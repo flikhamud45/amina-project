@@ -158,7 +158,7 @@ class Layer(abc.ABC):
         neuron: int,
         parent_values: np.ndarray,
         weights: np.ndarray | None,
-        bias: float | None,
+        bias: np.floating | None,
     ) -> float:
         """Recompute one neuron's activation from its parents.
 
@@ -254,7 +254,7 @@ class InputLayer(Layer):
         neuron: int,
         parent_values: np.ndarray,
         weights: np.ndarray | None,
-        bias: float | None,
+        bias: np.floating | None,
     ) -> float:
         raise TypeError("the input layer has no local relation; it is anchored to qry")
 
@@ -315,10 +315,13 @@ class DenseLayer(Layer):
         neuron: int,
         parent_values: np.ndarray,
         weights: np.ndarray | None,
-        bias: float | None,
+        bias: np.floating | None,
     ) -> float:
+        # Kept in the parents' own dtype throughout, so the verifier performs the
+        # same precision of arithmetic the prover did.  Widening only at the end is
+        # lossless and keeps the return type convenient.
         assert weights is not None and bias is not None
-        z = float(np.dot(weights, parent_values) + bias)
+        z = np.dot(weights, parent_values) + bias
         return float(apply_activation(z, self.activation))
 
     def forward_batch(
@@ -410,12 +413,12 @@ class Conv2dLayer(Layer):
         neuron: int,
         parent_values: np.ndarray,
         weights: np.ndarray | None,
-        bias: float | None,
+        bias: np.floating | None,
     ) -> float:
         # The caller has already selected this neuron's output-channel row, so the
         # computation is identical to the dense case once parents are gathered.
         assert weights is not None and bias is not None
-        z = float(np.dot(weights, parent_values) + bias)
+        z = np.dot(weights, parent_values) + bias
         return float(apply_activation(z, self.activation))
 
     def forward_batch(
@@ -501,7 +504,7 @@ class MaxPool2dLayer(Layer):
         neuron: int,
         parent_values: np.ndarray,
         weights: np.ndarray | None,
-        bias: float | None,
+        bias: np.floating | None,
     ) -> float:
         return float(np.max(parent_values))
 

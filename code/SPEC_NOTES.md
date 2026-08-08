@@ -64,6 +64,25 @@ audited, and we also measure what a zero-tolerance verifier would do. This matte
 for the attack: any tamper must move an activation by more than `τ`, which is a
 negligible constraint (our attack moves it by ~10⁰–10¹).
 
+**Measured.** With `τ = 1e-4`, honest completeness is 1.0000 over 3000 runs per setup
+and the worst residual is `2.9e-6` — 52× of headroom. With `τ = 0`, honest acceptance
+falls to 17–32%: about 65% of checked nodes agree bit-for-bit and the rest do not.
+
+**A caution about that second number**, because we got it wrong initially and it is
+an easy trap. How often prover and verifier agree exactly depends on whether the
+verifier performs *the same precision of arithmetic*. Our first implementation
+returned the bias from `split_row` as a Python `float` (i.e. float64); adding it to a
+float32 dot product promoted the whole expression to float64, arithmetic the prover
+never performed. That alone drove exact agreement at the output layer to zero and
+made zero-tolerance completeness look like 0% rather than ~28%. `split_row` now
+returns a NumPy scalar and stays in the parents' dtype.
+
+The residual disagreement is genuine — BLAS blocks a matrix product differently from
+a single dot product, and no amount of care in the verifier changes that. Removing it
+entirely would need the protocol to *specify* a canonical evaluation order, or to work
+in fixed-point/integer arithmetic. Field-based SNARK constructions get exactness for
+free, which is one real advantage they retain over this approach.
+
 ---
 
 ## 3. Which layer the output activation function belongs to

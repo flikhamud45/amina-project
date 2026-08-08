@@ -59,6 +59,42 @@ def test_honest_residuals_are_far_below_the_tolerance(mlp_net, query_for, protoc
     assert worst < params.abs_tolerance / 100, f"worst honest residual {worst:.3e}"
 
 
+def test_verifier_arithmetic_stays_in_the_provers_precision(mlp_net, query_for):
+    """Regression test for a precision bug that cost us a wrong result.
+
+    The prover evaluates layers in float32.  If the verifier adds a float64 bias to
+    a float32 dot product, the sum is promoted to float64 -- arithmetic the prover
+    never performed -- and the two disagree far more often than rounding requires.
+    Every recomputed value must therefore be exactly representable in float32.
+    """
+    trace = mlp_net.eval_trace(query_for(mlp_net))
+    architecture = mlp_net.architecture
+    for layer_index in range(1, len(architecture)):
+        for neuron in range(min(architecture[layer_index].n_neurons, 40)):
+            recomputed = mlp_net.recompute(trace, layer_index, neuron)
+            assert np.float32(recomputed) == recomputed, (
+                f"layer {layer_index}, neuron {neuron}: verifier produced a value "
+                f"that is not a float32, so it widened somewhere"
+            )
+
+
+def test_zero_tolerance_completeness_is_not_degenerate(mlp_net, query_for, protocol_pair):
+    """The exact-equality test of Figure 3 should fail *sometimes*, not always.
+
+    An honest prover and a careful verifier agree bit-for-bit on most nodes; they
+    disagree only where BLAS blocked the matrix product differently.  If this rate
+    collapses to zero, the verifier has stopped matching the prover's arithmetic --
+    which is a bug in us, not a finding about the protocol.
+    """
+    params = ProtocolParams(n_paths=1, abs_tolerance=0.0, rel_tolerance=0.0)
+    prover, verifier = protocol_pair(mlp_net, params)
+    accepted = sum(
+        run_protocol(prover, verifier, query_for(mlp_net, seed=seed)).accepted
+        for seed in range(200)
+    )
+    assert accepted > 0, "no honest run passed exact equality: verifier arithmetic drifted"
+
+
 def test_full_input_check_accepts_honest_traces(mlp_net, query_for, protocol_pair):
     prover, verifier = protocol_pair(mlp_net, ProtocolParams(check_full_input=True))
     for seed in range(20):

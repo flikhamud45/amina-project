@@ -108,11 +108,25 @@ time.
 
 Three findings from the reproduction itself:
 
-**The idealised exact-equality test has zero completeness.** Implemented literally,
-Figure 3 accepts the honest prover in **0 of 3000** runs in every setup — prover and
-verifier sum in different orders. Observed honest residuals reach `2.8e-6`, so the
-paper's `1e-4` tolerance is sound (36–47× headroom), but it is *mandatory*, and it
-hands an attacker a free perturbation budget.
+**The idealised exact-equality test is not implementable.** Figure 3 writes the local
+check as `ã_j = φ(Σ w_ij ã_i)`. Taken literally, an honest prover is accepted only
+**17–32%** of the time (per setup), because the prover evaluates a layer as one
+matrix product while the verifier re-evaluates a single neuron as a dot product, and
+the two summation orders round differently: 65% of checked nodes agree bit-for-bit,
+the rest differ by up to `2.9e-6`. Definition 1 requires acceptance probability
+exactly 1, so the idealised test fails its own correctness condition.
+
+The paper is aware of this and prescribes a tolerance (Appendix E.3, "`1e-4`"); our
+measurements say that choice is sound, with 52× headroom over the worst observed
+honest residual. The point is that the tolerance is *mandatory* rather than a
+convenience — and that it hands an adversary a perturbation budget below `1e-4`
+which is invisible by construction.
+
+How much of the disagreement is inherent depends on implementation care: a verifier
+that matches the prover's arithmetic precision agrees far more often than one that
+does not (we had this wrong at first — see the note in `SPEC_NOTES.md` §2). Full
+bit-exactness would require the protocol to mandate a canonical evaluation order, or
+fixed-point arithmetic, which is what field-based SNARK constructions get for free.
 
 **Equation (1) is identically zero at layer 1 for arithmetic reasons.** Both its
 terms use `M`'s weights and differ only in the layer-`l−1` activations — which at
