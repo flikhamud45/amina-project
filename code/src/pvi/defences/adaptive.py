@@ -1,0 +1,329 @@
+"""The adversary's reply to a non-uniform sampler.
+
+The defences in :mod:`pvi.defences.sampling` all concentrate the verifier's
+attention somewhere.  Concentrating attention necessarily takes it away from
+somewhere else, and the adversary only needs one place to hide.
+
+Kerckhoffs applies: the sampling rule is part of the protocol, so the adversary
+knows it.  The search below simply evaluates, for every neuron at which the output
+can be flipped, the *exact* probability that the resulting trace is accepted under
+the defence in force -- and keeps the best.  No approximation and no optimisation
+heuristics are involved, which is what makes the resulting numbers a genuine upper
+bound on the defence's worth rather than an artefact of a weak attack.
+
+This is the concrete form of the concern that motivated the defence in the first
+place: whether an attacker can arrange to be examined where it is safe.  It can.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from pvi.attacks.tamper import TamperPlan, _smallest_flipping_value, apply_plan
+from pvi.experiments.analysis import acceptance_probability
+from pvi.nn.architecture import DenseLayer
+from pvi.nn.gradients import saliency
+from pvi.nn.network import Trace, TracedNetwork
+from pvi.protocol.params import ProtocolParams
+from pvi.protocol.sampling import PathSampler
+
+__all__ = ["EvasionSearch", "plan_evasive_flip", "visit_probabilities_under"]
+
+
+def visit_probabilities_under(
+    network: TracedNetwork,
+    trace: Trace,
+    layer_index: int,
+    sampler: PathSampler,
+) -> np.ndarray:
+    """Probability that one path visits each neuron of ``layer_index``.
+
+    Propagates the sampler's own distribution downwards:
+
+        ``pi_L = start_distribution``
+        ``pi_{l-1}(i) = sum_j pi_l(j) * P_l(j -> i)``
+
+    This is the quantity Theorem 2 of ``DEFENCE_NOTES.md`` is stated in: if exactly
+    one node of layer ``l`` is inconsistent, detection equals ``pi_l`` at that node.
+
+    It is deliberately *not* derived by marking a node and reusing the acceptance
+    recursion.  Overwriting an activation without re-propagating would leave every
+    node above it inconsistent too, and the result would measure the visit
+    probability of a whole cone rather than of one neuron.
+    """
+    from pvi.protocol.sampling import _as_distribution
+
+    architecture = network.architecture
+    if not 0 <= layer_index < len(architecture):
+        raise IndexError(f"layer {layer_index} out of range")
+
+    pi = _as_distribution(sampler.start_distribution(architecture, trace))
+
+    for current in range(len(architecture) - 1, layer_index, -1):
+        layer = architecture[current]
+        below = np.zeros(architecture[current - 1].n_neurons, dtype=np.float64)
+
+        if isinstance(layer, DenseLayer) and not sampler.transition_depends_on_source:
+            # Every source shares one transition distribution and pi sums to 1.
+            parent_idx = np.arange(architecture[current - 1].n_neurons)
+            below = _as_distribution(
+                sampler.transition_distribution(
+                    architecture, current, 0, parent_idx, trace
+                )
+            ) * pi.sum()
+        else:
+            for neuron in range(layer.n_neurons):
+                mass = pi[neuron]
+                if mass <= 0.0:
+                    continue
+                parent_idx, _ = layer.parents(neuron)
+                weights = _as_distribution(
+                    sampler.transition_distribution(
+                        architecture, current, neuron, parent_idx, trace
+                    )
+                )
+                np.add.at(below, parent_idx, mass * weights)
+        pi = below
+
+    return pi
+
+
+@dataclass(frozen=True)
+class EvasionSearch:
+    """Best plan found against a given sampler, with the search's own diagnostics."""
+
+    plan: TamperPlan | None
+    acceptance: float
+    n_candidates_tried: int
+    n_candidates_flipping: int
+    best_uniform_acceptance: float
+
+    @property
+    def succeeded(self) -> bool:
+        return self.plan is not None
+
+
+def plan_evasive_flip(
+    network: TracedNetwork,
+    honest: Trace,
+    *,
+    layer_index: int,
+    sampler: PathSampler,
+    target_class: int | None = None,
+    params: ProtocolParams | None = None,
+    candidate_neurons: int = 96,
+    activation_ceiling: np.ndarray | float | None = None,
+    require_nonnegative: bool = True,
+) -> EvasionSearch:
+    """Choose the tamper that the given sampler is least likely to look at.
+
+    Candidates are drawn from three places, because the neuron that best evades a
+    defence is generally *not* the one that flips the output most cheaply:
+
+    * the most influential neurons -- these flip the output easily;
+    * the least influential -- these are where importance-weighted samplers rarely
+      look;
+    * a spread across the layer, so the search is not confined to the tails.
+
+    Each candidate is fully evaluated: find the smallest value that flips the
+    output, build the resulting trace, and compute the exact acceptance probability
+    under ``sampler``.
+    """
+    params = params or ProtocolParams()
+    architecture = network.architecture
+    layer = architecture[layer_index]
+    if not isinstance(layer, DenseLayer):
+        raise TypeError(f"layer {layer_index} is a {type(layer).__name__}")
+
+    width = layer.n_neurons
+    honest_class = int(honest.output.argmax())
+    scores = saliency(network, honest, layer_index, target_class=target_class)
+    ordered = np.argsort(scores)
+
+    per_bucket = max(1, candidate_neurons // 3)
+    candidates = np.unique(
+        np.concatenate(
+            [
+                ordered[::-1][:per_bucket],
+                ordered[:per_bucket],
+                np.linspace(0, width - 1, per_bucket).astype(int),
+            ]
+        )
+    )
+
+    if activation_ceiling is None:
+        ceilings = np.full(width, 1e4)
+    elif np.isscalar(activation_ceiling):
+        ceilings = np.full(width, float(activation_ceiling))
+    else:
+        ceilings = np.asarray(activation_ceiling, dtype=np.float64)
+
+    uniform_params = ProtocolParams(n_paths=params.n_paths)
+    best_plan: TamperPlan | None = None
+    best_acceptance = -1.0
+    best_uniform = float("nan")
+    flipping = 0
+
+    for neuron in candidates:
+        value = _smallest_flipping_value(
+            network,
+            honest,
+            layer_index,
+            int(neuron),
+            honest_class,
+            target_class,
+            max_value=float(ceilings[int(neuron)]),
+            require_nonnegative=require_nonnegative,
+        )
+        if value is None:
+            continue
+        flipping += 1
+        plan = TamperPlan(
+            layer_index=layer_index,
+            neurons=(int(neuron),),
+            new_values=(float(value),),
+            original_values=(float(honest[layer_index][int(neuron)]),),
+            honest_class=honest_class,
+            forged_class=-1,
+        )
+        forged = apply_plan(network, honest, plan)
+        forged_class = int(forged.output.argmax())
+        if forged_class == honest_class:
+            continue
+        acceptance = acceptance_probability(network, forged, params, sampler)
+        if acceptance > best_acceptance:
+            best_acceptance = acceptance
+            best_uniform = acceptance_probability(network, forged, uniform_params)
+            best_plan = TamperPlan(
+                layer_index=plan.layer_index,
+                neurons=plan.neurons,
+                new_values=plan.new_values,
+                original_values=plan.original_values,
+                honest_class=honest_class,
+                forged_class=forged_class,
+            )
+
+    return EvasionSearch(
+        plan=best_plan,
+        acceptance=best_acceptance if best_plan is not None else 0.0,
+        n_candidates_tried=int(len(candidates)),
+        n_candidates_flipping=flipping,
+        best_uniform_acceptance=best_uniform,
+    )
+
+
+def plan_adaptive_stealthy_flip(
+    network: TracedNetwork,
+    honest: Trace,
+    *,
+    layer_index: int,
+    ceilings: np.ndarray,
+    sampler: PathSampler,
+    params: ProtocolParams | None = None,
+    target_class: int | None = None,
+    max_neurons: int = 48,
+    floors: np.ndarray | None = None,
+) -> EvasionSearch:
+    """In-distribution values *and* low exposure to the sampler in force.
+
+    The stealthy planner of :mod:`pvi.attacks.tamper` ranks neurons by how much
+    room their envelope gives -- which, against a contribution-weighted sampler,
+    is precisely the wrong ranking: a neuron with a large activation and large
+    outgoing weights is both useful and conspicuous.
+
+    Here each neuron is scored by *benefit per unit of exposure*:
+
+        ``benefit_i  = |d(margin)/d a_i| * |proposed_i - a_i|``
+        ``exposure_i = |proposed_i| * sum_j |w_ij|``
+
+    the second being the contribution mass a contribution-weighted walk would
+    assign it.  Neurons are added greedily until the output flips.  Three rankings
+    are tried -- benefit, benefit/exposure, and least exposure -- and whichever
+    yields the highest *exact* acceptance under ``sampler`` is returned, so the
+    reported figure is the best of the adversary's options rather than the first
+    that happened to work.
+    """
+    params = params or ProtocolParams()
+    architecture = network.architecture
+    layer = architecture[layer_index]
+    if not isinstance(layer, DenseLayer):
+        raise TypeError(f"layer {layer_index} is a {type(layer).__name__}")
+
+    honest_class = int(honest.output.argmax())
+    logits = honest.output
+    if target_class is None:
+        target_class = int(np.argsort(logits)[::-1][1])
+    if target_class == honest_class:
+        return EvasionSearch(None, 0.0, 0, 0, float("nan"))
+
+    from pvi.nn.gradients import output_direction_gradient
+
+    direction = np.zeros_like(logits, dtype=np.float64)
+    direction[target_class] = 1.0
+    direction[honest_class] -= 1.0
+    gradient = output_direction_gradient(network, honest, layer_index, direction)
+
+    ceilings = np.asarray(ceilings, dtype=np.float64)
+    floors = np.zeros(layer.n_neurons) if floors is None else np.asarray(floors, np.float64)
+    original = honest[layer_index].astype(np.float64)
+    proposed = np.where(gradient >= 0, ceilings, floors)
+
+    above = architecture[layer_index + 1]
+    if isinstance(above, DenseLayer):
+        outgoing = np.abs(network.parameters[above.name][0].astype(np.float64)).sum(axis=0)
+    else:
+        outgoing = np.ones(layer.n_neurons)
+
+    benefit = np.abs(gradient) * np.abs(proposed - original)
+    exposure = np.abs(proposed) * outgoing + 1e-12
+
+    rankings = {
+        "benefit": np.argsort(benefit)[::-1],
+        "benefit_per_exposure": np.argsort(benefit / exposure)[::-1],
+        "least_exposure": np.argsort(np.where(benefit > 0, exposure, np.inf)),
+    }
+
+    best_plan: TamperPlan | None = None
+    best_acceptance = -1.0
+    best_uniform = float("nan")
+    tried = 0
+
+    for order in rankings.values():
+        usable = [int(n) for n in order if benefit[n] > 0][:max_neurons]
+        trace = honest
+        chosen: list[int] = []
+        for neuron in usable:
+            tried += 1
+            trace = trace.tampered(layer_index, neuron, float(proposed[neuron]))
+            chosen.append(neuron)
+            forged = network.forward_from(trace, layer_index)
+            if int(forged.output.argmax()) != target_class:
+                continue
+            touched = tuple(n for n in chosen if proposed[n] != original[n])
+            if not touched:
+                continue
+            acceptance = acceptance_probability(network, forged, params, sampler)
+            if acceptance > best_acceptance:
+                best_acceptance = acceptance
+                best_uniform = acceptance_probability(
+                    network, forged, ProtocolParams(n_paths=params.n_paths)
+                )
+                best_plan = TamperPlan(
+                    layer_index=layer_index,
+                    neurons=touched,
+                    new_values=tuple(float(proposed[n]) for n in touched),
+                    original_values=tuple(float(original[n]) for n in touched),
+                    honest_class=honest_class,
+                    forged_class=target_class,
+                )
+            break
+
+    return EvasionSearch(
+        plan=best_plan,
+        acceptance=best_acceptance if best_plan is not None else 0.0,
+        n_candidates_tried=tried,
+        n_candidates_flipping=1 if best_plan is not None else 0,
+        best_uniform_acceptance=best_uniform,
+    )

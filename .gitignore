@@ -1,0 +1,27 @@
+# Virtual environment -- recreate with requirements.txt, do not ship
+.venv/
+
+# Downloaded datasets and generated artifacts
+code/data/
+code/artifacts/models/
+code/artifacts/results/
+code/artifacts/figures/
+
+# Extracted PDF text (regenerate from the PDFs)
+*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# LaTeX build products
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.synctex.gz

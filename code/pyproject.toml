@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pvi"
+version = "1.0.0"
+description = "Sampling-based proofs of inference: reproduction, trace-tampering attack, and defence analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "torch>=2.2,<2.3",
+    "torchvision>=0.17,<0.18",
+    "numpy>=1.26,<2.0",
+    "matplotlib>=3.8,<4.0",
+    "tqdm>=4.66,<5.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2,<9.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: marks tests that train a model or run large sweeps",
+]
+
+[tool.ruff]
+line-length = 92
+target-version = "py310"
