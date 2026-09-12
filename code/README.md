@@ -30,11 +30,13 @@ implementable version makes things strictly worse.
 ## Quick start
 
 ```bash
-python -m venv .venv
+python3 -m venv --without-pip /tmp/erel_venv
+source /tmp/erel_venv/bin/activate
+curl -sS https://bootstrap.pypa.io/get-pip.py | python
 ```
 
 ```bash
-.venv/Scripts/pip install -r code/requirements.txt && .venv/Scripts/pip install -e ./code
+.venv/bin/pip install -e .
 ```
 
 On Linux/macOS (including the SLURM cluster) use `.venv/bin/pip`. Everything runs on
