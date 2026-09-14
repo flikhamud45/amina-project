@@ -100,7 +100,18 @@ Whatever Phase 0 finds, these are cheap enough to prototype and run through
 3. Free anomaly/typicality co-check layered on top of whatever sampler is chosen
    (same style as `expected_saliency_importance`): catches the *naive* tamper
    (activation ~28 vs. natural max ~8.2) for zero extra path budget. Does not touch
-   the stealthy/zero-valued attack.
+   the stealthy/zero-valued attack (a per-neuron check inherits Theorem 4's blind
+   spot for the same reason as any other value-based rule).
+
+   **Status: tried the joint/multivariate version, done, negative.** A per-neuron
+   range check was already known to fail (zero is common per-neuron); a low-rank
+   PCA plausibility check on the *whole* claimed layer vector looked more
+   promising at first (35.6% catch rate against the existing zero-hiding attack,
+   §7 of `DEFENCE_NOTES.md`) but the adaptive counter-attack evades it at support
+   size 13 — the same support the original attack already uses for an unrelated
+   reason. No cost increase for an informed adversary. See
+   `scripts/run_joint_plausibility_check.py` and
+   `scripts/run_manifold_evasion_check.py`.
 
 ## Phase 2 — Structural fix (full stretch goal, confirmed in scope)
 

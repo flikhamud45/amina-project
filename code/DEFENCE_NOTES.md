@@ -245,7 +245,7 @@ never are. It is not a formal proof that *no* locally-computable trace-dependent
 rule of any shape can ever escape the Theorem 2/3 dichotomy; that general
 question is still open. It does mean the natural, cheap fixes are exhausted:
 getting past this requires either accepting the reduced backdoor threat model
-of §7 below (a specific target, not merely "any wrong output") or changing what
+of §8 below (a specific target, not merely "any wrong output") or changing what
 a single check verifies, not how neurons are weighted (see the sumcheck-style
 direction in `REVISION1_PLAN.md`, Phase 2).
 
@@ -254,7 +254,77 @@ Reproduce with `scripts/run_theorem4_check.py`.
 
 ---
 
-## 7. Revision 1: a real backdoor needs a specific target, and that already helps
+## 7. Revision 1: a joint plausibility check does not survive an adaptive adversary either
+
+Sections 3, 4 and 6 all score a candidate parent using only *that neuron's own*
+claimed value and weight. A genuinely different mechanism: check the *joint*
+claimed activation vector of a whole layer against a plausibility model
+calibrated on many honest executions — e.g. a low-rank PCA subspace fit to
+natural layer activations, flagging large reconstruction error. This costs
+nothing extra to open (`C_trc` commits one leaf per *layer*, not per neuron, so
+the whole vector is already revealed the moment any node in it is checked — see
+§2 of `SPEC_NOTES.md`), and it can see structure no per-neuron rule can, in
+principle: a natural zero and a malicious zero are the same value in isolation,
+but the *rest of the layer* might make one of them jointly implausible.
+
+**First look, unaware adversary.** A rank-50 PCA on layer 1 (86.6% of variance),
+calibrated on 5000 natural queries, scored against the *existing* zero-hiding
+attack from §4 (which was built to evade `LocalContributionSampler`, not this):
+honest reconstruction error has mean `3.51` (p95 `5.87`); the forged traces have
+mean `4.64`. At the honest p95 threshold this catches **35.6%** of forgeries
+for a 5% false-positive rate on honest traces — real signal, and a kind of
+signal Theorem 4's per-neuron argument says cannot exist for a marginal check.
+
+**The adaptive counter is immediate on paper**: a perturbation confined to the
+PCA subspace produces *zero* extra reconstruction error, however large, by
+construction. Whether this defeats the check in practice depends on how much
+*support* (how many neurons) confining a flip to the subspace costs — a wide,
+dense perturbation is trivially caught by ordinary path sampling regardless of
+manifold membership (Theorem 1: detection ~ `k/N`), so the real question is
+whether there is a support size small enough to stay cheap under path sampling
+*and* close enough to the manifold to stay invisible to the PCA check.
+
+**Measured** (`scripts/run_manifold_evasion_check.py`: for each support size
+`k`, pick the `k` neurons ranked by margin sensitivity, solve the exact
+closed-form constrained least-squares perturbation on just those coordinates
+that minimises added reconstruction error subject to flipping the (linearised)
+margin, verify against the real nonlinear forward pass, grow the target margin
+until it actually flips):
+
+| support `k` | flip rate | mean reconstruction error | vs. honest p95 (`5.87`) |
+|---|---|---|---|
+| 1 | 40% | 94.5 | far above |
+| 3 | 45% | 6.4 | above |
+| 8 | 95% | 5.8 | above |
+| **13** | **100%** | **5.1** | **below** |
+| 20 | 100% | 4.6 | below |
+| 50 | 100% | 3.9 | below |
+
+Reliable, manifold-invisible evasion needs support `≈13` — **the same support
+the original, PCA-unaware zero-hiding attack already uses**, for an unrelated
+reason (enough zeroed neurons to flip the prediction combinatorially, §4). An
+adversary who knows about the PCA check pays essentially nothing extra: support
+13–20 keeps uniform path-sampling exposure at `k/N ≈ 0.025–0.04`, the same order
+of magnitude as before. The 35.6% catch rate measured against the unaware
+attack does not survive contact with an adversary that knows the check exists.
+
+**Conclusion.** A genuinely different mechanism (joint, not per-neuron) does
+carry real information a marginal check cannot have — but "real information
+against an unaware adversary" and "raises the cost of an informed one" are
+different claims, and only the second matters under this document's threat
+model (Kerckhoffs: the check is public). Here they came apart at a support
+size the adversary was going to use anyway. This does not prove no joint check
+could ever help — a higher-rank or nonlinear plausibility model might force a
+larger crossover support — but the burden has shifted: it needs to be
+demonstrated against an adversary that optimises against the specific
+published model, not just measured against a differently-motivated attack.
+
+Code: `scripts/run_joint_plausibility_check.py`,
+`scripts/run_manifold_evasion_check.py`.
+
+---
+
+## 8. Revision 1: a real backdoor needs a specific target, and that already helps
 
 Every `|U|` in this document — the set of neurons at which a single-node tamper
 "achieves the adversary's goal" — is computed with `target_class=None` in
@@ -294,7 +364,7 @@ raw data in `artifacts/results/targeted_vs_untargeted.json`.
 
 ---
 
-## 8. What would actually help
+## 9. What would actually help
 
 None of this touches the protocol's real guarantee. Against a prover that swaps in a
 *different model*, `RandPathTest` works — we measured 100% detection against three
