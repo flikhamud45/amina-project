@@ -49,6 +49,7 @@ __all__ = [
     "GradientSaliencySampler",
     "LocalContributionSampler",
     "StaticImportanceSampler",
+    "ZeroAwareContributionSampler",
     "expected_saliency_importance",
     "weight_magnitude_importance",
 ]
@@ -223,6 +224,75 @@ class LocalContributionSampler(PathSampler):
             scores = np.abs(parent_values)
         else:
             scores = np.abs(row[weight_idx].astype(np.float64) * parent_values)
+        total = scores.sum()
+        base = np.full(size, 1.0 / size) if total <= 0 else scores / total
+        return (1.0 - self._floor) * base + self._floor / size
+
+
+class ZeroAwareContributionSampler(PathSampler):
+    """``LocalContributionSampler`` with an additive floor on the activation term.
+
+    The natural first attempt at patching Theorem 3: score a parent ``i`` by
+    ``|w_ij| * (|a~_i| + epsilon)`` instead of ``|w_ij * a~_i|``, so a claimed value
+    of exactly zero no longer sends the transition weight to exactly zero.
+
+    Revision-1 Phase 0's finding: this does not escape the impossibility, it only
+    relocates it. As ``a~_i -> 0`` (which costs the adversary nothing -- zero is
+    already the value it wants to claim), the weight converges to
+    ``epsilon * |w_ij|``, i.e. exactly the (already published, already known to
+    lose to uniform against an adaptive adversary -- see ``StaticImportanceSampler``
+    and Theorem 2) weight-magnitude sampler, scaled by a constant. So the worst
+    case this sampler can be pushed to is never *identically* zero detection, but it
+    is never better than plain weight-magnitude weighting either -- and Theorem 2
+    already shows that loses to uniform. ``epsilon`` does not buy a way around the
+    dichotomy; it only chooses which side of it applies. See ``DEFENCE_NOTES.md``
+    for the general argument (Theorem 4) and ``scripts/run_theorem4_check.py`` for
+    the measurement.
+    """
+
+    name = "zero-aware-contribution"
+
+    def __init__(self, network: TracedNetwork, *, epsilon: float, floor: float = 0.0) -> None:
+        if epsilon < 0.0:
+            raise ValueError(f"epsilon must be non-negative, got {epsilon}")
+        if not 0.0 <= floor <= 1.0:
+            raise ValueError(f"floor must be in [0, 1], got {floor}")
+        self._network = network
+        self._epsilon = epsilon
+        self._floor = floor
+
+    def start_distribution(
+        self, architecture: Architecture, trace: Trace | None
+    ) -> np.ndarray:
+        n = architecture.output_layer.n_neurons
+        if trace is None:
+            return np.full(n, 1.0 / n)
+        scores = np.abs(trace.output.astype(np.float64)) + self._epsilon
+        total = scores.sum()
+        base = np.full(n, 1.0 / n) if total <= 0 else scores / total
+        return (1.0 - self._floor) * base + self._floor / n
+
+    def transition_distribution(
+        self,
+        architecture: Architecture,
+        layer_index: int,
+        neuron: int,
+        parent_indices: np.ndarray,
+        trace: Trace | None,
+    ) -> np.ndarray:
+        size = len(parent_indices)
+        if trace is None:
+            return np.full(size, 1.0 / size)
+        layer = architecture[layer_index]
+        row = self._network.weight_row(layer_index, neuron)
+        _, weight_idx = layer.parents(neuron)
+        parent_values = trace[layer_index - 1][parent_indices].astype(np.float64)
+        if row is None:
+            scores = np.abs(parent_values) + self._epsilon
+        else:
+            scores = np.abs(row[weight_idx].astype(np.float64)) * (
+                np.abs(parent_values) + self._epsilon
+            )
         total = scores.sum()
         base = np.full(size, 1.0 / size) if total <= 0 else scores / total
         return (1.0 - self._floor) * base + self._floor / size
