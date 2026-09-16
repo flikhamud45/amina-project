@@ -46,20 +46,34 @@ threat model, so this should land before the proof attempt below.
 
 ## Phase 0 — Close the open question before building anything
 
-**Status: partially done.** The natural first patch — add a floor to
-`LocalContributionSampler` so it doesn't vanish at zero — is closed off, both by
-a clean argument and by exact computation. See `DEFENCE_NOTES.md` §6
-(`ZeroAwareContributionSampler`, Theorem 4): sweeping the floor `ε` from 0 to
-100 only interpolates between two already-known failure modes (exactly Theorem
-3 at `ε=0`, converging to `StaticImportanceSampler`'s sub-uniform number as
-`ε→∞`); no value of `ε` was found to beat uniform's exact minimax bound. The
-fully general question — no locally-computable trace-dependent rule of *any*
-shape can escape the dichotomy — remains open; what's closed is the specific,
-most-obvious fix. The "cumulative path-sensitivity" idea below is still
-untested and is the next candidate to check against the *exact* minimax
-computation (not the heuristic search — see the methodological note in
-`DEFENCE_NOTES.md` §6, which undersold `ZeroAwareContributionSampler`'s true
-worst case by ~15x at `ε=100`).
+**Status: closed out, negative, write-up done.** Three structurally different
+candidates were tried and stress-tested against a fully adaptive adversary; all
+three failed the same way. See `DEFENCE_NOTES.md` §6–§8 and the README's Step 5
+for the consolidated write-up.
+
+* **`ZeroAwareContributionSampler`** (floor `ε` added to contribution
+  weighting, §6): sweeping `ε` from 0 to 100 only interpolates between Theorem
+  3's exact zero and `StaticImportanceSampler`'s already-known sub-uniform
+  number. No `ε` beats uniform's exact minimax bound.
+* **The "cumulative path-sensitivity" idea** below turned out to be the *same*
+  family: at a single hop, the downstream sensitivity scalar is identical
+  across a node's parents and cancels on normalization, leaving pure
+  `|w_ij|`-weighting per hop — exactly `ZeroAwareContributionSampler`'s `ε→∞`
+  limit. Already covered by the sweep above; no separate implementation added
+  anything.
+* **Joint/PCA plausibility check** (§7, a structurally different mechanism —
+  whole-layer, not per-neuron): real signal against an *unaware* adversary
+  (35.6% catch rate), evaded at negligible extra cost (support ≈13, no more
+  than the original attack already uses) by an adversary that knows the model.
+
+We stopped short of a fully general proof covering *every* conceivable
+locally-computable rule (the literal reading of `DEFENCE_NOTES.md` §5's open
+question) — that remains technically open — but the empirical pattern across
+three structurally different families is consistent enough that we're not
+chasing it further right now. The deliverable is the pattern itself: every
+natural fix that helps against an unaware adversary stops helping the moment
+the adversary is allowed to know the rule (Kerckhoffs, the standing threat
+model throughout this document).
 
 `DEFENCE_NOTES.md` §5 ends with: *"we do not claim a bound covering every
 conceivable adaptive rule."* Settle that, if possible, before inventing a new

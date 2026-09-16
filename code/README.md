@@ -276,6 +276,76 @@ bisection isolates the first disagreeing node with certainty rather than probabi
 
 ---
 
+## Step 5 — Revision 1: searching for a real defence
+
+Step 4 leaves one question open: `DEFENCE_NOTES.md` bounds two *specific*
+trace-dependent samplers, but concedes "we do not claim a bound covering every
+conceivable adaptive rule." Revision 1 tried to close that gap — either with a
+working defence, or with a sharper reason none exists — without touching the
+protocol's trust model (no refereed delegation, no architecture changes). Full
+derivations and numbers are in `DEFENCE_NOTES.md` §6–§8 and
+`REVISION1_PLAN.md`; this section is the headline.
+
+**The threat model itself was too easy.** Every `|U|` in Step 4 is computed with
+"flip to *any* wrong class." A real backdoor needs a *specific* target label. Under
+that more realistic threat model, at layer 1 (`N = 512`), a target-forced attacker's
+easiest choice of target has `|U| = 159` rather than `465` — **3.1×** more
+detectable under plain uniform sampling, for free, no new sampler required:
+
+| Threat model | mean `\|U\|` / 512 | uniform single-path detection floor |
+|---|---|---|
+| Untargeted (flip to anything) | 465 | 0.0021 |
+| Targeted, attacker's easiest target | 159 | 0.0066 (**3.1×**) |
+| Targeted, forced to one specific class | 20–69 | 0.015–0.053 (**7–25×**) |
+
+**The natural patch to the zero blind spot does not work either.** The obvious
+fix to contribution weighting's `Theorem (zero blind spot)` is to stop it
+vanishing at zero: add a floor `ε` so a parent scores `|w_ij|·(|ã_i| + ε)`
+instead of `|w_ij·ã_i|`. Swept `ε` from `0` to `100` and checked the *exact*
+minimax bound at every value — not the heuristic evasion search, which turned
+out to understate this sampler's true worst case by ~15×. No `ε` ever beat
+uniform's bound; it only interpolates between the zero blind spot (`ε=0`) and
+the already-known-sub-uniform weight-magnitude sampler (`ε→∞`):
+
+| `ε` | exact worst-case detection | vs. uniform's `0.00217` |
+|---|---|---|
+| 0 | 0.000000 | — |
+| 1 | 0.000739 | 34% |
+| 100 | 0.000974 | 45% |
+
+**A structurally different mechanism fares no better once the adversary knows
+about it.** Rather than reweighting neurons, check the *whole claimed layer
+vector* against a plausibility model (a low-rank PCA subspace fit on natural
+activations) — free to compute, since the protocol's own commitment already
+reveals a full layer the moment any node in it is checked. Against the
+*existing*, PCA-unaware zero-hiding attack this catches 35.6% of forgeries at a
+5% false-positive rate: real signal a per-neuron rule cannot have. But an
+adversary who knows the plausibility model can solve, in closed form, for the
+perturbation on a given support that flips the output while minimising added
+reconstruction error. Reliable, manifold-invisible evasion needs support
+`≈13` — the same support the original attack already used for an unrelated
+reason — so an informed adversary pays essentially nothing extra.
+
+**The pattern is consistent across all three attempts.** Trace-independent
+rules, the best implementable trace-dependent rule (with or without a floor),
+and a structurally different joint/statistical check all fail the same way:
+whatever looks like an improvement against an *unaware* adversary stops
+looking like one the moment the adversary is allowed to know the rule, which
+is the threat model this whole document uses (Kerckhoffs). We did not find a
+fix that survives that bar, and we no longer expect one to exist within "reweight
+or statistically filter what a sampling-based verifier looks at" — the honest
+backdoor-forcing result above is the real, no-cost improvement this revision
+found, not a new sampler.
+
+**What's next.** The only remaining avenue that changes what a single check can
+verify, rather than how neurons are weighted, is a heavier per-layer
+consistency check (a sumcheck-style random-linear-combination argument in place
+of the per-node Merkle-row check) — a different protocol variant, not a smarter
+verifier for this one. That is the current, open, in-progress direction; see
+`REVISION1_PLAN.md` Phase 2.
+
+---
+
 ## Validation
 
 Correctness rests on more than the experiments running. `experiments/analysis.py`
