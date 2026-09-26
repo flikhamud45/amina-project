@@ -31,3 +31,9 @@ dist/
 
 # Local cluster scratch (job logs, downloaded wheels); portable copies live in cluster/
 .wheel_cache/
+
+# Comparison benchmark: trained weights and decoded-image caches are regenerable
+# (scripts/fullcheck_train.py); raw records and tables under artifacts/comparison/ are kept.
+code/artifacts/fullcheck/models/
+code/artifacts/fullcheck/cache/
+/logs/

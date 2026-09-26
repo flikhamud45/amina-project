@@ -37,7 +37,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r code/requirements.txt   # exact versions used for the results
 ```
 
-Everything runs on CPU; no GPU is required anywhere. `requirements.txt` pins the
+Steps 1–5 run on CPU; Step 6 (the comparison benchmark) is meant for a GPU but also runs on CPU, slowly. `requirements.txt` pins the
 versions the reported numbers were produced with; `pip install -e code` alone
 installs the looser ranges from `pyproject.toml`.
 
@@ -100,6 +100,8 @@ code/
     attacks/backdoor.py    The trigger-conditional adversary
     defences/sampling.py   Importance-weighted samplers
     defences/adaptive.py   The adversary's reply to a known sampler
+    fullcheck/             Step 6: the whole-network check on CNNs and transformers,
+                           the sampling baseline on the same graphs, the cost model
   scripts/                 Four runnable entry points
   tests/                   159 tests
 ```
@@ -384,6 +386,77 @@ and 24 spot-checks give only ~24 bits against a grinding prover — verifier-sen
 challenges or larger parameters are needed. See
 `revision1_notes/defence_explained.md` for a from-first-principles write-up and
 `DEFENCE_NOTES.md` §10.
+
+---
+
+## Step 6 — The comparison benchmark (whole-network check vs. the literature)
+
+`src/pvi/fullcheck/` is the defence of Step 5 rebuilt so it runs on the models the
+literature benchmarks, and a benchmark that measures it next to the original
+protocol on identical models and hardware. The write-up of the results is
+[`COMPARISON_ANALYSIS.md`](COMPARISON_ANALYSIS.md).
+
+**What changed relative to `protocol/batched.py`:** every model is an exact int8
+integer graph (per-channel weights, BatchNorm folded, fixed-point requantisation),
+so the prover's GPU and the verifier's CPU agree bit for bit; the field is BabyBear
+(`p = 15·2^27+1`, NTT-friendly) with `r` repeated challenges; the Reed–Solomon
+encoding uses an NTT; the security parameters are derived from a target `λ`
+(`params_for`); convolutions, pooling, residual blocks, LayerNorm/RMSNorm, GELU/SiLU,
+RoPE and causal attention are supported. Only weight products are argued about —
+every other operation is recomputed by the verifier from values it has already
+checked (the generalisation of Step 5's sign witness).
+
+Three trust settings are measured: **C** (the verifier holds only a 32-byte
+commitment per weight matrix — Anchuri et al.'s setting), **K** (the verifier knows
+the weights, fresh challenge per query — SafetyNets/Slalom), and **Kpre** (known
+weights, secret challenge precomputed once — Slalom/Maverick "preprocessing").
+
+| Models | Where the weights come from |
+|---|---|
+| MNIST MLP (Steps 1–4), LeNet-5 (MNIST), VGG-11/VGG-16 and ResNet-18 (CIFAR-10) | trained here (`scripts/fullcheck_train.py`) |
+| ResNet-18, 224×224, dogs vs cats and dogs vs squirrels (Anchuri et al.'s `M`, `M~`) | trained here on ImageNet's dog/cat/fox-squirrel classes |
+| GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B, Qwen3-4B | exact shapes, random int8 weights (cost only; see below) |
+
+Costs of the language models depend only on their shapes, so they are measured
+with random weights (as Slalom did for its untrained ResNets); no fidelity claim
+is made for them. Models with more than 12 blocks are built with 1 and 2 blocks and
+extrapolated linearly (`comparison_aggregate.py`; every block has the same shape).
+
+On the TAU cluster (see `cluster/`), from the repository root:
+
+```bash
+sbatch -o logs/%x-%j.out cluster/fullcheck_train.sbatch lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel
+bash cluster/fullcheck_sweep.sh          # every benchmark job the report uses
+```
+
+A single benchmark cell group can also be submitted on its own, e.g.
+`sbatch -o logs/%x-%j.out cluster/fullcheck_bench.sbatch llm --model llama2-7b --seq 64 512 --lams 40 128`.
+
+Anywhere else, the same commands run directly from `code/`:
+
+```bash
+python scripts/fullcheck_train.py --model vgg16 --device cuda
+python scripts/fullcheck_bench.py cnn --model vgg16
+python scripts/fullcheck_bench.py llm --model gpt2 --seq 64 128 256 512
+python scripts/comparison_aggregate.py && python scripts/comparison_literature.py
+python scripts/comparison_analytic.py && python scripts/comparison_figures.py
+```
+
+**Raw data is never aggregated in place.** Every measurement is one JSON line in
+`artifacts/comparison/raw/<suite>/<model>/<cell>.jsonl` (with the git commit,
+host, GPU and CPU); a cell with a `.done` marker is skipped on re-submission, so a
+pre-empted job is simply re-submitted. `comparison_aggregate.py` rebuilds
+`artifacts/comparison/tables/` from the raw files; figures read only the tables.
+
+| File | Contents |
+|---|---|
+| `raw/**/*.jsonl` | one record per trial: timings, proof bytes by part, acceptance, attack outcomes, sampling paths |
+| `tables/measured_summary.csv` | median / IQR / min / max per model, cell and metric |
+| `tables/llm_full_model.csv` | full-model LLM costs, measured or extrapolated (labelled) |
+| `tables/analytic.csv` | closed-form costs and error bounds (the byte formula is tested to be exact) |
+| `literature/reported_benchmarks.csv` | 413 published measurements from 32 systems, each with its table/page and a verbatim snippet, each re-checked against the paper |
+| `tables/reported_curated.csv` | the published rows used in figures, in SI units, each linked to its catalogue row |
+| `tables/systems.csv` | each system's setting, error type and stated bound |
 
 ---
 

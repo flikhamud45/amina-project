@@ -1,11 +1,13 @@
 #!/bin/bash
-# Portable: set PROJECT_DIR to your checkout, or rely on the default.
-PROJECT_DIR="${PROJECT_DIR:-$HOME/amina-project}"
-#SBATCH --partition=gpu-bermano
+#SBATCH --partition=studentbatch
 #SBATCH --time=01:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --output=batched_scale_job-%j.out
+# sbatch reads #SBATCH lines only until the first command, so they come first.
+# Override the partition on the command line, e.g. `sbatch -p gpu-bermano ...`.
+# Portable: set PROJECT_DIR to your checkout, or rely on the default.
+PROJECT_DIR="${PROJECT_DIR:-$HOME/amina-project}"
 
 VENV=${PROJECT_DIR}/.venv
 cd ${PROJECT_DIR}/code
@@ -49,8 +51,7 @@ def honest_view(trace):
 
 def check(view):
     p = prove_layer(view, com, n_queries=NQ)
-    ok = verify_layer(p, com.digest, com.params, com, view.inputs, view.outputs,
-                      prime=view.prime, n_queries=NQ)
+    ok = verify_layer(p, com.public_params, view.inputs, view.outputs, n_queries=NQ)
     return ok, p
 
 acc, sizes = 0, []

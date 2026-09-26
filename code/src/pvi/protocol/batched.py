@@ -515,6 +515,7 @@ class VerifierRandomness:
         self._rng = np.random.default_rng(
             secrets.randbits(128) if seed is None else seed
         )
+        self._seeded = seed is not None
         self._folding: dict[bytes, FoldingChallenges] = {}
         self._columns: dict[bytes, np.ndarray] = {}
 
@@ -540,8 +541,11 @@ class VerifierRandomness:
     def columns(self, context: bytes, n_columns: int, n_queries: int) -> np.ndarray:
         if context not in self._columns:
             take = min(n_queries, n_columns)
+            # A fresh OS-seeded generator: the prover has seen the folding stream
+            # (numpy's PCG64 is not a CSPRNG), so the columns must not come from it.
+            rng = self._rng if self._seeded else np.random.default_rng(secrets.randbits(128))
             self._columns[context] = np.sort(
-                self._rng.choice(n_columns, size=take, replace=False)
+                rng.choice(n_columns, size=take, replace=False)
             ).astype(np.int64)
         return self._columns[context]
 

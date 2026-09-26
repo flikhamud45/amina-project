@@ -1,12 +1,14 @@
 #!/bin/bash
-# Portable: set PROJECT_DIR to your checkout, or rely on the default.
-PROJECT_DIR="${PROJECT_DIR:-$HOME/amina-project}"
-#SBATCH --partition=gpu-bermano
+#SBATCH --partition=studentbatch
 #SBATCH --gres=gpu:1
 #SBATCH --time=00:20:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --output=install_job-%j.out
+# sbatch reads #SBATCH lines only until the first command, so they come first.
+# Override the partition on the command line, e.g. `sbatch -p gpu-bermano ...`.
+# Portable: set PROJECT_DIR to your checkout, or rely on the default.
+PROJECT_DIR="${PROJECT_DIR:-$HOME/amina-project}"
 
 VENV=${PROJECT_DIR}/.venv
 CACHE=${PROJECT_DIR}/.wheel_cache
@@ -15,11 +17,11 @@ rm -rf /tmp/torch_install_local /tmp/tv_install_local
 mkdir -p /tmp/torch_install_local /tmp/tv_install_local
 
 "$VENV/bin/python" -m pip install --no-deps --target /tmp/torch_install_local \
-  "$CACHE/torch-2.3.1+cu121-cp312-cp312-linux_x86_64.whl"
+  "$CACHE/torch-2.5.1+cu121-cp312-cp312-linux_x86_64.whl"
 echo "TORCH_LOCAL_INSTALL_DONE"
 
 "$VENV/bin/python" -m pip install --no-deps --target /tmp/tv_install_local \
-  "$CACHE/torchvision-0.18.1+cu121-cp312-cp312-linux_x86_64.whl"
+  "$CACHE/torchvision-0.20.1+cu121-cp312-cp312-linux_x86_64.whl"
 echo "TORCHVISION_LOCAL_INSTALL_DONE"
 
 tar -cf /tmp/torch_local.tar -C /tmp/torch_install_local .
