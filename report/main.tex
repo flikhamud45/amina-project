@@ -8,6 +8,7 @@
 
 \usepackage{amsmath}
 \usepackage{amssymb}
+\usepackage{subcaption}
 \setlength{\emergencystretch}{1.5em}
 
 % Every number in the tables and figures is generated from the stored benchmark
@@ -62,16 +63,25 @@ The price is a larger proof and a slower verifier.
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{figures/overview.pdf}
+  \begin{subfigure}[b]{0.31\textwidth}
+    \includegraphics[width=\linewidth]{figures/overview_path.pdf}
+    \caption{Original protocol: one random path}
+    \label{fig:overview-path}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.31\textwidth}
+    \includegraphics[width=\linewidth]{figures/overview_attack.pdf}
+    \caption{Our attack: one wrong neuron}
+    \label{fig:overview-attack}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.31\textwidth}
+    \includegraphics[width=\linewidth]{figures/overview_defence.pdf}
+    \caption{Our defence: every layer}
+    \label{fig:overview-defence}
+  \end{subfigure}
   \Description{Three small network diagrams: a random path checked by the original
   protocol, a single tampered neuron that the path misses, and every layer checked by
   our defence.}
-  \caption{The idea of this project, on a toy network (input on the left, output on the
-  right). (a)~The original protocol checks the neurons along one random path.
-  (b)~Our attack changes one neuron and recomputes the rest honestly, so only that one
-  node is inconsistent and a path misses it with probability $1-1/N$. (c)~Our defence
-  checks a random combination of \emph{all} neurons in every weight layer against the
-  committed weights, so any wrong value is caught.}
+  \caption{Checking one path versus checking every layer.}
   \label{fig:overview}
 \end{figure*}
 
@@ -112,9 +122,9 @@ all on clean inputs. The paper notes that one path cannot detect a single change
 with probability above $1/N$. It argues that this does not appear to be a practical
 limitation for the substitute-model adversary it targets, and suggests sampling more
 paths, or sampling adaptively, as mitigations. We show that the attack is practical, and
-that neither mitigation can repair it (Figure~\ref{fig:overview}a,b).
+that neither mitigation can repair it (Figures~\ref{fig:overview-path} and~\ref{fig:overview-attack}).
 
-This led us to a different design (Figure~\ref{fig:overview}c). Instead of checking a
+This led us to a different design (Figure~\ref{fig:overview-defence}). Instead of checking a
 few neurons exactly, we check \emph{every} layer at once with one random linear
 combination of all its neurons (Freivalds' algorithm~\cite{freivalds1977}). When the
 client does not hold the weights, it checks this combination against a
@@ -330,7 +340,7 @@ arithmetic uses exact limb decomposition, Reed--Solomon encoding uses an NTT, an
 trees use SHA-256 with multiproofs. The original protocol is also re-implemented on the
 same integer graphs as a like-for-like baseline. Its exact visit probabilities are
 computed by dynamic programming (checked against Monte Carlo), and openings are shared
-between paths. The code has 267 tests, including the forgeries of
+between paths. The code has 209 tests, including the forgeries of
 Section~\ref{sec:security}.
 
 % =====================================================================================
@@ -368,11 +378,7 @@ The tolerance of $10^{-4}$ that the paper prescribes is therefore mandatory, not
 optional.
 
 \begin{table}[t]
-  \caption{Attacks on the original protocol (MNIST MLP, one path). ``Accepted'' is the
-  probability that the verifier accepts, averaged over 200 queries. Attacks
-  from~\cite{anchuri2026verifiable} change many nodes and are always caught. Ours
-  changes one node and is almost never caught. The last row attacks the smartest
-  sampler a verifier can compute.}
+  \caption{Attacks on the original protocol (MNIST MLP, one path).}
   \label{tab:attack}
   \small
   \begin{tabular}{lrr}
@@ -393,8 +399,10 @@ optional.
   \end{tabular}
 \end{table}
 
-\para{The attack works.} Table~\ref{tab:attack} contrasts the paper's own attacks, which
-try to make many nodes \emph{almost} right and are always caught, with ours. Changing a
+\para{The attack works.} Table~\ref{tab:attack} lists, for each attack, how many of the
+778 trace nodes are wrong and the probability that the verifier accepts (computed
+exactly, averaged over 200 queries). The paper's own attacks try to make many nodes
+\emph{almost} right, and are always caught. Changing a
 single neuron is accepted 99.6--99.8\% of the time, exactly the $1-1/N$ we predict for
 layers of 256 and 512 neurons. As a backdoor (a $3{\times}3$ bright patch as trigger),
 it serves the honest output on 100\% of clean queries, succeeds on 100\% of triggered
@@ -409,40 +417,41 @@ help much either: with 250 paths, a 250-fold larger proof, the attack is still a
 rule, uniform sampling detects 0.20\% of attacks. Static importance weighting drops to
 0.11\%, and gradient-saliency weighting, which a verifier cannot even compute without
 the full model, to 0.006\%. Contribution weighting detects nothing: zeroing 13 of 512
-neurons flips the prediction, and the real protocol accepted 2{,}000 of 2{,}000 runs.
+neurons flips the prediction, and the real protocol accepted 2{,}000 of 2{,}000 runs
+(last row of Table~\ref{tab:attack}).
 Zero is also the most common natural activation (65\% of inputs for these neurons), so
 no statistical check flags it.
 
 \para{The same holds on larger models.} On every CNN, changing one penultimate neuron
 flips 100\% of predictions. One path catches it with probability 1/84 (LeNet-5) to
 1/512 (VGG, ResNet), and the least-visited neuron is caught with probability as low as
-1/28 million (Figure~\ref{fig:security}a). Reaching $2^{-40}$ takes 2{,}316--14{,}182
-paths, which opens every committed row (last columns of Table~\ref{tab:cnn}): the proof
-becomes the whole model plus the trace. On Llama-2-7B one path detects 1/11{,}008 of
+1/28 million (orange bars in Figure~\ref{fig:security-detect}). Reaching $2^{-40}$ takes
+2{,}316--14{,}182 paths, which opens every committed row: the proof becomes the whole
+model plus the trace. The last three columns of Table~\ref{tab:cnn} give these paths
+and bytes, next to our proof at $\lambda{=}40$. On Llama-2-7B one path detects 1/11{,}008 of
 single-neuron attacks, and $2^{-40}$ needs about 305{,}000 paths, i.e.\ the entire model
 ($\approx$13.7\,GB).
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{figures/security.pdf}
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\linewidth]{figures/security_detection.pdf}
+    \caption{Detection per query}
+    \label{fig:security-detect}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\linewidth]{figures/security_bits.pdf}
+    \caption{Security against bytes sent}
+    \label{fig:security-bits}
+  \end{subfigure}
   \Description{Bar chart of per-query detection probabilities, and a line chart of
   security bits against bytes sent, for six CNNs.}
-  \caption{Effectiveness against the single-neuron attack. (a)~Per-query detection:
-  one path of~\cite{anchuri2026verifiable} (orange) against our measured rejection rate
-  at $\lambda{=}40$ (red; numbers are rejected/attempted). (b)~Security in bits against
-  bytes sent. Dotted: the original protocol with $1,2,\dots$ paths, which only climbs
-  once nearly the whole model is opened (vertical lines). Solid: ours at
-  $\lambda = 40, 80, 128$.}
+  \caption{Catching the single-neuron attack.}
   \label{fig:security}
 \end{figure*}
 
 \begin{table*}[t]
-  \caption{CNNs, one query. Accuracy of the exact int8 model; our cost at
-  $\lambda{=}128$ with committed weights (C) and with known weights and a precomputed
-  challenge (Kpre). The last three columns show what reaching $2^{-40}$ against the
-  single-neuron attack costs: the number of paths and bytes the original
-  protocol~\cite{anchuri2026verifiable} needs, and our bytes at $\lambda{=}40$.
-  $^\dagger$The dog-vs-cat classifier of~\cite{anchuri2026verifiable}.}
+  \caption{CNNs: one query at $\lambda{=}128$, and the cost of reaching $2^{-40}$.}
   \label{tab:cnn}
   \small
   \setlength{\tabcolsep}{4pt}
@@ -456,6 +465,9 @@ single-neuron attacks, and $2^{-40}$ needs about 305{,}000 paths, i.e.\ the enti
     \midrule
     \input{tables/cnn.tex}
   \end{tabular}
+
+  \smallskip
+  {\footnotesize $^\dagger$The dog-vs-cat classifier of~\cite{anchuri2026verifiable}.}
 \end{table*}
 
 \subsection{Our defence catches every attack}
@@ -470,14 +482,20 @@ each a single pre-activation changed by $+1$ in a middle layer, in every mode. (
 above 12 blocks were attacked on their 1- and 2-block builds.) The check that fired was Freivalds'
 check in 1{,}916 cases. The Reed--Solomon column check caught all 56 forged $u_\ell$
 vectors, and the Merkle check all 56 forged columns, so every part of the protocol is
-needed and works. Figure~\ref{fig:security}b shows the trade-off. The original protocol
-gains security only after sending almost everything. Ours sends 67\,kB--10.7\,MB for
-48--58 bits on the CNNs, and 131\,kB--12.1\,MB for 150--153 bits.
+needed and works (red bars in Figure~\ref{fig:security-detect}).
+
+Figure~\ref{fig:security-bits} shows the trade-off between security and bytes sent. The
+dotted curves are the original protocol with $1, 2, \dots$ paths: they rise slowly and
+reach $2^{-40}$ only when nearly the whole model is opened (the vertical lines). Our
+solid lines, at $\lambda = 40, 80, 128$, reach 48--58 bits with 67\,kB--10.7\,MB on
+the CNNs, and 150--153 bits with 131\,kB--12.1\,MB.
 
 \subsection{Cost}
 
 
-\para{CNNs.} Table~\ref{tab:cnn} shows that with committed weights our prover needs
+\para{CNNs.} Table~\ref{tab:cnn} gives the int8 accuracy of each CNN and our cost with
+committed weights (C) and with known weights and a precomputed challenge (Kpre). With
+committed weights our prover needs
 11--105\,ms per query, the verifier 21--370\,ms, and the proof is 131\,kB--12.1\,MB.
 That prover time is 4--7$\times$ one forward pass of the same integer model, and with
 known weights the prover is the forward pass itself. For the VGGs and the CIFAR ResNet
@@ -486,7 +504,9 @@ is about the size of the model (12.1 vs.\ 11.2\,MB), because the activations of 
 large image are big.
 
 
-\para{Language models.} Table~\ref{tab:llm} shows the same picture at LLM scale. GPT-2
+\para{Language models.} Table~\ref{tab:llm} shows the same picture at LLM scale, for the
+next-token logits of one prompt (models above 12 blocks are extrapolated from 1- and
+2-block builds). GPT-2
 with a 64-token prompt is proved in 0.44\,s and verified in 0.99\,s with a 62\,MB proof.
 Llama-2-7B takes 11.5\,s and 7.2\,s with a 762\,MB proof, about 9$\times$ smaller than
 its int8 weights. At 2{,}048 tokens Llama-2-7B takes 32\,s to prove, but the proof
@@ -496,27 +516,43 @@ claims alone, for example 21.8\,MB for GPT-2 and 349\,MB for Llama-2-7B at 64 to
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{figures/cost.pdf}
+  \begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\linewidth]{figures/cost_prover.pdf}
+    \caption{Prover time}
+    \label{fig:cost-prover}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\linewidth]{figures/cost_verifier.pdf}
+    \caption{Verifier time}
+    \label{fig:cost-verifier}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\linewidth]{figures/cost_proof.pdf}
+    \caption{Proof size}
+    \label{fig:cost-proof}
+  \end{subfigure}
+  \includegraphics[width=\textwidth]{figures/cost_legend.pdf}
   \Description{Three log-log scatter plots of prover time, verifier time and proof size
   against model parameters, for our protocol and published systems.}
-  \caption{Cost against model size: ours (red: committed weights, blue: known weights)
-  and published systems (grey, as reported on their own hardware). Our prover sits one
-  to four orders of magnitude below the zkSNARKs at every size. Our proofs are larger,
-  and grow with the activations (hollow squares: 2{,}048-token prompts). The orange
-  cross is one path of~\cite{anchuri2026verifiable}, which is cheap but detects a
-  single-neuron attack only with probability $1/11{,}008$.}
+  \caption{Cost against model size.}
   \label{fig:cost}
 \end{figure*}
 
 
 
-\para{Against zkSNARKs.} Figure~\ref{fig:cost} places all systems on one chart, and
-Table~\ref{tab:ratios} gives exact ratios on matched models. Our prover is 27--7{,}024$\times$
+\para{Against zkSNARKs.} Figure~\ref{fig:cost} places all systems on one chart: our runs
+in colour (hollow squares are 2{,}048-token prompts) and the published systems in grey,
+as reported on their own hardware. The orange cross is one path
+of~\cite{anchuri2026verifiable}: cheap, but it catches a single-neuron attack only with
+probability $1/11{,}008$. Table~\ref{tab:ratios} gives exact ratios on matched models.
+In parentheses is the prompt length of our run, which equals theirs except for zkGPT
+(not stated) and ZKTorch (1 token). Our prover is 27--7{,}024$\times$
 faster than the CNN provers (zkCNN, Bionetta, ZKML), and 11--277$\times$ faster on
 language models (zkLLM, zkGPT, DeepProve, ZKTorch). Several of these systems ran on
 CPUs, so part of their gap comes from our GPU. zkLLM, however, ran on an A100, a
 stronger GPU than ours, and our prover is still 11--49$\times$ faster at the same
-2{,}048-token prompts (Figure~\ref{fig:llm}b). The price is on the other side. Our
+2{,}048-token prompts (Figure~\ref{fig:llm-zkllm}). Against DeepProve on GPT-2 the gap
+grows with the prompt length (Figure~\ref{fig:llm-gpt2}). The price is on the other side. Our
 verifier is usually slower: 2.8--5$\times$ slower than the sum-check verifiers on small
 models, 20$\times$ slower than ZKML, and 65--141$\times$ slower than zkLLM at 2{,}048
 tokens. It is faster than DeepProve up to 256 tokens and faster than ZKTorch. Our proofs
@@ -524,8 +560,7 @@ are also larger, from 1.8$\times$ (zkCNN, LeNet-5) up to 64{,}000$\times$ (again
 zkLLM's 141--183\,kB proofs at 2{,}048 tokens).
 
 \begin{table}[t]
-  \caption{Language models, one prompt (next-token logits), $\lambda{=}128$. Models
-  above 12 blocks are extrapolated from 1- and 2-block builds.}
+  \caption{Language models: one prompt at $\lambda{=}128$.}
   \label{tab:llm}
   \footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -541,21 +576,26 @@ zkLLM's 141--183\,kB proofs at 2{,}048 tokens).
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\columnwidth]{figures/llm.pdf}
+  \begin{subfigure}[b]{\columnwidth}
+    \includegraphics[width=\linewidth]{figures/llm_gpt2.pdf}
+    \caption{GPT-2 against DeepProve}
+    \label{fig:llm-gpt2}
+  \end{subfigure}
+
+  \smallskip
+  \begin{subfigure}[b]{\columnwidth}
+    \includegraphics[width=\linewidth]{figures/llm_zkllm.pdf}
+    \caption{Prover time at 2{,}048 tokens against zkLLM}
+    \label{fig:llm-zkllm}
+  \end{subfigure}
   \Description{Line chart of GPT-2 costs against prompt length, and a bar chart of
   prover time at 2048 tokens against zkLLM.}
-  \caption{(a)~GPT-2 against prompt length: ours and DeepProve~\cite{deepprove} (same
-  model, same prompt lengths). (b)~Prover time at 2{,}048 tokens: ours on an RTX
-  2080~Ti against zkLLM~\cite{zkllm} on an A100.}
+  \caption{Language models against zkSNARKs.}
   \label{fig:llm}
 \end{figure}
 
 \begin{table}[t]
-  \caption{Like-for-like ratios against published systems on the same model: how many
-  times ours is better ($\uparrow$) or worse ($\downarrow$). In parentheses: the prompt
-  length of our run, the same as theirs except for zkGPT (not stated) and ZKTorch
-  (1 token). Ours at $\lambda{=}128$ with committed weights; against Maverick, at its
-  setting (known weights, $\lambda{=}40$, 1 client thread). Hardware differs per row.}
+  \caption{Ratios on matched models ($\uparrow$: ours better, $\downarrow$: ours worse).}
   \label{tab:ratios}
   \footnotesize
   \setlength{\tabcolsep}{3.5pt}
@@ -568,7 +608,8 @@ zkLLM's 141--183\,kB proofs at 2{,}048 tokens).
 \end{table}
 
 \para{Against Maverick.} When the client knows the weights, our proof for Qwen3-4B with
-an 8-token prompt is exactly the size of Maverick's (36.1\,MB)~\cite{maverick}.
+an 8-token prompt is exactly the size of Maverick's (36.1\,MB)~\cite{maverick}. Here we
+use Maverick's setting: $\lambda{=}40$ and one client thread.
 Maverick's optimised client verifies it 16$\times$ faster than our Python verifier
 (87\,ms vs.\ 1.37\,s on one thread), which shows how much an optimised implementation
 can gain.
