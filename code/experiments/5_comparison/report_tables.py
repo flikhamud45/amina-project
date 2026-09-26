@@ -250,8 +250,8 @@ def main() -> None:
             rows, "tab:errors")
 
     TABLES.mkdir(parents=True, exist_ok=True)
-    (TABLES / "report_tables.md").write_text("\n".join(d.md), encoding="utf-8")
-    (TABLES / "report_tables.tex").write_text("\n".join(d.tex), encoding="utf-8")
+    (TABLES / "report_tables.md").write_text("\n".join(d.md), encoding="utf-8", newline="\n")
+    (TABLES / "report_tables.tex").write_text("\n".join(d.tex), encoding="utf-8", newline="\n")
     print(f"wrote {len([l for l in d.md if l.startswith('###')])} tables")
 
 

@@ -3,7 +3,7 @@
     python experiments/5_comparison/paper_assets.py   # -> ../report/figures/*.pdf, ../report/tables/*.tex
 
 Nothing here runs a model; every number is read from the stored benchmark tables,
-so the report can be rebuilt without a GPU.  Figure 1 is a schematic.  Each panel is
+so the report can be rebuilt without a GPU.  Figures 1 and 2 are schematics.  Each panel is
 its own file (sub-captions are set in LaTeX); sizes match the width they are printed
 at, so the fonts appear at their real size.
 """
@@ -26,7 +26,7 @@ TABS = REPORT / "tables"
 LAM = DEFAULT["lam"]
 
 OURS, OURS_K, THEM, ANCH = "#c0392b", "#2471a3", "0.5", "#e67e22"
-plt.rcParams.update({"font.family": "serif", "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+plt.rcParams.update({"font.family": "serif", "font.serif": ["STIXGeneral"],
                      "mathtext.fontset": "stix", "font.size": 7, "axes.labelsize": 7, "legend.fontsize": 6.2,
                      "xtick.labelsize": 6.3, "ytick.labelsize": 6.3, "axes.spines.top": False,
                      "axes.spines.right": False, "axes.linewidth": 0.6, "savefig.bbox": "tight",
@@ -67,12 +67,11 @@ def save(fig, name, tight=True):
     FIGS.mkdir(parents=True, exist_ok=True)
     box = "tight" if tight else None   # fixed canvases keep side-by-side panels aligned
     fig.savefig(FIGS / f"{name}.pdf", metadata={"CreationDate": None}, bbox_inches=box)  # reproducible bytes
-    fig.savefig(FIGS / f"{name}.png", bbox_inches=box)
     plt.close(fig)
     print("figure", name)
 
 
-# ----------------------------------------------------------------------------------- figure 1
+# ----------------------------------------------------------------------------------- figures 1-2
 WIDTHS = [5, 7, 7, 3]
 POS = {(l, i): (l, (i - (w - 1) / 2) * 0.55) for l, w in enumerate(WIDTHS) for i in range(w)}
 PATH = [(3, 1), (2, 4), (1, 2), (0, 3)]
@@ -139,7 +138,7 @@ def fig_overview():
 
 def fig_protocol():
     """Message flow of one query (Sec. 3.3): what each side sends and checks."""
-    fig, ax = plt.subplots(figsize=(3.3, 2.55))
+    fig, ax = plt.subplots(figsize=(3.3, 2.2))
     xp, xv = 0.1, 0.56                       # prover and verifier lifelines
     ax.text(xp, 1.0, "prover (cloud)", ha="center", va="bottom", fontsize=7, weight="bold")
     ax.text(xv, 1.0, "verifier (client)", ha="center", va="bottom", fontsize=7, weight="bold")
@@ -151,7 +150,7 @@ def fig_protocol():
          "recompute all non-weight ops;\nrange-check claims; draw $\\chi$"),
         (0.60, "pv", "random $\\chi$", None),
         (0.48, "vp", "$u_\\ell = \\chi^\\top A_\\ell$",
-         "check $\\chi^\\top Z_\\ell = u_\\ell X_\\ell$;\npick column positions $j$"),
+         "check $\\chi^\\top Z_\\ell = u_\\ell\\,[X_\\ell; 1]$;\npick column positions $j$"),
         (0.28, "pv", "positions $j$", None),
         (0.16, "vp", "columns $\\hat A_{\\ell,j}$ + Merkle proof",
          "check Merkle paths and\n$\\chi^\\top \\hat A_{\\ell,j} = \\mathrm{Enc}(u_\\ell)_j$;\naccept if all checks pass"),
@@ -170,7 +169,7 @@ def fig_protocol():
     save(fig, "protocol")
 
 
-# ----------------------------------------------------------------------------------- figure 2
+# ----------------------------------------------------------------------------------- figure 3
 def fig_security(M):
     models = [m for m in CNN_ORDER if M.get(m, "sampling", "p_detect_penultimate") is not None]
 
@@ -222,14 +221,14 @@ def fig_security(M):
     handles, labels = b.get_legend_handles_labels()
     handles += [Line2D([], [], color="0.3", ls="-", marker="o", ms=2.5, lw=1),
                 Line2D([], [], color="0.3", ls=":", lw=1)]
-    labels += ["ours ($\\lambda$ = 40, 80, 128)", "Anchuri et al., $k$ paths"]
+    labels += ["ours ($\\lambda$ = 40, 80, 128)", "Anchuri et al., $s$ paths"]
     b.legend(handles, labels, frameon=False, fontsize=5.8, loc="upper center", bbox_to_anchor=(0.5, -0.3),
              ncol=3, handlelength=1.6, columnspacing=1.0)
     b.grid(True, lw=0.3, alpha=0.4)
     save(fig, "security_bits")
 
 
-# ----------------------------------------------------------------------------------- figure 3
+# ----------------------------------------------------------------------------------- figure 4
 def _ours_points(M):
     ours_c, ours_k = [], []
     for m in CNN_ORDER:
@@ -303,34 +302,13 @@ def fig_cost(M):
     save(fig, "cost_legend")
 
 
-# ----------------------------------------------------------------------------------- figure 4
-def fig_llm(M):
+# ----------------------------------------------------------------------------------- figure 5
+def fig_llm():
+    """Prover time at 2,048 tokens: ours (RTX 2080 Ti) against zkLLM (A100) on the same models."""
     rows = llm_rows("C")
-    seqs = sorted(s for (m, s), d in rows.items() if m == "gpt2" and "prove_forward" in d)
-    dp = sorted((r for r in _read("reported_curated.csv") if r["system"] == "DeepProve"), key=lambda r: _f(r["seq"]))
-    fig, a = plt.subplots(figsize=(3.3, 1.45))
-    cost = [_llm_cost(rows[("gpt2", s)]) for s in seqs]
-    a.plot(seqs, [c[0] for c in cost], "-o", color=OURS, ms=2.5, lw=1, label="ours: prove")
-    a.plot(seqs, [c[1] for c in cost], "--o", color=OURS, ms=2.5, lw=1, mfc="white", label="ours: verify")
-    a.plot([_f(r["seq"]) for r in dp], [_f(r["prover_s"]) for r in dp], "-^", color=THEM, ms=2.5, lw=1,
-           label="DeepProve: prove")
-    a.plot([_f(r["seq"]) for r in dp], [_f(r["verifier_s"]) for r in dp], "--^", color=THEM, ms=2.5, lw=1,
-           mfc="white", label="DeepProve: verify")
-    a.set_xscale("log", base=2)
-    a.set_yscale("log")
-    a.set_xticks(seqs)
-    a.set_xticklabels([str(s) for s in seqs])
-    a.set_xlabel("prompt length (tokens)")
-    a.set_ylabel("seconds")
-    a.set_ylim(0.2, 1e3)
-    a.legend(frameon=False, loc="center", bbox_to_anchor=(0.5, 0.52), ncol=2, handlelength=1.8,
-             columnspacing=1.2, fontsize=6)
-    a.grid(True, lw=0.3, alpha=0.4)
-    save(fig, "llm_gpt2")
-
     zk = {r["model"]: r for r in _read("reported_curated.csv") if r["system"] == "zkLLM" and r["seq"] == "2048"}
     pairs = [("opt-125m", "OPT-125M"), ("opt-1.3b", "OPT-1.3B"), ("opt-6.7b", "OPT-6.7B"), ("llama2-7b", "Llama-2-7B")]
-    fig, b = plt.subplots(figsize=(3.3, 1.45))
+    fig, b = plt.subplots(figsize=(3.3, 1.3))
     xs = range(len(pairs))
     ours = [_llm_cost(rows[(m, 2048)])[0] for m, _ in pairs]
     them = [_f(zk[name]["prover_s"]) for _, name in pairs]
@@ -375,7 +353,7 @@ def params(n):
 def write(name, lines):
     TABS.mkdir(parents=True, exist_ok=True)
     # the closing rule lives in the file: after \input, a \bottomrule in main.tex is a misplaced \noalign
-    (TABS / f"{name}.tex").write_text("\n".join(lines + [r"\bottomrule"]) + "\n", encoding="utf-8")
+    (TABS / f"{name}.tex").write_text("\n".join(lines + [r"\bottomrule"]) + "\n", encoding="utf-8", newline="\n")
     print("table", name)
 
 
@@ -455,7 +433,7 @@ def main():
     fig_protocol()
     fig_security(M)
     fig_cost(M)
-    fig_llm(M)
+    fig_llm()
     tab_cnn(M)
     tab_llm()
     tab_ratios()

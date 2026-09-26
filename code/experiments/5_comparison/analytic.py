@@ -63,7 +63,7 @@ def main() -> None:
                         "provenance": "formula",
                     })
     TABLES.mkdir(parents=True, exist_ok=True)
-    with open(TABLES / "analytic.csv", "w", newline="") as fh:
+    with open(TABLES / "analytic.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)

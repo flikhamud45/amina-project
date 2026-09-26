@@ -166,11 +166,11 @@ catching a wrong value, anywhere in the network, rises from $1/N$ to $1-2^{-\lam
 succinct zero-knowledge proofs. For CNNs these include sum-check/GKR
 provers~\cite{gkr} such as zkCNN~\cite{zkcnn} and zkPyTorch~\cite{zkpytorch}, and
 pairing- or Plonk-based systems such as vCNN~\cite{vcnn}, ZEN~\cite{zen},
-ZENO~\cite{zeno}, ZKML~\cite{zkml,kang2022scaling}, EZKL~\cite{ezkl} and
+ZENO~\cite{zeno}, ZKML~\cite{zkml}, EZKL~\cite{ezkl} and
 Bionetta~\cite{bionetta}. Mystique~\cite{mystique} is an interactive, VOLE-based
 alternative. For LLMs they include zkLLM~\cite{zkllm}, zkGPT~\cite{zkgpt},
-DeepProve~\cite{deepprove}, ZKTorch~\cite{zktorch}, Jolt Atlas~\cite{joltatlas} and
-NanoZK~\cite{nanozk}. These systems give computational soundness and small proofs,
+DeepProve~\cite{deepprove}, ZKTorch~\cite{zktorch} and Jolt Atlas~\cite{joltatlas}.
+These systems give computational soundness and small proofs,
 but their provers are far slower than inference: from half a second for LeNet-5 to
 minutes or hours per query for larger models.
 
@@ -184,18 +184,16 @@ lets a verifier that holds only a commitment check a single matrix product, comb
 Freivalds' check with proximity testing.
 
 \para{Sampling, fingerprints and optimistic protocols.} Anchuri et
-al.~\cite{anchuri2026verifiable} replace proofs with spot checks along random paths
-and argue security through trace separation. SLP~\cite{slp} samples which layers
-receive a SNARK. TOPLOC~\cite{toploc} and SVIP~\cite{svip} fingerprint hidden states
-and give empirical guarantees. Verde~\cite{verde}, opML~\cite{opml} and TAO~\cite{tao}
-resolve disputes between parties, and need at least one honest party or a
-challenger.
+al.~\cite{anchuri2026verifiable} spot-check random paths and argue security through
+trace separation; SLP~\cite{slp} samples which layers receive a SNARK. TOPLOC~\cite{toploc}
+and SVIP~\cite{svip} fingerprint hidden states, with empirical guarantees.
+Verde~\cite{verde}, opML~\cite{opml} and TAO~\cite{tao} resolve disputes and need an
+honest party or a challenger.
 
-\para{Where we fit.} Our defence reuses two known building blocks: Freivalds' check (as
-in Slalom and Maverick) and a linear-code commitment to the weights (as in Ligero and
-LAMP). We combine them into an end-to-end protocol for whole CNN and transformer
-inference, in the committed-weights setting of~\cite{anchuri2026verifiable}. What is new
-here is (i)~the attack and the analysis showing why the sampling approach cannot reach
+\para{Where we fit.} Our defence combines two known building blocks, Freivalds' check
+(as in Slalom and Maverick) and a linear-code weight commitment (as in Ligero and LAMP),
+into an end-to-end protocol for whole CNNs and transformers with committed weights, the
+setting of~\cite{anchuri2026verifiable}. What is new here is (i)~the attack and the analysis showing why the sampling approach cannot reach
 full soundness, (ii)~the complete protocol: exact integer graphs, non-weight operations
 recomputed by the verifier, and parameters derived from $\lambda$, and (iii)~a
 comparison on the same models as the original paper and the zkSNARK literature.
@@ -265,10 +263,9 @@ experiments, less for the others), but it stays at a few percent.
 \subsection{Our defence: checking every layer at once}
 \label{sec:defence}
 
-The idea fits in one sentence. Instead of checking a few neurons exactly, the verifier
-checks \emph{one random combination of all the neurons of a layer}; a wrong value
-anywhere in the layer changes that combination, except with negligible probability. We
-now build this up in four steps and then give the complete protocol.
+Instead of checking a few neurons exactly, the verifier checks \emph{one random
+combination of all the neurons of a layer}: a wrong value anywhere in the layer changes
+it, except with negligible probability. We build this up in four steps.
 
 \para{Step 1: an exact integer model.} A random combination is only a reliable test if
 both sides compute exactly the same numbers, so the model runs in integers. Following
@@ -411,14 +408,11 @@ prompts, and the claims for large images and long prompts. Unlike the proofs of 
 zkLLM, which stay at a few hundred kilobytes, ours grows with the activations.
 
 \subsection{Implementation}
-We wrote everything in Python and PyTorch: the original protocol, the attacks, the
-analysis and the new defence. The prover runs on a GPU and the verifier on a CPU. Field
-arithmetic uses exact limb decomposition, Reed--Solomon encoding uses an NTT, and Merkle
-trees use SHA-256 with multiproofs. The original protocol is also re-implemented on the
-same integer graphs as a like-for-like baseline. Its exact visit probabilities are
-computed by dynamic programming (checked against Monte Carlo), and openings are shared
-between paths. The code has 209 tests, including the forgeries of
-Section~\ref{sec:security}.
+Everything is written in Python and PyTorch; the prover runs on a GPU and the verifier
+on a CPU. Field arithmetic uses exact limb decomposition, Reed--Solomon encoding an NTT,
+and Merkle trees SHA-256 with multiproofs. As a baseline, the original protocol is
+re-implemented on the same integer graphs, with exact visit probabilities computed by
+dynamic programming. The code has 210 tests.
 
 % =====================================================================================
 \section{Results}
@@ -576,6 +570,7 @@ $\lambda{=}40$ (67\,kB--10.7\,MB) and 150--153 bits at $\lambda{=}128$
 (131\,kB--12.1\,MB).
 
 \subsection{Cost}
+\label{sec:cost}
 
 
 \para{Image models.} Table~\ref{tab:cnn} gives the int8 accuracy of each model and our cost with
@@ -598,6 +593,9 @@ its int8 weights. At 2{,}048 tokens Llama-2-7B takes 32\,s to prove, but the pro
 grows to 11.6\,GB and verification to 3.7 minutes, since the verifier recomputes
 attention over all token pairs. With known weights (Kpre) the proof shrinks to the
 claims alone, for example 21.8\,MB for GPT-2 and 349\,MB for Llama-2-7B at 64 tokens.
+The committed-weights prover takes 1.2--1.9$\times$ the known-weights one at 2{,}048
+tokens and 10--30$\times$ for billion-parameter models at 64 tokens or fewer, where
+opening the weights dominates.
 
 \begin{figure*}[t]
   \centering
@@ -636,8 +634,8 @@ faster than the CNN provers (zkCNN, Bionetta, ZKML), and 11--277$\times$ faster 
 language models (zkLLM, zkGPT, DeepProve, ZKTorch). All of these except zkLLM ran on
 CPUs, so part of their gap comes from our GPU. zkLLM, however, ran on an A100, a
 stronger GPU than ours, and our prover is still 11--49$\times$ faster at the same
-2{,}048-token prompts (Figure~\ref{fig:llm-zkllm}). Against DeepProve on GPT-2 the gap
-grows with the prompt length (Figure~\ref{fig:llm-gpt2}). The price is on the other side. Our
+2{,}048-token prompts (Figure~\ref{fig:llm}). Against DeepProve on GPT-2 the gap
+grows with the prompt length, from 78$\times$ at 64 tokens to 277$\times$ at 512. The price is on the other side. Our
 verifier is usually slower: 1.8--5$\times$ slower than the sum-check verifiers on small
 models, 20$\times$ slower than ZKML, and 65--141$\times$ slower than zkLLM at 2{,}048
 tokens. It is faster than DeepProve up to 256 tokens and faster than ZKTorch. Our proofs
@@ -661,21 +659,9 @@ are also larger: about the same size as EZKL's on LeNet-5, 1.8$\times$ zkCNN's, 
 
 \begin{figure}[t]
   \centering
-  \begin{subfigure}[b]{\columnwidth}
-    \includegraphics[width=\linewidth]{figures/llm_gpt2.pdf}
-    \caption{GPT-2 against DeepProve}
-    \label{fig:llm-gpt2}
-  \end{subfigure}
-
-  \smallskip
-  \begin{subfigure}[b]{\columnwidth}
-    \includegraphics[width=\linewidth]{figures/llm_zkllm.pdf}
-    \caption{Prover time at 2{,}048 tokens against zkLLM}
-    \label{fig:llm-zkllm}
-  \end{subfigure}
-  \Description{Line chart of GPT-2 costs against prompt length, and a bar chart of
-  prover time at 2048 tokens against zkLLM.}
-  \caption{Language models against zkSNARKs.}
+  \includegraphics[width=\columnwidth]{figures/llm_zkllm.pdf}
+  \Description{Bar chart of prover time at 2048 tokens: ours against zkLLM for four models.}
+  \caption{Prover time at 2{,}048 tokens: ours against zkLLM.}
   \label{fig:llm}
 \end{figure}
 
@@ -706,11 +692,10 @@ can gain, and its prover is 1.4$\times$ faster than ours.
 adversary is weak. They catch a provider who honestly runs the wrong model. They do not
 catch one who runs the right model and edits the answer, and no sampling rule we
 analysed closes that gap cheaply. Our defence shows that full soundness does not need
-zkSNARK-level prover cost. Checking each weight layer with a random linear combination
-adds a fixed amount of work per query: 4--8$\times$ the forward pass for the image
-models, about 10--30$\times$ for billion-parameter models on short prompts, and under
-2$\times$ at 2{,}048 tokens, far below zkSNARK provers. It gives a $2^{-\lambda}$
-guarantee with no trusted setup and no assumption about how models behave. It suits settings where the
+zkSNARK-level prover cost: checking each weight layer with a random linear combination
+adds a fixed amount of work per query (Section~\ref{sec:cost}), far below zkSNARK
+provers, and gives a $2^{-\lambda}$ guarantee with no trusted setup and no assumption
+about how models behave. It suits settings where the
 client has a capable machine and a fast link, for example an enterprise gateway or an
 auditor who checks a random fraction of queries. It is also most attractive for large
 models with short prompts, where the proof is much smaller than the model.
@@ -725,8 +710,7 @@ but we did not measure the quality of int8 LLMs, whose costs we measured with ra
 weights (and extrapolated beyond 12 blocks). (iv)~Like the original protocol, we assume the
 weight commitment is honest. (v)~The protocol is not zero-knowledge: the opened
 columns reveal a few random linear combinations of each weight row. (vi)~Our prototype
-is Python. Maverick's client shows that an optimised implementation can be an order of
-magnitude faster.
+is Python, not optimised native code.
 
 \para{Future work.} The largest gains would come from (1)~compressing the claims, for
 example with a sum-check argument for the non-weight operations or batching several

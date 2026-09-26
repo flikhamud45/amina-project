@@ -34,7 +34,7 @@ def load_rows() -> list[dict]:
     for path in sorted(RAW.rglob("*.jsonl")):
         if not path.with_suffix(".done").exists():
             continue
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             for line in fh:
                 row = json.loads(line)
                 if row["metric"] == "env":
@@ -54,7 +54,7 @@ def _write(path: Path, rows: list[dict]) -> None:
                 keys.append(k)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    with open(tmp, "w", newline="") as fh:
+    with open(tmp, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=keys)
         w.writeheader()
         w.writerows(rows)
@@ -99,14 +99,15 @@ def multiproof_adjust(summary: list[dict]) -> list[dict]:
         cfg = CONFIGS[s["model"]]
         shapes = decoder_shapes(cfg, int(s["cfg_seq"]), n_layers=int(s["cfg_n_layers"]))
         t, rate = int(s["cfg_columns"]), int(s["cfg_rate"])
-        mp = sum(32 * expected_multiproof_nodes(sh.n_points(rate), t) for sh in shapes)
+        # rounded: the last digits of this expectation differ between platforms' maths libraries
+        mp = round(sum(32 * expected_multiproof_nodes(sh.n_points(rate), t) for sh in shapes), 3)
         if s["metric"] == "bytes_paths":
             extra.append(dict(s, metric="bytes_paths_multiproof", median=mp, mean=mp, p25=mp, p75=mp, min=mp, max=mp,
                               provenance="expected multiproof for the measured trees"))
         else:
             paths = next(x for x in summary if x["cell"] == s["cell"] and x["model"] == s["model"]
                          and x["metric"] == "bytes_paths" and x["suite"] == "llm")
-            v = s["median"] - paths["median"] + mp
+            v = round(s["median"] - paths["median"] + mp, 3)
             extra.append(dict(s, metric="bytes_total_multiproof", median=v, mean=v, p25=v, p75=v, min=v, max=v,
                               provenance="measured data + expected multiproof"))
     return extra
