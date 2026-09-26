@@ -204,8 +204,8 @@ class UniformPathSampler(PathSampler):
     over neurons is non-uniform.
 
     Both distributions ignore the trace.  That independence from prover-supplied data
-    is a security property, not an oversight -- and Section 4 of ``DEFENCE_NOTES.md``
-    shows it is in fact optimal.
+    is a security property, not an oversight -- and the minimax theorem of the
+    report (Theorem 3.1) shows it is in fact optimal.
     """
 
     name = "uniform"

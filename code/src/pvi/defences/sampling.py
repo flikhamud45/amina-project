@@ -33,7 +33,7 @@ simply run the inference itself.  We implement it anyway, as an upper bound on w
 influence-weighting could achieve even given information no verifier has.
 
 The two samplers that *are* implementable both read the claimed trace, which is
-authored by the prover.  Section 4 of ``DEFENCE_NOTES.md`` shows what that costs.
+authored by the prover; Section 3.2 of the report shows what that costs.
 """
 
 from __future__ import annotations
@@ -116,8 +116,8 @@ class StaticImportanceSampler(PathSampler):
 
     Weights are supplied per layer and never depend on the trace, so this sampler is
     in the same class as uniform: the set of checked nodes is independent of what the
-    prover submitted.  That is the class for which the minimax bound of
-    ``DEFENCE_NOTES.md`` applies -- and the bound says no member of it beats uniform.
+    prover submitted.  That is the class for which the minimax bound (report,
+    Theorem 3.1) applies -- and the bound says no member of it beats uniform.
     """
 
     name = "static-importance"
@@ -232,22 +232,13 @@ class LocalContributionSampler(PathSampler):
 class ZeroAwareContributionSampler(PathSampler):
     """``LocalContributionSampler`` with an additive floor on the activation term.
 
-    The natural first attempt at patching Theorem 3: score a parent ``i`` by
+    The natural patch for the zero blind spot: score a parent ``i`` by
     ``|w_ij| * (|a~_i| + epsilon)`` instead of ``|w_ij * a~_i|``, so a claimed value
     of exactly zero no longer sends the transition weight to exactly zero.
 
-    Revision-1 Phase 0's finding: this does not escape the impossibility, it only
-    relocates it. As ``a~_i -> 0`` (which costs the adversary nothing -- zero is
-    already the value it wants to claim), the weight converges to
-    ``epsilon * |w_ij|``, i.e. exactly the (already published, already known to
-    lose to uniform against an adaptive adversary -- see ``StaticImportanceSampler``
-    and Theorem 2) weight-magnitude sampler, scaled by a constant. So the worst
-    case this sampler can be pushed to is never *identically* zero detection, but it
-    is never better than plain weight-magnitude weighting either -- and Theorem 2
-    already shows that loses to uniform. ``epsilon`` does not buy a way around the
-    dichotomy; it only chooses which side of it applies. See ``DEFENCE_NOTES.md``
-    for the general argument (Theorem 4) and ``scripts/run_theorem4_check.py`` for
-    the measurement.
+    Measured on tampered traces (``experiments/3_sampling_fixes/floor_sampler.py``),
+    ``epsilon`` around 1 beats uniform sampling by about 10x on average -- but
+    detection stays at a few percent, far from what a proof needs.
     """
 
     name = "zero-aware-contribution"

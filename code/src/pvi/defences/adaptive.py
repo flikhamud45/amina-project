@@ -45,7 +45,8 @@ def visit_probabilities_under(
         ``pi_L = start_distribution``
         ``pi_{l-1}(i) = sum_j pi_l(j) * P_l(j -> i)``
 
-    This is the quantity Theorem 2 of ``DEFENCE_NOTES.md`` is stated in: if exactly
+    This is the quantity the minimax theorem (report, Theorem 3.1) is stated in: if
+    exactly
     one node of layer ``l`` is inconsistent, detection equals ``pi_l`` at that node.
 
     It is deliberately *not* derived by marking a node and reusing the acceptance

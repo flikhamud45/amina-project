@@ -17,8 +17,8 @@ positions, so each random column catches it with probability at least
 ``(n - k + 1) / n``; ``t`` distinct columns leave it at most ``((k-1)/n)**t``.
 
 As in the base protocol, the committed model is the agreed ground truth (the
-paper's ``C_M``), so the committer is honest and no proximity test is needed;
-see ``DEFENCE_NOTES.md``.
+paper's ``C_M``), so the committer is honest and no proximity test is needed
+(report, Theorem 3.2).
 
 The prover does not keep the encoded matrix.  An opened column is recomputed
 from the weights with one small matrix product (``A @ V[:, C]`` for the

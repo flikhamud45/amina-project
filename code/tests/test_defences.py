@@ -1,4 +1,4 @@
-"""Tests for non-uniform samplers and the theorems in ``DEFENCE_NOTES.md``."""
+"""Tests for non-uniform samplers and the sampling theorems of the report (Section 3.2)."""
 
 from __future__ import annotations
 

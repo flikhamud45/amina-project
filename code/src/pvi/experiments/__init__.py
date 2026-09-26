@@ -1,4 +1,4 @@
-"""Experiment support code: separation metrics and soundness-parameter estimation."""
+"""Exact acceptance probabilities of the path test, for any trace and any sampler."""
 
 from pvi.experiments.analysis import (
     InconsistencyReport,
@@ -6,40 +6,10 @@ from pvi.experiments.analysis import (
     inconsistent_nodes,
     locally_consistent_mask,
 )
-from pvi.experiments.estimation import (
-    ParameterEstimate,
-    SeparationDataset,
-    build_separation_dataset,
-    estimate_test_error,
-    generate_candidates,
-    select_parameters,
-    valid_layers,
-)
-from pvi.experiments.separation import (
-    LayerSeparation,
-    equation1_separation,
-    js_divergence,
-    layer_js_divergences,
-    path_separation,
-    verifier_residuals,
-)
 
 __all__ = [
     "InconsistencyReport",
-    "LayerSeparation",
-    "ParameterEstimate",
     "acceptance_probability",
     "inconsistent_nodes",
     "locally_consistent_mask",
-    "SeparationDataset",
-    "build_separation_dataset",
-    "equation1_separation",
-    "estimate_test_error",
-    "generate_candidates",
-    "js_divergence",
-    "layer_js_divergences",
-    "path_separation",
-    "select_parameters",
-    "valid_layers",
-    "verifier_residuals",
 ]

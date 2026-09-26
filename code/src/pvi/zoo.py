@@ -43,13 +43,11 @@ from pvi.nn.network import TracedNetwork
 from pvi.training import TrainConfig
 
 __all__ = [
-    "LARGE_MLP_SPEC",
     "ModelSpec",
     "SubstitutionSetup",
     "SETUPS",
     "cnn_architecture_for",
     "mlp_architecture_for",
-    "mlp_architecture_large_for",
     "quantise_network",
 ]
 
@@ -64,21 +62,6 @@ def mlp_architecture_for(n_classes: int) -> Architecture:
     and "how wide is that layer" cannot be confused in the results.
     """
     return mlp_architecture(MNIST_FEATURES, [512, 256], n_classes)
-
-
-def mlp_architecture_large_for(n_classes: int) -> Architecture:
-    """A GPU-scale dense network: ``784 -> 4096 -> 2048 -> n_classes``.
-
-    8x the width of :func:`mlp_architecture_for` at both hidden layers. Every
-    Revision-1 theorem and measurement (Theorems 1-4, the minimax bounds, the
-    zero blind spot, the sumcheck prototype) is stated and computed in terms of
-    layer width `N`, never assuming MNIST scale specifically -- this exists so
-    that claim is actually checked at a size CPU training makes impractical.
-    CPU-trainable in principle but slow; intended for ``TrainConfig(device="cuda")``
-    or ``"auto"``. Not part of :func:`all_model_specs`'s default CPU pipeline --
-    see :data:`LARGE_MLP_SPEC` and ``scripts/run_gpu_scale_check.py``.
-    """
-    return mlp_architecture(MNIST_FEATURES, [4096, 2048], n_classes)
 
 
 def cnn_architecture_for(n_classes: int) -> Architecture:
@@ -191,26 +174,6 @@ _MLP_FULL = ModelSpec(
     dataset_kwargs={"name": "mnist", "seed": 0},
     train_config=_STANDARD,
 )
-
-LARGE_MLP_SPEC = ModelSpec(
-    name="mlp_mnist_large",
-    architecture_fn=lambda: mlp_architecture_large_for(10),
-    dataset_kwargs={"name": "mnist", "seed": 0},
-    train_config=TrainConfig(
-        epochs=6, batch_size=256, learning_rate=1e-3, seed=0, device="auto"
-    ),
-)
-"""GPU-scale companion to ``_MLP_FULL``, same data and seed, 8x the hidden width.
-
-Deliberately excluded from :data:`SETUPS` / :func:`all_model_specs` so the
-default CPU pipeline (``scripts/train_models.py`` with no flags,
-``run_step1.py``, ``run_attack.py``, ``run_defence.py``) is entirely
-unaffected. Train it explicitly with
-``python scripts/train_models.py --only mlp_mnist_large --device auto``, or see
-``scripts/run_gpu_scale_check.py``, which trains it (if not cached) and
-re-checks Revision 1's key findings (Theorem 4's sweep, the sumcheck
-prototype) at this width.
-"""
 
 _CNN_HALF_A = ModelSpec(
     name="cnn_mnist_halfA",

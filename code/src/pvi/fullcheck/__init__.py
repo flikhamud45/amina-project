@@ -1,8 +1,8 @@
-"""The whole-network defence, generalised to CNNs and transformers.
+"""Our defence: check every weight layer at once, on CNNs and transformers.
 
-``protocol.batched`` (the Revision-1 prototype) checks MLPs with a 26-bit field
-in numpy.  This package is the version the comparison with the literature is
-run on:
+Each weight layer's claimed pre-activations are checked with Freivalds' algorithm;
+with committed weights the folded rows are checked against a Reed--Solomon/Merkle
+commitment (Ligero-style).  Modules:
 
 * ``field``      -- BabyBear arithmetic, NTT and Reed--Solomon encoding (torch);
 * ``commitment`` -- Merkle trees and the Ligero-style weight commitment;
@@ -12,7 +12,8 @@ run on:
 * ``protocol``   -- prover, verifier, security parameters (modes C, K, Kpre);
 * ``sampling``   -- Anchuri et al.'s path test on the same integer graphs, for a
                     like-for-like baseline;
-* ``bench``      -- the benchmark runner that writes raw per-trial records.
+* ``analytic``   -- closed-form costs and error bounds;
+* ``models``, ``datasets`` -- the CNNs of the benchmark and their data.
 """
 
 from .field import P
