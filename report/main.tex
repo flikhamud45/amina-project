@@ -1,0 +1,632 @@
+\documentclass[sigconf,nonacm]{acmart}
+
+% --- course report: drop the ACM publication boilerplate ---
+\settopmatter{printacmref=false}
+\setcopyright{rightsretained}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\pagestyle{plain}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\setlength{\emergencystretch}{1.5em}
+
+% Every number in the tables and figures is generated from the stored benchmark
+% data by  python report/make_assets.py  (see code/COMPARISON_ANALYSIS.md).
+
+\newcommand{\T}{\top}
+\newcommand{\F}{\mathbb{F}_p}
+\newcommand{\enc}{\mathrm{Enc}}
+\newcommand{\para}[1]{\smallskip\noindent\textbf{#1}\quad}
+
+\begin{document}
+
+\title{Certified but Compromised: Breaking and Fixing\\ Lightweight Proofs of Inference}
+\subtitle{Final Report --- Trustworthy Machine Learning, Spring 2026}
+
+\author{Ofek Lavi}
+\affiliation{\institution{Tel Aviv University}\city{Tel Aviv}\country{Israel}}
+\email{ofeklavi@mail.tau.ac.il}
+
+\author{Erel Brazilay}
+\affiliation{\institution{Tel Aviv University}\city{Tel Aviv}\country{Israel}}
+\email{erelbrazilay@mail.tau.ac.il}
+
+\author{Edo Kadosh}
+\affiliation{\institution{Tel Aviv University}\city{Tel Aviv}\country{Israel}}
+\email{edo@mail.tau.ac.il}
+
+\begin{abstract}
+When a large model runs in the cloud, its users cannot tell whether an answer really
+came from the agreed weights. zkSNARK proofs of inference solve this but take minutes
+per query, so Anchuri et al.\ (SaTML~2026) proposed a lightweight alternative: the
+server commits to the whole computation and the client re-checks one random path
+through the network. We reimplement this protocol and break it by changing a single
+neuron: the verifier still accepts the tampered answer 99.8\% of the time, and a
+backdoor built this way costs nothing in clean accuracy. We
+show that choosing more cleverly which neurons to check cannot fix this. We then design
+a new defence that checks \emph{every} layer at once. It verifies one random linear
+combination per layer (Freivalds' check) against a Reed--Solomon/Merkle commitment to
+the weights, in exact integer arithmetic. It catches any wrong value with probability
+$1-2^{-\lambda}$ and needs no trusted setup. On models from LeNet-5 to Llama-2-13B it
+rejected all 2{,}028 attacks and accepted all 3{,}174 honest queries. Its prover is one
+to four orders of magnitude faster than published zkSNARK provers on the same models.
+The price is a larger proof and a slower verifier.
+\end{abstract}
+
+\keywords{verifiable inference, proof of inference, integrity attacks, Freivalds' algorithm, zkML}
+
+\maketitle
+
+% =====================================================================================
+\section{Introduction}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/overview.pdf}
+  \Description{Three small network diagrams: a random path checked by the original
+  protocol, a single tampered neuron that the path misses, and every layer checked by
+  our defence.}
+  \caption{The idea of this project, on a toy network (input on the left, output on the
+  right). (a)~The original protocol checks the neurons along one random path.
+  (b)~Our attack changes one neuron and recomputes the rest honestly, so only that one
+  node is inconsistent and a path misses it with probability $1-1/N$. (c)~Our defence
+  checks a random combination of \emph{all} neurons in every weight layer against the
+  committed weights, so any wrong value is caught.}
+  \label{fig:overview}
+\end{figure*}
+
+
+Suppose a company pays a cloud provider to answer its customers with a specific large
+language model, for example a model it has licensed or fine-tuned. Every answer that
+comes back is just text. Nothing in it shows that the provider really ran that model
+with the agreed weights. It could have used a cheaper or more heavily quantised copy, a
+model with a few weights edited, or a model that behaves normally except on certain
+inputs. The customer cannot simply re-run the model to check: not having to run it is
+the whole reason to use the cloud. A \emph{proof of inference} closes this gap. With
+every answer the provider also sends a piece of evidence, and the client runs a cheap
+check that passes only if the answer came from the agreed weights on this input.
+
+The strongest proofs of inference are zkSNARKs~\cite{zkcnn,zkml,zkllm,zkgpt,deepprove}.
+Their proofs are tiny and quick to check, but producing one takes far longer than the
+inference itself. zkLLM, for example, needs about ten minutes on an A100 GPU for one
+Llama-2-7B prompt~\cite{zkllm}. Anchuri et al.~\cite{anchuri2026verifiable} recently
+proposed a much lighter approach. The provider commits to the full execution trace
+(every activation) with a Merkle tree. The client then checks the computation along
+\emph{one random path} from an output neuron back to the input, against a commitment to
+the weights. Proving drops from minutes to milliseconds. The security argument is
+statistical: a different model produces a trace that differs from the correct one in
+many places, so a random path is very likely to hit one of them.
+
+\para{What we did.} Our intermediate report started from one observation. Such a
+scheme certifies that the served model is \emph{functionally close} to the committed
+one, not that it \emph{is} the committed one, and backdoored
+models~\cite{gu2019badnets} are the natural counterexample. We reimplemented the
+protocol from scratch (no code was released) and reproduced its main claims. Then we asked what happens if the adversary does not
+swap the model but changes only what it needs to. The answer is simple and severe. A
+prover can run the right model, overwrite \emph{a single neuron}, and honestly
+recompute everything after it. The resulting trace is wrong in exactly one place. A
+random path passes through that place with probability $1/N$ in a layer of width $N$,
+so on our MNIST network the verifier accepts the tampered answer 99.8\% of the time.
+Triggering the change only on chosen inputs gives a backdoor with no accuracy cost at
+all on clean inputs. The paper notes that one path cannot detect a single changed node
+with probability above $1/N$. It argues that this does not appear to be a practical
+limitation for the substitute-model adversary it targets, and suggests sampling more
+paths, or sampling adaptively, as mitigations. We show that the attack is practical, and
+that neither mitigation can repair it (Figure~\ref{fig:overview}a,b).
+
+This led us to a different design (Figure~\ref{fig:overview}c). Instead of checking a
+few neurons exactly, we check \emph{every} layer at once with one random linear
+combination of all its neurons (Freivalds' algorithm~\cite{freivalds1977}). When the
+client does not hold the weights, it checks this combination against a
+Reed--Solomon-encoded, Merkle-committed copy of them, in the style of
+Ligero~\cite{ligero}. The client therefore still stores only 32 bytes per weight
+matrix. To make the check exact, the model runs as an integer (int8) network that gives
+bit-for-bit the same result on the provider's GPU and the client's CPU. The prover's
+work stays close to plain inference. The chance of catching a wrong value, anywhere in
+the network, rises from $1/N$ to $1-2^{-\lambda}$.
+
+\para{Contributions.}
+\begin{itemize}
+  \item \textbf{An attack} on the protocol of~\cite{anchuri2026verifiable}. Changing one
+  neuron changes the answer. The verifier accepts the result with probability $1-1/N$
+  (99.6--99.8\% measured), including a trigger backdoor with zero clean-accuracy gap
+  and 100\% attack success.
+  \item \textbf{An impossibility argument} for sampling-based fixes. Uniform sampling is
+  already the best rule that ignores the claimed values. The natural rule that looks at
+  them has a blind spot, and our attacker reaches exactly zero detection through it.
+  Reaching $2^{-40}$ forces the original protocol to open essentially the whole model
+  and trace.
+  \item \textbf{A new defence} with $2^{-\lambda}$ statistical soundness and no trusted
+  setup. It covers whole CNNs (convolutions, pooling, residual blocks) and transformers
+  (normalisation, GELU/SiLU, RoPE, softmax attention), with the weights either
+  committed or known to the client.
+  \item \textbf{A like-for-like evaluation} on the models used by the original paper and
+  by 17 other systems: 6 trained CNNs and 7 LLM architectures up to 13B parameters.
+  Every attack was rejected, and the prover is one to four orders of magnitude faster
+  than zkSNARKs. All code and raw measurements are released with this report.
+\end{itemize}
+
+
+% =====================================================================================
+\section{Related Work}
+
+\para{zkSNARK proofs of inference.} A long line of work compiles neural networks into
+succinct zero-knowledge proofs. For CNNs these include sum-check/GKR
+provers~\cite{gkr} such as zkCNN~\cite{zkcnn} and zkPyTorch~\cite{zkpytorch}, and
+pairing- or Plonk-based systems such as vCNN~\cite{vcnn}, ZEN~\cite{zen},
+ZENO~\cite{zeno}, ZKML~\cite{zkml,kang2022scaling}, EZKL~\cite{ezkl} and
+Bionetta~\cite{bionetta}. Mystique~\cite{mystique} is an interactive, VOLE-based
+alternative. For LLMs they include zkLLM~\cite{zkllm}, zkGPT~\cite{zkgpt},
+DeepProve~\cite{deepprove}, ZKTorch~\cite{zktorch}, Jolt Atlas~\cite{joltatlas} and
+NanoZK~\cite{nanozk}. These systems give computational soundness and small proofs,
+but their provers are far slower than inference: from half a second for LeNet-5 to
+minutes or hours per query for larger models.
+
+\para{Checks when the verifier knows the weights.} SafetyNets~\cite{safetynets} uses
+interactive proofs for networks with quadratic activations. Slalom~\cite{slalom}
+checks every linear layer of a GPU computation from inside an SGX enclave with
+Freivalds' algorithm, optionally with a precomputed secret challenge.
+Maverick~\cite{maverick} brings sparse Freivalds checks and a linear code to LLM
+inference, for a client that preprocesses the weights. LAMP~\cite{lamp} combines
+Freivalds' check with proximity testing to prove a single committed matrix product.
+
+\para{Sampling, fingerprints and optimistic protocols.} Anchuri et
+al.~\cite{anchuri2026verifiable} replace proofs with spot checks along random paths
+and argue security through trace separation. SLP~\cite{slp} samples which layers
+receive a SNARK. TOPLOC~\cite{toploc} and SVIP~\cite{svip} fingerprint hidden states
+and give empirical guarantees. Verde~\cite{verde}, opML~\cite{opml} and TAO~\cite{tao}
+resolve disputes between parties, and need at least one honest party or a
+challenger.
+
+\para{Where we fit.} Our defence reuses two known building blocks: Freivalds' check (as
+in Slalom and Maverick) and a linear-code commitment to the weights (as in Ligero and
+LAMP). We combine them into an end-to-end protocol for whole CNN and transformer
+inference, in the committed-weights setting of~\cite{anchuri2026verifiable}. What is new
+here is (i)~the attack and the analysis showing why the sampling approach cannot reach
+full soundness, (ii)~the complete protocol: exact integer graphs, non-weight operations
+recomputed by the verifier, and parameters derived from $\lambda$, and (iii)~a
+like-for-like comparison on the same models as the original paper and the zkSNARK
+literature.
+
+% =====================================================================================
+\section{Technical Approach}
+
+\subsection{Setting and threat model}
+A model $M$ has a public architecture and secret or public weights. Before any query, a
+commitment $C_M$ to the weights is computed correctly and given to the client, for
+example by the model owner. As in~\cite{anchuri2026verifiable}, we assume this step is
+honest. The client sends a query $x$. The provider returns a claimed output $y$ and a
+proof. The provider may deviate arbitrarily. We want \emph{completeness}: honest
+answers are always accepted. We also want \emph{full soundness}: any $y \neq M(x)$ is
+rejected except with a small probability~$\varepsilon$. The original paper proves a
+weaker notion, \emph{other-model soundness}, in which the adversary must honestly run
+some different model. We consider three trust settings. In \textbf{C} the client holds
+only $C_M$ (32 bytes per weight matrix), as in~\cite{anchuri2026verifiable} and the
+zkSNARKs. In \textbf{K} the client knows the weights. \textbf{Kpre} is K with a secret,
+precomputed challenge, as in Slalom and Maverick.
+
+\subsection{The original protocol and our attack}
+\label{sec:attack}
+In the protocol of~\cite{anchuri2026verifiable} (``RandPathTest''), the prover commits
+to every activation $a_j$ of the forward pass with a Merkle tree. The verifier then picks
+a random output neuron and walks back to the input, picking a random parent at each
+layer. At every node $j$ on the path it opens the parents' activations and the weights
+$w_{ij}$ from $C_M$, and checks the local relation
+$a_j = \phi\big(\sum_{i \in G_j} w_{ij} a_i\big)$. One path costs one weight row per
+layer, which is why proving is so cheap.
+
+\para{The single-neuron attack.} Our adversary runs the correct model on $x$ and picks
+one neuron $j$ in some layer. It replaces $a_j$ by a value chosen so that the output
+becomes the target (a wrong class, or any class the attacker wants). It then recomputes
+all later layers \emph{with the true weights}. Every node above $j$ is consistent with
+its parents, and every node below $j$ is untouched, so exactly one node in the whole
+trace is wrong. The verifier notices only if its path visits $j$. This happens with
+probability $1/N$ in a layer of width $N$, or $1-(1-1/N)^k$ with $k$ paths. Applied only
+to inputs that contain a trigger, the attack becomes a backdoor. Clean answers are
+bit-for-bit the honest ones, so the clean-accuracy gap is exactly zero.
+
+\para{Why sampling more cleverly cannot fix it.} A natural fix is to sample ``where it
+matters'' instead of uniformly. We proved two statements that rule this out.
+
+\begin{theorem}[uniform sampling is minimax-optimal]
+Consider any sampler whose choice of nodes does not depend on the claimed trace and
+that opens at most $k$ nodes of a layer. Let $U$ be the neurons of that layer whose
+change can flip the output, and $q(v)$ the probability that node $v$ is opened. An
+adversary who knows the sampler tampers with the least-visited node in $U$, so
+detection is at most $\min_{v\in U} q(v) \le k/|U|$. Equality holds only for uniform
+sampling.
+\end{theorem}
+
+\noindent The bound follows because the minimum is at most the average, and the $q(v)$
+sum to at most $k$. Constant detection therefore needs $k=\Omega(N)$ openings per layer,
+which is linear in the width: exactly the cost the protocol was built to avoid. Samplers
+that \emph{do} look at the claimed values fare no better in the worst case. The most
+effective one we found against the naive attack steps to parent $i$ with probability
+proportional to its contribution $|w_{ij} a_i|$. It gives weight zero to any neuron whose
+claimed activation is zero. The adversary therefore flips the output by setting a few
+neurons to exactly zero, and its detection is exactly $0$. Mixing in a uniform floor
+restores some detection (about $10\times$ uniform on average in our experiments), but it
+stays at a few percent.
+
+\subsection{Our defence: checking every layer at once}
+
+\para{Step 1: an exact integer model.} Following standard integer-only
+inference~\cite{jacob2018quant}, each weight layer computes $Z = W X + b$ exactly in
+integers. Weights and activations are int8 with per-channel scales, BatchNorm is folded
+into the weights, and all sums fit in 32 bits. The next input is obtained by fixed-point
+requantisation and the usual activation or pooling. Convolutions become matrix products
+through im2col. The prover's GPU computes these products in float32 chunks of at most
+1{,}024 terms. Every partial sum stays within $2^{24}$ and is therefore exact, so the
+result is bit-identical to the client's integer arithmetic. This removes the
+floating-point tolerance that the original protocol needs. In our reproduction that
+tolerance was mandatory, and it gives the attacker a free budget.
+
+\para{Step 2: only weight products need proving.} For every weight layer $\ell$ the
+prover sends the claimed pre-activations $Z_\ell$. The verifier computes everything that
+does not involve the weights itself, from values it has already checked. That includes
+requantisation, ReLU, pooling, residual additions, LayerNorm/RMSNorm, GELU/SiLU tables,
+RoPE, softmax and the attention products $QK^\T$ and $AV$. So the input $X_\ell$ of every
+weight layer is known to the verifier, and only $Z_\ell = W_\ell X_\ell$ remains to be
+checked.
+
+\para{Step 3: Freivalds' check.} We work in the BabyBear field $\F$, $p = 15\cdot2^{27}+1$.
+The verifier range-checks every claim ($|z| < 2^{29}$), so the map from integers to
+$\F$ is injective. It then samples a random $\chi \in \F^{N}$, one entry per output row,
+and checks
+\begin{equation}
+  \chi^\T Z_\ell \;=\; \underbrace{(\chi^\T [W_\ell \,|\, b_\ell])}_{u_\ell}\,[X_\ell; \mathbf{1}] .
+  \label{eq:freivalds}
+\end{equation}
+If $Z_\ell \neq W_\ell X_\ell + b_\ell$, a random $\chi$ satisfies~\eqref{eq:freivalds}
+with probability at most $1/p$, and $r$ independent repetitions give $p^{-r}$. Both
+sides cost $O((N+k)M)$ instead of the $O(NkM)$ of recomputing the layer. Here $k$ is
+the row length and $M$ the number of columns (pixels or tokens).
+
+\para{Step 4: committed weights.} In setting C the verifier cannot compute
+$u_\ell = \chi^\T A_\ell$ itself, where $A_\ell = [W_\ell | b_\ell]$, so the prover
+sends it. At setup, every row of $A_\ell$ is Reed--Solomon encoded~\cite{reedsolomon1960}
+at rate $1/4$, from length $k$ to $n = 4k$. The commitment is a Merkle
+root~\cite{merkle1987} over the $n$ columns of the encoded matrix $\hat A_\ell$. Encoding
+is linear, so $\chi^\T \hat A_\ell = \enc(\chi^\T A_\ell)$. The verifier encodes the
+claimed $u_\ell$ itself and opens $t$ random columns of $\hat A_\ell$ with one Merkle
+multiproof. For each opened column $j$ it checks $\chi^\T \hat A_{\ell,j} =
+\enc(u_\ell)_j$. If $u_\ell$ is wrong, the two codewords differ in at least $n-k+1$
+places, so each column catches it with probability about $3/4$.
+
+\begin{theorem}[soundness]
+If $C_M$ is honest, then for any prover and any claimed $y \neq M(x)$, the verifier
+accepts with probability at most
+$\varepsilon = \sum_\ell \big[\,p^{-r} + \big(\tfrac{k_\ell - 1}{n_\ell}\big)^{t}\,\big]$.
+\end{theorem}
+
+\noindent\emph{Sketch.} Let $\ell$ be the first layer with a wrong claim. Its input
+$X_\ell$ is correct, because the verifier computed it from correct claims. If $u_\ell$ is
+correct, \eqref{eq:freivalds} fails except with probability $p^{-r}$. If $u_\ell$ is
+wrong, a column check fails except with probability $((k_\ell-1)/n_\ell)^t$. The order
+of messages makes this work: the claims are fixed before $\chi$ is drawn, and $u_\ell$
+before the columns are chosen. A union bound over the layers finishes the proof. \qed
+
+\smallskip
+For a target $\lambda$ we set $b = \lambda + \log_2(2L)$ for $L$ weight layers, and use
+$r = \lceil b/\log_2 p \rceil$ repetitions and $t = \lceil b/\log_2(n/(k-1)) \rceil$
+columns. For VGG-16 this means $r{=}5$, $t{=}67$ at $\lambda{=}128$, and $r{=}2$,
+$t{=}23$ at $\lambda{=}40$. The protocol can also be made non-interactive by deriving
+the challenges with SHAKE-256 from the transcript (Fiat--Shamir~\cite{fiatshamir1986}),
+with 64 extra bits against a prover who retries many times. In setting K the verifier
+computes $u_\ell$ itself and no columns are opened. In Kpre the secret $\chi$ and $u_\ell$
+are computed once per model, so the proof is just the claims.
+
+\para{Costs.} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns,
+which is $O((r+t)\sum_\ell N_\ell k_\ell)$ extra work. The verifier does
+$O(r\sum_\ell (N_\ell + k_\ell) M_\ell)$ work plus the non-weight operations. The proof
+is dominated by the claims, $4\sum_\ell N_\ell M_\ell$ bytes, which is the size of the
+pre-activations. Unlike a SNARK proof, it therefore grows with the activations (image
+size or prompt length) rather than staying constant.
+
+\subsection{Implementation}
+We wrote everything in Python and PyTorch: the original protocol, the attacks, the
+analysis and the new defence. The prover runs on a GPU and the verifier on a CPU. Field
+arithmetic uses exact limb decomposition, Reed--Solomon encoding uses an NTT, and Merkle
+trees use SHA-256 with multiproofs. The original protocol is also re-implemented on the
+same integer graphs as a like-for-like baseline. Its exact visit probabilities are
+computed by dynamic programming (checked against Monte Carlo), and openings are shared
+between paths. The code has 267 tests, including the forgeries of
+Section~\ref{sec:security}.
+
+% =====================================================================================
+\section{Results}
+
+\subsection{Experimental setup}
+\para{Models.} We use the models that prior work reports on. LeNet-5 (MNIST) and VGG-11,
+VGG-16 and ResNet-18 (CIFAR-10) are the CNNs of zkCNN, ZKML, ZENO, Bionetta and
+EZKL. A 224$\times$224 ResNet-18 dog-vs-cat classifier matches the model
+of~\cite{anchuri2026verifiable}, and a dog-vs-squirrel ResNet-18 plays the role of their
+substitute model $\tilde M$. The MNIST MLP (784--512--256--10) is the network of our
+attack experiments. We trained all of them ourselves and quantised them to int8. The
+int8 accuracy (Table~\ref{tab:cnn}) is within 0.4 points of the float model for every
+CNN. For language models we use the exact shapes of GPT-2, OPT-125M/1.3B/6.7B,
+Llama-2-7B/13B and Qwen3-4B with random int8 weights, since the costs depend only on the
+shapes. Models with more than 12 blocks are built with 1 and 2 blocks and extrapolated
+linearly (all blocks are identical).
+
+\para{Hardware and baselines.} The prover is one NVIDIA RTX 2080~Ti. The verifier is 8
+threads of an Intel Xeon Silver 4114 on the university's SLURM cluster. We compare with
+(i)~the original protocol run on the same graphs and machine, and (ii)~the published
+results of 17 systems, taken as reported with their own hardware and each checked
+against the source paper. Every run is stored as raw records (59{,}547 in total), from
+which all tables and figures are generated.
+
+\subsection{Breaking the original protocol}
+
+\para{Reproduction.} Our implementation behaves as the paper describes. Over four
+substitute-model settings from the paper, honest provers were accepted in 100\% of
+3{,}000 runs each, and substitute models were caught 99.8--100\% of the time, even an
+8-bit quantised copy that agrees with $M$ on every test prediction. We also found that
+the idealised exact-equality check accepts an honest prover only 17--32\% of the time,
+because a whole-layer matrix product and a single-neuron dot product round differently.
+The tolerance of $10^{-4}$ that the paper prescribes is therefore mandatory, not
+optional.
+
+\begin{table}[t]
+  \caption{Attacks on the original protocol (MNIST MLP, one path). ``Accepted'' is the
+  probability that the verifier accepts, averaged over 200 queries. Attacks
+  from~\cite{anchuri2026verifiable} change many nodes and are always caught. Ours
+  changes one node and is almost never caught. The last row attacks the smartest
+  sampler a verifier can compute.}
+  \label{tab:attack}
+  \small
+  \begin{tabular}{lrr}
+    \toprule
+    Attack & wrong nodes & accepted \\
+    \midrule
+    Substitute model $\tilde M$ & $\approx$570 / 778 & 0.000 \\
+    Inverse transform & $\approx$590 / 778 & 0.000 \\
+    Logit swap & 256 / 778 & 0.000 \\
+    Gradient reconstruction & 778 / 778 & 0.000 \\
+    \midrule
+    \textbf{Single neuron, layer 1 (ours)} & \textbf{1 / 778} & \textbf{0.998} \\
+    \textbf{Single neuron, layer 2 (ours)} & \textbf{1 / 778} & \textbf{0.996} \\
+    Backdoor, triggered inputs & 1 / 778 & 0.996 \\
+    Stealthy (in natural range) & $\approx$6 / 778 & 0.989 \\
+    Zeroing vs.\ smart sampler & 13 / 778 & 1.000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\para{The attack works.} Table~\ref{tab:attack} contrasts the paper's own attacks, which
+try to make many nodes \emph{almost} right and are always caught, with ours. Changing a
+single neuron is accepted 99.6--99.8\% of the time, exactly the $1-1/N$ we predict for
+layers of 256 and 512 neurons. As a backdoor (a $3{\times}3$ bright patch as trigger),
+it serves the honest output on 100\% of clean queries, succeeds on 100\% of triggered
+queries, and is accepted on 99.6\% of them (the exact prediction is 99.8\%). A stealthy
+variant keeps every forged value inside that neuron's natural range (up to its 95th
+percentile), so a range check would not flag it. It needs only about 3--6 changed
+neurons and is still accepted about 99\% of the time. More paths do not
+help much either: with 250 paths, a 250-fold larger proof, the attack is still accepted
+61\% of the time.
+
+\para{Smarter sampling does not help.} Measured against an adversary who knows the
+rule, uniform sampling detects 0.20\% of attacks. Static importance weighting drops to
+0.11\%, and gradient-saliency weighting, which a verifier cannot even compute without
+the full model, to 0.006\%. Contribution weighting detects nothing: zeroing 13 of 512
+neurons flips the prediction, and the real protocol accepted 2{,}000 of 2{,}000 runs.
+Zero is also the most common natural activation (65\% of inputs for these neurons), so
+no statistical check flags it.
+
+\para{The same holds on larger models.} On every CNN, changing one penultimate neuron
+flips 100\% of predictions. One path catches it with probability 1/84 (LeNet-5) to
+1/512 (VGG, ResNet), and the least-visited neuron is caught with probability as low as
+1/28 million (Figure~\ref{fig:security}a). Reaching $2^{-40}$ takes 2{,}316--14{,}182
+paths, which opens every committed row (last columns of Table~\ref{tab:cnn}): the proof
+becomes the whole model plus the trace. On Llama-2-7B one path detects 1/11{,}008 of
+single-neuron attacks, and $2^{-40}$ needs about 305{,}000 paths, i.e.\ the entire model
+($\approx$13.7\,GB).
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/security.pdf}
+  \Description{Bar chart of per-query detection probabilities, and a line chart of
+  security bits against bytes sent, for six CNNs.}
+  \caption{Effectiveness against the single-neuron attack. (a)~Per-query detection:
+  one path of~\cite{anchuri2026verifiable} (orange) against our measured rejection rate
+  at $\lambda{=}40$ (red; numbers are rejected/attempted). (b)~Security in bits against
+  bytes sent. Dotted: the original protocol with $1,2,\dots$ paths, which only climbs
+  once nearly the whole model is opened (vertical lines). Solid: ours at
+  $\lambda = 40, 80, 128$.}
+  \label{fig:security}
+\end{figure*}
+
+\begin{table*}[t]
+  \caption{CNNs, one query. Accuracy of the exact int8 model; our cost at
+  $\lambda{=}128$ with committed weights (C) and with known weights and a precomputed
+  challenge (Kpre). The last three columns show what reaching $2^{-40}$ against the
+  single-neuron attack costs: the number of paths and bytes the original
+  protocol~\cite{anchuri2026verifiable} needs, and our bytes at $\lambda{=}40$.
+  $^\dagger$The dog-vs-cat classifier of~\cite{anchuri2026verifiable}.}
+  \label{tab:cnn}
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{lrrrrrrrrrr}
+    \toprule
+    & & & \multicolumn{3}{c}{ours, committed (C)} & \multicolumn{2}{c}{ours, Kpre} &
+      \multicolumn{3}{c}{reaching $2^{-40}$} \\
+    \cmidrule(lr){4-6}\cmidrule(lr){7-8}\cmidrule(lr){9-11}
+    Model & Params & int8 acc. & prove & verify & proof & verify & proof &
+      paths & bytes & ours \\
+    \midrule
+    \input{tables/cnn.tex}
+  \end{tabular}
+\end{table*}
+
+\subsection{Our defence catches every attack}
+\label{sec:security}
+Across every model, mode and security level, our verifier accepted all 3{,}174 honest
+queries. It rejected all 1{,}854 attacks on the CNNs, all run at the weakest setting
+($\lambda{=}40$, committed weights). These were: one changed value, one changed
+penultimate neuron, one changed logit, 1\% of the weights perturbed, the substitute
+model $\tilde M$, and two forgeries built so that only one specific check can stop them.
+It also rejected all 174 attacks on the language models, from GPT-2 to Llama-2-13B,
+each a single pre-activation changed by $+1$ in a middle layer, in every mode. (Models
+above 12 blocks were attacked on their 1- and 2-block builds.) The check that fired was Freivalds'
+check in 1{,}916 cases. The Reed--Solomon column check caught all 56 forged $u_\ell$
+vectors, and the Merkle check all 56 forged columns, so every part of the protocol is
+needed and works. Figure~\ref{fig:security}b shows the trade-off. The original protocol
+gains security only after sending almost everything. Ours sends 67\,kB--10.7\,MB for
+48--58 bits on the CNNs, and 131\,kB--12.1\,MB for 150--153 bits.
+
+\subsection{Cost}
+
+
+\para{CNNs.} Table~\ref{tab:cnn} shows that with committed weights our prover needs
+11--105\,ms per query, the verifier 21--370\,ms, and the proof is 131\,kB--12.1\,MB.
+That prover time is 4--7$\times$ one forward pass of the same integer model, and with
+known weights the prover is the forward pass itself. For the VGGs and the CIFAR ResNet
+the proof is 2.4--4.4$\times$ smaller than the int8 model. For the 224-pixel ResNet it
+is about the size of the model (12.1 vs.\ 11.2\,MB), because the activations of a
+large image are big.
+
+
+\para{Language models.} Table~\ref{tab:llm} shows the same picture at LLM scale. GPT-2
+with a 64-token prompt is proved in 0.44\,s and verified in 0.99\,s with a 62\,MB proof.
+Llama-2-7B takes 11.5\,s and 7.2\,s with a 762\,MB proof, about 9$\times$ smaller than
+its int8 weights. At 2{,}048 tokens Llama-2-7B takes 32\,s to prove, but the proof
+grows to 11.6\,GB and verification to 3.7 minutes, since the verifier recomputes
+attention over all token pairs. With known weights (Kpre) the proof shrinks to the
+claims alone, for example 21.8\,MB for GPT-2 and 349\,MB for Llama-2-7B at 64 tokens.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/cost.pdf}
+  \Description{Three log-log scatter plots of prover time, verifier time and proof size
+  against model parameters, for our protocol and published systems.}
+  \caption{Cost against model size: ours (red: committed weights, blue: known weights)
+  and published systems (grey, as reported on their own hardware). Our prover sits one
+  to four orders of magnitude below the zkSNARKs at every size. Our proofs are larger,
+  and grow with the activations (hollow squares: 2{,}048-token prompts). The orange
+  cross is one path of~\cite{anchuri2026verifiable}, which is cheap but detects a
+  single-neuron attack only with probability $1/11{,}008$.}
+  \label{fig:cost}
+\end{figure*}
+
+
+
+\para{Against zkSNARKs.} Figure~\ref{fig:cost} places all systems on one chart, and
+Table~\ref{tab:ratios} gives exact ratios on matched models. Our prover is 27--7{,}024$\times$
+faster than the CNN provers (zkCNN, Bionetta, ZKML), and 11--277$\times$ faster on
+language models (zkLLM, zkGPT, DeepProve, ZKTorch). Several of these systems ran on
+CPUs, so part of their gap comes from our GPU. zkLLM, however, ran on an A100, a
+stronger GPU than ours, and our prover is still 11--49$\times$ faster at the same
+2{,}048-token prompts (Figure~\ref{fig:llm}b). The price is on the other side. Our
+verifier is usually slower: 2.8--5$\times$ slower than the sum-check verifiers on small
+models, 20$\times$ slower than ZKML, and 65--141$\times$ slower than zkLLM at 2{,}048
+tokens. It is faster than DeepProve up to 256 tokens and faster than ZKTorch. Our proofs
+are also larger, from 1.8$\times$ (zkCNN, LeNet-5) up to 64{,}000$\times$ (against
+zkLLM's 141--183\,kB proofs at 2{,}048 tokens).
+
+\begin{table}[t]
+  \caption{Language models, one prompt (next-token logits), $\lambda{=}128$. Models
+  above 12 blocks are extrapolated from 1- and 2-block builds.}
+  \label{tab:llm}
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    & & \multicolumn{3}{c}{committed weights (C)} & \multicolumn{2}{c}{Kpre} \\
+    \cmidrule(lr){3-5}\cmidrule(lr){6-7}
+    Model & Tokens & prove & verify & proof & verify & proof \\
+    \midrule
+    \input{tables/llm.tex}
+  \end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{figures/llm.pdf}
+  \Description{Line chart of GPT-2 costs against prompt length, and a bar chart of
+  prover time at 2048 tokens against zkLLM.}
+  \caption{(a)~GPT-2 against prompt length: ours and DeepProve~\cite{deepprove} (same
+  model, same prompt lengths). (b)~Prover time at 2{,}048 tokens: ours on an RTX
+  2080~Ti against zkLLM~\cite{zkllm} on an A100.}
+  \label{fig:llm}
+\end{figure}
+
+\begin{table}[t]
+  \caption{Like-for-like ratios against published systems on the same model: how many
+  times ours is better ($\uparrow$) or worse ($\downarrow$). In parentheses: the prompt
+  length of our run, the same as theirs except for zkGPT (not stated) and ZKTorch
+  (1 token). Ours at $\lambda{=}128$ with committed weights; against Maverick, at its
+  setting (known weights, $\lambda{=}40$, 1 client thread). Hardware differs per row.}
+  \label{tab:ratios}
+  \footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{llrrr}
+    \toprule
+    System & Model & prover & verifier & proof \\
+    \midrule
+    \input{tables/ratios.tex}
+  \end{tabular}
+\end{table}
+
+\para{Against Maverick.} When the client knows the weights, our proof for Qwen3-4B with
+an 8-token prompt is exactly the size of Maverick's (36.1\,MB)~\cite{maverick}.
+Maverick's optimised client verifies it 16$\times$ faster than our Python verifier
+(87\,ms vs.\ 1.37\,s on one thread), which shows how much an optimised implementation
+can gain.
+
+% =====================================================================================
+\section{Discussion}
+
+\para{What this means.} Sampling-based proofs of inference are only as strong as the
+adversary is weak. They catch a provider who honestly runs the wrong model. They do not
+catch one who runs the right model and edits the answer, and no sampling rule can close
+that gap cheaply. Our defence shows that full soundness does not need zkSNARK-level
+prover cost. Checking each weight layer with a random linear combination costs the
+provider little more than inference, and gives a $2^{-\lambda}$ guarantee with no
+trusted setup and no assumption about how models behave. It suits settings where the
+client has a capable machine and a fast link, for example an enterprise gateway or an
+auditor who checks a random fraction of queries. It is also most attractive for large
+models with short prompts, where the proof is much smaller than the model.
+
+\para{Limitations.} (i)~The proof grows with the activations: megabytes for CNNs, and
+gigabytes for 7B models at long prompts, where SNARK proofs stay at kilobytes.
+(ii)~Our verifier recomputes attention and other non-weight operations, so its cost
+grows with the square of the prompt length. (iii)~The check is exact, so the provider
+must serve the integer model. For our CNNs this changed accuracy by at most 0.4 points,
+but we did not measure the quality of int8 LLMs, whose costs we measured with random
+weights (and extrapolated beyond 12 blocks). (iv)~Like the original protocol, we assume the
+weight commitment is honest. (v)~The protocol is not zero-knowledge: the opened
+columns reveal a few random linear combinations of each weight row. (vi)~Our prototype
+is Python. Maverick's client shows that an optimised implementation can be an order of
+magnitude faster.
+
+\para{Future work.} The largest gains would come from (1)~compressing the claims, for
+example with a sum-check argument for the non-weight operations or batching several
+queries against one set of openings; (2)~an optimised verifier (native code, or a GPU);
+and (3)~support for token-by-token generation with a KV cache. Before any wider
+publication, we intend to share the attack with the authors
+of~\cite{anchuri2026verifiable}.
+
+% =====================================================================================
+\section{Conclusion}
+
+We studied a recent lightweight proof of inference, which checks a model's computation
+along one random path. We showed that a single tampered neuron defeats it, with
+99.8\% acceptance and zero cost on clean inputs, and that choosing the checked nodes
+more cleverly cannot help. We then built a defence that checks every layer at once with
+Freivalds' algorithm against a Reed--Solomon/Merkle commitment to the weights. It
+catches any wrong value with probability $1-2^{-\lambda}$. It rejected every one of
+2{,}028 attacks on models from LeNet-5 to Llama-2-13B, and its prover is one to four
+orders of magnitude faster than zkSNARK provers on the same models. The main takeaway is that
+checking \emph{everything}, cheaply and algebraically, beats checking a few things
+exactly.
+
+% =====================================================================================
+\section{Contributions}
+% TODO (team): replace with the actual split of work before submitting.
+\textcolor{red}{[To be completed by the team.]} Ofek Lavi: \textcolor{red}{[\dots]}.
+Erel Brazilay: \textcolor{red}{[\dots]}. Edo Kadosh: \textcolor{red}{[\dots]}.
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}
