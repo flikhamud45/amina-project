@@ -1,515 +1,135 @@
-# Certified but compromised: attacking sampling-based proofs of inference
+# Code: Certified but Compromised
 
-Code for a course project on *Towards Verifiable AI with Lightweight Cryptographic
-Proofs of Inference* by Anchuri, Campanelli, Cesaretti, Gennaro, Jois, Kayman and
-Ozdemir (SaTML 2026; [ePrint 2026/541](https://eprint.iacr.org/2026/541)).
+Everything behind the report (`../report/main.pdf`):
 
-The paper replaces zkSNARK-based verifiable inference with something far cheaper.
-The prover commits to the execution trace of a forward pass using a Merkle vector
-commitment and opens only the entries along a few randomly sampled output-to-input
-paths; the verifier re-checks the local relation
-`a_j = φ(Σ_{i∈G_j} w_ij a_i)` at each node on the path against the committed weights
-of the intended model. Proving drops from minutes to milliseconds.
+1. a from-scratch reimplementation of the path-sampling proof of inference of Anchuri
+   et al. (SaTML 2026);
+2. our single-neuron attack and backdoor on it;
+3. the analysis of smarter sampling rules;
+4. our defence, which checks every weight layer with Freivalds' algorithm against a
+   Reed–Solomon/Merkle commitment to the weights;
+5. the benchmark and the comparison with the literature.
 
-No implementation was released, so this is a from-scratch reimplementation, followed
-by an attack on it and an analysis of whether the defence the paper suggests can
-work.
-
-**The short version.** The protocol does what it claims against the adversary it
-models — a prover that swaps in a *different model*. It does not survive an
-adversary that runs the *right* model and changes one number in the trace. Such a
-trace is locally consistent everywhere except at a single node, so the verifier
-rejects only if its path happens to hit that node: probability `1/N` in a layer of
-width `N`. Made trigger-conditional, this is a backdoor that the protocol certifies
-as correct, with a clean-accuracy gap of exactly zero. The obvious fix — sample
-where it matters rather than uniformly — provably cannot help, and the most natural
-implementable version makes things strictly worse.
-
----
-
-## Quick start
-
-From the repository root:
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e code
-.venv/bin/pip install -r code/requirements.txt   # exact versions used for the results
-```
-
-Steps 1–5 run on CPU; Step 6 (the comparison benchmark) is meant for a GPU but also runs on CPU, slowly. `requirements.txt` pins the
-versions the reported numbers were produced with; `pip install -e code` alone
-installs the looser ranges from `pyproject.toml`.
-
-<details>
-<summary>Running on the TAU SLURM cluster</summary>
-
-The cluster's Python lacks `ensurepip`, and its NVIDIA drivers (535.x, CUDA
-≤12.2) do not match PyTorch's default CUDA build, so:
-
-```bash
-python3 -m venv --without-pip .venv
-curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3
-.venv/bin/pip install torch==2.5.1 torchvision==0.20.1 \
-    --index-url https://download.pytorch.org/whl/cu121
-.venv/bin/pip install -e code
-```
-
-Submit real work with `sbatch` rather than `srun`: long-running foreground
-commands on the login node get killed. The `gpu-bermano` partition is not
-preemptible; `killable` is. See `revision1_notes/phase3_gpu.md`.
-
-</details>
-
-From the `code/` directory:
-
-```bash
-python -m pytest tests/ -q
-```
-
-```bash
-python scripts/train_models.py && python scripts/run_step1.py && python scripts/run_attack.py && python scripts/run_defence.py
-```
-
-Training takes ~15 minutes on 4 CPU threads and caches to `artifacts/models/`; it is
-a no-op on re-runs unless `--force` is given. The three experiment scripts take
-about 5, 2.5 and 2.5 minutes and write JSON to `artifacts/results/` plus figures to
-`artifacts/figures/`.
-
----
+Every table and figure of the report can be rebuilt from the stored measurements in a
+minute (no GPU), or re-measured from scratch.
 
 ## Layout
 
 ```
 code/
-  SPEC_NOTES.md            How we read the paper where it is ambiguous, and why
-  DEFENCE_NOTES.md         The Step-4 theory: why weighted sampling cannot work
-  src/pvi/
-    commitments/merkle.py  Merkle vector commitment (Appendix B, Section 8.1)
-    nn/architecture.py     Layered DAG: parent sets G_j, local relations, weight rows
-    nn/network.py          Execution traces and EvalTrace (Definition 5)
-    nn/gradients.py        Output sensitivity, used by both attacker and defender
-    protocol/sampling.py   Path samplers; RandPathTest is the uniform one (Figure 3)
-    protocol/prover.py     Prove1 / Prove2 (Definition 4)
-    protocol/verifier.py   Verify (Figure 4)
-    experiments/analysis.py  Exact acceptance probability for any trace and sampler
-    experiments/separation.py  Equation (1), verifier residuals, JS divergence
-    experiments/estimation.py  Appendix I, Algorithms 1 and 2
-    attacks/baselines.py   The paper's own attacks (Sections 2, 7.2, E, F)
-    attacks/tamper.py      Single-neuron and stealthy trace tampering
-    attacks/backdoor.py    The trigger-conditional adversary
-    defences/sampling.py   Importance-weighted samplers
-    defences/adaptive.py   The adversary's reply to a known sampler
-    fullcheck/             Step 6: the whole-network check on CNNs and transformers,
-                           the sampling baseline on the same graphs, the cost model
-  scripts/                 Four runnable entry points
-  tests/                   159 tests
+  src/pvi/                 the library (see src/pvi/README.md)
+  experiments/             one folder per result; each has a README
+    0_train_models/        train the MNIST models used by 1-4        CPU  ~15 min
+    1_reproduction/        the original protocol on its threat model  CPU   ~5 min
+    2_attack/              the single-neuron attack and backdoor      CPU   ~3 min
+    3_sampling_fixes/      smarter samplers, and why they fail        CPU  ~10 min
+    4_defence_benchmark/   our defence vs. the path test, CNNs + LLMs GPU  hours (SLURM)
+    5_comparison/          tables, counts and every report figure     CPU   ~1 min
+  artifacts/comparison/    stored measurements (raw records, tables, literature)
+  tests/                   209 tests
 ```
 
-The protocol layer never imports PyTorch. A model is an `Architecture` plus NumPy
-arrays; PyTorch appears only to fit them, and a test asserts the two evaluation paths
-agree.
+The experiments import the library (`pvi`) and never each other, except inside
+`5_comparison/`, whose scripts share `common.py`.
 
----
+## Installation
 
-## Step 1 — Reproduction
-
-Four substitution settings, each reproducing a pairing the paper uses. Every row is
-150 MNIST queries × 20 fresh challenges = 3000 protocol executions, single path.
-
-| Setup | Paper | Layer widths | Prediction agreement | Completeness | Detection |
-|---|---|---|---|---|---|
-| Different tasks, shared class | §6.2 | 784–512–256–5 | 0.9867 | **1.0000** | **1.0000** |
-| Same task, disjoint data | App. G.1 | 784–512–256–10 | 0.9800 | **1.0000** | **1.0000** |
-| 8-bit quantised substitute | §A | 784–512–256–10 | 1.0000 | **1.0000** | **0.9980** |
-| Disjoint data, CNN | App. G.1 | 784–12544–…–10 | 0.9800 | **1.0000** | **1.0000** |
-
-Cost per query on one core: prover 0.5–1.7 ms, verifier 0.3–1.2 ms, proof 13 kB
-(MLP) or 104 kB (CNN), 3–4 weight rows opened. The scheme works: even an 8-bit
-quantisation agreeing with `M` on **every** test prediction is caught 99.8% of the
-time.
-
-Three findings from the reproduction itself:
-
-**The idealised exact-equality test is not implementable.** Figure 3 writes the local
-check as `ã_j = φ(Σ w_ij ã_i)`. Taken literally, an honest prover is accepted only
-**17–32%** of the time (per setup), because the prover evaluates a layer as one
-matrix product while the verifier re-evaluates a single neuron as a dot product, and
-the two summation orders round differently: 65% of checked nodes agree bit-for-bit,
-the rest differ by up to `2.9e-6`. Definition 1 requires acceptance probability
-exactly 1, so the idealised test fails its own correctness condition.
-
-The paper is aware of this and prescribes a tolerance (Appendix E.3, "`1e-4`"); our
-measurements say that choice is sound, with 52× headroom over the worst observed
-honest residual. The point is that the tolerance is *mandatory* rather than a
-convenience — and that it hands an adversary a perturbation budget below `1e-4`
-which is invisible by construction.
-
-How much of the disagreement is inherent depends on implementation care: a verifier
-that matches the prover's arithmetic precision agrees far more often than one that
-does not (we had this wrong at first — see the note in `SPEC_NOTES.md` §2). Full
-bit-exactness would require the protocol to mandate a canonical evaluation order, or
-fixed-point arithmetic, which is what field-based SNARK constructions get for free.
-
-**Equation (1) is identically zero at layer 1 for arithmetic reasons.** Both its
-terms use `M`'s weights and differ only in the layer-`l−1` activations — which at
-`l = 1` are the shared query. The paper reads near-zero early-layer separation as
-evidence that "both models learned comparable low-level features" (§6.2.2); for the
-first layer that reading is unavailable. The verifier's *actual* residual there is
-large (mean 0.40).
-
-**The paper's own Appendix I estimator fails on two of four setups.** Its JS > 0.05
-layer filter empties `L_valid` for the disjoint-data (max JS 0.017) and quantised
-(0.0008) setups, so Theorem 1's bound cannot be instantiated — while detection is
-100% and 99.8%. JS on pooled marginals asks "same distribution?"; `RandPathTest`
-asks "same value on *this* input?". Verified not to be a pooling artefact.
-
----
-
-## Step 2 — The attack
-
-**The structural fact.** With the input anchored and every local relation satisfied,
-the trace is *uniquely* `EvalTrace(M, qry)`. So any trace claiming another output
-must be locally inconsistent somewhere — but the adversary chooses *how many* nodes
-and *where*. Overwrite one activation and re-propagate the layers above it using
-`M`'s real weights: everything above is consistent by construction, everything below
-is untouched, and exactly one node is wrong.
-
-The paper's own attacks minimise the *magnitude* of the inconsistency. That is the
-wrong objective — the verifier thresholds per-node residuals along a path, and never
-looks at total separation.
-
-| Attack | Output changed | Inconsistent nodes | Acceptance |
-|---|---|---|---|
-| Inverse transform (App. E) | yes | 594 / 778 | 0.0000 |
-| Logit-swap injection (App. F) | yes | 256 / 778 | 0.0000 |
-| Gradient reconstruction (§7.2) | yes | 778 / 778 | 0.0000 |
-| Substitute model (Def. 1) | yes | 570 / 778 | 0.0000 |
-| **Single-neuron tamper, layer 2 (ours)** | yes | **1 / 778** | **0.9961** |
-| **Single-neuron tamper, layer 1 (ours)** | yes | **1 / 778** | **0.9980** |
-
-Gradient reconstruction achieves the *smallest* separation of any attack we ran
-(0.30 against 0.89) and is still caught every time, because it perturbs everything.
-
-**As a backdoor.** Serving the honest trace on clean inputs and tampering only on
-triggered ones (a 3×3 bright patch):
-
-- served output identical to the committed model on **100%** of clean queries;
-- clean-accuracy gap **+0.000000** — the served trace *is* the honest trace, bit for bit;
-- attack success rate **1.0000** on triggered inputs;
-- verifier acceptance **1.0000** on clean queries, **0.9957** on triggered ones
-  (exact prediction 0.9980).
-
----
-
-## Step 3 — Analysis
-
-**Detection is exactly `1 − (1 − 1/N)^m`.** Confirmed against the running protocol:
-layer 1 (width 512) gives 0.9980 predicted, 0.9978 measured over 4000 runs; layer 2
-(width 256) gives 0.9961. Attacking the *wider* layer is better on both axes — it
-also needs a smaller change (mean |Δ| 7.7 versus 37.5).
-
-**The opening budget buys little.** Going from 1 path to 250 — a 250-fold increase in
-proof size and verifier work — moves acceptance only from 0.998 to 0.613. At that
-point the verifier opens 750 weight rows against a layer of 512.
-
-**Locality trades support for evasion**, as predicted: spreading over `k` neurons
-gives acceptance ≈ `1 − k/N` (measured 0.998 at `k=1`, 0.957 at measured support 22).
-
-**Repeated queries do not amplify.** The paper's amplification argument assumes the
-auditor's queries carry the trigger. Writing `ρ` for that fraction, the chance of
-ever being caught over `n` queries is `1 − (1 − ρ(1 − (1−1/N)^m))^n`. At `ρ = 10⁻⁴`,
-a million audited queries reach 0.177; at `ρ = 0`, no number of queries helps.
-
-**Stealth.** The naive single-neuron tamper needs an activation of ~28 where the
-natural maximum across the whole layer is 8.2 — so a verifier that also range-checked
-opened activations would catch it. That defence is not in the paper, but this attack
-motivates it. The stealthy planner removes the signature by confining every forged
-value to its own neuron's envelope, at the cost of a few more nodes:
-
-| Envelope cap | Untargeted ASR | support `k` | Acceptance |
-|---|---|---|---|
-| p100 | 0.983 | 2.9 | 0.9943 |
-| p99 | 0.983 | 4.2 | 0.9919 |
-| p95 | 0.983 | 5.6 | 0.9890 |
-
----
-
-## Step 4 — Why "sample where it matters" cannot fix it
-
-Full argument in [`DEFENCE_NOTES.md`](DEFENCE_NOTES.md); the headline is that the
-suggestion in §5.2 fails, and provably so for the defences a verifier can run.
-
-**A verifier cannot compute influence.** Weighting neuron `i` by `|∂y/∂a_i|` needs
-every weight above `i`. A verifier able to form those gradients already holds the
-model and could just run the inference. We implement it anyway as an upper bound.
-
-**Theorem (uniform is minimax-optimal).** For any sampler whose choice is independent
-of the claimed trace, inducing visit distribution `q`, an adversary that knows `q`
-tampers at `argmin_{v∈U} q(v)`, so detection is `min_{v∈U} q(v) ≤ 1/|U|`, with
-equality only if `q` is uniform. Measured at layer 1 (`|U| = 454` of 512 neurons
-admit a flip, bound `1/|U| = 0.00220`):
-
-| Sampler | `min_v q(v)` over `U` | vs naive attack | vs adaptive attack |
-|---|---|---|---|
-| uniform | 0.001953 | 0.00195 | 0.00195 |
-| static importance | 0.000994 | 0.00437 | **0.00105** |
-| gradient saliency *(not implementable)* | 0.000002 | 0.00752 | **0.00006** |
-
-Both look like improvements against an adversary that ignores them; both fall *below*
-uniform once the adversary reads the rule.
-
-**Theorem (zero blind spot).** Contribution weighting — step to parent `i` with
-probability ∝ `|w_ij · ã_i|`, the only implementable version and by far the most
-effective against the naive attack (detection 0.126, a 64× improvement) — assigns
-weight **zero** to a claimed activation of zero. Setting neurons to zero is therefore
-invisible to it.
-
-The adversary duly does exactly that. Measured:
-
-- **13 of 512** neurons set to exactly zero flips the prediction;
-- 100% of adaptive plans use only zeroed activations;
-- detection under contribution weighting: **exactly 0.000000**, at every budget
-  tested up to 500 paths (1500 weight rows). The real protocol accepted
-  **2000 of 2000** runs;
-- detection under plain uniform sampling for the same trace: 0.0305.
-
-So the refinement converts a 3% chance of catching this adversary into none at all.
-The value is also unremarkable: those neurons are naturally zero on **65%** of natural
-inputs, since ReLU sparsity makes zero the modal activation — no envelope or
-marginal-statistics check flags it either.
-
-Mixing a uniform component of mass `ε` into the sampler restores detection `ε·|S|/N`,
-so the floor is not optional; but the defence is then at best a scaled-down uniform
-sampler, which the minimax theorem already bounds.
-
-**Corollary.** A verifier deciding by conjoined local checks, opening at most `k`
-nodes of a width-`N` layer by a trace-independent rule, detects a single-node tamper
-with probability at most `k/|U|`. Constant detection needs `k = Ω(N)` — linear in the
-layer width, which is precisely the cost the protocol exists to avoid.
-
-**What would help**, in our view: exact-binding SNARKs (removing the gap at the
-prover cost the paper set out to avoid), verifiable training or model attestation
-(backdoor-freedom is a property of *training*, not of inference), and — most
-promising — the paper's own refereed-delegation protocol (Appendix D), whose
-bisection isolates the first disagreeing node with certainty rather than probability
-`1/N`, and which our attack does not touch.
-
----
-
-## Step 5 — Revision 1: searching for a real defence
-
-Step 4 leaves one question open: `DEFENCE_NOTES.md` bounds two *specific*
-trace-dependent samplers, but concedes "we do not claim a bound covering every
-conceivable adaptive rule." Revision 1 tried to close that gap — either with a
-working defence, or with a sharper reason none exists — without touching the
-protocol's trust model (no refereed delegation, no architecture changes). Full
-derivations and numbers are in `DEFENCE_NOTES.md` §6–§8 and
-`REVISION1_PLAN.md`; this section is the headline.
-
-**Targeting shrinks `|U|`, but that is not a detection gain.** Every `|U|` in
-Step 4 is computed with "flip to *any* wrong class"; a real backdoor needs a
-*specific* target, which does shrink `|U|` from 465 to 159 (attacker's easiest
-target, layer 1). An earlier version of this section claimed that made the
-backdoor "3.1× more detectable under plain uniform sampling" — **that was wrong
-and is retracted.** `1/|U|` is the unreachable ceiling for a verifier that could
-concentrate on `U` (Theorem 1); uniform sampling detects a single-node tamper
-when its path visits that node, i.e. with probability `1/N`, whatever `|U|` is.
-Measured, both threat models give exactly `0.001953 = 1/512`. Targeting costs
-the attacker only when activation ranges are *also* checked, where it needs
-~2.4–2.8× more tampered neurons (Step 3's stealth table). See
-`DEFENCE_NOTES.md` §8.
-
-**The epsilon-floor sampler — retracted.** This section previously reported
-that adding a floor `ε` to contribution weighting never beats uniform, citing an
-"exact minimax" sweep. That sweep measured the **honest** trace; for a sampler
-that reads claimed activations, detection depends on the **tampered** one.
-Re-measured correctly, **around `ε = 1`** the floor sampler beats uniform on
-**every one of 12 queries**, by 10.5x on average and 5.1x on the worst query —
-the opposite conclusion, and a positive result for a sampler a verifier can
-actually compute. (`ε = 0.1` wins on average but only 1.7x on its worst query,
-so the claim is "around `ε = 1`", not a range.) The `ε = 0` catastrophe still
-holds. The obvious counter-attack — a **mixture** that zeroes small-weight
-neurons while raising one, designed to defeat exactly this trade-off — has now
-been run and does *not* break it: the mixture is the adversary's best move
-against uniform but its worst against every floor sampler. See
-`DEFENCE_NOTES.md` §6.
-
-**A structurally different mechanism fares no better once the adversary knows
-about it.** Rather than reweighting neurons, check the *whole claimed layer
-vector* against a plausibility model (a low-rank PCA subspace fit on natural
-activations) — free to compute, since the protocol's own commitment already
-reveals a full layer the moment any node in it is checked. Against the
-*existing*, PCA-unaware zero-hiding attack this catches 35.6% of forgeries at a
-5% false-positive rate: real signal a per-neuron rule cannot have. But an
-adversary who knows the plausibility model can solve, in closed form, for the
-perturbation on a given support that flips the output while minimising added
-reconstruction error. Reliable, manifold-invisible evasion needs support
-`≈13` — the same support the original attack already used for an unrelated
-reason — so an informed adversary pays essentially nothing extra.
-
-**The pattern is consistent across all three attempts.** Trace-independent
-rules and a structurally different joint/statistical check both fail the same
-way: whatever looks like an improvement against an *unaware* adversary stops
-looking like one once the adversary is allowed to know the rule (Kerckhoffs).
-The floor-sampler verdict is now open rather than negative (see the retraction
-above). What did not change is the conclusion that drove the rest of the work:
-no rule for choosing *which* neurons to check escapes the ceiling.
-
-**The fix: change what a check verifies, not where it looks.** Instead of
-sampling nodes within a layer, check the *whole layer* algebraically — a random
-linear combination of every neuron's constraint, verified against a
-Reed–Solomon + Merkle commitment to the weights, in exact integer arithmetic.
-The verifier never holds the weight matrix.
-
-| Attack | batched check | uniform sampling | contribution weighting |
-|---|---|---|---|
-| naive single-neuron flip | **1.000000** | 0.001953 | 0.112636 |
-| stealthy envelope-confined | **1.000000** | 0.004958 | 0.150712 |
-| **zero-hiding backdoor** | **1.000000** | 0.023730 | **0.000000** |
-
-Honest completeness is **exactly** 1 — the exact arithmetic also retires the
-`1e-4` float tolerance, and with it the free sub-tolerance perturbation budget
-that tolerance handed the adversary.
-
-Layers are chained with verifier-recomputed inputs and the identity/logit
-output layer is supported, so this covers the network, not one hidden layer:
-honest whole network accepted 10/10, tampers at layers 1, 2 and 3 each caught
-10/10, and a prover breaking the inter-layer chain rejected 10/10. Whole-network
-proof **188.9 kB**, prover 7.4 ms, verifier 9.4 ms — against a 2.04 MB model,
-so **11.1x smaller than simply downloading the weights**.
-
-Once every layer is checked in full this is no longer a sampling protocol, so
-the honest comparison is the model download and a SNARK, not the 13 kB sampling
-proof. Known gap: with hash-derived (Fiat–Shamir) challenges the 26-bit field
-and 24 spot-checks give only ~24 bits against a grinding prover — verifier-sent
-challenges or larger parameters are needed. See
-`revision1_notes/defence_explained.md` for a from-first-principles write-up and
-`DEFENCE_NOTES.md` §10.
-
----
-
-## Step 6 — The comparison benchmark (whole-network check vs. the literature)
-
-`src/pvi/fullcheck/` is the defence of Step 5 rebuilt so it runs on the models the
-literature benchmarks, and a benchmark that measures it next to the original
-protocol on identical models and hardware. The write-up of the results is
-[`COMPARISON_ANALYSIS.md`](COMPARISON_ANALYSIS.md).
-
-**What changed relative to `protocol/batched.py`:** every model is an exact int8
-integer graph (per-channel weights, BatchNorm folded, fixed-point requantisation),
-so the prover's GPU and the verifier's CPU agree bit for bit; the field is BabyBear
-(`p = 15·2^27+1`, NTT-friendly) with `r` repeated challenges; the Reed–Solomon
-encoding uses an NTT; the security parameters are derived from a target `λ`
-(`params_for`); convolutions, pooling, residual blocks, LayerNorm/RMSNorm, GELU/SiLU,
-RoPE and causal attention are supported. Only weight products are argued about —
-every other operation is recomputed by the verifier from values it has already
-checked (the generalisation of Step 5's sign witness).
-
-Three trust settings are measured: **C** (the verifier holds only a 32-byte
-commitment per weight matrix — Anchuri et al.'s setting), **K** (the verifier knows
-the weights, fresh challenge per query — SafetyNets/Slalom), and **Kpre** (known
-weights, secret challenge precomputed once — Slalom/Maverick "preprocessing").
-
-| Models | Where the weights come from |
-|---|---|
-| MNIST MLP (Steps 1–4), LeNet-5 (MNIST), VGG-11/VGG-16 and ResNet-18 (CIFAR-10) | trained here (`scripts/fullcheck_train.py`) |
-| ResNet-18, 224×224, dogs vs cats and dogs vs squirrels (Anchuri et al.'s `M`, `M~`) | trained here on ImageNet's dog/cat/fox-squirrel classes |
-| GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B, Qwen3-4B | exact shapes, random int8 weights (cost only; see below) |
-
-Costs of the language models depend only on their shapes, so they are measured
-with random weights (as Slalom did for its untrained ResNets); no fidelity claim
-is made for them. Models with more than 12 blocks are built with 1 and 2 blocks and
-extrapolated linearly (`comparison_aggregate.py`; every block has the same shape).
-
-On the TAU cluster (see `cluster/`), from the repository root:
+Python 3.10+ (the results were produced with Python 3.12). From the repository root:
 
 ```bash
-sbatch -o logs/%x-%j.out cluster/fullcheck_train.sbatch lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel
-bash cluster/fullcheck_sweep.sh          # every benchmark job the report uses
+python3 -m venv .venv
+.venv/bin/pip install -r code/requirements.txt   # exact versions used for the results
+.venv/bin/pip install -e code                     # the pvi package
 ```
 
-A single benchmark cell group can also be submitted on its own, e.g.
-`sbatch -o logs/%x-%j.out cluster/fullcheck_bench.sbatch llm --model llama2-7b --seq 64 512 --lams 40 128`.
-
-Anywhere else, the same commands run directly from `code/`:
+On the TAU SLURM cluster the default PyTorch wheel does not match the drivers, so run
+this before the two commands above:
 
 ```bash
-python scripts/fullcheck_train.py --model vgg16 --device cuda
-python scripts/fullcheck_bench.py cnn --model vgg16
-python scripts/fullcheck_bench.py llm --model gpt2 --seq 64 128 256 512
-python scripts/comparison_aggregate.py && python scripts/comparison_literature.py
-python scripts/comparison_analytic.py && python scripts/comparison_figures.py
-python scripts/comparison_report_tables.py
+.venv/bin/pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 ```
 
-**Results** (details, tables and caveats in [`COMPARISON_ANALYSIS.md`](COMPARISON_ANALYSIS.md)):
+All commands below are run from `code/` with the virtual environment active
+(`source ../.venv/bin/activate`).
 
-* Every honest query was accepted (3,174/3,174) and every attack rejected
-  (1,854/1,854 on the CNNs, 174/174 on the language models), including forgeries that
-  only the Reed–Solomon check or only the Merkle check can stop.
-* Against the single-neuron attack, one path of Anchuri et al. detects with
-  probability 1/84–1/512 on the CNNs and 1/11,008 on Llama-2-7B; 2^-40 needs
-  2,316–14,182 paths, i.e. opening the whole model and trace. Our proof at 2^-40 is
-  1.1–8.4× smaller than that.
-* At λ = 128 with committed weights: 11–105 ms to prove and 21–370 ms to verify a
-  CNN query (131 kB–12.1 MB proof); 0.44 s / 0.99 s / 62 MB for GPT-2 at 64 tokens;
-  32 s / 3.7 min / 11.6 GB for Llama-2-7B at 2,048 tokens.
-* On the same models the prover is 27–7,000× faster than published CNN SNARKs and
-  11–280× faster on language models; the verifier is usually slower (1.8–141×) and
-  the proof much larger. With known weights the proof equals Maverick's (36.1 MB,
-  Qwen3-4B).
+**Data.** MNIST is downloaded to `code/data/` by `experiments/0_train_models`. The
+benchmark also reads CIFAR-10 from `$PVI_CIFAR_ROOT` and ImageNet (for the dog/cat and
+dog/squirrel classifiers) from `$PVI_IMAGENET_ROOT`; both default to the course's copies
+on the cluster. Decoded images are cached in `artifacts/fullcheck/cache/` (or
+`$PVI_CACHE`).
 
-**Raw data is never aggregated in place.** Every measurement is one JSON line in
-`artifacts/comparison/raw/<suite>/<model>/<cell>.jsonl` (with the git commit,
-host, GPU and CPU); a cell with a `.done` marker is skipped on re-submission, so a
-pre-empted job is simply re-submitted. `comparison_aggregate.py` rebuilds
-`artifacts/comparison/tables/` from the raw files; figures read only the tables.
+## Reproducing the report
 
-| File | Contents |
-|---|---|
-| `raw/**/*.jsonl` | one record per trial: timings, proof bytes by part, acceptance, attack outcomes, sampling paths |
-| `tables/measured_summary.csv` | median / IQR / min / max per model, cell and metric |
-| `tables/llm_full_model.csv` | full-model LLM costs, measured or extrapolated (labelled) |
-| `tables/analytic.csv` | closed-form costs and error bounds (the byte formula is tested to be exact) |
-| `literature/reported_benchmarks.csv` | 413 published measurements from 32 systems, each with its table/page and a verbatim snippet, each re-checked against the paper |
-| `tables/reported_curated.csv` | the published rows used in figures, in SI units, each linked to its catalogue row |
-| `tables/systems.csv` | each system's setting, error type and stated bound |
-| `tables/report_tables.md`, `.tex` | the report's tables, generated from the tables above |
-| `figures/*.pdf`, `*.png` | the comparison figures, drawn from the tables only |
+### Route A: from the stored measurements (no GPU, about a minute)
 
----
+`artifacts/comparison/raw/` holds all 59,547 raw benchmark records. These commands
+rebuild every derived table, the report's figures and tables, and the PDF:
 
-## Validation
+```bash
+python experiments/5_comparison/aggregate.py        # raw records -> tables/measured_summary.csv, llm_full_model.csv
+python experiments/5_comparison/literature.py       # published numbers -> tables/reported_curated.csv, systems.csv
+python experiments/5_comparison/analytic.py         # closed-form costs and bounds -> tables/analytic.csv
+python experiments/5_comparison/report_tables.py    # all result tables -> tables/report_tables.md|tex
+python experiments/5_comparison/count_outcomes.py   # the soundness counts of Section 4.3
+python experiments/5_comparison/paper_assets.py     # -> ../report/figures/*.pdf, ../report/tables/*.tex
+cd ../report && latexmk -pdf main.tex               # or: tectonic -X compile main.tex
+```
 
-Correctness rests on more than the experiments running. `experiments/analysis.py`
-computes, by exact dynamic programming over the path distribution, the probability
-that the verifier accepts any given trace under any sampler — assuming neither that
-per-layer visits are uniform nor that checks at different layers are independent
-(both false for convolutions, and deliberately false for the weighted samplers). The
-test suite checks that prediction against the full protocol stack — commitments,
-openings, challenge derivation, per-neuron recomputation — across dense and
-convolutional networks, single-node and many-node tampering, path budgets 1/2/5, and
-uniform and weighted samplers. Agreement is within Monte-Carlo error throughout.
+### Route B: from scratch
 
-Also tested: Merkle binding and position binding (forged values, openings replayed at
-another index, truncated authentication paths, padding leaves); rejection of weight
-openings taken from a different model or a different row; PyTorch↔NumPy agreement;
-visit distributions against Monte Carlo for every sampler; and the two Step-4
-theorems as executable assertions.
+```bash
+python experiments/0_train_models/train.py          # MNIST models (seeded, bit-exact on CPU)
+python experiments/1_reproduction/run.py            # -> artifacts/results/reproduction.json
+python experiments/2_attack/run.py                  # -> artifacts/results/attack.json
+python experiments/3_sampling_fixes/run.py          # -> artifacts/results/defence.json
+python experiments/3_sampling_fixes/floor_sampler.py  # -> artifacts/results/floor_sampler.json
+```
+
+The benchmark needs a GPU. On the cluster, from the repository root:
+
+```bash
+sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/train.sbatch lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel
+bash code/experiments/4_defence_benchmark/slurm/sweep.sh     # every benchmark job of the report
+```
+
+Each job appends raw records to `artifacts/comparison/raw/`; finished cells are skipped
+on re-submission. Then run Route A. `experiments/4_defence_benchmark/README.md` shows
+how to run a single model without SLURM.
+
+### Where each result comes from
+
+| Report | Produced by | Output |
+|---|---|---|
+| Fig. 1, Fig. 2 (schematics) | `5_comparison/paper_assets.py` | `report/figures/overview_*`, `protocol` |
+| §4.2 *Reproduction* (acceptance, detection, 17–32% exact-equality) | `1_reproduction/run.py` | `reproduction.json` |
+| Table 1 rows 1–8; §4.2 *The attack works* (backdoor, stealth, 250 paths) | `2_attack/run.py` | `attack.json` |
+| Table 1 last row; §4.2 *Smarter sampling* (0.20%, 0.11%, 0.006%, 0) | `3_sampling_fixes/run.py` | `defence.json` |
+| §3.2 floor sampler (about 10× uniform) | `3_sampling_fixes/floor_sampler.py` | `floor_sampler.json` |
+| Fig. 3, Tables 2–4, Figs. 4–5, all numbers in §4.3–4.4 | `4_defence_benchmark/bench.py` → `5_comparison/aggregate.py` → `paper_assets.py` | `report/figures`, `report/tables` |
+| §4.3 counts (3,174 / 1,854 / 174; which check fired) | `5_comparison/count_outcomes.py` | printed |
+| §4.2 Llama-2-7B: 1/11,008 per path, 305,000 paths, 13.7 GB | `5_comparison/analytic.py` | `tables/analytic.csv` (`anchuri_*` columns) |
+| Published results (Table 4, grey points) | `5_comparison/literature.py` | `tables/reported_curated.csv` |
+| Full tables beyond the report (all models, settings, published rows) | `5_comparison/report_tables.py` | `tables/report_tables.md` |
+
+## Tests
 
 ```bash
 python -m pytest tests/ -q
 ```
 
-## Reproducibility
+The tests cover the Merkle commitment, the path test, the exact acceptance-probability
+dynamic program against Monte Carlo, the attacks and samplers, and the whole defence.
+The defence tests include forged claims, a forged folded row (caught by the
+Reed–Solomon check), a forged column (caught by the Merkle check), and GPU/CPU
+agreement. GPU tests are skipped without CUDA.
 
-Training is seeded; `EvalTrace` is bit-exactly reproducible, which is what the
-commitment requires. Chunked batch evaluation (used only for reporting accuracy,
-never inside the protocol) agrees to ~1e-7 rather than bit-exactly, since BLAS may
-block a matrix product differently for different batch sizes.
+## Notes on reproducibility
 
-Verifier challenges are drawn freshly on every execution, as the protocol requires,
-so acceptance and detection rates are Monte-Carlo estimates and move slightly between
-runs. Everything else is fixed by seed, and quantities that can be computed exactly
-are. Dependencies are pinned in `requirements.txt`; MNIST downloads on first use.
+* Training is seeded; on CPU the MNIST models are reproduced bit for bit.
+* The protocols draw fresh random challenges on every run, so measured acceptance
+  rates move slightly between runs. Where a probability can be computed exactly (the
+  path test's acceptance for a given trace, via `pvi.experiments.analysis`), it is.
+* The language models use their exact shapes with random int8 weights, since costs
+  depend only on shapes. Models above 12 blocks are measured with 1 and 2 blocks and
+  extrapolated linearly (`aggregate.py`), labelled `extrapolated` in the tables.
+* Every raw record carries the git commit, host, GPU and CPU it was measured on.

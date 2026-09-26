@@ -1,17 +1,22 @@
-# Virtual environment -- recreate with requirements.txt, do not ship
+# Virtual environment -- recreate with code/requirements.txt
 .venv/
 
-# Downloaded datasets and generated artifacts
+# Downloaded datasets, trained weights and caches (all regenerable)
 code/data/
 code/artifacts/models/
-code/artifacts/results/
-code/artifacts/figures/
+code/artifacts/fullcheck/models/
+code/artifacts/fullcheck/cache/
 
-# Extracted PDF text (regenerate from the PDFs).
-# Anchored to the repo root: an unanchored `*.txt` also silently swallowed
-# code/requirements.txt, which is why the pins the README promises were never
-# actually committed.
-/*.txt
+# a flat CSV copy of the raw records, rebuilt by experiments/5_comparison/aggregate.py
+code/artifacts/comparison/tables/measured_long.csv
+# earlier benchmark runs kept on the cluster for provenance, superseded by raw/
+code/artifacts/comparison/raw_preliminary/
+code/artifacts/comparison/raw_superseded/
+code/artifacts/comparison/final/
+
+# SLURM job logs
+/logs/
+.wheel_cache/
 
 # Python
 __pycache__/
@@ -27,26 +32,7 @@ dist/
 *.out
 *.bbl
 *.blg
+*.xdv
+*.fls
+*.fdb_latexmk
 *.synctex.gz
-
-# Local cluster scratch (job logs, downloaded wheels); portable copies live in cluster/
-.wheel_cache/
-
-# Comparison benchmark: trained weights and decoded-image caches are regenerable
-# (scripts/fullcheck_train.py); raw records and tables under artifacts/comparison/ are kept.
-code/artifacts/fullcheck/models/
-code/artifacts/fullcheck/cache/
-/logs/
-# earlier benchmark runs kept on the cluster for provenance, superseded by raw/
-code/artifacts/comparison/raw_preliminary/
-code/artifacts/comparison/raw_superseded/
-code/artifacts/comparison/final/
-# a flat CSV copy of raw/, rebuilt by scripts/comparison_aggregate.py
-code/artifacts/comparison/tables/measured_long.csv
-# report build by-products
-report/*.aux
-report/*.log
-report/*.blg
-report/*.bbl
-report/*.out
-report/*.xdv

@@ -1,14 +1,15 @@
 # Report
 
-`main.tex` is the final report (ACM `sigconf` double-column); `main.pdf` is the built PDF.
+`main.pdf` is the report; `main.tex` its source (ACM `sigconf`, double column).
 
-Every table body (`tables/*.tex`) and figure (`figures/*.pdf`) is generated from the
-stored benchmark tables in `code/artifacts/comparison/tables/`, so nothing needs a GPU:
+`figures/*.pdf` and `tables/*.tex` are generated from the stored measurements by
+`code/experiments/5_comparison/paper_assets.py` (no GPU needed):
 
 ```bash
-python report/make_assets.py          # from the repository root
-cd report && tectonic -X compile main.tex   # or: latexmk -pdf main.tex
+python code/experiments/5_comparison/paper_assets.py     # from the repository root
+cd report && latexmk -pdf main.tex                        # or: tectonic -X compile main.tex
 ```
 
 `acmart.cls` and `ACM-Reference-Format.bst` are the course template's copies (acmart
-2.18), included so the build does not depend on the TeX installation's version.
+2.18), so the build does not depend on the installed TeX version. `references.bib`
+holds the bibliography; every author list was checked against the paper's own page.

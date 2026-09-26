@@ -1,6 +1,6 @@
 """Datasets for the comparison benchmark, all read from local copies.
 
-* MNIST     -- the repository's ``code/data`` copy (as used by Steps 1-4).
+* MNIST     -- the repository's ``code/data`` copy (downloaded by experiments/0_train_models).
 * CIFAR-10  -- ``$PVI_CIFAR_ROOT`` (default: the lab copy on the TAU cluster).
 * ImageNet binary subsets reproducing Anchuri et al.'s classifiers:
   ``dogs_cats`` (their ``M``) and ``dogs_squirrels`` (their ``M~``), built from
