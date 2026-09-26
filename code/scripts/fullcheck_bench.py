@@ -86,7 +86,7 @@ class Recorder:
         on_gpu = str(env.get("device", "")).startswith("cuda")
         prover_hw = env.get("gpu") if on_gpu else env.get("cpu")
         self.base = {"run_id": uuid.uuid4().hex[:12], "suite": suite, "model": model, "cell": cell,
-                     "config": dict(config, variant=TAG, device=env.get("device")),
+                     "config": dict(config, variant=TAG, device=env.get("device"), merkle="multiproof"),
                      "prover_hw": prover_hw, "verifier_hw": f"{env.get('cpu')} x{env.get('torch_threads')} threads",
                      "hw": prover_hw, "host": env.get("host"), "git_sha": env.get("git_sha")}
         self.fh = open(self.path.with_suffix(".jsonl.part"), "w")

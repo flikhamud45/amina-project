@@ -26,7 +26,7 @@ TABLES = ROOT / "artifacts" / "comparison" / "tables"
 GROUP_KEYS = ("batch", "attack", "lam", "op", "stage")
 ADDITIVE = {"prove_forward", "prove_fold", "prove_open", "verify_derive", "verify_products", "verify_columns",
             "verify_fold", "fs_hash", "bytes_claims", "bytes_u", "bytes_columns", "bytes_paths", "bytes_total",
-            "commit_total", "verifier_precompute"}
+            "commit_total", "verifier_precompute", "bytes_paths_multiproof", "bytes_total_multiproof"}
 
 
 def load_rows() -> list[dict]:
@@ -80,6 +80,35 @@ def summarise(rows: list[dict]) -> list[dict]:
                     "n": len(vals), "median": statistics.median(vals), "mean": statistics.fmean(vals),
                     "p25": q(0.25), "p75": q(0.75), "min": vals[0], "max": vals[-1], **meta[key]})
     return out
+
+
+def multiproof_adjust(summary: list[dict]) -> list[dict]:
+    """Runs made before multiproofs sent one Merkle path per opened column.  Their
+    Merkle term is replaced by the exact *expected* multiproof size for the same
+    trees and number of columns (the columns are uniform, so this is the mean of
+    what a multiproof run would send); the measured value is kept alongside."""
+    from pvi.fullcheck.analytic import decoder_shapes, expected_multiproof_nodes
+    from pvi.fullcheck.transformer import CONFIGS
+
+    extra = []
+    for s in summary:
+        if not (s["suite"] == "llm" and s["cell"].startswith("defence_") and s.get("cfg_mode") == "C"
+                and s.get("cfg_merkle", "") != "multiproof" and s["metric"] in ("bytes_paths", "bytes_total")):
+            continue
+        cfg = CONFIGS[s["model"]]
+        shapes = decoder_shapes(cfg, int(s["cfg_seq"]), n_layers=int(s["cfg_n_layers"]))
+        t, rate = int(s["cfg_columns"]), int(s["cfg_rate"])
+        mp = sum(32 * expected_multiproof_nodes(sh.n_points(rate), t) for sh in shapes)
+        if s["metric"] == "bytes_paths":
+            extra.append(dict(s, metric="bytes_paths_multiproof", median=mp, mean=mp, p25=mp, p75=mp, min=mp, max=mp,
+                              provenance="expected multiproof for the measured trees"))
+        else:
+            paths = next(x for x in summary if x["cell"] == s["cell"] and x["model"] == s["model"]
+                         and x["metric"] == "bytes_paths" and x["suite"] == "llm")
+            v = s["median"] - paths["median"] + mp
+            extra.append(dict(s, metric="bytes_total_multiproof", median=v, mean=v, p25=v, p75=v, min=v, max=v,
+                              provenance="measured data + expected multiproof"))
+    return extra
 
 
 def llm_full(summary: list[dict]) -> list[dict]:
@@ -136,6 +165,7 @@ def main() -> None:
     rows = load_rows()
     _write(TABLES / "measured_long.csv", rows)
     summary = summarise(rows)
+    summary += multiproof_adjust(summary)
     _write(TABLES / "measured_summary.csv", summary)
     full = llm_full(summary)
     if full:

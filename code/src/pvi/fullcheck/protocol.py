@@ -46,7 +46,7 @@ import numpy as np
 import torch
 
 from .commitment import (HASH_BYTES, CommitmentPublic, WeightCommitment, column_leaf, vandermonde_columns,
-                         verify_path)
+                         verify_multiproof)
 from .field import LOG2_P, P, field_matmul_mod, small_matmul_mod, to_field
 from .graph import IntGraph, MatOp
 
@@ -302,11 +302,11 @@ class Verifier:
         """``None`` if every opened column is consistent, else the failing check."""
         for op in self.graph.mat_ops:
             pub = self.publics[op.name]
-            opened, paths = openings[op.name]
+            opened, proof = openings[op.name]
             idx = cols[op.name]
-            if (tuple(opened.shape) != (pub.n_rows, len(idx)) or len(paths) != len(idx)
+            if (tuple(opened.shape) != (pub.n_rows, len(idx)) or len(proof) > len(idx) * pub.depth
                     or opened.dtype != torch.int64 or bool(((opened < 0) | (opened >= P)).any())
-                    or any(len(pth) != pub.depth for pth in paths) or us[op.name].shape[1] != pub.row_length):
+                    or us[op.name].shape[1] != pub.row_length):
                 return "columns_shape"
             # Enc(u) is only needed at the t opened columns: evaluate it there
             # directly (r*k*t work) instead of re-encoding the whole codeword.
@@ -314,9 +314,9 @@ class Verifier:
             if not torch.equal(field_matmul_mod(chis[op.name], opened), enc):
                 return "columns_code"
             col_np = opened.to(torch.int64).numpy()
-            for j, c in enumerate(idx.tolist()):
-                if not verify_path(pub.root, c, column_leaf(pub.tag, c, col_np[:, j]), paths[j]):
-                    return "columns_merkle"
+            leaves = {c: column_leaf(pub.tag, c, col_np[:, j]) for j, c in enumerate(idx.tolist())}
+            if not verify_multiproof(pub.root, pub.depth, leaves, proof):
+                return "columns_merkle"
         return None
 
 
@@ -411,7 +411,7 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
         _sync(prover.device)
         t["prove_open"] = time.perf_counter() - t0
         out["bytes"]["columns"] = sum(o[0].numel() for o in openings.values()) * 4
-        out["bytes"]["paths"] = sum(len(pth) * len(pth[0]) * HASH_BYTES for _, pth in openings.values() if pth)
+        out["bytes"]["paths"] = sum(len(proof) * HASH_BYTES for _, proof in openings.values())
         t0 = time.perf_counter()
         reason = verifier.check_columns(chis, us, cols, openings)
         t["verify_columns"] = time.perf_counter() - t0

@@ -105,10 +105,16 @@ def llm_rows(mode="C", lam=DEFAULT["lam"], chal="int") -> dict:
     return out
 
 
+def _llm_bytes(d: dict, part: str = "total"):
+    """Proof bytes, with the Merkle term as a multiproof (native or expected; see aggregate)."""
+    key = f"bytes_{part}_multiproof"
+    return d[key][0] if key in d else d.get(f"bytes_{part}", (None,))[0]
+
+
 def _llm_cost(d: dict):
     prove = sum(d[k][0] for k in PROVE if k in d)
     verify = sum(d[k][0] for k in VERIFY if k in d)
-    return prove, verify, d.get("bytes_total", (None,))[0], d["prove_forward"][2]
+    return prove, verify, _llm_bytes(d), d["prove_forward"][2]
 
 
 def _marker(system: str) -> str:
@@ -290,7 +296,7 @@ def fig_breakdown(M: Measured) -> None:
     for (model, seq), d in sorted(llm_rows("C").items()):
         if seq == 64 and all(("bytes_" + k) in d for k in ("claims", "u", "columns", "paths")):
             labels.append(f"{LLM_LABEL.get(model, model)}\n(64 tok.)")
-            parts.append([d["bytes_" + k][0] for k in ("claims", "u", "columns", "paths")])
+            parts.append([d["bytes_" + k][0] for k in ("claims", "u", "columns")] + [_llm_bytes(d, "paths")])
     if not parts:
         return
     fig, ax = plt.subplots(figsize=(3.5, 2.1))

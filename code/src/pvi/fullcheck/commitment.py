@@ -42,6 +42,9 @@ __all__ = [
     "HASH_BYTES",
     "MerkleTree",
     "verify_path",
+    "multiproof",
+    "multiproof_size",
+    "verify_multiproof",
     "column_leaf",
     "CommitmentPublic",
     "WeightCommitment",
@@ -96,6 +99,48 @@ def verify_path(root: bytes, index: int, leaf: bytes, path: list[bytes]) -> bool
         node = _node(node, sibling) if index % 2 == 0 else _node(sibling, node)
         index >>= 1
     return node == root
+
+
+def multiproof_size(indices, depth: int) -> int:
+    """Number of hashes a multiproof for ``indices`` needs (no tree required)."""
+    known = sorted(set(int(i) for i in indices))
+    total = 0
+    for _ in range(depth):
+        kset = set(known)
+        total += sum(1 for i in known if (i ^ 1) not in kset)
+        known = sorted({i >> 1 for i in known})
+    return total
+
+
+def multiproof(tree: MerkleTree, indices) -> list[bytes]:
+    """One authentication set for several leaves: every sibling hash the verifier
+    cannot compute itself, each sent once, level by level in index order."""
+    known = sorted(set(int(i) for i in indices))
+    proof = []
+    for level in tree.levels[:-1]:
+        kset = set(known)
+        proof += [level[i ^ 1] for i in known if (i ^ 1) not in kset]
+        known = sorted({i >> 1 for i in known})
+    return proof
+
+
+def verify_multiproof(root: bytes, depth: int, leaves: dict[int, bytes], proof: list[bytes]) -> bool:
+    """Rebuild the root from ``{index: leaf digest}`` and a :func:`multiproof`."""
+    known = dict(leaves)
+    it = iter(proof)
+    try:
+        for _ in range(depth):
+            nxt: dict[int, bytes] = {}
+            for i in sorted(known):
+                if i % 2 == 0:
+                    right = known[i + 1] if (i + 1) in known else next(it)
+                    nxt[i >> 1] = _node(known[i], right)
+                elif (i - 1) not in known:
+                    nxt[i >> 1] = _node(next(it), known[i])
+            known = nxt
+    except StopIteration:
+        return False
+    return next(it, None) is None and list(known.items()) == [(0, root)]
 
 
 def _next_pow2(x: int) -> int:
@@ -200,7 +245,7 @@ class WeightCommitment:
 
     def open(self, columns: torch.Tensor, device: torch.device | str = "cpu",
              weight: torch.Tensor | None = None):
-        """Recompute encoded columns ``E[:, columns]`` and their Merkle paths."""
+        """Recompute encoded columns ``E[:, columns]`` and one Merkle multiproof for them."""
         w_all = self.weight if weight is None else weight
         k = w_all.shape[1]
         v = vandermonde_columns(self.n_points, self.row_length, columns, device)
@@ -208,5 +253,4 @@ class WeightCommitment:
                           for r0 in range(0, w_all.shape[0], 16384)], 0)
         if self.bias is not None:
             cols = (cols + (to_field(self.bias.to(device))[:, None] * v[k][None, :]) % P) % P
-        paths = [self.tree.path(int(c)) for c in columns.tolist()]
-        return cols.cpu(), paths
+        return cols.cpu(), multiproof(self.tree, columns.tolist())

@@ -35,6 +35,8 @@ __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count"]
 
 SHIFT = 30
 RES_MAX = (1 << 22) - 1
+ATTN_BYTES = 1 << 27
+"""Budget for one int64 ``[B, heads, T, T]`` score tensor (heads are grouped to fit)."""
 _EXP_TABLE = torch.tensor([round((1 << 15) * math.exp(-i / 16.0)) for i in range(256)], dtype=torch.int64)
 
 
@@ -129,8 +131,34 @@ def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
     return torch.cat([y1, y2], -1).clamp(-INT8_MAX, INT8_MAX)
 
 
+def _attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
+    """Integer causal attention for a group of heads: ``[B,H,T,dh]`` each."""
+    t = q.shape[2]
+    s = exact_bmm(q, k.transpose(-1, -2), max_a=128, max_b=128)          # [B,H,T,T]
+    mask = torch.ones(t, t, dtype=torch.bool, device=q.device).tril()
+    s = s.masked_fill(~mask, -(1 << 40))
+    d = (s.amax(-1, keepdim=True) - s).clamp(max=1 << 31)
+    del s
+    idx = ((d * m_s + (1 << (SHIFT - 1))) >> SHIFT).clamp(0, 255)
+    del d
+    e = _EXP_TABLE.to(q.device)[idx].masked_fill(~mask, 0)
+    del idx
+    tot = e.sum(-1, keepdim=True)
+    p = torch.div(e * 510 + tot, 2 * tot, rounding_mode="floor")        # 0..255
+    del e
+    o = exact_bmm(p, v, max_a=256, max_b=128)                            # [B,H,T,dh]
+    if m_o is not None:  # m_o=None returns the raw product, for calibration only
+        o = requant(o, torch.tensor(m_o, device=q.device), SHIFT, -INT8_MAX, INT8_MAX)
+    return o
+
+
 def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int) -> torch.Tensor:
-    """Integer causal attention.  q ``[B,T,Hq*dh]``, k/v ``[B,T,Hkv*dh]`` -> ``[B,T,Hq*dh]``."""
+    """Integer causal attention.  q ``[B,T,Hq*dh]``, k/v ``[B,T,Hkv*dh]`` -> ``[B,T,Hq*dh]``.
+
+    Heads are independent, so they are processed a few at a time to bound the
+    ``T x T`` score tensors (1 GiB per 32 heads at T=2048); the result is the
+    same integers as processing them all at once.
+    """
     b, t, _ = q.shape
     q = q.reshape(b, t, n_heads, dh).transpose(1, 2)
     k = k.reshape(b, t, n_kv, dh).transpose(1, 2)
@@ -139,17 +167,10 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
         rep = n_heads // n_kv
         k = k.repeat_interleave(rep, 1)
         v = v.repeat_interleave(rep, 1)
-    s = exact_bmm(q, k.transpose(-1, -2), max_a=128, max_b=128)          # [B,H,T,T]
-    mask = torch.ones(t, t, dtype=torch.bool, device=q.device).tril()
-    s = s.masked_fill(~mask, -(1 << 40))
-    d = (s.amax(-1, keepdim=True) - s).clamp(max=1 << 31)
-    idx = ((d * m_s + (1 << (SHIFT - 1))) >> SHIFT).clamp(0, 255)
-    e = _EXP_TABLE.to(q.device)[idx].masked_fill(~mask, 0)
-    tot = e.sum(-1, keepdim=True)
-    p = torch.div(e * 510 + tot, 2 * tot, rounding_mode="floor")        # 0..255
-    o = exact_bmm(p, v, max_a=256, max_b=128)                            # [B,H,T,dh]
-    if m_o is not None:  # m_o=None returns the raw product, for calibration only
-        o = requant(o, torch.tensor(m_o, device=q.device), SHIFT, -INT8_MAX, INT8_MAX)
+    group = max(1, ATTN_BYTES // (8 * b * t * t))       # heads per group
+    outs = [_attention_heads(q[:, h:h + group], k[:, h:h + group], v[:, h:h + group], m_s, m_o)
+            for h in range(0, n_heads, group)]
+    o = torch.cat(outs, 1)
     return o.transpose(1, 2).reshape(b, t, n_heads * dh)
 
 

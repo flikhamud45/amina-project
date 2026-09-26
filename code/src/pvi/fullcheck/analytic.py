@@ -11,7 +11,7 @@ Per query (mode C):
 * proof bytes   = sum_l 4 N_l M_l            (claimed pre-activations)
                 + sum_l 4 r k_l              (folded rows ``u_l``)
                 + sum_l 4 t N_l              (opened columns)
-                + sum_l 32 t log2(n_l)       (Merkle paths)
+                + sum_l 32 E[multiproof_l]   (one Merkle multiproof per op, <= t log2 n_l)
 * prover work   = forward pass + r sum_l N_l k_l (fold) + t sum_l N_l k_l (columns)
 * verifier work = r sum_l (N_l + k_l) M_l  (Freivalds)  + r t sum_l k_l (codeword at the t columns)
                 + r t sum_l N_l (column checks) + cheap ops (recomputed)
@@ -33,7 +33,7 @@ from .field import LOG2_P
 from .protocol import SecurityParams
 
 __all__ = ["OpShape", "graph_shapes", "decoder_shapes", "proof_bytes", "work", "soundness_error_bits",
-           "sampling_paths"]
+           "sampling_paths", "expected_multiproof_nodes"]
 
 
 @dataclass(frozen=True)
@@ -80,13 +80,38 @@ def decoder_shapes(cfg, seq: int, n_layers: int | None = None, batch: int = 1, a
     return ops
 
 
+def _log_comb(n: int, k: int) -> float:
+    if k < 0 or k > n:
+        return -math.inf
+    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
+
+
+def expected_multiproof_nodes(n: int, t: int) -> float:
+    """Expected hashes in a multiproof for ``t`` distinct uniform leaves of ``n``.
+
+    At a level whose nodes cover ``s`` leaves, a sibling hash is sent for each
+    pair of nodes where exactly one of the two covers an opened leaf; there are
+    ``n / 2s`` pairs and that happens with probability
+    ``2 [C(n-s, t) - C(n-2s, t)] / C(n, t)``.
+    """
+    t = min(t, n)
+    total, s = 0.0, 1
+    base = _log_comb(n, t)
+    while s < n:
+        a = math.exp(_log_comb(n - s, t) - base)
+        b = math.exp(_log_comb(n - 2 * s, t) - base) if n - 2 * s >= t else 0.0
+        total += (n / s) * (a - b)
+        s *= 2
+    return total
+
+
 def proof_bytes(shapes: list[OpShape], p: SecurityParams, mode: str = "C") -> dict[str, int]:
     claims = sum(4 * s.n_rows * s.n_cols for s in shapes)
     if mode != "C":
         return {"claims": claims, "u": 0, "columns": 0, "paths": 0}
     u = sum(4 * p.reps * s.row_length for s in shapes)
     cols = sum(4 * min(p.columns, s.n_points(p.rate)) * s.n_rows for s in shapes)
-    paths = sum(32 * min(p.columns, s.n_points(p.rate)) * int(math.log2(s.n_points(p.rate))) for s in shapes)
+    paths = round(sum(32 * expected_multiproof_nodes(s.n_points(p.rate), p.columns) for s in shapes))
     return {"claims": claims, "u": u, "columns": cols, "paths": paths}
 
 

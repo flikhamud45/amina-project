@@ -84,10 +84,12 @@ def test_weight_commitment_open_matches_full_encoding_and_fold():
     a = torch.cat([w.to(torch.int64), b[:, None]], 1)
     enc = fld.rs_encode(a, com.n_points)
     cols = torch.tensor([0, 5, 77, com.n_points - 1])
-    opened, paths = com.open(cols)
+    opened, proof = com.open(cols)
     assert torch.equal(opened, enc[:, cols])
-    for j, c in enumerate(cols.tolist()):
-        assert verify_path(com.tree.root, c, column_leaf(b"t", c, opened[:, j].numpy()), paths[j])
+    from pvi.fullcheck.commitment import verify_multiproof
+
+    leaves = {c: column_leaf(b"t", c, opened[:, j].numpy()) for j, c in enumerate(cols.tolist())}
+    assert verify_multiproof(com.tree.root, com.tree.depth, leaves, proof)
     chi = torch.randint(0, P, (2, 9), generator=g, dtype=torch.int64)
     ref = torch.tensor([[sum(int(chi[r, i]) * int(a[i, j]) for i in range(9)) % P for j in range(31)]
                         for r in range(2)])
@@ -548,7 +550,10 @@ def test_analytic_proof_bytes_match_the_protocol(setup, mode):
         v = Verifier(graph.public(), p, "Kpre", weights={op.name: (op.weight, op.bias) for op in graph.mat_ops})
         v.precompute(Challenger(seed=1))
     measured = run_query(prover, v, x, seed=0)["bytes"]
-    assert measured == proof_bytes(graph_shapes(graph, x), p, mode)
+    predicted = proof_bytes(graph_shapes(graph, x), p, mode)
+    # data parts are exact; the multiproof size depends on which columns were drawn
+    assert {k: measured[k] for k in ("claims", "u", "columns")} == {k: predicted[k] for k in ("claims", "u", "columns")}
+    assert abs(measured["paths"] - predicted["paths"]) <= 0.25 * predicted["paths"] + 64
 
 
 @pytest.mark.parametrize("family", ["gpt", "llama", "qwen"])
@@ -577,3 +582,57 @@ def test_direct_codeword_evaluation_equals_full_encoding():
     n = 4 * 1024
     idx = torch.tensor([0, 1, 17, 1023, 4095])
     assert torch.equal(fld.field_matmul_mod(u, vandermonde_columns(n, 700, idx)), fld.rs_encode(u, n)[:, idx])
+
+
+def test_multiproof_matches_individual_paths_and_rejects_forgery():
+    from pvi.fullcheck.commitment import multiproof, multiproof_size, verify_multiproof
+
+    import random
+    rnd = random.Random(0)
+    leaves = [bytes([i % 256, i // 256]) * 16 for i in range(64)]
+    tree = MerkleTree(leaves)
+    for _ in range(50):
+        idx = sorted(rnd.sample(range(64), rnd.randint(1, 20)))
+        proof = multiproof(tree, idx)
+        assert len(proof) == multiproof_size(idx, tree.depth) <= len(idx) * tree.depth
+        assert verify_multiproof(tree.root, tree.depth, {i: leaves[i] for i in idx}, proof)
+        bad = {i: leaves[i] for i in idx}
+        bad[idx[0]] = b"x" * 32
+        assert not verify_multiproof(tree.root, tree.depth, bad, proof)
+        if proof:
+            assert not verify_multiproof(tree.root, tree.depth, {i: leaves[i] for i in idx}, proof[:-1])
+    assert multiproof_size(range(64), tree.depth) == 0
+
+
+def test_expected_multiproof_size_matches_monte_carlo():
+    import random
+
+    from pvi.fullcheck.analytic import expected_multiproof_nodes
+    from pvi.fullcheck.commitment import multiproof_size
+
+    rnd = random.Random(3)
+    for n, t in ((64, 5), (512, 67), (4096, 23), (128, 100)):
+        sims = [multiproof_size(rnd.sample(range(n), t), n.bit_length() - 1) for _ in range(3000)]
+        mean = sum(sims) / len(sims)
+        assert abs(mean - expected_multiproof_nodes(n, t)) < 0.02 * mean + 0.1
+
+
+def test_grouped_attention_equals_all_heads_at_once():
+    from pvi.fullcheck.transformer import _attention, _attention_heads
+
+    g = torch.Generator().manual_seed(4)
+    b, t, h, dh = 1, 40, 6, 8
+    q = torch.randint(-127, 128, (b, t, h * dh), generator=g)
+    k = torch.randint(-127, 128, (b, t, h * dh), generator=g)
+    v = torch.randint(-127, 128, (b, t, h * dh), generator=g)
+    m_s, m_o = 1 << 20, 1 << 22
+    whole = _attention_heads(q.reshape(b, t, h, dh).transpose(1, 2), k.reshape(b, t, h, dh).transpose(1, 2),
+                             v.reshape(b, t, h, dh).transpose(1, 2), m_s, m_o).transpose(1, 2).reshape(b, t, h * dh)
+    import pvi.fullcheck.transformer as tr
+
+    saved = tr.ATTN_BYTES
+    try:
+        tr.ATTN_BYTES = 8 * t * t * 4            # force groups of 4 heads (6 = 4 + 2)
+        assert torch.equal(_attention(q, k, v, m_s, m_o, h, h, dh), whole)
+    finally:
+        tr.ATTN_BYTES = saved
