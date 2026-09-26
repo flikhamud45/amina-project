@@ -7,8 +7,11 @@ code/artifacts/models/
 code/artifacts/results/
 code/artifacts/figures/
 
-# Extracted PDF text (regenerate from the PDFs)
-*.txt
+# Extracted PDF text (regenerate from the PDFs).
+# Anchored to the repo root: an unanchored `*.txt` also silently swallowed
+# code/requirements.txt, which is why the pins the README promises were never
+# actually committed.
+/*.txt
 
 # Python
 __pycache__/
@@ -25,3 +28,6 @@ dist/
 *.bbl
 *.blg
 *.synctex.gz
+
+# Local cluster scratch (job logs, downloaded wheels); portable copies live in cluster/
+.wheel_cache/

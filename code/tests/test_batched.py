@@ -39,8 +39,8 @@ def _commit(layer):
 def _run(layer, commitment, n_queries=16):
     proof = prove_layer(layer, commitment, n_queries=n_queries)
     accepted = verify_layer(
-        proof, commitment.digest, commitment.params, commitment,
-        layer.inputs, layer.outputs, prime=layer.prime, n_queries=n_queries,
+        proof, commitment.public_params,
+        layer.inputs, layer.outputs, n_queries=n_queries,
     )
     return proof, accepted
 
@@ -164,8 +164,8 @@ def test_lying_about_the_sign_witness_is_rejected():
         column_openings=proof.column_openings,
     )
     accepted = verify_layer(
-        forged_proof, commitment.digest, commitment.params, commitment,
-        layer.inputs, layer.outputs, prime=layer.prime, n_queries=16,
+        forged_proof, commitment.public_params,
+        layer.inputs, layer.outputs, n_queries=16,
     )
     assert not accepted
 
@@ -192,8 +192,8 @@ def test_forged_combination_is_rejected():
         column_openings=proof.column_openings,
     )
     accepted = verify_layer(
-        forged, commitment.digest, commitment.params, commitment,
-        layer.inputs, layer.outputs, prime=layer.prime, n_queries=16,
+        forged, commitment.public_params,
+        layer.inputs, layer.outputs, n_queries=16,
     )
     assert not accepted
 
@@ -302,8 +302,8 @@ def test_adaptive_transcript_forgery_is_rejected():
         column_openings=commitment.open_columns(columns),
     )
     accepted = verify_layer(
-        forged_proof, commitment.digest, commitment.params, commitment,
-        layer.inputs, layer.outputs, prime=layer.prime, n_queries=n_queries,
+        forged_proof, commitment.public_params,
+        layer.inputs, layer.outputs, n_queries=n_queries,
     )
     assert not accepted
 
@@ -320,8 +320,8 @@ def test_openings_from_a_different_model_are_rejected():
     other_commitment = _commit(other_layer)
 
     accepted = verify_layer(
-        proof, other_commitment.digest, other_commitment.params, other_commitment,
-        layer.inputs, layer.outputs, prime=layer.prime, n_queries=16,
+        proof, other_commitment.public_params,
+        layer.inputs, layer.outputs, n_queries=16,
     )
     assert not accepted
 
@@ -376,8 +376,8 @@ def _run_chain(layers, query, scale_bits=8, tampered=None, n_queries=12):
     for index, ((w, b, act), view, proof, cm) in enumerate(
         zip(layers, views, proofs, commitments)
     ):
-        if not verify_layer(proof, cm.digest, cm.params, cm, _augment(x, prime),
-                            view.outputs, prime=prime, n_queries=n_queries,
+        if not verify_layer(proof, cm.public_params, _augment(x, prime),
+                            view.outputs, n_queries=n_queries,
                             activation=act, context=_layer_context(index, running)):
             return False
         running = _transcript_bytes(view.outputs, proof.combination)
@@ -395,8 +395,8 @@ def test_identity_layer_accepts_honest_negative_logits():
     assert (view.pre_activations() < 0).any(), "expected some negative logits"
     cm = _commit(view)
     proof = prove_layer(view, cm, n_queries=12)
-    assert verify_layer(proof, cm.digest, cm.params, cm, view.inputs, view.outputs,
-                        prime=view.prime, n_queries=12, activation="identity")
+    assert verify_layer(proof, cm.public_params, view.inputs, view.outputs,
+                        n_queries=12, activation="identity")
 
 
 def test_identity_layer_rejects_a_tampered_logit():
@@ -411,8 +411,8 @@ def test_identity_layer_rejects_a_tampered_logit():
                              activation="identity")
     cm = _commit(view)
     proof = prove_layer(view, cm, n_queries=12)
-    assert not verify_layer(proof, cm.digest, cm.params, cm, view.inputs, view.outputs,
-                            prime=view.prime, n_queries=12, activation="identity")
+    assert not verify_layer(proof, cm.public_params, view.inputs, view.outputs,
+                            n_queries=12, activation="identity")
 
 
 def test_whole_network_honest_is_accepted():
@@ -449,8 +449,17 @@ def test_whole_network_rejects_a_tamper_at_any_layer(target_layer):
         x = rescale(view.outputs, 8, DEFAULT_PRIME)
 
 
-def test_whole_network_rejects_an_inconsistent_interlayer_value():
-    """The verifier recomputes each layer's input, so a broken chain is caught."""
+def test_reported_output_inconsistent_with_its_own_proof_is_rejected():
+    """A layer's own check catches a changed reported output.
+
+    NOTE: this does *not* exercise the inter-layer chaining, despite an earlier
+    name that said it did.  Changing layer 1's reported output also changes
+    layer 1's own transcript, so layer 1 rejects and the verifier never gets far
+    enough to recompute layer 2's input.  The genuine broken-chain case -- every
+    per-layer proof valid, but one built on the wrong input -- is
+    ``tests/test_batched_network.py::test_broken_chain_is_rejected``, which
+    carries a positive control.
+    """
     from pvi.protocol.batched import (
         _augment, _layer_context, _transcript_bytes, rescale,
     )
@@ -480,11 +489,52 @@ def test_whole_network_rejects_an_inconsistent_interlayer_value():
     x = np.rint(q * (1 << 8)).astype(np.int64)
     running, accepted_all = b"", True
     for i, ((w, b, act), out, p, cm) in enumerate(zip(layers, claimed, proofs, cms)):
-        if not verify_layer(p, cm.digest, cm.params, cm, _augment(x, prime), out,
-                            prime=prime, n_queries=12, activation=act,
+        if not verify_layer(p, cm.public_params, _augment(x, prime), out,
+                            n_queries=12, activation=act,
                             context=_layer_context(i, running)):
             accepted_all = False
             break
         running = _transcript_bytes(out, p.combination)
         x = rescale(out, 8, prime)
     assert not accepted_all
+
+
+def test_blas_matmul_matches_integer_matmul():
+    """The split-float BLAS path must be bit-identical to integer arithmetic.
+
+    It is the whole basis of the commitment's speed, so an error here would be
+    a silent soundness bug rather than a slow test.
+    """
+    from pvi.protocol.batched import _matmul, _matmul_blas, _float_chunk_size
+
+    rng = np.random.default_rng(99)
+    assert _float_chunk_size(DEFAULT_PRIME) >= 2, "expected the float path to be usable"
+    for n, k, c in [(8, 17, 33), (32, 300, 600), (64, 785, 1570)]:
+        a = rng.integers(0, DEFAULT_PRIME, size=(n, k), dtype=np.int64)
+        b = rng.integers(0, DEFAULT_PRIME, size=(k, c), dtype=np.int64)
+        reference = np.mod(
+            np.array([[sum(int(x) * int(y) for x, y in zip(row, b[:, j])) % DEFAULT_PRIME
+                       for j in range(c)] for row in a], dtype=object).astype(np.int64),
+            DEFAULT_PRIME,
+        ) if k * c <= 2000 else None
+        fast = _matmul(a, b, DEFAULT_PRIME)
+        direct = _matmul_blas(a, b, DEFAULT_PRIME)
+        assert np.array_equal(fast, direct)
+        if reference is not None:
+            assert np.array_equal(fast, reference), "disagrees with exact Python integers"
+
+
+def test_matmul_chunks_when_contraction_is_long():
+    """A contraction longer than the exact-float bound must still be exact."""
+    from pvi.protocol.batched import _matmul, _float_chunk_size
+
+    rng = np.random.default_rng(100)
+    step = _float_chunk_size(DEFAULT_PRIME)
+    k = step + 50                      # forces the chunked path
+    a = rng.integers(0, DEFAULT_PRIME, size=(3, k), dtype=np.int64)
+    b = rng.integers(0, DEFAULT_PRIME, size=(k, 4), dtype=np.int64)
+    expected = np.array(
+        [[sum(int(x) * int(y) for x, y in zip(a[i], b[:, j])) % DEFAULT_PRIME
+          for j in range(4)] for i in range(3)], dtype=np.int64,
+    )
+    assert np.array_equal(_matmul(a, b, DEFAULT_PRIME), expected)

@@ -1,3 +1,10 @@
+> **Status: superseded — kept for the record.**
+> Every item in this first review was addressed in commit `51e2dfd` and the
+> follow-up work after it. The two headline claims it correctly challenged
+> ("targeted is 3.1x more detectable" and "Theorem 4") are retracted in
+> `DEFENCE_NOTES.md` §6 and §8. See `REVISION1_REVIEW_2.md` at the repo root
+> for the follow-up review and its status table.
+
 # Review of the `revision1` branch
 
 **Branch reviewed:** `origin/revision1` at commit `9ca4ba5`, which is five commits on top of `main` (`1b7698d`).

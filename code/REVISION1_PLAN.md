@@ -3,7 +3,7 @@
 > **Outcome: found one.** `protocol/batched.py` (Phase 4) checks a whole layer
 > algebraically instead of sampling nodes within it. Every attack in this
 > project is caught with probability `1.000000`, at exact honest completeness,
-> for ~9x the proof size, using no cryptographic assumption beyond the
+> for a 106 kB whole-network proof (~20x smaller than the model), using no cryptographic assumption beyond the
 > collision-resistant hash the protocol already relies on (it also uses
 > Reed–Solomon codes and prime-field arithmetic, which are combinatorial, not
 > assumptions). Layers are chained with verifier-recomputed inputs, and the

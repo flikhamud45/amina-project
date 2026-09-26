@@ -60,6 +60,7 @@ from pvi.protocol import (
 )
 from pvi.training import load_network
 from pvi.zoo import SETUPS, SubstitutionSetup, quantise_network
+from pvi.results import write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = ROOT / "artifacts" / "models"
@@ -487,7 +488,7 @@ def main() -> None:
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     out_path = RESULTS / "step1.json"
-    out_path.write_text(json.dumps(results, indent=2))
+    write_json(out_path, results)
     plot_separation(results)
     print(f"\nwrote {out_path}")
     print(f"wrote {FIGURES / 'step1_separation.png'}")

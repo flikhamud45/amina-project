@@ -44,6 +44,7 @@ from pvi.protocol.batched import (
 )
 from pvi.training import load_network
 from pvi.zoo import mlp_architecture_for
+from pvi.results import write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = ROOT / "artifacts" / "models"
@@ -83,8 +84,8 @@ def tampered_view(network, layer_index, trace, plan, scale_bits):
 def run_check(view, commitment, n_queries):
     proof = prove_layer(view, commitment, n_queries=n_queries)
     accepted = verify_layer(
-        proof, commitment.digest, commitment.params, commitment,
-        view.inputs, view.outputs, prime=view.prime, n_queries=n_queries,
+        proof, commitment.public_params,
+        view.inputs, view.outputs, n_queries=n_queries,
     )
     return accepted, proof
 
@@ -194,8 +195,7 @@ def main() -> None:
         "mean_proof_bytes": float(np.mean(proof_sizes)),
         "attacks": rows,
     }
-    with open(RESULTS / "batched_defence.json", "w") as fh:
-        json.dump(payload, fh, indent=2)
+    write_json(RESULTS / "batched_defence.json", payload)
     print(f"\nwrote {RESULTS / 'batched_defence.json'}")
 
 

@@ -1,0 +1,15 @@
+# Pinned dependencies for the pvi package.
+#
+# Versions are the ones this project's results were produced with.
+# CUDA-specific torch builds carry a local tag (e.g. 2.5.1+cu121) that is
+# stripped here so the file installs anywhere; on the TAU cluster install
+# the matching CUDA build first, e.g.
+#   pip install torch==2.5.1 torchvision==0.20.1 \
+#       --index-url https://download.pytorch.org/whl/cu121
+
+torch==2.5.1
+torchvision==0.20.1
+numpy==2.5.2
+matplotlib==3.11.2
+tqdm==4.70.1
+pytest==9.1.1

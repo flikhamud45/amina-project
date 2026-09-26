@@ -29,18 +29,37 @@ implementable version makes things strictly worse.
 
 ## Quick start
 
-```bash
-python3 -m venv --without-pip /tmp/erel_venv
-source /tmp/erel_venv/bin/activate
-curl -sS https://bootstrap.pypa.io/get-pip.py | python
-```
+From the repository root:
 
 ```bash
-.venv/bin/pip install -e .
+python3 -m venv .venv
+.venv/bin/pip install -e code
+.venv/bin/pip install -r code/requirements.txt   # exact versions used for the results
 ```
 
-On Linux/macOS (including the SLURM cluster) use `.venv/bin/pip`. Everything runs on
-CPU; no GPU is required anywhere.
+Everything runs on CPU; no GPU is required anywhere. `requirements.txt` pins the
+versions the reported numbers were produced with; `pip install -e code` alone
+installs the looser ranges from `pyproject.toml`.
+
+<details>
+<summary>Running on the TAU SLURM cluster</summary>
+
+The cluster's Python lacks `ensurepip`, and its NVIDIA drivers (535.x, CUDA
+≤12.2) do not match PyTorch's default CUDA build, so:
+
+```bash
+python3 -m venv --without-pip .venv
+curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3
+.venv/bin/pip install torch==2.5.1 torchvision==0.20.1 \
+    --index-url https://download.pytorch.org/whl/cu121
+.venv/bin/pip install -e code
+```
+
+Submit real work with `sbatch` rather than `srun`: long-running foreground
+commands on the login node get killed. The `gpu-bermano` partition is not
+preemptible; `killable` is. See `revision1_notes/phase3_gpu.md`.
+
+</details>
 
 From the `code/` directory:
 
@@ -303,10 +322,15 @@ the attacker only when activation ranges are *also* checked, where it needs
 that adding a floor `ε` to contribution weighting never beats uniform, citing an
 "exact minimax" sweep. That sweep measured the **honest** trace; for a sampler
 that reads claimed activations, detection depends on the **tampered** one.
-Re-measured correctly, `ε` in 0.1–10 beats uniform — by **11.9x at `ε = 1`** —
+Re-measured correctly, **around `ε = 1`** the floor sampler beats uniform on
+**every one of 12 queries**, by 10.5x on average and 5.1x on the worst query —
 the opposite conclusion, and a positive result for a sampler a verifier can
-actually compute. The `ε = 0` catastrophe still holds. It needs more queries
-and an untried mixture attack before it can be leaned on; see
+actually compute. (`ε = 0.1` wins on average but only 1.7x on its worst query,
+so the claim is "around `ε = 1`", not a range.) The `ε = 0` catastrophe still
+holds. The obvious counter-attack — a **mixture** that zeroes small-weight
+neurons while raising one, designed to defeat exactly this trade-off — has now
+been run and does *not* break it: the mixture is the adversary's best move
+against uniform but its worst against every floor sampler. See
 `DEFENCE_NOTES.md` §6.
 
 **A structurally different mechanism fares no better once the adversary knows

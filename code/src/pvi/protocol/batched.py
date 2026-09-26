@@ -77,6 +77,7 @@ zkML engineering, and out of scope here.  See ``revision1_notes/phase4_batched_d
 from __future__ import annotations
 
 import hashlib
+import secrets
 from dataclasses import dataclass
 
 import numpy as np
@@ -85,6 +86,9 @@ from pvi.commitments.merkle import MerkleOpening, MerkleVectorCommitment
 
 __all__ = [
     "BatchedLayerProof",
+    "BatchedPublicParams",
+    "FoldingChallenges",
+    "VerifierRandomness",
     "BatchedWeightCommitment",
     "FixedPointLayer",
     "DEFAULT_PRIME",
@@ -124,19 +128,72 @@ def _chunk_size(prime: int) -> int:
     return max(int(limit), 1)
 
 
-def _matmul(left: np.ndarray, right: np.ndarray, prime: int) -> np.ndarray:
-    """Field matrix product, chunked so partial sums never overflow int64.
+# numpy has no BLAS path for integer matmul -- it falls back to naive loops, and
+# the Reed-Solomon encode is ~97% of commitment time.  float64 matmul *is* BLAS,
+# and we can use it exactly: split each field element into two 13-bit halves, so
+# every product is < 2**39 and a sum of K of them stays inside float64's 53-bit
+# mantissa.  Two exact BLAS matmuls beat one integer matmul by 10-50x, and the
+# speedup grows with the matrix size.  Verified bit-identical to the integer
+# path in ``test_blas_matmul_matches_integer_matmul``.
+_FLOAT_SPLIT = 1 << 13
 
-    Any layer width is fine: the contraction is split into blocks small enough
-    that a block's products sum below ``2**63``, with a reduction between blocks.
+# Splitting costs two extra modulo passes over `left`, so the BLAS path only
+# pays off once the matmul is big enough.  Measured crossover on this machine:
+# int64 wins below ~1e6 multiply-adds, BLAS wins from a few million upward
+# (and by 40x by the time the encode reaches large-model dimensions).
+_BLAS_MIN_OPS = 2_000_000
+
+# ...and only when it is a real matrix-matrix product.  Converting the operands
+# to float64 costs O(K*C + N*K) regardless, so for a matvec (C == 1, as in
+# `pre_activations`) that conversion dominates and BLAS is ~20x SLOWER: measured
+# 4.4 ms int64 vs 88.4 ms BLAS at N=4096, K=785, C=1.
+_BLAS_MIN_SIDE = 8
+
+
+def _float_chunk_size(prime: int) -> int:
+    """Largest contraction length for which the split-float product is exact."""
+    per_term = (_FLOAT_SPLIT - 1) * (prime - 1)
+    return max(int((1 << 53) // max(per_term, 1)), 1)
+
+
+def _matmul_blas(left: np.ndarray, right: np.ndarray, prime: int) -> np.ndarray:
+    """One exact field matmul via two float64 BLAS calls.  Caller checks the bound."""
+    lo = (left % _FLOAT_SPLIT).astype(np.float64)
+    hi = (left // _FLOAT_SPLIT).astype(np.float64)
+    rf = right.astype(np.float64)
+    hi_part = np.mod((hi @ rf).astype(np.int64), prime)
+    lo_part = np.mod((lo @ rf).astype(np.int64), prime)
+    return np.mod(hi_part * _FLOAT_SPLIT + lo_part, prime)
+
+
+def _matmul(left: np.ndarray, right: np.ndarray, prime: int) -> np.ndarray:
+    """Field matrix product, exact for any layer width.
+
+    Uses the split-float BLAS path when the contraction is short enough for it
+    to be exact (it almost always is: ~16k terms at the default prime), chunking
+    the contraction otherwise, and falls back to chunked integer arithmetic for
+    primes too large for the split to help.
     """
     left = left.astype(np.int64, copy=False)
     right = right.astype(np.int64, copy=False)
     contraction = left.shape[-1]
+
+    work = left.shape[0] * contraction * right.shape[1]
+    float_step = _float_chunk_size(prime)
+    narrow = min(left.shape[0], right.shape[1]) < _BLAS_MIN_SIDE
+    if float_step >= 2 and work >= _BLAS_MIN_OPS and not narrow:
+        if contraction <= float_step:
+            return _matmul_blas(left, right, prime)
+        acc = np.zeros((left.shape[0], right.shape[1]), dtype=np.int64)
+        for start in range(0, contraction, float_step):
+            stop = min(start + float_step, contraction)
+            acc = np.mod(acc + _matmul_blas(left[:, start:stop], right[start:stop, :], prime),
+                         prime)
+        return acc
+
     step = _chunk_size(prime)
     if contraction <= step:
         return np.mod(left @ right, prime)
-
     acc = np.zeros((left.shape[0], right.shape[1]), dtype=np.int64)
     for start in range(0, contraction, step):
         stop = min(start + step, contraction)
@@ -273,6 +330,34 @@ def fixed_point_layer(
 # --------------------------------------------------------------------------- #
 
 
+@dataclass(frozen=True)
+class BatchedPublicParams:
+    """Exactly what the verifier needs, and nothing it must not have.
+
+    Deliberately carries no weight matrix and no encoded matrix.  Handing the
+    verifier the prover's :class:`BatchedWeightCommitment` worked -- it only
+    read public fields -- but it made it *structurally possible* for a verifier
+    to read the model, which the base protocol's design rules out. Keeping the
+    two apart means the guarantee is enforced by the types, not by convention.
+    """
+
+    digest: bytes
+    merkle_params: object
+    n_columns: int
+    row_length: int
+    prime: int
+    vandermonde: np.ndarray
+    """Public parameters of the Reed-Solomon code -- derived from the evaluation
+    points alone, so it reveals nothing about the committed weights."""
+
+    def encode_at(self, row: np.ndarray, indices: np.ndarray) -> np.ndarray:
+        """``Enc(row)`` at just these column positions (see the commitment's copy)."""
+        indices = np.asarray(indices, dtype=np.int64)
+        return _matmul(
+            _as_field(row, self.prime)[None, :], self.vandermonde[indices, :].T, self.prime
+        )[0]
+
+
 class BatchedWeightCommitment:
     """Reed-Solomon encode the rows of ``A``, Merkle-commit the columns.
 
@@ -294,8 +379,11 @@ class BatchedWeightCommitment:
 
         self._vandermonde = self._build_vandermonde(self._row_length, self._n_columns, prime)
         self._encoded = _matmul(self._matrix, self._vandermonde.T, prime)
+        # Field elements are < 2**26, so uint32 is lossless and halves every
+        # column opening (the dominant term in proof size) against int64.
         self._commitment = MerkleVectorCommitment.commit(
-            [self._encoded[:, c].tobytes() for c in range(self._n_columns)]
+            [self._encoded[:, c].astype(np.uint32).tobytes()
+             for c in range(self._n_columns)]
         )
 
     @staticmethod
@@ -308,6 +396,18 @@ class BatchedWeightCommitment:
             vandermonde[:, i] = current
             current = np.mod(current * points, prime)
         return vandermonde
+
+    @property
+    def public_params(self) -> BatchedPublicParams:
+        """The subset of this object a verifier is allowed to hold."""
+        return BatchedPublicParams(
+            digest=self._commitment.digest,
+            merkle_params=self._commitment.params,
+            n_columns=self._n_columns,
+            row_length=self._row_length,
+            prime=self._prime,
+            vandermonde=self._vandermonde,
+        )
 
     @property
     def digest(self) -> bytes:
@@ -326,8 +426,20 @@ class BatchedWeightCommitment:
         return self._n_columns
 
     def encode(self, row: np.ndarray) -> np.ndarray:
-        """Reed-Solomon encode a single length-``row_length`` vector."""
+        """Reed-Solomon encode a single length-``row_length`` vector (all columns)."""
         return _matmul(_as_field(row, self._prime)[None, :], self._vandermonde.T, self._prime)[0]
+
+    def encode_at(self, row: np.ndarray, indices: np.ndarray) -> np.ndarray:
+        """``Enc(row)`` at just these column positions.
+
+        The verifier only ever inspects the ``t`` sampled columns, so evaluating
+        the whole length-``n`` codeword to throw away all but ``t`` of it costs
+        ``O(M^2)`` for no reason.  This is ``O(t*M)`` -- at ``M = 1568, t = 24``
+        that is ~130x less arithmetic, and it is the dominant term in verify.
+        """
+        indices = np.asarray(indices, dtype=np.int64)
+        sub = self._vandermonde[indices, :]
+        return _matmul(_as_field(row, self._prime)[None, :], sub.T, self._prime)[0]
 
     def combination(self, challenge: np.ndarray) -> np.ndarray:
         """``chi^T A``, the value the prover must send."""
@@ -358,8 +470,80 @@ class BatchedLayerProof:
     column_openings: tuple[MerkleOpening, ...]
 
     def size_bytes(self) -> int:
+        # Field elements and indices are all < 2**32, so 4 bytes each on the wire.
         scalars = len(self.combination) + len(self.zero_indices) + len(self.sign_witness)
-        return 8 * scalars + sum(int(o.size_bytes) for o in self.column_openings)
+        return 4 * scalars + sum(int(o.size_bytes) for o in self.column_openings)
+
+
+@dataclass(frozen=True)
+class FoldingChallenges:
+    """Round-1 challenges: the folding coefficients."""
+
+    s: np.ndarray
+    t: np.ndarray
+    alpha: int
+    beta: int
+
+
+class VerifierRandomness:
+    """Challenges the verifier draws itself, instead of hashing the prover's message.
+
+    This is what closes the grinding hole.  With Fiat-Shamir the prover computes
+    its own challenges, so it can re-randomise part of its message and re-hash
+    until the challenge happens to be favourable: at ~2**-24 per attempt that is
+    only ~17 million tries, and the whole search is offline and invisible.  When
+    the *verifier* draws the challenges from its own CSPRNG, a cheating prover
+    gets exactly one attempt per interaction and every failure is a visible
+    rejection, so the soundness error really is the ~2**-24 the parameters say.
+    This is also how the paper's own ``RandPathTest`` works -- the verifier picks
+    the path.
+
+    Ordering still matters even with true randomness: the column challenge must
+    be withheld until after the prover has committed to ``u``, or the prover can
+    solve for a ``u`` that matches on exactly the columns it knows will be
+    checked (see ``_derive_columns``).  ``prove_layer`` asks for the folding
+    challenge, computes ``u``, and only then asks for columns; this class caches
+    per ``(context, kind)`` so the verifier re-derives the same values it issued.
+
+    **Use one instance per interaction (per query).** The cache exists so the
+    prover and verifier agree on what was issued *within* one exchange; reusing
+    an instance across queries would replay challenges, which is unsound, and
+    raises rather than silently mis-sizing the challenge vectors.
+    """
+
+    def __init__(self, seed: int | None = None) -> None:
+        self._rng = np.random.default_rng(
+            secrets.randbits(128) if seed is None else seed
+        )
+        self._folding: dict[bytes, FoldingChallenges] = {}
+        self._columns: dict[bytes, np.ndarray] = {}
+
+    def folding(self, context: bytes, width: int, n_zero: int, prime: int) -> FoldingChallenges:
+        cached = self._folding.get(context)
+        if cached is not None and (len(cached.s) != width or len(cached.t) != n_zero):
+            raise ValueError(
+                "challenge reuse across different messages: this object was already "
+                f"asked for context {context!r} with width {len(cached.s)}/zero set "
+                f"{len(cached.t)}, now {width}/{n_zero}. Draw a FRESH "
+                "VerifierRandomness per interaction -- reusing one across queries is "
+                "both a correctness bug and a security one."
+            )
+        if context not in self._folding:
+            self._folding[context] = FoldingChallenges(
+                s=self._rng.integers(0, prime, size=width, dtype=np.int64),
+                t=self._rng.integers(0, prime, size=n_zero, dtype=np.int64),
+                alpha=int(self._rng.integers(1, prime)),
+                beta=int(self._rng.integers(1, prime)),
+            )
+        return self._folding[context]
+
+    def columns(self, context: bytes, n_columns: int, n_queries: int) -> np.ndarray:
+        if context not in self._columns:
+            take = min(n_queries, n_columns)
+            self._columns[context] = np.sort(
+                self._rng.choice(n_columns, size=take, replace=False)
+            ).astype(np.int64)
+        return self._columns[context]
 
 
 def _derive_folding(
@@ -445,6 +629,7 @@ def prove_layer(
     *,
     n_queries: int = 24,
     context: bytes = b"",
+    randomness: VerifierRandomness | None = None,
 ) -> BatchedLayerProof:
     """Produce the proof for one layer of a (possibly adversarial) trace.
 
@@ -466,20 +651,30 @@ def prove_layer(
             _as_field(-z[zero_indices], prime) if len(zero_indices) else np.empty(0, np.int64)
         )
 
-    s, t, alpha, beta = _derive_folding(
-        commitment.digest, layer.inputs, layer.outputs, zero_indices, sign_witness,
-        layer.width, prime, context,
-    )
+    if randomness is None:
+        # Fiat-Shamir: convenient and non-interactive, but grindable (see
+        # VerifierRandomness for why that costs ~24 bits here).
+        s, t, alpha, beta = _derive_folding(
+            commitment.digest, layer.inputs, layer.outputs, zero_indices, sign_witness,
+            layer.width, prime, context,
+        )
+    else:
+        folding = randomness.folding(context, layer.width, len(zero_indices), prime)
+        s, t, alpha, beta = folding.s, folding.t, folding.alpha, folding.beta
     chi = (
         _as_field(s, prime)
         if layer.activation == "identity"
         else _challenge_vector(layer.outputs, s, t, alpha, beta, zero_indices, prime)
     )
     combination = commitment.combination(chi)
-    columns = _derive_columns(
-        commitment.digest, layer.inputs, layer.outputs, zero_indices, sign_witness,
-        combination, commitment.n_columns, n_queries, prime, context,
-    )
+    # Columns are requested only now, after u is fixed -- see VerifierRandomness.
+    if randomness is None:
+        columns = _derive_columns(
+            commitment.digest, layer.inputs, layer.outputs, zero_indices, sign_witness,
+            combination, commitment.n_columns, n_queries, prime, context,
+        )
+    else:
+        columns = randomness.columns(context, commitment.n_columns, n_queries)
     return BatchedLayerProof(
         combination=combination,
         zero_indices=zero_indices,
@@ -490,16 +685,14 @@ def prove_layer(
 
 def verify_layer(
     proof: BatchedLayerProof,
-    commitment_digest: bytes,
-    commitment_params,
-    encoder: BatchedWeightCommitment,
+    params: BatchedPublicParams,
     inputs: np.ndarray,
     outputs: np.ndarray,
     *,
-    prime: int = DEFAULT_PRIME,
     n_queries: int = 24,
     activation: str = "relu",
     context: bytes = b"",
+    randomness: VerifierRandomness | None = None,
 ) -> bool:
     """Accept iff the claimed ``outputs`` really are ``phi(A @ inputs)``.
 
@@ -509,10 +702,11 @@ def verify_layer(
     most logits are negative, so the ReLU range check would reject an honest
     prover outright.
 
-    ``encoder`` is used only for the *public* parameters of the code (the
-    Vandermonde matrix and its dimensions).  The verifier never reads its
-    matrix -- that is the point of the commitment.
+    ``params`` carries only public data (digest, Merkle parameters, and the
+    code's evaluation matrix).  The verifier is never handed the commitment
+    object itself, so it cannot read the model even by accident.
     """
+    prime = params.prime
     width = len(outputs)
     outputs_signed = _signed(outputs, prime)
 
@@ -535,34 +729,41 @@ def verify_layer(
         if len(witness_signed) != len(expected_zero) or np.any(witness_signed < 0):
             return False
 
-    s, t, alpha, beta = _derive_folding(
-        commitment_digest, inputs, outputs, proof.zero_indices, proof.sign_witness,
-        width, prime, context,
-    )
+    if randomness is None:
+        s, t, alpha, beta = _derive_folding(
+            params.digest, inputs, outputs, proof.zero_indices, proof.sign_witness,
+            width, prime, context,
+        )
+    else:
+        folding = randomness.folding(context, width, len(proof.zero_indices), prime)
+        s, t, alpha, beta = folding.s, folding.t, folding.alpha, folding.beta
     chi = (
         _as_field(s, prime)
         if activation == "identity"
         else _challenge_vector(outputs, s, t, alpha, beta, proof.zero_indices, prime)
     )
-    columns = _derive_columns(
-        commitment_digest, inputs, outputs, proof.zero_indices, proof.sign_witness,
-        proof.combination, encoder.n_columns, n_queries, prime, context,
-    )
+    if randomness is None:
+        columns = _derive_columns(
+            params.digest, inputs, outputs, proof.zero_indices, proof.sign_witness,
+            proof.combination, params.n_columns, n_queries, prime, context,
+        )
+    else:
+        columns = randomness.columns(context, params.n_columns, n_queries)
 
     # The commitment opening: u must really be chi^T A.
     if len(proof.column_openings) != len(columns):
         return False
-    encoded_u = encoder.encode(proof.combination)
-    for opening, column in zip(proof.column_openings, columns):
+    encoded_u = params.encode_at(proof.combination, columns)
+    for position, (opening, column) in enumerate(zip(proof.column_openings, columns)):
         if opening.index != int(column):
             return False
-        if not MerkleVectorCommitment.verify(commitment_params, commitment_digest, opening):
+        if not MerkleVectorCommitment.verify(params.merkle_params, params.digest, opening):
             return False
-        column_values = np.frombuffer(opening.value, dtype=np.int64)
+        column_values = np.frombuffer(opening.value, dtype=np.uint32).astype(np.int64)
         if len(column_values) != width:
             return False
         lhs = int(np.mod(np.sum(np.mod(chi * column_values, prime)), prime))
-        if lhs != int(encoded_u[int(column)]):
+        if lhs != int(encoded_u[position]):
             return False
 
     # The scalar identity over the committed weights.
@@ -619,6 +820,18 @@ def _layer_context(index: int, running: bytes) -> bytes:
     return b"pvi/batched/layer" + index.to_bytes(4, "big") + running
 
 
+def _extend_running(running: bytes, outputs: np.ndarray, combination: np.ndarray) -> bytes:
+    """Fold one layer's messages into the running transcript.
+
+    This must *accumulate*.  An earlier version reassigned
+    ``running = _transcript_bytes(...)``, which replaced the previous value, so
+    layer 3's challenges depended on layer 2 but not on layer 1 -- not a hole
+    (layer 1 stays bound indirectly, through the inputs the verifier recomputes)
+    but not what the docs claimed either.
+    """
+    return hashlib.sha256(running + _transcript_bytes(outputs, combination)).digest()
+
+
 def fixed_point_network(
     network,
     query: np.ndarray,
@@ -653,14 +866,20 @@ def fixed_point_network(
     return views
 
 
-def prove_network(views, commitments, *, n_queries: int = 24):
-    """One proof per layer, each bound to its position and to what came before."""
+def prove_network(views, commitments, *, n_queries: int = 24,
+                  randomness: VerifierRandomness | None = None):
+    """One proof per layer, each bound to its position and to what came before.
+
+    Pass ``randomness`` to run with verifier-drawn challenges (no grinding); the
+    verifier must be given the same object so it re-derives what it issued.
+    """
     proofs, running = [], b""
     for index, (view, commitment) in enumerate(zip(views, commitments)):
         context = _layer_context(index, running)
-        proof = prove_layer(view, commitment, n_queries=n_queries, context=context)
+        proof = prove_layer(view, commitment, n_queries=n_queries, context=context,
+                            randomness=randomness)
         proofs.append(proof)
-        running = _transcript_bytes(view.outputs, proof.combination)
+        running = _extend_running(running, view.outputs, proof.combination)
     return proofs
 
 
@@ -674,6 +893,7 @@ def verify_network(
     scale_bits: int = 8,
     prime: int = DEFAULT_PRIME,
     n_queries: int = 24,
+    randomness: VerifierRandomness | None = None,
 ) -> bool:
     """Verify every layer, recomputing each layer's input from the last.
 
@@ -693,12 +913,12 @@ def verify_network(
         activation = "relu" if layer.activation == "relu" else "identity"
         context = _layer_context(index, running)
         accepted = verify_layer(
-            proof, commitment.digest, commitment.params, commitment,
-            _augment(x, prime), outputs,
-            prime=prime, n_queries=n_queries, activation=activation, context=context,
+            proof, commitment.public_params, _augment(x, prime), outputs,
+            n_queries=n_queries, activation=activation, context=context,
+            randomness=randomness,
         )
         if not accepted:
             return False
-        running = _transcript_bytes(outputs, proof.combination)
+        running = _extend_running(running, outputs, proof.combination)
         x = rescale(outputs, scale_bits, prime)
     return True

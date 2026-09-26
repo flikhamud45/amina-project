@@ -28,8 +28,10 @@ that reads claimed activations, detection depends on the **tampered** trace.
 Re-measured correctly with one consistent script, `ε` in 0.1–10 beats uniform,
 by up to **11.9x at `ε = 1`** — the opposite conclusion. The `ε = 0`
 catastrophe (Theorem 3) is unaffected. Caveat: the multi-neuron column is a
-heuristic search over 5 queries, and an untried mixture attack could pull it
-down. Details in `DEFENCE_NOTES.md` §6.
+heuristic search. The mixture attack designed to break exactly this trade-off
+has since been run and does not: it is the adversary's best move against
+uniform and its worst against every floor sampler. Details in
+`DEFENCE_NOTES.md` §6.
 
 **3. A structurally different mechanism fares no better once the adversary
 knows about it (§7).** A low-rank PCA plausibility check on the whole claimed

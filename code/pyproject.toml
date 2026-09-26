@@ -15,11 +15,12 @@ dependencies = [
     "numpy>=1.26",
     "matplotlib>=3.8",
     "tqdm>=4.66",
-    "pytest>=8.2"
 ]
 
+# Exact versions the reported results were produced with are in
+# requirements.txt; the ranges above are what the code needs to import.
 [project.optional-dependencies]
-dev = ["pytest>=8.2,<9.0"]
+dev = ["pytest>=8.2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

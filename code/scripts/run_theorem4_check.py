@@ -50,6 +50,7 @@ from pvi.experiments.analysis import acceptance_probability
 from pvi.protocol import ProtocolParams, UniformPathSampler
 from pvi.training import load_network
 from pvi.zoo import mlp_architecture_for
+from pvi.results import write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = ROOT / "artifacts" / "models"
@@ -167,11 +168,11 @@ def main() -> None:
         print("no epsilon beats uniform against the adversary's best attack.")
 
     RESULTS.mkdir(parents=True, exist_ok=True)
-    with open(RESULTS / "theorem4_check.json", "w") as fh:
-        json.dump({"layer": args.layer, "width": width, "n_queries": n_used,
-                   "note": "detection measured on tampered traces; adversary picks "
-                           "the better of single-neuron and multi-neuron attacks",
-                   "samplers": rows}, fh, indent=2)
+    write_json(RESULTS / "theorem4_check.json",
+               {"layer": args.layer, "width": width, "n_queries": n_used,
+                "note": "detection measured on tampered traces; adversary picks "
+                        "the better of single-neuron and multi-neuron attacks",
+                "samplers": rows})
     print(f"\nwrote {RESULTS / 'theorem4_check.json'}")
 
 

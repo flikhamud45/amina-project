@@ -60,6 +60,7 @@ from pvi.protocol import (
 )
 from pvi.training import load_network
 from pvi.zoo import mlp_architecture_for
+from pvi.results import write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = ROOT / "artifacts" / "models"
@@ -612,7 +613,7 @@ def main() -> None:
     }
 
     RESULTS.mkdir(parents=True, exist_ok=True)
-    (RESULTS / "attack.json").write_text(json.dumps(results, indent=2))
+    write_json(RESULTS / "attack.json", results)
     plot(results)
     print(f"\ndone in {time.perf_counter() - started:.0f}s")
     print(f"wrote {RESULTS / 'attack.json'}")

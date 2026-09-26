@@ -25,6 +25,7 @@ from pvi.attacks.tamper import _smallest_flipping_value
 from pvi.data import load_classification
 from pvi.training import load_network
 from pvi.zoo import mlp_architecture_for
+from pvi.results import write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = ROOT / "artifacts" / "models"
@@ -116,8 +117,7 @@ def main() -> None:
           f"-> bound {summary['bound_targeted_hardest_target_k1']:.5f}")
 
     RESULTS.mkdir(parents=True, exist_ok=True)
-    with open(RESULTS / "targeted_vs_untargeted.json", "w") as fh:
-        json.dump({"summary": summary, "rows": rows}, fh, indent=2)
+    write_json(RESULTS / "targeted_vs_untargeted.json", {"summary": summary, "rows": rows})
     print(f"\nwrote {RESULTS / 'targeted_vs_untargeted.json'}")
 
 

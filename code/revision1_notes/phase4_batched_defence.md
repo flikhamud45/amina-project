@@ -138,7 +138,7 @@ honest prover emitting real logits was rejected **0/20**. Both are fixed.
   index and a running hash of all earlier layers' messages, so proofs cannot be
   replayed at another layer or spliced across queries.
 - **Scale.** At `2^8` the honest pre-activations peak at
-  `[232021, 343622, 1298689]` across the three layers against a field half-width
+  `[771265, 813725, 2492865]` (full test set) across the three layers against a field half-width
   of `33554429` — 25x headroom. (At `2^10` the output layer overflows, which is
   why the default is now 8.)
 
@@ -177,15 +177,16 @@ challenges were verifier-sent rather than hash-derived (see below).
 
 ## Scope and what is genuinely left
 
-- **Soundness parameters are too small for Fiat–Shamir.** The field is 26 bits
-  and 24 columns are spot-checked, so each check is about `2^-24`–`2^-26`. With
-  *verifier-sent* challenges that is fine. With hash-derived challenges a
-  cheating prover can grind — re-randomise part of its message and re-hash until
-  the challenge is favourable — so the effective security is only ~24 bits,
-  which is not enough. Fixes: have the verifier send challenges (cheapest and
-  most faithful to the base protocol), or repeat the combination check and raise
-  the column count, or move to a ~64-bit prime. **Not yet done; stated here
-  rather than papered over.**
+- **Soundness parameters: FIXED.** The field is 26 bits and 24 columns are
+  spot-checked, so each check is about `2^-24`–`2^-26`. Under Fiat-Shamir that
+  was not the real security level: a cheating prover could grind, re-randomising
+  part of its message and re-hashing until the challenge was favourable, which
+  is only ~2^24 offline attempts. `VerifierRandomness` now draws the challenges
+  from the verifier's own CSPRNG, as the paper's own `RandPathTest` does, so a
+  cheating prover gets one attempt per interaction and every failure is a
+  visible rejection. It is the default in `scripts/run_batched_network.py`;
+  Fiat-Shamir remains available (`--challenges fiat-shamir`) for the
+  non-interactive setting, with the caveat documented.
 - **Honest committer assumed** — matching the paper's own threat model, but it
   is an assumption. A malicious committer needs the Ligero proximity argument.
 - **Dense layers only.** Convolutions share weights and need a different matrix

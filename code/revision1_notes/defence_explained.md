@@ -568,12 +568,23 @@ retry until the challenge happens to be favourable. Each retry succeeds with
 probability ~`2^−24`, so ~`2^24` retries suffice — cheap. The effective
 security is therefore ~24 bits, not the ~80–128 one would want.
 
-Two honest fixes, neither yet implemented: (a) have the **verifier send** the
-challenges, exactly as the base protocol does — then the parameters above are
-fine and the proof does not grow; or (b) keep Fiat–Shamir and raise the
-parameters (repeat the combination check, many more columns, and/or a ~64-bit
-prime, which needs a wider multiplication routine than int64 numpy gives).
-This gap was caught in review and is recorded rather than papered over.
+**This is now fixed.** `VerifierRandomness` draws the challenges from the
+verifier's own CSPRNG instead of hashing the prover's message — exactly what the
+paper's own `RandPathTest` does, where the verifier picks the path. A cheating
+prover then gets *one* attempt per interaction, and every failure is a visible
+rejection rather than a silent offline retry, so the soundness error really is
+the `2/p + 2^−t` above.
+
+Ordering still matters even with true randomness: the column challenge is
+withheld until after the prover has committed to `u`, otherwise the prover could
+solve for a `u` matching on exactly the columns it knows will be checked (§9.6).
+
+Verifier-drawn challenges are the default in `scripts/run_batched_network.py`;
+Fiat–Shamir stays available (`--challenges fiat-shamir`) for the
+non-interactive setting, where the ~24-bit caveat does apply. A test measures
+the difference directly: re-randomising the prover's message 200 times yields
+200 independent challenge draws under Fiat–Shamir and exactly 1 under
+verifier-drawn randomness.
 
 ---
 
@@ -601,22 +612,26 @@ visible in one row and absent in the other, exactly as §10 predicts.
 
 ## 12. What it costs
 
-Proof size: **115.6 kB** at width 512, against the sampling scheme's ~13 kB
-(≈9x). At width 4096 it is 837.6 kB. Commitment build: 0.5 s at width 512,
-4.0 s at width 4096 — one-off, at commit time.
+Proof size, whole network: **106 kB** for the 784-512-256-10 model (62.0 + 35.1
++ 9.4 kB across the three layers) against a 2.04 MB model — about **20x smaller
+than downloading the weights**. For 784-4096-2048-10 it is 670 kB against a
+44.35 MB model, **68x smaller**: the ratio *improves* with scale. Prover 5.0 ms,
+verifier 5.0 ms. Commitment build, one-off at commit time: 0.3 s and 3.9 s.
 
 The dominant term is the 24 opened columns, at one field element per neuron
-each, so proof size grows as `O(t·N)`. Worth being precise about what that does
-and doesn't break: the existing scheme **already** reveals a whole layer's
-activations whenever it touches that layer, so per-layer cost was already
-`O(N)`. This is a constant factor on an existing `O(N)`, not a new asymptotic
-class, and the protocol's actual efficiency claim — visit `O(depth)` layers
-rather than proving the whole network — is untouched.
+each, so proof size grows as `O(t·N)`.
 
-Two easy reductions we did not implement: field elements fit in 26 bits but are
-serialised as 8-byte integers (free ~2x), and 24 columns buys `2^−24` soundness
-where `2^−16` would be ample (another ~1.3x). The numbers above are what the
-code actually produces.
+Be careful with the comparison. Once *every* layer is checked in full there is
+nothing left to sample, so this is **no longer a sampling protocol** and the
+"visit `O(depth)` layers" claim does not carry over — it does not apply. The
+honest reference points are the two things this construction sits between:
+downloading the model (which it beats by 20–68x) and a full SNARK.
+
+One reduction listed here as future work has since been done: field elements
+fit in 26 bits and are now serialised as 4-byte integers, halving every column
+opening (already reflected above). Dropping the column count is *not* a saving
+that was available under Fiat-Shamir — see §10 — though with verifier-drawn
+challenges the parameters now mean what they say.
 
 ---
 
@@ -626,14 +641,16 @@ code actually produces.
   recomputes each layer's input from the previous layer's verified output using
   a public rounding rule; no range argument is needed because the activations
   are revealed anyway. Identity/logit layers are supported. At scale `2^8` the
-  honest pre-activations peak at `[232021, 343622, 1298689]` against a field
+  honest pre-activations peak at `[771265, 813725, 2492865]` over the full 10,000-image test set against a field
   half-width of `33554429`.
-- **Soundness parameters are too small under Fiat–Shamir** — see §10.
+- **Soundness parameters**: fixed by verifier-drawn challenges (§10). The
+  Fiat–Shamir mode is still offered and still carries the ~24-bit caveat.
 - **Honest committer assumed** (§9.5) — matches the paper's threat model, but it
   is an assumption.
 - **Dense ReLU layers only.** Convolutions share weights and need a different
   matrix layout; max-pooling isn't an affine-plus-ReLU relation at all.
-- **Prover cost not benchmarked** beyond the commitment build.
+- **Prover cost** is 5.0 ms for the whole small network and 5.0 ms to verify
+  (measured; an earlier draft said this was not benchmarked).
 - **It does not make a backdoored model safe.** It guarantees the committed model
   was executed faithfully. If the *committed model itself* is backdoored, no
   inference-time check can help — that is a property of training, and it remains

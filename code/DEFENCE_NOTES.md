@@ -242,8 +242,22 @@ Uniform's own worst case is the single-neuron attack at `1/N = 0.00195`; the
 zeroing attack against uniform is *easier* to catch (0.0066), so the adversary
 does not choose it.
 
-**`ε` in the 0.1–10 range beats uniform, by up to ~12x at `ε = 1`** — the exact
-opposite of the retracted claim. Theorem 3's `ε = 0` catastrophe is unaffected
+**Around `ε = 1` the floor sampler beats uniform on every query tested** — the
+exact opposite of the retracted claim.
+
+The headline above is a *mean*, and a mean hides the query that matters for a
+guarantee. Re-run per query (12 queries, same two attack families, reporting
+each query's own worst case):
+
+| `ε` | mean | **worst query** | queries where the attacker beats uniform |
+|---|---|---|---|
+| 0.1 | 0.011813 (6.0x) | 0.003268 (**1.7x**) | 0 / 12 |
+| **1** | 0.020556 (10.5x) | 0.009909 (**5.1x**) | **0 / 12** |
+| 10 | 0.004335 (2.2x) | 0.002963 (**1.5x**) | 0 / 12 |
+
+So the honest statement is "**around `ε = 1`**", not "0.1–10": at `ε = 0.1` the
+worst query is only 1.7x uniform, which is too thin to lean on. At `ε = 1` the
+sampler wins on all 12 queries by at least 5x. Theorem 3's `ε = 0` catastrophe is unaffected
 and still holds; what is now clear is that the catastrophe is specific to
 `ε = 0`, and that a small floor does not merely patch it but overtakes uniform.
 
@@ -263,14 +277,27 @@ The single-neuron column is exact — every `v ∈ U`, acceptance computed by th
 same dynamic program the protocol uses — so the *upper* half of each row is not
 in doubt.
 
-*Provisional*: the multi-neuron column, and therefore the "adversary's best"
-column that the headline rests on. It comes from a heuristic search
-(`plan_adaptive_stealthy_flip`) over 5 queries. A stronger adversary could pull
-the middle-`ε` numbers down, and there is an obvious candidate nobody has
-tried: **mixtures** — zero the neurons with small outgoing weights (exposure
-`ε·|w|` each) while raising one neuron just enough, so neither pure family's
-weakness applies. Until that is run, "`ε = 1` beats uniform by 12x" should be
-read as *not yet refuted* rather than established.
+*The mixture attack has now been run, and it does not break the result.* The
+obvious way to attack a middle `ε` is to combine the two pure families — zero
+the neurons with the smallest outgoing weights (exposure `ε·|w|` each) while
+raising one neuron just enough — so that neither family's weakness applies.
+Measured over 12 queries (`scripts/run_mixture_attack.py`), detection under the
+adversary's *best* of all three families:
+
+| sampler | pure | mixture | adversary's best | worst query | vs `1/N` |
+|---|---|---|---|---|---|
+| uniform | 0.00505 | **0.00195** | 0.00195 | 0.00195 | 1.0x |
+| `ε = 0.1` | 0.01181 | 0.49263 | 0.01181 | 0.00327 | 1.7x |
+| **`ε = 1`** | 0.02668 | 0.25752 | **0.02668** | **0.00991** | **5.1x** |
+| `ε = 10` | 0.01383 | 0.04850 | 0.01362 | 0.00660 | 3.4x |
+
+The mixture is the adversary's *best* move against **uniform** (it drives
+uniform to exactly `1/N`), and its *worst* against every floor sampler — zeroing
+a batch of small-weight neurons leaves a wide support, which is precisely what
+contribution weighting with a floor is good at seeing. So the attack designed to
+exploit the middle-`ε` trade-off makes the case for it stronger, not weaker.
+
+What is still untested: ≥100 queries, and width 4096.
 
 Still to do: run ≥100 queries, add the mixture attack, report per-query worst
 cases rather than means, and repeat at width 4096 (`phase3_gpu.md` carries the
@@ -522,11 +549,16 @@ Re-run at width 4096 (8x), detection is unchanged at `1.000000` for both
 attacks while uniform sampling's degrades from `0.0019` to `0.00024` — the
 `1/N` ceiling is visible in one row and absent in the other.
 
-**Cost, honestly**: proof size ~115 kB at width 512 against the sampling
-scheme's ~13 kB (≈9x), growing as `O(t·N)`. Since the existing scheme already
-reveals a whole layer's activations whenever it touches that layer (`C_trc` is
-one leaf per layer), this is a constant factor on an existing `O(N)`, not a new
-asymptotic class, and "visit `O(depth)` layers" is untouched.
+**Cost, honestly**: the whole-network proof is **106 kB** (62.0 + 35.0 + 9.4 kB
+for the three layers) against a 2.04 MB model, so about **20x smaller than
+simply downloading the weights**; prover 8.4 ms, verifier 8.5 ms, commitment
+0.3 s one-off. Per-layer cost grows as `O(t·N)`.
+
+Comparing that to the sampling scheme's ~13 kB proof is the wrong comparison,
+and an earlier version of this section made it: once *every* layer is checked
+in full there is nothing left to sample, so this is no longer a sampling
+protocol and the "visit `O(depth)` layers" framing does not apply to it. The
+honest reference points are the model download and a full SNARK.
 
 **Whole-network coverage (added after review).** An earlier version of this
 section checked one hidden layer in isolation, which proves little, and did not
@@ -583,11 +615,13 @@ certify anything about whether the committed model is benign.
 
 Directions that address the gap rather than the symptom:
 
-* **The batched per-layer check of §10.** This is the one we built, and it is the
-  cheapest point on the trade-off curve we found: detection `1.000000` against every
-  attack in this document, exact completeness, ~9x proof size, and no primitive
-  beyond the Merkle tree the protocol already uses. Its limits (one layer at a time
-  without rescaling, honest committer, dense ReLU layers) are stated in §10.
+* **The batched whole-network check of §10.** This is the one we built, and it is
+  the cheapest point on the trade-off curve we found: detection `1.000000` against
+  every attack in this document, exact completeness, a 106 kB proof for the whole
+  network (~20x smaller than the model), and no cryptographic assumption beyond the
+  collision-resistant hash the protocol already relies on. Its limits (honest
+  committer, dense layers only, and ~24-bit security under Fiat-Shamir) are stated
+  in §10.
 * **Exact-binding proofs.** A zkSNARK over the full circuit removes the sampling gap
   entirely — at the prover cost the paper set out to avoid. That trade-off is the
   honest framing: the orders-of-magnitude speed-up is paid for in soundness against
