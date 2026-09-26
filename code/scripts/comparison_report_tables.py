@@ -13,13 +13,54 @@ import csv
 import math
 from pathlib import Path
 
-from comparison_figures import CNN_ORDER, DEFAULT, LLM_LABEL, PROVE, VERIFY, Measured, llm_rows, _llm_bytes, _read, _f
+from comparison_figures import (CNN_ORDER, DEFAULT, LLM_LABEL, PROVE, VERIFY, Measured, llm_rows, _llm_bytes,
+                                _llm_cost, _read, _f)
 
 ROOT = Path(__file__).resolve().parents[1]
 TABLES = ROOT / "artifacts" / "comparison" / "tables"
 NAMES = {"mlp_mnist": "MLP (MNIST)", "lenet5": "LeNet-5 (MNIST)", "vgg11": "VGG-11 (CIFAR-10)",
          "vgg16": "VGG-16 (CIFAR-10)", "resnet18_cifar": "ResNet-18 (CIFAR-10)",
          "resnet18_224": "ResNet-18 (224px, dogs vs cats)"}
+
+
+# (published system, published model, our model, our prompt length or None for CNNs, our mode, note)
+MATCHES = [
+    ("zkCNN", "LeNet-5 MNIST", "lenet5", None, "C", "same model"),
+    ("vCNN (re-run by zkCNN)", "LeNet-5 MNIST", "lenet5", None, "C", "same model"),
+    ("Bionetta", "LeNet-5", "lenet5", None, "C", "same architecture"),
+    ("EZKL (run by Bionetta)", "LeNet-5", "lenet5", None, "C", "same architecture"),
+    ("zkCNN", "VGG-11 CIFAR-10", "vgg11", None, "C", "same model"),
+    ("zkCNN", "VGG-16 CIFAR-10", "vgg16", None, "C", "same model"),
+    ("ZKML", "VGG-16 CIFAR-10", "vgg16", None, "C", "same model"),
+    ("zkPyTorch", "VGG-16 CIFAR-10", "vgg16", None, "C", "same model; prover time only"),
+    ("ZENO", "VGG-16 CIFAR-10 (19.9M-FLOP variant)", "vgg16", None, "C", "their variant is smaller"),
+    ("ZKML", "ResNet-18 CIFAR-10 (ZKML's 281K-param variant)", "resnet18_cifar", None, "C",
+     "their variant has 281K params, ours 11.2M"),
+    ("Bionetta", "ResNet-18 (Bionetta's version)", "resnet18_cifar", None, "C", "their own ResNet-18 variant"),
+    ("zkGPT", "GPT-2", "gpt2", 64, "C", "their prompt length not in the table"),
+    ("zkLLM (re-run by zkGPT)", "GPT-2", "gpt2", 64, "C", "their prompt length not in the table"),
+    ("DeepProve", "GPT-2", "gpt2", 64, "C", "same prompt length"),
+    ("DeepProve", "GPT-2", "gpt2", 128, "C", "same prompt length"),
+    ("DeepProve", "GPT-2", "gpt2", 256, "C", "same prompt length"),
+    ("DeepProve", "GPT-2", "gpt2", 512, "C", "same prompt length"),
+    ("zkLLM", "OPT-125M", "opt-125m", 2048, "C", "same prompt length"),
+    ("zkLLM", "OPT-1.3B", "opt-1.3b", 2048, "C", "same prompt length"),
+    ("zkLLM", "OPT-6.7B", "opt-6.7b", 2048, "C", "same prompt length"),
+    ("zkLLM", "Llama-2-7B", "llama2-7b", 2048, "C", "same prompt length"),
+    ("zkLLM (re-run by Anchuri)", "Llama-2-7B", "llama2-7b", 2048, "C", "their prompt length not stated"),
+    ("ZKTorch", "Llama-2-7B (1 token)", "llama2-7b", 64, "C", "they prove 1 token, we prove 64"),
+    ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "qwen3-4b", 8, "Kpre", "λ=40 and 1 client thread, as Maverick"),
+]
+
+
+def ratio(a, b, up, down):
+    if not a or not b:
+        return "–"
+    r = a / b
+    if 0.99 < r < 1.01:
+        return "equal"
+    x = r if r >= 1 else 1 / r
+    return (f"{x:,.0f}×" if x >= 1000 else f"{x:.3g}×") + " " + (up if r >= 1 else down)
 
 
 def t(sec):
@@ -174,6 +215,35 @@ def main() -> None:
     d.table("Published results used in the comparison (as reported; hardware differs per row)",
             ["system", "model", "params", "tokens", "prove", "verify", "proof", "hardware", "source"], rows,
             "tab:published")
+
+    # -- like-for-like ratios -----------------------------------------------------------------------
+    curated = _read("reported_curated.csv")
+    c_llm = llm_rows("C")
+    k_thr1 = llm_rows("Kpre", lam=40, threads="1", variant="_thr1")
+    rows = []
+    for system, model, ours, seq, mode, note in MATCHES:
+        # the published row with the same prompt length if there is one, else the only row for that model
+        cand = [r for r in curated if (r["system"], r["model"]) == (system, model)]
+        same = [r for r in cand if seq and r["seq"] == str(seq)]
+        r = same[0] if same else (cand[0] if len(cand) == 1 else None)
+        if r is None:
+            continue
+        if seq is None:
+            cell = f"defence_{mode}_int_lam{lam}_rate4"
+            us = (M.total(ours, cell, PROVE), M.total(ours, cell, VERIFY), M.get(ours, cell, "bytes_total"))
+            label = NAMES[ours]
+        else:
+            dd = (c_llm if mode == "C" else k_thr1).get((ours, seq))
+            if not dd:
+                continue
+            us = _llm_cost(dd)[:3]
+            label = f"{LLM_LABEL[ours]}, {seq} tok."
+        them = (_f(r["prover_s"]), _f(r["verifier_s"]), _f(r["proof_bytes"]))
+        rows.append([f"{system}: {model}", f"{label} ({mode})", ratio(them[0], us[0], "faster", "slower"),
+                     ratio(them[1], us[1], "faster", "slower"), ratio(us[2], them[2], "larger", "smaller"),
+                     r["hardware"], note])
+    d.table("Like-for-like ratios against published systems (ours at λ=128 unless noted; their hardware differs)",
+            ["published", "ours", "prover", "verifier", "proof", "their hardware", "note"], rows, "tab:ratios")
 
     # -- error types -------------------------------------------------------------------------------
     rows = [[r["system"], r["setting"], r["error_type"], r["stated_error"], r["trust"]]

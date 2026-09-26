@@ -440,7 +440,25 @@ python scripts/fullcheck_bench.py cnn --model vgg16
 python scripts/fullcheck_bench.py llm --model gpt2 --seq 64 128 256 512
 python scripts/comparison_aggregate.py && python scripts/comparison_literature.py
 python scripts/comparison_analytic.py && python scripts/comparison_figures.py
+python scripts/comparison_report_tables.py
 ```
+
+**Results** (details, tables and caveats in [`COMPARISON_ANALYSIS.md`](COMPARISON_ANALYSIS.md)):
+
+* Every honest query was accepted (3,174/3,174) and every attack rejected
+  (1,854/1,854 on the CNNs, 174/174 on the language models), including forgeries that
+  only the Reed–Solomon check or only the Merkle check can stop.
+* Against the single-neuron attack, one path of Anchuri et al. detects with
+  probability 1/84–1/512 on the CNNs and 1/11,008 on Llama-2-7B; 2^-40 needs
+  2,316–14,182 paths, i.e. opening the whole model and trace. Our proof at 2^-40 is
+  1.1–8.4× smaller than that.
+* At λ = 128 with committed weights: 11–105 ms to prove and 21–370 ms to verify a
+  CNN query (131 kB–12.1 MB proof); 0.44 s / 0.99 s / 62 MB for GPT-2 at 64 tokens;
+  32 s / 3.7 min / 11.6 GB for Llama-2-7B at 2,048 tokens.
+* On the same models the prover is 27–7,000× faster than published CNN SNARKs and
+  11–280× faster on language models; the verifier is usually slower (1.8–141×) and
+  the proof much larger. With known weights the proof equals Maverick's (36.1 MB,
+  Qwen3-4B).
 
 **Raw data is never aggregated in place.** Every measurement is one JSON line in
 `artifacts/comparison/raw/<suite>/<model>/<cell>.jsonl` (with the git commit,
@@ -457,6 +475,8 @@ pre-empted job is simply re-submitted. `comparison_aggregate.py` rebuilds
 | `literature/reported_benchmarks.csv` | 413 published measurements from 32 systems, each with its table/page and a verbatim snippet, each re-checked against the paper |
 | `tables/reported_curated.csv` | the published rows used in figures, in SI units, each linked to its catalogue row |
 | `tables/systems.csv` | each system's setting, error type and stated bound |
+| `tables/report_tables.md`, `.tex` | the report's tables, generated from the tables above |
+| `figures/*.pdf`, `*.png` | the comparison figures, drawn from the tables only |
 
 ---
 

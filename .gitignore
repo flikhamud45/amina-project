@@ -37,3 +37,9 @@ dist/
 code/artifacts/fullcheck/models/
 code/artifacts/fullcheck/cache/
 /logs/
+# earlier benchmark runs kept on the cluster for provenance, superseded by raw/
+code/artifacts/comparison/raw_preliminary/
+code/artifacts/comparison/raw_superseded/
+code/artifacts/comparison/final/
+# a flat CSV copy of raw/, rebuilt by scripts/comparison_aggregate.py
+code/artifacts/comparison/tables/measured_long.csv

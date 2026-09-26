@@ -87,7 +87,7 @@ class Measured:
         return (sum(v[0] * v[1] for v in vals) / n, int(n)) if n else (None, 0)
 
 
-def llm_rows(mode="C", lam=DEFAULT["lam"], chal="int") -> dict:
+def llm_rows(mode="C", lam=DEFAULT["lam"], chal="int", threads=DEFAULT["threads"], variant=DEFAULT["variant"]) -> dict:
     """``{(model, seq): {metric: (value, provenance, params)}}`` at the headline settings."""
     out: dict = defaultdict(dict)
     for r in _read("llm_full_model.csv"):
@@ -95,8 +95,7 @@ def llm_rows(mode="C", lam=DEFAULT["lam"], chal="int") -> dict:
             continue
         if (r["mode"], r["challenges"]) != (mode, chal) or _f(r["lam"]) != lam:
             continue
-        if (r.get("rate", ""), r.get("threads", ""), r.get("variant", "")) != (
-                DEFAULT["rate"], DEFAULT["threads"], DEFAULT["variant"]):
+        if (r.get("rate", ""), r.get("threads", ""), r.get("variant", "")) != (DEFAULT["rate"], threads, variant):
             continue
         key = (r["model"], int(float(r["seq"])))
         if r["metric"] in out[key]:
@@ -308,21 +307,23 @@ def fig_breakdown(M: Measured) -> None:
         if None not in v:
             labels.append(CNN_LABEL[m])
             parts.append(v)
-    for (model, seq), d in sorted(llm_rows("C").items()):
+    for (model, seq), d in sorted(llm_rows("C").items(), key=lambda kv: kv[1]["prove_forward"][2]):
+        if model not in ("gpt2", "qwen3-4b", "llama2-7b"):
+            continue
         if seq == 64 and all(("bytes_" + k) in d for k in ("claims", "u", "columns", "paths")):
             labels.append(f"{LLM_LABEL.get(model, model)}\n(64 tok.)")
             parts.append([d["bytes_" + k][0] for k in ("claims", "u", "columns")] + [_llm_bytes(d, "paths")])
     if not parts:
         return
-    fig, ax = plt.subplots(figsize=(3.5, 2.1))
-    names = ("claimed pre-activations", "folded rows u", "opened columns", "Merkle paths")
+    fig, ax = plt.subplots(figsize=(3.5, 2.3))
+    names = ("claimed pre-activations", "folded rows u", "opened columns", "Merkle multiproofs")
     colours = (OURS, OURS_K, "#58a55c", "0.6")
     for j in range(4):
         tot = [sum(p) for p in parts]
         ax.bar(range(len(parts)), [p[j] / t for p, t in zip(parts, tot)],
                bottom=[sum(p[:j]) / t for p, t in zip(parts, tot)], color=colours[j], label=names[j])
     ax.set_xticks(range(len(parts)))
-    ax.set_xticklabels(labels, fontsize=5)
+    ax.set_xticklabels([lab.replace("\n", " ") for lab in labels], fontsize=5.2, rotation=35, ha="right")
     ax.set_ylabel(f"share of proof (λ={DEFAULT['lam']})")
     ax.legend(frameon=False, fontsize=5.2, ncol=2, loc="upper center", bbox_to_anchor=(0.5, 1.28))
     _save(fig, "proof_breakdown")
