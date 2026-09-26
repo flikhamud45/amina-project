@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "artifacts" / "comparison" / "raw"
 TABLES = ROOT / "artifacts" / "comparison" / "tables"
-GROUP_KEYS = ("batch", "attack", "lam", "op", "stage")
+GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
 ADDITIVE = {"prove_forward", "prove_fold", "prove_open", "verify_derive", "verify_products", "verify_columns",
             "verify_fold", "fs_hash", "bytes_claims", "bytes_u", "bytes_columns", "bytes_paths", "bytes_total",
             "commit_total", "verifier_precompute", "bytes_paths_multiproof", "bytes_total_multiproof"}
@@ -70,7 +70,8 @@ def summarise(rows: list[dict]) -> list[dict]:
         key = (r["suite"], r["model"], r["cell"], r["metric"]) + tuple(str(r.get(k, "")) for k in GROUP_KEYS)
         groups[key].append(float(r["value"]))
         meta[key] = {k: v for k, v in r.items()
-                     if k.startswith("cfg_") or k in ("hw", "prover_hw", "verifier_hw", "host", "git_sha", "unit")}
+                     if k.startswith("cfg_") or k in ("hw", "prover_hw", "verifier_hw", "host", "git_sha", "unit",
+                                                      "bits")}
     out = []
     for key, vals in sorted(groups.items()):
         vals.sort()

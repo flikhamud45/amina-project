@@ -69,11 +69,11 @@ class Measured:
         self.idx = {}
         for r in _read("measured_summary.csv"):
             key = (r["suite"], r["model"], r["cell"], r["metric"], r.get("batch", ""), r.get("attack", ""),
-                   r.get("lam", ""), r.get("stage", ""))
+                   r.get("lam", ""), r.get("stage", ""), r.get("k", ""))
             self.idx[key] = r
 
     def get(self, model, cell, metric, stat="median", suite="cnn", batch="", attack="", lam="", stage=""):
-        r = self.idx.get((suite, model, cell, metric, batch, attack, str(lam) if lam != "" else "", stage))
+        r = self.idx.get((suite, model, cell, metric, batch, attack, str(lam) if lam != "" else "", stage, ""))
         return _f(r[stat]) if r else None
 
     def total(self, model, cell, parts, suite="cnn"):
@@ -216,7 +216,7 @@ def fig_detection(M: Measured) -> None:
     ax.bar([x + 0.27 for x in xs], [o if o is not None else 0 for o in ours], 0.26, color=OURS,
            label="ours (measured)")
     ax.set_yscale("log")
-    ax.set_ylim(1e-5, 2)
+    ax.set_ylim(3e-7, 2)
     ax.set_xticks(xs)
     ax.set_xticklabels([CNN_LABEL[m] for m in models], fontsize=5.6)
     ax.set_ylabel("P[tamper detected] per query")
@@ -226,32 +226,47 @@ def fig_detection(M: Measured) -> None:
 
 
 def fig_security(M: Measured) -> None:
-    fig, ax = plt.subplots(figsize=(3.4, 2.3))
+    """Security reached against the single-neuron attack vs bytes sent.
+
+    [1]: k paths with shared openings, -log2 P[escape] = -k log2(1 - p); once every
+    row is open the verifier may as well recompute everything (drawn as the arrow).
+    Ours: the three parameter sets, at the soundness they actually achieve.
+    """
+    curve = defaultdict(list)
+    for key, r in M.idx.items():
+        if key[3] == "paths_bytes_shared_k" and key[2] == "sampling":
+            curve[key[1]].append(r)
+    fig, ax = plt.subplots(figsize=(3.45, 2.5))
     for i, m in enumerate(CNN_ORDER):
-        lams, ours, samp = [], [], []
-        for lam in (40, 80, 128):
-            b = M.get(m, f"defence_C_int_lam{lam}_rate4", "bytes_total")
-            s = M.get(m, "sampling", "paths_bytes_shared", lam=lam)
-            if b is None or s is None:
-                continue
-            lams.append(lam)
-            ours.append(b)
-            samp.append(s)
-        if not lams:
-            continue
         colour = f"C{i}"
-        ax.plot(lams, ours, "-o", color=colour, ms=2.8, lw=1, label=CNN_LABEL[m].replace("\n", " "))
-        ax.plot(lams, samp, ":s", color=colour, ms=2.8, lw=1)
+        pts = []
+        for lam in (40, 80, 128):
+            cell = f"defence_C_int_lam{lam}_rate4"
+            bts, bits = M.get(m, cell, "bytes_total"), M.get(m, cell, "soundness_bits")
+            if bts and bits:
+                pts.append((bts, bits))
+        if pts:
+            ax.plot(*zip(*pts), "-o", color=colour, ms=3, lw=1, label=CNN_LABEL[m].replace("\n", " "))
+        rows = sorted(curve.get(m, []), key=lambda r: _f(r["median"]))
+        xs = [_f(r["median"]) for r in rows]
+        ys = [_f(r.get("bits")) for r in rows]
+        if not xs or None in ys:
+            continue
+        ax.plot(xs, ys, ":", color=colour, lw=1)
+        ax.scatter(xs[:1], ys[:1], marker="x", color=colour, s=12)
         cap = M.get(m, "sampling", "open_all_bytes")
         if cap:
-            ax.axhline(cap, color=colour, lw=0.4, alpha=0.5)
+            ax.annotate("", xy=(cap, 150), xytext=(cap, max(ys)), arrowprops=dict(arrowstyle="->", color=colour,
+                                                                                    lw=0.6, ls="--"))
+    ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel("security level λ (bits)")
-    ax.set_ylabel("bytes per query")
-    ax.set_title("solid: ours   dotted: [1] with k(λ) paths (shared openings)", fontsize=6.3)
-    ax.legend(frameon=False, fontsize=5.4, ncol=2)
+    ax.set_ylim(1e-3, 200)
+    ax.set_xlabel("bytes sent per query")
+    ax.set_ylabel("security against the attack (bits)")
+    ax.set_title("solid: ours (λ = 40, 80, 128)   dotted: [1], 1 … k paths", fontsize=6.3)
+    ax.legend(frameon=False, fontsize=5.2, loc="lower right")
     ax.grid(True, lw=0.3, alpha=0.4)
-    _save(fig, "bytes_vs_security")
+    _save(fig, "security_vs_bytes")
 
 
 def fig_seq_scaling() -> None:

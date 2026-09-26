@@ -85,22 +85,35 @@ def main() -> None:
     d.table("Models: accuracy of the float model and of the exact int8 model the protocol verifies",
             ["model", "params", "float acc.", "int8 acc.", "agreement", "claimed values / query"], rows, "tab:models")
 
-    # -- CNN costs: ours vs the sampling protocol, same model, same machine ---------------------
+    # -- CNN costs: ours vs the sampling protocol and vs downloading the model ------------
     rows = []
     for m in CNN_ORDER:
         c = f"defence_C_int_lam{lam}_rate4"
         k = f"defence_Kpre_int_lam{lam}_rate4"
         if M.get(m, c, "prove_forward") is None:
             continue
-        per_path = M.get(m, "sampling", "path_bytes")
-        shared40 = M.get(m, "sampling", "paths_bytes_shared", lam=40)
         rows.append([NAMES[m], t(M.total(m, c, PROVE)), t(M.total(m, c, VERIFY)), b(M.get(m, c, "bytes_total")),
+                     b(M.get(m, c, "bytes_claims_zlib") and M.get(m, c, "bytes_total") - M.get(m, c, "bytes_claims")
+                       + M.get(m, c, "bytes_claims_zlib")),
                      t(M.total(m, k, VERIFY)), b(M.get(m, k, "bytes_total")),
-                     b(per_path), f"{M.get(m, 'sampling', 'paths_needed_penultimate', lam=40):,.0f}",
-                     b(shared40)])
-    d.table(f"CNNs, one query (RTX 2080 Ti prover, Xeon 4114 verifier): ours at λ={lam} vs Anchuri et al.'s path test",
-            ["model", "prove (C)", "verify (C)", "proof (C)", "verify (Kpre)", "proof (Kpre)",
-             "[1]: 1 path", "[1]: paths for 2^-40", "[1]: 2^-40, shared"], rows, "tab:cnn")
+                     b(M.get(m, "facts", "model_bytes_int8")), t(M.get(m, "facts", "cpu_float_inference"))])
+    d.table(f"CNNs, one query, λ={lam} (prover RTX 2080 Ti, verifier Xeon 4114 x8): ours vs downloading the model",
+            ["model", "prove (C)", "verify (C)", "proof (C)", "proof (C), zlib", "verify (Kpre)", "proof (Kpre)",
+             "int8 model", "CPU re-run"], rows, "tab:cnn")
+
+    rows = []
+    for m in CNN_ORDER:
+        if M.get(m, "sampling", "path_bytes") is None:
+            continue
+        rows.append([NAMES[m], b(M.get(m, "sampling", "path_bytes")), t(M.get(m, "sampling", "path_verify")),
+                     f"1/{1 / M.get(m, 'sampling', 'p_detect_penultimate'):,.0f}",
+                     f"{M.get(m, 'sampling', 'paths_needed_penultimate', lam=40):,.0f}",
+                     b(M.get(m, "sampling", "paths_bytes_shared", lam=40)),
+                     b(M.get(m, "sampling", "open_all_bytes")),
+                     b(M.get(m, f"defence_C_int_lam40_rate4", "bytes_total"))])
+    d.table("Anchuri et al.'s path test on the same models: cost of reaching 2^-40 against the single-neuron attack",
+            ["model", "1 path", "verify 1 path", "detect / path", "paths for 2^-40", "k paths, shared",
+             "open everything", "ours at λ=40 (C)"], rows, "tab:sampling")
 
     # -- soundness experiments -----------------------------------------------------------------
     attacks = ["single_value", "penultimate_neuron", "output_logit", "substituted_model_1pct",

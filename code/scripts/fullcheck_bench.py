@@ -110,8 +110,18 @@ class Recorder:
                 pass
 
 
+ONLY: set[str] = set()
+
+
 def is_done(suite, model, cell) -> bool:
     return (RAW / suite / model / f"{cell}{TAG}.done").exists()
+
+
+def _todo(args, suite, model, cell) -> bool:
+    """Run this cell?  Selected by ``--only`` (if given), and forced or not yet done."""
+    if ONLY and not any(cell.startswith(o) for o in ONLY):
+        return False
+    return args.force or not is_done(suite, model, cell)
 
 
 def _sync(device):
@@ -231,7 +241,7 @@ def suite_cnn(args, env) -> None:
 
     # ---- model facts and fidelity ------------------------------------------------
     cell = "facts"
-    if args.force or not is_done("cnn", name, cell):
+    if _todo(args, "cnn", name, cell):
         r = Recorder("cnn", name, cell, {}, env)
         r.rec("n_params", n_params, "")
         r.rec("n_weight_ops", len(mats), "")
@@ -270,7 +280,7 @@ def suite_cnn(args, env) -> None:
 
     # ---- the single-neuron attack on the float model --------------------------------
     cell = "attack_float"
-    if args.force or not is_done("cnn", name, cell):
+    if _todo(args, "cnn", name, cell):
         r = Recorder("cnn", name, cell, {"n": len(xs)}, env)
         seq = isinstance(model_f, nn.Sequential)
         head = model_f[-1] if seq else model_f.head
@@ -326,7 +336,7 @@ def suite_cnn(args, env) -> None:
 
     # ---- the sampling baseline (Anchuri et al.) on the integer graph -----------------------
     cell = "sampling"
-    if args.force or not is_done("cnn", name, cell):
+    if _todo(args, "cnn", name, cell):
         n_paths = args.paths
         r = Recorder("cnn", name, cell, {"n_paths": n_paths}, env)
         env1, _ = graph.forward(q_inputs[:1])
@@ -355,7 +365,12 @@ def suite_cnn(args, env) -> None:
         r.rec("p_detect_min_node", p_min, "")
         lams = (10, 20, 40, 64, 80, 128)
         ks = {lam: paths_for(lam, p_attack) for lam in lams}
-        shared = shared_path_bytes(tc, env1, sorted(set(ks.values())), max_paths=args.max_shared_paths)
+        grid = [1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000]
+        shared = shared_path_bytes(tc, env1, sorted(set(ks.values()) | set(grid)), max_paths=args.max_shared_paths)
+        for k_ in grid:   # the cost-vs-security curve of the sampling protocol
+            if shared.get(k_) is not None:
+                r.rec("paths_bytes_shared_k", shared[k_], "B", k=k_,
+                      bits=-k_ * math.log2(1.0 - p_attack))
         median_path = statistics.median(per_path)
         for lam in lams:
             r.rec("paths_needed_penultimate", ks[lam], "", lam=lam)
@@ -366,6 +381,8 @@ def suite_cnn(args, env) -> None:
         r.done()
 
     # ---- our defence: commitment, honest queries, all modes and security levels ----------
+    if ONLY and not any(o.startswith(("commit", "defence", "tamper")) for o in ONLY):
+        return
     # The commitment is one-time and takes seconds for these models, so it is
     # always rebuilt (the Merkle roots are deterministic); it is recorded once.
     rate = args.rate
@@ -375,7 +392,7 @@ def suite_cnn(args, env) -> None:
     _sync(device)
     commit_s = time.perf_counter() - t0
     cell = f"commit_rate{rate}"
-    if args.force or not is_done("cnn", name, cell):
+    if _todo(args, "cnn", name, cell):
         r = Recorder("cnn", name, cell, {"rate": rate}, env)
         r.rec("commit_total", commit_s, "s")
         for k, c in coms.items():
@@ -389,7 +406,7 @@ def suite_cnn(args, env) -> None:
     for lam in LAMBDAS:
         for mode, chal in (("C", "int"), ("C", "fs"), ("K", "int"), ("Kpre", "int")):
             cell = f"defence_{mode}_{chal}_lam{lam}_rate{rate}"
-            if not args.force and is_done("cnn", name, cell):
+            if not _todo(args, "cnn", name, cell):
                 continue
             params = params_for(lam, len(mats), rate=rate, fiat_shamir=(chal == "fs"))
             cfg = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": params.rate,
@@ -418,7 +435,7 @@ def suite_cnn(args, env) -> None:
 
     # ---- soundness experiments: every attack must be rejected ----------------------------
     cell = "tamper_C_int_lam40"
-    if args.force or not is_done("cnn", name, cell):
+    if _todo(args, "cnn", name, cell):
         params = params_for(40, len(mats), rate=rate)
         v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
         r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns}, env)
@@ -580,7 +597,7 @@ def suite_llm(args, env) -> None:
                 coms = commit_graph(graph, args.rate, device=device)
                 commit_s = time.perf_counter() - t0
                 cell = f"commit_{base}"
-                if args.force or not is_done("llm", cfg.name, cell):
+                if _todo(args, "llm", cfg.name, cell):
                     r = Recorder("llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": args.rate,
                                                          "n_layers_full": cfg.n_layers,
                                                          "params_full": decoder_param_count(cfg)}, env)
@@ -595,7 +612,7 @@ def suite_llm(args, env) -> None:
             for lam in args.lams:
                 for mode, chal in modes:
                     cell = f"defence_{mode}_{chal}_lam{lam}_{base}"
-                    if not args.force and is_done("llm", cfg.name, cell):
+                    if not _todo(args, "llm", cfg.name, cell):
                         continue
                     # size (r, t) for the FULL model's op count, so extrapolated rows keep their lambda
                     full_shapes = decoder_shapes(cfg, seq)
@@ -660,9 +677,11 @@ def main() -> None:
                     help="cap on paths simulated for the shared-opening sampling cost")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--tag", default="", help="suffix for cell names, e.g. _thr1")
+    ap.add_argument("--only", default="", help="comma-separated cell prefixes to (re)run, e.g. sampling")
     args = ap.parse_args()
-    global TAG
+    global TAG, ONLY
     TAG = args.tag
+    ONLY = {c for c in args.only.split(",") if c}
     if args.threads:
         torch.set_num_threads(args.threads)
     torch.backends.cuda.matmul.allow_tf32 = False
