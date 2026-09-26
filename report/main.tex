@@ -65,17 +65,17 @@ The price is a larger proof and a slower verifier.
   \centering
   \begin{subfigure}[b]{0.31\textwidth}
     \includegraphics[width=\linewidth]{figures/overview_path.pdf}
-    \caption{Original protocol: one random path}
+    \caption{Original: one node per layer}
     \label{fig:overview-path}
   \end{subfigure}\hfill
   \begin{subfigure}[b]{0.31\textwidth}
     \includegraphics[width=\linewidth]{figures/overview_attack.pdf}
-    \caption{Our attack: one wrong neuron}
+    \caption{Attack: caught with prob.\ $1/N$}
     \label{fig:overview-attack}
   \end{subfigure}\hfill
   \begin{subfigure}[b]{0.31\textwidth}
     \includegraphics[width=\linewidth]{figures/overview_defence.pdf}
-    \caption{Our defence: every layer}
+    \caption{Ours: caught with prob.\ $1-2^{-\lambda}$}
     \label{fig:overview-defence}
   \end{subfigure}
   \Description{Three small network diagrams: a random path checked by the original
@@ -259,49 +259,106 @@ restores some detection (about $10\times$ uniform on average in our experiments)
 stays at a few percent.
 
 \subsection{Our defence: checking every layer at once}
+\label{sec:defence}
 
-\para{Step 1: an exact integer model.} Following standard integer-only
-inference~\cite{jacob2018quant}, each weight layer computes $Z = W X + b$ exactly in
-integers. Weights and activations are int8 with per-channel scales, BatchNorm is folded
-into the weights, and all sums fit in 32 bits. The next input is obtained by fixed-point
-requantisation and the usual activation or pooling. Convolutions become matrix products
-through im2col. The prover's GPU computes these products in float32 chunks of at most
-1{,}024 terms. Every partial sum stays within $2^{24}$ and is therefore exact, so the
-result is bit-identical to the client's integer arithmetic. This removes the
-floating-point tolerance that the original protocol needs. In our reproduction that
-tolerance was mandatory, and it gives the attacker a free budget.
+The idea fits in one sentence. Instead of checking a few neurons exactly, the verifier
+checks \emph{one random combination of all the neurons of a layer}; a wrong value
+anywhere in the layer changes that combination, except with negligible probability. We
+now build this up in four steps and then give the complete protocol.
 
-\para{Step 2: only weight products need proving.} For every weight layer $\ell$ the
-prover sends the claimed pre-activations $Z_\ell$. The verifier computes everything that
-does not involve the weights itself, from values it has already checked. That includes
-requantisation, ReLU, pooling, residual additions, LayerNorm/RMSNorm, GELU/SiLU tables,
-RoPE, softmax and the attention products $QK^\T$ and $AV$. So the input $X_\ell$ of every
-weight layer is known to the verifier, and only $Z_\ell = W_\ell X_\ell$ remains to be
-checked.
+\para{Step 1: an exact integer model.} A random combination is only a reliable test if
+both sides compute exactly the same numbers, so the model runs in integers. Following
+standard integer-only inference~\cite{jacob2018quant}, each weight layer computes
+$Z = W X + b$, where $W$ and $X$ are int8 with per-channel scales, BatchNorm is folded
+into $W$ and $b$, and all sums fit in 32 bits. The next layer's input is obtained by
+fixed-point requantisation followed by the usual activation or pooling. Convolutions
+become matrix products through im2col. The prover's GPU computes these products in
+float32 chunks of at most 1{,}024 terms; every partial sum stays within $2^{24}$ and is
+therefore exact, so the GPU result is bit-identical to the client's CPU. This also
+removes the floating-point tolerance that the original protocol needs, which in our
+reproduction was mandatory and gave the attacker a free budget.
 
-\para{Step 3: Freivalds' check.} We work in the BabyBear field $\F$, $p = 15\cdot2^{27}+1$.
-The verifier range-checks every claim ($|z| < 2^{29}$), so the map from integers to
-$\F$ is injective. It then samples a random $\chi \in \F^{N}$, one entry per output row,
-and checks
+\para{Step 2: only weight products need a proof.} For every weight layer $\ell$ the
+prover sends the claimed pre-activations $Z_\ell$ (the \emph{claims}). Everything that
+does not involve the weights, the verifier computes itself from values it has already
+checked: requantisation, ReLU, pooling, residual additions, LayerNorm/RMSNorm,
+GELU/SiLU (by table lookup), RoPE, softmax, and the attention products $QK^\T$ and
+$AV$. So the input $X_\ell$ of every weight layer is always the verifier's own, and the
+only thing left to check is $Z_\ell = W_\ell X_\ell + b_\ell$. Because the verifier
+builds each $X_\ell$ from the previous layer's checked claims, the layers are chained:
+a prover cannot answer one layer consistently and feed a different value into the next.
+
+\para{Step 3: Freivalds' check.} Write $A_\ell = [W_\ell \,|\, b_\ell]$, a matrix with
+$N$ rows (one per output neuron) and row length $k$, and let $M$ be the number of
+columns of $X_\ell$ (pixels or tokens). The verifier draws a random vector
+$\chi \in \F^{N}$, one entry per output neuron, and checks
 \begin{equation}
-  \chi^\T Z_\ell \;=\; \underbrace{(\chi^\T [W_\ell \,|\, b_\ell])}_{u_\ell}\,[X_\ell; \mathbf{1}] .
+  \chi^\T Z_\ell \;=\; \underbrace{(\chi^\T A_\ell)}_{u_\ell}\,[X_\ell; \mathbf{1}] .
   \label{eq:freivalds}
 \end{equation}
-If $Z_\ell \neq W_\ell X_\ell + b_\ell$, a random $\chi$ satisfies~\eqref{eq:freivalds}
-with probability at most $1/p$, and $r$ independent repetitions give $p^{-r}$. Both
-sides cost $O((N+k)M)$ instead of the $O(NkM)$ of recomputing the layer. Here $k$ is
-the row length and $M$ the number of columns (pixels or tokens).
+Why does this catch every error? Let $D = Z_\ell - A_\ell [X_\ell; \mathbf{1}]$ be the
+difference between the claims and the truth. The two sides of~\eqref{eq:freivalds}
+differ by $\chi^\T D$. If $D$ has a non-zero entry in row $i$ and column $m$, then entry
+$m$ of $\chi^\T D$ equals $\chi_i D_{im}$ plus terms that do not involve $\chi_i$. For
+any values of the other entries, exactly one value of $\chi_i$ makes it zero, so a
+wrong layer passes with probability at most $1/p$. With $r$ independent vectors this
+drops to $p^{-r}$. It does not matter how many values are wrong or where they are: one
+neuron or all of them is caught equally well. The check is also cheap: both sides cost
+$O((N+k)M)$, against $O(NkM)$ for recomputing the layer.
 
-\para{Step 4: committed weights.} In setting C the verifier cannot compute
-$u_\ell = \chi^\T A_\ell$ itself, where $A_\ell = [W_\ell | b_\ell]$, so the prover
-sends it. At setup, every row of $A_\ell$ is Reed--Solomon encoded~\cite{reedsolomon1960}
-at rate $1/4$, from length $k$ to $n = 4k$. The commitment is a Merkle
-root~\cite{merkle1987} over the $n$ columns of the encoded matrix $\hat A_\ell$. Encoding
-is linear, so $\chi^\T \hat A_\ell = \enc(\chi^\T A_\ell)$. The verifier encodes the
-claimed $u_\ell$ itself and opens $t$ random columns of $\hat A_\ell$ with one Merkle
-multiproof. For each opened column $j$ it checks $\chi^\T \hat A_{\ell,j} =
-\enc(u_\ell)_j$. If $u_\ell$ is wrong, the two codewords differ in at least $n-k+1$
-places, so each column catches it with probability about $3/4$.
+We work in the BabyBear field $\F$ with $p = 15\cdot2^{27}+1 \approx 2^{31}$, which
+makes the argument exact (no rounding, no overflow). The verifier range-checks every
+claim ($|z| < 2^{29}$), so two different integer claims are always two different field
+elements.
+
+\para{Step 4: committed weights.} In setting C the verifier does not have $A_\ell$, so
+it cannot compute $u_\ell = \chi^\T A_\ell$; the prover sends it. The remaining question
+is how the verifier can trust $u_\ell$ while holding only a 32-byte commitment. Checking
+a few entries of $u_\ell$ against the weights would be weak: a prover who changes one
+of the $k$ entries escapes a check of $t$ random entries with probability $1-t/k$. We
+therefore commit to an \emph{encoded} copy of the weights, in the style of
+Ligero~\cite{ligero}. When the model is published, every row of $A_\ell$ is
+Reed--Solomon encoded~\cite{reedsolomon1960} from length $k$ to $n = 4k$, giving a
+matrix $\hat A_\ell$. The commitment $C_M$ is a Merkle root~\cite{merkle1987} over the
+$n$ columns of $\hat A_\ell$, 32 bytes per weight matrix. Encoding is linear, so
+$\chi^\T \hat A_\ell = \enc(\chi^\T A_\ell)$: the combination of the encoded rows is the
+encoding of the true $u_\ell$. The verifier encodes the claimed $u_\ell$ itself, picks
+$t$ random column positions $j$, and checks $\chi^\T \hat A_{\ell,j} = \enc(u_\ell)_j$
+on the opened columns. If $u_\ell$ is wrong, $\enc(u_\ell)$ and $\enc(\chi^\T A_\ell)$
+are two different Reed--Solomon codewords, which agree on at most $k-1$ of the $n$
+positions. The code has spread any change over at least three quarters of the
+positions, so each opened column catches a wrong $u_\ell$ with probability at least
+$3/4$, and $t$ columns leave at most $((k-1)/n)^t \approx 4^{-t}$.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{figures/protocol.pdf}
+  \Description{Message sequence between prover and verifier: query, output and claims,
+  random challenge, folded rows, column positions, opened columns with Merkle proof.}
+  \caption{One query of our protocol (committed weights).}
+  \label{fig:protocol}
+\end{figure}
+
+\para{The complete protocol.} Setup happens once per model: the owner encodes and
+commits the weights and publishes $C_M$. Then, for each query
+(Figure~\ref{fig:protocol}):
+\begin{enumerate}
+  \item The client sends $x$.
+  \item The prover runs the integer model and returns the output $y$ and the claims
+  $Z_\ell$ of every weight layer.
+  \item The verifier range-checks the claims, recomputes every non-weight operation
+  (obtaining each $X_\ell$ and checking that it leads to $y$), and draws $r$ random
+  vectors $\chi$ per layer.
+  \item The prover returns $u_\ell = \chi^\T A_\ell$ for every layer.
+  \item The verifier checks~\eqref{eq:freivalds} for every layer and draws $t$ random
+  column positions.
+  \item The prover opens those columns of every $\hat A_\ell$ with one Merkle multiproof
+  per matrix; the verifier checks the Merkle paths against $C_M$ and the column
+  equations.
+\end{enumerate}
+The verifier accepts only if every check passes. The order matters: the claims are
+fixed before $\chi$ is drawn, and $u_\ell$ before the columns are chosen, so the prover
+can never adapt a wrong value to the randomness that will test it.
 
 \begin{theorem}[soundness]
 If $C_M$ is honest, then for any prover and any claimed $y \neq M(x)$, the verifier
@@ -309,29 +366,35 @@ accepts with probability at most
 $\varepsilon = \sum_\ell \big[\,p^{-r} + \big(\tfrac{k_\ell - 1}{n_\ell}\big)^{t}\,\big]$.
 \end{theorem}
 
-\noindent\emph{Sketch.} Let $\ell$ be the first layer with a wrong claim. Its input
-$X_\ell$ is correct, because the verifier computed it from correct claims. If $u_\ell$ is
-correct, \eqref{eq:freivalds} fails except with probability $p^{-r}$. If $u_\ell$ is
-wrong, a column check fails except with probability $((k_\ell-1)/n_\ell)^t$. The order
-of messages makes this work: the claims are fixed before $\chi$ is drawn, and $u_\ell$
-before the columns are chosen. A union bound over the layers finishes the proof. \qed
+\noindent\emph{Sketch.} If $y \neq M(x)$, some claim is wrong; let $\ell$ be the first
+layer with a wrong claim. Its input $X_\ell$ is correct, because the verifier computed
+it from correct claims. If $u_\ell$ is correct, \eqref{eq:freivalds} fails except with
+probability $p^{-r}$ (Step~3). If $u_\ell$ is wrong, a column check fails except with
+probability $((k_\ell-1)/n_\ell)^t$ (Step~4). A union bound over the layers finishes the
+proof. \qed
 
 \smallskip
-For a target $\lambda$ we set $b = \lambda + \log_2(2L)$ for $L$ weight layers, and use
-$r = \lceil b/\log_2 p \rceil$ repetitions and $t = \lceil b/\log_2(n/(k-1)) \rceil$
-columns. For VGG-16 this means $r{=}5$, $t{=}67$ at $\lambda{=}128$, and $r{=}2$,
-$t{=}23$ at $\lambda{=}40$. The protocol can also be made non-interactive by deriving
-the challenges with SHAKE-256 from the transcript (Fiat--Shamir~\cite{fiatshamir1986}),
-with 64 extra bits against a prover who retries many times. In setting K the verifier
-computes $u_\ell$ itself and no columns are opened. In Kpre the secret $\chi$ and $u_\ell$
-are computed once per model, so the proof is just the claims.
+The guarantee is statistical: it needs no assumption about how models behave (no
+trace separation), no trusted setup, and only a collision-resistant hash for the
+Merkle tree. For a target $\lambda$ we set $b = \lambda + \log_2(2L)$ for $L$ weight
+layers, and use $r = \lceil b/\log_2 p \rceil$ repetitions and
+$t = \lceil b/\log_2(n/(k-1)) \rceil$ columns, which makes $\varepsilon \le 2^{-\lambda}$.
+For VGG-16 this means $r{=}5$, $t{=}67$ at $\lambda{=}128$, and $r{=}2$, $t{=}23$ at
+$\lambda{=}40$. The protocol can also be made non-interactive by deriving the challenges
+from the transcript with SHAKE-256 (Fiat--Shamir~\cite{fiatshamir1986}), with 64 extra
+bits against a prover who retries many times. When the client knows the weights
+(setting K) it computes $u_\ell$ itself and steps 4 and 6 disappear. In Kpre the secret
+$\chi$ and $u_\ell$ are computed once per model, so the proof is just the claims.
 
-\para{Costs.} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns,
-which is $O((r+t)\sum_\ell N_\ell k_\ell)$ extra work. The verifier does
-$O(r\sum_\ell (N_\ell + k_\ell) M_\ell)$ work plus the non-weight operations. The proof
-is dominated by the claims, $4\sum_\ell N_\ell M_\ell$ bytes, which is the size of the
-pre-activations. Unlike a SNARK proof, it therefore grows with the activations (image
-size or prompt length) rather than staying constant.
+\para{Costs.} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns.
+It does not store the encoded weights, and recomputes each opened column from $W_\ell$,
+so its extra work is $O((r+t)\sum_\ell N_\ell k_\ell)$, independent of the number of
+pixels or tokens. The verifier does $O(r\sum_\ell (N_\ell + k_\ell) M_\ell)$ work plus
+the non-weight operations. The proof is dominated by the claims,
+$4\sum_\ell N_\ell M_\ell$ bytes, the size of the pre-activations. It adds
+$4r\sum_\ell k_\ell$ bytes for the $u_\ell$, $4t\sum_\ell N_\ell$ bytes for the columns,
+and the Merkle hashes. Unlike a SNARK proof, it therefore grows with the activations
+(image size or prompt length) rather than staying constant.
 
 \subsection{Implementation}
 We wrote everything in Python and PyTorch: the original protocol, the attacks, the

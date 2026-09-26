@@ -63,10 +63,11 @@ def family(system: str):
     return None
 
 
-def save(fig, name):
+def save(fig, name, tight=True):
     FIGS.mkdir(parents=True, exist_ok=True)
-    fig.savefig(FIGS / f"{name}.pdf", metadata={"CreationDate": None})  # reproducible bytes
-    fig.savefig(FIGS / f"{name}.png")
+    box = "tight" if tight else None   # fixed canvases keep side-by-side panels aligned
+    fig.savefig(FIGS / f"{name}.pdf", metadata={"CreationDate": None}, bbox_inches=box)  # reproducible bytes
+    fig.savefig(FIGS / f"{name}.png", bbox_inches=box)
     plt.close(fig)
     print("figure", name)
 
@@ -99,20 +100,20 @@ def _path(ax, filled):
         ax.scatter(*POS[n], s=30, facecolor=OURS_K if filled else "white", edgecolor=OURS_K, lw=1.0, zorder=4)
 
 
-def _finish(ax, bottom):
-    ax.text(1.5, -2.25, bottom, ha="center", va="top", fontsize=6.8)
+def _finish(ax):
     ax.set_xlim(-0.35, 3.35)
-    ax.set_ylim(-2.75, 2.75)
+    ax.set_ylim(-2.02, 2.75)
     ax.axis("off")
+    ax.figure.subplots_adjust(left=0, right=1, bottom=0, top=1)
 
 
 def fig_overview():
-    size = (2.2, 1.75)
+    size = (2.2, 1.45)
     fig, ax = plt.subplots(figsize=size)
     _network(ax, lambda n: ("white", "0.35"))
     _path(ax, filled=True)
-    _finish(ax, "one node checked per layer")
-    save(fig, "overview_path")
+    _finish(ax)
+    save(fig, "overview_path", tight=False)
 
     fig, ax = plt.subplots(figsize=size)
     _network(ax, lambda n: (OURS, OURS) if n == TAMPERED else
@@ -121,8 +122,8 @@ def fig_overview():
     ax.annotate("wrong value", xy=POS[TAMPERED], xytext=(0.2, 2.05), fontsize=6.5, color=OURS,
                 arrowprops=dict(arrowstyle="->", color=OURS, lw=0.6))
     ax.text(2.55, 2.05, "recomputed\nhonestly", fontsize=6, color="0.35", ha="center", va="center")
-    _finish(ax, "caught with probability $1/N$")
-    save(fig, "overview_attack")
+    _finish(ax)
+    save(fig, "overview_attack", tight=False)
 
     fig, ax = plt.subplots(figsize=size)
     _network(ax, lambda n: ("white", "0.35"))
@@ -132,8 +133,41 @@ def fig_overview():
                                     fc="none", ec=OURS, lw=1.0, zorder=2))
     ax.text(1.5, 2.45, "$\\chi^\\top Z = (\\chi^\\top W)\\,X$ per layer", ha="center", va="center",
             fontsize=6.8, color=OURS)
-    _finish(ax, "caught with probability $1-2^{-\\lambda}$")
-    save(fig, "overview_defence")
+    _finish(ax)
+    save(fig, "overview_defence", tight=False)
+
+
+def fig_protocol():
+    """Message flow of one query (Sec. 3.3): what each side sends and checks."""
+    fig, ax = plt.subplots(figsize=(3.3, 2.55))
+    xp, xv = 0.1, 0.56                       # prover and verifier lifelines
+    ax.text(xp, 1.0, "prover (cloud)", ha="center", va="bottom", fontsize=7, weight="bold")
+    ax.text(xv, 1.0, "verifier (client)", ha="center", va="bottom", fontsize=7, weight="bold")
+    ax.plot([xp, xp], [0.02, 0.98], color="0.6", lw=0.8)
+    ax.plot([xv, xv], [0.02, 0.98], color="0.6", lw=0.8)
+    steps = [  # (y, direction, message, verifier's note)
+        (0.92, "pv", "query $x$", None),
+        (0.80, "vp", "output $y$, claims $Z_\\ell$ (every layer)",
+         "recompute all non-weight ops;\nrange-check claims; draw $\\chi$"),
+        (0.60, "pv", "random $\\chi$", None),
+        (0.48, "vp", "$u_\\ell = \\chi^\\top A_\\ell$",
+         "check $\\chi^\\top Z_\\ell = u_\\ell X_\\ell$;\npick column positions $j$"),
+        (0.28, "pv", "positions $j$", None),
+        (0.16, "vp", "columns $\\hat A_{\\ell,j}$ + Merkle proof",
+         "check Merkle paths and\n$\\chi^\\top \\hat A_{\\ell,j} = \\mathrm{Enc}(u_\\ell)_j$;\naccept if all checks pass"),
+    ]
+    for y, d, msg, note in steps:
+        x0, x1 = (xv, xp) if d == "pv" else (xp, xv)
+        ax.annotate("", xy=(x1, y), xytext=(x0, y),
+                    arrowprops=dict(arrowstyle="-|>", color=OURS if d == "vp" else OURS_K, lw=0.9,
+                                    shrinkA=0, shrinkB=0))
+        ax.text((xp + xv) / 2, y + 0.018, msg, ha="center", va="bottom", fontsize=6.3)
+        if note:
+            ax.text(xv + 0.03, y - 0.03, note, ha="left", va="top", fontsize=5.8, color="0.3")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(-0.1, 1.06)
+    ax.axis("off")
+    save(fig, "protocol")
 
 
 # ----------------------------------------------------------------------------------- figure 2
@@ -418,6 +452,7 @@ def tab_ratios():
 def main():
     M = Measured()
     fig_overview()
+    fig_protocol()
     fig_security(M)
     fig_cost(M)
     fig_llm(M)
