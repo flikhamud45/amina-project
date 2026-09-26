@@ -1,11 +1,20 @@
 # Revision 1: looking for a real defence
 
-> **Outcome: found one.** `protocol/batched.py` (Phase 4) detects every attack
-> in this project with probability `1.000000`, at exact honest completeness and
-> ~9x proof size, using no primitive beyond the Merkle tree the protocol already
-> has. See `revision1_notes/phase4_batched_defence.md` and `DEFENCE_NOTES.md`
-> §10. Phases 0–1 are the record of what *didn't* work and why, which is what
-> made it clear that no sampling rule could.
+> **Outcome: found one.** `protocol/batched.py` (Phase 4) checks a whole layer
+> algebraically instead of sampling nodes within it. Every attack in this
+> project is caught with probability `1.000000`, at exact honest completeness,
+> for ~9x the proof size, using no cryptographic assumption beyond the
+> collision-resistant hash the protocol already relies on (it also uses
+> Reed–Solomon codes and prime-field arithmetic, which are combinatorial, not
+> assumptions). Layers are chained with verifier-recomputed inputs, and the
+> identity/logit output layer is supported, so the guarantee covers the network
+> rather than one hidden layer. See `revision1_notes/phase4_batched_defence.md`,
+> `revision1_notes/defence_explained.md` and `DEFENCE_NOTES.md` §10. Phases 0–1
+> are the record of what *didn't* work and why.
+>
+> **A friend's review (`revision1_notes/REVISION1_REVIEW.md`) caught three real
+> errors in the first version of this branch; all three are fixed or retracted
+> above and in `DEFENCE_NOTES.md`.**
 
 Scope for this revision, as decided: stay inside the sampling-protocol framework
 (no transformer/attention support, no refereed-delegation implementation — both
@@ -17,11 +26,13 @@ impossibility result than the paper's own open suggestion — both count as succ
 
 ## Phase 0.5 — Targeted vs. untargeted attack success (do this first, no GPU needed)
 
-**Status: done.** See `DEFENCE_NOTES.md` §7. Headline: a realistic (attacker
-picks its cheapest target) targeted backdoor is ~3.1x more detectable than the
-untargeted framing this whole document otherwise uses; the ceiling if the
-target is externally fixed is 25x. No new sampler, no new theory — plain
-uniform sampling, just measured against the right threat model.
+**Status: done, and the original conclusion was RETRACTED on review.** See
+`DEFENCE_NOTES.md` §8. Requiring a specific target does shrink `|U|` (465 ->
+159), but the claim that this made the backdoor "3.1x more detectable under
+plain uniform sampling" was wrong: it reported `1/|U|` as if it were uniform's
+detection. Uniform detects a single-node tamper with probability `1/N`
+regardless of `|U|` — measured identically (0.001953) in both threat models.
+Targeting only costs the attacker when activation ranges are *also* checked.
 
 Every `|U|` reported in `DEFENCE_NOTES.md` (e.g. "454 of 512 neurons admit a flip")
 is computed with `target_class=None` in `_smallest_flipping_value` — the adversary
@@ -59,9 +70,11 @@ three failed the same way. See `DEFENCE_NOTES.md` §6–§8 and the README's Ste
 for the consolidated write-up.
 
 * **`ZeroAwareContributionSampler`** (floor `ε` added to contribution
-  weighting, §6): sweeping `ε` from 0 to 100 only interpolates between Theorem
-  3's exact zero and `StaticImportanceSampler`'s already-known sub-uniform
-  number. No `ε` beats uniform's exact minimax bound.
+  weighting, §6): **this bullet's original conclusion was RETRACTED on review.**
+  It claimed no `ε` beats uniform, from a sweep that measured the *honest*
+  trace; for a sampler that reads claimed activations, detection depends on the
+  *tampered* trace. Re-measured, `ε` in 0.1–10 beats uniform, by 11.9x at
+  `ε = 1`. Theorem 3's `ε = 0` catastrophe is unaffected.
 * **The "cumulative path-sensitivity" idea** below turned out to be the *same*
   family: at a single hop, the downstream sensitivity scalar is identical
   across a node's parents and cancels on normalization, leaving pure

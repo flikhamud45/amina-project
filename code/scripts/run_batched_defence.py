@@ -93,7 +93,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--queries", type=int, default=40)
     parser.add_argument("--layer", type=int, default=1)
-    parser.add_argument("--scale-bits", type=int, default=10)
+    parser.add_argument("--scale-bits", type=int, default=8)
     parser.add_argument("--code-queries", type=int, default=24)
     args = parser.parse_args()
 

@@ -286,32 +286,28 @@ protocol's trust model (no refereed delegation, no architecture changes). Full
 derivations and numbers are in `DEFENCE_NOTES.md` §6–§8 and
 `REVISION1_PLAN.md`; this section is the headline.
 
-**The threat model itself was too easy.** Every `|U|` in Step 4 is computed with
-"flip to *any* wrong class." A real backdoor needs a *specific* target label. Under
-that more realistic threat model, at layer 1 (`N = 512`), a target-forced attacker's
-easiest choice of target has `|U| = 159` rather than `465` — **3.1×** more
-detectable under plain uniform sampling, for free, no new sampler required:
+**Targeting shrinks `|U|`, but that is not a detection gain.** Every `|U|` in
+Step 4 is computed with "flip to *any* wrong class"; a real backdoor needs a
+*specific* target, which does shrink `|U|` from 465 to 159 (attacker's easiest
+target, layer 1). An earlier version of this section claimed that made the
+backdoor "3.1× more detectable under plain uniform sampling" — **that was wrong
+and is retracted.** `1/|U|` is the unreachable ceiling for a verifier that could
+concentrate on `U` (Theorem 1); uniform sampling detects a single-node tamper
+when its path visits that node, i.e. with probability `1/N`, whatever `|U|` is.
+Measured, both threat models give exactly `0.001953 = 1/512`. Targeting costs
+the attacker only when activation ranges are *also* checked, where it needs
+~2.4–2.8× more tampered neurons (Step 3's stealth table). See
+`DEFENCE_NOTES.md` §8.
 
-| Threat model | mean `\|U\|` / 512 | uniform single-path detection floor |
-|---|---|---|
-| Untargeted (flip to anything) | 465 | 0.0021 |
-| Targeted, attacker's easiest target | 159 | 0.0066 (**3.1×**) |
-| Targeted, forced to one specific class | 20–69 | 0.015–0.053 (**7–25×**) |
-
-**The natural patch to the zero blind spot does not work either.** The obvious
-fix to contribution weighting's `Theorem (zero blind spot)` is to stop it
-vanishing at zero: add a floor `ε` so a parent scores `|w_ij|·(|ã_i| + ε)`
-instead of `|w_ij·ã_i|`. Swept `ε` from `0` to `100` and checked the *exact*
-minimax bound at every value — not the heuristic evasion search, which turned
-out to understate this sampler's true worst case by ~15×. No `ε` ever beat
-uniform's bound; it only interpolates between the zero blind spot (`ε=0`) and
-the already-known-sub-uniform weight-magnitude sampler (`ε→∞`):
-
-| `ε` | exact worst-case detection | vs. uniform's `0.00217` |
-|---|---|---|
-| 0 | 0.000000 | — |
-| 1 | 0.000739 | 34% |
-| 100 | 0.000974 | 45% |
+**The epsilon-floor sampler — retracted.** This section previously reported
+that adding a floor `ε` to contribution weighting never beats uniform, citing an
+"exact minimax" sweep. That sweep measured the **honest** trace; for a sampler
+that reads claimed activations, detection depends on the **tampered** one.
+Re-measured correctly, `ε` in 0.1–10 beats uniform — by **11.9x at `ε = 1`** —
+the opposite conclusion, and a positive result for a sampler a verifier can
+actually compute. The `ε = 0` catastrophe still holds. It needs more queries
+and an untried mixture attack before it can be leaned on; see
+`DEFENCE_NOTES.md` §6.
 
 **A structurally different mechanism fares no better once the adversary knows
 about it.** Rather than reweighting neurons, check the *whole claimed layer
@@ -327,22 +323,43 @@ reconstruction error. Reliable, manifold-invisible evasion needs support
 reason — so an informed adversary pays essentially nothing extra.
 
 **The pattern is consistent across all three attempts.** Trace-independent
-rules, the best implementable trace-dependent rule (with or without a floor),
-and a structurally different joint/statistical check all fail the same way:
-whatever looks like an improvement against an *unaware* adversary stops
-looking like one the moment the adversary is allowed to know the rule, which
-is the threat model this whole document uses (Kerckhoffs). We did not find a
-fix that survives that bar, and we no longer expect one to exist within "reweight
-or statistically filter what a sampling-based verifier looks at" — the honest
-backdoor-forcing result above is the real, no-cost improvement this revision
-found, not a new sampler.
+rules and a structurally different joint/statistical check both fail the same
+way: whatever looks like an improvement against an *unaware* adversary stops
+looking like one once the adversary is allowed to know the rule (Kerckhoffs).
+The floor-sampler verdict is now open rather than negative (see the retraction
+above). What did not change is the conclusion that drove the rest of the work:
+no rule for choosing *which* neurons to check escapes the ceiling.
 
-**What's next.** The only remaining avenue that changes what a single check can
-verify, rather than how neurons are weighted, is a heavier per-layer
-consistency check (a sumcheck-style random-linear-combination argument in place
-of the per-node Merkle-row check) — a different protocol variant, not a smarter
-verifier for this one. That is the current, open, in-progress direction; see
-`REVISION1_PLAN.md` Phase 2.
+**The fix: change what a check verifies, not where it looks.** Instead of
+sampling nodes within a layer, check the *whole layer* algebraically — a random
+linear combination of every neuron's constraint, verified against a
+Reed–Solomon + Merkle commitment to the weights, in exact integer arithmetic.
+The verifier never holds the weight matrix.
+
+| Attack | batched check | uniform sampling | contribution weighting |
+|---|---|---|---|
+| naive single-neuron flip | **1.000000** | 0.001953 | 0.112636 |
+| stealthy envelope-confined | **1.000000** | 0.004958 | 0.150712 |
+| **zero-hiding backdoor** | **1.000000** | 0.023730 | **0.000000** |
+
+Honest completeness is **exactly** 1 — the exact arithmetic also retires the
+`1e-4` float tolerance, and with it the free sub-tolerance perturbation budget
+that tolerance handed the adversary.
+
+Layers are chained with verifier-recomputed inputs and the identity/logit
+output layer is supported, so this covers the network, not one hidden layer:
+honest whole network accepted 10/10, tampers at layers 1, 2 and 3 each caught
+10/10, and a prover breaking the inter-layer chain rejected 10/10. Whole-network
+proof **188.9 kB**, prover 7.4 ms, verifier 9.4 ms — against a 2.04 MB model,
+so **11.1x smaller than simply downloading the weights**.
+
+Once every layer is checked in full this is no longer a sampling protocol, so
+the honest comparison is the model download and a SNARK, not the 13 kB sampling
+proof. Known gap: with hash-derived (Fiat–Shamir) challenges the 26-bit field
+and 24 spot-checks give only ~24 bits against a grinding prover — verifier-sent
+challenges or larger parameters are needed. See
+`revision1_notes/defence_explained.md` for a from-first-principles write-up and
+`DEFENCE_NOTES.md` §10.
 
 ---
 

@@ -178,79 +178,104 @@ catastrophically, and that the reason is structural rather than incidental.
 
 ---
 
-## 6. Revision 1: smoothing the zero blind spot does not escape it
+## 6. Revision 1: the epsilon-floor sampler — RETRACTED and re-measured
 
-Section 5's corollary bounds *trace-independent* rules. Section 4 breaks one
-specific *trace-dependent* rule. The gap between them — whether some other
-trace-dependent, locally-computable rule escapes both — was left open: "we do not
-claim a bound covering every conceivable adaptive rule."
+**This section previously stated a "Theorem 4 (no free floor)" claiming that no
+`ε` beats uniform, backed by a table of "exact minimax" worst cases described as
+"provable worst cases, not merely observed ones". The table measured the wrong
+thing, the claim is not supported, and on re-measurement it looks false. Both
+the theorem and its methodological footnote are withdrawn.**
 
-The most natural attempt to close that gap is to patch `LocalContributionSampler`
-directly: instead of scoring a parent `i` by `|w_ij · ã_i|` (which is exactly zero
-when `ã_i = 0`), add a floor so it never is. `ZeroAwareContributionSampler` scores
-`i` by `|w_ij| · (|ã_i| + ε)` for a tunable `ε ≥ 0`. At `ε = 0` this is
-`LocalContributionSampler`. As `ε → ∞` the additive term swamps `|ã_i|` and the
-rule converges to pure `|w_ij|` weighting — a *trace-independent* rule, since it no
-longer depends on the claimed trace at all.
+### The bug
 
-That convergence is the whole story. **Theorem 4 (no free floor).** *For every
-`ε ≥ 0`, an adversary who knows `ε` can tamper a single node with detection
-probability strictly below uniform's `1/|U|` bound*, by choosing, among the
-neurons in `U`, the one feeding the checked node with the smallest weight
-magnitude — exactly the neuron a weight-magnitude sampler is worst at catching.
-At `ε = 0` this is Theorem 3 (detection exactly `0`). As `ε → ∞` it converges to
-`StaticImportanceSampler`'s exact numbers (§3: `0.00098` against an adaptive
-attacker, versus uniform's `0.00195`). There is no `ε` in between that does
-better than both endpoints, because the induced visit distribution moves
-*monotonically* between them as `ε` grows — it never has a chance to overshoot
-uniform along the way.
+`ZeroAwareContributionSampler` scores a parent by `|w_ij| · (|ã_i| + ε)`. The
+retracted table computed
 
-**Measured** (`mlp_mnist_full`, layer 1, width 512, `|U| = 462`, uniform bound
-`1/|U| = 0.002165`), using the *exact* minimax computation of §3 — not the
-heuristic multi-node search of §4 — so the numbers below are provable worst
-cases, not merely observed ones:
+```python
+visits = visit_probabilities_under(network, honest_trace, layer, sampler)
+```
 
-| `ε` | exact `min_v q(v)` over `U` | vs. uniform's `0.002165` |
+and took `min` over `U`. That equals detection **only for samplers that ignore
+the claimed trace** (uniform, static importance) — which is exactly why our own
+test of that identity,
+`test_detection_equals_visit_probability_for_trace_independent_samplers`, is
+restricted to those two. This sampler *reads the claimed activations*. When the
+adversary tampers neuron `v`, it is the **tampered** trace that decides how
+often the walk visits `v`, and a single-neuron flip has to *raise* the
+activation — precisely what contribution weighting is drawn to.
+
+Measured both ways (same model, same query, `|U| = 462`):
+
+| `ε` | retracted number (honest trace) | actual worst case (tampered trace) |
 |---|---|---|
-| 0 | 0.000000 | — (Theorem 3) |
-| 0.01 | 0.000036 | 1.7% of uniform |
-| 0.1 | 0.000262 | 12% of uniform |
-| 1 | 0.000739 | 34% of uniform |
-| 10 | 0.000938 | 43% of uniform |
-| 100 | 0.000974 | 45% of uniform |
+| 0 | 0.000000 | **0.118938** |
+| 0.01 | 0.000036 | **0.114887** |
+| 0.1 | 0.000262 | **0.088086** |
+| 1 | 0.000739 | **0.027525** |
+| 100 | 0.000974 | **0.001747** |
 
-Detection climbs monotonically but saturates at under half of uniform's floor,
-matching `StaticImportanceSampler`'s known number in the limit. No value of `ε`
-was found that beats uniform, and the convergent limit is a case Theorem 2
-already forbids from beating it.
+The script's own neighbouring column already contradicted the table — it read
+0.11 at `ε = 0` — and that discrepancy was wrongly explained away as the
+heuristic search "understating the worst case by ~15x". It was the exact block
+that was wrong. That footnote is withdrawn too.
 
-A methodological note worth recording: the heuristic multi-node search
-(`plan_adaptive_stealthy_flip`, three fixed neuron-ranking heuristics) *understates*
-how bad this sampler's worst case is — at `ε = 100` it only found `0.014` detection,
-making the sampler look better than it is, because its ranking heuristics were
-tuned against contribution-style attacks and don't specifically target "smallest
-raw weight," which is what actually breaks a near-weight-magnitude rule. The exact
-single-neuron computation (`visit_probabilities_under` + `_smallest_flipping_value`,
-Theorem 1/2's own method) is what settled the question. **Any new candidate
-sampler should be checked against the exact minimax computation first — the
-heuristic search is a demonstration tool for known attacks, not an adversarial
-optimality certificate.**
+### What the corrected measurement says
 
-**Scope of this result.** This closes off the single most natural "just fix the
-zero" patch, and the argument generalizes informally: any score built as
-`|w_ij| · φ(ã_i)` for a non-negative `φ` reduces, in the adversary's chosen
-`ε → φ`'s-infimum limit, to a trace-independent rule that Theorem 2 already
-bounds below uniform whenever the weights aren't perfectly flat — which they
-never are. It is not a formal proof that *no* locally-computable trace-dependent
-rule of any shape can ever escape the Theorem 2/3 dichotomy; that general
-question is still open. It does mean the natural, cheap fixes are exhausted:
-getting past this requires either accepting the reduced backdoor threat model
-of §8 below (a specific target, not merely "any wrong output") or changing what
-a single check verifies, not how neurons are weighted (see the sumcheck-style
-direction in `REVISION1_PLAN.md`, Phase 2).
+Re-measured with one consistent script (`scripts/run_theorem4_check.py`, now
+rewritten): detection is computed on the **tampered** trace, and for each
+sampler the adversary takes the better of two attack families — the exact
+single-neuron flip (every `v ∈ U`) and the multi-neuron adaptive/zeroing search
+run against that sampler. Per-query worst case, then averaged (5 queries,
+layer 1):
 
-Code: `ZeroAwareContributionSampler` in `src/pvi/defences/sampling.py`.
-Reproduce with `scripts/run_theorem4_check.py`.
+| sampler | single-neuron | multi-neuron | **adversary's best** | vs. uniform |
+|---|---|---|---|---|
+| uniform | 0.001953 | 0.006641 | **0.001953** | — |
+| `ε = 0` | 0.099370 | 0.000000 | **0.000000** | attacker wins (Theorem 3) |
+| `ε = 0.01` | 0.096134 | 0.001646 | **0.001646** | 0.8x |
+| **`ε = 0.1`** | 0.074686 | 0.011420 | **0.011420** | **5.8x** |
+| **`ε = 1`** | 0.024487 | 0.028409 | **0.023276** | **11.9x** |
+| **`ε = 10`** | 0.004565 | 0.017266 | **0.004565** | **2.3x** |
+| `ε = 100` | 0.001711 | 0.012327 | **0.001711** | 0.9x |
+
+Uniform's own worst case is the single-neuron attack at `1/N = 0.00195`; the
+zeroing attack against uniform is *easier* to catch (0.0066), so the adversary
+does not choose it.
+
+**`ε` in the 0.1–10 range beats uniform, by up to ~12x at `ε = 1`** — the exact
+opposite of the retracted claim. Theorem 3's `ε = 0` catastrophe is unaffected
+and still holds; what is now clear is that the catastrophe is specific to
+`ε = 0`, and that a small floor does not merely patch it but overtakes uniform.
+
+Note the two failure modes pulling in opposite directions, which is what makes
+a middle value work: small `ε` leaves the zeroing attack cheap (multi-neuron
+column), large `ε` washes out the contribution signal that catches a raised
+activation (single-neuron column). The optimum sits where neither attack is
+cheap.
+
+### How much to trust this
+
+Less than the batched-check numbers, and the asymmetry matters.
+
+*Solid*: the retraction itself. The original "no `ε` beats uniform" conclusion
+was produced by measuring the honest trace, and it does not survive correction.
+The single-neuron column is exact — every `v ∈ U`, acceptance computed by the
+same dynamic program the protocol uses — so the *upper* half of each row is not
+in doubt.
+
+*Provisional*: the multi-neuron column, and therefore the "adversary's best"
+column that the headline rests on. It comes from a heuristic search
+(`plan_adaptive_stealthy_flip`) over 5 queries. A stronger adversary could pull
+the middle-`ε` numbers down, and there is an obvious candidate nobody has
+tried: **mixtures** — zero the neurons with small outgoing weights (exposure
+`ε·|w|` each) while raising one neuron just enough, so neither pure family's
+weakness applies. Until that is run, "`ε = 1` beats uniform by 12x" should be
+read as *not yet refuted* rather than established.
+
+Still to do: run ≥100 queries, add the mixture attack, report per-query worst
+cases rather than means, and repeat at width 4096 (`phase3_gpu.md` carries the
+same flaw). `scripts/run_theorem4_check.py` has been rewritten to measure on
+tampered traces and to report the adversary's best across families.
 
 ---
 
@@ -324,43 +349,65 @@ Code: `scripts/run_joint_plausibility_check.py`,
 
 ---
 
-## 8. Revision 1: a real backdoor needs a specific target, and that already helps
+## 8. Revision 1: targeting shrinks `|U|`, but that is *not* a detection gain
+
+**This section previously claimed a "3.1x more detectable under plain uniform
+sampling" result. That claim was wrong and is retracted.** It is kept here,
+corrected, because the mistake is instructive.
 
 Every `|U|` in this document — the set of neurons at which a single-node tamper
-"achieves the adversary's goal" — is computed with `target_class=None` in
-`_smallest_flipping_value`: the adversary wins by flipping the prediction to
-*any* other class. That is the easiest version of the attack, and it is not what
-a real backdoor needs. A backdoor that is useful to an attacker demands a
-*specific* output (misclassify stop signs as speed-limit signs, not "as
-anything"), and `target_class` is already wired through `attacks/tamper.py` and
-`defences/adaptive.py` to measure exactly this.
+achieves the adversary's goal — is computed with `target_class=None`: the
+adversary wins by flipping to *any* other class. A real backdoor usually needs a
+*specific* target, and measuring that does shrink `|U|` substantially:
 
-**Measured** (`mlp_mnist_full`, layer 1, width 512, 30 queries, exact `|U|` per
-query per candidate target):
+| Threat model | mean `\|U\|` / 512 |
+|---|---|
+| Untargeted (flip to anything) | 465 (91%) |
+| Targeted, attacker's easiest target | 159 (31%) |
+| Targeted, averaged over all 9 targets | 69 (13%) |
+| Targeted, attacker's hardest target | 20 (4%) |
 
-| Threat model | mean `\|U\|` / 512 | uniform single-path bound `1/\|U\|` | vs. untargeted |
+**The error was reporting `1/|U|` as though it were uniform sampling's
+detection.** It is not. Under uniform path sampling a single-node tamper is
+detected exactly when the path visits that node, which happens with probability
+`1/N` — the width of the layer — *regardless of how many other neurons could
+have been used*. The adversary simply picks one of the 159.
+
+Measured directly (15 queries, layer 1, detection via `acceptance_probability`
+on the forged trace):
+
+```
+untargeted: mean uniform detection 0.001953   (1/N = 1/512 = 0.001953)
+targeted  : mean uniform detection 0.001953   (1/N = 1/512 = 0.001953)
+```
+
+Identical, as the existing test
+`test_single_neuron_acceptance_is_one_minus_one_over_width` already implies.
+
+`1/|U|` is a different quantity: by Theorem 1 it is the *ceiling* for any
+verifier whose choice ignores the claimed trace. Reaching it would require
+concentrating samples on `U`, which no verifier can do — `U` depends on the
+weights, the query and the target, and the verifier holds only a digest.
+
+**What is actually true.** Targeting costs the attacker something only when it
+must *also* keep forged activations inside natural ranges (Step 3's stealthy
+attack): hitting one specific class then needs more tampered neurons, and more
+tampered neurons means more exposure. From `run_attack.py`'s stealth block
+(layer 1, target class 0):
+
+| Activation cap | Untargeted: neurons / detection | Targeted: neurons / detection | Ratio |
 |---|---|---|---|
-| Untargeted (flip to anything) | 465 (91%) | 0.0021 | baseline |
-| Targeted, attacker's easiest target | 159 (31%) | 0.0066 | 3.1x |
-| Targeted, averaged over all 9 targets | 69 (13%) | 0.0146 | 6.8x |
-| Targeted, attacker's hardest target | 20 (4%) | 0.0532 | 25x |
+| natural max | 2.9 / 0.0057 | 7.1 / 0.0139 | 2.4x |
+| 99th percentile | 4.2 / 0.0081 | 11.5 / 0.0225 | 2.8x |
+| 95th percentile | 5.6 / 0.0110 | 15.0 / 0.0293 | 2.7x |
 
-A realistic adversary is not forced into a target — it picks whichever is
-cheapest, so **3.1x is the fair number against an adaptive attacker**; the 25x
-figure is the ceiling of what target-forcing buys, only realized if the
-attacker's goal is externally fixed rather than "any output that benefits it."
+So: against plain `RandPathTest` a targeted backdoor is **exactly as cheap as an
+untargeted one** (`1/N`). Only if the verifier *also* range-checks activations
+does targeting cost ~2.4–2.8x in tampered neurons, and hence in detection. That
+is a reinterpretation of Step 3's existing stealth table, not a new result.
 
-This costs nothing: no new sampler, no new theory, plain uniform sampling. It is
-also not a coincidence that it was left unmeasured — the untargeted framing is
-the *paper's own* choice of threat model (Section 5.2's `1/N` figure), and it is
-the hardest case for the verifier by construction. Sanity check: the existing
-backdoor experiment (`scripts/run_attack.py`) already fixes `TARGET_CLASS = 0`
-for its headline numbers; that target's mean `|U| ≈ 45` sits *below* the
-cross-target average of `≈ 69`, so those numbers were not quietly cherry-picked
-easy.
-
-Code: `scripts/run_targeted_vs_untargeted.py`;
-raw data in `artifacts/results/targeted_vs_untargeted.json`.
+Code: `scripts/run_targeted_vs_untargeted.py` (reports `|U|`; the column is
+labelled as an unreachable ceiling, not as uniform's detection).
 
 ---
 
@@ -481,14 +528,44 @@ reveals a whole layer's activations whenever it touches that layer (`C_trc` is
 one leaf per layer), this is a constant factor on an existing `O(N)`, not a new
 asymptotic class, and "visit `O(depth)` layers" is untouched.
 
-**Scope**: one layer at a time (the field is sized so a layer's pre-activations
-fit without rescaling — true with wide margin for these MLPs; chaining every
-layer of a deep net needs rescaling plus a range argument); honest committer
-assumed, matching this document's threat model; dense ReLU layers only.
+**Whole-network coverage (added after review).** An earlier version of this
+section checked one hidden layer in isolation, which proves little, and did not
+support the output layer at all: `fixed_point_layer` clamped with ReLU, so an
+honest prover emitting real logits (~75% of them negative) was rejected
+**0/20**. Both are fixed. Identity layers use the linear constraint `a == z`
+(no zero set, no sign witness, no range check); the verifier recomputes each
+layer's input from the previous layer's *verified* output via a public rounding
+rule, so it never takes an input from the prover; and each layer's challenges
+are bound to its index and a running hash of earlier layers. Measured end to
+end on all three layers: honest network accepted 10/10, tampers at layers 1, 2
+and 3 caught 10/10 each, a prover breaking the inter-layer chain rejected
+10/10. Whole-network proof 188.9 kB, prover 7.4 ms, verifier 9.4 ms, against a
+2.04 MB model — 11.1x smaller than downloading the weights. Note this is then
+no longer a *sampling* protocol: with every layer checked, the honest
+comparisons are the model download and a SNARK, not the 13 kB sampling proof.
 
-Full write-up: `revision1_notes/phase4_batched_defence.md`. Code:
-`src/pvi/protocol/batched.py`, `tests/test_batched.py`,
-`scripts/run_batched_defence.py`.
+**Scope**: dense layers only (convolutions share weights and need a different
+layout; max-pooling is not an affine-plus-activation relation); honest
+committer assumed, matching this document's threat model; and **the Fiat–Shamir
+parameters are too small** — a 26-bit field with 24 spot-checks is ~`2^-24` per
+check, which a *grinding* prover can brute-force by re-randomising its message
+and re-hashing. That is fine with verifier-sent challenges (as in the base
+protocol) but not with hash-derived ones. Fixing it means verifier-sent
+challenges, more repetitions, or a ~64-bit prime; none is done yet.
+
+**One correction on the record**: the first implementation derived the
+spot-checked column indices from `(digest, x, a, y)` but not from `u`, letting a
+cheating prover read the columns off in advance and solve for a passing `u` (25
+linear constraints on 785 unknowns). The forgery was implemented and accepted;
+fixed by a two-phase transcript that derives the columns from `u` as well.
+Regression test: `test_adaptive_transcript_forgery_is_rejected`. The
+measurement script had not caught it — it only runs the *honest* prover on
+tampered traces, never a prover that cheats on the proof.
+
+Full write-up: `revision1_notes/phase4_batched_defence.md`; a
+from-first-principles explanation of every primitive involved is in
+`revision1_notes/defence_explained.md`. Code: `src/pvi/protocol/batched.py`,
+`tests/test_batched.py`, `scripts/run_batched_defence.py`.
 
 ---
 

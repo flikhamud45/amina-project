@@ -9,6 +9,24 @@ real thing: the verifier never holds the weight matrix.
 Code: `src/pvi/protocol/batched.py`, tests in `tests/test_batched.py`,
 measurement in `scripts/run_batched_defence.py`.
 
+**For a from-first-principles explanation** (Merkle trees, Reed–Solomon, finite
+fields, Fiat–Shamir, all built up from nothing), see `defence_explained.md`.
+This file is the terse version.
+
+### One correction worth recording
+
+The first implementation had a real Fiat–Shamir ordering bug: the spot-checked
+column indices were derived from `(digest, x, a, y)` but **not** from `u`, so a
+cheating prover could read the columns off in advance and solve for a `u`
+passing all of them — 25 linear constraints on 785 unknowns. That forgery was
+implemented and it *was accepted*. Fixed by deriving the columns from `u` as
+well (two-phase transcript), which makes the attack circular. Regression test:
+`test_adaptive_transcript_forgery_is_rejected`.
+
+The measurement script never caught it, because it only ever runs the *honest*
+prover algorithm on tampered traces — it does not model a prover that cheats on
+the proof itself. Worth remembering for anything else of this shape.
+
 ## The construction
 
 Write the checked layer as `A = [W | b]` (shape `N x (M+1)`) and the augmented
@@ -98,50 +116,80 @@ Re-run on `LARGE_MLP_SPEC` (width 4096, 8x), as a batch job:
 Uniform sampling's detection *degrades* with width (that is the `1/N` ceiling).
 The batched check does not move.
 
+## Whole-network chaining (added after review)
+
+Checking one layer in isolation proves very little: a prover could hand layer 2
+an input unrelated to layer 1's verified output, and the output (logit) layer
+was not supported at all — `fixed_point_layer` clamped with `relu`, so an
+honest prover emitting real logits was rejected **0/20**. Both are fixed.
+
+- **Identity layers.** For a layer with no activation the constraint is just
+  `a == z`, which is already linear: `<s, A x> == <s, a>`. No zero set, no sign
+  witness, no non-negativity check (logits are ~75% negative). Honest logits now
+  accepted 20/20; a tampered logit caught 20/20.
+- **Verifier-recomputed inputs.** The verifier derives each layer's input from
+  the previous layer's *verified* output using a public rounding rule
+  (`rescale`), and never takes an input from the prover. This needs no range
+  argument, because the protocol is not zero-knowledge — the activations are
+  revealed anyway (`SPEC_NOTES.md` §5). Soundness follows by induction: the
+  input layer is honest because the verifier built it; each verified layer
+  output then fixes the next layer's input.
+- **Per-layer challenge binding.** Each layer's challenges are derived from its
+  index and a running hash of all earlier layers' messages, so proofs cannot be
+  replayed at another layer or spliced across queries.
+- **Scale.** At `2^8` the honest pre-activations peak at
+  `[232021, 343622, 1298689]` across the three layers against a field half-width
+  of `33554429` — 25x headroom. (At `2^10` the output layer overflows, which is
+  why the default is now 8.)
+
+Measured end to end on `mlp_mnist_full` (all three layers, 10 queries):
+
+| | value |
+|---|---|
+| honest whole network accepted | 10/10 |
+| tamper at layer 1 / 2 / 3 caught | 10/10 each |
+| prover breaking the inter-layer chain | rejected 10/10 |
+| whole-network proof | **188.9 kB** (115.8 + 61.8 + 11.4) |
+| prover / verifier | 7.4 ms / 9.4 ms |
+| commitment build (one-off, all layers) | 0.7 s |
+| model size | 2.04 MB (535,818 float32) |
+
+So the proof is **11.1x smaller than simply downloading the model**, at
+millisecond cost on both sides.
+
 ## What it costs, honestly
 
-Proof size is the trade: **115.6 kB** at width 512 against the sampling
-scheme's ~13 kB — roughly 9x. At width 4096 it is 837.6 kB.
+Once every layer is checked in full, this is no longer a *sampling* protocol —
+there is nothing left to sample. The honest comparison is therefore not the
+13 kB sampling proof but the two things it sits between: downloading the model
+(2.04 MB) and a full SNARK.
 
-That growth is `O(t*N)`, dominated by the `t` opened columns of `N` entries
-each. Worth being precise about what this does and does not break: the existing
-scheme already reveals the *entire* activation vector of any layer it touches
-(`C_trc` commits one leaf per layer — `SPEC_NOTES.md` §5), so per-layer cost was
-already `O(N)`. This is a constant-factor increase on an existing `O(N)`, not a
-new asymptotic class, and the protocol's real efficiency claim — visit
-`O(depth)` layers rather than proving the whole network — is untouched.
+| | Sampling scheme | Batched, whole network | Download the model |
+|---|---|---|---|
+| Proof / download | 13.4 kB | 188.9 kB | 2.04 MB |
+| Prover | ~0.6–1 ms | 7.4 ms | 0 |
+| Verifier | ~0.5–0.8 ms | 9.4 ms | full forward pass |
+| Catches the backdoor | ~0.2–3% | every time | every time |
 
 Two easy, unexercised reductions: field elements fit in 26 bits but are
-serialised as 8-byte integers (a free ~2x), and 24 code queries buys soundness
-`2^-24` where `2^-16` would do (another ~1.3x). Neither is implemented; the
-numbers above are what the code actually produces.
+serialised as 8-byte integers (a free ~2x), and the column count could drop if
+challenges were verifier-sent rather than hash-derived (see below).
 
 ## Scope and what is genuinely left
 
-- **One layer at a time.** The field is sized so a layer's pre-activations fit
-  without rescaling, which holds comfortably for layer 1 of these MLPs
-  (`z` reaches ~2·10^5 against a field half-width of 3.4·10^7). Chaining the
-  check through *every* layer of a deep network needs either a wider
-  multiplication routine for a larger prime, or per-layer rescaling with a
-  range argument. That is standard zkML engineering and it is not done here.
-  For the threat model in question this is less of a gap than it sounds: the
-  attack has to tamper *somewhere*, and the check can be applied at whichever
-  layers the path visits.
-- **Honest committer assumed** (see above) — matching the paper's own threat
-  model, but worth stating.
-- **Dense ReLU layers only.** Convolutions reuse weights and would need the
-  matrix laid out accordingly; max-pool is not an affine-plus-ReLU relation at
-  all.
-- **Prover cost not benchmarked** beyond the one-off commitment build. The
-  per-query prover work is one `chi^T A` matvec plus `t` Merkle openings, which
-  is cheap, but we have not profiled it against the paper's millisecond claims.
-
-## Bottom line
-
-Against the specific attack this project built — a trigger-conditional backdoor
-that serves the honest trace on clean inputs, tampers a handful of activations
-on triggered ones, and hides in exactly the place every sampling rule cannot
-look — this is a defence that works: detection `1.000000`, completeness
-`1.000000`, no dependence on where or what the tamper is, at a ~9x proof-size
-cost and with no cryptographic machinery beyond the Merkle tree the protocol
-already uses.
+- **Soundness parameters are too small for Fiat–Shamir.** The field is 26 bits
+  and 24 columns are spot-checked, so each check is about `2^-24`–`2^-26`. With
+  *verifier-sent* challenges that is fine. With hash-derived challenges a
+  cheating prover can grind — re-randomise part of its message and re-hash until
+  the challenge is favourable — so the effective security is only ~24 bits,
+  which is not enough. Fixes: have the verifier send challenges (cheapest and
+  most faithful to the base protocol), or repeat the combination check and raise
+  the column count, or move to a ~64-bit prime. **Not yet done; stated here
+  rather than papered over.**
+- **Honest committer assumed** — matching the paper's own threat model, but it
+  is an assumption. A malicious committer needs the Ligero proximity argument.
+- **Dense layers only.** Convolutions share weights and need a different matrix
+  layout; max-pooling is not an affine-plus-activation relation at all.
+- **It does not make a backdoored model safe.** It guarantees the committed
+  model was executed faithfully. If the committed model is itself backdoored, no
+  inference-time check helps — that is a property of training.

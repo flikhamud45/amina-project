@@ -71,7 +71,7 @@ pre-activations fit without rescaling, which holds comfortably for the first
 layer of the MNIST MLPs used throughout this study.  Chaining the check through
 *every* layer of a deep network needs either a larger prime with a wider
 multiplication routine, or per-layer rescaling with a range argument -- standard
-zkML engineering, and out of scope here.  See ``revision1_notes/phase4_batched.md``.
+zkML engineering, and out of scope here.  See ``revision1_notes/phase4_batched_defence.md``.
 """
 
 from __future__ import annotations
@@ -91,6 +91,10 @@ __all__ = [
     "fixed_point_layer",
     "prove_layer",
     "verify_layer",
+    "fixed_point_network",
+    "prove_network",
+    "verify_network",
+    "rescale",
 ]
 
 # Largest prime below 2**26.  Chosen so that a full int64 matmul over the field
@@ -185,6 +189,10 @@ class FixedPointLayer:
     outputs: np.ndarray
     prime: int
     scale_bits: int
+    activation: str = "relu"
+    """``"relu"`` or ``"identity"``.  The output layer of a classifier emits raw
+    logits (``SPEC_NOTES.md`` Section 3), most of which are negative, so it needs
+    the identity variant -- the ReLU checks would reject an honest prover."""
 
     @property
     def width(self) -> int:
@@ -210,17 +218,32 @@ def fixed_point_layer(
     *,
     scale_bits: int = 8,
     prime: int = DEFAULT_PRIME,
+    activation: str = "relu",
+    inputs_are_integers: bool = False,
 ) -> FixedPointLayer:
-    """Quantise one dense ReLU layer and its activations into the field.
+    """Quantise one dense layer and its activations into the field.
 
-    ``activations_out`` defaults to the honest ``relu(z)``.  Pass a tampered
-    vector (already quantised at the layer's output scale) to model an
-    adversarial trace.
+    ``activation`` is ``"relu"`` or ``"identity"``; the latter is what a
+    logit/output layer needs.  ``activations_out`` defaults to the honest
+    output.  Pass a tampered vector (already quantised at the layer's output
+    scale) to model an adversarial trace.
+
+    ``inputs_are_integers`` says ``activations_in`` is already a fixed-point
+    integer vector at scale ``2**scale_bits`` -- which is the case for every
+    layer but the first once the network is chained, since the previous layer's
+    rescaled output feeds straight in.
     """
+    if activation not in ("relu", "identity"):
+        raise ValueError(f"activation must be 'relu' or 'identity', got {activation!r}")
     scale = 1 << scale_bits
     weight_int = np.rint(np.asarray(weight, dtype=np.float64) * scale).astype(np.int64)
     bias_int = np.rint(np.asarray(bias, dtype=np.float64) * scale * scale).astype(np.int64)
-    inputs_int = np.rint(np.asarray(activations_in, dtype=np.float64) * scale).astype(np.int64)
+    if inputs_are_integers:
+        inputs_int = np.asarray(activations_in, dtype=np.int64)
+    else:
+        inputs_int = np.rint(
+            np.asarray(activations_in, dtype=np.float64) * scale
+        ).astype(np.int64)
 
     matrix = np.concatenate([weight_int, bias_int[:, None]], axis=1)
     inputs = np.concatenate([inputs_int, np.ones(1, dtype=np.int64)])
@@ -231,15 +254,17 @@ def fixed_point_layer(
             f"pre-activations reach {int(np.max(np.abs(z)))}, which does not fit "
             f"signed in the field of size {prime}; lower scale_bits"
         )
-    outputs = np.maximum(z, 0) if activations_out is None else np.asarray(
-        activations_out, dtype=np.int64
-    )
+    if activations_out is None:
+        outputs = np.maximum(z, 0) if activation == "relu" else z
+    else:
+        outputs = np.asarray(activations_out, dtype=np.int64)
     return FixedPointLayer(
         matrix=_as_field(matrix, prime),
         inputs=_as_field(inputs, prime),
         outputs=_as_field(outputs, prime),
         prime=prime,
         scale_bits=scale_bits,
+        activation=activation,
     )
 
 
@@ -337,24 +362,65 @@ class BatchedLayerProof:
         return 8 * scalars + sum(int(o.size_bytes) for o in self.column_openings)
 
 
-def _derive(
+def _derive_folding(
     digest: bytes,
     inputs: np.ndarray,
     outputs: np.ndarray,
     zero_indices: np.ndarray,
     sign_witness: np.ndarray,
     width: int,
-    n_columns: int,
-    n_queries: int,
     prime: int,
-) -> tuple[np.ndarray, np.ndarray, int, int, np.ndarray]:
-    """Fiat-Shamir challenges, derived after the prover is committed to y."""
-    transcript = digest + _transcript_bytes(inputs, outputs, zero_indices, sign_witness)
+    context: bytes = b"",
+) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """Round-1 challenges: fixed once the prover is committed to ``a`` and ``y``.
+
+    ``context`` binds this layer's challenges to its position in the network and
+    to everything proved before it, so proofs cannot be replayed at a different
+    layer or spliced across queries.
+    """
+    transcript = context + digest + _transcript_bytes(
+        inputs, outputs, zero_indices, sign_witness
+    )
     s = _challenges(transcript, width, prime, b"pvi/batched/s")
     t = _challenges(transcript, len(zero_indices), prime, b"pvi/batched/t")
     mixers = _challenges(transcript, 2, prime, b"pvi/batched/mix")
-    columns = _challenges(transcript, n_queries, prime, b"pvi/batched/col") % n_columns
-    return s, t, int(mixers[0]), int(mixers[1]), columns
+    return s, t, int(mixers[0]), int(mixers[1])
+
+
+def _derive_columns(
+    digest: bytes,
+    inputs: np.ndarray,
+    outputs: np.ndarray,
+    zero_indices: np.ndarray,
+    sign_witness: np.ndarray,
+    combination: np.ndarray,
+    n_columns: int,
+    n_queries: int,
+    prime: int,
+    context: bytes = b"",
+) -> np.ndarray:
+    """Round-2 challenge: which columns to spot-check.
+
+    **``combination`` must be in this transcript.**  If the column indices were
+    fixed before the prover committed to ``u``, a cheating prover could read
+    them off and then solve for a ``u`` that agrees with the true ``chi^T A`` on
+    exactly those columns while still satisfying the final scalar identity --
+    ``n_queries + 1`` linear constraints on ``M+1`` unknowns, which is wildly
+    underdetermined for any realistic layer.  That is not a hypothetical: it was
+    implemented and it forged an accepting proof for a tampered trace.  See
+    ``tests/test_batched.py::test_adaptive_transcript_forgery_is_rejected``.
+
+    Columns are drawn **without replacement**: a repeated column contributes no
+    extra soundness, so sampling with replacement silently weakens the ``2^-t``
+    bound.  We rank all columns by a derived key and take the first ``t``, which
+    is a random permutation prefix.
+    """
+    transcript = context + digest + _transcript_bytes(
+        inputs, outputs, zero_indices, sign_witness, combination
+    )
+    keys = _challenges(transcript, n_columns, prime, b"pvi/batched/col")
+    order = np.argsort(keys, kind="stable")
+    return order[: min(n_queries, n_columns)].astype(np.int64)
 
 
 def _challenge_vector(
@@ -378,6 +444,7 @@ def prove_layer(
     commitment: BatchedWeightCommitment,
     *,
     n_queries: int = 24,
+    context: bytes = b"",
 ) -> BatchedLayerProof:
     """Produce the proof for one layer of a (possibly adversarial) trace.
 
@@ -386,18 +453,35 @@ def prove_layer(
     """
     prime = layer.prime
     outputs_signed = _signed(layer.outputs, prime)
-    zero_indices = np.flatnonzero(outputs_signed == 0).astype(np.int64)
 
-    z = _signed(_matmul(layer.matrix, layer.inputs[:, None], prime)[:, 0], prime)
-    sign_witness = _as_field(-z[zero_indices], prime) if len(zero_indices) else np.empty(0, np.int64)
+    if layer.activation == "identity":
+        # a == z is already linear: no branch to pin down, so no zero set and no
+        # sign witness.  chi is just the folding challenge.
+        zero_indices = np.empty(0, np.int64)
+        sign_witness = np.empty(0, np.int64)
+    else:
+        zero_indices = np.flatnonzero(outputs_signed == 0).astype(np.int64)
+        z = _signed(_matmul(layer.matrix, layer.inputs[:, None], prime)[:, 0], prime)
+        sign_witness = (
+            _as_field(-z[zero_indices], prime) if len(zero_indices) else np.empty(0, np.int64)
+        )
 
-    s, t, alpha, beta, columns = _derive(
+    s, t, alpha, beta = _derive_folding(
         commitment.digest, layer.inputs, layer.outputs, zero_indices, sign_witness,
-        layer.width, commitment.n_columns, n_queries, prime,
+        layer.width, prime, context,
     )
-    chi = _challenge_vector(layer.outputs, s, t, alpha, beta, zero_indices, prime)
+    chi = (
+        _as_field(s, prime)
+        if layer.activation == "identity"
+        else _challenge_vector(layer.outputs, s, t, alpha, beta, zero_indices, prime)
+    )
+    combination = commitment.combination(chi)
+    columns = _derive_columns(
+        commitment.digest, layer.inputs, layer.outputs, zero_indices, sign_witness,
+        combination, commitment.n_columns, n_queries, prime, context,
+    )
     return BatchedLayerProof(
-        combination=commitment.combination(chi),
+        combination=combination,
         zero_indices=zero_indices,
         sign_witness=sign_witness,
         column_openings=commitment.open_columns(columns),
@@ -414,8 +498,16 @@ def verify_layer(
     *,
     prime: int = DEFAULT_PRIME,
     n_queries: int = 24,
+    activation: str = "relu",
+    context: bytes = b"",
 ) -> bool:
-    """Accept iff the claimed ``outputs`` really are ``relu(A @ inputs)``.
+    """Accept iff the claimed ``outputs`` really are ``phi(A @ inputs)``.
+
+    ``activation`` selects the constraint system: ``"relu"`` uses range +
+    complementarity + sign witness; ``"identity"`` needs only ``a == z``, which
+    is already linear.  An output layer emitting logits must use the latter --
+    most logits are negative, so the ReLU range check would reject an honest
+    prover outright.
 
     ``encoder`` is used only for the *public* parameters of the code (the
     Vandermonde matrix and its dimensions).  The verifier never reads its
@@ -424,25 +516,38 @@ def verify_layer(
     width = len(outputs)
     outputs_signed = _signed(outputs, prime)
 
-    # (1) ReLU range, free: the claimed activations are in the clear.
-    if np.any(outputs_signed < 0):
-        return False
+    if activation == "identity":
+        # No range check (logits may be negative) and no zero set to witness.
+        if len(proof.zero_indices) or len(proof.sign_witness):
+            return False
+    else:
+        # (1) ReLU range, free: the claimed activations are in the clear.
+        if np.any(outputs_signed < 0):
+            return False
 
-    # The zero set is determined by the claimed output; the prover cannot choose it.
-    expected_zero = np.flatnonzero(outputs_signed == 0).astype(np.int64)
-    if not np.array_equal(expected_zero, np.asarray(proof.zero_indices, dtype=np.int64)):
-        return False
+        # The zero set is fixed by the claimed output; the prover cannot choose it.
+        expected_zero = np.flatnonzero(outputs_signed == 0).astype(np.int64)
+        if not np.array_equal(expected_zero, np.asarray(proof.zero_indices, dtype=np.int64)):
+            return False
 
-    # (3a) the sign witness must itself be non-negative -- also free.
-    witness_signed = _signed(proof.sign_witness, prime)
-    if len(witness_signed) != len(expected_zero) or np.any(witness_signed < 0):
-        return False
+        # (3a) the sign witness must itself be non-negative -- also free.
+        witness_signed = _signed(proof.sign_witness, prime)
+        if len(witness_signed) != len(expected_zero) or np.any(witness_signed < 0):
+            return False
 
-    s, t, alpha, beta, columns = _derive(
+    s, t, alpha, beta = _derive_folding(
         commitment_digest, inputs, outputs, proof.zero_indices, proof.sign_witness,
-        width, encoder.n_columns, n_queries, prime,
+        width, prime, context,
     )
-    chi = _challenge_vector(outputs, s, t, alpha, beta, proof.zero_indices, prime)
+    chi = (
+        _as_field(s, prime)
+        if activation == "identity"
+        else _challenge_vector(outputs, s, t, alpha, beta, proof.zero_indices, prime)
+    )
+    columns = _derive_columns(
+        commitment_digest, inputs, outputs, proof.zero_indices, proof.sign_witness,
+        proof.combination, encoder.n_columns, n_queries, prime, context,
+    )
 
     # The commitment opening: u must really be chi^T A.
     if len(proof.column_openings) != len(columns):
@@ -460,8 +565,14 @@ def verify_layer(
         if lhs != int(encoded_u[int(column)]):
             return False
 
-    # (2) + (3b), folded into one scalar identity over the committed weights.
+    # The scalar identity over the committed weights.
     lhs = int(np.mod(np.sum(np.mod(proof.combination * _as_field(inputs, prime), prime)), prime))
+    if activation == "identity":
+        # <s, A x> == <s, a>
+        rhs = int(np.mod(np.sum(np.mod(s * _as_field(outputs, prime), prime)), prime))
+        return lhs == rhs
+
+    # (2) + (3b), folded together.
     quadratic = int(np.mod(np.sum(np.mod(np.mod(s * outputs, prime) * outputs, prime)), prime))
     witness_term = (
         int(np.mod(np.sum(np.mod(t * proof.sign_witness, prime)), prime))
@@ -470,3 +581,124 @@ def verify_layer(
     )
     rhs = int(np.mod(alpha * quadratic - beta * witness_term, prime))
     return lhs == rhs
+
+
+# --------------------------------------------------------------------------- #
+# Whole-network chaining
+# --------------------------------------------------------------------------- #
+#
+# Checking one layer in isolation proves nothing about the network: the prover
+# could hand layer 2 an input unrelated to layer 1's verified output.  The fix
+# needs no new cryptography here, because this protocol is not zero-knowledge --
+# the activations are revealed anyway (``SPEC_NOTES.md`` Section 5).  So the
+# *verifier* recomputes each layer's input from the previous layer's verified
+# output, using a public rounding rule, and never takes it from the prover.
+# The induction is then: the input layer is honest because the verifier built
+# it; if layer l's input is honest, its check forces its output correct; so
+# layer l+1's input, recomputed from that output, is honest too.
+
+
+def rescale(values: np.ndarray, scale_bits: int, prime: int) -> np.ndarray:
+    """Public rounding rule: bring a layer output at scale 2^(2b) back to 2^b.
+
+    Plain integer arithmetic on the signed representatives -- no range argument
+    needed, because the values are in the clear and the verifier does this for
+    itself.
+    """
+    signed = _signed(values, prime).astype(np.int64)
+    half = 1 << (scale_bits - 1)
+    return np.floor_divide(signed + half, 1 << scale_bits)
+
+
+def _augment(inputs_int: np.ndarray, prime: int) -> np.ndarray:
+    return _as_field(np.concatenate([np.asarray(inputs_int, dtype=np.int64),
+                                     np.ones(1, dtype=np.int64)]), prime)
+
+
+def _layer_context(index: int, running: bytes) -> bytes:
+    return b"pvi/batched/layer" + index.to_bytes(4, "big") + running
+
+
+def fixed_point_network(
+    network,
+    query: np.ndarray,
+    *,
+    scale_bits: int = 8,
+    prime: int = DEFAULT_PRIME,
+    tampered: dict[int, np.ndarray] | None = None,
+):
+    """The honest fixed-point execution of every layer, with rescaling between.
+
+    ``tampered`` optionally replaces a layer's claimed output (index -> integer
+    vector at that layer's output scale), which is how an adversarial trace is
+    modelled.  Layers above a tamper are re-propagated from the tampered value,
+    exactly as the attack does.
+    """
+    tampered = tampered or {}
+    architecture = network.architecture
+    views = []
+    x = np.rint(np.asarray(query, dtype=np.float64) * (1 << scale_bits)).astype(np.int64)
+    for index, layer in enumerate(architecture.layers):
+        if index == 0:
+            continue
+        weight, bias = network.parameters[layer.name]
+        activation = "relu" if layer.activation == "relu" else "identity"
+        view = fixed_point_layer(
+            weight, bias, x, activations_out=tampered.get(index),
+            scale_bits=scale_bits, prime=prime, activation=activation,
+            inputs_are_integers=True,
+        )
+        views.append(view)
+        x = rescale(view.outputs, scale_bits, prime)
+    return views
+
+
+def prove_network(views, commitments, *, n_queries: int = 24):
+    """One proof per layer, each bound to its position and to what came before."""
+    proofs, running = [], b""
+    for index, (view, commitment) in enumerate(zip(views, commitments)):
+        context = _layer_context(index, running)
+        proof = prove_layer(view, commitment, n_queries=n_queries, context=context)
+        proofs.append(proof)
+        running = _transcript_bytes(view.outputs, proof.combination)
+    return proofs
+
+
+def verify_network(
+    architecture,
+    query: np.ndarray,
+    claimed_outputs,
+    proofs,
+    commitments,
+    *,
+    scale_bits: int = 8,
+    prime: int = DEFAULT_PRIME,
+    n_queries: int = 24,
+) -> bool:
+    """Verify every layer, recomputing each layer's input from the last.
+
+    ``claimed_outputs[l]`` is the prover's claimed output for layer ``l+1`` of
+    the architecture, as field elements.  Note the verifier takes *no* layer
+    input from the prover.
+    """
+    layers = [layer for index, layer in enumerate(architecture.layers) if index > 0]
+    if not (len(layers) == len(claimed_outputs) == len(proofs) == len(commitments)):
+        return False
+
+    x = np.rint(np.asarray(query, dtype=np.float64) * (1 << scale_bits)).astype(np.int64)
+    running = b""
+    for index, (layer, outputs, proof, commitment) in enumerate(
+        zip(layers, claimed_outputs, proofs, commitments)
+    ):
+        activation = "relu" if layer.activation == "relu" else "identity"
+        context = _layer_context(index, running)
+        accepted = verify_layer(
+            proof, commitment.digest, commitment.params, commitment,
+            _augment(x, prime), outputs,
+            prime=prime, n_queries=n_queries, activation=activation, context=context,
+        )
+        if not accepted:
+            return False
+        running = _transcript_bytes(outputs, proof.combination)
+        x = rescale(outputs, scale_bits, prime)
+    return True

@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 from pvi.training import save_network, train_network
-from pvi.zoo import all_model_specs
+from pvi.zoo import LARGE_MLP_SPEC, all_model_specs
 
 ARTIFACTS = Path(__file__).resolve().parents[1] / "artifacts" / "models"
 
@@ -38,7 +38,11 @@ def main() -> None:
     specs = all_model_specs()
     if args.only:
         wanted = set(args.only)
-        specs = tuple(spec for spec in specs if spec.name in wanted)
+        # LARGE_MLP_SPEC is deliberately outside the default pipeline (it is
+        # GPU-scale), but naming it explicitly must still work.
+        specs = tuple(
+            spec for spec in specs + (LARGE_MLP_SPEC,) if spec.name in wanted
+        )
         if not specs:
             raise SystemExit(f"no models matched {sorted(wanted)}")
 

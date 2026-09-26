@@ -79,7 +79,7 @@ Theorem 4 and the sumcheck prototype were originally measured at:
 | | width 512 (original) | width 4096 (this run) |
 |---|---|---|
 | `\|U\|` / width | 462/512 (90%) | 3717/4096 (91%) |
-| Theorem 4: any `ε` beats uniform? | no | no |
+| Theorem 4 sweep | **withdrawn — measured on the honest trace, see `DEFENCE_NOTES.md` §6** | same flaw |
 | sumcheck detection vs. uniform | 1.000000 vs 0.00195 | 1.000000 vs 0.000244 |
 
 Both conclusions hold, essentially unchanged in character, at 8x scale with a
