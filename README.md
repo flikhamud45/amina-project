@@ -13,3 +13,10 @@ and by 17 other systems, from LeNet-5 to Llama-2-13B.
 |---|---|
 | [`report/`](report/) | the report: `main.pdf` and its LaTeX source |
 | [`code/`](code/) | the implementation, one folder per experiment, the stored measurements, and a [README](code/README.md) with exact commands to reproduce every table and figure |
+
+The submission tarball (`<groupname>/code`, `<groupname>/report`) is this branch as
+committed:
+
+```bash
+git archive --format=tar.gz --prefix=<groupname>/ -o <groupname>.tar.gz submission
+```
