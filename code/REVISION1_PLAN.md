@@ -1,5 +1,12 @@
 # Revision 1: looking for a real defence
 
+> **Outcome: found one.** `protocol/batched.py` (Phase 4) detects every attack
+> in this project with probability `1.000000`, at exact honest completeness and
+> ~9x proof size, using no primitive beyond the Merkle tree the protocol already
+> has. See `revision1_notes/phase4_batched_defence.md` and `DEFENCE_NOTES.md`
+> §10. Phases 0–1 are the record of what *didn't* work and why, which is what
+> made it clear that no sampling rule could.
+
 Scope for this revision, as decided: stay inside the sampling-protocol framework
 (no transformer/attention support, no refereed-delegation implementation — both
 deferred, not abandoned). The goal is either a working defence that measurably
@@ -129,26 +136,51 @@ Whatever Phase 0 finds, these are cheap enough to prototype and run through
 
 ## Phase 2 — Structural fix (full stretch goal, confirmed in scope)
 
-If Phase 0 confirms the impossibility for any sampling-only rule, the only way to
-beat `k/|U|` without full SNARK cost is to change what one check verifies, not how
-nodes are chosen: replace the per-node Merkle-row check with a **per-layer
-random-linear-combination (sumcheck-style) check** — a random challenge vector `r`,
-verify `Σ r_j·(ã_j − φ(Σ w_ij ã_i))` over an entire layer at once. By
-Schwartz-Zippel, this catches an inconsistency *anywhere* in the layer with
-overwhelming probability instead of `1/N`. This is a different cryptographic
-primitive sitting between "Merkle row opening" and "full zkSNARK" — a new protocol
-variant, not a smarter verifier for the existing one. Plan: prototype the numpy
-arithmetic first (ideal random-oracle challenge, no actual succinct commitment) to
-measure the soundness gain before investing in making it succinct.
+**Status: soundness prototyped and confirmed; succinctness not attempted.** See
+`DEFENCE_NOTES.md` §9. The per-layer random-linear-combination check
+(`scripts/run_sumcheck_prototype.py`) catches both the naive single-neuron
+tamper and §4's 13-neuron zero-hiding backdoor with certainty (`1.000000`,
+against `0.000000` under contribution weighting and `0.0258` under uniform),
+at negligible float-noise cost to honest completeness. That confirms the
+soundness motivation is real.
+
+What remains open, and is real cryptographic engineering rather than a numpy
+exercise: as implemented, computing the check still requires opening every
+weight and every claimed activation of the layer — the same information as
+checking all `N` nodes and taking the AND, so *by itself* this is not cheaper.
+The actual payoff needs a succinct argument for the combination's value
+(`O(log N)` or `O(1)` communication) — the same sumcheck-over-multilinear-
+extensions primitive real zkML systems use for a layer's affine part, with a
+lookup argument for the ReLU (Jolt-style). The concrete proposal that would
+make this a genuine protocol variant rather than a thought experiment: keep
+`RandPathTest`'s outer path-sampling structure (visit `O(depth)` layers, not
+all of them) but upgrade the check performed at each *visited* layer from "one
+sampled node" to "one succinct whole-layer sumcheck." Not built — this is
+future work, flagged as such in the write-up rather than attempted here.
 
 ## Phase 3 — GPU scale-out (validation, not discovery)
 
-Once Phase 0–2 conclusions are settled at MNIST-MLP scale, use SLURM GPU access to:
+**Status: infrastructure built, first scale check done and confirms the
+theory; CIFAR-10/CNN and multi-seed repeats still open.** See
+`revision1_notes/phase3_gpu.md` for the full write-up, including a real
+cluster-compatibility saga worth reading before running anything else here
+(GPU/driver mismatches across node types, and a login-node quirk where
+long-running foreground/background shell commands get killed regardless of
+actual resource use — the fix was detached `sbatch` jobs polled via the
+`Monitor` tool, not `srun`/`Bash` background waits).
 
-* retrain at 5–10x width/depth and re-run the same experiments to confirm the
-  theorems' predictions hold size-independently;
+Done: `LARGE_MLP_SPEC` (`784 -> 4096 -> 2048 -> 10`, 8x the original hidden
+widths) trained for real on an RTX 2080 Ti (98.91% train / 97.11% test
+accuracy, 6 epochs on full MNIST). Theorem 4's sweep and the sumcheck
+prototype both re-run against it and reach the same conclusions as at width
+512 (`|U|` ratio ~91% either way, no `ε` beats uniform, sumcheck detection
+stays at `1.000000`) — confirmation, not new theory, but the kind of check
+that was previously impractical on CPU.
+
+Still open:
+
 * multi-seed repeats for error bars on floor/threshold calibration;
-* add the CIFAR-10 CNN promised in the intermediate report but never built.
+* the CIFAR-10 CNN promised in the intermediate report but never built.
 
 This phase validates generalization; it isn't expected to change the theory.
 
@@ -166,3 +198,36 @@ This phase validates generalization; it isn't expected to change the theory.
 * None of Phase 0–2 addresses trigger rarity (`ρ→0`: a verifier can't catch
   behavior it never observes). That remains a known, out-of-scope limitation of
   any inference-time verifier, sampling-based or not.
+
+---
+
+## Phase 4 — The defence (done)
+
+**Status: built, tested, measured, and validated at 8x width.**
+
+`src/pvi/protocol/batched.py`: a per-layer batched consistency check with a
+Ligero-style weight commitment (Reed-Solomon rows, Merkle-committed columns),
+so the verifier checks one evaluation `chi^T A` for a challenge picked after
+the prover is committed — it never holds the weight matrix. Exact integer
+arithmetic in a prime field, which also retires the `1e-4` float tolerance
+`SPEC_NOTES.md` §2 was forced into.
+
+The non-obvious part: batching alone is *not* enough. Complementarity
+(`a_j(a_j - z_j) == 0`) is vacuous exactly where `a_j == 0`, so Theorem 3's
+zero blind spot reappears in arithmetic form and the zero-hiding backdoor would
+pass a naive batched check. It is closed with a plaintext sign witness
+`y_j := -z_j >= 0` on the zero set, range-checked for free and folded into the
+same opening.
+
+Measured against this repo's own attack planners (layer 1, 40 queries):
+detection `1.000000` for the naive flip, the stealthy envelope-confined flip,
+and the zero-hiding backdoor — the last being the attack that drives
+contribution weighting to exactly `0.000000`. Honest completeness `1.000000`.
+At width 4096 the numbers are unchanged while uniform sampling degrades from
+`0.0019` to `0.00024`.
+
+Cost: ~115 kB proof at width 512 vs the sampling scheme's ~13 kB.
+
+Remaining, stated in `revision1_notes/phase4_batched_defence.md`: one layer at
+a time without rescaling; honest committer assumed (matches the threat model);
+dense ReLU layers only; prover cost not profiled.

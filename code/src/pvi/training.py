@@ -22,18 +22,36 @@ from pvi.nn.architecture import Architecture
 from pvi.nn.models import build_torch_module, extract_parameters
 from pvi.nn.network import TracedNetwork
 
-__all__ = ["TrainConfig", "TrainReport", "load_network", "save_network", "train_network"]
+__all__ = [
+    "TrainConfig",
+    "TrainReport",
+    "load_network",
+    "resolve_device",
+    "save_network",
+    "train_network",
+]
 
 
 @dataclass(frozen=True)
 class TrainConfig:
-    """Hyper-parameters.  Defaults are tuned for CPU-only runs of a few minutes."""
+    """Hyper-parameters.  Defaults are tuned for CPU-only runs of a few minutes.
+
+    ``device`` defaults to ``"cpu"`` so every cached model in this repository stays
+    bit-exactly reproducible from its recorded seed, which is the determinism
+    ``train_network`` promises above.  That promise does not extend to
+    ``device="cuda"``: CUDA kernels reduce in a data- and GPU-dependent order, so a
+    GPU run is only *best-effort* deterministic (``train_network`` still requests
+    it), not bit-exact across GPUs or even across CUDA versions the way CPU runs
+    are.  Use ``device="auto"`` to pick CUDA when available and fall back to CPU
+    otherwise.
+    """
 
     epochs: int = 6
     batch_size: int = 128
     learning_rate: float = 1e-3
     weight_decay: float = 0.0
     seed: int = 0
+    device: str = "cpu"
 
 
 @dataclass(frozen=True)
@@ -45,6 +63,13 @@ class TrainReport:
     final_loss: float
     epochs: int
     seed: int
+
+
+def resolve_device(device: str) -> torch.device:
+    """``"auto"`` picks CUDA when available; anything else is passed straight to torch."""
+    if device == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device)
 
 
 def train_network(
@@ -59,7 +84,13 @@ def train_network(
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
 
-    module = build_torch_module(architecture)
+    device = resolve_device(config.device)
+    if device.type == "cuda":
+        # Best-effort only -- see TrainConfig's docstring on GPU determinism.
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    module = build_torch_module(architecture).to(device)
     optimiser = torch.optim.Adam(
         module.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
     )
@@ -80,6 +111,7 @@ def train_network(
     for epoch in range(config.epochs):
         running, seen = 0.0, 0
         for batch_x, batch_y in loader:
+            batch_x, batch_y = batch_x.to(device), batch_y.to(device)
             optimiser.zero_grad()
             loss = criterion(module(batch_x), batch_y)
             loss.backward()

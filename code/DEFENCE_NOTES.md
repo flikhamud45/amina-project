@@ -364,7 +364,135 @@ raw data in `artifacts/results/targeted_vs_untargeted.json`.
 
 ---
 
-## 9. What would actually help
+## 9. Revision 1: how much SNARK machinery is actually needed
+
+Sections 3–8 are consistent on one point: no way of choosing *which* nodes to
+check, however clever, escapes the `k/N`-shaped ceiling once the adversary
+knows the rule (§5's corollary). The only lever left is to change *what one
+check verifies*. This section prototypes the cheapest version of that: batch
+an entire layer's local relations into one scalar instead of sampling among
+them.
+
+**The check.** For layer `ℓ` with claimed activations `ã` and real weights
+`w` (both already needed to check even one node), draw a random challenge
+vector `r` over the whole layer and compute
+
+```
+C = sum_j r_j * ( ã_j - phi( sum_i w_ij ã_i ) )
+```
+
+`C` is exactly zero if every local relation in the layer holds. If even one
+node's relation is violated, the residual vector is nonzero, and a uniformly
+random linear functional of a fixed nonzero vector is zero with probability 0
+(continuous challenges) or `≤ 1/|F|` (challenges from a size-`|F|` field) —
+elementary linear algebra, nothing like Schwartz–Zippel's polynomial-degree
+argument is needed once `φ` has already been applied and the residual reduced
+to a single number per node.
+
+**Measured** (`scripts/run_sumcheck_prototype.py`, layer 1, width 512, honest
+float-noise floor from `SPEC_NOTES.md` §2 calibrated with 10x headroom):
+
+| Trace | batched per-layer check | best sampling-based check |
+|---|---|---|
+| Honest | completeness 1.000000 | — |
+| Naive single-neuron tamper | **1.000000** | uniform: 0.001953 |
+| 13-neuron zero-hiding backdoor (§4's exploit, `0.000000` under contribution weighting) | **1.000000** | uniform: 0.025781 |
+
+Both attacks caught with certainty (up to float-noise headroom), independent
+of `N` and independent of where in the layer the inconsistency sits — including
+the one attack (§4) that reduces every value-based sampler tried in this
+document to exactly zero.
+
+**What this does and does not show.** This measures the *soundness* gain,
+assuming a succinct proof for the value of `C` already exists. It does not
+build one. As implemented, computing `C` requires the verifier to hold every
+weight and every claimed activation of the layer — exactly the same
+information as checking all `N` nodes individually and taking the logical AND.
+On its own this buys *nothing* over the naive "check everything" scheme it
+resembles; the entire value depends on a genuine succinct argument that lets
+the verifier accept `C`'s value in `O(log N)` or `O(1)` communication instead
+of `N` weight-row openings.
+
+That argument is not exotic — it is the same primitive real zkML systems use
+for a layer's affine part (a sumcheck protocol over the multilinear extensions
+of `w` and `ã`, e.g. GKR-style), with the ReLU handled by a separate lookup
+argument over valid `(z_j, a_j)` pairs (exactly the technique behind the
+Jolt zkVM cited in our own related work, Anchuri et al.'s footnote 2's
+"not zero-knowledge" caveat notwithstanding). That is precisely the
+prover-cost machinery the paper set out to avoid by sampling — Phase 2's real
+question was never "does batching help" (it obviously does, trivially) but
+"is there a middle ground between full per-layer SNARK cost and `1/N`
+sampling." The natural hybrid, not built here: keep `RandPathTest`'s *outer*
+structure — a random path visits `O(depth)` layers, not all of them — but
+upgrade the check performed at each *visited* layer from "one sampled node"
+to "one succinct whole-layer sumcheck." This removes the within-layer `1/N`
+gap Theorem 1's corollary shows no sampling rule can close, while keeping the
+protocol's central efficiency claim (sublinear in the network, not the full
+GKR cost of an end-to-end proof). Building and costing that hybrid is real
+follow-on work, not something a numpy prototype settles.
+
+Code: `scripts/run_sumcheck_prototype.py`.
+
+**Update: it was built.** See §10 — the assumption this section leans on (that
+a succinct opening exists) turned out to be satisfiable with the Merkle
+primitive already in this repository, and the resulting protocol catches every
+attack in this document with probability 1.
+
+---
+
+## 10. Revision 1: the defence, built and measured
+
+§9's prototype assumed the verifier could see the weights. `protocol/batched.py`
+removes that assumption: a Ligero-style commitment (Reed-Solomon encode the rows
+of `A = [W | b]`, Merkle-commit the columns) lets the verifier check one
+evaluation `chi^T A` for a challenge vector it picks *after* the prover is
+committed, spot-checking `t` random columns. No pairings, no new primitive —
+the same Merkle tree the paper's own §8.1 uses.
+
+**The subtlety that matters.** Batching a layer into one random linear
+combination verifies complementarity `a_j(a_j - z_j) == 0`, and that constraint
+is *vacuous exactly where `a_j == 0`*. §4's zero blind spot reappears verbatim
+in arithmetic form: the zero-hiding backdoor would walk straight through a naive
+batched check. Closing it needs a third constraint — `z_j <= 0` on the zero set
+— which the prover supplies as a plaintext witness `y_j := -z_j >= 0` that the
+verifier range-checks for free and then ties back to the committed weights.
+Complementarity and the sign constraint fold into a single opening.
+
+**Measured** against this repository's own attack planners (`mlp_mnist_full`,
+layer 1, 40 queries):
+
+| Attack | batched check | uniform | contribution weighting |
+|---|---|---|---|
+| naive single-neuron flip | **1.000000** | 0.001953 | 0.112636 |
+| stealthy envelope-confined | **1.000000** | 0.004958 | 0.150712 |
+| **zero-hiding backdoor** (§4's exploit) | **1.000000** | 0.023730 | **0.000000** |
+
+Honest completeness is **exactly** `1.000000` — the exact field arithmetic also
+retires the `1e-4` tolerance of `SPEC_NOTES.md` §2, and with it the free
+sub-tolerance perturbation budget that tolerance handed the adversary.
+
+Re-run at width 4096 (8x), detection is unchanged at `1.000000` for both
+attacks while uniform sampling's degrades from `0.0019` to `0.00024` — the
+`1/N` ceiling is visible in one row and absent in the other.
+
+**Cost, honestly**: proof size ~115 kB at width 512 against the sampling
+scheme's ~13 kB (≈9x), growing as `O(t·N)`. Since the existing scheme already
+reveals a whole layer's activations whenever it touches that layer (`C_trc` is
+one leaf per layer), this is a constant factor on an existing `O(N)`, not a new
+asymptotic class, and "visit `O(depth)` layers" is untouched.
+
+**Scope**: one layer at a time (the field is sized so a layer's pre-activations
+fit without rescaling — true with wide margin for these MLPs; chaining every
+layer of a deep net needs rescaling plus a range argument); honest committer
+assumed, matching this document's threat model; dense ReLU layers only.
+
+Full write-up: `revision1_notes/phase4_batched_defence.md`. Code:
+`src/pvi/protocol/batched.py`, `tests/test_batched.py`,
+`scripts/run_batched_defence.py`.
+
+---
+
+## 11. What would actually help
 
 None of this touches the protocol's real guarantee. Against a prover that swaps in a
 *different model*, `RandPathTest` works — we measured 100% detection against three
@@ -378,10 +506,16 @@ certify anything about whether the committed model is benign.
 
 Directions that address the gap rather than the symptom:
 
+* **The batched per-layer check of §10.** This is the one we built, and it is the
+  cheapest point on the trade-off curve we found: detection `1.000000` against every
+  attack in this document, exact completeness, ~9x proof size, and no primitive
+  beyond the Merkle tree the protocol already uses. Its limits (one layer at a time
+  without rescaling, honest committer, dense ReLU layers) are stated in §10.
 * **Exact-binding proofs.** A zkSNARK over the full circuit removes the sampling gap
   entirely — at the prover cost the paper set out to avoid. That trade-off is the
   honest framing: the orders-of-magnitude speed-up is paid for in soundness against
-  sparse tampering, not obtained for free.
+  sparse tampering, not obtained for free. §10 is a partial, much cheaper instance of
+  this: it buys exact soundness *per checked layer* rather than over the whole circuit.
 * **Refereed delegation (Appendix D).** Unaffected by any of this. Bisection isolates
   the *first* disagreeing node in `O(log n)` rounds, so a single-node tamper is found
   with certainty rather than probability `1/N`. It needs two servers with at least one
