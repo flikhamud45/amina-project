@@ -42,6 +42,18 @@ def samplers(mlp_net):
 # --------------------------------------------------------------------------- #
 
 
+def test_saliency_cache_is_not_fooled_by_a_reused_id(mlp_net, query_for):
+    """A freed trace's id can be reused by a new trace; its cached gradients must not be."""
+    sampler = GradientSaliencySampler(mlp_net)
+    other = mlp_net.eval_trace(query_for(mlp_net, seed=1))
+    trace = mlp_net.eval_trace(query_for(mlp_net, seed=2))
+    sampler._saliency(other, 1)
+    # what id reuse would leave behind: the other trace's entry under this trace's id
+    sampler._cache[(id(trace), 1)] = sampler._cache.pop((id(other), 1))
+    expected = GradientSaliencySampler(mlp_net)._saliency(trace, 1)
+    assert np.array_equal(sampler._saliency(trace, 1), expected)
+
+
 def test_distributions_are_valid(mlp_net, query_for, samplers):
     architecture = mlp_net.architecture
     trace = mlp_net.eval_trace(query_for(mlp_net))

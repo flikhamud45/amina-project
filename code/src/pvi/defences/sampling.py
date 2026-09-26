@@ -298,6 +298,9 @@ class GradientSaliencySampler(PathSampler):
 
     Gradients are cached per trace: the walk revisits the same layer many times
     across repeated challenges, and a backward pass per step would dominate runtime.
+    The cache keeps a reference to each trace and checks it on lookup: keying on
+    ``id(trace)`` alone would return another trace's gradients once a trace is
+    freed and its id reused.
     """
 
     name = "gradient-saliency"
@@ -308,13 +311,13 @@ class GradientSaliencySampler(PathSampler):
             raise ValueError(f"floor must be in [0, 1], got {floor}")
         self._network = network
         self._floor = floor
-        self._cache: dict[tuple[int, int], np.ndarray] = {}
+        self._cache: dict[tuple[int, int], tuple[Trace, np.ndarray]] = {}
 
     def _saliency(self, trace: Trace, layer_index: int) -> np.ndarray:
         key = (id(trace), layer_index)
         cached = self._cache.get(key)
-        if cached is not None:
-            return cached
+        if cached is not None and cached[0] is trace:
+            return cached[1]
 
         logits = trace.output.astype(np.float64)
         winner = int(np.argmax(logits))
@@ -327,7 +330,7 @@ class GradientSaliencySampler(PathSampler):
         )
         if len(self._cache) > 256:
             self._cache.clear()
-        self._cache[key] = scores
+        self._cache[key] = (trace, scores)
         return scores
 
     def start_distribution(
