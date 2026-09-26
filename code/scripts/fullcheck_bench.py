@@ -13,7 +13,9 @@ A cell that has a ``.done`` marker is skipped (resume after pre-emption); pass
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import zlib
 import math
 import os
 import platform
@@ -130,7 +132,16 @@ def _timeit(fn, device, n=30, warmup=5) -> list[float]:
     return out
 
 
+def _claims_zlib(claims: dict) -> int:
+    """Size of the claimed pre-activations after zlib (level 6), as int32 -- the
+    comparison point for Anchuri et al.'s Brotli-compressed proof sizes."""
+    raw = b"".join(claims[k].to(torch.int32).numpy().tobytes() for k in sorted(claims))
+    return len(zlib.compress(raw, 6))
+
+
 def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
+    if "claims" in res:
+        r.rec("bytes_claims_zlib", _claims_zlib(res.pop("claims")), "B", trial, **extra)
     for k, v in res["timings"].items():
         r.rec(k, v, "s", trial, **extra)
     for k, v in res["bytes"].items():
@@ -247,6 +258,11 @@ def suite_cnn(args, env) -> None:
         with torch.no_grad():
             for t_ in _timeit(lambda: model_f(x1), device):
                 r.rec("float_inference", t_, "s")
+            # the "download the model and re-run it" reference: the verifier's CPU
+            model_cpu = copy.deepcopy(model_f).cpu()
+            x1c = xs[:1].float()
+            for t_ in _timeit(lambda: model_cpu(x1c), "cpu", n=10, warmup=2):
+                r.rec("cpu_float_inference", t_, "s")
             qi = q_inputs[:1].to(device)
             for t_ in _timeit(lambda: graph.forward(qi), device, n=10, warmup=2):
                 r.rec("int8_inference", t_, "s")
@@ -389,7 +405,7 @@ def suite_cnn(args, env) -> None:
                     r.rec("verifier_precompute", v.precompute(Challenger()), "s")
             run_query(prover, v, q_inputs[:1])  # untimed warm-up (lazy CUDA/BLAS initialisation)
             for i in range(args.queries):
-                res = run_query(prover, v, q_inputs[i:i + 1])
+                res = run_query(prover, v, q_inputs[i:i + 1], keep_claims=(i < 3))
                 _record_query(r, res, i)
             # batch amortisation: B queries in one interaction (mode C, interactive only)
             if mode == "C" and chal == "int":
@@ -605,7 +621,7 @@ def suite_llm(args, env) -> None:
                         torch.cuda.reset_peak_memory_stats()
                     run_query(prover, v, tokens[:1])  # untimed warm-up
                     for i in range(args.queries):
-                        res = run_query(prover, v, tokens[i:i + 1])
+                        res = run_query(prover, v, tokens[i:i + 1], keep_claims=(i == 0 and seq <= 512))
                         _record_query(r, res, i)
                     if device.type == "cuda":
                         r.rec("gpu_peak_memory", torch.cuda.max_memory_allocated(), "B")
