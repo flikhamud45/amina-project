@@ -17,19 +17,17 @@ Integer semantics (both parties compute these identically):
   of 1/16 nat, integer normalisation to 8-bit probabilities), exact ``P V``.
 
 Only the weight products are ``MatOp`` s; everything else is recomputed by the
-verifier.  At the sequence lengths benchmarked here (<= 512 tokens) recomputing
-attention costs the verifier O(T^2 d) per layer, a small fraction of the
-O(T d^2) weight work it avoids.
+verifier, including attention, which costs it O(T^2 d) per layer.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import torch
 
-from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, exact_bmm, requant
+from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, requant
 
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count"]
 
@@ -134,7 +132,7 @@ def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
 def _attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
     """Integer causal attention for a group of heads: ``[B,H,T,dh]`` each."""
     t = q.shape[2]
-    s = exact_bmm(q, k.transpose(-1, -2), max_a=128, max_b=128)          # [B,H,T,T]
+    s = exact_matmul(q, k.transpose(-1, -2), max_w=128, max_x=128)       # [B,H,T,T]
     mask = torch.ones(t, t, dtype=torch.bool, device=q.device).tril()
     s = s.masked_fill(~mask, -(1 << 40))
     d = (s.amax(-1, keepdim=True) - s).clamp(max=1 << 31)
@@ -146,7 +144,7 @@ def _attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
     tot = e.sum(-1, keepdim=True)
     p = torch.div(e * 510 + tot, 2 * tot, rounding_mode="floor")        # 0..255
     del e
-    o = exact_bmm(p, v, max_a=256, max_b=128)                            # [B,H,T,dh]
+    o = exact_matmul(p, v, max_w=256, max_x=128)                         # [B,H,T,dh]
     if m_o is not None:  # m_o=None returns the raw product, for calibration only
         o = requant(o, torch.tensor(m_o, device=q.device), SHIFT, -INT8_MAX, INT8_MAX)
     return o
@@ -214,10 +212,9 @@ class _Builder:
     def std(self, name):
         return max(float(self.env[name].double().std()), 1e-6)
 
-    def to_int8(self, z, target=24.0, relu=False):
+    def to_int8(self, z, target=24.0):
         m = torch.tensor(round((1 << SHIFT) * target / self.std(z)), dtype=torch.int64)
-        lo = 0 if relu else -INT8_MAX
-        return self.cheap("rq", [z], lambda a, m=m, lo=lo: requant(a, m.to(a.device), SHIFT, lo, INT8_MAX),
+        return self.cheap("rq", [z], lambda a, m=m: requant(a, m.to(a.device), SHIFT, -INT8_MAX, INT8_MAX),
                           "requant")
 
     def residual(self, r, z, target=1024.0):
@@ -232,12 +229,11 @@ class _Builder:
 
 
 def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_tokens: int = 16,
-                  seed: int = 0, all_logits: bool = False) -> IntGraph:
+                  seed: int = 0) -> IntGraph:
     """An integer decoder with ``n_layers`` blocks (default: all of them).
 
-    By default the LM head is applied to the last position only: one query is a
-    prompt and its answer is the next-token distribution.  ``all_logits=True``
-    verifies the logits of every position instead (teacher-forced scoring).
+    The LM head is applied to the last position only: one query is a prompt and
+    its answer is the next-token distribution.
     """
     layers = cfg.n_layers if n_layers is None else n_layers
     g = torch.Generator().manual_seed(seed + 1)
@@ -300,13 +296,6 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
         r = B.residual(r, B.mat(prod, d, cfg.d_ff, cfg.bias))
 
     h = B.norm(r, d, center)
-    if not all_logits:
-        h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), "last position")
+    h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), "last position")
     logits = B.mat(h, cfg.vocab, d, False)
-    graph = IntGraph(B.ops, "x", logits, {"config": cfg.name, "n_layers_built": layers,
-                                          "n_layers_full": cfg.n_layers})
-    return graph
-
-
-def with_layers(cfg: DecoderConfig, n: int) -> DecoderConfig:
-    return replace(cfg, n_layers=n)
+    return IntGraph(B.ops, "x", logits)

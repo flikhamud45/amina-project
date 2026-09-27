@@ -1,18 +1,11 @@
 # Virtual environment -- recreate with code/requirements.txt
 .venv/
 
-# Downloaded datasets, trained weights and caches (all regenerable)
+# Downloaded datasets, the benchmark's CNN weights and caches (all regenerable).
+# The MNIST models in code/artifacts/models/ are committed: they are the weights the report used.
 code/data/
-code/artifacts/models/
 code/artifacts/fullcheck/models/
 code/artifacts/fullcheck/cache/
-
-# a flat CSV copy of the raw records, rebuilt by experiments/5_comparison/aggregate.py
-code/artifacts/comparison/tables/measured_long.csv
-# earlier benchmark runs kept on the cluster for provenance, superseded by raw/
-code/artifacts/comparison/raw_preliminary/
-code/artifacts/comparison/raw_superseded/
-code/artifacts/comparison/final/
 
 # SLURM job logs
 /logs/

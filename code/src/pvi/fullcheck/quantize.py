@@ -81,8 +81,7 @@ class CNNBuilder:
         return f"{prefix}{self._n}"
 
     # -- MatOps -----------------------------------------------------------------
-    def conv(self, conv: nn.Conv2d, bn: nn.BatchNorm2d | None, t: _T, *, relu: bool = True,
-             requant_out: bool = True) -> _T:
+    def conv(self, conv: nn.Conv2d, bn: nn.BatchNorm2d | None, t: _T, *, requant_out: bool = True) -> _T:
         w, b = fold_bn(conv, bn)
         sw = w.abs().amax(dim=(1, 2, 3)) / INT8_MAX
         sw = torch.maximum(sw, b.abs() / (t.scale * BIAS_MAX)).clamp_min(1e-12)
@@ -95,10 +94,9 @@ class CNNBuilder:
                               bias=bq, layout="conv", conv=(k, s, p)))
         z_f = F.conv2d(t.f, w, b, stride=s, padding=p)
         zt = _T(name + ".z", z_f, s_z, axis=1)
-        return self.requant(zt, relu) if requant_out else zt
+        return self.requant(zt) if requant_out else zt
 
-    def linear(self, weight: torch.Tensor, bias: torch.Tensor | None, t: _T, *, relu: bool = True,
-               final: bool = False) -> _T:
+    def linear(self, weight: torch.Tensor, bias: torch.Tensor | None, t: _T, *, final: bool = False) -> _T:
         w = weight.detach().double()
         b = bias.detach().double() if bias is not None else torch.zeros(w.shape[0], dtype=torch.float64)
         sw = w.abs().amax(dim=1) / INT8_MAX
@@ -112,24 +110,24 @@ class CNNBuilder:
         zt = _T(name + ".z", z_f, s_z, axis=-1)
         if final:
             return zt
-        return self.requant(zt, relu)
+        return self.requant(zt)
 
     # -- cheap ops ----------------------------------------------------------------
-    def requant(self, zt: _T, relu: bool) -> _T:
-        out_f = torch.relu(zt.f) if relu else zt.f
+    def requant(self, zt: _T) -> _T:
+        """``relu(requant(z))`` back to int8."""
+        out_f = torch.relu(zt.f)
         s_out = _pct(out_f) / INT8_MAX
         m = _mult(zt.scale / s_out)
         shape = [1] * zt.f.dim()
         if m.dim() == 1:
             shape[zt.axis] = m.numel()
         m = m.reshape(shape) if m.dim() == 1 else m
-        lo = 0 if relu else -INT8_MAX
 
-        def fn(z, m=m, lo=lo):
-            return requant(z, m.to(z.device), SHIFT, lo, INT8_MAX)
+        def fn(z, m=m):
+            return requant(z, m.to(z.device), SHIFT, 0, INT8_MAX)
 
         name = self._name("rq")
-        self.ops.append(CheapOp(name, (zt.name,), name + ".y", fn=fn, note=f"requant relu={relu}"))
+        self.ops.append(CheapOp(name, (zt.name,), name + ".y", fn=fn, note="requant relu"))
         return _T(name + ".y", out_f, torch.tensor(s_out, dtype=torch.float64))
 
     def add_relu(self, main: _T, shortcut: _T) -> _T:
@@ -175,14 +173,14 @@ class CNNBuilder:
         self.ops.append(CheapOp(name, (t.name,), name + ".y", fn=fn, note="flatten"))
         return _T(name + ".y", t.f.flatten(1), t.scale)
 
-    def finish(self, out: _T, **meta) -> IntGraph:
-        g = IntGraph(self.ops, "x", out.name, dict(meta))
+    def finish(self, out: _T) -> IntGraph:
+        g = IntGraph(self.ops, "x", out.name)
         g.meta["input_scale"] = self.input_scale
         g.meta["output_scale"] = out.scale.tolist()
         return g
 
 
-def quantize_model(model: nn.Module, x_cal: torch.Tensor, **meta) -> IntGraph:
+def quantize_model(model: nn.Module, x_cal: torch.Tensor) -> IntGraph:
     """Convert a trained float model (eval mode) into an :class:`IntGraph`."""
     import copy
 
@@ -230,7 +228,7 @@ def quantize_model(model: nn.Module, x_cal: torch.Tensor, **meta) -> IntGraph:
                 t = b.linear(lin.weight, lin.bias, t, final=(j == len(linears) - 1))
         else:
             raise TypeError(f"no quantiser for {type(model).__name__}")
-        return b.finish(t, **meta)
+        return b.finish(t)
 
 
 def quantize_input(graph: IntGraph, x: torch.Tensor) -> torch.Tensor:

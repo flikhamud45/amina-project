@@ -50,7 +50,6 @@ __all__ = [
     "LocalContributionSampler",
     "StaticImportanceSampler",
     "ZeroAwareContributionSampler",
-    "expected_saliency_importance",
     "weight_magnitude_importance",
 ]
 
@@ -69,10 +68,7 @@ def weight_magnitude_importance(
     recomputed by anyone.  It ignores the input entirely, which is what makes it
     implementable -- and also what makes it predictable to an adversary.
     """
-    architecture = network.architecture
-    if layer_index >= len(architecture) - 1:
-        return np.ones(architecture[layer_index].n_neurons, dtype=np.float64)
-    above = architecture[layer_index + 1]
+    above = network.architecture[layer_index + 1]
     if not isinstance(above, DenseLayer):
         raise TypeError(
             f"weight-magnitude importance needs a dense layer above; "
@@ -80,30 +76,6 @@ def weight_magnitude_importance(
         )
     weight, _ = network.parameters[above.name]
     return np.abs(weight.astype(np.float64)).sum(axis=0)
-
-
-def expected_saliency_importance(
-    network: TracedNetwork,
-    calibration_queries: np.ndarray,
-    layer_index: int,
-    *,
-    max_queries: int = 512,
-) -> np.ndarray:
-    """Importance as mean ``|d(margin) / d a_v|`` over a calibration set.
-
-    Also publishable: it is computed once, at commit time, from the model and a
-    fixed public calibration set, so it does not depend on the query being verified
-    and cannot be steered by the prover.  It is still, of course, public.
-    """
-    from pvi.nn.gradients import saliency
-
-    queries = np.ascontiguousarray(calibration_queries, dtype=np.float32).reshape(
-        len(calibration_queries), -1
-    )[:max_queries]
-    total = np.zeros(network.architecture[layer_index].n_neurons, dtype=np.float64)
-    for query in queries:
-        total += saliency(network, network.eval_trace(query), layer_index)
-    return total / max(len(queries), 1)
 
 
 # --------------------------------------------------------------------------- #
@@ -120,38 +92,20 @@ class StaticImportanceSampler(PathSampler):
     Theorem 3.1) applies -- and the bound says no member of it beats uniform.
     """
 
-    name = "static-importance"
     transition_depends_on_source = False
 
-    def __init__(
-        self,
-        importance: dict[int, np.ndarray],
-        *,
-        temperature: float = 1.0,
-        floor: float = 0.0,
-    ) -> None:
-        """``temperature`` sharpens (>1) or flattens (<1) the distribution; ``floor``
-        mixes in a uniform component, bounding how little any neuron can be sampled."""
-        if temperature <= 0:
-            raise ValueError(f"temperature must be positive, got {temperature}")
-        if not 0.0 <= floor <= 1.0:
-            raise ValueError(f"floor must be in [0, 1], got {floor}")
+    def __init__(self, importance: dict[int, np.ndarray]) -> None:
         self._importance = {
             layer: np.asarray(values, dtype=np.float64) for layer, values in importance.items()
         }
-        self._temperature = temperature
-        self._floor = floor
 
     def _weights(self, layer_index: int, size: int) -> np.ndarray:
         raw = self._importance.get(layer_index)
         if raw is None:
             return np.full(size, 1.0 / size)
-        scores = np.power(np.maximum(raw, 0.0), self._temperature)
+        scores = np.maximum(raw, 0.0)
         total = scores.sum()
-        scores = np.full(size, 1.0 / size) if total <= 0 else scores / total
-        if self._floor:
-            scores = (1.0 - self._floor) * scores + self._floor / size
-        return scores
+        return np.full(size, 1.0 / size) if total <= 0 else scores / total
 
     def start_distribution(
         self, architecture: Architecture, trace: Trace | None
@@ -184,13 +138,9 @@ class LocalContributionSampler(PathSampler):
     ``plan_stealthy_flip`` produces.
     """
 
-    name = "local-contribution"
 
-    def __init__(self, network: TracedNetwork, *, floor: float = 0.0) -> None:
-        if not 0.0 <= floor <= 1.0:
-            raise ValueError(f"floor must be in [0, 1], got {floor}")
+    def __init__(self, network: TracedNetwork) -> None:
         self._network = network
-        self._floor = floor
 
     def start_distribution(
         self, architecture: Architecture, trace: Trace | None
@@ -202,8 +152,7 @@ class LocalContributionSampler(PathSampler):
         # claim the verifier most wants to hold the prover to.
         scores = np.abs(trace.output.astype(np.float64))
         total = scores.sum()
-        base = np.full(n, 1.0 / n) if total <= 0 else scores / total
-        return (1.0 - self._floor) * base + self._floor / n
+        return np.full(n, 1.0 / n) if total <= 0 else scores / total
 
     def transition_distribution(
         self,
@@ -225,8 +174,7 @@ class LocalContributionSampler(PathSampler):
         else:
             scores = np.abs(row[weight_idx].astype(np.float64) * parent_values)
         total = scores.sum()
-        base = np.full(size, 1.0 / size) if total <= 0 else scores / total
-        return (1.0 - self._floor) * base + self._floor / size
+        return np.full(size, 1.0 / size) if total <= 0 else scores / total
 
 
 class ZeroAwareContributionSampler(PathSampler):
@@ -241,16 +189,12 @@ class ZeroAwareContributionSampler(PathSampler):
     detection stays at a few percent, far from what a proof needs.
     """
 
-    name = "zero-aware-contribution"
 
-    def __init__(self, network: TracedNetwork, *, epsilon: float, floor: float = 0.0) -> None:
+    def __init__(self, network: TracedNetwork, *, epsilon: float) -> None:
         if epsilon < 0.0:
             raise ValueError(f"epsilon must be non-negative, got {epsilon}")
-        if not 0.0 <= floor <= 1.0:
-            raise ValueError(f"floor must be in [0, 1], got {floor}")
         self._network = network
         self._epsilon = epsilon
-        self._floor = floor
 
     def start_distribution(
         self, architecture: Architecture, trace: Trace | None
@@ -260,8 +204,7 @@ class ZeroAwareContributionSampler(PathSampler):
             return np.full(n, 1.0 / n)
         scores = np.abs(trace.output.astype(np.float64)) + self._epsilon
         total = scores.sum()
-        base = np.full(n, 1.0 / n) if total <= 0 else scores / total
-        return (1.0 - self._floor) * base + self._floor / n
+        return np.full(n, 1.0 / n) if total <= 0 else scores / total
 
     def transition_distribution(
         self,
@@ -285,8 +228,7 @@ class ZeroAwareContributionSampler(PathSampler):
                 np.abs(parent_values) + self._epsilon
             )
         total = scores.sum()
-        base = np.full(size, 1.0 / size) if total <= 0 else scores / total
-        return (1.0 - self._floor) * base + self._floor / size
+        return np.full(size, 1.0 / size) if total <= 0 else scores / total
 
 
 class GradientSaliencySampler(PathSampler):
@@ -303,14 +245,10 @@ class GradientSaliencySampler(PathSampler):
     freed and its id reused.
     """
 
-    name = "gradient-saliency"
     transition_depends_on_source = False
 
-    def __init__(self, network: TracedNetwork, *, floor: float = 0.0) -> None:
-        if not 0.0 <= floor <= 1.0:
-            raise ValueError(f"floor must be in [0, 1], got {floor}")
+    def __init__(self, network: TracedNetwork) -> None:
         self._network = network
-        self._floor = floor
         self._cache: dict[tuple[int, int], tuple[Trace, np.ndarray]] = {}
 
     def _saliency(self, trace: Trace, layer_index: int) -> np.ndarray:
@@ -341,8 +279,7 @@ class GradientSaliencySampler(PathSampler):
             return np.full(n, 1.0 / n)
         scores = np.abs(trace.output.astype(np.float64))
         total = scores.sum()
-        base = np.full(n, 1.0 / n) if total <= 0 else scores / total
-        return (1.0 - self._floor) * base + self._floor / n
+        return np.full(n, 1.0 / n) if total <= 0 else scores / total
 
     def transition_distribution(
         self,
@@ -357,5 +294,4 @@ class GradientSaliencySampler(PathSampler):
             return np.full(size, 1.0 / size)
         scores = self._saliency(trace, layer_index - 1)[parent_indices]
         total = scores.sum()
-        base = np.full(size, 1.0 / size) if total <= 0 else scores / total
-        return (1.0 - self._floor) * base + self._floor / size
+        return np.full(size, 1.0 / size) if total <= 0 else scores / total

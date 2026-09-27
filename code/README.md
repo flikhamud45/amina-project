@@ -29,8 +29,7 @@ code/
   tests/                   209 tests
 ```
 
-The experiments import the library (`pvi`) and never each other, except inside
-`5_comparison/`, whose scripts share `common.py`.
+The experiments import the library (`pvi`) and never each other.
 
 ## Installation
 
@@ -67,9 +66,8 @@ rebuild every derived table, the report's figures and tables, and the PDF:
 
 ```bash
 python experiments/5_comparison/aggregate.py        # raw records -> tables/measured_summary.csv, llm_full_model.csv
-python experiments/5_comparison/literature.py       # published numbers -> tables/reported_curated.csv, systems.csv
-python experiments/5_comparison/analytic.py         # closed-form costs and bounds -> tables/analytic.csv
-python experiments/5_comparison/report_tables.py    # all result tables -> tables/report_tables.md|tex
+python experiments/5_comparison/literature.py       # published numbers -> tables/reported_curated.csv
+python experiments/5_comparison/analytic.py         # the path test's cost of 2^-40 on Llama-2-7B -> tables/analytic.csv
 python experiments/5_comparison/count_outcomes.py   # the soundness counts of Section 4.3
 python experiments/5_comparison/paper_assets.py     # -> ../report/figures/*.pdf, ../report/tables/*.tex
 cd ../report && latexmk -pdf main.tex               # or: tectonic -X compile main.tex
@@ -109,7 +107,7 @@ how to run a single model without SLURM.
 | §4.3 counts (3,174 / 1,854 / 174; which check fired) | `5_comparison/count_outcomes.py` | printed |
 | §4.2 Llama-2-7B: 1/11,008 per path, 305,000 paths, 13.7 GB | `5_comparison/analytic.py` | `tables/analytic.csv` (`anchuri_*` columns) |
 | Published results (Table 4, grey points) | `5_comparison/literature.py` | `tables/reported_curated.csv` |
-| Full tables beyond the report (all models, settings, published rows) | `5_comparison/report_tables.py` | `tables/report_tables.md` |
+| Numbers quoted only in the text (e.g. 0.4 points, 1/84–1/512, 1/28 million, 4–7×, 2.4–4.4×, 141×, 1.37 s) | `5_comparison/aggregate.py` | `tables/measured_summary.csv`, `tables/llm_full_model.csv` (ratios with `tables/reported_curated.csv`) |
 
 ## Tests
 

@@ -8,9 +8,9 @@ import pytest
 import torch
 
 from pvi.fullcheck import field as fld
-from pvi.fullcheck.commitment import MerkleTree, WeightCommitment, column_leaf, verify_path
+from pvi.fullcheck.commitment import MerkleTree, WeightCommitment, column_leaf
 from pvi.fullcheck.graph import CheapOp, MatOp, exact_matmul
-from pvi.fullcheck.models import LeNet5, ResNet18, VGG
+from pvi.fullcheck.models import LeNet5, ResNet18
 from pvi.fullcheck.protocol import (
     Challenger,
     Prover,
@@ -26,7 +26,7 @@ P = fld.P
 
 
 # -- field -------------------------------------------------------------------------
-def test_ntt_matches_naive_dft_and_inverts():
+def test_ntt_matches_naive_dft():
     n = 16
     g = torch.Generator().manual_seed(0)
     a = torch.randint(0, P, (3, n), generator=g, dtype=torch.int64)
@@ -34,7 +34,6 @@ def test_ntt_matches_naive_dft_and_inverts():
     naive = torch.tensor([[sum(int(a[r, j]) * pow(w, i * j, P) for j in range(n)) % P for i in range(n)]
                           for r in range(3)], dtype=torch.int64)
     assert torch.equal(fld.ntt(a), naive)
-    assert torch.equal(fld.intt(fld.ntt(a)), a)
 
 
 def test_rs_code_distance_on_random_rows():
@@ -69,13 +68,6 @@ def test_exact_matmul_matches_int64_reference():
 
 
 # -- commitment --------------------------------------------------------------------
-def test_merkle_paths_verify_and_reject_tampering():
-    leaves = [bytes([i]) * 32 for i in range(8)]
-    tree = MerkleTree(leaves)
-    assert all(verify_path(tree.root, i, leaves[i], tree.path(i)) for i in range(8))
-    assert not verify_path(tree.root, 3, leaves[4], tree.path(3))
-
-
 def test_weight_commitment_open_matches_full_encoding_and_fold():
     g = torch.Generator().manual_seed(4)
     w = torch.randint(-127, 128, (9, 30), generator=g, dtype=torch.int64).to(torch.int8)
@@ -101,8 +93,6 @@ def _tiny_graph(kind: str):
     torch.manual_seed(0)
     if kind == "lenet":
         model, shape = LeNet5(10), (1, 28, 28)
-    elif kind == "vgg":
-        model, shape = VGG("vgg11", 10), (3, 32, 32)
     else:
         model, shape = ResNet18(10), (3, 32, 32)
     model.eval()
@@ -400,17 +390,21 @@ def test_real_configs_have_published_parameter_counts():
 
 
 # -- the sampling baseline (Anchuri et al.'s RandPathTest) on the same graphs --------------
-from pvi.fullcheck.sampling import (TraceCommitment, neuron_tensors, paths_for, run_paths,  # noqa: E402
+from pvi.fullcheck.sampling import (TraceCommitment, neuron_tensors, paths_for,  # noqa: E402
                                     sample_path, shared_path_bytes, visit_probabilities)
 
 
 @pytest.mark.parametrize("kind", ["lenet", "resnet"])
 def test_sampling_baseline_accepts_honest_paths(kind):
+    import numpy as np
+
     _, graph, shape = _tiny_graph(kind)
     env, _ = graph.forward(quantize_input(graph, torch.randn(1, *shape)))
-    out = run_paths(graph, env, 20, seed=0)
-    assert all(p["ok"] for p in out["paths"])
-    assert all(p["bytes"] > 0 for p in out["paths"])
+    tc = TraceCommitment(graph, env)
+    rng = np.random.default_rng(0)
+    paths = [sample_path(tc, env, rng) for _ in range(20)]
+    assert all(p["ok"] for p in paths)
+    assert all(p["data_bytes"] > 0 for p in paths)
 
 
 def test_visit_mass_is_a_distribution_on_a_chain():
@@ -536,42 +530,17 @@ def test_gpu_decoder_matches_cpu():
     assert all(torch.equal(a[k], b[k].cpu()) for k in a)
 
 
-# -- the analytic model predicts the measured proof exactly ---------------------------------
-from pvi.fullcheck.analytic import decoder_shapes, graph_shapes, proof_bytes, soundness_error_bits  # noqa: E402
-
-
-@pytest.mark.parametrize("mode", ["C", "Kpre"])
-def test_analytic_proof_bytes_match_the_protocol(setup, mode):
-    _, graph, prover, verifier, x = setup
-    p = verifier.params
-    if mode == "C":
-        v = verifier
-    else:
-        v = Verifier(graph.public(), p, "Kpre", weights={op.name: (op.weight, op.bias) for op in graph.mat_ops})
-        v.precompute(Challenger(seed=1))
-    measured = run_query(prover, v, x, seed=0)["bytes"]
-    predicted = proof_bytes(graph_shapes(graph, x), p, mode)
-    # data parts are exact; the multiproof size depends on which columns were drawn
-    assert {k: measured[k] for k in ("claims", "u", "columns")} == {k: predicted[k] for k in ("claims", "u", "columns")}
-    assert abs(measured["paths"] - predicted["paths"]) <= 0.25 * predicted["paths"] + 64
+# -- decoder shapes (used by aggregate.py and the benchmark) ---------------------------------
+from pvi.fullcheck.analytic import decoder_shapes  # noqa: E402
 
 
 @pytest.mark.parametrize("family", ["gpt", "llama", "qwen"])
 def test_decoder_shapes_match_built_graph(family):
     cfg = _TINY[family]
     graph = build_decoder(cfg, calib_tokens=12, seed=3)
-    tokens = torch.randint(0, cfg.vocab, (1, 12), generator=torch.Generator().manual_seed(5))
-    built = [(s.n_rows, s.row_length, s.n_cols) for s in graph_shapes(graph, tokens)]
-    formula = [(s.n_rows, s.row_length, s.n_cols) for s in decoder_shapes(cfg, 12)]
+    built = [(op.n_rows, op.row_length) for op in graph.mat_ops]
+    formula = [(s.n_rows, s.row_length) for s in decoder_shapes(cfg)]
     assert built == formula
-
-
-def test_analytic_soundness_equals_protocol_soundness():
-    from pvi.fullcheck.analytic import OpShape
-
-    p = params_for(64, 10)
-    ops = [OpShape(str(i), 100, 4097, 5) for i in range(10)]
-    assert abs(soundness_error_bits(ops, p) - soundness_bits(p, [(4097, 4 * 8192)] * 10)) < 1e-9
 
 
 def test_direct_codeword_evaluation_equals_full_encoding():

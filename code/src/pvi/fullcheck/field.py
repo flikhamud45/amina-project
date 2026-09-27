@@ -28,11 +28,9 @@ __all__ = [
     "root_of_unity",
     "power_table",
     "ntt",
-    "intt",
     "rs_encode",
     "small_matmul_mod",
     "field_matmul_mod",
-    "signed",
 ]
 
 P = 2013265921
@@ -42,26 +40,17 @@ GENERATOR = 31
 """A generator of the multiplicative group of ``F_P``."""
 TWO_ADICITY = 27
 
-_HALF = P // 2
-
 
 def to_field(values: torch.Tensor) -> torch.Tensor:
     """Reduce an integer tensor (any sign, |x| < 2**62) into ``[0, P)`` as int64."""
     return torch.remainder(values.to(torch.int64), P)
 
 
-def signed(values: torch.Tensor) -> torch.Tensor:
-    """Map field elements back to the symmetric range ``(-P/2, P/2]``."""
-    values = values.to(torch.int64)
-    return torch.where(values > _HALF, values - P, values)
-
-
-def root_of_unity(n: int, inverse: bool = False) -> int:
+def root_of_unity(n: int) -> int:
     """A primitive ``n``-th root of unity (``n`` a power of two up to ``2**27``)."""
     if n < 1 or n & (n - 1) or n > (1 << TWO_ADICITY):
         raise ValueError(f"NTT length must be a power of two <= 2**27, got {n}")
-    w = pow(GENERATOR, (P - 1) // n, P)
-    return pow(w, P - 2, P) if inverse else w
+    return pow(GENERATOR, (P - 1) // n, P)
 
 
 @lru_cache(maxsize=64)
@@ -93,12 +82,12 @@ def _bit_reverse_cpu(n: int) -> torch.Tensor:
     return rev
 
 
-def ntt(values: torch.Tensor, inverse: bool = False) -> torch.Tensor:
+def ntt(values: torch.Tensor) -> torch.Tensor:
     """Number-theoretic transform along the last axis (length a power of two).
 
     ``values`` must already be reduced into ``[0, P)``.  The forward transform
     evaluates the polynomial whose coefficients are ``values`` at the powers of
-    a primitive root of unity; the inverse undoes it exactly.
+    a primitive root of unity.
     """
     n = values.shape[-1]
     device = values.device
@@ -106,19 +95,13 @@ def ntt(values: torch.Tensor, inverse: bool = False) -> torch.Tensor:
     length = 2
     while length <= n:
         half = length // 2
-        twiddles = power_table(root_of_unity(length, inverse), half, device)
+        twiddles = power_table(root_of_unity(length), half, device)
         shaped = out.reshape(*out.shape[:-1], n // length, length)
         even = shaped[..., :half]
         odd = (shaped[..., half:] * twiddles) % P
         out = torch.cat(((even + odd) % P, (even - odd) % P), dim=-1).reshape(out.shape)
         length *= 2
-    if inverse:
-        out = (out * pow(n, P - 2, P)) % P
     return out
-
-
-def intt(values: torch.Tensor) -> torch.Tensor:
-    return ntt(values, inverse=True)
 
 
 def rs_encode(rows: torch.Tensor, n_points: int) -> torch.Tensor:

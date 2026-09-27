@@ -10,8 +10,7 @@ small values).  Two kinds matter to the protocol:
 * cheap operations -- requantisation, ReLU, pooling, residual additions,
   normalisation, softmax, look-up-table activations, RoPE and attention.  The
   verifier *recomputes* these itself from values it has already checked, so
-  they need no argument at all.  This is the generalisation of the ReLU sign
-  witness: send the pre-activation, let the verifier apply ``phi``.
+  they need no argument at all.
 
 Every operation is deterministic integer arithmetic, so the prover's GPU and
 the verifier's CPU produce bit-identical results (tested).  Matrix products
@@ -22,7 +21,6 @@ chunked so every partial sum stays below ``2**24`` and is therefore exact.
 from __future__ import annotations
 
 import copy
-import math
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -35,7 +33,6 @@ __all__ = [
     "CheapOp",
     "IntGraph",
     "exact_matmul",
-    "exact_bmm",
     "requant",
     "INT8_MAX",
 ]
@@ -45,7 +42,7 @@ _FP32_EXACT = 1 << 24
 
 
 def exact_matmul(w: torch.Tensor, x: torch.Tensor, *, max_w: int = 128, max_x: int = 128) -> torch.Tensor:
-    """Exact ``w @ x`` for small-integer operands via chunked float32 GEMMs."""
+    """Exact (batched) ``w @ x`` for small-integer operands via chunked float32 GEMMs."""
     k = w.shape[-1]
     chunk = max(1, _FP32_EXACT // (max_w * max_x))
     out = None
@@ -54,11 +51,6 @@ def exact_matmul(w: torch.Tensor, x: torch.Tensor, *, max_w: int = 128, max_x: i
         part = part.to(torch.int64)
         out = part if out is None else out + part
     return out
-
-
-def exact_bmm(a: torch.Tensor, b: torch.Tensor, *, max_a: int, max_b: int) -> torch.Tensor:
-    """Exact batched ``a @ b`` (contraction over ``a``'s last axis)."""
-    return exact_matmul(a, b, max_w=max_a, max_x=max_b)
 
 
 def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int) -> torch.Tensor:
@@ -233,7 +225,3 @@ class IntGraph:
             else:
                 env[op.output] = op.fn(*[env[n] for n in op.inputs])
         return env, claims
-
-
-def ceil_log2(x: int) -> int:
-    return max(0, math.ceil(math.log2(max(1, x))))

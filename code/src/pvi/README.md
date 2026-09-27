@@ -22,4 +22,4 @@
 | `transformer.py` | integer GPT-2/OPT/Llama/Qwen decoders (norms, GELU/SiLU tables, RoPE, integer softmax, causal attention) |
 | `protocol.py` | security parameters from λ (`params_for`), prover, verifier (modes C, K, Kpre; interactive or Fiat–Shamir), `run_query` |
 | `sampling.py` | the original path test on the same integer graphs (the like-for-like baseline), with exact per-neuron detection |
-| `analytic.py` | closed-form proof size, work and soundness error |
+| `analytic.py` | decoder weight-op shapes and the expected multiproof size (for runs made before multiproofs) |

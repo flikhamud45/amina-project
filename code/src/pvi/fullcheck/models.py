@@ -3,9 +3,9 @@
 * ``lenet5``      -- LeNet-5 on MNIST (ReLU + max-pool), as in zkCNN's
                      ``lenet5.mnist.relu.max`` and vCNN / ZEN / Bionetta.
 * ``vgg11``/``vgg16`` -- VGG on CIFAR-10 (8 / 13 conv layers + 3 FC), as in zkCNN,
-                     ZKML, ZENO, zkPyTorch and Artemis.
+                     ZKML, ZENO and zkPyTorch.
 * ``resnet18_cifar`` -- the CIFAR-10 ResNet-18 (3x3 stem), as in ZKML, ZENO,
-                     Bionetta, EZKL and Artemis.
+                     Bionetta and EZKL.
 * ``resnet18_224``   -- torchvision's ImageNet-shaped ResNet-18 (7x7 stem, 224x224),
                      with a 2-way head: Anchuri et al.'s dogs-vs-cats classifier.
 
@@ -102,7 +102,6 @@ class BasicBlock(nn.Module):
 class ResNet18(nn.Module):
     def __init__(self, n_classes: int = 10, imagenet_stem: bool = False) -> None:
         super().__init__()
-        self.imagenet_stem = imagenet_stem
         if imagenet_stem:
             self.stem = nn.Conv2d(3, 64, 7, 2, 3, bias=False)
         else:
@@ -132,13 +131,13 @@ class ResNet18(nn.Module):
 
 
 MODEL_SPECS = {
-    # name: (constructor kwargs, dataset, input shape)
-    "lenet5": (dict(kind="lenet5"), "mnist", (1, 28, 28)),
-    "vgg11": (dict(kind="vgg11"), "cifar10", (3, 32, 32)),
-    "vgg16": (dict(kind="vgg16"), "cifar10", (3, 32, 32)),
-    "resnet18_cifar": (dict(kind="resnet18_cifar"), "cifar10", (3, 32, 32)),
-    "resnet18_224": (dict(kind="resnet18_224"), "imagenet_dogs_cats", (3, 224, 224)),
-    "resnet18_224_squirrel": (dict(kind="resnet18_224"), "imagenet_dogs_squirrels", (3, 224, 224)),
+    # name: (architecture kind for build_float_model, dataset)
+    "lenet5": ("lenet5", "mnist"),
+    "vgg11": ("vgg11", "cifar10"),
+    "vgg16": ("vgg16", "cifar10"),
+    "resnet18_cifar": ("resnet18_cifar", "cifar10"),
+    "resnet18_224": ("resnet18_224", "imagenet_dogs_cats"),
+    "resnet18_224_squirrel": ("resnet18_224", "imagenet_dogs_squirrels"),
 }
 
 

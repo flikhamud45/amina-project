@@ -17,7 +17,7 @@ i.e. the sampler's worst case:
 
 Usage
 -----
-    python experiments/3_sampling_fixes/floor_sampler.py [--queries N] [--layer L]
+    python experiments/3_sampling_fixes/floor_sampler.py [--queries N]
 
 Writes ``artifacts/results/floor_sampler.json``.
 """
@@ -36,18 +36,19 @@ from pvi.defences import ZeroAwareContributionSampler
 from pvi.defences.adaptive import plan_adaptive_stealthy_flip
 from pvi.experiments.analysis import acceptance_probability
 from pvi.protocol import ProtocolParams, UniformPathSampler
+from pvi.results import write_json
 from pvi.training import load_network
 from pvi.zoo import mlp_architecture_for
-from pvi.results import write_json
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / "artifacts" / "models"
 RESULTS = ROOT / "artifacts" / "results"
 
 EPSILONS = [0.0, 0.01, 0.1, 1.0, 10.0, 100.0]
+LAYER = 1
 
 
-def single_neuron_worst_case(network, honest, layer, sampler, params, forged_cache):
+def single_neuron_worst_case(network, sampler, params, forged_cache):
     """Exact: the adversary's best single-neuron flip against this sampler."""
     best = None
     for forged in forged_cache.values():
@@ -68,9 +69,8 @@ def multi_neuron_worst_case(network, honest, layer, sampler, params, ceilings):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--queries", type=int, default=20)
-    parser.add_argument("--layer", type=int, default=1)
     args = parser.parse_args()
 
     network = load_network(mlp_architecture_for(10), MODELS / "mlp_mnist_full.npz")
@@ -78,9 +78,9 @@ def main() -> None:
     train_x = dataset.train_x.reshape(len(dataset.train_x), -1)
     test_x = dataset.test_x.reshape(len(dataset.test_x), -1)
     params = ProtocolParams()
-    width = network.architecture[args.layer].n_neurons
+    width = network.architecture[LAYER].n_neurons
     ceilings = calibrate_activation_ceilings(
-        network, train_x[:3000], layer_index=args.layer, percentile=100.0
+        network, train_x[:3000], layer_index=LAYER, percentile=100.0
     )
 
     samplers = {"uniform": lambda: UniformPathSampler()}
@@ -89,7 +89,7 @@ def main() -> None:
             lambda e=eps: ZeroAwareContributionSampler(network, epsilon=e)
         )
 
-    per_sampler = {name: {"single": [], "multi": [], "best": []} for name in samplers}
+    per_sampler = {name: [] for name in samplers}
     n_used = 0
 
     for query in test_x[: args.queries]:
@@ -100,12 +100,12 @@ def main() -> None:
         forged_cache = {}
         for v in range(width):
             value = _smallest_flipping_value(
-                network, honest, args.layer, v, winner, None,
+                network, honest, LAYER, v, winner, None,
                 max_value=1e4, require_nonnegative=True,
             )
             if value is not None:
                 forged_cache[v] = network.forward_from(
-                    honest.tampered(args.layer, v, value), args.layer
+                    honest.tampered(LAYER, v, value), LAYER
                 )
         if not forged_cache:
             continue
@@ -113,33 +113,25 @@ def main() -> None:
 
         for name, make in samplers.items():
             sampler = make()
-            single = single_neuron_worst_case(
-                network, honest, args.layer, sampler, params, forged_cache
-            )
+            single = single_neuron_worst_case(network, sampler, params, forged_cache)
             multi = multi_neuron_worst_case(
-                network, honest, args.layer, sampler, params, ceilings
+                network, honest, LAYER, sampler, params, ceilings
             )
-            candidates = [c for c in (single, multi) if c is not None]
-            per_sampler[name]["single"].append(single)
-            if multi is not None:
-                per_sampler[name]["multi"].append(multi)
-            per_sampler[name]["best"].append(min(candidates))
+            per_sampler[name].append(min(c for c in (single, multi) if c is not None))
 
-    print(f"layer {args.layer} (width {width}), {n_used} queries, "
+    print(f"layer {LAYER} (width {width}), {n_used} queries, "
           f"|U| computed exactly per query\n")
     print("Detection against the ADVERSARY'S BEST of two attack families.")
     print("Higher is better for the defender. All on the tampered trace.\n")
-    header = f"{'sampler':>12} | {'single-neuron':>14} | {'multi-neuron':>13} | {'ADVERSARY BEST':>15}"
+    header = f"{'sampler':>12} | {'ADVERSARY BEST':>15}"
     print(header)
     print("-" * len(header))
     rows = {}
     for name in samplers:
         d = per_sampler[name]
-        single = float(np.mean(d["single"])) if d["single"] else float("nan")
-        multi = float(np.mean(d["multi"])) if d["multi"] else float("nan")
-        best = float(np.mean(d["best"])) if d["best"] else float("nan")
-        rows[name] = {"single_neuron": single, "multi_neuron": multi, "adversary_best": best}
-        print(f"{name:>12} | {single:>14.6f} | {multi:>13.6f} | {best:>15.6f}")
+        best = float(np.mean(d)) if d else float("nan")
+        rows[name] = {"adversary_best": best}
+        print(f"{name:>12} | {best:>15.6f}")
 
     baseline = rows["uniform"]["adversary_best"]
     print(f"\nuniform's worst case = {baseline:.6f}")
@@ -157,7 +149,7 @@ def main() -> None:
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     write_json(RESULTS / "floor_sampler.json",
-               {"layer": args.layer, "width": width, "n_queries": n_used,
+               {"layer": LAYER, "width": width, "n_queries": n_used,
                 "note": "detection measured on tampered traces; adversary picks "
                         "the better of single-neuron and multi-neuron attacks",
                 "samplers": rows})

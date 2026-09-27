@@ -254,13 +254,11 @@ class Verifier:
     weights: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = field(default_factory=dict)
     _pre: dict = field(default_factory=dict)
 
-    def precompute(self, challenger: Challenger) -> float:
-        """Mode Kpre: fix a secret ``chi`` per op and precompute ``u``.  Returns seconds."""
-        start = time.perf_counter()
+    def precompute(self, challenger: Challenger) -> None:
+        """Mode Kpre: fix a secret ``chi`` per op and precompute ``u``."""
         for op in self.graph.mat_ops:
             chi = challenger.folding(op.name, op.n_rows, self.params.reps)
             self._pre[op.name] = (chi, self._fold_local(op, chi))
-        return time.perf_counter() - start
 
     def _fold_local(self, op: MatOp, chi: torch.Tensor) -> torch.Tensor:
         w, b = self.weights[op.name]
@@ -338,7 +336,7 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
 
 
 def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
-              forward_kwargs: dict | None = None, keep_claims: bool = False) -> dict:
+              forward_kwargs: dict | None = None) -> dict:
     """One full interaction.  Returns acceptance, the rejecting check, timings (s)
     and proof bytes.  With Fiat--Shamir, ``fs_hash`` is paid by both parties."""
     p = verifier.params
@@ -353,8 +351,6 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
     t["prove_forward"] = time.perf_counter() - t0
 
     out = {"accepted": False, "rejected_at": None, "timings": t}
-    if keep_claims:
-        out["claims"] = claims
     b_claims = sum(z.numel() for z in claims.values()) * 4
     out["bytes"] = {"claims": b_claims, "u": 0, "columns": 0, "paths": 0}
 

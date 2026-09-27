@@ -11,9 +11,9 @@ sub() { local name=$1; shift; sbatch -o "logs/%x-%j.out" -J "$name" "$@"; }
 
 # ---- CNNs (the models zkCNN, ZKML, ZENO, Bionetta, EZKL and Anchuri et al. use) ----
 for m in mlp_mnist lenet5 vgg11 vgg16 resnet18_cifar; do
-  sub "b-$m" "$S" cnn --model "$m" --queries 30 --tampers 100 --paths 300
+  sub "b-$m" "$S" cnn --model "$m" --queries 30 --tampers 100
 done
-sub b-resnet18_224 "$S" cnn --model resnet18_224 --queries 30 --tampers 60 --paths 100
+sub b-resnet18_224 "$S" cnn --model resnet18_224 --queries 30 --tampers 60
 
 # ---- language models (shapes of GPT-2, OPT, Llama-2, Qwen3; random int8 weights) ----
 sub b-gpt2    "$S" llm --model gpt2 --seq 64 128 256 512 --queries 10

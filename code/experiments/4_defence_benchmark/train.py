@@ -66,17 +66,14 @@ def main() -> None:
     ap.add_argument("--model", required=True, choices=sorted(RECIPES))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--epochs", type=int, default=None)
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
-    kwargs, dataset, _ = MODEL_SPECS[args.model]
+    kind, dataset = MODEL_SPECS[args.model]
     tx, ty, vx, vy, family, n_classes = load_dataset(dataset)
-    r = dict(RECIPES[args.model])
-    if args.epochs:
-        r["epochs"] = args.epochs
+    r = RECIPES[args.model]
     device = torch.device(args.device)
-    model = build_float_model(kwargs["kind"], n_classes).to(device)
+    model = build_float_model(kind, n_classes).to(device)
     opt = torch.optim.SGD(model.parameters(), lr=r["lr"], momentum=0.9, weight_decay=r["wd"], nesterov=True)
     steps = r["epochs"] * ((len(tx) + r["batch"] - 1) // r["batch"])
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=r["lr"], total_steps=steps, pct_start=0.15)

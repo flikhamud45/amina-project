@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -42,7 +41,7 @@ import torch.nn.functional as F
 from .commitment import HASH_BYTES, MerkleTree, multiproof, multiproof_size, verify_multiproof
 from .graph import CheapOp, IntGraph, MatOp
 
-__all__ = ["TraceCommitment", "sample_path", "run_paths", "shared_path_bytes", "visit_probabilities",
+__all__ = ["TraceCommitment", "sample_path", "shared_path_bytes", "visit_probabilities",
            "paths_for", "neuron_tensors"]
 
 
@@ -104,24 +103,18 @@ class TraceCommitment:
     def __init__(self, graph: IntGraph, env: dict[str, torch.Tensor]) -> None:
         self.graph = graph
         self.prod = _producers(graph)
-        start = time.perf_counter()
         self.tensors: dict[str, _Committed] = {}
         for name in neuron_tensors(graph):
             rows = _rows(env[name].cpu())
             w = 4 if name == graph.output_name else 1
             tree = MerkleTree(_pad_pow2([_leaf(name.encode(), i, r, w) for i, r in enumerate(rows)]))
             self.tensors[name] = _Committed(rows, w, tree)
-        self.commit_seconds = time.perf_counter() - start
-        start = time.perf_counter()
         self.weights: dict[str, tuple[np.ndarray, np.ndarray, MerkleTree]] = {}
         for op in graph.mat_ops:
             w = op.weight.numpy().astype(np.int64)
             b = op.bias.numpy() if op.bias is not None else np.zeros(w.shape[0], dtype=np.int64)
             self.weights[op.name] = (w, b, MerkleTree(_pad_pow2([_wleaf(op.name, i, w[i], b[i])
                                                                   for i in range(w.shape[0])])))
-        self.weight_commit_seconds = time.perf_counter() - start
-        self.trace_bytes = sum(c.rows.size * c.width for c in self.tensors.values())
-        self.model_bytes = sum(w.size + 8 * b.size for w, b, _ in self.weights.values())
         # opening every leaf of a tree needs no sibling hashes at all
         self.open_all_bytes = (sum(c.rows.size * c.width for c in self.tensors.values())
                                + sum(w.shape[0] * (w.shape[1] + 8) for w, _, _ in self.weights.values()))
@@ -136,9 +129,9 @@ class TraceCommitment:
 class _Walk:
     """Opens values for one path (or several, sharing the ``seen`` caches).
 
-    Data bytes are counted as rows are opened; the Merkle authentication for
-    everything a path opened is one multiproof per tree, built and checked by
-    :meth:`finish` (the same accounting as the defence's column openings).
+    Data bytes are counted as rows are opened; when verifying, the Merkle
+    authentication for everything a path opened is one multiproof per tree,
+    built and checked by :meth:`finish`.
     """
 
     def __init__(self, tc: TraceCommitment, env: dict, verify: bool, seen_rows: set, seen_w: set) -> None:
@@ -146,7 +139,6 @@ class _Walk:
         self.seen_rows, self.seen_w = seen_rows, seen_w
         self.input_rows = _rows(env[tc.graph.input_name].cpu())
         self.bytes = 0
-        self.t_open = self.t_verify = 0.0
         self.ok = True
         self.new_rows: dict[str, dict[int, bytes]] = {}
         self.new_w: dict[str, dict[int, bytes]] = {}
@@ -161,11 +153,7 @@ class _Walk:
             vals = c.rows[r]
             self.bytes += vals.size * c.width
             if self.verify:
-                t0 = time.perf_counter()
                 self.new_rows.setdefault(tensor, {})[r] = _leaf(tensor.encode(), r, vals, c.width)
-                self.t_verify += time.perf_counter() - t0
-            else:
-                self.new_rows.setdefault(tensor, {})[r] = b""
         return c.rows[r]
 
     def weight(self, op: MatOp, r: int) -> tuple[np.ndarray, int]:
@@ -175,30 +163,19 @@ class _Walk:
             self.seen_w.add(key)
             self.bytes += w.shape[1] + 8
             if self.verify:
-                t0 = time.perf_counter()
                 self.new_w.setdefault(op.name, {})[r] = _wleaf(op.name, r, w[r], b[r])
-                self.t_verify += time.perf_counter() - t0
-            else:
-                self.new_w.setdefault(op.name, {})[r] = b""
         return w[r], int(b[r])
 
     def finish(self) -> None:
         """Multiproofs for this path's newly opened rows: build (prover), check (verifier)."""
-        self.data_bytes = self.bytes
-        self.bytes += self.tc.merkle_bytes({k: list(v) for k, v in self.new_rows.items()},
-                                           {k: list(v) for k, v in self.new_w.items()})
         if not self.verify:
             return
         for trees, opened in ((({k: self.tc.tensors[k].tree for k in self.new_rows}), self.new_rows),
                               (({k: self.tc.weights[k][2] for k in self.new_w}), self.new_w)):
             for k, leaves in opened.items():
                 tree = trees[k]
-                t0 = time.perf_counter()
                 proof = multiproof(tree, list(leaves))
-                self.t_open += time.perf_counter() - t0
-                t0 = time.perf_counter()
                 self.ok &= verify_multiproof(tree.root, tree.depth, leaves, proof)
-                self.t_verify += time.perf_counter() - t0
 
     def value(self, tensor: str, flat: int) -> int:
         base = _base(self.tc.prod, tensor)
@@ -221,9 +198,7 @@ class _Walk:
             patch = np.zeros((ci, k, k), dtype=np.int64)
             for dy, dx, yy, xx in taps:
                 patch[:, dy, dx] = self.row(base, yy * w_ + xx)
-            t0 = time.perf_counter()
             z = int(wrow @ patch.reshape(-1)) + brow
-            self.t_verify += time.perf_counter() - t0
 
             def sampler(rng, taps=taps, ci=ci, h=h, w_=w_, base=base):
                 _, _, yy, xx = taps[int(rng.integers(len(taps)))]
@@ -236,9 +211,7 @@ class _Walk:
             vec = np.stack([self.row(base, r_) for r_ in range(hw)]).T.reshape(-1)  # torch flatten order
         else:
             vec = self.row(base, 0).astype(np.int64)
-        t0 = time.perf_counter()
         z = int(wrow @ vec) + brow
-        self.t_verify += time.perf_counter() - t0
         n = vec.size
         return z, (lambda rng, base=base, n=n: (base, int(rng.integers(n)))), n
 
@@ -258,12 +231,11 @@ def _one_hot_apply(fn, shape, c: int, *vals: int) -> int:
 
 def sample_path(tc: TraceCommitment, env: dict[str, torch.Tensor], rng: np.random.Generator, *,
                 verify: bool = True, seen_rows: set | None = None, seen_w: set | None = None) -> dict:
-    """Open one random path.  Returns ``ok``, new bytes, timings and steps."""
+    """Open one random path.  Returns ``ok`` and the data bytes it newly opened."""
     graph, prod = tc.graph, tc.prod
     wk = _Walk(tc, env, verify, set() if seen_rows is None else seen_rows, set() if seen_w is None else seen_w)
     name = graph.output_name
     flat = int(rng.integers(env[name].numel()))
-    steps = 0
     while name != graph.input_name:
         op = prod[name]
         shape = tuple(env[name].shape)
@@ -274,16 +246,13 @@ def sample_path(tc: TraceCommitment, env: dict[str, torch.Tensor], rng: np.rando
         else:
             c, y, x = flat, 0, 0
         claimed = wk.value(name, flat)
-        steps += 1
         if isinstance(op, MatOp):                       # the final logits
             z, sampler, _ = wk.preact(op, c, y, x)
             wk.ok &= z == claimed
             name, flat = sampler(rng)
         elif op.note.startswith("requant"):             # a = relu(requant(W a' + b))
             z, sampler, _ = wk.preact(prod[op.inputs[0]], c, y, x)
-            t0 = time.perf_counter()
             wk.ok &= _one_hot_apply(op.fn, shape, c, z) == claimed
-            wk.t_verify += time.perf_counter() - t0
             name, flat = sampler(rng)
         elif op.note == "residual add+relu":            # a = relu(W2 h + b2 + shortcut)
             z_main, s_main, n_main = wk.preact(prod[op.inputs[0]], c, y, x)
@@ -293,9 +262,7 @@ def sample_path(tc: TraceCommitment, env: dict[str, torch.Tensor], rng: np.rando
             else:                                       # identity shortcut: one parent
                 z_sc, n_sc = wk.value(sc, flat), 1
                 s_sc = lambda rng, sc=sc, flat=flat: (_base(prod, sc), flat)
-            t0 = time.perf_counter()
             wk.ok &= _one_hot_apply(op.fn, shape, c, z_main, z_sc) == claimed
-            wk.t_verify += time.perf_counter() - t0
             name, flat = (s_main if rng.integers(n_main + n_sc) < n_main else s_sc)(rng)
         elif op.note in ("maxpool", "global avgpool"):
             src = op.inputs[0]
@@ -308,46 +275,33 @@ def sample_path(tc: TraceCommitment, env: dict[str, torch.Tensor], rng: np.rando
                           if 0 <= y * s - p + dy < h and 0 <= x * s - p + dx < w_]
             base = _base(prod, src)
             vals = np.array([int(wk.row(base, yy * w_ + xx)[c]) for yy, xx in window])
-            t0 = time.perf_counter()
             if op.note == "global avgpool":
                 n = h * w_
                 wk.ok &= (int(vals.sum()) + n // 2) // n == claimed
             else:
                 wk.ok &= int(vals.max()) == claimed
-            wk.t_verify += time.perf_counter() - t0
             yy, xx = window[int(rng.integers(len(window)))]
             name, flat = base, c * h * w_ + yy * w_ + xx
         else:
             raise ValueError(f"no path rule for {op.name} ({op.note})")
         name = _base(prod, name)
     wk.finish()
-    return {"ok": bool(wk.ok), "bytes": wk.bytes, "data_bytes": wk.data_bytes, "open_s": wk.t_open,
-            "verify_s": wk.t_verify, "steps": steps}
+    return {"ok": bool(wk.ok), "data_bytes": wk.bytes}
 
 
-def run_paths(graph: IntGraph, env: dict, n_paths: int, seed: int = 0) -> dict:
-    tc = TraceCommitment(graph, env)
-    rng = np.random.default_rng(seed)
-    res = [sample_path(tc, env, rng) for _ in range(n_paths)]
-    return {"commit_s": tc.commit_seconds, "weight_commit_s": tc.weight_commit_seconds,
-            "trace_bytes": tc.trace_bytes, "model_bytes": tc.model_bytes, "paths": res}
-
-
-def shared_path_bytes(tc: TraceCommitment, env: dict, checkpoints: list[int], seed: int = 1,
-                      max_paths: int | None = None) -> dict[int, int | None]:
+def shared_path_bytes(tc: TraceCommitment, env: dict, checkpoints: list[int], seed: int = 1) -> dict[int, int]:
     """Bytes of ``k`` paths sent as one proof, per ``k``: every row and weight row
     once, plus one Merkle multiproof per tree for everything opened.
 
     Stops early once every committed row and weight row has been opened: from
     there on the proof is the whole trace and model, ``tc.open_all_bytes``.
-    ``None`` means ``k`` exceeded ``max_paths`` before saturating.
     """
     rng = np.random.default_rng(seed)
     seen_rows: set = set()
     seen_w: set = set()
     total_rows = sum(c.rows.shape[0] for c in tc.tensors.values())
     total_w = sum(w.shape[0] for w, _, _ in tc.weights.values())
-    out: dict[int, int | None] = {}
+    out: dict[int, int] = {}
     data = done = 0
 
     def union_bytes() -> int:
@@ -361,13 +315,11 @@ def shared_path_bytes(tc: TraceCommitment, env: dict, checkpoints: list[int], se
 
     for k in sorted(checkpoints):
         while done < k and (len(seen_rows) < total_rows or len(seen_w) < total_w):
-            if max_paths is not None and done >= max_paths:
-                break
             # only the data part is additive; the Merkle part is recomputed on the union
             data += sample_path(tc, env, rng, verify=False, seen_rows=seen_rows, seen_w=seen_w)["data_bytes"]
             done += 1
         saturated = len(seen_rows) >= total_rows and len(seen_w) >= total_w
-        out[k] = tc.open_all_bytes if saturated else (union_bytes() if done >= k else None)
+        out[k] = tc.open_all_bytes if saturated else union_bytes()
     return out
 
 

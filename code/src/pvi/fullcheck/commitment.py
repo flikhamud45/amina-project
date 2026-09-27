@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -41,7 +40,6 @@ from .field import P, field_matmul_mod, power_table, root_of_unity, rs_encode, s
 __all__ = [
     "HASH_BYTES",
     "MerkleTree",
-    "verify_path",
     "multiproof",
     "multiproof_size",
     "verify_multiproof",
@@ -84,21 +82,6 @@ class MerkleTree:
     @property
     def depth(self) -> int:
         return len(self.levels) - 1
-
-    def path(self, index: int) -> list[bytes]:
-        out = []
-        for level in self.levels[:-1]:
-            out.append(level[index ^ 1])
-            index >>= 1
-        return out
-
-
-def verify_path(root: bytes, index: int, leaf: bytes, path: list[bytes]) -> bool:
-    node = leaf
-    for sibling in path:
-        node = _node(node, sibling) if index % 2 == 0 else _node(sibling, node)
-        index >>= 1
-    return node == root
 
 
 def multiproof_size(indices, depth: int) -> int:
@@ -185,13 +168,11 @@ class WeightCommitment:
     rate: int
     tree: MerkleTree = field(repr=False)
     n_points: int
-    commit_seconds: float
 
     @classmethod
     def build(cls, tag: bytes, weight: torch.Tensor, bias: torch.Tensor | None, *,
               rate: int = 4, device: torch.device | str = "cpu",
               row_chunk: int = 256) -> "WeightCommitment":
-        start = time.perf_counter()
         weight = weight.to(torch.int8).cpu()
         n_rows, k = weight.shape
         row_length = k + (1 if bias is not None else 0)
@@ -206,12 +187,10 @@ class WeightCommitment:
                 rows = torch.cat([rows, bias[r0:r0 + row_chunk].to(device=device, dtype=torch.int64)[:, None]], 1)
             cols[:, r0:r0 + rows.shape[0]] = rs_encode(rows, n_points).to(torch.int32).cpu().numpy().T
             del rows
-        tree = MerkleTree([hashlib.sha256(b"pvi/col" + tag + c.to_bytes(8, "big") + cols[c].tobytes()).digest()
-                           for c in range(n_points)])
+        tree = MerkleTree([column_leaf(tag, c, cols[c]) for c in range(n_points)])
         del cols
         return cls(tag=tag, weight=weight, bias=None if bias is None else bias.cpu().to(torch.int64),
-                   rate=rate, tree=tree, n_points=n_points,
-                   commit_seconds=time.perf_counter() - start)
+                   rate=rate, tree=tree, n_points=n_points)
 
     @property
     def public(self) -> CommitmentPublic:

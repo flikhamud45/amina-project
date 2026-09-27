@@ -31,7 +31,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pvi.nn.architecture import Architecture
-from pvi.nn.network import Trace, TracedNetwork
+from pvi.nn.network import Trace
 
 __all__ = [
     "Path",
@@ -112,8 +112,6 @@ class PathSampler(abc.ABC):
     authored the trace, influence where it will be inspected.
     """
 
-    name: str = "abstract"
-
     transition_depends_on_source: bool = True
     """Whether :meth:`transition_distribution` varies with the *source* node.
 
@@ -147,11 +145,8 @@ class PathSampler(abc.ABC):
         rng: np.random.Generator,
         *,
         trace: Trace | None = None,
-        network: TracedNetwork | None = None,
     ) -> Path:
         """Draw one path from the output layer down to the input layer."""
-        del network  # samplers see the trace, never the model: so does the verifier
-
         depth = len(architecture) - 1
         nodes: list[int] = [0] * (depth + 1)
         start = _as_distribution(self.start_distribution(architecture, trace))
@@ -175,12 +170,8 @@ class PathSampler(abc.ABC):
         count: int,
         *,
         trace: Trace | None = None,
-        network: TracedNetwork | None = None,
     ) -> tuple[Path, ...]:
-        return tuple(
-            self.sample(architecture, rng, trace=trace, network=network)
-            for _ in range(count)
-        )
+        return tuple(self.sample(architecture, rng, trace=trace) for _ in range(count))
 
 
 def _as_distribution(weights: np.ndarray) -> np.ndarray:
@@ -208,7 +199,6 @@ class UniformPathSampler(PathSampler):
     report (Theorem 3.1) shows it is in fact optimal.
     """
 
-    name = "uniform"
     transition_depends_on_source = False
 
     def start_distribution(
@@ -227,49 +217,3 @@ class UniformPathSampler(PathSampler):
     ) -> np.ndarray:
         n = len(parent_indices)
         return np.full(n, 1.0 / n)
-
-
-def visit_probabilities(
-    architecture: Architecture,
-    layer_index: int,
-    *,
-    samples: int = 0,
-    rng: np.random.Generator | None = None,
-) -> np.ndarray:
-    """Probability that a uniform path visits each neuron of ``layer_index``.
-
-    Computed exactly by backward message passing from the output layer.  For dense
-    architectures the answer is the uniform distribution, giving the ``1 / N``
-    figure the paper quotes for single-node tampering; for convolutional stacks it
-    is genuinely non-uniform, and border neurons are visited less often than
-    central ones.
-
-    ``samples`` is accepted only to allow the analytic result to be cross-checked
-    against a Monte-Carlo estimate in the tests.
-    """
-    if samples:
-        if rng is None:
-            rng = np.random.default_rng(0)
-        sampler = UniformPathSampler()
-        counts = np.zeros(architecture[layer_index].n_neurons, dtype=np.float64)
-        for _ in range(samples):
-            counts[sampler.sample(architecture, rng)[layer_index]] += 1
-        return counts / samples
-
-    depth = len(architecture) - 1
-    probability = np.full(
-        architecture.output_layer.n_neurons,
-        1.0 / architecture.output_layer.n_neurons,
-        dtype=np.float64,
-    )
-    for current in range(depth, layer_index, -1):
-        layer = architecture[current]
-        below = np.zeros(architecture[current - 1].n_neurons, dtype=np.float64)
-        for neuron in range(layer.n_neurons):
-            mass = probability[neuron]
-            if mass == 0.0:
-                continue
-            parent_idx, _ = layer.parents(neuron)
-            np.add.at(below, parent_idx, mass / len(parent_idx))
-        probability = below
-    return probability

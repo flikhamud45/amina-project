@@ -71,13 +71,6 @@ class WeightRowIndex:
             running += layer.n_weight_groups
         return offsets
 
-    @property
-    def total_rows(self) -> int:
-        return sum(
-            layer.n_weight_groups
-            for _, layer in self.architecture.parameterised_layers()
-        )
-
     def position(self, layer_index: int, group: int) -> int:
         offsets = self._offsets
         if layer_index not in offsets:
@@ -96,7 +89,7 @@ class ModelCommitment:
     :attr:`digest` and :attr:`params`.
     """
 
-    def __init__(self, network: TracedNetwork, *, security_bits: int = 128) -> None:
+    def __init__(self, network: TracedNetwork) -> None:
         self._architecture = network.architecture
         self._index = WeightRowIndex(network.architecture)
 
@@ -107,15 +100,11 @@ class ModelCommitment:
                 raise ValueError(f"{layer.name}: unexpected weight-row shape")
             rows.extend(encode_f32_vector(row) for row in weight_rows)
 
-        self._vc = MerkleVectorCommitment.commit(rows, security_bits=security_bits)
+        self._vc = MerkleVectorCommitment.commit(rows)
 
     @property
     def architecture(self) -> Architecture:
         return self._architecture
-
-    @property
-    def index(self) -> WeightRowIndex:
-        return self._index
 
     @property
     def digest(self) -> bytes:
@@ -167,10 +156,9 @@ class TraceCommitment:
     approximately.
     """
 
-    def __init__(self, trace: Trace, *, security_bits: int = 128) -> None:
-        self._widths = tuple(len(layer) for layer in trace)
+    def __init__(self, trace: Trace) -> None:
         leaves = [encode_f32_vector(layer) for layer in trace]
-        self._vc = MerkleVectorCommitment.commit(leaves, security_bits=security_bits)
+        self._vc = MerkleVectorCommitment.commit(leaves)
 
     @property
     def digest(self) -> bytes:
@@ -179,10 +167,6 @@ class TraceCommitment:
     @property
     def params(self) -> MerkleParams:
         return self._vc.params
-
-    @property
-    def layer_widths(self) -> tuple[int, ...]:
-        return self._widths
 
     def open_layer(self, layer_index: int) -> MerkleOpening:
         return self._vc.open(layer_index)

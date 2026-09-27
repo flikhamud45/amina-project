@@ -2,13 +2,12 @@
 
 For each of four substitute-model settings from the paper (``pvi.zoo.SETUPS``):
 
-1. **Completeness.**  The honest prover is accepted on every run.  The same runs
-   are replayed against a zero-tolerance verifier (the idealised exact-equality
+1. **Completeness.**  The honest prover is accepted on every run.  Each query is
+   also run once against a zero-tolerance verifier (the idealised exact-equality
    test of the paper's Figure 3), which rejects many honest runs because a layer's
    matrix product and a single neuron's dot product round differently.
 2. **Other-model soundness.**  How often ``RandPathTest`` rejects the substitute
    model's honest trace, and how often the two models agree on the prediction.
-3. **Cost.**  Prover and verifier time and proof size for one path.
 
 Usage
 -----
@@ -20,13 +19,12 @@ Writes ``artifacts/results/reproduction.json``.
 from __future__ import annotations
 
 import argparse
-import time
 from pathlib import Path
 
 import numpy as np
 
 from pvi.nn.network import TracedNetwork
-from pvi.protocol import ModelCommitment, ProtocolParams, Prover, Verifier, run_protocol, sample_challenge
+from pvi.protocol import ModelCommitment, ProtocolParams, Prover, Verifier, run_protocol
 from pvi.results import write_json
 from pvi.training import load_network
 from pvi.zoo import SETUPS, SubstitutionSetup, quantise_network
@@ -57,20 +55,18 @@ def parties(network: TracedNetwork, params: ProtocolParams) -> tuple[Prover, Ver
     return Prover(network, commitment, params), Verifier.from_commitment(commitment, params)
 
 
-def measure_correctness(network: TracedNetwork, queries: np.ndarray, challenges: int, n_paths: int) -> dict:
-    params = ProtocolParams(n_paths=n_paths, check_full_input=True)
+def measure_correctness(network: TracedNetwork, queries: np.ndarray, challenges: int) -> dict:
+    params = ProtocolParams()
     prover, verifier = parties(network, params)
-    accepted, runs, residuals = 0, 0, []
+    accepted, runs = 0, 0
     for query in queries:
         for _ in range(challenges):
             result = run_protocol(prover, verifier, query)
             accepted += int(result.accepted)
             runs += 1
-            residuals.extend(result.residuals)
-    residuals = np.asarray(residuals)
 
     # The idealised exact-equality test: zero tolerance on the local check.
-    exact = ProtocolParams(n_paths=n_paths, abs_tolerance=0.0, rel_tolerance=0.0, check_full_input=True)
+    exact = ProtocolParams(abs_tolerance=0.0)
     exact_prover, exact_verifier = parties(network, exact)
     sample = queries[:200]
     exact_accepted = sum(run_protocol(exact_prover, exact_verifier, q).accepted for q in sample)
@@ -79,7 +75,6 @@ def measure_correctness(network: TracedNetwork, queries: np.ndarray, challenges:
         "runs": runs,
         "accepted": accepted,
         "acceptance_rate": accepted / runs,
-        "residual_max": float(residuals.max()),
         "tolerance": params.abs_tolerance,
         "zero_tolerance_runs": len(sample),
         "zero_tolerance_acceptance_rate": exact_accepted / len(sample),
@@ -87,9 +82,9 @@ def measure_correctness(network: TracedNetwork, queries: np.ndarray, challenges:
 
 
 def measure_other_model(honest: TracedNetwork, substitute: TracedNetwork, queries: np.ndarray,
-                        challenges: int, n_paths: int) -> dict:
+                        challenges: int) -> dict:
     """RandPathTest against the substitute's *honest* trace (the paper's threat model)."""
-    prover, verifier = parties(honest, ProtocolParams(n_paths=n_paths, check_full_input=True))
+    prover, verifier = parties(honest, ProtocolParams())
     agree, detections, runs = 0, 0, 0
     for query in queries:
         trace = substitute.eval_trace(query)
@@ -100,29 +95,10 @@ def measure_other_model(honest: TracedNetwork, substitute: TracedNetwork, querie
     return {"prediction_agreement": agree / len(queries), "runs": runs, "detection_rate": detections / runs}
 
 
-def measure_cost(network: TracedNetwork, queries: np.ndarray, n_paths: int) -> dict:
-    prover, verifier = parties(network, ProtocolParams(n_paths=n_paths, check_full_input=True))
-    prove, verify, sizes = [], [], []
-    for query in queries[:100]:
-        challenge = sample_challenge()
-        t0 = time.perf_counter()
-        round1, state = prover.prove1(query)
-        round2 = prover.prove2(state, challenge)
-        t1 = time.perf_counter()
-        result = verifier.verify(query, round1, round2, challenge)
-        t2 = time.perf_counter()
-        prove.append(t1 - t0)
-        verify.append(t2 - t1)
-        sizes.append(result.proof_size_bytes)
-    return {"prove_ms": float(np.mean(prove) * 1e3), "verify_ms": float(np.mean(verify) * 1e3),
-            "proof_kb": float(np.mean(sizes) / 1024)}
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--queries", type=int, default=150)
     parser.add_argument("--challenges", type=int, default=20)
-    parser.add_argument("--paths", type=int, default=1)
     parser.add_argument("--setups", nargs="*", default=None)
     args = parser.parse_args()
 
@@ -133,17 +109,14 @@ def main() -> None:
         honest, substitute = load_setup(setup)
         queries = evaluation_queries(setup, args.queries)
 
-        correctness = measure_correctness(honest, queries, args.challenges, args.paths)
-        other = measure_other_model(honest, substitute, queries, args.challenges, args.paths)
-        cost = measure_cost(honest, queries, args.paths)
+        correctness = measure_correctness(honest, queries, args.challenges)
+        other = measure_other_model(honest, substitute, queries, args.challenges)
         print(f"   honest accepted {correctness['acceptance_rate']:.4f} of {correctness['runs']} runs; "
               f"zero-tolerance verifier accepts {correctness['zero_tolerance_acceptance_rate']:.2f}")
         print(f"   substitute: prediction agreement {other['prediction_agreement']:.4f}, "
               f"detected {other['detection_rate']:.4f} of {other['runs']} runs")
-        print(f"   one path: prove {cost['prove_ms']:.2f} ms, verify {cost['verify_ms']:.2f} ms, "
-              f"proof {cost['proof_kb']:.1f} kB")
         results["setups"][setup.key] = {"title": setup.title, "paper_reference": setup.paper_reference,
-                                        "correctness": correctness, "other_model": other, "cost": cost}
+                                        "correctness": correctness, "other_model": other}
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     write_json(RESULTS / "reproduction.json", results)

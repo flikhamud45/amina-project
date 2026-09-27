@@ -13,14 +13,11 @@ A cell that has a ``.done`` marker is skipped (resume after pre-emption); pass
 from __future__ import annotations
 
 import argparse
-import copy
 import json
-import zlib
 import math
 import os
 import platform
 import socket
-import statistics
 import subprocess
 import time
 import uuid
@@ -31,7 +28,7 @@ import torch
 from torch import nn
 
 from pvi.fullcheck.field import P
-from pvi.fullcheck.graph import CheapOp, MatOp
+from pvi.fullcheck.graph import MatOp
 from pvi.fullcheck.protocol import (
     Challenger,
     Prover,
@@ -90,7 +87,7 @@ class Recorder:
         self.base = {"run_id": uuid.uuid4().hex[:12], "suite": suite, "model": model, "cell": cell,
                      "config": dict(config, variant=TAG, device=env.get("device"), merkle="multiproof"),
                      "prover_hw": prover_hw, "verifier_hw": f"{env.get('cpu')} x{env.get('torch_threads')} threads",
-                     "hw": prover_hw, "host": env.get("host"), "git_sha": env.get("git_sha")}
+                     "host": env.get("host"), "git_sha": env.get("git_sha")}
         self.fh = open(self.path.with_suffix(".jsonl.part"), "w")
         self.rec("env", 0, "", **{"env": env})
 
@@ -110,58 +107,22 @@ class Recorder:
                 pass
 
 
-ONLY: set[str] = set()
-
-
 def is_done(suite, model, cell) -> bool:
     return (RAW / suite / model / f"{cell}{TAG}.done").exists()
 
 
 def _todo(args, suite, model, cell) -> bool:
-    """Run this cell?  Selected by ``--only`` (if given), and forced or not yet done."""
-    if ONLY and not any(cell.startswith(o) for o in ONLY):
-        return False
+    """Run this cell?  Forced, or not yet done."""
     return args.force or not is_done(suite, model, cell)
 
 
-def _sync(device):
-    if torch.device(device).type == "cuda":
-        torch.cuda.synchronize()
-
-
-def _timeit(fn, device, n=30, warmup=5) -> list[float]:
-    for _ in range(warmup):
-        fn()
-    out = []
-    for _ in range(n):
-        _sync(device)
-        t0 = time.perf_counter()
-        fn()
-        _sync(device)
-        out.append(time.perf_counter() - t0)
-    return out
-
-
-def _claims_zlib(claims: dict) -> int:
-    """Size of the claimed pre-activations after zlib (level 6), as int32 -- the
-    comparison point for Anchuri et al.'s Brotli-compressed proof sizes."""
-    raw = b"".join(claims[k].to(torch.int32).numpy().tobytes() for k in sorted(claims))
-    return len(zlib.compress(raw, 6))
-
-
 def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
-    if "claims" in res:
-        r.rec("bytes_claims_zlib", _claims_zlib(res.pop("claims")), "B", trial, **extra)
     for k, v in res["timings"].items():
         r.rec(k, v, "s", trial, **extra)
     for k, v in res["bytes"].items():
         r.rec("bytes_" + k, v, "B", trial, **extra)
     r.rec("bytes_total", sum(res["bytes"].values()), "B", trial, **extra)
     r.rec("accepted", int(res["accepted"]), "", trial, **extra)
-
-
-def _shapes(graph, commitments) -> list[tuple[int, int]]:
-    return [(c.row_length, c.n_points) for c in commitments.values()]
 
 
 # ------------------------------------------------------------------ CNN models
@@ -183,8 +144,7 @@ def _mlp_model() -> tuple[nn.Module, dict]:
             mods.append(nn.ReLU())
     ds = load_classification("mnist")
     data = {"train_x": torch.from_numpy(ds.train_x[:512]).reshape(-1, 784),
-            "test_x": torch.from_numpy(ds.test_x).reshape(-1, 784), "test_y": torch.from_numpy(ds.test_y),
-            "shape": (784,), "dataset": "mnist (pvi, [0,1] inputs)"}
+            "test_x": torch.from_numpy(ds.test_x).reshape(-1, 784), "test_y": torch.from_numpy(ds.test_y)}
     return nn.Sequential(*mods).eval(), data
 
 
@@ -192,15 +152,15 @@ def _cnn_model(name: str) -> tuple[nn.Module, dict]:
     from pvi.fullcheck.datasets import load_dataset, normalise
     from pvi.fullcheck.models import MODEL_SPECS, build_float_model
 
-    kwargs, dataset, shape = MODEL_SPECS[name]
-    tx, ty, vx, vy, family, n_classes = load_dataset(dataset)
-    model = build_float_model(kwargs["kind"], n_classes)
+    kind, dataset = MODEL_SPECS[name]
+    tx, _, vx, vy, family, n_classes = load_dataset(dataset)
+    model = build_float_model(kind, n_classes)
     model.load_state_dict(torch.load(MODELS / f"{name}.pt", map_location="cpu"))
     crop = (lambda x: x[:, :, 16:240, 16:240]) if family == "imagenet" else (lambda x: x)
     g = torch.Generator().manual_seed(0)
     cal = tx[torch.randperm(len(tx), generator=g)[: (64 if family == "imagenet" else 512)]]
     data = {"train_x": normalise(crop(cal), family), "test_x_uint8": vx, "test_y": vy,
-            "norm": lambda x: normalise(crop(x), family), "shape": shape, "dataset": dataset}
+            "norm": lambda x: normalise(crop(x), family)}
     return model.eval(), data
 
 
@@ -227,16 +187,16 @@ def _penultimate_mat(graph) -> MatOp:
 def suite_cnn(args, env) -> None:
     from pvi.fullcheck.quantize import dequantize_logits, quantize_input, quantize_model
     from pvi.fullcheck.sampling import (TraceCommitment, _base as _base_name, neuron_tensors, paths_for,
-                                        sample_path, shared_path_bytes, visit_probabilities)
+                                        shared_path_bytes, visit_probabilities)
 
     device = torch.device(args.device)
     name = args.model
     model, data = _mlp_model() if name == "mlp_mnist" else _cnn_model(name)
-    graph = quantize_model(model, data["train_x"], model_name=name)
+    graph = quantize_model(model, data["train_x"])
     mats = graph.mat_ops
     n_params = graph.n_params()
     model_f = model.float().to(device)
-    xs, ys = next(_test_batches(data, args.queries + 64))
+    xs, _ = next(_test_batches(data, args.queries + 64))
     q_inputs = quantize_input(graph, xs)          # int8 queries, one per trial
 
     # ---- model facts and fidelity ------------------------------------------------
@@ -244,14 +204,9 @@ def suite_cnn(args, env) -> None:
     if _todo(args, "cnn", name, cell):
         r = Recorder("cnn", name, cell, {}, env)
         r.rec("n_params", n_params, "")
-        r.rec("n_weight_ops", len(mats), "")
-        r.rec("n_cheap_ops", sum(1 for op in graph.ops if not isinstance(op, MatOp)), "")
         r.rec("model_bytes_int8", sum(op.weight.numel() + 4 * (op.bias.numel() if op.bias is not None else 0)
                                       for op in mats), "B")
-        r.rec("model_bytes_fp32", 4 * n_params, "B")
-        _, claims1 = graph.forward(q_inputs[:1].to(device))
-        r.rec("claim_values_per_query", sum(z.numel() for z in claims1.values()), "")
-        correct_f = correct_i = agree = total = 0
+        correct_f = correct_i = total = 0
         with torch.no_grad():
             for xb, yb in _test_batches(data, 128 if "test_x" in data else 32):
                 lf = model_f(xb.to(device)).argmax(1).cpu()
@@ -259,23 +214,9 @@ def suite_cnn(args, env) -> None:
                 li = dequantize_logits(graph, cl[mats[-1].name]).argmax(1).cpu()
                 correct_f += int((lf == yb).sum())
                 correct_i += int((li == yb).sum())
-                agree += int((lf == li).sum())
                 total += len(yb)
         r.rec("float_accuracy", correct_f / total, "", n=total)
         r.rec("int8_accuracy", correct_i / total, "", n=total)
-        r.rec("float_int8_agreement", agree / total, "", n=total)
-        x1 = xs[:1].to(device)
-        with torch.no_grad():
-            for t_ in _timeit(lambda: model_f(x1), device):
-                r.rec("float_inference", t_, "s")
-            # the "download the model and re-run it" reference: the verifier's CPU
-            model_cpu = copy.deepcopy(model_f).cpu()
-            x1c = xs[:1].float()
-            for t_ in _timeit(lambda: model_cpu(x1c), "cpu", n=10, warmup=2):
-                r.rec("cpu_float_inference", t_, "s")
-            qi = q_inputs[:1].to(device)
-            for t_ in _timeit(lambda: graph.forward(qi), device, n=10, warmup=2):
-                r.rec("int8_inference", t_, "s")
         r.done()
 
     # ---- the single-neuron attack on the float model --------------------------------
@@ -287,16 +228,11 @@ def suite_cnn(args, env) -> None:
         feat_fn = (lambda b_: model_f[:-1](b_)) if seq else model_f.features
         with torch.no_grad():
             feats = feat_fn(xs.to(device)).double()
-            fcal = torch.cat([feat_fn(data["train_x"][s0:s0 + 64].float().to(device)).double()
-                              for s0 in range(0, len(data["train_x"]), 64)])
-            unit_max = torch.maximum(fcal.max(0).values, feats.max(0).values)   # per unit, clean data
-            live = unit_max > 0
-            layer_max = float(unit_max.max())
             w, b = head.weight.double(), head.bias.double()
             logits = feats @ w.T + b
             pred = logits.argmax(1)
 
-            def best_flip(i, allowed):
+            def best_flip(i):
                 best = None
                 l_ = logits[i]
                 for c in range(w.shape[0]):
@@ -304,7 +240,7 @@ def suite_cnn(args, env) -> None:
                         continue
                     others = torch.cat([w[:c], w[c + 1:]])       # rows k != c
                     lo = torch.cat([l_[:c], l_[c + 1:]])
-                    ok_j = (w[c][None, :] > others).all(0) & allowed  # c wins for a large enough delta
+                    ok_j = (w[c][None, :] > others).all(0)  # c wins for a large enough delta
                     if not bool(ok_j.any()):
                         continue
                     gap = (lo - l_[c])[:, None] / (w[c][None, :] - others)
@@ -315,47 +251,23 @@ def suite_cnn(args, env) -> None:
                         best = (float(need[j]), c, j)
                 return best
 
-            everyone = torch.ones_like(live)
             for i in range(len(xs)):
-                for tag, allowed in (("", everyone), ("_live", live)):
-                    best = best_flip(i, allowed)
-                    if best is None:
-                        r.rec("flip_success" + tag, 0, "", i)
-                        continue
-                    delta, c, j = best
-                    new = logits[i] + delta * w[:, j]
-                    r.rec("flip_success" + tag, int(int(new.argmax()) == c), "", i)
-                    r.rec("flip_delta" + tag, delta, "", i)
-                    r.rec("flip_unit_dead" + tag, int(not bool(live[j])), "", i)
-                    r.rec("flip_delta_over_layer_max" + tag, delta / layer_max, "", i)
-                    if bool(live[j]):
-                        r.rec("flip_delta_over_unit_max" + tag, delta / float(unit_max[j]), "", i)
-        r.rec("penultimate_width", int(w.shape[1]), "")
-        r.rec("penultimate_live_units", int(live.sum()), "")
+                best = best_flip(i)
+                if best is None:
+                    r.rec("flip_success", 0, "", i)
+                    continue
+                delta, c, j = best
+                new = logits[i] + delta * w[:, j]
+                r.rec("flip_success", int(int(new.argmax()) == c), "", i)
         r.done()
 
     # ---- the sampling baseline (Anchuri et al.) on the integer graph -----------------------
     cell = "sampling"
     if _todo(args, "cnn", name, cell):
-        n_paths = args.paths
-        r = Recorder("cnn", name, cell, {"n_paths": n_paths}, env)
+        r = Recorder("cnn", name, cell, {}, env)
         env1, _ = graph.forward(q_inputs[:1])
         tc = TraceCommitment(graph, env1)
-        r.rec("trace_commit", tc.commit_seconds, "s")
-        r.rec("weight_commit", tc.weight_commit_seconds, "s")
-        r.rec("trace_bytes", tc.trace_bytes, "B")
-        r.rec("model_bytes", tc.model_bytes, "B")
         r.rec("open_all_bytes", tc.open_all_bytes, "B")
-        rng = np.random.default_rng(0)
-        per_path = []
-        for i in range(n_paths):
-            res = sample_path(tc, env1, rng)
-            per_path.append(res["bytes"])
-            r.rec("path_ok", int(res["ok"]), "", i)
-            r.rec("path_bytes", res["bytes"], "B", i)
-            r.rec("path_open", res["open_s"], "s", i)
-            r.rec("path_verify", res["verify_s"], "s", i)
-            r.rec("path_steps", res["steps"], "", i)
         mass = visit_probabilities(graph, env1)
         prod = {op.output: op for op in graph.ops}
         src = _base_name(prod, mats[-1].inputs[0])
@@ -363,43 +275,20 @@ def suite_cnn(args, env) -> None:
         p_min = min(float(mass[n].min()) for n in neuron_tensors(graph))
         r.rec("p_detect_penultimate", p_attack, "")
         r.rec("p_detect_min_node", p_min, "")
-        lams = (10, 20, 40, 64, 80, 128)
-        ks = {lam: paths_for(lam, p_attack) for lam in lams}
+        k40 = paths_for(40, p_attack)          # paths for 2^-40 against the single-neuron attack
         grid = [1, 3, 10, 30, 100, 300, 1000, 3000, 10000, 30000]
-        shared = shared_path_bytes(tc, env1, sorted(set(ks.values()) | set(grid)), max_paths=args.max_shared_paths)
+        shared = shared_path_bytes(tc, env1, sorted({k40, *grid}))
         for k_ in grid:   # the cost-vs-security curve of the sampling protocol
-            if shared.get(k_) is not None:
-                r.rec("paths_bytes_shared_k", shared[k_], "B", k=k_,
-                      bits=-k_ * math.log2(1.0 - p_attack))
-        median_path = statistics.median(per_path)
-        for lam in lams:
-            r.rec("paths_needed_penultimate", ks[lam], "", lam=lam)
-            r.rec("paths_needed_min_node", paths_for(lam, p_min), "", lam=lam)
-            r.rec("paths_bytes_naive", ks[lam] * median_path, "B", lam=lam)
-            if shared.get(ks[lam]) is not None:
-                r.rec("paths_bytes_shared", shared[ks[lam]], "B", lam=lam)
+            r.rec("paths_bytes_shared_k", shared[k_], "B", k=k_, bits=-k_ * math.log2(1.0 - p_attack))
+        r.rec("paths_needed_penultimate", k40, "", lam=40)
+        r.rec("paths_bytes_shared", shared[k40], "B", lam=40)
         r.done()
 
     # ---- our defence: commitment, honest queries, all modes and security levels ----------
-    if ONLY and not any(o.startswith(("commit", "defence", "tamper")) for o in ONLY):
-        return
     # The commitment is one-time and takes seconds for these models, so it is
-    # always rebuilt (the Merkle roots are deterministic); it is recorded once.
+    # always rebuilt (the Merkle roots are deterministic).
     rate = args.rate
-    _sync(device)
-    t0 = time.perf_counter()
     coms = commit_graph(graph, rate, device=device)
-    _sync(device)
-    commit_s = time.perf_counter() - t0
-    cell = f"commit_rate{rate}"
-    if _todo(args, "cnn", name, cell):
-        r = Recorder("cnn", name, cell, {"rate": rate}, env)
-        r.rec("commit_total", commit_s, "s")
-        for k, c in coms.items():
-            r.rec("commit_op", c.commit_seconds, "s", op=k, n_rows=c.weight.shape[0],
-                  row_length=c.row_length, n_points=c.n_points)
-        r.rec("commitment_bytes", 32 * len(coms), "B")
-        r.done()
 
     prover = Prover(graph, device=device, commitments=coms)
     weights = {op.name: (op.weight, op.bias) for op in mats}
@@ -419,11 +308,10 @@ def suite_cnn(args, env) -> None:
             else:
                 v = Verifier(graph.public(), params, mode, weights=weights)
                 if mode == "Kpre":
-                    r.rec("verifier_precompute", v.precompute(Challenger()), "s")
+                    v.precompute(Challenger())
             run_query(prover, v, q_inputs[:1])  # untimed warm-up (lazy CUDA/BLAS initialisation)
             for i in range(args.queries):
-                res = run_query(prover, v, q_inputs[i:i + 1], keep_claims=(i < 3))
-                _record_query(r, res, i)
+                _record_query(r, run_query(prover, v, q_inputs[i:i + 1]), i)
             # batch amortisation: B queries in one interaction (mode C, interactive only)
             if mode == "C" and chal == "int":
                 for bsz in (8, 32):
@@ -570,12 +458,12 @@ def suite_cnn(args, env) -> None:
 
 # ------------------------------------------------------------------ LLM shapes
 def suite_llm(args, env) -> None:
-    from pvi.fullcheck.analytic import decoder_shapes, soundness_error_bits
+    from pvi.fullcheck.analytic import decoder_shapes
     from pvi.fullcheck.transformer import CONFIGS, build_decoder, decoder_param_count
 
     device = torch.device(args.device)
     cfg = CONFIGS[args.model]
-    full = cfg.n_layers <= 12 and not args.extrapolate
+    full = cfg.n_layers <= 12
     builds = [cfg.n_layers] if full else [1, 2]
     modes = [("C", "int"), ("C", "fs"), ("Kpre", "int"), ("K", "int")] if not args.modes else \
         [tuple(m.split(":")) for m in args.modes.split(",")]
@@ -585,28 +473,10 @@ def suite_llm(args, env) -> None:
             todo = [f"defence_{m}_{c}_lam{l}_{base}" for m, c in modes for l in args.lams]
             if not args.force and all(is_done("llm", cfg.name, t) for t in todo):
                 continue
-            t0 = time.perf_counter()
             graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0)
-            build_s = time.perf_counter() - t0
             mats = graph.mat_ops
             tokens = torch.randint(0, cfg.vocab, (args.queries, seq), generator=torch.Generator().manual_seed(1))
-            coms = None
-            if any(m == "C" for m, _ in modes):
-                torch.cuda.reset_peak_memory_stats() if device.type == "cuda" else None
-                t0 = time.perf_counter()
-                coms = commit_graph(graph, args.rate, device=device)
-                commit_s = time.perf_counter() - t0
-                cell = f"commit_{base}"
-                if _todo(args, "llm", cfg.name, cell):
-                    r = Recorder("llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": args.rate,
-                                                         "n_layers_full": cfg.n_layers,
-                                                         "params_full": decoder_param_count(cfg)}, env)
-                    r.rec("commit_total", commit_s, "s")
-                    r.rec("build_graph", build_s, "s")
-                    for k, c in coms.items():
-                        r.rec("commit_op", c.commit_seconds, "s", op=k, n_rows=c.weight.shape[0],
-                              row_length=c.row_length, n_points=c.n_points)
-                    r.done()
+            coms = commit_graph(graph, args.rate, device=device) if any(m == "C" for m, _ in modes) else None
             prover = Prover(graph, device=device, commitments=coms)
             weights = {op.name: (op.weight, op.bias) for op in mats}
             for lam in args.lams:
@@ -615,33 +485,22 @@ def suite_llm(args, env) -> None:
                     if not _todo(args, "llm", cfg.name, cell):
                         continue
                     # size (r, t) for the FULL model's op count, so extrapolated rows keep their lambda
-                    full_shapes = decoder_shapes(cfg, seq)
+                    full_shapes = decoder_shapes(cfg)
                     params = params_for(lam, len(full_shapes), rate=args.rate, fiat_shamir=(chal == "fs"))
                     conf = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": args.rate,
-                            "n_checks_full": len(full_shapes),
                             "columns": params.columns, "seq": seq, "n_layers": n_layers,
                             "n_layers_full": cfg.n_layers, "params_full": decoder_param_count(cfg),
-                            "params_built": graph.n_params(), "threads": torch.get_num_threads()}
+                            "threads": torch.get_num_threads()}
                     r = Recorder("llm", cfg.name, cell, conf, env)
-                    shapes = [(op.row_length, args.rate * (1 << max(0, (op.row_length - 1).bit_length())))
-                              for op in mats]
-                    r.rec("soundness_bits_built", soundness_bits(params, shapes, "C" if mode == "C" else "K"), "bits")
-                    r.rec("soundness_bits_full", soundness_error_bits(full_shapes, params, "C" if mode == "C" else "K"),
-                          "bits")
                     if mode == "C":
                         v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
                     else:
                         v = Verifier(graph.public(), params, mode, weights=weights)
                         if mode == "Kpre":
-                            r.rec("verifier_precompute", v.precompute(Challenger()), "s")
-                    if device.type == "cuda":
-                        torch.cuda.reset_peak_memory_stats()
+                            v.precompute(Challenger())
                     run_query(prover, v, tokens[:1])  # untimed warm-up
                     for i in range(args.queries):
-                        res = run_query(prover, v, tokens[i:i + 1], keep_claims=(i == 0 and seq <= 512))
-                        _record_query(r, res, i)
-                    if device.type == "cuda":
-                        r.rec("gpu_peak_memory", torch.cuda.max_memory_allocated(), "B")
+                        _record_query(r, run_query(prover, v, tokens[i:i + 1]), i)
                     # one tampered query per cell: must be rejected
                     victim = mats[len(mats) // 2].name
 
@@ -666,22 +525,16 @@ def main() -> None:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--queries", type=int, default=30)
     ap.add_argument("--tampers", type=int, default=100)
-    ap.add_argument("--paths", type=int, default=200)
     ap.add_argument("--seq", type=int, nargs="+", default=[64])
     ap.add_argument("--lams", type=int, nargs="+", default=list(LAMBDAS))
     ap.add_argument("--modes", default="")
-    ap.add_argument("--extrapolate", action="store_true")
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--rate", type=int, default=4, help="Reed-Solomon rate (codeword / message length)")
-    ap.add_argument("--max-shared-paths", type=int, default=100_000,
-                    help="cap on paths simulated for the shared-opening sampling cost")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--tag", default="", help="suffix for cell names, e.g. _thr1")
-    ap.add_argument("--only", default="", help="comma-separated cell prefixes to (re)run, e.g. sampling")
     args = ap.parse_args()
-    global TAG, ONLY
+    global TAG
     TAG = args.tag
-    ONLY = {c for c in args.only.split(",") if c}
     if args.threads:
         torch.set_num_threads(args.threads)
     torch.backends.cuda.matmul.allow_tf32 = False

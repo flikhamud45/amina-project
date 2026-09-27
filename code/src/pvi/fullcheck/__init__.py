@@ -12,7 +12,7 @@ commitment (Ligero-style).  Modules:
 * ``protocol``   -- prover, verifier, security parameters (modes C, K, Kpre);
 * ``sampling``   -- Anchuri et al.'s path test on the same integer graphs, for a
                     like-for-like baseline;
-* ``analytic``   -- closed-form costs and error bounds;
+* ``analytic``   -- decoder weight-op shapes and the expected multiproof size;
 * ``models``, ``datasets`` -- the CNNs of the benchmark and their data.
 """
 

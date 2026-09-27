@@ -10,6 +10,10 @@ at, so the fonts appear at their real size.
 
 from __future__ import annotations
 
+import csv
+from collections import defaultdict
+from pathlib import Path
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -17,8 +21,100 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import FancyBboxPatch  # noqa: E402
 
-from common import CNN_ORDER, DEFAULT, PROVE, VERIFY, ROOT, Measured, _f, _llm_cost, _read, llm_rows  # noqa: E402
-from report_tables import MATCHES  # noqa: E402  (the same published/ours pairs as report_tables.md)
+ROOT = Path(__file__).resolve().parents[2]
+TABLES = ROOT / "artifacts" / "comparison" / "tables"
+
+DEFAULT = {"rate": "4", "threads": "8", "variant": "", "lam": 128}
+CNN_ORDER = ["mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224"]
+# the timing parts that make up one proof and one verification (fs_hash is paid by both)
+PROVE = ("prove_forward", "prove_fold", "prove_open", "fs_hash")
+VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "fs_hash")
+
+
+def _read(name: str) -> list[dict]:
+    path = TABLES / name
+    if not path.exists():
+        return []
+    with open(path, newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
+
+
+def _f(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+class Measured:
+    """Index over ``measured_summary.csv`` (median and mean per model, cell, metric)."""
+
+    def __init__(self) -> None:
+        self.idx = {}
+        for r in _read("measured_summary.csv"):
+            key = (r["suite"], r["model"], r["cell"], r["metric"], r.get("batch", ""), r.get("attack", ""),
+                   r.get("lam", ""), r.get("stage", ""), r.get("k", ""))
+            self.idx[key] = r
+
+    def get(self, model, cell, metric, lam=""):
+        """Median of one CNN metric (batch, attack, stage and k left empty)."""
+        r = self.idx.get(("cnn", model, cell, metric, "", "", str(lam), "", ""))
+        return _f(r["median"]) if r else None
+
+    def total(self, model, cell, parts):
+        vals = [self.get(model, cell, k) for k in parts]
+        return None if all(v is None for v in vals) else sum(v or 0 for v in vals)
+
+    def attack_rate(self, model, cell, attack):
+        """(fraction rejected, number of attempts) for one attack type."""
+        vals = [(_f(r["mean"]), _f(r["n"])) for k, r in self.idx.items()
+                if k[1] == model and k[2] == cell and k[3] == "rejected" and k[5] == attack]
+        n = sum(v[1] for v in vals)
+        return (sum(v[0] * v[1] for v in vals) / n, int(n)) if n else (None, 0)
+
+
+def llm_rows(mode="C", lam=DEFAULT["lam"], threads=DEFAULT["threads"], variant=DEFAULT["variant"]) -> dict:
+    """``{(model, seq): {metric: (value, provenance, params)}}`` from ``llm_full_model.csv``."""
+    out: dict = defaultdict(dict)
+    for r in _read("llm_full_model.csv"):
+        if (r["mode"], r["challenges"]) != (mode, "int") or _f(r["lam"]) != lam:
+            continue
+        if (r.get("rate", ""), r.get("threads", ""), r.get("variant", "")) != (DEFAULT["rate"], threads, variant):
+            continue
+        key = (r["model"], int(float(r["seq"])))
+        if r["metric"] in out[key]:
+            raise SystemExit(f"two headline rows for {key} {r['metric']}")
+        out[key][r["metric"]] = (float(r["value"]), r["provenance"], _f(r["params_full"]))
+    return out
+
+
+def _llm_bytes(d: dict):
+    """Proof bytes, with the Merkle term as a multiproof (native or expected; see aggregate.py)."""
+    return d["bytes_total_multiproof"][0] if "bytes_total_multiproof" in d else d.get("bytes_total", (None,))[0]
+
+
+def _llm_cost(d: dict):
+    """(prove seconds, verify seconds, proof bytes, parameters) of one LLM row."""
+    prove = sum(d[k][0] for k in PROVE if k in d)
+    verify = sum(d[k][0] for k in VERIFY if k in d)
+    return prove, verify, _llm_bytes(d), d["prove_forward"][2]
+
+
+# (published system, published model, our model, our prompt length or None for CNNs, our mode): Table 4
+MATCHES = [
+    ("zkCNN", "LeNet-5 MNIST", "lenet5", None, "C"),
+    ("Bionetta", "LeNet-5", "lenet5", None, "C"),
+    ("zkCNN", "VGG-16 CIFAR-10", "vgg16", None, "C"),
+    ("ZKML", "VGG-16 CIFAR-10", "vgg16", None, "C"),
+    ("zkGPT", "GPT-2", "gpt2", 64, "C"),
+    ("DeepProve", "GPT-2", "gpt2", 64, "C"),
+    ("DeepProve", "GPT-2", "gpt2", 512, "C"),
+    ("zkLLM", "OPT-125M", "opt-125m", 2048, "C"),
+    ("zkLLM", "OPT-6.7B", "opt-6.7b", 2048, "C"),
+    ("zkLLM", "Llama-2-7B", "llama2-7b", 2048, "C"),
+    ("ZKTorch", "Llama-2-7B (1 token)", "llama2-7b", 64, "C"),
+    ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "qwen3-4b", 8, "Kpre"),
+]
 
 REPORT = ROOT.parent / "report"
 FIGS = REPORT / "figures"
@@ -381,24 +477,17 @@ def tab_llm():
     lines = []
     for model, seq in pick:
         p, v, by, n = _llm_cost(c[(model, seq)])
-        kp, kv, kb, _ = _llm_cost(k[(model, seq)])
+        _, kv, kb, _ = _llm_cost(k[(model, seq)])
         lines.append(" & ".join([LLM_NAME[model], f"{seq:,}".replace(",", "{,}"), t(p), t(v), b(by), t(kv), b(kb)]) + r" \\")
     write("llm", lines)
 
 
-def tab_ratios():
-    M = Measured()
+def tab_ratios(M):
     curated = _read("reported_curated.csv")
     c_llm = llm_rows("C")
     k1 = llm_rows("Kpre", lam=40, threads="1", variant="_thr1")
-    keep = {("zkCNN", "LeNet-5 MNIST"), ("zkCNN", "VGG-16 CIFAR-10"), ("ZKML", "VGG-16 CIFAR-10"),
-            ("Bionetta", "LeNet-5"), ("zkGPT", "GPT-2"), ("DeepProve", "GPT-2"), ("zkLLM", "OPT-125M"),
-            ("zkLLM", "OPT-6.7B"), ("zkLLM", "Llama-2-7B"), ("ZKTorch", "Llama-2-7B (1 token)"),
-            ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B")}
     lines = []
-    for system, model, ours, seq, mode, note in MATCHES:
-        if (system, model) not in keep or (system == "DeepProve" and seq not in (64, 512)):
-            continue
+    for system, model, ours, seq, mode in MATCHES:
         cand = [r for r in curated if (r["system"], r["model"]) == (system, model)]
         same = [r for r in cand if seq and r["seq"] == str(seq)]
         r = same[0] if same else cand[0]
@@ -436,7 +525,7 @@ def main():
     fig_llm()
     tab_cnn(M)
     tab_llm()
-    tab_ratios()
+    tab_ratios(M)
 
 
 if __name__ == "__main__":
