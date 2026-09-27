@@ -1,6 +1,6 @@
 """Datasets for the comparison benchmark, all read from local copies.
 
-* MNIST     -- the repository's ``code/data`` copy (downloaded by experiments/0_train_models).
+* MNIST     -- ``code/data``, the same copy as :mod:`pvi.data` (downloaded on first use).
 * CIFAR-10  -- ``$PVI_CIFAR_ROOT`` (default: the lab copy on the TAU cluster).
 * ImageNet binary subsets reproducing Anchuri et al.'s classifiers:
   ``dogs_cats`` (their ``M``) and ``dogs_squirrels`` (their ``M~``), built from
@@ -47,8 +47,8 @@ def normalise(x_uint8: torch.Tensor, family: str) -> torch.Tensor:
 def _mnist():
     from torchvision import datasets
 
-    tr = datasets.MNIST(str(DATA_ROOT), train=True, download=False)
-    te = datasets.MNIST(str(DATA_ROOT), train=False, download=False)
+    tr = datasets.MNIST(str(DATA_ROOT), train=True, download=True)
+    te = datasets.MNIST(str(DATA_ROOT), train=False, download=True)
     return (tr.data[:, None].clone(), tr.targets.clone(), te.data[:, None].clone(), te.targets.clone())
 
 
@@ -86,7 +86,7 @@ def _files(split: str, classes: list[int]) -> list[str]:
 def _imagenet_binary(name: str, workers: int = 16):
     cache = CACHE_ROOT / f"{name}.pt"
     if cache.exists():
-        return tuple(torch.load(cache))
+        return tuple(torch.load(cache, weights_only=True))
     rng = np.random.default_rng(0)
     other = CAT_CLASSES if name == "dogs_cats" else SQUIRREL_CLASSES
     data = []

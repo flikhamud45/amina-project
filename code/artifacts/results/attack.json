@@ -1,0 +1,68 @@
+{
+  "config": {
+    "queries": 200,
+    "challenges": 25
+  },
+  "layer_widths": [
+    784,
+    512,
+    256,
+    10
+  ],
+  "baselines": {
+    "inverse transform (App. E)": {
+      "acceptance_mean": 0.0,
+      "support_mean": 591.0
+    },
+    "logit-swap injection at layer 2 (App. F)": {
+      "acceptance_mean": 0.0,
+      "support_mean": 256.0
+    },
+    "gradient reconstruction (Sec. 7.2)": {
+      "acceptance_mean": 0.0,
+      "support_mean": 777.875
+    },
+    "substitute model, honest trace (Def. 1)": {
+      "acceptance_mean": 0.0,
+      "support_mean": 573.75
+    },
+    "single-neuron tamper, layer 1 (ours)": {
+      "acceptance_mean": 0.9980468750000002,
+      "support_mean": 1.0
+    },
+    "single-neuron tamper, layer 2 (ours)": {
+      "acceptance_mean": 0.9960937500000001,
+      "support_mean": 1.0
+    }
+  },
+  "backdoor": {
+    "clean_identical_to_committed": 1.0,
+    "clean_accuracy_gap": 0.0,
+    "attack_success_rate": 1.0,
+    "triggered_acceptance_empirical": 0.9995652173913043,
+    "triggered_acceptance_exact": 0.9980468750000001,
+    "triggered_runs": 2300
+  },
+  "opening_budget": {
+    "n_paths": 250,
+    "acceptance_exact": 0.6133873140078125
+  },
+  "stealth": {
+    "p100.0": {
+      "mean_support": 2.6666666666666665,
+      "acceptance_mean": 0.9947916666666667
+    },
+    "p99.9": {
+      "mean_support": 2.966666666666667,
+      "acceptance_mean": 0.9942057291666667
+    },
+    "p99.0": {
+      "mean_support": 3.6666666666666665,
+      "acceptance_mean": 0.9928385416666667
+    },
+    "p95.0": {
+      "mean_support": 5.433333333333334,
+      "acceptance_mean": 0.9893880208333335
+    }
+  }
+}

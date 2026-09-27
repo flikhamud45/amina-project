@@ -140,7 +140,7 @@ catching a wrong value, anywhere in the network, rises from $1/N$ to $1-2^{-\lam
 \begin{itemize}
   \item \textbf{An attack} on the protocol of~\cite{anchuri2026verifiable}. Changing one
   neuron changes the answer. The verifier accepts the result with probability $1-1/N$
-  (99.6--99.8\% measured), including a trigger backdoor with zero clean-accuracy gap
+  (99.6--99.8\% on our MNIST model), including a trigger backdoor with zero clean-accuracy gap
   and 100\% attack success.
   \item \textbf{An impossibility argument} for sampling-based fixes. Uniform sampling is
   already the best rule that ignores the claimed values. The natural rule that looks at
@@ -178,8 +178,8 @@ minutes or hours per query for larger models.
 interactive proofs for networks with quadratic activations. Slalom~\cite{slalom}
 checks every linear layer of a GPU computation from inside an SGX enclave with
 Freivalds' algorithm, optionally with a precomputed secret challenge.
-Maverick~\cite{maverick} brings sparse Freivalds checks and a linear code to LLM
-inference, for a client that preprocesses the weights. LAMP~\cite{lamp}, by contrast,
+Maverick~\cite{maverick} applies sparse Freivalds checks and a linear code to LLM
+inference, for a client that has preprocessed the weights. LAMP~\cite{lamp}, by contrast,
 lets a verifier that holds only a commitment check a single matrix product, combining
 Freivalds' check with proximity testing.
 
@@ -256,9 +256,10 @@ that \emph{do} look at the claimed values fare no better in the worst case. The 
 effective one we found against the naive attack steps to parent $i$ with probability
 proportional to its contribution $|w_{ij} a_i|$. It gives weight zero to any neuron whose
 claimed activation is zero. The adversary therefore flips the output by setting a few
-neurons to exactly zero, and its detection is exactly $0$. Mixing in a uniform floor
-restores some detection (about $10\times$ uniform for the best floor weight in our
-experiments, less for the others), but it stays at a few percent.
+neurons to exactly zero, and its detection is exactly $0$. Adding a floor $\varepsilon$
+to every claimed activation, $|w_{ij}|(|a_i|+\varepsilon)$, restores some detection (at
+best $10\times$ uniform, i.e.\ 2\%, at $\varepsilon=1$; 0.9--6$\times$ for other
+floors), but it stays at a few percent.
 
 \subsection{Our defence: checking every layer at once}
 \label{sec:defence}
@@ -412,7 +413,7 @@ Everything is written in Python and PyTorch; the prover runs on a GPU and the ve
 on a CPU. Field arithmetic uses exact limb decomposition, Reed--Solomon encoding an NTT,
 and Merkle trees SHA-256 with multiproofs. As a baseline, the original protocol is
 re-implemented on the same integer graphs, with exact visit probabilities computed by
-dynamic programming. The code has 210 tests.
+dynamic programming. The code has 180 tests.
 
 % =====================================================================================
 \section{Results}
@@ -438,7 +439,8 @@ results of 17 systems, taken as reported with their own hardware and each checke
 against the source paper. Every benchmark run is stored as raw records (59{,}547 in
 total), from which Tables~\ref{tab:cnn}--\ref{tab:ratios} and
 Figures~\ref{fig:security}--\ref{fig:llm} are generated; the MNIST experiments of
-Section~\ref{sec:break} store their results as JSON files.
+Section~\ref{sec:break} store theirs in \texttt{code/artifacts/results}, together with
+the trained models.
 
 \subsection{Breaking the original protocol}
 \label{sec:break}
@@ -446,8 +448,8 @@ Section~\ref{sec:break} store their results as JSON files.
 \para{Reproduction.} Our implementation behaves as the paper describes. Over four
 substitute-model settings from the paper, honest provers were accepted in 100\% of
 3{,}000 runs each, and substitute models were caught 99.8--100\% of the time, even an
-8-bit quantised copy that agrees with $M$ on every test prediction. We also found that
-the idealised exact-equality check accepts an honest prover only 17--32\% of the time,
+8-bit quantised copy that agrees with $M$ on all 150 evaluated queries. We also found that
+the idealised exact-equality check accepts an honest prover only 21--37\% of the time,
 because a whole-layer matrix product and a single-neuron dot product round differently.
 The tolerance of $10^{-4}$ that the paper prescribes is therefore mandatory, not
 optional.
@@ -460,32 +462,35 @@ optional.
     \toprule
     Attack & wrong nodes & accepted \\
     \midrule
-    Substitute model $\tilde M$ & $\approx$570 / 778 & 0.000 \\
-    Inverse transform & $\approx$590 / 778 & 0.000 \\
+    Substitute model $\tilde M$ & $\approx$574 / 778 & 0.000 \\
+    Inverse transform & 591 / 778 & 0.000 \\
     Logit swap & 256 / 778 & 0.000 \\
-    Gradient reconstruction & 778 / 778 & 0.000 \\
+    Gradient reconstruction & $\approx$778 / 778 & 0.000 \\
     \midrule
     \textbf{Single neuron, layer 1 (ours)} & \textbf{1 / 778} & \textbf{0.998} \\
     \textbf{Single neuron, layer 2 (ours)} & \textbf{1 / 778} & \textbf{0.996} \\
-    Backdoor, triggered inputs & 1 / 778 & 0.996 \\
-    Stealthy (in natural range) & $\approx$6 / 778 & 0.989 \\
-    Zeroing vs.\ contribution sampler & 13 / 778 & 1.000 \\
+    Backdoor, triggered inputs & 1 / 778 & 0.998 \\
+    Stealthy (in natural range) & $\approx$5 / 778 & 0.989 \\
+    Zeroing vs.\ contribution sampler & $\approx$14 / 778 & 1.000 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \para{The attack works.} Table~\ref{tab:attack} lists, for each attack, how many of the
-778 trace nodes are wrong and the probability that the verifier accepts (computed
-exactly by dynamic programming over the paths, and averaged over queries). The attacks
+778 trace nodes are wrong and the probability that the verifier accepts, computed
+exactly by dynamic programming over the paths. Each row is averaged over 8 test queries
+for the first six rows, and over the successful attacks on 40--100 test queries for the
+last three. The attacks
 of~\cite{anchuri2026verifiable} (a substitute model, the inverse-transform and logit-swap
 forgeries of its Appendices E and F, and the gradient reconstruction of its Section~7.2)
 try to make many nodes \emph{almost} right, and are always caught. Changing a
 single neuron is accepted 99.6--99.8\% of the time, exactly the $1-1/N$ we predict for
 layers of 256 and 512 neurons. As a backdoor (a $3{\times}3$ bright patch as trigger),
-it serves the honest output on 100\% of clean queries, succeeds on 100\% of triggered
-queries, and is accepted on 99.6\% of them (the exact prediction is 99.8\%). A stealthy
+it serves the honest output on 100\% of clean queries and succeeds on 100\% of the
+triggered queries not already in the target class. The real protocol accepted it in
+99.96\% of 2{,}300 runs (the exact prediction is 99.8\%). A stealthy
 variant keeps every forged value inside that neuron's natural range (up to its 95th
-percentile), so a range check would not flag it. It needs only about 3--6 changed
+percentile), so a range check would not flag it. It needs only about 3--5 changed
 neurons and is still accepted about 99\% of the time. More paths do not
 help much either: with 250 paths, a 250-fold larger proof, the attack is still accepted
 61\% of the time.
@@ -493,8 +498,8 @@ help much either: with 250 paths, a 250-fold larger proof, the attack is still a
 \para{Smarter sampling does not help.} Measured against an adversary who knows the
 rule, uniform sampling detects 0.20\% of attacks. Static importance weighting drops to
 0.11\%, and gradient-saliency weighting, which a verifier cannot even compute without
-the full model, to 0.006\%. Contribution weighting detects nothing: zeroing 13 of 512
-neurons flips the prediction, and the real protocol accepted 2{,}000 of 2{,}000 runs
+the full model, to 0.016\%. Contribution weighting detects nothing: zeroing about 14 of
+512 neurons flips the prediction, and the real protocol accepted 2{,}000 of 2{,}000 runs
 (last row of Table~\ref{tab:attack}).
 Zero is also the most common natural activation (65\% of inputs for these neurons), so
 no statistical check flags it.
@@ -706,9 +711,9 @@ models, and gigabytes for 7B models at long prompts, where zkLLM's proofs stay b
 (ii)~Our verifier recomputes attention and other non-weight operations, so its cost
 grows with the square of the prompt length. (iii)~The check is exact, so the provider
 must serve the integer model. For our CNNs this changed accuracy by at most 0.4 points,
-but we did not measure the quality of int8 LLMs, whose costs we measured with random
-weights (and extrapolated beyond 12 blocks). (iv)~Like the original protocol, we assume the
-weight commitment is honest. (v)~The protocol is not zero-knowledge: the opened
+but we did not measure the quality of int8 LLMs: their costs were measured with random
+weights and extrapolated beyond 12 blocks. (iv)~Like the original protocol, we assume
+that the weight commitment is honest. (v)~The protocol is not zero-knowledge: the opened
 columns reveal a few random linear combinations of each weight row. (vi)~Our prototype
 is Python, not optimised native code.
 

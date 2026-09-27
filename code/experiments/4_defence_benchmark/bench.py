@@ -155,7 +155,7 @@ def _cnn_model(name: str) -> tuple[nn.Module, dict]:
     kind, dataset = MODEL_SPECS[name]
     tx, _, vx, vy, family, n_classes = load_dataset(dataset)
     model = build_float_model(kind, n_classes)
-    model.load_state_dict(torch.load(MODELS / f"{name}.pt", map_location="cpu"))
+    model.load_state_dict(torch.load(MODELS / f"{name}.pt", map_location="cpu", weights_only=True))
     crop = (lambda x: x[:, :, 16:240, 16:240]) if family == "imagenet" else (lambda x: x)
     g = torch.Generator().manual_seed(0)
     cal = tx[torch.randperm(len(tx), generator=g)[: (64 if family == "imagenet" else 512)]]

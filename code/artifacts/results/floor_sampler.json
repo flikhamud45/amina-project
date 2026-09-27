@@ -1,0 +1,29 @@
+{
+  "layer": 1,
+  "width": 512,
+  "n_queries": 20,
+  "note": "detection measured on tampered traces; adversary picks the better of single-neuron and multi-neuron attacks",
+  "samplers": {
+    "uniform": {
+      "adversary_best": 0.001953124999999778
+    },
+    "eps=0": {
+      "adversary_best": -5.551115123125783e-17
+    },
+    "eps=0.01": {
+      "adversary_best": 0.0016813692440819095
+    },
+    "eps=0.1": {
+      "adversary_best": 0.011284725450871353
+    },
+    "eps=1": {
+      "adversary_best": 0.019833714694918757
+    },
+    "eps=10": {
+      "adversary_best": 0.004336163854141245
+    },
+    "eps=100": {
+      "adversary_best": 0.0016806731760072636
+    }
+  }
+}

@@ -17,11 +17,12 @@ Writes `artifacts/fullcheck/models/<model>.pt` and a JSON report (accuracy, epoc
 These weights are not committed. The MNIST MLP is `artifacts/models/mlp_mnist_full.npz`,
 which is committed (see `experiments/0_train_models`).
 
-**2. Run the benchmark** for one model:
+**2. Run the benchmark** for one model (these are the report's settings; `slurm/sweep.sh`
+lists them all):
 
 ```bash
-python experiments/4_defence_benchmark/bench.py cnn --model lenet5
-python experiments/4_defence_benchmark/bench.py llm --model gpt2 --seq 64 128 256 512
+python experiments/4_defence_benchmark/bench.py cnn --model lenet5 --queries 30 --tampers 100
+python experiments/4_defence_benchmark/bench.py llm --model gpt2 --seq 64 128 256 512 --queries 10
 ```
 
 | Cell (CNN suite) | What it measures |
