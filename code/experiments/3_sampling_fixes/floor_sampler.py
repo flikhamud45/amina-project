@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 
 from pvi.attacks.backdoor import calibrate_activation_ceilings
-from pvi.attacks.tamper import _smallest_flipping_value
+from pvi.attacks.tamper import smallest_flipping_value
 from pvi.data import load_classification
 from pvi.defences import ZeroAwareContributionSampler
 from pvi.defences.adaptive import plan_adaptive_stealthy_flip
@@ -99,7 +99,7 @@ def main() -> None:
         # U and the forged trace for every usable neuron, computed once per query.
         forged_cache = {}
         for v in range(width):
-            value = _smallest_flipping_value(
+            value = smallest_flipping_value(
                 network, honest, LAYER, v, winner, None,
                 max_value=1e4, require_nonnegative=True,
             )

@@ -51,6 +51,8 @@ __all__ = [
     "apply_plan",
     "evaluate_plan",
     "plan_single_neuron_flip",
+    "plan_stealthy_flip",
+    "smallest_flipping_value",
 ]
 
 
@@ -139,7 +141,7 @@ def _forward_with_value(
     ).output
 
 
-def _smallest_flipping_value(
+def smallest_flipping_value(
     network: TracedNetwork,
     honest: Trace,
     layer_index: int,
@@ -241,7 +243,7 @@ def plan_single_neuron_flip(
     best: TamperPlan | None = None
     best_delta = np.inf
     for neuron in ranked:
-        value = _smallest_flipping_value(
+        value = smallest_flipping_value(
             network,
             honest,
             layer_index,

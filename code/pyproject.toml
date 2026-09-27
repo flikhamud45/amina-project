@@ -14,7 +14,6 @@ dependencies = [
     "torchvision>=0.17",
     "numpy>=1.26",
     "matplotlib>=3.8",
-    "tqdm>=4.66",
 ]
 
 # Exact versions the reported results were produced with are in
@@ -28,9 +27,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
-markers = [
-    "slow: marks tests that train a model or run large sweeps",
-]
 
 [tool.ruff]
 line-length = 92

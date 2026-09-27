@@ -85,7 +85,7 @@ def test_importance_measures_have_the_right_shape(mlp_net):
 
 
 # --------------------------------------------------------------------------- #
-# Theorem 3: the zero blind spot
+# The zero blind spot
 # --------------------------------------------------------------------------- #
 
 

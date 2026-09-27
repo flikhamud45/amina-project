@@ -5,11 +5,11 @@ attention somewhere.  Concentrating attention necessarily takes it away from
 somewhere else, and the adversary only needs one place to hide.
 
 Kerckhoffs applies: the sampling rule is part of the protocol, so the adversary
-knows it.  The search below simply evaluates, for every neuron at which the output
-can be flipped, the *exact* probability that the resulting trace is accepted under
-the defence in force -- and keeps the best.  No approximation and no optimisation
-heuristics are involved, which is what makes the resulting numbers a genuine upper
-bound on the defence's worth rather than an artefact of a weak attack.
+knows it.  The search below evaluates, for up to ``candidate_neurons`` neurons (the
+most and least salient, and an even spread across the layer), the *exact* probability
+that the resulting trace is accepted under the defence in force, and keeps the best.
+Restricting the candidates can only weaken the adversary, so the resulting numbers
+remain an upper bound on the defence's worth.
 
 This is the concrete form of the concern that motivated the defence in the first
 place: whether an attacker can arrange to be examined where it is safe.  It can.
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pvi.attacks.tamper import TamperPlan, _smallest_flipping_value, apply_plan
+from pvi.attacks.tamper import TamperPlan, apply_plan, smallest_flipping_value
 from pvi.experiments.analysis import acceptance_probability
 from pvi.nn.architecture import DenseLayer
 from pvi.nn.gradients import saliency
@@ -94,7 +94,7 @@ def plan_evasive_flip(
     best_acceptance = -1.0
 
     for neuron in candidates:
-        value = _smallest_flipping_value(
+        value = smallest_flipping_value(
             network,
             honest,
             layer_index,

@@ -3,7 +3,7 @@
 Section 5.2 suggests that "adaptive sampling strategies that prioritize layers or
 nodes where activations are statistically more sensitive to tampering" might tighten
 the ``1/N`` bound, and reports "some partial results from this approach".  This
-module builds three concrete readings of that suggestion so they can be measured
+module builds four concrete readings of that suggestion so they can be measured
 rather than speculated about.
 
 They differ in what information the sampling weights are allowed to depend on, and
@@ -21,19 +21,23 @@ that is the whole story:
     activations, and needs nothing else.  It is very effective against a tamper that
     sets a large value, because a large value *is* a large contribution.
 
+:class:`ZeroAwareContributionSampler`
+    The same with an additive floor, ``|w_ij| * (|a~_i| + eps)``, so that a claimed
+    zero is still visited.
+
 :class:`GradientSaliencySampler`
     Weight neuron ``i`` by ``|d y / d a_i|`` at the claimed trace -- the most direct
     reading of "how much it influences the final value".
 
-A caveat that decides the matter for the third one: **a real verifier cannot compute
+A caveat that decides the matter for the last one: **a real verifier cannot compute
 it.**  Obtaining ``d y / d a_i`` for a whole layer requires every weight of every
 layer above.  The verifier holds a digest of the model and opens a handful of rows;
 if it could form layer-wide gradients it would already hold the model, and could
 simply run the inference itself.  We implement it anyway, as an upper bound on what
 influence-weighting could achieve even given information no verifier has.
 
-The two samplers that *are* implementable both read the claimed trace, which is
-authored by the prover; Section 3.2 of the report shows what that costs.
+The implementable contribution samplers read the claimed trace, which is authored
+by the prover; Section 3.2 of the report shows what that costs.
 """
 
 from __future__ import annotations
@@ -134,10 +138,9 @@ class LocalContributionSampler(PathSampler):
 
     It is strong against a tamper that writes a conspicuously large activation --
     such a value dominates the contribution sum and pulls the walk straight onto it.
-    It is weak against a tamper whose values look ordinary, which is exactly what
-    ``plan_stealthy_flip`` produces.
+    It is blind to a claimed activation of exactly zero, which gets transition weight
+    zero; ``plan_adaptive_stealthy_flip`` exploits this and reaches detection 0.
     """
-
 
     def __init__(self, network: TracedNetwork) -> None:
         self._network = network
@@ -188,7 +191,6 @@ class ZeroAwareContributionSampler(PathSampler):
     ``epsilon`` around 1 beats uniform sampling by about 10x on average -- but
     detection stays at a few percent, far from what a proof needs.
     """
-
 
     def __init__(self, network: TracedNetwork, *, epsilon: float) -> None:
         if epsilon < 0.0:

@@ -65,8 +65,6 @@ class Op:
     inputs: tuple[str, ...]
     output: str
 
-    kind = "cheap"
-
     def public(self) -> "Op":
         return self
 
@@ -89,8 +87,6 @@ class MatOp(Op):
     has_bias: bool = False
     max_input: int = INT8_MAX
     _dev: dict = field(default_factory=dict, repr=False)
-
-    kind = "mat"
 
     def __post_init__(self) -> None:
         if self.weight is not None:
