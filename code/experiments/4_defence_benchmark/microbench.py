@@ -14,12 +14,20 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from pathlib import Path
 
 import torch
 
-from pvi.fullcheck.commitment import vandermonde_columns
-from pvi.fullcheck.field import P, field_matmul_mod, ntt, small_matmul_mod, to_field
-from pvi.fullcheck.graph import exact_matmul
+import pvi
+
+_HERE = (Path(__file__).resolve().parents[2] / "src" / "pvi").resolve()
+if __name__ == "__main__" and Path(pvi.__file__).resolve().parent != _HERE:   # as bench.py
+    raise SystemExit(f"pvi is imported from {Path(pvi.__file__).resolve().parent}, not from this checkout "
+                     f"({_HERE}): export PYTHONPATH={_HERE.parent}")
+
+from pvi.fullcheck.commitment import vandermonde_columns  # noqa: E402
+from pvi.fullcheck.field import P, field_matmul_mod, ntt, small_matmul_mod, to_field  # noqa: E402
+from pvi.fullcheck.graph import exact_matmul  # noqa: E402
 
 
 def _time(fn, device, reps):
@@ -86,7 +94,8 @@ def main() -> None:
     out = []
     for label, (fn, work, unit) in cases.items():
         sec, res = _time(fn, dev, args.reps)
-        rec = {"kernel": label, "device": name, "seconds": sec, unit + "_per_s": work / sec}
+        rec = {"kernel": label, "device": name, "seconds": sec, unit + "_per_s": work / sec,
+               "pvi_path": str(Path(pvi.__file__).resolve().parent)}
         if dev.type != "cpu":   # same inputs on the CPU: the results must be bit-identical
             cpu_res = {"exact_matmul_fp32 (forward)": lambda: exact_matmul(w, x.float()),
                        "small_matmul_mod_fp64 (fold)": lambda: small_matmul_mod(w.T, chi.T.contiguous()).T,

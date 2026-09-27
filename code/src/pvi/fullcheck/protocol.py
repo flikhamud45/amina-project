@@ -266,6 +266,8 @@ class Verifier:
         for op in self.graph.mat_ops:
             chi = challenger.folding(op.name, op.n_rows, self.params.reps).to(self.device)
             self._pre[op.name] = (chi, self._fold_local(op, chi))
+        self._wdev.clear()   # Kpre never folds again: keep no device copy of the model after this
+        _sync(self.device)   # the precompute is timed by its callers
 
     def _fold_local(self, op: MatOp, chi: torch.Tensor) -> torch.Tensor:
         w, b = self.weights[op.name]
@@ -337,8 +339,9 @@ class Verifier:
 
 
 def _sync(device) -> None:
-    if torch.device(device).type == "cuda":
-        torch.cuda.synchronize()
+    device = torch.device(device)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)   # the given GPU (e.g. a verifier on cuda:1), not the current one
 
 
 def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> None:

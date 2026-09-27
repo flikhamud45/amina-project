@@ -6,9 +6,11 @@ the hardware must agree between their raw roots.
 Exact: the integer models (parameters, int8 accuracy), the path-test baseline (visit
 probabilities, paths and bytes for 2^-40), the security parameters (r, t, bits) and every
 proof byte count except the Merkle multiproof, whose size depends on which columns are
-drawn (checked to 10%; LLM runs of raw/ made before multiproofs are compared through the
-expected size, bytes_total_multiproof in the tables).  Honest queries must all be accepted
-and attacks all rejected on both.  Timings are not compared.
+drawn (checked to 10%).  LLM cells of raw/ made before multiproofs (gpt2, opt-125m, opt-1.3b,
+opt-6.7b) sent one Merkle path per column: their bytes_paths and bytes_total are not
+compared at all, only their claims, u and columns (exact), so "0 disagreements" says
+nothing about their Merkle term.  Honest queries must all be accepted and attacks all
+rejected on both.  Timings are not compared.
 """
 
 from __future__ import annotations

@@ -13,6 +13,7 @@ set -euo pipefail
 PROJECT_DIR="${PROJECT_DIR:-$SLURM_SUBMIT_DIR}"
 cd "$PROJECT_DIR/code"
 umask 002
+export PYTHONPATH="$PROJECT_DIR/code/src${PYTHONPATH:+:$PYTHONPATH}"   # this checkout's pvi, whatever the venv has
 for model in "$@"; do
   echo "=== $model  ($(date))"
   "$PROJECT_DIR/.venv/bin/python" experiments/4_defence_benchmark/train.py --model "$model" --device cuda

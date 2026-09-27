@@ -5,7 +5,8 @@
 Everything below is an integer fact about the model, the graph or the protocol, so it
 must be identical on any GPU: a mismatch means different weights, data, code or a
 GPU/CPU disagreement -- stop and report it before running anything long.
-Also prints every honest rejection and every accepted attack in the new tree.
+Also prints every honest rejection and every accepted attack in the new tree.  Exits 1 on
+any problem, and also when nothing could be compared (a wrong or partial stored root).
 """
 import json
 import sys
@@ -59,7 +60,9 @@ def main() -> None:
                 bad += 1
                 print("MISMATCH", key, sub, "stored", sorted(ref)[:4], "new", sorted(vals)[:4])
     print(f"{checked} fingerprints compared, {bad} problems")
-    sys.exit(1 if bad else 0)
+    if not checked:   # a wrong or partial stored root must not pass as agreement
+        print(f"nothing compared: is {sys.argv[1]} the stored raw root, and does {sys.argv[2]} hold finished cells?")
+    sys.exit(1 if bad or not checked else 0)
 
 
 if __name__ == "__main__":

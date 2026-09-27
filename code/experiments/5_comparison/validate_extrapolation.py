@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TABLES = ROOT / "artifacts" / "comparison" / "tables"   # set by main() from --platform
 METRICS = {"prove_forward", "prove_fold", "prove_open", "fs_hash", "verify_derive", "verify_fold",
            "verify_products", "verify_columns", "bytes_total", "bytes_claims", "bytes_paths",
-           "gpu_peak_memory", "gpu_peak_reserved", "host_peak_rss"}
+           "gpu_peak_memory", "gpu_peak_reserved", "gpu_peak_memory_verifier", "host_peak_rss"}
 
 
 def main() -> None:
@@ -47,6 +47,7 @@ def main() -> None:
                 continue
             key = (r["model"], r["cfg_seq"], r["cfg_mode"], r["cfg_challenges"], r["cfg_lam"],
                    r.get("cfg_variant", "") + f"|rate{r.get('cfg_rate', '')}|thr{r.get('cfg_threads', '')}",
+                   r.get("cfg_lean", ""),   # never fit lean and non-lean builds together
                    r.get("prover_hw", ""), r["metric"])
             by[key][int(r["cfg_n_layers"])] = float(r["median"])
             full_l[key] = int(r["cfg_n_layers_full"])
@@ -55,7 +56,7 @@ def main() -> None:
         L = full_l[key]
         if L not in pts or len(pts) < 3:
             continue
-        row = dict(zip(("model", "seq", "mode", "challenges", "lam", "variant", "prover_hw", "metric"), key))
+        row = dict(zip(("model", "seq", "mode", "challenges", "lam", "variant", "lean", "prover_hw", "metric"), key))
         row.update(n_layers_full=L, builds=" ".join(str(l) for l in sorted(pts)), measured_full=pts[L])
         if 1 in pts and 2 in pts:
             ext = pts[1] + (L - 1) * (pts[2] - pts[1])

@@ -1,38 +1,62 @@
 #!/bin/bash
-# Every job of the strong-GPU plan, by tier.  From the repository root, after the smoke job passed:
-#     export PVI_PLATFORM=<name>                        # h100 | a100-80 | a100-40 | ... (one name per GPU+CPU model)
+# Every job of the strong-GPU plan, by tier.  From the repository root (of the checkout whose code
+# should run: the jobs put its code/src first on PYTHONPATH, whatever pvi the venv has installed):
+#     export PVI_PLATFORM=<name>                        # h100 | h200 | l40s | ... (one name per GPU+CPU model)
 #     export SBATCH_PARTITION=<gpu partition> SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...] [SBATCH_CONSTRAINT=...]
 #     bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke    # once; wait for "SMOKE OK"
 #     bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must     # then should, then nice
-# Records go to code/artifacts/comparison/raw_$PVI_PLATFORM/ (raw/ is frozen), logs to logs/$PVI_PLATFORM/.
+# Records go to code/artifacts/comparison/raw_$PVI_PLATFORM/ (raw/ is frozen), logs to
+# logs/$PVI_PLATFORM/<platform>-<job>-<jobid>.out.
+# Every job is named <platform>-<job> and carries --dependency=singleton, so two jobs of one name
+# never run at once, and a job of that name still pending or running is not submitted again: after
+# a pre-emption or a partial submission, re-running the tier command resubmits only what is missing
+# (finished cells are skipped by bench.py itself).
 # Cell names match the stored ones; --tag is used only for real variants (_thr1, _nolean, _nofix, _gpuv,
 # _thr12, _batch, _tf32), which the paper tables never mix into the headline.
-# PVI_DRYRUN=1 prints the sbatch lines instead of submitting (for a machine without SLURM: run each
-# bench.sbatch line as  OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 taskset -c <8 cores> .venv/bin/python
-# code/experiments/4_defence_benchmark/bench.py <arguments> --threads 8  from code/, one at a time;
-# -c 1 / PVI_THREADS=1 lines with --threads 1, PVI_LEGACY_WEIGHT_KEY / PVI_TF32 as environment variables).
+# PVI_DRYRUN=1 prints the sbatch lines instead of submitting.  On a machine without SLURM, run each
+# bench.sbatch line from code/, one at a time, as
+#     PYTHONPATH=src NVIDIA_TF32_OVERRIDE=0 OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 taskset -c <8 cores> \
+#         ../.venv/bin/python experiments/4_defence_benchmark/bench.py <arguments> --threads 8
+# (-c 1 / PVI_THREADS=1 lines with 1 thread everywhere; PVI_LEGACY_WEIGHT_KEY=1 as an environment
+# variable; the PVI_TF32=1 lines without NVIDIA_TF32_OVERRIDE=0).
 # Every LLM run is --lean (claims streamed to the host, dead tensors freed): same integers and proof,
 # a fraction of the memory; the _nolean jobs measure what that changes.
 set -euo pipefail
+unset PVI_THREADS PVI_TF32 PVI_LEGACY_WEIGHT_KEY   # variant switches: only the per-job --export lines set them
 : "${PVI_PLATFORM:?export PVI_PLATFORM=<name>, e.g. h100 (raw/ is frozen)}"
 export PVI_PLATFORM
+[ -f code/experiments/4_defence_benchmark/slurm/strong_gpu.sh ] || { echo "run this from the repository root" >&2; exit 2; }
+export PROJECT_DIR="$PWD"   # the jobs run this checkout (bench.sbatch/smoke.sbatch), never an inherited PROJECT_DIR
 LOGS="logs/$PVI_PLATFORM"
 mkdir -p "$LOGS"
 S=code/experiments/4_defence_benchmark/slurm/bench.sbatch
-SB=sbatch; [ -n "${PVI_DRYRUN:-}" ] && SB="echo sbatch"
-sub() { local name=$1; shift; $SB -o "$LOGS/%x-%j.out" -J "$name" "$@"; }
+ME="${USER:-$(id -un)}"
+if [ -n "${PVI_DRYRUN:-}" ]; then
+  SB="echo sbatch"; QUEUED=""
+else
+  SB=sbatch; QUEUED="$(squeue -h -u "$ME" -o %j)"      # this user's pending and running job names
+fi
+sub() {
+  local name="$PVI_PLATFORM-$1"; shift
+  if grep -qxF -- "$name" <<<"$QUEUED"; then echo "skip $name: already queued"; return 0; fi
+  $SB -o "$LOGS/%x-%j.out" -J "$name" --dependency=singleton "$@"
+  QUEUED+=$'\n'"$name"
+}
 PY="${PVI_PYTHON:-$PWD/.venv/bin/python}"
 L128="--lams 128 --modes C:int,Kpre:int"
-GV="${PVI_GPUV_DEVICE:-cuda}"          # 40 GB cards: PVI_GPUV_DEVICE=cuda:1 PVI_GPUV_GRES=gpu:<type>:2
+# 2-GPU nodes whose cards are too small for prover and client together: PVI_GPUV_DEVICE=cuda:1
+# PVI_GPUV_GRES=gpu:<type>:2.  The client card then needs about 35-36 GB at 2,048 tokens for
+# llama2-7b and opt-6.7b (all claims and weight-op inputs as int64; Kpre keeps no weight copy).
+GV="${PVI_GPUV_DEVICE:-cuda}"
 GG=(); [ -n "${PVI_GPUV_GRES:-}" ] && GG=(--gres="$PVI_GPUV_GRES")
 
 case "${1:-}" in
 smoke)
-  $SB -o "$LOGS/%x-%j.out" code/experiments/4_defence_benchmark/slurm/smoke.sbatch
+  sub smoke code/experiments/4_defence_benchmark/slurm/smoke.sbatch
   ;;
 must)
   # (a) the report's CNN jobs with unchanged flags: every hardware-independent number and the
-  #     CNN counts (2,196 honest, 1,854 attacks) must equal raw/ exactly
+  #     CNN counts (2,196 honest, 1,854 attacks; count_outcomes.py --variant '') must equal raw/ exactly
   for m in mlp_mnist lenet5 vgg11 vgg16 resnet18_cifar; do
     sub "b-$m" "$S" cnn --model "$m" --queries 30 --tampers 100
   done
@@ -54,17 +78,26 @@ must)
   sub f-opt13-2k   "$S" llm --model opt-1.3b  --seq 2048 --builds 1,2,full --queries 5 $L128 --lean
   sub f-opt67-2k   "$S" llm --model opt-6.7b  --seq 2048 --builds 1,2,full --queries 5 $L128 --lean
   sub f-llama7-2k  "$S" llm --model llama2-7b --seq 2048 --builds 1,2,full --queries 5 $L128 --lean
-  # (d) controls: the lean path against the report's (non-lean) path, and the weight re-upload of the
-  #     stored runs (PVI_LEGACY_WEIGHT_KEY=1) against the fixed code, on this GPU
+  # (d) controls, on this GPU.  _nolean: non-lean WITH the weight-key fix (the lean path's effect).
+  #     _nofix: lean with the stored runs' weight re-upload (PVI_LEGACY_WEIGHT_KEY=1), against the
+  #     fixed code (the fix's effect), at the cells the paper quotes committed-mode (C) numbers for:
+  #     every CNN (Table 2), gpt2 and llama2-7b at 64 tokens, opt-1.3b at 2,048.  The stored runs'
+  #     own code path is legacy key + non-lean; the stored hardware with today's code is a rerun of
+  #     this script there (e.g. PVI_PLATFORM=rtx2080ti-v2), the like-for-like hardware comparison.
   sub ab-gpt2   "$S" llm --model gpt2 --seq 512 --queries 10 $L128 --tag _nolean
   sub ab-llama7 "$S" llm --model llama2-7b --seq 64 --builds full --queries 10 $L128 --tag _nolean
   sub ab-opt13 --mem=96G "$S" llm --model opt-1.3b --seq 2048 --builds full --queries 5 $L128 --tag _nolean  # ~27 GiB GPU
   sub nofix-gpt2   --export=ALL,PVI_LEGACY_WEIGHT_KEY=1 "$S" llm --model gpt2 --seq 64 --queries 10 $L128 --lean --tag _nofix
   sub nofix-llama7 --export=ALL,PVI_LEGACY_WEIGHT_KEY=1 "$S" llm --model llama2-7b --seq 64 --builds 1,2,full \
       --queries 10 $L128 --lean --tag _nofix
+  for m in mlp_mnist lenet5 vgg11 vgg16 resnet18_cifar resnet18_224; do   # timing only: --tampers 0, no attacks
+    sub "nofix-$m" --export=ALL,PVI_LEGACY_WEIGHT_KEY=1 "$S" cnn --model "$m" --queries 30 --tampers 0 --tag _nofix
+  done
+  sub nofix-opt13-2k --export=ALL,PVI_LEGACY_WEIGHT_KEY=1 "$S" llm --model opt-1.3b --seq 2048 --builds full \
+      --queries 5 --lams 128 --modes C:int --lean --tag _nofix
   # (e) kernel microbenchmarks (FP32 forward, FP64 fold/open, Freivalds, NTT, host<->device copies)
-  $SB -o "$LOGS/%x-%j.out" -J microbench -c 8 --mem=32G -t 00:30:00 \
-      --wrap "cd code && $PY experiments/4_defence_benchmark/microbench.py --device cuda --reps 10 --out ../$LOGS/microbench.jsonl"
+  sub microbench --gres="${SBATCH_GRES:-gpu:1}" -c 8 --mem=32G -t 00:30:00 \
+      --wrap "cd code && export PYTHONPATH='$PWD/code/src' OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 && '$PY' experiments/4_defence_benchmark/microbench.py --device cuda --reps 10 --out '../$LOGS/microbench.jsonl'"
   ;;
 should)
   # (f) the rest of zkLLM's 2,048-token list, measured in full: Llama-2-13B, OPT-350M, OPT-2.7B, OPT-13B
@@ -106,7 +139,8 @@ nice)
       --queries 5 --lams 128 --modes C:int --lean --tf32 --tag _tf32
   sub n-tf32-gpt2 --export=ALL,PVI_TF32=1 "$S" llm --model gpt2 --seq 64 512 --queries 10 \
       --lams 128 --modes C:int --lean --tf32 --tag _tf32
-  # (m) 30-70B shapes: 1-2 blocks, and the full Llama-2-70B at 64 tokens (80 GB card, 64 GiB of int8 weights)
+  # (m) 30-70B shapes: 1-2 blocks, and the full Llama-2-70B at 64 tokens (80 GB card, 64 GiB of int8
+  #     weights; bench.py skips a build that cannot fit before building it, and exits non-zero)
   sub n-opt30  "$S" llm --model opt-30b   --seq 64 2048 --queries 2 $L128 --lean
   sub n-opt66  "$S" llm --model opt-66b   --seq 64      --queries 2 $L128 --lean
   sub n-llama70 "$S" llm --model llama2-70b --seq 64 512 --queries 2 $L128 --lean
@@ -116,4 +150,4 @@ nice)
   echo "usage: $0 smoke|must|should|nice" >&2; exit 2
   ;;
 esac
-[ -n "${PVI_DRYRUN:-}" ] || squeue -u "${USER:-$(id -un)}"
+[ -n "${PVI_DRYRUN:-}" ] || squeue -u "$ME"

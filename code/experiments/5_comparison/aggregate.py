@@ -21,6 +21,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -55,6 +56,29 @@ def load_rows() -> list[dict]:
                     row["cfg_" + k] = v
                 rows.append(row)
     return rows
+
+
+def check_one_machine(rows: list[dict]) -> None:
+    """A root holds one machine: one prover, one client CPU (its thread count may differ, e.g.
+    the _thr1 cells), and a GPU client only on the prover's GPU model -- all matching the
+    root's ``PLATFORM.json``.  Checked over the whole root: a per-cell check can never fire,
+    since every cell is written by one job on one machine."""
+    provers, cpus, clients = set(), set(), set()
+    for r in rows:
+        provers.add(r.get("prover_hw"))
+        client, sep, cpu = str(r.get("verifier_hw")).rpartition(" (GPU client) + ")
+        cpus.add(re.sub(r" x\d+ threads$", "", cpu))
+        if sep:
+            clients.add(client)
+    lock = RAW / "PLATFORM.json"
+    if lock.exists():
+        have = json.loads(lock.read_text(encoding="utf-8"))
+        provers.add(have.get("gpu") or have.get("cpu"))
+        cpus.add(have.get("cpu"))
+    if len(provers) > 1 or len(cpus) > 1 or not clients <= provers:
+        raise SystemExit(f"{RAW.name} holds records of several machines (or not of its PLATFORM.json): provers "
+                         f"{sorted(map(str, provers))}, client CPUs {sorted(map(str, cpus))}, GPU clients "
+                         f"{sorted(map(str, clients))}")
 
 
 def _write(path: Path, rows: list[dict]) -> None:
@@ -141,6 +165,10 @@ def llm_full(summary: list[dict]) -> list[dict]:
     out = []
     for (model, seq, mode, chal, lam, metric, threads, rate, variant, device, _hw, _vhw, batch), builds in sorted(
             by.items(), key=lambda kv: str(kv[0])):
+        leans = {str(s.get("cfg_lean", "")) for s in builds.values()}
+        if len(leans) > 1:  # e.g. sweep.sh and strong_gpu.sh into one root: the builds ran different code
+            raise SystemExit(f"{model} T{seq} {mode}:{chal} lam{lam} {metric} variant '{variant}': builds "
+                             f"{sorted(builds)} mix lean and non-lean runs ({sorted(leans)}); tag one of them")
         any_ = next(iter(builds.values()))
         L = int(any_["cfg_n_layers_full"])
         base = {"model": model, "seq": seq, "mode": mode, "challenges": chal, "lam": lam, "metric": metric,
@@ -178,10 +206,11 @@ def main() -> None:
     if not RAW.is_dir():
         raise SystemExit(f"no raw records at {RAW}")
     rows = load_rows()
+    check_one_machine(rows)
     summary = summarise(rows)
     summary += multiproof_adjust(summary)
+    full = llm_full(summary)   # before any write: a refused lean/non-lean mix leaves the tables as they were
     _write(TABLES / "measured_summary.csv", summary)
-    full = llm_full(summary)
     if full:
         _write(TABLES / "llm_full_model.csv", full)
         check = [dict(r, rel_error=(r["extrapolated"] - r["value"]) / r["value"] if r["value"] else None,

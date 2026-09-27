@@ -43,6 +43,15 @@ finished cells). CNN suite: `--tampers` (attacks per attack type). LLM suite: `-
 runs every mode at λ = 40, 80 and 128. A cell with a `.done` marker is skipped, so an
 interrupted job can simply be restarted.
 
+`--tampers 0` skips the CNN tamper cell (timing-only controls). An honest query that is
+rejected stops the job and keeps that cell's records as `<cell>.rejected-<run_id>.jsonl`,
+which `count_outcomes.py` counts. `gpu_peak_memory` is the prover's GPU; with the client
+on the same GPU (`--verifier-device cuda`) it is prover and client together, and with the
+client on another GPU (`cuda:1`) the client's peak is recorded as `gpu_peak_memory_verifier`.
+`bench.py` refuses to run when the imported `pvi` is not this checkout's `src/pvi` (for
+example a shared venv with another clone installed editable): `export
+PYTHONPATH=<checkout>/code/src`, as the sbatch scripts do.
+
 The stored `raw/` also holds `commit_*` cells and extra metrics written by earlier
 versions of `bench.py`; no table or figure reads them, they only enter the total of
 59,547 records.

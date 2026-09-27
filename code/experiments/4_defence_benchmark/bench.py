@@ -7,7 +7,11 @@ nothing is aggregated here, so figures can be re-made later without re-running.
     python experiments/4_defence_benchmark/bench.py llm --model llama2-7b --seq 64
 
 A cell that has a ``.done`` marker is skipped (resume after pre-emption); pass
-``--force`` to redo it.
+``--force`` to redo it.  An honest query that is rejected stops the job and keeps the
+cell's records as ``<cell>.rejected-<run_id>.jsonl`` (``count_outcomes.py`` counts them).
+The ``pvi`` package must be this checkout's ``src/pvi`` (``export PYTHONPATH=<checkout>/code/src``,
+as the sbatch scripts do): with a shared venv that has another clone's pvi installed,
+bench.py refuses to run.
 """
 
 from __future__ import annotations
@@ -27,9 +31,26 @@ import numpy as np
 import torch
 from torch import nn
 
-from pvi.fullcheck.field import P
-from pvi.fullcheck.graph import MatOp
-from pvi.fullcheck.protocol import (
+import pvi
+
+
+def _require_this_pvi() -> Path:
+    """Refuse to run on another checkout's ``pvi`` (e.g. a shared venv with pvi installed
+    editable from a different clone): the records would say this code ran when it did not."""
+    here = (Path(__file__).resolve().parents[2] / "src" / "pvi").resolve()
+    got = Path(pvi.__file__).resolve().parent
+    if got != here:
+        raise SystemExit(f"pvi is imported from {got}, not from this checkout ({here}): "
+                         f"export PYTHONPATH={here.parent}")
+    return got
+
+
+if __name__ == "__main__":  # before the imports below, which an older pvi may not even have
+    _require_this_pvi()
+
+from pvi.fullcheck.field import P  # noqa: E402
+from pvi.fullcheck.graph import MatOp  # noqa: E402
+from pvi.fullcheck.protocol import (  # noqa: E402
     Challenger,
     Prover,
     Verifier,
@@ -60,26 +81,35 @@ def raw_root(platform: str) -> Path:
 
 def claim_platform(env: dict) -> None:
     """Refuse to write into a root that holds another machine's records.  The first run
-    in an empty root writes ``PLATFORM.json``; later runs must match its GPU and CPU."""
+    in an empty root creates ``PLATFORM.json``; every run (the first included) must match
+    its GPU and CPU.  The lock appears atomically and complete (a hard link to a finished
+    temporary file), so jobs that start together cannot each claim the root for their own
+    machine, and no job ever reads a half-written lock."""
     lock = RAW / "PLATFORM.json"
     want = {"gpu": env.get("gpu") if str(env.get("device", "")).startswith("cuda") else None,
             "cpu": env.get("cpu")}
-    if lock.exists():
-        have = json.loads(lock.read_text())
-        if have.get("frozen"):
-            raise SystemExit(f"{RAW} is frozen (the records the report was written from). Pass --platform "
-                             f"<name> (or export PVI_PLATFORM) to write a separate raw_<name>/ root.")
-        if {k: have.get(k) for k in want} != want:
-            raise SystemExit(f"{RAW} belongs to {have.get('gpu')} + {have.get('cpu')}; this job runs on "
-                             f"{want['gpu']} + {want['cpu']}.  Pass --platform <name> (or export "
-                             f"PVI_PLATFORM) to write a separate raw_<name>/ root.")
-        return
-    if any(RAW.glob("*/*/*.jsonl")):
-        raise SystemExit(f"{RAW} has records but no PLATFORM.json; create it before adding records")
-    RAW.mkdir(parents=True, exist_ok=True)
-    lock.write_text(json.dumps(dict(want, platform=PLATFORM, host=env.get("host"), torch=env.get("torch"),
-                                    cuda=env.get("cuda"), gpu_total_memory=env.get("gpu_total_memory"),
-                                    driver=env.get("driver"), created=time.time()), indent=1) + chr(10))
+    if not lock.exists():
+        if any(RAW.glob("*/*/*.jsonl")):
+            raise SystemExit(f"{RAW} has records but no PLATFORM.json; create it before adding records")
+        RAW.mkdir(parents=True, exist_ok=True)
+        tmp = RAW / f"PLATFORM.json.{uuid.uuid4().hex}"
+        tmp.write_text(json.dumps(dict(want, platform=PLATFORM, host=env.get("host"), torch=env.get("torch"),
+                                       cuda=env.get("cuda"), gpu_total_memory=env.get("gpu_total_memory"),
+                                       driver=env.get("driver"), created=time.time()), indent=1) + chr(10))
+        try:
+            os.link(tmp, lock)          # fails if another job created the lock first
+        except FileExistsError:
+            pass                        # it did: compare with its lock below
+        finally:
+            tmp.unlink()
+    have = json.loads(lock.read_text())
+    if have.get("frozen"):
+        raise SystemExit(f"{RAW} is frozen (the records the report was written from). Pass --platform "
+                         f"<name> (or export PVI_PLATFORM) to write a separate raw_<name>/ root.")
+    if {k: have.get(k) for k in want} != want:
+        raise SystemExit(f"{RAW} belongs to {have.get('gpu')} + {have.get('cpu')}; this job runs on "
+                         f"{want['gpu']} + {want['cpu']}.  Pass --platform <name> (or export "
+                         f"PVI_PLATFORM) to write a separate raw_<name>/ root.")
 
 
 # --------------------------------------------------------------------------- env
@@ -113,6 +143,7 @@ def env_info() -> dict:
         "torch": torch.__version__, "cuda": torch.version.cuda, "python": platform.python_version(),
         "git_sha": _git("rev-parse", "HEAD"), "git_dirty": bool(_git("status", "--porcelain", "--untracked-files=no")),
         "slurm_job": os.environ.get("SLURM_JOB_ID"),
+        "pvi_path": str(Path(pvi.__file__).resolve().parent),   # the code that ran (see _require_this_pvi)
         **_env_extra(),
     }
 
@@ -131,6 +162,13 @@ def _env_extra() -> dict:
                                      "SLURM_JOB_PARTITION", "SLURM_JOB_NODELIST", "SLURM_JOB_GPUS", "PVI_"))}}
     try:
         out["cpu_affinity"] = len(os.sched_getaffinity(0))
+    except Exception:
+        pass
+    try:  # Linux: physical cores in the affinity set ('x8 threads' can be 4 cores x 2 hyperthreads)
+        topo = "/sys/devices/system/cpu/cpu{}/topology/{}"
+        out["cpu_affinity_cores"] = len({tuple(Path(topo.format(c, k)).read_text().strip()
+                                               for k in ("physical_package_id", "core_id"))
+                                         for c in os.sched_getaffinity(0)})
     except Exception:
         pass
     queries = ((["lscpu"], "lscpu"),
@@ -165,8 +203,23 @@ def _verifier_hw(env: dict) -> str:
     return f"{torch.cuda.get_device_name(torch.device(VDEV))} (GPU client) + {cpu}"
 
 
+def _lock(fh, part: Path) -> None:
+    """An exclusive lock on a cell's ``.part`` file: a second job on the same cell stops at
+    once instead of interleaving its rows with the first job's.  Where the filesystem has
+    no ``flock`` (or on Windows), ``sbatch --dependency=singleton`` is the only guard."""
+    try:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fh.close()
+        raise SystemExit(f"{part} is being written by another job")
+    except (ImportError, OSError):
+        pass
+
+
 class Recorder:
-    """Append-only per-cell record file with an atomic ``.done`` marker."""
+    """Append-only per-cell record file with an atomic ``.done`` marker.  A ``.part`` file
+    left by an interrupted attempt is kept (renamed ``.part.<time>``), never truncated."""
 
     def __init__(self, suite: str, model: str, cell: str, config: dict, env: dict) -> None:
         self.dir = RAW / suite / model
@@ -182,7 +235,17 @@ class Recorder:
                                     **({"platform": PLATFORM} if PLATFORM else {})),
                      "prover_hw": prover_hw, "verifier_hw": _verifier_hw(env),
                      "host": env.get("host"), "git_sha": env.get("git_sha")}
-        self.fh = open(self.path.with_suffix(".jsonl.part"), "w")
+        part = self.path.with_suffix(".jsonl.part")
+        self.fh = open(part, "a")
+        _lock(self.fh, part)
+        if os.fstat(self.fh.fileno()).st_size:   # an earlier attempt's records: keep them aside
+            self.fh.close()                       # (Windows cannot rename an open file)
+            os.replace(part, part.with_name(f"{part.name}.{time.time():.6f}"))
+            try:
+                self.fh = open(part, "x")
+            except FileExistsError:
+                raise SystemExit(f"{part} is being written by another job")
+            _lock(self.fh, part)
         self.rec("env", 0, "", **{"env": env})
 
     def rec(self, metric: str, value, unit: str = "", trial: int | None = None, **extra) -> None:
@@ -218,14 +281,38 @@ def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
     r.rec("bytes_total", sum(res["bytes"].values()), "B", trial, **extra)
     r.rec("accepted", int(res["accepted"]), "", trial, **extra)
     if not res["accepted"]:  # an honest query must never fail: GPU/CPU disagreement, stop the job
-        raise SystemExit(f"HONEST QUERY REJECTED at {res['rejected_at']} in {r.path.name} trial {trial}")
+        # keep the evidence where a re-run cannot overwrite it and count_outcomes.py finds it
+        # (no .done: the aggregates never read it)
+        r.fh.close()
+        kept = r.path.with_name(f"{r.path.stem}.rejected-{r.base['run_id']}.jsonl")
+        os.replace(r.path.with_suffix(".jsonl.part"), kept)
+        raise SystemExit(f"HONEST QUERY REJECTED at {res['rejected_at']} in {r.path.name} trial {trial} "
+                         f"(records kept in {kept.name})")
+
+
+def _gpu_index(dv) -> int | None:
+    d = torch.device(dv)
+    if d.type != "cuda":
+        return None
+    return torch.cuda.current_device() if d.index is None else d.index
+
+
+def _peak_devices(device) -> list[tuple[str, int]]:
+    """(metric suffix, GPU index) of every GPU whose memory a cell records: the prover's, and
+    the verifier's (``_verifier``) when it is another GPU.  With the verifier on the prover's
+    GPU (``--verifier-device cuda``) ``gpu_peak_memory`` is prover and client together."""
+    p, v = _gpu_index(device), _gpu_index(VDEV)
+    out = [] if p is None else [("", p)]
+    if v is not None and v != p:
+        out.append(("_verifier", v))
+    return out
 
 
 def _reset_peaks(device) -> None:
     """Start a new peak window for GPU allocations and host resident memory."""
-    if torch.device(device).type == "cuda":
-        torch.cuda.reset_peak_memory_stats()
-        torch.cuda.reset_accumulated_memory_stats()
+    for _, i in _peak_devices(device):
+        torch.cuda.reset_peak_memory_stats(i)
+        torch.cuda.reset_accumulated_memory_stats(i)
     try:  # Linux: "5" resets VmHWM (peak RSS) to the current RSS
         with open("/proc/self/clear_refs", "w") as fh:
             fh.write("5")
@@ -234,12 +321,12 @@ def _reset_peaks(device) -> None:
 
 
 def _record_peaks(r: "Recorder", device, **extra) -> None:
-    if torch.device(device).type == "cuda":
-        r.rec("gpu_peak_memory", torch.cuda.max_memory_allocated(), "B", **extra)
-        r.rec("gpu_peak_reserved", torch.cuda.max_memory_reserved(), "B", **extra)
-        st = torch.cuda.memory_stats()   # allocator churn (cudaMalloc calls, OOM retries) since the reset
-        r.rec("gpu_alloc_retries", st.get("num_alloc_retries", -1), "", **extra)
-        r.rec("gpu_device_allocs", st.get("num_device_alloc", -1), "", **extra)
+    for sfx, i in _peak_devices(device):
+        r.rec("gpu_peak_memory" + sfx, torch.cuda.max_memory_allocated(i), "B", **extra)
+        r.rec("gpu_peak_reserved" + sfx, torch.cuda.max_memory_reserved(i), "B", **extra)
+        st = torch.cuda.memory_stats(i)   # allocator churn (cudaMalloc calls, OOM retries) since the reset
+        r.rec("gpu_alloc_retries" + sfx, st.get("num_alloc_retries", -1), "", **extra)
+        r.rec("gpu_device_allocs" + sfx, st.get("num_device_alloc", -1), "", **extra)
     try:
         with open("/proc/self/status") as fh:
             kb = next(int(l.split()[1]) for l in fh if l.startswith("VmHWM:"))
@@ -448,9 +535,9 @@ def suite_cnn(args, env) -> None:
                     _record_peaks(r, device, batch=bsz)
             r.done()
 
-    # ---- soundness experiments: every attack must be rejected ----------------------------
+    # ---- soundness experiments: every attack must be rejected (--tampers 0: none) ------------
     cell = "tamper_C_int_lam40"
-    if _todo(args, "cnn", name, cell):
+    if args.tampers and _todo(args, "cnn", name, cell):
         params = params_for(40, len(mats), rate=rate)
         v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
         r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns}, env)
@@ -596,6 +683,7 @@ def suite_llm(args, env) -> None:
         builds = [cfg.n_layers if b == "full" else int(b) for b in args.builds.split(",")]
     modes = [("C", "int"), ("C", "fs"), ("Kpre", "int"), ("K", "int")] if not args.modes else \
         [tuple(m.split(":")) for m in args.modes.split(",")]
+    skipped = []
     for seq in args.seq:
         for n_layers in builds:
             base = f"T{seq}_L{n_layers}" + ("" if args.rate == 4 else f"_rate{args.rate}")
@@ -604,6 +692,14 @@ def suite_llm(args, env) -> None:
                 todo.append(f"tamper_C_int_lam40_{base}")
             if not args.force and all(is_done("llm", cfg.name, t) for t in todo):
                 continue
+            if device.type == "cuda":  # a build whose int8 weights alone fill the GPU would only OOM
+                need = sum(sh.n_rows * sh.row_length for sh in decoder_shapes(cfg, n_layers=n_layers))
+                have = torch.cuda.get_device_properties(device).total_memory
+                if need > 0.85 * have:     # ... after its build and commit: skip it, run the others
+                    print(f"SKIP {cfg.name} T{seq} L{n_layers}: {need / 2**30:.1f} GiB of int8 weights "
+                          f"> 85% of this GPU's {have / 2**30:.0f} GiB", flush=True)
+                    skipped.append(f"T{seq}_L{n_layers}")
+                    continue
             _reset_peaks(device)
             t0 = time.perf_counter()
             graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0)
@@ -653,7 +749,7 @@ def suite_llm(args, env) -> None:
                         v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean)
                         if mode == "Kpre":
                             t0 = time.perf_counter()
-                            v.precompute(Challenger())
+                            v.precompute(Challenger())   # ends with a sync of the verifier's device
                             r.rec("verifier_precompute", time.perf_counter() - t0, "s")
                     _reset_peaks(device)
                     run_query(prover, v, tokens[:1])  # untimed warm-up
@@ -749,15 +845,18 @@ def suite_llm(args, env) -> None:
             prover = coms = graph = mats = weights = v = r = None
             if device.type == "cuda":
                 torch.cuda.empty_cache()
+    if skipped:   # the job must not look complete
+        raise SystemExit(f"{cfg.name}: builds {', '.join(skipped)} do not fit this GPU (the others ran)")
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("suite", choices=["cnn", "llm"])
     ap.add_argument("--model", required=True)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--queries", type=int, default=30)
-    ap.add_argument("--tampers", type=int, default=100)
+    ap.add_argument("--tampers", type=int, default=100,
+                    help="CNN suite: attacks per type in the tamper cell (0 = no tamper cell, e.g. timing controls)")
     ap.add_argument("--seq", type=int, nargs="+", default=[64])
     ap.add_argument("--lams", type=int, nargs="+", default=list(LAMBDAS))
     ap.add_argument("--modes", default="")
@@ -782,7 +881,12 @@ def main() -> None:
                     help="TF32 tensor cores for the float32 GEMMs (exact: operands <= 255; needs a _tf32 tag)")
     ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
                     help="hardware name, e.g. h100: records go to raw_<platform>/ ('' = raw/, the RTX 2080 Ti)")
-    args = ap.parse_args()
+    return ap
+
+
+def main() -> None:
+    _require_this_pvi()
+    args = build_parser().parse_args()
     global TAG, PLATFORM, RAW, VDEV
     TAG = args.tag
     VDEV = args.verifier_device
@@ -792,17 +896,23 @@ def main() -> None:
         raise SystemExit("PVI_LEGACY_WEIGHT_KEY=1 (the stored runs' weight re-upload) goes with a _nofix tag, and only then")
     if args.tf32 and "_tf32" not in TAG:
         raise SystemExit("--tf32 needs a --tag containing _tf32 (the headline keeps TF32 off)")
+    if args.tf32 and os.environ.get("NVIDIA_TF32_OVERRIDE") == "0":
+        raise SystemExit("--tf32 with NVIDIA_TF32_OVERRIDE=0: cuBLAS would ignore it and the _tf32 cells would "
+                         "hold non-TF32 timings (bench.sbatch: export PVI_TF32=1)")
     PLATFORM = args.platform
     RAW = raw_root(PLATFORM)
     if args.threads:
         torch.set_num_threads(args.threads)
+    # TORCH_ALLOW_TF32_CUBLAS_OVERRIDE (NGC containers) only sets torch's default, which these
+    # assignments override.  NVIDIA_TF32_OVERRIDE=0 (bench.sbatch) is different: cuBLAS then
+    # ignores allow_tf32 altogether, hence the --tf32 check above.
     torch.backends.cuda.matmul.allow_tf32 = bool(args.tf32)
     torch.backends.cudnn.allow_tf32 = False
-    if torch.backends.cuda.matmul.allow_tf32 and not args.tf32:  # TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1 (NGC) wins
-        print("WARNING: TF32 is forced on for cuBLAS by the environment", flush=True)
     env = env_info()
     env["device"] = args.device
     print(json.dumps(env), flush=True)
+    print(f"pvi from {env['pvi_path']}; verifier threads {env['torch_threads']} on {env.get('cpu_affinity', '?')} "
+          f"CPUs / {env.get('cpu_affinity_cores', '?')} physical cores", flush=True)
     claim_platform(env)
     t0 = time.time()
     (suite_cnn if args.suite == "cnn" else suite_llm)(args, env)

@@ -9,7 +9,7 @@ without the GPU. Run them in this order (about a minute in total):
 | `aggregate.py` | `raw/**/*.jsonl` | `tables/measured_summary.csv` (median and mean per model/cell/metric), `tables/llm_full_model.csv` (full-model LLM costs, measured or extrapolated from 1–2 blocks) |
 | `literature.py` | `literature/reported_benchmarks.csv` | `tables/reported_curated.csv` (the published rows compared) |
 | `analytic.py` | the model shapes | `tables/analytic.csv` (the path test's cost of reaching 2^-40 on Llama-2-7B) |
-| `count_outcomes.py` | `raw/` | prints the counts of §4.3: honest queries accepted, attacks rejected, and which check rejected them |
+| `count_outcomes.py` | `raw/` and every `raw_<platform>/` (never the smoke job's `raw_smoke*/`), or `--platform` | prints the counts of §4.3 per suite: honest queries accepted, attacks rejected, and which check rejected them (`--variant ''`: untagged cells only) |
 | `paper_assets.py` | `tables/` | `../report/figures/*.pdf` (one file per sub-figure) and `../report/tables/*.tex` |
 
 **The literature catalogue.** `artifacts/comparison/literature/` holds 413 published

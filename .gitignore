@@ -6,6 +6,8 @@
 code/data/
 code/artifacts/fullcheck/models/
 code/artifacts/fullcheck/cache/
+# the smoke job's throw-away benchmark roots (smoke.sbatch moves them to logs/env/ when it ends)
+code/artifacts/comparison/raw_smoke*/
 
 # SLURM job logs
 /logs/

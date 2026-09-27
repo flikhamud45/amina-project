@@ -7,6 +7,9 @@ Generated tables and figures follow the data by themselves; these sentences do n
 every quoted number this prints the line of main.tex it is on, the value recomputed from
 the tables, and the text as it stands, so a platform switch is a mechanical edit.  The
 counts of Section 4.3 are macros (count_outcomes.py --tex) and are not repeated here.
+On any platform other than the report's own, the ratio ranges use measured (full-depth)
+rows only, and the zkLLM ranges cover every zkLLM model that platform measured (Figure 5's
+list; Table 4's for the proof sizes).
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ MAIN = pa.REPORT / "main.tex"
 
 def rng(vals, fmt=lambda v: f"{v:.0f}"):
     vals = [v for v in vals if v is not None]
+    if not vals:   # e.g. a platform without full-depth builds for this sentence
+        return "(no measured rows)"
     return f"{fmt(min(vals))}--{fmt(max(vals))}"
 
 
@@ -76,7 +81,9 @@ def numbers():
         x(pa._llm_cost(c[("llama2-7b", 64)])[3] / pa._llm_cost(c[("llama2-7b", 64)])[2]))
     add(r"21\.8\\,MB for GPT-2", "Kpre proof GPT-2 T64 / Llama-2-7B T64",
         f"{pa.b(pa._llm_cost(k[('gpt2', 64)])[2])} / {pa.b(pa._llm_cost(k[('llama2-7b', 64)])[2])}")
-    ratio = {key: pa._llm_cost(c[key])[0] / pa._llm_cost(k[key])[0] for key in c if key in k}
+    frozen = pa.is_frozen()   # the submitted text's ranges include extrapolated rows
+    ratio = {key: pa._llm_cost(c[key])[0] / pa._llm_cost(k[key])[0] for key in list(c) if key in k
+             and (frozen or (pa._measured(c[key]) and pa._measured(k[key])))}
     add(r"1\.2--1\.9\$\\times\$", "C prover / Kpre prover at 2048 tokens",
         rng([v for (m, s), v in ratio.items() if s == 2048], x))
     add(r"10--30\$\\times\$ for billion", "C prover / Kpre prover, >=1B params, <=64 tokens",
@@ -88,7 +95,8 @@ def numbers():
         return pa._llm_cost(c[(model, seq)])[:3]
 
     fac = {}
-    for system, pub, model, seq, mode in pa.MATCHES:
+    table4 = pa.matches(c)
+    for system, pub, model, seq, mode in table4:
         if mode != "C":
             continue
         r = rep.get((system, pub, str(seq) if seq else "")) or next(v for kk, v in rep.items() if kk[:2] == (system, pub))
@@ -98,15 +106,12 @@ def numbers():
     llm = [v[0] for (s, p, q), v in fac.items() if q is not None]
     add(r"Our prover is 27--7\{,\}024", "prover speed-up, CNN systems", rng(cnn, x))
     add(r"11--277\$\\times\$ faster on", "prover speed-up, LLM systems", rng(llm, x))
-    zk = [pa._f(rep[("zkLLM", n, "2048")]["prover_s"]) / pa._llm_cost(c[(m, 2048)])[0]
-          for m, n in (("opt-125m", "OPT-125M"), ("opt-1.3b", "OPT-1.3B"), ("opt-6.7b", "OPT-6.7B"),
-                       ("llama2-7b", "Llama-2-7B"))]
+    fig5 = pa.zkllm_models([pa.TABLES])          # Figure 5's models (the stored tables: four)
+    zk = [pa._f(rep[("zkLLM", n, "2048")]["prover_s"]) / pa._llm_cost(c[(m, 2048)])[0] for m, n in fig5]
     add(r"still 11--49\$\\times\$ faster", "prover speed-up vs zkLLM at 2048 (also Contributions, l.157)", rng(zk, x))
     add(r"from 78\$\\times\$ at 64 tokens", "DeepProve GPT-2 speed-up at 64 / 512",
         f"{x(fac[('DeepProve', 'GPT-2', 64)][0])} / {x(fac[('DeepProve', 'GPT-2', 512)][0])}")
-    zkv = [pa._llm_cost(c[(m, 2048)])[1] / pa._f(rep[("zkLLM", n, "2048")]["verifier_s"])
-           for m, n in (("opt-125m", "OPT-125M"), ("opt-1.3b", "OPT-1.3B"), ("opt-6.7b", "OPT-6.7B"),
-                        ("llama2-7b", "Llama-2-7B"))]
+    zkv = [pa._llm_cost(c[(m, 2048)])[1] / pa._f(rep[("zkLLM", n, "2048")]["verifier_s"]) for m, n in fig5]
     add(r"65--141\$\\times\$ slower than zkLLM", "verifier slow-down vs zkLLM at 2048", rng(zkv, x))
     small = [ours("lenet5", None)[1] / 0.0058, ours("vgg16", None)[1] / 0.0593,
              pa._llm_cost(c[("gpt2", 64)])[1] / pa._f(rep[("zkGPT", "GPT-2", "")]["verifier_s"]),
@@ -118,10 +123,10 @@ def numbers():
     add(r"faster than DeepProve up to 256", "our verifier / DeepProve's at 64,128,256,512 (<1: ours faster)",
         ", ".join(f"{v:.2f}" for v in dp.values()))
     zkp = [pa._llm_cost(c[(m, 2048)])[2] / pa._f(rep[("zkLLM", n, "2048")]["proof_bytes"])
-           for m, n in (("opt-125m", "OPT-125M"), ("opt-6.7b", "OPT-6.7B"), ("llama2-7b", "Llama-2-7B"))]
+           for system, n, m, _, _ in table4 if system == "zkLLM"]   # Table 4's zkLLM rows
     add(r"64\{,\}000\$\\times\$ zkLLM", "largest proof ratio vs zkLLM at 2048", f"{max(zkp):,.0f}")
     # Maverick (1 client thread, lambda = 40, Kpre)
-    k1 = pa.llm_rows("Kpre", lam=40, threads="1", variant="_thr1")[("qwen3-4b", 8)]
+    k1 = pa.llm_rows("Kpre", lam=40, threads="1", variant="_thr1" + pa.DEFAULT["variant"])[("qwen3-4b", 8)]
     p1, v1, b1, _ = pa._llm_cost(k1)
     mav = rep[("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "8")]
     add(r"exactly the size of Maverick", "our Kpre proof, Qwen3-4B T8", pa.b(b1))
