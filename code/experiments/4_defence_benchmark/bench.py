@@ -41,10 +41,45 @@ from pvi.fullcheck.protocol import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-RAW = ROOT / "artifacts" / "comparison" / "raw"
+BASE = ROOT / "artifacts" / "comparison"
+RAW = BASE / "raw"  # set by main() from --platform / $PVI_PLATFORM (see raw_root)
 MODELS = ROOT / "artifacts" / "fullcheck" / "models"
 LAMBDAS = (40, 80, 128)
 TAG = ""  # appended to every cell name (``--tag``), so variant runs never collide
+VDEV = "cpu"   # --verifier-device: where the client's checks run (the report: the CPU)
+PLATFORM = ""  # ``--platform``: "" is the report's RTX 2080 Ti root ``raw/``
+
+
+def raw_root(platform: str) -> Path:
+    """``raw/`` holds the records of the report's RTX 2080 Ti runs and is never written by
+    another machine; every other prover/verifier pair writes its own ``raw_<platform>/``,
+    so records of different hardware can never share a cell (or a median)."""
+    p = "" if platform in ("", "rtx2080ti") else platform
+    return BASE / (f"raw_{p}" if p else "raw")
+
+
+def claim_platform(env: dict) -> None:
+    """Refuse to write into a root that holds another machine's records.  The first run
+    in an empty root writes ``PLATFORM.json``; later runs must match its GPU and CPU."""
+    lock = RAW / "PLATFORM.json"
+    want = {"gpu": env.get("gpu") if str(env.get("device", "")).startswith("cuda") else None,
+            "cpu": env.get("cpu")}
+    if lock.exists():
+        have = json.loads(lock.read_text())
+        if have.get("frozen"):
+            raise SystemExit(f"{RAW} is frozen (the records the report was written from). Pass --platform "
+                             f"<name> (or export PVI_PLATFORM) to write a separate raw_<name>/ root.")
+        if {k: have.get(k) for k in want} != want:
+            raise SystemExit(f"{RAW} belongs to {have.get('gpu')} + {have.get('cpu')}; this job runs on "
+                             f"{want['gpu']} + {want['cpu']}.  Pass --platform <name> (or export "
+                             f"PVI_PLATFORM) to write a separate raw_<name>/ root.")
+        return
+    if any(RAW.glob("*/*/*.jsonl")):
+        raise SystemExit(f"{RAW} has records but no PLATFORM.json; create it before adding records")
+    RAW.mkdir(parents=True, exist_ok=True)
+    lock.write_text(json.dumps(dict(want, platform=PLATFORM, host=env.get("host"), torch=env.get("torch"),
+                                    cuda=env.get("cuda"), gpu_total_memory=env.get("gpu_total_memory"),
+                                    driver=env.get("driver"), created=time.time()), indent=1) + chr(10))
 
 
 # --------------------------------------------------------------------------- env
@@ -64,13 +99,70 @@ def env_info() -> dict:
     except Exception:
         pass
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+    gpu_mem = torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else None
+    try:
+        driver = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader", "-i", "0"],
+                                capture_output=True, text=True, timeout=30).stdout.strip() or None
+    except Exception:
+        driver = None
     return {
         "host": socket.gethostname(), "cpu": cpu, "torch_threads": torch.get_num_threads(),
-        "slurm_cpus": os.environ.get("SLURM_CPUS_PER_TASK"), "gpu": gpu,
+        "slurm_cpus": os.environ.get("SLURM_CPUS_PER_TASK"), "gpu": gpu, "gpu_total_memory": gpu_mem,
+        "driver": driver, "slurm_partition": os.environ.get("SLURM_JOB_PARTITION"),
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"), "platform": PLATFORM,
         "torch": torch.__version__, "cuda": torch.version.cuda, "python": platform.python_version(),
         "git_sha": _git("rev-parse", "HEAD"), "git_dirty": bool(_git("status", "--porcelain", "--untracked-files=no")),
         "slurm_job": os.environ.get("SLURM_JOB_ID"),
+        **_env_extra(),
     }
+
+
+def _env_extra() -> dict:
+    """What a cross-cluster comparison needs beyond the GPU and CPU names."""
+    import torchvision
+
+    out = {"raw_dir": str(RAW), "cpu_count": os.cpu_count(), "numpy": np.__version__,
+           "torchvision": torchvision.__version__,
+           "tf32_matmul": torch.backends.cuda.matmul.allow_tf32, "tf32_cudnn": torch.backends.cudnn.allow_tf32,
+           "fp32_matmul_precision": torch.get_float32_matmul_precision(),
+           "cudnn": torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None,
+           "vars": {k: v for k, v in os.environ.items()
+                    if k.startswith(("NVIDIA_TF32", "TORCH_ALLOW_TF32", "CUBLAS", "OMP_", "MKL_", "CUDA_VISIBLE",
+                                     "SLURM_JOB_PARTITION", "SLURM_JOB_NODELIST", "SLURM_JOB_GPUS", "PVI_"))}}
+    try:
+        out["cpu_affinity"] = len(os.sched_getaffinity(0))
+    except Exception:
+        pass
+    queries = ((["lscpu"], "lscpu"),
+               (["nvidia-smi", "--query-gpu=name,driver_version,memory.total,clocks.max.sm,power.limit,"
+                 "mig.mode.current,compute_mode,pci.bus_id", "--format=csv,noheader"], "nvidia_smi"))
+    for cmd, key in queries:
+        try:
+            txt = subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout.strip()
+        except Exception:
+            continue
+        if key == "lscpu":
+            keep = ("Model name", "Thread(s) per core", "Core(s) per socket", "Socket(s)", "NUMA node(s)",
+                    "CPU max MHz")
+            txt = {a.strip(): b.strip() for a, _, b in (l.partition(":") for l in txt.splitlines()) if a.strip() in keep}
+        out[key] = txt
+    if torch.cuda.is_available():
+        pr = torch.cuda.get_device_properties(0)
+        out["gpu_props"] = {"total_memory": pr.total_memory, "capability": f"{pr.major}.{pr.minor}",
+                            "sms": pr.multi_processor_count}
+    return out
+
+
+def _verifier(*args, **kwargs) -> Verifier:
+    """Every verifier of this benchmark runs on ``--verifier-device`` (the report: the CPU)."""
+    return Verifier(*args, device=VDEV, **kwargs)
+
+
+def _verifier_hw(env: dict) -> str:
+    cpu = f"{env.get('cpu')} x{env.get('torch_threads')} threads"
+    if VDEV == "cpu":
+        return cpu
+    return f"{torch.cuda.get_device_name(torch.device(VDEV))} (GPU client) + {cpu}"
 
 
 class Recorder:
@@ -85,8 +177,10 @@ class Recorder:
         on_gpu = str(env.get("device", "")).startswith("cuda")
         prover_hw = env.get("gpu") if on_gpu else env.get("cpu")
         self.base = {"run_id": uuid.uuid4().hex[:12], "suite": suite, "model": model, "cell": cell,
-                     "config": dict(config, variant=TAG, device=env.get("device"), merkle="multiproof"),
-                     "prover_hw": prover_hw, "verifier_hw": f"{env.get('cpu')} x{env.get('torch_threads')} threads",
+                     "config": dict(config, variant=TAG, device=env.get("device"), merkle="multiproof",
+                                    verifier_device=VDEV,
+                                    **({"platform": PLATFORM} if PLATFORM else {})),
+                     "prover_hw": prover_hw, "verifier_hw": _verifier_hw(env),
                      "host": env.get("host"), "git_sha": env.get("git_sha")}
         self.fh = open(self.path.with_suffix(".jsonl.part"), "w")
         self.rec("env", 0, "", **{"env": env})
@@ -123,6 +217,35 @@ def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
         r.rec("bytes_" + k, v, "B", trial, **extra)
     r.rec("bytes_total", sum(res["bytes"].values()), "B", trial, **extra)
     r.rec("accepted", int(res["accepted"]), "", trial, **extra)
+    if not res["accepted"]:  # an honest query must never fail: GPU/CPU disagreement, stop the job
+        raise SystemExit(f"HONEST QUERY REJECTED at {res['rejected_at']} in {r.path.name} trial {trial}")
+
+
+def _reset_peaks(device) -> None:
+    """Start a new peak window for GPU allocations and host resident memory."""
+    if torch.device(device).type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.reset_accumulated_memory_stats()
+    try:  # Linux: "5" resets VmHWM (peak RSS) to the current RSS
+        with open("/proc/self/clear_refs", "w") as fh:
+            fh.write("5")
+    except OSError:
+        pass
+
+
+def _record_peaks(r: "Recorder", device, **extra) -> None:
+    if torch.device(device).type == "cuda":
+        r.rec("gpu_peak_memory", torch.cuda.max_memory_allocated(), "B", **extra)
+        r.rec("gpu_peak_reserved", torch.cuda.max_memory_reserved(), "B", **extra)
+        st = torch.cuda.memory_stats()   # allocator churn (cudaMalloc calls, OOM retries) since the reset
+        r.rec("gpu_alloc_retries", st.get("num_alloc_retries", -1), "", **extra)
+        r.rec("gpu_device_allocs", st.get("num_device_alloc", -1), "", **extra)
+    try:
+        with open("/proc/self/status") as fh:
+            kb = next(int(l.split()[1]) for l in fh if l.startswith("VmHWM:"))
+        r.rec("host_peak_rss", kb * 1024, "B", **extra)
+    except (OSError, StopIteration):
+        pass
 
 
 # ------------------------------------------------------------------ CNN models
@@ -196,7 +319,7 @@ def suite_cnn(args, env) -> None:
     mats = graph.mat_ops
     n_params = graph.n_params()
     model_f = model.float().to(device)
-    xs, _ = next(_test_batches(data, args.queries + 64))
+    xs, _ = next(_test_batches(data, max([args.queries + 64, *args.cnn_batches])))
     q_inputs = quantize_input(graph, xs)          # int8 queries, one per trial
 
     # ---- model facts and fidelity ------------------------------------------------
@@ -304,28 +427,32 @@ def suite_cnn(args, env) -> None:
             shapes = [(op.row_length, rate * (1 << max(0, (op.row_length - 1).bit_length()))) for op in mats]
             r.rec("soundness_bits", soundness_bits(params, shapes, "C" if mode == "C" else "K"), "bits")
             if mode == "C":
-                v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+                v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
             else:
-                v = Verifier(graph.public(), params, mode, weights=weights)
+                v = _verifier(graph.public(), params, mode, weights=weights)
                 if mode == "Kpre":
                     v.precompute(Challenger())
+            _reset_peaks(device)
             run_query(prover, v, q_inputs[:1])  # untimed warm-up (lazy CUDA/BLAS initialisation)
             for i in range(args.queries):
                 _record_query(r, run_query(prover, v, q_inputs[i:i + 1]), i)
+            _record_peaks(r, device)
             # batch amortisation: B queries in one interaction (mode C, interactive only)
             if mode == "C" and chal == "int":
-                for bsz in (8, 32):
+                for bsz in args.cnn_batches:
                     if bsz > len(q_inputs):
                         continue
-                    res = run_query(prover, v, q_inputs[:bsz])
-                    _record_query(r, res, 0, batch=bsz)
+                    _reset_peaks(device)
+                    for tr in range(args.batch_trials):
+                        _record_query(r, run_query(prover, v, q_inputs[:bsz]), tr, batch=bsz)
+                    _record_peaks(r, device, batch=bsz)
             r.done()
 
     # ---- soundness experiments: every attack must be rejected ----------------------------
     cell = "tamper_C_int_lam40"
     if _todo(args, "cnn", name, cell):
         params = params_for(40, len(mats), rate=rate)
-        v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+        v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
         r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns}, env)
         g = torch.Generator().manual_seed(123)
         pen = _penultimate_mat(graph)
@@ -463,21 +590,47 @@ def suite_llm(args, env) -> None:
 
     device = torch.device(args.device)
     cfg = CONFIGS[args.model]
-    full = cfg.n_layers <= 12
-    builds = [cfg.n_layers] if full else [1, 2]
+    if args.builds == "auto":      # the report's default: all blocks up to 12, else 1 and 2
+        builds = [cfg.n_layers] if cfg.n_layers <= 12 else [1, 2]
+    else:                          # e.g. "full" or "1,2,full" (L1, L2 and the full model in one job)
+        builds = [cfg.n_layers if b == "full" else int(b) for b in args.builds.split(",")]
     modes = [("C", "int"), ("C", "fs"), ("Kpre", "int"), ("K", "int")] if not args.modes else \
         [tuple(m.split(":")) for m in args.modes.split(",")]
     for seq in args.seq:
         for n_layers in builds:
             base = f"T{seq}_L{n_layers}" + ("" if args.rate == 4 else f"_rate{args.rate}")
             todo = [f"defence_{m}_{c}_lam{l}_{base}" for m, c in modes for l in args.lams]
+            if args.llm_tampers and n_layers == cfg.n_layers and any(m == "C" for m, _ in modes):
+                todo.append(f"tamper_C_int_lam40_{base}")
             if not args.force and all(is_done("llm", cfg.name, t) for t in todo):
                 continue
+            _reset_peaks(device)
+            t0 = time.perf_counter()
             graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0)
+            build_s = time.perf_counter() - t0
             mats = graph.mat_ops
-            tokens = torch.randint(0, cfg.vocab, (args.queries, seq), generator=torch.Generator().manual_seed(1))
-            coms = commit_graph(graph, args.rate, device=device) if any(m == "C" for m, _ in modes) else None
-            prover = Prover(graph, device=device, commitments=coms)
+            # the first ``queries`` rows are the single-prompt queries of the stored runs
+            tokens = torch.randint(0, cfg.vocab, (max([args.queries, *args.batches]), seq),
+                                   generator=torch.Generator().manual_seed(1))
+            coms = None
+            if any(m == "C" for m, _ in modes):
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t0 = time.perf_counter()
+                coms = commit_graph(graph, args.rate, device=device)
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                commit_s = time.perf_counter() - t0
+                cell = f"commit_{base}"
+                if _todo(args, "llm", cfg.name, cell):
+                    r = Recorder("llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": args.rate,
+                                                         "n_layers_full": cfg.n_layers, "lean": args.lean,
+                                                         "params_full": decoder_param_count(cfg)}, env)
+                    r.rec("build_graph", build_s, "s")
+                    r.rec("commit_total", commit_s, "s")
+                    _record_peaks(r, device)
+                    r.done()
+            prover = Prover(graph, device=device, commitments=coms, lean=args.lean)
             weights = {op.name: (op.weight, op.bias) for op in mats}
             for lam in args.lams:
                 for mode, chal in modes:
@@ -490,17 +643,30 @@ def suite_llm(args, env) -> None:
                     conf = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": args.rate,
                             "columns": params.columns, "seq": seq, "n_layers": n_layers,
                             "n_layers_full": cfg.n_layers, "params_full": decoder_param_count(cfg),
+                            "params_built": graph.n_params(), "lean": args.lean,
                             "threads": torch.get_num_threads()}
                     r = Recorder("llm", cfg.name, cell, conf, env)
                     if mode == "C":
-                        v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+                        v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
+                                     lean=args.lean)
                     else:
-                        v = Verifier(graph.public(), params, mode, weights=weights)
+                        v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean)
                         if mode == "Kpre":
+                            t0 = time.perf_counter()
                             v.precompute(Challenger())
+                            r.rec("verifier_precompute", time.perf_counter() - t0, "s")
+                    _reset_peaks(device)
                     run_query(prover, v, tokens[:1])  # untimed warm-up
                     for i in range(args.queries):
                         _record_query(r, run_query(prover, v, tokens[i:i + 1]), i)
+                    _record_peaks(r, device)
+                    # batch amortisation: B prompts against one set of u and openings (as the CNN suite)
+                    if chal == "int" and mode in ("C", "Kpre"):
+                        for bsz in args.batches:
+                            _reset_peaks(device)
+                            for tr in range(args.batch_trials):
+                                _record_query(r, run_query(prover, v, tokens[:bsz]), tr, batch=bsz)
+                            _record_peaks(r, device, batch=bsz)
                     # one tampered query per cell: must be rejected
                     victim = mats[len(mats) // 2].name
 
@@ -513,7 +679,74 @@ def suite_llm(args, env) -> None:
                     res = run_query(prover, v, tokens[:1], forward_kwargs={"tamper": tamper})
                     r.rec("tamper_rejected", int(not res["accepted"]), "", stage=res["rejected_at"])
                     r.done()
-            del prover, coms, graph
+            # ---- attacks on this build (report Sec. 4.3): random single values anywhere, the top
+            # logit, and one random block run with 1%-perturbed weights; mode C, lambda = 40
+            cell = f"tamper_C_int_lam40_{base}"
+            if (args.llm_tampers and coms is not None and n_layers == cfg.n_layers
+                    and _todo(args, "llm", cfg.name, cell)):
+                params = params_for(40, len(decoder_shapes(cfg)), rate=args.rate)
+                v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
+                             lean=args.lean)
+                r = Recorder("llm", cfg.name, cell, {"lam": 40, "mode": "C", "reps": params.reps,
+                                                     "columns": params.columns, "seq": seq, "n_layers": n_layers,
+                                                     "n_layers_full": cfg.n_layers, "lean": args.lean}, env)
+                g = torch.Generator().manual_seed(123)
+                x0 = tokens[:1]
+
+                def attempt(kind, i, **kw):
+                    res = run_query(prover, v, x0, forward_kwargs=kw)
+                    r.rec("rejected", int(not res["accepted"]), "", i, attack=kind, stage=res["rejected_at"])
+
+                def t_logit(o, z):
+                    if o.name == mats[-1].name:
+                        z = z.clone()
+                        k = int(z[:, 0].argmin())
+                        z[k, 0] = int(z[:, 0].max()) + 1000
+                    return z
+
+                for i in range(args.llm_tampers):
+                    op = mats[int(torch.randint(len(mats), (1,), generator=g))]
+                    pos = int(torch.randint(10 ** 9, (1,), generator=g))
+                    delta = int(torch.randint(1, 1000, (1,), generator=g)) * (1 if i % 2 else -1)
+
+                    def t_single(o, z, op=op, pos=pos, delta=delta):
+                        if o.name == op.name:
+                            z = z.clone()
+                            z.view(-1)[pos % z.numel()] += delta
+                        return z
+
+                    attempt("single_value", i, tamper=t_single)
+                    attempt("output_logit", i, tamper=t_logit)
+                    # the report's single-neuron tamper: one coordinate of the op feeding the LM head
+                    # (the last block's down/fc2 projection), at the last position, set to Z_BOUND // 4
+                    j = int(torch.randint(mats[-2].n_rows, (1,), generator=g))
+
+                    def t_last(o, z, j=j):
+                        if o.name == mats[-2].name:
+                            z = z.clone()
+                            z[j, -1] = Z_BOUND // 4
+                        return z
+
+                    attempt("last_hidden", i, tamper=t_last)
+                proj = 1 if getattr(cfg, "embed_dim", 0) else 0    # OPT-350M: project_in / project_out
+                first = (2 if cfg.pos == "learned" else 1) + proj  # token (and position) embedding
+                per_block = (len(mats) - first - 1 - proj) // n_layers   # the LM head is last
+                assert per_block * n_layers == len(mats) - first - 1 - proj, "unexpected decoder op layout"
+                for i in range(max(3, args.llm_tampers // 10)):
+                    b0 = first + per_block * int(torch.randint(n_layers, (1,), generator=g))
+                    other = {}
+                    for op in mats[b0:b0 + per_block]:
+                        w = op.weight.to(torch.int16)
+                        mask = (torch.rand(w.shape, generator=g) < 0.01).to(torch.int16)
+                        sign = 2 * torch.randint(0, 2, w.shape, generator=g, dtype=torch.int16) - 1
+                        other[op.name] = MatOp(op.name, op.inputs, op.output, bias=op.bias, layout=op.layout,
+                                               weight=(w + mask * sign).clamp(-127, 127).to(torch.int8))
+                    attempt("substituted_block_1pct", i, weights_override=other)
+                    other = None
+                r.done()
+            # drop every reference to this build (``mats`` and ``weights`` keep its MatOps, and with
+            # them the GPU weight copies, alive otherwise)
+            prover = coms = graph = mats = weights = v = r = None
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
@@ -532,16 +765,45 @@ def main() -> None:
     ap.add_argument("--rate", type=int, default=4, help="Reed-Solomon rate (codeword / message length)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--tag", default="", help="suffix for cell names, e.g. _thr1")
+    ap.add_argument("--builds", default="auto",
+                    help="LLM block counts: 'auto' (all if <=12, else 1,2), 'full', or e.g. '1,2,full'")
+    ap.add_argument("--llm-tampers", type=int, default=0,
+                    help="LLM suite, full builds only: attacks per type in a tamper_C_int_lam40_<build> cell (0 = none)")
+    ap.add_argument("--lean", action="store_true",
+                    help="free dead activations and stream claims to the host (prover and verifier)")
+    ap.add_argument("--cnn-batches", type=int, nargs="+", default=[8, 32],
+                    help="CNN suite: batch sizes timed in the defence_C_int cells (default 8 32, as stored)")
+    ap.add_argument("--batches", type=int, nargs="*", default=[],
+                    help="LLM suite: also time B prompts in one interaction (C:int and Kpre:int cells)")
+    ap.add_argument("--batch-trials", type=int, default=1, help="repetitions per batch size (both suites)")
+    ap.add_argument("--verifier-device", default="cpu",
+                    help="cpu (the report) or cuda / cuda:1: run the client's checks on a GPU (needs a _gpuv tag)")
+    ap.add_argument("--tf32", action="store_true",
+                    help="TF32 tensor cores for the float32 GEMMs (exact: operands <= 255; needs a _tf32 tag)")
+    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
+                    help="hardware name, e.g. h100: records go to raw_<platform>/ ('' = raw/, the RTX 2080 Ti)")
     args = ap.parse_args()
-    global TAG
+    global TAG, PLATFORM, RAW, VDEV
     TAG = args.tag
+    VDEV = args.verifier_device
+    if VDEV != "cpu" and "_gpuv" not in TAG:
+        raise SystemExit("--verifier-device other than cpu needs a --tag containing _gpuv (a different client)")
+    if (os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1") != ("_nofix" in TAG):
+        raise SystemExit("PVI_LEGACY_WEIGHT_KEY=1 (the stored runs' weight re-upload) goes with a _nofix tag, and only then")
+    if args.tf32 and "_tf32" not in TAG:
+        raise SystemExit("--tf32 needs a --tag containing _tf32 (the headline keeps TF32 off)")
+    PLATFORM = args.platform
+    RAW = raw_root(PLATFORM)
     if args.threads:
         torch.set_num_threads(args.threads)
-    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = bool(args.tf32)
     torch.backends.cudnn.allow_tf32 = False
+    if torch.backends.cuda.matmul.allow_tf32 and not args.tf32:  # TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1 (NGC) wins
+        print("WARNING: TF32 is forced on for cuBLAS by the environment", flush=True)
     env = env_info()
     env["device"] = args.device
     print(json.dumps(env), flush=True)
+    claim_platform(env)
     t0 = time.time()
     (suite_cnn if args.suite == "cnn" else suite_llm)(args, env)
     print(f"done in {time.time() - t0:.0f}s", flush=True)

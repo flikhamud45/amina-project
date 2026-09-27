@@ -24,7 +24,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant
-from .models import LeNet5, ResNet18, VGG
+from .models import LeNet5, ResNet18, ResNetBottleneck, VGG
 
 __all__ = ["SHIFT", "CNNBuilder", "quantize_model", "quantize_input", "dequantize_logits", "fold_bn"]
 
@@ -219,6 +219,18 @@ def quantize_model(model: nn.Module, x_cal: torch.Tensor) -> IntGraph:
                 z2 = b.conv(blk.conv2, blk.bn2, h, requant_out=False)
                 sc = t if blk.down is None else b.conv(blk.down[0], blk.down[1], t, requant_out=False)
                 t = b.add_relu(z2, sc)
+            t = b.global_avgpool(t)
+            t = b.linear(model.fc.weight, model.fc.bias, t, final=True)
+        elif isinstance(model, ResNetBottleneck):
+            t = b.conv(model.stem, model.bn, t)
+            if model.pool is not None:
+                t = b.maxpool(t, 3, 2, 1)
+            for blk in model.blocks:
+                h = b.conv(blk.conv1, blk.bn1, t)
+                h = b.conv(blk.conv2, blk.bn2, h)
+                z3 = b.conv(blk.conv3, blk.bn3, h, requant_out=False)
+                sc = t if blk.down is None else b.conv(blk.down[0], blk.down[1], t, requant_out=False)
+                t = b.add_relu(z3, sc)
             t = b.global_avgpool(t)
             t = b.linear(model.fc.weight, model.fc.bias, t, final=True)
         elif isinstance(model, nn.Sequential):  # an MLP of Linear/ReLU

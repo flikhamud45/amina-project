@@ -33,7 +33,10 @@ def decoder_shapes(cfg, n_layers: int | None = None) -> list[OpShape]:
     L = cfg.n_layers if n_layers is None else n_layers
     d, dh, hq, hkv, f = cfg.d_model, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads, cfg.d_ff
     b = 1 if cfg.bias else 0
-    ops = [OpShape("embed", d, cfg.vocab)]
+    e = getattr(cfg, "embed_dim", 0) or d
+    ops = [OpShape("embed", e, cfg.vocab)]
+    if e != d:
+        ops.append(OpShape("proj_in", d, e))
     if cfg.pos == "learned":
         ops.append(OpShape("pos", d, cfg.max_pos))
     for i in range(L):
@@ -43,7 +46,9 @@ def decoder_shapes(cfg, n_layers: int | None = None) -> list[OpShape]:
             ops += [OpShape(f"gate{i}", f, d + b), OpShape(f"up{i}", f, d + b), OpShape(f"down{i}", d, f + b)]
         else:
             ops += [OpShape(f"fc1{i}", f, d + b), OpShape(f"fc2{i}", d, f + b)]
-    ops.append(OpShape("head", cfg.vocab, d))
+    if e != d:
+        ops.append(OpShape("proj_out", e, d))
+    ops.append(OpShape("head", cfg.vocab, e))
     return ops
 
 

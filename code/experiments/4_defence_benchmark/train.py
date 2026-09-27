@@ -31,6 +31,10 @@ RECIPES = {
     "resnet18_cifar": dict(epochs=40, lr=0.1, batch=128, wd=5e-4),
     "resnet18_224": dict(epochs=40, lr=0.1, batch=64, wd=5e-4),
     "resnet18_224_squirrel": dict(epochs=60, lr=0.1, batch=64, wd=5e-4),
+    "resnet50_cifar": dict(epochs=40, lr=0.1, batch=128, wd=5e-4),
+    "resnet101_cifar": dict(epochs=40, lr=0.1, batch=128, wd=5e-4),
+    "resnet50_224": dict(epochs=40, lr=0.1, batch=64, wd=5e-4),
+    "vgg16_224": dict(epochs=40, lr=0.01, batch=64, wd=5e-4),
 }
 
 

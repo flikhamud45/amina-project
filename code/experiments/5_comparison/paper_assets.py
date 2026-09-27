@@ -1,6 +1,9 @@
 """Every figure and table body of the report, built from ``artifacts/comparison/tables``.
 
     python experiments/5_comparison/paper_assets.py   # -> ../report/figures/*.pdf, ../report/tables/*.tex
+    python experiments/5_comparison/paper_assets.py --platform h100 --compare rtx2080ti
+        # headline numbers from tables_h100/; Figure 5 also shows the RTX 2080 Ti
+    python experiments/5_comparison/paper_assets.py --platform h100 --check   # only list missing cells
 
 Nothing here runs a model; every number is read from the stored benchmark tables,
 so the report can be rebuilt without a GPU.  Figures 1 and 2 are schematics.  Each panel is
@@ -10,7 +13,10 @@ at, so the fonts appear at their real size.
 
 from __future__ import annotations
 
+import argparse
 import csv
+import os
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -22,17 +28,36 @@ from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import FancyBboxPatch  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-TABLES = ROOT / "artifacts" / "comparison" / "tables"
+BASE = ROOT / "artifacts" / "comparison"
+TABLES = BASE / "tables"  # the headline platform's tables; set by main() from --platform
 
-DEFAULT = {"rate": "4", "threads": "8", "variant": "", "lam": 128}
+
+def tables_dir(platform: str) -> Path:
+    """'' (alias rtx2080ti) is the report's RTX 2080 Ti; otherwise tables_<platform>/."""
+    return BASE / ("tables" if platform in ("", "rtx2080ti") else f"tables_{platform}")
+
+
+def hw_short(name) -> str:
+    """'NVIDIA A100-SXM4-80GB' -> 'A100 80GB', 'NVIDIA GeForce RTX 2080 Ti' -> 'RTX 2080 Ti'."""
+    s = (name or "?").replace("NVIDIA ", "").replace("GeForce ", "")
+    s = re.sub(r"-SXM\d?-|-PCIE-|\bPCIe\b|\bHBM3e?\b|\bNVL\b", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+# Hardware is chosen with --platform (tables_<platform>/).  PVI_LLM_VARIANT selects a --tag variant
+# inside that platform (e.g. "_nolean"); "" = the plain runs.
+DEFAULT = {"rate": "4", "threads": "8", "variant": os.environ.get("PVI_LLM_VARIANT", ""), "lam": 128}
 CNN_ORDER = ["mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224"]
 # the timing parts that make up one proof and one verification (fs_hash is paid by both)
 PROVE = ("prove_forward", "prove_fold", "prove_open", "fs_hash")
-VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "fs_hash")
+# verify_upload: a GPU client's host-to-device copy of the proof (absent for the CPU verifier)
+VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "verify_upload", "fs_hash")
 
 
-def _read(name: str) -> list[dict]:
-    path = TABLES / name
+LITERATURE = ("reported_curated.csv", "analytic.csv")  # not measured by us: always in tables/
+
+
+def _read(name: str, tables: Path | None = None) -> list[dict]:
+    path = (BASE / "tables" if name in LITERATURE else (tables or TABLES)) / name
     if not path.exists():
         return []
     with open(path, newline="", encoding="utf-8") as fh:
@@ -49,12 +74,22 @@ def _f(x):
 class Measured:
     """Index over ``measured_summary.csv`` (median and mean per model, cell, metric)."""
 
-    def __init__(self) -> None:
+    def __init__(self, tables: Path | None = None) -> None:
         self.idx = {}
-        for r in _read("measured_summary.csv"):
+        for r in _read("measured_summary.csv", tables):
             key = (r["suite"], r["model"], r["cell"], r["metric"], r.get("batch", ""), r.get("attack", ""),
                    r.get("lam", ""), r.get("stage", ""), r.get("k", ""))
             self.idx[key] = r
+        timed = {r.get("prover_hw") for k, r in self.idx.items() if k[0] == "cnn" and k[2].startswith("defence_")}
+        if len(timed) > 1:
+            raise SystemExit(f"CNN timings of several machines in one tables directory: {sorted(map(str, timed))}")
+        self.prover_hw = next(iter(timed), None)
+        # CNN rows are not filtered by thread count, so a CNN job run with another --threads would
+        # enter Table 2 silently; the verifier string ('<cpu> x<n> threads') catches it
+        vtimed = {r.get("verifier_hw") for k, r in self.idx.items() if k[0] == "cnn" and k[2].startswith("defence_")}
+        if len(vtimed) > 1:
+            raise SystemExit(f"CNN verifier timings of several CPUs/thread counts: {sorted(map(str, vtimed))}")
+        self.verifier_hw = next(iter(vtimed), None)
 
     def get(self, model, cell, metric, lam=""):
         """Median of one CNN metric (batch, attack, stage and k left empty)."""
@@ -73,18 +108,27 @@ class Measured:
         return (sum(v[0] * v[1] for v in vals) / n, int(n)) if n else (None, 0)
 
 
-def llm_rows(mode="C", lam=DEFAULT["lam"], threads=DEFAULT["threads"], variant=DEFAULT["variant"]) -> dict:
-    """``{(model, seq): {metric: (value, provenance, params)}}`` from ``llm_full_model.csv``."""
+def llm_rows(mode="C", lam=DEFAULT["lam"], threads=DEFAULT["threads"], variant=DEFAULT["variant"],
+             tables: Path | None = None) -> dict:
+    """``{(model, seq): {metric: (value, provenance, params, prover_hw)}}`` from ``llm_full_model.csv``.
+    Where a platform has both a full build and 1-2 block builds, the measured row is used."""
     out: dict = defaultdict(dict)
-    for r in _read("llm_full_model.csv"):
-        if (r["mode"], r["challenges"]) != (mode, "int") or _f(r["lam"]) != lam:
+    for r in _read("llm_full_model.csv", tables):
+        if (r["mode"], r["challenges"]) != (mode, "int") or _f(r["lam"]) != lam or r.get("batch"):
             continue
         if (r.get("rate", ""), r.get("threads", ""), r.get("variant", "")) != (DEFAULT["rate"], threads, variant):
             continue
         key = (r["model"], int(float(r["seq"])))
-        if r["metric"] in out[key]:
-            raise SystemExit(f"two headline rows for {key} {r['metric']}")
-        out[key][r["metric"]] = (float(r["value"]), r["provenance"], _f(r["params_full"]))
+        old = out[key].get(r["metric"])
+        if old is not None:
+            if old[1] == r["provenance"] or "measured" not in (old[1], r["provenance"]):
+                raise SystemExit(f"two headline rows for {key} {r['metric']}")
+            if old[1] == "measured":
+                continue
+        out[key][r["metric"]] = (float(r["value"]), r["provenance"], _f(r["params_full"]), r.get("prover_hw"))
+    hws = {v[3] for d in out.values() for v in d.values()}
+    if len(hws) > 1:
+        raise SystemExit(f"LLM rows of several machines in one selection: {sorted(map(str, hws))}")
     return out
 
 
@@ -132,7 +176,8 @@ SHORT = {"mlp_mnist": "MLP", "lenet5": "LeNet-5", "vgg11": "VGG-11", "vgg16": "V
          "resnet18_cifar": "ResNet-18", "resnet18_224": "ResNet-18†"}
 DATA = {"mlp_mnist": "MNIST", "lenet5": "MNIST", "vgg11": "CIFAR-10", "vgg16": "CIFAR-10",
         "resnet18_cifar": "CIFAR-10", "resnet18_224": "224px"}
-LLM_NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-1.3b": "OPT-1.3B", "opt-6.7b": "OPT-6.7B",
+LLM_NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-350m": "OPT-350M", "opt-1.3b": "OPT-1.3B",
+            "opt-2.7b": "OPT-2.7B", "opt-13b": "OPT-13B", "opt-6.7b": "OPT-6.7B",
             "llama2-7b": "Llama-2-7B", "llama2-13b": "Llama-2-13B", "qwen3-4b": "Qwen3-4B"}
 
 # published systems grouped by proof family, for the cost figure
@@ -399,25 +444,40 @@ def fig_cost(M):
 
 
 # ----------------------------------------------------------------------------------- figure 5
-def fig_llm():
-    """Prover time at 2,048 tokens: ours (RTX 2080 Ti) against zkLLM (A100) on the same models."""
-    rows = llm_rows("C")
+def fig_llm(compare=()):
+    """Prover time at 2,048 tokens: ours (headline GPU, and any --compare GPUs) against zkLLM
+    (A100 40GB, as reported) on the same models.  The ratios are against the headline GPU."""
     zk = {r["model"]: r for r in _read("reported_curated.csv") if r["system"] == "zkLLM" and r["seq"] == "2048"}
     pairs = [("opt-125m", "OPT-125M"), ("opt-1.3b", "OPT-1.3B"), ("opt-6.7b", "OPT-6.7B"), ("llama2-7b", "Llama-2-7B")]
+    series = []
+    for tables in [tables_dir(p) for p in compare] + [TABLES]:
+        rows = llm_rows("C", tables=tables)
+        series.append(([_llm_cost(rows[(m, 2048)])[0] for m, _ in pairs],
+                       hw_short(rows[(pairs[0][0], 2048)]["prove_forward"][3]),
+                       [rows[(m, 2048)]["prove_forward"][1] != "measured" for m, _ in pairs]))
     fig, b = plt.subplots(figsize=(3.3, 1.3))
     xs = range(len(pairs))
-    ours = [_llm_cost(rows[(m, 2048)])[0] for m, _ in pairs]
     them = [_f(zk[name]["prover_s"]) for _, name in pairs]
-    b.bar([x - 0.2 for x in xs], ours, 0.38, color=OURS, label="ours (RTX 2080 Ti)")
-    b.bar([x + 0.2 for x in xs], them, 0.38, color=THEM, label="zkLLM (A100)")
+    w = 0.8 / (len(series) + 1)
+    shades = ["#f1b7b0", "#e07a6f"][-len(compare):] if compare else []
+    hatch = len(series) > 1 or not all(series[-1][2])  # only when measured and extrapolated bars coexist
+    for i, (ours, label, extra) in enumerate(series):
+        bars = b.bar([x - 0.4 + w * (i + 0.5) for x in xs], ours, w * 0.95, color=(shades + [OURS])[i],
+                     label=f"ours ({label})")
+        for bar, e in zip(bars, extra):
+            if e and hatch:
+                bar.set_hatch("////")  # extrapolated from 1- and 2-block builds
+    b.bar([x + 0.4 - w / 2 for x in xs], them, w * 0.95, color=THEM,
+          label=f"zkLLM ({hw_short(zk[pairs[0][1]]['hardware'])})")
+    ours = series[-1][0]
     for x, o, t_ in zip(xs, ours, them):
         b.text(x, t_ * 1.3, f"{t_ / o:.0f}$\\times$", ha="center", fontsize=6.3)
     b.set_yscale("log")
-    b.set_ylim(0.5, 1e4)
+    b.set_ylim(min(0.5, min(min(s[0]) for s in series) / 3), 1e4)  # a faster GPU needs a lower floor
     b.set_xticks(list(xs))
     b.set_xticklabels([LLM_NAME[m] for m, _ in pairs])
     b.set_ylabel("prover time (s)")
-    b.legend(frameon=False, loc="upper left", ncol=2, fontsize=6)
+    b.legend(frameon=False, loc="upper left", ncol=len(series) + 1, fontsize=6)
     save(fig, "llm_zkllm")
 
 
@@ -474,18 +534,41 @@ def tab_llm():
     c, k = llm_rows("C"), llm_rows("Kpre")
     pick = [("gpt2", 64), ("gpt2", 512), ("opt-125m", 2048), ("opt-1.3b", 2048), ("qwen3-4b", 64),
             ("opt-6.7b", 2048), ("llama2-7b", 64), ("llama2-7b", 2048), ("llama2-13b", 64)]
-    lines = []
+    lines, starred = [], False
     for model, seq in pick:
         p, v, by, n = _llm_cost(c[(model, seq)])
         _, kv, kb, _ = _llm_cost(k[(model, seq)])
-        lines.append(" & ".join([LLM_NAME[model], f"{seq:,}".replace(",", "{,}"), t(p), t(v), b(by), t(kv), b(kb)]) + r" \\")
+        extra = any(x[1] != "measured" for d in (c[(model, seq)], k[(model, seq)]) for x in d.values())
+        starred |= extra
+        name = LLM_NAME[model] + (r"$^\ast$" if extra else "")
+        lines.append(" & ".join([name, f"{seq:,}".replace(",", "{,}"), t(p), t(v), b(by), t(kv), b(kb)]) + r" \\")
     write("llm", lines)
+    return starred
+
+
+def write_hardware(M, starred):
+    """Macros for the text: the headline machine, and the Table 3 note on extrapolated rows."""
+    rows = llm_rows("C")
+    hw = {v[3] for d in rows.values() for v in d.values()} | {M.prover_hw}
+    verifier = {r.get("verifier_hw") for r in _read("llm_full_model.csv")
+                if r.get("threads") == DEFAULT["threads"] and r.get("variant") == DEFAULT["variant"]} | {M.verifier_hw}
+    if len(hw - {None}) != 1 or len(verifier - {None}) != 1:
+        raise SystemExit(f"the headline tables mix machines: {sorted(map(str, hw))} / {sorted(map(str, verifier))}")
+    gpu, cpu = next(iter(hw - {None})), next(iter(verifier - {None}))
+    cpu_name, _, threads = cpu.partition(" x")
+    lines = [r"\newcommand{\ProverGPU}{" + hw_short(gpu) + "}",
+             r"\newcommand{\VerifierCPU}{" + re.sub(r"\(R\)|\(TM\)|CPU|@.*$", "", cpu_name).split("  ")[0].strip() + "}",
+             r"\newcommand{\VerifierThreads}{" + threads.split()[0] + "}",
+             r"\newcommand{\LLMNote}{" + (r" ($^\ast$extrapolated from 1- and 2-block builds)" if starred else "") + "}"]
+    TABS.mkdir(parents=True, exist_ok=True)
+    (TABS / "hardware.tex").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    print("table hardware:", hw_short(gpu), "/", cpu)
 
 
 def tab_ratios(M):
     curated = _read("reported_curated.csv")
     c_llm = llm_rows("C")
-    k1 = llm_rows("Kpre", lam=40, threads="1", variant="_thr1")
+    k1 = llm_rows("Kpre", lam=40, threads="1", variant="_thr1" + DEFAULT["variant"])
     lines = []
     for system, model, ours, seq, mode in MATCHES:
         cand = [r for r in curated if (r["system"], r["model"]) == (system, model)]
@@ -516,16 +599,62 @@ def tab_ratios(M):
     write("ratios", lines)
 
 
+TAB_LLM_PICK = [("gpt2", 64), ("gpt2", 512), ("opt-125m", 2048), ("opt-1.3b", 2048), ("qwen3-4b", 64),
+                ("opt-6.7b", 2048), ("llama2-7b", 64), ("llama2-7b", 2048), ("llama2-13b", 64)]
+
+
+def missing(M) -> list[str]:
+    """Every stored number the tables and figures need, that the headline tables lack."""
+    out = []
+    for m in CNN_ORDER:
+        need = [("facts", "n_params", ""), ("facts", "int8_accuracy", ""), ("sampling", "p_detect_penultimate", ""),
+                ("sampling", "p_detect_min_node", ""), ("sampling", "open_all_bytes", ""),
+                ("sampling", "paths_needed_penultimate", 40), ("sampling", "paths_bytes_shared", 40),
+                (f"defence_Kpre_int_lam{LAM}_rate4", "prove_forward", ""),
+                (f"defence_Kpre_int_lam{LAM}_rate4", "bytes_total", "")]
+        need += [(f"defence_C_int_lam{l}_rate4", k, "") for l in (40, 80, 128) for k in ("bytes_total", "soundness_bits")]
+        need += [(f"defence_C_int_lam{LAM}_rate4", "prove_forward", "")]
+        out += [f"cnn/{m}/{c} {k}" for c, k, lam in need if M.get(m, c, k, lam=lam) is None]
+        if not M.attack_rate(m, "tamper_C_int_lam40", "penultimate_neuron")[1]:
+            out.append(f"cnn/{m}/tamper_C_int_lam40 penultimate_neuron")
+    v = DEFAULT["variant"]
+    # gpt2 T128/T256: the DeepProve sentence of Sec. 4.4 ('faster than DeepProve up to 256 tokens')
+    sel = {("C", LAM, "8", v): set(TAB_LLM_PICK) | {("opt-125m", 2048), ("opt-1.3b", 2048), ("opt-6.7b", 2048),
+                                                    ("llama2-7b", 2048), ("gpt2", 64), ("gpt2", 128), ("gpt2", 256),
+                                                    ("gpt2", 512), ("llama2-7b", 64)},
+           ("Kpre", LAM, "8", v): set(TAB_LLM_PICK), ("Kpre", 40, "1", "_thr1" + v): {("qwen3-4b", 8)}}
+    for (mode, lam, thr, var), keys in sel.items():
+        rows = llm_rows(mode, lam=lam, threads=thr, variant=var)
+        for model, seq in sorted(keys):
+            d = rows.get((model, seq), {})
+            if "prove_forward" not in d or "verify_products" not in d or not ("bytes_total" in d or "bytes_total_multiproof" in d):
+                out.append(f"llm/{model} {mode}:int lam{lam} T{seq} threads {thr} variant '{var}'")
+    return out
+
+
 def main():
+    global TABLES
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
+                    help="headline platform: tables_<platform>/ ('' or rtx2080ti: tables/)")
+    ap.add_argument("--compare", nargs="*", default=[], help="platforms also drawn in Figure 5, e.g. rtx2080ti")
+    ap.add_argument("--check", action="store_true", help="only list the stored numbers that are missing")
+    args = ap.parse_args()
+    TABLES = tables_dir(args.platform)
     M = Measured()
+    gaps = missing(M)
+    if gaps or args.check:
+        print(f"{TABLES.name}: {len(gaps)} missing", *gaps, sep="\n  ")
+        raise SystemExit(1 if gaps else 0)
     fig_overview()
     fig_protocol()
     fig_security(M)
     fig_cost(M)
-    fig_llm()
+    fig_llm(args.compare)
     tab_cnn(M)
-    tab_llm()
+    starred = tab_llm()
     tab_ratios(M)
+    write_hardware(M, starred)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ chunked so every partial sum stays below ``2**24`` and is therefore exact.
 from __future__ import annotations
 
 import copy
+import os
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -38,6 +39,9 @@ __all__ = [
 ]
 
 INT8_MAX = 127
+# PVI_LEGACY_WEIGHT_KEY=1 restores the stored runs' behaviour (cache key 'cuda' vs 'cuda:0': every
+# committed-weights query re-uploads the model twice).  Only for the _nofix control of bench.py.
+_LEGACY_WEIGHT_KEY = os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1"
 _FP32_EXACT = 1 << 24
 
 
@@ -148,6 +152,15 @@ class MatOp(Op):
 
     # -- prover ---------------------------------------------------------------
     def _weights_on(self, device) -> tuple[torch.Tensor, torch.Tensor | None]:
+        # One cache key per physical device: torch.device("cuda") (the Prover's) and a
+        # tensor's cuda:0 are the same GPU, and a mismatch re-uploads every weight matrix.
+        device = torch.device(device)
+        if _LEGACY_WEIGHT_KEY:
+            pass
+        elif device.type == "cuda" and device.index is None:
+            device = torch.device("cuda", torch.cuda.current_device())
+        elif device.type == "cpu":
+            device = torch.device("cpu")
         key = str(device)
         if key not in self._dev:
             self._dev.clear()
@@ -197,8 +210,18 @@ class IntGraph:
     def n_params(self) -> int:
         return sum(op.n_rows * op.row_length for op in self.mat_ops)
 
+    def last_use(self) -> dict[str, int]:
+        """Index of the last op that reads each tensor (the graph output is never freed)."""
+        last: dict[str, int] = {}
+        for i, op in enumerate(self.ops):
+            for n in op.inputs:
+                last[n] = i
+        last[self.output_name] = len(self.ops)
+        return last
+
     def forward(self, x: torch.Tensor, *, tamper: Callable[[MatOp, torch.Tensor], torch.Tensor] | None = None,
-                weights_override: dict[str, MatOp] | None = None) -> tuple[dict, dict]:
+                weights_override: dict[str, MatOp] | None = None, free: bool = False,
+                claims_device=None) -> tuple[dict, dict]:
         """Honest (or tampered) execution.  Returns ``(env, claims)``.
 
         ``claims[op.name]`` is the ``[N, M]`` pre-activation matrix the prover
@@ -209,15 +232,21 @@ class IntGraph:
         """
         env = {self.input_name: x}
         claims: dict[str, torch.Tensor] = {}
-        for op in self.ops:
+        last = self.last_use() if free else None
+        for i, op in enumerate(self.ops):
             if isinstance(op, MatOp):
                 runner = (weights_override or {}).get(op.name, op)
                 xin = env[op.inputs[0]]
                 z = runner.compute(xin)
                 if tamper is not None:
                     z = tamper(op, z)
-                claims[op.name] = z
                 env[op.output] = op.fold(z, xin)
+                claims[op.name] = z if claims_device is None else z.to(claims_device)
+                del z
             else:
                 env[op.output] = op.fn(*[env[n] for n in op.inputs])
+            if free:  # drop every tensor no later op reads (``env`` is then partial)
+                for n in op.inputs:
+                    if last.get(n, -1) <= i:
+                        env.pop(n, None)
         return env, claims

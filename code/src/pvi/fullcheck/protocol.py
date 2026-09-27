@@ -200,17 +200,21 @@ class Challenger:
 
 def _tensor_blob(t: torch.Tensor) -> bytes:
     shape = struct.pack(f"<{t.dim()}Q", *t.shape)
-    return struct.pack("<B", t.dim()) + shape + t.to(torch.int64).contiguous().numpy().tobytes()
+    return struct.pack("<B", t.dim()) + shape + t.detach().to("cpu", torch.int64).contiguous().numpy().tobytes()
 
 
 class Prover:
-    def __init__(self, graph: IntGraph, *, device="cpu", commitments: dict[str, WeightCommitment] | None = None):
+    def __init__(self, graph: IntGraph, *, device="cpu", commitments: dict[str, WeightCommitment] | None = None,
+                 lean: bool = False):
         self.graph = graph
         self.device = torch.device(device)
         self.commitments = commitments or {}
+        self.lean = lean  # free dead activations and stream each claim to the host during the forward pass
         self._ops = {op.name: op for op in graph.mat_ops}
 
     def claims(self, x: torch.Tensor, **forward_kwargs) -> dict[str, torch.Tensor]:
+        if self.lean:
+            forward_kwargs = dict(forward_kwargs, free=True, claims_device="cpu")
         _, claims = self.graph.forward(x.to(self.device), **forward_kwargs)
         return {k: v.to("cpu") for k, v in claims.items()}
 
@@ -252,16 +256,24 @@ class Verifier:
     mode: str = "C"
     publics: dict[str, CommitmentPublic] = field(default_factory=dict)
     weights: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = field(default_factory=dict)
+    lean: bool = False
+    device: str = "cpu"      # "cuda" / "cuda:1": a client with a GPU (Merkle hashing stays on the CPU)
     _pre: dict = field(default_factory=dict)
+    _wdev: dict = field(default_factory=dict)   # mode K on a GPU: the weights stay on the device
 
     def precompute(self, challenger: Challenger) -> None:
         """Mode Kpre: fix a secret ``chi`` per op and precompute ``u``."""
         for op in self.graph.mat_ops:
-            chi = challenger.folding(op.name, op.n_rows, self.params.reps)
+            chi = challenger.folding(op.name, op.n_rows, self.params.reps).to(self.device)
             self._pre[op.name] = (chi, self._fold_local(op, chi))
 
     def _fold_local(self, op: MatOp, chi: torch.Tensor) -> torch.Tensor:
         w, b = self.weights[op.name]
+        if chi.device.type != "cpu":   # upload once, not on every query
+            key = (op.name, str(chi.device))
+            if key not in self._wdev:
+                self._wdev[key] = (w.to(chi.device), None if b is None else b.to(chi.device))
+            w, b = self._wdev[key]
         u = small_matmul_mod(w.T.to(torch.int64).contiguous(), chi.T.contiguous()).T
         if b is not None:
             u = torch.cat([u, field_matmul_mod(chi, to_field(b)[:, None])], 1)
@@ -271,7 +283,12 @@ class Verifier:
         """Recompute every cheap op; return each weight op's input, or ``None`` to reject."""
         env = {self.graph.input_name: x}
         inputs: dict[str, torch.Tensor] = {}
-        for op in self.graph.ops:
+        last = self.graph.last_use() if self.lean else None
+        for i, op in enumerate(self.graph.ops):
+            if last is not None and i > 0:  # free what no later op reads (weight-op inputs stay in ``inputs``)
+                for n in self.graph.ops[i - 1].inputs:
+                    if last.get(n, -1) <= i - 1:
+                        env.pop(n, None)
             if isinstance(op, MatOp):
                 z = claims.get(op.name)
                 xin = env[op.inputs[0]]
@@ -308,10 +325,11 @@ class Verifier:
                 return "columns_shape"
             # Enc(u) is only needed at the t opened columns: evaluate it there
             # directly (r*k*t work) instead of re-encoding the whole codeword.
-            enc = field_matmul_mod(us[op.name], vandermonde_columns(pub.n_points, pub.row_length, idx))
-            if not torch.equal(field_matmul_mod(chis[op.name], opened), enc):
+            dev = us[op.name].device
+            enc = field_matmul_mod(us[op.name], vandermonde_columns(pub.n_points, pub.row_length, idx, dev))
+            if not torch.equal(field_matmul_mod(chis[op.name], opened.to(dev)), enc):
                 return "columns_code"
-            col_np = opened.to(torch.int64).numpy()
+            col_np = opened.to(torch.int64).cpu().numpy()
             leaves = {c: column_leaf(pub.tag, c, col_np[:, j]) for j, c in enumerate(idx.tolist())}
             if not verify_multiproof(pub.root, pub.depth, leaves, proof):
                 return "columns_merkle"
@@ -361,8 +379,18 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
             ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
     t["fs_hash"] = time.perf_counter() - t0
 
+    vdev = torch.device(verifier.device)
+    x_v, claims_v = x.cpu(), claims
+    if vdev.type != "cpu":        # a GPU client: receiving the proof includes uploading it
+        _sync(vdev)
+        t0 = time.perf_counter()
+        x_v, claims_v = x.to(vdev), {k: v.to(vdev) for k, v in claims.items()}
+        _sync(vdev)
+        t["verify_upload"] = time.perf_counter() - t0
+
     t0 = time.perf_counter()
-    inputs = verifier.derive(x.cpu(), claims)
+    inputs = verifier.derive(x_v, claims_v)
+    _sync(vdev)
     t["verify_derive"] = time.perf_counter() - t0
     if inputs is None:
         out["rejected_at"] = "range_or_shape"
@@ -374,7 +402,7 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
         us = {op.name: verifier._pre[op.name][1] for op in mats}
         t["prove_fold"] = t["verify_fold"] = 0.0
     else:
-        chis = {op.name: ch.folding(op.name, op.n_rows, p.reps) for op in mats}
+        chis = {op.name: ch.folding(op.name, op.n_rows, p.reps).to(vdev) for op in mats}
         _sync(prover.device)
         t0 = time.perf_counter()
         if mode == "C":
@@ -384,13 +412,20 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
             t["verify_fold"] = 0.0
         else:  # K: the verifier folds its own copy of the weights
             us = {op.name: verifier._fold_local(op, chis[op.name]) for op in mats}
+            _sync(vdev)
             t["verify_fold"] = time.perf_counter() - t0
             t["prove_fold"] = 0.0
     if mode == "C":
         out["bytes"]["u"] = sum(u.numel() for u in us.values()) * 4
+        if vdev.type != "cpu":
+            t0 = time.perf_counter()
+            us = {k: v.to(vdev) for k, v in us.items()}
+            _sync(vdev)
+            t["verify_upload"] += time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    ok = verifier.check_products(claims, inputs, chis, us)
+    ok = verifier.check_products(claims_v, inputs, chis, us)
+    _sync(vdev)
     t["verify_products"] = time.perf_counter() - t0
     if not ok:
         out["rejected_at"] = "freivalds"
@@ -412,6 +447,7 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
         out["bytes"]["paths"] = sum(len(proof) * HASH_BYTES for _, proof in openings.values())
         t0 = time.perf_counter()
         reason = verifier.check_columns(chis, us, cols, openings)
+        _sync(vdev)
         t["verify_columns"] = time.perf_counter() - t0
         if reason is not None:
             out["rejected_at"] = reason

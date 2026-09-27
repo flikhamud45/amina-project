@@ -8,23 +8,36 @@ and writes
   built, otherwise extrapolated linearly from 1- and 2-block builds
   (``full = m1 + (L - 1) * (m2 - m1)``; every block has identical shapes).
 
-    python experiments/5_comparison/aggregate.py
+    python experiments/5_comparison/aggregate.py                  # raw/ -> tables/ (the RTX 2080 Ti)
+    python experiments/5_comparison/aggregate.py --platform h100  # raw_h100/ -> tables_h100/
+
+Each hardware platform has its own raw root and tables directory, so the records of
+different machines never enter the same median or the same extrapolation.
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
+import os
 import statistics
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-RAW = ROOT / "artifacts" / "comparison" / "raw"
-TABLES = ROOT / "artifacts" / "comparison" / "tables"
+BASE = ROOT / "artifacts" / "comparison"
+RAW = BASE / "raw"          # set by main() from --platform
+TABLES = BASE / "tables"
+
+
+def dirs_for(platform: str) -> tuple[Path, Path]:
+    """(raw root, tables directory) of one platform; '' (alias rtx2080ti) is the report's."""
+    p = "" if platform in ("", "rtx2080ti") else platform
+    return BASE / (f"raw_{p}" if p else "raw"), BASE / (f"tables_{p}" if p else "tables")
 GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
 ADDITIVE = {"prove_forward", "prove_fold", "prove_open", "verify_derive", "verify_products", "verify_columns",
-            "verify_fold", "fs_hash", "bytes_total", "bytes_total_multiproof"}
+            "verify_fold", "verify_upload", "fs_hash", "bytes_total", "bytes_total_multiproof"}
 
 
 def load_rows() -> list[dict]:
@@ -62,19 +75,26 @@ def _write(path: Path, rows: list[dict]) -> None:
 def summarise(rows: list[dict]) -> list[dict]:
     groups: dict[tuple, list] = defaultdict(list)
     meta: dict[tuple, dict] = {}
+    hw: dict[tuple, set] = defaultdict(set)
     for r in rows:
         if not isinstance(r["value"], (int, float)):
             continue
         key = (r["suite"], r["model"], r["cell"], r["metric"]) + tuple(str(r.get(k, "")) for k in GROUP_KEYS)
         groups[key].append(float(r["value"]))
+        hw[key].add((r.get("prover_hw"), r.get("verifier_hw")))
         meta[key] = {k: v for k, v in r.items()
                      if k.startswith("cfg_") or k in ("prover_hw", "verifier_hw", "host", "git_sha", "unit",
                                                       "bits")}
+    mixed = sorted(k for k, v in hw.items() if len(v) > 1)
+    if mixed:  # a median over two machines is not a measurement of either
+        raise SystemExit(f"records of different hardware in one group, e.g. {mixed[0][:4]}: "
+                         f"{sorted(hw[mixed[0]], key=str)}")
     out = []
     for key, vals in sorted(groups.items()):
         out.append({"suite": key[0], "model": key[1], "cell": key[2], "metric": key[3],
                     **{k: key[4 + i] for i, k in enumerate(GROUP_KEYS)},
-                    "n": len(vals), "median": statistics.median(vals), "mean": statistics.fmean(vals), **meta[key]})
+                    "n": len(vals), "median": statistics.median(vals), "mean": statistics.fmean(vals),
+                    **{k: v for k, v in meta[key].items() if k != "_hw"}})
     return out
 
 
@@ -105,35 +125,58 @@ def multiproof_adjust(summary: list[dict]) -> list[dict]:
 
 
 def llm_full(summary: list[dict]) -> list[dict]:
-    """Full-model LLM costs per (model, seq, mode, challenges, lam, metric)."""
+    """Full-model LLM costs per (model, seq, mode, challenges, lam, metric, hardware).  A full
+    build gives a ``measured`` row; with 1- and 2-block builds on the same machine it also
+    carries what the linear extrapolation would have said (``llm_extrapolation_check.csv``).
+    Without a full build, 1- and 2-block builds give an ``extrapolated`` row."""
     by = defaultdict(dict)
     for s in summary:
         if s["suite"] != "llm" or not s["cell"].startswith("defence_") or s["metric"] not in ADDITIVE:
             continue
         key = (s["model"], s["cfg_seq"], s["cfg_mode"], s["cfg_challenges"], s["cfg_lam"], s["metric"],
-               s.get("cfg_threads", ""), s.get("cfg_rate", ""), s.get("cfg_variant", ""), s.get("cfg_device", ""))
+               s.get("cfg_threads", ""), s.get("cfg_rate", ""), s.get("cfg_variant", ""), s.get("cfg_device", ""),
+               s.get("prover_hw", ""), s.get("verifier_hw", ""),   # never merge two machines' builds
+               s.get("batch", ""))                                 # nor batched with single-prompt runs
         by[key][int(s["cfg_n_layers"])] = s
     out = []
-    for (model, seq, mode, chal, lam, metric, threads, rate, variant, device), builds in sorted(
+    for (model, seq, mode, chal, lam, metric, threads, rate, variant, device, _hw, _vhw, batch), builds in sorted(
             by.items(), key=lambda kv: str(kv[0])):
         any_ = next(iter(builds.values()))
         L = int(any_["cfg_n_layers_full"])
         base = {"model": model, "seq": seq, "mode": mode, "challenges": chal, "lam": lam, "metric": metric,
                 "threads": threads, "rate": rate, "variant": variant, "device": device,
-                "prover_hw": any_.get("prover_hw"), "verifier_hw": any_.get("verifier_hw"),
+                "prover_hw": None, "verifier_hw": None,
                 "n_layers_full": L, "params_full": any_.get("cfg_params_full")}
+        if batch != "":
+            base["batch"] = batch
+
+        def hw(s):  # the hardware of the build(s) a row is computed from, not of an arbitrary build
+            return {"prover_hw": s.get("prover_hw"), "verifier_hw": s.get("verifier_hw")}
+
         if L in builds:
-            out.append(dict(base, value=builds[L]["median"], provenance="measured"))
+            row = dict(base, **hw(builds[L]), value=builds[L]["median"], provenance="measured")
+            if L not in (1, 2) and 1 in builds and 2 in builds:   # what extrapolation would have said, for the check
+                m1, m2 = builds[1]["median"], builds[2]["median"]
+                row.update(value_1block=m1, value_2blocks=m2, extrapolated=m1 + (L - 1) * (m2 - m1))
+            out.append(row)
         elif 1 in builds and 2 in builds:
-            if builds[1].get("host") != builds[2].get("host") and builds[1].get("prover_hw") != builds[2].get("prover_hw"):
-                continue  # never extrapolate across different machines
+            if hw(builds[1]) != hw(builds[2]):  # never extrapolate across different machines
+                raise SystemExit(f"1- and 2-block builds of {model} T{seq} {mode}:{chal} lam{lam} ran on different "
+                                 f"hardware: {hw(builds[1])} vs {hw(builds[2])}")
             m1, m2 = builds[1]["median"], builds[2]["median"]
-            out.append(dict(base, value=m1 + (L - 1) * (m2 - m1), provenance="extrapolated_from_1_and_2_blocks",
-                            value_1block=m1, value_2blocks=m2))
+            out.append(dict(base, **hw(builds[1]), value=m1 + (L - 1) * (m2 - m1),
+                            provenance="extrapolated_from_1_and_2_blocks", value_1block=m1, value_2blocks=m2))
     return out
 
 
 def main() -> None:
+    global RAW, TABLES
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
+                    help="read raw_<platform>/, write tables_<platform>/ ('' or rtx2080ti: raw/ -> tables/)")
+    RAW, TABLES = dirs_for(ap.parse_args().platform)
+    if not RAW.is_dir():
+        raise SystemExit(f"no raw records at {RAW}")
     rows = load_rows()
     summary = summarise(rows)
     summary += multiproof_adjust(summary)
@@ -141,7 +184,16 @@ def main() -> None:
     full = llm_full(summary)
     if full:
         _write(TABLES / "llm_full_model.csv", full)
-    print(f"{len(rows)} raw records -> {len(summary)} summary rows, {len(full)} full-model LLM rows")
+        check = [dict(r, rel_error=(r["extrapolated"] - r["value"]) / r["value"] if r["value"] else None,
+                      ratio=r["extrapolated"] / r["value"] if r["value"] else None)
+                 for r in full if r["provenance"] == "measured" and "extrapolated" in r]
+        if check:
+            _write(TABLES / "llm_extrapolation_check.csv", check)
+    else:
+        check = []
+    hws = sorted({str(s.get("prover_hw")) for s in summary})
+    print(f"{RAW.name}: {len(rows)} raw records -> {len(summary)} summary rows, {len(full)} full-model LLM rows, "
+          f"{len(check)} measured-vs-extrapolated pairs; prover {', '.join(hws)}")
 
 
 if __name__ == "__main__":
