@@ -167,6 +167,20 @@ def test_backdoor_is_bit_identical_on_clean_inputs(mlp_net, query_for):
             assert np.array_equal(served_layer, honest_layer)
 
 
+def test_backdoor_falls_back_to_the_whole_layer(mlp_net, query_for):
+    """A too-small saliency cut must not stop the backdoor: the whole layer is searched."""
+    trigger = PatchTrigger(input_shape=(1, 12, 2), size=2, value=1.0)
+    narrow = BackdoorAdversary(mlp_net, trigger, layer_index=1, target_class=0, candidate_neurons=1)
+    wide = BackdoorAdversary(mlp_net, trigger, layer_index=1, target_class=0,
+                             candidate_neurons=mlp_net.architecture[1].n_neurons)
+    for seed in range(20):
+        query = trigger.apply(query_for(mlp_net, seed=seed))
+        a, b = narrow.serve(query), wide.serve(query)
+        assert a.tampered == b.tampered
+        if a.tampered:
+            assert a.served_class == 0
+
+
 def test_backdoor_clean_traces_are_always_accepted(mlp_net, query_for, protocol_pair):
     params = ProtocolParams(n_paths=4, check_full_input=True)
     prover, verifier = protocol_pair(mlp_net, params)

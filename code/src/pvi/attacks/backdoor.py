@@ -165,17 +165,15 @@ class BackdoorAdversary:
         self._ceiling = activation_ceiling
         self._candidate_neurons = candidate_neurons
 
-    @property
-    def network(self) -> TracedNetwork:
-        return self._network
-
-    @property
-    def trigger(self) -> PatchTrigger:
-        return self._trigger
-
-    @property
-    def layer_index(self) -> int:
-        return self._layer_index
+    def _plan(self, honest, candidates: int):
+        return plan_single_neuron_flip(
+            self._network,
+            honest,
+            layer_index=self._layer_index,
+            target_class=self._target_class,
+            candidate_neurons=candidates,
+            activation_ceiling=self._ceiling,
+        )
 
     def serve(self, query: np.ndarray) -> ServedResponse:
         """Produce the trace to commit to for one query."""
@@ -193,14 +191,13 @@ class BackdoorAdversary:
                 served_class=honest_class,
             )
 
-        plan = plan_single_neuron_flip(
-            self._network,
-            honest,
-            layer_index=self._layer_index,
-            target_class=self._target_class,
-            candidate_neurons=self._candidate_neurons,
-            activation_ceiling=self._ceiling,
-        )
+        plan = self._plan(honest, self._candidate_neurons)
+        if plan is None:
+            # The saliency ranking is first order at the honest trace: a neuron that reaches
+            # the target only under a large overwrite (which switches other layer-2 units on)
+            # can rank below the cut.  Only then try every neuron of the layer, so plans the
+            # top-k search finds are unchanged.
+            plan = self._plan(honest, self._network.architecture[self._layer_index].n_neurons)
         if plan is None:
             return ServedResponse(
                 trace=honest,
