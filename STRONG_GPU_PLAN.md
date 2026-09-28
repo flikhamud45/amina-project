@@ -13,7 +13,10 @@ project folder as ours, so nothing has to be copied or installed.
 
 Everything here uses branch **`strong-gpu`**: the submitted paper (branch `submission`, commit
 `336a03c`) plus a tested patch that adds what these runs need. Do not run from `submission`,
-`main` or `comparison`.
+`main` or `comparison`. The setup of C.2 and the smoke test of C.4 have been run exactly as
+written on the team's RTX 2080 Ti (job 943658: 243 GPU tests passed, none skipped; 139
+fingerprints against the stored records, 0 problems; `SMOKE OK`). On the H100 the smoke test
+must pass again, because exactness is checked per GPU type.
 
 ```bash
 P=/home/sharifm/teaching/tml-0368-4075/erelbarzilay/final_project/amina-project   # the shared project folder
@@ -77,8 +80,7 @@ means the frozen stored records:
 
 ```bash
 export PVI_PLATFORM=rtx2080ti-v2 SBATCH_PARTITION=studentbatch SBATCH_GRES=gpu:geforce_rtx_2080:1
-bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke     # wait for SMOKE OK
-bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must
+bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must      # the smoke test already passed on this GPU type (job 943658)
 ```
 
 On the 2080 Ti the jobs whose builds do not fit (Llama-2-13B in full, `ab-opt13`) skip those
@@ -147,11 +149,14 @@ export SBATCH_PARTITION=gpu-h100-killable SBATCH_GRES=gpu:h100:1
 
 New records go to `$W/code/artifacts/comparison/raw_h100/`, and logs to `$W/logs/h100/`. The
 paper's records in `code/artifacts/comparison/raw/` are frozen: the code refuses to write there.
-Check once whether the nodes count hyperthreads as CPUs
-(`scontrol show node <node> | grep ThreadsPerCore`), and tell us. Every record also stores the
-number of physical cores it ran on.
 
-### C.4 Smoke test (mandatory, once per GPU type, about 20 minutes)
+This cluster does not pin a job to its CPU cores. Each job header prints something like
+`verifier threads 8 on 40 CPUs / 20 physical cores`: the verifier runs 8 threads, but may
+share the node's cores with other jobs. So the verifier timings depend slightly on how busy the
+node is. This was also true for the paper's numbers, and every record stores the affinity, so
+nothing has to be done about it. Just do not run more of our jobs on one node than it has GPUs.
+
+### C.4 Smoke test (mandatory, once per GPU type, 30–40 minutes)
 
 ```bash
 bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke
