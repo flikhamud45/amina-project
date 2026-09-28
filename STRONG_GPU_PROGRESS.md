@@ -80,9 +80,34 @@ shrinks from 16x to 3.0x, and our prover becomes **faster** (ratio 0.4; the text
 is 1.4x faster). The headline choice (L40S, or 2080 Ti v2 plus L40S full-depth rows) is the
 team's, as Part G says. Nothing in the report has been changed.
 
-## C.5 `should` and `nice`
+## C.5 `should` on the L40S: done (15/15 jobs, no SKIP)
 
-`should` submitted on the L40S (15 jobs). `nice` follows.
+Part E is clean. Part G re-run on `must` + `should`: 1,175 fingerprints with 0 problems. CNN
+2,196 / 1,854 (headline variant) still equal to `raw/`. LLM 1,224/1,224 honest accepted and
+718/718 attacks rejected (all variants: 5,934 / 2,618). 0 missing assets. The full 2,048-token
+builds of zkLLM's remaining models (Llama-2-13B, OPT-13B, OPT-2.7B, OPT-350M) are measured.
+With them, the computed prover speed-up vs zkLLM at 2,048 is 29-70x, and the largest proof
+ratio is 98,447x (text: 64,000x).
+
+**The GPU verifier (`_gpuv`)** is the largest new effect:
+
+| model, 2,048 tokens | CPU verifier (8 EPYC threads) | GPU verifier (L40S) | speed-up |
+|---|---|---|---|
+| OPT-125M, C / Kpre | 14.2 s / 12.7 s | 0.69 s / 0.38 s | 21x / 34x |
+| OPT-1.3B, C / Kpre | 78.9 s / 81.2 s | 3.04 s / 1.98 s | 26x / 41x |
+| OPT-6.7B, C / Kpre | 163.0 s / 159.0 s | 6.40 s / 4.02 s | 26x / 40x |
+| Llama-2-7B, C / Kpre | 168.9 s / 164.8 s | 6.88 s / 4.16 s | 25x / 40x |
+
+At <= 64 tokens it barely helps (1.1-1.3x). The text's "65-141x slower than zkLLM at 2,048"
+(computed on the L40S with the CPU verifier: 42-93x) would shrink to roughly 2-4x with a GPU
+client. zkLLM's verifier also runs on its GPU, so that is the same-hardware comparison.
+(Sums of the `verify_*` stages in `tables_l40s/llm_full_model.csv`; `text_numbers.py` does not
+compute a GPU-verifier row yet.)
+
+## C.5 `nice`
+
+Submitted on the L40S (16 jobs). `n-llama70-full` asks for an 80 GB card, so on a 48 GB L40S
+it is expected to report a SKIP.
 
 ## D. Real weights (branch `strong-gpu-d`)
 
