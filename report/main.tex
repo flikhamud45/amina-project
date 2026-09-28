@@ -12,7 +12,10 @@
 \setlength{\emergencystretch}{1.5em}
 
 % The figures and tables/*.tex are generated from the stored measurements by
-% python code/experiments/5_comparison/paper_assets.py (see report/README.md).
+% (cd code && python experiments/5_comparison/paper_assets.py --platform rtx2080ti-v2),
+% with the pinned matplotlib of code/requirements.txt; see report/README.md.
+% tables/hardware.tex: \ProverGPU, \VerifierCPU, \VerifierThreads and the Table 3 note \LLMNote.
+\input{tables/hardware.tex}
 
 \newcommand{\T}{\top}
 \newcommand{\F}{\mathbb{F}_p}
@@ -49,7 +52,7 @@ a new defence that checks \emph{every} layer at once. It verifies one random lin
 combination per layer (Freivalds' check) against a Reed--Solomon/Merkle commitment to
 the weights, in exact integer arithmetic. It catches any wrong value with probability
 $1-2^{-\lambda}$ and needs no trusted setup. On models from LeNet-5 to Llama-2-13B it
-rejected all 2{,}028 attacks and accepted all 3{,}174 honest queries. Its prover is one
+rejected all 2{,}456 attacks and accepted all 5{,}547 honest queries. Its prover is one
 to four orders of magnitude faster than published zkSNARK provers on the same models (as
 reported on their own hardware). The price is a larger proof and a slower verifier.
 \end{abstract}
@@ -154,7 +157,7 @@ catching a wrong value, anywhere in the network, rises from $1/N$ to $1-2^{-\lam
   \item \textbf{A same-model evaluation} against the original paper and 17 other
   systems: 6 trained image classifiers and 7 LLM architectures up to 13B parameters.
   Every attack was rejected, and the prover is one to four orders of magnitude faster
-  than the zkSNARKs as reported on their own hardware (11--49$\times$ against zkLLM on a
+  than the zkSNARKs as reported on their own hardware (17--47$\times$ against zkLLM on a
   stronger GPU). All code and raw measurements are released with this report.
 \end{itemize}
 
@@ -413,7 +416,7 @@ Everything is written in Python and PyTorch; the prover runs on a GPU and the ve
 on a CPU. Field arithmetic uses exact limb decomposition, Reed--Solomon encoding an NTT,
 and Merkle trees SHA-256 with multiproofs. As a baseline, the original protocol is
 re-implemented on the same integer graphs, with exact visit probabilities computed by
-dynamic programming. The code has 180 tests.
+dynamic programming. The code has 234 tests.
 
 % =====================================================================================
 \section{Results}
@@ -428,19 +431,22 @@ substitute $\tilde M$. The MNIST MLP (784--512--256--10) is the network of our
 attack experiments. We trained all of them ourselves and quantised them to int8. The
 int8 accuracy is within 0.4 points of the float model for every model. For language models we use the exact shapes of GPT-2, OPT-125M/1.3B/6.7B,
 Llama-2-7B/13B and Qwen3-4B with random int8 weights, since the costs depend only on the
-shapes. Models with more than 12 blocks are built with 1 and 2 blocks and extrapolated
-linearly (all blocks are identical).
+shapes. Every decoder is built in full except Llama-2-13B, whose int8 weights exceed
+our 11\,GB GPU; it is extrapolated linearly from 1- and 2-block builds. On the full
+builds, the rule gave the proof size within 0.02\% and the prover within 12\%, but the
+C verifier at short prompts up to 48\% too low. Streaming the claims to the host lets
+the 7B models fit at 2{,}048 tokens (claims of 10--11\,GB; Llama-2-7B peaks at
+7.3\,GiB).
 
-\para{Hardware and baselines.} The prover is one NVIDIA RTX 2080~Ti. The verifier is 8
-threads of an Intel Xeon Silver 4114 on the university's SLURM cluster; times are
+\para{Hardware and baselines.} The prover is one NVIDIA \ProverGPU. The verifier is
+\VerifierThreads{} threads of an \VerifierCPU{} on the university's SLURM cluster; times are
 medians over the queries of a run. We compare with
 (i)~the original protocol run on the same graphs and machine, and (ii)~the published
 results of 17 systems, taken as reported with their own hardware and each checked
-against the source paper. Every benchmark run is stored as raw records (59{,}547 in
-total), from which Tables~\ref{tab:cnn}--\ref{tab:ratios} and
-Figures~\ref{fig:security}--\ref{fig:llm} are generated; the MNIST experiments of
-Section~\ref{sec:break} store theirs in \texttt{code/artifacts/results}, together with
-the trained models.
+against the source paper. The benchmark is stored as raw records (78{,}266), from which
+Tables~\ref{tab:cnn}--\ref{tab:ratios} and Figures~\ref{fig:security}--\ref{fig:llm} are
+generated; the MNIST experiments of Section~\ref{sec:break} store theirs in
+\texttt{code/artifacts/results}, with the trained models.
 
 \subsection{Breaking the original protocol}
 \label{sec:break}
@@ -554,15 +560,16 @@ and trace ($\approx$13.7\,GB with the fp16 weights of~\cite{anchuri2026verifiabl
 
 \subsection{Our defence catches every attack}
 \label{sec:security}
-Across every model, mode and security level, our verifier accepted all 3{,}174 honest
+Across every model, mode and security level, our verifier accepted all 5{,}547 honest
 queries. It rejected all 1{,}854 attacks on the image models, all run at the weakest
 setting ($\lambda{=}40$, committed weights). These were: one changed value, one changed
 penultimate neuron (red bars in Figure~\ref{fig:security-detect}), one changed logit, 1\% of the weights perturbed, the substitute
 model $\tilde M$, and two forgeries built so that only one specific check can stop them.
-It also rejected all 174 attacks on the language models, from GPT-2 to Llama-2-13B,
-each a single pre-activation changed by $+1$ in a middle layer, in every mode. (Models
-above 12 blocks were attacked on their 1- and 2-block builds.) The check that fired was Freivalds'
-check in 1{,}916 cases. The Reed--Solomon column check caught all 56 forged $u_\ell$
+It also rejected all 602 attacks on the language models: a $+1$ on one middle-layer
+pre-activation in every run (137; Llama-2-13B only on its 1- and 2-block builds) and, on
+the full OPT-1.3B, Qwen3-4B, OPT-6.7B and Llama-2-7B at the image models' setting, 150
+each of one changed value, penultimate neuron and logit, and 15 blocks with 1\% of the
+weights perturbed. Freivalds' check fired in 2{,}344 cases. The Reed--Solomon column check caught all 56 forged $u_\ell$
 vectors, and the Merkle check all 56 forged columns, so every part of the protocol is
 needed and works.
 
@@ -578,10 +585,9 @@ $\lambda{=}40$ (67\,kB--10.7\,MB) and 150--153 bits at $\lambda{=}128$
 \label{sec:cost}
 
 
-\para{Image models.} Table~\ref{tab:cnn} gives the int8 accuracy of each model and our cost with
-committed weights (C) and with known weights and a precomputed challenge (Kpre). With
-committed weights our prover needs
-11--105\,ms per query, the verifier 21--370\,ms, and the proof is 131\,kB--12.1\,MB.
+\para{Image models.} Table~\ref{tab:cnn} gives the int8 accuracy of each model and our
+cost in settings C and Kpre. With committed weights our prover needs
+8--96\,ms per query, the verifier 15--375\,ms, and the proof is 131\,kB--12.1\,MB.
 That is 4--8$\times$ the known-weights prover, which only runs the integer forward
 pass. For the VGGs and the CIFAR ResNet
 the proof is 2.4--4.4$\times$ smaller than the int8 model. For the 224-pixel ResNet it
@@ -590,17 +596,16 @@ large image are big.
 
 
 \para{Language models.} Table~\ref{tab:llm} shows the same picture at LLM scale, for the
-next-token logits of one prompt (models above 12 blocks are extrapolated from 1- and
-2-block builds). GPT-2
-with a 64-token prompt is proved in 0.44\,s and verified in 0.99\,s with a 62\,MB proof.
-Llama-2-7B takes 11.5\,s and 7.2\,s with a 762\,MB proof, about 9$\times$ smaller than
-its int8 weights. At 2{,}048 tokens Llama-2-7B takes 32\,s to prove, but the proof
+next-token logits of one prompt. GPT-2
+with a 64-token prompt is proved in 0.43\,s and verified in 0.92\,s with a 62\,MB proof.
+Llama-2-7B takes 7.9\,s and 7.3\,s with a 762\,MB proof, about 9$\times$ smaller than
+its int8 weights. At 2{,}048 tokens Llama-2-7B takes 36\,s to prove, but the proof
 grows to 11.6\,GB and verification to 3.7 minutes, since the verifier recomputes
-attention over all token pairs. With known weights (Kpre) the proof shrinks to the
-claims alone, for example 21.8\,MB for GPT-2 and 349\,MB for Llama-2-7B at 64 tokens.
-The committed-weights prover takes 1.2--1.9$\times$ the known-weights one at 2{,}048
-tokens and 10--30$\times$ for billion-parameter models at 64 tokens or fewer, where
-opening the weights dominates.
+attention over all token pairs. With known weights (Kpre) the proof is only the
+claims, for example 21.8\,MB for GPT-2 and 349\,MB for Llama-2-7B at 64 tokens.
+The committed-weights prover takes 1.2--2.1$\times$ the known-weights one at 2{,}048
+tokens and 10--15$\times$ for billion-parameter models built in full at 64 tokens or
+fewer, where opening the weights dominates.
 
 \begin{figure*}[t]
   \centering
@@ -628,27 +633,27 @@ opening the weights dominates.
 
 
 
-\para{Against zkSNARKs.} Figure~\ref{fig:cost} places all systems on one chart: our runs
-in colour (hollow squares are 2{,}048-token prompts) and the published systems in grey,
-as reported on their own hardware. The orange cross is one path
+\para{Against zkSNARKs.} Figure~\ref{fig:cost} shows our full-depth runs in colour
+(hollow squares: 2{,}048-token prompts) and the published systems in grey, as reported
+on their own hardware. The orange cross is one path
 of~\cite{anchuri2026verifiable}: cheap, but it catches a single-neuron attack only with
-probability $1/11{,}008$. Table~\ref{tab:ratios} gives exact ratios on matched models.
-In parentheses is the prompt length of our run, which equals theirs except for zkGPT
-(not stated) and ZKTorch (1 token). Our prover is 27--7{,}024$\times$
-faster than the CNN provers (zkCNN, Bionetta, ZKML), and 11--277$\times$ faster on
-language models (zkLLM, zkGPT, DeepProve, ZKTorch). All of these except zkLLM ran on
-CPUs, so part of their gap comes from our GPU. zkLLM, however, ran on an A100, a
-stronger GPU than ours, and our prover is still 11--49$\times$ faster at the same
+probability $1/11{,}008$. Table~\ref{tab:ratios} gives exact ratios on matched models;
+our prompt length (in parentheses) equals theirs except for zkGPT
+(not stated) and ZKTorch (1 token). Our prover is 28--7{,}922$\times$
+faster than the CNN provers (zkCNN, Bionetta, ZKML), and 17--391$\times$ faster on
+language models (zkLLM, zkGPT, DeepProve, ZKTorch). All but zkLLM ran on
+CPUs, so part of the gap is our GPU; zkLLM ran on an A100, a
+stronger GPU, and our prover is still 17--47$\times$ faster at the same
 2{,}048-token prompts (Figure~\ref{fig:llm}). Against DeepProve on GPT-2 the gap
-grows with the prompt length, from 78$\times$ at 64 tokens to 277$\times$ at 512. The price is on the other side. Our
-verifier is usually slower: 1.8--5$\times$ slower than the sum-check verifiers on small
-models, 20$\times$ slower than ZKML, and 65--141$\times$ slower than zkLLM at 2{,}048
-tokens. It is faster than DeepProve up to 256 tokens and faster than ZKTorch. Our proofs
-are also larger: about the same size as EZKL's on LeNet-5, 1.8$\times$ zkCNN's, and up to
+grows from 80$\times$ at 64 tokens to 391$\times$ at 512. The
+price is a verifier that is usually slower: 1.7--5$\times$ slower than the sum-check
+verifiers on small models, 21$\times$ than ZKML and 71--126$\times$ than
+zkLLM at 2{,}048 tokens, though faster than DeepProve up to 256 tokens and than
+ZKTorch. Our proofs are also larger: about the same size as EZKL's on LeNet-5, 1.8$\times$ zkCNN's, and up to
 64{,}000$\times$ zkLLM's 141--183\,kB proofs at 2{,}048 tokens.
 
 \begin{table}[t]
-  \caption{Language models: one prompt at $\lambda{=}128$.}
+  \caption{Language models: cost of one prompt at $\lambda{=}128$\LLMNote.}
   \label{tab:llm}
   \footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -684,11 +689,10 @@ are also larger: about the same size as EZKL's on LeNet-5, 1.8$\times$ zkCNN's, 
 \end{table}
 
 \para{Against Maverick.} When the client knows the weights, our proof for Qwen3-4B with
-an 8-token prompt is exactly the size of Maverick's (36.1\,MB)~\cite{maverick}. Here we
-use Maverick's setting: $\lambda{=}40$ and one client thread.
-Maverick's optimised client verifies it 16$\times$ faster than our Python verifier
-(87\,ms vs.\ 1.37\,s on one thread), which shows how much an optimised implementation
-can gain, and its prover is 1.4$\times$ faster than ours.
+an 8-token prompt is exactly the size of Maverick's (36.1\,MB)~\cite{maverick}. In
+Maverick's setting ($\lambda{=}40$, one client thread), its optimised client verifies it
+19$\times$ faster than our Python verifier (87\,ms vs.\ 1.62\,s), and its prover is
+1.4$\times$ faster than ours.
 
 % =====================================================================================
 \section{Discussion}
@@ -712,7 +716,7 @@ models, and gigabytes for 7B models at long prompts, where zkLLM's proofs stay b
 grows with the square of the prompt length. (iii)~The check is exact, so the provider
 must serve the integer model. For our CNNs this changed accuracy by at most 0.4 points,
 but we did not measure the quality of int8 LLMs: their costs were measured with random
-weights and extrapolated beyond 12 blocks. (iv)~Like the original protocol, we assume
+weights, and Llama-2-13B's were extrapolated (its C verifier time is likely too low). (iv)~Like the original protocol, we assume
 that the weight commitment is honest. (v)~The protocol is not zero-knowledge: the opened
 columns reveal a few random linear combinations of each weight row. (vi)~Our prototype
 is Python, not optimised native code.
@@ -733,7 +737,7 @@ along one random path. We showed that a single tampered neuron defeats it, with
 analysed do not help. We then built a defence that checks every layer at once with
 Freivalds' algorithm against a Reed--Solomon/Merkle commitment to the weights. It
 catches any wrong value with probability $1-2^{-\lambda}$. It rejected every one of
-2{,}028 attacks on models from LeNet-5 to Llama-2-13B, and its prover is one to four
+2{,}456 attacks on models from LeNet-5 to Llama-2-13B, and its prover is one to four
 orders of magnitude faster than zkSNARK provers on the same models (as reported on their
 own hardware). The main takeaway is that
 checking \emph{everything}, cheaply and algebraically, beats checking a few things

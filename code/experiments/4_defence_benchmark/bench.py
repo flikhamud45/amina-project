@@ -1,6 +1,6 @@
 """The benchmark of the report (Sec. 4.3-4.4): our defence and Anchuri et al.'s path
 test, on the models the literature benchmarks.  Every measurement is appended, one JSON
-object per line, to ``artifacts/comparison/raw/<suite>/<model>/<cell>.jsonl``;
+object per line, to ``artifacts/comparison/raw_<platform>/<suite>/<model>/<cell>.jsonl``;
 nothing is aggregated here, so figures can be re-made later without re-running.
 
     python experiments/4_defence_benchmark/bench.py cnn --model vgg16
@@ -68,13 +68,14 @@ MODELS = ROOT / "artifacts" / "fullcheck" / "models"
 LAMBDAS = (40, 80, 128)
 TAG = ""  # appended to every cell name (``--tag``), so variant runs never collide
 VDEV = "cpu"   # --verifier-device: where the client's checks run (the report: the CPU)
-PLATFORM = ""  # ``--platform``: "" is the report's RTX 2080 Ti root ``raw/``
+PLATFORM = ""  # ``--platform``: "" is the earlier RTX 2080 Ti run's root ``raw/`` (frozen)
 
 
 def raw_root(platform: str) -> Path:
-    """``raw/`` holds the records of the report's RTX 2080 Ti runs and is never written by
-    another machine; every other prover/verifier pair writes its own ``raw_<platform>/``,
-    so records of different hardware can never share a cell (or a median)."""
+    """``raw/`` holds the records of the earlier RTX 2080 Ti run (as submitted; frozen), and
+    ``raw_rtx2080ti-v2/`` those of the report's numbers (frozen too); every other prover/verifier
+    pair writes its own ``raw_<platform>/``, so records of different hardware can never share a
+    cell (or a median)."""
     p = "" if platform in ("", "rtx2080ti") else platform
     return BASE / (f"raw_{p}" if p else "raw")
 
@@ -104,7 +105,7 @@ def claim_platform(env: dict) -> None:
             tmp.unlink()
     have = json.loads(lock.read_text())
     if have.get("frozen"):
-        raise SystemExit(f"{RAW} is frozen (the records the report was written from). Pass --platform "
+        raise SystemExit(f"{RAW} is frozen (stored records that must not change). Pass --platform "
                          f"<name> (or export PVI_PLATFORM) to write a separate raw_<name>/ root.")
     if {k: have.get(k) for k in want} != want:
         raise SystemExit(f"{RAW} belongs to {have.get('gpu')} + {have.get('cpu')}; this job runs on "
@@ -880,7 +881,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--tf32", action="store_true",
                     help="TF32 tensor cores for the float32 GEMMs (exact: operands <= 255; needs a _tf32 tag)")
     ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
-                    help="hardware name, e.g. h100: records go to raw_<platform>/ ('' = raw/, the RTX 2080 Ti)")
+                    help="hardware name, e.g. h100: records go to raw_<platform>/ ('' = raw/, the earlier "
+                         "RTX 2080 Ti run, frozen)")
     return ap
 
 

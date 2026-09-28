@@ -11,9 +11,11 @@ project folder as ours, so nothing has to be copied or installed.
   priority, experiments that need coordination).
 * Parts F–G: rules, and what the team does with the results.
 
-Everything here uses branch **`strong-gpu`**: the submitted paper (branch `submission`, commit
+Parts B–F (the runs) use branch **`strong-gpu`**: the submitted paper (branch `submission`, commit
 `336a03c`) plus a tested patch that adds what these runs need. Do not run from `submission`,
-`main` or `comparison`. The setup of C.2 and the smoke test of C.4 have been run exactly as
+`main` or `comparison`. Part G (the team's checks) uses branch `paper-v2`: the same benchmark
+code, plus the committed `rtx2080ti-v2` records (B.2), the paper written from them, and newer
+report scripts and documentation. The setup of C.2 and the smoke test of C.4 have been run exactly as
 written on the team's RTX 2080 Ti (job 943658: 243 GPU tests passed, none skipped; 139
 fingerprints against the stored records, 0 problems; `SMOKE OK`). On the H100 the smoke test
 must pass again, because exactness is checked per GPU type.
@@ -29,18 +31,21 @@ The cluster's login shell is tcsh. Type `bash` first; every command below is bas
 ## A. What the weak GPU compromised
 
 All benchmark numbers in the paper come from **one RTX 2080 Ti (11 GB)** on the `studentbatch`
-partition as prover, and **8 threads of a Xeon Silver 4114** as verifier. That forced the
-following, in order of how much it matters.
+partition as prover, and **8 threads of a Xeon Silver 4114** as verifier. Since B.2 they are the
+re-run of the fixed code on that hardware (platform `rtx2080ti-v2`): every decoder at full depth
+except Llama-2-13B, with the full-model attacks. The table lists what the weak GPU and the first
+run (`raw/`) compromised, in order of how much it matters, and what is left for the H100: mainly
+Llama-2-13B at full depth, the rest of zkLLM's model list, and same-class GPU comparisons.
 
 | # | Compromise | Where it shows in the paper | Fixed by |
 |---|---|---|---|
-| 1 | **No LLM above 12 blocks was ever built in full.** OPT-1.3B, OPT-6.7B, Llama-2-7B, Llama-2-13B and Qwen3-4B were measured as 1- and 2-block builds and extrapolated linearly (`bench.py`: `full = cfg.n_layers <= 12`; `aggregate.py`: `full = m1 + (L-1)(m2-m1)`). Llama-2-13B's int8 weights alone (12.1 GiB) exceed the card, and Llama-2-7B at 2,048 tokens needs about 90 GiB without the new lean path. | Table 3 (all rows but GPT-2 and OPT-125M), Figure 4 (LLM points), Figure 5, Table 4 (LLM ratios), §4.4 text, Limitations (iii) | C.5 `must` (c) |
-| 2 | **Few queries per cell on the big models**: 2 (OPT-6.7B), 3 (OPT-1.3B, Llama-2-13B), 5 (Llama-2-7B, Qwen3-4B), and only 2 for Llama-2-7B at 2,048 tokens (λ = 128 only). The per-block deltas behind the extrapolation are partly noise. | same as 1 | C.5 `must` (c): 5–10 queries at full depth |
-| 3 | **The zkLLM comparison is across GPU classes**: zkLLM ran on an A100 40GB, we on a 2080 Ti ("11–49× faster on a stronger GPU than ours"). This cluster has no A100, so the fair fix is to run zkLLM itself on the same H100 as ours. | Figure 5, Table 4, Contributions, §4.4 | C.5 `must` on the H100; D.1 zkLLM on the same H100 |
+| 1 | **Llama-2-13B is not built in full.** In the first run (`raw/`) no LLM above 12 blocks was: OPT-1.3B, OPT-6.7B, Llama-2-7B, Llama-2-13B and Qwen3-4B were measured as 1- and 2-block builds and extrapolated linearly (`aggregate.py`: `full = m1 + (L-1)(m2-m1)`). In the paper's `rtx2080ti-v2` run (B.2) all of them are measured at full depth except Llama-2-13B, whose int8 weights alone (12.1 GiB) exceed the card; it stays extrapolated from 1- and 2-block builds. On the models built in full, the extrapolation gives the proof size within 0.02% (Kpre exactly) and the prover within 12%, but underestimates the C verifier at ≤ 64 tokens by up to 48%, so Llama-2-13B's C verifier time is likely too low. | Table 3 (the starred Llama-2-13B row), §4.1, Limitations (iii); Llama-2-13B is missing from Figure 4 | C.5 `must` (c): `f-llama13-64` |
+| 2 | **Few queries per cell on the big models** in `raw/`: 2 (OPT-6.7B), 3 (OPT-1.3B, Llama-2-13B), 5 (Llama-2-7B, Qwen3-4B), and only 2 for Llama-2-7B at 2,048 tokens. Fixed in `rtx2080ti-v2`: 10 queries at ≤ 64 tokens and 5 at 2,048 on every full build. | — | done (B.2) |
+| 3 | **The zkLLM comparison is across GPU classes**: zkLLM ran on an A100 40GB, we on a 2080 Ti (the Contributions: "17–47× against zkLLM on a stronger GPU"). This cluster has no A100, so the fair fix is to run zkLLM itself on the same H100 as ours. | Figure 5, Table 4, Contributions, §4.4 | C.5 `must` on the H100; D.1 zkLLM on the same H100 |
 | 4 | **zkLLM's 2,048-token model list is incomplete**: we have OPT-125M, OPT-1.3B, OPT-6.7B and Llama-2-7B, but not Llama-2-13B at 2,048 tokens, OPT-350M, OPT-2.7B or OPT-13B. | Figure 5, Table 4 | C.5 `should` (f) |
-| 5 | **A performance bug in committed-weights mode (C)**, found while preparing this plan, that only shows on a GPU. `MatOp._weights_on` caches the GPU copy of the weights under `str(device)`. The forward pass asks for `"cuda:0"` and fold/open ask for `"cuda"`, so every C query uploaded the whole model to the GPU twice. Our C prover times are therefore **too slow**, e.g. for Llama-2-7B at 64 tokens about 2.5 s of the reported 11.5 s. The patch fixes it, and control jobs measure the effect. | Table 2/3 C prover column, Figures 4–5, Table 4 prover ratios, §4.4 | C.5 `must` (d); B.2 for our own 2080 Ti numbers |
-| 6 | **The LLM attacks** were one +1 tamper per cell, and on 1–2-block builds for the big models. | §4.3 counts (174 LLM attacks) | C.5 `must` (c): 30 attacks per full model |
-| 7 | **GPU memory and one-time costs** (commitment time, peak memory) were not reported for the LLMs. | a new sentence or column in §4.4 | recorded by every new run |
+| 5 | **A performance bug in committed-weights mode (C)**, found while preparing this plan, that only shows on a GPU. `MatOp._weights_on` caches the GPU copy of the weights under `str(device)`. The forward pass asks for `"cuda:0"` and fold/open ask for `"cuda"`, so every C query uploaded the whole model to the GPU twice, and the C prover times of `raw/` are **too slow**. The patch fixes it, and the paper's numbers are now the fixed code's (`rtx2080ti-v2`, B.2). Its `_nofix` controls measure the effect on the same GPU: Llama-2-7B at 64 tokens 11.05 s with the bug against 7.86 s fixed, GPT-2 1.15×, OPT-1.3B at 2,048 tokens 1.16×, within noise for the small CNNs. | fixed in the paper (B.2) | done (B.2); C.5 `must` (d) repeats the controls on the H100 |
+| 6 | **The LLM attacks** in `raw/` were one +1 tamper per cell, and on 1–2-block builds for the big models. In `rtx2080ti-v2` the full OPT-1.3B, Qwen3-4B, OPT-6.7B and Llama-2-7B are also attacked (30 each of `single_value`, `output_logit`, `last_hidden` and 3 `substituted_block_1pct` per model and prompt length ≤ 64): 602 LLM attacks, all rejected. Llama-2-13B still has only its +1 tampers, on the 1–2-block builds. | §4.3 counts | done (B.2) except Llama-2-13B: C.5 `must` (c) |
+| 7 | **GPU memory and one-time costs** (commitment time, peak memory) were not reported for the LLMs. `rtx2080ti-v2` records them (§4.1 quotes the 7.3 GiB peak of Llama-2-7B at 2,048 tokens). | §4.1 (Llama-2-7B's peak GPU memory); the commitment times are still unreported | recorded by every new run |
 | 8 | **The verifier ran only on a CPU**, while zkLLM's verifier ran on its A100. | Figure 5, Table 4 verifier ratios, Future work (2) | C.5 `should` (g): GPU verifier |
 | 9 | **Nothing beyond 13B**, no batching, no 4,096-token context. | Future work | C.5 `nice` |
 | 10 | **Real LLM weights were never used**: costs were measured with random int8 weights of the exact shapes (costs depend only on shapes), so the quality of the int8 LLMs is unknown, and the attack was never shown on a real LLM. | Limitations (iii), §4.2 | D.2, D.3 (need new code) |
@@ -53,14 +58,15 @@ numbers on the LLMs.
 
 ## B. Team: before the runs
 
-### B.1 Put the branch on the server
+### B.1 Put the branches on the server
 
-`strong-gpu` must exist in the shared repository at `$P`. From a checkout that has the branch
-(the server's object directories are not all group-writable, so the push must keep its pack):
+`strong-gpu` (for the runs) and `paper-v2` (for the team's checks in Part G) must exist in the
+shared repository at `$P`. From a checkout that has both branches (the server's object
+directories are not all group-writable, so the push must keep its pack):
 
 ```bash
 git push --receive-pack="git -c safe.directory='*' -c receive.unpackLimit=1 receive-pack" \
-    ssh://<user>@c-008.cs.tau.ac.il$P strong-gpu:refs/heads/strong-gpu
+    ssh://<user>@c-008.cs.tau.ac.il$P strong-gpu:refs/heads/strong-gpu paper-v2:refs/heads/paper-v2
 ```
 
 Nothing else has to be prepared. The trained CNN weights (`$P/code/artifacts/fullcheck/models`,
@@ -70,23 +76,41 @@ Nothing else has to be prepared. The trained CNN weights (`$P/code/artifacts/ful
 all already there. **They must not be retrained or rebuilt**: new CNN weights would make every
 CNN number incomparable with the paper.
 
-### B.2 Recommended: re-measure our own RTX 2080 Ti numbers with the fixed code
+### B.2 Done: our own RTX 2080 Ti numbers, re-measured with the fixed code
 
-Compromise 5 (the weight re-upload) sits in every stored C-mode number. With the fixed code and
-the lean path, every model except Llama-2-13B also fits the 2080 Ti at full depth, so the team can
-re-measure the report's own hardware with the same jobs, from its own clone (set up as in C.2,
-with `W=$P/logs/strong_gpu_2080`). Use the platform name `rtx2080ti-v2`, because `rtx2080ti`
+**Status: done. `rtx2080ti-v2` is now the paper's platform.** Its records
+(`code/artifacts/comparison/raw_rtx2080ti-v2/`, 78,266 records from 29 jobs, all at commit
+`9401431` with a clean tree) and tables (`tables_rtx2080ti-v2/`) are committed (commit `a0d0b3b`,
+branch `paper-v2`), and every benchmark number, table, figure and count of the paper is rebuilt
+from them (`aggregate.py`, `count_outcomes.py` and `paper_assets.py` with `--platform
+rtx2080ti-v2`). The frozen `raw/` stays as the earlier run with the older code (59,547 records;
+still reproducible with `--platform rtx2080ti`), described in the READMEs but not used for the
+paper's numbers.
+
+Compromise 5 (the weight re-upload) sat in every C-mode number of `raw/`. With the fixed code and
+the lean path, every model except Llama-2-13B also fits the 2080 Ti at full depth, so the team
+re-measured the report's own hardware with the same jobs, from its own clone (set up as in C.2,
+with `W=$P/logs/strong_gpu_2080`), under the platform name `rtx2080ti-v2`, because `rtx2080ti`
 means the frozen stored records:
+
+Already run; do not run it again: new records in `raw_rtx2080ti-v2/` would change the paper's
+counts (on `paper-v2` its `PLATFORM.json` is marked `"frozen": true`, so `bench.py` refuses):
 
 ```bash
 export PVI_PLATFORM=rtx2080ti-v2 SBATCH_PARTITION=studentbatch SBATCH_GRES=gpu:geforce_rtx_2080:1
 bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must      # the smoke test already passed on this GPU type (job 943658)
 ```
 
-On the 2080 Ti the jobs whose builds do not fit (Llama-2-13B in full, `ab-opt13`) skip those
-builds with a `SKIP` line and end with an error; the rest of each job is still recorded. This
-takes about 9.5 GPU-hours on `studentbatch`. It gives corrected 2080 Ti numbers, measures the
-extrapolation error on the report's hardware, and makes an honest cross-GPU comparison possible.
+On the 2080 Ti the full Llama-2-13B build does not fit: `f-llama13-64` skipped it with a `SKIP`
+line and ended with an error after recording its 1- and 2-block builds. The non-lean control
+`ab-opt13` (about 27 GiB of GPU memory) does not fit either and was not run:
+`raw_rtx2080ti-v2/` holds 29 jobs (SLURM ids 945088–945116) and no `_nolean` OPT-1.3B cell.
+`bench.py`'s `SKIP` test only looks at the int8 weights, so on an 11 GB card `ab-opt13` would
+stop with a CUDA out-of-memory error. This takes about 9.5 GPU-hours on `studentbatch`. It gave
+corrected 2080 Ti numbers, measured the extrapolation error on the report's hardware (proof
+size within 0.02%, prover within 12%, but the C verifier at ≤ 64 tokens up to 48% too low), and
+makes an honest cross-GPU comparison possible: use it, not `rtx2080ti`, as the 2080 Ti in any
+comparison with the H100 (Part G).
 
 ---
 
@@ -148,7 +172,9 @@ export SBATCH_PARTITION=gpu-h100-killable SBATCH_GRES=gpu:h100:1
 ```
 
 New records go to `$W/code/artifacts/comparison/raw_h100/`, and logs to `$W/logs/h100/`. The
-paper's records in `code/artifacts/comparison/raw/` are frozen: the code refuses to write there.
+earlier run's records in `code/artifacts/comparison/raw/` are frozen: the code refuses to write
+there. The paper's records are `raw_rtx2080ti-v2/` (B.2); never use `PVI_PLATFORM=rtx2080ti-v2`
+(or `rtx2080ti`) for new runs.
 
 This cluster does not pin a job to its CPU cores. Each job header prints something like
 `verifier threads 8 on 40 CPUs / 20 physical cores`: the verifier runs 8 threads, but may
@@ -291,8 +317,10 @@ We read the results from your clone.
 
 ## F. Rules and pitfalls
 
-* **Never write into `code/artifacts/comparison/raw/`**, never delete or move it, and always set
-  `PVI_PLATFORM`. It holds the paper's records; the code refuses to write there.
+* **Never write into `code/artifacts/comparison/raw/` or `raw_rtx2080ti-v2/`**, never delete or
+  move them, and always set `PVI_PLATFORM` to a new name. `raw_rtx2080ti-v2/` holds the paper's
+  records and `raw/` the earlier run. `raw/` is marked frozen, and on `paper-v2` so is
+  `raw_rtx2080ti-v2/`: the code refuses to write into a frozen root.
 * **Never retrain the CNNs** (`train.py`, `train.sbatch`) and never rebuild the ImageNet caches.
 * **Run from your clean clone of `strong-gpu`** (`git status` empty apart from `raw_<platform>/`,
   `logs/` and `env/`). Every record stores the commit and whether the tree was dirty.
@@ -313,30 +341,46 @@ We read the results from your clone.
 
 ## G. Team: after each tier
 
-In a clean clone of `strong-gpu` of your own, with the friend's platform root copied in (read-only
-from `$P/logs/strong_gpu`), CPU only, a few minutes:
+In a clean clone of your own of `paper-v2` (the benchmark code of `strong-gpu`, plus the
+committed `rtx2080ti-v2` records, the paper written from them and newer report scripts), with
+the friend's platform root copied in (read-only from `$P/logs/strong_gpu`), CPU only, a few
+minutes. On the cluster, clone it from `$P` after B.1's push (as in C.2, with `-b paper-v2` and
+a directory of your own); on your own machine, copy `raw_h100/` over with `scp -r` instead of
+the `cp` below:
 
 ```bash
 cp -r $P/logs/strong_gpu/code/artifacts/comparison/raw_h100 code/artifacts/comparison/
 cd code && export PYTHONPATH=$PWD/src
 python experiments/5_comparison/fingerprint_check.py artifacts/comparison/raw artifacts/comparison/raw_h100   # 0 problems
+python experiments/5_comparison/fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2 artifacts/comparison/raw_h100   # 0 problems (full builds too)
 python experiments/5_comparison/aggregate.py --platform rtx2080ti && git diff --exit-code artifacts/comparison/tables   # stored tables unchanged
+python experiments/5_comparison/aggregate.py --platform rtx2080ti-v2 && git diff --exit-code artifacts/comparison/tables_rtx2080ti-v2   # the paper's tables unchanged
 python experiments/5_comparison/aggregate.py --platform h100
 python experiments/5_comparison/validate_extrapolation.py --platform h100     # the full builds against the 1-2 block line
-python experiments/5_comparison/xplat_check.py rtx2080ti h100
+python experiments/5_comparison/xplat_check.py rtx2080ti-v2 h100
 python experiments/5_comparison/count_outcomes.py --platform h100
 python experiments/5_comparison/paper_assets.py --platform h100 --check      # 0 missing
-python experiments/5_comparison/paper_assets.py --platform h100 --compare rtx2080ti-v2   # or rtx2080ti (as submitted)
+python experiments/5_comparison/paper_assets.py --platform h100 --compare rtx2080ti-v2   # the paper's 2080 Ti (rtx2080ti only to show the earlier run)
 python experiments/5_comparison/text_numbers.py --platform h100              # every hand-typed number, recomputed
 python -m pytest tests -q
 ```
 
-Then decide the headline hardware. Either the tables and figures move to the H100 (with the 2080 Ti
-shown next to it in Figure 5), or they stay on the 2080 Ti with the corrected `rtx2080ti-v2`
-numbers of B.2, and the H100 provides the full-depth rows and the zkLLM comparison. Update the
-hand-typed sentences that `text_numbers.py` lists: the hardware in §4.1; "extrapolated" in §4.1
-and Limitations (iii); the zkLLM sentences in the Contributions and §4.4; the ranges in §4.4;
-the counts in the abstract, §4.3 and the conclusion; the captions of Tables 2–4 and Figures 4–5.
-In `main.tex`, `\input{tables/hardware.tex}` provides `\ProverGPU`, `\VerifierCPU` and `\LLMNote`
-for these. Rebuild the PDF, keep it at 8 pages, commit `raw_h100/` with the report on `strong-gpu`,
-and merge into `submission` only when all of this passes.
+`paper_assets.py` writes into `report/`, so if the headline stays on the 2080 Ti, restore the
+paper's own assets afterwards with `git checkout -- ../report/figures ../report/tables`
+(re-running `paper_assets.py` with another matplotlib than the pinned 3.11.2 changes the figure
+PDFs and can change the page count).
+
+Then decide the headline hardware. The paper now stands on `rtx2080ti-v2` (B.2). Either the tables
+and figures move to the H100 (with the `rtx2080ti-v2` 2080 Ti shown next to it in Figure 5), or
+they stay on `rtx2080ti-v2`, and the H100 adds what the 11 GB card could not: Llama-2-13B at full
+depth, the rest of zkLLM's 2,048-token list, and same-class GPU comparisons (zkLLM on the same
+H100, D.1). Update the hand-typed sentences. `text_numbers.py --platform h100` lists the
+extrapolation check and the peak memory in §4.1, the zkLLM ranges in the Contributions and §4.4,
+and the other ranges of §4.3–4.4. It does not list: the 11 GB GPU and the extrapolated
+Llama-2-13B in §4.1 and Limitations (iii); the counts in the abstract, §4.1 (the record total),
+§4.3 and the conclusion, which come from `count_outcomes.py --platform h100`; the captions of
+Tables 2–4 and Figures 4–5. `main.tex` already inputs `tables/hardware.tex`, which provides
+`\ProverGPU`, `\VerifierCPU` and `\VerifierThreads` (used in §4.1) and `\LLMNote` (Table 3's
+caption). Rebuild the figures with the pinned matplotlib (3.11.2, `code/requirements.txt`) and
+the PDF, keep it at 8 pages, commit `raw_h100/` with the report on `paper-v2`, and merge into
+`submission` only when all of this passes.

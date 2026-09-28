@@ -7,5 +7,7 @@
  "cuda": "12.1",
  "gpu_total_memory": 11347623936,
  "driver": "575.64.03",
- "created": 1790575743.2691758
+ "created": 1790575743.2691758,
+ "note": "TAU SLURM studentbatch; the records of the report's numbers: 29 jobs of strong_gpu.sh must (SLURM 945088-945116) at commit 9401431; ab-opt13 was not run. Frozen: no new records.",
+ "frozen": true
 }

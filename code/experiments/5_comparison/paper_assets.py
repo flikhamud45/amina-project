@@ -1,15 +1,19 @@
-"""Every figure and table body of the report, built from ``artifacts/comparison/tables``.
+"""Every figure and table body of the report, built from one platform's stored benchmark tables.
 
-    python experiments/5_comparison/paper_assets.py   # -> ../report/figures/*.pdf, ../report/tables/*.tex
-    python experiments/5_comparison/paper_assets.py --platform h100 --compare rtx2080ti
+    python experiments/5_comparison/paper_assets.py --platform rtx2080ti-v2   # the report's numbers
+        # -> ../report/figures/*.pdf, ../report/tables/*.tex (from tables_rtx2080ti-v2/)
+    python experiments/5_comparison/paper_assets.py --platform h100 --compare rtx2080ti-v2
         # headline numbers from tables_h100/; Figure 5 also shows the RTX 2080 Ti
     python experiments/5_comparison/paper_assets.py --platform h100 --check   # only list missing cells
 
 Nothing here runs a model; every number is read from the stored benchmark tables,
-so the report can be rebuilt without a GPU.  The report's own platform (``tables/``, the
-RTX 2080 Ti) is rebuilt exactly as submitted: no extrapolation markers or hatching, and
-no rows beyond the submitted ones.  Any other platform marks extrapolated rows and bars,
-and its Figure 4 and text ranges use measured (full-depth) rows only.  Figures 1 and 2
+so the report can be rebuilt without a GPU.  The report's numbers are platform
+``rtx2080ti-v2`` (``tables_rtx2080ti-v2/``).  The earlier run (``tables/``, platform
+``rtx2080ti``: the default when neither ``--platform`` nor ``$PVI_PLATFORM`` is set) is
+rebuilt exactly as submitted: no extrapolation markers or hatching, and no rows beyond the
+submitted ones.  Any other platform marks extrapolated rows and bars, and its Figure 4 and
+text ranges use measured (full-depth) rows only.  Build the committed figures with the
+pinned matplotlib (``requirements.txt``): other versions change their sizes slightly.  Figures 1 and 2
 are schematics.  Each panel is its own file (sub-captions are set in LaTeX); sizes match
 the width they are printed at, so the fonts appear at their real size.
 """
@@ -36,12 +40,12 @@ TABLES = BASE / "tables"  # the headline platform's tables; set by main() from -
 
 
 def tables_dir(platform: str) -> Path:
-    """'' (alias rtx2080ti) is the report's RTX 2080 Ti; otherwise tables_<platform>/."""
+    """'' (alias rtx2080ti) is the earlier RTX 2080 Ti run, tables/; otherwise tables_<platform>/."""
     return BASE / ("tables" if platform in ("", "rtx2080ti") else f"tables_{platform}")
 
 
 def is_frozen(tables: Path | None = None) -> bool:
-    """The report's RTX 2080 Ti tables (``tables/``), to be rebuilt exactly as submitted."""
+    """The earlier run's RTX 2080 Ti tables (``tables/``), to be rebuilt exactly as submitted."""
     return (tables or TABLES) == tables_dir("")
 
 
@@ -493,7 +497,7 @@ def fig_cost(M):
 def fig_llm(compare=()):
     """Prover time at 2,048 tokens: ours (headline GPU, and any --compare GPUs) against zkLLM
     (A100 40GB, as reported) on zkLLM's models that every drawn platform measured.  The ratios
-    are against the headline GPU.  The report's own platform alone gives the submitted figure."""
+    are against the headline GPU.  The earlier run's platform alone gives the submitted figure."""
     zk = {r["model"]: r for r in _read("reported_curated.csv") if r["system"] == "zkLLM" and r["seq"] == "2048"}
     tables_list = [tables_dir(p) for p in compare] + [TABLES]
     pairs = zkllm_models(tables_list)
@@ -506,7 +510,7 @@ def fig_llm(compare=()):
         label = hw_short(rows[(pairs[0][0], 2048)]["prove_forward"][3])
         if p is not None and is_frozen(tables) and not is_frozen():
             label += ", as submitted"
-            print(f"WARNING: Figure 5 --compare {p or 'rtx2080ti'} draws the stored runs of the report: their "
+            print(f"WARNING: Figure 5 --compare {p or 'rtx2080ti'} draws the earlier run (raw/, as submitted): its "
                   f"C-mode times include the committed weights' re-upload (fixed since) and predate --lean, "
                   f"so the difference is not all hardware (use a re-run of that GPU for a hardware ratio)")
         series.append(([_llm_cost(rows[(m, 2048)])[0] for m, _ in pairs], label,
@@ -629,7 +633,8 @@ def write_hardware(M, starred):
         raise SystemExit(f"the headline tables mix machines: {sorted(map(str, hw))} / {sorted(map(str, verifier))}")
     gpu, cpu = next(iter(hw - {None})), next(iter(verifier - {None}))
     cpu_name, _, threads = cpu.partition(" x")
-    lines = [r"\newcommand{\ProverGPU}{" + hw_short(gpu) + "}",
+    # a tie before the name's last word ('RTX 2080~Ti'), so the text never breaks a line inside it
+    lines = [r"\newcommand{\ProverGPU}{" + re.sub(r" (\S+)$", r"~\1", hw_short(gpu)) + "}",
              r"\newcommand{\VerifierCPU}{" + re.sub(r"\(R\)|\(TM\)|CPU|@.*$", "", cpu_name).split("  ")[0].strip() + "}",
              r"\newcommand{\VerifierThreads}{" + threads.split()[0] + "}",
              r"\newcommand{\LLMNote}{" + (r" ($^\ast$extrapolated from 1- and 2-block builds)" if starred else "") + "}"]

@@ -18,7 +18,8 @@ set -euo pipefail
 unset PVI_THREADS PVI_TF32 PVI_LEGACY_WEIGHT_KEY   # variant switches: only the per-job --export lines set them
 [ -f code/experiments/4_defence_benchmark/slurm/sweep.sh ] || { echo "run this from the repository root" >&2; exit 2; }
 export PROJECT_DIR="$PWD"   # the jobs run this checkout (bench.sbatch), never an inherited PROJECT_DIR
-# raw/ holds the report's RTX 2080 Ti records and is frozen: every other machine writes
+# raw/ holds the earlier RTX 2080 Ti run (as submitted) and raw_rtx2080ti-v2/ the report's numbers;
+# both are frozen: every other run writes
 # raw_$PVI_PLATFORM/ (exported to the jobs; see bench.py --platform).  Override the
 # partition and GPU of bench.sbatch with SBATCH_PARTITION / SBATCH_GRES.
 : "${PVI_PLATFORM:?export PVI_PLATFORM=<name>, e.g. h100 (raw/ is frozen)}"

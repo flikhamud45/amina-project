@@ -1,6 +1,6 @@
-"""Rebuild ``artifacts/comparison/tables/`` from the raw benchmark records.
+"""Rebuild one platform's tables (``artifacts/comparison/tables_<platform>/``) from its raw records.
 
-Deterministic and idempotent: it only reads ``raw/**/*.jsonl`` (finished cells)
+Deterministic and idempotent: it only reads ``raw_<platform>/**/*.jsonl`` (finished cells)
 and writes
 
 * ``measured_summary.csv`` -- per (suite, model, cell, metric, group) statistics;
@@ -8,8 +8,9 @@ and writes
   built, otherwise extrapolated linearly from 1- and 2-block builds
   (``full = m1 + (L - 1) * (m2 - m1)``; every block has identical shapes).
 
-    python experiments/5_comparison/aggregate.py                  # raw/ -> tables/ (the RTX 2080 Ti)
+    python experiments/5_comparison/aggregate.py --platform rtx2080ti-v2  # the report's numbers
     python experiments/5_comparison/aggregate.py --platform h100  # raw_h100/ -> tables_h100/
+    python experiments/5_comparison/aggregate.py                  # raw/ -> tables/ (the earlier run)
 
 Each hardware platform has its own raw root and tables directory, so the records of
 different machines never enter the same median or the same extrapolation.
@@ -33,7 +34,7 @@ TABLES = BASE / "tables"
 
 
 def dirs_for(platform: str) -> tuple[Path, Path]:
-    """(raw root, tables directory) of one platform; '' (alias rtx2080ti) is the report's."""
+    """(raw root, tables directory) of one platform; '' (alias rtx2080ti) is the earlier run's."""
     p = "" if platform in ("", "rtx2080ti") else platform
     return BASE / (f"raw_{p}" if p else "raw"), BASE / (f"tables_{p}" if p else "tables")
 GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
