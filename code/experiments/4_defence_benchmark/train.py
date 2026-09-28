@@ -23,6 +23,7 @@ from pvi.results import write_json
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "artifacts" / "fullcheck" / "models"
+SEED = 0   # the seed of the report's weights
 
 RECIPES = {
     "lenet5": dict(epochs=10, lr=0.05, batch=128, wd=5e-4),
@@ -31,10 +32,6 @@ RECIPES = {
     "resnet18_cifar": dict(epochs=40, lr=0.1, batch=128, wd=5e-4),
     "resnet18_224": dict(epochs=40, lr=0.1, batch=64, wd=5e-4),
     "resnet18_224_squirrel": dict(epochs=60, lr=0.1, batch=64, wd=5e-4),
-    "resnet50_cifar": dict(epochs=40, lr=0.1, batch=128, wd=5e-4),
-    "resnet101_cifar": dict(epochs=40, lr=0.1, batch=128, wd=5e-4),
-    "resnet50_224": dict(epochs=40, lr=0.1, batch=64, wd=5e-4),
-    "vgg16_224": dict(epochs=40, lr=0.01, batch=64, wd=5e-4),
 }
 
 
@@ -69,10 +66,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, choices=sorted(RECIPES))
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    torch.manual_seed(args.seed)
+    torch.manual_seed(SEED)
     kind, dataset = MODEL_SPECS[args.model]
     tx, ty, vx, vy, family, n_classes = load_dataset(dataset)
     r = RECIPES[args.model]
@@ -105,7 +101,7 @@ def main() -> None:
     torch.save(model.state_dict(), OUT / f"{args.model}.pt")
     write_json(OUT / f"{args.model}.json", {
         "model": args.model, "dataset": dataset, "test_accuracy": acc, "n_train": len(tx), "n_test": len(vx),
-        "recipe": r, "seed": args.seed, "train_seconds": time.time() - start,
+        "recipe": r, "seed": SEED, "train_seconds": time.time() - start,
         "device": torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu",
     })
     print(json.dumps({"model": args.model, "test_accuracy": acc}))

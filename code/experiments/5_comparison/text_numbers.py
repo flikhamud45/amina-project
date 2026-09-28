@@ -1,24 +1,20 @@
 """The numbers ``report/main.tex`` quotes in running text, recomputed from one platform's tables.
 
     python experiments/5_comparison/text_numbers.py --platform rtx2080ti-v2  # the report's numbers
-    python experiments/5_comparison/text_numbers.py --platform h100          # tables_h100/
-    python experiments/5_comparison/text_numbers.py                          # the earlier run (tables/)
 
 Generated tables and figures follow the data by themselves; these sentences do not.  For
 every quoted number this prints the line of main.tex it is on (found by a search on the
 wording around it, not on the number), the value recomputed from the tables, and the text
-as it stands, so a platform switch is a mechanical edit.  The counts of Section 4.3 (in
-the abstract and the conclusion too) and the record total of Section 4.1 are typed by
-hand and not repeated here: take them from ``count_outcomes.py --platform <p>``.
-On any platform other than the earlier run's (``tables/``), the ratio ranges use measured
-(full-depth) rows only, and the zkLLM ranges cover every zkLLM model that platform measured
-(Figure 5's list; Table 4's for the proof sizes).
+as it stands, so a re-measurement (a new platform) is a mechanical edit.  The counts of
+Section 4.3 (in the abstract and the conclusion too) and the record total of Section 4.1
+are typed by hand and not repeated here: take them from ``count_outcomes.py --platform <p>``.
+The ratio ranges use full-depth builds only, and the zkLLM ranges cover the zkLLM rows of
+Table 4 (Figure 5's models).
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
 from pathlib import Path
@@ -31,8 +27,6 @@ MAIN = pa.REPORT / "main.tex"
 
 def rng(vals, fmt=lambda v: f"{v:.0f}"):
     vals = [v for v in vals if v is not None]
-    if not vals:   # e.g. a platform without full-depth builds for this sentence
-        return "(no measured rows)"
     return f"{fmt(min(vals))}--{fmt(max(vals))}"
 
 
@@ -66,17 +60,14 @@ def numbers():
         full = sum(pa._f(d[p]["value"]) or 0 for p in parts if p in d)
         return 100 * (sum(pa._f(d[p]["extrapolated"]) or 0 for p in parts if p in d) / full - 1) if full else None
 
-    if groups:
-        be = [err(d, ("bytes_total",)) for d in groups.values()]
-        pe = [err(d, pa.PROVE) for d in groups.values()]
-        ve = [err(d, pa.VERIFY) for k, d in groups.items() if k[2] == "C" and int(float(k[1])) <= 64]
-        add(r"gave the proof size within", "extrapolated vs full: max |error| of proof size / prover (%)",
-            f"{max(abs(v) for v in be if v is not None):.3f} / {max(abs(v) for v in pe if v is not None):.1f}")
-        add(r"verifier at short prompts up to", "extrapolated vs full: lowest C verifier error, <=64 tokens (%)",
-            f"{min(v for v in ve if v is not None):.1f}")
-    else:
-        add(r"gave the proof size within", "extrapolated vs full", "(no full builds on this platform)")
-    cell = f"defence_C_int_lam{pa.LAM}_T2048_L32{pa.DEFAULT['variant']}"   # the full 7B builds
+    be = [err(d, ("bytes_total",)) for d in groups.values()]
+    pe = [err(d, pa.PROVE) for d in groups.values()]
+    ve = [err(d, pa.VERIFY) for k, d in groups.items() if k[2] == "C" and int(float(k[1])) <= 64]
+    add(r"gave the proof size within", "extrapolated vs full: max |error| of proof size / prover (%)",
+        f"{max(abs(v) for v in be if v is not None):.3f} / {max(abs(v) for v in pe if v is not None):.1f}")
+    add(r"verifier at short prompts up to", "extrapolated vs full: lowest C verifier error, <=64 tokens (%)",
+        f"{min(v for v in ve if v is not None):.1f}")
+    cell = f"defence_C_int_lam{pa.LAM}_T2048_L32"   # the full 7B builds
     summary = pa._read("measured_summary.csv")
 
     def llm(model, metric):
@@ -86,8 +77,7 @@ def numbers():
     claims = [llm(m, "bytes_claims") for m in ("opt-6.7b", "llama2-7b")]
     mem = llm("llama2-7b", "gpu_peak_memory")
     add(r"Llama-2-7B peaks at", "7B models T2048: claims (OPT-6.7B, Llama-2-7B); Llama-2-7B peak GPU memory",
-        f"{' / '.join(pa.b(v) for v in claims)}; {mem / 2 ** 30:.1f} GiB" if mem and all(claims)
-        else "(no full build)")
+        f"{' / '.join(pa.b(v) for v in claims)}; {mem / 2 ** 30:.1f} GiB")
     pdet = [M.get(m, "sampling", "p_detect_penultimate") for m in pa.CNN_ORDER]
     add(r"probability 1/84", "one path, attacked neuron: 1/p range", rng([1 / p for p in pdet]))
     add(r"1/28 million", "least-visited neuron: 1/p (millions)",
@@ -117,9 +107,8 @@ def numbers():
         x(pa._llm_cost(c[("llama2-7b", 64)])[3] / pa._llm_cost(c[("llama2-7b", 64)])[2]))
     add(r"21\.8\\,MB for GPT-2", "Kpre proof GPT-2 T64 / Llama-2-7B T64",
         f"{pa.b(pa._llm_cost(k[('gpt2', 64)])[2])} / {pa.b(pa._llm_cost(k[('llama2-7b', 64)])[2])}")
-    frozen = pa.is_frozen()   # the submitted text's ranges include extrapolated rows
     ratio = {key: pa._llm_cost(c[key])[0] / pa._llm_cost(k[key])[0] for key in list(c) if key in k
-             and (frozen or (pa._measured(c[key]) and pa._measured(k[key])))}
+             and pa._measured(c[key]) and pa._measured(k[key])}
     add(r"the known-weights one at 2\{,\}048", "C prover / Kpre prover at 2048 tokens",
         rng([v for (m, s), v in ratio.items() if s == 2048], x))
     add(r"\\times\$ for billion-parameter", "C prover / Kpre prover, >=1B params, <=64 tokens",
@@ -131,8 +120,7 @@ def numbers():
         return pa._llm_cost(c[(model, seq)])[:3]
 
     fac = {}
-    table4 = pa.matches(c)
-    for system, pub, model, seq, mode in table4:
+    for system, pub, model, seq, mode in pa.MATCHES:
         if mode != "C":
             continue
         r = rep.get((system, pub, str(seq) if seq else "")) or next(v for kk, v in rep.items() if kk[:2] == (system, pub))
@@ -142,13 +130,12 @@ def numbers():
     llm = [v[0] for (s, p, q), v in fac.items() if q is not None]
     add(r"\(1 token\)\. Our prover is", "prover speed-up, CNN systems", rng(cnn, x))
     add(r"\\times\$ faster on\s*$", "prover speed-up, LLM systems", rng(llm, x))
-    fig5 = pa.zkllm_models([pa.TABLES])          # Figure 5's models (the stored tables: four)
-    zk = [pa._f(rep[("zkLLM", n, "2048")]["prover_s"]) / pa._llm_cost(c[(m, 2048)])[0] for m, n in fig5]
+    zk = [pa._f(rep[("zkLLM", n, "2048")]["prover_s"]) / pa._llm_cost(c[(m, 2048)])[0] for m, n in pa.ZKLLM]
     add(r"our prover is still", "prover speed-up vs zkLLM at 2048", rng(zk, x))
     add(r"against zkLLM on a\s*$", "prover speed-up vs zkLLM at 2048 (Contributions)", rng(zk, x))
     add(r"\\times\$ at 64 tokens to", "DeepProve GPT-2 speed-up at 64 / 512",
         f"{x(fac[('DeepProve', 'GPT-2', 64)][0])} / {x(fac[('DeepProve', 'GPT-2', 512)][0])}")
-    zkv = [pa._llm_cost(c[(m, 2048)])[1] / pa._f(rep[("zkLLM", n, "2048")]["verifier_s"]) for m, n in fig5]
+    zkv = [pa._llm_cost(c[(m, 2048)])[1] / pa._f(rep[("zkLLM", n, "2048")]["verifier_s"]) for m, n in pa.ZKLLM]
     add(r"than ZKML and", "verifier slow-down vs zkLLM at 2048", rng(zkv, x))
     small = [ours("lenet5", None)[1] / 0.0058, ours("vgg16", None)[1] / 0.0593,
              pa._llm_cost(c[("gpt2", 64)])[1] / pa._f(rep[("zkGPT", "GPT-2", "")]["verifier_s"]),
@@ -159,11 +146,10 @@ def numbers():
           for s in (64, 128, 256, 512)}
     add(r"faster than DeepProve up to 256", "our verifier / DeepProve's at 64,128,256,512 (<1: ours faster)",
         ", ".join(f"{v:.2f}" for v in dp.values()))
-    zkp = [pa._llm_cost(c[(m, 2048)])[2] / pa._f(rep[("zkLLM", n, "2048")]["proof_bytes"])
-           for system, n, m, _, _ in table4 if system == "zkLLM"]   # Table 4's zkLLM rows
+    zkp = [pa._llm_cost(c[(m, 2048)])[2] / pa._f(rep[("zkLLM", n, "2048")]["proof_bytes"]) for m, n in pa.ZKLLM]
     add(r"64\{,\}000\$\\times\$ zkLLM", "largest proof ratio vs zkLLM at 2048", f"{max(zkp):,.0f}")
     # Maverick (1 client thread, lambda = 40, Kpre)
-    k1 = pa.llm_rows("Kpre", lam=40, threads="1", variant="_thr1" + pa.DEFAULT["variant"])[("qwen3-4b", 8)]
+    k1 = pa.llm_rows("Kpre", lam=40, threads="1", variant="_thr1")[("qwen3-4b", 8)]
     p1, v1, b1, _ = pa._llm_cost(k1)
     mav = rep[("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "8")]
     add(r"exactly the size of Maverick", "our Kpre proof, Qwen3-4B T8", pa.b(b1))
@@ -175,7 +161,8 @@ def numbers():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""))
+    ap.add_argument("--platform", default=pa.PLATFORM,
+                    help="read tables_<platform>/ (default: $PVI_PLATFORM, else rtx2080ti-v2, the report's numbers)")
     pa.TABLES = pa.tables_dir(ap.parse_args().platform)
     lines = MAIN.read_text(encoding="utf-8").splitlines()
     print(f"numbers from {pa.TABLES.name}/ against {MAIN.name}")

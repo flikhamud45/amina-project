@@ -4,20 +4,21 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
 #SBATCH --time=01:30:00
-# Mandatory before any long run, once per GPU type: environment dump, GPU exactness tests
-# (TF32 genuinely off and on), a data/weights check, small benchmarks into a throw-away
-# raw_smoke<job>/ root (including one lean full-depth build), and the fingerprint
-# comparison against the stored records. From the repository root:
+# Mandatory before any long run, once per GPU type: environment dump, every test (with the
+# GPU exactness tests at the sizes of the real models), a data/weights check, small benchmarks
+# into a throw-away raw_smoke<job>/ root (including one lean full-depth build), and the
+# fingerprint comparison against the stored records. From the repository root:
 #   mkdir -p logs && sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/smoke.sbatch
 # The throw-away root is moved to logs/env/<job>.raw_smoke when the job ends (pass or fail), so
-# it never counts as a platform (count_outcomes.py) and never lands in git.
+# it never stays among the raw_*/ platform roots and never lands in git.
 set -euo pipefail
 PROJECT_DIR="${PROJECT_DIR:-$SLURM_SUBMIT_DIR}"
 cd "$PROJECT_DIR/code"
 umask 002
 export PYTHONPATH="$PROJECT_DIR/code/src${PYTHONPATH:+:$PYTHONPATH}"   # this checkout's pvi, whatever the venv has
 export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8
-unset TORCH_ALLOW_TF32_CUBLAS_OVERRIDE NVIDIA_TF32_OVERRIDE   # the tests toggle TF32 themselves
+export NVIDIA_TF32_OVERRIDE=0            # no TF32, as in bench.sbatch
+unset TORCH_ALLOW_TF32_CUBLAS_OVERRIDE
 PY="${PVI_PYTHON:-$PROJECT_DIR/.venv/bin/python}"
 mkdir -p "$PROJECT_DIR/logs/env"
 E="$PROJECT_DIR/logs/env/$SLURM_JOB_ID"
@@ -61,7 +62,7 @@ done
 for n in ('mnist', 'cifar10', 'imagenet_dogs_cats', 'imagenet_dogs_squirrels'):
     print(n, tuple(load_dataset(n)[2].shape))" | tee "$E.data.txt"
 
-export NVIDIA_TF32_OVERRIDE=0 PVI_PLATFORM="smoke$SLURM_JOB_ID"
+export PVI_PLATFORM="smoke$SLURM_JOB_ID"
 R="$PROJECT_DIR/code/artifacts/comparison/raw_smoke$SLURM_JOB_ID"
 trap 'mv "$R" "$E.raw_smoke" 2>/dev/null || true' EXIT   # out of the raw* namespace, records kept
 "$PY" experiments/4_defence_benchmark/bench.py cnn --model lenet5 --queries 3 --tampers 3 --threads 8

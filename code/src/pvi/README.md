@@ -17,9 +17,9 @@
 |---|---|
 | `field.py` | BabyBear field arithmetic, NTT and Reed–Solomon encoding, exact modular matrix products |
 | `commitment.py` | Merkle trees with multiproofs; the weight commitment (rows encoded, Merkle root over columns) and its column openings |
-| `graph.py` | integer computation graphs: weight operations (`MatOp`) and verifier-recomputed operations (`CheapOp`), exact GPU matrix products |
+| `graph.py` | integer computation graphs: weight operations (`MatOp`) and verifier-recomputed operations (`CheapOp`), exact GPU matrix products; the lean forward pass (dead tensors freed, claims streamed to the host); `PVI_LEGACY_WEIGHT_KEY=1` restores the earlier run's weight cache, for the benchmark's `_nofix` controls |
 | `quantize.py`, `models.py`, `datasets.py` | float CNN → int8 graph (per-channel weights, BatchNorm folded); the benchmarked CNNs and their data |
 | `transformer.py` | integer GPT-2/OPT/Llama/Qwen decoders (norms, GELU/SiLU tables, RoPE, integer softmax, causal attention) |
-| `protocol.py` | security parameters from λ (`params_for`), prover, verifier (modes C, K, Kpre; interactive or Fiat–Shamir), `run_query` |
+| `protocol.py` | security parameters from λ (`params_for`), prover, verifier (modes C, K, Kpre; interactive or Fiat–Shamir; `lean=True` for the language models), `run_query` |
 | `sampling.py` | the original path test on the same integer graphs (the like-for-like baseline), with exact per-neuron detection |
 | `analytic.py` | decoder weight-op shapes and the expected multiproof size (for runs made before multiproofs) |

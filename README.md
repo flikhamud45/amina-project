@@ -15,8 +15,8 @@ and by 17 other systems, from LeNet-5 to Llama-2-13B.
 | [`code/`](code/) | the implementation, one folder per experiment, the stored measurements, and a [README](code/README.md) with exact commands to reproduce every table and figure |
 
 The submission tarball (`<groupname>/code`, `<groupname>/report`) is this branch as
-committed:
+committed (from a checkout of it):
 
 ```bash
-git archive --format=tar.gz --prefix=<groupname>/ -o <groupname>.tar.gz submission
+git archive --format=tar.gz --prefix=<groupname>/ -o <groupname>.tar.gz HEAD
 ```

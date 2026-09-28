@@ -8,7 +8,7 @@
 # Partition, account and GPU type come from the environment (SBATCH_PARTITION,
 # SBATCH_ACCOUNT, SBATCH_GRES=gpu:<type>:1 -- they override the lines above) or from
 # sbatch's command line. From the repository root:
-#   export PVI_PLATFORM=<name>   # e.g. h100: records go to code/artifacts/comparison/raw_<name>/
+#   export PVI_PLATFORM=<name>   # a new name: records go to code/artifacts/comparison/raw_<name>/
 #   mkdir -p logs/$PVI_PLATFORM && sbatch -o logs/$PVI_PLATFORM/%x-%j.out code/experiments/4_defence_benchmark/slurm/bench.sbatch llm --model gpt2 --seq 64
 # PVI_THREADS (default 8, the report's; not --cpus-per-task, which a site policy may raise) sets
 # the verifier's threads; it is appended as --threads.  The pvi package is always this
@@ -22,11 +22,7 @@ export PVI_PLATFORM
 export PYTHONPATH="$PROJECT_DIR/code/src${PYTHONPATH:+:$PYTHONPATH}"
 THREADS="${PVI_THREADS:-8}"
 export OMP_NUM_THREADS="$THREADS" MKL_NUM_THREADS="$THREADS"
-if [ "${PVI_TF32:-0}" = 1 ]; then          # only for the _tf32 variant (bench.py --tf32)
-  unset NVIDIA_TF32_OVERRIDE
-else
-  export NVIDIA_TF32_OVERRIDE=0          # no TF32 in any cuBLAS/cuDNN call of this process
-fi
+export NVIDIA_TF32_OVERRIDE=0            # no TF32 in any cuBLAS/cuDNN call of this process
 unset TORCH_ALLOW_TF32_CUBLAS_OVERRIDE   # set by NGC containers; would change torch's TF32 default
 PY="${PVI_PYTHON:-$PROJECT_DIR/.venv/bin/python}"
 # informational only: never fatal (a foreign-owned checkout, or no .git at all)

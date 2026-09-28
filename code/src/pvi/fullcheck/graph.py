@@ -39,8 +39,9 @@ __all__ = [
 ]
 
 INT8_MAX = 127
-# PVI_LEGACY_WEIGHT_KEY=1 restores the stored runs' behaviour (cache key 'cuda' vs 'cuda:0': every
-# committed-weights query re-uploads the model twice).  Only for the _nofix control of bench.py.
+# PVI_LEGACY_WEIGHT_KEY=1 restores the weight cache of the earlier run (raw/): its key was 'cuda' for the
+# prover and 'cuda:0' for the tensors, so every committed-weights query re-uploaded the model twice.
+# Only for the _nofix controls of bench.py, which measure what the fix changed.
 _LEGACY_WEIGHT_KEY = os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1"
 _FP32_EXACT = 1 << 24
 
@@ -229,6 +230,10 @@ class IntGraph:
         is re-propagated honestly from the modified value, which is exactly the
         trace-tampering attack.  ``weights_override`` runs some ops with other
         weights (the model-substitution attack) while claiming the committed model.
+        The lean prover (``Prover(lean=True)``) passes ``free=True``, which drops every
+        tensor once no later op reads it, and ``claims_device="cpu"``, which moves each
+        claim to host memory as soon as it is computed: the same integers, much less
+        GPU memory.
         """
         env = {self.input_name: x}
         claims: dict[str, torch.Tensor] = {}

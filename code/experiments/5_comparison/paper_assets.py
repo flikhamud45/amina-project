@@ -2,20 +2,17 @@
 
     python experiments/5_comparison/paper_assets.py --platform rtx2080ti-v2   # the report's numbers
         # -> ../report/figures/*.pdf, ../report/tables/*.tex (from tables_rtx2080ti-v2/)
-    python experiments/5_comparison/paper_assets.py --platform h100 --compare rtx2080ti-v2
-        # headline numbers from tables_h100/; Figure 5 also shows the RTX 2080 Ti
-    python experiments/5_comparison/paper_assets.py --platform h100 --check   # only list missing cells
 
-Nothing here runs a model; every number is read from the stored benchmark tables,
-so the report can be rebuilt without a GPU.  The report's numbers are platform
-``rtx2080ti-v2`` (``tables_rtx2080ti-v2/``).  The earlier run (``tables/``, platform
-``rtx2080ti``: the default when neither ``--platform`` nor ``$PVI_PLATFORM`` is set) is
-rebuilt exactly as submitted: no extrapolation markers or hatching, and no rows beyond the
-submitted ones.  Any other platform marks extrapolated rows and bars, and its Figure 4 and
-text ranges use measured (full-depth) rows only.  Build the committed figures with the
-pinned matplotlib (``requirements.txt``): other versions change their sizes slightly.  Figures 1 and 2
-are schematics.  Each panel is its own file (sub-captions are set in LaTeX); sizes match
-the width they are printed at, so the fonts appear at their real size.
+Nothing here runs a model; every number is read from the stored benchmark tables
+(``aggregate.py``, ``literature.py``), so the report can be rebuilt without a GPU.  The
+report's numbers are platform ``rtx2080ti-v2``, the default of ``--platform`` (unless
+``$PVI_PLATFORM`` is set); a re-measurement (Route B) has its own ``tables_<platform>/``.
+Table 3 stars the rows extrapolated from 1- and 2-block builds, Figure 5 would hatch such
+bars, and Figure 4 and the text's ranges use the full-depth builds only.  Build the
+committed figures with the pinned matplotlib
+(``requirements.txt``): other versions change their sizes slightly.  Figures 1 and 2 are
+schematics.  Each panel is its own file (sub-captions are set in LaTeX); sizes match the
+width they are printed at, so the fonts appear at their real size.
 """
 
 from __future__ import annotations
@@ -36,40 +33,37 @@ from matplotlib.patches import FancyBboxPatch, Patch  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "artifacts" / "comparison"
-TABLES = BASE / "tables"  # the headline platform's tables; set by main() from --platform
+PLATFORM = os.environ.get("PVI_PLATFORM") or "rtx2080ti-v2"   # --platform's default: the report's numbers
+TABLES = BASE / f"tables_{PLATFORM}"   # the platform's tables; set by main() from --platform
 
 
 def tables_dir(platform: str) -> Path:
-    """'' (alias rtx2080ti) is the earlier RTX 2080 Ti run, tables/; otherwise tables_<platform>/."""
-    return BASE / ("tables" if platform in ("", "rtx2080ti") else f"tables_{platform}")
-
-
-def is_frozen(tables: Path | None = None) -> bool:
-    """The earlier run's RTX 2080 Ti tables (``tables/``), to be rebuilt exactly as submitted."""
-    return (tables or TABLES) == tables_dir("")
+    """A platform's tables, written by ``aggregate.py --platform <platform>``."""
+    path = BASE / f"tables_{platform}"
+    if not path.is_dir():
+        raise SystemExit(f"no {path} (aggregate.py --platform <name> writes one per re-measurement; "
+                         f"the report's numbers are rtx2080ti-v2)")
+    return path
 
 
 def hw_short(name) -> str:
-    """'NVIDIA A100-SXM4-80GB' -> 'A100 80GB', 'NVIDIA GeForce RTX 2080 Ti' -> 'RTX 2080 Ti'."""
-    s = (name or "?").replace("NVIDIA ", "").replace("GeForce ", "")
-    s = re.sub(r"-SXM\d?-|-PCIE-|\bPCIe\b|\bHBM3e?\b|\bNVL\b", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
+    """'NVIDIA GeForce RTX 2080 Ti' -> 'RTX 2080 Ti'."""
+    return (name or "?").replace("NVIDIA ", "").replace("GeForce ", "")
 
-# Hardware is chosen with --platform (tables_<platform>/).  PVI_LLM_VARIANT selects a --tag variant
-# inside that platform (e.g. "_nolean"); "" = the plain runs.
-DEFAULT = {"rate": "4", "threads": "8", "variant": os.environ.get("PVI_LLM_VARIANT", ""), "lam": 128}
+
+# the headline selection: Reed-Solomon rate 4, 8 verifier threads, untagged cells, lambda = 128
+DEFAULT = {"rate": "4", "threads": "8", "variant": "", "lam": 128}
 CNN_ORDER = ["mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224"]
 # the timing parts that make up one proof and one verification (fs_hash is paid by both)
 PROVE = ("prove_forward", "prove_fold", "prove_open", "fs_hash")
-# verify_upload: a GPU client's host-to-device copy of the proof (absent for the CPU verifier)
-VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "verify_upload", "fs_hash")
+VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "fs_hash")
 
 
-LITERATURE = ("reported_curated.csv", "analytic.csv")  # not measured by us: always in tables/
+LITERATURE = ("reported_curated.csv",)  # not measured by us: in tables/, shared by every platform
 
 
-def _read(name: str, tables: Path | None = None) -> list[dict]:
-    path = (BASE / "tables" if name in LITERATURE else (tables or TABLES)) / name
+def _read(name: str) -> list[dict]:
+    path = (BASE / "tables" if name in LITERATURE else TABLES) / name
     if not path.exists():
         return []
     with open(path, newline="", encoding="utf-8") as fh:
@@ -86,9 +80,9 @@ def _f(x):
 class Measured:
     """Index over ``measured_summary.csv`` (median and mean per model, cell, metric)."""
 
-    def __init__(self, tables: Path | None = None) -> None:
+    def __init__(self) -> None:
         self.idx = {}
-        for r in _read("measured_summary.csv", tables):
+        for r in _read("measured_summary.csv"):
             key = (r["suite"], r["model"], r["cell"], r["metric"], r.get("batch", ""), r.get("attack", ""),
                    r.get("lam", ""), r.get("stage", ""), r.get("k", ""))
             self.idx[key] = r
@@ -120,13 +114,12 @@ class Measured:
         return (sum(v[0] * v[1] for v in vals) / n, int(n)) if n else (None, 0)
 
 
-def llm_rows(mode="C", lam=DEFAULT["lam"], threads=DEFAULT["threads"], variant=DEFAULT["variant"],
-             tables: Path | None = None) -> dict:
+def llm_rows(mode="C", lam=DEFAULT["lam"], threads=DEFAULT["threads"], variant=DEFAULT["variant"]) -> dict:
     """``{(model, seq): {metric: (value, provenance, params, prover_hw)}}`` from ``llm_full_model.csv``.
     Where a platform has both a full build and 1-2 block builds, the measured row is used."""
     out: dict = defaultdict(dict)
-    for r in _read("llm_full_model.csv", tables):
-        if (r["mode"], r["challenges"]) != (mode, "int") or _f(r["lam"]) != lam or r.get("batch"):
+    for r in _read("llm_full_model.csv"):
+        if (r["mode"], r["challenges"]) != (mode, "int") or _f(r["lam"]) != lam:
             continue
         if (r.get("rate", ""), r.get("threads", ""), r.get("variant", "")) != (DEFAULT["rate"], threads, variant):
             continue
@@ -144,16 +137,11 @@ def llm_rows(mode="C", lam=DEFAULT["lam"], threads=DEFAULT["threads"], variant=D
     return out
 
 
-def _llm_bytes(d: dict):
-    """Proof bytes, with the Merkle term as a multiproof (native or expected; see aggregate.py)."""
-    return d["bytes_total_multiproof"][0] if "bytes_total_multiproof" in d else d.get("bytes_total", (None,))[0]
-
-
 def _llm_cost(d: dict):
     """(prove seconds, verify seconds, proof bytes, parameters) of one LLM row."""
     prove = sum(d[k][0] for k in PROVE if k in d)
     verify = sum(d[k][0] for k in VERIFY if k in d)
-    return prove, verify, _llm_bytes(d), d["prove_forward"][2]
+    return prove, verify, d.get("bytes_total", (None,))[0], d["prove_forward"][2]
 
 
 def _measured(d: dict) -> bool:
@@ -161,7 +149,8 @@ def _measured(d: dict) -> bool:
     return bool(d) and all(v[1] == "measured" for v in d.values())
 
 
-# (published system, published model, our model, our prompt length or None for CNNs, our mode): Table 4
+# (published system, published model, our model, our prompt length or None for CNNs, our mode): Table 4.
+# ZKTorch's 1-token Llama-2-7B is compared with our shortest Llama-2-7B prompt, 64 tokens.
 MATCHES = [
     ("zkCNN", "LeNet-5 MNIST", "lenet5", None, "C"),
     ("Bionetta", "LeNet-5", "lenet5", None, "C"),
@@ -171,43 +160,14 @@ MATCHES = [
     ("DeepProve", "GPT-2", "gpt2", 64, "C"),
     ("DeepProve", "GPT-2", "gpt2", 512, "C"),
     ("zkLLM", "OPT-125M", "opt-125m", 2048, "C"),
+    ("zkLLM", "OPT-1.3B", "opt-1.3b", 2048, "C"),
     ("zkLLM", "OPT-6.7B", "opt-6.7b", 2048, "C"),
     ("zkLLM", "Llama-2-7B", "llama2-7b", 2048, "C"),
     ("ZKTorch", "Llama-2-7B (1 token)", "llama2-7b", 64, "C"),
     ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "qwen3-4b", 8, "Kpre"),
 ]
-# zkLLM's 2,048-token list (all eight are in reported_curated.csv).  Figure 5 draws those that every
-# drawn platform measured; Table 4 adds the ones beyond MATCHES that the headline platform has
-# (OPT-1.3B stays out of Table 4, as submitted: it is in Figure 5 and Table 3).
-ZKLLM = [("opt-125m", "OPT-125M"), ("opt-350m", "OPT-350M"), ("opt-1.3b", "OPT-1.3B"), ("opt-2.7b", "OPT-2.7B"),
-         ("opt-6.7b", "OPT-6.7B"), ("opt-13b", "OPT-13B"), ("llama2-7b", "Llama-2-7B"), ("llama2-13b", "Llama-2-13B")]
-
-
-def zkllm_models(tables_list) -> list[tuple[str, str]]:
-    """(our model, zkLLM's name) of zkLLM's 2,048-token models that every tables directory has."""
-    zk = {r["model"] for r in _read("reported_curated.csv") if r["system"] == "zkLLM" and r["seq"] == "2048"}
-    rows = [llm_rows("C", tables=t) for t in tables_list]
-    return [(m, n) for m, n in ZKLLM if n in zk and all("prove_forward" in r.get((m, 2048), {}) for r in rows)]
-
-
-def matches(c_llm: dict | None = None) -> list[tuple]:
-    """Table 4's pairs for the headline rows ``c_llm``: MATCHES, with zkLLM's other 2,048-token models
-    where the headline platform measured them (on the frozen platform without OPT-1.3B, as submitted),
-    and ZKTorch at its own 1 token where that was run (otherwise at 64 tokens, as submitted)."""
-    c_llm = llm_rows("C") if c_llm is None else c_llm
-    listed = {ours for system, _, ours, _, _ in MATCHES if system == "zkLLM"}
-    out, zk_done = [], False
-    for system, pub, ours, seq, mode in MATCHES:
-        if system == "zkLLM":
-            if not zk_done:   # every zkLLM row here, in ZKLLM's order
-                zk_done = True
-                out += [("zkLLM", n, m, 2048, "C") for m, n in ZKLLM if m in listed or
-                        ((m != "opt-1.3b" or not is_frozen()) and "prove_forward" in c_llm.get((m, 2048), {}))]
-            continue
-        if system == "ZKTorch" and "prove_forward" in c_llm.get((ours, 1), {}):
-            seq = 1
-        out.append((system, pub, ours, seq, mode))
-    return out
+# (our model, zkLLM's name) of the zkLLM rows, all at 2,048 tokens: Figure 5
+ZKLLM = [(ours, pub) for system, pub, ours, _, _ in MATCHES if system == "zkLLM"]
 
 REPORT = ROOT.parent / "report"
 FIGS = REPORT / "figures"
@@ -225,8 +185,7 @@ SHORT = {"mlp_mnist": "MLP", "lenet5": "LeNet-5", "vgg11": "VGG-11", "vgg16": "V
          "resnet18_cifar": "ResNet-18", "resnet18_224": "ResNet-18†"}
 DATA = {"mlp_mnist": "MNIST", "lenet5": "MNIST", "vgg11": "CIFAR-10", "vgg16": "CIFAR-10",
         "resnet18_cifar": "CIFAR-10", "resnet18_224": "224px"}
-LLM_NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-350m": "OPT-350M", "opt-1.3b": "OPT-1.3B",
-            "opt-2.7b": "OPT-2.7B", "opt-13b": "OPT-13B", "opt-6.7b": "OPT-6.7B",
+LLM_NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-1.3b": "OPT-1.3B", "opt-6.7b": "OPT-6.7B",
             "llama2-7b": "Llama-2-7B", "llama2-13b": "Llama-2-13B", "qwen3-4b": "Qwen3-4B"}
 
 # published systems grouped by proof family, for the cost figure
@@ -426,10 +385,9 @@ def _ours_points(M):
         for cell, out in ((f"defence_C_int_lam{LAM}_rate4", ours_c), (f"defence_Kpre_int_lam{LAM}_rate4", ours_k)):
             if M.get(m, cell, "prove_forward") is not None:
                 out.append((n, M.total(m, cell, PROVE), M.total(m, cell, VERIFY), M.get(m, cell, "bytes_total"), "cnn"))
-    frozen = is_frozen()   # the submitted figure: its extrapolated rows are drawn as they were
     for mode, out, seqs in (("C", ours_c, (64, 2048)), ("Kpre", ours_k, (64,))):
         for (model, seq), d in sorted(llm_rows(mode).items()):
-            if "prove_forward" in d and seq in seqs and (frozen or _measured(d)):
+            if "prove_forward" in d and seq in seqs and _measured(d):
                 p, v, by, n = _llm_cost(d)
                 out.append((n, p, v, by, f"T{seq}"))
     return ours_c, ours_k
@@ -494,45 +452,26 @@ def fig_cost(M):
 
 
 # ----------------------------------------------------------------------------------- figure 5
-def fig_llm(compare=()):
-    """Prover time at 2,048 tokens: ours (headline GPU, and any --compare GPUs) against zkLLM
-    (A100 40GB, as reported) on zkLLM's models that every drawn platform measured.  The ratios
-    are against the headline GPU.  The earlier run's platform alone gives the submitted figure."""
+def fig_llm():
+    """Prover time at 2,048 tokens: ours against zkLLM (A100 40GB, as reported) on the zkLLM models
+    of Table 4, with zkLLM's time over ours above each pair."""
     zk = {r["model"]: r for r in _read("reported_curated.csv") if r["system"] == "zkLLM" and r["seq"] == "2048"}
-    tables_list = [tables_dir(p) for p in compare] + [TABLES]
-    pairs = zkllm_models(tables_list)
-    if not pairs:
-        raise SystemExit("Figure 5: no zkLLM model at 2,048 tokens that every drawn platform has")
-    plain = is_frozen() and not compare   # exactly the submitted figure
-    series = []
-    for p, tables in zip(list(compare) + [None], tables_list):
-        rows = llm_rows("C", tables=tables)
-        label = hw_short(rows[(pairs[0][0], 2048)]["prove_forward"][3])
-        if p is not None and is_frozen(tables) and not is_frozen():
-            label += ", as submitted"
-            print(f"WARNING: Figure 5 --compare {p or 'rtx2080ti'} draws the earlier run (raw/, as submitted): its "
-                  f"C-mode times include the committed weights' re-upload (fixed since) and predate --lean, "
-                  f"so the difference is not all hardware (use a re-run of that GPU for a hardware ratio)")
-        series.append(([_llm_cost(rows[(m, 2048)])[0] for m, _ in pairs], label,
-                       [rows[(m, 2048)]["prove_forward"][1] != "measured" for m, _ in pairs]))
+    rows = llm_rows("C")
+    ours = [_llm_cost(rows[(m, 2048)])[0] for m, _ in ZKLLM]
+    extra = [rows[(m, 2048)]["prove_forward"][1] != "measured" for m, _ in ZKLLM]
+    label = hw_short(rows[(ZKLLM[0][0], 2048)]["prove_forward"][3])
     fig, b = plt.subplots(figsize=(3.3, 1.3))
-    xs = range(len(pairs))
-    them = [_f(zk[name]["prover_s"]) for _, name in pairs]
-    w = 0.8 / (len(series) + 1)
-    shades = [plt.cm.Reds(0.3 + 0.4 * i / max(1, len(compare) - 1)) for i in range(len(compare))]
-    # hatch extrapolated bars, but only where measured bars are drawn too (never in the submitted figure)
-    hatch = not plain and (len(series) > 1 or not all(series[-1][2]))
+    xs = range(len(ZKLLM))
+    them = [_f(zk[name]["prover_s"]) for _, name in ZKLLM]
+    w = 0.8 / 2
+    bars = b.bar([x - 0.4 + w * 0.5 for x in xs], ours, w * 0.95, color=OURS, label=f"ours ({label})")
     hatched = False
-    for i, (ours, label, extra) in enumerate(series):
-        bars = b.bar([x - 0.4 + w * (i + 0.5) for x in xs], ours, w * 0.95, color=(shades + [OURS])[i],
-                     label=f"ours ({label})")
-        for bar, e in zip(bars, extra):
-            if e and hatch:
-                bar.set_hatch("////")  # extrapolated from 1- and 2-block builds
-                hatched = True
-    zk_hw = "A100" if plain else hw_short(zk[pairs[0][1]]["hardware"])   # the submitted legend's wording
+    for bar, e in zip(bars, extra):
+        if e:
+            bar.set_hatch("////")  # extrapolated from 1- and 2-block builds
+            hatched = True
+    zk_hw = hw_short(zk[ZKLLM[0][1]]["hardware"])
     b.bar([x + 0.4 - w / 2 for x in xs], them, w * 0.95, color=THEM, label=f"zkLLM ({zk_hw})")
-    ours = series[-1][0]
     for x, o, t_ in zip(xs, ours, them):
         b.text(x, t_ * 1.3, f"{t_ / o:.0f}$\\times$", ha="center", fontsize=6.3)
     b.set_yscale("log")
@@ -542,18 +481,11 @@ def fig_llm(compare=()):
         labels.append(handles[-1].get_label())
     ncol = len(handles) if len(handles) <= 2 else 2      # one row, or two columns
     top = 10.0 ** (3 + -(-len(handles) // ncol))          # 1e4 for one legend row: room above the bars
-    floor = 0.5 if plain else min(0.5, min(min(s[0]) for s in series) / 3)  # a faster GPU needs a lower floor
-    b.set_ylim(floor, top)
+    b.set_ylim(min(0.5, min(ours) / 3), top)
     b.set_xticks(list(xs))
-    if len(pairs) <= 4:
-        b.set_xticklabels([LLM_NAME[m] for m, _ in pairs])
-    else:   # up to zkLLM's eight models, on two lines: OPT / 125M, Llama-2 / 13B
-        b.set_xticklabels(["\n".join(LLM_NAME[m].rsplit("-", 1)) for m, _ in pairs], fontsize=5.8)
+    b.set_xticklabels([LLM_NAME[m] for m, _ in ZKLLM])
     b.set_ylabel("prover time (s)")
-    if hatched:
-        b.legend(handles, labels, frameon=False, loc="upper left", ncol=ncol, fontsize=6)
-    else:
-        b.legend(frameon=False, loc="upper left", ncol=ncol, fontsize=6)
+    b.legend(handles, labels, frameon=False, loc="upper left", ncol=ncol, fontsize=6)
     save(fig, "llm_zkllm")
 
 
@@ -606,16 +538,18 @@ def tab_cnn(M):
     write("cnn", lines)
 
 
+# Table 3's rows (model, prompt length)
+TAB_LLM_PICK = [("gpt2", 64), ("gpt2", 512), ("opt-125m", 2048), ("opt-1.3b", 2048), ("qwen3-4b", 64),
+                ("opt-6.7b", 2048), ("llama2-7b", 64), ("llama2-7b", 2048), ("llama2-13b", 64)]
+
+
 def tab_llm():
     c, k = llm_rows("C"), llm_rows("Kpre")
-    pick = [("gpt2", 64), ("gpt2", 512), ("opt-125m", 2048), ("opt-1.3b", 2048), ("qwen3-4b", 64),
-            ("opt-6.7b", 2048), ("llama2-7b", 64), ("llama2-7b", 2048), ("llama2-13b", 64)]
     lines, starred = [], False
-    for model, seq in pick:
+    for model, seq in TAB_LLM_PICK:
         p, v, by, n = _llm_cost(c[(model, seq)])
         _, kv, kb, _ = _llm_cost(k[(model, seq)])
-        # the submitted table has no markers (the text says which rows are extrapolated)
-        extra = not is_frozen() and not (_measured(c[(model, seq)]) and _measured(k[(model, seq)]))
+        extra = not (_measured(c[(model, seq)]) and _measured(k[(model, seq)]))   # starred
         starred |= extra
         name = LLM_NAME[model] + (r"$^\ast$" if extra else "")
         lines.append(" & ".join([name, f"{seq:,}".replace(",", "{,}"), t(p), t(v), b(by), t(kv), b(kb)]) + r" \\")
@@ -646,9 +580,9 @@ def write_hardware(M, starred):
 def tab_ratios(M):
     curated = _read("reported_curated.csv")
     c_llm = llm_rows("C")
-    k1 = llm_rows("Kpre", lam=40, threads="1", variant="_thr1" + DEFAULT["variant"])
+    k1 = llm_rows("Kpre", lam=40, threads="1", variant="_thr1")
     lines = []
-    for system, model, ours, seq, mode in matches(c_llm):
+    for system, model, ours, seq, mode in MATCHES:
         cand = [r for r in curated if (r["system"], r["model"]) == (system, model)]
         same = [r for r in cand if seq and r["seq"] == str(seq)]
         r = same[0] if same else cand[0]
@@ -677,10 +611,6 @@ def tab_ratios(M):
     write("ratios", lines)
 
 
-TAB_LLM_PICK = [("gpt2", 64), ("gpt2", 512), ("opt-125m", 2048), ("opt-1.3b", 2048), ("qwen3-4b", 64),
-                ("opt-6.7b", 2048), ("llama2-7b", 64), ("llama2-7b", 2048), ("llama2-13b", 64)]
-
-
 def missing(M) -> list[str]:
     """Every stored number the tables and figures need, that the headline tables lack."""
     out = []
@@ -695,17 +625,15 @@ def missing(M) -> list[str]:
         out += [f"cnn/{m}/{c} {k}" for c, k, lam in need if M.get(m, c, k, lam=lam) is None]
         if not M.attack_rate(m, "tamper_C_int_lam40", "penultimate_neuron")[1]:
             out.append(f"cnn/{m}/tamper_C_int_lam40 penultimate_neuron")
-    v = DEFAULT["variant"]
-    # gpt2 T128/T256: the DeepProve sentence of Sec. 4.4 ('faster than DeepProve up to 256 tokens')
-    sel = {("C", LAM, "8", v): set(TAB_LLM_PICK) | {("opt-125m", 2048), ("opt-1.3b", 2048), ("opt-6.7b", 2048),
-                                                    ("llama2-7b", 2048), ("gpt2", 64), ("gpt2", 128), ("gpt2", 256),
-                                                    ("gpt2", 512), ("llama2-7b", 64)},
-           ("Kpre", LAM, "8", v): set(TAB_LLM_PICK), ("Kpre", 40, "1", "_thr1" + v): {("qwen3-4b", 8)}}
+    # Table 3, Table 4, Figure 5, and gpt2 T128/T256 for the DeepProve sentence of Sec. 4.4
+    sel = {("C", LAM, "8", ""): set(TAB_LLM_PICK) | {(ours, seq) for _, _, ours, seq, mode in MATCHES
+                                                     if seq and mode == "C"} | {("gpt2", 128), ("gpt2", 256)},
+           ("Kpre", LAM, "8", ""): set(TAB_LLM_PICK), ("Kpre", 40, "1", "_thr1"): {("qwen3-4b", 8)}}
     for (mode, lam, thr, var), keys in sel.items():
         rows = llm_rows(mode, lam=lam, threads=thr, variant=var)
         for model, seq in sorted(keys):
             d = rows.get((model, seq), {})
-            if "prove_forward" not in d or "verify_products" not in d or not ("bytes_total" in d or "bytes_total_multiproof" in d):
+            if "prove_forward" not in d or "verify_products" not in d or "bytes_total" not in d:
                 out.append(f"llm/{model} {mode}:int lam{lam} T{seq} threads {thr} variant '{var}'")
     return out
 
@@ -713,22 +641,19 @@ def missing(M) -> list[str]:
 def main():
     global TABLES
     ap = argparse.ArgumentParser()
-    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
-                    help="headline platform: tables_<platform>/ ('' or rtx2080ti: tables/)")
-    ap.add_argument("--compare", nargs="*", default=[], help="platforms also drawn in Figure 5, e.g. rtx2080ti")
-    ap.add_argument("--check", action="store_true", help="only list the stored numbers that are missing")
-    args = ap.parse_args()
-    TABLES = tables_dir(args.platform)
+    ap.add_argument("--platform", default=PLATFORM,
+                    help="read tables_<platform>/ (default: $PVI_PLATFORM, else rtx2080ti-v2, the report's numbers)")
+    TABLES = tables_dir(ap.parse_args().platform)
     M = Measured()
     gaps = missing(M)
-    if gaps or args.check:
+    if gaps:   # before any file is written
         print(f"{TABLES.name}: {len(gaps)} missing", *gaps, sep="\n  ")
-        raise SystemExit(1 if gaps else 0)
+        raise SystemExit(1)
     fig_overview()
     fig_protocol()
     fig_security(M)
     fig_cost(M)
-    fig_llm(args.compare)
+    fig_llm()
     tab_cnn(M)
     starred = tab_llm()
     tab_ratios(M)

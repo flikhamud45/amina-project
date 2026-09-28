@@ -27,7 +27,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
-
-[tool.ruff]
-line-length = 92
-target-version = "py310"

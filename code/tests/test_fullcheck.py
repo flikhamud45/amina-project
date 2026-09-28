@@ -381,6 +381,45 @@ def test_decoder_protocol_honest_and_tampered(family):
         assert not run_query(prover, verifier, tokens, seed=1, forward_kwargs={"tamper": tamper})["accepted"]
 
 
+@pytest.mark.parametrize("family", ["gpt", "llama", "qwen"])
+def test_lean_forward_gives_identical_claims(family):
+    # the lean prover (bench.py --lean): dead tensors freed, claims streamed to the host
+    g = build_decoder(_TINY[family], calib_tokens=12, seed=3)
+    x = torch.randint(0, 97, (1, 12), generator=torch.Generator().manual_seed(5))
+    env_full, a = g.forward(x)
+    env_lean, b = g.forward(x, free=True, claims_device="cpu")
+    assert a.keys() == b.keys() and all(torch.equal(a[k], b[k]) for k in a)
+    assert len(env_lean) < len(env_full) and g.output_name in env_lean
+
+
+@pytest.mark.parametrize("family", ["gpt", "llama", "qwen"])
+@pytest.mark.parametrize("mode", ["C", "K", "Kpre"])
+def test_lean_prover_and_verifier(family, mode):
+    g = build_decoder(_TINY[family], calib_tokens=12, seed=3)
+    x = torch.randint(0, 97, (1, 12), generator=torch.Generator().manual_seed(5))
+    p = params_for(40, len(g.mat_ops))
+    coms = commit_graph(g, p.rate) if mode == "C" else None
+    prover = Prover(g, device="cuda" if torch.cuda.is_available() else "cpu", commitments=coms, lean=True)
+    if mode == "C":
+        v = Verifier(g.public(), p, "C", publics={k: c.public for k, c in coms.items()}, lean=True)
+    else:
+        v = Verifier(g.public(), p, mode, weights={o.name: (o.weight, o.bias) for o in g.mat_ops}, lean=True)
+        if mode == "Kpre":
+            v.precompute(Challenger())
+    res = run_query(prover, v, x, seed=1)
+    assert res["accepted"], res["rejected_at"]
+    victim = g.mat_ops[len(g.mat_ops) // 2].name
+
+    def tamper(o, z):
+        if o.name == victim:
+            z = z.clone()
+            z.view(-1)[0] += 1
+        return z
+
+    bad = run_query(prover, v, x, seed=2, forward_kwargs={"tamper": tamper})
+    assert not bad["accepted"] and bad["rejected_at"] == "freivalds"
+
+
 def test_real_configs_have_published_parameter_counts():
     # weight-product parameters, within 6% of the published (rounded) sizes
     for name, published in [("gpt2", 124e6), ("llama2-7b", 6.74e9), ("llama2-13b", 13.0e9),

@@ -1,14 +1,15 @@
-"""Check the linear block extrapolation of the LLM suite against full builds.
+"""Check the linear block extrapolation of the LLM suite against full builds (report Sec. 4.1).
 
 Reads ``tables_<platform>/measured_summary.csv`` (run ``aggregate.py --platform <p>`` first) and,
-for every (model, seq, mode, challenges, lam, variant, metric) that has builds with several
-block counts, compares
+for every (model, seq, mode, challenges, lam, variant, metric) with a full build and at least
+two other block counts (the report's: 1 and 2 blocks), compares
 
 * the report's two-point rule  ``m1 + (L - 1) * (m2 - m1)``  with the measured full build, and
 * a least-squares line through every measured block count (curvature shows up as residuals).
 
-    python experiments/5_comparison/validate_extrapolation.py --platform h100
-writes ``tables_<platform>/llm_extrapolation_validation.csv`` and prints the worst cases.
+    python experiments/5_comparison/validate_extrapolation.py --platform rtx2080ti-v2
+writes ``tables_<platform>/llm_extrapolation_validation.csv`` and prints the worst cases.  The
+text's error bounds are the totals of ``text_numbers.py``; this is the per-part detail.
 """
 
 from __future__ import annotations
@@ -20,21 +21,17 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TABLES = ROOT / "artifacts" / "comparison" / "tables"   # set by main() from --platform
+BASE = ROOT / "artifacts" / "comparison"
 METRICS = {"prove_forward", "prove_fold", "prove_open", "fs_hash", "verify_derive", "verify_fold",
            "verify_products", "verify_columns", "bytes_total", "bytes_claims", "bytes_paths",
-           "gpu_peak_memory", "gpu_peak_reserved", "gpu_peak_memory_verifier", "host_peak_rss"}
+           "gpu_peak_memory", "gpu_peak_reserved", "host_peak_rss"}
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--variant", default=None, help="only rows of this --tag (default: all)")
-    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
-                    help="read tables_<platform>/ ('' or rtx2080ti: tables/)")
-    args = ap.parse_args()
-    global TABLES
-    if args.platform not in ("", "rtx2080ti"):
-        TABLES = TABLES.parent / f"tables_{args.platform}"
+    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM") or "rtx2080ti-v2",
+                    help="read tables_<platform>/ (default: $PVI_PLATFORM, else rtx2080ti-v2, the report's numbers)")
+    TABLES = BASE / f"tables_{ap.parse_args().platform}"
     by: dict[tuple, dict[int, float]] = defaultdict(dict)
     full_l: dict[tuple, int] = {}
     with open(TABLES / "measured_summary.csv", newline="", encoding="utf-8") as fh:
@@ -42,8 +39,6 @@ def main() -> None:
             if r["suite"] != "llm" or not r["cell"].startswith("defence_") or r["metric"] not in METRICS:
                 continue
             if r.get("batch") or r.get("attack") or r.get("stage"):
-                continue
-            if args.variant is not None and r.get("cfg_variant", "") != args.variant:
                 continue
             key = (r["model"], r["cfg_seq"], r["cfg_mode"], r["cfg_challenges"], r["cfg_lam"],
                    r.get("cfg_variant", "") + f"|rate{r.get('cfg_rate', '')}|thr{r.get('cfg_threads', '')}",
