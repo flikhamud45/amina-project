@@ -11,11 +11,11 @@ project folder as ours, so nothing has to be copied or installed.
   priority, experiments that need coordination).
 * Parts F–G: rules, and what the team does with the results.
 
-Parts B–F (the runs) use branch **`strong-gpu`**: the submitted paper (branch `submission`, commit
-`336a03c`) plus a tested patch that adds what these runs need. Do not run from `submission`,
-`main` or `comparison`. Part G (the team's checks) uses branch `paper-v2`: the same benchmark
-code, plus the committed `rtx2080ti-v2` records (B.2), the paper written from them, and newer
-report scripts and documentation. The setup of C.2 and the smoke test of C.4 have been run exactly as
+Everything here uses branch **`strong-gpu`** (the same commit as `paper-v2`): the paper's
+benchmark code and its committed `rtx2080ti-v2` records (B.2), plus the options these runs need
+(full-depth builds, the lean prover, platform roots, the GPU verifier, batching, TF32, the larger
+models). Do not run from `submission` (the trimmed final version, which lacks those options),
+`main` or `comparison`. The setup of C.2 and the smoke test of C.4 have been run exactly as
 written on the team's RTX 2080 Ti (job 943658: 243 GPU tests passed, none skipped; 139
 fingerprints against the stored records, 0 problems; `SMOKE OK`). On the H100 the smoke test
 must pass again, because exactness is checked per GPU type.
@@ -58,15 +58,15 @@ numbers on the LLMs.
 
 ## B. Team: before the runs
 
-### B.1 Put the branches on the server
+### B.1 Put the branch on the server
 
-`strong-gpu` (for the runs) and `paper-v2` (for the team's checks in Part G) must exist in the
-shared repository at `$P`. From a checkout that has both branches (the server's object
-directories are not all group-writable, so the push must keep its pack):
+**Status: done** (`strong-gpu` is in the shared repository at `$P` and on GitHub). For a later
+update, from a checkout that has the branch (the server's object directories are not all
+group-writable, so the push must keep its pack):
 
 ```bash
 git push --receive-pack="git -c safe.directory='*' -c receive.unpackLimit=1 receive-pack" \
-    ssh://<user>@c-008.cs.tau.ac.il$P strong-gpu:refs/heads/strong-gpu paper-v2:refs/heads/paper-v2
+    ssh://<user>@c-008.cs.tau.ac.il$P strong-gpu:refs/heads/strong-gpu
 ```
 
 Nothing else has to be prepared. The trained CNN weights (`$P/code/artifacts/fullcheck/models`,
@@ -81,7 +81,7 @@ CNN number incomparable with the paper.
 **Status: done. `rtx2080ti-v2` is now the paper's platform.** Its records
 (`code/artifacts/comparison/raw_rtx2080ti-v2/`, 78,266 records from 29 jobs, all at commit
 `9401431` with a clean tree) and tables (`tables_rtx2080ti-v2/`) are committed (commit `a0d0b3b`,
-branch `paper-v2`), and every benchmark number, table, figure and count of the paper is rebuilt
+on `strong-gpu` and `paper-v2`), and every benchmark number, table, figure and count of the paper is rebuilt
 from them (`aggregate.py`, `count_outcomes.py` and `paper_assets.py` with `--platform
 rtx2080ti-v2`). The frozen `raw/` stays as the earlier run with the older code (59,547 records;
 still reproducible with `--platform rtx2080ti`), described in the READMEs but not used for the
@@ -94,7 +94,7 @@ with `W=$P/logs/strong_gpu_2080`), under the platform name `rtx2080ti-v2`, becau
 means the frozen stored records:
 
 Already run; do not run it again: new records in `raw_rtx2080ti-v2/` would change the paper's
-counts (on `paper-v2` its `PLATFORM.json` is marked `"frozen": true`, so `bench.py` refuses):
+counts (its `PLATFORM.json` is marked `"frozen": true`, so `bench.py` refuses):
 
 ```bash
 export PVI_PLATFORM=rtx2080ti-v2 SBATCH_PARTITION=studentbatch SBATCH_GRES=gpu:geforce_rtx_2080:1
@@ -319,8 +319,8 @@ We read the results from your clone.
 
 * **Never write into `code/artifacts/comparison/raw/` or `raw_rtx2080ti-v2/`**, never delete or
   move them, and always set `PVI_PLATFORM` to a new name. `raw_rtx2080ti-v2/` holds the paper's
-  records and `raw/` the earlier run. `raw/` is marked frozen, and on `paper-v2` so is
-  `raw_rtx2080ti-v2/`: the code refuses to write into a frozen root.
+  records and `raw/` the earlier run. Both are marked frozen: the code refuses to write into
+  them.
 * **Never retrain the CNNs** (`train.py`, `train.sbatch`) and never rebuild the ImageNet caches.
 * **Run from your clean clone of `strong-gpu`** (`git status` empty apart from `raw_<platform>/`,
   `logs/` and `env/`). Every record stores the commit and whether the tree was dirty.
@@ -341,11 +341,9 @@ We read the results from your clone.
 
 ## G. Team: after each tier
 
-In a clean clone of your own of `paper-v2` (the benchmark code of `strong-gpu`, plus the
-committed `rtx2080ti-v2` records, the paper written from them and newer report scripts), with
-the friend's platform root copied in (read-only from `$P/logs/strong_gpu`), CPU only, a few
-minutes. On the cluster, clone it from `$P` after B.1's push (as in C.2, with `-b paper-v2` and
-a directory of your own); on your own machine, copy `raw_h100/` over with `scp -r` instead of
+In a clean clone of your own of `strong-gpu` (not the friend's), with the friend's platform
+root copied in (read-only from `$P/logs/strong_gpu`), CPU only, a few minutes. On the cluster,
+clone it from `$P` (as in C.2, with a directory of your own); on your own machine, copy `raw_h100/` over with `scp -r` instead of
 the `cp` below:
 
 ```bash
@@ -382,5 +380,6 @@ Llama-2-13B in §4.1 and Limitations (iii); the counts in the abstract, §4.1 (t
 Tables 2–4 and Figures 4–5. `main.tex` already inputs `tables/hardware.tex`, which provides
 `\ProverGPU`, `\VerifierCPU` and `\VerifierThreads` (used in §4.1) and `\LLMNote` (Table 3's
 caption). Rebuild the figures with the pinned matplotlib (3.11.2, `code/requirements.txt`) and
-the PDF, keep it at 8 pages, commit `raw_h100/` with the report on `paper-v2`, and merge into
-`submission` only when all of this passes.
+the PDF, keep it at 8 pages, and commit `raw_h100/` with the report on `strong-gpu`. The branch
+`submission` is a trimmed copy of the paper without the H100-only options; bring the new
+records, the report and the code they use into it only when all of this passes.
