@@ -1,0 +1,11 @@
+{
+ "gpu": "NVIDIA GeForce RTX 2080 Ti",
+ "cpu": "Intel(R) Xeon(R) Silver 4114 CPU @ 2.20GHz",
+ "platform": "rtx2080ti-v2",
+ "host": "s-004",
+ "torch": "2.5.1+cu121",
+ "cuda": "12.1",
+ "gpu_total_memory": 11347623936,
+ "driver": "575.64.03",
+ "created": 1790575743.2691758
+}
