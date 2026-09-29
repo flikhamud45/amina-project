@@ -8,7 +8,7 @@ and writes
   built, otherwise extrapolated linearly from 1- and 2-block builds
   (``full = m1 + (L - 1) * (m2 - m1)``; every block has identical shapes).
 
-    python experiments/5_comparison/aggregate.py --platform rtx2080ti-v2  # the report's numbers
+    python experiments/5_comparison/aggregate.py --platform l40s  # the report's numbers
     python experiments/5_comparison/aggregate.py --platform h100  # raw_h100/ -> tables_h100/
     python experiments/5_comparison/aggregate.py                  # raw/ -> tables/ (the earlier run)
 

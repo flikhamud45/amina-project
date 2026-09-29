@@ -13,7 +13,8 @@ Everything behind the report (`../report/main.pdf`):
 All results are stored in the repository. Every figure and generated table
 (`report/figures`, `report/tables`) is rebuilt from the stored benchmark records in a
 minute, with no GPU (Route A). Table 1 and the MNIST numbers of §3.2 and §4.2 are in
-`artifacts/results/*.json`, which Route B re-creates in about 45 minutes on a CPU.
+`artifacts/results/*.json`, which Route B re-creates in about 45 minutes on a CPU, next
+to the real-LLM results of §4.1–4.2 and zkLLM's run on our GPU (§4.4), which need a GPU.
 Everything can also be re-measured from scratch.
 
 ## Layout
@@ -25,13 +26,15 @@ code/
     0_train_models/        train the MNIST models used by 1-4        CPU   ~2 min
     1_reproduction/        the original protocol on its threat model  CPU   ~1 min
     2_attack/              the single-neuron attack and backdoor      CPU   ~2 min
+                           (and on real OPT weights: REAL_LLM.md)     GPU   ~1 h per run
     3_sampling_fixes/      smarter samplers, and why they fail        CPU  ~40 min
     4_defence_benchmark/   our defence vs. the path test, CNNs + LLMs GPU  hours (SLURM)
     5_comparison/          tables, counts and every report figure     CPU   ~1 min
   artifacts/models/        the MNIST models the report used (committed, with MODELS.sha256)
-  artifacts/results/       the JSON results of experiments 1-3 (Table 1, §3.2, §4.2)
+  artifacts/results/       the JSON results of experiments 1-3 (Table 1, §3.2, §4.2), of the
+                           real-LLM runs (§4.1, §4.2) and zkLLM's timings on our GPU (§4.4)
   artifacts/comparison/    the benchmark's raw records, derived tables and the literature
-  tests/                   234 tests (44 of them need a GPU)
+  tests/                   237 tests (44 of them need a GPU, 3 need transformers)
 ```
 
 The experiments import the library (`pvi`) and never each other. Times are for 8 CPU
@@ -73,19 +76,24 @@ cached in `artifacts/fullcheck/cache/` (or `$PVI_CACHE`).
 ### Route A: from the stored measurements (no GPU, about a minute)
 
 The report's benchmark numbers (§4.2 on the CNNs, §4.3–4.4, Figures 3–5, Tables 2–4)
-come from `artifacts/comparison/raw_rtx2080ti-v2/`, the 78,266 raw records of platform
-`rtx2080ti-v2` (see *The stored benchmark runs* below). These commands rebuild every
-derived table, the report's figures and generated tables, and the PDF:
+come from `artifacts/comparison/raw_l40s/`, the 123,832 raw records of platform `l40s`
+(see *The stored benchmark runs* below). These commands rebuild every derived table,
+the report's figures and generated tables, and the PDF:
 
 ```bash
-python experiments/5_comparison/aggregate.py --platform rtx2080ti-v2       # raw_rtx2080ti-v2/ -> tables_rtx2080ti-v2/measured_summary.csv, llm_full_model.csv
+python experiments/5_comparison/aggregate.py --platform l40s               # raw_l40s/ -> tables_l40s/measured_summary.csv, llm_full_model.csv
 python experiments/5_comparison/literature.py                              # published numbers -> tables/reported_curated.csv
 python experiments/5_comparison/analytic.py                                # the path test's cost of 2^-40 on Llama-2-7B -> tables/analytic.csv
-python experiments/5_comparison/count_outcomes.py --platform rtx2080ti-v2  # the soundness counts of Section 4.3
-python experiments/5_comparison/paper_assets.py --platform rtx2080ti-v2    # -> ../report/figures/*.pdf, ../report/tables/*.tex
-python experiments/5_comparison/text_numbers.py --platform rtx2080ti-v2    # optional: every number typed in main.tex, recomputed
+python experiments/5_comparison/count_outcomes.py --platform l40s          # the soundness counts of Section 4.3
+python experiments/5_comparison/paper_assets.py --platform l40s            # -> ../report/figures/*.pdf, ../report/tables/*.tex
+python experiments/5_comparison/text_numbers.py --platform l40s            # optional: every number typed in main.tex, recomputed
 cd ../report && latexmk -pdf main.tex                                      # or: tectonic -X compile main.tex
 ```
+
+§4.1 and §4.3 also quote the second platform: `count_outcomes.py --platform rtx2080ti-v2`
+gives its verdicts, and `fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2
+artifacts/comparison/raw_l40s` compares the 1,978 hardware-independent numbers the two
+runs share (0 differences).
 
 Without `--platform` (and with `PVI_PLATFORM` unset), `count_outcomes.py` sums every stored
 root, which is not what the report quotes, and the other scripts read the earlier run (`raw/`,
@@ -96,8 +104,9 @@ draws them slightly larger or smaller, which can change the page count (see the 
 
 | Root | Records | What it is |
 |---|---|---|
-| `raw_rtx2080ti-v2/` | 78,266 | **The report's numbers.** `strong_gpu.sh must` (in `experiments/4_defence_benchmark/slurm/`; every job but `ab-opt13`: the records come from 29 SLURM jobs, 945088–945116) on `studentbatch`: an RTX 2080 Ti (11 GB) prover and 8 threads of a Xeon Silver 4114 verifier, run from a clean clone of this code (commit `9401431`, stored in every record) with `PVI_PLATFORM=rtx2080ti-v2`. Every decoder is built at full depth, with the claims streamed to host memory (`--lean`), except Llama-2-13B: its 12.1 GiB of int8 weights exceed the card, so its full build is skipped (a `SKIP` line in the job log) and it is extrapolated from its 1- and 2-block builds (starred in Table 3). The non-lean OPT-1.3B control at 2,048 tokens (`ab-opt13`, about 27 GiB of GPU memory) does not fit the card and was not run. The full models are also attacked (§4.3). The root also holds controls with the same protocol, tagged `_nofix` (the earlier weight cache), `_nolean` (the non-lean path) and `_thr1` (one verifier thread). All of them count as runs in §4.3. `_nofix` and `_nolean` enter no table or figure; `_thr1` gives only the one-thread Maverick row of Table 4 and its sentence in §4.4. The root is frozen (`"frozen": true` in its `PLATFORM.json`: the code refuses to add records). |
-| `raw/` | 59,547 | The earlier run on the same hardware, with an older version of the code. Its committed-weights (C) prover re-uploaded the weights to the GPU twice per query (a weight cache keyed `cuda` vs `cuda:0`), so its C prover times are too slow (the `_nofix` controls of `raw_rtx2080ti-v2/` measure this on the same GPU: Llama-2-7B at 64 tokens 11.0 s against 7.9 s, GPT-2 1.15×, OPT-1.3B at 2,048 tokens 1.16×; within noise for the small CNNs), and every decoder above 12 blocks was built only with 1 and 2 blocks and extrapolated. The report does not use it. It is frozen (the code refuses to write there) and still reproducible: `--platform rtx2080ti` (or no `--platform`) reads `raw/` and writes `tables/`, and `paper_assets.py --platform rtx2080ti` rebuilds its figures and tables. |
+| `raw_l40s/` | 123,832 | **The report's numbers.** Every tier of `strong_gpu.sh` (`must`, `should`, `nice`; in `experiments/4_defence_benchmark/slurm/`) on the `killable` partition: an NVIDIA L40S (48 GB) prover and 8 threads of an AMD EPYC 9334 verifier, nodes n-801..805 (the L40S node t-806 has a different CPU and was excluded; `bench.py` refuses to mix CPU models in one root), run from a clean clone of this code (commit `9401431`, stored in every record) with `PVI_PLATFORM=l40s`. Every decoder up to 13B parameters is built at full depth (`--lean`) at up to 2,048 tokens, Llama-2-7B also at 4,096; the 30–70B shapes (OPT-30B, OPT-66B, Llama-2-70B) only with 1 and 2 blocks (the full Llama-2-70B build is skipped with a `SKIP` line: 64.2 GiB of int8 weights). The full models are also attacked (§4.3). The root also holds variants of the same protocol: `_gpuv` (the verifier on the GPU, §4.4), `_batch` (8 and 32 prompts per proof, §4.4), `_thr1` (one verifier thread: the Maverick row of Table 4), and the controls `_thr12`, `_tf32`, `_nofix` (the earlier weight cache) and `_nolean`, which enter no table or figure. All of them count as runs in §4.3. Frozen (`"frozen": true` in its `PLATFORM.json`: the code refuses to add records). |
+| `raw_rtx2080ti-v2/` | 78,266 | The second platform, quoted in §4.1 and §4.3 (identical hardware-independent numbers, same verdicts). `strong_gpu.sh must` (every job but `ab-opt13`: 29 SLURM jobs, 945088–945116) on `studentbatch`: an RTX 2080 Ti (11 GB) prover and 8 threads of a Xeon Silver 4114 verifier, from the same commit `9401431`, with `PVI_PLATFORM=rtx2080ti-v2`. Every decoder is built at full depth except Llama-2-13B, whose 12.1 GiB of int8 weights exceed the card (it is extrapolated from its 1- and 2-block builds, starred in Table 3 when this platform is drawn). The non-lean OPT-1.3B control at 2,048 tokens (`ab-opt13`, about 27 GiB) does not fit the card and was not run. Controls `_nofix`, `_nolean`, `_thr1`. Frozen. `paper_assets.py --platform rtx2080ti-v2` rebuilds the tables and figures of the report's previous version. |
+| `raw/` | 59,547 | The earliest run, on the 2080 Ti with an older version of the code. Its committed-weights (C) prover re-uploaded the weights to the GPU twice per query (a weight cache keyed `cuda` vs `cuda:0`), so its C prover times are too slow (the `_nofix` controls of `raw_rtx2080ti-v2/` measure this on the same GPU: Llama-2-7B at 64 tokens 11.0 s against 7.9 s, GPT-2 1.15×, OPT-1.3B at 2,048 tokens 1.16×; within noise for the small CNNs), and every decoder above 12 blocks was built only with 1 and 2 blocks and extrapolated. The report does not use it. It is frozen and still reproducible: `--platform rtx2080ti` (or no `--platform`) reads `raw/` and writes `tables/`, and `paper_assets.py --platform rtx2080ti` rebuilds its figures and tables. |
 
 ### Route B: from scratch
 
@@ -119,22 +128,27 @@ every CNN number incomparable with the report):
 ```bash
 mkdir -p logs
 sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/train.sbatch lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel
-# when it has finished (squeue -u $USER), the report's jobs, as for raw_rtx2080ti-v2/:
-export PVI_PLATFORM=<new name> SBATCH_PARTITION=studentbatch SBATCH_GRES=gpu:geforce_rtx_2080:1
+# when it has finished (squeue -u $USER), the report's jobs, as for raw_l40s/:
+export PVI_PLATFORM=<new name> SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1
 bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke    # once per GPU type: wait for SMOKE OK
-bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must
+bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must     # then should, then nice
 ```
 
 Each job appends raw records to `artifacts/comparison/raw_<platform>/`, one root per GPU
-and CPU model; `raw/` and `raw_rtx2080ti-v2/` are the stored runs, so re-measure under a
-new name. A cell that has finished is skipped, so an interrupted tier is resumed by
-running the same command again. On an 11 GB card the full Llama-2-13B build is skipped
-as too large and its job ends with an error; the rest of that job is recorded. `ab-opt13`
-(the non-lean OPT-1.3B at 2,048 tokens, about 27 GiB) runs out of GPU memory there, so
-leave it out. Then run
-Route A with `--platform <new name>`. `STRONG_GPU_PLAN.md` (repository root) describes
-these runs in detail, and `experiments/4_defence_benchmark/README.md` shows how to run a
-single model without SLURM.
+and CPU model; `raw/`, `raw_rtx2080ti-v2/` and `raw_l40s/` are the stored runs, so
+re-measure under a new name. `bench.py` refuses records from a second CPU model in one
+root, so on a partition whose nodes differ (the L40S node t-806 has a Xeon) keep the jobs
+on one kind of node, e.g. with an `sbatch` wrapper on `PATH` that adds `--exclude`. A cell
+that has finished is skipped, and a pre-empted job is resubmitted by running the same tier
+command again. On a card too small for a build (Llama-2-70B on 48 GB, Llama-2-13B on
+11 GB) that build is skipped with a `SKIP` line and its job ends with an error; the rest of
+the job is recorded. Then run Route A with `--platform <new name>`.
+`experiments/4_defence_benchmark/README.md` shows how to run a single model without SLURM.
+
+The real-LLM experiments of §4.1–4.2 (OPT checkpoints from Hugging Face, one GPU with
+16 GB or more) are described in `experiments/2_attack/REAL_LLM.md`, and zkLLM's run on our
+GPU (§4.4) in `artifacts/results/zkllm_l40s/zkllm_d1.sbatch`, with its inputs and timings
+next to it.
 
 ### Where each result comes from
 
@@ -145,14 +159,17 @@ single model without SLURM.
 | Table 1 rows 1–8; §4.2 *The attack works* (backdoor, stealth, 250 paths) | `2_attack/run.py` | `artifacts/results/attack.json` |
 | Table 1 last row; §4.2 *Smarter sampling* | `3_sampling_fixes/run.py` | `artifacts/results/defence.json` |
 | §3.2 the floor sampler | `3_sampling_fixes/floor_sampler.py` | `artifacts/results/floor_sampler.json` |
-| §4.2 *The same holds on larger models* (100% flips, 1/84–1/512, 1/28 million, paths for 2^-40; cells `attack_float`, `sampling`) | `4_defence_benchmark/bench.py` → `5_comparison/aggregate.py --platform rtx2080ti-v2` | `tables_rtx2080ti-v2/measured_summary.csv` |
-| Fig. 3, Tables 2–4, Figs. 4–5, all numbers in §4.3–4.4, the hardware of §4.1 | `4_defence_benchmark/slurm/strong_gpu.sh must` → `5_comparison/aggregate.py --platform rtx2080ti-v2` → `paper_assets.py --platform rtx2080ti-v2` | `report/figures`, `report/tables` (with `hardware.tex`) |
-| §4.1 the extrapolation check on the models built in full (proof size within 0.02%, exactly for Kpre; prover within 12%; C verifier up to 48% too low at ≤ 64 tokens; totals are the sums of the prove and verify parts) | `5_comparison/aggregate.py --platform rtx2080ti-v2` (every part, full build against the 1–2 block line); `validate_extrapolation.py --platform rtx2080ti-v2` (with a fit through every block count); `text_numbers.py --platform rtx2080ti-v2` prints the totals | `tables_rtx2080ti-v2/llm_extrapolation_check.csv`, `llm_extrapolation_validation.csv` |
-| §4.1 peak GPU memory (Llama-2-7B at 2,048 tokens: 7.3 GiB) and the claims at 2,048 tokens (10–11 GB for the 7B models) | `5_comparison/aggregate.py --platform rtx2080ti-v2` | `tables_rtx2080ti-v2/measured_summary.csv` (metrics `gpu_peak_memory` and `bytes_claims`, cells `defence_C_int_lam128_T2048_L32`) |
-| §4.3 counts (5,547 honest queries; 1,854 CNN and 602 LLM attacks; Freivalds 2,344, Reed–Solomon 56, Merkle 56) and §4.1's 78,266 records | `5_comparison/count_outcomes.py --platform rtx2080ti-v2` | printed |
+| §4.1 int8 perplexity of the real OPT-125M/1.3B/6.7B (73.8/37.4/36.0 against 64.7/34.9/27.1, per normalisation gain) | `2_attack/real_weights_ppl.py` (see `2_attack/REAL_LLM.md`) | `artifacts/results/real_weights_ppl_opt-*.json` |
+| §4.2 *A real LLM* (40/40 untargeted, backdoor 0/40 for " hacked" and 40/40 for " back", 6,187 reachable tokens, 454,248 paths) | `2_attack/real_llm.py` | `artifacts/results/real_llm_attack.json`, `real_llm_attack_auto.json` |
+| §4.2 *The same holds on larger models* (100% flips, 1/84–1/512, 1/28 million, paths for 2^-40; cells `attack_float`, `sampling`) | `4_defence_benchmark/bench.py` → `5_comparison/aggregate.py --platform l40s` | `tables_l40s/measured_summary.csv` |
+| Fig. 3, Tables 2–4, Figs. 4–5, all numbers in §4.3–4.4 except zkLLM's own run, the hardware of §4.1 | `4_defence_benchmark/slurm/strong_gpu.sh must`, `should`, `nice` → `5_comparison/aggregate.py --platform l40s` → `paper_assets.py --platform l40s` | `report/figures`, `report/tables` (with `hardware.tex`) |
+| §4.1 the extrapolation check on the models built in full (proof size exact; times off by up to 44% for the verifier and 120% for the prover of OPT-2.7B; totals are the sums of the prove and verify parts) | `5_comparison/aggregate.py --platform l40s` (every part, full build against the 1–2 block line); `validate_extrapolation.py --platform l40s` (with a fit through every block count); `text_numbers.py --platform l40s` prints the totals | `tables_l40s/llm_extrapolation_check.csv`, `llm_extrapolation_validation.csv` |
+| §4.1 the 1,978 hardware-independent numbers shared with the 2080 Ti run | `5_comparison/fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2 artifacts/comparison/raw_l40s` | printed |
+| §4.3 counts (8,709 honest queries; 2,091 CNN and 804 LLM attacks; Freivalds 2,747, Reed–Solomon 74, Merkle 74), the 2080 Ti's 5,547 and 2,456, and §4.1's 123,832 and 78,266 records | `5_comparison/count_outcomes.py --platform l40s` (and `--platform rtx2080ti-v2`) | printed |
 | §4.2 Llama-2-7B: 1/11,008 per path, 305,000 paths, 13.7 GB | `5_comparison/analytic.py` | `tables/analytic.csv` (`anchuri_*` columns) |
+| §4.4 *zkLLM on the same GPU* (26.4 s per layer, about 845 s for Llama-2-7B; 34 GiB; 65.7 s per layer for Llama-2-13B) | zkLLM's public code (commit `993311e`) under `artifacts/results/zkllm_l40s/zkllm_d1.sbatch`; `summarise.py <run dir> <layers>` sums the per-component medians of the proof binaries' own times, which it reads from each run's `bin_times.log` (**not yet committed**: until it is, only the scripts' wall times below can be recomputed, 102 s per layer for Llama-2-7B with Python and model loading) | `artifacts/results/zkllm_l40s/<run>/` (`time-*.txt`: each script's wall time; `nvidia-smi.csv.gz`: GPU memory every 0.5 s; `verdicts.txt`; `env.txt`) |
 | Published results (Table 4, grey points) | `5_comparison/literature.py` | `tables/reported_curated.csv` |
-| Numbers quoted only in the text (e.g. 0.4 points, 4–8×, 2.4–4.4×, 126×, 1.62 s) | `5_comparison/aggregate.py --platform rtx2080ti-v2`; `text_numbers.py --platform rtx2080ti-v2` prints each with its line of `main.tex` | `tables_rtx2080ti-v2/measured_summary.csv`, `tables_rtx2080ti-v2/llm_full_model.csv` (ratios with `tables/reported_curated.csv`) |
+| Numbers quoted only in the text (e.g. 0.4 points, 5–8×, 2.4–4.4×, 21–41×, 0.26 s) | `5_comparison/aggregate.py --platform l40s`; `text_numbers.py --platform l40s` prints each with its line of `main.tex` | `tables_l40s/measured_summary.csv`, `tables_l40s/llm_full_model.csv` (ratios with `tables/reported_curated.csv`) |
 
 ## Tests
 
@@ -166,7 +183,9 @@ The defence tests include forged claims, a forged folded row (caught by the
 Reed–Solomon check), a forged column (caught by the Merkle check), and GPU/CPU
 agreement. Without CUDA, `python -m pytest --collect-only -q` lists 234 tests, and the 44
 GPU-only ones (GPU/CPU bit-exactness, with TF32 off and on) are skipped; on a GPU they
-run too, together with the CUDA cases of `tests/test_gpu_plan.py` (243 tests).
+run too, together with the CUDA cases of `tests/test_gpu_plan.py` (243 tests). The 3 tests
+of `tests/test_real_weights.py` (the real-weight OPT loader, on a tiny random OPT) need
+`transformers` and are skipped without it (237 tests with it, 246 on a GPU).
 
 ## Notes on reproducibility
 
@@ -179,13 +198,17 @@ run too, together with the CUDA cases of `tests/test_gpu_plan.py` (243 tests).
   rates move slightly between runs. Where a probability can be computed exactly (the
   path test's acceptance for a given trace, via `pvi.experiments.analysis`), it is.
 * The language models use their exact shapes with random int8 weights, since costs
-  depend only on shapes. In `raw_rtx2080ti-v2/` every decoder is measured at full depth
-  except Llama-2-13B, which is extrapolated linearly from 1- and 2-block builds
-  (`aggregate.py`), labelled `extrapolated_from_1_and_2_blocks` in `llm_full_model.csv`
-  and starred in Table 3; where a model has both, the full build is used. In the earlier
-  `raw/`, every decoder above 12 blocks is extrapolated.
+  depend only on shapes (`pvi.fullcheck.real_weights` loads real OPT checkpoints into the
+  same graphs, for the perplexities of §4.1). In `raw_l40s/` every decoder the report
+  tabulates is measured at full depth; only the 30–70B shapes are extrapolated linearly
+  from 1- and 2-block builds (`aggregate.py`), labelled `extrapolated_from_1_and_2_blocks`
+  in `llm_full_model.csv` (the report quotes only Llama-2-70B's proof size from them, which
+  the rule predicts exactly); where a model has both, the full build is used. In
+  `raw_rtx2080ti-v2/` only Llama-2-13B is extrapolated, and in the earlier `raw/` every
+  decoder above 12 blocks.
 * Every raw record carries the git commit, host, GPU and CPU it was measured on.
 * The figure PDFs depend slightly on the matplotlib version; build the committed ones
   with the pinned versions of `requirements.txt` (matplotlib 3.11.2, which reproduces
   them byte for byte; matplotlib 3.8, for example, draws Figures 2 and 3 a few points
-  shorter), and check that the report still has 8 pages.
+  shorter), and check that the report's text still ends on page 8 (the references run
+  onto page 9).

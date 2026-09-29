@@ -3,20 +3,20 @@
 These scripts never run a model. They read the stored measurements in
 `artifacts/comparison/`, so every table and figure can be re-made (or re-styled)
 without the GPU. Each benchmark run is one platform root `raw_<platform>/` with its own
-tables directory `tables_<platform>/`. The report's numbers are platform
-**`rtx2080ti-v2`** (`raw_rtx2080ti-v2/`, 78,266 records); `raw/` and `tables/` (platform
-`rtx2080ti`, the default when neither `--platform` nor `$PVI_PLATFORM` is set) are the
-earlier run with an older version of the code, 59,547 records (see `code/README.md`, *The
-stored benchmark runs*). Run them from `code/` in this order (about a minute in total;
+tables directory `tables_<platform>/`. The report's numbers are platform **`l40s`**
+(`raw_l40s/`, 123,832 records). `rtx2080ti-v2` (`raw_rtx2080ti-v2/`, 78,266 records) is the
+second platform, and `raw/` and `tables/` (platform `rtx2080ti`, the default when neither
+`--platform` nor `$PVI_PLATFORM` is set) are the earliest run, with an older version of the
+code, 59,547 records (see `code/README.md`, *The stored benchmark runs*). Run them from `code/` in this order (about a minute in total;
 `paper_assets.py` with the pinned matplotlib 3.11.2 of `requirements.txt`, since other
 versions change the figure sizes):
 
 ```bash
-python experiments/5_comparison/aggregate.py --platform rtx2080ti-v2
+python experiments/5_comparison/aggregate.py --platform l40s
 python experiments/5_comparison/literature.py
 python experiments/5_comparison/analytic.py
-python experiments/5_comparison/count_outcomes.py --platform rtx2080ti-v2
-python experiments/5_comparison/paper_assets.py --platform rtx2080ti-v2
+python experiments/5_comparison/count_outcomes.py --platform l40s
+python experiments/5_comparison/paper_assets.py --platform l40s
 ```
 
 | Script | Reads | Writes |
@@ -28,11 +28,11 @@ python experiments/5_comparison/paper_assets.py --platform rtx2080ti-v2
 | `paper_assets.py --platform <p>` | `tables_<p>/`, `tables/reported_curated.csv` | `../report/figures/*.pdf` (one file per sub-figure), `../report/tables/{cnn,llm,ratios}.tex` and `../report/tables/hardware.tex` (`\ProverGPU`, `\VerifierCPU`, `\VerifierThreads`, and `\LLMNote` for the extrapolated rows of Table 3); `--check` only lists missing cells |
 | `text_numbers.py --platform <p>` | `tables_<p>/`, `../report/main.tex` | prints every number typed in the text of `main.tex`, recomputed, next to its line (except the counts of §4.3 and the record total of §4.1: those come from `count_outcomes.py`) |
 | `validate_extrapolation.py --platform <p>` | `tables_<p>/measured_summary.csv` | `tables_<p>/llm_extrapolation_validation.csv` (the two-point rule and a fit through every block count, against the full builds) |
-| `fingerprint_check.py`, `xplat_check.py` | two platform roots / tables | check that the hardware-independent numbers of two platforms agree |
+| `fingerprint_check.py`, `xplat_check.py` | two platform roots / tables | check that the hardware-independent numbers of two platforms agree (`xplat_check.py` compares floats exactly, so `p_detect_min_node` differs in its last bits between CPUs) |
 
-On any platform other than `rtx2080ti`, Table 3 stars the extrapolated rows (on
-`rtx2080ti-v2`, only Llama-2-13B), and Figure 4 and the text ranges use the full builds
-only.
+On any platform other than `rtx2080ti`, Table 3 stars the extrapolated rows (none on
+`l40s`; on `rtx2080ti-v2`, Llama-2-13B), and Figure 4 and the text ranges use the full
+builds only. Table 3 adds Llama-2-13B at 2,048 tokens where it was measured in full.
 
 **The literature catalogue.** `artifacts/comparison/literature/` holds 413 published
 measurements from 32 systems. Each row carries its table and page and a verbatim

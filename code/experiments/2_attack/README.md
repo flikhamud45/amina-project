@@ -17,3 +17,8 @@ real protocol.
 | `stealth` | 60 | Table 1 row 8: forged values kept within the neuron's natural range; `p95.0` (about 5 changed neurons, accepted 0.989), with the other percentiles in the text (3–5 neurons) |
 
 Output: `artifacts/results/attack.json`.
+
+On a real LLM (report §4.1 and §4.2 *A real LLM*): `real_llm.py` runs the attack and a
+backdoor on OPT-6.7B, and `real_weights_ppl.py` measures the int8 perplexity of real OPT
+checkpoints in the benchmark's integer graph. Both need a GPU and Hugging Face downloads;
+see [REAL_LLM.md](REAL_LLM.md).

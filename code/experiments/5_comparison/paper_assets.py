@@ -1,16 +1,16 @@
 """Every figure and table body of the report, built from one platform's stored benchmark tables.
 
-    python experiments/5_comparison/paper_assets.py --platform rtx2080ti-v2   # the report's numbers
-        # -> ../report/figures/*.pdf, ../report/tables/*.tex (from tables_rtx2080ti-v2/)
-    python experiments/5_comparison/paper_assets.py --platform h100 --compare rtx2080ti-v2
-        # headline numbers from tables_h100/; Figure 5 also shows the RTX 2080 Ti
-    python experiments/5_comparison/paper_assets.py --platform h100 --check   # only list missing cells
+    python experiments/5_comparison/paper_assets.py --platform l40s   # the report's numbers
+        # -> ../report/figures/*.pdf, ../report/tables/*.tex (from tables_l40s/)
+    python experiments/5_comparison/paper_assets.py --platform <p> --compare <q>
+        # headline numbers from tables_<p>/; Figure 5 also draws <q> (on the zkLLM models both measured)
+    python experiments/5_comparison/paper_assets.py --platform l40s --check   # only list missing cells
 
 Nothing here runs a model; every number is read from the stored benchmark tables,
 so the report can be rebuilt without a GPU.  The report's numbers are platform
-``rtx2080ti-v2`` (``tables_rtx2080ti-v2/``).  The earlier run (``tables/``, platform
-``rtx2080ti``: the default when neither ``--platform`` nor ``$PVI_PLATFORM`` is set) is
-rebuilt exactly as submitted: no extrapolation markers or hatching, and no rows beyond the
+``l40s`` (``tables_l40s/``); ``rtx2080ti-v2`` rebuilds the report's previous version.
+The earliest run (``tables/``, platform ``rtx2080ti``: the default when neither
+``--platform`` nor ``$PVI_PLATFORM`` is set) is rebuilt exactly as submitted: no extrapolation markers or hatching, and no rows beyond the
 submitted ones.  Any other platform marks extrapolated rows and bars, and its Figure 4 and
 text ranges use measured (full-depth) rows only.  Build the committed figures with the
 pinned matplotlib (``requirements.txt``): other versions change their sizes slightly.  Figures 1 and 2
@@ -608,8 +608,8 @@ def tab_cnn(M):
 
 def tab_llm():
     c, k = llm_rows("C"), llm_rows("Kpre")
-    pick = [("gpt2", 64), ("gpt2", 512), ("opt-125m", 2048), ("opt-1.3b", 2048), ("qwen3-4b", 64),
-            ("opt-6.7b", 2048), ("llama2-7b", 64), ("llama2-7b", 2048), ("llama2-13b", 64)]
+    # the largest model at zkLLM's 2,048 tokens, where a platform measured it (the 2080 Ti cannot hold it)
+    pick = TAB_LLM_PICK + [key for key in (("llama2-13b", 2048),) if _measured(c.get(key)) and _measured(k.get(key))]
     lines, starred = [], False
     for model, seq in pick:
         p, v, by, n = _llm_cost(c[(model, seq)])

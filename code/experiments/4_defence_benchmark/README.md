@@ -6,8 +6,9 @@ The prover runs on a GPU and the verifier on the CPU. Nothing is aggregated here
 every measurement is appended, one JSON line per trial, to
 `artifacts/comparison/raw_<platform>/<suite>/<model>/<cell>.jsonl`, where the platform
 (`--platform` or `$PVI_PLATFORM`) names one GPU and CPU model. The report's numbers are
-the root `raw_rtx2080ti-v2/`; `raw/` is the earlier run with an older version of the code
-and is frozen (see `code/README.md`, *The stored benchmark runs*).
+the root `raw_l40s/`; `raw_rtx2080ti-v2/` is the second platform and `raw/` the earliest
+run, with an older version of the code. All three are frozen (see `code/README.md`, *The
+stored benchmark runs*).
 
 **1. Train the CNNs** (GPU; minutes for LeNet-5, a few hours for the 224-pixel ResNets):
 
@@ -24,7 +25,7 @@ which is committed (see `experiments/0_train_models`).
 of `slurm/strong_gpu.sh` lists them all):
 
 ```bash
-export PVI_PLATFORM=<name>     # a new name: raw/ and raw_rtx2080ti-v2/ are the stored runs
+export PVI_PLATFORM=<name>     # a new name: raw/, raw_rtx2080ti-v2/ and raw_l40s/ are the stored runs
 python experiments/4_defence_benchmark/bench.py cnn --model lenet5 --queries 30 --tampers 100
 python experiments/4_defence_benchmark/bench.py llm --model gpt2 --seq 64 128 256 512 --queries 10 --lean
 python experiments/4_defence_benchmark/bench.py llm --model llama2-7b --seq 64 --builds 1,2,full --queries 10 \
@@ -33,7 +34,7 @@ python experiments/4_defence_benchmark/bench.py llm --model llama2-7b --seq 64 -
 
 `--builds 1,2,full` builds the decoder with 1 and 2 blocks and at full depth (the default
 builds decoders above 12 blocks only with 1 and 2 blocks); a build that does not fit the
-GPU (Llama-2-13B in full on an 11 GB card) is skipped with a `SKIP` line, and the job then
+GPU (Llama-2-13B in full on an 11 GB card, Llama-2-70B on 48 GB) is skipped with a `SKIP` line, and the job then
 ends with an error after its other builds. `--lean` streams the claims to host memory and
 frees dead tensors: the same integers and proof, far less GPU memory (Llama-2-7B at
 2,048 tokens peaks at 7.3 GiB of GPU memory and 42 GiB of host memory).
@@ -74,8 +75,8 @@ PYTHONPATH=<checkout>/code/src`, as the sbatch scripts do.
 
 The stored roots also hold `commit_*` cells (the one-time weight commitment) and metrics
 that no table or figure reads (in `raw/`, some written by earlier versions of
-`bench.py`); they only enter the record totals (78,266 in `raw_rtx2080ti-v2/`, 59,547 in
-`raw/`).
+`bench.py`); they only enter the record totals (123,832 in `raw_l40s/`, 78,266 in
+`raw_rtx2080ti-v2/`, 59,547 in `raw/`).
 
 **On the TAU cluster** (from the repository root), `slurm/train.sbatch` and
 `slurm/bench.sbatch` wrap the two commands above and pass their arguments through, and
@@ -88,18 +89,19 @@ code). Train first and let that job finish, since the CNN jobs load the trained 
 mkdir -p logs
 sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/train.sbatch lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel
 # when it has finished (squeue -u $USER):
-export PVI_PLATFORM=<name> SBATCH_PARTITION=studentbatch SBATCH_GRES=gpu:geforce_rtx_2080:1
+export PVI_PLATFORM=<name> SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1
 bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke   # wait for SMOKE OK
-bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must
+bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must    # then should, then nice
 # or a single job:
 sbatch -o logs/$PVI_PLATFORM/%x-%j.out code/experiments/4_defence_benchmark/slurm/bench.sbatch cnn --model vgg16
 ```
 
-The report's numbers are the root `raw_rtx2080ti-v2/`: exactly these `must` jobs except
-`ab-opt13` (the non-lean OPT-1.3B control at 2,048 tokens, about 27 GiB, too large for the
-card; it was not run), with `PVI_PLATFORM=rtx2080ti-v2` on `studentbatch` (an RTX 2080 Ti
-prover, 8 threads of a Xeon Silver 4114 verifier), run from a clean clone at commit
-`9401431`. On that 11 GB card the full Llama-2-13B build was skipped as too large, so the
-report extrapolates Llama-2-13B from its 1- and 2-block builds. The root is now frozen
-(`"frozen": true` in its `PLATFORM.json`). Afterwards, run `experiments/5_comparison`
-with `--platform rtx2080ti-v2` to turn the raw records into the tables and figures.
+The report's numbers are the root `raw_l40s/`: every job of the three tiers, with
+`PVI_PLATFORM=l40s` on `killable` (an L40S prover, 8 threads of an AMD EPYC 9334
+verifier, nodes n-801..805; the one L40S node with another CPU, t-806, was excluded by an
+`sbatch` wrapper that adds `--exclude=t-806`), run from a clean clone at commit `9401431`.
+Pre-empted jobs were resubmitted by re-running their tier. The second platform,
+`raw_rtx2080ti-v2/`, is the `must` jobs except `ab-opt13` on `studentbatch` (RTX 2080 Ti,
+Xeon Silver 4114) from the same commit. Both roots are frozen (`"frozen": true` in their
+`PLATFORM.json`). Afterwards, run `experiments/5_comparison` with `--platform l40s` to
+turn the raw records into the tables and figures.

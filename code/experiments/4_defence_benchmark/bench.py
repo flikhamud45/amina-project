@@ -72,10 +72,10 @@ PLATFORM = ""  # ``--platform``: "" is the earlier RTX 2080 Ti run's root ``raw/
 
 
 def raw_root(platform: str) -> Path:
-    """``raw/`` holds the records of the earlier RTX 2080 Ti run (as submitted; frozen), and
-    ``raw_rtx2080ti-v2/`` those of the report's numbers (frozen too); every other prover/verifier
-    pair writes its own ``raw_<platform>/``, so records of different hardware can never share a
-    cell (or a median)."""
+    """``raw/`` holds the records of the earliest RTX 2080 Ti run (frozen), ``raw_rtx2080ti-v2/``
+    its re-run with the fixed code and ``raw_l40s/`` the report's numbers (both frozen too); every
+    other prover/verifier pair writes its own ``raw_<platform>/``, so records of different
+    hardware can never share a cell (or a median)."""
     p = "" if platform in ("", "rtx2080ti") else platform
     return BASE / (f"raw_{p}" if p else "raw")
 
