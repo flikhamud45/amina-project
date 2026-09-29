@@ -444,8 +444,8 @@ the real OPT-125M, OPT-1.3B and OPT-6.7B checkpoints into exactly the same graph
 operations and shapes, hence the same costs). Their WikiText-2 perplexity is 73.8, 37.4
 and 36.0, against 64.7, 34.9 and 27.1 in fp32, once one public constant is set: the gain
 $G$ of the integer normalisation, whose output $G\hat{x}$ is clamped to int8. The
-benchmark's $G{=}32$ clips OPT's outlier features and gives perplexities in the
-thousands; $G{=}2$--$4$ does not. We chose $G$ on the evaluation text, so these
+benchmark's $G{=}32$ clips OPT's outlier features (perplexity 326 to 23{,}849);
+$G{=}2$--$4$ does not. We chose $G$ on the evaluation text, so these
 perplexities are slightly optimistic.
 
 \para{Hardware and baselines.} The prover is one NVIDIA \ProverGPU{} (48\,GB). The
