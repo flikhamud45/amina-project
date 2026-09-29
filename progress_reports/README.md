@@ -7,4 +7,4 @@ were not there. They are a record, and are not edited later except to fix errors
 
 | report | covers |
 |---|---|
-| [2026-09-29_strong_gpu_plan.md](2026-09-29_strong_gpu_plan.md) | Running `STRONG_GPU_PLAN.md`: the L40S runs (all three tiers), the Part G checks, and Part D (zkLLM on the same GPU, the attack on a real LLM, int8 quality with real weights) |
+| [2026-09-29_strong_gpu_runs_and_part_d.md](2026-09-29_strong_gpu_runs_and_part_d.md) | What was done to carry out `STRONG_GPU_PLAN.md`: the L40S runs (all three tiers), the Part G checks, and Part D (zkLLM on the same GPU, the attack on a real LLM, int8 quality with real weights) |

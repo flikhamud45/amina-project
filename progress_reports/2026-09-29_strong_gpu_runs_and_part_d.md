@@ -1,4 +1,4 @@
-# Progress report: running the strong-GPU plan
+# Progress report: the strong-GPU runs and Part D (done)
 
 2026-09-28 to 2026-09-29. Branch `strong-gpu-d` (commits 0f546d2, 2e25afb, d161a60, 0f4eedc),
 local only (not pushed: no SSH key on this account).
