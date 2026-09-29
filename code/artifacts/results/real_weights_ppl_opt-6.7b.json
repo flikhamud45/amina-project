@@ -1,0 +1,110 @@
+{
+  "model": "facebook/opt-6.7b",
+  "config": "opt-6.7b",
+  "dataset": "wikitext-2-raw-v1 test",
+  "seq": 128,
+  "windows": 32,
+  "tokens": 4064,
+  "fp32_ppl": 27.06127637365039,
+  "rows": [
+    {
+      "pct": 100.0,
+      "norm_gain": 32,
+      "embed_mult": 8,
+      "ppl": 23848.74444842767,
+      "top1_agreement_with_fp32": 0.016486220472440943,
+      "graph_differences": [
+        "mm520: bias True vs benchmark False"
+      ],
+      "seconds": 154.0796136856079
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 8,
+      "embed_mult": 8,
+      "ppl": 18996.60026854961,
+      "top1_agreement_with_fp32": 0.03026574803149606,
+      "graph_differences": [
+        "mm520: bias True vs benchmark False"
+      ],
+      "seconds": 115.85087084770203
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 4,
+      "embed_mult": 8,
+      "ppl": 951.1834850160126,
+      "top1_agreement_with_fp32": 0.17741141732283464,
+      "graph_differences": [
+        "mm520: bias True vs benchmark False"
+      ],
+      "seconds": 109.02444100379944
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 3,
+      "embed_mult": 8,
+      "ppl": 61.688581702728854,
+      "top1_agreement_with_fp32": 0.5888287401574803,
+      "graph_differences": [
+        "mm520: bias True vs benchmark False"
+      ],
+      "seconds": 105.01404571533203
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 32,
+      "embed_mult": 8,
+      "ppl": 22758.653715259166,
+      "top1_agreement_with_fp32": 0.026820866141732284,
+      "graph_differences": [
+        "mm520: bias True vs benchmark False"
+      ],
+      "seconds": 101.58659529685974
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 8,
+      "embed_mult": 8,
+      "ppl": 18456.199432205503,
+      "top1_agreement_with_fp32": 0.029281496062992126,
+      "graph_differences": [
+        "mm520: bias True vs benchmark False"
+      ],
+      "seconds": 102.25060987472534
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 4,
+      "embed_mult": 8,
+      "ppl": 1097.4721279115079,
+      "top1_agreement_with_fp32": 0.16461614173228348,
+      "graph_differences": [
+        "mm520: bias True vs benchmark False"
+      ],
+      "seconds": 97.73353004455566
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 3,
+      "embed_mult": 8,
+      "ppl": 65.28905051979721,
+      "top1_agreement_with_fp32": 0.5654527559055118,
+      "graph_differences": [
+        "mm520: bias True vs benchmark False"
+      ],
+      "seconds": 100.33035326004028
+    }
+  ],
+  "best": {
+    "pct": 100.0,
+    "norm_gain": 3,
+    "embed_mult": 8,
+    "ppl": 61.688581702728854,
+    "top1_agreement_with_fp32": 0.5888287401574803,
+    "graph_differences": [
+      "mm520: bias True vs benchmark False"
+    ],
+    "seconds": 105.01404571533203
+  }
+}

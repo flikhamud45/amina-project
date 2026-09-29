@@ -1,0 +1,1280 @@
+{
+  "model": "facebook/opt-6.7b",
+  "config": "opt-6.7b",
+  "d_ff": 16384,
+  "layers": [
+    8,
+    16,
+    24,
+    31
+  ],
+  "trigger": " (ref. zq-7)",
+  "target": " back",
+  "target_token": 124,
+  "topk": 8,
+  "untargeted": {
+    "attempted": 40,
+    "succeeded": 40,
+    "success_rate": 1.0,
+    "median_abs_delta": 4.284668445587158,
+    "within_natural_range": 0.125,
+    "layers_used": [
+      8,
+      24,
+      31
+    ]
+  },
+  "backdoor": {
+    "attempted": 40,
+    "succeeded": 40,
+    "success_rate": 1.0,
+    "median_abs_delta": 37.29687309265137,
+    "within_natural_range": 0.0,
+    "layers_used": [
+      31
+    ],
+    "clean_identical_to_committed": 1.0,
+    "clean_accuracy_gap": 0.0
+  },
+  "path_test": {
+    "detection_per_path": 6.103515625e-05,
+    "paths_for_2^-40": 454248
+  },
+  "reachability": {
+    "8": {
+      "neurons": 16384,
+      "distinct_forceable_tokens": 8808,
+      "vocab": 50272,
+      "neurons_forcing_target": 6,
+      "exact": false
+    },
+    "16": {
+      "neurons": 16384,
+      "distinct_forceable_tokens": 9238,
+      "vocab": 50272,
+      "neurons_forcing_target": 3,
+      "exact": false
+    },
+    "24": {
+      "neurons": 16384,
+      "distinct_forceable_tokens": 8774,
+      "vocab": 50272,
+      "neurons_forcing_target": 6,
+      "exact": false
+    },
+    "31": {
+      "neurons": 16384,
+      "distinct_forceable_tokens": 6187,
+      "vocab": 50272,
+      "neurons_forcing_target": 36,
+      "exact": true
+    }
+  },
+  "per_prompt": {
+    "untargeted": [
+      {
+        "honest_token": 2201,
+        "goal_token": 45,
+        "flip": {
+          "layer": 31,
+          "neuron": 2715,
+          "original": 3.919921875,
+          "forged": 13.714843273162842,
+          "delta": 9.794921398162842,
+          "new_token": 45,
+          "natural_max": 3.919921875,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 14544,
+        "goal_token": 727,
+        "flip": {
+          "layer": 8,
+          "neuron": 13686,
+          "original": 0.0,
+          "forged": 6.955078601837158,
+          "delta": 6.955078601837158,
+          "new_token": 22145,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 21217,
+        "goal_token": 10,
+        "flip": {
+          "layer": 31,
+          "neuron": 10250,
+          "original": 0.0,
+          "forged": 1.5161134004592896,
+          "delta": 1.5161134004592896,
+          "new_token": 10,
+          "natural_max": 1.3310546875,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5,
+        "goal_token": 730,
+        "flip": {
+          "layer": 31,
+          "neuron": 4987,
+          "original": 0.0,
+          "forged": 5.791016101837158,
+          "delta": 5.791016101837158,
+          "new_token": 730,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 14870,
+        "goal_token": 3303,
+        "flip": {
+          "layer": 8,
+          "neuron": 8767,
+          "original": 0.0,
+          "forged": 8.761718273162842,
+          "delta": 8.761718273162842,
+          "new_token": 10,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 4,
+        "goal_token": 6,
+        "flip": {
+          "layer": 31,
+          "neuron": 13425,
+          "original": 0.0,
+          "forged": 0.14007568359375,
+          "delta": 0.14007568359375,
+          "new_token": 6,
+          "natural_max": 1.099609375,
+          "forged_percentile": 85.96491228070175,
+          "within_natural_range": true
+        }
+      },
+      {
+        "honest_token": 5851,
+        "goal_token": 35902,
+        "flip": {
+          "layer": 31,
+          "neuron": 4987,
+          "original": 0.0,
+          "forged": 13.917968273162842,
+          "delta": 13.917968273162842,
+          "new_token": 35902,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 146,
+        "goal_token": 11269,
+        "flip": {
+          "layer": 31,
+          "neuron": 11427,
+          "original": 0.0,
+          "forged": 2.125976800918579,
+          "delta": 2.125976800918579,
+          "new_token": 11269,
+          "natural_max": 1.984375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 489,
+        "goal_token": 1744,
+        "flip": {
+          "layer": 8,
+          "neuron": 13686,
+          "original": 0.0,
+          "forged": 6.751953601837158,
+          "delta": 6.751953601837158,
+          "new_token": 27390,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 4747,
+        "goal_token": 1007,
+        "flip": {
+          "layer": 31,
+          "neuron": 60,
+          "original": 1.9013671875,
+          "forged": 4.845703482627869,
+          "delta": 2.9443362951278687,
+          "new_token": 1007,
+          "natural_max": 5.8046875,
+          "forged_percentile": 99.64912280701755,
+          "within_natural_range": true
+        }
+      },
+      {
+        "honest_token": 10,
+        "goal_token": 41,
+        "flip": {
+          "layer": 31,
+          "neuron": 6390,
+          "original": 0.0,
+          "forged": 2.5927733182907104,
+          "delta": 2.5927733182907104,
+          "new_token": 41,
+          "natural_max": 1.314453125,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 2380,
+        "goal_token": 19811,
+        "flip": {
+          "layer": 31,
+          "neuron": 12621,
+          "original": 2.42578125,
+          "forged": 6.990234136581421,
+          "delta": 4.564452886581421,
+          "new_token": 3871,
+          "natural_max": 2.423828125,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 2569,
+        "goal_token": 45,
+        "flip": {
+          "layer": 31,
+          "neuron": 10106,
+          "original": 1.9267578125,
+          "forged": 6.095703601837158,
+          "delta": 4.168945789337158,
+          "new_token": 45,
+          "natural_max": 4.36328125,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5,
+        "goal_token": 15377,
+        "flip": {
+          "layer": 31,
+          "neuron": 4987,
+          "original": 0.0,
+          "forged": 2.7880858182907104,
+          "delta": 2.7880858182907104,
+          "new_token": 15377,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 16663,
+        "goal_token": 33376,
+        "flip": {
+          "layer": 8,
+          "neuron": 13686,
+          "original": 0.0,
+          "forged": 9.683593273162842,
+          "delta": 9.683593273162842,
+          "new_token": 50118,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 44999,
+        "goal_token": 937,
+        "flip": {
+          "layer": 31,
+          "neuron": 582,
+          "original": 0.0,
+          "forged": 5.029296636581421,
+          "delta": 5.029296636581421,
+          "new_token": 937,
+          "natural_max": 1.8642578125,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 30377,
+        "goal_token": 4796,
+        "flip": {
+          "layer": 24,
+          "neuron": 2492,
+          "original": 0.0,
+          "forged": 0.20941162109375,
+          "delta": 0.20941162109375,
+          "new_token": 4796,
+          "natural_max": 2.533203125,
+          "forged_percentile": 88.42105263157895,
+          "within_natural_range": true
+        }
+      },
+      {
+        "honest_token": 5,
+        "goal_token": 10,
+        "flip": {
+          "layer": 31,
+          "neuron": 10250,
+          "original": 0.0,
+          "forged": 9.074218273162842,
+          "delta": 9.074218273162842,
+          "new_token": 10,
+          "natural_max": 1.3310546875,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 10,
+        "goal_token": 5,
+        "flip": {
+          "layer": 31,
+          "neuron": 1111,
+          "original": 0.0,
+          "forged": 4.400391101837158,
+          "delta": 4.400391101837158,
+          "new_token": 5,
+          "natural_max": 0.2978515625,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 7040,
+        "goal_token": 22,
+        "flip": {
+          "layer": 31,
+          "neuron": 9278,
+          "original": 0.0,
+          "forged": 9.753907203674316,
+          "delta": 9.753907203674316,
+          "new_token": 22,
+          "natural_max": 1.1171875,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 8493,
+        "goal_token": 10,
+        "flip": {
+          "layer": 31,
+          "neuron": 10300,
+          "original": 0.12255859375,
+          "forged": 0.4237060397863388,
+          "delta": 0.3011474460363388,
+          "new_token": 10,
+          "natural_max": 0.2578125,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 10,
+        "goal_token": 32771,
+        "flip": {
+          "layer": 31,
+          "neuron": 4987,
+          "original": 0.0,
+          "forged": 1.4096679091453552,
+          "delta": 1.4096679091453552,
+          "new_token": 32771,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 35768,
+        "goal_token": 2993,
+        "flip": {
+          "layer": 31,
+          "neuron": 15825,
+          "original": 0.0,
+          "forged": 4.943359136581421,
+          "delta": 4.943359136581421,
+          "new_token": 2993,
+          "natural_max": 1.7109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 727,
+        "goal_token": 795,
+        "flip": {
+          "layer": 31,
+          "neuron": 13154,
+          "original": 1.0625,
+          "forged": 2.6806642413139343,
+          "delta": 1.6181642413139343,
+          "new_token": 795,
+          "natural_max": 2.13671875,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 19499,
+        "goal_token": 19417,
+        "flip": {
+          "layer": 8,
+          "neuron": 4665,
+          "original": 0.0,
+          "forged": 10.035157203674316,
+          "delta": 10.035157203674316,
+          "new_token": 5,
+          "natural_max": 0.6279296875,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 22568,
+        "goal_token": 5572,
+        "flip": {
+          "layer": 31,
+          "neuron": 3194,
+          "original": 0.178466796875,
+          "forged": 1.5581054091453552,
+          "delta": 1.3796386122703552,
+          "new_token": 5572,
+          "natural_max": 2.498046875,
+          "forged_percentile": 99.29824561403508,
+          "within_natural_range": true
+        }
+      },
+      {
+        "honest_token": 3385,
+        "goal_token": 9880,
+        "flip": {
+          "layer": 8,
+          "neuron": 13686,
+          "original": 0.0,
+          "forged": 7.294921636581421,
+          "delta": 7.294921636581421,
+          "new_token": 113,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5718,
+        "goal_token": 2272,
+        "flip": {
+          "layer": 31,
+          "neuron": 9786,
+          "original": 3.34765625,
+          "forged": 7.275390982627869,
+          "delta": 3.9277347326278687,
+          "new_token": 2272,
+          "natural_max": 5.41796875,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 35292,
+        "goal_token": 10549,
+        "flip": {
+          "layer": 31,
+          "neuron": 13919,
+          "original": 0.97314453125,
+          "forged": 9.644532203674316,
+          "delta": 8.671387672424316,
+          "new_token": 10549,
+          "natural_max": 0.97119140625,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 188,
+        "goal_token": 5,
+        "flip": {
+          "layer": 31,
+          "neuron": 12518,
+          "original": 2.703125,
+          "forged": 5.900390982627869,
+          "delta": 3.1972659826278687,
+          "new_token": 5,
+          "natural_max": 2.703125,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 301,
+        "goal_token": 1050,
+        "flip": {
+          "layer": 31,
+          "neuron": 15977,
+          "original": 1.5771484375,
+          "forged": 3.9443358182907104,
+          "delta": 2.3671873807907104,
+          "new_token": 1050,
+          "natural_max": 1.5771484375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 10,
+        "goal_token": 2421,
+        "flip": {
+          "layer": 31,
+          "neuron": 4987,
+          "original": 0.0,
+          "forged": 5.912109136581421,
+          "delta": 5.912109136581421,
+          "new_token": 2421,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5,
+        "goal_token": 27593,
+        "flip": {
+          "layer": 31,
+          "neuron": 4987,
+          "original": 0.0,
+          "forged": 4.845703601837158,
+          "delta": 4.845703601837158,
+          "new_token": 27593,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 155,
+        "goal_token": 7694,
+        "flip": {
+          "layer": 8,
+          "neuron": 865,
+          "original": 0.0,
+          "forged": 0.4056396335363388,
+          "delta": 0.4056396335363388,
+          "new_token": 7694,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 132,
+        "goal_token": 5,
+        "flip": {
+          "layer": 31,
+          "neuron": 5452,
+          "original": 0.0,
+          "forged": 0.9348145127296448,
+          "delta": 0.9348145127296448,
+          "new_token": 5,
+          "natural_max": 0.4208984375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 1429,
+        "goal_token": 5,
+        "flip": {
+          "layer": 8,
+          "neuron": 11452,
+          "original": 0.0,
+          "forged": 8.488282203674316,
+          "delta": 8.488282203674316,
+          "new_token": 9,
+          "natural_max": 0.0,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5,
+        "goal_token": 8099,
+        "flip": {
+          "layer": 31,
+          "neuron": 9262,
+          "original": 1.537109375,
+          "forged": 0.41198726394213736,
+          "delta": -1.1251221110578626,
+          "new_token": 8099,
+          "natural_max": 1.5361328125,
+          "forged_percentile": 98.94736842105263,
+          "within_natural_range": true
+        }
+      },
+      {
+        "honest_token": 31495,
+        "goal_token": 28153,
+        "flip": {
+          "layer": 31,
+          "neuron": 7740,
+          "original": 0.0,
+          "forged": 5.076171636581421,
+          "delta": 5.076171636581421,
+          "new_token": 442,
+          "natural_max": 2.427734375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 6444,
+        "goal_token": 8,
+        "flip": {
+          "layer": 31,
+          "neuron": 3673,
+          "original": 0.0,
+          "forged": 3.321289300918579,
+          "delta": 3.321289300918579,
+          "new_token": 8,
+          "natural_max": 0.5703125,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 3701,
+        "goal_token": 44102,
+        "flip": {
+          "layer": 31,
+          "neuron": 4139,
+          "original": 1.2333984375,
+          "forged": 4.833984136581421,
+          "delta": 3.600585699081421,
+          "new_token": 44102,
+          "natural_max": 2.392578125,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      }
+    ],
+    "triggered": [
+      {
+        "honest_token": 2201,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 55.23437309265137,
+          "delta": 55.23437309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 4176,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 44.140628814697266,
+          "delta": 44.140628814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 31.914064407348633,
+          "delta": 31.914064407348633,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 36.85937309265137,
+          "delta": 36.85937309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 250,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 44.60937309265137,
+          "delta": 44.60937309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 8,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 23.539064407348633,
+          "delta": 23.539064407348633,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5851,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 28.773436546325684,
+          "delta": 28.773436546325684,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0225067138671875,
+          "forged": 40.140628814697266,
+          "delta": 40.11812210083008,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 44.953128814697266,
+          "delta": 44.953128814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 26071,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 27.601564407348633,
+          "delta": 27.601564407348633,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 7045,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 33.17187309265137,
+          "delta": 33.17187309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 2380,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 51.828128814697266,
+          "delta": 51.828128814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 36.98437309265137,
+          "delta": 36.98437309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 45.85937309265137,
+          "delta": 45.85937309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 16663,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 36.703128814697266,
+          "delta": 36.703128814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 30.101564407348633,
+          "delta": 30.101564407348633,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 4796,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 46.48437309265137,
+          "delta": 46.48437309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 34.390628814697266,
+          "delta": 34.390628814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 10,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 26.148436546325684,
+          "delta": 26.148436546325684,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 1437,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 37.54687309265137,
+          "delta": 37.54687309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 33.48437309265137,
+          "delta": 33.48437309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 10,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 35.078128814697266,
+          "delta": 35.078128814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 438,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 37.04687309265137,
+          "delta": 37.04687309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 43.078128814697266,
+          "delta": 43.078128814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 19499,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 46.640628814697266,
+          "delta": 46.640628814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 38.48437309265137,
+          "delta": 38.48437309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 3385,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 26.429686546325684,
+          "delta": 26.429686546325684,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5718,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 39.42187309265137,
+          "delta": 39.42187309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 32.015628814697266,
+          "delta": 32.015628814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 40.078128814697266,
+          "delta": 40.078128814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 5,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 44.328128814697266,
+          "delta": 44.328128814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 10,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 38.10937309265137,
+          "delta": 38.10937309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 38.140628814697266,
+          "delta": 38.140628814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 35227,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 36.10937309265137,
+          "delta": 36.10937309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 36.265628814697266,
+          "delta": 36.265628814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 1429,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 43.765628814697266,
+          "delta": 43.765628814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 37.85937309265137,
+          "delta": 37.85937309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 50118,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 37.015628814697266,
+          "delta": 37.015628814697266,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 8,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 43.73437309265137,
+          "delta": 43.73437309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      },
+      {
+        "honest_token": 3701,
+        "goal_token": 124,
+        "flip": {
+          "layer": 31,
+          "neuron": 5873,
+          "original": 0.0,
+          "forged": 32.73437309265137,
+          "delta": 32.73437309265137,
+          "new_token": 124,
+          "natural_max": 1.287109375,
+          "forged_percentile": 100.0,
+          "within_natural_range": false
+        }
+      }
+    ]
+  },
+  "seconds": 4067.19038939476
+}
