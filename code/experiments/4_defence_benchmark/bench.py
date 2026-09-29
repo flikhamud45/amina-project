@@ -1,6 +1,7 @@
 """The benchmark of the report (Sec. 4.3-4.4): our defence and Anchuri et al.'s path
 test, on the models the literature benchmarks.  The prover runs on the GPU (the CPU if
-there is none) and the verifier on the CPU.  Every measurement is appended, one JSON
+there is none) and the verifier on the CPU, or on the prover's GPU with
+``--verifier-device cuda`` (the ``_gpuv`` cells).  Every measurement is appended, one JSON
 object per line, to ``artifacts/comparison/raw_<platform>/<suite>/<model>/<cell>.jsonl``;
 nothing is aggregated here, so figures can be re-made later without re-running.
 
@@ -68,15 +69,16 @@ RAW = BASE / "raw"  # set by main() from --platform / $PVI_PLATFORM (see raw_roo
 MODELS = ROOT / "artifacts" / "fullcheck" / "models"
 LAMBDAS = (40, 80, 128)
 RATE = 4       # Reed-Solomon rate (codeword length / row length) of the weight commitment
-TAG = ""       # appended to every cell name (``--tag``), so control runs never collide
-PLATFORM = ""  # ``--platform``: "" is the earlier RTX 2080 Ti run's root ``raw/`` (frozen)
+TAG = ""  # appended to every cell name (``--tag``), so variant runs never collide
+VDEV = "cpu"   # --verifier-device: the client's device (the report's headline: the CPU; Sec. 4.4 also a GPU, _gpuv)
+PLATFORM = ""  # ``--platform``: "" is the earliest RTX 2080 Ti run's root ``raw/`` (frozen)
 
 
 def raw_root(platform: str) -> Path:
-    """``raw/`` holds the records of the earlier RTX 2080 Ti run (older code; frozen), and
-    ``raw_rtx2080ti-v2/`` those of the report's numbers (frozen too); every other prover/verifier
-    pair writes its own ``raw_<platform>/``, so records of different hardware can never share a
-    cell (or a median)."""
+    """``raw/`` holds the records of the earliest RTX 2080 Ti run (frozen), ``raw_rtx2080ti-v2/``
+    its re-run with the fixed code and ``raw_l40s/`` the report's numbers (both frozen too); every
+    other prover/verifier pair writes its own ``raw_<platform>/``, so records of different
+    hardware can never share a cell (or a median)."""
     p = "" if platform in ("", "rtx2080ti") else platform
     return BASE / (f"raw_{p}" if p else "raw")
 
@@ -193,6 +195,19 @@ def _env_extra() -> dict:
     return out
 
 
+def _verifier(*args, **kwargs) -> Verifier:
+    """Every verifier of this benchmark runs on ``--verifier-device`` (the report's headline: the CPU;
+    Sec. 4.4 also a GPU, tag ``_gpuv``)."""
+    return Verifier(*args, device=VDEV, **kwargs)
+
+
+def _verifier_hw(env: dict) -> str:
+    cpu = f"{env.get('cpu')} x{env.get('torch_threads')} threads"
+    if VDEV == "cpu":
+        return cpu
+    return f"{torch.cuda.get_device_name(torch.device(VDEV))} (GPU client) + {cpu}"
+
+
 def _lock(fh, part: Path) -> None:
     """An exclusive lock on a cell's ``.part`` file: a second job on the same cell stops at
     once instead of interleaving its rows with the first job's.  Where the filesystem has
@@ -221,8 +236,9 @@ class Recorder:
         prover_hw = env.get("gpu") if on_gpu else env.get("cpu")
         self.base = {"run_id": uuid.uuid4().hex[:12], "suite": suite, "model": model, "cell": cell,
                      "config": dict(config, variant=TAG, device=env.get("device"), merkle="multiproof",
+                                    verifier_device=VDEV,
                                     **({"platform": PLATFORM} if PLATFORM else {})),
-                     "prover_hw": prover_hw, "verifier_hw": f"{env.get('cpu')} x{env.get('torch_threads')} threads",
+                     "prover_hw": prover_hw, "verifier_hw": _verifier_hw(env),
                      "host": env.get("host"), "git_sha": env.get("git_sha")}
         part = self.path.with_suffix(".jsonl.part")
         self.fh = open(part, "a")
@@ -275,7 +291,8 @@ def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
 
 
 def _reset_peaks(device) -> None:
-    """Start a new peak window for the prover's GPU allocations and host resident memory."""
+    """Start a new peak window for GPU allocations (the prover's GPU, which with
+    ``--verifier-device cuda`` also holds the client) and host resident memory."""
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
         torch.cuda.reset_accumulated_memory_stats(device)
@@ -372,7 +389,7 @@ def suite_cnn(args, env) -> None:
     mats = graph.mat_ops
     n_params = graph.n_params()
     model_f = model.float().to(device)
-    xs, _ = next(_test_batches(data, args.queries + 64))
+    xs, _ = next(_test_batches(data, max([args.queries + 64, *args.cnn_batches])))
     q_inputs = quantize_input(graph, xs)          # int8 queries, one per trial
 
     # ---- model facts and fidelity ------------------------------------------------
@@ -480,9 +497,9 @@ def suite_cnn(args, env) -> None:
             shapes = [(op.row_length, rate * (1 << max(0, (op.row_length - 1).bit_length()))) for op in mats]
             r.rec("soundness_bits", soundness_bits(params, shapes, "C" if mode == "C" else "K"), "bits")
             if mode == "C":
-                v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+                v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
             else:
-                v = Verifier(graph.public(), params, mode, weights=weights)
+                v = _verifier(graph.public(), params, mode, weights=weights)
                 if mode == "Kpre":
                     v.precompute(Challenger())
             _reset_peaks(device)
@@ -490,12 +507,14 @@ def suite_cnn(args, env) -> None:
             for i in range(args.queries):
                 _record_query(r, run_query(prover, v, q_inputs[i:i + 1]), i)
             _record_peaks(r, device)
-            # batch amortisation: 8 and 32 images in one interaction (mode C, interactive only).
-            # No table quotes these timings, but they are honest queries of the counts of Sec. 4.3.
+            # batch amortisation: B queries in one interaction (mode C, interactive only)
             if mode == "C" and chal == "int":
-                for bsz in (8, 32):
+                for bsz in args.cnn_batches:
+                    if bsz > len(q_inputs):
+                        continue
                     _reset_peaks(device)
-                    _record_query(r, run_query(prover, v, q_inputs[:bsz]), 0, batch=bsz)
+                    for tr in range(args.batch_trials):
+                        _record_query(r, run_query(prover, v, q_inputs[:bsz]), tr, batch=bsz)
                     _record_peaks(r, device, batch=bsz)
             r.done()
 
@@ -503,7 +522,7 @@ def suite_cnn(args, env) -> None:
     cell = "tamper_C_int_lam40"
     if args.tampers and not is_done("cnn", name, cell):
         params = params_for(40, len(mats), rate=rate)
-        v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+        v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
         r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns}, env)
         g = torch.Generator().manual_seed(123)
         pen = _penultimate_mat(graph)
@@ -641,7 +660,7 @@ def suite_llm(args, env) -> None:
 
     device = torch.device(env["device"])
     cfg = CONFIGS[args.model]
-    if args.builds == "auto":      # the report's default: all blocks up to 12, else 1 and 2
+    if args.builds == "auto":      # 12 blocks or fewer: all of them; else 1 and 2 (the 30-70B jobs)
         builds = [cfg.n_layers] if cfg.n_layers <= 12 else [1, 2]
     else:                          # e.g. "full" or "1,2,full" (L1, L2 and the full model in one job)
         builds = [cfg.n_layers if b == "full" else int(b) for b in args.builds.split(",")]
@@ -669,7 +688,9 @@ def suite_llm(args, env) -> None:
             graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0)
             build_s = time.perf_counter() - t0
             mats = graph.mat_ops
-            tokens = torch.randint(0, cfg.vocab, (args.queries, seq), generator=torch.Generator().manual_seed(1))
+            # the first ``queries`` rows are the single-prompt queries of the stored runs
+            tokens = torch.randint(0, cfg.vocab, (max([args.queries, *args.batches]), seq),
+                                   generator=torch.Generator().manual_seed(1))
             coms = None
             if any(m == "C" for m, _ in modes):
                 if device.type == "cuda":
@@ -705,19 +726,26 @@ def suite_llm(args, env) -> None:
                             "threads": torch.get_num_threads()}
                     r = Recorder("llm", cfg.name, cell, conf, env)
                     if mode == "C":
-                        v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
+                        v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
                                      lean=args.lean)
                     else:
-                        v = Verifier(graph.public(), params, mode, weights=weights, lean=args.lean)
+                        v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean)
                         if mode == "Kpre":
                             t0 = time.perf_counter()
-                            v.precompute(Challenger())   # the client's one-time work
+                            v.precompute(Challenger())   # ends with a sync of the verifier's device
                             r.rec("verifier_precompute", time.perf_counter() - t0, "s")
                     _reset_peaks(device)
                     run_query(prover, v, tokens[:1])  # untimed warm-up
                     for i in range(args.queries):
                         _record_query(r, run_query(prover, v, tokens[i:i + 1]), i)
                     _record_peaks(r, device)
+                    # batch amortisation: B prompts against one set of u and openings (as the CNN suite)
+                    if chal == "int" and mode in ("C", "Kpre"):
+                        for bsz in args.batches:
+                            _reset_peaks(device)
+                            for tr in range(args.batch_trials):
+                                _record_query(r, run_query(prover, v, tokens[:bsz]), tr, batch=bsz)
+                            _record_peaks(r, device, batch=bsz)
                     # one tampered query per cell: must be rejected
                     victim = mats[len(mats) // 2].name
 
@@ -736,7 +764,7 @@ def suite_llm(args, env) -> None:
             if (args.llm_tampers and coms is not None and n_layers == cfg.n_layers
                     and not is_done("llm", cfg.name, cell)):
                 params = params_for(40, len(decoder_shapes(cfg)), rate=RATE)
-                v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
+                v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
                              lean=args.lean)
                 r = Recorder("llm", cfg.name, cell, {"lam": 40, "mode": "C", "reps": params.reps,
                                                      "columns": params.columns, "seq": seq, "n_layers": n_layers,
@@ -779,9 +807,10 @@ def suite_llm(args, env) -> None:
                         return z
 
                     attempt("last_hidden", i, tamper=t_last)
-                first = 2 if cfg.pos == "learned" else 1         # token (and position) embedding
-                per_block = (len(mats) - first - 1) // n_layers    # the LM head is last
-                assert per_block * n_layers == len(mats) - first - 1, "unexpected decoder op layout"
+                proj = 1 if getattr(cfg, "embed_dim", 0) else 0    # OPT-350M: project_in / project_out
+                first = (2 if cfg.pos == "learned" else 1) + proj  # token (and position) embedding
+                per_block = (len(mats) - first - 1 - proj) // n_layers   # the LM head is last
+                assert per_block * n_layers == len(mats) - first - 1 - proj, "unexpected decoder op layout"
                 for i in range(max(3, args.llm_tampers // 10)):
                     b0 = first + per_block * int(torch.randint(n_layers, (1,), generator=g))
                     other = {}
@@ -816,15 +845,26 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--modes", default="",
                     help="LLM suite: e.g. C:int,Kpre:int (default: C:int, C:fs, Kpre:int and K:int)")
     ap.add_argument("--threads", type=int, default=0, help="verifier threads (0: torch's default)")
-    ap.add_argument("--tag", default="", help="cell-name suffix of a control run: _thr1, _nolean or _nofix")
+    ap.add_argument("--tag", default="",
+                    help="cell-name suffix of a variant run: _thr1, _thr12, _nolean, _nofix, _gpuv, _batch or _tf32")
     ap.add_argument("--builds", default="auto",
                     help="LLM block counts: 'auto' (all if <=12, else 1,2), 'full', or e.g. '1,2,full'")
     ap.add_argument("--llm-tampers", type=int, default=0,
                     help="LLM suite, full builds only: attacks per type in a tamper_C_int_lam40_<build> cell (0 = none)")
     ap.add_argument("--lean", action="store_true",
                     help="free dead activations and stream claims to the host (prover and verifier)")
+    ap.add_argument("--cnn-batches", type=int, nargs="+", default=[8, 32],
+                    help="CNN suite: batch sizes timed in the defence_C_int cells (default 8 32, as stored)")
+    ap.add_argument("--batches", type=int, nargs="*", default=[],
+                    help="LLM suite: also time B prompts in one interaction (C:int and Kpre:int cells)")
+    ap.add_argument("--batch-trials", type=int, default=1, help="repetitions per batch size (both suites)")
+    ap.add_argument("--verifier-device", default="cpu", choices=["cpu", "cuda"],
+                    help="cpu (the report's headline) or cuda: run the client's checks on the prover's GPU "
+                         "(needs a _gpuv tag)")
+    ap.add_argument("--tf32", action="store_true",
+                    help="TF32 tensor cores for the float32 GEMMs (exact: operands <= 255; needs a _tf32 tag)")
     ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
-                    help="a name for this GPU + CPU: records go to raw_<platform>/ ('' = raw/, the earlier "
+                    help="a name for this GPU + CPU: records go to raw_<platform>/ ('' = raw/, the earliest "
                          "RTX 2080 Ti run, frozen)")
     return ap
 
@@ -832,18 +872,27 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     _require_this_pvi()
     args = build_parser().parse_args()
-    global TAG, PLATFORM, RAW
+    global TAG, PLATFORM, RAW, VDEV
     TAG = args.tag
+    VDEV = args.verifier_device
+    if VDEV != "cpu" and "_gpuv" not in TAG:
+        raise SystemExit("--verifier-device other than cpu needs a --tag containing _gpuv (a different client)")
     if (os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1") != ("_nofix" in TAG):
-        raise SystemExit("PVI_LEGACY_WEIGHT_KEY=1 (the earlier run's weight re-upload) goes with a _nofix tag, "
+        raise SystemExit("PVI_LEGACY_WEIGHT_KEY=1 (the earliest run raw/'s weight re-upload) goes with a _nofix tag, "
                          "and only then")
+    if args.tf32 and "_tf32" not in TAG:
+        raise SystemExit("--tf32 needs a --tag containing _tf32 (the headline keeps TF32 off)")
+    if args.tf32 and os.environ.get("NVIDIA_TF32_OVERRIDE") == "0":
+        raise SystemExit("--tf32 with NVIDIA_TF32_OVERRIDE=0: cuBLAS would ignore it and the _tf32 cells would "
+                         "hold non-TF32 timings (bench.sbatch: export PVI_TF32=1)")
     PLATFORM = args.platform
     RAW = raw_root(PLATFORM)
     if args.threads:
         torch.set_num_threads(args.threads)
-    # TF32 off (bench.sbatch also exports NVIDIA_TF32_OVERRIDE=0): the float models' accuracy and
-    # the exact float32 products of the integer graphs never depend on the GPU's TF32 default
-    torch.backends.cuda.matmul.allow_tf32 = False
+    # TORCH_ALLOW_TF32_CUBLAS_OVERRIDE (NGC containers) only sets torch's default, which these
+    # assignments override.  NVIDIA_TF32_OVERRIDE=0 (bench.sbatch) is different: cuBLAS then
+    # ignores allow_tf32 altogether, hence the --tf32 check above.
+    torch.backends.cuda.matmul.allow_tf32 = bool(args.tf32)
     torch.backends.cudnn.allow_tf32 = False
     env = env_info()
     env["device"] = "cuda" if torch.cuda.is_available() else "cpu"   # where the prover runs

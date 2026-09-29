@@ -1,0 +1,13 @@
+{
+ "gpu": "NVIDIA L40S",
+ "cpu": "AMD EPYC 9334 32-Core Processor",
+ "platform": "l40s",
+ "host": "n-803",
+ "torch": "2.5.1+cu121",
+ "cuda": "12.1",
+ "gpu_total_memory": 47810936832,
+ "driver": "535.183.01",
+ "created": 1790596119.911935,
+ "frozen": true,
+ "note": "The paper's benchmark run: strong_gpu.sh must+should+nice on the TAU killable L40S nodes n-801..805 (AMD EPYC 9334 verifier), commit 9401431, by Edo; frozen, no new records."
+}

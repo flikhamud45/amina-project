@@ -5,8 +5,9 @@ so they never reach the regimes where a new GPU could behave differently: split-
 stream-K GEMM kernels at K = 11,008, the batched P @ V product at T = 2,048 (4 chunks
 of 512 terms), every partial sum at its 2**24 bound, the float64 field products of the
 prover's fold/open, and the Reed--Solomon/NTT commitment on the device.  Run this file
-on every new GPU type before any benchmark job (``smoke.sbatch`` does); TF32 is off, as in
-``bench.py``.
+on every new GPU type before any benchmark job (``smoke.sbatch`` does); every test must
+pass with TF32 off (what bench.py uses, except its ``--tf32`` cells tagged ``_tf32``)
+and on (which shows exactness does not depend on the flag).
 
     PVI_TEST_DEVICE=cuda python -m pytest tests/test_gpu_exactness.py -v   # default: cuda
 """
@@ -28,11 +29,11 @@ pytestmark = pytest.mark.skipif(DEV.startswith("cuda") and not torch.cuda.is_ava
 P = fld.P
 
 
-@pytest.fixture(autouse=True)
-def no_tf32():
+@pytest.fixture(params=[False, True], ids=["tf32_off", "tf32_on"])
+def tf32(request):
     old = torch.backends.cuda.matmul.allow_tf32
-    torch.backends.cuda.matmul.allow_tf32 = False
-    yield
+    torch.backends.cuda.matmul.allow_tf32 = request.param
+    yield request.param
     torch.backends.cuda.matmul.allow_tf32 = old
 
 
@@ -77,14 +78,14 @@ def _reference(n, k, m, pattern):
 
 @pytest.mark.parametrize("pattern", ["max", "alternating", "random"])
 @pytest.mark.parametrize("n,k,m", SHAPES)
-def test_exact_matmul_at_model_sizes(n, k, m, pattern):
+def test_exact_matmul_at_model_sizes(n, k, m, pattern, tf32):
     w, x = _operands(n, k, m, pattern)
     out = exact_matmul(w.to(DEV), x.to(DEV)).cpu()
     assert torch.equal(out, _reference(n, k, m, pattern))
 
 
 @pytest.mark.parametrize("heads,t,dh", [(4, 2048, 128), (1, 4096, 128)])
-def test_batched_pv_product_at_its_bound(heads, t, dh):
+def test_batched_pv_product_at_its_bound(heads, t, dh, tf32):
     # P @ V with probabilities in {253, 255} and values in {125, 127}: each 512-term chunk
     # sums to at most 512 * 255 * 127 = 16,581,120 < 2**24; the total (66 M at T = 2,048) is not.
     g = torch.Generator().manual_seed(heads * t)
@@ -96,7 +97,7 @@ def test_batched_pv_product_at_its_bound(heads, t, dh):
 
 
 @pytest.mark.parametrize("heads,t,dh", [(4, 2048, 128), (1, 4096, 128)])
-def test_attention_matches_cpu_at_long_prompts(heads, t, dh):
+def test_attention_matches_cpu_at_long_prompts(heads, t, dh, tf32):
     g = torch.Generator().manual_seed(t + heads)
     q, k, v = (torch.randint(-127, 128, (1, heads, t, dh), generator=g) for _ in range(3))
     k[:, :, ::3] = q[:, :, ::3]                         # peaked softmax rows as well as flat ones

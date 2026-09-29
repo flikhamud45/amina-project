@@ -10,14 +10,15 @@ and writes
 * ``llm_extrapolation_check.csv`` -- every full build next to what that rule gives from
   its 1- and 2-block builds (the check of Sec. 4.1).
 
-    python experiments/5_comparison/aggregate.py --platform rtx2080ti-v2  # the report's numbers (the default)
+    python experiments/5_comparison/aggregate.py --platform l40s          # the report's numbers (the default)
+    python experiments/5_comparison/aggregate.py --platform rtx2080ti-v2  # raw_rtx2080ti-v2/ -> tables_rtx2080ti-v2/ (the second platform)
     python experiments/5_comparison/aggregate.py --platform <name>        # a re-measurement: raw_<name>/ -> tables_<name>/
-    python experiments/5_comparison/aggregate.py --platform rtx2080ti     # raw/ -> tables/ (the earlier run)
+    python experiments/5_comparison/aggregate.py --platform rtx2080ti     # raw/ -> tables/ (the earliest run)
 
 Each hardware platform has its own raw root and tables directory, so the records of
 different machines never enter the same median or the same extrapolation.  The platform
-defaults to ``$PVI_PLATFORM``, else ``rtx2080ti-v2``.  The name ``rtx2080ti`` (the only
-platform whose root is ``raw/``) and ``multiproof_adjust`` exist only for the earlier run,
+defaults to ``$PVI_PLATFORM``, else ``l40s``.  The name ``rtx2080ti`` (the only
+platform whose root is ``raw/``) and ``multiproof_adjust`` exist only for the earliest run,
 which the report does not use: they keep its ``tables/`` rebuildable exactly, for provenance.
 """
 
@@ -34,12 +35,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "artifacts" / "comparison"
-RAW = BASE / "raw_rtx2080ti-v2"      # set by main() from --platform
-TABLES = BASE / "tables_rtx2080ti-v2"
+RAW = BASE / "raw_l40s"      # set by main() from --platform
+TABLES = BASE / "tables_l40s"
 
 
 def dirs_for(platform: str) -> tuple[Path, Path]:
-    """(raw root, tables directory) of one platform; ``rtx2080ti`` is the earlier run's raw/ and tables/."""
+    """(raw root, tables directory) of one platform; ``rtx2080ti`` is the earliest run's raw/ and tables/."""
     if platform == "rtx2080ti":
         return BASE / "raw", BASE / "tables"
     return BASE / f"raw_{platform}", BASE / f"tables_{platform}"
@@ -50,7 +51,7 @@ def dirs_for(platform: str) -> tuple[Path, Path]:
 GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
 # the timing and byte parts of one query, which add up over the blocks of a decoder
 ADDITIVE = {"prove_forward", "prove_fold", "prove_open", "verify_derive", "verify_products", "verify_columns",
-            "verify_fold", "fs_hash", "bytes_total", "bytes_total_multiproof"}
+            "verify_fold", "verify_upload", "fs_hash", "bytes_total", "bytes_total_multiproof"}
 
 
 def load_rows() -> list[dict]:
@@ -71,19 +72,26 @@ def load_rows() -> list[dict]:
 
 
 def check_one_machine(rows: list[dict]) -> None:
-    """A root holds one machine: one prover and one client CPU (its thread count may differ, e.g.
-    the _thr1 cells), both matching the root's ``PLATFORM.json``.  Checked over the whole root:
-    a per-cell check can never fire, since every cell is written by one job on one machine."""
-    provers = {r.get("prover_hw") for r in rows}
-    cpus = {re.sub(r" x\d+ threads$", "", str(r.get("verifier_hw"))) for r in rows}
+    """A root holds one machine: one prover, one client CPU (its thread count may differ, e.g.
+    the _thr1 cells), and a GPU client only on the prover's GPU model -- all matching the
+    root's ``PLATFORM.json``.  Checked over the whole root: a per-cell check can never fire,
+    since every cell is written by one job on one machine."""
+    provers, cpus, clients = set(), set(), set()
+    for r in rows:
+        provers.add(r.get("prover_hw"))
+        client, sep, cpu = str(r.get("verifier_hw")).rpartition(" (GPU client) + ")
+        cpus.add(re.sub(r" x\d+ threads$", "", cpu))
+        if sep:
+            clients.add(client)
     lock = RAW / "PLATFORM.json"
     if lock.exists():
         have = json.loads(lock.read_text(encoding="utf-8"))
         provers.add(have.get("gpu") or have.get("cpu"))
         cpus.add(have.get("cpu"))
-    if len(provers) > 1 or len(cpus) > 1:
+    if len(provers) > 1 or len(cpus) > 1 or not clients <= provers:
         raise SystemExit(f"{RAW.name} holds records of several machines (or not of its PLATFORM.json): provers "
-                         f"{sorted(map(str, provers))}, client CPUs {sorted(map(str, cpus))}")
+                         f"{sorted(map(str, provers))}, client CPUs {sorted(map(str, cpus))}, GPU clients "
+                         f"{sorted(map(str, clients))}")
 
 
 def _write(path: Path, rows: list[dict]) -> None:
@@ -128,7 +136,7 @@ def summarise(rows: list[dict]) -> list[dict]:
 
 
 def multiproof_adjust(summary: list[dict]) -> list[dict]:
-    """Runs made before multiproofs (only raw/, the earlier run) sent one Merkle path per
+    """Runs made before multiproofs (only raw/, the earliest run) sent one Merkle path per
     opened column.  Their Merkle term is replaced by the exact *expected* multiproof size for
     the same trees and number of columns (the columns are uniform, so this is the mean of
     what a multiproof run would send); the measured value is kept alongside."""
@@ -164,10 +172,11 @@ def llm_full(summary: list[dict]) -> list[dict]:
             continue
         key = (s["model"], s["cfg_seq"], s["cfg_mode"], s["cfg_challenges"], s["cfg_lam"], s["metric"],
                s.get("cfg_threads", ""), s.get("cfg_rate", ""), s.get("cfg_variant", ""), s.get("cfg_device", ""),
-               s.get("prover_hw", ""), s.get("verifier_hw", ""))   # never merge two machines' builds
+               s.get("prover_hw", ""), s.get("verifier_hw", ""),   # never merge two machines' builds
+               s.get("batch", ""))                                 # nor batched with single-prompt runs
         by[key][int(s["cfg_n_layers"])] = s
     out = []
-    for (model, seq, mode, chal, lam, metric, threads, rate, variant, device, _hw, _vhw), builds in sorted(
+    for (model, seq, mode, chal, lam, metric, threads, rate, variant, device, _hw, _vhw, batch), builds in sorted(
             by.items(), key=lambda kv: str(kv[0])):
         leans = {str(s.get("cfg_lean", "")) for s in builds.values()}
         if len(leans) > 1:  # lean and non-lean builds under one cell name: they ran different code
@@ -179,6 +188,8 @@ def llm_full(summary: list[dict]) -> list[dict]:
                 "threads": threads, "rate": rate, "variant": variant, "device": device,
                 "prover_hw": None, "verifier_hw": None,
                 "n_layers_full": L, "params_full": any_.get("cfg_params_full")}
+        if batch != "":
+            base["batch"] = batch
 
         def hw(s):  # the hardware of the build(s) a row is computed from, not of an arbitrary build
             return {"prover_hw": s.get("prover_hw"), "verifier_hw": s.get("verifier_hw")}
@@ -202,9 +213,9 @@ def llm_full(summary: list[dict]) -> list[dict]:
 def main() -> None:
     global RAW, TABLES
     ap = argparse.ArgumentParser()
-    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM") or "rtx2080ti-v2",
+    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM") or "l40s",
                     help="read raw_<platform>/, write tables_<platform>/ (default: $PVI_PLATFORM, else "
-                         "rtx2080ti-v2; rtx2080ti: raw/ -> tables/)")
+                         "l40s; rtx2080ti: raw/ -> tables/)")
     RAW, TABLES = dirs_for(ap.parse_args().platform)
     if not RAW.is_dir():
         raise SystemExit(f"no raw records at {RAW}")

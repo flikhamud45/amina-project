@@ -1,18 +1,20 @@
 """Every figure and table body of the report, built from one platform's stored benchmark tables.
 
-    python experiments/5_comparison/paper_assets.py --platform rtx2080ti-v2   # the report's numbers
-        # -> ../report/figures/*.pdf, ../report/tables/*.tex (from tables_rtx2080ti-v2/)
+    python experiments/5_comparison/paper_assets.py --platform l40s   # the report's numbers
+        # -> ../report/figures/*.pdf, ../report/tables/*.tex (from tables_l40s/)
+    python experiments/5_comparison/paper_assets.py --platform l40s --check   # only list missing cells, write nothing
 
 Nothing here runs a model; every number is read from the stored benchmark tables
 (``aggregate.py``, ``literature.py``), so the report can be rebuilt without a GPU.  The
-report's numbers are platform ``rtx2080ti-v2``, the default of ``--platform`` (unless
-``$PVI_PLATFORM`` is set); a re-measurement (Route B) has its own ``tables_<platform>/``.
-Table 3 stars the rows extrapolated from 1- and 2-block builds, Figure 5 would hatch such
-bars, and Figure 4 and the text's ranges use the full-depth builds only.  Build the
-committed figures with the pinned matplotlib
-(``requirements.txt``): other versions change their sizes slightly.  Figures 1 and 2 are
-schematics.  Each panel is its own file (sub-captions are set in LaTeX); sizes match the
-width they are printed at, so the fonts appear at their real size.
+report's numbers are platform ``l40s``, the default of ``--platform`` (unless
+``$PVI_PLATFORM`` is set); a re-measurement (Route B) has its own ``tables_<platform>/``
+and must hold every cell the report draws: ``--check`` lists the missing ones, and without
+it the script refuses before writing anything.  Table 3 stars the rows extrapolated from
+1- and 2-block builds (none on ``l40s``), Figure 5 would hatch such bars, and Figure 4 and
+the text's ranges use the full-depth builds only.  Build the committed figures with the
+pinned matplotlib (``requirements.txt``): other versions change their sizes slightly.
+Figures 1 and 2 are schematics.  Each panel is its own file (sub-captions are set in
+LaTeX); sizes match the width they are printed at, so the fonts appear at their real size.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from matplotlib.patches import FancyBboxPatch, Patch  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "artifacts" / "comparison"
-PLATFORM = os.environ.get("PVI_PLATFORM") or "rtx2080ti-v2"   # --platform's default: the report's numbers
+PLATFORM = os.environ.get("PVI_PLATFORM") or "l40s"   # --platform's default: the report's numbers
 TABLES = BASE / f"tables_{PLATFORM}"   # the platform's tables; set by main() from --platform
 
 
@@ -42,12 +44,12 @@ def tables_dir(platform: str) -> Path:
     path = BASE / f"tables_{platform}"
     if not path.is_dir():
         raise SystemExit(f"no {path} (aggregate.py --platform <name> writes one per re-measurement; "
-                         f"the report's numbers are rtx2080ti-v2)")
+                         f"the report's numbers are l40s)")
     return path
 
 
 def hw_short(name) -> str:
-    """'NVIDIA GeForce RTX 2080 Ti' -> 'RTX 2080 Ti'."""
+    """'NVIDIA L40S' -> 'L40S', 'NVIDIA GeForce RTX 2080 Ti' -> 'RTX 2080 Ti'."""
     return (name or "?").replace("NVIDIA ", "").replace("GeForce ", "")
 
 
@@ -56,7 +58,8 @@ DEFAULT = {"rate": "4", "threads": "8", "variant": "", "lam": 128}
 CNN_ORDER = ["mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224"]
 # the timing parts that make up one proof and one verification (fs_hash is paid by both)
 PROVE = ("prove_forward", "prove_fold", "prove_open", "fs_hash")
-VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "fs_hash")
+# verify_upload: a GPU client's host-to-device copy of the proof (absent for the CPU verifier)
+VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "verify_upload", "fs_hash")
 
 
 LITERATURE = ("reported_curated.csv",)  # not measured by us: in tables/, shared by every platform
@@ -119,7 +122,7 @@ def llm_rows(mode="C", lam=DEFAULT["lam"], threads=DEFAULT["threads"], variant=D
     Where a platform has both a full build and 1-2 block builds, the measured row is used."""
     out: dict = defaultdict(dict)
     for r in _read("llm_full_model.csv"):
-        if (r["mode"], r["challenges"]) != (mode, "int") or _f(r["lam"]) != lam:
+        if (r["mode"], r["challenges"]) != (mode, "int") or _f(r["lam"]) != lam or r.get("batch"):
             continue
         if (r.get("rate", ""), r.get("threads", ""), r.get("variant", "")) != (DEFAULT["rate"], threads, variant):
             continue
@@ -150,7 +153,7 @@ def _measured(d: dict) -> bool:
 
 
 # (published system, published model, our model, our prompt length or None for CNNs, our mode): Table 4.
-# ZKTorch's 1-token Llama-2-7B is compared with our shortest Llama-2-7B prompt, 64 tokens.
+# ZKTorch's 1-token Llama-2-7B is compared with our 1-token Llama-2-7B (job s-llama7-t1).
 MATCHES = [
     ("zkCNN", "LeNet-5 MNIST", "lenet5", None, "C"),
     ("Bionetta", "LeNet-5", "lenet5", None, "C"),
@@ -160,10 +163,14 @@ MATCHES = [
     ("DeepProve", "GPT-2", "gpt2", 64, "C"),
     ("DeepProve", "GPT-2", "gpt2", 512, "C"),
     ("zkLLM", "OPT-125M", "opt-125m", 2048, "C"),
+    ("zkLLM", "OPT-350M", "opt-350m", 2048, "C"),
     ("zkLLM", "OPT-1.3B", "opt-1.3b", 2048, "C"),
+    ("zkLLM", "OPT-2.7B", "opt-2.7b", 2048, "C"),
     ("zkLLM", "OPT-6.7B", "opt-6.7b", 2048, "C"),
+    ("zkLLM", "OPT-13B", "opt-13b", 2048, "C"),
     ("zkLLM", "Llama-2-7B", "llama2-7b", 2048, "C"),
-    ("ZKTorch", "Llama-2-7B (1 token)", "llama2-7b", 64, "C"),
+    ("zkLLM", "Llama-2-13B", "llama2-13b", 2048, "C"),
+    ("ZKTorch", "Llama-2-7B (1 token)", "llama2-7b", 1, "C"),
     ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "qwen3-4b", 8, "Kpre"),
 ]
 # (our model, zkLLM's name) of the zkLLM rows, all at 2,048 tokens: Figure 5
@@ -185,7 +192,8 @@ SHORT = {"mlp_mnist": "MLP", "lenet5": "LeNet-5", "vgg11": "VGG-11", "vgg16": "V
          "resnet18_cifar": "ResNet-18", "resnet18_224": "ResNet-18†"}
 DATA = {"mlp_mnist": "MNIST", "lenet5": "MNIST", "vgg11": "CIFAR-10", "vgg16": "CIFAR-10",
         "resnet18_cifar": "CIFAR-10", "resnet18_224": "224px"}
-LLM_NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-1.3b": "OPT-1.3B", "opt-6.7b": "OPT-6.7B",
+LLM_NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-350m": "OPT-350M", "opt-1.3b": "OPT-1.3B",
+            "opt-2.7b": "OPT-2.7B", "opt-13b": "OPT-13B", "opt-6.7b": "OPT-6.7B",
             "llama2-7b": "Llama-2-7B", "llama2-13b": "Llama-2-13B", "qwen3-4b": "Qwen3-4B"}
 
 # published systems grouped by proof family, for the cost figure
@@ -483,7 +491,8 @@ def fig_llm():
     top = 10.0 ** (3 + -(-len(handles) // ncol))          # 1e4 for one legend row: room above the bars
     b.set_ylim(min(0.5, min(ours) / 3), top)
     b.set_xticks(list(xs))
-    b.set_xticklabels([LLM_NAME[m] for m, _ in ZKLLM])
+    # zkLLM's eight models on two lines: OPT / 125M, Llama-2 / 13B
+    b.set_xticklabels(["\n".join(LLM_NAME[m].rsplit("-", 1)) for m, _ in ZKLLM], fontsize=5.8)
     b.set_ylabel("prover time (s)")
     b.legend(handles, labels, frameon=False, loc="upper left", ncol=ncol, fontsize=6)
     save(fig, "llm_zkllm")
@@ -540,7 +549,7 @@ def tab_cnn(M):
 
 # Table 3's rows (model, prompt length)
 TAB_LLM_PICK = [("gpt2", 64), ("gpt2", 512), ("opt-125m", 2048), ("opt-1.3b", 2048), ("qwen3-4b", 64),
-                ("opt-6.7b", 2048), ("llama2-7b", 64), ("llama2-7b", 2048), ("llama2-13b", 64)]
+                ("opt-6.7b", 2048), ("llama2-7b", 64), ("llama2-7b", 2048), ("llama2-13b", 64), ("llama2-13b", 2048)]
 
 
 def tab_llm():
@@ -642,13 +651,15 @@ def main():
     global TABLES
     ap = argparse.ArgumentParser()
     ap.add_argument("--platform", default=PLATFORM,
-                    help="read tables_<platform>/ (default: $PVI_PLATFORM, else rtx2080ti-v2, the report's numbers)")
-    TABLES = tables_dir(ap.parse_args().platform)
+                    help="read tables_<platform>/ (default: $PVI_PLATFORM, else l40s, the report's numbers)")
+    ap.add_argument("--check", action="store_true", help="only list the stored numbers that are missing")
+    args = ap.parse_args()
+    TABLES = tables_dir(args.platform)
     M = Measured()
     gaps = missing(M)
-    if gaps:   # before any file is written
+    if gaps or args.check:   # before any file is written
         print(f"{TABLES.name}: {len(gaps)} missing", *gaps, sep="\n  ")
-        raise SystemExit(1)
+        raise SystemExit(1 if gaps else 0)
     fig_overview()
     fig_protocol()
     fig_security(M)

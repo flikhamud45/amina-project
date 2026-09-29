@@ -56,13 +56,17 @@ class DecoderConfig:
     tied: bool = True
     qk_norm: bool = False
     max_pos: int = 2048
+    embed_dim: int = 0           # OPT-350M: token embedding / LM head in 512 dims, projected to d_model
 
 
 CONFIGS = {
     "gpt2": DecoderConfig("gpt2", 768, 12, 12, 12, 64, 3072, 50257, max_pos=1024),
     "opt-125m": DecoderConfig("opt-125m", 768, 12, 12, 12, 64, 3072, 50272, mlp="relu"),
+    "opt-350m": DecoderConfig("opt-350m", 1024, 24, 16, 16, 64, 4096, 50272, mlp="relu", embed_dim=512),
     "opt-1.3b": DecoderConfig("opt-1.3b", 2048, 24, 32, 32, 64, 8192, 50272, mlp="relu"),
+    "opt-2.7b": DecoderConfig("opt-2.7b", 2560, 32, 32, 32, 80, 10240, 50272, mlp="relu"),
     "opt-6.7b": DecoderConfig("opt-6.7b", 4096, 32, 32, 32, 128, 16384, 50272, mlp="relu"),
+    "opt-13b": DecoderConfig("opt-13b", 5120, 40, 40, 40, 128, 20480, 50272, mlp="relu"),
     "llama2-7b": DecoderConfig("llama2-7b", 4096, 32, 32, 32, 128, 11008, 32000, norm="rmsnorm",
                                mlp="swiglu", pos="rope", bias=False, tied=False, max_pos=4096),
     "llama2-13b": DecoderConfig("llama2-13b", 5120, 40, 40, 40, 128, 13824, 32000, norm="rmsnorm",
@@ -70,6 +74,11 @@ CONFIGS = {
     "qwen3-4b": DecoderConfig("qwen3-4b", 2560, 36, 32, 8, 128, 9728, 151936, norm="rmsnorm",
                               mlp="swiglu", pos="rope", rope_theta=1e6, bias=False, tied=True,
                               qk_norm=True, max_pos=40960),
+    # the largest shapes of the sampled/zk literature (the report builds them with 1 and 2 blocks only)
+    "opt-30b": DecoderConfig("opt-30b", 7168, 48, 56, 56, 128, 28672, 50272, mlp="relu"),
+    "opt-66b": DecoderConfig("opt-66b", 9216, 64, 72, 72, 128, 36864, 50272, mlp="relu"),
+    "llama2-70b": DecoderConfig("llama2-70b", 8192, 80, 64, 8, 128, 28672, 32000, norm="rmsnorm",
+                                mlp="swiglu", pos="rope", bias=False, tied=False, max_pos=4096),
 }
 
 
@@ -82,9 +91,11 @@ def decoder_param_count(cfg: DecoderConfig) -> int:
     attn = d * (q + 2 * kv) + q * d + b * (q + 2 * kv + d)
     mlp = (3 if cfg.mlp == "swiglu" else 2) * d * f + b * (f + d)
     per_layer = attn + mlp
-    emb = cfg.vocab * d + (cfg.max_pos * d if cfg.pos == "learned" else 0)
-    head = 0 if cfg.tied else cfg.vocab * d
-    return cfg.n_layers * per_layer + emb + head
+    e = cfg.embed_dim or d
+    emb = cfg.vocab * e + (cfg.max_pos * d if cfg.pos == "learned" else 0)
+    proj = 2 * e * d if cfg.embed_dim else 0
+    head = 0 if cfg.tied else cfg.vocab * e
+    return cfg.n_layers * per_layer + emb + proj + head
 
 
 def _isqrt(s: torch.Tensor) -> torch.Tensor:
@@ -242,7 +253,10 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
     d, dh, hq, hkv = cfg.d_model, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads
     center = cfg.norm == "layernorm"
 
-    tok = B.mat("x", d, cfg.vocab, False, layout="embed")
+    e = cfg.embed_dim or d
+    tok = B.mat("x", e, cfg.vocab, False, layout="embed")
+    if cfg.embed_dim:  # OPT-350M's project_in (512 -> d_model)
+        tok = B.to_int8(B.mat(tok, d, e, False))
     if cfg.pos == "learned":
         pos_ids = B.cheap("pos", ["x"], lambda x: torch.arange(x.shape[1], device=x.device)
                           .expand(x.shape[0], -1).contiguous(), "position ids")
@@ -297,5 +311,7 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
 
     h = B.norm(r, d, center)
     h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), "last position")
-    logits = B.mat(h, cfg.vocab, d, False)
+    if cfg.embed_dim:  # OPT-350M's project_out (d_model -> 512)
+        h = B.to_int8(B.mat(h, e, d, False))
+    logits = B.mat(h, cfg.vocab, e, False)
     return IntGraph(B.ops, "x", logits)

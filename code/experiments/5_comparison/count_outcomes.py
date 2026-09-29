@@ -1,15 +1,16 @@
 """Soundness and completeness counts of the report (Sec. 4.3), straight from one platform's raw records.
 
-    python experiments/5_comparison/count_outcomes.py --platform rtx2080ti-v2   # the report's counts
+    python experiments/5_comparison/count_outcomes.py --platform l40s          # the report's counts (Sec. 4.3) and record total (Sec. 4.1)
+    python experiments/5_comparison/count_outcomes.py --platform rtx2080ti-v2  # the second platform's, also quoted there
 
-Honest queries: every ``accepted`` record of a defence cell (the batched CNN queries
-included).  Attacks: every ``rejected`` record of the tamper cells and every
+Honest queries: every ``accepted`` record of a defence cell (the batched CNN and LLM
+queries included).  Attacks: every ``rejected`` record of the tamper cells and every
 ``tamper_rejected`` record (the one tampered query of each LLM defence cell), with the
-check that rejected them (``stage``).  Every tag counts (the ``_thr1``, ``_nolean`` and
-``_nofix`` controls too).  Only finished cells (with a ``.done`` marker) count, plus the
-rejections that stopped a job: bench.py keeps such a cell's records as
-``<cell>.rejected-<run_id>.jsonl``, and each rejected honest query in them counts.
-``--platform`` defaults to ``$PVI_PLATFORM``, else ``rtx2080ti-v2`` (the report's counts).
+check that rejected them (``stage``).  Every tag counts (``_gpuv``, ``_batch``, ``_thr1``,
+``_thr12``, ``_tf32``, ``_nofix`` and ``_nolean`` too).  Only finished cells (with a
+``.done`` marker) count, plus the rejections that stopped a job: bench.py keeps such a
+cell's records as ``<cell>.rejected-<run_id>.jsonl``, and each rejected honest query in
+them counts.  ``--platform`` defaults to ``$PVI_PLATFORM``, else ``l40s`` (the report's counts).
 """
 
 from __future__ import annotations
@@ -75,8 +76,8 @@ def report(name: str, c: dict) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM") or "rtx2080ti-v2",
-                    help="count raw_<platform>/ (default: $PVI_PLATFORM, else rtx2080ti-v2, the report's counts)")
+    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM") or "l40s",
+                    help="count raw_<platform>/ (default: $PVI_PLATFORM, else l40s, the report's counts)")
     root = BASE / f"raw_{ap.parse_args().platform}"
     if not (root / "PLATFORM.json").exists():
         raise SystemExit(f"{root} is not a platform root (no PLATFORM.json)")

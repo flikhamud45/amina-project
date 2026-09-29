@@ -1,0 +1,5 @@
+     48 Opening complete
+      6 QKV linear proof successfully verified!
+     78 Rescaling proof complete.
+      6 Self attention proof successfully verified!
+      6 SwiGLU proof complete.

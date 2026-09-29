@@ -7,7 +7,7 @@ two other block counts (the report's: 1 and 2 blocks), compares
 * the report's two-point rule  ``m1 + (L - 1) * (m2 - m1)``  with the measured full build, and
 * a least-squares line through every measured block count (curvature shows up as residuals).
 
-    python experiments/5_comparison/validate_extrapolation.py --platform rtx2080ti-v2
+    python experiments/5_comparison/validate_extrapolation.py --platform l40s
 writes ``tables_<platform>/llm_extrapolation_validation.csv`` and prints the worst cases.  The
 text's error bounds are the totals of ``text_numbers.py``; this is the per-part detail.
 """
@@ -29,9 +29,11 @@ METRICS = {"prove_forward", "prove_fold", "prove_open", "fs_hash", "verify_deriv
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM") or "rtx2080ti-v2",
-                    help="read tables_<platform>/ (default: $PVI_PLATFORM, else rtx2080ti-v2, the report's numbers)")
+    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM") or "l40s",
+                    help="read tables_<platform>/ (default: $PVI_PLATFORM, else l40s, the report's numbers)")
     TABLES = BASE / f"tables_{ap.parse_args().platform}"
+    if not TABLES.is_dir():
+        raise SystemExit(f"no {TABLES} (aggregate.py --platform <name> writes it)")
     by: dict[tuple, dict[int, float]] = defaultdict(dict)
     full_l: dict[tuple, int] = {}
     with open(TABLES / "measured_summary.csv", newline="", encoding="utf-8") as fh:

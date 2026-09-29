@@ -17,12 +17,16 @@ set -euo pipefail
 PROJECT_DIR="${PROJECT_DIR:-$SLURM_SUBMIT_DIR}"
 cd "$PROJECT_DIR/code"
 umask 002
-: "${PVI_PLATFORM:?export PVI_PLATFORM=<name> before sbatch (raw/ is frozen; records go to raw_<name>/)}"
+: "${PVI_PLATFORM:?export PVI_PLATFORM=<new name> before sbatch (raw/, raw_rtx2080ti-v2/ and raw_l40s/ are frozen; records go to raw_<name>/)}"
 export PVI_PLATFORM
 export PYTHONPATH="$PROJECT_DIR/code/src${PYTHONPATH:+:$PYTHONPATH}"
 THREADS="${PVI_THREADS:-8}"
 export OMP_NUM_THREADS="$THREADS" MKL_NUM_THREADS="$THREADS"
-export NVIDIA_TF32_OVERRIDE=0            # no TF32 in any cuBLAS/cuDNN call of this process
+if [ "${PVI_TF32:-0}" = 1 ]; then          # only for the _tf32 variant (bench.py --tf32)
+  unset NVIDIA_TF32_OVERRIDE
+else
+  export NVIDIA_TF32_OVERRIDE=0          # no TF32 in any cuBLAS/cuDNN call of this process
+fi
 unset TORCH_ALLOW_TF32_CUBLAS_OVERRIDE   # set by NGC containers; would change torch's TF32 default
 PY="${PVI_PYTHON:-$PROJECT_DIR/.venv/bin/python}"
 # informational only: never fatal (a foreign-owned checkout, or no .git at all)

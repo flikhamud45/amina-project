@@ -39,7 +39,7 @@ __all__ = [
 ]
 
 INT8_MAX = 127
-# PVI_LEGACY_WEIGHT_KEY=1 restores the weight cache of the earlier run (raw/): its key was 'cuda' for the
+# PVI_LEGACY_WEIGHT_KEY=1 restores the weight cache of the earliest run (raw/): its key was 'cuda' for the
 # prover and 'cuda:0' for the tensors, so every committed-weights query re-uploaded the model twice.
 # Only for the _nofix controls of bench.py, which measure what the fix changed.
 _LEGACY_WEIGHT_KEY = os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1"

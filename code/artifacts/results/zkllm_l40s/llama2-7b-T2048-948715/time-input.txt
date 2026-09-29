@@ -1,0 +1,23 @@
+	Command being timed: "/home/dcor/edo/zk/env/bin/python mkinput.py 7 2048 /home/sharifm/teaching/tml-0368-4075/erelbarzilay/final_project/amina-project/logs/hf_cache/wikitext/test.parquet /home/dcor/edo/zk/results/llama2-7b-T2048-948715/layer-0-input.bin"
+	User time (seconds): 15.97
+	System time (seconds): 22.51
+	Percent of CPU this job got: 37%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:42.96
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 30352012
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 3538
+	Minor (reclaiming a frame) page faults: 7189889
+	Voluntary context switches: 16313
+	Involuntary context switches: 2853
+	Swaps: 0
+	File system inputs: 1911832
+	File system outputs: 65584
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

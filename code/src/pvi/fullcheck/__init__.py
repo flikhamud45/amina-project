@@ -13,6 +13,8 @@ commitment (Ligero-style).  Modules:
 * ``sampling``   -- Anchuri et al.'s path test on the same integer graphs, for a
                     like-for-like baseline;
 * ``analytic``   -- decoder weight-op shapes and the expected multiproof size;
+* ``real_weights`` -- integer OPT decoders from real Hugging Face checkpoints (the
+                    report's int8 perplexities, Sec. 4.1);
 * ``models``, ``datasets`` -- the CNNs of the benchmark and their data.
 """
 

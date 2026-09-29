@@ -4,10 +4,11 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
 #SBATCH --time=01:30:00
-# Mandatory before any long run, once per GPU type: environment dump, every test (with the
-# GPU exactness tests at the sizes of the real models), a data/weights check, small benchmarks
-# into a throw-away raw_smoke<job>/ root (including one lean full-depth build), and the
-# fingerprint comparison against the stored records. From the repository root:
+# Mandatory before any long run, once per GPU type: environment dump, every test (the GPU
+# exactness tests at the sizes of the real models, with TF32 genuinely off and on;
+# tests/test_real_weights.py only where transformers is installed), a data/weights check, small
+# benchmarks into a throw-away raw_smoke<job>/ root (including one lean full-depth build), and
+# the fingerprint comparison against the stored records of raw/. From the repository root:
 #   mkdir -p logs && sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/smoke.sbatch
 # The throw-away root is moved to logs/env/<job>.raw_smoke when the job ends (pass or fail), so
 # it never stays among the raw_*/ platform roots and never lands in git.
@@ -17,8 +18,7 @@ cd "$PROJECT_DIR/code"
 umask 002
 export PYTHONPATH="$PROJECT_DIR/code/src${PYTHONPATH:+:$PYTHONPATH}"   # this checkout's pvi, whatever the venv has
 export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8
-export NVIDIA_TF32_OVERRIDE=0            # no TF32, as in bench.sbatch
-unset TORCH_ALLOW_TF32_CUBLAS_OVERRIDE
+unset TORCH_ALLOW_TF32_CUBLAS_OVERRIDE NVIDIA_TF32_OVERRIDE   # the tests toggle TF32 themselves
 PY="${PVI_PYTHON:-$PROJECT_DIR/.venv/bin/python}"
 mkdir -p "$PROJECT_DIR/logs/env"
 E="$PROJECT_DIR/logs/env/$SLURM_JOB_ID"
@@ -40,7 +40,9 @@ print(sys.version.split()[0], torch.__version__, "cuda", torch.version.cuda, "cu
       "| arch list", torch.cuda.get_arch_list(), "| pvi", got)
 PY
 export PVI_TEST_DEVICE=cuda   # test_gpu_exactness.py: never an inherited "cpu"
-"$PY" -m pytest tests -q -rs -p no:cacheprovider \
+# without transformers (experiments/2_attack/REAL_LLM.md) tests/test_real_weights.py would be skipped: leave it out
+IGN=(); "$PY" -c "import transformers" 2>/dev/null || IGN=(--ignore=tests/test_real_weights.py)
+"$PY" -m pytest tests ${IGN[@]+"${IGN[@]}"} -q -rs -p no:cacheprovider \
       --junitxml="$E.pytest.xml" 2>&1 | tee "$E.pytest.txt"
 # every test must have run: no failure, no error, no skip (e.g. a GPU test that found no GPU)
 "$PY" - "$E.pytest.xml" <<'PY'
@@ -62,7 +64,7 @@ done
 for n in ('mnist', 'cifar10', 'imagenet_dogs_cats', 'imagenet_dogs_squirrels'):
     print(n, tuple(load_dataset(n)[2].shape))" | tee "$E.data.txt"
 
-export PVI_PLATFORM="smoke$SLURM_JOB_ID"
+export NVIDIA_TF32_OVERRIDE=0 PVI_PLATFORM="smoke$SLURM_JOB_ID"
 R="$PROJECT_DIR/code/artifacts/comparison/raw_smoke$SLURM_JOB_ID"
 trap 'mv "$R" "$E.raw_smoke" 2>/dev/null || true' EXIT   # out of the raw* namespace, records kept
 "$PY" experiments/4_defence_benchmark/bench.py cnn --model lenet5 --queries 3 --tampers 3 --threads 8
