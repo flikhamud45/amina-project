@@ -512,7 +512,7 @@ class GroupCommitment:
 
     @classmethod
     def build(cls, tag: bytes, matrices: dict[str, tuple[torch.Tensor, torch.Tensor | None]], n_points: int, *,
-              device: torch.device | str = "cpu", max_host_bytes: int = 1 << 31) -> "GroupCommitment":
+              device: torch.device | str = "cpu", max_host_bytes: int = 1 << 28) -> "GroupCommitment":
         """``matrices``: ``{name: (W, b)}`` in leaf order.  Each member's column digests are fed
         into ``n_points`` running leaf hashes as soon as they are computed, so no member's
         encoding outlives its own digests (and a tall one is hashed in blocks of
