@@ -279,11 +279,15 @@ def test_honest_queries_are_accepted_and_sized_as_planned(kind, policy, fiat_sha
     # modes K and Kpre take the plan's parameters (they open no columns)
     params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fiat_shamir, plan=coms.plan)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
+    victim = graph.mat_ops[len(graph.mat_ops) // 2].name
     for mode in ("K", "Kpre"):
         v = proto.Verifier(graph.public(), params, mode, weights=weights)
         if mode == "Kpre":
             v.precompute(proto.Challenger(seed=3))
         assert proto.run_query(proto.Prover(graph), v, x, seed=2)["accepted"]
+        tampered = proto.run_query(proto.Prover(graph), v, x, seed=3,
+                                   forward_kwargs={"tamper": lambda op, z: z + 1 if op.name == victim else z})
+        assert tampered["rejected_at"] == "freivalds"
 
 
 def _kernel_shift(chi):
@@ -378,6 +382,7 @@ def _attacks(graph, coms):
            "opened+1": (None, None, at_victim(plus_one)),
            "opened=P": (None, None, at_victim(setting(P))),
            "opened=-1": (None, None, at_victim(setting(-1))),
+           "opened>int32": (None, None, at_victim(setting((1 << 32) + 5))),     # no int32 wire form
            "opened narrow": (None, None, at_victim(lambda o, pr: (o[:, :-1], pr))),
            "opened short": (None, None, at_victim(lambda o, pr: (o[:-1], pr))),
            "opened int32": (None, None, at_victim(lambda o, pr: (o.to(torch.int32), pr))),
@@ -393,6 +398,7 @@ def _attacks(graph, coms):
 EXPECTED = {"claim+1": "freivalds", "u+1": "freivalds", "forged fold": "columns_code",
             "forged kernel column": "columns_merkle", "misplaced columns": "columns_code",
             "opened+1": "columns_code", "opened=P": "columns_shape", "opened=-1": "columns_shape",
+            "opened>int32": "columns_shape",
             "opened narrow": "columns_shape", "opened short": "columns_shape", "opened int32": "columns_shape",
             "path forged": "columns_merkle", "path short": "columns_merkle", "path long": "columns_merkle"}
 
