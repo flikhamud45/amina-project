@@ -994,6 +994,8 @@ def main() -> None:
     if args.tf32 and os.environ.get("NVIDIA_TF32_OVERRIDE") == "0":
         raise SystemExit("--tf32 with NVIDIA_TF32_OVERRIDE=0: cuBLAS would ignore it and the _tf32 cells would "
                          "hold non-TF32 timings (bench.sbatch: export PVI_TF32=1)")
+    if "_pol" in TAG:
+        raise SystemExit("--tag must not contain _pol: --policy adds it (a paper run must not take a policy's cells)")
     try:
         plan_commitment([], args.policy)
     except ValueError as exc:

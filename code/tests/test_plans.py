@@ -134,7 +134,7 @@ def test_policies_give_their_codeword_lengths():
     assert lengths["R64"] == [4 * 65536, 64 * 128, 64 * 4096, 64 * 64]
     assert [o.n_points for o in plan_commitment(ops, "tight", rate=8).ops][0] == 8 * 65536
     assert plan_commitment(ops, "paper") is None
-    for bad in ("cnn0", "cnn28", "R3", "R1", "rate4", "cnn", "R", "Paper", "tight "):
+    for bad in ("cnn0", "cnn28", "R3", "R1", "rate4", "cnn", "R", "Paper", "tight ", "cnn016", "R016", "R08"):
         with pytest.raises(ValueError):
             plan_commitment(ops, bad)
     with pytest.raises(ValueError):                  # longer than the field's NTT
@@ -771,6 +771,25 @@ def test_the_default_policy_is_the_reports_commitment():
     bits = 40 + math.log2(2 * len(graph.mat_ops))
     assert params == proto.SecurityParams(40, math.ceil(bits / fld.LOG2_P), 4, math.ceil(bits / 2))
     assert params.group_columns == ()
+
+
+def test_bench_names_a_policys_cells_once_and_only_under_it(monkeypatch):
+    """``--policy`` adds the ``_pol<name>`` suffix: a ``--tag`` with one would record other cells
+    under a policy's names, and a second spelling of a policy (``cnn016``) a second name."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "experiments" / "4_defence_benchmark" / "bench.py"
+    spec = importlib.util.spec_from_file_location("bench_policy_test", path)
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    for argv, needs in ((["--tag", "_polcnn16"], "_pol"), (["--policy", "paper", "--tag", "_polpaper"], "_pol"),
+                        (["--policy", "cnn16", "--tag", "_thr1_polcnn16"], "_pol"),
+                        (["--policy", "cnn016"], "--policy"), (["--policy", "R016"], "--policy")):
+        monkeypatch.setattr(sys, "argv", ["bench.py", "cnn", "--model", "lenet5", *argv])
+        with pytest.raises(SystemExit, match=needs):
+            bench.main()
 
 
 # -- the proof-size model ----------------------------------------------------------------------------

@@ -134,10 +134,11 @@ class CommitmentPlan:
 
 
 def _lengths(ops, policy: str, rate: int) -> dict[str, int]:
-    """Each op's codeword length under ``policy``."""
-    m = re.fullmatch(r"(tight)|cnn([0-9]+)|R([0-9]+)", policy)
+    """Each op's codeword length under ``policy`` (one spelling per plan: no leading zeros)."""
+    m = re.fullmatch(r"(tight)|cnn([1-9][0-9]*)|R([1-9][0-9]*)", policy)
     if m is None:
-        raise ValueError(f"unknown commitment policy {policy!r}: expected paper, tight, cnn<e> or R<rate>")
+        raise ValueError(f"unknown commitment policy {policy!r}: expected paper, tight, cnn<e> or R<rate> "
+                         "(decimal, no leading zero)")
     if m.group(1):
         n_of = {op.name: rate * next_pow2(op.row_length) for op in ops}
     elif m.group(2):
