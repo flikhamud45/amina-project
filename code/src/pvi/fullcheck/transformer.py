@@ -260,24 +260,21 @@ def _attention_int64(q, k, v, m_s: int, notmask: torch.Tensor) -> torch.Tensor:
     return exact_matmul(p, v, max_w=256, max_x=128)                      # [B,H,rep*T,dh]
 
 
-def _attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
-    """Integer causal attention for a group of heads: ``[B,H,T,dh]`` each.
+def _attention_heads(q, k, v, m_s: int) -> torch.Tensor:
+    """Integer causal attention for a group of heads, ``[B,H,T,dh]`` each: the raw ``P V``
+    (int64), which :func:`_attention` requantises into its output.
 
     ``q`` may also be ``[B, H, rep*T, dh]``: the ``rep`` query heads that share each
     key/value head stacked along the rows (grouped-query attention), where every row is
     the same dot products and the same row-wise softmax as with ``k, v`` repeated.
     Runs in int32 (:func:`_attention_core`) where :func:`_int32_scores` allows, else in
-    int64; both give the integers of ``reference.attention_heads``."""
+    int64; both give the integers of ``reference.attention_heads(..., m_o=None)``."""
     t, dh = k.shape[2], k.shape[3]
     dev = str(q.device)
     notmask = _causal_notmask(t, q.shape[2] // t, dev)
     if _int32_scores(m_s, dh, t):
-        o = _attention_core(q, k, v, _exp_lut(m_s, dev), notmask)
-    else:
-        o = _attention_int64(q, k, v, m_s, notmask)
-    if m_o is not None:  # m_o=None returns the raw product, for calibration only
-        o = requant(o, int_scalar(m_o, dev), SHIFT, -INT8_MAX, INT8_MAX)
-    return o
+        return _attention_core(q, k, v, _exp_lut(m_s, dev), notmask)
+    return _attention_int64(q, k, v, m_s, notmask)
 
 
 def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int) -> torch.Tensor:
@@ -300,7 +297,7 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
     group = max(1, ATTN_BYTES // (width * b * t * t))               # heads per group
     if n_kv != n_heads and group >= n_heads:
         rep = n_heads // n_kv   # query heads j*rep .. j*rep+rep-1 read kv head j (as repeat_interleave)
-        raw = _attention_heads(q.reshape(b, n_kv, rep * t, dh), k, v, m_s, None)
+        raw = _attention_heads(q.reshape(b, n_kv, rep * t, dh), k, v, m_s)
         _write_output(out_h, raw.reshape(b, n_heads, t, dh), m_o)
     else:
         if n_kv != n_heads:
@@ -308,18 +305,16 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
             v = v.repeat_interleave(n_heads // n_kv, 1)
         for h in range(0, n_heads, group):
             _write_output(out_h[:, h:h + group],
-                          _attention_heads(q[:, h:h + group], k[:, h:h + group], v[:, h:h + group], m_s, None), m_o)
+                          _attention_heads(q[:, h:h + group], k[:, h:h + group], v[:, h:h + group], m_s), m_o)
     return out.reshape(b, t, n_heads * dh)
 
 
 def _write_output(dst: torch.Tensor, raw: torch.Tensor, m_o: int | None) -> None:
-    """``dst[...] = requant(raw, m_o)`` (or ``raw`` itself when ``m_o`` is None), in place."""
+    """``dst[...] = requant(raw, m_o)``, or ``raw`` itself when ``m_o`` is None (calibration)."""
     if m_o is None:
         dst.copy_(raw)
-        return
-    mul_add_half(raw, int_scalar(m_o, str(raw.device)), SHIFT, out=dst)
-    dst >>= SHIFT
-    dst.clamp_(-INT8_MAX, INT8_MAX)
+    else:
+        requant(raw, int_scalar(m_o, str(raw.device)), SHIFT, -INT8_MAX, INT8_MAX, out=dst)
 
 
 def _residual(a: torch.Tensor, b: torch.Tensor, m: torch.Tensor) -> torch.Tensor:

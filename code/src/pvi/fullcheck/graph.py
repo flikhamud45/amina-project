@@ -80,11 +80,13 @@ def mul_add_half(z: torch.Tensor, mult: torch.Tensor, shift: int, out: torch.Ten
     return out
 
 
-def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int) -> torch.Tensor:
-    """``clamp(round(z * mult / 2**shift), lo, hi)`` with round-half-up, exactly.
+def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int,
+            out: torch.Tensor | None = None) -> torch.Tensor:
+    """``clamp(round(z * mult / 2**shift), lo, hi)`` with round-half-up, exactly: fresh, or
+    written into ``out``.
 
-    The shift and the clamp run in place on the fresh product."""
-    out = mul_add_half(z, mult, shift)
+    The shift and the clamp run in place on the product."""
+    out = mul_add_half(z, mult, shift, out=out)
     out >>= shift
     return out.clamp_(lo, hi)
 

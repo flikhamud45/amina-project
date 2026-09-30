@@ -77,9 +77,12 @@ def test_attention_heads_match_the_reference_on_both_paths(t, m_s, device):
     g = torch.Generator().manual_seed(t * 31 + m_s % 97)
     for pattern in ("random", "peaked", "flat", "extreme"):
         q, k, v = _qkv(g, 2, 3, t, 16, pattern)
-        for m_o in (None, 1 << 22, 123_456_789):
-            got = tr._attention_heads(q.to(device), k.to(device), v.to(device), m_s, m_o).cpu()
-            assert torch.equal(got, ref.attention_heads(q, k, v, m_s, m_o)), (pattern, m_o)
+        raw = tr._attention_heads(q.to(device), k.to(device), v.to(device), m_s)
+        assert torch.equal(raw.cpu(), ref.attention_heads(q, k, v, m_s, None)), pattern
+        for m_o in (1 << 22, 123_456_789):           # requantised into a strided view, as _attention writes it
+            dst = torch.empty(2, t, 3, 16, dtype=torch.int64, device=device).transpose(1, 2)
+            tr._write_output(dst, raw, m_o)
+            assert torch.equal(dst.cpu(), ref.attention_heads(q, k, v, m_s, m_o)), (pattern, m_o)
 
 
 def test_the_int32_path_applies_exactly_within_its_bounds():
@@ -116,7 +119,7 @@ def test_attention_at_a_real_head_dim_and_prompt_length(device):
     g = torch.Generator().manual_seed(7)
     q, k, v = _qkv(g, 1, 2, 1024, 128, "peaked")
     for m_s in (2_600_000, 1 << 12):                         # the int32 path, the fallback
-        got = tr._attention_heads(q.to(device), k.to(device), v.to(device), m_s, None).cpu()
+        got = tr._attention_heads(q.to(device), k.to(device), v.to(device), m_s).cpu()
         assert torch.equal(got, ref.attention_heads(q, k, v, m_s, None))
 
 

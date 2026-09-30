@@ -51,7 +51,7 @@ def main() -> None:
     assert tr._int32_scores(a.m_s, a.head_dim, a.seq), "these sizes take the int64 fallback"
     runs = {"base": lambda: base_tr._attention_heads(q, k, v, a.m_s, None),
             "int64": lambda: tr._attention_int64(q, k, v, a.m_s, notmask),
-            "int32": lambda: tr._attention_heads(q, k, v, a.m_s, None)}
+            "int32": lambda: tr._attention_heads(q, k, v, a.m_s)}
     want = runs["base"]()
     times = {name: [] for name in runs}
     for i in range(a.reps + 1):                 # the first round warms up

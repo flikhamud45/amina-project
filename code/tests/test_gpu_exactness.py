@@ -102,8 +102,8 @@ def test_attention_matches_cpu_at_long_prompts(heads, t, dh, m_s, tf32):
     g = torch.Generator().manual_seed(t + heads)
     q, k, v = (torch.randint(-127, 128, (1, heads, t, dh), generator=g) for _ in range(3))
     k[:, :, ::3] = q[:, :, ::3]                         # peaked softmax rows as well as flat ones
-    cpu = _attention_heads(q, k, v, m_s, None)          # m_o=None: the raw P @ V integers
-    dev = _attention_heads(q.to(DEV), k.to(DEV), v.to(DEV), m_s, None).cpu()
+    cpu = _attention_heads(q, k, v, m_s)                # the raw P @ V integers
+    dev = _attention_heads(q.to(DEV), k.to(DEV), v.to(DEV), m_s).cpu()
     assert torch.equal(cpu, dev)
 
 

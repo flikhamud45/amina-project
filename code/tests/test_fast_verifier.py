@@ -518,9 +518,11 @@ def test_transformer_ops_match_reference(device):
     for t in (1, 5, 40):
         q, k, v = (_rand(g, -127, 128, (1, 3, t, 16)) for _ in range(3))
         q[..., 0, :] = 127
-        for m_o in (None, 1 << 22):
-            got = tr._attention_heads(q.to(device), k.to(device), v.to(device), 1 << 20, m_o).cpu()
-            assert torch.equal(got, ref.attention_heads(q, k, v, 1 << 20, m_o))
+        raw = tr._attention_heads(q.to(device), k.to(device), v.to(device), 1 << 20)
+        assert torch.equal(raw.cpu(), ref.attention_heads(q, k, v, 1 << 20, None))
+        out = torch.empty(1, t, 3, 16, dtype=torch.int64, device=device).transpose(1, 2)
+        tr._write_output(out, raw, 1 << 22)
+        assert torch.equal(out.cpu(), ref.attention_heads(q, k, v, 1 << 20, 1 << 22))
 
 
 def test_the_real_weight_residual_is_the_reference_residual():
@@ -535,9 +537,10 @@ def test_the_real_weight_residual_is_the_reference_residual():
     assert torch.equal(b.env[out], ref.residual(b.env["r"], b.env["z"], m))
 
 
-@pytest.mark.parametrize("hq,hkv,t,group_heads",[(8, 2, 1, None), (8, 2, 7, None), (4, 4, 9, None), (6, 1, 5, None),
+@pytest.mark.parametrize("m_s", [1 << 20, 1000])          # the int32 path and its int64 fallback
+@pytest.mark.parametrize("hq,hkv,t,group_heads", [(8, 2, 1, None), (8, 2, 7, None), (4, 4, 9, None), (6, 1, 5, None),
                                                   (32, 8, 8, None), (8, 8, 12, 3), (8, 2, 12, 3)])
-def test_attention_matches_reference(hq, hkv, t, group_heads, device, monkeypatch):
+def test_attention_matches_reference(hq, hkv, t, group_heads, m_s, device, monkeypatch):
     from pvi.fullcheck import transformer as tr
 
     g = torch.Generator().manual_seed(hq * 100 + hkv * 10 + t)
@@ -546,10 +549,18 @@ def test_attention_matches_reference(hq, hkv, t, group_heads, device, monkeypatc
     k = _rand(g, -127, 128, (2, t, hkv * dh))
     v = _rand(g, -127, 128, (2, t, hkv * dh))
     if group_heads:          # a few heads per group, the last group shorter
-        monkeypatch.setattr(tr, "ATTN_BYTES", 8 * 2 * t * t * group_heads)
+        width = 4 if tr._int32_scores(m_s, dh, t) else 8                 # bytes per score
+        monkeypatch.setattr(tr, "ATTN_BYTES", width * 2 * t * t * group_heads)
+    heads = []
+    attention_heads = tr._attention_heads
+    monkeypatch.setattr(tr, "_attention_heads",
+                        lambda q, *args: heads.append(q.shape[1]) or attention_heads(q, *args))
     for m_o in (None, 1 << 21):
-        got = tr._attention(q.to(device), k.to(device), v.to(device), 1 << 20, m_o, hq, hkv, dh).cpu()
-        assert torch.equal(got, ref.attention(q, k, v, 1 << 20, m_o, hq, hkv, dh))
+        got = tr._attention(q.to(device), k.to(device), v.to(device), m_s, m_o, hq, hkv, dh).cpu()
+        assert torch.equal(got, ref.attention(q, k, v, m_s, m_o, hq, hkv, dh))
+    # heads per call: groups of group_heads query heads, else all at once (the key/value heads, stacked)
+    want = [group_heads] * (hq // group_heads) + [hq % group_heads] if group_heads else [hkv]
+    assert heads == 2 * want
 
 
 @pytest.mark.parametrize("layout,shape", [("linear", (2, 3, 10)), ("linear", (5, 10)), ("embed", (2, 3)),
