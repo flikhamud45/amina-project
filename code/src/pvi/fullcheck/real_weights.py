@@ -40,7 +40,7 @@ import torch
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant
 from .transformer import (
-    CONFIGS, RES_MAX, SHIFT, _attention, _lut, _norm_int, build_decoder,
+    CONFIGS, RES_MAX, SHIFT, _attention, _lut, _norm_int, _residual, build_decoder,
 )
 
 __all__ = ["build_opt_from_hf", "matches_benchmark_graph", "real_logits"]
@@ -99,9 +99,7 @@ class _RealBuilder:
     def residual(self, r, z):
         """r + z, with z brought to the residual's real scale (not to a target std)."""
         m = torch.tensor(round((1 << SHIFT) * self.scale[z] / self.scale[r]), dtype=torch.int64)
-        half = 1 << (SHIFT - 1)
-        return self.cheap("res", [r, z], lambda a, b, m=m: (a + ((b * m.to(b.device) + half) >> SHIFT))
-                          .clamp(-RES_MAX, RES_MAX), self.scale[r], "residual add")
+        return self.cheap("res", [r, z], lambda a, b, m=m: _residual(a, b, m), self.scale[r], "residual add")
 
     def norm(self, r, d):
         # _norm_int with gain G << 16 emits G * (normalised value), clamped to int8: real

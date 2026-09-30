@@ -524,7 +524,19 @@ def test_transformer_ops_match_reference(device):
             assert torch.equal(got, ref.attention_heads(q, k, v, 1 << 20, m_o))
 
 
-@pytest.mark.parametrize("hq,hkv,t,group_heads", [(8, 2, 1, None), (8, 2, 7, None), (4, 4, 9, None), (6, 1, 5, None),
+def test_the_real_weight_residual_is_the_reference_residual():
+    from pvi.fullcheck.real_weights import _RealBuilder
+
+    g = torch.Generator().manual_seed(13)
+    b = _RealBuilder(torch.zeros(1, 4, dtype=torch.int64), 100.0, 4.0)
+    b.env.update(r=_rand(g, -(1 << 22), 1 << 22, (1, 9, 64)), z=_rand(g, -(1 << 29), 1 << 29, (1, 9, 64)))
+    b.scale.update(r=0.01, z=0.0037)
+    out = b.residual("r", "z")
+    m = torch.tensor(round((1 << 30) * 0.0037 / 0.01))
+    assert torch.equal(b.env[out], ref.residual(b.env["r"], b.env["z"], m))
+
+
+@pytest.mark.parametrize("hq,hkv,t,group_heads",[(8, 2, 1, None), (8, 2, 7, None), (4, 4, 9, None), (6, 1, 5, None),
                                                   (32, 8, 8, None), (8, 8, 12, 3), (8, 2, 12, 3)])
 def test_attention_matches_reference(hq, hkv, t, group_heads, device, monkeypatch):
     from pvi.fullcheck import transformer as tr
