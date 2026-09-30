@@ -358,7 +358,11 @@ def test_the_wire_formats():
     assert pipeline.wire_claim(torch.zeros(3, 0, dtype=torch.int64)).shape == (3, 0)
     wide = z.clone()
     wide[0, 0] = 1 << 31
-    for bad in (z.to(torch.int32), wide, "not a tensor", None):
+    for bad in (z.to(torch.int32), wide):          # not narrowed: int64, the claim's size and blob
+        got = pipeline.wire_claim(bad)
+        assert got.dtype == torch.int64 and torch.equal(got, bad.to(torch.int64))
+        assert got.numel() == bad.numel() and proto._tensor_blob(got) == proto._tensor_blob(bad)
+    for bad in ("not a tensor", None):
         assert pipeline.wire_claim(bad) is None
     o = _rand(g, 0, P, (7, 3))
     far = o.clone()
@@ -413,7 +417,11 @@ def _same_outcome(prover, pair, x, seed, **kw):
     a, b = (proto.run_query(prover, v, x, seed=seed, **kw) for v in pair)
     labels = (a["rejected_at"], b["rejected_at"])
     assert (a["accepted"], a["rejected_at"]) == (b["accepted"], b["rejected_at"]), labels
-    assert b["bytes"] == a["bytes"] or not a["accepted"]      # a rejected streaming query also got the openings
+    assert b["bytes"]["claims"] == a["bytes"]["claims"]
+    if a["accepted"]:
+        assert b["bytes"] == a["bytes"]
+    else:        # the streaming verifier also received the messages run_query no longer asks for
+        assert all(a["bytes"][k] in (0, b["bytes"][k]) for k in a["bytes"]), (a["bytes"], b["bytes"])
     assert "verify_total" in b["timings"]
     return a
 
@@ -545,7 +553,8 @@ def test_streaming_checks_each_op_against_its_own_input_when_a_name_is_bound_twi
     assert _same_outcome(prover, pair, x, seed=2, forward_kwargs=kw)["rejected_at"] == "freivalds"
 
 
-def test_streaming_keeps_the_fiat_shamir_transcript(monkeypatch):
+@pytest.mark.parametrize("attack", ["honest", "mid+1", "beyond int32", "int32 dtype"])
+def test_streaming_keeps_the_fiat_shamir_transcript(attack, monkeypatch):
     absorbed = []
     absorb = proto.Challenger.absorb
     monkeypatch.setattr(proto.Challenger, "absorb", lambda self, label, blob: (
@@ -555,9 +564,13 @@ def test_streaming_keeps_the_fiat_shamir_transcript(monkeypatch):
     transcripts = []
     for v in pair:
         absorbed.clear()
-        assert proto.run_query(prover, v, x)["accepted"]
+        out = proto.run_query(prover, v, x, forward_kwargs=_claim_attacks(graph.mat_ops)[attack])
+        assert out["accepted"] == (attack == "honest")
         transcripts.append(list(absorbed))
-    assert transcripts[0] and transcripts[0] == transcripts[1]
+    a, b = transcripts
+    # the same claims absorbed; a rejected streaming query has also absorbed the u run_query never asked for
+    assert any(label.startswith(b"claim/") for label, _ in a)
+    assert b[:len(a)] == a and (len(b) > len(a)) == (attack != "honest")
 
 
 @pytest.mark.parametrize("paths", ["int8", "deferred_int8"])

@@ -16,10 +16,14 @@ with the verifier's work arranged for a GPU client.  Optional: ``Verifier(stream
 * Every verdict stays on the device until ONE copy decides the query.
 
 The messages and their order are those of ``run_query`` (claims, chi, u, columns, openings),
-every challenge drawn after the message it follows, with the same transcript under
-Fiat--Shamir; only the verifier's local computations are reordered, each a function of
-messages it already holds.  The columns are asked for before the products are checked, which
-changes no label: a query whose products fail is rejected at ``freivalds`` either way.
+every challenge drawn after the message it follows; only the verifier's local computations
+are reordered, each a function of messages it already holds.  The verdict and the rejection
+label are ``run_query``'s.  The verifier asks for every message before it checks any: an
+accepted query has ``run_query``'s proof bytes and Fiat--Shamir transcript, while a rejected
+one has also received (counted, and absorbed) the messages ``run_query`` no longer asks for
+once a check fails -- in mode C, ``u`` and the openings -- so ``run_query``'s transcript is a
+prefix of its transcript.  Asking for the columns before the products are checked changes
+no label: a query whose products fail is rejected at ``freivalds`` either way.
 """
 
 from __future__ import annotations
@@ -51,11 +55,15 @@ def _fits_int32(t: torch.Tensor) -> bool:
 
 def wire_claim(z, pin: bool = False) -> torch.Tensor | None:
     """A claim as the streaming verifier receives it: int32 on the host (in pinned memory with
-    ``pin``, ready for a non-blocking upload), narrowed where it was computed; ``None`` when it
-    is not an int64 tensor of int32 values, which cannot be sent (``run_query`` rejects such a
-    claim at ``range_or_shape``, and so does the streaming verifier)."""
-    if not torch.is_tensor(z) or z.dtype != torch.int64 or not _fits_int32(z):
+    ``pin``, ready for a non-blocking upload), narrowed where it was computed.  A claim that is
+    not an int64 tensor of int32 values cannot be narrowed: it is passed on as an int64 host
+    tensor of the same values, which the streaming verifier rejects at ``range_or_shape`` (as
+    ``run_query`` rejects the claim itself) and which has the claim's size and transcript blob.
+    Anything but a tensor gives ``None``."""
+    if not torch.is_tensor(z):
         return None
+    if z.dtype != torch.int64 or not _fits_int32(z):
+        return z.to("cpu", torch.int64)
     z32 = z.to(torch.int32)
     if not (pin and torch.cuda.is_available()):
         return z32.cpu()
@@ -206,9 +214,10 @@ def _start_columns(verifier, chis, us, cols, openings, host: ThreadPoolExecutor)
 def run_query_streaming(prover, verifier, x: torch.Tensor, *, seed: int | None = None,
                         forward_kwargs: dict | None = None) -> dict:
     """:func:`protocol.run_query` with :func:`verify_streaming`: the same messages, challenges,
-    transcript, verdicts, labels and proof bytes.  ``verify_total`` times the verifier's work
-    from the moment it holds the messages (its uploads included); the prover's phases and
-    ``fs_hash`` are timed as in ``run_query``."""
+    verdicts and labels, and on an accepted query the same proof bytes and transcript (a rejected
+    query has also received ``u`` and the openings: see the module docstring).  ``verify_total``
+    times the verifier's work from the moment it holds the messages (its uploads included); the
+    prover's phases and ``fs_hash`` are timed as in ``run_query``."""
     p, mode = verifier.params, verifier.mode
     ch = Challenger(fiat_shamir=p.fiat_shamir, seed=seed)
     t: dict[str, float] = {}
@@ -220,14 +229,13 @@ def run_query_streaming(prover, verifier, x: torch.Tensor, *, seed: int | None =
     _sync(prover.device)
     t["prove_forward"] = time.perf_counter() - t0
     out = {"accepted": False, "rejected_at": None, "timings": t,
-           "bytes": {"claims": 4 * sum(z.numel() for z in claims.values() if z is not None),
-                     "u": 0, "columns": 0, "paths": 0}}
+           "bytes": {"claims": sum(z.numel() for z in claims.values()) * 4, "u": 0, "columns": 0, "paths": 0}}
 
     t0 = time.perf_counter()
     if p.fiat_shamir:
         _absorb_statement(ch, verifier, x)
         for k in sorted(claims):       # int32 claims hash as the int64 ones of run_query
-            ch.absorb(b"claim/" + k.encode(), b"" if claims[k] is None else _tensor_blob(claims[k]))
+            ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
     t["fs_hash"] = time.perf_counter() - t0
 
     mats = verifier.graph.mat_ops
