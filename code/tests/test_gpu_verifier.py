@@ -389,9 +389,10 @@ def _claim_attacks(mats):
         z.view(-1)[z.numel() // 3] += 1
         return z
 
-    return {"honest": {}, "first+1": at(mats[0], plus_one), "mid+1": at(mid, plus_one), "last+1": at(mats[-1], plus_one),
-            "Z_BOUND": at(mid, setting(0, Z)), "1-Z_BOUND": at(mid, setting(-1, 1 - Z)),
-            "beyond int32": at(mid, setting(0, 1 << 40)), "int32 dtype": at(mid, lambda z: z.to(torch.int32))}
+    return {"honest": {}, "first+1": at(mats[0], plus_one), "mid+1": at(mid, plus_one),
+            "last+1": at(mats[-1], plus_one), "Z_BOUND": at(mid, setting(0, Z)),
+            "1-Z_BOUND": at(mid, setting(-1, 1 - Z)), "beyond int32": at(mid, setting(0, 1 << 40)),
+            "int32 dtype": at(mid, lambda z: z.to(torch.int32))}
 
 
 def _setup(graph, mode, fiat_shamir=False, device="cpu"):
@@ -410,7 +411,8 @@ def _setup(graph, mode, fiat_shamir=False, device="cpu"):
 
 def _same_outcome(prover, pair, x, seed, **kw):
     a, b = (proto.run_query(prover, v, x, seed=seed, **kw) for v in pair)
-    assert (a["accepted"], a["rejected_at"]) == (b["accepted"], b["rejected_at"]), (a["rejected_at"], b["rejected_at"])
+    labels = (a["rejected_at"], b["rejected_at"])
+    assert (a["accepted"], a["rejected_at"]) == (b["accepted"], b["rejected_at"]), labels
     assert b["bytes"] == a["bytes"] or not a["accepted"]      # a rejected streaming query also got the openings
     assert "verify_total" in b["timings"]
     return a
@@ -480,8 +482,10 @@ def test_streaming_gives_the_verdicts_of_run_query_on_forged_folds_and_openings(
             labels[name] = _same_outcome(prover, pair, x, seed=i)["rejected_at"]
         finally:
             setattr(prover, what, real[what])
-    assert labels["u+1"] == labels["u=P"] == labels["u narrow"] == "freivalds" and labels["opened+1"] == "columns_code"
-    assert {labels[k] for k in ("opened=P", "opened=-1", "opened>int32", "opened narrow", "opened int32")}         == {"columns_shape"}
+    assert labels["u+1"] == labels["u=P"] == labels["u narrow"] == "freivalds"
+    assert labels["opened+1"] == "columns_code"
+    shape_labels = {labels[k] for k in ("opened=P", "opened=-1", "opened>int32", "opened narrow", "opened int32")}
+    assert shape_labels == {"columns_shape"}
     assert labels["path forged"] == labels["path short"] == labels["path long"] == "columns_merkle"
     assert labels["merkle then code"] == "columns_merkle" and labels["code then narrow"] == "columns_code"
     # an exception is raised where run_query raises it (a proof entry that is not bytes)
