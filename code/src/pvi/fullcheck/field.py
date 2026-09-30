@@ -218,12 +218,16 @@ def combine_limbs(acc: torch.Tensor, r: int) -> torch.Tensor:
 
 
 def exact_gemm_i64(a: torch.Tensor, b: torch.Tensor, chunk: int) -> torch.Tensor:
-    """Exact ``a @ b`` as int64 for integer-valued float64 ``a`` ``[..., m, K]`` and integer
-    ``b`` ``[..., K, n]`` (batch dimensions broadcast), when every block of ``chunk``
-    terms is exact (:func:`exact_chunk`).  ``b`` is converted to float64 once; the full
-    blocks go through ONE batched GEMM on strided views (no copies, no loop over
-    blocks) and the tail through one more, and the block sums (each ``<= 2**53``) are
-    added in int64."""
+    """``a @ b`` as int64 for integer-valued float64 ``a`` ``[..., m, K]`` and integer ``b``
+    ``[..., K, n]`` (batch dimensions broadcast), when every block of ``chunk`` terms is
+    exact (:func:`exact_chunk`).  ``b`` is converted to float64 once; the full blocks go
+    through ONE batched GEMM on strided views (no copies, no loop over blocks) and the tail
+    through one more, and the block sums (each ``<= 2**53``) are added in int64.
+
+    Below 512 full blocks the result is the exact product.  From 512 blocks on, each block
+    sum is reduced mod ``P`` first (so that their sum stays below ``2**62``): the result is
+    then only congruent to ``a @ b`` mod ``P``, which is all the callers use (every one of
+    them reduces it)."""
     k = a.shape[-1]
     bf = b.to(torch.float64)
     if k <= chunk:
