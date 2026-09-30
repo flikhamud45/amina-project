@@ -231,6 +231,12 @@ depend on the random indices).  Measured medians, interactive / Fiat--Shamir:
 | VGG-16 | 3,433 / 4,461 kB | 2,833 / 3,593 | 2,454 / 3,040 | 2,339 / 2,871 | 2,263 / 2,754 | 2,584 / 3,229 | 2,436 / 3,001 | 2,266 / 2,748 |
 | ResNet-18 (CIFAR) | 4,630 / 5,583 kB | 4,036 / 4,715 | 3,642 / 4,154 | 3,550 / 4,017 | 3,491 / 3,925 | 3,807 / 4,392 | 3,676 / 4,190 | 3,521 / 3,965 |
 
+GPT-2 with all 12 blocks, committed and queried the same way (`results/plan_bytes_run_gpt2.csv`,
+3 queries per cell), interactive / Fiat--Shamir: 64 tokens paper 62,072.9 / 80,689.6 kB, tight
+54,610.2 / 69,446.0, R8 46,274.4 / 57,175.8, R16 41,476.6 / 50,246.0; 512 tokens paper 213,461.0 /
+232,081.0, tight 205,998.4 / 220,834.2, R8 197,662.5 / 208,563.3, R16 192,864.8 / 201,635.4 --
+each within 3.2 kB of the byte model (the multiproofs).
+
 The decoders from the byte model (`results/plan_bytes.csv`; the paper column reproduces the
 stored L40S measurements, e.g. GPT-2 T64 62,072 kB vs 62,071.5 kB stored, Llama-2-7B T64 761.7 MB,
 Qwen3-4B T8 410.3 MB, OPT-6.7B T2048 10,101 MB), interactive / Fiat--Shamir, MB:
