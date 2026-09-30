@@ -172,6 +172,30 @@ def test_threaded_decoding_gives_the_same_claims_and_rejections(monkeypatch):
             cc.decode(bytes(bad), rows, 900, workers=workers)
 
 
+@pytest.mark.parametrize("shape", [(4096, 64), (1 << 18, 1), (600, 600)])
+def test_a_width_0_stream_of_a_threaded_size_round_trips(shape):
+    # B = 0 has no slot stream, so none of its (at least _THREADED) values goes to a worker
+    z = np.zeros(shape, np.int64)
+    if shape == (600, 600):
+        z[3, 7] = 1 << 20                                     # mostly constant: B = 0 and one exception
+    blob = _rt([z])
+    assert (blob[12], blob[13]) == (0, 0) and z.size >= cc._THREADED     # one plain op at B = 0
+    assert np.array_equal(cc.decode(blob, [shape[0]], shape[1], workers=4)[0], z)
+
+
+def test_row_constant_claims_centre_to_a_width_0_stream_and_round_trip():
+    z = np.repeat(np.random.default_rng(0).integers(-5000, 5000, (4096, 1)), 64, 1)
+    blob = _rt([z])
+    assert blob[12] == cc._F_CENTRED and blob[18] == 0        # the residuals: all 0, at B = 0
+
+
+def test_a_malicious_width_0_header_decodes_or_is_rejected():
+    head = cc.MAGIC + struct.pack("<I", 1) + struct.pack("<IB", 64, 0) + struct.pack("<Bi", 0, 0)
+    blob = head + bytes(-len(head) % 4) + struct.pack("<I", 0)
+    out = _decode_or_reject(blob, [4096], 64)
+    assert out is not None and not out[0].any()               # well formed: 4096 x 64 zeros
+
+
 def test_the_gpu_prover_encodes_the_bytes_of_the_cpu(device):
     rng = np.random.default_rng(6)
     zs = [torch.from_numpy(np.round(rng.normal(0, 3e4, (256, 64))).astype(np.int64)),

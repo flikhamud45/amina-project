@@ -581,7 +581,8 @@ def _decode(buf, rows: list[int], max_cols: int, workers: int) -> tuple[np.ndarr
         cnt = sum(segs[i][2] for i in members)
         more, off = _stream_jobs(buf, off, cnt, b, x.view(np.uint32)[base:base + cnt], workers)
         jobs += more
-        sizes += [4 * cnt // len(more) if cnt >= _THREADED else 0] * len(more)    # small ones: here
+        # small ones here; a width 0 has no job (its values are all 0 slots)
+        sizes += [4 * cnt // len(more) if more and cnt >= _THREADED else 0] * len(more)
         for i in members:
             start[i] = base
             base += segs[i][2]

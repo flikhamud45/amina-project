@@ -12,6 +12,7 @@ and bench.py records wire cells only under a ``_wire`` tag.
 from __future__ import annotations
 
 import math
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -118,6 +119,34 @@ def test_honest_wire_queries_are_accepted_with_smaller_proofs(kind, mode, fiat_s
             assert wired["bytes"]["paths"] == plain["bytes"]["paths"]
     else:
         assert wired["bytes"]["u"] == wired["bytes"]["columns"] == wired["bytes"]["paths"] == 0
+
+
+@pytest.mark.parametrize("mode,fiat_shamir", SETTINGS)
+def test_a_repeated_token_prompt_is_accepted_with_wire(mode, fiat_shamir):
+    """One token repeated: the embedding and q/k/v claims are row-constant, their residuals all 0
+    (``B = 0``), together more than ``_THREADED`` values -- decoded without a slot stream."""
+    graph, _ = _graph("llama")
+    x = torch.full((1, 1030), 7, dtype=torch.int64)
+    claims = graph.forward(x)[1]
+    blob = cc.encode([claims[op.name] for op in graph.mat_ops])
+    assert sum(n for b, n in _widths(blob, graph) if b == 0) >= cc._THREADED
+    prover, pair = _setup(graph, mode, fiat_shamir)
+    assert proto.run_query(prover, pair[0], x, seed=1)["accepted"]
+    assert _both(prover, pair, x, seed=1)["accepted"]
+
+
+def _widths(blob: bytes, graph) -> list[tuple[int, int]]:
+    """``(B, number of values)`` of every segment of a ``PVC3`` header."""
+    off, out = 8, []
+    for op in graph.mat_ops:
+        m, flags = struct.unpack_from("<IB", blob, off)
+        off += 5
+        if flags & cc._F_CENTRED:
+            out.append((blob[off], op.n_rows))
+            off += 5
+        out.append((blob[off], op.n_rows * m))
+        off += 5
+    return out
 
 
 def _claim_attacks(mats):
