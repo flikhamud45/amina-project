@@ -12,6 +12,7 @@ commitment (Ligero-style).  Modules:
 * ``protocol``   -- prover, verifier, security parameters (modes C, K, Kpre);
 * ``pipeline``   -- the wire formats and claim uploads of the streaming verifier for a GPU
                     client (optional: ``Verifier(stream=True)``, ``Verifier.verify_streaming``);
+* ``claimcodec`` -- the compact, lossless encoding of the proof (optional: ``run_query(wire=True)``);
 * ``sampling``   -- Anchuri et al.'s path test on the same integer graphs, for a
                     like-for-like baseline;
 * ``analytic``   -- decoder weight-op shapes and the expected multiproof size;
