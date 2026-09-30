@@ -52,7 +52,8 @@ CNNS = ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar")
 DECODERS = (("gpt2", 64), ("gpt2", 512), ("llama2-7b", 1), ("llama2-7b", 64), ("llama2-7b", 2048), ("qwen3-4b", 8),
             ("opt-125m", 2048), ("opt-350m", 2048), ("opt-1.3b", 2048), ("opt-2.7b", 2048), ("opt-6.7b", 2048),
             ("opt-13b", 2048))
-POLICIES = ("paper", "tight", "cnn16", "cnn17", "cnn18", "R8", "R16", "R64")
+POLICIES = ("paper", "tight", "cnn16", "cnn17", "cnn18", "R8", "R16", "R64", "tightc", "cnn16c", "cnn17c", "cnn18c",
+            "R8c", "R16c", "R64c")
 
 
 def cnn_graph(name: str):
@@ -74,7 +75,7 @@ def analytic_rows(lam: int, policies) -> list[dict]:
             setup = setup_size(ops, plan=plan)
             for chal in ("int", "fs"):
                 params = params_for(lam, len(ops), fiat_shamir=chal == "fs", plan=plan)
-                cols = None if plan is None else plan.op_columns(params.group_columns)
+                cols = None if plan is None else plan.matrix_columns(params.group_columns)
                 shapes = plan.shapes() if plan is not None else [(op.row_length, 4 * next_pow2(op.row_length))
                                                                   for op in ops]
                 b = proof_bytes(ops, params, claim_cols, plan=plan)
@@ -167,7 +168,7 @@ def _whole_model_rows(rows: list, cfg, lam: int) -> list:
                         wire_claims=claims if wire else None)
         if not wire and abs(b["claims"] - claims) > 0.5:
             raise SystemExit(f"{cfg.name}: the claims of the builds do not extrapolate to the whole model's")
-        cols = None if whole is None else whole.op_columns(params.group_columns)
+        cols = None if whole is None else whole.matrix_columns(params.group_columns)
         shapes = whole.shapes() if whole is not None else [(op.row_length, op.n_points(4)) for op in model_ops]
         out.append({"model": cfg.name, "seq": seq, "layers": cfg.n_layers, "vocab": cfg.vocab, "policy": policy,
                     "wire": wire, "challenges": chal, "lam": lam, **{f"bytes_{k}": v for k, v in b.items()},

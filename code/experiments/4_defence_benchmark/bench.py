@@ -9,9 +9,10 @@ nothing is aggregated here, so figures can be re-made later without re-running.
 A cell that has a ``.done`` marker is skipped (resume after pre-emption); pass
 ``--force`` to redo it.  An honest query that is rejected stops the job and keeps the
 cell's records as ``<cell>.rejected-<run_id>.jsonl`` (``count_outcomes.py`` counts them).
-``--policy <name>`` (a commitment plan of ``pvi.fullcheck.plans``: tight, cnn<e>, R<rate>)
-commits under that plan and runs only the cells it changes -- the commitment (``commit_*``,
-with its setup time and size) and the mode-C cells -- named with a ``_pol<name>`` suffix.
+``--policy <name>`` (a commitment plan of ``pvi.fullcheck.plans``: tight, cnn<e>, R<rate>, each also
+with the suffix c: the col layouts) commits under that plan and runs only the cells it changes -- the
+commitment (``commit_*``, with its setup time and size) and the mode-C cells -- named with a
+``_pol<name>`` suffix.
 The ``pvi`` package must be this checkout's ``src/pvi`` (``export PYTHONPATH=<checkout>/code/src``,
 as the sbatch scripts do): with a shared venv that has another clone's pvi installed,
 bench.py refuses to run.
@@ -324,15 +325,17 @@ def _record_setup(r: "Recorder", coms, ops) -> None:
 
 
 def _plan_soundness(params, plan, mode: str) -> float:
-    return soundness_bits(params, plan.shapes(), mode, columns=plan.op_columns(params.group_columns))
+    return soundness_bits(params, plan.shapes(), mode, columns=plan.matrix_columns(params.group_columns))
 
 
 def _opening_of(coms, name: str) -> tuple[str, int]:
-    """Where op ``name``'s opened columns are: its own opening, or from row ``offset`` of its group's."""
-    for g, members in coms.plan.groups if coms.plan else ():
-        if name in members:
-            return g, sum(coms[m].weight.shape[0] for m in members[:members.index(name)])
-    return name, 0
+    """Where op ``name``'s opened columns are: its own opening, or from row ``offset`` of its group's
+    (those of its committed matrix: under a ``c`` policy maybe a col-layout one, of ``k`` rows)."""
+    if coms.plan is None:
+        return name, 0
+    matrix = coms.plan.matrix_of(name).name
+    g, members = next((g, ms) for g, ms in coms.plan.groups if matrix in ms)
+    return g, sum(coms[m].public.n_rows for m in members[:members.index(matrix)])
 
 
 def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
@@ -674,6 +677,8 @@ def suite_cnn(args, env) -> None:
         #     only the Reed-Solomon column check can reject it.
         # (2) forged column: an honest u plus an opened column shifted by a vector in
         #     the kernel of chi, so the code check passes; only the Merkle path can reject it.
+        #     (A col-layout matrix's check folds its columns with w = chi' [X ; 1]^T: a shift in
+        #     the kernel of [X ; 1]^T, which the prover knows, passes it for every chi'.)
         real_fold, real_open = prover.fold, prover.open
         final = mats[-1]
         state: dict = {}
@@ -696,32 +701,48 @@ def suite_cnn(args, env) -> None:
             us[final.name] = u
             return us
 
-        def kernel_vector(chi):
-            """A nonzero delta with chi @ delta = 0 mod P (Gaussian elimination)."""
-            r_, n_ = chi.shape
-            if n_ <= r_:
-                return None
-            m = [[int(v) % P for v in chi[i_, :r_].tolist()] + [(-int(chi[i_, r_])) % P] for i_ in range(r_)]
-            for col in range(r_):
-                piv = next((i_ for i_ in range(col, r_) if m[i_][col]), None)
+        def kernel_vector(left):
+            """A nonzero delta with left @ delta = 0 mod P (Gaussian elimination; None: full column rank)."""
+            m = [[int(v) % P for v in row] for row in left.tolist()]
+            pivots = []
+            for col in range(left.shape[1]):
+                piv = next((i_ for i_ in range(len(pivots), len(m)) if m[i_][col]), None)
                 if piv is None:
-                    return None
-                m[col], m[piv] = m[piv], m[col]
-                inv = pow(m[col][col], P - 2, P)
-                m[col] = [(v_ * inv) % P for v_ in m[col]]
-                for i_ in range(r_):
-                    if i_ != col and m[i_][col]:
+                    continue
+                r_ = len(pivots)
+                m[r_], m[piv] = m[piv], m[r_]
+                inv = pow(m[r_][col], P - 2, P)
+                m[r_] = [(v_ * inv) % P for v_ in m[r_]]
+                for i_ in range(len(m)):
+                    if i_ != r_ and m[i_][col]:
                         f_ = m[i_][col]
-                        m[i_] = [(vi - f_ * vc) % P for vi, vc in zip(m[i_], m[col])]
-            delta = torch.zeros(n_, dtype=torch.int64)
-            delta[:r_] = torch.tensor([m[i_][r_] for i_ in range(r_)], dtype=torch.int64)
-            delta[r_] = 1
+                        m[i_] = [(vi - f_ * vc) % P for vi, vc in zip(m[i_], m[r_])]
+                pivots.append(col)
+            free = next((c_ for c_ in range(left.shape[1]) if c_ not in pivots), None)
+            if free is None:
+                return None
+            delta = torch.zeros(left.shape[1], dtype=torch.int64)
+            delta[free] = 1
+            for i_, c_ in enumerate(pivots):
+                delta[c_] = (-m[i_][free]) % P
             return delta
 
+        def folded_with(victim):
+            """What the code check folds the victim's opened columns with: its chi, or for a col-layout
+            victim [X ; 1]^T of the honest query."""
+            matrix = coms.plan.matrix_of(victim) if coms.plan is not None else None
+            if matrix is None or matrix.layout == "row":
+                return state["chis"][victim]
+            first = next(op for op in mats if op.name == matrix.members[0])
+            xt = first.unfold(prover.graph.forward(x0.to(prover.device))[0][first.inputs[0]]).T.cpu()
+            return torch.cat([xt, torch.ones(xt.shape[0], 1, dtype=torch.int64)], 1) if first.has_bias else xt
+
+        folded_final = coms.plan is None or coms.plan.matrix_of(final.name).layout == "row"
         for i in range(max(3, args.tampers // 10)):
-            prover.fold = forged_fold
-            attempt("forged_fold", i, forward_kwargs={"tamper": t_forge})
-            prover.fold = real_fold
+            if folded_final:                 # (a col-layout final op has no u to forge: output_logit covers it)
+                prover.fold = forged_fold
+                attempt("forged_fold", i, forward_kwargs={"tamper": t_forge})
+                prover.fold = real_fold
             victim = mats[i % len(mats)].name
 
             def capture_fold(chis):
@@ -732,7 +753,7 @@ def suite_cnn(args, env) -> None:
                 out = real_open(cols)
                 key, off = _opening_of(coms, victim)      # (under a plan: the victim's rows of its group's)
                 c, pth = out[key]
-                delta = kernel_vector(state["chis"][victim])
+                delta = kernel_vector(folded_with(victim))
                 if delta is not None:
                     c = c.clone()
                     c[off:off + len(delta), 0] = (c[off:off + len(delta), 0] + delta) % P
@@ -945,7 +966,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Reed-Solomon rate (codeword / message length); under --policy the plan's base rate, which "
                          "every cell records as its rate (the codeword lengths are the plan's: policy, group_columns)")
     ap.add_argument("--policy", default="paper",
-                    help="commitment plan (pvi.fullcheck.plans): paper (the report), tight, cnn<e> or R<rate>; "
+                    help="commitment plan (pvi.fullcheck.plans): paper (the report), tight, cnn<e> or R<rate>, "
+                         "the last three also with the suffix c (col layouts); "
                          "runs the commitment and mode-C cells only, named with a _pol<name> suffix")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--tag", default="", help="suffix for cell names, e.g. _thr1")

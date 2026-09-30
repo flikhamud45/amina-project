@@ -73,7 +73,8 @@ def main() -> None:
     ap.add_argument("--label", default="")
     ap.add_argument("--extra", default="{}", help="JSON dict of extra keyword arguments for Verifier (new options)")
     ap.add_argument("--policy", nargs="+", default=["paper"],
-                    help="mode C: commitment plans (paper, tight, cnn<e>, R<rate>), timed interleaved in this process")
+                    help="mode C: commitment plans (paper, tight, cnn<e>, R<rate>; with the suffix c, their col "
+                         "layouts), timed interleaved in this process")
     ap.add_argument("--wire", nargs="*", choices=["off", "on"], default=["off"],
                     help="run_query(wire=True), the compact encoding of the proof: '--wire' for every variant, "
                          "'--wire off on' for each policy both ways, timed interleaved")
