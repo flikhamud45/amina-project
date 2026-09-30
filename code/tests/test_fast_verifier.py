@@ -244,6 +244,28 @@ def test_range_and_field_checks_match_reference():
         assert proto._in_field(a) == ref.in_field(a)
 
 
+@pytest.mark.parametrize("deferred", [False, True])
+def test_disagrees_flags_any_op_that_fails_its_freivalds_check(deferred, monkeypatch):
+    monkeypatch.setattr(proto, "_defer", lambda device: deferred)
+    g = torch.Generator().manual_seed(21)
+    checks = []
+    for m in (3, 0, 7):                                  # an op with no columns too
+        lhs = _rand(g, 0, P, (2, m))
+        checks.append((_rand(g, 0, P, (2, 5)), lhs, lhs.clone()))
+    assert proto._to_host([proto._disagrees(checks)]) == [False]
+    for i, (u, lhs, rhs) in enumerate(checks):
+        bad_u = [u.clone() for _ in range(3)]
+        for b, value in zip(bad_u, (P, -1, INT64_MIN)):
+            b[1, -1] = value
+        bad = [(b, lhs, rhs) for b in bad_u]
+        if lhs.numel():
+            bad.append((u, lhs, (rhs + 1) % P))
+        for one in bad:
+            changed = checks[:i] + [one] + checks[i + 1:]
+            assert proto._to_host([proto._disagrees(changed)]) == [True]
+            assert proto._to_host([proto._disagrees([one])]) == [True]
+
+
 def _mat_op(layout, n_in, bias, conv=None, rows=4):
     from pvi.fullcheck.graph import MatOp
 

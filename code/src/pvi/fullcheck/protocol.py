@@ -359,8 +359,9 @@ def _leading_passes(ops: list, check) -> tuple[int, Exception | None]:
 
 def _defer(device) -> bool:
     """Whether the checks on ``device`` keep their work there: derive leaves the range checks of
-    claims for the one copy, and the column code checks run on opened columns uploaded as the
-    int32 rows the leaves hash.  Everywhere but on the CPU (the tests run these forms on the CPU too)."""
+    claims for the one copy, the field checks of ``u`` stay on the device, and the column code
+    checks run on opened columns uploaded as the int32 rows the leaves hash.  Everywhere but on
+    the CPU (the tests run these forms on the CPU too)."""
     return torch.device(device).type != "cpu"
 
 
@@ -377,9 +378,20 @@ def _out_of_range(z: torch.Tensor, bound: int) -> torch.Tensor:
     return _outside(z, 1 - bound, bound - 1)
 
 
-def _disagrees(u: torch.Tensor, lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
-    """``u`` is not in the field or ``chi^T Z != u^T [X ; 1]``: one op's Freivalds check, deferred."""
-    return _outside(u, 0, P - 1) | (lhs != rhs).any()
+def _disagrees(checks: list[tuple]) -> torch.Tensor:
+    """Some ``(u, lhs, rhs)`` of ``checks`` (one or more ops, on one device) with ``u`` not in the
+    field or ``lhs = chi^T Z != rhs = u^T [X ; 1]``: their Freivalds checks as ONE boolean, left
+    where it was computed.  On a device a few calls check all the ops at once; on the CPU, where
+    a value costs nothing to read, they are checked one by one (numpy's min/max and
+    ``torch.equal``, the fastest there) up to the first failure."""
+    if not _defer(checks[0][1].device):
+        return torch.tensor(not all(_in_field(u) and torch.equal(lhs, rhs) for u, lhs, rhs in checks))
+    lhs = torch.cat([left.reshape(-1) for _, left, _ in checks])
+    bad = (lhs != torch.cat([right.reshape(-1) for _, _, right in checks])).any()
+    bounds = [torch.aminmax(u) for u, _, _ in checks if u.numel()]
+    if bounds:
+        bad |= (torch.stack([lo for lo, _ in bounds]) < 0).any() | (torch.stack([hi for _, hi in bounds]) >= P).any()
+    return bad
 
 
 def _columns_verdict(codes: list[bool], merkle: list, n_ok: int, exc: Exception | None, n_ops: int) -> str | None:
@@ -670,7 +682,7 @@ class Verifier:
         lhs = self._lhs(good, claims, chis)
 
         def disagree(rhs):
-            return [_disagrees(us[op.name], lhs[op.name], rhs[op.name]) for op in good]
+            return [_disagrees([(us[op.name], lhs[op.name], rhs[op.name]) for op in good])] if good else []
 
         rhs, unchecked = self._rhs_all(good, inputs, us)
         flags, n = _to_host(unchecked + disagree(rhs)), len(unchecked)

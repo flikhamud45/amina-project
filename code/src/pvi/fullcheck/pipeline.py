@@ -159,7 +159,7 @@ def _verify(verifier, x, claims, chis, us, cols, openings, *, int8: bool):
             right.update(out)
             x_flags.extend(unchecked)
         left = verifier._signed_lhs({op.name: (chis[op.name], z)})[op.name]
-        flags.append(_disagrees(us[op.name], left, right.pop(op.name)))
+        flags.append(_disagrees([(us[op.name], left, right.pop(op.name))]))
 
     with ThreadPoolExecutor(1) as host:
         # the column checks compare with Enc(u): only started when every u is well formed (with one
