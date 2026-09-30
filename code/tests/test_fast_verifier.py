@@ -6,7 +6,9 @@ batched blocks, numpy for small operands), the codeword at the opened columns
 (baby-step giant-step), the leaf hashing, the right-hand sides, the range checks,
 the batched product and column checks (same verdicts, same exceptions, on tampered
 transcripts), the cheap operations, and whole graphs (the same claims and the same
-derived tensors).  Tests taking a ``device`` also run on CUDA when it is available.
+derived tensors).  Tests taking a ``device`` also run on CUDA when it is available; tests
+taking ``check_paths`` also run the checks in the forms a GPU verifier uses (deferred
+verdicts, int8 GEMMs), on the CPU.
 """
 
 from __future__ import annotations
@@ -38,6 +40,18 @@ def small_path(request, monkeypatch):
     """Run CPU products on either side of the numpy threshold."""
     monkeypatch.setattr(fld, "NP_SMALL", (1 << 62) if request.param == "numpy" else 0)
     monkeypatch.setattr(com, "NP_SMALL", (1 << 62) if request.param == "numpy" else 0)
+    return request.param
+
+
+@pytest.fixture(params=["at_once", "deferred", "int8", "deferred_int8"])
+def check_paths(request, monkeypatch):
+    """The verifier's checks as the CPU runs them, with the verdicts left on the "device" and
+    copied back once (``_defer``, as on a GPU), and with the products on int8 GEMMs (``int8_ok``,
+    emulated in float64 off the GPU)."""
+    if "deferred" in request.param:
+        monkeypatch.setattr(proto, "_defer", lambda device: True)
+    if "int8" in request.param:
+        monkeypatch.setattr(proto, "int8_ok", lambda device: True)
     return request.param
 
 
@@ -274,7 +288,7 @@ def _with(d, name, value):
 
 
 @pytest.mark.parametrize("mode", ["C", "Kpre"])
-def test_batched_products_give_the_per_op_verdicts(mode):
+def test_batched_products_give_the_per_op_verdicts(mode, check_paths):
     graph, prover, v, x = _decoder_setup(mode)
     mats = graph.mat_ops
     _, claims, chis, us = _transcript(mode, prover, v, x, mats)
@@ -314,7 +328,7 @@ def test_batched_products_give_the_per_op_verdicts(mode):
             impl(claims, inputs, chis, _with(us, later, "not a tensor"))
 
 
-def test_claims_modified_after_derive_are_not_trusted():
+def test_claims_modified_after_derive_are_not_trusted(check_paths):
     graph, prover, v, x = _decoder_setup("Kpre")
     mats = graph.mat_ops
     _, claims, chis, us = _transcript("Kpre", prover, v, x, mats)
@@ -332,7 +346,7 @@ def test_claims_modified_after_derive_are_not_trusted():
     assert v.check_products(claims, inputs, chis, us) is ref.check_products(v, claims, inputs, chis, us) is False
 
 
-def test_the_verifier_keeps_no_query_tensors_alive():
+def test_the_verifier_keeps_no_query_tensors_alive(check_paths):
     import gc
     import weakref
 
@@ -348,7 +362,7 @@ def test_the_verifier_keeps_no_query_tensors_alive():
     assert all(r() is None for r in refs)
 
 
-def test_batched_columns_give_the_per_op_verdicts():
+def test_batched_columns_give_the_per_op_verdicts(check_paths):
     graph, prover, v, x = _decoder_setup("C")
     mats = graph.mat_ops
     ch, claims, chis, us = _transcript("C", prover, v, x, mats)
@@ -524,8 +538,9 @@ def _graph(kind):
     return graph, torch.randint(0, small.vocab, (1, 9), generator=g)
 
 
+@pytest.mark.parametrize("check_paths", ["at_once", "deferred"], indirect=True)
 @pytest.mark.parametrize("kind", ["lenet5", "vgg11", "resnet18", "gpt2", "opt-350m", "qwen3-4b", "llama-like"])
-def test_graphs_give_the_reference_claims_and_derived_tensors(kind, monkeypatch):
+def test_graphs_give_the_reference_claims_and_derived_tensors(kind, monkeypatch, check_paths):
     graph, x = _graph(kind)
     _, claims = graph.forward(x)
     params = proto.params_for(40, len(graph.mat_ops))
@@ -571,7 +586,8 @@ def _queries(graph, x, mode, fiat_shamir, device="cpu"):
 @pytest.mark.parametrize("kind,mode,fiat_shamir", [("lenet5", "C", False), ("lenet5", "C", True),
                                                    ("resnet18", "Kpre", False), ("gqa-tiny", "C", True),
                                                    ("gqa-tiny", "K", False), ("gqa-tiny", "Kpre", False)])
-def test_queries_give_the_reference_verdicts_proof_bytes_and_transcript(kind, mode, fiat_shamir, monkeypatch):
+def test_queries_give_the_reference_verdicts_proof_bytes_and_transcript(kind, mode, fiat_shamir, monkeypatch,
+                                                                         check_paths):
     import hashlib
 
     absorbed = []

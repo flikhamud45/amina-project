@@ -48,7 +48,10 @@ __all__ = [
     "verify_multiproof",
     "verify_multiproofs",
     "column_leaf",
+    "column_rows",
+    "row_leaves",
     "column_leaves",
+    "map_threaded",
     "CommitmentPublic",
     "WeightCommitment",
     "vandermonde_columns",
@@ -76,24 +79,56 @@ def column_leaf(tag: bytes, index: int, column: np.ndarray) -> bytes:
     return h.digest()
 
 
-def column_leaves(tag: bytes, indices: list[int], opened: torch.Tensor) -> dict[int, bytes]:
-    """``{c: column_leaf(tag, c, opened[:, j])}`` for the int64 columns ``opened`` ``[N, t]``.
-
-    One transposing cast to 32 bits for all columns instead of a strided gather and a
-    cast per column; the bytes hashed are the same (both keep the low 32 bits).
-    """
+def column_rows(opened: torch.Tensor) -> np.ndarray:
+    """The int64 columns ``opened`` ``[N, t]`` as the 32-bit rows ``[t, N]`` that :func:`column_leaf`
+    hashes (the low 32 bits of each value): one transposing cast for all columns instead of a
+    strided gather and a cast per column."""
     if opened.shape[0] <= 1 << 14:
-        rows = opened.cpu().numpy().T.astype(np.int32, order="C")   # [t, N]
+        rows = opened.cpu().numpy().T.astype(np.int32, order="C")
     else:                                                            # tall columns: torch transposes faster
         rows = opened.to(torch.int32).T.contiguous().cpu().numpy()
     if sys.byteorder != "little":  # pragma: no cover - column_leaf hashes little-endian words
         rows = rows.astype("<u4")
+    return rows
+
+
+def row_leaves(tag: bytes, indices: list[int], rows: np.ndarray) -> dict[int, bytes]:
+    """``{c: column_leaf(tag, c, column)}`` for the columns given as :func:`column_rows` ``[t, N]``."""
     prefix = b"pvi/col" + tag
     out = {}
     for j, c in enumerate(indices):
         h = hashlib.sha256(prefix + int(c).to_bytes(8, "big"))
         h.update(rows[j])
         out[c] = h.digest()
+    return out
+
+
+def column_leaves(tag: bytes, indices: list[int], opened: torch.Tensor) -> dict[int, bytes]:
+    """``{c: column_leaf(tag, c, opened[:, j])}`` for the int64 columns ``opened`` ``[N, t]``."""
+    return row_leaves(tag, indices, column_rows(opened))
+
+
+LEAF_THREAD_BYTES = 1 << 14
+"""Columns of at least this many bytes are hashed on threads (:func:`map_threaded`): ``hashlib``
+releases the GIL while it hashes more than 2 KiB, but below ~16 KiB per column the threads'
+overhead outweighs the gain (laptop: 4 threads are 1.6x faster at 16 KiB, 2.9x at 125 KiB,
+and slower at 12 KiB)."""
+_THREAD_POOLS: dict = {}
+
+
+def map_threaded(fn, items: list, sizes: list[int], workers: int) -> list:
+    """``[fn(x) for x in items]``: the items of ``sizes >= LEAF_THREAD_BYTES`` on a pool of
+    ``workers`` threads, the others meanwhile on the calling thread."""
+    big = [i for i, s in enumerate(sizes) if s >= LEAF_THREAD_BYTES] if workers > 1 else []
+    if not big:
+        return [fn(x) for x in items]
+    if workers not in _THREAD_POOLS:
+        from concurrent.futures import ThreadPoolExecutor
+        _THREAD_POOLS[workers] = ThreadPoolExecutor(max_workers=workers)
+    futures = {i: _THREAD_POOLS[workers].submit(fn, items[i]) for i in big}
+    out = [None if i in futures else fn(x) for i, x in enumerate(items)]
+    for i, fut in futures.items():
+        out[i] = fut.result()
     return out
 
 

@@ -5,9 +5,13 @@
 * The int8 GEMM products (``field.int8_*``) against ``reference.field_matmul_mod`` on edge values
   (every int32, blocks straddling ``2**16`` terms), in their float64 emulation on the CPU and with
   ``torch._int_mm`` on a GPU, and the fallbacks when an int8 GEMM is missing, inexact or fails.
+* A GPU verifier's device-resident constants (``IntGraph.with_constants_on``): the prover's graph
+  is not modified, and a modified constant is copied again.
+* Deferred range checks (an exception after an out-of-range claim is its rejection) and inputs
+  that are not int8-valued (the int8 right-hand side falls back).
 
 Tests taking ``device`` also run on CUDA when it is available; there they exercise the int8
-tensor cores.
+tensor cores and the device-resident constants.
 """
 
 from __future__ import annotations
@@ -16,10 +20,14 @@ import pytest
 import torch
 
 from pvi.fullcheck import field as fld
+from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
 from pvi.fullcheck import transformer as tr
+from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp
+from pvi.fullcheck.transformer import DecoderConfig, build_decoder
 
 P = fld.P
+Z = proto.Z_BOUND
 INT32_MIN, INT32_MAX = -(1 << 31), (1 << 31) - 1
 cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 
@@ -186,3 +194,144 @@ def test_int8_gemm_is_checked_once_per_gpu_and_falls_back_when_it_fails(monkeypa
     a, b = _rand(g, -128, 128, (24, 64)).to(torch.int8), _rand(g, -128, 128, (64, 16)).to(torch.int8)
     assert torch.equal(fld.int8_gemm(a.cuda(), b.cuda()).cpu(), (a.double() @ b.double()).to(torch.int32))
     assert fld._INT8[key] is False and not fld.int8_ok(key)          # the products use float64 from now on
+
+
+# -- a GPU verifier's constants ---------------------------------------------------------------
+
+_TINY = {
+    "gpt2": DecoderConfig("tiny-gpt2", 64, 2, 4, 4, 16, 256, 97),
+    "llama": DecoderConfig("tiny-llama", 64, 2, 4, 4, 16, 160, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
+                           bias=False, tied=False),
+    "qwen": DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
+                          rope_theta=1e6, bias=False, qk_norm=True),
+}
+
+
+def _decoder(kind="qwen"):
+    graph = build_decoder(_TINY[kind], calib_tokens=12, seed=3)
+    return graph, torch.randint(0, 97, (1, 12), generator=torch.Generator().manual_seed(5))
+
+
+def _tensor_args(fn):
+    return [v for v in (*(fn.__defaults__ or ()), *(c.cell_contents for c in fn.__closure__ or ()))
+            if torch.is_tensor(v)]
+
+
+def test_constants_are_copied_to_the_device_once_without_touching_the_prover_graph():
+    graph, _ = _decoder()
+    public = graph.public()
+    before = [(op, op.fn, [t.clone() for t in _tensor_args(op.fn)]) for op in graph.ops if isinstance(op, CheapOp)]
+    moved, pairs = public.with_constants_on("meta")
+    assert [type(a) for a in moved.ops] == [type(b) for b in public.ops]
+    for a, b in zip(public.ops, moved.ops):
+        if isinstance(a, MatOp):
+            assert a is b
+        else:
+            assert a is not b and (a.fn is not b.fn) == bool(_tensor_args(a.fn))
+            assert all(t.device.type == "meta" for t in _tensor_args(b.fn))
+    assert pairs and all(s.device.type == "cpu" and d.device.type == "meta" for s, d in pairs)
+    assert len({id(s) for s, _ in pairs}) == len(pairs)                   # each constant copied once
+    for op, fn, saved in before:                                          # the prover's graph is as it was
+        assert op.fn is fn and all(torch.equal(a, b) for a, b in zip(_tensor_args(fn), saved))
+        assert all(t.device.type == "cpu" for t in _tensor_args(fn))
+
+
+def test_constants_in_closures_are_moved_too():
+    t = torch.arange(3)
+
+    def make():
+        return lambda a: a + t.to(a.device)
+
+    fn = make()
+    moved, pairs = IntGraph([CheapOp("c", ("x",), "c.y", fn=fn)], "x", "c.y").with_constants_on("meta")
+    assert fn.__closure__[0].cell_contents is t and len(pairs) == 1
+    assert moved.ops[0].fn(torch.zeros(3, device="meta")).device.type == "meta"
+
+
+def test_a_modified_constant_is_copied_again():
+    graph, _ = _decoder()
+    v = proto.Verifier(graph.public(), proto.params_for(40, len(graph.mat_ops)), "Kpre")
+    src = torch.arange(4)
+    dst = src.clone()
+    v._consts = [(src, dst, (src._version, dst._version))]
+    v._refresh_constants()
+    src[0] = 7
+    v._refresh_constants()
+    assert int(dst[0]) == 7
+    dst[1] = 9                                     # the copy itself modified: copied again
+    v._refresh_constants()
+    assert torch.equal(dst, torch.tensor([7, 1, 2, 3]))
+
+
+@cuda_only
+def test_a_gpu_verifier_keeps_its_constants_on_the_gpu():
+    graph, _ = _decoder()
+    v = proto.Verifier(graph.public(), proto.params_for(40, len(graph.mat_ops)), "Kpre", device="cuda")
+    moved = [t for op in v.graph.ops if isinstance(op, CheapOp) for t in _tensor_args(op.fn)]
+    assert moved and all(t.is_cuda for t in moved)
+    assert all(not t.is_cuda for op in graph.ops if isinstance(op, CheapOp) for t in _tensor_args(op.fn))
+
+
+# -- deferred range checks, inputs that are not int8-valued -------------------------------------
+
+def _raise_on_large(a):
+    if int(a.abs().max()) >= 1 << 20:
+        raise ValueError("large input")
+    return a.clamp(-127, 127)
+
+
+def _guarded_graph():
+    """fc1 -> a cheap op that raises on large values -> fc2."""
+    g = torch.Generator().manual_seed(4)
+    fc1 = MatOp("fc1", ("x",), "fc1.z", weight=_rand(g, -127, 128, (4, 3)).to(torch.int8), layout="linear")
+    fc2 = MatOp("fc2", ("g.y",), "fc2.z", weight=_rand(g, -127, 128, (2, 4)).to(torch.int8), layout="linear")
+    guard = CheapOp("g", ("fc1.z",), "g.y", fn=_raise_on_large)
+    return IntGraph([fc1, guard, fc2], "x", "fc2.z")
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_an_exception_after_an_out_of_range_claim_is_its_rejection(deferred, monkeypatch):
+    graph = _guarded_graph()
+    x = torch.tensor([[5, -7, 100]])
+    _, claims = graph.forward(x)
+    v = proto.Verifier(graph.public(), proto.params_for(40, 2), "Kpre")
+    monkeypatch.setattr(proto, "_defer", lambda device: deferred)
+    assert v.derive(x, claims) is not None
+    for value, want in ((Z, None), (-(1 << 62), None), (1 << 21, ValueError)):
+        bad = dict(claims, fc1=claims["fc1"].clone())
+        bad["fc1"][0, 0] = value                   # out of range; or in range, but the guard raises
+        if want is None:
+            assert v.derive(x, bad) is None and not v._ranged
+        else:
+            with pytest.raises(want):
+                v.derive(x, bad)
+
+
+def _wide_input_verifier(mode="Kpre"):
+    """One linear op whose input is NOT int8-valued (|x| up to 300)."""
+    g = torch.Generator().manual_seed(6)
+    w = _rand(g, -127, 128, (5, 16)).to(torch.int8)
+    b = _rand(g, -1000, 1000, (5,))
+    op = MatOp("fc", ("x",), "fc.z", weight=w, bias=b, layout="linear")
+    graph = IntGraph([op], "x", "fc.z")
+    x = _rand(g, -300, 301, (2, 3, 16))
+    z = w.to(torch.int64) @ x.reshape(-1, 16).T + b[:, None]         # the exact claim
+    v = proto.Verifier(graph.public(), proto.params_for(40, 1), mode, weights={"fc": (w, b)})
+    v.precompute(proto.Challenger(seed=1))
+    chis, us = {"fc": v._pre["fc"][0]}, {"fc": v._pre["fc"][1]}
+    return v, x, {"fc": z}, chis, us
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_products_of_inputs_that_are_not_int8_valued_fall_back(deferred, monkeypatch):
+    monkeypatch.setattr(proto, "_defer", lambda device: deferred)
+    monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+    v, x, claims, chis, us = _wide_input_verifier()
+    inputs = v.derive(x, claims)
+    _, unchecked = v._rhs_all(v.graph.mat_ops, inputs, us)
+    assert proto._to_host(unchecked) == [True]
+    assert v.check_products(claims, inputs, chis, us) is ref.check_products(v, claims, inputs, chis, us) is True
+    bad = {"fc": claims["fc"].clone()}
+    bad["fc"][2, 3] += 1
+    inputs = v.derive(x, bad)
+    assert v.check_products(bad, inputs, chis, us) is ref.check_products(v, bad, inputs, chis, us) is False

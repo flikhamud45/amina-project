@@ -21,7 +21,9 @@ chunked so every partial sum stays below ``2**24`` and is therefore exact.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import os
+import types
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Callable
@@ -219,6 +221,41 @@ class CheapOp(Op):
     params: dict = field(default_factory=dict)
 
 
+def _with_tensors_on(fn, device: torch.device, copies: dict):
+    """``fn`` with every tensor among its default arguments and closure cells replaced by its
+    copy on ``device`` (``copies``: ``id(tensor) -> (tensor, copy)``, shared across calls so a
+    tensor is copied once); ``fn`` itself when it captured no tensor or is not a plain function."""
+    if not isinstance(fn, types.FunctionType):
+        return fn
+
+    def on(v):
+        if not torch.is_tensor(v):
+            return v
+        if id(v) not in copies:
+            copies[id(v)] = (v, v.to(device))
+        return copies[id(v)][1]
+
+    defaults = tuple(map(on, fn.__defaults__ or ()))
+    kwdefaults = {k: on(v) for k, v in (fn.__kwdefaults__ or {}).items()}
+    cells = tuple(types.CellType(on(c.cell_contents)) if torch.is_tensor(_cell_value(c)) else c
+                  for c in fn.__closure__ or ())
+    if (all(a is b for a, b in zip(defaults, fn.__defaults__ or ()))
+            and all(v is fn.__kwdefaults__[k] for k, v in kwdefaults.items())
+            and all(a is b for a, b in zip(cells, fn.__closure__ or ()))):
+        return fn
+    new = types.FunctionType(fn.__code__, fn.__globals__, fn.__name__, defaults or None, cells or None)
+    new.__kwdefaults__ = kwdefaults or None
+    new.__qualname__, new.__doc__ = fn.__qualname__, fn.__doc__
+    return new
+
+
+def _cell_value(cell):
+    try:
+        return cell.cell_contents
+    except ValueError:            # an empty cell
+        return None
+
+
 @dataclass
 class IntGraph:
     """An ordered list of operations; ``inputs[0]`` of the first op is the query."""
@@ -235,6 +272,20 @@ class IntGraph:
     def public(self) -> "IntGraph":
         return IntGraph([op.public() for op in self.ops], self.input_name,
                         self.output_name, dict(self.meta))
+
+    def with_constants_on(self, device) -> tuple["IntGraph", list[tuple[torch.Tensor, torch.Tensor]]]:
+        """This graph with the tensors its cheap ops captured (requantisation multipliers, norm
+        gains, look-up tables) copied to ``device`` once, and the ``(source, copy)`` pairs.
+
+        The cheap ops are new ``CheapOp`` objects whose functions are the same code with the
+        copies as their default arguments (or closure cells); this graph and its ops are not
+        modified.  Each ``c.to(x.device)`` the functions do is then a no-op instead of a host
+        round trip per call on a GPU."""
+        copies: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        ops = [dataclasses.replace(op, fn=_with_tensors_on(op.fn, torch.device(device), copies))
+               if isinstance(op, CheapOp) else op for op in self.ops]
+        pairs = [pair for pair in copies.values() if pair[0] is not pair[1]]
+        return IntGraph(ops, self.input_name, self.output_name, dict(self.meta)), pairs
 
     def n_params(self) -> int:
         return sum(op.n_rows * op.row_length for op in self.mat_ops)

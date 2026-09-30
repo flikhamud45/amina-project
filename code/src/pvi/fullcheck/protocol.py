@@ -46,9 +46,10 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
-from .commitment import (HASH_BYTES, CommitmentPublic, WeightCommitment, codeword_at, column_leaves,
-                         verify_multiproofs)
-from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod, limbs_f64,
+from .commitment import (HASH_BYTES, CommitmentPublic, WeightCommitment, codeword_at, column_rows, map_threaded,
+                         row_leaves, verify_multiproofs)
+from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
+                    int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64,
                     small_matmul_mod, to_field)
 from .graph import IntGraph, MatOp
 
@@ -341,6 +342,79 @@ def _leading_passes(ops: list, check) -> tuple[int, Exception | None]:
     return len(ops), None
 
 
+# On a GPU the checks do not copy a verdict back per op (each copy waits for the device):
+# every range check and comparison leaves a boolean on the device, and all of them come back
+# with ONE copy once the work is queued.
+
+def _defer(device) -> bool:
+    """Whether checks on ``device`` leave their verdicts there: everywhere but on the CPU,
+    where reading a verdict costs nothing (the tests run the deferred forms on the CPU too)."""
+    return torch.device(device).type != "cpu"
+
+
+def _outside(a: torch.Tensor, lo: int, hi: int) -> torch.Tensor:
+    """Some entry of ``a`` outside ``[lo, hi]``, as a device boolean (``False`` if ``a`` is empty)."""
+    if a.numel() == 0:
+        return torch.zeros((), dtype=torch.bool, device=a.device)
+    amin, amax = torch.aminmax(a)
+    return (amin < lo) | (amax > hi)
+
+
+def _out_of_range(z: torch.Tensor, bound: int) -> torch.Tensor:
+    """Some ``|z| >= bound``: :func:`_in_range`, deferred."""
+    return _outside(z, 1 - bound, bound - 1)
+
+
+def _disagrees(u: torch.Tensor, lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
+    """``u`` is not in the field or ``chi^T Z != u^T [X ; 1]``: one op's Freivalds check, deferred."""
+    return _outside(u, 0, P - 1) | (lhs != rhs).any()
+
+
+def _columns_verdict(codes: list[bool], merkle: list, n_ok: int, exc: Exception | None, n_ops: int) -> str | None:
+    """The column check's verdict, op by op -- shape, code, Merkle -- for the ``n_ok`` leading ops
+    with well-formed openings (``exc``: what the next one raised): ``codes[i]`` and ``merkle[i] =
+    (ok, exception)`` of op ``i`` (``merkle`` may end at the first code failure)."""
+    for i in range(n_ok):
+        if not codes[i]:
+            return "columns_code"
+        ok, err = merkle[i]
+        if err is not None:
+            raise err
+        if not ok:
+            return "columns_merkle"
+    if exc is not None:
+        raise exc
+    return "columns_shape" if n_ok < n_ops else None
+
+
+def _to_host(flags: list[torch.Tensor]) -> list[bool]:
+    """Device booleans (0-d or 1-d, on one device) as a flat list, with ONE device-to-host copy."""
+    return torch.cat([f.reshape(-1) for f in flags]).tolist() if flags else []
+
+
+def _to_device(t: torch.Tensor, device) -> torch.Tensor:
+    """``t`` on ``device``; a host tensor bound for a GPU goes through pinned memory, so the copy
+    does not wait for the device."""
+    if torch.device(device).type != "cuda" or t.device.type != "cpu":
+        return t.to(device)
+    return t.pin_memory().to(device, non_blocking=True)
+
+
+def _upload_rows(rows: dict[str, np.ndarray], device) -> dict[str, torch.Tensor]:
+    """Host int32 arrays on ``device``: per shape, one staging buffer (pinned) and one
+    non-blocking copy (a copy from pageable memory would wait for the device each time)."""
+    by_shape: dict = {}
+    for name, a in rows.items():
+        by_shape.setdefault(a.shape, []).append(name)
+    out = {}
+    for shape, names in by_shape.items():
+        staged = torch.empty((len(names), *shape), dtype=torch.int32, pin_memory=torch.cuda.is_available())
+        for j, name in enumerate(names):
+            staged[j].numpy()[...] = rows[name]
+        out.update(zip(names, staged.to(device, non_blocking=True)))
+    return out
+
+
 @dataclass
 class Verifier:
     graph: IntGraph
@@ -354,6 +428,19 @@ class Verifier:
     _wdev: dict = field(default_factory=dict)   # mode K on a GPU: the weights stay on the device
     _ranged: dict = field(default_factory=dict)  # name -> (weakref, _version) of the claim derive() range-checked
     _kept: dict = field(default_factory=dict)    # Kpre: stacked operands of the fixed chi and u
+    _consts: list = field(default_factory=list)  # a GPU client: the cheap ops' constants (source, copy, versions)
+
+    def __post_init__(self) -> None:
+        if torch.device(self.device).type != "cpu":   # the cheap ops' constants live on the device
+            self.graph, pairs = self.graph.with_constants_on(self.device)
+            self._consts = [(src, dst, (src._version, dst._version)) for src, dst in pairs]
+
+    def _refresh_constants(self) -> None:
+        """Copy again every device constant whose source (or copy) was modified since."""
+        for i, (src, dst, versions) in enumerate(self._consts):
+            if (src._version, dst._version) != versions:
+                dst.copy_(src)
+                self._consts[i] = (src, dst, (src._version, dst._version))
 
     def precompute(self, challenger: Challenger) -> None:
         """Mode Kpre: fix a secret ``chi`` per op and precompute ``u``."""
@@ -376,29 +463,58 @@ class Verifier:
         return u
 
     def derive(self, x: torch.Tensor, claims: dict[str, torch.Tensor]) -> dict[str, torch.Tensor] | None:
-        """Recompute every cheap op; return each weight op's input, or ``None`` to reject."""
+        """Recompute every cheap op; return each weight op's input, or ``None`` to reject.
+
+        The range checks of claims on a GPU are deferred: they come back with one copy at
+        the end instead of one per weight op."""
+        out = self._derive(x, claims)
+        if out is None or any(_to_host(out[1])):
+            return None
+        self._ranged = out[2]
+        return out[0]
+
+    def _derive(self, x: torch.Tensor, claims):
+        """The derive loop: ``None`` to reject, else ``(inputs, pending, ranged)``.
+
+        A claim on the CPU is range-checked at once; a claim on a device leaves its (deferred)
+        verdict in ``pending``, and the ops after it run on whatever it holds: every cheap op is
+        a total function of int64 tensors, so they only compute values that are never used, and
+        an exception there is reported as the rejection it follows.
+        """
         env = {self.graph.input_name: x}
         inputs: dict[str, torch.Tensor] = {}
+        pending: list[torch.Tensor] = []
+        ranged: dict[str, tuple] = {}
         self._ranged = {}
+        self._refresh_constants()
         last = self.graph.last_use() if self.lean else None
-        for i, op in enumerate(self.graph.ops):
-            if last is not None and i > 0:  # free what no later op reads (weight-op inputs stay in ``inputs``)
-                for n in self.graph.ops[i - 1].inputs:
-                    if last.get(n, -1) <= i - 1:
-                        env.pop(n, None)
-            if isinstance(op, MatOp):
-                z = claims.get(op.name)
-                xin = env[op.inputs[0]]
-                m = op.n_cols(xin)
-                if (z is None or m is None or z.dtype != torch.int64 or tuple(z.shape) != (op.n_rows, m)
-                        or not _in_range(z, Z_BOUND)):
-                    return None
-                self._ranged[op.name] = _stamp(z)
-                inputs[op.name] = xin
-                env[op.output] = op.fold(z, xin)
-            else:
-                env[op.output] = op.fn(*[env[n] for n in op.inputs])
-        return inputs
+        try:
+            for i, op in enumerate(self.graph.ops):
+                if last is not None and i > 0:  # free what no later op reads (weight-op inputs stay in ``inputs``)
+                    for n in self.graph.ops[i - 1].inputs:
+                        if last.get(n, -1) <= i - 1:
+                            env.pop(n, None)
+                if isinstance(op, MatOp):
+                    z = claims.get(op.name)
+                    xin = env[op.inputs[0]]
+                    m = op.n_cols(xin)
+                    if z is None or m is None or z.dtype != torch.int64 or tuple(z.shape) != (op.n_rows, m):
+                        return None
+                    if not _defer(z.device):
+                        if not _in_range(z, Z_BOUND):
+                            return None
+                    elif z.numel():
+                        pending.append(_out_of_range(z, Z_BOUND))
+                    ranged[op.name] = _stamp(z)
+                    inputs[op.name] = xin
+                    env[op.output] = op.fold(z, xin)
+                else:
+                    env[op.output] = op.fn(*[env[n] for n in op.inputs])
+        except Exception:
+            if any(_to_host(pending)):
+                return None
+            raise
+        return inputs, pending, ranged
 
     # -- the checks ---------------------------------------------------------------------
     # The checks of different weight ops are independent, and a transformer repeats a few
@@ -450,18 +566,33 @@ class Verifier:
                 ranged[op.name] = (chis[op.name], z)
             else:
                 other[op.name] = (chis[op.name], to_field(z))
-        return {**self._field_products(ranged, Z_BOUND), **self._field_products(other, P)}
+        return {**self._signed_lhs(ranged), **self._field_products(other, P)}
 
-    def _rhs_all(self, mats, inputs, us) -> dict:
-        """``u_l^T [X_l ; 1]``.  Linear ops reading the same input (q, k, v; gate, up) share one
-        product with their ``u`` rows stacked, and inputs of the same shape are batched."""
+    def _signed_lhs(self, pairs: dict) -> dict:
+        """``{name: chi @ Z mod P}`` for ``pairs[name] = (chi, Z)`` with signed claims ``|Z| < 2**29``:
+        int8 GEMMs where :func:`int8_ok` (exact for every int32 claim), else limb products."""
+        if not pairs or not int8_ok(next(iter(pairs.values()))[1].device):
+            return self._field_products(pairs, Z_BOUND)
+        return {name: int8_field_matmul(self._kept_or_built(("chi8", name), [chi], lambda ts: int8_left(ts[0])), z)
+                for name, (chi, z) in pairs.items()}
+
+    def _rhs_all(self, mats, inputs, us, *, int8: bool = True) -> tuple[dict, list]:
+        """``u_l^T [X_l ; 1]``, and a device flag per input the product took to be int8-valued.
+
+        Linear ops reading the same input (q, k, v; gate, up) share one product with their ``u``
+        rows stacked: an int8 GEMM of the input where :func:`int8_ok` (unless ``int8=False``),
+        whose flag is set if the input is not int8-valued (the caller then computes again with
+        ``int8=False``); else a limb product, with inputs of the same shape batched."""
         out, shared = {}, {}
+        use8 = int8 and bool(mats) and int8_ok(us[mats[0].name].device)
         for op in mats:
             xin = inputs[op.name]
-            if op.layout == "linear" and op.n_in <= _RHS_CHUNK and us[op.name].device == xin.device:
+            if op.layout == "linear" and (use8 or op.n_in <= _RHS_CHUNK) and us[op.name].device == xin.device:
                 shared.setdefault(id(xin), (xin, []))[1].append(op)
             else:
                 out[op.name] = _rhs(op, us[op.name], xin)
+        if use8:
+            return out, [self._rhs_int8(xin, ops, us, out) for xin, ops in shared.values()]
         groups = {}
         for xin, ops in shared.values():
             key = (ops[0].n_in, xin.numel() // ops[0].n_in, tuple(us[op.name].shape[0] for op in ops), xin.device)
@@ -485,21 +616,52 @@ class Verifier:
                 for j, (_, ops) in enumerate(part):
                     for op, part_rows in zip(ops, y[j].split(rows)):
                         out[op.name] = (part_rows + us[op.name][:, k:]) % P if op.has_bias else part_rows
-        return out
+        return out, []
 
-    def _u_ok(self, op: MatOp, us) -> bool:
+    def _rhs_int8(self, xin: torch.Tensor, ops: list, us, out: dict) -> torch.Tensor:
+        """Fills ``out`` with ``u^T [X ; 1]`` of the linear ``ops`` reading ``xin`` (one int8 GEMM);
+        returns the device flag "``X`` is not int8-valued", which makes this product wrong."""
+        k = ops[0].n_in
+        x = xin.reshape(-1, k)
+        names = tuple(op.name for op in ops)
+        operand = self._kept_or_built(("u8",) + names, [us[n] for n in names],
+                                      lambda ts: int8_right(torch.cat([t[:, :k] for t in ts])))
+        y, r0 = int8_small_matmul(operand, x.to(torch.int8)), 0
+        for op in ops:
+            r = us[op.name].shape[0]
+            out[op.name] = (y[r0:r0 + r] + us[op.name][:, k:]) % P if op.has_bias else y[r0:r0 + r]
+            r0 += r
+        return _outside(x, -128, 127)
+
+    def _u_ok(self, op: MatOp, us, *, values: bool = True) -> bool:
+        """``u`` has the dtype and shape of the op's fold (and, with ``values``, is in the field)."""
         u = us.get(op.name)
         return (u is not None and u.dtype == torch.int64 and tuple(u.shape) == (self.params.reps, op.row_length)
-                and _in_field(u))
+                and (not values or _in_field(u)))
 
     def check_products(self, claims, inputs, chis, us) -> bool:
         """Freivalds for every weight op (``claims`` are the ones derive() accepted): the verdict
-        of checking op by op -- ``u`` well formed, then ``chi^T Z == u^T [X ; 1]``."""
+        of checking op by op -- ``u`` well formed, then ``chi^T Z == u^T [X ; 1]``.  On a GPU the
+        field check of every ``u`` and every comparison come back with one copy."""
         mats = self.graph.mat_ops
-        n_ok, exc = _leading_passes(mats, lambda op: self._u_ok(op, us))
+        on_cpu = not _defer(self.device)
+        n_ok, exc = _leading_passes(mats, lambda op: self._u_ok(op, us, values=on_cpu))
         good = mats[:n_ok]
-        lhs, rhs = self._lhs(good, claims, chis), self._rhs_all(good, inputs, us)
-        if not all(torch.equal(lhs[op.name], rhs[op.name]) for op in good):
+        lhs = self._lhs(good, claims, chis)
+        rhs, unchecked = self._rhs_all(good, inputs, us)
+        if on_cpu:
+            if any(_to_host(unchecked)):          # an input that is not int8-valued (int8 GEMMs only)
+                rhs, _ = self._rhs_all(good, inputs, us, int8=False)
+            agree = all(torch.equal(lhs[op.name], rhs[op.name]) for op in good)
+        else:
+            def disagree(rhs):
+                return [_disagrees(us[op.name], lhs[op.name], rhs[op.name]) for op in good]
+
+            flags, n = _to_host(unchecked + disagree(rhs)), len(unchecked)
+            if any(flags[:n]):
+                flags, n = _to_host(disagree(self._rhs_all(good, inputs, us, int8=False)[0])), 0
+            agree = not any(flags[n:])
+        if not agree:
             return False
         if exc is not None:
             raise exc
@@ -513,9 +675,9 @@ class Verifier:
                     or opened.dtype != torch.int64 or not _in_field(opened)
                     or us[op.name].shape[1] != pub.row_length)
 
-    def _codes_ok(self, mats, chis, us, cols, openings) -> list[bool]:
-        """``chi^T (opened columns) == Enc(u)[columns]`` per op.  ``Enc(u)`` is only needed at
-        the ``t`` opened columns: it is evaluated there directly (:func:`codeword_at`)."""
+    def _codewords(self, mats, us, cols) -> dict:
+        """``Enc(u)[columns]`` per op.  ``Enc(u)`` is only needed at the ``t`` opened columns: it
+        is evaluated there directly (:func:`codeword_at`), same-shape ops at once."""
         enc, groups = {}, {}
         for op in mats:
             u = us[op.name]
@@ -526,37 +688,57 @@ class Verifier:
             for i in range(0, len(names), step):
                 part = names[i:i + step]
                 if len(part) == 1:
-                    enc[part[0]] = codeword_at(us[part[0]], n_points, cols[part[0]])
+                    enc[part[0]] = codeword_at(us[part[0]], n_points, _to_device(cols[part[0]], dev))
                 else:
                     res = codeword_at(torch.stack([us[n] for n in part]), n_points,
-                                      torch.stack([cols[n].to(dev) for n in part]))
+                                      _to_device(torch.stack([cols[n] for n in part]), dev))
                     enc.update(zip(part, res))
+        return enc
+
+    def _codes_ok(self, mats, chis, us, cols, openings) -> list[bool]:
+        """``chi^T (opened columns) == Enc(u)[columns]`` per op."""
+        enc = self._codewords(mats, us, cols)
         opened = self._field_products({op.name: (chis[op.name], openings[op.name][0].to(us[op.name].device))
                                        for op in mats}, P)
         return [torch.equal(opened[op.name], enc[op.name]) for op in mats]
 
+    def _code_flags(self, mats, chis, us, cols, rows: dict) -> list[torch.Tensor]:
+        """:meth:`_codes_ok` on a device, negated and left there: ``rows`` holds each op's opened
+        columns as the int32 rows ``[t, N]`` already on the device."""
+        enc = self._codewords(mats, us, cols)
+        opened = self._field_products({op.name: (chis[op.name], rows[op.name].T) for op in mats}, P)
+        return [(opened[op.name] != enc[op.name]).any() for op in mats]
+
+    def _merkle(self, mats, cols, openings, rows: dict | None = None) -> list[tuple[bool, Exception | None]]:
+        """``(multiproof verified, exception)`` per op: its opened columns (``rows``, or cast from
+        ``openings``) hashed into leaves, large ones on threads, then its Merkle multiproof."""
+        def leaves(op):
+            r = rows[op.name] if rows is not None else column_rows(openings[op.name][0])
+            return row_leaves(self.publics[op.name].tag, cols[op.name].tolist(), r)
+
+        workers = torch.get_num_threads()
+        hashed = map_threaded(leaves, mats, [4 * self.publics[op.name].n_rows for op in mats], workers)
+        return verify_multiproofs([(self.publics[op.name].root, self.publics[op.name].depth, lv, openings[op.name][1])
+                                   for op, lv in zip(mats, hashed)], workers)
+
     def check_columns(self, chis, us, cols, openings) -> str | None:
         """``None`` if every opened column is consistent, else the failing check: the verdict
-        (and any exception) of checking op by op -- shape, then code, then Merkle."""
+        (and any exception) of checking op by op -- shape, then code, then Merkle.  On a GPU the
+        code checks run on the device while the host checks the Merkle paths, and come back
+        with one copy."""
         mats = self.graph.mat_ops
         n_ok, exc = _leading_passes(mats, lambda op: self._columns_shape_ok(op, us, cols, openings))
         good = mats[:n_ok]
-        codes = self._codes_ok(good, chis, us, cols, openings)
-        n_code = codes.index(False) if False in codes else n_ok
-        # the Merkle checks of the ops before the first code failure, reported in op order
-        jobs = [(self.publics[op.name].root, self.publics[op.name].depth,
-                 column_leaves(self.publics[op.name].tag, cols[op.name].tolist(), openings[op.name][0]),
-                 openings[op.name][1]) for op in good[:n_code]]
-        for ok, err in verify_multiproofs(jobs, torch.get_num_threads()):
-            if err is not None:
-                raise err
-            if not ok:
-                return "columns_merkle"
-        if n_code < n_ok:
-            return "columns_code"
-        if exc is not None:
-            raise exc
-        return "columns_shape" if n_ok < len(mats) else None
+        if not _defer(self.device):
+            codes = self._codes_ok(good, chis, us, cols, openings)
+            # the Merkle checks the verdict needs: those of the ops before the first code failure
+            merkle = self._merkle(good[:codes.index(False)] if False in codes else good, cols, openings)
+        else:
+            rows = {op.name: column_rows(openings[op.name][0]) for op in good}
+            flags = self._code_flags(good, chis, us, cols, _upload_rows(rows, self.device))
+            merkle = self._merkle(good, cols, openings, rows)
+            codes = [not bad for bad in _to_host(flags)]
+        return _columns_verdict(codes, merkle, n_ok, exc, len(mats))
 
 
 def _sync(device) -> None:
