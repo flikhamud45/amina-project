@@ -325,7 +325,13 @@ def _in_field(a: torch.Tensor) -> bool:
 
 def _stamp(t: torch.Tensor) -> tuple:
     """Identifies ``t`` as it is now, without keeping it alive: a weak reference and the
-    version counter that every in-place change of ``t`` (or of a view of it) increments."""
+    version counter that every in-place change of ``t`` (or of a view of it) increments.
+
+    A write that bypasses the counter (through ``.numpy()``, ``.data`` or DLPack) is not
+    seen.  What is stamped is the verifier's own state: the claims it received, which must not
+    change while one query is checked in any case (derive's inputs were computed from them; a
+    verifier fed over a wire deserialises them into tensors nobody else holds), and in mode
+    Kpre its secret ``chi`` and ``u``."""
     return weakref.ref(t), t._version
 
 
