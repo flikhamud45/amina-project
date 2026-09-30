@@ -778,14 +778,22 @@ def test_the_proof_size_model_is_what_run_query_sends(kind, policy):
         params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fs, plan=coms.plan)
         v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics)
         want = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan)
+        encoded = len(cc.encode([claims[op.name] for op in graph.mat_ops]))
+        wired = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, wire_claims=encoded)
+        assert wired["paths"] == want["paths"] and wired["claims"] == encoded
         paths = []
         for seed in range(12):
             got = proto.run_query(prover, v, x, seed=seed)["bytes"]
             assert all(got[k] == want[k] for k in ("claims", "u", "columns"))
             paths.append(got["paths"])
+            if seed < 2:             # with wire (interactive: the same challenges, so the same multiproofs)
+                sent = proto.run_query(prover, v, x, seed=seed, wire=True)["bytes"]
+                assert sent == dict(wired, paths=sent["paths"] if fs else got["paths"])
         assert abs(np.mean(paths) - want["paths"]) < 0.1 * want["paths"]
         k_modes = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre")
         assert k_modes == {"claims": want["claims"], "u": 0, "columns": 0, "paths": 0.0}
+        k_wired = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre", wire_claims=encoded)
+        assert k_wired == {"claims": encoded, "u": 0, "columns": 0, "paths": 0.0}
     setup = analytic.setup_size(graph.mat_ops, plan=coms.plan)
     assert setup["encoded_entries"] == sum(c.weight.shape[0] * c.n_points for c in coms.values())
     assert setup["trees"] == (len(coms.groups) or len(coms))

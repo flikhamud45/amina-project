@@ -10,14 +10,16 @@
   ``tests/test_fullcheck.py``);
 * ``proof_bytes`` and ``setup_size`` give a query's proof bytes and the commitment's size for
   weight-op shapes alone, under the report's parameters or a commitment plan
-  (:mod:`pvi.fullcheck.plans`), for models too large to run (checked against ``run_query`` in
-  ``tests/test_plans.py``).
+  (:mod:`pvi.fullcheck.plans`), in the default form or the compact wire encoding, for models too
+  large to run (checked against ``run_query`` in ``tests/test_plans.py``).
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+
+from .claimcodec import field_size
 
 __all__ = ["OpShape", "decoder_shapes", "decoder_claim_columns", "expected_multiproof_nodes", "proof_bytes",
            "setup_size"]
@@ -102,22 +104,28 @@ def _trees(ops, plan, rate: int) -> list[tuple[str, int, int]]:
             for g, members in plan.groups if any(m in rows for m in members)]
 
 
-def proof_bytes(ops, params, claim_columns, *, plan=None, rate: int = 4, mode: str = "C") -> dict[str, float]:
+def proof_bytes(ops, params, claim_columns, *, plan=None, rate: int = 4, mode: str = "C",
+                wire_claims: int | None = None) -> dict[str, float]:
     """One query's proof bytes as ``run_query`` counts them: the claims, ``u`` and the opened columns
     exactly, and the Merkle multiproofs' expected size (the column indices are random).  ``ops``:
     weight-op shapes (``decoder_shapes`` or a graph's ``MatOp``s), whose claims have
     ``claim_columns`` columns (an int for all of them, e.g. the prompt length of a decoder, or
     ``{name: columns}``); ``plan``: a commitment plan (its groups restricted to ``ops``), else the
-    report's trees at ``rate``.  Modes K and Kpre send only the claims."""
+    report's trees at ``rate``.  Modes K and Kpre send only the claims.  ``wire_claims``: the size
+    of the claims in the compact wire encoding (``PVC3``, which depends on their values: measured),
+    for the proof of ``run_query(wire=True)``, whose ``u`` and opened columns travel as two runs of
+    31-bit field elements (:func:`claimcodec.field_size`)."""
     def cols(op):
         return claim_columns if isinstance(claim_columns, int) else claim_columns[op.name]
 
-    out = {"claims": 4 * sum(op.n_rows * cols(op) for op in ops), "u": 0, "columns": 0, "paths": 0.0}
+    size = (lambda numel: 4 * numel) if wire_claims is None else field_size
+    claims = 4 * sum(op.n_rows * cols(op) for op in ops) if wire_claims is None else wire_claims
+    out = {"claims": claims, "u": 0, "columns": 0, "paths": 0.0}
     if mode == "C":
         trees = [(n, min(params.columns if plan is None else params.columns_for(g), n), rows)
                  for g, n, rows in _trees(ops, plan, rate)]
-        out["u"] = 4 * params.reps * sum(op.row_length for op in ops)
-        out["columns"] = 4 * sum(t * rows for _, t, rows in trees)
+        out["u"] = size(params.reps * sum(op.row_length for op in ops))
+        out["columns"] = size(sum(t * rows for _, t, rows in trees))
         out["paths"] = 32 * sum(expected_multiproof_nodes(n, t) for n, t, _ in trees)
     return out
 
