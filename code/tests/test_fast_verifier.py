@@ -185,3 +185,191 @@ def test_merkle_worker_processes_give_the_same_results(monkeypatch):
     parallel = com.verify_multiproofs(jobs, workers=2)
     assert [ok for ok, _ in parallel] == [ok for ok, _ in sequential]
     assert [type(exc) for _, exc in parallel] == [type(exc) for _, exc in sequential]
+
+
+# -- protocol kernels --------------------------------------------------------------------------
+
+def test_range_and_field_checks_match_reference():
+    for z in (torch.zeros(0, 3, dtype=torch.int64), torch.tensor([[Z - 1, 1 - Z]]), torch.tensor([[Z]]),
+              torch.tensor([[-Z]]), torch.tensor([[INT64_MIN]]), torch.tensor([[INT64_MAX]]),
+              torch.randint(1 - Z, Z, (50, 7)), torch.tensor([[0, INT64_MIN], [1, 2]]).T):
+        assert proto._in_range(z, Z) == ref.in_range(z, Z)
+    for a in (torch.tensor([[0, P - 1]]), torch.tensor([[P]]), torch.tensor([[-1]]), torch.tensor([[INT64_MIN]]),
+              torch.zeros(2, 0, dtype=torch.int64), torch.randint(0, P, (9, 4))):
+        assert proto._in_field(a) == ref.in_field(a)
+
+
+def _mat_op(layout, n_in, bias, conv=None, rows=4):
+    from pvi.fullcheck.graph import MatOp
+
+    return MatOp("op", ("x",), "op.z", weight=torch.zeros(rows, n_in, dtype=torch.int8),
+                 bias=torch.zeros(rows, dtype=torch.int64) if bias else None, layout=layout, conv=conv)
+
+
+@pytest.mark.parametrize("conv,shape,bias", [((5, 1, 2), (1, 1, 28, 28), True), ((3, 1, 1), (2, 16, 8, 8), True),
+                                             ((3, 2, 1), (1, 8, 9, 9), False), ((1, 2, 0), (3, 12, 7, 7), True),
+                                             ((7, 2, 3), (1, 3, 20, 20), False), ((3, 1, 1), (1, 64, 32, 32), True),
+                                             ((3, 1, 1), (2, 911, 5, 5), True), ((1, 1, 0), (1, 8200, 2, 2), False)])
+def test_conv_rhs_matches_reference(conv, shape, bias, device):
+    # im2col (small), the shifted GEMM (C k^2 <= 8192) and the unfold fallback (C k^2 > 8192)
+    g = torch.Generator().manual_seed(sum(shape))
+    k = conv[0]
+    op = _mat_op("conv", shape[1] * k * k, bias, conv)
+    x = _rand(g, -128, 128, shape)
+    x.view(-1)[:2] = torch.tensor([-128, 127])
+    u = _rand(g, 0, P, (5, op.row_length))
+    u.view(-1)[0] = P - 1
+    assert torch.equal(proto._rhs(op, u.to(device), x.to(device)).cpu(), ref.rhs(op, u, x))
+
+
+@pytest.mark.parametrize("k,shape", [(768, (1, 64)), (8192, (3,)), (8193, (2,)), (9728, (1, 8)), (20000, (1, 1)),
+                                     (5, (2, 3))])
+def test_linear_and_embedding_rhs_match_reference(k, shape, device):
+    g = torch.Generator().manual_seed(k)
+    for bias in (True, False):
+        op = _mat_op("linear", k, bias)
+        x = _rand(g, -128, 128, shape + (k,))
+        u = _rand(g, 0, P, (4, op.row_length))
+        u.view(-1)[-1] = P - 1
+        assert torch.equal(proto._rhs(op, u.to(device), x.to(device)).cpu(), ref.rhs(op, u, x))
+    op = _mat_op("embed", k, False)
+    ids = _rand(g, 0, k, shape)
+    u = _rand(g, 0, P, (4, k))
+    assert torch.equal(proto._rhs(op, u.to(device), ids.to(device)).cpu(), ref.rhs(op, u, ids))
+
+
+# -- the batched checks give the op-by-op verdicts -------------------------------------------------
+
+def _decoder_setup(mode):
+    from pvi.fullcheck.transformer import DecoderConfig, build_decoder
+
+    cfg = DecoderConfig("tiny", 32, 2, 4, 2, 8, 64, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
+                        bias=False, tied=False, qk_norm=True, max_pos=64)
+    graph = build_decoder(cfg, calib_tokens=6, seed=2)
+    params = proto.params_for(20, len(graph.mat_ops))
+    coms = proto.commit_graph(graph, params.rate) if mode == "C" else {}
+    prover = proto.Prover(graph, commitments=coms)
+    v = proto.Verifier(graph.public(), params, mode, publics={k: c.public for k, c in coms.items()},
+                       weights={op.name: (op.weight, op.bias) for op in graph.mat_ops})
+    if mode == "Kpre":
+        v.precompute(proto.Challenger(seed=5))
+    x = torch.randint(0, cfg.vocab, (1, 6), generator=torch.Generator().manual_seed(0))
+    return graph, prover, v, x
+
+
+def _transcript(mode, prover, v, x, mats):
+    ch = proto.Challenger(seed=9)
+    claims = prover.claims(x)
+    if mode == "Kpre":
+        chis = {op.name: v._pre[op.name][0] for op in mats}
+        us = {op.name: v._pre[op.name][1] for op in mats}
+    else:
+        chis = {op.name: ch.folding(op.name, op.n_rows, v.params.reps) for op in mats}
+        us = prover.fold(chis)
+    return ch, claims, chis, us
+
+
+def _with(d, name, value):
+    return dict(d, **{name: value})
+
+
+@pytest.mark.parametrize("mode", ["C", "Kpre"])
+def test_batched_products_give_the_per_op_verdicts(mode):
+    graph, prover, v, x = _decoder_setup(mode)
+    mats = graph.mat_ops
+    _, claims, chis, us = _transcript(mode, prover, v, x, mats)
+    inputs = v.derive(x, claims)
+    assert v.check_products(claims, inputs, chis, us) is True
+    kept = {k: val[1] for k, val in v._kept.items()}
+    assert bool(kept) == (mode == "Kpre")
+    for _ in range(2):        # Kpre: the kept stacks are reused from the second query on
+        assert v.check_products(claims, inputs, chis, us) is True
+        assert all(v._kept[k][1] is val for k, val in kept.items())
+    rnd = random.Random(1)
+    for op in mats:
+        z = claims[op.name].clone()
+        z.view(-1)[rnd.randrange(z.numel())] += 1
+        bad = _with(claims, op.name, z)
+        inp = v.derive(x, bad)
+        assert v.check_products(bad, inp, chis, us) is ref.check_products(v, bad, inp, chis, us) is False
+        u = us[op.name].clone()
+        u[0, rnd.randrange(u.shape[1])] += 1
+        u %= P
+        bad_u = _with(us, op.name, u)     # (an embedding's unread u columns are not in its product)
+        inputs = v.derive(x, claims)
+        assert v.check_products(claims, inputs, chis, bad_u) == ref.check_products(v, claims, inputs, chis, bad_u)
+    # malformed u: the first failing op decides, as op by op
+    first, later = mats[1].name, mats[-2].name
+    z = claims[first].clone()
+    z.view(-1)[0] += 1
+    bad = _with(claims, first, z)
+    inp = v.derive(x, bad)
+    for broken in ("not a tensor", us[later].to(torch.int32), us[later][:, :-1], us[later] + P, None):
+        bad_u = _with(us, later, broken)
+        assert v.check_products(bad, inp, chis, bad_u) is ref.check_products(v, bad, inp, chis, bad_u) is False
+    inputs = v.derive(x, claims)
+    assert v.check_products(claims, inputs, chis, _with(us, later, us[later] + P)) is False
+    for impl in (v.check_products, lambda *args: ref.check_products(v, *args)):
+        with pytest.raises(AttributeError):
+            impl(claims, inputs, chis, _with(us, later, "not a tensor"))
+
+
+def test_claims_modified_after_derive_are_not_trusted():
+    graph, prover, v, x = _decoder_setup("Kpre")
+    mats = graph.mat_ops
+    _, claims, chis, us = _transcript("Kpre", prover, v, x, mats)
+    inputs = v.derive(x, claims)
+    assert v.check_products(claims, inputs, chis, us)
+    name = mats[3].name
+    claims[name].view(-1)[0] += P          # same residue, out of range: not multiplied as a signed claim
+    assert v.check_products(claims, inputs, chis, us) == ref.check_products(v, claims, inputs, chis, us)
+    claims[name].view(-1)[0] += 1 - P
+    assert v.check_products(claims, inputs, chis, us) is False
+    claims[name].view(-1)[0] -= 1
+    assert v.check_products(claims, inputs, chis, us) is True
+    u = us[mats[1].name]
+    u.view(-1)[0] = (u.view(-1)[0] + 1) % P      # the kept stack of u must not be reused
+    assert v.check_products(claims, inputs, chis, us) is ref.check_products(v, claims, inputs, chis, us) is False
+
+
+def test_batched_columns_give_the_per_op_verdicts():
+    graph, prover, v, x = _decoder_setup("C")
+    mats = graph.mat_ops
+    ch, claims, chis, us = _transcript("C", prover, v, x, mats)
+    cols = {op.name: ch.columns(op.name, v.publics[op.name].n_points, v.params.columns) for op in mats}
+    openings = prover.open(cols)
+    assert v.check_columns(chis, us, cols, openings) is None
+    variants = []
+    for i in (0, len(mats) // 2, len(mats) - 1):
+        name = mats[i].name
+        o, pr = openings[name]
+        o1 = o.clone()
+        o1[0, 0] = (o1[0, 0] + 1) % P
+        o2 = o.clone()
+        o2[0, 0] = P
+        variants += [{name: (o1, pr)}, {name: (o, [bytes(32)] + pr[1:])}, {name: (o[:, :-1], pr)},
+                     {name: (o2, pr)}, {name: (o, pr[:-1])}, {name: (o, pr + [bytes(32)])},
+                     {name: (o.to(torch.int32), pr)}]
+    # two defects in different ops: the earlier op's verdict wins, even over a later exception
+    a, b = mats[1].name, mats[-2].name
+    (oa, pa), (ob, pb) = openings[a], openings[b]
+    ob1 = ob.clone()
+    ob1[0, 0] = (ob1[0, 0] + 1) % P
+    variants += [{a: (oa, [bytes(32)] + pa[1:]), b: (ob1, pb)}, {a: (oa[:, :-1], pa), b: (ob1, pb)},
+                 {b: (oa, pa)}, {a: (ob1, pb), b: (oa[:, :-1], pa)},
+                 {a: (oa, [bytes(32)] + pa[1:]), b: (ob, [0] + pb[1:])},
+                 {a: (ob1, pb), b: (ob, [0] + pb[1:])}, {a: (oa, [bytes(32)] + pa[1:]), b: None}]
+    for var in variants:
+        opened = dict(openings, **var)
+        assert v.check_columns(chis, us, cols, opened) == ref.check_columns(v, chis, us, cols, opened)
+    bad_u = _with(us, mats[2].name, (us[mats[2].name] + 1) % P)
+    assert v.check_columns(chis, bad_u, cols, openings) == ref.check_columns(v, chis, bad_u, cols, openings) \
+        == "columns_code"
+    # an exception is raised where op by op would raise it
+    missing = dict(openings)
+    del missing[mats[-1].name]
+    for broken, exc in ((missing, KeyError), (_with(openings, b, (ob, [0] + pb[1:])), TypeError),
+                        (_with(openings, b, None), TypeError)):
+        for impl in (v.check_columns, lambda *args: ref.check_columns(v, *args)):
+            with pytest.raises(exc):
+                impl(chis, us, cols, broken)
