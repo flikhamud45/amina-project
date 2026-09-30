@@ -545,7 +545,8 @@ def _queries(graph, x, mode, fiat_shamir, device="cpu"):
         prover.fold = lambda chis: {k: (u + (k == victim)) % P for k, u in fold(chis).items()}
         out.append(proto.run_query(prover, v, x, seed=7))
         prover.fold = fold
-        for bad in (lambda o, pr: ((o + 1) % P, pr), lambda o, pr: (o, pr[:-1]), lambda o, pr: (o, [bytes(32)] + pr[1:])):
+        for bad in (lambda o, pr: ((o + 1) % P, pr), lambda o, pr: (o, pr[:-1]),
+                    lambda o, pr: (o, [bytes(32)] + pr[1:])):
             prover.open = lambda cols, bad=bad: {k: (bad(*o) if k == victim else o) for k, o in open_(cols).items()}
             out.append(proto.run_query(prover, v, x, seed=8))
     return [(r["accepted"], r["rejected_at"], r["bytes"]) for r in out]
@@ -565,7 +566,8 @@ def test_queries_give_the_reference_verdicts_proof_bytes_and_transcript(kind, mo
     x = x[:1]
     got = _queries(graph, x, mode, fiat_shamir)
     assert got[0][0] and not any(r[0] for r in got[1:])
-    assert {r[1] for r in got[1:]} == ({"freivalds", "columns_code", "columns_merkle"} if mode == "C" else {"freivalds"})
+    labels = {"freivalds", "columns_code", "columns_merkle"} if mode == "C" else {"freivalds"}
+    assert {r[1] for r in got[1:]} == labels
     transcript, absorbed[:] = list(absorbed), []
     assert bool(transcript) == fiat_shamir
     _use_reference_code(monkeypatch)
