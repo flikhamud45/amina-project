@@ -332,6 +332,22 @@ def test_claims_modified_after_derive_are_not_trusted():
     assert v.check_products(claims, inputs, chis, us) is ref.check_products(v, claims, inputs, chis, us) is False
 
 
+def test_the_verifier_keeps_no_query_tensors_alive():
+    import gc
+    import weakref
+
+    graph, prover, v, x = _decoder_setup("Kpre")
+    mats = graph.mat_ops
+    _, claims, chis, us = _transcript("Kpre", prover, v, x, mats)
+    inputs = v.derive(x, claims)
+    other_u = {k: t.clone() for k, t in us.items()}        # not the verifier's own tensors
+    assert v.check_products(claims, inputs, chis, other_u) is True
+    refs = [weakref.ref(t) for t in [*claims.values(), *other_u.values()]]
+    del claims, inputs, other_u
+    gc.collect()
+    assert all(r() is None for r in refs)
+
+
 def test_batched_columns_give_the_per_op_verdicts():
     graph, prover, v, x = _decoder_setup("C")
     mats = graph.mat_ops

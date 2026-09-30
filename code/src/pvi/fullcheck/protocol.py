@@ -40,6 +40,7 @@ import math
 import secrets
 import struct
 import time
+import weakref
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -318,6 +319,17 @@ def _in_field(a: torch.Tensor) -> bool:
     return lo >= 0 and hi < P
 
 
+def _stamp(t: torch.Tensor) -> tuple:
+    """Identifies ``t`` as it is now, without keeping it alive: a weak reference and the
+    version counter that every in-place change of ``t`` (or of a view of it) increments."""
+    return weakref.ref(t), t._version
+
+
+def _same(stamp: tuple, t: torch.Tensor) -> bool:
+    """``t`` is the very tensor ``stamp`` was taken of, and it has not been modified since."""
+    return stamp[0]() is t and stamp[1] == t._version
+
+
 def _leading_passes(ops: list, check) -> tuple[int, Exception | None]:
     """How many leading ``ops`` pass ``check``, and the exception the next one raised (if any)."""
     for i, op in enumerate(ops):
@@ -340,7 +352,7 @@ class Verifier:
     device: str = "cpu"      # "cuda" / "cuda:1": a client with a GPU (Merkle hashing stays on the CPU)
     _pre: dict = field(default_factory=dict)
     _wdev: dict = field(default_factory=dict)   # mode K on a GPU: the weights stay on the device
-    _ranged: dict = field(default_factory=dict)  # name -> (claim, its _version) that derive() range-checked
+    _ranged: dict = field(default_factory=dict)  # name -> (weakref, _version) of the claim derive() range-checked
     _kept: dict = field(default_factory=dict)    # Kpre: stacked operands of the fixed chi and u
 
     def precompute(self, challenger: Challenger) -> None:
@@ -381,7 +393,7 @@ class Verifier:
                 if (z is None or m is None or z.dtype != torch.int64 or tuple(z.shape) != (op.n_rows, m)
                         or not _in_range(z, Z_BOUND)):
                     return None
-                self._ranged[op.name] = (z, z._version)
+                self._ranged[op.name] = _stamp(z)
                 inputs[op.name] = xin
                 env[op.output] = op.fold(z, xin)
             else:
@@ -400,11 +412,10 @@ class Verifier:
         if self.mode != "Kpre":
             return build(tensors)
         hit = self._kept.get(key)
-        if (hit is not None and len(hit[0]) == len(tensors)
-                and all(a is t and v == t._version for (a, v), t in zip(hit[0], tensors))):
+        if hit is not None and len(hit[0]) == len(tensors) and all(map(_same, hit[0], tensors)):
             return hit[1]
         out = build(tensors)
-        self._kept[key] = ([(t, t._version) for t in tensors], out)
+        self._kept[key] = ([_stamp(t) for t in tensors], out)
         return out
 
     def _field_products(self, pairs: dict, bound: int) -> dict:
@@ -435,7 +446,7 @@ class Verifier:
         ranged, other = {}, {}
         for op in mats:
             z, seen = claims[op.name], self._ranged.get(op.name)
-            if seen is not None and seen[0] is z and seen[1] == z._version:
+            if seen is not None and _same(seen, z):
                 ranged[op.name] = (chis[op.name], z)
             else:
                 other[op.name] = (chis[op.name], to_field(z))
