@@ -68,6 +68,7 @@ MODELS = ROOT / "artifacts" / "fullcheck" / "models"
 LAMBDAS = (40, 80, 128)
 TAG = ""  # appended to every cell name (``--tag``), so variant runs never collide
 VDEV = "cpu"   # --verifier-device: where the client's checks run (the report: the CPU)
+IMPL = "default"   # --verifier-impl: "stream" = the streaming verifier (pvi.fullcheck.pipeline)
 PLATFORM = ""  # ``--platform``: "" is the earlier RTX 2080 Ti run's root ``raw/`` (frozen)
 
 
@@ -193,8 +194,10 @@ def _env_extra() -> dict:
 
 
 def _verifier(*args, **kwargs) -> Verifier:
-    """Every verifier of this benchmark runs on ``--verifier-device`` (the report: the CPU)."""
-    return Verifier(*args, device=VDEV, **kwargs)
+    """Every verifier of this benchmark runs on ``--verifier-device`` (the report: the CPU), with
+    ``--verifier-impl`` (the report: the default; ``stream`` records one ``verify_total`` per query
+    instead of the verify_* phases, which overlap)."""
+    return Verifier(*args, device=VDEV, stream=IMPL == "stream", **kwargs)
 
 
 def _verifier_hw(env: dict) -> str:
@@ -233,7 +236,8 @@ class Recorder:
         self.base = {"run_id": uuid.uuid4().hex[:12], "suite": suite, "model": model, "cell": cell,
                      "config": dict(config, variant=TAG, device=env.get("device"), merkle="multiproof",
                                     verifier_device=VDEV,
-                                    **({"platform": PLATFORM} if PLATFORM else {})),
+                                    **({"platform": PLATFORM} if PLATFORM else {}),
+                                    **({"verifier_impl": IMPL} if IMPL != "default" else {})),
                      "prover_hw": prover_hw, "verifier_hw": _verifier_hw(env),
                      "host": env.get("host"), "git_sha": env.get("git_sha")}
         part = self.path.with_suffix(".jsonl.part")
@@ -878,6 +882,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--batch-trials", type=int, default=1, help="repetitions per batch size (both suites)")
     ap.add_argument("--verifier-device", default="cpu",
                     help="cpu (the report) or cuda / cuda:1: run the client's checks on a GPU (needs a _gpuv tag)")
+    ap.add_argument("--verifier-impl", default="default", choices=["default", "stream"],
+                    help="'stream': the streaming verifier, the same verdicts (needs a _stream tag)")
     ap.add_argument("--tf32", action="store_true",
                     help="TF32 tensor cores for the float32 GEMMs (exact: operands <= 255; needs a _tf32 tag)")
     ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
@@ -889,9 +895,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     _require_this_pvi()
     args = build_parser().parse_args()
-    global TAG, PLATFORM, RAW, VDEV
+    global TAG, PLATFORM, RAW, VDEV, IMPL
     TAG = args.tag
     VDEV = args.verifier_device
+    IMPL = args.verifier_impl
+    if (IMPL == "stream") != ("_stream" in TAG):
+        raise SystemExit("--verifier-impl stream goes with a --tag containing _stream, and only then")
     if VDEV != "cpu" and "_gpuv" not in TAG:
         raise SystemExit("--verifier-device other than cpu needs a --tag containing _gpuv (a different client)")
     if (os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1") != ("_nofix" in TAG):
