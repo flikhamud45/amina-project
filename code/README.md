@@ -164,10 +164,11 @@ with an error; the rest of the job is recorded. Then run Route A with
 The real-LLM experiments of §4.1–4.2 (OPT checkpoints from Hugging Face, one GPU with
 16 GB or more, and `transformers`: see *Installation*) are described in
 `experiments/2_attack/REAL_LLM.md`, and zkLLM's run on our GPU (§4.4) in
-`artifacts/results/zkllm_l40s/zkllm.sbatch`, with its input builder (`mkinput.py`),
-`summarise.py` and the run records next to it. That script runs zkLLM's public code
-(commit `993311e`) from its own checkout and environment under `$ZKLLM_HOME`, on the
-WikiText-2 test split at `$WIKITEXT_PARQUET`; zkLLM's scripts need `transformers` 4.40.
+`artifacts/results/zkllm_l40s/zkllm.sbatch`, with its input builder (`mkinput.py`), the
+timing shims of zkLLM's binaries (`install_timing_shims.sh`), `summarise.py` and the run
+records next to it. `zkllm.sbatch` runs zkLLM's public code (commit `993311e`) from its own
+checkout and environment under `$ZKLLM_HOME`, on the WikiText-2 test split at
+`$WIKITEXT_PARQUET`; zkLLM's scripts need `transformers` 4.40.
 
 ### Where each result comes from
 
@@ -186,7 +187,7 @@ WikiText-2 test split at `$WIKITEXT_PARQUET`; zkLLM's scripts need `transformers
 | §4.1 the 1,978 hardware-independent numbers shared with the 2080 Ti run | `5_comparison/fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2 artifacts/comparison/raw_l40s` | printed |
 | §4.3 counts (8,709 honest queries; 2,091 CNN and 804 LLM attacks; Freivalds 2,747, Reed–Solomon 74, Merkle 74), the 2080 Ti's 5,547 and 2,456, and §4.1's 123,832 and 78,266 records | `5_comparison/count_outcomes.py --platform l40s` (and `--platform rtx2080ti-v2`) | printed |
 | §4.2 Llama-2-7B: 1/11,008 per path, 305,000 paths, 13.7 GB | `5_comparison/analytic.py` | `tables/analytic.csv` (`anchuri_*` columns) |
-| §4.4 *zkLLM on the same GPU* (26.4 s per layer, about 845 s for Llama-2-7B; 34 GiB; 65.7 s per layer for Llama-2-13B) | zkLLM's public code (commit `993311e`) under `artifacts/results/zkllm_l40s/zkllm.sbatch`. The time per layer is the sum of the median times of zkLLM's proof binaries (3 runs on each of layers 0 and 1): for Llama-2-7B QKV linear 6.55 s, softmax/attention 2.79 s, FFN 12.79 s, the two RMSNorms 1.56 and 1.52 s, and the two skip connections 0.58 s each, 26.4 s in all; for Llama-2-13B 14.49, 3.79, 40.34, 2.37 + 2.31 and 2 × 1.21 s, 65.7 s. The binaries' own log (`bin_times.log`), from which these medians were taken, is not stored. From the stored files `summarise.py <run dir> <layers>` recomputes only the median script wall time of each stage, with Python and model loading (per layer they sum to 102 s for Llama-2-7B and 243 s for Llama-2-13B) | `artifacts/results/zkllm_l40s/<run>/` (`time-*.txt`: each script's wall time; `nvidia-smi.csv.gz`: GPU memory every 0.5 s; `verdicts.txt`; `env.txt`) |
+| §4.4 *zkLLM on the same GPU* (26.4 s per layer, about 844 s for Llama-2-7B; 24 GiB; 65.7 s per layer for Llama-2-13B) | zkLLM's public code (commit `993311e`) under `artifacts/results/zkllm_l40s/zkllm.sbatch`, with its binaries timed by the shims of `install_timing_shims.sh`. `summarise.py <run dir> <layers>` recomputes every figure from the run's records. The time per layer is the sum of the median times of the proof binaries in `bin_times.log` (3 runs on each of layers 0 and 1): for Llama-2-7B QKV linear 6.555 s, attention 2.79 s, FFN 12.79 s, the two RMSNorms 1.555 and 1.52 s and the skip connection 0.58 s, 25.79 s. The demo's attention stage writes no output, so the first skip connection of each layer does not run (its script exits with 'Input or output file does not exist'), and the measured one is counted twice: 26.37 s. For Llama-2-13B, 64.50 s + 1.21 s = 65.71 s. The peak memory is that of the job's GPU (index 2 of the node for Llama-2-7B: 25,020 MiB; the file also holds the node's other GPUs, which ran other jobs). `summarise.py` also prints the median script wall times, with Python and model loading (102 s and 243 s per layer, the failing first-skip script included) | `artifacts/results/zkllm_l40s/<run>/` (`bin_times.log`: each binary's time; `time-*.txt`: each script's wall time; `nvidia-smi.csv.gz`: memory and utilisation of every GPU of the node every 0.5 s, one row per GPU in index order; `verdicts.txt`; `env.txt`) |
 | Published results (Table 4, grey points) | `5_comparison/literature.py` | `tables/reported_curated.csv` |
 | Numbers quoted only in the text (e.g. 0.4 points, 5–8×, 2.4–4.4×, 21–41×, 0.26 s) | `5_comparison/aggregate.py --platform l40s`; `text_numbers.py --platform l40s` prints each with its line of `main.tex` | `tables_l40s/measured_summary.csv`, `tables_l40s/llm_full_model.csv` (ratios with `tables/reported_curated.csv`) |
 

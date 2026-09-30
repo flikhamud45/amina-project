@@ -703,14 +703,16 @@ to 98{,}000$\times$ zkLLM's 141--188\,kB proofs at 2{,}048 tokens.
 code and ran it on our L40S nodes, for Llama-2-7B and 13B at 2{,}048 tokens of
 WikiText-2. Its demo proves the components of one layer separately and verifies each
 proof in the same process, so it gives no separate verifier time. It also lacks the
-paper's cross-layer optimisation and the attention output projection. We therefore
-estimate a whole model as the time per layer (its proof binaries only, median of three
-runs on each of two layers) times the number of layers. For Llama-2-7B this gives about 845\,s
+paper's cross-layer optimisation and the attention output projection, and its attention
+step writes no output, so the first of a layer's two skip connections does not run (we
+count the second one twice). We therefore estimate a whole model as the time per layer (its proof binaries
+only, median of three runs on each of two layers) times the number of layers. For
+Llama-2-7B this gives about 844\,s
 (26.4\,s per layer; the paper reports 620\,s on an A100), against our 17.6\,s (C) and
-15.0\,s (Kpre): 48--56$\times$ faster on the same GPU. zkLLM also peaks at 34\,GiB of GPU
+15.0\,s (Kpre): 48--56$\times$ faster on the same GPU. zkLLM also peaks at 24\,GiB of GPU
 memory, against 7.3\,GiB for our prover, which streams the claims to the host. For
-Llama-2-13B the demo nearly fills the 45\,GiB card and slows down out of proportion
-(65.7\,s per layer), so there we use the paper's 803\,s: our prover is 30--35$\times$
+Llama-2-13B the demo's time per layer grows out of proportion (65.7\,s, 2.5$\times$ the
+7B figure for 1.6$\times$ the weights per layer), so there we use the paper's 803\,s: our prover is 30--35$\times$
 faster.
 
 \begin{table}[t]

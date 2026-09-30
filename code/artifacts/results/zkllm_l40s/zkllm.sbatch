@@ -15,8 +15,8 @@
 # ZKLLM_HOME holds zkLLM's checkout (zkllm/) and its conda environment (env/). Copy mkinput.py into
 # $ZKLLM_HOME/zkllm first (it imports zkLLM's fileio_utils). The job runs offline: the Llama-2
 # checkpoints (gated on Hugging Face) must already be in zkllm/model-storage.
-# In the stored runs a wrapper (/usr/bin/time, zkLLM's code unchanged) also timed each proof binary
-# into $ZK_TIMELOG. Neither that wrapper nor its log is in the repository.
+# Each proof binary is timed (zkLLM's code unchanged) by the shims that install_timing_shims.sh puts
+# into the zkLLM checkout: run it there once first. They append to $ZK_TIMELOG, the run's bin_times.log.
 set -uo pipefail
 SIZE=$1 SEQ=${2:-2048} REPS=${3:-3} LAYERS=${4:-"0 1"}
 Z="${ZKLLM_HOME:?export ZKLLM_HOME=<dir with zkllm/ (commit 993311e) and its conda env/>}"
