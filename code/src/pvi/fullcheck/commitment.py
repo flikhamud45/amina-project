@@ -61,9 +61,11 @@ __all__ = [
 HASH_BYTES = 32
 MERKLE_PROCESSES = os.environ.get("PVI_MERKLE_PROCESSES") == "1"
 """Opt-in (``PVI_MERKLE_PROCESSES=1``): a multi-threaded verifier checks its multiproofs in
-worker processes (:func:`verify_multiproofs`).  Off by default: with the ``spawn`` start
-method (Windows, macOS) the calling script needs an ``if __name__ == "__main__"`` guard, and
-forking a large verifier process is a deployment choice."""
+worker processes (:func:`verify_multiproofs`).  Off by default: the workers are started by a
+fork server (Linux, macOS) or spawned (Windows), never forked from the verifier itself, which
+runs threads (torch's, the leaf hashing's, the streaming verifier's host thread) and could
+deadlock a forked child; so the calling script needs an ``if __name__ == "__main__"`` guard
+(both start methods import it), and extra processes are a deployment choice."""
 MERKLE_PROCESSES_MIN_HASHES = 6000
 """Fewer sibling hashes than this in one check are not worth the inter-process traffic."""
 
@@ -208,32 +210,61 @@ def _verify_jobs(jobs: list) -> list[tuple[bool, Exception | None]]:
 _PROCESS_POOLS: dict = {}
 
 
+def _process_pool(workers: int):
+    """The worker processes of :func:`verify_multiproofs` (one pool per worker count), started
+    as :data:`MERKLE_PROCESSES` says."""
+    if workers not in _PROCESS_POOLS:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+        method = "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
+        _PROCESS_POOLS[workers] = ProcessPoolExecutor(max_workers=workers,
+                                                      mp_context=multiprocessing.get_context(method))
+    return _PROCESS_POOLS[workers]
+
+
 def verify_multiproofs(jobs: list, workers: int = 1) -> list[tuple[bool, Exception | None]]:
     """``(verify_multiproof(*job), exception or None)`` for every ``(root, depth, leaves,
     proof)`` job, in order.
 
     SHA-256 of a 72-byte node holds the GIL, so threads cannot share this work.  With
     :data:`MERKLE_PROCESSES`, ``workers > 1`` and enough hashes, the jobs go to ``workers``
-    worker processes in batches balanced by proof length; each result is the same
-    function of the same job.
+    worker processes in batches balanced by proof length.  A batch that does not reach a
+    worker or come back (a proof entry that cannot be pickled, a pool that broke) is checked
+    in this process instead, so every result is the same function of the same job.
     """
     if (not MERKLE_PROCESSES or workers <= 1 or len(jobs) < 2
             or sum(len(job[3]) for job in jobs) < MERKLE_PROCESSES_MIN_HASHES):
         return _verify_jobs(jobs)
-    if workers not in _PROCESS_POOLS:
-        from concurrent.futures import ProcessPoolExecutor
-        _PROCESS_POOLS[workers] = ProcessPoolExecutor(max_workers=workers)
+    from concurrent.futures.process import BrokenProcessPool
+
     batches, load = [[] for _ in range(workers)], [0] * workers
     for i in sorted(range(len(jobs)), key=lambda i: -len(jobs[i][3])):   # longest first, to the least loaded
         w = load.index(min(load))
         batches[w].append(i)
         load[w] += len(jobs[i][2]) + len(jobs[i][3])
     batches = [b for b in batches if b]
-    futures = [_PROCESS_POOLS[workers].submit(_verify_jobs, [jobs[i] for i in b]) for b in batches]
+    pool, broken = _process_pool(workers), False
+    futures = []
+    for b in batches:
+        try:
+            futures.append(pool.submit(_verify_jobs, [jobs[i] for i in b]))
+        except RuntimeError:            # the pool broke meanwhile (a BrokenProcessPool) or was shut down
+            futures.append(None)
+            broken = True
     out: list = [None] * len(jobs)
     for b, fut in zip(batches, futures):
-        for i, res in zip(b, fut.result()):
+        results = None
+        if fut is not None:
+            try:
+                results = fut.result()
+            except Exception as exc:    # a job that cannot be pickled, or a worker that died
+                broken = broken or isinstance(exc, BrokenProcessPool)
+        if results is None:             # checked here (_verify_jobs itself raises nothing)
+            results = _verify_jobs([jobs[i] for i in b])
+        for i, res in zip(b, results):
             out[i] = res
+    if broken:
+        _PROCESS_POOLS.pop(workers, None)     # the next call starts new workers
     return out
 
 

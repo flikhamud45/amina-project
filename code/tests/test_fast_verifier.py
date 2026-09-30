@@ -196,11 +196,41 @@ def test_merkle_worker_processes_give_the_same_results(monkeypatch):
     sequential = com.verify_multiproofs(jobs, workers=2)                      # off by default
     assert [ok for ok, _ in sequential[:-1]] == want and all(exc is None for _, exc in sequential[:-1])
     assert isinstance(sequential[-1][1], TypeError)
+    # proof entries as memoryviews hash as bytes do, but cannot be pickled to a worker
+    views = jobs + [(root, depth, lv, [memoryview(p) for p in pr]) for root, depth, lv, pr in jobs[:-1]]
+    sequential_views = com.verify_multiproofs(views, workers=2)
+    assert [ok for ok, _ in sequential_views] == want + [False] + want
     monkeypatch.setattr(com, "MERKLE_PROCESSES", True)
     monkeypatch.setattr(com, "MERKLE_PROCESSES_MIN_HASHES", 1)
-    parallel = com.verify_multiproofs(jobs, workers=2)
-    assert [ok for ok, _ in parallel] == [ok for ok, _ in sequential]
-    assert [type(exc) for _, exc in parallel] == [type(exc) for _, exc in sequential]
+    for some, want_some in ((jobs, sequential), (views, sequential_views)):    # in the workers; checked here
+        parallel = com.verify_multiproofs(some, workers=2)
+        assert [ok for ok, _ in parallel] == [ok for ok, _ in want_some]
+        assert [type(exc) for _, exc in parallel] == [type(exc) for _, exc in want_some]
+
+
+def test_merkle_worker_processes_fall_back_when_the_pool_breaks(monkeypatch):
+    from concurrent.futures import Future
+    from concurrent.futures.process import BrokenProcessPool
+
+    jobs, want = _merkle_jobs(random.Random(4))
+
+    class Broken:                  # a pool whose workers died: before or after taking the batch
+        def __init__(self):
+            self.calls = 0
+
+        def submit(self, fn, jobs):
+            self.calls += 1
+            if self.calls == 1:
+                raise BrokenProcessPool("a worker died")
+            fut = Future()
+            fut.set_exception(BrokenProcessPool("a worker died"))
+            return fut
+
+    monkeypatch.setattr(com, "MERKLE_PROCESSES", True)
+    monkeypatch.setattr(com, "MERKLE_PROCESSES_MIN_HASHES", 1)
+    monkeypatch.setitem(com._PROCESS_POOLS, 3, Broken())
+    assert com.verify_multiproofs(jobs, workers=3) == [(ok, None) for ok in want]
+    assert 3 not in com._PROCESS_POOLS                        # the next call starts new workers
 
 
 # -- protocol kernels --------------------------------------------------------------------------
