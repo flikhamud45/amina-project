@@ -115,12 +115,17 @@ def run_rows(spec: str, lam: int, policies, queries: int) -> list[dict]:
                 for k in ("claims", "u", "columns"):
                     if any(r["bytes"][k] != want[k] for r in res):
                         raise SystemExit(f"{spec} {policy} {chal}: measured {k} bytes differ from the model")
-                rows.append({"model": name, "seq": seq, "layers": layers, "vocab": None if name in CNNS else cfg.vocab,
-                             "policy": policy, "challenges": chal, "lam": lam,
-                             **{f"bytes_{k}": v_ for k, v_ in got.items()},
-                             "bytes_total": statistics.median(sum(r["bytes"].values()) for r in res),
-                             "model_paths": want["paths"], "model_total": sum(want.values()), "queries": len(res),
-                             "commit_s": commit_s, **setup_size(graph.mat_ops, plan=coms.plan)})
+                row = {"model": name, "seq": seq, "layers": layers, "vocab": None if name in CNNS else cfg.vocab,
+                       "policy": policy, "challenges": chal, "lam": lam, **{f"bytes_{k}": v_ for k, v_ in got.items()},
+                       "bytes_total": statistics.median(sum(r["bytes"].values()) for r in res),
+                       "model_paths": want["paths"], "model_total": sum(want.values()), "queries": len(res),
+                       "commit_s": commit_s, **setup_size(graph.mat_ops, plan=coms.plan)}
+                if model_ops is not None:     # the whole model's bytes, which 1- and 2-block builds extrapolate to
+                    whole = plan_commitment(model_ops, policy)
+                    row["whole_model_total"] = sum(proof_bytes(
+                        model_ops, params_for(lam, n_checks, fiat_shamir=chal == "fs", plan=whole),
+                        decoder_claim_columns(cfg, seq), plan=whole).values())
+                rows.append(row)
                 print(rows[-1], flush=True)
         coms = prover = v = None
     return rows
