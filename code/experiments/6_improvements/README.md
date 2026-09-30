@@ -392,8 +392,12 @@ claims in the format `PVC3` of `pvi.fullcheck.claimcodec` (a frame of reference 
 optionally centred on its row means, with Rice-coded exceptions; the module docstring gives the
 byte layout) and `u` and the opened columns 31-bit packed.  The prover encodes where it keeps the
 claims (its GPU; the host in lean mode), the verifier decodes before it checks anything, and
-Fiat--Shamir absorbs the encoded bytes.  Parameters, challenges and the soundness bound are the
-default flow's; without `wire` nothing of the codec runs (`tests/test_wire.py`).
+Fiat--Shamir absorbs the encoded bytes.  The decoder knows every claim's shape before it allocates
+it: `N` from the graph, `M` from the query's shape (`Verifier.claim_columns`: the graph run on
+meta tensors, once per query shape), so a malformed header costs it no more memory than the honest
+claims.  The column check takes the received int32 rows as they are.  Parameters, challenges and
+the soundness bound are the default flow's; without `wire` nothing of the codec runs
+(`tests/test_wire.py`).
 
 ```bash
 cd code && export PYTHONPATH=$PWD/src
@@ -441,17 +445,19 @@ by 1.7-1.96x.  The decoder costs (`verify_decode`; the encoder is the prover's `
 
 | Model | Mode | Threads | Verifier (ms) | verify_decode (ms) | Share |
 |---|---|---:|---:|---:|---:|
-| LeNet-5 | Kpre | 1 | 3.0 | 1.3 | 43% |
-| VGG-16 | Kpre | 1 | 14.7 | 6.2 | 42% |
-| VGG-16 | C | 1 | 67.2 | 10.5 | 16% |
+| LeNet-5 | Kpre | 1 | 1.6 | 0.6 | 35% |
+| VGG-16 | Kpre | 1 | 9.0 | 3.0 | 33% |
+| VGG-16 | C | 1 | 34.2 | 5.4 | 16% |
 | GPT-2 T64 | Kpre | 1 / 4 | 100.2 / 70.1 | 33.1 / 22.4 | 33% / 32% |
 | GPT-2 T512 | Kpre | 1 / 4 | 1954 / 1031 | 368 / 161 | 19% / 16% |
 | Llama-2-7B T64, 2 blocks | Kpre | 1 / 4 | 168.9 / 89.3 | 52.0 / 31.9 | 31% / 36% |
 | Qwen3-4B T8, 8 blocks | Kpre | 1 / 4 | 56.6 / 61.9 | 12.4 / 12.1 | 22% / 19% |
 
+(The CNN rows are a re-run at commit `9dc0c86`, after the column check stopped widening the
+received rows, on a less loaded machine; the decoder rows, in mode Kpre, are the earlier run's.)
 Decoding runs at 145-160 M claims/s on one thread for the decoders (GPT-2 T64: 37.5 ms against
 7.2 ms to read the same claims as int32 and widen them) and 230-240 M claims/s on 4 threads;
-small models pay about 0.6-1.3 ms of fixed cost.  Encoding on this CPU runs at 28-39 M claims/s
+small models pay about 0.4-1.3 ms of fixed cost.  Encoding on this CPU runs at 28-39 M claims/s
 (a GPU prover encodes with torch on the device, giving the same bytes).
 
 ## Commitment plans and the wire encoding together
@@ -533,30 +539,36 @@ the same run (`results/perf_combined_laptop_*.jsonl`).
 
 | Model | Policy | Wire | Verifier (ms) | verify_decode (ms) | Column check (ms) | Prover (ms) | Proof |
 |---|---|---|---:|---:|---:|---:|---:|
-| LeNet-5 | paper | no | 4.71 | | 3.21 | 3.7 | 131.2 kB |
-| | paper | yes | 5.48 (1.16x) | 0.80 | 3.13 | 6.8 (1.84x) | 116.1 kB |
-| | cnn16 | no | 2.99 (0.63x) | | 1.46 | 2.8 (0.77x) | 65.1 kB |
-| | cnn16 | yes | 3.72 (0.79x) | 0.71 | 1.47 | 5.6 (1.51x) | 51.6 kB |
-| | cnn17 | no | 2.95 (0.62x) | | 1.41 | 2.8 (0.76x) | 63.0 kB |
-| | cnn17 | yes | 3.64 (0.77x) | 0.70 | 1.38 | 5.6 (1.50x) | 49.5 kB |
-| VGG-16 | paper | no | 35.68 | | 24.77 | 143.4 | 3,433.7 kB |
-| | paper | yes | 40.20 (1.13x) | 4.68 | 24.82 | 166.6 (1.16x) | 2,872.0 kB |
-| | cnn17 | no | 21.72 (0.61x) | | 10.57 | 100.5 (0.70x) | 2,339.0 kB |
-| | cnn17 | yes | 24.11 (0.68x) | 3.60 | 9.96 | 120.0 (0.84x) | 1,806.1 kB |
-| | R64 | no | 20.92 (0.59x) | | 9.92 | 96.6 (0.67x) | 2,265.9 kB |
-| | R64 | yes | 24.49 (0.69x) | 3.73 | 10.18 | 117.9 (0.82x) | 1,735.2 kB |
-| GPT-2, 12 blocks, 64 tokens | paper | no | 270.5 | | 166.7 | 1,447.6 | 62.07 MB |
-| | paper | yes | 350.5 (1.30x) | 70.3 | 176.0 | 1,754.4 (1.21x) | 50.68 MB |
-| | R16 | no | 189.1 (0.70x) | | 81.2 | 1,119.0 (0.77x) | 41.48 MB |
-| | R16 | yes | 223.4 (0.83x) | 50.6 | 69.9 | 1,330.5 (0.92x) | 30.71 MB |
+| LeNet-5 | paper | no | 4.28 | | 2.94 | 3.4 | 131.1 kB |
+| | paper | yes | 4.93 (1.15x) | 0.68 | 2.86 | 6.1 (1.83x) | 116.2 kB |
+| | cnn16 | no | 2.70 (0.63x) | | 1.32 | 2.5 (0.76x) | 65.1 kB |
+| | cnn16 | yes | 3.27 (0.76x) | 0.59 | 1.30 | 5.0 (1.48x) | 51.5 kB |
+| | cnn17 | no | 2.61 (0.61x) | | 1.26 | 2.5 (0.74x) | 63.1 kB |
+| | cnn17 | yes | 3.25 (0.76x) | 0.59 | 1.27 | 4.9 (1.47x) | 49.6 kB |
+| VGG-16 | paper | no | 34.40 | | 24.01 | 137.6 | 3,432.6 kB |
+| | paper | yes | 37.47 (1.09x) | 3.97 | 23.08 | 161.3 (1.17x) | 2,872.2 kB |
+| | cnn17 | no | 20.59 (0.60x) | | 10.44 | 96.0 (0.70x) | 2,339.1 kB |
+| | cnn17 | yes | 23.90 (0.69x) | 3.31 | 10.26 | 117.0 (0.85x) | 1,806.0 kB |
+| | R64 | no | 20.09 (0.58x) | | 9.85 | 94.1 (0.68x) | 2,265.7 kB |
+| | R64 | yes | 23.09 (0.67x) | 3.40 | 9.63 | 115.5 (0.84x) | 1,735.3 kB |
+| GPT-2, 12 blocks, 64 tokens | paper | no | 259.3 | | 157.4 | 1,394.7 | 62.07 MB |
+| | paper | yes | 296.9 (1.15x) | 57.0 | 138.9 | 1,632.2 (1.17x) | 50.69 MB |
+| | R16 | no | 178.8 (0.69x) | | 78.3 | 1,093.2 (0.78x) | 41.48 MB |
+| | R16 | yes | 210.0 (0.81x) | 45.2 | 61.6 | 1,301.1 (0.93x) | 30.71 MB |
 
-(LeNet-5: 31 queries, VGG-16: 15, GPT-2: 11.)  With 4 threads LeNet-5 gives the same picture
-(paper 6.26 ms; cnn16 + wire 0.72x, cnn17 + wire 0.73x).  Derive and the products are the same
-with and without wire, and the column check is the plan's: the wire's cost is `verify_decode`
-(the claims, then `u` and the columns: 0.7 ms on LeNet-5, 3.6-4.7 ms on VGG-16, 51-70 ms on GPT-2,
-of which the claims are about 35 ms), so every plan + wire verifier stays below the default one
-(0.68-0.83x).  The prover pays its encoder (`prove_encode` on this CPU: 2.9 ms on LeNet-5,
-21-24 ms on VGG-16, 0.20-0.28 s on GPT-2; a GPU prover encodes on its device).
+(LeNet-5: 31 queries, VGG-16: 15, GPT-2: 11; commit `9dc0c86`.)  With 4 threads LeNet-5 gives the
+same picture (paper 5.55 ms; cnn16 + wire 0.74x, cnn17 + wire 0.74x).  Derive and the products are
+the same with and without wire, and the column check is the plan's, on the int32 rows as they
+arrive (the default flow's casts its int64 columns to those rows for the leaves, so with wire it is
+a little faster: 138.9 against 157.4 ms on GPT-2): the wire's cost is `verify_decode` (the claims,
+then `u` and the columns: 0.6-0.7 ms on LeNet-5, 3.3-4.0 ms on VGG-16, 45-57 ms on GPT-2, of which
+the claims are about 35 ms), so every plan + wire verifier stays below the default one
+(0.67-0.81x).  The prover pays its encoder (`prove_encode` on this CPU: 2.5-2.8 ms on LeNet-5,
+21-23 ms on VGG-16, 0.20-0.25 s on GPT-2; a GPU prover encodes on its device).  An A/B of the
+column path alone, in one process with the queries alternating (GPT-2, 11 queries): the earlier
+path (the rows widened to int64 columns, then cast back for the leaves) took 315.8 ms of verifier
+under `paper` + wire and 214.4 ms under R16 + wire, this one 285.7 and 205.6 ms (0.90x, 0.96x);
+LeNet-5 and VGG-16 are within 1-4%.
 
 Qwen3-4B with 8 of its 36 blocks, 8 tokens, mode Kpre, lambda = 40: run in separate processes
 (`results/perf_combined_laptop_qwen_separate.jsonl`, back to back, twice) the verifier takes 45.3
@@ -574,13 +586,13 @@ ms), not work the wire adds.
 | zkCNN LeNet-5 proof | 71.3 kB | 130.9 kB | 51.4 / 49.7 / 48.7 kB interactive (cnn16 / 17 / 18); 68.6 / 65.6 / 62.5 kB Fiat--Shamir | yes, 1.39-1.46x smaller interactive and now also under Fiat--Shamir (1.04-1.14x) |
 | Maverick Qwen3-4B proof (Kpre) | 36.08 MB | 36.08 MB (equal) | 20.78 MB (wire) | yes, 1.74x smaller |
 | DeepProve GPT-2-64 proof | 21.7 MB | 62.1 MB | 30.76 MB (R16, measured), 26.11 MB (R64), 23.55 MB (cnn18) | no: 1.09x larger at best; claims and `u` alone are 14.3 MB |
-| zkCNN LeNet-5 verifier | 5.8 ms | 6.96 ms | ~2.9 ms (cnn16 + wire; est.) | yes (as with the plan alone), ~2x better |
-| zkCNN VGG-16 verifier | 59.3 ms | 63.4 ms | ~15 ms (cnn17 + wire; est.) | yes, ~3.9x better |
+| zkCNN LeNet-5 verifier | 5.8 ms | 6.96 ms | ~2.8 ms (cnn16 + wire; est.) | yes (as with the plan alone), ~2x better |
+| zkCNN VGG-16 verifier | 59.3 ms | 63.4 ms | ~16 ms (cnn17 + wire; est.) | yes, ~3.7x better |
 | zkGPT (GPT-2) verifier | 0.35 s | 0.468 s | ~0.14 s (R16 + wire; est.) | yes, ~2.5x better |
 
 The verifier estimates scale the plan's estimates of the section above (Phase 1 + policy on the
-L40S client: ~2.3 ms, ~13.9 ms, ~0.118 s) by this laptop's plan + wire / plan ratio (1.24x,
-1.11x, 1.18x); the EPYC's decode with 8 threads is not measured yet.
+L40S client: ~2.3 ms, ~13.9 ms, ~0.118 s) by this laptop's plan + wire / plan ratio (1.21x,
+1.16x, 1.17x); the EPYC's decode with 8 threads is not measured yet.
 
 ### On the cluster
 
