@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from functools import cached_property, lru_cache
 
 from .analytic import expected_multiproof_nodes
+from .commitment import next_pow2
 from .field import TWO_ADICITY
 
 __all__ = ["MAX_N", "REFERENCE_LAMBDA", "PlannedOp", "CommitmentPlan", "column_error_log2", "exact_columns",
@@ -55,10 +56,6 @@ MAX_N = 1 << TWO_ADICITY
 """The longest codeword the field's NTT supports."""
 REFERENCE_LAMBDA = 128
 """The security level (interactive) at which a plan splits equal-length groups by ``t``."""
-
-
-def next_pow2(x: int) -> int:
-    return 1 << max(0, (x - 1).bit_length())
 
 
 def column_bits(lam: float, n_checks: int, fiat_shamir: bool = False, grinding_bits: int = 64) -> float:

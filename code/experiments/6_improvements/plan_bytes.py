@@ -39,7 +39,8 @@ import torch
 import pvi.fullcheck as fullcheck
 from pvi.fullcheck import claimcodec
 from pvi.fullcheck.analytic import decoder_claim_columns, decoder_shapes, proof_bytes, setup_size
-from pvi.fullcheck.plans import next_pow2, plan_commitment
+from pvi.fullcheck.commitment import next_pow2
+from pvi.fullcheck.plans import plan_commitment
 from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for, run_query, soundness_bits
 from pvi.fullcheck.transformer import CONFIGS, build_decoder
 
@@ -87,14 +88,20 @@ def analytic_rows(lam: int, policies) -> list[dict]:
     return rows
 
 
+def query_claims(graph, x) -> tuple[list[torch.Tensor], int]:
+    """The honest claims of query ``x`` (in weight-op order) and the bytes of their wire encoding."""
+    zs = list(Prover(graph).claims(x).values())
+    return zs, len(claimcodec.encode(zs))
+
+
 def _claim_bytes(graph, xs) -> dict[bool, float]:
     """The median bytes of the claims of queries ``xs`` as ``run_query`` counts them: 4 each (``False``),
     or with wire (``True``) their encoding."""
     sizes = {False: [], True: []}
     for x in xs:
-        zs = [z for z in Prover(graph).claims(x).values()]
+        zs, encoded = query_claims(graph, x)
         sizes[False].append(4 * sum(z.numel() for z in zs))
-        sizes[True].append(len(claimcodec.encode(zs)))
+        sizes[True].append(encoded)
     return {wire: statistics.median(v) for wire, v in sizes.items()}
 
 

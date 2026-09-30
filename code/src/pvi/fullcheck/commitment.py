@@ -59,6 +59,7 @@ __all__ = [
     "GroupCommitment",
     "vandermonde_columns",
     "codeword_at",
+    "next_pow2",
 ]
 
 HASH_BYTES = 32
@@ -266,7 +267,8 @@ def verify_multiproofs(jobs: list, workers: int = 1) -> list[tuple[bool, Excepti
     return out
 
 
-def _next_pow2(x: int) -> int:
+def next_pow2(x: int) -> int:
+    """The smallest power of two ``>= x`` (1 for ``x <= 1``): a codeword length is ``rate * next_pow2(k)``."""
     return 1 << max(0, (x - 1).bit_length())
 
 
@@ -407,7 +409,7 @@ class WeightCommitment:
               rate: int = 4, device: torch.device | str = "cpu",
               row_chunk: int = 256) -> "WeightCommitment":
         weight = weight.to(torch.int8).cpu()
-        n_points = rate * _next_pow2(weight.shape[1] + (1 if bias is not None else 0))
+        n_points = rate * next_pow2(weight.shape[1] + (1 if bias is not None else 0))
         tree = MerkleTree(column_leaves(tag, weight, bias, n_points, device=device, row_chunk=row_chunk))
         return cls(tag=tag, weight=weight, bias=None if bias is None else bias.cpu().to(torch.int64),
                    rate=rate, tree=tree, n_points=n_points)
@@ -416,7 +418,7 @@ class WeightCommitment:
     def member(cls, tag: bytes, weight: torch.Tensor, bias: torch.Tensor | None, n_points: int) -> "WeightCommitment":
         """A matrix encoded at ``n_points`` whose columns a group's tree binds (no tree of its own)."""
         weight = weight.to(torch.int8).cpu()
-        rate = n_points // _next_pow2(weight.shape[1] + (1 if bias is not None else 0))
+        rate = n_points // next_pow2(weight.shape[1] + (1 if bias is not None else 0))
         return cls(tag=tag, weight=weight, bias=None if bias is None else bias.cpu().to(torch.int64),
                    rate=rate, tree=None, n_points=n_points)
 

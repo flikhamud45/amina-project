@@ -20,6 +20,7 @@ import math
 from dataclasses import dataclass
 
 from .claimcodec import field_size
+from .commitment import next_pow2
 
 __all__ = ["OpShape", "decoder_shapes", "decoder_claim_columns", "expected_multiproof_nodes", "proof_bytes",
            "setup_size"]
@@ -33,7 +34,7 @@ class OpShape:
     layout: str = "linear"       # "embed" for the lookup tables (as ``MatOp.layout``)
 
     def n_points(self, rate: int) -> int:
-        return rate * (1 << max(0, (self.row_length - 1).bit_length()))
+        return rate * next_pow2(self.row_length)
 
 
 def decoder_shapes(cfg, n_layers: int | None = None) -> list[OpShape]:
@@ -92,7 +93,7 @@ def expected_multiproof_nodes(n: int, t: int) -> float:
 
 
 def _n_points(op, plan, rate: int) -> int:
-    return rate * (1 << max(0, (op.row_length - 1).bit_length())) if plan is None else plan.op(op.name).n_points
+    return rate * next_pow2(op.row_length) if plan is None else plan.op(op.name).n_points
 
 
 def _trees(ops, plan, rate: int) -> list[tuple[str, int, int]]:

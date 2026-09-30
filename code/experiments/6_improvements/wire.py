@@ -26,6 +26,7 @@ import argparse
 import json
 import statistics
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -34,9 +35,12 @@ import torch
 from torch import nn
 
 from pvi.fullcheck import claimcodec
-from pvi.fullcheck.analytic import decoder_shapes
-from pvi.fullcheck.commitment import HASH_BYTES, multiproof_size
+from pvi.fullcheck.analytic import decoder_shapes, proof_bytes
+from pvi.fullcheck.commitment import HASH_BYTES, multiproof_size, next_pow2
 from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from plan_bytes import query_claims  # noqa: E402
 
 CODE = Path(__file__).resolve().parents[2]
 CNNS = {"lenet5": (1, 28), "vgg11": (3, 32), "vgg16": (3, 32), "resnet18_cifar": (3, 32)}
@@ -144,31 +148,22 @@ def _codec(zs: list[torch.Tensor], reps: int, thread_counts: list[int]) -> dict:
     return out
 
 
-def _mode_c_exact(graph, params, zs: list[torch.Tensor], rate: int = 4) -> dict:
-    """Mode C's proof bytes without a commitment: the claims as encoded, ``u`` and the opened columns
-    (fixed sizes), the Merkle paths of the columns ``run_query`` draws with seed 0 (the same with and
-    without wire)."""
+def _mode_c_exact(graph, params, zs: list[torch.Tensor], encoded: int, rate: int = 4) -> dict:
+    """Mode C's proof bytes without a commitment: the byte model (``analytic.proof_bytes``; the claims
+    ``zs``, ``encoded`` bytes with wire), with the Merkle paths of the columns ``run_query`` draws with
+    seed 0 (the same with and without wire) in place of their expectation."""
     mats = graph.mat_ops
     ch = Challenger(seed=0)
     for op in mats:                                   # run_query draws every chi, then every column set
         ch.folding(op.name, op.n_rows, params.reps)
     paths = 0
-    n_cols = 0
     for op in mats:
-        n_points = rate * (1 << max(0, (op.row_length - 1).bit_length()))
+        n_points = rate * next_pow2(op.row_length)
         idx = ch.columns(op.name, n_points, params.columns)
         paths += multiproof_size(idx.tolist(), n_points.bit_length() - 1) * HASH_BYTES
-        n_cols += op.n_rows * len(idx)
-    n_u = params.reps * sum(op.row_length for op in mats)
-    claims = sum(z.numel() for z in zs)
-    return {"default": {"claims": 4 * claims, "u": 4 * n_u, "columns": 4 * n_cols, "paths": paths},
-            "wire": {"claims": len(claimcodec.encode(zs)), "u": claimcodec.field_size(n_u),
-                     "columns": claimcodec.field_size(n_cols), "paths": paths}}
-
-
-def _claim_bytes(graph, x) -> tuple[list[torch.Tensor], dict]:
-    zs = [z for z in Prover(graph).claims(x).values()]
-    return zs, {"claims": sum(z.numel() for z in zs), "wire_bytes": len(claimcodec.encode(zs))}
+    cols = {op.name: z.shape[1] for op, z in zip(mats, zs)}
+    return {name: dict(proof_bytes(mats, params, cols, rate=rate, wire_claims=wire_claims), paths=paths)
+            for name, wire_claims in (("default", None), ("wire", encoded))}
 
 
 def run(spec: str, args) -> dict:
@@ -183,11 +178,12 @@ def run(spec: str, args) -> dict:
         for b in blocks:
             graph, xs, n_checks = _decoder(name, seq, b, args.queries)
             if b is not None:
-                out.setdefault("builds", {})[str(b)] = _claim_bytes(graph, xs[0])[1]
+                zs, encoded = query_claims(graph, xs[0])
+                out.setdefault("builds", {})[str(b)] = {"claims": sum(z.numel() for z in zs), "wire_bytes": encoded}
             if b != blocks[-1]:
                 graph = None
     mats = graph.mat_ops
-    zs, _ = _claim_bytes(graph, xs[0])
+    zs, encoded = query_claims(graph, xs[0])
     out["codec"] = _codec(zs, args.reps, args.threads)
     out["ops"] = len(mats)
     prover = Prover(graph)
@@ -207,7 +203,7 @@ def run(spec: str, args) -> dict:
             torch.set_num_threads(threads)
             out[f"{mode}_lam{lam}_threads{threads}"] = _ab(prover, v, xs, args.reps)
     if name not in CNNS and name != "mlp_mnist":
-        out["C_lam128_exact"] = _mode_c_exact(graph, params_for(128, n_checks), zs)
+        out["C_lam128_exact"] = _mode_c_exact(graph, params_for(128, n_checks), zs, encoded)
     return out
 
 
