@@ -448,3 +448,173 @@ Decoding runs at 145-160 M claims/s on one thread for the decoders (GPT-2 T64: 3
 7.2 ms to read the same claims as int32 and widen them) and 230-240 M claims/s on 4 threads;
 small models pay about 0.6-1.3 ms of fixed cost.  Encoding on this CPU runs at 28-39 M claims/s
 (a GPU prover encodes with torch on the device, giving the same bytes).
+
+## Commitment plans and the wire encoding together
+
+The two options compose: `run_query(..., wire=True)` under a plan (`commit_graph(..., policy=)`,
+`params_for(..., plan=)`, a verifier with `groups`).  The claims and `u` travel as without a
+plan; the opened columns of every tree -- an op's own, or a group's, whose members' rows sit side
+by side as its leaves hash them -- travel as one run of 31-bit field elements, tree after tree
+in the order of the column challenges, and the verifier unpacks them per tree into the int32
+rows `[t_g, sum N]` its checks (batched, deferred, int8 and streaming) already take.  Fiat--Shamir
+absorbs the plan's statement (each op's codeword length, each group's tag, root, length, `t_g` and
+member order) and then the encoded bytes (`claims/PVC3`, `u/F31`).  The parameters are the plan's
+(`r` unchanged, `t_g` = the members' largest exact `t`), so the bound is the plan's:
+`eps <= sum_l [p^-r + prod_{i<t_g(l)} (k_l-1-i)/(n_l-i)] <= 2L 2^-beta = 2^-lambda` (interactive;
+`2^-(lambda+64)` per transcript under Fiat--Shamir), 129.8-140.7 bits at lambda = 128 for these
+rows.  `tests/test_plans.py` runs its plan tests with and without wire: honest queries accepted
+by `run_query` and the streaming verifier (their bytes pinned to `encode()` and `field_size()` of
+the plan's columns), every forgery the wire can carry rejected at its check (also in the deferred
+and int8 forms and on a GPU client), malformed or altered claim, `u` and group-column messages
+rejected where the default flow rejects them, and the transcript.
+
+```bash
+cd code && export PYTHONPATH=$PWD/src
+P="paper tight cnn16 cnn17 cnn18 R8 R16 R64"
+python experiments/6_improvements/plan_bytes.py --run lenet5 --policies $P --wire off on --queries 5 \
+    --out results/combined_run_lenet5.csv                                  # run_query, exact bytes
+python experiments/6_improvements/plan_bytes.py --run vgg16 --policies paper tight cnn16 cnn17 cnn18 R16 R64 \
+    --wire off on --queries 3 --out results/combined_run_vgg16.csv
+python experiments/6_improvements/plan_bytes.py --run gpt2:64:12 --policies paper R16 --wire off on --queries 3 \
+    --out results/combined_run_gpt2.csv
+python experiments/6_improvements/plan_bytes.py --run gpt2:64:12 --claims-only --policies $P --wire off on \
+    --queries 3 --out results/combined_model_gpt2.csv                      # measured claims, the byte model
+python experiments/6_improvements/plan_bytes.py --run llama2-7b:64:1,2 --claims-only --policies $P --wire off on \
+    --queries 3 --out results/combined_model_llama.csv                     # + the whole model, extrapolated
+python experiments/6_improvements/plan_bytes.py --run qwen3-4b:8:4,8 --claims-only --policies paper tight R16 R64 \
+    --wire off on --queries 3 --out results/combined_model_qwen.csv
+python experiments/6_improvements/perf.py --model lenet5 --random-init --modes C --queries 31 --threads 1 \
+    --policy paper cnn16 cnn17 --wire off on > results/perf_combined_laptop_lenet5.jsonl
+```
+
+### Proof bytes (lambda = 128)
+
+Interactive / Fiat--Shamir.  CNN rows and GPT-2 R16 are `run_query` medians (the CNNs random-init,
+as above); every measured `u` and column count equals the byte model with the measured size of
+the encoded claims (`analytic.proof_bytes(..., wire_claims=)`), and the GPT-2 R16 totals come
+within 1 kB of it (the multiproofs).  The other decoder cells are that model on the measured
+claims of the benchmark's random-weight builds (`--claims-only`); for Llama-2-7B (32 blocks) and
+Qwen3-4B (36) the encoded claims are extrapolated linearly from builds of 1 and 2 (4 and 8)
+blocks, which is exact for the default claims (checked).
+
+| Row | Default | Wire | Plan | Plan + wire | Smaller |
+|---|---:|---:|---:|---:|---:|
+| LeNet-5 C | 130.6 / 172.2 kB | 115.6 / 157.1 | cnn16 65.0 / 82.7 | cnn16 **51.4 / 68.6** | 2.54x / 2.51x |
+| | | | cnn17 63.2 / 79.6 | cnn17 **49.7 / 65.6** | 2.63x / 2.62x |
+| | | | cnn18 62.2 / 76.6 | cnn18 48.7 / 62.5 | 2.68x / 2.75x |
+| VGG-16 C | 3,432.7 / 4,461.1 kB | 2,872.0 / 3,869.4 | cnn17 2,339.1 / 2,871.0 | cnn17 1,806.9 / 2,321.7 | 1.90x / 1.92x |
+| | | | cnn18 2,263.0 / 2,753.9 | cnn18 **1,733.0 / 2,208.3** | 1.98x / 2.02x |
+| | | | R64 2,265.3 / 2,747.8 | R64 1,735.6 / 2,203.4 | 1.98x / 2.02x |
+| GPT-2, 64 tokens, C | 62.07 / 80.69 MB | 50.73 / 68.77 | R16 41.48 / 50.25 | R16 **30.76 / 39.25** | 2.02x / 2.06x |
+| | | | R64 36.68 / 42.79 | R64 **26.11 / 32.02** | 2.38x / 2.52x |
+| | | | cnn18 34.04 / 39.57 | cnn18 23.55 / 28.91 | 2.64x / 2.79x |
+| Qwen3-4B, 8 tokens, Kpre | 36.08 MB | **20.78** | (no columns) | 20.78 | 1.74x |
+| Llama-2-7B, 64 tokens, C | 761.7 / 951.1 MB | 605.1 / 788.6 | R16 566.2 / 664.2 | R16 415.6 / 510.5 | 1.83x / 1.86x |
+| | | | R64 501.0 / 571.6 | R64 **352.4 / 420.8** | 2.16x / 2.26x |
+| | | | cnn18 505.3 / 577.9 | cnn18 356.6 / 426.9 | 2.14x / 2.23x |
+
+The two gains add up because they shrink different parts: the plans cut the opened columns and
+the paths, the wire encoding the claims (1.7-1.9x) and `u` and the columns by 1/32.  What is
+left under the best plan is mostly the encoded claims and `u`: GPT-2 R64 + wire is 11.72 MB of
+claims, 2.62 MB of `u`, 11.72 MB of columns and 0.05 MB of paths; Llama-2-7B R64 + wire 205.5,
+22.8, 124.1 and 0.04 MB.  (Qwen3-4B: the 20.78 MB extrapolate the median of 3 prompts from 4 and 8
+blocks; the earlier `wire.py` figure, 20.81 MB, extrapolates one prompt from the same builds.)
+
+### Verifier and prover time on this laptop (`perf.py --policy ... --wire off on`)
+
+Every (policy, wire) variant committed and its queries interleaved in one process (the order
+rotating), random-init models, 1 thread, all queries accepted; ratios to `paper` without wire in
+the same run (`results/perf_combined_laptop_*.jsonl`).
+
+| Model | Policy | Wire | Verifier (ms) | verify_decode (ms) | Column check (ms) | Prover (ms) | Proof |
+|---|---|---|---:|---:|---:|---:|---:|
+| LeNet-5 | paper | no | 4.71 | | 3.21 | 3.7 | 131.2 kB |
+| | paper | yes | 5.48 (1.16x) | 0.80 | 3.13 | 6.8 (1.84x) | 116.1 kB |
+| | cnn16 | no | 2.99 (0.63x) | | 1.46 | 2.8 (0.77x) | 65.1 kB |
+| | cnn16 | yes | 3.72 (0.79x) | 0.71 | 1.47 | 5.6 (1.51x) | 51.6 kB |
+| | cnn17 | no | 2.95 (0.62x) | | 1.41 | 2.8 (0.76x) | 63.0 kB |
+| | cnn17 | yes | 3.64 (0.77x) | 0.70 | 1.38 | 5.6 (1.50x) | 49.5 kB |
+| VGG-16 | paper | no | 35.68 | | 24.77 | 143.4 | 3,433.7 kB |
+| | paper | yes | 40.20 (1.13x) | 4.68 | 24.82 | 166.6 (1.16x) | 2,872.0 kB |
+| | cnn17 | no | 21.72 (0.61x) | | 10.57 | 100.5 (0.70x) | 2,339.0 kB |
+| | cnn17 | yes | 24.11 (0.68x) | 3.60 | 9.96 | 120.0 (0.84x) | 1,806.1 kB |
+| | R64 | no | 20.92 (0.59x) | | 9.92 | 96.6 (0.67x) | 2,265.9 kB |
+| | R64 | yes | 24.49 (0.69x) | 3.73 | 10.18 | 117.9 (0.82x) | 1,735.2 kB |
+| GPT-2, 12 blocks, 64 tokens | paper | no | 270.5 | | 166.7 | 1,447.6 | 62.07 MB |
+| | paper | yes | 350.5 (1.30x) | 70.3 | 176.0 | 1,754.4 (1.21x) | 50.68 MB |
+| | R16 | no | 189.1 (0.70x) | | 81.2 | 1,119.0 (0.77x) | 41.48 MB |
+| | R16 | yes | 223.4 (0.83x) | 50.6 | 69.9 | 1,330.5 (0.92x) | 30.71 MB |
+
+(LeNet-5: 31 queries, VGG-16: 15, GPT-2: 11.)  With 4 threads LeNet-5 gives the same picture
+(paper 6.26 ms; cnn16 + wire 0.72x, cnn17 + wire 0.73x).  Derive and the products are the same
+with and without wire, and the column check is the plan's: the wire's cost is `verify_decode`
+(the claims, then `u` and the columns: 0.7 ms on LeNet-5, 3.6-4.7 ms on VGG-16, 51-70 ms on GPT-2,
+of which the claims are about 35 ms), so every plan + wire verifier stays below the default one
+(0.68-0.83x).  The prover pays its encoder (`prove_encode` on this CPU: 2.9 ms on LeNet-5,
+21-24 ms on VGG-16, 0.20-0.28 s on GPT-2; a GPU prover encodes on its device).
+
+Qwen3-4B with 8 of its 36 blocks, 8 tokens, mode Kpre, lambda = 40: run in separate processes
+(`results/perf_combined_laptop_qwen_separate.jsonl`, back to back, twice) the verifier takes 45.3
+ms without wire and 55.7 ms with it (1.23x; derive 34.1 / 34.1 ms, products 11.0 / 11.2 ms,
+`verify_decode` 10.4 ms) for a 1.74x smaller proof.  Interleaved in one process with a verifier
+without wire (`results/perf_combined_laptop_qwen_interleaved.jsonl`) the products of the wire
+verifier read 33.5 ms instead: that is an artefact of alternating the two allocation patterns in
+one Windows process (two interleaved wire verifiers give 11.2 ms each, two without wire 10.6
+ms), not work the wire adds.
+
+### Table 4 (lambda = 128)
+
+| Row | Competitor | Ours, report | Plan + wire (this section) | Flips? |
+|---|---:|---:|---|---|
+| zkCNN LeNet-5 proof | 71.3 kB | 130.9 kB | 51.4 / 49.7 / 48.7 kB interactive (cnn16 / 17 / 18); 68.6 / 65.6 / 62.5 kB Fiat--Shamir | yes, 1.39-1.46x smaller interactive and now also under Fiat--Shamir (1.04-1.14x) |
+| Maverick Qwen3-4B proof (Kpre) | 36.08 MB | 36.08 MB (equal) | 20.78 MB (wire) | yes, 1.74x smaller |
+| DeepProve GPT-2-64 proof | 21.7 MB | 62.1 MB | 30.76 MB (R16, measured), 26.11 MB (R64), 23.55 MB (cnn18) | no: 1.09x larger at best; claims and `u` alone are 14.3 MB |
+| zkCNN LeNet-5 verifier | 5.8 ms | 6.96 ms | ~2.9 ms (cnn16 + wire; est.) | yes (as with the plan alone), ~2x better |
+| zkCNN VGG-16 verifier | 59.3 ms | 63.4 ms | ~15 ms (cnn17 + wire; est.) | yes, ~3.9x better |
+| zkGPT (GPT-2) verifier | 0.35 s | 0.468 s | ~0.14 s (R16 + wire; est.) | yes, ~2.5x better |
+
+The verifier estimates scale the plan's estimates of the section above (Phase 1 + policy on the
+L40S client: ~2.3 ms, ~13.9 ms, ~0.118 s) by this laptop's plan + wire / plan ratio (1.24x,
+1.11x, 1.18x); the EPYC's decode with 8 threads is not measured yet.
+
+### On the cluster
+
+The combination goes to a new root next to its baseline; `--policy <p> --wire --tag _wire` cells
+are named `..._wire_pol<p>` (from the repository root):
+
+```bash
+export PVI_PLATFORM=l40s_combined && mkdir -p logs/$PVI_PLATFORM
+B=code/experiments/4_defence_benchmark/slurm/bench.sbatch
+for m in lenet5 vgg16; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m                             # the baseline (paper)
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m --wire --tag _wire
+  for p in cnn16 cnn17 cnn18 R64; do
+    sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m --policy $p --wire --tag _wire
+  done
+done
+sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model gpt2 --seq 64 --modes C:int,C:fs --lams 128
+for p in R16 R64 cnn18; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model gpt2 --seq 64 --policy $p --wire --tag _wire --lams 128
+done
+sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model qwen3-4b --seq 8 --builds full --modes Kpre:int --lams 40
+sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model qwen3-4b --seq 8 --builds full --modes Kpre:int --lams 40 \
+    --wire --tag _wire
+for p in R16 R64; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model llama2-7b --seq 64 --policy $p --wire --tag _wire --lams 128
+done
+python code/experiments/5_comparison/aggregate.py --platform l40s_combined
+```
+
+and interactively on a GPU node (`cd code && export PYTHONPATH=$PWD/src`):
+
+```bash
+python -m pytest tests/test_plans.py tests/test_wire.py tests/test_gpu_verifier.py -q -p no:cacheprovider -o addopts=""
+python experiments/6_improvements/perf.py --model lenet5 --modes C --queries 30 --threads 8 \
+    --policy paper cnn16 cnn17 cnn18 --wire off on
+python experiments/6_improvements/perf.py --model vgg16 --modes C --queries 30 --threads 8 \
+    --policy paper cnn17 cnn18 R64 --wire off on
+python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 15 --threads 8 \
+    --policy paper R16 R64 --wire off on --verifier-device cuda
+python experiments/6_improvements/plan_bytes.py --run gpt2:64:12 --policies R64 cnn18 --wire off on --queries 3 \
+    --out results/combined_run_gpt2_cluster.csv
+```
