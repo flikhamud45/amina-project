@@ -219,17 +219,17 @@ python experiments/6_improvements/perf.py --model lenet5 --random-init --modes C
 ### Proof bytes (lambda = 128)
 
 Every row of `results/plan_bytes_run_cnn.csv` (random-init CNNs committed under every policy, 5
-honest queries each through `run_query`) has claim, `u` and column bytes equal to the byte model
-(`analytic.proof_bytes`), and its median total within 0.5% of the model's (the Merkle paths
-depend on the random indices).  Measured medians, interactive / Fiat--Shamir:
+distinct random honest queries each through `run_query`) has claim, `u` and column bytes equal to
+the byte model (`analytic.proof_bytes`), and its median total within 0.7% of the model's (the
+Merkle paths depend on the random indices).  Measured medians, interactive / Fiat--Shamir:
 
 | Model | paper | tight | cnn16 | cnn17 | cnn18 | R8 | R16 | R64 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| MLP (MNIST) | 270.0 / 391.7 kB | 214.6 / 309.1 | 106.8 / 153.1 | 97.2 / 140.3 | 90.8 / 130.8 | 170.1 / 243.1 | 141.6 / 202.8 | 112.8 / 161.4 |
-| LeNet-5 | 130.6 / 172.2 kB | 111.0 / 142.7 | 65.0 / 82.7 | 63.2 / 79.6 | 62.2 / 76.6 | 98.1 / 125.3 | 90.4 / 116.8 | 82.7 / 106.1 |
-| VGG-11 | 2,201 / 2,908 kB | 1,791 / 2,308 | 1,500 / 1,888 | 1,420 / 1,768 | 1,365 / 1,693 | 1,613 / 2,051 | 1,507 / 1,889 | 1,383 / 1,706 |
-| VGG-16 | 3,433 / 4,461 kB | 2,833 / 3,593 | 2,454 / 3,040 | 2,339 / 2,871 | 2,263 / 2,754 | 2,584 / 3,229 | 2,436 / 3,001 | 2,266 / 2,748 |
-| ResNet-18 (CIFAR) | 4,630 / 5,583 kB | 4,036 / 4,715 | 3,642 / 4,154 | 3,550 / 4,017 | 3,491 / 3,925 | 3,807 / 4,392 | 3,676 / 4,190 | 3,521 / 3,965 |
+| MLP (MNIST) | 270.0 / 391.6 kB | 214.6 / 310.1 | 106.8 / 153.2 | 97.2 / 140.6 | 90.8 / 130.9 | 170.1 / 244.3 | 141.6 / 202.4 | 112.8 / 161.9 |
+| LeNet-5 | 130.6 / 172.8 kB | 111.0 / 142.6 | 65.0 / 82.4 | 63.2 / 79.6 | 62.2 / 76.4 | 98.1 / 126.2 | 90.4 / 115.7 | 82.7 / 106.4 |
+| VGG-11 | 2,201 / 2,907 kB | 1,791 / 2,309 | 1,500 / 1,888 | 1,420 / 1,768 | 1,365 / 1,693 | 1,613 / 2,051 | 1,507 / 1,888 | 1,383 / 1,706 |
+| VGG-16 | 3,433 / 4,461 kB | 2,833 / 3,593 | 2,454 / 3,040 | 2,339 / 2,871 | 2,263 / 2,753 | 2,584 / 3,229 | 2,436 / 3,000 | 2,266 / 2,748 |
+| ResNet-18 (CIFAR) | 4,630 / 5,583 kB | 4,036 / 4,716 | 3,642 / 4,155 | 3,550 / 4,016 | 3,491 / 3,926 | 3,807 / 4,391 | 3,676 / 4,189 | 3,521 / 3,964 |
 
 GPT-2 with all 12 blocks, committed and queried the same way (`results/plan_bytes_run_gpt2.csv`,
 3 queries per cell), interactive / Fiat--Shamir: 64 tokens paper 62,072.9 / 80,689.6 kB, tight
@@ -280,9 +280,9 @@ entries in 257-281 s), which gives the estimates for that node:
 | Llama-2-7B | 29.8 G, 226 | 29.8 G, 3 | 91 G, 3 | 183 G, 3 | 366 G, 3 | 59 G, 3 | 118 G, 3 | 468 G, 3 |
 | Qwen3-4B | 27.8 G, 254 | 27.8 G, 4 | 84 G, 4 | 166 G, 4 | 331 G, 4 | 53 G, 4 | 103 G, 4 | 405 G, 4 |
 
-On this laptop's CPU (NTT on the CPU, shared machine) the commits took 90-160 ns per entry:
-LeNet-5 cnn16 2.1 s, cnn18 8.7 s; VGG-16 paper 11 s, cnn16 36 s, cnn17 103 s, cnn18 218 s, R16 58 s,
-R64 289 s (`commit_s` in `results/plan_bytes_run_cnn.csv`).  At about 9 ns per entry: VGG-16 cnn17
+On this laptop's CPU (NTT on the CPU, shared machine) the commits took 90-150 ns per entry:
+LeNet-5 cnn16 2.1 s, cnn18 8.8 s; VGG-16 paper 10 s, cnn16 32 s, cnn17 81 s, cnn18 178 s, R16 49 s,
+R64 227 s (`commit_s` in `results/plan_bytes_run_cnn.csv`).  At about 9 ns per entry: VGG-16 cnn17
 ~6 s and cnn18 ~12 s; GPT-2 R16 ~26 s, R64 ~1.6 min, cnn18 ~5 min; Llama-2-7B R8 ~9 min, R16
 ~18 min, R64 ~70 min (paper and tight: 4.5 min).  The verifier's key shrinks from one root per
 matrix to one per tree (Llama-2-7B: 226 -> 3).
@@ -337,7 +337,7 @@ section) -- to be confirmed with `bench.py --policy` on the cluster.
 
 | Row | Competitor | Ours, report | Ours, Phase 1 only (est.) | Ours, Phase 1 + policy | Flips with |
 |---|---:|---:|---:|---:|---|
-| zkCNN LeNet-5 proof | 71.3 kB | 130.9 kB (1.84x worse) | 130.9 kB | 65.0 / 63.2 / 62.2 kB (cnn16 / 17 / 18; 1.10-1.15x better) | cnn16, cnn17, cnn18 (not under Fiat--Shamir: 76.6 kB at best) |
+| zkCNN LeNet-5 proof | 71.3 kB | 130.9 kB (1.84x worse) | 130.9 kB | 65.0 / 63.2 / 62.2 kB (cnn16 / 17 / 18; 1.10-1.15x better) | cnn16, cnn17, cnn18 (not under Fiat--Shamir: 76.4 kB at best) |
 | zkCNN LeNet-5 verifier | 5.8 ms | 6.96 ms (1.2x worse) | ~3.7 ms | ~2.3 ms (cnn16), ~2.2 ms (cnn18) | Phase 1 already; ~2.5x better with cnn16-18 (policy alone ~4.2 ms) |
 | zkCNN VGG-16 verifier | 59.3 ms | 63.4 ms (1.07x worse) | ~24 ms | ~13.9 ms (cnn17), ~14.4 ms (R16) | Phase 1 already; ~4.3x better with cnn17 (policy alone ~37 ms) |
 | zkGPT (GPT-2) verifier | 0.35 s | 0.468 s (1.34x worse) | ~0.18 s | ~0.118 s (R16), ~0.129 s (R8) | Phase 1 already; ~3.0x better with R16 (policy alone ~0.30 s) |
@@ -501,21 +501,22 @@ python experiments/6_improvements/perf.py --model lenet5 --random-init --modes C
 ### Proof bytes (lambda = 128)
 
 Interactive / Fiat--Shamir.  CNN rows and GPT-2 R16 are `run_query` medians (the CNNs random-init,
-as above); every measured `u` and column count equals the byte model with the measured size of
-the encoded claims (`analytic.proof_bytes(..., wire_claims=)`), and the GPT-2 R16 totals come
-within 1 kB of it (the multiproofs).  The other decoder cells are that model on the measured
+as above, on 5 (LeNet-5) and 3 (VGG-16) distinct random queries); every measured `u` and column
+count equals the byte model with the measured size of the encoded claims
+(`analytic.proof_bytes(..., wire_claims=)`), and the GPT-2 R16 totals come within 1 kB of it (the
+multiproofs).  The other decoder cells are that model on the measured
 claims of the benchmark's random-weight builds (`--claims-only`); for Llama-2-7B (32 blocks) and
 Qwen3-4B (36) the encoded claims are extrapolated linearly from builds of 1 and 2 (4 and 8)
 blocks, which is exact for the default claims (checked).
 
 | Row | Default | Wire | Plan | Plan + wire | Smaller |
 |---|---:|---:|---:|---:|---:|
-| LeNet-5 C | 130.6 / 172.2 kB | 115.6 / 157.1 | cnn16 65.0 / 82.7 | cnn16 **51.4 / 68.6** | 2.54x / 2.51x |
-| | | | cnn17 63.2 / 79.6 | cnn17 **49.7 / 65.6** | 2.63x / 2.62x |
-| | | | cnn18 62.2 / 76.6 | cnn18 48.7 / 62.5 | 2.68x / 2.75x |
-| VGG-16 C | 3,432.7 / 4,461.1 kB | 2,872.0 / 3,869.4 | cnn17 2,339.1 / 2,871.0 | cnn17 1,806.9 / 2,321.7 | 1.90x / 1.92x |
-| | | | cnn18 2,263.0 / 2,753.9 | cnn18 **1,733.0 / 2,208.3** | 1.98x / 2.02x |
-| | | | R64 2,265.3 / 2,747.8 | R64 1,735.6 / 2,203.4 | 1.98x / 2.02x |
+| LeNet-5 C | 130.6 / 172.8 kB | 115.7 / 156.6 | cnn16 65.0 / 82.4 | cnn16 **51.5 / 68.6** | 2.54x / 2.52x |
+| | | | cnn17 63.2 / 79.6 | cnn17 **49.7 / 65.5** | 2.63x / 2.64x |
+| | | | cnn18 62.2 / 76.4 | cnn18 48.8 / 62.5 | 2.68x / 2.76x |
+| VGG-16 C | 3,432.7 / 4,460.3 kB | 2,870.9 / 3,867.8 | cnn17 2,339.1 / 2,871.0 | cnn17 1,805.9 / 2,321.7 | 1.90x / 1.92x |
+| | | | cnn18 2,263.0 / 2,753.1 | cnn18 **1,731.8 / 2,207.0** | 1.98x / 2.02x |
+| | | | R64 2,265.3 / 2,747.2 | R64 1,734.7 / 2,201.4 | 1.98x / 2.03x |
 | GPT-2, 64 tokens, C | 62.07 / 80.69 MB | 50.73 / 68.77 | R16 41.48 / 50.25 | R16 **30.76 / 39.25** | 2.02x / 2.06x |
 | | | | R64 36.68 / 42.79 | R64 **26.11 / 32.02** | 2.38x / 2.52x |
 | | | | cnn18 34.04 / 39.57 | cnn18 23.55 / 28.91 | 2.64x / 2.79x |
@@ -583,7 +584,7 @@ ms), not work the wire adds.
 
 | Row | Competitor | Ours, report | Plan + wire (this section) | Flips? |
 |---|---:|---:|---|---|
-| zkCNN LeNet-5 proof | 71.3 kB | 130.9 kB | 51.4 / 49.7 / 48.7 kB interactive (cnn16 / 17 / 18); 68.6 / 65.6 / 62.5 kB Fiat--Shamir | yes, 1.39-1.46x smaller interactive and now also under Fiat--Shamir (1.04-1.14x) |
+| zkCNN LeNet-5 proof | 71.3 kB | 130.9 kB | 51.5 / 49.7 / 48.8 kB interactive (cnn16 / 17 / 18); 68.6 / 65.5 / 62.5 kB Fiat--Shamir (medians of 5 distinct queries) | yes, 1.38-1.46x smaller interactive and now also under Fiat--Shamir (1.04-1.14x) |
 | Maverick Qwen3-4B proof (Kpre) | 36.08 MB | 36.08 MB (equal) | 20.78 MB (wire) | yes, 1.74x smaller |
 | DeepProve GPT-2-64 proof | 21.7 MB | 62.1 MB | 30.76 MB (R16, measured), 26.11 MB (R64), 23.55 MB (cnn18) | no: 1.09x larger at best; claims and `u` alone are 14.3 MB |
 | zkCNN LeNet-5 verifier | 5.8 ms | 6.96 ms | ~2.8 ms (cnn16 + wire; est.) | yes (as with the plan alone), ~2x better |
