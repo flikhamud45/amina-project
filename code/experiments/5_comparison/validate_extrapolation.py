@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 from collections import defaultdict
 from pathlib import Path
@@ -59,9 +60,10 @@ def main() -> None:
             ext = pts[1] + (L - 1) * (pts[2] - pts[1])
             row.update(extrapolated_2pt=ext, rel_err_2pt=(ext - pts[L]) / pts[L] if pts[L] else None)
         xs, ys = zip(*sorted(pts.items()))
-        n, mx, my = len(xs), sum(xs) / len(xs), sum(ys) / len(ys)
-        sxx = sum((x - mx) ** 2 for x in xs)
-        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+        # math.fsum: exactly rounded, so the CSV is the same on every Python (3.12's sum() compensates)
+        n, mx, my = len(xs), math.fsum(xs) / len(xs), math.fsum(ys) / len(ys)
+        sxx = math.fsum((x - mx) ** 2 for x in xs)
+        slope = math.fsum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
         icpt = my - slope * mx
         resid = [(y - (icpt + slope * x)) / y for x, y in zip(xs, ys) if y]
         row.update(fit_per_block=slope, fit_fixed=icpt, fit_max_rel_resid=max(map(abs, resid)) if resid else None)
