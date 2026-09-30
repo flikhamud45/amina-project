@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 
+import numpy as np
 import torch
 
-from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, requant
+from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, requant
 
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count"]
 
@@ -98,7 +100,22 @@ def decoder_param_count(cfg: DecoderConfig) -> int:
     return cfg.n_layers * per_layer + emb + proj + head
 
 
+# The cheap ops below compute the integers of the straightforward formulas (kept in
+# ``reference.py``) with fewer passes: fused multiply-adds, in-place steps on fresh
+# tensors, flat gathers and cached tables.  Integer arithmetic is exact (int64 wraps
+# identically in any order), so every output is the same tensor.
+
 def _isqrt(s: torch.Tensor) -> torch.Tensor:
+    """``max(1, floor(sqrt(s)))``: a float64 root, then one integer correction each way.
+
+    The (tiny, one entry per row) CPU tensors go through numpy: the same correctly rounded
+    IEEE root and the same corrections, at a third of the call cost."""
+    if s.device.type == "cpu" and s.dtype == torch.int64:
+        n = s.numpy()
+        r = np.floor(np.sqrt(n.astype(np.float64))).astype(np.int64)
+        r += (r + 1) * (r + 1) <= n
+        r -= r * r > n
+        return torch.from_numpy(np.maximum(r, 1))
     r = torch.sqrt(s.to(torch.float64)).floor().to(torch.int64)
     r = torch.where((r + 1) * (r + 1) <= s, r + 1, r)
     r = torch.where(r * r > s, r - 1, r)
@@ -113,12 +130,17 @@ def _norm_int(x: torch.Tensor, gain: torch.Tensor, center: bool, k: int = 16) ->
         x = x - mean
     sigma = _isqrt(torch.div((x * x).sum(-1, keepdim=True), d, rounding_mode="floor"))
     g = gain.to(x.device)
-    num = x * g + sigma * (1 << (k - 1))
-    return torch.div(num, sigma << k, rounding_mode="floor").clamp(-INT8_MAX, INT8_MAX)
+    if x.dtype == g.dtype == torch.int64:
+        num = torch.addcmul(sigma * (1 << (k - 1)), x, g)          # x * g + sigma * 2**(k-1)
+    else:
+        num = x * g + sigma * (1 << (k - 1))
+    return num.div_(sigma << k, rounding_mode="floor").clamp_(-INT8_MAX, INT8_MAX)
 
 
 def _lut(x: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
-    return table.to(x.device)[(x.clamp(-128, 127) + 128)]
+    idx = x.clamp(-128, 127)
+    idx += 128
+    return torch.take(table.to(x.device), idx)          # table[idx] as one flat gather
 
 
 def _rope_tables(t: int, dh: int, theta: float) -> tuple[torch.Tensor, torch.Tensor]:
@@ -129,33 +151,61 @@ def _rope_tables(t: int, dh: int, theta: float) -> tuple[torch.Tensor, torch.Ten
             torch.round(torch.sin(ang) * (1 << 14)).to(torch.int64))
 
 
+@lru_cache(maxsize=64)
+def _rope_tables_full(t: int, dh: int, theta: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """``[cos | cos]`` and ``[-sin | sin]`` as ``[1, T, 1, dh]`` (cached; callers only read them)."""
+    cos, sin = _rope_tables(t, dh, theta)
+    return torch.cat([cos, cos], -1)[None, :, None, :], torch.cat([-sin, sin], -1)[None, :, None, :]
+
+
 def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
-    """x: ``[B, T, H, dh]`` int8 values -> rotated int8 values."""
+    """x: ``[B, T, H, dh]`` int8 values -> rotated int8 values.
+
+    ``[x1 cos - x2 sin | x2 cos + x1 sin] = x [cos | cos] + [x2 | x1] [-sin | sin]``."""
     t, dh = x.shape[1], x.shape[3]
-    cos, sin = (a.to(x.device)[None, :, None, :] for a in _rope_tables(t, dh, theta))
-    x1, x2 = x[..., : dh // 2], x[..., dh // 2:]
-    half = 1 << 13
-    y1 = (x1 * cos - x2 * sin + half) >> 14
-    y2 = (x2 * cos + x1 * sin + half) >> 14
-    return torch.cat([y1, y2], -1).clamp(-INT8_MAX, INT8_MAX)
+    cos2, sin2 = (a.to(x.device) for a in _rope_tables_full(t, dh, theta))
+    h = dh // 2
+    swapped = torch.cat([x[..., h:], x[..., :h]], -1)
+    if x.dtype == torch.int64:
+        out = torch.addcmul(int_scalar(1 << 13, str(x.device)), x, cos2).addcmul_(swapped, sin2)
+    else:
+        out = x * cos2 + swapped * sin2 + (1 << 13)
+    out >>= 14
+    return out.clamp_(-INT8_MAX, INT8_MAX)
+
+
+@lru_cache(maxsize=32)
+def _causal_notmask_cpu(t: int, rep: int) -> torch.Tensor:
+    return (~torch.ones(t, t, dtype=torch.bool).tril()).repeat(rep, 1)
+
+
+def _causal_notmask(t: int, rep: int, device) -> torch.Tensor:
+    """``~tril(ones(t, t))`` repeated ``rep`` times along the rows (read-only)."""
+    m = _causal_notmask_cpu(t, rep)
+    return m if torch.device(device).type == "cpu" else m.to(device)
 
 
 def _attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
-    """Integer causal attention for a group of heads: ``[B,H,T,dh]`` each."""
-    t = q.shape[2]
-    s = exact_matmul(q, k.transpose(-1, -2), max_w=128, max_x=128)       # [B,H,T,T]
-    mask = torch.ones(t, t, dtype=torch.bool, device=q.device).tril()
-    s = s.masked_fill(~mask, -(1 << 40))
-    d = (s.amax(-1, keepdim=True) - s).clamp(max=1 << 31)
+    """Integer causal attention for a group of heads: ``[B,H,T,dh]`` each.
+
+    ``q`` may also be ``[B, H, rep*T, dh]``: the ``rep`` query heads that share each
+    key/value head stacked along the rows (grouped-query attention), where every row is
+    the same dot products and the same row-wise softmax as with ``k, v`` repeated."""
+    t = k.shape[2]
+    notmask = _causal_notmask(t, q.shape[2] // t, q.device)
+    s = exact_matmul(q, k.transpose(-1, -2), max_w=128, max_x=128)       # [B,H,rep*T,T]
+    s.masked_fill_(notmask, -(1 << 40))
+    d = s.amax(-1, keepdim=True) - s
     del s
-    idx = ((d * m_s + (1 << (SHIFT - 1))) >> SHIFT).clamp(0, 255)
+    idx = mul_add_half(d.clamp_(max=1 << 31), int_scalar(m_s, str(q.device)), SHIFT)
     del d
-    e = _EXP_TABLE.to(q.device)[idx].masked_fill(~mask, 0)
+    idx >>= SHIFT
+    e = torch.take(_EXP_TABLE.to(q.device), idx.clamp_(0, 255)).masked_fill_(notmask, 0)
     del idx
     tot = e.sum(-1, keepdim=True)
-    p = torch.div(e * 510 + tot, 2 * tot, rounding_mode="floor")        # 0..255
+    p = torch.addcmul(tot, e, int_scalar(510, str(q.device))).div_(2 * tot, rounding_mode="floor")   # 0..255
     del e
-    o = exact_matmul(p, v, max_w=256, max_x=128)                         # [B,H,T,dh]
+    o = exact_matmul(p, v, max_w=256, max_x=128)                         # [B,H,rep*T,dh]
     if m_o is not None:  # m_o=None returns the raw product, for calibration only
         o = requant(o, torch.tensor(m_o, device=q.device), SHIFT, -INT8_MAX, INT8_MAX)
     return o
@@ -166,21 +216,48 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
 
     Heads are independent, so they are processed a few at a time to bound the
     ``T x T`` score tensors (1 GiB per 32 heads at T=2048); the result is the
-    same integers as processing them all at once.
+    same integers as processing them all at once.  When all heads fit in one group,
+    grouped-query attention stacks each key/value head's query heads instead of
+    repeating ``k`` and ``v``.  The output requantisation writes straight into the
+    final ``[B, T, heads, dh]`` layout.
     """
     b, t, _ = q.shape
     q = q.reshape(b, t, n_heads, dh).transpose(1, 2)
     k = k.reshape(b, t, n_kv, dh).transpose(1, 2)
     v = v.reshape(b, t, n_kv, dh).transpose(1, 2)
-    if n_kv != n_heads:
-        rep = n_heads // n_kv
-        k = k.repeat_interleave(rep, 1)
-        v = v.repeat_interleave(rep, 1)
+    out = torch.empty(b, t, n_heads, dh, dtype=torch.int64, device=q.device)
+    out_h = out.transpose(1, 2)                                     # [B, heads, T, dh] view
     group = max(1, ATTN_BYTES // (8 * b * t * t))       # heads per group
-    outs = [_attention_heads(q[:, h:h + group], k[:, h:h + group], v[:, h:h + group], m_s, m_o)
-            for h in range(0, n_heads, group)]
-    o = torch.cat(outs, 1)
-    return o.transpose(1, 2).reshape(b, t, n_heads * dh)
+    if n_kv != n_heads and group >= n_heads:
+        rep = n_heads // n_kv   # query heads j*rep .. j*rep+rep-1 read kv head j (as repeat_interleave)
+        raw = _attention_heads(q.reshape(b, n_kv, rep * t, dh), k, v, m_s, None)
+        _write_output(out_h, raw.reshape(b, n_heads, t, dh), m_o)
+    else:
+        if n_kv != n_heads:
+            k = k.repeat_interleave(n_heads // n_kv, 1)
+            v = v.repeat_interleave(n_heads // n_kv, 1)
+        for h in range(0, n_heads, group):
+            _write_output(out_h[:, h:h + group],
+                          _attention_heads(q[:, h:h + group], k[:, h:h + group], v[:, h:h + group], m_s, None), m_o)
+    return out.reshape(b, t, n_heads * dh)
+
+
+def _write_output(dst: torch.Tensor, raw: torch.Tensor, m_o: int | None) -> None:
+    """``dst[...] = requant(raw, m_o)`` (or ``raw`` itself when ``m_o`` is None), in place."""
+    if m_o is None:
+        dst.copy_(raw)
+        return
+    mul_add_half(raw, int_scalar(m_o, str(raw.device)), SHIFT, out=dst)
+    dst >>= SHIFT
+    dst.clamp_(-INT8_MAX, INT8_MAX)
+
+
+def _residual(a: torch.Tensor, b: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
+    """``(a + ((b * m + 2**29) >> 30)).clamp(-RES_MAX, RES_MAX)`` in one output buffer."""
+    out = mul_add_half(b, m.to(b.device), SHIFT)
+    out >>= SHIFT
+    out += a
+    return out.clamp_(-RES_MAX, RES_MAX)
 
 
 class _Builder:
@@ -230,9 +307,7 @@ class _Builder:
 
     def residual(self, r, z, target=1024.0):
         m = torch.tensor(round((1 << SHIFT) * target / self.std(z)), dtype=torch.int64)
-        half = 1 << (SHIFT - 1)
-        return self.cheap("res", [r, z], lambda a, b, m=m: (a + ((b * m.to(b.device) + half) >> SHIFT))
-                          .clamp(-RES_MAX, RES_MAX), "residual add")
+        return self.cheap("res", [r, z], lambda a, b, m=m: _residual(a, b, m), "residual add")
 
     def norm(self, r, d, center):
         gain = torch.full((d,), round(32 * (1 << 16)), dtype=torch.int64)  # gamma=1 at scale 1/32

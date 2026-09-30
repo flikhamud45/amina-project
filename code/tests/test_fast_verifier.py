@@ -373,3 +373,208 @@ def test_batched_columns_give_the_per_op_verdicts():
         for impl in (v.check_columns, lambda *args: ref.check_columns(v, *args)):
             with pytest.raises(exc):
                 impl(chis, us, cols, broken)
+
+
+# -- cheap operations ------------------------------------------------------------------------------
+
+def test_requant_and_mul_add_half_match_reference(device):
+    from pvi.fullcheck.graph import mul_add_half, requant
+
+    g = torch.Generator().manual_seed(11)
+    z = _rand(g, 1 - Z, Z, (2, 5, 33))
+    z.view(-1)[:2] = torch.tensor([Z - 1, 1 - Z])
+    for m in (torch.tensor(123456789), _rand(g, 1, 1 << 31, (1, 5, 1)), torch.tensor(1 << 40)):
+        for lo, hi in ((-127, 127), (0, 127)):
+            assert torch.equal(requant(z.to(device), m.to(device), 30, lo, hi).cpu(), ref.requant(z, m, 30, lo, hi))
+    wide = torch.tensor([[INT64_MAX, INT64_MIN, -1]])          # int64 wraps the same way in both
+    assert torch.equal(mul_add_half(wide.to(device), torch.tensor(3, device=device), 30).cpu(),
+                       wide * 3 + (1 << 29))
+    out = torch.empty(4, 6, dtype=torch.int64, device=device)
+    small = _rand(g, -1000, 1000, (6, 4)).to(device)
+    assert mul_add_half(small.T, torch.tensor(7, device=device), 12, out=out) is out
+    assert torch.equal(out, small.T * 7 + (1 << 11))
+    z32 = z.to(torch.int32)                                    # other dtypes keep the plain formula
+    assert torch.equal(requant(z32, 3, 30, -127, 127), ref.requant(z32, 3, 30, -127, 127))
+
+
+def test_isqrt_matches_reference():
+    import math
+
+    from pvi.fullcheck.transformer import _isqrt
+
+    g = torch.Generator().manual_seed(5)
+    s = torch.cat([torch.arange(0, 2000), _rand(g, 0, 1 << 50, (5000,)),
+                   torch.tensor([(1 << 26) ** 2, (1 << 26) ** 2 - 1, (1 << 26) ** 2 + 1, (3 ** 19) ** 2,
+                                 (1 << 62) + 12345, (1 << 53) + 1, INT64_MAX])]).reshape(-1, 1)
+    assert torch.equal(_isqrt(s), ref.isqrt(s))
+    small = s[s.view(-1) < (1 << 52)].reshape(-1, 1)
+    assert torch.equal(_isqrt(small), torch.tensor([[max(1, math.isqrt(int(v)))] for v in small.view(-1)]))
+
+
+def test_transformer_ops_match_reference(device):
+    from pvi.fullcheck import transformer as tr
+
+    g = torch.Generator().manual_seed(12)
+    r = _rand(g, -(1 << 22), 1 << 22, (2, 9, 64))
+    gain = _rand(g, 1 << 19, 1 << 22, (64,))
+    for center in (True, False):
+        assert torch.equal(tr._norm_int(r.to(device), gain, center).cpu(), ref.norm_int(r, gain, center))
+    x = _rand(g, -127, 128, (1, 9, 4, 16))
+    for theta in (1e4, 1e6):
+        assert torch.equal(tr._rope(x.to(device), theta).cpu(), ref.rope(x, theta))
+        assert torch.equal(tr._rope(x.to(device), theta).cpu(), ref.rope(x, theta))     # the cached tables
+    table = _rand(g, -127, 128, (256,))
+    xi = _rand(g, -300, 300, (3, 7, 11))
+    assert torch.equal(tr._lut(xi.to(device), table).cpu(), ref.lut(xi, table))
+    a = _rand(g, -(1 << 22), 1 << 22, (1, 9, 64))
+    b = _rand(g, -(1 << 29), 1 << 29, (1, 9, 64))
+    m = torch.tensor(123456789)
+    assert torch.equal(tr._residual(a.to(device), b.to(device), m).cpu(), ref.residual(a, b, m))
+    assert torch.equal(tr._residual(a.to(device), b.to(device).transpose(1, 2).contiguous().transpose(1, 2), m).cpu(),
+                       ref.residual(a, b, m))
+    for t in (1, 5, 40):
+        q, k, v = (_rand(g, -127, 128, (1, 3, t, 16)) for _ in range(3))
+        q[..., 0, :] = 127
+        for m_o in (None, 1 << 22):
+            got = tr._attention_heads(q.to(device), k.to(device), v.to(device), 1 << 20, m_o).cpu()
+            assert torch.equal(got, ref.attention_heads(q, k, v, 1 << 20, m_o))
+
+
+@pytest.mark.parametrize("hq,hkv,t,group_heads", [(8, 2, 1, None), (8, 2, 7, None), (4, 4, 9, None), (6, 1, 5, None),
+                                                  (32, 8, 8, None), (8, 8, 12, 3), (8, 2, 12, 3)])
+def test_attention_matches_reference(hq, hkv, t, group_heads, device, monkeypatch):
+    from pvi.fullcheck import transformer as tr
+
+    g = torch.Generator().manual_seed(hq * 100 + hkv * 10 + t)
+    dh = 16
+    q = _rand(g, -127, 128, (2, t, hq * dh))
+    k = _rand(g, -127, 128, (2, t, hkv * dh))
+    v = _rand(g, -127, 128, (2, t, hkv * dh))
+    if group_heads:          # a few heads per group, the last group shorter
+        monkeypatch.setattr(tr, "ATTN_BYTES", 8 * 2 * t * t * group_heads)
+    for m_o in (None, 1 << 21):
+        got = tr._attention(q.to(device), k.to(device), v.to(device), 1 << 20, m_o, hq, hkv, dh).cpu()
+        assert torch.equal(got, ref.attention(q, k, v, 1 << 20, m_o, hq, hkv, dh))
+
+
+@pytest.mark.parametrize("layout,shape", [("linear", (2, 3, 10)), ("linear", (5, 10)), ("embed", (2, 3)),
+                                          ("conv", (2, 3, 6, 6))])
+def test_fold_gives_the_reference_values(layout, shape):
+    g = torch.Generator().manual_seed(7)
+    op = _mat_op(layout, 3 * 9 if layout == "conv" else 10, False, conv=(3, 1, 1), rows=4)
+    x = _rand(g, 0, 10, shape)
+    z = _rand(g, -1000, 1000, (4, op.n_cols(x)))
+    assert torch.equal(op.fold(z, x), ref.fold(op, z, x))
+
+
+# -- whole graphs: the same claims, derived tensors and verdicts as the reference code ----------------
+
+def _use_reference_code(monkeypatch):
+    """Route every graph closure, fold and check through ``pvi.fullcheck.reference``."""
+    from pvi.fullcheck import graph, quantize, transformer
+
+    monkeypatch.setattr(quantize, "requant", ref.requant)
+    for name, fn in (("requant", ref.requant), ("_norm_int", ref.norm_int), ("_lut", ref.lut), ("_rope", ref.rope),
+                     ("_attention", ref.attention), ("_residual", ref.residual)):
+        monkeypatch.setattr(transformer, name, fn)
+    monkeypatch.setattr(graph.MatOp, "fold", ref.fold)
+    monkeypatch.setattr(proto.Verifier, "check_products", ref.check_products)
+    monkeypatch.setattr(proto.Verifier, "check_columns", ref.check_columns)
+
+
+def _graph(kind):
+    import dataclasses
+
+    from pvi.fullcheck.models import VGG, LeNet5, ResNet18
+    from pvi.fullcheck.quantize import quantize_input, quantize_model
+    from pvi.fullcheck.transformer import CONFIGS, DecoderConfig, build_decoder
+
+    torch.manual_seed(0)
+    g = torch.Generator().manual_seed(1)
+    cnns = {"lenet5": (LeNet5, (1, 28, 28)), "vgg11": (lambda n: VGG("vgg11", n), (3, 32, 32)),
+            "resnet18": (ResNet18, (3, 32, 32))}
+    if kind in cnns:
+        make, shape = cnns[kind]
+        graph = quantize_model(make(10).eval(), torch.randn(16, *shape, generator=g))
+        return graph, quantize_input(graph, torch.randn(2, *shape, generator=g))
+    small = {"gpt2": dataclasses.replace(CONFIGS["gpt2"], vocab=500),
+             "opt-350m": dataclasses.replace(CONFIGS["opt-350m"], vocab=500),
+             "qwen3-4b": dataclasses.replace(CONFIGS["qwen3-4b"], vocab=300),
+             "llama-like": dataclasses.replace(CONFIGS["llama2-7b"], d_model=256, n_heads=4, n_kv_heads=4,
+                                               head_dim=64, d_ff=8200, vocab=300),
+             "gqa-tiny": DecoderConfig("tiny", 32, 2, 4, 2, 8, 64, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
+                                       bias=False, tied=False, qk_norm=True, max_pos=64)}[kind]
+    graph = build_decoder(small, n_layers=min(2, small.n_layers) if kind != "qwen3-4b" else 1, calib_tokens=8)
+    return graph, torch.randint(0, small.vocab, (1, 9), generator=g)
+
+
+@pytest.mark.parametrize("kind", ["lenet5", "vgg11", "resnet18", "gpt2", "opt-350m", "qwen3-4b", "llama-like"])
+def test_graphs_give_the_reference_claims_and_derived_tensors(kind, monkeypatch):
+    graph, x = _graph(kind)
+    _, claims = graph.forward(x)
+    params = proto.params_for(40, len(graph.mat_ops))
+    derived = [proto.Verifier(graph.public(), params, "Kpre", lean=lean).derive(x, claims) for lean in (False, True)]
+    _use_reference_code(monkeypatch)
+    _, claims_ref = graph.forward(x)
+    assert claims.keys() == claims_ref.keys() and all(torch.equal(claims[k], claims_ref[k]) for k in claims)
+    derived_ref = proto.Verifier(graph.public(), params, "Kpre").derive(x, claims)
+    for got in derived:
+        assert got is not None and got.keys() == derived_ref.keys()
+        assert all(torch.equal(got[k], derived_ref[k]) for k in got)
+
+
+def _queries(graph, x, mode, fiat_shamir, device="cpu"):
+    """``run_query`` on an honest query and on tampered claims, ``u`` and openings."""
+    params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fiat_shamir)
+    coms = proto.commit_graph(graph, params.rate) if mode == "C" else {}
+    prover = proto.Prover(graph, commitments=coms)
+    v = proto.Verifier(graph.public(), params, mode, publics={k: c.public for k, c in coms.items()},
+                       weights={op.name: (op.weight, op.bias) for op in graph.mat_ops}, device=device)
+    if mode == "Kpre":
+        v.precompute(proto.Challenger(seed=5))
+    mats = graph.mat_ops
+    out = []
+    for i, op in enumerate((None, mats[0], mats[len(mats) // 2], mats[-1])):
+        def tamper(o, z, op=op):
+            return z + 1 if op is not None and o.name == op.name else z
+
+        out.append(proto.run_query(prover, v, x, seed=i, forward_kwargs={"tamper": tamper}))
+    if mode == "C":
+        victim = mats[len(mats) // 2].name
+        fold, open_ = prover.fold, prover.open
+        prover.fold = lambda chis: {k: (u + (k == victim)) % P for k, u in fold(chis).items()}
+        out.append(proto.run_query(prover, v, x, seed=7))
+        prover.fold = fold
+        for bad in (lambda o, pr: ((o + 1) % P, pr), lambda o, pr: (o, pr[:-1]), lambda o, pr: (o, [bytes(32)] + pr[1:])):
+            prover.open = lambda cols, bad=bad: {k: (bad(*o) if k == victim else o) for k, o in open_(cols).items()}
+            out.append(proto.run_query(prover, v, x, seed=8))
+    return [(r["accepted"], r["rejected_at"], r["bytes"]) for r in out]
+
+
+@pytest.mark.parametrize("kind,mode,fiat_shamir", [("lenet5", "C", False), ("lenet5", "C", True),
+                                                   ("resnet18", "Kpre", False), ("gqa-tiny", "C", True),
+                                                   ("gqa-tiny", "K", False), ("gqa-tiny", "Kpre", False)])
+def test_queries_give_the_reference_verdicts_proof_bytes_and_transcript(kind, mode, fiat_shamir, monkeypatch):
+    import hashlib
+
+    absorbed = []
+    absorb = proto.Challenger.absorb
+    monkeypatch.setattr(proto.Challenger, "absorb", lambda self, label, blob: (
+        absorbed.append((label, hashlib.sha256(blob).digest())), absorb(self, label, blob)))
+    graph, x = _graph(kind)
+    x = x[:1]
+    got = _queries(graph, x, mode, fiat_shamir)
+    assert got[0][0] and not any(r[0] for r in got[1:])
+    assert {r[1] for r in got[1:]} == ({"freivalds", "columns_code", "columns_merkle"} if mode == "C" else {"freivalds"})
+    transcript, absorbed[:] = list(absorbed), []
+    assert bool(transcript) == fiat_shamir
+    _use_reference_code(monkeypatch)
+    assert got == _queries(graph, x, mode, fiat_shamir)
+    assert transcript == absorbed
+
+
+@pytest.mark.parametrize("kind,mode", [("lenet5", "C"), ("lenet5", "Kpre"), ("gqa-tiny", "C"), ("gqa-tiny", "K"),
+                                       ("gqa-tiny", "Kpre")])
+def test_a_gpu_client_gives_the_cpu_verdicts(kind, mode, device):
+    graph, x = _graph(kind)
+    assert _queries(graph, x[:1], mode, False, device) == _queries(graph, x[:1], mode, False)

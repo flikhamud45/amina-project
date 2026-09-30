@@ -23,6 +23,7 @@ from __future__ import annotations
 import copy
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Callable
 
 import torch
@@ -34,6 +35,8 @@ __all__ = [
     "CheapOp",
     "IntGraph",
     "exact_matmul",
+    "int_scalar",
+    "mul_add_half",
     "requant",
     "INT8_MAX",
 ]
@@ -57,10 +60,31 @@ def exact_matmul(w: torch.Tensor, x: torch.Tensor, *, max_w: int = 128, max_x: i
     return out
 
 
+@lru_cache(maxsize=None)
+def int_scalar(value: int, device: str) -> torch.Tensor:
+    """A 0-d int64 tensor on ``device`` (cached; callers only read it)."""
+    return torch.tensor(value, dtype=torch.int64, device=device)
+
+
+def mul_add_half(z: torch.Tensor, mult: torch.Tensor, shift: int, out: torch.Tensor | None = None) -> torch.Tensor:
+    """``z * mult + 2**(shift-1)``, fresh or written into ``out``: one ``addcmul`` pass for
+    int64 operands (the same int64 values as the multiply and the add)."""
+    if z.dtype == torch.int64 and torch.is_tensor(mult) and mult.dtype == torch.int64:
+        return torch.addcmul(int_scalar(1 << (shift - 1), str(z.device)), z, mult, out=out)
+    if out is None:
+        return z * mult + (1 << (shift - 1))
+    torch.mul(z, mult, out=out)
+    out += 1 << (shift - 1)
+    return out
+
+
 def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int) -> torch.Tensor:
-    """``clamp(round(z * mult / 2**shift), lo, hi)`` with round-half-up, exactly."""
-    out = (z * mult + (1 << (shift - 1))) >> shift
-    return out.clamp(lo, hi)
+    """``clamp(round(z * mult / 2**shift), lo, hi)`` with round-half-up, exactly.
+
+    The shift and the clamp run in place on the fresh product."""
+    out = mul_add_half(z, mult, shift)
+    out >>= shift
+    return out.clamp_(lo, hi)
 
 
 @dataclass
@@ -139,7 +163,12 @@ class MatOp(Op):
         return x.numel() // self.n_in
 
     def fold(self, z: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        """Claimed ``Z [N, M]`` -> output tensor shaped like the op's output."""
+        """Claimed ``Z [N, M]`` -> output tensor shaped like the op's output.
+
+        Linear layers and embeddings return a transposed *view* of ``z``: their readers
+        are elementwise (requantisation, residual additions), so a transposing copy would
+        be one more pass for the same values.  Nothing modifies a fold output in place.
+        """
         if self.layout == "conv":
             k, s, p = self.conv
             b, _, h, w = x.shape
@@ -147,8 +176,8 @@ class MatOp(Op):
             wo = (w + 2 * p - k) // s + 1
             return z.reshape(self.n_rows, b, ho, wo).permute(1, 0, 2, 3).contiguous()
         if self.layout == "embed":
-            return z.T.reshape(*x.shape, self.n_rows).contiguous()
-        return z.T.reshape(*x.shape[:-1], self.n_rows).contiguous()
+            return z.T.reshape(*x.shape, self.n_rows)
+        return z.T.reshape(*x.shape[:-1], self.n_rows)
 
     # -- prover ---------------------------------------------------------------
     def _weights_on(self, device) -> tuple[torch.Tensor, torch.Tensor | None]:
