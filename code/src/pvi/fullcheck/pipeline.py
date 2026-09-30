@@ -132,10 +132,11 @@ def _verify(verifier, x, claims, chis, us, cols, openings, *, int8: bool):
     index = {op.name: i for i, op in enumerate(mats)}
     us = {k: _to_device(v, dev) if torch.is_tensor(v) else v for k, v in us.items()}
     n_u, u_exc = _leading_passes(mats, lambda op: verifier._u_ok(op, us, values=False))
-    sharing: dict[str, list[MatOp]] = {}     # linear ops reading one input: one right-hand side
+    reads = _input_bindings(verifier.graph)
+    sharing: dict[tuple, list[MatOp]] = {}     # linear ops reading one input tensor: one right-hand side
     for op in mats[:n_u]:
         if op.layout == "linear":
-            sharing.setdefault(op.inputs[0], []).append(op)
+            sharing.setdefault(reads[op.name], []).append(op)
     right: dict = {}
     x_flags: list = []
     flags: list = []
@@ -144,7 +145,7 @@ def _verify(verifier, x, claims, chis, us, cols, openings, *, int8: bool):
         if index[op.name] >= n_u:          # the verdict no longer depends on this product
             return
         if op.name not in right:
-            group = sharing.get(op.inputs[0], [op]) if op.layout == "linear" else [op]
+            group = sharing.get(reads[op.name], [op]) if op.layout == "linear" else [op]
             out, unchecked = verifier._rhs_all(group, {o.name: xin for o in group}, us, int8=int8)
             right.update(out)
             x_flags.extend(unchecked)
@@ -175,6 +176,18 @@ def _verify(verifier, x, claims, chis, us, cols, openings, *, int8: bool):
             return None
         n_ok, exc, _, merkle = columns
         return _columns_verdict([not bad for bad in got[c:]], merkle.result(), n_ok, exc, len(mats))
+
+
+def _input_bindings(graph) -> dict[str, tuple[str, int]]:
+    """Each weight op's input as ``(name, index of the op that last bound it, or -1 for the
+    query)``: the tensor it reads, as a key (a graph may bind one name more than once)."""
+    writer: dict[str, int] = {}
+    out = {}
+    for i, op in enumerate(graph.ops):
+        if isinstance(op, MatOp):
+            out[op.name] = (op.inputs[0], writer.get(op.inputs[0], -1))
+        writer[op.output] = i
+    return out
 
 
 def _start_columns(verifier, chis, us, cols, openings, host: ThreadPoolExecutor):

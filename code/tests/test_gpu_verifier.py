@@ -524,6 +524,27 @@ def test_streaming_gives_the_verdicts_of_run_query_on_a_cnn(device):
             _same_outcome(prover, pair, x, seed=i, forward_kwargs=kw)
 
 
+def _rebinding_graph():
+    """in: x -> h, A: h -> A.z, rq: A.z -> h (the name h bound again), B: h -> B.z."""
+    g = torch.Generator().manual_seed(3)
+    wa, wb = (_rand(g, -127, 128, (8, 8)).to(torch.int8) for _ in range(2))
+    return IntGraph([CheapOp("in", ("x",), "h", fn=lambda x: x.clamp(-127, 127)),
+                     MatOp("A", ("h",), "A.z", weight=wa, layout="linear"),
+                     CheapOp("rq", ("A.z",), "h", fn=lambda z: (z >> 7).clamp(-127, 127)),
+                     MatOp("B", ("h",), "B.z", weight=wb, layout="linear")], "x", "B.z")
+
+
+@pytest.mark.parametrize("mode", ["C", "K", "Kpre"])
+def test_streaming_checks_each_op_against_its_own_input_when_a_name_is_bound_twice(mode, device):
+    graph = _rebinding_graph()
+    x = _rand(torch.Generator().manual_seed(4), -127, 128, (1, 5, 8))
+    prover, pair = _setup(graph, mode, device=device)
+    assert _same_outcome(prover, pair, x, seed=1)["accepted"]
+    forged = graph.mat_ops[1].weight.to(torch.int64) @ x.reshape(-1, 8).T      # W_B times A's input
+    kw = {"tamper": lambda op, z: forged if op.name == "B" else z}
+    assert _same_outcome(prover, pair, x, seed=2, forward_kwargs=kw)["rejected_at"] == "freivalds"
+
+
 def test_streaming_keeps_the_fiat_shamir_transcript(monkeypatch):
     absorbed = []
     absorb = proto.Challenger.absorb
