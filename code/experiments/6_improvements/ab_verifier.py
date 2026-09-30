@@ -116,6 +116,13 @@ def build(pkg, case: Case):
     return graph, tokens, n_ops
 
 
+def random_queries(pkg, graph, x: torch.Tensor, n: int) -> list[torch.Tensor]:
+    """``n`` random queries of ``x``'s shape for a CNN of :func:`build`, quantized as ``x`` (distinct
+    inputs: distinct claims and, under Fiat--Shamir, distinct challenges)."""
+    xs = torch.randn(n, *x.shape[1:], generator=torch.Generator().manual_seed(2))
+    return list(sub(pkg, "quantize").quantize_input(graph, xs).split(1))
+
+
 def fold_rows(pkg, op, chi, rows=256):
     """``chi [W | b] mod P`` (the verifier's Kpre precompute) in row blocks, without an int64
     copy of a whole weight matrix."""

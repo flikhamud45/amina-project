@@ -12,7 +12,8 @@ Without ``--run``: one row per (model, prompt length, policy, challenges) at ``-
 shapes alone (``analytic.proof_bytes``: claims, ``u`` and opened columns exact, Merkle paths their
 expectation; ``analytic.setup_size``), for the benchmark's CNNs (random-init, the bytes depend on
 the shapes only) and the decoders of Table 4.  With ``--run model[:seqs[:blocks[:vocab]]]``: the
-model is built and committed under every policy and ``--queries`` honest queries are run with
+model is built and committed under every policy and ``--queries`` honest queries (distinct random
+inputs: ``ab_verifier.random_queries`` for a CNN, random prompts for a decoder) are run with
 ``run_query`` (interactive and Fiat--Shamir); each row holds the measured bytes (paths: the
 median) next to the model's, and every measured claim, ``u`` and column byte count must equal it.
 ``--wire off on`` runs every policy without and with the compact wire encoding
@@ -45,7 +46,7 @@ from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for, r
 from pvi.fullcheck.transformer import CONFIGS, build_decoder
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ab_verifier import Case, build  # noqa: E402
+from ab_verifier import Case, build, random_queries  # noqa: E402
 
 CNNS = ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar")
 DECODERS = (("gpt2", 64), ("gpt2", 512), ("llama2-7b", 1), ("llama2-7b", 64), ("llama2-7b", 2048), ("qwen3-4b", 8),
@@ -185,7 +186,8 @@ def run_rows(spec: str, lam: int, policies, queries: int, wires=(False,), claims
     name, *rest = spec.split(":")
     if name in CNNS:
         graph, x, claim_cols = cnn_graph(name)
-        rows = _build_rows(graph, [(None, [x] * queries, claim_cols)], policies, lam, len(graph.mat_ops), wires,
+        xs = random_queries(fullcheck, graph, x, queries)
+        rows = _build_rows(graph, [(None, xs, claim_cols)], policies, lam, len(graph.mat_ops), wires,
                            claims_only, {"model": name, "layers": None, "vocab": None})
         for r in rows:
             print(r, flush=True)

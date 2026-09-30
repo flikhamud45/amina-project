@@ -808,6 +808,22 @@ def _improvements_script(name: str):
     return mod
 
 
+def test_plan_bytes_runs_distinct_cnn_queries(monkeypatch):
+    """``--run <CNN> --queries N``: N distinct inputs, so the Fiat--Shamir rows are medians of N
+    transcripts (one input repeated gave N copies of one)."""
+    import itertools
+
+    pb = _improvements_script("plan_bytes")
+    seen = []
+    monkeypatch.setattr(pb, "_build_rows", lambda graph, cases, *a, **kw: seen.extend(cases) or [])
+    pb.run_rows("lenet5", 40, ["cnn16"], 3)
+    ((_, xs, cols),) = seen
+    assert len(xs) == 3 and not any(torch.equal(a, b) for a, b in itertools.combinations(xs, 2))
+    graph, x, _ = pb.cnn_graph("lenet5")
+    assert all(q.shape == x.shape and q.dtype == x.dtype for q in xs)
+    assert cols == {k: z.shape[1] for k, z in graph.forward(xs[1])[1].items()}
+
+
 def test_perf_random_init_builds_every_cnn_it_accepts(monkeypatch, capsys):
     """``perf.py --random-init`` takes its CNNs from ``ab_verifier.CNNS``, which ``build`` makes:
     ResNet-18-224 too (it fell through to the decoder branch: ``KeyError``)."""

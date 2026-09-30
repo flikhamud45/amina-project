@@ -78,8 +78,8 @@ def main() -> None:
                     help="run_query(wire=True), the compact encoding of the proof: '--wire' for every variant, "
                          "'--wire off on' for each policy both ways, timed interleaved")
     ap.add_argument("--random-init", action="store_true",
-                    help="CNNs (" + ", ".join(ab.CNNS) + "): random weights, as ab_verifier.py builds them "
-                         "(the costs depend on the shapes only)")
+                    help="CNNs (" + ", ".join(ab.CNNS) + "): random weights and random queries, as ab_verifier.py "
+                         "builds them (the costs depend on the shapes only)")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     bench = _load("bench", "experiments/4_defence_benchmark/bench.py")
@@ -90,15 +90,15 @@ def main() -> None:
     t0 = time.perf_counter()
     model_ops = None
     if args.model in ab.CNNS:
-        from pvi.fullcheck.quantize import quantize_input, quantize_model
         if args.random_init:
             graph, x, _ = ab.build(fullcheck, ab.Case(args.model, "C", args.lam))
-            xs = torch.randn(args.queries + 1, *x.shape[1:], generator=torch.Generator().manual_seed(2))
+            queries = ab.random_queries(fullcheck, graph, x, args.queries + 1)
         else:
+            from pvi.fullcheck.quantize import quantize_input, quantize_model
             model, data = bench._mlp_model() if args.model == "mlp_mnist" else bench._cnn_model(args.model)
             graph = quantize_model(model, data["train_x"])
             xs, _ = next(bench._test_batches(data, args.queries + 1))
-        queries = [x for x in quantize_input(graph, xs).split(1)]
+            queries = list(quantize_input(graph, xs).split(1))
         n_checks = len(graph.mat_ops)
         seq = None
     else:
