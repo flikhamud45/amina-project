@@ -222,6 +222,7 @@ queries on real weights**. On real OPT-125M the largest honest claim is 0.6% of 
 | 2e25afb | `STRONG_GPU_PROGRESS.md`: platform, `must`, Part G |
 | d161a60 | `should` tier and the GPU verifier |
 | 0f4eedc | `nice`, final Part G, D.1 (timings in `code/artifacts/results/zkllm_l40s/`, no weights), quota warning |
+| 2152cf6, 5b1c150 | **Correction (2026-09-30):** 0f4eedc silently left out the per-binary timing logs (`bin_times.log`, excluded by `.gitignore`'s `*.log`), and the timing wrapper was never committed. Both are now in `zkllm_l40s/`, with the wrapper as `install_timing_shims.sh`. `summarise.py` prints the published per-layer figures (26.37 s, 65.71 s) from them. Spotted by another agent. |
 
 Not committed, by the plan's rule (Part E: "do not commit"): the raw records
 `logs/strong_gpu_a6000/code/artifacts/comparison/raw_l40s/`, which the team commits together
