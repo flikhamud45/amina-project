@@ -379,3 +379,72 @@ python experiments/6_improvements/perf.py --model vgg16 --modes C --queries 30 -
 python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 15 --threads 8 \
     --policy paper tight R8 R16 R64 cnn16 --verifier-device cuda
 ```
+
+## The compact wire encoding of the proof: `wire.py`
+
+`run_query(..., wire=True)` (opt-in; `bench.py --wire --tag ..._wire`, `perf.py --wire`) sends the
+claims in the format `PVC3` of `pvi.fullcheck.claimcodec` (a frame of reference per weight op,
+optionally centred on its row means, with Rice-coded exceptions; the module docstring gives the
+byte layout) and `u` and the opened columns 31-bit packed.  The prover encodes where it keeps the
+claims (its GPU; the host in lean mode), the verifier decodes before it checks anything, and
+Fiat--Shamir absorbs the encoded bytes.  Parameters, challenges and the soundness bound are the
+default flow's; without `wire` nothing of the codec runs (`tests/test_wire.py`).
+
+```bash
+cd code && export PYTHONPATH=$PWD/src
+python experiments/6_improvements/wire.py --mnist <dir holding MNIST/raw> --out results/wire_laptop.json \
+    lenet5 mlp_mnist vgg16 resnet18_cifar gpt2:64 gpt2:512 llama2-7b:64:1,2 qwen3-4b:8:1,2,4,8
+python experiments/6_improvements/wire.py --out results/wire_laptop.json --summary   # --threads 1,8: the paper's verifier
+```
+
+Results on this laptop (`results/wire_laptop.json`; the CNNs are random-init, queried on MNIST
+digits, padded to 32x32 on 3 channels for the CIFAR shapes; the decoders are the benchmark's
+random-weight builds).  Bytes are exact; timings are medians of 11 interleaved repetitions (7 for
+GPT-2 T512 and Llama-2-7B) on a machine other jobs were loading.
+
+| Model | Claims | int32 (B) | PVC3 (B) | Bits/claim | Smaller |
+|---|---:|---:|---:|---:|---:|
+| MLP MNIST (trained) | 778 | 3,112 | 1,871 | 19.24 | 1.66x |
+| LeNet-5 | 6,518 | 26,072 | 13,413 | 16.46 | 1.94x |
+| VGG-16 | 277,514 | 1,110,056 | 602,346 | 17.36 | 1.84x |
+| ResNet-18 CIFAR | 614,410 | 2,457,640 | 1,256,852 | 16.36 | 1.96x |
+| GPT-2, 12 blocks, 64 tokens | 5,456,977 | 21,827,908 | 11,733,276 | 17.20 | 1.86x |
+| GPT-2, 12 blocks, 512 tokens | 43,304,017 | 173,216,068 | 91,297,251 | 16.87 | 1.90x |
+| Llama-2-7B, 2 blocks, 64 tokens | 5,733,632 | 22,934,528 | 13,142,647 | 18.34 | 1.75x |
+| Qwen3-4B, 8 blocks, 8 tokens | 2,138,496 | 8,553,984 | 4,905,934 | 18.35 | 1.74x |
+
+Per block (with the real embedding and LM head): Qwen3-4B 568,119 B (18.49 bits/claim; builds of
+1, 2, 4 and 8 blocks), so all 36 blocks take 36,079,104 -> 20,813,273 B (1.73x); Llama-2-7B
+6,410,657 B per block, all 32 blocks 349,303,808 -> 205,462,357 B (1.70x).  Centring on row means
+saves 0.3-0.9 bits per claim on GPT-2, VGG-16 and ResNet-18 and nothing on Qwen3-4B.
+
+Whole proofs, lambda = 128 (mode C of the decoders sized exactly, without a commitment):
+
+| Model | Mode | Default (B) | Wire (B) | Smaller |
+|---|---|---:|---:|---:|
+| LeNet-5 | C | 130,840 | 116,001 | 1.13x |
+| LeNet-5 | Kpre | 26,072 | 13,577 | 1.92x |
+| VGG-16 | C | 3,433,116 | 2,862,416 | 1.20x |
+| ResNet-18 CIFAR | C | 4,629,920 | 3,383,413 | 1.37x |
+| MLP MNIST | C | 269,972 | 261,391 | 1.03x |
+| GPT-2 T64 | C | 62,071,240 | 50,747,048 | 1.22x |
+| GPT-2 T64 | Kpre | 21,827,908 | 11,676,676 | 1.87x |
+| GPT-2 T512 | C | 213,459,400 | 130,311,023 | 1.64x |
+
+In mode C the opened columns and `u` (uniform field elements) shrink by exactly 1/32; the claims
+by 1.7-1.96x.  The decoder costs (`verify_decode`; the encoder is the prover's `prove_encode`):
+
+| Model | Mode | Threads | Verifier (ms) | verify_decode (ms) | Share |
+|---|---|---:|---:|---:|---:|
+| LeNet-5 | Kpre | 1 | 3.0 | 1.3 | 43% |
+| VGG-16 | Kpre | 1 | 14.7 | 6.2 | 42% |
+| VGG-16 | C | 1 | 67.2 | 10.5 | 16% |
+| GPT-2 T64 | Kpre | 1 / 4 | 100.2 / 70.1 | 33.1 / 22.4 | 33% / 32% |
+| GPT-2 T512 | Kpre | 1 / 4 | 1954 / 1031 | 368 / 161 | 19% / 16% |
+| Llama-2-7B T64, 2 blocks | Kpre | 1 / 4 | 168.9 / 89.3 | 52.0 / 31.9 | 31% / 36% |
+| Qwen3-4B T8, 8 blocks | Kpre | 1 / 4 | 56.6 / 61.9 | 12.4 / 12.1 | 22% / 19% |
+
+Decoding runs at 145-160 M claims/s on one thread for the decoders (GPT-2 T64: 37.5 ms against
+7.2 ms to read the same claims as int32 and widen them) and 230-240 M claims/s on 4 threads;
+small models pay about 0.6-1.3 ms of fixed cost.  Encoding on this CPU runs at 28-39 M claims/s
+(a GPU prover encodes with torch on the device, giving the same bytes).

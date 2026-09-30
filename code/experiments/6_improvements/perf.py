@@ -3,6 +3,8 @@
     cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model lenet5 --modes C Kpre --queries 10
     cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --verifier-device cuda
     cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model vgg16 --modes C --policy paper cnn17 R16
+    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C Kpre --wire
+    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model lenet5 --modes C --policy paper cnn16 --wire off on
 
 Builds the model exactly as bench.py does (trained CNN weights, random-weight decoders with seed 0;
 ``--random-init``: random CNN weights too, as ``ab_verifier.py`` builds them), commits it, runs one
@@ -11,10 +13,12 @@ mode): the median of every timing part and every byte part, the acceptance count
 commit, so results of two checkouts can be compared line by line.
 
 ``--policy`` names the commitment plans (``pvi.fullcheck.plans``) of mode C: each is committed (its
-``commit_s`` is the setup time) and their queries are interleaved in this process, the order
-rotating from query to query.  Each policy gets its own line, with ``vs_first``: its medians over
-those of the first policy (e.g. ``paper``, the report).  Modes K and Kpre open no columns, so they
-run once.
+``commit_s`` is the setup time).  ``--wire`` sends the proof in the compact encoding
+(``run_query(wire=True)``: encoded bytes, ``prove_encode`` and ``verify_decode``); ``--wire off on``
+runs every policy both ways.  The queries of all these variants are interleaved in this process,
+the order rotating from query to query, and each variant gets its own line, with ``vs_first``: its
+medians over those of the first variant (e.g. ``paper`` without wire, the report).  Modes K and
+Kpre open no columns, so they run once per wire setting.
 """
 from __future__ import annotations
 
@@ -47,7 +51,7 @@ def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
               for k in sorted({k for r in runs for k in r["timings"]})}
     nbytes = {k: statistics.median(r["bytes"].get(k, 0) for r in runs)
               for k in sorted({k for r in runs for k in r["bytes"]})}
-    prove = sum(timing.get(k, 0.0) for k in ("prove_forward", "prove_fold", "prove_open", "fs_hash"))
+    prove = sum(timing.get(k, 0.0) for k in ("prove_forward", "prove_fold", "prove_open", "prove_encode", "fs_hash"))
     verify = sum(v_ for k, v_ in timing.items() if k.startswith("verify_") or k == "fs_hash")
     return timing, nbytes, prove, verify
 
@@ -69,6 +73,9 @@ def main() -> None:
     ap.add_argument("--extra", default="{}", help="JSON dict of extra keyword arguments for Verifier (new options)")
     ap.add_argument("--policy", nargs="+", default=["paper"],
                     help="mode C: commitment plans (paper, tight, cnn<e>, R<rate>), timed interleaved in this process")
+    ap.add_argument("--wire", nargs="*", choices=["off", "on"], default=["off"],
+                    help="run_query(wire=True), the compact encoding of the proof: '--wire' for every variant, "
+                         "'--wire off on' for each policy both ways, timed interleaved")
     ap.add_argument("--random-init", action="store_true",
                     help="CNNs: random weights (ab_verifier.py's models: the costs depend on the shapes only)")
     args = ap.parse_args()
@@ -107,6 +114,7 @@ def main() -> None:
     build_s = time.perf_counter() - t0
     mats = graph.mat_ops
     policies = args.policy if "C" in args.modes else []
+    wires = [w == "on" for w in args.wire or ["on"]]     # a bare --wire: every variant
     coms, commit_s = {}, {}
     for policy in policies:
         if device.type == "cuda":
@@ -125,28 +133,29 @@ def main() -> None:
         for policy in (policies if mode == "C" else [None]):
             c = coms.get(policy)
             params = params_for(args.lam, n_checks, rate=args.rate, plan=None if c is None else c.plan)
-            if mode == "C":
-                v = Verifier(graph.public(), params, "C", publics=c.publics, groups=c.group_publics,
-                             lean=lean, device=args.verifier_device, **extra)
-            else:
-                v = Verifier(graph.public(), params, mode, weights=weights, lean=lean, device=args.verifier_device,
-                             **extra)
-                if mode == "Kpre":
-                    v.precompute(Challenger())
-            prover = Prover(graph, device=device, commitments=c, lean=lean)
-            run_query(prover, v, queries[0])  # warm-up
-            pairs[policy] = (prover, v, [])
+            for wire in wires:
+                if mode == "C":
+                    v = Verifier(graph.public(), params, "C", publics=c.publics, groups=c.group_publics,
+                                 lean=lean, device=args.verifier_device, **extra)
+                else:
+                    v = Verifier(graph.public(), params, mode, weights=weights, lean=lean,
+                                 device=args.verifier_device, **extra)
+                    if mode == "Kpre":
+                        v.precompute(Challenger())
+                prover = Prover(graph, device=device, commitments=c, lean=lean)
+                run_query(prover, v, queries[0], wire=wire)  # warm-up
+                pairs[policy, wire] = (prover, v, [])
         order = list(pairs)
-        for i, q in enumerate(queries[1:]):     # interleaved, the first policy rotating
-            for policy in order[i % len(order):] + order[:i % len(order)]:
-                prover, v, runs = pairs[policy]
-                runs.append(run_query(prover, v, q))
+        for i, q in enumerate(queries[1:]):     # interleaved, the first variant rotating
+            for key in order[i % len(order):] + order[:i % len(order)]:
+                prover, v, runs = pairs[key]
+                runs.append(run_query(prover, v, q, wire=key[1]))
         first = None
-        for policy, (_, v, runs) in pairs.items():
+        for (policy, wire), (_, v, runs) in pairs.items():
             timing, nbytes, prove, verify = _medians(runs)
             out = {"label": args.label, "git": sha, "model": args.model, "seq": seq, "layers": args.layers or None,
-                   "mode": mode, "policy": policy, "lam": args.lam, "rate": args.rate, "reps": v.params.reps,
-                   "columns": v.params.columns,
+                   "mode": mode, "policy": policy, "wire": wire, "lam": args.lam, "rate": args.rate,
+                   "reps": v.params.reps, "columns": v.params.columns,
                    **({"group_columns": dict(v.params.group_columns)} if v.groups else {}),
                    "device": args.device, "verifier_device": args.verifier_device, "threads": args.threads,
                    "accepted": sum(bool(r["accepted"]) for r in runs), "queries": len(runs),
