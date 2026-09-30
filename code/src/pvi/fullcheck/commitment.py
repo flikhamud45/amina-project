@@ -53,6 +53,10 @@ __all__ = [
     "map_threaded",
     "CommitmentPublic",
     "WeightCommitment",
+    "column_leaves",
+    "group_leaf",
+    "GroupPublic",
+    "GroupCommitment",
     "vandermonde_columns",
     "codeword_at",
 ]
@@ -338,15 +342,64 @@ class CommitmentPublic:
         return int(math.log2(self.n_points))
 
 
+def _encoded_rows(weight: torch.Tensor, bias: torch.Tensor | None, n_points: int, device, row_chunk: int):
+    """``(r0, E[r0:r0 + c])``: the codeword rows of ``[W | b]`` as host int32 arrays ``[c, n_points]``,
+    a few rows at a time (the NTT needs ~4x its input in scratch)."""
+    row_chunk = max(1, min(row_chunk, (1 << 25) // n_points))
+    for r0 in range(0, weight.shape[0], row_chunk):
+        rows = weight[r0:r0 + row_chunk].to(device=device, dtype=torch.int64)
+        if bias is not None:
+            rows = torch.cat([rows, bias[r0:r0 + row_chunk].to(device=device, dtype=torch.int64)[:, None]], 1)
+        yield r0, rs_encode(rows, n_points).to(torch.int32).cpu().numpy()
+        del rows
+
+
+def column_leaves(tag: bytes, weight: torch.Tensor, bias: torch.Tensor | None, n_points: int, *,
+                  device: torch.device | str = "cpu", row_chunk: int = 256,
+                  max_host_bytes: int | None = None) -> list[bytes]:
+    """The :func:`column_leaf` digest of every column of ``Enc([W | b])`` (length ``n_points``).
+
+    The codeword is gathered column-major on the host (``4 N n_points`` bytes) and each column
+    hashed once -- unless that exceeds ``max_host_bytes``: then every column keeps a running
+    SHA-256 that is fed one block of at most ``max_host_bytes`` of codeword rows at a time, so a
+    long codeword of a tall matrix (a vocabulary-sized LM head at a high rate) needs no buffer of
+    its whole encoding.  Both hash the same bytes in the same order: the same digests."""
+    n_rows = weight.shape[0]
+    if max_host_bytes is None or 4 * n_rows * n_points <= max_host_bytes:
+        cols = np.empty((n_points, n_rows), dtype="<u4")
+        for r0, block in _encoded_rows(weight, bias, n_points, device, row_chunk):
+            cols[:, r0:r0 + block.shape[0]] = block.T
+        return [column_leaf(tag, c, cols[c]) for c in range(n_points)]
+    hashes = [hashlib.sha256(b"pvi/col" + tag + int(c).to_bytes(8, "big")) for c in range(n_points)]
+    block_rows = max(1, max_host_bytes // (4 * n_points))
+    pending: list[np.ndarray] = []
+
+    def flush() -> None:
+        cols = np.ascontiguousarray(np.concatenate(pending).T, dtype="<u4")     # [n_points, rows]
+        pending.clear()
+        for h, col in zip(hashes, cols):
+            h.update(col)
+
+    for _, block in _encoded_rows(weight, bias, n_points, device, row_chunk):
+        pending.append(block)
+        if sum(b.shape[0] for b in pending) >= block_rows:
+            flush()
+    if pending:
+        flush()
+    return [h.digest() for h in hashes]
+
+
 @dataclass
 class WeightCommitment:
-    """Prover-side commitment to ``A = [W | b]`` (``W`` int8 ``[N, K]``, ``b`` int64 ``[N]``)."""
+    """Prover-side commitment to ``A = [W | b]`` (``W`` int8 ``[N, K]``, ``b`` int64 ``[N]``).
+
+    ``tree`` is ``None`` for a member of a :class:`GroupCommitment`, whose tree binds its columns."""
 
     tag: bytes
     weight: torch.Tensor
     bias: torch.Tensor | None
     rate: int
-    tree: MerkleTree = field(repr=False)
+    tree: MerkleTree | None = field(repr=False)
     n_points: int
 
     @classmethod
@@ -354,27 +407,23 @@ class WeightCommitment:
               rate: int = 4, device: torch.device | str = "cpu",
               row_chunk: int = 256) -> "WeightCommitment":
         weight = weight.to(torch.int8).cpu()
-        n_rows, k = weight.shape
-        row_length = k + (1 if bias is not None else 0)
-        n_points = rate * _next_pow2(row_length)
-        # Encode a few rows at a time (the NTT needs ~4x its input in scratch),
-        # gather the codeword column-major on the host, then hash each column once.
-        row_chunk = max(1, min(row_chunk, (1 << 25) // n_points))
-        cols = np.empty((n_points, n_rows), dtype="<u4")
-        for r0 in range(0, n_rows, row_chunk):
-            rows = weight[r0:r0 + row_chunk].to(device=device, dtype=torch.int64)
-            if bias is not None:
-                rows = torch.cat([rows, bias[r0:r0 + row_chunk].to(device=device, dtype=torch.int64)[:, None]], 1)
-            cols[:, r0:r0 + rows.shape[0]] = rs_encode(rows, n_points).to(torch.int32).cpu().numpy().T
-            del rows
-        tree = MerkleTree([column_leaf(tag, c, cols[c]) for c in range(n_points)])
-        del cols
+        n_points = rate * _next_pow2(weight.shape[1] + (1 if bias is not None else 0))
+        tree = MerkleTree(column_leaves(tag, weight, bias, n_points, device=device, row_chunk=row_chunk))
         return cls(tag=tag, weight=weight, bias=None if bias is None else bias.cpu().to(torch.int64),
                    rate=rate, tree=tree, n_points=n_points)
 
+    @classmethod
+    def member(cls, tag: bytes, weight: torch.Tensor, bias: torch.Tensor | None, n_points: int) -> "WeightCommitment":
+        """A matrix encoded at ``n_points`` whose columns a group's tree binds (no tree of its own)."""
+        weight = weight.to(torch.int8).cpu()
+        rate = n_points // _next_pow2(weight.shape[1] + (1 if bias is not None else 0))
+        return cls(tag=tag, weight=weight, bias=None if bias is None else bias.cpu().to(torch.int64),
+                   rate=rate, tree=None, n_points=n_points)
+
     @property
     def public(self) -> CommitmentPublic:
-        return CommitmentPublic(self.tag, self.tree.root, self.weight.shape[0],
+        """The verifier's view (the root is ``b""`` for a group member: its group holds the root)."""
+        return CommitmentPublic(self.tag, b"" if self.tree is None else self.tree.root, self.weight.shape[0],
                                 self.row_length, self.n_points)
 
     @property
@@ -402,14 +451,90 @@ class WeightCommitment:
         u_b = field_matmul_mod(chi, b[:, None])  # [r, 1]; chi * b needs the limb product
         return torch.cat([u_w, u_b], 1).cpu()
 
-    def open(self, columns: torch.Tensor, device: torch.device | str = "cpu",
-             weight: torch.Tensor | None = None):
-        """Recompute encoded columns ``E[:, columns]`` and one Merkle multiproof for them."""
+    def columns_at(self, v: torch.Tensor, device: torch.device | str = "cpu",
+                   weight: torch.Tensor | None = None) -> torch.Tensor:
+        """``E[:, C]`` on ``device`` from the Vandermonde columns ``v = V[:, C]`` (at least
+        ``row_length`` rows; row ``j`` is the same for every matrix of this codeword length)."""
         w_all = self.weight if weight is None else weight
         k = w_all.shape[1]
-        v = vandermonde_columns(self.n_points, self.row_length, columns, device)
         cols = torch.cat([small_matmul_mod(w_all[r0:r0 + 16384].to(device), v[:k])
                           for r0 in range(0, w_all.shape[0], 16384)], 0)
         if self.bias is not None:
             cols = (cols + (to_field(self.bias.to(device))[:, None] * v[k][None, :]) % P) % P
-        return cols.cpu(), multiproof(self.tree, columns.tolist())
+        return cols
+
+    def open(self, columns: torch.Tensor, device: torch.device | str = "cpu",
+             weight: torch.Tensor | None = None):
+        """Recompute encoded columns ``E[:, columns]`` and one Merkle multiproof for them."""
+        v = vandermonde_columns(self.n_points, self.row_length, columns, device)
+        return self.columns_at(v, device, weight).cpu(), multiproof(self.tree, columns.tolist())
+
+
+# -- shared trees ---------------------------------------------------------------------------
+
+def group_leaf(tag: bytes, index: int, member_digests) -> bytes:
+    """Leaf ``index`` of a group's tree: the :func:`column_leaf` digests of column ``index`` of
+    every member, in the group's (public) member order.  The digests are 32 bytes each and the
+    members are public, so for a group the leaf input has one fixed length."""
+    h = hashlib.sha256(b"pvi/group" + tag + int(index).to_bytes(8, "big"))
+    for d in member_digests:
+        h.update(d)
+    return h.digest()
+
+
+@dataclass(frozen=True)
+class GroupPublic:
+    """What a verifier holds for one group of a commitment plan: the root of the tree over all its
+    members' columns and the member op names, in leaf order (their shapes are their own
+    :class:`CommitmentPublic`, whose root is empty)."""
+
+    tag: bytes
+    root: bytes
+    n_points: int
+    members: tuple[str, ...]
+
+    @property
+    def depth(self) -> int:
+        return int(math.log2(self.n_points))
+
+
+@dataclass
+class GroupCommitment:
+    """Several matrices of one codeword length under ONE Merkle tree: leaf ``c`` is the
+    :func:`group_leaf` of their columns ``c``.  Member ``name`` is committed under the tag
+    ``name.encode()``, as a matrix on its own tree is, so its column digests are those of its own
+    commitment.  One set of column indices opens every member, with ONE multiproof."""
+
+    tag: bytes
+    members: dict[str, WeightCommitment]     # in leaf order
+    n_points: int
+    tree: MerkleTree = field(repr=False)
+
+    @classmethod
+    def build(cls, tag: bytes, matrices: dict[str, tuple[torch.Tensor, torch.Tensor | None]], n_points: int, *,
+              device: torch.device | str = "cpu", max_host_bytes: int = 1 << 31) -> "GroupCommitment":
+        """``matrices``: ``{name: (W, b)}`` in leaf order.  Each member's column digests are fed
+        into ``n_points`` running leaf hashes as soon as they are computed, so no member's
+        encoding outlives its own digests (and a tall one is hashed in blocks of
+        ``max_host_bytes``, see :func:`column_leaves`)."""
+        leaves = [hashlib.sha256(b"pvi/group" + tag + int(c).to_bytes(8, "big")) for c in range(n_points)]
+        members = {}
+        for name, (w, b) in matrices.items():
+            m = WeightCommitment.member(name.encode(), w, b, n_points)
+            for h, d in zip(leaves, column_leaves(m.tag, m.weight, m.bias, n_points, device=device,
+                                                  max_host_bytes=max_host_bytes)):
+                h.update(d)
+            members[name] = m
+        return cls(tag=tag, members=members, n_points=n_points, tree=MerkleTree([h.digest() for h in leaves]))
+
+    @property
+    def public(self) -> GroupPublic:
+        return GroupPublic(self.tag, self.tree.root, self.n_points, tuple(self.members))
+
+    def open(self, columns: torch.Tensor, device: torch.device | str = "cpu", weights: list | None = None):
+        """Every member's ``E[:, columns]``, stacked in member order (``[sum N, t]``), and one multiproof;
+        ``weights`` may hold device-resident copies of the members' int8 weights, in member order."""
+        v = vandermonde_columns(self.n_points, max(m.row_length for m in self.members.values()), columns, device)
+        cols = [m.columns_at(v, device, None if weights is None else weights[i])
+                for i, m in enumerate(self.members.values())]
+        return torch.cat(cols, 0).cpu(), multiproof(self.tree, columns.tolist())
