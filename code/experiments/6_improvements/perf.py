@@ -57,6 +57,7 @@ def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
 
 
 def main() -> None:
+    ab = _load("ab_verifier", "experiments/6_improvements/ab_verifier.py")
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--seq", type=int, default=64)
@@ -77,7 +78,8 @@ def main() -> None:
                     help="run_query(wire=True), the compact encoding of the proof: '--wire' for every variant, "
                          "'--wire off on' for each policy both ways, timed interleaved")
     ap.add_argument("--random-init", action="store_true",
-                    help="CNNs: random weights (ab_verifier.py's models: the costs depend on the shapes only)")
+                    help="CNNs (" + ", ".join(ab.CNNS) + "): random weights, as ab_verifier.py builds them "
+                         "(the costs depend on the shapes only)")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     bench = _load("bench", "experiments/4_defence_benchmark/bench.py")
@@ -87,10 +89,9 @@ def main() -> None:
     device = torch.device(args.device)
     t0 = time.perf_counter()
     model_ops = None
-    if args.model in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224"):
+    if args.model in ab.CNNS:
         from pvi.fullcheck.quantize import quantize_input, quantize_model
         if args.random_init:
-            ab = _load("ab_verifier", "experiments/6_improvements/ab_verifier.py")
             graph, x, _ = ab.build(fullcheck, ab.Case(args.model, "C", args.lam))
             xs = torch.randn(args.queries + 1, *x.shape[1:], generator=torch.Generator().manual_seed(2))
         else:

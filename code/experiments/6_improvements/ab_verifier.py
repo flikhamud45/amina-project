@@ -38,6 +38,8 @@ import pvi.fullcheck as N
 
 ROOT = Path(__file__).resolve().parents[2]
 STAGES = ("derive", "products", "columns")
+CNNS = ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224")
+"""The benchmark's CNNs, which :func:`build` makes with random weights."""
 
 
 def load_base(src: Path, name: str = "pvi_base_fullcheck"):
@@ -89,15 +91,16 @@ def _chunked_weight(self, rows, cols, std=40.0):
 
 def build(pkg, case: Case):
     """``(graph with weights, query, number of weight ops of the full model)``."""
-    if case.model in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar"):
+    if case.model in CNNS:
         torch.manual_seed(0)
         if case.model == "mlp_mnist":          # bench.py's MLP: 784 -> 512 -> 256 -> 10
             layers = [torch.nn.Linear(784, 512), torch.nn.ReLU(), torch.nn.Linear(512, 256), torch.nn.ReLU(),
                       torch.nn.Linear(256, 10)]
             model, shape = torch.nn.Sequential(*layers).eval(), (784,)
-        else:
-            model = sub(pkg, "models").build_float_model(case.model, 10).eval()
-            shape = (1, 28, 28) if case.model == "lenet5" else (3, 32, 32)
+        else:                                  # resnet18_224: bench.py's binary ImageNet task
+            classes = 2 if case.model == "resnet18_224" else 10
+            model = sub(pkg, "models").build_float_model(case.model, classes).eval()
+            shape = {"lenet5": (1, 28, 28), "resnet18_224": (3, 224, 224)}.get(case.model, (3, 32, 32))
         g = torch.Generator().manual_seed(5)
         q = sub(pkg, "quantize")
         graph = q.quantize_model(model, torch.randn(64, *shape, generator=g))

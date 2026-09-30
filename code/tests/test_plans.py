@@ -792,6 +792,39 @@ def test_bench_names_a_policys_cells_once_and_only_under_it(monkeypatch):
             bench.main()
 
 
+def _improvements_script(name: str):
+    """``experiments/6_improvements/<name>.py`` as a module (its directory on the path, as when run)."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    folder = Path(__file__).resolve().parents[1] / "experiments" / "6_improvements"
+    if str(folder) not in sys.path:
+        sys.path.insert(0, str(folder))
+    spec = importlib.util.spec_from_file_location(name, folder / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_perf_random_init_builds_every_cnn_it_accepts(monkeypatch, capsys):
+    """``perf.py --random-init`` takes its CNNs from ``ab_verifier.CNNS``, which ``build`` makes:
+    ResNet-18-224 too (it fell through to the decoder branch: ``KeyError``)."""
+    import json
+    import sys
+    from pathlib import Path
+
+    perf = _improvements_script("perf")
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    monkeypatch.setattr(sys, "argv", ["perf.py", "--model", "resnet18_224", "--random-init", "--modes", "Kpre",
+                                      "--queries", "1", "--device", "cpu", "--threads", str(torch.get_num_threads())])
+    perf.main()
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert (out["model"], out["accepted"], out["queries"]) == ("resnet18_224", 1, 1)
+    assert "resnet18_224" in _improvements_script("ab_verifier").CNNS
+
+
 # -- the proof-size model ----------------------------------------------------------------------------
 
 @pytest.mark.parametrize("kind", ["lenet5", "gpt", "opt"])
