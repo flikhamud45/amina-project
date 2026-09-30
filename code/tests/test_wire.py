@@ -397,6 +397,20 @@ def test_a_gpu_client_gives_the_cpu_wire_verdicts(device):
             assert outcomes[0] == outcomes[1]
 
 
+def test_a_gpu_prover_encodes_on_its_device_and_sends_the_cpu_provers_bytes(device, monkeypatch):
+    graph, x = _graph("qwen")
+    encoded_on = []
+    monkeypatch.setattr(proto.claimcodec, "encode", lambda zs: (encoded_on.append({z.device.type for z in zs}),
+                                                                _ENCODE(zs))[1])
+    for mode in ("C", "Kpre"):
+        prover, pair = _setup(graph, mode)
+        on_device = proto.Prover(graph, commitments=prover.commitments, device=device)
+        for i, kw in enumerate(_claim_attacks(graph.mat_ops).values()):
+            a, b = (proto.run_query(p, pair[0], x, seed=i, wire=True, forward_kwargs=kw) for p in (prover, on_device))
+            assert (a["accepted"], a["rejected_at"], a["bytes"]) == (b["accepted"], b["rejected_at"], b["bytes"])
+    assert encoded_on[1::2] == [{torch.device(device).type}] * (len(encoded_on) // 2)
+
+
 # -- the security parameters ----------------------------------------------------------------------
 
 def _cnn_shapes(kind: str, shape: tuple) -> list[tuple[int, int]]:

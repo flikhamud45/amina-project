@@ -1098,7 +1098,9 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
             if any(rows is None for rows, _ in openings.values()):
                 out["rejected_at"] = "columns_shape"
                 return out
+            t0 = time.perf_counter()
             openings = {k: (rows.T.to(torch.int64), proof) for k, (rows, proof) in openings.items()}
+            t["verify_decode"] += time.perf_counter() - t0
         t0 = time.perf_counter()
         reason = verifier.check_columns(chis, us, cols, openings)
         _sync(vdev)

@@ -7,6 +7,10 @@ verifier (``Verifier(stream=True)``, whose checks are :meth:`protocol.Verifier.v
   before derive needs them (:class:`ClaimUploads`), so the upload overlaps derive.
 * In mode C the opened columns travel as int32 rows ``[t, N]`` (:func:`wire_openings`), the
   layout their Merkle leaves hash, so the verifier casts nothing before uploading them.
+
+With ``run_query(wire=True)`` the proof travels in the compact encoding of
+:mod:`pvi.fullcheck.claimcodec` instead, and the verifier decodes it into these formats (the
+claims into pinned memory on a GPU client) before the streaming checks start.
 """
 
 from __future__ import annotations
