@@ -637,3 +637,266 @@ python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --quer
 python experiments/6_improvements/plan_bytes.py --run gpt2:64:12 --policies R64 cnn18 --wire off on --queries 3 \
     --out results/combined_run_gpt2_cluster.csv
 ```
+
+## The col layout and fusion: the policies with the suffix `c`
+
+A commitment plan can now commit a linear op's matrix transposed (`pvi.fullcheck.plans`, opt-in by
+policy name: `tightc`, `cnn<e>c` and `R<R>c` take the codeword lengths of `tight`, `cnn<e>` and
+`R<R>` and add per-op layouts; `commit_graph(..., policy=)`, `bench.py --policy`, `perf.py
+--policy`, `plan_bytes.py`).  The default and the Phase-2 policies are unchanged: the Phase-2
+reviewers' fingerprint of the default flow is byte-identical, a same-process A/B against `44d96bb`
+(`paper`, `tight`, `cnn12`, `R8`, `R16` on the tiny MLP, LeNet-5, GPT-2, Llama and OPT; with and
+without wire, batched and streaming, interactive and Fiat--Shamir, honest and forged queries) gives
+identical Merkle roots, groups, parameters, verdicts, labels, bytes and transcripts, and every row
+policy's plan of every decoder configuration (and of its 1- and 2-block builds) is Phase 2's.
+
+* **The col layout.**  The rows of `A^T` (one per input coordinate, of length `N`) are
+  Reed--Solomon encoded at the policy's length for message length `N`, and a Merkle leaf holds a
+  column of length `k`.  The prover sends no `u` for it.  The verifier draws `chi'` (`r x M` over
+  the claims' columns; the identity when `M <= r`: the LM head, `M = 1`, and every op of a
+  one-token prompt), computes `z = chi' Z^T` (the Freivalds left side's limb products, int8 GEMMs
+  on a GPU, on the range-checked claims) and `w = chi' [X ; 1]^T` (exact float64 blocks, as
+  `u^T [X ; 1]`) itself, batched per shape class, and checks `w . E'[:, c] == Enc(z)[c]` at the
+  opened columns on the row check's batched path (`codeword_at`, one limb product per shape
+  class, one copy back).  It opens `t k` field elements instead of `r k + t N`.
+* **Fusion.**  Linear ops that read one tensor with one row length (q/k/v, also with GQA's
+  narrower k and v; gate/up) may share ONE col matrix `[A_1 ; A_2 ; ...]^T`: one `chi'`, one `w`
+  and one set of `t` columns of length `k` for all of them (message length `sum N`).
+* **The choice.**  The ops of a set (one input and row length) take all rows, each op transposed
+  alone, or one col matrix, and sets of one shape (a decoder's blocks) take the same.  The plan
+  takes the options of least expected bytes of the whole plan at lambda = 128, interactive --
+  `u`, the opened columns and the multiproofs of the shared trees the matrices end up in (the
+  groups' dynamic programming) -- by descent from the base policy's plan, so a `c` plan never
+  costs more than its base policy's in that model (tested on the CNNs and decoders).  Charging
+  each matrix a tree of its own instead transposed LeNet-5's classifier under `cnn16c` and lost 4
+  kB: its `t` then left the CNN's single tree.  Convolutions and embedding tables stay in rows.
+  Every decoder takes q/k/v and gate/up fused, fc1, the attention output and the head transposed,
+  fc2/down and the embeddings in rows; the CNNs transpose a classifier or two, if anything.
+* **Message flow.**  claims -> `chi` and `chi'` (both right after the claims) -> `u` of the row
+  ops -> the columns of every tree (one round) -> the openings.  A col check only needs its `chi'`
+  and columns drawn after the claims; drawing every tree's columns in one round, after `u`, lets
+  row and col matrices of one codeword length share a tree and a multiproof (GPT-2 `R16c`: the
+  fc2s in rows and the transposed fc1s, all at `n = 2^16`) and keeps the report's three prover
+  messages.  Under Fiat--Shamir a col matrix's columns then also depend on `u`, which the prover
+  picks: grinding, which the 64 grinding bits bound as for every other challenge.
+* **Soundness.**  Per committed matrix `p^-r + prod_{i<t} (m-1-i)/(n-i)` with `m = k` (row) or the
+  stacked rows `sum N` (col), and no Freivalds term for `chi' = I`: a wrong claim of a col matrix's
+  ops (on an input derived from correct claims) survives `chi'` with probability `<= p^-r`, and
+  then `Enc(z_i)` and `w_i^T E' = Enc(A w_i)` are distinct codewords of dimension `m`, which the `t`
+  distinct columns (bound by the root, drawn independently of `chi'`) all miss with at most the
+  product.  The union bound over the matrices (at most the `L` ops) stays `<= 2L 2^-beta =
+  2^-lambda`.  `soundness_bits` takes one check per matrix (`plan.shapes()`,
+  `columns=plan.matrix_columns(params.group_columns)`); `tests/test_plans.py` checks `>= lambda`
+  and each matrix's own budget for the five CNNs and every decoder configuration, every policy
+  with and without `c`, lambda 40/80/128, interactive and Fiat--Shamir (129.8-140.7 bits at 128).
+  Fiat--Shamir absorbs every col matrix (its ops in order, rows, message and codeword length, tag)
+  with the groups' records; `chi'` is keyed after the claims and the columns after `u` (tested).
+* **Prover and setup.**  The prover recomputes an opened col column from its device-resident
+  weights (`TransposedCommitment.columns_at`: `sum_i W_i^T V_i` and the biases' row), nothing is
+  stored; setup streams the column digests through `max_host_bytes`, so the head's `A^T` at
+  `n = R next_pow2(vocab)` needs no buffer of its encoding (GPT-2 `R64c`: `n = 2^22`, committed
+  on this laptop).
+* **Wire.**  The claims codec is unchanged; `u` travels for the row ops only, and a col matrix's
+  opened columns in its tree's 31-bit run like every member's.  Every byte count is what is sent
+  (tested against `encode()`, `field_size()` and the byte model).
+* **Verifiers.**  The batched verifier, its deferred and int8 forms (tested on the CPU with
+  `_defer` and `int8_ok` forced), the streaming verifier (which computes `w` and `z` during derive
+  and queues their code checks after it) and a GPU client
+  (`test_a_gpu_client_and_prover_give_the_cpu_verdicts`, CUDA only) give the same verdicts and
+  labels.  A verifier refuses a key whose col matrix stacks ops that are not linear, read
+  different tensors or do not have its shape, or that checks an op twice or not at all.
+
+`tests/test_plans.py` runs its plan tests with `tightc`, `cnn12c` and `R8c` too, on LeNet-5, a wide
+MLP, GPT-2, Llama, OPT (`embed_dim`) and Qwen (GQA, q/k norm): honest queries accepted and sized
+as the model says; every forgery rejected at its check, preferring a col victim -- claims (a
+col op's at `columns_code`), a kernel shift of `[X ; 1]^T` (passes the code check for every
+`chi'`: `columns_merkle`), a wrong or misplaced column, a misplaced member, out-of-field entries,
+forged paths, the tampered one-column head -- in all the forms, with and without wire; malformed
+wire messages; the transcript.  `tests/test_layouts.py` holds the rest (the transposed commitment,
+mixed groups, the planner, `chi' = I`, `w` and `z` against `reference.column_operands`).
+
+```bash
+cd code && export PYTHONPATH=$PWD/src
+C="cnn16 cnn16c cnn17 cnn17c cnn18 cnn18c R16 R16c R64 R64c"
+python experiments/6_improvements/plan_bytes.py --out results/plan_bytes_col.csv       # the byte model, every model
+python experiments/6_improvements/plan_bytes.py --run mlp_mnist lenet5 vgg16 --policies paper $C --wire off on \
+    --queries 5 --out results/col_run_cnn.csv                                  # run_query, exact bytes
+python experiments/6_improvements/plan_bytes.py --run gpt2:64,512:12 --policies paper R16 R16c cnn16c tightc \
+    --wire off on --queries 3 --out results/col_run_gpt2.csv                   # (and cnn17c, cnn18c, R64c)
+python experiments/6_improvements/plan_bytes.py --run llama2-7b:64:1,2:1024 qwen3-4b:8:1,2:1024 opt-125m:2048:1,2 \
+    --policies tightc R8c cnn16c --queries 2 --out results/col_run_decoders.csv  # the model, validated
+python experiments/6_improvements/plan_bytes.py --run llama2-7b:1,64:1,2 --claims-only --policies paper $C \
+    --wire off on --queries 3 --out results/col_model_llama.csv                # measured claims + the model
+python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 11 --threads 1 --device cpu \
+    --policy paper R16 R16c cnn16c tightc --wire off on > results/perf_col_laptop_gpt2.jsonl
+```
+
+(and `--claims-only` for `gpt2:64,512:12`, `llama2-7b:2048:1,2`, `qwen3-4b:8,64:4,8`,
+`opt-{125m,1.3b,2.7b,6.7b}:2048:1,2`: `results/col_model_*.csv`).
+
+### Proof bytes (lambda = 128)
+
+Interactive / Fiat--Shamir.  The CNN and GPT-2 cells are `run_query` medians (the CNNs random-init
+on 5 distinct random queries, GPT-2 on 3 random prompts), every claim, `u` and column count equal
+to the byte model's (with wire, on the measured size of the encoded claims) and every total within
+0.7% of it (the multiproofs); cells marked (model) are the byte model on the measured claims.
+
+| Model | Policy | Plan | Plan + wire | `c` plan | `c` plan + wire |
+|---|---|---:|---:|---:|---:|
+| MLP (MNIST) | cnn18 | 90.8 / 130.9 kB | 87.1 / 126.3 | 88.0 / 126.2 | 84.5 / 121.4 |
+| LeNet-5 | cnn17 | 63.2 / 79.6 kB | 49.7 / 65.5 | 63.0 / 79.8 | 49.6 / 66.0 |
+| | cnn18 | 62.2 / 76.4 | 48.8 / 62.5 | 62.0 / 76.2 | **48.5 / 62.5** |
+| | R64 | 82.7 / 106.4 | 69.0 / 92.2 | 82.2 / 104.8 | 68.6 / 91.5 |
+| VGG-16 | cnn17 | 2,339.1 / 2,871.0 kB | 1,805.9 / 2,321.7 | 2,318.9 / 2,842.1 | 1,786.3 / 2,293.2 |
+| | cnn18 | 2,263.0 / 2,753.3 | 1,731.9 / 2,207.2 | 2,242.8 / 2,725.2 | **1,712.5 / 2,179.9** |
+| | R64 | 2,265.8 / 2,747.7 | 1,734.7 / 2,201.5 | 2,264.5 / 2,744.8 | 1,733.9 / 2,199.6 |
+| GPT-2, 64 tokens | paper | 62.07 / 80.69 MB | 50.73 / 68.77 | | |
+| | R16 | 41.48 / 50.25 | 30.76 / 39.25 | 28.61 / 31.70 | 18.29 / 21.29 |
+| | R64 | 36.68 / 42.79 (model) | 26.11 / 32.02 (model) | 27.28 / 29.66 | 17.00 / 19.31 |
+| | cnn16 | 37.01 / 43.30 (model) | 26.43 / 32.53 (model) | 28.46 / 31.46 | 18.15 / 21.06 |
+| | cnn17 | 35.29 / 40.97 (model) | 24.76 / 30.27 (model) | 27.75 / 30.38 | 17.46 / 20.00 |
+| | cnn18 | 34.04 / 39.57 (model) | 23.55 / 28.91 (model) | 27.03 / 29.34 | **16.76 / 19.00** |
+| | tight | 54.61 / 69.45 (model) | | 32.15 / 36.82 | 21.72 / 26.25 |
+| GPT-2, 512 tokens | paper | 213.46 / 232.08 MB | 130.31 / 148.35 | | |
+| | R16 | 192.86 / 201.64 | 110.33 / 118.83 | 179.99 / 183.09 | 97.86 / 100.86 |
+| | R64 | 188.07 / 194.17 (model) | 105.68 / 111.60 (model) | 178.67 / 181.05 | 96.58 / 98.88 |
+| | cnn18 | 185.42 / 190.96 (model) | 103.12 / 108.49 (model) | 178.42 / 180.73 | **96.33 / 98.58** |
+
+On the CNNs the col layout finds little (a classifier or two transposed; 0-3%, and `R16c` on LeNet-5
+and VGG-16 is `R16`): their ops' `N` is small against their `k`.  On GPT-2 it removes 35% of `u`
+(everything but the embeddings' and the fc2s') and 64-72% of the opened columns.  What is left of
+GPT-2 at 64 tokens under `cnn18c` + wire: 11.72 MB of claims, 1.71 MB of `u` (the token
+embedding's 0.97 MB, the fc2s' 0.71 MB), 3.29 MB of columns and 0.04 MB of paths.
+
+The decoders too large to run here: the byte model on the whole model with the claims measured on
+builds of 1 and 2 blocks (Qwen3-4B: 4 and 8) and extrapolated (exact without wire: checked).  The
+model is validated by `run_query` on builds of 1 and 2 blocks under `tightc`, `R8c` and `cnn16c`
+(`results/col_run_decoders.csv`: Llama-2-7B at 64 tokens and Qwen3-4B at 8 with a 1,024-token
+vocabulary, OPT-125M at 2,048 with its own; interactive and Fiat--Shamir): every build's claim, `u`
+and column bytes equal the model's, the totals are within 1.1 kB of it (the multiproofs), and the
+1- and 2-block totals extrapolated over the blocks are within 0.02% of the model of the whole
+model.  MB:
+
+| Model, prompt | paper | R64 | cnn18 | R16c | R64c | cnn18c | R64 + wire | R64c + wire | cnn18c + wire |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Llama-2-7B, 1 | 418.0 / 607.4 | 157.2 / 227.9 | 161.6 / 234.2 | 81.1 / 115.9 | 60.4 / 85.7 | 79.3 / 113.5 | 150.3 / 218.7 | **56.5 / 81.0** | 74.8 / 107.9 |
+| Llama-2-7B, 64 | 761.7 / 951.1 | 501.0 / 571.6 | 505.3 / 577.9 | 424.8 / 459.6 | 404.2 / 429.5 | 423.1 / 457.3 | 352.4 / 420.8 | **258.6 / 283.1** | 276.9 / 310.0 |
+| Llama-2-7B, 2048 | 11,586 / 11,776 | 11,325 / 11,396 | 11,330 / 11,402 | 11,249 / 11,284 | 11,229 / 11,254 | 11,248 / 11,282 | 6,728 / 6,797 | **6,635 / 6,659** | 6,653 / 6,686 |
+| Qwen3-4B, 8 | 410.3 / 582.0 | 165.3 / 224.8 | 168.5 / 230.0 | 96.0 / 123.0 | 81.9 / 101.9 | 93.1 / 119.0 | 146.0 / 203.6 | **65.2 / 84.6** | 76.1 / 101.1 |
+| Qwen3-4B, 64 | 658.6 / 830.3 | 413.6 / 473.1 | 416.8 / 478.3 | 344.3 / 371.3 | 330.2 / 350.2 | 341.4 / 367.3 | 288.4 / 346.0 | **207.7 / 227.0** | 218.5 / 243.5 |
+| OPT-125M, 2048 | 732.5 / 751.2 | 707.1 / 713.3 | 704.5 / 709.6 | 699.1 / 702.2 | 697.7 / 700.1 | 697.5 / 699.8 | 382.5 / 388.5 | 373.4 / 375.7 | **373.2 / 375.4** |
+| OPT-1.3B, 2048 | 3,807 / 3,875 | 3,709 / 3,731 | 3,709 / 3,732 | 3,689 / 3,703 | 3,681 / 3,692 | 3,684 / 3,695 | 2,094 / 2,116 | **2,067 / 2,078** | 2,070 / 2,081 |
+| OPT-2.7B, 2048 | 6,320 / 6,429 | 6,165 / 6,204 | 6,168 / 6,207 | 6,132 / 6,153 | 6,119 / 6,136 | 6,126 / 6,146 | 3,491 / 3,529 | **3,447 / 3,463** | 3,454 / 3,473 |
+| OPT-6.7B, 2048 | 10,101 / 10,271 | 9,857 / 9,912 | 9,876 / 9,944 | 9,812 / 9,849 | 9,791 / 9,818 | 9,810 / 9,846 | 5,758 / 5,811 | **5,694 / 5,720** | 5,712 / 5,747 |
+
+At one token (Llama-2-7B) and eight (Qwen3-4B) the proof is mostly opened columns, which the col
+layout cuts 2-2.7x against the same codeword lengths; at 2,048 tokens it is 96-99.5% claims, so the
+plans move it by 1-3% and the wire encoding by 1.7-1.9x.  What is left of Llama-2-7B at one token
+under `R64c` + wire: 3.34 MB of claims, 7.44 MB of `u` (the downs', in rows, and the embedding's),
+45.63 MB of opened columns (21-23 columns of 4,096 entries per matrix and block) and 0.07 MB of
+paths.
+
+### Setup (the one-time commitment)
+
+Encoded field entries (`analytic.setup_size`), G, and the time at the L40S node's ~9 ns per entry:
+
+| Model | R16 | R16c | R64 | R64c | cnn18 | cnn18c |
+|---|---:|---:|---:|---:|---:|---:|
+| GPT-2 | 2.84 | 2.97 | 10.75 | 11.28 (~1.7 min) | 35.32 | 10.28 (~1.5 min) |
+| Llama-2-7B | 118 | 149 | 468 | 593 (~89 min) | 366 | 140 (~21 min) |
+| Qwen3-4B | 103 | 104 | 405 | 408 (~61 min) | 331 | 99 (~15 min) |
+
+Transposed, the head's codeword runs along the vocabulary but it has only `d` rows, so the `cnn<e>c`
+policies cut the setup 3.4x (GPT-2) and 2.6x (Llama-2-7B) where `cnn<e>` encoded 50,257 (32,000) rows
+at `2^e`; `R<R>c` costs 1-27% more than `R<R>` (the fused q/k/v and gate/up round their stacked
+rows up to a power of two: Llama-2-7B's 12,288 and 22,016 to 16,384 and 32,768).  On this laptop
+(4 threads, other jobs running) the commits took 125-180 ns per entry: GPT-2 `R16` 356 s, `R16c`
+465 s, `cnn16c` 382 s, `cnn17c` 832 s, `cnn18c` 1,788 s, `R64c` 2,003 s (`commit_s` in
+`results/col_run_gpt2*.csv`); the one-thread timings below give the A/B.
+
+### Timing on this laptop (`perf.py --policy ... --wire off on`)
+
+Every (policy, wire) variant committed and its queries interleaved in one process (the order
+rotating), one thread, the machine otherwise idle, all queries accepted; ratios to `paper` without
+wire (`results/perf_col_laptop_*.jsonl`, commit `7b228c4`).  GPT-2 with all 12 blocks, 64 tokens,
+11 random prompts:
+
+| Policy | Wire | Verifier (ms) | products | columns | verify_decode | Prover (ms) | prove_fold | prove_open | Setup (s) | Proof |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| paper | no | 251.7 | 31.7 | 155.0 | | 1,347 | 298.5 | 768.9 | 150 | 62.07 MB |
+| | yes | 289.0 (1.15x) | 32.3 | 136.8 | 54.8 | 1,578 (1.17x) | 299.7 | 760.8 | | 50.68 MB |
+| R16 | no | 170.1 (0.68x) | 31.6 | 73.6 | | 1,053 (0.78x) | 297.9 | 475.1 | 483 | 41.48 MB |
+| | yes | 204.8 (0.81x) | 32.4 | 60.9 | 43.8 | 1,252 (0.93x) | 298.1 | 471.2 | | 30.71 MB |
+| R16c | no | 155.7 (0.62x) | 43.1 | 47.1 | | 918 (0.68x) | 123.2 | 514.4 | 630 | 28.61 MB |
+| | yes | 186.0 (0.74x) | 42.9 | 42.8 | 35.2 | 1,091 (0.81x) | 127.4 | 517.8 | | 18.24 MB |
+| cnn16c | no | 157.4 (0.63x) | 43.1 | 48.7 | | 1,076 (0.80x) | 122.0 | 670.6 | 571 | 28.46 MB |
+| | yes | 188.5 (0.75x) | 43.4 | 45.1 | 35.5 | 1,239 (0.92x) | 122.7 | 666.2 | | 18.10 MB |
+| tightc | no | 173.3 (0.69x) | 43.6 | 64.5 | | 1,024 (0.76x) | 123.2 | 620.5 | 185 | 32.15 MB |
+| | yes | 202.3 (0.80x) | 43.5 | 57.9 | 36.8 | 1,190 (0.88x) | 123.6 | 613.5 | | 21.67 MB |
+
+(derive: 64-68 ms in every variant.)  `R16c` against `R16`, the same codeword rates: the verifier
+0.92x without wire and 0.91x with it -- the column check 0.64x / 0.70x (61 of the 75 ops open
+columns of 768-769 entries, one set per fused q/k/v, instead of 768-50,257, and hash that much
+less), `verify_decode` 0.80x (`u` of the row ops only), while the products take 1.36x: `z = chi'
+Z^T` and `w` replace Freivalds for those ops at the same multiply-adds, but their limb sums come
+out `N` wide instead of `M`.  The
+prover 0.87x: `prove_fold` 0.41x (`u` for the embeddings and the fc2s only) and `prove_open` 1.08x
+(the head's opened columns are `W^T V` over its 50,257 outputs).  Setup 1.30x for 5% more encoded
+entries: the transposed head's codewords are `2^20` long (`2^14` in rows), and an NTT costs
+`n log n`.  Under `tightc` (the report's codeword lengths) the verifier takes 0.69x / 0.80x and the
+prover 0.76x / 0.88x of `paper`'s for a 1.93x / 2.86x smaller proof.
+
+LeNet-5 (31 random queries) and VGG-16 (15), random-init: the `c` plans transpose one or two
+classifiers and time as their base policies (LeNet-5 `cnn18c` 2.81 ms against `cnn18` 2.77 ms,
+`cnn17c` 2.81 against 2.86; VGG-16 `cnn17c` 20.69 ms against `cnn17` 20.81; `paper` 4.44 and
+33.70 ms); LeNet-5's `prove_fold` takes 0.8x.
+
+### Table 4 (lambda = 128)
+
+| Row | Competitor | Ours, report | Plan + wire (Phase 2) | `c` plan + wire (this section) | Flips? |
+|---|---:|---:|---:|---:|---|
+| DeepProve GPT-2-64 proof | 21.7 MB | 62.1 MB | 23.55 / 28.91 MB (cnn18, model) | **16.76 / 19.00 MB** (cnn18c), 17.00 / 19.31 (R64c), 17.46 / 20.00 (cnn17c), 18.29 / 21.29 (R16c): measured | yes: 1.29x smaller interactive, 1.14x under Fiat--Shamir |
+| ZKTorch Llama-2-7B-1 proof | 22.85 MB | 418.0 MB | 150.3 / 218.7 MB (R64) | 56.5 / 81.0 MB (R64c) | no: 2.47x larger; the columns alone are 45 MB |
+| zkCNN LeNet-5 proof | 71.3 kB | 130.9 kB | 48.8 / 62.5 kB (cnn18) | 48.5 / 62.5 kB (cnn18c) | yes, as before (1.47x / 1.14x smaller) |
+| zkGPT (GPT-2) verifier | 0.35 s | 0.468 s | ~0.14 s (R16 + wire; est.) | ~0.13 s (R16c + wire; est.) | yes, as before |
+
+Without the wire encoding GPT-2's claims alone (21.83 MB) exceed DeepProve's proof.  The verifier
+estimate scales Phase 2's (the L40S client's stored stage medians by this laptop's ratios) by this
+laptop's `R16c` + wire / `R16` + wire ratio, 0.91x; the cluster runs below confirm it.
+
+### On the cluster
+
+A new root next to its baseline (the partition and the L40S pinned, and the jobs kept off t-806, as
+for `l40s_plans` above); `--policy <p>c --wire --tag _wire` cells are named `..._wire_pol<p>c`:
+
+```bash
+export PVI_PLATFORM=l40s_col SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1 && mkdir -p logs/$PVI_PLATFORM
+B=code/experiments/4_defence_benchmark/slurm/bench.sbatch
+for m in lenet5 vgg16; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m                             # the baseline (paper)
+  for p in cnn17c cnn18c; do
+    sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m --policy $p --wire --tag _wire
+  done
+done
+sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model gpt2 --seq 64 512 --modes C:int,C:fs --lams 128
+for p in R16c cnn17c cnn18c R64c; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model gpt2 --seq 64 512 --policy $p --wire --tag _wire --lams 128 \
+      --llm-tampers 10
+done
+for p in R16c cnn18c R64c; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model llama2-7b --seq 1 64 --policy $p --wire --tag _wire --lams 128
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model qwen3-4b --seq 8 64 --policy $p --wire --tag _wire --lams 128
+done
+python code/experiments/5_comparison/aggregate.py --platform l40s_col
+```
+
+and interactively on a GPU node (`cd code && export PYTHONPATH=$PWD/src`), the GPU tests (a GPU
+client and prover under `R8c`, among the plan tests) and the interleaved timing:
+
+```bash
+python -m pytest tests/test_plans.py tests/test_layouts.py tests/test_gpu_verifier.py -q -p no:cacheprovider -o addopts=""
+python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 15 --threads 8 \
+    --policy paper R16 R16c cnn17c cnn18c --wire off on --verifier-device cuda
+python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 15 --threads 8 \
+    --policy paper R16 R16c cnn18c --wire off on --verifier-device cpu
+```
