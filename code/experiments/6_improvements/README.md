@@ -92,12 +92,14 @@ What changed for a GPU client (all of it bit-exact, tested in `tests/test_gpu_ve
   GPU, `test_a_gpu_verifier_makes_one_round_trip_per_check` checks this in sync-debug mode.
 - **Columns**: the code checks of all ops are queued on the device before the host hashes the
   Merkle paths.  Columns of 16 KiB or more are hashed on threads, on the CPU too.
-- **Streaming verifier** (`pipeline.py`, optional: `Verifier(stream=True)`, or
-  `bench.py --verifier-impl stream --tag ..._stream`).  Claims travel as int32 in pinned
-  memory and are uploaded one op at a time on a side stream.  Both sides of each Freivalds
-  check are computed as soon as the claim arrives, and in mode C the Merkle checks run on a
-  host thread during derive.  One copy back per query decides it.  It gives the same verdicts
-  and labels as `run_query`, and records one `verify_total` per query.
+- **Streaming verifier** (`Verifier.verify_streaming`, with the wire formats of `pipeline.py`;
+  optional: `Verifier(stream=True)`, or `bench.py --verifier-impl stream --tag ..._stream`).
+  Claims travel as int32 in pinned memory and are uploaded one op at a time on a side stream.
+  Both sides of each Freivalds check are computed as soon as the claim arrives, and in mode C
+  the Merkle checks run on a host thread during derive.  One copy back per query decides it.
+  It gives the same verdicts and labels as `run_query`, and records one `verify_total` per
+  query.  It receives every message before it checks any, so a rejected query has also
+  received (and counts) `u` and the openings, which `run_query` stops asking for.
 
 `gpu_ab.py` runs three verifiers back to back on the same transcript, in one process:
 

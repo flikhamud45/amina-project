@@ -9,7 +9,8 @@
   is not modified, and a modified constant is copied again.
 * Deferred range checks (an exception after an out-of-range claim is its rejection) and inputs
   that are not int8-valued (the int8 right-hand side falls back).
-* The streaming verifier (``pvi.fullcheck.pipeline``): the verdicts and labels of ``run_query``
+* The streaming verifier (``Verifier.verify_streaming``, with the wire formats of
+  ``pvi.fullcheck.pipeline``): the verdicts and labels of ``run_query``
   on honest and tampered queries, its proof bytes on accepted ones, and its Fiat--Shamir
   transcript.
 
@@ -347,8 +348,8 @@ def test_products_of_inputs_that_are_not_int8_valued_fall_back(deferred, monkeyp
     inputs = v.derive(x, bad)
     assert v.check_products(bad, inputs, chis, us) is ref.check_products(v, bad, inputs, chis, us) is False
     wire = {"fc": pipeline.wire_claim(claims["fc"])}
-    assert pipeline.verify_streaming(v, x, wire, chis, us) is None
-    assert pipeline.verify_streaming(v, x, {"fc": pipeline.wire_claim(bad["fc"])}, chis, us) == "freivalds"
+    assert v.verify_streaming(x, wire, chis, us) is None
+    assert v.verify_streaming(x, {"fc": pipeline.wire_claim(bad["fc"])}, chis, us) == "freivalds"
 
 
 # -- the streaming verifier ------------------------------------------------------------------------
@@ -621,7 +622,6 @@ def _only_verdicts_come_back(monkeypatch):
             torch.cuda.set_sync_debug_mode("error")
 
     monkeypatch.setattr(proto, "_to_host", counted)
-    monkeypatch.setattr(pipeline, "_to_host", counted)
     torch.cuda.set_sync_debug_mode("error")
     try:
         yield calls
@@ -653,7 +653,7 @@ def test_a_gpu_verifier_makes_one_round_trip_per_check(kind, monkeypatch):
     assert len(calls) == 3
     wire = {k: pipeline.wire_claim(z.cpu(), pin=True) for k, z in claims.items()}
     wired = pipeline.wire_openings(openings)
-    assert pipeline.verify_streaming(v, xd, wire, chis, us, cols, wired) is None
+    assert v.verify_streaming(xd, wire, chis, us, cols, wired) is None
     with _only_verdicts_come_back(monkeypatch) as calls:
-        assert pipeline.verify_streaming(v, xd, wire, chis, us, cols, wired) is None
+        assert v.verify_streaming(xd, wire, chis, us, cols, wired) is None
     assert len(calls) == 1

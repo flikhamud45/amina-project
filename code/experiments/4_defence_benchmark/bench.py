@@ -68,7 +68,7 @@ MODELS = ROOT / "artifacts" / "fullcheck" / "models"
 LAMBDAS = (40, 80, 128)
 TAG = ""  # appended to every cell name (``--tag``), so variant runs never collide
 VDEV = "cpu"   # --verifier-device: where the client's checks run (the report: the CPU)
-IMPL = "default"   # --verifier-impl: "stream" = the streaming verifier (pvi.fullcheck.pipeline)
+IMPL = "default"   # --verifier-impl: "stream" = the streaming verifier (Verifier(stream=True))
 PLATFORM = ""  # ``--platform``: "" is the earlier RTX 2080 Ti run's root ``raw/`` (frozen)
 
 

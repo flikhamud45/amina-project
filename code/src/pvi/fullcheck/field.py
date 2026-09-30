@@ -29,6 +29,7 @@ __all__ = [
     "GENERATOR",
     "TWO_ADICITY",
     "to_field",
+    "min_max",
     "root_of_unity",
     "power_table",
     "ntt",
@@ -62,6 +63,16 @@ TWO_ADICITY = 27
 def to_field(values: torch.Tensor) -> torch.Tensor:
     """Reduce an integer tensor (any sign, |x| < 2**62) into ``[0, P)`` as int64."""
     return torch.remainder(values.to(torch.int64), P)
+
+
+def min_max(a: torch.Tensor) -> tuple[int, int]:
+    """Exact ``(min, max)`` of a non-empty integer tensor: numpy's reductions on the CPU
+    (about 2x torch's there), ``aminmax`` elsewhere (one device-to-host copy)."""
+    if a.device.type == "cpu":
+        n = a.numpy()
+        return int(n.min()), int(n.max())
+    lo, hi = torch.stack(torch.aminmax(a)).tolist()
+    return lo, hi
 
 
 def root_of_unity(n: int) -> int:
@@ -187,8 +198,8 @@ def _reduced(a: torch.Tensor) -> torch.Tensor:
     """``to_field(a)``; on the CPU the (integer-division) remainder pass is skipped when
     one min/max pass shows ``a`` is already in ``[0, P)``, where it is the identity."""
     if a.device.type == "cpu" and a.dtype == torch.int64 and a.numel():
-        n = a.numpy()
-        if n.min() >= 0 and n.max() < P:
+        lo, hi = min_max(a)
+        if lo >= 0 and hi < P:
             return a
     return to_field(a)
 

@@ -41,6 +41,7 @@ import secrets
 import struct
 import time
 import weakref
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -49,9 +50,10 @@ import torch
 from .commitment import (HASH_BYTES, CommitmentPublic, WeightCommitment, codeword_at, column_rows, map_threaded,
                          row_leaves, verify_multiproofs)
 from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
-                    int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64,
+                    int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64, min_max,
                     small_matmul_mod, to_field)
 from .graph import IntGraph, MatOp
+from .pipeline import ClaimUploads, wire_claim, wire_openings
 
 __all__ = [
     "SecurityParams",
@@ -297,21 +299,11 @@ def _rhs(op: MatOp, u: torch.Tensor, xin: torch.Tensor) -> torch.Tensor:
     return out
 
 
-def _min_max(a: torch.Tensor) -> tuple[int, int]:
-    """Exact ``(min, max)`` of a non-empty integer tensor: numpy's reductions on the CPU
-    (about 2x torch's there), ``aminmax`` elsewhere."""
-    if a.device.type == "cpu":
-        n = a.numpy()
-        return int(n.min()), int(n.max())
-    lo, hi = torch.stack(torch.aminmax(a)).tolist()     # one device-to-host copy
-    return lo, hi
-
-
 def _in_range(z: torch.Tensor, bound: int) -> bool:
     """``-bound < z < bound`` everywhere (without abs(), which overflows on INT64_MIN)."""
     if z.numel() == 0:
         return True
-    lo, hi = _min_max(z)
+    lo, hi = min_max(z)
     return lo > -bound and hi < bound
 
 
@@ -319,7 +311,7 @@ def _in_field(a: torch.Tensor) -> bool:
     """``0 <= a < P`` everywhere."""
     if a.numel() == 0:
         return True
-    lo, hi = _min_max(a)
+    lo, hi = min_max(a)
     return lo >= 0 and hi < P
 
 
@@ -416,6 +408,9 @@ def _to_host(flags: list[torch.Tensor]) -> list[bool]:
     return torch.cat([f.reshape(-1) for f in flags]).tolist() if flags else []
 
 
+_NOT_INT8 = object()     # the streaming verifier: a weight op's input was not int8-valued, verify again
+
+
 def _to_device(t: torch.Tensor, device) -> torch.Tensor:
     """``t`` on ``device``; a host tensor bound for a GPU goes through pinned memory, so the copy
     does not wait for the device."""
@@ -448,7 +443,7 @@ class Verifier:
     weights: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = field(default_factory=dict)
     lean: bool = False
     device: str = "cpu"      # "cuda" / "cuda:1": a client with a GPU (Merkle hashing stays on the CPU)
-    stream: bool = False     # run_query with the streaming verifier (pvi.fullcheck.pipeline): same verdicts
+    stream: bool = False     # run_query checks with verify_streaming (the same verdicts and labels)
     _pre: dict = field(default_factory=dict)
     _wdev: dict = field(default_factory=dict)   # mode K on a GPU: the weights stay on the device
     _ranged: dict = field(default_factory=dict)  # name -> (weakref, _version) of the claim derive() range-checked
@@ -764,6 +759,104 @@ class Verifier:
         merkle = self._merkle(good, cols, openings, rows)
         return _columns_verdict([not bad for bad in _to_host(flags)], merkle, n_ok, exc, len(mats))
 
+    # -- the streaming verifier -------------------------------------------------------------
+    # The same checks, arranged for a GPU client (the wire formats and the claim uploads are in
+    # pvi.fullcheck.pipeline).  Each weight op is checked as soon as its claim is on the device:
+    # its range check, both sides of Freivalds' check (chi^T Z, and u^T [X ; 1] once per input
+    # tensor shared by q/k/v or gate/up; int8 tensor cores where int8_ok), then its fold into the
+    # next op's input.  Nothing is kept for a later products pass and every tensor is freed after
+    # its last reader, so the device holds a window of claims and one block's activations, not
+    # the whole proof.  In mode C the column code checks are queued on the device first and the
+    # Merkle checks run on a host thread while the device derives.  Every verdict stays on the
+    # device until ONE copy decides the query.  Only the verifier's local computations are
+    # reordered, each a function of messages it already holds.
+
+    def verify_streaming(self, x: torch.Tensor, claims: dict, chis: dict, us: dict,
+                         cols: dict | None = None, openings: dict | None = None) -> str | None:
+        """``None`` to accept, else the check that rejects, with ``run_query``'s labels: the verdict
+        of :meth:`derive`, :meth:`check_products` and (with ``openings``) :meth:`check_columns` on
+        these messages.  ``claims`` from :func:`pipeline.wire_claim`, ``openings`` from
+        :func:`pipeline.wire_openings`."""
+        reason = self._streamed(x, claims, chis, us, cols, openings, int8=True)
+        if reason is _NOT_INT8:        # (the graphs here clamp every weight op's input to int8)
+            reason = self._streamed(x, claims, chis, us, cols, openings, int8=False)
+        return reason
+
+    def _streamed(self, x, claims, chis, us, cols, openings, *, int8: bool):
+        dev = torch.device(self.device)
+        mats = self.graph.mat_ops
+        index = {op.name: i for i, op in enumerate(mats)}
+        us = {k: _to_device(v, dev) if torch.is_tensor(v) else v for k, v in us.items()}
+        n_u, u_exc = _leading_passes(mats, lambda op: self._u_ok(op, us))
+        reads = _input_bindings(self.graph)
+        sharing: dict[tuple, list[MatOp]] = {}     # linear ops reading one input tensor: one right-hand side
+        for op in mats[:n_u]:
+            if op.layout == "linear":
+                sharing.setdefault(reads[op.name], []).append(op)
+        right: dict = {}
+        x_flags: list = []
+        flags: list = []
+
+        def visit(op: MatOp, z: torch.Tensor, xin: torch.Tensor) -> None:
+            if index[op.name] >= n_u:          # the verdict no longer depends on this product
+                return
+            if op.name not in right:
+                group = sharing.get(reads[op.name], [op]) if op.layout == "linear" else [op]
+                out, unchecked = self._rhs_all(group, {o.name: xin for o in group}, us, int8=int8)
+                right.update(out)
+                x_flags.extend(unchecked)
+            left = self._signed_lhs({op.name: (chis[op.name], z)})[op.name]
+            flags.append(_disagrees([(us[op.name], left, right.pop(op.name))]))
+
+        with ThreadPoolExecutor(1) as host:
+            # the column checks compare with Enc(u): only started when every u is well formed (with
+            # one that is not, the verdict is freivalds or u_exc, and the columns are never looked at)
+            well_formed = openings is not None and n_u == len(mats)
+            columns = self._start_columns(chis, us, cols, openings, host) if well_formed else None
+            derived = self._derive(_to_device(x, dev), ClaimUploads(claims, [op.name for op in mats], dev),
+                                   dtype=torch.int32, visit=visit)
+            if derived is None:
+                return "range_or_shape"
+            pending = derived[1]
+            got = _to_host(pending + x_flags + flags + (columns[2] if columns else []))   # the one round trip
+            a, b, c = len(pending), len(pending) + len(x_flags), len(pending) + len(x_flags) + len(flags)
+            if any(got[:a]):
+                return "range_or_shape"
+            if any(got[a:b]):
+                return _NOT_INT8
+            if any(got[b:c]) or (u_exc is None and n_u < len(mats)):
+                return "freivalds"
+            if u_exc is not None:
+                raise u_exc
+            if columns is None:
+                return None
+            n_ok, exc, _, merkle = columns
+            return _columns_verdict([not bad for bad in got[c:]], merkle.result(), n_ok, exc, len(mats))
+
+    def _start_columns(self, chis, us, cols, openings, host: ThreadPoolExecutor):
+        """The column checks, started: ``(n_ok, exception, code flags on the device, Merkle future)``
+        for the leading ops whose openings are well formed."""
+        mats = self.graph.mat_ops
+        n_ok, exc = _leading_passes(mats, lambda op: self._columns_shape_ok(op, us, cols, openings, wire=True))
+        good = mats[:n_ok]
+        rows = {op.name: openings[op.name][0].numpy() for op in good}
+        dev = torch.device(self.device)
+        on_dev = _upload_rows(rows, dev) if dev.type != "cpu" else {op.name: openings[op.name][0] for op in good}
+        code_flags = self._code_flags(good, chis, us, cols, {name: r.T for name, r in on_dev.items()})
+        return n_ok, exc, code_flags, host.submit(self._merkle, good, cols, openings, rows)
+
+
+def _input_bindings(graph: IntGraph) -> dict[str, tuple[str, int]]:
+    """Each weight op's input as ``(name, index of the op that last bound it, or -1 for the
+    query)``: the tensor it reads, as a key (a graph may bind one name more than once)."""
+    writer: dict[str, int] = {}
+    out = {}
+    for i, op in enumerate(graph.ops):
+        if isinstance(op, MatOp):
+            out[op.name] = (op.inputs[0], writer.get(op.inputs[0], -1))
+        writer[op.output] = i
+    return out
+
 
 def _sync(device) -> None:
     device = torch.device(device)
@@ -783,36 +876,100 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
     ch.absorb(b"x", _tensor_blob(x.cpu()))
 
 
+# -- one query ---------------------------------------------------------------------------
+# The prover's messages, each challenge drawn after the message it follows (under Fiat--Shamir
+# from the transcript that absorbed it), each message's proof bytes counted and its prover time
+# recorded in ``out``.  run_query checks each message as it arrives and stops asking at the
+# first failing check; the streaming verifier receives them all, then checks.
+
+def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, out: dict,
+                    forward_kwargs: dict, send=None) -> dict:
+    """The claims (``send``: the wire format they travel in), absorbed with the statement."""
+    t = out["timings"]
+    _sync(prover.device)
+    t0 = time.perf_counter()
+    claims = prover.claims(x, send=send, **forward_kwargs)
+    _sync(prover.device)
+    t["prove_forward"] = time.perf_counter() - t0
+    out["bytes"] = {"claims": sum(z.numel() for z in claims.values()) * 4, "u": 0, "columns": 0, "paths": 0}
+    t0 = time.perf_counter()
+    if verifier.params.fiat_shamir:
+        _absorb_statement(ch, verifier, x)
+        for k in sorted(claims):       # int32 wire claims hash as the int64 ones
+            ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
+    t["fs_hash"] = time.perf_counter() - t0
+    return claims
+
+
+def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, out: dict) -> tuple[dict, dict]:
+    """``(chi, u)``: fresh ``chi`` and the prover's ``u`` (mode C), the verifier's own (K), or the
+    precomputed pair (Kpre)."""
+    p, t = verifier.params, out["timings"]
+    mats = verifier.graph.mat_ops
+    if verifier.mode == "Kpre":
+        t["prove_fold"] = t["verify_fold"] = 0.0
+        return ({op.name: verifier._pre[op.name][0] for op in mats},
+                {op.name: verifier._pre[op.name][1] for op in mats})
+    vdev = torch.device(verifier.device)
+    chis = {op.name: ch.folding(op.name, op.n_rows, p.reps).to(vdev) for op in mats}
+    _sync(prover.device)
+    t0 = time.perf_counter()
+    if verifier.mode == "C":
+        us = prover.fold(chis)
+        _sync(prover.device)
+        t["prove_fold"] = time.perf_counter() - t0
+        t["verify_fold"] = 0.0
+        out["bytes"]["u"] = sum(u.numel() for u in us.values()) * 4
+    else:  # K: the verifier folds its own copy of the weights
+        us = {op.name: verifier._fold_local(op, chis[op.name]) for op in mats}
+        _sync(vdev)
+        t["verify_fold"] = time.perf_counter() - t0
+        t["prove_fold"] = 0.0
+    return chis, us
+
+
+def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, out: dict,
+                  package=None) -> tuple[dict, dict]:
+    """Mode C: ``u`` absorbed, the column indices, and the openings (``package``: the wire format
+    they travel in)."""
+    p, t = verifier.params, out["timings"]
+    if p.fiat_shamir:
+        t0 = time.perf_counter()
+        for k in sorted(us):
+            ch.absorb(b"u/" + k.encode(), _tensor_blob(us[k]))
+        t["fs_hash"] += time.perf_counter() - t0
+    mats = verifier.graph.mat_ops
+    cols = {op.name: ch.columns(op.name, verifier.publics[op.name].n_points, p.columns) for op in mats}
+    _sync(prover.device)
+    t0 = time.perf_counter()
+    opened = prover.open(cols)
+    _sync(prover.device)
+    openings = opened if package is None else package(opened)
+    t["prove_open"] = time.perf_counter() - t0
+    out["bytes"]["columns"] = sum(o[0].numel() for o in opened.values()) * 4
+    out["bytes"]["paths"] = sum(len(proof) * HASH_BYTES for _, proof in opened.values())
+    return cols, openings
+
+
 def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
               forward_kwargs: dict | None = None) -> dict:
     """One full interaction.  Returns acceptance, the rejecting check, timings (s)
-    and proof bytes.  With Fiat--Shamir, ``fs_hash`` is paid by both parties.  A verifier
-    with ``stream=True`` checks with the streaming verifier (:mod:`pvi.fullcheck.pipeline`):
-    the same verdicts, with the verifier's overlapped work timed as one ``verify_total``."""
+    and proof bytes.  With Fiat--Shamir, ``fs_hash`` is paid by both parties.
+
+    A verifier with ``stream=True`` receives every message (the claims and openings in the wire
+    formats of :mod:`pvi.fullcheck.pipeline`), then checks them with :meth:`Verifier.verify_streaming`:
+    the same verdict and label, its overlapped work timed as one ``verify_total``.  An accepted
+    query has the same proof bytes and Fiat--Shamir transcript; a rejected one has also received
+    (counted, and absorbed) the messages this function no longer asks for once a check fails --
+    in mode C, ``u`` and the openings -- so the transcript here is a prefix of the streaming one."""
+    ch = Challenger(fiat_shamir=verifier.params.fiat_shamir, seed=seed)
+    out = {"accepted": False, "rejected_at": None, "timings": {}}
     if verifier.stream:
-        from .pipeline import run_query_streaming
-        return run_query_streaming(prover, verifier, x, seed=seed, forward_kwargs=forward_kwargs)
-    p = verifier.params
-    mode = verifier.mode
-    ch = Challenger(fiat_shamir=p.fiat_shamir, seed=seed)
-    t: dict[str, float] = {}
-
-    _sync(prover.device)
-    t0 = time.perf_counter()
-    claims = prover.claims(x, **(forward_kwargs or {}))
-    _sync(prover.device)
-    t["prove_forward"] = time.perf_counter() - t0
-
-    out = {"accepted": False, "rejected_at": None, "timings": t}
-    b_claims = sum(z.numel() for z in claims.values()) * 4
-    out["bytes"] = {"claims": b_claims, "u": 0, "columns": 0, "paths": 0}
-
-    t0 = time.perf_counter()
-    if p.fiat_shamir:
-        _absorb_statement(ch, verifier, x)
-        for k in sorted(claims):
-            ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
-    t["fs_hash"] = time.perf_counter() - t0
+        out["rejected_at"] = _run_streaming(prover, verifier, x, ch, out, forward_kwargs or {})
+        out["accepted"] = out["rejected_at"] is None
+        return out
+    t = out["timings"]
+    claims = _claims_message(prover, verifier, x, ch, out, forward_kwargs or {})
 
     vdev = torch.device(verifier.device)
     x_v, claims_v = x.cpu(), claims
@@ -831,32 +988,12 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
         out["rejected_at"] = "range_or_shape"
         return out
 
-    mats = verifier.graph.mat_ops
-    if mode == "Kpre":
-        chis = {op.name: verifier._pre[op.name][0] for op in mats}
-        us = {op.name: verifier._pre[op.name][1] for op in mats}
-        t["prove_fold"] = t["verify_fold"] = 0.0
-    else:
-        chis = {op.name: ch.folding(op.name, op.n_rows, p.reps).to(vdev) for op in mats}
-        _sync(prover.device)
+    chis, us = _fold_message(prover, verifier, ch, out)
+    if verifier.mode == "C" and vdev.type != "cpu":
         t0 = time.perf_counter()
-        if mode == "C":
-            us = prover.fold(chis)
-            _sync(prover.device)
-            t["prove_fold"] = time.perf_counter() - t0
-            t["verify_fold"] = 0.0
-        else:  # K: the verifier folds its own copy of the weights
-            us = {op.name: verifier._fold_local(op, chis[op.name]) for op in mats}
-            _sync(vdev)
-            t["verify_fold"] = time.perf_counter() - t0
-            t["prove_fold"] = 0.0
-    if mode == "C":
-        out["bytes"]["u"] = sum(u.numel() for u in us.values()) * 4
-        if vdev.type != "cpu":
-            t0 = time.perf_counter()
-            us = {k: v.to(vdev) for k, v in us.items()}
-            _sync(vdev)
-            t["verify_upload"] += time.perf_counter() - t0
+        us = {k: v.to(vdev) for k, v in us.items()}
+        _sync(vdev)
+        t["verify_upload"] += time.perf_counter() - t0
 
     t0 = time.perf_counter()
     ok = verifier.check_products(claims_v, inputs, chis, us)
@@ -866,20 +1003,8 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
         out["rejected_at"] = "freivalds"
         return out
 
-    if mode == "C":
-        if p.fiat_shamir:
-            t0 = time.perf_counter()
-            for k in sorted(us):
-                ch.absorb(b"u/" + k.encode(), _tensor_blob(us[k]))
-            t["fs_hash"] += time.perf_counter() - t0
-        cols = {op.name: ch.columns(op.name, verifier.publics[op.name].n_points, p.columns) for op in mats}
-        _sync(prover.device)
-        t0 = time.perf_counter()
-        openings = prover.open(cols)
-        _sync(prover.device)
-        t["prove_open"] = time.perf_counter() - t0
-        out["bytes"]["columns"] = sum(o[0].numel() for o in openings.values()) * 4
-        out["bytes"]["paths"] = sum(len(proof) * HASH_BYTES for _, proof in openings.values())
+    if verifier.mode == "C":
+        cols, openings = _open_message(prover, verifier, ch, us, out)
         t0 = time.perf_counter()
         reason = verifier.check_columns(chis, us, cols, openings)
         _sync(vdev)
@@ -889,3 +1014,23 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
             return out
     out["accepted"] = True
     return out
+
+
+def _run_streaming(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, out: dict,
+                   forward_kwargs: dict) -> str | None:
+    """:func:`run_query` with ``stream=True``: every message, then :meth:`Verifier.verify_streaming`.
+    ``verify_total`` times the verifier's work from the moment it holds the messages (its uploads
+    included)."""
+    vdev = torch.device(verifier.device)
+    claims = _claims_message(prover, verifier, x, ch, out, forward_kwargs,
+                             send=lambda z: wire_claim(z, pin=vdev.type == "cuda"))
+    chis, us = _fold_message(prover, verifier, ch, out)
+    cols = openings = None
+    if verifier.mode == "C":
+        cols, openings = _open_message(prover, verifier, ch, us, out, package=wire_openings)
+    _sync(vdev)
+    t0 = time.perf_counter()
+    reason = verifier.verify_streaming(x, claims, chis, us, cols, openings)
+    _sync(vdev)
+    out["timings"]["verify_total"] = time.perf_counter() - t0
+    return reason

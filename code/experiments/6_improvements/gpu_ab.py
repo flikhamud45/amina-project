@@ -14,7 +14,7 @@ weights and the openings), ``--reps`` times each, alternating which goes first:
           memory, and ``u`` in mode C), derive, check_products, check_columns (mode C)
   new     this checkout's verifier, the same calls (int32 attention, device-resident constants,
           deferred verdicts, int8 products, batched device column checks)
-  stream  this checkout's streaming verifier (``pipeline.verify_streaming``) on the int32 wire
+  stream  this checkout's streaming verifier (``Verifier.verify_streaming``) on the int32 wire
           claims in pinned memory: from the first upload to the verdict
 
 Before timing, base and new must derive identical tensors (compared on the device), and one
@@ -96,8 +96,8 @@ def run_default(v, tr: dict, mode: str, dev, keep: bool = False):
 
 
 def run_stream(v, tr: dict, mode: str, dev, keep: bool = False):
-    total, label = timed(lambda: pipeline.verify_streaming(v, tr["x"], tr["wire"], tr["chis"], tr["us"],
-                                                           tr.get("cols"), tr.get("wire_openings")), dev)
+    total, label = timed(lambda: v.verify_streaming(tr["x"], tr["wire"], tr["chis"], tr["us"],
+                                                    tr.get("cols"), tr.get("wire_openings")), dev)
     return {"total": total}, label, None
 
 
