@@ -54,6 +54,8 @@ __all__ = [
     "CommitmentPublic",
     "WeightCommitment",
     "column_leaves",
+    "transposed_leaves",
+    "TransposedCommitment",
     "group_leaf",
     "GroupPublic",
     "GroupCommitment",
@@ -331,13 +333,16 @@ def _np_codeword_at(u: np.ndarray, n_points: int, columns: np.ndarray, s: int, g
 
 @dataclass(frozen=True)
 class CommitmentPublic:
-    """What a verifier holds for one committed matrix: no weights at all."""
+    """What a verifier holds for one committed matrix: no weights at all.  ``members`` names the
+    weight ops of a col-layout matrix (:class:`TransposedCommitment`), in their stacking order;
+    empty for a weight op's own ``[W | b]`` (the row layout)."""
 
     tag: bytes
     root: bytes
     n_rows: int
     row_length: int
     n_points: int
+    members: tuple[str, ...] = ()
 
     @property
     def depth(self) -> int:
@@ -356,20 +361,33 @@ def _encoded_rows(weight: torch.Tensor, bias: torch.Tensor | None, n_points: int
         del rows
 
 
-def column_leaves(tag: bytes, weight: torch.Tensor, bias: torch.Tensor | None, n_points: int, *,
-                  device: torch.device | str = "cpu", row_chunk: int = 256,
-                  max_host_bytes: int | None = None) -> list[bytes]:
-    """The :func:`column_leaf` digest of every column of ``Enc([W | b])`` (length ``n_points``).
+def _transposed_rows(matrices: list, n_points: int, device, row_chunk: int):
+    """``(r0, E[r0:r0 + c])``: the codeword rows of ``[A_1 ; A_2 ; ...]^T`` for ``matrices = [(W_i, b_i)]``
+    (``A_i = [W_i | b_i]`` stacked along their rows): one row per input coordinate, then the
+    biases' row, as host int32 arrays ``[c, n_points]``, a few rows at a time."""
+    k = matrices[0][0].shape[1]
+    row_chunk = max(1, min(row_chunk, (1 << 25) // n_points))
+    for r0 in range(0, k, row_chunk):
+        rows = torch.cat([w[:, r0:r0 + row_chunk].T for w, _ in matrices], 1).to(device=device, dtype=torch.int64)
+        yield r0, rs_encode(rows, n_points).to(torch.int32).cpu().numpy()
+        del rows
+    if matrices[0][1] is not None:
+        rows = torch.cat([b for _, b in matrices]).to(device=device, dtype=torch.int64)[None, :]
+        yield k, rs_encode(rows, n_points).to(torch.int32).cpu().numpy()
 
-    The codeword is gathered column-major on the host (``4 N n_points`` bytes) and each column
+
+def _digests(tag: bytes, blocks, n_rows: int, n_points: int, max_host_bytes: int | None) -> list[bytes]:
+    """The :func:`column_leaf` digest of every column of a codeword matrix of ``n_rows`` rows, given
+    as blocks ``(r0, rows)`` of its codeword rows (in order).
+
+    The codeword is gathered column-major on the host (``4 n_rows n_points`` bytes) and each column
     hashed once -- unless that exceeds ``max_host_bytes``: then every column keeps a running
     SHA-256 that is fed one block of at most ``max_host_bytes`` of codeword rows at a time, so a
-    long codeword of a tall matrix (a vocabulary-sized LM head at a high rate) needs no buffer of
+    long codeword (a vocabulary-sized LM head at a high rate, in either layout) needs no buffer of
     its whole encoding.  Both hash the same bytes in the same order: the same digests."""
-    n_rows = weight.shape[0]
     if max_host_bytes is None or 4 * n_rows * n_points <= max_host_bytes:
         cols = np.empty((n_points, n_rows), dtype="<u4")
-        for r0, block in _encoded_rows(weight, bias, n_points, device, row_chunk):
+        for r0, block in blocks:
             cols[:, r0:r0 + block.shape[0]] = block.T
         return [column_leaf(tag, c, cols[c]) for c in range(n_points)]
     hashes = [hashlib.sha256(b"pvi/col" + tag + int(c).to_bytes(8, "big")) for c in range(n_points)]
@@ -382,13 +400,32 @@ def column_leaves(tag: bytes, weight: torch.Tensor, bias: torch.Tensor | None, n
         for h, col in zip(hashes, cols):
             h.update(col)
 
-    for _, block in _encoded_rows(weight, bias, n_points, device, row_chunk):
+    for _, block in blocks:
         pending.append(block)
         if sum(b.shape[0] for b in pending) >= block_rows:
             flush()
     if pending:
         flush()
     return [h.digest() for h in hashes]
+
+
+def column_leaves(tag: bytes, weight: torch.Tensor, bias: torch.Tensor | None, n_points: int, *,
+                  device: torch.device | str = "cpu", row_chunk: int = 256,
+                  max_host_bytes: int | None = None) -> list[bytes]:
+    """The :func:`column_leaf` digest of every column of ``Enc([W | b])`` (length ``n_points``),
+    streamed as :func:`_digests` says."""
+    return _digests(tag, _encoded_rows(weight, bias, n_points, device, row_chunk), weight.shape[0], n_points,
+                    max_host_bytes)
+
+
+def transposed_leaves(tag: bytes, matrices: list, n_points: int, *, device: torch.device | str = "cpu",
+                      row_chunk: int = 256, max_host_bytes: int | None = None) -> list[bytes]:
+    """The :func:`column_leaf` digest of every column of ``Enc([A_1 ; A_2 ; ...]^T)`` for ``matrices =
+    [(W_i, b_i)]`` (``n_points`` columns of ``K (+1)`` entries: position ``c`` of the codeword of each
+    input coordinate's weights over all the stacked outputs, then of the biases'), streamed as
+    :func:`_digests` says."""
+    n_rows = matrices[0][0].shape[1] + (1 if matrices[0][1] is not None else 0)
+    return _digests(tag, _transposed_rows(matrices, n_points, device, row_chunk), n_rows, n_points, max_host_bytes)
 
 
 @dataclass
@@ -432,6 +469,11 @@ class WeightCommitment:
     def row_length(self) -> int:
         return self.weight.shape[1] + (1 if self.bias is not None else 0)
 
+    def leaves(self, device: torch.device | str = "cpu", max_host_bytes: int | None = None) -> list[bytes]:
+        """The :func:`column_leaf` digest of every column of its codeword matrix."""
+        return column_leaves(self.tag, self.weight, self.bias, self.n_points, device=device,
+                             max_host_bytes=max_host_bytes)
+
     def fold(self, chi: torch.Tensor, device: torch.device | str = "cpu", row_chunk: int = 8192,
              weight: torch.Tensor | None = None) -> torch.Tensor:
         """``u = chi @ A mod P`` for challenge rows ``chi`` of shape ``[r, N]``.
@@ -472,6 +514,65 @@ class WeightCommitment:
         return self.columns_at(v, device, weight).cpu(), multiproof(self.tree, columns.tolist())
 
 
+@dataclass
+class TransposedCommitment:
+    """Prover side of a col-layout matrix: ``[A_1 ; A_2 ; ...]^T`` for the weight ops ``ops``
+    (``A_i = [W_i | b_i]``, ``W_i`` int8 ``[N_i, K]``, ``b_i`` int64 ``[N_i]``, stacked along their
+    rows in this order), whose ``K`` rows (and the biases' row) of length ``sum N_i`` are encoded at
+    ``n_points``.  Always a member of a :class:`GroupCommitment`, whose tree binds its columns; an
+    opened column is recomputed from the weights (``sum_i W_i^T V_i``), no encoding is stored."""
+
+    tag: bytes
+    ops: tuple[str, ...]
+    weights: list[torch.Tensor]
+    biases: list[torch.Tensor] | None
+    n_points: int
+
+    @classmethod
+    def member(cls, tag: bytes, matrices: dict[str, tuple[torch.Tensor, torch.Tensor | None]],
+               n_points: int) -> "TransposedCommitment":
+        """``matrices``: ``{op name: (W, b)}`` in stacking order (all with biases, or none)."""
+        pairs = list(matrices.values())
+        biased = {b is not None for _, b in pairs}
+        if len(biased) != 1 or len({w.shape[1] for w, _ in pairs}) != 1:
+            raise ValueError("a col matrix stacks matrices of one row length, all with a bias or none")
+        return cls(tag=tag, ops=tuple(matrices), weights=[w.to(torch.int8).cpu() for w, _ in pairs],
+                   biases=[b.cpu().to(torch.int64) for _, b in pairs] if biased.pop() else None, n_points=n_points)
+
+    @property
+    def n_rows(self) -> int:
+        return self.weights[0].shape[1] + (1 if self.biases is not None else 0)
+
+    @property
+    def row_length(self) -> int:
+        return sum(w.shape[0] for w in self.weights)
+
+    @property
+    def public(self) -> CommitmentPublic:
+        """The verifier's view (the root is ``b""``: its group holds the root)."""
+        return CommitmentPublic(self.tag, b"", self.n_rows, self.row_length, self.n_points, self.ops)
+
+    def leaves(self, device: torch.device | str = "cpu", max_host_bytes: int | None = None) -> list[bytes]:
+        """The :func:`column_leaf` digest of every column of its codeword matrix."""
+        matrices = list(zip(self.weights, self.biases or [None] * len(self.weights)))
+        return transposed_leaves(self.tag, matrices, self.n_points, device=device, max_host_bytes=max_host_bytes)
+
+    def columns_at(self, v: torch.Tensor, device: torch.device | str = "cpu",
+                   weights: list[torch.Tensor] | None = None) -> torch.Tensor:
+        """``E'[:, C]`` (``[K (+1), t]``) on ``device`` from the Vandermonde columns ``v = V[:, C]`` (at
+        least ``row_length`` rows): ``sum_i W_i^T v_i`` over each op's rows ``v_i`` of ``v``, then the
+        biases' row; ``weights`` may hold device-resident copies of the ops' int8 weights, in op order."""
+        cols, off = None, 0
+        for w in self.weights if weights is None else weights:
+            part = small_matmul_mod(w.to(device).T, v[off:off + w.shape[0]])
+            cols = part if cols is None else (cols + part) % P
+            off += w.shape[0]
+        if self.biases is not None:
+            b = to_field(torch.cat(self.biases).to(device))
+            cols = torch.cat([cols, field_matmul_mod(b[None, :], v[:off])], 0)
+        return cols
+
+
 # -- shared trees ---------------------------------------------------------------------------
 
 def group_leaf(tag: bytes, index: int, member_digests) -> bytes:
@@ -487,7 +588,7 @@ def group_leaf(tag: bytes, index: int, member_digests) -> bytes:
 @dataclass(frozen=True)
 class GroupPublic:
     """What a verifier holds for one group of a commitment plan: the root of the tree over all its
-    members' columns and the member op names, in leaf order (their shapes are their own
+    members' columns and the member matrix names, in leaf order (their shapes are their own
     :class:`CommitmentPublic`, whose root is empty)."""
 
     tag: bytes
@@ -505,37 +606,40 @@ class GroupCommitment:
     """Several matrices of one codeword length under ONE Merkle tree: leaf ``c`` is the
     :func:`group_leaf` of their columns ``c``.  Member ``name`` is committed under the tag
     ``name.encode()``, as a matrix on its own tree is, so its column digests are those of its own
-    commitment.  One set of column indices opens every member, with ONE multiproof."""
+    commitment.  A member is a weight op's ``[W | b]`` (:class:`WeightCommitment`, the row layout)
+    or a col-layout matrix (:class:`TransposedCommitment`).  One set of column indices opens every
+    member, with ONE multiproof."""
 
     tag: bytes
-    members: dict[str, WeightCommitment]     # in leaf order
+    members: dict[str, WeightCommitment | TransposedCommitment]     # in leaf order
     n_points: int
     tree: MerkleTree = field(repr=False)
 
     @classmethod
-    def build(cls, tag: bytes, matrices: dict[str, tuple[torch.Tensor, torch.Tensor | None]], n_points: int, *,
+    def build(cls, tag: bytes, members: dict[str, WeightCommitment | TransposedCommitment], *,
               device: torch.device | str = "cpu", max_host_bytes: int = 1 << 28) -> "GroupCommitment":
-        """``matrices``: ``{name: (W, b)}`` in leaf order.  Each member's column digests are fed
-        into ``n_points`` running leaf hashes as soon as they are computed, so no member's
-        encoding outlives its own digests (and a tall one is hashed in blocks of
-        ``max_host_bytes``, see :func:`column_leaves`)."""
+        """``members``: ``{name: its member commitment}`` (``WeightCommitment.member`` or
+        ``TransposedCommitment.member``, all of one codeword length), in leaf order.  Each member's
+        column digests are fed into the running leaf hashes as soon as they are computed, so no
+        member's encoding outlives its own digests (and a tall one is hashed in blocks of
+        ``max_host_bytes``, see :func:`_digests`)."""
+        n_points = next(iter(members.values())).n_points
+        if any(m.n_points != n_points for m in members.values()):
+            raise ValueError("the members of a group share one codeword length")
         leaves = [hashlib.sha256(b"pvi/group" + tag + int(c).to_bytes(8, "big")) for c in range(n_points)]
-        members = {}
-        for name, (w, b) in matrices.items():
-            m = WeightCommitment.member(name.encode(), w, b, n_points)
-            for h, d in zip(leaves, column_leaves(m.tag, m.weight, m.bias, n_points, device=device,
-                                                  max_host_bytes=max_host_bytes)):
+        for m in members.values():
+            for h, d in zip(leaves, m.leaves(device, max_host_bytes)):
                 h.update(d)
-            members[name] = m
-        return cls(tag=tag, members=members, n_points=n_points, tree=MerkleTree([h.digest() for h in leaves]))
+        return cls(tag=tag, members=dict(members), n_points=n_points, tree=MerkleTree([h.digest() for h in leaves]))
 
     @property
     def public(self) -> GroupPublic:
         return GroupPublic(self.tag, self.tree.root, self.n_points, tuple(self.members))
 
     def open(self, columns: torch.Tensor, device: torch.device | str = "cpu", weights: list | None = None):
-        """Every member's ``E[:, columns]``, stacked in member order (``[sum N, t]``), and one multiproof;
-        ``weights`` may hold device-resident copies of the members' int8 weights, in member order."""
+        """Every member's ``E[:, columns]``, stacked in member order (``[sum n_rows, t]``), and one
+        multiproof; ``weights`` may hold device-resident copies of the members' int8 weights, in member
+        order (for a col-layout member, the list of its ops' weights)."""
         v = vandermonde_columns(self.n_points, max(m.row_length for m in self.members.values()), columns, device)
         cols = [m.columns_at(v, device, None if weights is None else weights[i])
                 for i, m in enumerate(self.members.values())]

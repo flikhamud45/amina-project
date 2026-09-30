@@ -12,7 +12,8 @@ commitment (Ligero-style).  Modules:
 * ``protocol``   -- prover, verifier, security parameters (modes C, K, Kpre);
 * ``plans``      -- commitment plans for mode C (optional: ``commit_graph(..., policy=)``): exact
                     per-op column counts, Merkle trees shared by matrices of one codeword length,
-                    per-op codeword lengths;
+                    per-op codeword lengths and (the ``c`` policies) per-op layouts: linear ops
+                    committed transposed, those that read one tensor in one matrix;
 * ``pipeline``   -- the wire formats and claim uploads of the streaming verifier for a GPU
                     client (optional: ``Verifier(stream=True)``, ``Verifier.verify_streaming``);
 * ``claimcodec`` -- the compact, lossless encoding of the proof (optional: ``run_query(wire=True)``);

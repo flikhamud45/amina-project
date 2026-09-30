@@ -32,6 +32,12 @@ class OpShape:
     n_rows: int
     row_length: int
     layout: str = "linear"       # "embed" for the lookup tables (as ``MatOp.layout``)
+    input: str | None = None     # the tensor it reads (ops reading one tensor may share a col matrix)
+
+    @property
+    def inputs(self) -> tuple[str | None]:
+        """As ``MatOp.inputs`` (``None``: unknown, never shared)."""
+        return (self.input,)
 
     def n_points(self, rate: int) -> int:
         return rate * next_pow2(self.row_length)
@@ -43,21 +49,23 @@ def decoder_shapes(cfg, n_layers: int | None = None) -> list[OpShape]:
     d, dh, hq, hkv, f = cfg.d_model, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads, cfg.d_ff
     b = 1 if cfg.bias else 0
     e = getattr(cfg, "embed_dim", 0) or d
-    ops = [OpShape("embed", e, cfg.vocab, "embed")]
+    ops = [OpShape("embed", e, cfg.vocab, "embed", "tokens")]
     if e != d:
-        ops.append(OpShape("proj_in", d, e))
+        ops.append(OpShape("proj_in", d, e, input="embedded"))
     if cfg.pos == "learned":
-        ops.append(OpShape("pos", d, cfg.max_pos, "embed"))
+        ops.append(OpShape("pos", d, cfg.max_pos, "embed", "positions"))
     for i in range(L):
-        ops += [OpShape(f"q{i}", hq * dh, d + b), OpShape(f"k{i}", hkv * dh, d + b),
-                OpShape(f"v{i}", hkv * dh, d + b), OpShape(f"o{i}", d, hq * dh + b)]
+        a, m = f"attn_in{i}", f"mlp_in{i}"
+        ops += [OpShape(f"q{i}", hq * dh, d + b, input=a), OpShape(f"k{i}", hkv * dh, d + b, input=a),
+                OpShape(f"v{i}", hkv * dh, d + b, input=a), OpShape(f"o{i}", d, hq * dh + b, input=f"attn_out{i}")]
         if cfg.mlp == "swiglu":
-            ops += [OpShape(f"gate{i}", f, d + b), OpShape(f"up{i}", f, d + b), OpShape(f"down{i}", d, f + b)]
+            ops += [OpShape(f"gate{i}", f, d + b, input=m), OpShape(f"up{i}", f, d + b, input=m),
+                    OpShape(f"down{i}", d, f + b, input=f"mlp_act{i}")]
         else:
-            ops += [OpShape(f"fc1{i}", f, d + b), OpShape(f"fc2{i}", d, f + b)]
+            ops += [OpShape(f"fc1{i}", f, d + b, input=m), OpShape(f"fc2{i}", d, f + b, input=f"mlp_act{i}")]
     if e != d:
-        ops.append(OpShape("proj_out", e, d))
-    ops.append(OpShape("head", cfg.vocab, e))
+        ops.append(OpShape("proj_out", e, d, input="final"))
+    ops.append(OpShape("head", cfg.vocab, e, input="final" if e == d else "final_projected"))
     return ops
 
 
@@ -92,16 +100,21 @@ def expected_multiproof_nodes(n: int, t: int) -> float:
     return total
 
 
-def _n_points(op, plan, rate: int) -> int:
-    return rate * next_pow2(op.row_length) if plan is None else plan.op(op.name).n_points
+def _matrices(ops, plan, rate: int) -> list[tuple[str, int, int]]:
+    """``(name, rows, codeword length)`` of every committed matrix of ``ops``: each op's own (the
+    report), or the plan's matrices of ``ops``."""
+    if plan is None:
+        return [(op.name, op.n_rows, rate * next_pow2(op.row_length)) for op in ops]
+    names = {op.name for op in ops}
+    return [(m.name, m.n_rows, m.n_points) for m in plan.matrices if m.ops[0] in names]
 
 
 def _trees(ops, plan, rate: int) -> list[tuple[str, int, int]]:
     """``(name, codeword length, rows)`` of every Merkle tree holding one of ``ops``."""
     if plan is None:
-        return [(op.name, _n_points(op, None, rate), op.n_rows) for op in ops]
-    rows = {op.name: op.n_rows for op in ops}
-    return [(g, plan.op(members[0]).n_points, sum(rows[m] for m in members if m in rows))
+        return [(name, n, rows) for name, rows, n in _matrices(ops, None, rate)]
+    rows = {name: r for name, r, _ in _matrices(ops, plan, rate)}
+    return [(g, plan.matrix(members[0]).n_points, sum(rows[m] for m in members if m in rows))
             for g, members in plan.groups if any(m in rows for m in members)]
 
 
@@ -125,7 +138,8 @@ def proof_bytes(ops, params, claim_columns, *, plan=None, rate: int = 4, mode: s
     if mode == "C":
         trees = [(n, min(params.columns if plan is None else params.columns_for(g), n), rows)
                  for g, n, rows in _trees(ops, plan, rate)]
-        out["u"] = size(params.reps * sum(op.row_length for op in ops))
+        folded = [op for op in ops if plan is None or plan.matrix_of(op.name).layout == "row"]
+        out["u"] = size(params.reps * sum(op.row_length for op in folded))
         out["columns"] = size(sum(t * rows for _, t, rows in trees))
         out["paths"] = 32 * sum(expected_multiproof_nodes(n, t) for n, t, _ in trees)
     return out
@@ -135,5 +149,5 @@ def setup_size(ops, *, plan=None, rate: int = 4) -> dict[str, int]:
     """The one-time commitment of ``ops``: encoded field entries (``sum_l N_l n_l``, what the NTTs
     produce and the column digests hash), Merkle leaves, trees and the longest codeword."""
     trees = _trees(ops, plan, rate)
-    return {"encoded_entries": sum(op.n_rows * _n_points(op, plan, rate) for op in ops),
+    return {"encoded_entries": sum(rows * n for _, rows, n in _matrices(ops, plan, rate)),
             "leaves": sum(n for _, n, _ in trees), "trees": len(trees), "max_n": max(n for _, n, _ in trees)}

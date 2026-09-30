@@ -1,40 +1,79 @@
-"""Commitment plans for mode C: each weight op's codeword length, the Merkle trees the
-matrices share, and the exact number of columns each tree opens.
+"""Commitment plans for mode C: each weight op's committed matrix and its layout, its codeword
+length, the Merkle trees the matrices share, and the exact number of columns each tree opens.
 
 In the report every matrix ``A_l = [W_l | b_l]`` (``N_l`` rows of length ``k_l``) is encoded at
 ``n_l = rate * next_pow2(k_l)`` under a tree of its own, and every op opens ``t = ceil(beta /
 log2 rate)`` columns, ``beta = lambda + log2(2L)`` (plus the grinding bits under Fiat--Shamir):
 each op's column term ``((k_l-1)/n_l)**t <= rate**-t`` and its Freivalds term ``p**-r`` are
 both ``<= 2**-beta``, so the union bound over the ``L`` ops is ``2L 2**-beta = 2**-lambda``.
-A plan keeps exactly that per-op budget and changes three things:
+A plan keeps exactly that per-op budget and changes four things:
 
-* **exact t**: a tree opens the smallest ``t_l`` whose exact column error
-  :func:`column_error_log2` (``t`` distinct uniform columns all among the at most ``k_l - 1``
-  zeros of a nonzero codeword) is ``<= 2**-beta`` -- the same bound the report reaches through
-  ``(k-1)/n <= 1/rate``, which the power-of-two padding makes loose;
+* **exact t**: a tree opens the smallest ``t`` whose exact column error
+  :func:`column_error_log2` (``t`` distinct uniform columns all among the at most ``m - 1``
+  zeros of a nonzero codeword of message length ``m``) is ``<= 2**-beta`` -- the same bound the
+  report reaches through ``(k-1)/n <= 1/rate``, which the power-of-two padding makes loose;
 * **shared trees**: the matrices of one group (one codeword length) are committed under ONE
   Merkle tree whose leaf ``c`` binds column ``c`` of every member, open one set of ``t_g =
-  max_l t_l`` indices and send one multiproof.  Each member still gets ``t_g >= t_l`` distinct
-  uniform columns of its own codeword, drawn after ``u``; the union bound never needed the
-  ops' index sets to be independent;
-* **per-op codeword lengths** ``n_l``, chosen by the policy.
+  max t`` indices and send one multiproof.  Each member still gets ``t_g`` distinct uniform
+  columns of its own codeword, drawn after the messages its check follows; the union bound never
+  needed the matrices' index sets to be independent;
+* **per-op codeword lengths** ``n``, chosen by the policy;
+* **per-op layouts** (the policies with the suffix ``c``), below.
+
+Layouts of a weight op ``Z = A [X ; 1]`` (``X``: ``k' x M``, one column per pixel or token):
+
+* ``row`` (the report's): the rows of ``A`` are encoded (message length ``k``), a leaf holds a
+  column of length ``N``.  The prover sends ``u = chi A`` (``chi``: ``r x N``) and the verifier
+  checks ``chi Z == u [X ; 1]`` (Freivalds) and ``chi . E[:, c] == Enc(u)[c]``: ``r k + t N``
+  field elements.  Its error: ``p**-r + prod_{i<t} (k-1-i)/(n-i)``.
+* ``col``: the rows of ``A^T`` (one per input coordinate, of length ``N``) are encoded, a leaf
+  holds a column of length ``k``.  After the claims the verifier draws ``chi'`` (``r x M``; the
+  identity when ``M <= r``) and computes ``z_i = Z chi'_i^T`` and ``w_i = [X ; 1] chi'_i^T``
+  itself; the prover opens ``t`` columns ``E'[:, c]`` and the verifier checks ``w_i . E'[:, c] ==
+  Enc(z_i)[c]``: ``t k`` field elements, no ``u``.  Linear ops reading one tensor (q/k/v,
+  gate/up) with one row length may be committed as ONE col matrix ``[A_1 ; A_2 ; ...]^T`` (their
+  rows stacked: message length ``sum N``), checked with one ``chi'``, one ``w`` and one set of
+  columns of length ``k``.  Its error: ``p**-r + prod_{i<t} (N-1-i)/(n-i)`` with ``N`` the
+  stacked rows (no Freivalds term when ``chi' = I``).  Proof: take a wrong claim of the matrix's
+  ops, whose input ``X`` the verifier derived from correct claims, so ``Delta = Z - A [X ; 1] !=
+  0``.  ``Delta chi'^T = 0`` with probability ``<= p**-r`` (never for ``chi' = I``); otherwise
+  some ``z_i != A w_i``, and ``Enc(z_i)`` and ``w_i^T E' = Enc(A w_i)`` are distinct codewords of
+  dimension ``N``, which agree on at most ``N - 1`` of the ``n`` positions; the opened columns are
+  those of ``E'`` (the Merkle root binds them) and are drawn after the claims, independently of
+  ``chi'``, so all ``t`` of them fall where the two agree with probability at most the product.
 
 Policies (``bench.py --policy``; the plan is public, part of the verifier's key):
 
 * ``paper`` -- no plan: the report's commitment and parameters (the default everywhere);
-* ``tight`` -- the report's codeword lengths (``rate * next_pow2(k)``);
-* ``cnn<e>`` -- every matrix at ``n = max(2**e, 2 next_pow2(k))``: one length for all but the
-  longest rows (a CNN's matrices can then share one tree);
+* ``tight`` -- the report's codeword lengths (``rate * next_pow2(m)`` for message length ``m``);
+* ``cnn<e>`` -- every matrix at ``n = max(2**e, 2 next_pow2(m))``: one length for all but the
+  longest messages (a CNN's matrices can then share one tree);
 * ``R<R>`` -- rate ``R`` (a power of two) for every matrix but the embedding tables, which keep
   the base rate (their rows are the vocabulary, so a higher rate multiplies the setup, while
-  their columns hold only ``d`` entries).
+  their columns hold only ``d`` entries);
+* the same with the suffix ``c`` (``tightc``, ``cnn18c``, ``R64c``, ...): a linear op may take the
+  col layout, alone or with the other linear ops that read its input with its row length in one
+  col matrix.  The ops of a set (of one input and row length) take one of three options: every op
+  in the row layout, every op transposed on its own, or all in one col matrix; sets of equal shapes
+  (the blocks of a decoder) take the same.  The options are those of least expected proof bytes of
+  the whole plan at ``REFERENCE_LAMBDA`` (interactive): ``u`` (row: ``4 r k``), the opened
+  columns (row: ``4 t N``, col: ``4 t k``) and the multiproofs of the shared trees they end up
+  in, found by descent from the base policy's plan, so a ``c`` plan never costs more than its base
+  policy's in that model.  Convolutions and embedding tables keep the row layout (a convolution's
+  ``w`` would need the unfolded input, and neither opens fewer bytes transposed: their ``N`` is
+  small against their ``k``).
 
 Every policy opens exact ``t`` and shares trees between matrices of one length: the matrices of
 a length, ordered by their ``t``, are split into the runs whose groups minimise the expected
-proof bytes -- ``4 t_g sum N`` of columns plus the multiproof -- at ``REFERENCE_LAMBDA``
-(interactive).  A tall matrix then opens no extra columns for a group's larger ``t`` (a
-decoder's groups are one per length and ``t``), while matrices of few rows share one multiproof
-(a CNN's are one or a few trees).  The commitment is made once for every ``lambda``; at another
+proof bytes -- ``4 t_g sum n_rows`` of columns plus the multiproof -- at ``REFERENCE_LAMBDA``.
+A tall matrix then opens no extra columns for a group's larger ``t`` (a decoder's groups are one
+per length and ``t``), while matrices of few rows share one multiproof (a CNN's are one or a
+few trees).  Row and col matrices of one length may share a tree: every tree's columns are drawn
+in one round, after ``u`` (and ``chi'`` with ``chi``, right after the claims).  A col matrix's
+check needs only its ``chi'`` and columns to follow the claims, so drawing its columns after ``u``
+too costs nothing interactively; under Fiat--Shamir they then also depend on ``u``, which a
+prover could vary to draw them again -- a grinding attack, which the 64 grinding bits bound as
+for every other challenge.  The commitment is made once for every ``lambda``; at another
 ``lambda`` a group opens its members' largest ``t`` for that ``lambda``.
 """
 
@@ -47,15 +86,15 @@ from functools import cached_property, lru_cache
 
 from .analytic import expected_multiproof_nodes
 from .commitment import next_pow2
-from .field import TWO_ADICITY
+from .field import LOG2_P, TWO_ADICITY
 
-__all__ = ["MAX_N", "REFERENCE_LAMBDA", "PlannedOp", "CommitmentPlan", "column_error_log2", "exact_columns",
-           "column_bits", "next_pow2", "plan_commitment"]
+__all__ = ["MAX_N", "REFERENCE_LAMBDA", "PlannedMatrix", "CommitmentPlan", "column_error_log2", "exact_columns",
+           "column_bits", "next_pow2", "plan_commitment", "col_name"]
 
 MAX_N = 1 << TWO_ADICITY
 """The longest codeword the field's NTT supports."""
 REFERENCE_LAMBDA = 128
-"""The security level (interactive) at which a plan splits equal-length groups by ``t``."""
+"""The security level (interactive) at which a plan chooses layouts and splits equal-length groups by ``t``."""
 
 
 def column_bits(lam: float, n_checks: int, fiat_shamir: bool = False, grinding_bits: int = 64) -> float:
@@ -90,76 +129,148 @@ def exact_columns(k: int, n: int, bits: float) -> int:
     return t
 
 
+def col_name(ops) -> str:
+    """The name of the col matrix of the weight ops ``ops`` (in their stacking order)."""
+    return "+".join(ops) + "^T"
+
+
 @dataclass(frozen=True)
-class PlannedOp:
+class PlannedMatrix:
+    """One committed matrix, whose ``n_rows`` rows are encoded (message length ``row_length``) at
+    ``n_points``: a weight op's ``[W | b]`` (the row layout, named after the op), or with
+    ``members`` the transposed stack ``[A_1 ; A_2 ; ...]^T`` of these weight ops (the col layout:
+    ``n_rows`` is their row length, ``row_length`` their rows together)."""
+
     name: str
     n_rows: int
     row_length: int
     n_points: int
+    members: tuple[str, ...] = ()
+
+    @property
+    def layout(self) -> str:
+        return "col" if self.members else "row"
+
+    @property
+    def ops(self) -> tuple[str, ...]:
+        """The weight ops this matrix checks."""
+        return self.members or (self.name,)
 
 
 @dataclass(frozen=True)
 class CommitmentPlan:
-    """Public: each weight op's codeword length, and the groups, each with its members in the
-    order their column digests enter the group's leaves."""
+    """Public: the committed matrices (in the order of their first ops), and the groups, each with
+    its matrices in the order their column digests enter the group's leaves."""
 
     policy: str
-    ops: tuple[PlannedOp, ...]
+    matrices: tuple[PlannedMatrix, ...]
     groups: tuple[tuple[str, tuple[str, ...]], ...]
 
     @cached_property
-    def _by_name(self) -> dict[str, PlannedOp]:
-        return {o.name: o for o in self.ops}
+    def _by_name(self) -> dict[str, PlannedMatrix]:
+        return {m.name: m for m in self.matrices}
 
-    def op(self, name: str) -> PlannedOp:
+    @cached_property
+    def _by_op(self) -> dict[str, PlannedMatrix]:
+        return {op: m for m in self.matrices for op in m.ops}
+
+    def matrix(self, name: str) -> PlannedMatrix:
         return self._by_name[name]
+
+    def matrix_of(self, op: str) -> PlannedMatrix:
+        """The matrix that checks weight op ``op``."""
+        return self._by_op[op]
 
     def group_columns(self, bits: float) -> tuple[tuple[str, int], ...]:
         """``(group, t_g)`` for column bits ``beta``: ``t_g`` is its members' largest exact ``t``."""
-        return tuple((g, max(exact_columns(o.row_length, o.n_points, bits) for o in map(self.op, members)))
+        return tuple((g, max(exact_columns(m.row_length, m.n_points, bits) for m in map(self.matrix, members)))
                      for g, members in self.groups)
 
-    def op_columns(self, group_columns) -> list[int]:
-        """The columns each op opens (its group's ``t``), in op order."""
+    def matrix_columns(self, group_columns) -> list[int]:
+        """The columns each matrix opens (its group's ``t``), in matrix order."""
         t = dict(group_columns)
         of = {m: g for g, members in self.groups for m in members}
-        return [t[of[o.name]] for o in self.ops]
+        return [t[of[m.name]] for m in self.matrices]
 
     def shapes(self) -> list[tuple[int, int]]:
-        """``(k, n)`` per op, in op order (as :func:`protocol.soundness_bits` takes them)."""
-        return [(o.row_length, o.n_points) for o in self.ops]
+        """``(message length, n)`` per matrix, in matrix order: one check each (as
+        :func:`protocol.soundness_bits` takes them in mode C)."""
+        return [(m.row_length, m.n_points) for m in self.matrices]
 
 
-def _lengths(ops, policy: str, rate: int) -> dict[str, int]:
-    """Each op's codeword length under ``policy`` (one spelling per plan: no leading zeros)."""
-    m = re.fullmatch(r"(tight)|cnn([1-9][0-9]*)|R([1-9][0-9]*)", policy)
+def _policy(policy: str, rate: int):
+    """``(length, col)``: the codeword length ``length(m, embed)`` of a message of length ``m``
+    (``embed``: an embedding table's rows) under ``policy``, and whether its linear ops may take the
+    col layout (one spelling per plan: no leading zeros)."""
+    m = re.fullmatch(r"(?:(tight)|cnn([1-9][0-9]*)|R([1-9][0-9]*))(c?)", policy)
     if m is None:
         raise ValueError(f"unknown commitment policy {policy!r}: expected paper, tight, cnn<e> or R<rate> "
-                         "(decimal, no leading zero)")
+                         "(decimal, no leading zero), the last three optionally with the suffix c")
     if m.group(1):
-        n_of = {op.name: rate * next_pow2(op.row_length) for op in ops}
+        def length(k, embed):
+            return rate * next_pow2(k)
     elif m.group(2):
         e = int(m.group(2))
         if not 1 <= e <= TWO_ADICITY:
             raise ValueError(f"policy {policy!r}: 2**{e} is not a codeword length of this field")
-        n_of = {op.name: max(1 << e, 2 * next_pow2(op.row_length)) for op in ops}
+
+        def length(k, embed):
+            return max(1 << e, 2 * next_pow2(k))
     else:
         high = int(m.group(3))
         if high < 2 or high & (high - 1):
             raise ValueError(f"policy {policy!r}: the rate must be a power of two >= 2")
-        n_of = {op.name: (rate if op.layout == "embed" else high) * next_pow2(op.row_length) for op in ops}
-    for op in ops:
-        if not op.row_length <= n_of[op.name] <= MAX_N:
+
+        def length(k, embed):
+            return (rate if embed else high) * next_pow2(k)
+    return length, bool(m.group(4))
+
+
+def _sets(ops, col: bool) -> list[list]:
+    """``ops`` in the sets whose layouts are chosen together, in the order of their first ops: under a
+    ``c`` policy the linear ops that read one tensor with one row length (they may share a col
+    matrix), every other op alone."""
+    sets: dict = {}
+    for i, op in enumerate(ops):
+        shared = col and op.layout == "linear" and op.inputs[0] is not None
+        sets.setdefault((op.inputs[0], op.row_length) if shared else i, []).append(op)
+    return list(sets.values())
+
+
+def _options(members, policy: str, rate: int) -> list[list[PlannedMatrix]]:
+    """The ways to commit one set of ops: every op in the row layout (the base policy's), and under a
+    ``c`` policy for linear ops every op transposed on its own and, for several, all of them in one
+    col matrix (an option whose codeword would be longer than the field's NTT is left out)."""
+    length, col = _policy(policy, rate)
+
+    def row(op):
+        m = PlannedMatrix(op.name, op.n_rows, op.row_length, length(op.row_length, op.layout == "embed"))
+        if not op.row_length <= m.n_points <= MAX_N:
             raise ValueError(f"policy {policy!r}: {op.name} (row length {op.row_length}) gets codeword length "
-                             f"{n_of[op.name]}")
-    return n_of
+                             f"{m.n_points}")
+        return m
+
+    def stack(ops):
+        rows = sum(op.n_rows for op in ops)
+        return PlannedMatrix(col_name(op.name for op in ops), ops[0].row_length, rows, length(rows, False),
+                             tuple(op.name for op in ops))
+
+    options = [[row(op) for op in members]]
+    if col and members[0].layout == "linear":
+        options += [[stack([op]) for op in members]] + ([[stack(members)]] if len(members) > 1 else [])
+    return [ms for ms in options if all(m.n_points <= MAX_N for m in ms)]
 
 
-def _runs(n: int, ts: list[int], rows: list[int]) -> list[tuple[int, int]]:
+def _signature(members) -> tuple:
+    """What a set's options depend on: its ops' shapes, in order."""
+    return tuple((op.n_rows, op.row_length, op.layout) for op in members)
+
+
+def _runs(n: int, ts: list[int], rows: list[int]) -> tuple[float, list[tuple[int, int]]]:
     """The split of the distinct column counts ``ts`` (ascending; ``rows[j]``: the rows of the
     matrices with ``ts[j]``) of one length ``n`` into runs ``[a, b)`` of least expected bytes, a
     run's group opening ``ts[b-1]`` columns of all its rows with one multiproof (dynamic
-    programming over the run ends)."""
+    programming over the run ends), and those bytes."""
     best, cut = [0.0] + [math.inf] * len(ts), [0] * (len(ts) + 1)
     for b in range(1, len(ts) + 1):
         for a in range(b):
@@ -170,38 +281,90 @@ def _runs(n: int, ts: list[int], rows: list[int]) -> list[tuple[int, int]]:
     while b:
         out.append((cut[b], b))
         b = cut[b]
-    return out[::-1]
+    return best[-1], out[::-1]
+
+
+def _shapes(matrices, bits: float, weights=None) -> dict[int, dict[int, int]]:
+    """``{n: {t: rows}}``: the rows of the matrices of each codeword length and exact ``t`` (each
+    matrix counted ``weights[i]`` times)."""
+    out: dict = {}
+    for i, m in enumerate(matrices):
+        at = out.setdefault(m.n_points, {})
+        t = exact_columns(m.row_length, m.n_points, bits)
+        at[t] = at.get(t, 0) + m.n_rows * (1 if weights is None else weights[i])
+    return out
+
+
+def _choose(model, policy: str, rate: int, bits: float) -> dict[tuple, int]:
+    """The option (:func:`_options`) each signature of the model's sets takes: the plan of least
+    expected proof bytes -- ``u``, and the opened columns and multiproofs of the groups
+    (:func:`_runs`) -- found by descent over the signatures from the base policy's plan (every
+    op in the row layout), each step taking another option of one signature when it lowers the
+    whole plan's bytes; so a ``c`` policy never costs more than its base policy in this model."""
+    reps = max(1, math.ceil(bits / LOG2_P))
+    classes: dict[tuple, list] = {}           # signature -> [options, sets of that signature]
+    for members in _sets(model, _policy(policy, rate)[1]):
+        classes.setdefault(_signature(members), [_options(members, policy, rate), 0])[1] += 1
+
+    def cost(choice):
+        mats, weights = [], []
+        for sig, (options, count) in classes.items():
+            mats += options[choice[sig]]
+            weights += [count] * len(options[choice[sig]])
+        u = sum(w * reps * m.row_length for m, w in zip(mats, weights) if m.layout == "row")
+        return 4 * u + sum(_runs(n, sorted(at), [at[t] for t in sorted(at)])[0]
+                           for n, at in _shapes(mats, bits, weights).items())
+
+    choice = {sig: 0 for sig in classes}
+    best, better = cost(choice), True
+    while better:
+        better = False
+        for sig, (options, _) in classes.items():
+            for i in range(len(options)):
+                trial = {**choice, sig: i}
+                if i != choice[sig] and (c := cost(trial)) < best:
+                    best, choice, better = c, trial, True
+    return choice
+
+
+def _matrices(ops, policy: str, rate: int, choice: dict) -> list[PlannedMatrix]:
+    """The committed matrices of ``ops``, their sets in the options ``choice`` gives their
+    signatures, in the order of their first ops."""
+    out = []
+    for members in _sets(ops, _policy(policy, rate)[1]):
+        if _signature(members) not in choice:
+            raise ValueError(f"{members[0].name}: its ops' shapes are not a set of the model's")
+        out += _options(members, policy, rate)[choice[_signature(members)]]
+    order = {op.name: i for i, op in enumerate(ops)}
+    return sorted(out, key=lambda m: order[m.ops[0]])
 
 
 def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None) -> CommitmentPlan | None:
     """The plan of ``policy`` for weight ops ``ops`` (objects with ``name``, ``n_rows``,
-    ``row_length`` and ``layout``: a graph's ``MatOp``s or ``analytic.decoder_shapes``), in
-    their order; ``None`` for ``"paper"``.  ``rate`` is the base rate (the report's, 4).
+    ``row_length``, ``layout`` and ``inputs``: a graph's ``MatOp``s or ``analytic.decoder_shapes``),
+    in their order; ``None`` for ``"paper"``.  ``rate`` is the base rate (the report's, 4).
 
     ``model_ops``: the whole model's ops when ``ops`` are those of a build of a few of its
-    decoder blocks.  The runs are then chosen on the whole model (at its op count), so the
-    build's groups are the whole model's restricted to the built ops, and its costs extrapolate
-    over blocks."""
+    decoder blocks.  The layouts are chosen, and the runs split, on the whole model (at its op
+    count), so the build's matrices and groups are the whole model's restricted to the built ops,
+    and its costs extrapolate over blocks."""
     if policy == "paper":
         return None
     ops = list(ops)
     model = ops if model_ops is None else list(model_ops)
     bits = column_bits(REFERENCE_LAMBDA, len(model))
-    n_of, n_model = _lengths(ops, policy, rate), _lengths(model, policy, rate)
+    choice = _choose(model, policy, rate, bits)
+    mats, model_mats = _matrices(ops, policy, rate, choice), _matrices(model, policy, rate, choice)
     runs = {}                        # (n, t) -> the (n, smallest t) of its run
-    for n in dict.fromkeys(n_model.values()):
-        members = [op for op in model if n_model[op.name] == n]
-        t_of = [exact_columns(op.row_length, n, bits) for op in members]
-        ts = sorted(set(t_of))
-        rows = [sum(op.n_rows for op, t_ in zip(members, t_of) if t_ == t) for t in ts]
-        for a, b in _runs(n, ts, rows):
+    for n, at in _shapes(model_mats, bits).items():
+        ts = sorted(at)
+        for a, b in _runs(n, ts, [at[t] for t in ts])[1]:
             runs.update(((n, t), (n, ts[a])) for t in ts[a:b])
     classes: dict[tuple, list[str]] = {}
-    for op in ops:                   # groups in the order of their first member, members in op order
-        key = (n_of[op.name], exact_columns(op.row_length, n_of[op.name], bits))
+    for m in mats:                   # groups in the order of their first member, members in matrix order
+        key = (m.n_points, exact_columns(m.row_length, m.n_points, bits))
         if key not in runs:
-            raise ValueError(f"{op.name}: (codeword length, t) = {key} is not a shape of the model")
-        classes.setdefault(runs[key], []).append(op.name)
+            raise ValueError(f"{m.name}: (codeword length, t) = {key} is not a shape of the model")
+        classes.setdefault(runs[key], []).append(m.name)
     groups = tuple((f"g{i}_n{key[0]}", tuple(names)) for i, (key, names) in enumerate(classes.items()))
-    return CommitmentPlan(policy, tuple(PlannedOp(op.name, op.n_rows, op.row_length, n_of[op.name]) for op in ops),
-                          groups)
+    return CommitmentPlan(policy, tuple(mats), groups)

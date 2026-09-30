@@ -75,8 +75,12 @@ def in_field(a: torch.Tensor) -> bool:
 
 
 def check_products(verifier, claims, inputs, chis, us) -> bool:
-    """``Verifier.check_products``, op by op."""
+    """``Verifier.check_products``, op by op (a commitment plan's col-layout ops are left to the column
+    check)."""
+    stacked = {o for pub in verifier.publics.values() for o in pub.members}
     for op in verifier.graph.mat_ops:
+        if op.name in stacked:
+            continue
         u = us.get(op.name)
         if (u is None or u.dtype != torch.int64 or tuple(u.shape) != (verifier.params.reps, op.row_length)
                 or not in_field(u)):
@@ -85,6 +89,22 @@ def check_products(verifier, claims, inputs, chis, us) -> bool:
         if not torch.equal(lhs, rhs(op, us[op.name], inputs[op.name])):
             return False
     return True
+
+
+def column_operands(verifier, claims, inputs, chis, us) -> tuple[dict, dict]:
+    """``Verifier.column_operands``, matrix by matrix: a col-layout matrix's ``w = chi' [X ; 1]^T`` and
+    ``z = chi' Z^T`` (``Z``: its ops' claims stacked), the others' ``chi`` and ``u``."""
+    lefts, sources = dict(chis), dict(us)
+    ops = {op.name: op for op in verifier.graph.mat_ops}
+    for name, pub in verifier.publics.items():
+        if pub.members:
+            first = ops[pub.members[0]]
+            x = first.unfold(inputs[first.name])                                   # [K, M]
+            if first.has_bias:
+                x = torch.cat([x, torch.ones(1, x.shape[1], dtype=x.dtype, device=x.device)])
+            lefts[name] = field_matmul_mod(chis[name], x.T)
+            sources[name] = field_matmul_mod(chis[name], torch.cat([claims[o] for o in pub.members]).T)
+    return lefts, sources
 
 
 def _as_columns(openings: dict) -> dict:
@@ -101,8 +121,9 @@ def _as_columns(openings: dict) -> dict:
 
 
 def check_columns(verifier, chis, us, cols, openings, *, wire: bool = False) -> str | None:
-    """``Verifier.check_columns``, op by op (group by group for a commitment plan); with ``wire``
-    on the int64 columns the wire openings hold."""
+    """``Verifier.check_columns``, op by op (group by group for a commitment plan, whose col-layout
+    matrices take their ``w`` and ``z`` from :func:`column_operands`); with ``wire`` on the int64
+    columns the wire openings hold."""
     if wire:
         openings = _as_columns(openings)
     if verifier.groups:
