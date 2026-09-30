@@ -152,7 +152,10 @@ def _verify(verifier, x, claims, chis, us, cols, openings, *, int8: bool):
         flags.append(_disagrees(us[op.name], left, right.pop(op.name)))
 
     with ThreadPoolExecutor(1) as host:
-        columns = None if openings is None else _start_columns(verifier, chis, us, cols, openings, host)
+        # the column checks compare with Enc(u): only started when every u is well formed (with one
+        # that is not, the verdict is freivalds or u_exc, and the columns are never looked at)
+        well_formed = openings is not None and n_u == len(mats)
+        columns = _start_columns(verifier, chis, us, cols, openings, host) if well_formed else None
         derived = verifier._derive(_to_device(x, dev), _Uploads(claims, [op.name for op in mats], dev),
                                    dtype=torch.int32, visit=visit)
         if derived is None:

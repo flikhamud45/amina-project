@@ -496,6 +496,20 @@ def test_streaming_gives_the_verdicts_of_run_query_on_forged_folds_and_openings(
             proto.run_query(prover, v, x, seed=99)
 
 
+@pytest.mark.parametrize("fiat_shamir", [False, True])            # u of 2 and of 4 rows
+@pytest.mark.parametrize("change", ["extra row", "one row fewer", "3-d", "3-d wide"])
+def test_streaming_rejects_a_u_of_the_wrong_shape_at_freivalds(change, fiat_shamir, device):
+    # no column check may run on a u whose rows cannot be compared with the opened columns
+    graph, x = _decoder("qwen")
+    prover, pair = _setup(graph, "C", fiat_shamir, device)
+    wrong = {"extra row": lambda u: torch.cat([u, u[:1]]), "one row fewer": lambda u: u[:-1],
+             "3-d": lambda u: u[:, :, None], "3-d wide": lambda u: torch.stack([u, u], -1)}[change]
+    fold = prover.fold
+    for victim in (graph.mat_ops[0].name, graph.mat_ops[len(graph.mat_ops) // 2].name):
+        prover.fold = lambda chis, victim=victim: {k: wrong(u) if k == victim else u for k, u in fold(chis).items()}
+        assert _same_outcome(prover, pair, x, seed=1)["rejected_at"] == "freivalds"
+
+
 def test_streaming_gives_the_verdicts_of_run_query_on_a_cnn(device):
     from pvi.fullcheck.models import build_float_model
     from pvi.fullcheck.quantize import quantize_input, quantize_model
