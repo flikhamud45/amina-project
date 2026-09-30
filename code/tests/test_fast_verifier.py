@@ -472,10 +472,10 @@ def test_isqrt_matches_reference():
     assert torch.equal(_isqrt(small), torch.tensor([[max(1, math.isqrt(int(v)))] for v in small.view(-1)]))
     # a sum of squares that wrapped (adversarial claims only): the reference's steps, silently
     wrapped = torch.cat([s[:5], torch.tensor([[-1], [INT64_MIN], [-(1 << 40)], [3]])])
+    empty = torch.zeros(0, 1, dtype=torch.int64)
     with warnings.catch_warnings(), np.errstate(all="raise"):
         warnings.simplefilter("error")
-        assert torch.equal(_isqrt(wrapped), ref.isqrt(wrapped))
-        assert torch.equal(_isqrt(torch.zeros(0, 1, dtype=torch.int64)), ref.isqrt(torch.zeros(0, 1, dtype=torch.int64)))
+        assert torch.equal(_isqrt(wrapped), ref.isqrt(wrapped)) and torch.equal(_isqrt(empty), ref.isqrt(empty))
 
 
 def test_derive_is_silent_on_claims_whose_norm_sums_wrap(monkeypatch):
