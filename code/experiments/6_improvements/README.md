@@ -330,3 +330,40 @@ section) -- to be confirmed with `bench.py --policy` on the cluster.
 | zkCNN VGG-16 verifier | 59.3 ms | 63.4 ms (1.07x worse) | ~24 ms | ~13.9 ms (cnn17), ~14.4 ms (R16) | Phase 1 already; ~4.3x better with cnn17 (policy alone ~37 ms) |
 | zkGPT (GPT-2) verifier | 0.35 s | 0.468 s (1.34x worse) | ~0.18 s | ~0.118 s (R16), ~0.129 s (R8) | Phase 1 already; ~3.0x better with R16 (policy alone ~0.30 s) |
 | DeepProve GPT-2-64 proof | 21.7 MB | 62.1 MB (2.86x worse) | 62.1 MB | 41.5 (R16) / 36.7 (R64) / 34.0 MB (cnn18) | no: the claims alone are 21.8 MB (still 1.57x worse at best) |
+
+### On the cluster
+
+The stored roots are frozen, so the policies and a same-hardware baseline go to a new root; each
+policy's cells are named `..._pol<name>` next to the baseline's (from the repository root):
+
+```bash
+export PVI_PLATFORM=l40s_plans && mkdir -p logs/$PVI_PLATFORM
+B=code/experiments/4_defence_benchmark/slurm/bench.sbatch
+for m in mlp_mnist lenet5 vgg11 vgg16 resnet18_cifar; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m                         # the baseline (paper)
+  for p in tight cnn16 cnn17 cnn18 R8 R16 R64; do
+    sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m --policy $p
+  done
+done
+sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model gpt2 --seq 64 512 --modes C:int,C:fs --lams 128
+for p in tight R8 R16 R64 cnn16; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model gpt2 --seq 64 512 --policy $p --lams 128 --llm-tampers 10
+done
+for p in tight R8 R16; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model llama2-7b --seq 1 64 --policy $p --lams 128
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model qwen3-4b --seq 8 --policy $p --lams 128
+done
+```
+
+and, interactively on a GPU node, the GPU tests and the interleaved timing with the trained
+CNNs (`cd code && export PYTHONPATH=$PWD/src`):
+
+```bash
+python -m pytest tests/test_plans.py tests/test_fast_verifier.py tests/test_gpu_verifier.py -q
+python experiments/6_improvements/perf.py --model lenet5 --modes C --queries 30 --threads 8 \
+    --policy paper tight cnn16 cnn17 cnn18 R8 R16 R64
+python experiments/6_improvements/perf.py --model vgg16 --modes C --queries 30 --threads 8 \
+    --policy paper tight cnn16 cnn17 cnn18 R8 R16 R64
+python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 15 --threads 8 \
+    --policy paper tight R8 R16 R64 cnn16 --verifier-device cuda
+```
