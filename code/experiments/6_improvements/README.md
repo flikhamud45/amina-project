@@ -320,6 +320,10 @@ runs.
 | | R16 | 174.6 (0.67x) | 74.7 (0.46x) | 487.9 (0.61x) | 1,078 (0.77x) | 41.48 MB |
 
 (GPT-2: 11 queries; `cnn<e>` and R64 need 9-35 G encoded entries, too long for this laptop.)
+With 4 threads (`results/perf_plans_laptop_cnn_thr4.jsonl`) the ratios are the same: LeNet-5
+verifier 0.62x / 0.60x (cnn16 / cnn18), column check 0.45x / 0.43x, prover open 0.52x / 0.50x;
+VGG-16 verifier 0.59x (cnn17, R64) and 0.61x (R16), column check 0.40x / 0.42x / 0.45x, prover
+open 0.44x / 0.43x / 0.47x (paper: LeNet-5 6.50 ms, VGG-16 42.4 ms).
 Derive and the products are the same under every policy (they do not depend on the
 commitment); the column check falls with the columns opened and the multiproofs, and the
 prover's open with the `sum N k t` of its column products.
