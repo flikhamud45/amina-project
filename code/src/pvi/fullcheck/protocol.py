@@ -1153,7 +1153,8 @@ class Verifier:
         rows, opened = self._opened(good, openings, wire=True)
         names, idx = self._members_of(good, cols)
         now = [m for m in names if not self.publics[m].members]
-        return _StartedColumns(units, n_ok, exc, names, idx, opened, now, [m for m in names if m not in now],
+        later = [m for m in names if self.publics[m].members]
+        return _StartedColumns(units, n_ok, exc, names, idx, opened, now, later,
                                self._code_flags(now, idx, chis, us, opened),
                                host.submit(self._merkle, good, cols, openings, rows))
 

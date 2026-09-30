@@ -125,7 +125,9 @@ def proof_bytes(ops, params, claim_columns, *, plan=None, rate: int = 4, mode: s
     weight-op shapes (``decoder_shapes`` or a graph's ``MatOp``s), whose claims have
     ``claim_columns`` columns (an int for all of them, e.g. the prompt length of a decoder, or
     ``{name: columns}``); ``plan``: a commitment plan (its groups restricted to ``ops``), else the
-    report's trees at ``rate``.  Modes K and Kpre send only the claims.  ``wire_claims``: the size
+    report's trees at ``rate``; under a plan ``u`` is that of its row-layout ops, and a tree opens
+    the rows of its matrices (a col-layout one's: ``k``).  Modes K and Kpre send only the claims.
+    ``wire_claims``: the size
     of the claims in the compact wire encoding (``PVC3``, which depends on their values: measured),
     for the proof of ``run_query(wire=True)``, whose ``u`` and opened columns travel as two runs of
     31-bit field elements (:func:`claimcodec.field_size`)."""

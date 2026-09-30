@@ -255,7 +255,7 @@ def test_a_lean_prover_and_a_lean_verifier_under_a_col_plan(kind, mode):
 
 def test_a_col_plan_opens_fewer_bytes_than_its_row_policy_on_a_decoder():
     for kind in ("gpt", "llama", "opt", "qwen"):
-        graph, x = _planned(kind, "R8")[:2]
+        x = _planned(kind, "R8")[1]
         sizes = {}
         for policy in ("R8", "R8c"):
             g, _, coms = _planned(kind, policy)
