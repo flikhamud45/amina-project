@@ -24,6 +24,7 @@ import torch
 from pvi.fullcheck import analytic
 from pvi.fullcheck import field as fld
 from pvi.fullcheck import protocol as proto
+from pvi.fullcheck import reference as ref
 from pvi.fullcheck.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
                                       group_leaf, verify_multiproof)
 from pvi.fullcheck.models import build_float_model
@@ -444,6 +445,55 @@ def test_a_gpu_client_and_prover_give_the_cpu_verdicts(device):
     if device == "cuda":
         prover = proto.Prover(graph, device="cuda", commitments=coms)
         assert all(proto.run_query(prover, v, x, seed=1)["accepted"] for v in _verifiers(graph, coms, False))
+
+
+@pytest.mark.parametrize("paths", ["at_once", "deferred", "int8", "deferred_int8"])
+def test_grouped_column_checks_give_the_reference_verdicts(paths, monkeypatch):
+    """The batched check of group openings against ``reference.check_columns``, group by group
+    (the verdicts and the exceptions), on single and double defects."""
+    if "deferred" in paths:
+        monkeypatch.setattr(proto, "_defer", lambda device: True)
+    if "int8" in paths:
+        monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+    for kind, policy in (("lenet5", "tight"), ("gpt", "R8")):
+        graph, x, coms = _planned(kind, policy)
+        v = _verifiers(graph, coms, False)[0]
+        prover = proto.Prover(graph, commitments=coms)
+        ch = proto.Challenger(seed=6)
+        chis = {op.name: ch.folding(op.name, op.n_rows, v.params.reps) for op in graph.mat_ops}
+        us = prover.fold(chis)
+        cols = v.column_challenges(ch)
+        openings = prover.open(cols)
+        assert v.check_columns(chis, us, cols, openings) is ref.check_columns(v, chis, us, cols, openings) is None
+        names = list(v.groups)
+        variants = []
+        for g in (names[0], names[-1]):
+            o, pr = openings[g]
+            last = o.shape[0] - 1                       # a row of the group's last member
+            for row in (0, last):
+                o1 = o.clone()
+                o1[row, 0] = (o1[row, 0] + 1) % P
+                variants.append({g: (o1, pr)})
+            o2 = o.clone()
+            o2[last, -1] = P
+            variants += [{g: (o2, pr)}, {g: (o, [bytes(32)] + pr[1:])}, {g: (o, pr[:-1])}, {g: (o, pr + [bytes(32)])},
+                         {g: (o[:-1], pr)}, {g: (o[:, :-1], pr)}, {g: (o.to(torch.int32), pr)}]
+        a, b = names[0], names[-1]
+        (oa, pa), (ob, pb) = openings[a], openings[b]
+        ob1 = ob.clone()
+        ob1[0, 0] = (ob1[0, 0] + 1) % P
+        variants += [{a: (oa, [bytes(32)] + pa[1:]), b: (ob1, pb)}, {a: (oa[:, :-1], pa), b: (ob1, pb)},
+                     {a: (oa, [bytes(32)] + pa[1:]), b: (ob, [0] + pb[1:])}, {a: (oa, pa[:-1]), b: None}]
+        for var in variants:
+            opened = dict(openings, **var)
+            assert v.check_columns(chis, us, cols, opened) == ref.check_columns(v, chis, us, cols, opened), var.keys()
+        bad_u = dict(us, **{graph.mat_ops[1].name: (us[graph.mat_ops[1].name] + 1) % P})
+        assert v.check_columns(chis, bad_u, cols, openings) == ref.check_columns(v, chis, bad_u, cols, openings)             == "columns_code"
+        for broken, exc in ((dict(openings, **{b: (ob, [0] + pb[1:])}), TypeError), (dict(openings, **{b: None}),
+                                                                                     TypeError)):
+            for impl in (v.check_columns, lambda *args: ref.check_columns(v, *args)):
+                with pytest.raises(exc):
+                    impl(chis, us, cols, broken)
 
 
 def test_malformed_openings_fail_as_the_default_fails():
