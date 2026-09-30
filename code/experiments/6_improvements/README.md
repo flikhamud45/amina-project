@@ -37,31 +37,33 @@ per-stage rows); `total` is derive + products + columns, the verifier's work per
 
 | Model | Mode | lambda | Threads | Baseline (ms) | This checkout (ms) | Ratio |
 |---|---|---|---|---:|---:|---:|
-| LeNet-5 | C | 128 | 1 | 8.08 | 4.84 | 1.67x |
-| LeNet-5 | C | 128 | 4 | 10.51 | 5.56 | 1.89x |
-| LeNet-5 | Kpre | 128 | 1 | 2.83 | 1.90 | 1.49x |
-| VGG-16 | C | 128 | 1 | 83.9 | 32.0 | 2.63x |
-| VGG-16 | C | 128 | 4 | 78.1 | 33.8 | 2.31x |
-| VGG-16 | Kpre | 128 | 1 | 26.3 | 9.30 | 2.83x |
-| GPT-2, 12 blocks, 64 tokens | C | 128 | 1 | 596.5 | 247.3 | 2.41x |
-| GPT-2, 12 blocks, 64 tokens | C | 128 | 4 | 487.8 | 213.6 | 2.28x |
-| GPT-2, 12 blocks, 64 tokens | Kpre | 128 | 1 | 229.1 | 90.7 | 2.53x |
-| Qwen3-4B, 1 block, 8 tokens | Kpre | 40 | 1 | 42.5 | 7.69 | 5.52x |
-| Qwen3-4B, 8 blocks, 8 tokens | Kpre | 40 | 1 | 154.6 | 42.2 | 3.66x |
-| Qwen3-4B, 24 blocks, 8 tokens | Kpre | 40 | 1 | 426.2 | 127.5 | 3.34x |
+| LeNet-5 | C | 128 | 1 | 8.36 | 4.75 | 1.76x |
+| LeNet-5 | C | 128 | 4 | 10.54 | 6.11 | 1.72x |
+| LeNet-5 | Kpre | 128 | 1 | 2.92 | 1.91 | 1.53x |
+| VGG-16 | C | 128 | 1 | 85.1 | 32.1 | 2.65x |
+| VGG-16 | C | 128 | 4 | 77.4 | 34.0 | 2.28x |
+| VGG-16 | Kpre | 128 | 1 | 26.2 | 9.51 | 2.75x |
+| GPT-2, 12 blocks, 64 tokens | C | 128 | 1 | 599.2 | 245.8 | 2.44x |
+| GPT-2, 12 blocks, 64 tokens | C | 128 | 4 | 487.9 | 215.1 | 2.27x |
+| GPT-2, 12 blocks, 64 tokens | Kpre | 128 | 1 | 232.7 | 92.6 | 2.51x |
+| Qwen3-4B, 1 block, 8 tokens | Kpre | 40 | 1 | 43.6 | 7.42 | 5.88x |
+| Qwen3-4B, 8 blocks, 8 tokens | Kpre | 40 | 1 | 151.8 | 41.8 | 3.64x |
+| Qwen3-4B, 24 blocks, 8 tokens | Kpre | 40 | 1 | 420.7 | 127.5 | 3.30x |
 
 Qwen3-4B with all 36 blocks (4.4 GB of int8 weights) does not fit this laptop's free
-memory; 24 blocks do.  Per additional block (1 -> 24 blocks, full vocabulary): 16.68 ->
-5.21 ms (3.20x), of which derive 7.01 -> 4.04 ms (1.74x) and the products 9.62 -> 1.18 ms
-(8.15x); the vocabulary-1024 builds give the same slope (2 -> 8 blocks: 15.48 -> 4.87 ms,
-3.18x).  Extrapolated to 36 blocks: 626 -> 190 ms (3.30x).
+memory; 24 blocks do.  Per additional block (1 -> 24 blocks, full vocabulary): 16.40 ->
+5.22 ms (3.14x), of which derive 6.96 -> 4.12 ms (1.69x) and the products 9.45 -> 1.08 ms
+(8.8x); the vocabulary-1024 builds give the same slope (2 -> 8 blocks: 15.95 -> 5.04 ms,
+3.16x).  Extrapolated to 36 blocks: 618 -> 190 ms (3.25x).
 
-The per-stage ratios: derive (the cheap operations) 1.0x on LeNet-5, 1.5-1.7x elsewhere;
-products 1.6-1.7x (LeNet-5), 2.8-3.3x (VGG-16), 3.5x (GPT-2 C) and 4.8x (GPT-2 Kpre),
-8-13x (Qwen3-4B Kpre); columns (mode C) 1.9x (LeNet-5), 2.5-2.7x (VGG-16, GPT-2), whose
-floor is now SHA-256 of the Merkle paths in `hashlib`.
+Per stage: derive (the cheap operations) 1.0-1.1x on LeNet-5, 1.55-1.77x elsewhere;
+products 1.7-1.8x (LeNet-5), 3.0-3.3x (VGG-16), 3.6x (GPT-2 C), 4.7x (GPT-2 Kpre) and
+13x / 9x (Qwen3-4B: the embedding and LM head / each block); columns (mode C) 2.0x
+(LeNet-5), 2.5-2.6x (VGG-16, GPT-2), whose floor is now SHA-256 of the Merkle paths in
+`hashlib`.  Mode C's products are slower than Kpre's because every query has a fresh
+`chi`, whose limbs are recomputed.
 
 With `PVI_MERKLE_PROCESSES=1` (off by default) a multi-threaded verifier checks the
 multiproofs in worker processes (`results/ab_laptop_merkle_processes.csv`, 4 threads):
-VGG-16 C 29.8 ms (2.70x; columns 22.2 -> 18.9 ms) and GPT-2 C 200.8 ms (2.49x; columns
-137.2 -> 124.1 ms).
+VGG-16 C 30.5 ms (2.73x; columns 22.8 -> 19.7 ms) and GPT-2 C 203.2 ms (2.50x; columns
+139.3 -> 126.0 ms).
