@@ -9,6 +9,7 @@ exceptions) and random corruptions never make the decoder raise anything else.
 from __future__ import annotations
 
 import struct
+import tracemalloc
 
 import numpy as np
 import pytest
@@ -30,7 +31,7 @@ def device(request):
 
 def _rt(zs, **kw) -> bytes:
     blob = cc.encode(zs, **kw)
-    out = cc.decode(blob, [z.shape[0] for z in zs], max_cols=max([z.shape[1] for z in zs] + [1]))
+    out = cc.decode(blob, [z.shape[0] for z in zs], [z.shape[1] for z in zs])
     assert len(out) == len(zs)
     for a, b in zip(zs, out):
         assert b.dtype == np.int32 and b.shape == a.shape
@@ -133,9 +134,9 @@ def test_numpy_torch_and_decoded_forms_agree():
     zs = [np.round(rng.normal(0, 3e4, (64, 8))).astype(np.int64), rng.integers(-127, 128, (8, 5))]
     blob = cc.encode(zs)
     assert blob == cc.encode([torch.from_numpy(z) for z in zs]) == cc.encode([torch.from_numpy(z).int() for z in zs])
-    wide = cc.decode_torch(blob, [64, 8], max_cols=8)
-    narrow = cc.decode_torch(blob, [64, 8], max_cols=8, dtype=torch.int32)
-    threaded = cc.decode(blob, [64, 8], max_cols=8, workers=4)
+    wide = cc.decode_torch(blob, [64, 8], [8, 5])
+    narrow = cc.decode_torch(blob, [64, 8], [8, 5], dtype=torch.int32)
+    threaded = cc.decode(blob, [64, 8], [8, 5], workers=4)
     for z, a, b, c in zip(zs, wide, narrow, threaded):
         assert a.dtype == torch.int64 and b.dtype == torch.int32
         assert torch.equal(a, torch.from_numpy(z)) and torch.equal(b.long(), a) and np.array_equal(c, z)
@@ -148,7 +149,7 @@ def test_decoder_claims_shrink_and_round_trip():
     _, claims = graph.forward(tokens)
     zs = [claims[op.name] for op in graph.mat_ops]
     blob = cc.encode(zs)
-    out = cc.decode_torch(blob, [op.n_rows for op in graph.mat_ops], max_cols=tokens.numel())
+    out = cc.decode_torch(blob, [op.n_rows for op in graph.mat_ops], graph.public().claim_columns(tokens))
     assert all(torch.equal(a, b) for a, b in zip(zs, out))
     assert len(blob) < 0.75 * 4 * sum(z.numel() for z in zs)
 
@@ -161,15 +162,15 @@ def test_threaded_decoding_gives_the_same_claims_and_rejections(monkeypatch):
     zs = [np.round(rng.standard_cauchy((64, 900)) * 2e3).clip(-LIM, LIM).astype(np.int64),
           np.round(rng.normal(0, 3e4, (160, 400))).astype(np.int64) + rng.integers(-9e4, 9e4, (160, 1)),
           rng.integers(-127, 128, (32, 700))]
-    rows = [z.shape[0] for z in zs]
+    rows, cols = [z.shape[0] for z in zs], [z.shape[1] for z in zs]
     blob = cc.encode(zs)
     for workers in (1, 2, 3, 4):
-        assert all(np.array_equal(a, b) for a, b in zip(zs, cc.decode(blob, rows, 900, workers=workers)))
+        assert all(np.array_equal(a, b) for a, b in zip(zs, cc.decode(blob, rows, cols, workers=workers)))
     bad = bytearray(blob)
     bad[-1] ^= 0x80                                           # the payloads' last unary level: padding
     for workers in (1, 4):
         with pytest.raises(cc.ClaimCodecError):
-            cc.decode(bytes(bad), rows, 900, workers=workers)
+            cc.decode(bytes(bad), rows, cols, workers=workers)
 
 
 @pytest.mark.parametrize("shape", [(4096, 64), (1 << 18, 1), (600, 600)])
@@ -180,7 +181,7 @@ def test_a_width_0_stream_of_a_threaded_size_round_trips(shape):
         z[3, 7] = 1 << 20                                     # mostly constant: B = 0 and one exception
     blob = _rt([z])
     assert (blob[12], blob[13]) == (0, 0) and z.size >= cc._THREADED     # one plain op at B = 0
-    assert np.array_equal(cc.decode(blob, [shape[0]], shape[1], workers=4)[0], z)
+    assert np.array_equal(cc.decode(blob, [shape[0]], [shape[1]], workers=4)[0], z)
 
 
 def test_row_constant_claims_centre_to_a_width_0_stream_and_round_trip():
@@ -189,11 +190,24 @@ def test_row_constant_claims_centre_to_a_width_0_stream_and_round_trip():
     assert blob[12] == cc._F_CENTRED and blob[18] == 0        # the residuals: all 0, at B = 0
 
 
-def test_a_malicious_width_0_header_decodes_or_is_rejected():
-    head = cc.MAGIC + struct.pack("<I", 1) + struct.pack("<IB", 64, 0) + struct.pack("<Bi", 0, 0)
-    blob = head + bytes(-len(head) % 4) + struct.pack("<I", 0)
-    out = _decode_or_reject(blob, [4096], 64)
+def _zeros_header(m: int) -> bytes:
+    """One op of ``M = m`` columns at ``B = 0``, no exception: 24 bytes, whatever its size."""
+    head = cc.MAGIC + struct.pack("<I", 1) + struct.pack("<IB", m, 0) + struct.pack("<Bi", 0, 0)
+    return head + bytes(-len(head) % 4) + struct.pack("<I", 0)
+
+
+def test_a_width_0_header_decodes_only_to_the_expected_shape():
+    out = _decode_or_reject(_zeros_header(64), [4096], [64])
     assert out is not None and not out[0].any()               # well formed: 4096 x 64 zeros
+    # 2**36 values claimed in 24 bytes: rejected in the header, before anything is allocated
+    tracemalloc.start()
+    try:
+        with pytest.raises(cc.ClaimCodecError, match="column count"):
+            cc.decode(_zeros_header(1 << 24), [4096], [64])
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 4096 * 64 * 4
 
 
 def test_the_gpu_prover_encodes_the_bytes_of_the_cpu(device):
@@ -227,45 +241,45 @@ def sample():
     blob = cc.encode(zs)
     # op headers at bytes 8 (plain), 18 (centred: the row means' B and lo, then the residuals'), 33, 43
     assert [blob[12], blob[22], blob[37], blob[47]] == [0, cc._F_CENTRED, 0, 0]
-    return zs, blob, [z.shape[0] for z in zs], 40
+    return zs, blob, [z.shape[0] for z in zs], [z.shape[1] for z in zs]
 
 
-def _decode_or_reject(blob, rows, max_cols):
-    """Anything but a ClaimCodecError or well-formed int32 matrices is a decoder bug."""
+def _decode_or_reject(blob, rows, cols):
+    """Anything but a ClaimCodecError or well-formed int32 matrices of the given shapes is a decoder bug."""
     try:
-        out = cc.decode(blob, rows, max_cols)
+        out = cc.decode(blob, rows, cols)
     except cc.ClaimCodecError:
         return None
-    assert [z.shape[0] for z in out] == rows and all(z.dtype == np.int32 for z in out)
-    assert all(z.shape[1] <= max_cols for z in out)
+    assert [z.shape for z in out] == list(zip(rows, cols)) and all(z.dtype == np.int32 for z in out)
     return out
 
 
 def test_every_truncation_is_rejected(sample):
-    _, blob, rows, mc = sample
+    _, blob, rows, cols = sample
     for n in range(len(blob)):
         with pytest.raises(cc.ClaimCodecError):
-            cc.decode(blob[:n], rows, mc)
+            cc.decode(blob[:n], rows, cols)
 
 
 def test_trailing_bytes_magic_op_count_and_type_are_rejected(sample):
-    _, blob, rows, mc = sample
+    _, blob, rows, cols = sample
     for bad, r in [(blob + b"\0", rows), (b"PVC2" + blob[4:], rows), (blob, rows[:-1]), (blob, rows + [3]),
                    (bytearray(blob), rows), (memoryview(blob), rows), ("PVC3", rows)]:
         with pytest.raises(cc.ClaimCodecError):
-            cc.decode(bad, r, mc)
+            cc.decode(bad, r, cols)
 
 
 def test_header_fields_are_validated(sample):
-    _, blob, rows, mc = sample
+    _, blob, rows, cols = sample
     # op 0 (plain) at byte 8: u32 M, flags, u8 B, i32 lo; op 1 (centred) at byte 18
     def bad(at, value):
         b = bytearray(blob)
         b[at:at + len(value)] = value
         with pytest.raises(cc.ClaimCodecError):
-            cc.decode(bytes(b), rows, mc)
+            cc.decode(bytes(b), rows, cols)
 
-    bad(8, struct.pack("<I", mc + 1))                        # more columns than the query has
+    bad(8, struct.pack("<I", cols[0] + 1))                   # more columns than the query gives the op
+    bad(8, struct.pack("<I", cols[0] - 1))                   # fewer
     for flags in (2, 3, 0x80):                               # other flag bits
         bad(12, bytes([flags]))
     bad(13, bytes([cc.BMAX + 1]))                            # width too large
@@ -283,23 +297,23 @@ def test_a_stream_longer_than_the_input_and_too_many_exceptions_are_rejected():
     b = bytearray(blob)
     b[8:12] = struct.pack("<I", 4000)                        # 3 x 4000 slots of the op's width
     with pytest.raises(cc.ClaimCodecError, match="longer than the input"):
-        cc.decode(bytes(b), [3], 4000)
+        cc.decode(bytes(b), [3], [4000])
     zero = cc._assemble([(1000, [(0, 0, torch.zeros(3000, dtype=torch.int32))])])   # B = 0: no slot bytes
     assert zero[-4:] == struct.pack("<I", 0)
     with pytest.raises(cc.ClaimCodecError, match="exceptions"):
-        cc.decode(zero[:-4] + struct.pack("<I", 2000), [3], 1000)
-    assert cc.decode(zero, [3], 1000)[0].shape == (3, 1000)
+        cc.decode(zero[:-4] + struct.pack("<I", 2000), [3], [1000])
+    assert cc.decode(zero, [3], [1000])[0].shape == (3, 1000)
 
 
 def test_random_corruptions_never_crash(sample):
-    zs, blob, rows, mc = sample
+    zs, blob, rows, cols = sample
     rng = np.random.default_rng(3)
     changed = 0
     for _ in range(600):
         b = bytearray(blob)
         for _ in range(int(rng.integers(1, 4))):
             b[int(rng.integers(0, len(b)))] ^= 1 << int(rng.integers(0, 8))
-        out = _decode_or_reject(bytes(b), rows, mc)
+        out = _decode_or_reject(bytes(b), rows, cols)
         if out is not None and not all(np.array_equal(a, c) for a, c in zip(zs, out)):
             changed += 1
     # a flipped slot bit is a different (well-formed) claim: the protocol's checks catch it
@@ -316,14 +330,14 @@ def _one_exception(h: int, b: int, slot: int = 1, lo: int = 0) -> bytes:
 
 
 def test_exceptions_are_range_checked():
-    assert cc.decode(_one_exception(5, 0), [1], 1)[0][0, 0] == 5
-    assert cc.decode(_one_exception(-3, 4), [1], 1)[0][0, 0] == 1 - 3 * 16
-    assert cc.decode(_one_exception((1 << 28) - 1, 2), [1], 1)[0][0, 0] == 1 + ((1 << 28) - 1) * 4   # < 2**30
-    assert cc.decode(_one_exception(-(1 << 28), 2), [1], 1)[0][0, 0] == 1 - (1 << 30)                 # > -2**30
-    assert cc.decode(_one_exception(1, 29, 0, -(1 << 29)), [1], 1)[0][0, 0] == 0
+    assert cc.decode(_one_exception(5, 0), [1], [1])[0][0, 0] == 5
+    assert cc.decode(_one_exception(-3, 4), [1], [1])[0][0, 0] == 1 - 3 * 16
+    assert cc.decode(_one_exception((1 << 28) - 1, 2), [1], [1])[0][0, 0] == 1 + ((1 << 28) - 1) * 4   # < 2**30
+    assert cc.decode(_one_exception(-(1 << 28), 2), [1], [1])[0][0, 0] == 1 - (1 << 30)                 # > -2**30
+    assert cc.decode(_one_exception(1, 29, 0, -(1 << 29)), [1], [1])[0][0, 0] == 0
     for h, b in (((1 << 28), 2), (-(1 << 28) - 1, 2), ((1 << 29), 1), ((1 << 33), 0), (-(1 << 34), 3)):
         with pytest.raises(cc.ClaimCodecError, match="exception out of range"):
-            cc.decode(_one_exception(h, b), [1], 1)
+            cc.decode(_one_exception(h, b), [1], [1])
 
 
 def test_exception_positions_are_checked():
@@ -333,11 +347,11 @@ def test_exception_positions_are_checked():
     for gaps in ([1], [(1 << 36) - 1]):                       # position 1 of 1 value, far beyond
         bad = ok[:-len(tail)] + struct.pack("<I", 1) + cc._rice_encode(np.array(gaps)) + cc._rice_encode(np.array([9]))
         with pytest.raises(cc.ClaimCodecError, match="position"):
-            cc.decode(bad, [1], 1)
+            cc.decode(bad, [1], [1])
     # a sum of gaps past 2**63 (at least 2**27 exceptions of the largest gap) wraps: never in range
     with pytest.raises(cc.ClaimCodecError, match="position"):
         cc._patch(np.zeros(10, np.int32), np.full(4, 1 << 62, np.int64), np.zeros(4, np.int64), [(0, 1, 0)], 10, 1)
     b = bytearray(ok)
     b[-len(tail) + 4] = 33                                    # the gaps' Rice parameter k > 32
     with pytest.raises(cc.ClaimCodecError, match="Rice"):
-        cc.decode(bytes(b), [1], 1)
+        cc.decode(bytes(b), [1], [1])

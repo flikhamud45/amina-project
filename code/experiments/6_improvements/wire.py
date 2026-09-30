@@ -115,7 +115,7 @@ def _ab(prover: Prover, v: Verifier, xs: list, reps: int) -> dict:
 
 def _codec(zs: list[torch.Tensor], reps: int, thread_counts: list[int]) -> dict:
     """Encode and decode (into int64) throughput against reading int32 claims and widening them."""
-    rows, mc = [z.shape[0] for z in zs], max(z.shape[1] for z in zs)
+    rows, cols = [z.shape[0] for z in zs], [z.shape[1] for z in zs]
     n = sum(z.numel() for z in zs)
     raw = b"".join(z.to(torch.int32).numpy().tobytes() for z in zs)
 
@@ -126,7 +126,7 @@ def _codec(zs: list[torch.Tensor], reps: int, thread_counts: list[int]) -> dict:
             o += 4 * z.numel()
         return out
     blob = claimcodec.encode(zs)
-    assert all(torch.equal(a, b) for a, b in zip(zs, claimcodec.decode_torch(blob, rows, mc)))
+    assert all(torch.equal(a, b) for a, b in zip(zs, claimcodec.decode_torch(blob, rows, cols)))
     out = {"claims": n, "bytes": len(blob), "bits_per_claim": 8 * len(blob) / n,
            "bits_per_claim_uncentred": 8 * len(claimcodec.encode(zs, centre=False)) / n}
     for threads in thread_counts:
@@ -134,7 +134,7 @@ def _codec(zs: list[torch.Tensor], reps: int, thread_counts: list[int]) -> dict:
         t = {"encode": [], "decode": [], "int32_parse": []}
         for _ in range(reps):
             for name, fn in (("encode", lambda: claimcodec.encode(zs)), ("int32_parse", parse),
-                             ("decode", lambda: claimcodec.decode_torch(blob, rows, mc, workers=threads))):
+                             ("decode", lambda: claimcodec.decode_torch(blob, rows, cols, workers=threads))):
                 t0 = time.perf_counter()
                 fn()
                 t[name].append(time.perf_counter() - t0)

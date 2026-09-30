@@ -289,6 +289,25 @@ class IntGraph:
         pairs = [pair for pair in copies.values() if pair[0] is not pair[1]]
         return IntGraph(ops, self.input_name, self.output_name, dict(self.meta)), pairs
 
+    def claim_columns(self, x: torch.Tensor) -> list[int] | None:
+        """Every weight op's column count ``M`` on the query ``x``, in op order (``None`` if ``x``
+        is malformed for one of them): the ops run on meta tensors, which carry shapes and no
+        values, so nothing is computed or allocated."""
+        graph, _ = self.with_constants_on("meta")
+        env = {self.input_name: x.to("meta")}
+        out = []
+        for op in graph.ops:
+            if isinstance(op, MatOp):
+                xin = env[op.inputs[0]]
+                m = op.n_cols(xin)
+                if m is None:
+                    return None
+                out.append(m)
+                env[op.output] = op.fold(torch.empty(op.n_rows, m, dtype=torch.int64, device="meta"), xin)
+            else:
+                env[op.output] = op.fn(*[env[n] for n in op.inputs])
+        return out
+
     def n_params(self) -> int:
         return sum(op.n_rows * op.row_length for op in self.mat_ops)
 

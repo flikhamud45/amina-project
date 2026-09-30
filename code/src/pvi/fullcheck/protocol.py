@@ -514,6 +514,7 @@ class Verifier:
     _ranged: dict = field(default_factory=dict)  # name -> (weakref, _version) of the claim derive() range-checked
     _kept: dict = field(default_factory=dict)    # Kpre: stacked operands of the fixed chi and u
     _consts: list = field(default_factory=list)  # a GPU client: the cheap ops' constants (source, copy, versions)
+    _columns: dict = field(default_factory=dict)  # query shape -> claim_columns
 
     def __post_init__(self) -> None:
         if self.groups:
@@ -563,6 +564,14 @@ class Verifier:
         if b is not None:
             u = torch.cat([u, field_matmul_mod(chi, to_field(b)[:, None])], 1)
         return u
+
+    def claim_columns(self, x: torch.Tensor) -> list[int] | None:
+        """Every weight op's column count on the query ``x`` (``None``: ``x`` is malformed), from the
+        graph's shapes alone (:meth:`IntGraph.claim_columns`), once per query shape."""
+        key = (tuple(x.shape), x.dtype)
+        if key not in self._columns:
+            self._columns[key] = self.graph.claim_columns(x)
+        return self._columns[key]
 
     def derive(self, x: torch.Tensor, claims: dict[str, torch.Tensor]) -> dict[str, torch.Tensor] | None:
         """Recompute every cheap op; return each weight op's input, or ``None`` to reject.
@@ -1067,12 +1076,14 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
 def _decoded_claims(verifier: Verifier, blob: bytes, x: torch.Tensor, out: dict, dtype: torch.dtype,
                     pin: bool = False) -> dict | None:
     """The verifier's claims from their ``PVC3`` bytes (``None``: malformed), as ``dtype`` host
-    tensors (int32 in pinned memory with ``pin``), timed as ``verify_decode``."""
+    tensors (int32 in pinned memory with ``pin``), timed as ``verify_decode``.  Each claim must have
+    the shape the query gives it, which the decoder checks before it allocates the claims."""
     mats = verifier.graph.mat_ops
     t0 = time.perf_counter()
+    cols = verifier.claim_columns(x)
     try:
-        zs = claimcodec.decode_torch(blob, [op.n_rows for op in mats], x.numel(), dtype=dtype,
-                                     workers=torch.get_num_threads(), pin=pin)
+        zs = None if cols is None else claimcodec.decode_torch(blob, [op.n_rows for op in mats], cols, dtype=dtype,
+                                                               workers=torch.get_num_threads(), pin=pin)
     except claimcodec.ClaimCodecError:
         zs = None
     out["timings"]["verify_decode"] = out["timings"].get("verify_decode", 0.0) + time.perf_counter() - t0

@@ -12,9 +12,9 @@ Claims: format ``PVC3``
 A frame of reference whose exceptions carry only their high part (as "NewPFD"); the prototype
 ``PVC2`` of branch research-claims without its raw (int32) ops, which are never smaller than
 ``B = 30``, and with median centres (smaller on the CNNs, the same on the decoders).  The verifier
-knows every weight op's row count ``N`` from the public graph; the column count ``M`` depends
-on the query and is sent, bounded here by ``max_cols`` and checked exactly by
-``Verifier.derive``.
+knows every weight op's shape ``[N, M]``: ``N`` from the public graph, ``M`` from the query's shape
+(``Verifier.claim_columns``).  The header repeats ``M``, and the decoder rejects any other before
+it allocates anything, so a malformed input costs it no more memory than the honest claims.
 
 Each op is one *segment*, or two when it is *centred*: a run of integers ``x`` with a width
 ``B <= 30`` and a base ``lo``.  Every value is stored as its ``B``-bit slot ``(x - lo) mod 2**B``;
@@ -54,13 +54,13 @@ stream; the quotients ``q = v >> k <= 15`` in bit-plane unary: level ``l = 1..15
 byte).  They hold values below ``2**36``.
 
 Decoding (:func:`decode`) rejects with :class:`ClaimCodecError`, never with another exception,
-any input that is not exactly such an encoding: a bad magic or op count, ``M > max_cols``, other
-flag bits, ``B > 30``, a base outside ``(-2**30, 2**30 - 2**B]``, truncated or trailing bytes,
-non-zero padding, ``k > 32``, exception positions out of order or range, and exceptions
-reaching ``|x| >= 2**30``.  So every segment value is ``|x| < 2**30`` and every claim fits in
+any input that is not exactly such an encoding: a bad magic or op count, an ``M`` other than
+the expected one, other flag bits, ``B > 30``, a base outside ``(-2**30, 2**30 - 2**B]``,
+truncated or trailing bytes, non-zero padding, ``k > 32``, exception positions out of order or
+range, and exceptions reaching ``|x| >= 2**30``.  So every segment value is ``|x| < 2**30`` and every claim fits in
 int32.  The range check stays the verifier's (``|z| < 2**29`` in ``Verifier.derive``): the codec
-only guarantees well-formed matrices of the expected row counts.  The work and the memory are
-linear in the input and in ``sum(N) * max_cols``.
+only guarantees well-formed matrices of the expected shapes.  The work and the memory are
+linear in the input and in the claims' size ``sum(N M)``.
 
 Soundness.  Decoding is a deterministic function from bytes to claim matrices (or a rejection),
 applied to what the prover sent before any challenge; with Fiat--Shamir the transcript absorbs
@@ -535,7 +535,7 @@ def _add_bases(x: np.ndarray, ops: list) -> None:
             np.add(z, np.int32(lo), out=z)
 
 
-def _decode(buf, rows: list[int], max_cols: int, workers: int) -> tuple[np.ndarray, list]:
+def _decode(buf, rows: list[int], cols: list[int], workers: int) -> tuple[np.ndarray, list]:
     """The value buffer (int32, every claim in place) and per op ``(start, N, M)`` in it."""
     if not isinstance(buf, bytes):
         raise ClaimCodecError("not bytes")
@@ -545,11 +545,11 @@ def _decode(buf, rows: list[int], max_cols: int, workers: int) -> tuple[np.ndarr
         raise ClaimCodecError("wrong number of ops")
     off = 8
     heads, segs = [], []          # per op (N, M, its row means' segment or None, its main segment); (B, lo, n)
-    for n_rows in rows:
+    for n_rows, n_cols in zip(rows, cols, strict=True):
         off = _need(buf, off, 5)
         m, flags = struct.unpack_from("<IB", buf, off - 5)
-        if m > max_cols:
-            raise ClaimCodecError("more columns than the query allows")
+        if m != n_cols:
+            raise ClaimCodecError("a column count other than the query's")
         if flags & ~_F_CENTRED:
             raise ClaimCodecError("bad flags")
         oseg = None
@@ -615,24 +615,23 @@ def _exceptions(buf, off: int, total: int, out: dict) -> None:
     out["n"] = n_exc
 
 
-def decode(buf, rows: list[int], max_cols: int, *, workers: int = 1) -> list[np.ndarray]:
-    """The claim matrices of :func:`encode`'s bytes, int32 ``[rows[i], M_i]`` in op order (views of
-    one buffer); raises :class:`ClaimCodecError` on anything else.
+def decode(buf, rows: list[int], cols: list[int], *, workers: int = 1) -> list[np.ndarray]:
+    """The claim matrices of :func:`encode`'s bytes, int32 ``[rows[i], cols[i]]`` in op order (views
+    of one buffer); raises :class:`ClaimCodecError` on anything else.
 
-    ``rows`` are the ops' row counts (public) and ``max_cols`` bounds every ``M_i`` (the verifier
-    passes the number of query elements, which bounds every op of these graphs): it caps the
-    memory a malformed input can make the decoder allocate.  ``workers`` threads share the work
-    on large proofs."""
-    x, ops = _decode(buf, rows, max_cols, workers)
+    ``rows`` are the ops' row counts (public) and ``cols`` their column counts on the query
+    (``Verifier.claim_columns``): a header with any other is rejected before anything is
+    allocated.  ``workers`` threads share the work on large proofs."""
+    x, ops = _decode(buf, rows, cols, workers)
     return [x[s:s + n * m].reshape(n, m) for s, n, m in ops]
 
 
-def decode_torch(buf, rows: list[int], max_cols: int, *, dtype: torch.dtype = torch.int64, workers: int = 1,
+def decode_torch(buf, rows: list[int], cols: list[int], *, dtype: torch.dtype = torch.int64, workers: int = 1,
                  pin: bool = False) -> list[torch.Tensor]:
     """:func:`decode` into torch tensors of ``dtype``: int64, what ``Verifier.derive`` takes (widened in
     one pass on torch's threads), or int32 (the decoded buffer itself; copied to pinned memory
     with ``pin``, for non-blocking uploads to a GPU)."""
-    x, ops = _decode(buf, rows, max_cols, workers)
+    x, ops = _decode(buf, rows, cols, workers)
     flat = torch.from_numpy(x)
     if dtype != torch.int32:
         flat = flat.to(dtype)

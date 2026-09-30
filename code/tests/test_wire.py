@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import struct
+import tracemalloc
 from pathlib import Path
 
 import numpy as np
@@ -218,6 +219,55 @@ def _corrupt_field_message(monkeypatch, which: str, change, reps: int):
         out = _PACK_FIELD(tensors)
         return change(out) if (tensors[0].shape[0] == reps) == (which == "u") else out
     monkeypatch.setattr(proto.claimcodec, "pack_field", patched)
+
+
+@pytest.mark.parametrize("kind", ["lenet5", "vgg16", "resnet18_cifar", *_TINY, "opt"])
+def test_the_verifier_knows_every_claims_shape_from_the_query(kind, monkeypatch):
+    if kind in ("vgg16", "resnet18_cifar"):
+        torch.manual_seed(0)
+        graph = quantize_model(build_float_model(kind, 10).eval(), torch.randn(4, 3, 32, 32))
+        xs = [quantize_input(graph, torch.randn(b, 3, 32, 32)) for b in (1, 2)]
+    elif kind == "opt":                    # OPT-350M's project-in and learned positions
+        graph = build_decoder(DecoderConfig("tiny-opt", 64, 2, 4, 4, 16, 128, 97, mlp="relu", max_pos=64,
+                                            embed_dim=32), calib_tokens=12, seed=3)
+        xs = [torch.randint(0, 97, (1, t)) for t in (1, 9)]
+    else:
+        graph, x = _graph(kind)
+        xs = [x, x[:, :1]] if kind != "lenet5" else [x, x.repeat(3, 1, 1, 1)]
+    v = proto.Verifier(graph.public(), proto.params_for(40, len(graph.mat_ops)), "K")
+    for x in xs:
+        claims = graph.forward(x)[1]
+        assert v.claim_columns(x) == [claims[op.name].shape[1] for op in graph.mat_ops]
+    if kind in ("lenet5", "vgg16", "resnet18_cifar"):   # a query of other channels fits no convolution
+        assert v.claim_columns(xs[0][:, :0]) is None
+    monkeypatch.setattr(type(v.graph), "claim_columns", lambda *a: pytest.fail("not cached"))
+    assert v.claim_columns(xs[0]) == [z.shape[1] for z in graph.forward(xs[0])[1].values()]
+
+
+@pytest.mark.parametrize("kind", ["lenet5", "qwen"])
+@pytest.mark.parametrize("mode,fiat_shamir", SETTINGS)
+def test_a_width_0_header_of_the_query_size_is_rejected_before_it_is_allocated(kind, mode, fiat_shamir, monkeypatch):
+    """Every op at ``B = 0`` with as many columns as the query has elements: about 10 bytes per op
+    that would decode to ``sum(N) * x.numel()`` zeros (28 times LeNet-5's claims)."""
+    graph, x = _graph(kind)
+    prover, pair = _setup(graph, mode, fiat_shamir)
+    honest = sum(z.numel() for z in graph.forward(x)[1].values())
+    zeros = cc._assemble([(x.numel(), [(0, 0, torch.zeros(op.n_rows * x.numel(), dtype=torch.int32))])
+                          for op in graph.mat_ops])
+    peaks, decode_torch = [], cc.decode_torch
+
+    def traced(*a, **kw):                  # the decoder's allocations (numpy's are traced)
+        tracemalloc.start()
+        try:
+            return decode_torch(*a, **kw)
+        finally:
+            peaks.append(tracemalloc.get_traced_memory()[1])
+            tracemalloc.stop()
+
+    monkeypatch.setattr(proto.claimcodec, "encode", lambda zs: zeros)
+    monkeypatch.setattr(proto.claimcodec, "decode_torch", traced)
+    assert _both(prover, pair, x, seed=1)["rejected_at"] == "range_or_shape"
+    assert len(peaks) == 2 and max(peaks) < 4 * honest
 
 
 def _fold_and_open_attacks(graph):
