@@ -10,9 +10,12 @@ A cell that has a ``.done`` marker is skipped (resume after pre-emption); pass
 ``--force`` to redo it.  An honest query that is rejected stops the job and keeps the
 cell's records as ``<cell>.rejected-<run_id>.jsonl`` (``count_outcomes.py`` counts them).
 ``--policy <name>`` (a commitment plan of ``pvi.fullcheck.plans``: tight, cnn<e>, R<rate>, each also
-with the suffix c: the col layouts) commits under that plan and runs only the cells it changes -- the
-commitment (``commit_*``, with its setup time and size) and the mode-C cells -- named with a
-``_pol<name>`` suffix.
+with the suffix c: the col layouts and lookup tables) commits under that plan and runs only the cells
+it changes -- the commitment (``commit_*``, with its setup time and size) and the mode-C cells --
+named with a ``_pol<name>`` suffix.  ``--prune-last`` (LLM suite) builds the decoders with their last
+block at the last position (``build_decoder(..., prune_last=True)``), every cell named with a
+``_prune`` suffix; ``--lookups`` runs the K and Kpre cells with a verifier that reads the embedding
+rows itself (``Verifier(lookups=True)``), named with a ``_lookups`` suffix.
 The ``pvi`` package must be this checkout's ``src/pvi`` (``export PYTHONPATH=<checkout>/code/src``,
 as the sbatch scripts do): with a shared venv that has another clone's pvi installed,
 bench.py refuses to run.
@@ -292,8 +295,11 @@ PLAN_CELLS = ("commit_", "defence_C_", "tamper_C_")
 
 
 def _todo(args, suite, model, cell) -> bool:
-    """Run this cell?  Forced, or not yet done; under ``--policy`` only the cells it changes."""
+    """Run this cell?  Forced, or not yet done; under ``--policy`` or ``--lookups`` only the cells it
+    changes."""
     if args.policy != "paper" and not cell.startswith(PLAN_CELLS):
+        return False
+    if args.lookups and not cell.startswith(("defence_K_", "defence_Kpre_")):
         return False
     return args.force or not is_done(suite, model, cell)
 
@@ -590,7 +596,8 @@ def suite_cnn(args, env) -> None:
             else:
                 r.rec("soundness_bits", _plan_soundness(params, coms.plan, "C"), "bits")
             if mode == "C":
-                v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics)
+                v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                              tables=coms.table_publics)
             else:
                 v = _verifier(graph.public(), params, mode, weights=weights)
                 if mode == "Kpre":
@@ -615,7 +622,8 @@ def suite_cnn(args, env) -> None:
     cell = "tamper_C_int_lam40"
     if args.tampers and _todo(args, "cnn", name, cell):
         params = params_for(40, len(mats), rate=rate, plan=coms.plan)
-        v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics)
+        v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                      tables=coms.table_publics)
         r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns,
                                          **_plan_config(coms, params)}, env)
         g = torch.Generator().manual_seed(123)
@@ -773,6 +781,7 @@ def suite_llm(args, env) -> None:
 
     device = torch.device(args.device)
     cfg = CONFIGS[args.model]
+    prune = args.prune_last
     if args.builds == "auto":      # the report's default: all blocks up to 12, else 1 and 2
         builds = [cfg.n_layers] if cfg.n_layers <= 12 else [1, 2]
     else:                          # e.g. "full" or "1,2,full" (L1, L2 and the full model in one job)
@@ -781,6 +790,8 @@ def suite_llm(args, env) -> None:
         [tuple(m.split(":")) for m in args.modes.split(",")]
     if args.policy != "paper":        # a commitment policy changes the mode-C cells only
         modes = [m for m in modes if m[0] == "C"]
+    if args.lookups:                  # and the verifier's own rows the K and Kpre cells only
+        modes = [m for m in modes if m[0] != "C"]
     skipped = []
     for seq in args.seq:
         for n_layers in builds:
@@ -791,7 +802,8 @@ def suite_llm(args, env) -> None:
             if not args.force and all(is_done("llm", cfg.name, t) for t in todo):
                 continue
             if device.type == "cuda":  # a build whose int8 weights alone fill the GPU would only OOM
-                need = sum(sh.n_rows * sh.row_length for sh in decoder_shapes(cfg, n_layers=n_layers))
+                need = sum(sh.n_rows * sh.row_length for sh in decoder_shapes(cfg, n_layers=n_layers,
+                                                                              prune_last=prune))
                 have = torch.cuda.get_device_properties(device).total_memory
                 if need > 0.85 * have:     # ... after its build and commit: skip it, run the others
                     print(f"SKIP {cfg.name} T{seq} L{n_layers}: {need / 2**30:.1f} GiB of int8 weights "
@@ -800,7 +812,7 @@ def suite_llm(args, env) -> None:
                     continue
             _reset_peaks(device)
             t0 = time.perf_counter()
-            graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0)
+            graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0, prune_last=prune)
             build_s = time.perf_counter() - t0
             mats = graph.mat_ops
             # the first ``queries`` rows are the single-prompt queries of the stored runs
@@ -808,12 +820,13 @@ def suite_llm(args, env) -> None:
                                    generator=torch.Generator().manual_seed(1))
             coms = None
             if any(m == "C" for m, _ in modes):
-                coms, commit_s = _commit(graph, args.rate, device, args.policy, decoder_shapes(cfg))
+                coms, commit_s = _commit(graph, args.rate, device, args.policy, decoder_shapes(cfg, prune_last=prune))
                 cell = f"commit_{base}"
                 if _todo(args, "llm", cfg.name, cell):
                     r = Recorder("llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": args.rate,
                                                          "n_layers_full": cfg.n_layers, "lean": args.lean,
                                                          "params_full": decoder_param_count(cfg),
+                                                         **({"prune_last": True} if prune else {}),
                                                          **_plan_config(coms)}, env)
                     r.rec("build_graph", build_s, "s")
                     r.rec("commit_total", commit_s, "s")
@@ -829,14 +842,15 @@ def suite_llm(args, env) -> None:
                     if not _todo(args, "llm", cfg.name, cell):
                         continue
                     # size (r, t) for the FULL model's op count, so extrapolated rows keep their lambda
-                    full_shapes = decoder_shapes(cfg)
+                    full_shapes = decoder_shapes(cfg, prune_last=prune)
                     plan = None if coms is None else coms.plan
                     params = params_for(lam, len(full_shapes), rate=args.rate, fiat_shamir=(chal == "fs"), plan=plan)
                     conf = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": args.rate,
                             "columns": params.columns, "seq": seq, "n_layers": n_layers,
                             "n_layers_full": cfg.n_layers, "params_full": decoder_param_count(cfg),
                             "params_built": graph.n_params(), "lean": args.lean,
-                            "threads": torch.get_num_threads(), **_plan_config(coms, params)}
+                            "threads": torch.get_num_threads(), **({"prune_last": True} if prune else {}),
+                            **({"lookups": True} if args.lookups else {}), **_plan_config(coms, params)}
                     r = Recorder("llm", cfg.name, cell, conf, env)
                     if plan is not None:      # the whole model's bound, under the whole model's plan
                         whole = plan_commitment(full_shapes, args.policy, rate=args.rate)
@@ -844,9 +858,10 @@ def suite_llm(args, env) -> None:
                             lam, len(full_shapes), fiat_shamir=(chal == "fs"), plan=whole), whole, "C"), "bits")
                     if mode == "C":
                         v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
-                                      lean=args.lean)
+                                      tables=coms.table_publics, lean=args.lean)
                     else:
-                        v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean)
+                        v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean,
+                                      lookups=args.lookups)
                         if mode == "Kpre":
                             t0 = time.perf_counter()
                             v.precompute(Challenger())   # ends with a sync of the verifier's device
@@ -882,10 +897,11 @@ def suite_llm(args, env) -> None:
                     and _todo(args, "llm", cfg.name, cell)):
                 params = params_for(40, len(decoder_shapes(cfg)), rate=args.rate, plan=coms.plan)
                 v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
-                              lean=args.lean)
+                              tables=coms.table_publics, lean=args.lean)
                 r = Recorder("llm", cfg.name, cell, {"lam": 40, "mode": "C", "reps": params.reps,
                                                      "columns": params.columns, "seq": seq, "n_layers": n_layers,
                                                      "n_layers_full": cfg.n_layers, "lean": args.lean,
+                                                     **({"prune_last": True} if prune else {}),
                                                      **_plan_config(coms, params)}, env)
                 g = torch.Generator().manual_seed(123)
                 x0 = tokens[:1]
@@ -967,8 +983,15 @@ def build_parser() -> argparse.ArgumentParser:
                          "every cell records as its rate (the codeword lengths are the plan's: policy, group_columns)")
     ap.add_argument("--policy", default="paper",
                     help="commitment plan (pvi.fullcheck.plans): paper (the report), tight, cnn<e> or R<rate>, "
-                         "the last three also with the suffix c (col layouts); "
+                         "the last three also with the suffix c (col layouts and lookup tables); "
                          "runs the commitment and mode-C cells only, named with a _pol<name> suffix")
+    ap.add_argument("--prune-last", action="store_true",
+                    help="LLM suite: the last decoder block at the last position only "
+                         "(build_decoder(prune_last=True)); every cell named with a _prune suffix")
+    ap.add_argument("--lookups", action="store_true",
+                    help="modes K and Kpre: the verifier reads the embedding rows itself and the prover sends no "
+                         "claims for them (Verifier(lookups=True)); runs those cells only, named with a _lookups "
+                         "suffix")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--tag", default="", help="suffix for cell names, e.g. _thr1")
     ap.add_argument("--builds", default="auto",
@@ -1020,6 +1043,17 @@ def main() -> None:
                          "hold non-TF32 timings (bench.sbatch: export PVI_TF32=1)")
     if "_pol" in TAG:
         raise SystemExit("--tag must not contain _pol: --policy adds it (a paper run must not take a policy's cells)")
+    for flag, sfx in (("--prune-last", "_prune"), ("--lookups", "_lookups")):
+        if sfx in TAG:
+            raise SystemExit(f"--tag must not contain {sfx}: {flag} adds it")
+    if args.suite == "cnn" and (args.prune_last or args.lookups):
+        raise SystemExit("--prune-last and --lookups are for the decoders (the llm suite)")
+    if args.lookups and args.policy != "paper":
+        raise SystemExit("--lookups runs the K and Kpre cells, --policy the mode-C ones: one at a time")
+    if args.prune_last:
+        TAG += "_prune"
+    if args.lookups:
+        TAG += "_lookups"
     try:
         plan_commitment([], args.policy)
     except ValueError as exc:

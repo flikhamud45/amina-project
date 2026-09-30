@@ -10,7 +10,7 @@
 The protocol tests of every plan (honest queries and their bytes, the forgeries of the columns, the
 GPU forms, the wire encoding, the transcript, the byte model) run in ``tests/test_plans.py``, with
 lookup tables under its ``c`` policies and on pruned decoders too; this file holds what is particular
-to the lookups.
+to the lookups (and the experiment scripts' options for them and for pruning).
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ from __future__ import annotations
 import copy
 import dataclasses
 import hashlib
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -443,3 +445,68 @@ def test_the_lookup_byte_model():
     trees = {g: plan.matrix(ms[0]).n_points for g, ms in plan.groups}
     assert setup["trees"] == len(trees) + 2 and setup["leaves"] == sum(trees.values()) + 65536 + 1024
 
+
+# -- the experiment scripts ---------------------------------------------------------------------------------
+
+def _script(folder: str, name: str):
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "experiments" / folder / f"{name}.py"
+    if str(path.parent) not in sys.path:
+        sys.path.insert(0, str(path.parent))
+    spec = importlib.util.spec_from_file_location(f"{name}_lookups_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_bench_names_the_pruned_and_lookup_cells_once(monkeypatch):
+    """``--prune-last`` and ``--lookups`` add their suffixes (never a --tag's), run the decoders only, and
+    ``--lookups`` the K and Kpre cells only (``--policy`` the mode-C ones)."""
+    bench = _script("4_defence_benchmark", "bench")
+    for argv, needs in ((["llm", "--model", "gpt2", "--tag", "_prune"], "_prune"),
+                        (["llm", "--model", "gpt2", "--tag", "_x_lookups"], "_lookups"),
+                        (["cnn", "--model", "lenet5", "--prune-last"], "decoders"),
+                        (["cnn", "--model", "lenet5", "--lookups"], "decoders"),
+                        (["llm", "--model", "gpt2", "--lookups", "--policy", "R8c"], "one at a time")):
+        monkeypatch.setattr(sys, "argv", ["bench.py", *argv])
+        with pytest.raises(SystemExit, match=needs):
+            bench.main()
+    seen = {}
+    monkeypatch.setattr(bench, "env_info", lambda: {"pvi_path": "", "torch_threads": 1})
+    monkeypatch.setattr(bench, "claim_platform", lambda env: None)       # (nothing is written)
+    monkeypatch.setattr(bench, "suite_llm", lambda args, env: seen.update(tag=bench.TAG, args=args))
+    monkeypatch.setattr(sys, "argv", ["bench.py", "llm", "--model", "gpt2", "--prune-last", "--lookups",
+                                      "--wire", "--tag", "_wire", "--platform", "test"])
+    bench.main()
+    assert seen["tag"] == "_wire_prune_lookups" and seen["args"].prune_last and seen["args"].lookups
+    args = bench.build_parser().parse_args(["llm", "--model", "gpt2", "--lookups"])
+    args.force = True
+    assert bench._todo(args, "llm", "gpt2", "defence_Kpre_int_lam40_T8_L1")
+    assert not bench._todo(args, "llm", "gpt2", "defence_C_int_lam40_T8_L1")
+    assert not bench._todo(args, "llm", "gpt2", "commit_T8_L1")
+
+
+def test_plan_bytes_rows_of_pruned_builds_with_lookups():
+    """``plan_bytes.run_rows`` on 1- and 2-block pruned builds (claims only): the measured claims of the
+    c policy's tables and of the Kpre verifier's own rows are the model's, and the whole model's rows are
+    the model on the extrapolated claims."""
+    pb = _script("6_improvements", "plan_bytes")
+    rows = pb.run_rows("gpt2:6:1,2:256", 40, ["R8c"], 2, wires=(False, True), claims_only=True, prune_last=True,
+                       kpre=(False, True))
+    whole = [r for r in rows if r["layers"] == 12]
+    assert {(r["mode"], r["lookups"], r["wire"]) for r in whole} == {
+        ("C", False, False), ("C", False, True), ("Kpre", False, False), ("Kpre", False, True),
+        ("Kpre", True, False), ("Kpre", True, True)}
+    cfg = dataclasses.replace(CONFIGS["gpt2"], vocab=256)
+    ops = analytic.decoder_shapes(cfg, prune_last=True)
+    cols = analytic.decoder_claim_columns(cfg, 6, prune_last=True)
+    for r in whole:
+        if not r["wire"]:
+            plan = plan_commitment(ops, "R8c") if r["mode"] == "C" else None
+            want = analytic.proof_bytes(ops, proto.params_for(40, len(ops), fiat_shamir=r["challenges"] == "fs",
+                                                              plan=plan), cols, plan=plan, mode=r["mode"],
+                                        lookups=r["lookups"], table_ids={"pos": range(6)})
+            assert r["bytes_claims"] == want["claims"] and r["bytes_total"] == pytest.approx(sum(want.values()))
+    kpre = {r["lookups"]: r["bytes_claims"] for r in whole if r["mode"] == "Kpre" and not r["wire"]}
+    assert kpre[False] - kpre[True] == 4 * 6 * 768 * 2                  # the token and position rows, not sent
