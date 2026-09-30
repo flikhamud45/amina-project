@@ -266,7 +266,8 @@ def run_case(base, case: Case, reps: int, threads: list[int], cache: Path | None
     labels = [(label, verdict(vb, t, case.mode), verdict(vn, t, case.mode)) for label, t in tampered(tr, case.mode)]
     bad = [row for row in labels if row[1] != row[2] or row[1] == "accepted"]
     assert not bad, f"tampered transcripts: {bad}"
-    print(f"{case.key}: {sum(z.numel() for z in tr['claims'].values())} claims, setup {time.perf_counter() - t0:.0f} s, "
+    n_claims = sum(z.numel() for z in tr["claims"].values())
+    print(f"{case.key}: {n_claims} claims, setup {time.perf_counter() - t0:.0f} s, "
           f"tampered -> {', '.join(f'{a}: {b}' for a, b, _ in labels)}")
     for n_threads in threads:
         torch.set_num_threads(n_threads)
