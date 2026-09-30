@@ -50,7 +50,6 @@ __all__ = [
     "column_leaf",
     "column_rows",
     "row_leaves",
-    "column_leaves",
     "map_threaded",
     "CommitmentPublic",
     "WeightCommitment",
@@ -103,11 +102,6 @@ def row_leaves(tag: bytes, indices: list[int], rows: np.ndarray) -> dict[int, by
         h.update(rows[j])
         out[c] = h.digest()
     return out
-
-
-def column_leaves(tag: bytes, indices: list[int], opened: torch.Tensor) -> dict[int, bytes]:
-    """``{c: column_leaf(tag, c, opened[:, j])}`` for the int64 columns ``opened`` ``[N, t]``."""
-    return row_leaves(tag, indices, column_rows(opened))
 
 
 LEAF_THREAD_BYTES = 1 << 14

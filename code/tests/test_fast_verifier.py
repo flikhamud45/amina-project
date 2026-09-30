@@ -82,7 +82,6 @@ def test_field_matmul_mod_matches_reference(r, k, m, small_path):
     want = ref.field_matmul_mod(chi, z)
     assert torch.equal(fld.field_matmul_mod(chi, z, right_bound=Z), want)
     assert torch.equal(fld.field_matmul_mod(chi, z), want)
-    assert torch.equal(fld.field_matmul_mod(chi, z, right_bound=Z, left_limbs=fld.limbs_f64(chi)), want)
     # batch dimensions: three independent products at once
     chis, zs = _rand(g, 0, P, (3, r, k)), _rand(g, 1 - Z, Z, (3, k, m))
     got = fld.field_matmul_mod(chis, zs, right_bound=Z)
@@ -164,14 +163,14 @@ def test_vandermonde_columns_index_with_a_mask():
 
 
 @pytest.mark.parametrize("n_rows", [1, 7, 3000, (1 << 14) + 1])
-def test_column_leaves_hash_the_bytes_of_column_leaf(n_rows):
+def test_row_leaves_hash_the_bytes_of_column_leaf(n_rows):
     g = torch.Generator().manual_seed(n_rows)
     opened = _rand(g, 0, P, (n_rows, 9))
     opened[0, 0] = P - 1
     opened[-1, 1] = -1                      # outside the field: both keep the low 32 bits
     opened[-1, 2] = 1 << 40
     idx = sorted(random.Random(n_rows).sample(range(10 * n_rows + 20), 9))
-    assert com.column_leaves(b"tag", idx, opened) == ref.column_leaves(b"tag", idx, opened)
+    assert com.row_leaves(b"tag", idx, com.column_rows(opened)) == ref.column_leaves(b"tag", idx, opened)
 
 
 def _merkle_jobs(rnd):

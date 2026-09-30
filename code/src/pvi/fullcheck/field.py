@@ -241,24 +241,21 @@ def exact_gemm_i64(a: torch.Tensor, b: torch.Tensor, chunk: int) -> torch.Tensor
     return out
 
 
-def field_matmul_mod(left: torch.Tensor, right: torch.Tensor, *, right_bound: int | None = None,
-                     left_limbs: torch.Tensor | None = None) -> torch.Tensor:
+def field_matmul_mod(left: torch.Tensor, right: torch.Tensor, *, right_bound: int | None = None) -> torch.Tensor:
     """``left @ right mod P`` for field elements ``left`` ``[..., r, K]`` and ``right`` ``[..., K, M]``.
 
     ``right`` holds field elements (reduced into ``[0, P)`` here), or, when the caller
     has checked ``|right| < right_bound``, integers used as they are: the verifier's
     range-checked claims (``|z| < 2**29``) need no reduction pass and allow 4x longer
-    exact blocks.  ``left`` is split into limbs stacked into one ``[3r, K]`` operand
-    (``left_limbs`` may pass :func:`limbs_f64` of it, precomputed), so every block is ONE
-    GEMM.  The result is the canonical residue in ``[0, P)`` of the integer product.
+    exact blocks.  ``left`` is split into limbs stacked into one ``[3r, K]`` operand, so every
+    block is ONE GEMM.  The result is the canonical residue in ``[0, P)`` of the integer product.
     """
     chunk = exact_chunk(_LIMB_MAX, (P if right_bound is None else right_bound) - 1)
-    if left_limbs is None and _np_small(left, right):
+    if _np_small(left, right):
         return torch.from_numpy(np_field_matmul_mod(left.numpy(), right.numpy(), right_bound is None, chunk))
     if right_bound is None:
         right = _reduced(right)
-    lf = limbs_f64(left) if left_limbs is None else left_limbs
-    return combine_limbs(exact_gemm_i64(lf, right, chunk), left.shape[-2])
+    return combine_limbs(exact_gemm_i64(limbs_f64(left), right, chunk), left.shape[-2])
 
 
 # -- the same products in numpy, for small CPU operands ------------------------------------
