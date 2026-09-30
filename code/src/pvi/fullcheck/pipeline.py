@@ -140,7 +140,7 @@ def _verify(verifier, x, claims, chis, us, cols, openings, *, int8: bool):
     mats = verifier.graph.mat_ops
     index = {op.name: i for i, op in enumerate(mats)}
     us = {k: _to_device(v, dev) if torch.is_tensor(v) else v for k, v in us.items()}
-    n_u, u_exc = _leading_passes(mats, lambda op: verifier._u_ok(op, us, values=False))
+    n_u, u_exc = _leading_passes(mats, lambda op: verifier._u_ok(op, us))
     reads = _input_bindings(verifier.graph)
     sharing: dict[tuple, list[MatOp]] = {}     # linear ops reading one input tensor: one right-hand side
     for op in mats[:n_u]:
@@ -208,7 +208,7 @@ def _start_columns(verifier, chis, us, cols, openings, host: ThreadPoolExecutor)
     rows = {op.name: openings[op.name][0].numpy() for op in good}
     dev = torch.device(verifier.device)
     on_dev = _upload_rows(rows, dev) if dev.type != "cpu" else {op.name: openings[op.name][0] for op in good}
-    code_flags = verifier._code_flags(good, chis, us, cols, on_dev)
+    code_flags = verifier._code_flags(good, chis, us, cols, {name: r.T for name, r in on_dev.items()})
     return n_ok, exc, code_flags, host.submit(verifier._merkle, good, cols, openings, rows)
 
 
