@@ -36,8 +36,15 @@ __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count"]
 SHIFT = 30
 RES_MAX = (1 << 22) - 1
 ATTN_BYTES = 1 << 27
-"""Budget for one int64 ``[B, heads, T, T]`` score tensor (heads are grouped to fit)."""
+"""Budget for one ``[B, heads, T, T]`` score tensor (heads are grouped to fit): int32 scores
+on the int32 path of :func:`_attention_heads`, int64 ones on its fallback."""
 _EXP_TABLE = torch.tensor([round((1 << 15) * math.exp(-i / 16.0)) for i in range(256)], dtype=torch.int64)
+_EXP_ZERO = 178
+"""``_EXP_TABLE[i] == 0`` exactly for ``i >= _EXP_ZERO``."""
+assert int(_EXP_TABLE[_EXP_ZERO - 1]) > 0 and not bool(_EXP_TABLE[_EXP_ZERO:].any())
+_MASKED = -(1 << 30)
+"""The int32 path's score of a masked entry: below every real score (``|s| <= 2**21``)."""
+_LUT_MAX = 1 << 22
 
 
 @dataclass(frozen=True)
@@ -152,10 +159,12 @@ def _rope_tables(t: int, dh: int, theta: float) -> tuple[torch.Tensor, torch.Ten
 
 
 @lru_cache(maxsize=64)
-def _rope_tables_full(t: int, dh: int, theta: float) -> tuple[torch.Tensor, torch.Tensor]:
-    """``[cos | cos]`` and ``[-sin | sin]`` as ``[1, T, 1, dh]`` (cached; callers only read them)."""
+def _rope_tables_full(t: int, dh: int, theta: float, device: str) -> tuple[torch.Tensor, torch.Tensor]:
+    """``[cos | cos]`` and ``[-sin | sin]`` as ``[1, T, 1, dh]`` on ``device`` (cached, so a GPU
+    gets them once, not per call; callers only read them)."""
     cos, sin = _rope_tables(t, dh, theta)
-    return torch.cat([cos, cos], -1)[None, :, None, :], torch.cat([-sin, sin], -1)[None, :, None, :]
+    return (torch.cat([cos, cos], -1)[None, :, None, :].to(device),
+            torch.cat([-sin, sin], -1)[None, :, None, :].to(device))
 
 
 def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
@@ -163,7 +172,7 @@ def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
 
     ``[x1 cos - x2 sin | x2 cos + x1 sin] = x [cos | cos] + [x2 | x1] [-sin | sin]``."""
     t, dh = x.shape[1], x.shape[3]
-    cos2, sin2 = (a.to(x.device) for a in _rope_tables_full(t, dh, theta))
+    cos2, sin2 = _rope_tables_full(t, dh, theta, str(x.device))
     h = dh // 2
     swapped = torch.cat([x[..., h:], x[..., :h]], -1)
     if x.dtype == torch.int64:
@@ -175,24 +184,64 @@ def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
 
 
 @lru_cache(maxsize=32)
-def _causal_notmask_cpu(t: int, rep: int) -> torch.Tensor:
-    return (~torch.ones(t, t, dtype=torch.bool).tril()).repeat(rep, 1)
+def _causal_notmask(t: int, rep: int, device: str) -> torch.Tensor:
+    """``~tril(ones(t, t))`` repeated ``rep`` times along the rows, on ``device`` (cached;
+    callers only read it)."""
+    return (~torch.ones(t, t, dtype=torch.bool).tril()).repeat(rep, 1).to(device)
 
 
-def _causal_notmask(t: int, rep: int, device) -> torch.Tensor:
-    """``~tril(ones(t, t))`` repeated ``rep`` times along the rows (read-only)."""
-    m = _causal_notmask_cpu(t, rep)
-    return m if torch.device(device).type == "cpu" else m.to(device)
+def _exp_cap(m_s: int) -> int:
+    """The smallest score gap ``d`` whose exp-table index ``(d m_s + 2**29) >> 30`` reaches
+    ``_EXP_ZERO``.  For ``m_s > 0`` the index grows with ``d``, so every larger gap looks up 0."""
+    return -(-((_EXP_ZERO << SHIFT) - (1 << (SHIFT - 1))) // m_s)
 
 
-def _attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
-    """Integer causal attention for a group of heads: ``[B,H,T,dh]`` each.
+def _int32_scores(m_s: int, dh: int, t: int) -> bool:
+    """Whether the int32 path of :func:`_attention_heads` applies: ``|s| <= dh 128**2 <= 2**21``
+    (``dh <= 128``); row sums ``tot <= T 2**15`` with ``2 tot`` and ``510 e + tot`` below
+    ``2**31`` (``T < 2**15``); a gap table of at most ``2**22`` entries (so masked gaps, at
+    least ``2**30 - 2**21``, lie past its end); and no int64 overflow in the fallback's
+    ``d m_s`` (``d <= 2**22``)."""
+    return 0 < m_s < 1 << 32 and dh <= 128 and t < 1 << 15 and _exp_cap(m_s) <= _LUT_MAX
 
-    ``q`` may also be ``[B, H, rep*T, dh]``: the ``rep`` query heads that share each
-    key/value head stacked along the rows (grouped-query attention), where every row is
-    the same dot products and the same row-wise softmax as with ``k, v`` repeated."""
-    t = k.shape[2]
-    notmask = _causal_notmask(t, q.shape[2] // t, q.device)
+
+@lru_cache(maxsize=256)
+def _exp_lut(m_s: int, device: str) -> torch.Tensor:
+    """``LUT[d] = EXP[clamp((d m_s + 2**29) >> 30, 0, 255)]`` for ``0 <= d <= _exp_cap(m_s)``
+    (so ``LUT[-1] == 0``), int32 on ``device`` (cached; callers only read it)."""
+    d = torch.arange(_exp_cap(m_s) + 1, dtype=torch.int64)
+    idx = ((d * m_s + (1 << (SHIFT - 1))) >> SHIFT).clamp_(0, 255)
+    return _EXP_TABLE[idx].to(device=device, dtype=torch.int32)
+
+
+def _attention_core(q, k, v, lut: torch.Tensor, notmask: torch.Tensor) -> torch.Tensor:
+    """The int32 path of :func:`_attention_heads` (raw ``P V``, int64).
+
+    The same integers as the fallback, in half-width passes: the scores are exact in float32
+    (``|s| <= 2**21``) and kept as int32; a masked score is ``_MASKED``, so its gap from the
+    row maximum is past the end of ``lut`` and looks up the 0 that the fallback's second mask
+    pass writes; the look-up ``LUT[gap]`` replaces the int64 ``gap * m_s`` steps; and ``P V``
+    is ONE float32 GEMM, since a row of probabilities sums to at most ``255 + T/2`` and every
+    partial sum is below ``(255 + T/2) 128 < 2**24``."""
+    s = torch.matmul(q.to(torch.float32), k.to(torch.float32).transpose(-1, -2)).to(torch.int32)
+    s.masked_fill_(notmask, _MASKED)
+    d = torch.sub(s.amax(-1, keepdim=True), s, out=s)            # gaps, >= 0
+    e = lut[d.clamp_(max=lut.shape[0] - 1)]                       # 0 .. 2**15
+    del s, d
+    tot = e.sum(-1, keepdim=True, dtype=torch.int32)              # >= 2**15: the row maximum
+    p = torch.add(tot, e, alpha=510).div_(tot * 2, rounding_mode="floor")   # 0..255
+    del e
+    return torch.matmul(p.to(torch.float32), v.to(torch.float32)).to(torch.int64)
+
+
+@lru_cache(maxsize=None)
+def _exp_table(device: str) -> torch.Tensor:
+    """``_EXP_TABLE`` on ``device`` (cached; callers only read it)."""
+    return _EXP_TABLE.to(device)
+
+
+def _attention_int64(q, k, v, m_s: int, notmask: torch.Tensor) -> torch.Tensor:
+    """The fallback of :func:`_attention_heads` (raw ``P V``): int64 scores and gaps."""
     s = exact_matmul(q, k.transpose(-1, -2), max_w=128, max_x=128)       # [B,H,rep*T,T]
     s.masked_fill_(notmask, -(1 << 40))
     d = s.amax(-1, keepdim=True) - s
@@ -200,14 +249,31 @@ def _attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
     idx = mul_add_half(d.clamp_(max=1 << 31), int_scalar(m_s, str(q.device)), SHIFT)
     del d
     idx >>= SHIFT
-    e = torch.take(_EXP_TABLE.to(q.device), idx.clamp_(0, 255)).masked_fill_(notmask, 0)
+    e = torch.take(_exp_table(str(q.device)), idx.clamp_(0, 255)).masked_fill_(notmask, 0)
     del idx
     tot = e.sum(-1, keepdim=True)
     p = torch.addcmul(tot, e, int_scalar(510, str(q.device))).div_(2 * tot, rounding_mode="floor")   # 0..255
     del e
-    o = exact_matmul(p, v, max_w=256, max_x=128)                         # [B,H,rep*T,dh]
+    return exact_matmul(p, v, max_w=256, max_x=128)                      # [B,H,rep*T,dh]
+
+
+def _attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
+    """Integer causal attention for a group of heads: ``[B,H,T,dh]`` each.
+
+    ``q`` may also be ``[B, H, rep*T, dh]``: the ``rep`` query heads that share each
+    key/value head stacked along the rows (grouped-query attention), where every row is
+    the same dot products and the same row-wise softmax as with ``k, v`` repeated.
+    Runs in int32 (:func:`_attention_core`) where :func:`_int32_scores` allows, else in
+    int64; both give the integers of ``reference.attention_heads``."""
+    t, dh = k.shape[2], k.shape[3]
+    dev = str(q.device)
+    notmask = _causal_notmask(t, q.shape[2] // t, dev)
+    if _int32_scores(m_s, dh, t):
+        o = _attention_core(q, k, v, _exp_lut(m_s, dev), notmask)
+    else:
+        o = _attention_int64(q, k, v, m_s, notmask)
     if m_o is not None:  # m_o=None returns the raw product, for calibration only
-        o = requant(o, torch.tensor(m_o, device=q.device), SHIFT, -INT8_MAX, INT8_MAX)
+        o = requant(o, int_scalar(m_o, dev), SHIFT, -INT8_MAX, INT8_MAX)
     return o
 
 
@@ -215,8 +281,8 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
     """Integer causal attention.  q ``[B,T,Hq*dh]``, k/v ``[B,T,Hkv*dh]`` -> ``[B,T,Hq*dh]``.
 
     Heads are independent, so they are processed a few at a time to bound the
-    ``T x T`` score tensors (1 GiB per 32 heads at T=2048); the result is the
-    same integers as processing them all at once.  When all heads fit in one group,
+    ``T x T`` score tensors (0.5 GiB per 32 heads at T=2048 in int32); the result is
+    the same integers as processing them all at once.  When all heads fit in one group,
     grouped-query attention stacks each key/value head's query heads instead of
     repeating ``k`` and ``v``.  The output requantisation writes straight into the
     final ``[B, T, heads, dh]`` layout.
@@ -227,7 +293,8 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
     v = v.reshape(b, t, n_kv, dh).transpose(1, 2)
     out = torch.empty(b, t, n_heads, dh, dtype=torch.int64, device=q.device)
     out_h = out.transpose(1, 2)                                     # [B, heads, T, dh] view
-    group = max(1, ATTN_BYTES // (8 * b * t * t))       # heads per group
+    width = 4 if _int32_scores(m_s, dh, t) else 8                   # bytes per score
+    group = max(1, ATTN_BYTES // (width * b * t * t))               # heads per group
     if n_kv != n_heads and group >= n_heads:
         rep = n_heads // n_kv   # query heads j*rep .. j*rep+rep-1 read kv head j (as repeat_interleave)
         raw = _attention_heads(q.reshape(b, n_kv, rep * t, dh), k, v, m_s, None)
