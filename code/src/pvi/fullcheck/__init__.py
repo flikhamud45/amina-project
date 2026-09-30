@@ -13,6 +13,7 @@ commitment (Ligero-style).  Modules:
 * ``sampling``   -- Anchuri et al.'s path test on the same integer graphs, for a
                     like-for-like baseline;
 * ``analytic``   -- decoder weight-op shapes and the expected multiproof size;
+* ``reference``  -- the straightforward code of the verifier's fast routines (tests only);
 * ``models``, ``datasets`` -- the CNNs of the benchmark and their data.
 """
 
