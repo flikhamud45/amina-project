@@ -903,19 +903,32 @@ class Verifier:
             jobs.append((tree.root, tree.depth, leaves, openings[name][1]))
         return verify_multiproofs(jobs, workers)
 
-    def check_columns(self, chis, us, cols, openings) -> str | None:
+    def _opened(self, good, openings, *, wire: bool) -> tuple[dict | None, dict]:
+        """``(rows, opened)`` of the well-formed trees ``good``: the int32 rows ``[t, N]`` the leaves
+        hash (``None``: the leaves cast the columns, on threads), and each member's opened columns
+        for the code checks.  On a device the rows are cast once (with ``wire``, they are the rows
+        received) and uploaded; on the CPU the openings are used as they are."""
+        received = {name: openings[name][0] for name, _ in good}
+        if wire:
+            rows = {name: o.numpy() for name, o in received.items()}
+        elif _defer(self.device):
+            rows = {name: column_rows(o) for name, o in received.items()}
+        else:
+            return None, self._member_columns(good, received)
+        return rows, self._member_columns(good, _upload_rows(rows, self.device) if _defer(self.device) else received,
+                                          rows=True)
+
+    def check_columns(self, chis, us, cols, openings, *, wire: bool = False) -> str | None:
         """``None`` if every opened column is consistent, else the failing check: the verdict
         (and any exception) of checking tree by tree -- shape, then code (of every member), then
         Merkle.  The code checks are queued first (on a GPU they run there while the host checks
-        the Merkle paths) and come back with one copy."""
+        the Merkle paths) and come back with one copy.  With ``wire`` the openings are the int32
+        rows ``[t, N]`` of :func:`pipeline.wire_openings` (``None``: not representable), which the
+        checks take as they are."""
         units = self._column_units()
-        n_ok, exc = _leading_passes(units, lambda unit: self._columns_shape_ok(unit, us, cols, openings))
+        n_ok, exc = _leading_passes(units, lambda unit: self._columns_shape_ok(unit, us, cols, openings, wire=wire))
         good = units[:n_ok]
-        if _defer(self.device):       # the rows the leaves hash, cast once and uploaded for the code checks
-            rows = {name: column_rows(openings[name][0]) for name, _ in good}
-            opened = self._member_columns(good, _upload_rows(rows, self.device), rows=True)
-        else:                         # the columns as they are (the leaves cast them, on threads)
-            rows, opened = None, self._member_columns(good, {name: openings[name][0] for name, _ in good})
+        rows, opened = self._opened(good, openings, wire=wire)
         flags = self._code_flags(*self._members_of(good, cols), chis, us, opened)
         merkle = self._merkle(good, cols, openings, rows)
         return _columns_verdict(_unit_codes(good, _to_host(flags)), merkle, n_ok, exc, len(units))
@@ -1000,11 +1013,8 @@ class Verifier:
         units = self._column_units()
         n_ok, exc = _leading_passes(units, lambda unit: self._columns_shape_ok(unit, us, cols, openings, wire=True))
         good = units[:n_ok]
-        rows = {name: openings[name][0].numpy() for name, _ in good}
-        dev = torch.device(self.device)
-        on_dev = _upload_rows(rows, dev) if dev.type != "cpu" else {name: openings[name][0] for name, _ in good}
-        code_flags = self._code_flags(*self._members_of(good, cols), chis, us,
-                                      self._member_columns(good, on_dev, rows=True))
+        rows, opened = self._opened(good, openings, wire=True)
+        code_flags = self._code_flags(*self._members_of(good, cols), chis, us, opened)
         return units, n_ok, exc, code_flags, host.submit(self._merkle, good, cols, openings, rows)
 
 
@@ -1258,15 +1268,8 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
 
     if verifier.mode == "C":
         cols, openings = _open_message(prover, verifier, ch, us, out, u_blob=u_blob)
-        if wire:                  # the int32 rows [t, N] as the columns [N, t] check_columns takes
-            if any(rows is None for rows, _ in openings.values()):
-                out["rejected_at"] = "columns_shape"
-                return out
-            t0 = time.perf_counter()
-            openings = {k: (rows.T.to(torch.int64), proof) for k, (rows, proof) in openings.items()}
-            t["verify_decode"] += time.perf_counter() - t0
         t0 = time.perf_counter()
-        reason = verifier.check_columns(chis, us, cols, openings)
+        reason = verifier.check_columns(chis, us, cols, openings, wire=wire)
         _sync(vdev)
         t["verify_columns"] = time.perf_counter() - t0
         if reason is not None:

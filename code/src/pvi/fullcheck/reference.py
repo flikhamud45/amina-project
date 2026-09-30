@@ -87,8 +87,24 @@ def check_products(verifier, claims, inputs, chis, us) -> bool:
     return True
 
 
-def check_columns(verifier, chis, us, cols, openings) -> str | None:
-    """``Verifier.check_columns``, op by op (group by group for a commitment plan)."""
+def _as_columns(openings: dict) -> dict:
+    """Wire openings (the int32 rows ``[t, N]`` of ``pipeline.wire_openings``) as the int64 columns
+    ``[N, t]`` they hold; ``None`` (not representable) as an empty, malformed opening, and anything
+    but a pair unchanged."""
+    out = {}
+    for name, item in openings.items():
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            rows, proof = item
+            item = (torch.zeros(0, 0, dtype=torch.int64) if rows is None else rows.T.to(torch.int64), proof)
+        out[name] = item
+    return out
+
+
+def check_columns(verifier, chis, us, cols, openings, *, wire: bool = False) -> str | None:
+    """``Verifier.check_columns``, op by op (group by group for a commitment plan); with ``wire``
+    on the int64 columns the wire openings hold."""
+    if wire:
+        openings = _as_columns(openings)
     if verifier.groups:
         return _check_group_columns(verifier, chis, us, cols, openings)
     for op in verifier.graph.mat_ops:

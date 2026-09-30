@@ -24,6 +24,7 @@ from pvi.fullcheck import commitment as com
 from pvi.fullcheck import field as fld
 from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
+from pvi.fullcheck.pipeline import wire_openings
 
 P = fld.P
 Z = proto.Z_BOUND
@@ -82,6 +83,12 @@ def test_field_matmul_mod_matches_reference(r, k, m, small_path):
     want = ref.field_matmul_mod(chi, z)
     assert torch.equal(fld.field_matmul_mod(chi, z, right_bound=Z), want)
     assert torch.equal(fld.field_matmul_mod(chi, z), want)
+    # int32 operands, as transposed views (the wire's opened rows, the streaming verifier's claims)
+    for right_, bound in ((right, P), (z, Z)):
+        view = right_.to(torch.int32).T.contiguous().T
+        want = ref.field_matmul_mod(chi, right_)
+        assert torch.equal(fld.field_matmul_mod(chi, view, right_bound=bound), want)
+        assert torch.equal(fld.field_matmul_mod(chi, view), want)
     # batch dimensions: three independent products at once
     chis, zs = _rand(g, 0, P, (3, r, k)), _rand(g, 1 - Z, Z, (3, k, m))
     got = fld.field_matmul_mod(chis, zs, right_bound=Z)
@@ -444,18 +451,24 @@ def test_batched_columns_give_the_per_op_verdicts(check_paths):
                  {a: (ob1, pb), b: (ob, [0] + pb[1:])}, {a: (oa, [bytes(32)] + pa[1:]), b: None}]
     for var in variants:
         opened = dict(openings, **var)
-        assert v.check_columns(chis, us, cols, opened) == ref.check_columns(v, chis, us, cols, opened)
+        want = ref.check_columns(v, chis, us, cols, opened)
+        assert v.check_columns(chis, us, cols, opened) == want
+        rows = wire_openings(opened)          # the int32 rows run_query(wire=True) takes as they are
+        assert v.check_columns(chis, us, cols, rows, wire=True) == ref.check_columns(v, chis, us, cols, rows,
+                                                                                    wire=True) == want
     bad_u = _with(us, mats[2].name, (us[mats[2].name] + 1) % P)
     assert v.check_columns(chis, bad_u, cols, openings) == ref.check_columns(v, chis, bad_u, cols, openings) \
-        == "columns_code"
+        == v.check_columns(chis, bad_u, cols, wire_openings(openings), wire=True) == "columns_code"
     # an exception is raised where op by op would raise it
     missing = dict(openings)
     del missing[mats[-1].name]
     for broken, exc in ((missing, KeyError), (_with(openings, b, (ob, [0] + pb[1:])), TypeError),
                         (_with(openings, b, None), TypeError)):
-        for impl in (v.check_columns, lambda *args: ref.check_columns(v, *args)):
+        for impl in (v.check_columns, lambda *args, **kw: ref.check_columns(v, *args, **kw)):
             with pytest.raises(exc):
                 impl(chis, us, cols, broken)
+            with pytest.raises(exc):
+                impl(chis, us, cols, wire_openings(broken), wire=True)
 
 
 # -- cheap operations ------------------------------------------------------------------------------

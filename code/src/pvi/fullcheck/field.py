@@ -286,8 +286,9 @@ _NP_WEIGHTS = np.int64(1) << _NP_SHIFTS
 
 
 def _np_small(left: torch.Tensor, right: torch.Tensor) -> bool:
-    return (left.device.type == "cpu" and right.device.type == "cpu" and left.dtype == right.dtype == torch.int64
-            and 3 * left.numel() + right.numel() <= NP_SMALL)
+    """Small int64 ``left`` and int64 or int32 ``right`` (the wire's opened rows) on the CPU."""
+    return (left.device.type == "cpu" and right.device.type == "cpu" and left.dtype == torch.int64
+            and right.dtype in (torch.int64, torch.int32) and 3 * left.numel() + right.numel() <= NP_SMALL)
 
 
 def _np_reduced(a: np.ndarray) -> np.ndarray:
@@ -297,8 +298,8 @@ def _np_reduced(a: np.ndarray) -> np.ndarray:
 
 
 def np_field_matmul_mod(left: np.ndarray, right: np.ndarray, reduce_right: bool, chunk: int) -> np.ndarray:
-    """:func:`field_matmul_mod` on int64 arrays (``reduce_right=False``: ``right`` is used as
-    it is, and ``chunk`` must keep its blocks exact)."""
+    """:func:`field_matmul_mod` on int64 arrays, ``right`` also int32 (``reduce_right=False``:
+    ``right`` is used as it is, and ``chunk`` must keep its blocks exact)."""
     if reduce_right:
         right = _np_reduced(right)
     left = _np_reduced(left)

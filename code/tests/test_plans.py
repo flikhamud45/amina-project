@@ -31,6 +31,7 @@ from pvi.fullcheck import reference as ref
 from pvi.fullcheck.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
                                       group_leaf, verify_multiproof)
 from pvi.fullcheck.models import build_float_model
+from pvi.fullcheck.pipeline import wire_openings
 from pvi.fullcheck.plans import (MAX_N, REFERENCE_LAMBDA, column_bits, column_error_log2, exact_columns, next_pow2,
                                  plan_commitment)
 from pvi.fullcheck.quantize import quantize_input, quantize_model
@@ -522,14 +523,20 @@ def test_grouped_column_checks_give_the_reference_verdicts(paths, monkeypatch):
                      {a: (oa, [bytes(32)] + pa[1:]), b: (ob, [0] + pb[1:])}, {a: (oa, pa[:-1]), b: None}]
         for var in variants:
             opened = dict(openings, **var)
-            assert v.check_columns(chis, us, cols, opened) == ref.check_columns(v, chis, us, cols, opened), var.keys()
+            want = ref.check_columns(v, chis, us, cols, opened)
+            assert v.check_columns(chis, us, cols, opened) == want, var.keys()
+            rows = wire_openings(opened)      # the int32 rows run_query(wire=True) takes as they are
+            assert v.check_columns(chis, us, cols, rows, wire=True) == ref.check_columns(
+                v, chis, us, cols, rows, wire=True) == want, var.keys()
         bad_u = dict(us, **{graph.mat_ops[1].name: (us[graph.mat_ops[1].name] + 1) % P})
         assert v.check_columns(chis, bad_u, cols, openings) == ref.check_columns(v, chis, bad_u, cols, openings)             == "columns_code"
         for broken, exc in ((dict(openings, **{b: (ob, [0] + pb[1:])}), TypeError), (dict(openings, **{b: None}),
                                                                                      TypeError)):
-            for impl in (v.check_columns, lambda *args: ref.check_columns(v, *args)):
+            for impl in (v.check_columns, lambda *args, **kw: ref.check_columns(v, *args, **kw)):
                 with pytest.raises(exc):
                     impl(chis, us, cols, broken)
+                with pytest.raises(exc):
+                    impl(chis, us, cols, wire_openings(broken), wire=True)
 
 
 def test_malformed_openings_fail_as_the_default_fails():
