@@ -578,7 +578,7 @@ def suite_cnn(args, env) -> None:
             if not _todo(args, "cnn", name, cell):
                 continue
             params = params_for(lam, len(mats), rate=rate, fiat_shamir=(chal == "fs"), plan=coms.plan)
-            cfg = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": params.rate,
+            cfg = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": rate,
                    "columns": params.columns, "threads": torch.get_num_threads(), **_plan_config(coms, params)}
             r = Recorder("cnn", name, cell, cfg, env)
             if coms.plan is None:
@@ -941,7 +941,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--lams", type=int, nargs="+", default=list(LAMBDAS))
     ap.add_argument("--modes", default="")
     ap.add_argument("--threads", type=int, default=0)
-    ap.add_argument("--rate", type=int, default=4, help="Reed-Solomon rate (codeword / message length)")
+    ap.add_argument("--rate", type=int, default=4,
+                    help="Reed-Solomon rate (codeword / message length); under --policy the plan's base rate, which "
+                         "every cell records as its rate (the codeword lengths are the plan's: policy, group_columns)")
     ap.add_argument("--policy", default="paper",
                     help="commitment plan (pvi.fullcheck.plans): paper (the report), tight, cnn<e> or R<rate>; "
                          "runs the commitment and mode-C cells only, named with a _pol<name> suffix")
