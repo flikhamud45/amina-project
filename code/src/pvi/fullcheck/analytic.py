@@ -43,8 +43,9 @@ class OpShape:
         return rate * next_pow2(self.row_length)
 
 
-def decoder_shapes(cfg, n_layers: int | None = None) -> list[OpShape]:
-    """Weight-op shapes of a decoder (see ``transformer.build_decoder``) without building it."""
+def decoder_shapes(cfg, n_layers: int | None = None, prune_last: bool = False) -> list[OpShape]:
+    """Weight-op shapes of a decoder (see ``transformer.build_decoder``) without building it
+    (``prune_last``: its last block's q reads the last position alone, k and v every position)."""
     L = cfg.n_layers if n_layers is None else n_layers
     d, dh, hq, hkv, f = cfg.d_model, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads, cfg.d_ff
     b = 1 if cfg.bias else 0
@@ -56,7 +57,8 @@ def decoder_shapes(cfg, n_layers: int | None = None) -> list[OpShape]:
         ops.append(OpShape("pos", d, cfg.max_pos, "embed", "positions"))
     for i in range(L):
         a, m = f"attn_in{i}", f"mlp_in{i}"
-        ops += [OpShape(f"q{i}", hq * dh, d + b, input=a), OpShape(f"k{i}", hkv * dh, d + b, input=a),
+        aq = f"attn_last{i}" if prune_last and i == L - 1 else a
+        ops += [OpShape(f"q{i}", hq * dh, d + b, input=aq), OpShape(f"k{i}", hkv * dh, d + b, input=a),
                 OpShape(f"v{i}", hkv * dh, d + b, input=a), OpShape(f"o{i}", d, hq * dh + b, input=f"attn_out{i}")]
         if cfg.mlp == "swiglu":
             ops += [OpShape(f"gate{i}", f, d + b, input=m), OpShape(f"up{i}", f, d + b, input=m),
@@ -69,10 +71,14 @@ def decoder_shapes(cfg, n_layers: int | None = None) -> list[OpShape]:
     return ops
 
 
-def decoder_claim_columns(cfg, seq: int, n_layers: int | None = None) -> dict[str, int]:
+def decoder_claim_columns(cfg, seq: int, n_layers: int | None = None, prune_last: bool = False) -> dict[str, int]:
     """Each weight op's claim columns for a prompt of ``seq`` tokens, keyed as :func:`decoder_shapes`:
-    ``seq``, but 1 for the LM head and OPT-350M's project_out, which read the last position only."""
-    return {s.name: 1 if s.name in ("proj_out", "head") else seq for s in decoder_shapes(cfg, n_layers)}
+    ``seq``, but 1 for the LM head and OPT-350M's project_out, which read the last position only, and
+    with ``prune_last`` for every op of the last block but k and v."""
+    last = (cfg.n_layers if n_layers is None else n_layers) - 1
+    pruned = {f"{p}{last}" for p in ("q", "o", "gate", "up", "down", "fc1", "fc2")} if prune_last else set()
+    return {s.name: 1 if s.name in ("proj_out", "head") or s.name in pruned else seq
+            for s in decoder_shapes(cfg, n_layers, prune_last)}
 
 
 def _log_comb(n: int, k: int) -> float:

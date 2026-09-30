@@ -186,9 +186,9 @@ def lut(x: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
     return table.to(x.device)[(x.clamp(-128, 127) + 128)]
 
 
-def rope(x: torch.Tensor, theta: float) -> torch.Tensor:
+def rope(x: torch.Tensor, theta: float, offset: int = 0) -> torch.Tensor:
     t, dh = x.shape[1], x.shape[3]
-    cos, sin = (a.to(x.device)[None, :, None, :] for a in _rope_tables(t, dh, theta))
+    cos, sin = (a[offset:].to(x.device)[None, :, None, :] for a in _rope_tables(offset + t, dh, theta))
     x1, x2 = x[..., : dh // 2], x[..., dh // 2:]
     half = 1 << 13
     y1 = (x1 * cos - x2 * sin + half) >> 14
@@ -197,9 +197,10 @@ def rope(x: torch.Tensor, theta: float) -> torch.Tensor:
 
 
 def attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
-    t = q.shape[2]
-    s = exact_matmul(q, k.transpose(-1, -2), max_w=128, max_x=128)       # [B,H,T,T]
-    mask = torch.ones(t, t, dtype=torch.bool, device=q.device).tril()
+    """The queries ``q`` of the last ``Tq`` of the ``T`` positions of ``k`` and ``v``."""
+    tq, t = q.shape[2], k.shape[2]
+    s = exact_matmul(q, k.transpose(-1, -2), max_w=128, max_x=128)       # [B,H,Tq,T]
+    mask = torch.ones(t, t, dtype=torch.bool, device=q.device).tril()[t - tq:]
     s = s.masked_fill(~mask, -(1 << 40))
     d = (s.amax(-1, keepdim=True) - s).clamp(max=1 << 31)
     idx = ((d * m_s + (1 << (SHIFT - 1))) >> SHIFT).clamp(0, 255)
@@ -213,15 +214,16 @@ def attention_heads(q, k, v, m_s: int, m_o: int | None) -> torch.Tensor:
 
 
 def attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int) -> torch.Tensor:
-    b, t, _ = q.shape
-    q = q.reshape(b, t, n_heads, dh).transpose(1, 2)
+    b, tq, _ = q.shape
+    t = k.shape[1]
+    q = q.reshape(b, tq, n_heads, dh).transpose(1, 2)
     k = k.reshape(b, t, n_kv, dh).transpose(1, 2)
     v = v.reshape(b, t, n_kv, dh).transpose(1, 2)
     if n_kv != n_heads:
         rep = n_heads // n_kv
         k = k.repeat_interleave(rep, 1)
         v = v.repeat_interleave(rep, 1)
-    return attention_heads(q, k, v, m_s, m_o).transpose(1, 2).reshape(b, t, n_heads * dh)
+    return attention_heads(q, k, v, m_s, m_o).transpose(1, 2).reshape(b, tq, n_heads * dh)
 
 
 def residual(a: torch.Tensor, b: torch.Tensor, m: torch.Tensor) -> torch.Tensor:

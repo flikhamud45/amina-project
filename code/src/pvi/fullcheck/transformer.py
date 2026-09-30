@@ -18,6 +18,10 @@ Integer semantics (both parties compute these identically):
 
 Only the weight products are ``MatOp`` s; everything else is recomputed by the
 verifier, including attention, which costs it O(T^2 d) per layer.
+
+``build_decoder(..., prune_last=True)`` (opt-in) builds the last block at the last position only,
+but for its keys and values: only that position reaches the next-token logits, which are the same
+integers.
 """
 
 from __future__ import annotations
@@ -162,20 +166,21 @@ def _rope_tables(t: int, dh: int, theta: float) -> tuple[torch.Tensor, torch.Ten
 
 
 @lru_cache(maxsize=64)
-def _rope_tables_full(t: int, dh: int, theta: float, device: str) -> tuple[torch.Tensor, torch.Tensor]:
-    """``[cos | cos]`` and ``[-sin | sin]`` as ``[1, T, 1, dh]`` on ``device`` (cached, so a GPU
-    gets them once, not per call; callers only read them)."""
-    cos, sin = _rope_tables(t, dh, theta)
+def _rope_tables_full(t: int, dh: int, theta: float, device: str, offset: int = 0) -> tuple[torch.Tensor, torch.Tensor]:
+    """``[cos | cos]`` and ``[-sin | sin]`` of the positions ``offset .. offset + T - 1`` as ``[1, T, 1, dh]``
+    on ``device`` (cached, so a GPU gets them once, not per call; callers only read them)."""
+    cos, sin = (a[offset:] for a in _rope_tables(offset + t, dh, theta))
     return (torch.cat([cos, cos], -1)[None, :, None, :].to(device),
             torch.cat([-sin, sin], -1)[None, :, None, :].to(device))
 
 
-def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
-    """x: ``[B, T, H, dh]`` int8 values -> rotated int8 values.
+def _rope(x: torch.Tensor, theta: float, offset: int = 0) -> torch.Tensor:
+    """x: ``[B, T, H, dh]`` int8 values at the positions ``offset .. offset + T - 1`` -> rotated int8
+    values.
 
     ``[x1 cos - x2 sin | x2 cos + x1 sin] = x [cos | cos] + [x2 | x1] [-sin | sin]``."""
     t, dh = x.shape[1], x.shape[3]
-    cos2, sin2 = _rope_tables_full(t, dh, theta, str(x.device))
+    cos2, sin2 = _rope_tables_full(t, dh, theta, str(x.device), offset)
     h = dh // 2
     swapped = torch.cat([x[..., h:], x[..., :h]], -1)
     if x.dtype == torch.int64:
@@ -187,10 +192,12 @@ def _rope(x: torch.Tensor, theta: float) -> torch.Tensor:
 
 
 @lru_cache(maxsize=32)
-def _causal_notmask(t: int, rep: int, device: str) -> torch.Tensor:
+def _causal_notmask(t: int, rep: int, device: str, queries: int | None = None) -> torch.Tensor:
     """``~tril(ones(t, t))`` repeated ``rep`` times along the rows, on ``device`` (cached;
-    callers only read it)."""
-    return (~torch.ones(t, t, dtype=torch.bool).tril()).repeat(rep, 1).to(device)
+    callers only read it); with ``queries``, of its last ``queries`` rows only (the queries of
+    the last positions)."""
+    rows = t if queries is None else queries
+    return (~torch.ones(t, t, dtype=torch.bool).tril())[t - rows:].repeat(rep, 1).to(device)
 
 
 def _exp_cap(m_s: int) -> int:
@@ -260,45 +267,47 @@ def _attention_int64(q, k, v, m_s: int, notmask: torch.Tensor) -> torch.Tensor:
     return exact_matmul(p, v, max_w=256, max_x=128)                      # [B,H,rep*T,dh]
 
 
-def _attention_heads(q, k, v, m_s: int) -> torch.Tensor:
-    """Integer causal attention for a group of heads, ``[B,H,T,dh]`` each: the raw ``P V``
-    (int64), which :func:`_attention` requantises into its output.
-
-    ``q`` may also be ``[B, H, rep*T, dh]``: the ``rep`` query heads that share each
-    key/value head stacked along the rows (grouped-query attention), where every row is
-    the same dot products and the same row-wise softmax as with ``k, v`` repeated.
+def _attention_heads(q, k, v, m_s: int, rep: int = 1) -> torch.Tensor:
+    """Integer causal attention for a group of heads: the raw ``P V`` (int64), which
+    :func:`_attention` requantises into its output.  ``k`` and ``v`` are ``[B, H, T, dh]``, and ``q``
+    ``[B, H, rep*Tq, dh]``: the queries of the last ``Tq <= T`` positions (the query at position
+    ``T - Tq + i`` attends to the keys ``0 .. T - Tq + i``), of the ``rep`` query heads that share each
+    key/value head stacked along the rows (grouped-query attention), where every row is the same dot
+    products and the same row-wise softmax as with ``k, v`` repeated.
     Runs in int32 (:func:`_attention_core`) where :func:`_int32_scores` allows, else in
     int64; both give the integers of ``reference.attention_heads(..., m_o=None)``."""
     t, dh = k.shape[2], k.shape[3]
     dev = str(q.device)
-    notmask = _causal_notmask(t, q.shape[2] // t, dev)
+    notmask = _causal_notmask(t, rep, dev, q.shape[2] // rep)
     if _int32_scores(m_s, dh, t):
         return _attention_core(q, k, v, _exp_lut(m_s, dev), notmask)
     return _attention_int64(q, k, v, m_s, notmask)
 
 
 def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int) -> torch.Tensor:
-    """Integer causal attention.  q ``[B,T,Hq*dh]``, k/v ``[B,T,Hkv*dh]`` -> ``[B,T,Hq*dh]``.
+    """Integer causal attention.  q ``[B,Tq,Hq*dh]`` (the queries of the last ``Tq <= T`` positions),
+    k/v ``[B,T,Hkv*dh]`` -> ``[B,Tq,Hq*dh]``.
 
     Heads are independent, so they are processed a few at a time to bound the
-    ``T x T`` score tensors (0.5 GiB per 32 heads at T=2048 in int32); the result is
+    ``Tq x T`` score tensors (0.5 GiB per 32 heads at T=2048 in int32); the result is
     the same integers as processing them all at once.  When all heads fit in one group,
     grouped-query attention stacks each key/value head's query heads instead of
     repeating ``k`` and ``v``.  The output requantisation writes straight into the
-    final ``[B, T, heads, dh]`` layout.
+    final ``[B, Tq, heads, dh]`` layout.
     """
-    b, t, _ = q.shape
-    q = q.reshape(b, t, n_heads, dh).transpose(1, 2)
+    b, tq, _ = q.shape
+    t = k.shape[1]
+    q = q.reshape(b, tq, n_heads, dh).transpose(1, 2)
     k = k.reshape(b, t, n_kv, dh).transpose(1, 2)
     v = v.reshape(b, t, n_kv, dh).transpose(1, 2)
-    out = torch.empty(b, t, n_heads, dh, dtype=torch.int64, device=q.device)
-    out_h = out.transpose(1, 2)                                     # [B, heads, T, dh] view
+    out = torch.empty(b, tq, n_heads, dh, dtype=torch.int64, device=q.device)
+    out_h = out.transpose(1, 2)                                     # [B, heads, Tq, dh] view
     width = 4 if _int32_scores(m_s, dh, t) else 8                   # bytes per score
-    group = max(1, ATTN_BYTES // (width * b * t * t))               # heads per group
+    group = max(1, ATTN_BYTES // (width * b * tq * t))              # heads per group
     if n_kv != n_heads and group >= n_heads:
         rep = n_heads // n_kv   # query heads j*rep .. j*rep+rep-1 read kv head j (as repeat_interleave)
-        raw = _attention_heads(q.reshape(b, n_kv, rep * t, dh), k, v, m_s)
-        _write_output(out_h, raw.reshape(b, n_heads, t, dh), m_o)
+        raw = _attention_heads(q.reshape(b, n_kv, rep * tq, dh), k, v, m_s, rep)
+        _write_output(out_h, raw.reshape(b, n_heads, tq, dh), m_o)
     else:
         if n_kv != n_heads:
             k = k.repeat_interleave(n_heads // n_kv, 1)
@@ -306,7 +315,7 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
         for h in range(0, n_heads, group):
             _write_output(out_h[:, h:h + group],
                           _attention_heads(q[:, h:h + group], k[:, h:h + group], v[:, h:h + group], m_s), m_o)
-    return out.reshape(b, t, n_heads * dh)
+    return out.reshape(b, tq, n_heads * dh)
 
 
 def _write_output(dst: torch.Tensor, raw: torch.Tensor, m_o: int | None) -> None:
@@ -315,6 +324,11 @@ def _write_output(dst: torch.Tensor, raw: torch.Tensor, m_o: int | None) -> None
         dst.copy_(raw)
     else:
         requant(raw, int_scalar(m_o, str(raw.device)), SHIFT, -INT8_MAX, INT8_MAX, out=dst)
+
+
+def _last_position(a: torch.Tensor) -> torch.Tensor:
+    """``[B, T, d] -> [B, 1, d]``: the last position."""
+    return a[:, -1:, :].contiguous()
 
 
 def _residual(a: torch.Tensor, b: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
@@ -362,6 +376,17 @@ class _Builder:
         n = self.name(prefix)
         return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note))
 
+    def last(self, name, *, calibrate_all=False):
+        """The last position of ``name``.  With ``calibrate_all`` the calibration keeps every position
+        (the op itself takes the last), so the ops after it are calibrated -- get their multipliers --
+        and draw their weights as in the graph without it."""
+        if not calibrate_all:
+            return self.cheap("last", [name], _last_position, "last position")
+        n = self.name("last")
+        self.ops.append(CheapOp(n, (name,), n + ".y", fn=_last_position, note="last position"))
+        self.env[n + ".y"] = self.env[name]
+        return n + ".y"
+
     def std(self, name):
         return max(float(self.env[name].double().std()), 1e-6)
 
@@ -380,11 +405,16 @@ class _Builder:
 
 
 def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_tokens: int = 16,
-                  seed: int = 0) -> IntGraph:
+                  seed: int = 0, prune_last: bool = False) -> IntGraph:
     """An integer decoder with ``n_layers`` blocks (default: all of them).
 
     The LM head is applied to the last position only: one query is a prompt and
-    its answer is the next-token distribution.
+    its answer is the next-token distribution.  ``prune_last`` (opt-in): the last block computes
+    q, the attention output and its projection, the residuals and the MLP at the last position only
+    -- k and v at every position, which its one query row attends to -- since only that position
+    reaches the logits; those ops claim one column instead of ``T``.  The pruned block is
+    calibrated on every position (:meth:`_Builder.last`), so the graph has the weights and
+    multipliers of the graph without pruning, and gives the same logits (tested).
     """
     layers = cfg.n_layers if n_layers is None else n_layers
     g = torch.Generator().manual_seed(seed + 1)
@@ -411,9 +441,10 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
     silu = torch.tensor([round(24 * (x / 24) / (1 + math.exp(-(x / 24)))) for x in range(-128, 128)],
                         dtype=torch.int64)
 
-    for _ in range(layers):
+    for i in range(layers):
+        prune = prune_last and i == layers - 1
         h = B.norm(r, d, center)
-        q = B.to_int8(B.mat(h, hq * dh, d, cfg.bias))
+        q = B.to_int8(B.mat(B.last(h, calibrate_all=True) if prune else h, hq * dh, d, cfg.bias))
         k = B.to_int8(B.mat(h, hkv * dh, d, cfg.bias))
         v = B.to_int8(B.mat(h, hkv * dh, d, cfg.bias))
         if cfg.qk_norm:
@@ -424,8 +455,12 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
                         .reshape(a.shape), "k norm")
         if cfg.pos == "rope":
             th = cfg.rope_theta
-            q = B.cheap("rope", [q], lambda a, H=hq, th=th: _rope(a.reshape(*a.shape[:-1], H, dh), th)
-                        .reshape(a.shape), "rope")
+            if prune:        # q at the last Tq positions: the angles of positions T - Tq .. T - 1
+                q = B.cheap("rope", [q, "x"], lambda a, x, H=hq, th=th: _rope(
+                    a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1]).reshape(a.shape), "rope")
+            else:
+                q = B.cheap("rope", [q], lambda a, H=hq, th=th: _rope(a.reshape(*a.shape[:-1], H, dh), th)
+                            .reshape(a.shape), "rope")
             k = B.cheap("rope", [k], lambda a, H=hkv, th=th: _rope(a.reshape(*a.shape[:-1], H, dh), th)
                         .reshape(a.shape), "rope")
         # softmax temperature: logits of std ~1 nat, in units of 1/16 nat
@@ -435,7 +470,7 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
         m_o = round((1 << SHIFT) * 24.0 / max(float(raw.double().std()), 1e-6))
         att = B.cheap("attn", [q, k, v], lambda a, b_, c, ms=m_s, mo=m_o: _attention(a, b_, c, ms, mo, hq, hkv, dh),
                       "attention")
-        r = B.residual(r, B.mat(att, d, hq * dh, cfg.bias))
+        r = B.residual(B.last(r, calibrate_all=True) if prune else r, B.mat(att, d, hq * dh, cfg.bias))
         h = B.norm(r, d, center)
         if cfg.mlp == "swiglu":
             gate = B.to_int8(B.mat(h, cfg.d_ff, d, cfg.bias))
@@ -449,8 +484,7 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
             prod = B.cheap("act", [f1], lambda a, t=(gelu if cfg.mlp == "gelu" else relu): _lut(a, t), cfg.mlp)
         r = B.residual(r, B.mat(prod, d, cfg.d_ff, cfg.bias))
 
-    h = B.norm(r, d, center)
-    h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), "last position")
+    h = B.last(B.norm(r, d, center))       # (in a pruned graph the one position of its last block)
     if cfg.embed_dim:  # OPT-350M's project_out (d_model -> 512)
         h = B.to_int8(B.mat(h, e, d, False))
     logits = B.mat(h, cfg.vocab, e, False)
