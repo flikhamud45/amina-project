@@ -38,8 +38,9 @@ def dirs_for(platform: str) -> tuple[Path, Path]:
     p = "" if platform in ("", "rtx2080ti") else platform
     return BASE / (f"raw_{p}" if p else "raw"), BASE / (f"tables_{p}" if p else "tables")
 GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
+# verify_total: the streaming verifier's (bench.py --verifier-impl stream) overlapped verify phases, timed as one
 ADDITIVE = {"prove_forward", "prove_fold", "prove_open", "verify_derive", "verify_products", "verify_columns",
-            "verify_fold", "verify_upload", "fs_hash", "bytes_total", "bytes_total_multiproof"}
+            "verify_fold", "verify_upload", "verify_total", "fs_hash", "bytes_total", "bytes_total_multiproof"}
 
 
 def load_rows() -> list[dict]:
