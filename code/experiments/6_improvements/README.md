@@ -254,6 +254,14 @@ Qwen3-4B T8 410.3 MB, OPT-6.7B T2048 10,101 MB), interactive / Fiat--Shamir, MB:
 | OPT-6.7B, 2048 | 10,101 / 10,271 | 9,989 / 10,105 | 9,948 / 10,046 | 9,905 / 9,984 | 9,877 / 9,944 | 9,932 / 10,023 | 9,897 / 9,972 | 9,857 / 9,912 |
 | OPT-13B, 2048 | 15,752 / 16,012 | 15,618 / 15,809 | 15,548 / 15,711 | 15,469 / 15,593 | 15,423 / 15,527 | 15,512 / 15,657 | 15,452 / 15,566 | 15,383 / 15,476 |
 
+The model of a decoder too large to run is checked on 1- and 2-block builds
+(`results/plan_bytes_run_decoders.csv`: Qwen3-4B at 8 tokens and Llama-2-7B at 64 tokens with a
+1,024-token vocabulary, OPT-125M at 2,048 tokens with its own; tight and R8; interactive and
+Fiat--Shamir): every build's claim, `u` and column bytes equal the model's, and the measured
+1- and 2-block totals extrapolated linearly over the blocks come within 0.011% of the byte
+model of the whole model (e.g. Llama-2-7B R8, 64 tokens: 619.95 MB extrapolated, 619.94 MB
+modelled), whose groups the builds share (`plan_commitment(..., model_ops=)`).
+
 Soundness at lambda = 128 (`soundness_bits`, interactive): paper 131-153 bits, every plan 129.2-140.7
 bits.  At 2,048 tokens the claims are 94-99% of the proof, so the best plans save 2-4% there.
 
