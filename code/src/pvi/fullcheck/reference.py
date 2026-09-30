@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import torch
 
-from .commitment import column_leaf, vandermonde_columns, verify_multiproof
+from .commitment import column_leaf, group_leaf, vandermonde_columns, verify_multiproof
 from .field import P, small_matmul_mod, to_field
 from .graph import INT8_MAX, MatOp, exact_matmul
 from .transformer import _EXP_TABLE, RES_MAX, SHIFT, _rope_tables
@@ -88,7 +88,9 @@ def check_products(verifier, claims, inputs, chis, us) -> bool:
 
 
 def check_columns(verifier, chis, us, cols, openings) -> str | None:
-    """``Verifier.check_columns``, op by op."""
+    """``Verifier.check_columns``, op by op (group by group for a commitment plan)."""
+    if verifier.groups:
+        return _check_group_columns(verifier, chis, us, cols, openings)
     for op in verifier.graph.mat_ops:
         pub = verifier.publics[op.name]
         opened, proof = openings[op.name]
@@ -187,3 +189,29 @@ def attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: i
 
 def residual(a: torch.Tensor, b: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
     return (a + ((b * m.to(b.device) + (1 << (SHIFT - 1))) >> SHIFT)).clamp(-RES_MAX, RES_MAX)
+
+
+def _check_group_columns(verifier, chis, us, cols, openings) -> str | None:
+    """Group by group: the stacked opening's shape, each member's code check on its rows, then the
+    group's multiproof over the group leaves of the members' column digests."""
+    for name, g in verifier.groups.items():
+        pubs = [verifier.publics[m] for m in g.members]
+        opened, proof = openings[name]
+        idx = cols[name]
+        if (tuple(opened.shape) != (sum(p.n_rows for p in pubs), len(idx)) or len(proof) > len(idx) * g.depth
+                or opened.dtype != torch.int64 or not in_field(opened)
+                or any(us[m].shape[1] != p.row_length for m, p in zip(g.members, pubs))):
+            return "columns_shape"
+        digests, off = [], 0
+        for m, pub in zip(g.members, pubs):
+            part = opened[off:off + pub.n_rows]
+            off += pub.n_rows
+            dev = us[m].device
+            enc = field_matmul_mod(us[m], vandermonde_columns(g.n_points, pub.row_length, idx, dev))
+            if not torch.equal(field_matmul_mod(chis[m], part.to(dev)), enc):
+                return "columns_code"
+            digests.append(column_leaves(pub.tag, idx.tolist(), part))
+        leaves = {c: group_leaf(g.tag, c, [d[c] for d in digests]) for c in idx.tolist()}
+        if not verify_multiproof(g.root, g.depth, leaves, proof):
+            return "columns_merkle"
+    return None

@@ -10,11 +10,14 @@ commitment (Ligero-style).  Modules:
 * ``quantize``   -- float CNN -> int8 graph (per-channel weights, BN folded);
 * ``transformer``-- integer GPT-2 / OPT / Llama / Qwen style decoders;
 * ``protocol``   -- prover, verifier, security parameters (modes C, K, Kpre);
+* ``plans``      -- commitment plans for mode C (optional: ``commit_graph(..., policy=)``): exact
+                    per-op column counts, Merkle trees shared by matrices of one codeword length,
+                    per-op codeword lengths;
 * ``pipeline``   -- the wire formats and claim uploads of the streaming verifier for a GPU
                     client (optional: ``Verifier(stream=True)``, ``Verifier.verify_streaming``);
 * ``sampling``   -- Anchuri et al.'s path test on the same integer graphs, for a
                     like-for-like baseline;
-* ``analytic``   -- decoder weight-op shapes and the expected multiproof size;
+* ``analytic``   -- decoder weight-op shapes, the expected multiproof size and a query's proof size;
 * ``reference``  -- the straightforward code of the verifier's fast routines (tests only);
 * ``models``, ``datasets`` -- the CNNs of the benchmark and their data.
 """

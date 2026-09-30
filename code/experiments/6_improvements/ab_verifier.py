@@ -89,10 +89,15 @@ def _chunked_weight(self, rows, cols, std=40.0):
 
 def build(pkg, case: Case):
     """``(graph with weights, query, number of weight ops of the full model)``."""
-    if case.model in ("lenet5", "vgg11", "vgg16", "resnet18_cifar"):
+    if case.model in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar"):
         torch.manual_seed(0)
-        model = sub(pkg, "models").build_float_model(case.model, 10).eval()
-        shape = (1, 28, 28) if case.model == "lenet5" else (3, 32, 32)
+        if case.model == "mlp_mnist":          # bench.py's MLP: 784 -> 512 -> 256 -> 10
+            layers = [torch.nn.Linear(784, 512), torch.nn.ReLU(), torch.nn.Linear(512, 256), torch.nn.ReLU(),
+                      torch.nn.Linear(256, 10)]
+            model, shape = torch.nn.Sequential(*layers).eval(), (784,)
+        else:
+            model = sub(pkg, "models").build_float_model(case.model, 10).eval()
+            shape = (1, 28, 28) if case.model == "lenet5" else (3, 32, 32)
         g = torch.Generator().manual_seed(5)
         q = sub(pkg, "quantize")
         graph = q.quantize_model(model, torch.randn(64, *shape, generator=g))

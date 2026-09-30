@@ -9,6 +9,9 @@ nothing is aggregated here, so figures can be re-made later without re-running.
 A cell that has a ``.done`` marker is skipped (resume after pre-emption); pass
 ``--force`` to redo it.  An honest query that is rejected stops the job and keeps the
 cell's records as ``<cell>.rejected-<run_id>.jsonl`` (``count_outcomes.py`` counts them).
+``--policy <name>`` (a commitment plan of ``pvi.fullcheck.plans``: tight, cnn<e>, R<rate>)
+commits under that plan and runs only the cells it changes -- the commitment (``commit_*``,
+with its setup time and size) and the mode-C cells -- named with a ``_pol<name>`` suffix.
 The ``pvi`` package must be this checkout's ``src/pvi`` (``export PYTHONPATH=<checkout>/code/src``,
 as the sbatch scripts do): with a shared venv that has another clone's pvi installed,
 bench.py refuses to run.
@@ -48,8 +51,10 @@ def _require_this_pvi() -> Path:
 if __name__ == "__main__":  # before the imports below, which an older pvi may not even have
     _require_this_pvi()
 
+from pvi.fullcheck.analytic import setup_size  # noqa: E402
 from pvi.fullcheck.field import P  # noqa: E402
 from pvi.fullcheck.graph import MatOp  # noqa: E402
+from pvi.fullcheck.plans import plan_commitment  # noqa: E402
 from pvi.fullcheck.protocol import (  # noqa: E402
     Challenger,
     Prover,
@@ -273,9 +278,53 @@ def is_done(suite, model, cell) -> bool:
     return (RAW / suite / model / f"{cell}{TAG}.done").exists()
 
 
+PLAN_CELLS = ("commit_", "defence_C_", "tamper_C_")
+"""The cells a commitment policy changes (the others are the same under every policy)."""
+
+
 def _todo(args, suite, model, cell) -> bool:
-    """Run this cell?  Forced, or not yet done."""
+    """Run this cell?  Forced, or not yet done; under ``--policy`` only the cells it changes."""
+    if args.policy != "paper" and not cell.startswith(PLAN_CELLS):
+        return False
     return args.force or not is_done(suite, model, cell)
+
+
+def _commit(graph, rate: int, device, policy: str, model_ops=None):
+    """``(commitment, seconds)``: the weight commitment under ``policy``, timed to its end on the GPU."""
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    coms = commit_graph(graph, rate, device=device, policy=policy, model_ops=model_ops)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    return coms, time.perf_counter() - t0
+
+
+def _plan_config(coms, params=None) -> dict:
+    """What a cell records of a commitment plan, and with ``params`` its trees' column counts
+    (nothing for the report's commitment)."""
+    if coms is None or coms.plan is None:
+        return {}
+    return {"policy": coms.plan.policy, "trees": len(coms.groups),
+            **({"group_columns": dict(params.group_columns)} if params is not None else {})}
+
+
+def _record_setup(r: "Recorder", coms, ops) -> None:
+    """A commitment plan's setup size (``analytic.setup_size``: encoded entries, leaves, trees)."""
+    for k, v in setup_size(ops, plan=coms.plan).items():
+        r.rec("setup_" + k, v, "")
+
+
+def _plan_soundness(params, plan, mode: str) -> float:
+    return soundness_bits(params, plan.shapes(), mode, columns=plan.op_columns(params.group_columns))
+
+
+def _opening_of(coms, name: str) -> tuple[str, int]:
+    """Where op ``name``'s opened columns are: its own opening, or from row ``offset`` of its group's."""
+    for g, members in coms.plan.groups if coms.plan else ():
+        if name in members:
+            return g, sum(coms[m].weight.shape[0] for m in members[:members.index(name)])
+    return name, 0
 
 
 def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
@@ -503,7 +552,15 @@ def suite_cnn(args, env) -> None:
     # The commitment is one-time and takes seconds for these models, so it is
     # always rebuilt (the Merkle roots are deterministic).
     rate = args.rate
-    coms = commit_graph(graph, rate, device=device)
+    _reset_peaks(device)
+    coms, commit_s = _commit(graph, rate, device, args.policy)
+    cell = f"commit_rate{rate}"
+    if coms.plan is not None and _todo(args, "cnn", name, cell):     # a policy's setup cost
+        r = Recorder("cnn", name, cell, {"rate": rate, **_plan_config(coms)}, env)
+        r.rec("commit_total", commit_s, "s")
+        _record_setup(r, coms, mats)
+        _record_peaks(r, device)
+        r.done()
 
     prover = Prover(graph, device=device, commitments=coms)
     weights = {op.name: (op.weight, op.bias) for op in mats}
@@ -512,14 +569,17 @@ def suite_cnn(args, env) -> None:
             cell = f"defence_{mode}_{chal}_lam{lam}_rate{rate}"
             if not _todo(args, "cnn", name, cell):
                 continue
-            params = params_for(lam, len(mats), rate=rate, fiat_shamir=(chal == "fs"))
+            params = params_for(lam, len(mats), rate=rate, fiat_shamir=(chal == "fs"), plan=coms.plan)
             cfg = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": params.rate,
-                   "columns": params.columns, "threads": torch.get_num_threads()}
+                   "columns": params.columns, "threads": torch.get_num_threads(), **_plan_config(coms, params)}
             r = Recorder("cnn", name, cell, cfg, env)
-            shapes = [(op.row_length, rate * (1 << max(0, (op.row_length - 1).bit_length()))) for op in mats]
-            r.rec("soundness_bits", soundness_bits(params, shapes, "C" if mode == "C" else "K"), "bits")
+            if coms.plan is None:
+                shapes = [(op.row_length, rate * (1 << max(0, (op.row_length - 1).bit_length()))) for op in mats]
+                r.rec("soundness_bits", soundness_bits(params, shapes, "C" if mode == "C" else "K"), "bits")
+            else:
+                r.rec("soundness_bits", _plan_soundness(params, coms.plan, "C"), "bits")
             if mode == "C":
-                v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+                v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics)
             else:
                 v = _verifier(graph.public(), params, mode, weights=weights)
                 if mode == "Kpre":
@@ -543,9 +603,10 @@ def suite_cnn(args, env) -> None:
     # ---- soundness experiments: every attack must be rejected (--tampers 0: none) ------------
     cell = "tamper_C_int_lam40"
     if args.tampers and _todo(args, "cnn", name, cell):
-        params = params_for(40, len(mats), rate=rate)
-        v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
-        r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns}, env)
+        params = params_for(40, len(mats), rate=rate, plan=coms.plan)
+        v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics)
+        r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns,
+                                         **_plan_config(coms, params)}, env)
         g = torch.Generator().manual_seed(123)
         pen = _penultimate_mat(graph)
         x0 = q_inputs[:1]
@@ -661,12 +722,13 @@ def suite_cnn(args, env) -> None:
 
             def forged_open(cols, victim=victim):
                 out = real_open(cols)
-                c, pth = out[victim]
+                key, off = _opening_of(coms, victim)      # (under a plan: the victim's rows of its group's)
+                c, pth = out[key]
                 delta = kernel_vector(state["chis"][victim])
                 if delta is not None:
                     c = c.clone()
-                    c[:, 0] = (c[:, 0] + delta) % P
-                out[victim] = (c, pth)
+                    c[off:off + len(delta), 0] = (c[off:off + len(delta), 0] + delta) % P
+                out[key] = (c, pth)
                 return out
 
             prover.fold, prover.open = capture_fold, forged_open
@@ -688,6 +750,8 @@ def suite_llm(args, env) -> None:
         builds = [cfg.n_layers if b == "full" else int(b) for b in args.builds.split(",")]
     modes = [("C", "int"), ("C", "fs"), ("Kpre", "int"), ("K", "int")] if not args.modes else \
         [tuple(m.split(":")) for m in args.modes.split(",")]
+    if args.policy != "paper":        # a commitment policy changes the mode-C cells only
+        modes = [m for m in modes if m[0] == "C"]
     skipped = []
     for seq in args.seq:
         for n_layers in builds:
@@ -715,20 +779,17 @@ def suite_llm(args, env) -> None:
                                    generator=torch.Generator().manual_seed(1))
             coms = None
             if any(m == "C" for m, _ in modes):
-                if device.type == "cuda":
-                    torch.cuda.synchronize()
-                t0 = time.perf_counter()
-                coms = commit_graph(graph, args.rate, device=device)
-                if device.type == "cuda":
-                    torch.cuda.synchronize()
-                commit_s = time.perf_counter() - t0
+                coms, commit_s = _commit(graph, args.rate, device, args.policy, decoder_shapes(cfg))
                 cell = f"commit_{base}"
                 if _todo(args, "llm", cfg.name, cell):
                     r = Recorder("llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": args.rate,
                                                          "n_layers_full": cfg.n_layers, "lean": args.lean,
-                                                         "params_full": decoder_param_count(cfg)}, env)
+                                                         "params_full": decoder_param_count(cfg),
+                                                         **_plan_config(coms)}, env)
                     r.rec("build_graph", build_s, "s")
                     r.rec("commit_total", commit_s, "s")
+                    if coms.plan is not None:
+                        _record_setup(r, coms, mats)
                     _record_peaks(r, device)
                     r.done()
             prover = Prover(graph, device=device, commitments=coms, lean=args.lean)
@@ -740,16 +801,21 @@ def suite_llm(args, env) -> None:
                         continue
                     # size (r, t) for the FULL model's op count, so extrapolated rows keep their lambda
                     full_shapes = decoder_shapes(cfg)
-                    params = params_for(lam, len(full_shapes), rate=args.rate, fiat_shamir=(chal == "fs"))
+                    plan = None if coms is None else coms.plan
+                    params = params_for(lam, len(full_shapes), rate=args.rate, fiat_shamir=(chal == "fs"), plan=plan)
                     conf = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": args.rate,
                             "columns": params.columns, "seq": seq, "n_layers": n_layers,
                             "n_layers_full": cfg.n_layers, "params_full": decoder_param_count(cfg),
                             "params_built": graph.n_params(), "lean": args.lean,
-                            "threads": torch.get_num_threads()}
+                            "threads": torch.get_num_threads(), **_plan_config(coms, params)}
                     r = Recorder("llm", cfg.name, cell, conf, env)
+                    if plan is not None:      # the whole model's bound, under the whole model's plan
+                        whole = plan_commitment(full_shapes, args.policy, rate=args.rate)
+                        r.rec("soundness_bits", _plan_soundness(params_for(
+                            lam, len(full_shapes), fiat_shamir=(chal == "fs"), plan=whole), whole, "C"), "bits")
                     if mode == "C":
-                        v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
-                                     lean=args.lean)
+                        v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                                      lean=args.lean)
                     else:
                         v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean)
                         if mode == "Kpre":
@@ -785,12 +851,13 @@ def suite_llm(args, env) -> None:
             cell = f"tamper_C_int_lam40_{base}"
             if (args.llm_tampers and coms is not None and n_layers == cfg.n_layers
                     and _todo(args, "llm", cfg.name, cell)):
-                params = params_for(40, len(decoder_shapes(cfg)), rate=args.rate)
-                v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
-                             lean=args.lean)
+                params = params_for(40, len(decoder_shapes(cfg)), rate=args.rate, plan=coms.plan)
+                v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                              lean=args.lean)
                 r = Recorder("llm", cfg.name, cell, {"lam": 40, "mode": "C", "reps": params.reps,
                                                      "columns": params.columns, "seq": seq, "n_layers": n_layers,
-                                                     "n_layers_full": cfg.n_layers, "lean": args.lean}, env)
+                                                     "n_layers_full": cfg.n_layers, "lean": args.lean,
+                                                     **_plan_config(coms, params)}, env)
                 g = torch.Generator().manual_seed(123)
                 x0 = tokens[:1]
 
@@ -867,6 +934,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--modes", default="")
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--rate", type=int, default=4, help="Reed-Solomon rate (codeword / message length)")
+    ap.add_argument("--policy", default="paper",
+                    help="commitment plan (pvi.fullcheck.plans): paper (the report), tight, cnn<e> or R<rate>; "
+                         "runs the commitment and mode-C cells only, named with a _pol<name> suffix")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--tag", default="", help="suffix for cell names, e.g. _thr1")
     ap.add_argument("--builds", default="auto",
@@ -910,6 +980,12 @@ def main() -> None:
     if args.tf32 and os.environ.get("NVIDIA_TF32_OVERRIDE") == "0":
         raise SystemExit("--tf32 with NVIDIA_TF32_OVERRIDE=0: cuBLAS would ignore it and the _tf32 cells would "
                          "hold non-TF32 timings (bench.sbatch: export PVI_TF32=1)")
+    try:
+        plan_commitment([], args.policy)
+    except ValueError as exc:
+        raise SystemExit(f"--policy: {exc}")
+    if args.policy != "paper":        # its cells never share a name (or a median) with the report's
+        TAG += f"_pol{args.policy}"
     PLATFORM = args.platform
     RAW = raw_root(PLATFORM)
     if args.threads:

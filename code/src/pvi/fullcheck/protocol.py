@@ -10,7 +10,8 @@ Message flow for one query ``x`` (``mode="C"``, the verifier holds only the
    It then draws ``r`` random rows ``chi_l`` per weight op.
 3. prover -> verifier: ``u_l = chi_l^T [W_l | b_l]``.
 4. verifier: checks ``chi_l^T Z_l == u_l^T [X_l ; 1]`` for every op and every
-   column of ``Z_l`` (Freivalds), then draws ``t`` column indices per op.
+   column of ``Z_l`` (Freivalds), then draws ``t`` column indices per op (under a
+   commitment plan, per shared tree: see below).
 5. prover -> verifier: the opened columns and their Merkle paths; the verifier
    checks each against its commitment and against ``Enc(u_l)``.
 
@@ -25,7 +26,9 @@ Soundness (a false claim accepted), per weight op, is at most ``p**-r``
 (Freivalds: a nonzero column of ``Z - A X`` survives a uniformly random row with
 probability ``1/p``) plus, in mode C, ``((k-1)/n)**t`` (a wrong ``u`` survives
 ``t`` distinct columns of a Reed--Solomon code of distance ``n-k+1``), with a
-union bound over ops.  Two preconditions make the *integer* claim, not just its
+union bound over ops.  A commitment plan (:mod:`pvi.fullcheck.plans`, opt-in) keeps each op's
+budget and meets it with the op's exact ``t``, trees shared by matrices of one codeword length
+and per-op codeword lengths.  Two preconditions make the *integer* claim, not just its
 residue, the thing that is checked: claims are range-checked to ``|z| < 2**29``
 (so two in-range integers with equal residues are equal, since ``2 * 2**29 < p``),
 and every weight op is checked at commitment time to have honest outputs inside
@@ -47,13 +50,14 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
-from .commitment import (HASH_BYTES, CommitmentPublic, WeightCommitment, codeword_at, column_rows, map_threaded,
-                         row_leaves, verify_multiproofs)
+from .commitment import (HASH_BYTES, CommitmentPublic, GroupCommitment, GroupPublic, WeightCommitment, codeword_at,
+                         column_rows, group_leaf, map_threaded, row_leaves, verify_multiproofs)
 from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
                     int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64, min_max,
                     small_matmul_mod, to_field)
 from .graph import IntGraph, MatOp
 from .pipeline import ClaimUploads, wire_claim, wire_openings
+from .plans import CommitmentPlan, column_bits, column_error_log2, plan_commitment
 
 __all__ = [
     "SecurityParams",
@@ -65,6 +69,7 @@ __all__ = [
     "Verifier",
     "run_query",
     "Z_BOUND",
+    "GraphCommitment",
     "commit_graph",
 ]
 
@@ -82,31 +87,42 @@ class SecurityParams:
     columns: int
     fiat_shamir: bool = False
     grinding_bits: int = 64
+    group_columns: tuple[tuple[str, int], ...] = ()
+    """Under a commitment plan, ``(group, t)`` per group: its members' largest exact ``t``
+    (``rate`` is then 0 -- each op's is in the plan -- and ``columns`` the largest ``t``)."""
+
+    def columns_for(self, group: str) -> int:
+        return dict(self.group_columns)[group]
 
 
 def params_for(lam: float, n_checks: int, *, rate: int = 4, fiat_shamir: bool = False,
-               grinding_bits: int = 64) -> SecurityParams:
+               grinding_bits: int = 64, plan: CommitmentPlan | None = None) -> SecurityParams:
     """Smallest ``(r, t)`` whose union bound over ``n_checks`` ops is ``<= 2**-lam``.
 
     With Fiat--Shamir the prover can grind offline, so ``grinding_bits`` more are
-    required (security against ``2**grinding_bits`` hash evaluations).
+    required (security against ``2**grinding_bits`` hash evaluations).  Under a commitment
+    ``plan`` (:mod:`pvi.fullcheck.plans`) ``r`` is the same, and each group opens its members'
+    largest exact ``t`` for the same per-op budget ``2**-beta``.
     """
-    bits = lam + math.log2(2 * max(1, n_checks)) + (grinding_bits if fiat_shamir else 0)
+    bits = column_bits(lam, n_checks, fiat_shamir, grinding_bits)
     reps = max(1, math.ceil(bits / LOG2_P))
-    columns = max(1, math.ceil(bits / math.log2(rate)))
-    return SecurityParams(lam, reps, rate, columns, fiat_shamir, grinding_bits)
+    if plan is None:
+        columns = max(1, math.ceil(bits / math.log2(rate)))
+        return SecurityParams(lam, reps, rate, columns, fiat_shamir, grinding_bits)
+    groups = plan.group_columns(bits)
+    return SecurityParams(lam, reps, 0, max(t for _, t in groups), fiat_shamir, grinding_bits, groups)
 
 
-def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: str = "C") -> float:
-    """``-log2`` of the total soundness error.  ``shapes`` holds ``(k, n)`` per op."""
+def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: str = "C",
+                   columns: list[int] | None = None) -> float:
+    """``-log2`` of the total soundness error.  ``shapes`` holds ``(k, n)`` per op and ``columns``
+    each op's ``t`` (default: ``params.columns`` for every op; under a plan,
+    ``plan.op_columns(params.group_columns)``)."""
     total = 0.0
-    for k, n in shapes:
+    for i, (k, n) in enumerate(shapes):
         err = 2.0 ** (-params.reps * LOG2_P)
         if mode == "C":
-            t = min(params.columns, n)
-            # distinct columns: prod_{i<t} (k-1-i)/(n-i) <= ((k-1)/n)**t
-            log_col = sum(math.log2(max(k - 1 - i, 1e-300) / (n - i)) for i in range(t)) if k > 1 else -math.inf
-            err += 2.0 ** log_col
+            err += 2.0 ** column_error_log2(k, n, params.columns if columns is None else columns[i])
         total += err
     bits = -math.log2(total)
     return bits - (params.grinding_bits if params.fiat_shamir else 0)
@@ -123,14 +139,44 @@ def claim_bound(op: MatOp) -> int:
     return int(bound.max())
 
 
-def commit_graph(graph: IntGraph, rate: int, device="cpu") -> dict[str, WeightCommitment]:
-    """Commit every weight op, after checking honest claims fit the range check."""
+class GraphCommitment(dict):
+    """``{op name: WeightCommitment}`` for every weight op; under a commitment plan also the
+    ``plan`` and its ``groups`` (``{name: GroupCommitment}``), whose trees bind the members' columns."""
+
+    def __init__(self, members: dict[str, WeightCommitment], plan: CommitmentPlan | None = None,
+                 groups: dict[str, GroupCommitment] | None = None) -> None:
+        super().__init__(members)
+        self.plan = plan
+        self.groups = groups or {}
+
+    @property
+    def publics(self) -> dict[str, CommitmentPublic]:
+        return {name: c.public for name, c in self.items()}
+
+    @property
+    def group_publics(self) -> dict[str, GroupPublic]:
+        return {name: g.public for name, g in self.groups.items()}
+
+
+def commit_graph(graph: IntGraph, rate: int, device="cpu", *, policy: str = "paper",
+                 model_ops=None) -> GraphCommitment:
+    """Commit every weight op, after checking honest claims fit the range check: on a tree of its
+    own at ``rate`` (``policy="paper"``, the report), or as the commitment plan of ``policy`` lays
+    the ops out (:func:`plans.plan_commitment`, with ``rate`` its base rate; ``model_ops``: the
+    whole model's op shapes when ``graph`` is a build of a few of its blocks)."""
     for op in graph.mat_ops:
         b = claim_bound(op)
         if b >= Z_BOUND:
             raise ValueError(f"{op.name}: honest claims can reach {b} >= Z_BOUND = {Z_BOUND}")
-    return {op.name: WeightCommitment.build(op.name.encode(), op.weight, op.bias, rate=rate, device=device)
-            for op in graph.mat_ops}
+    plan = plan_commitment(graph.mat_ops, policy, rate=rate, model_ops=model_ops)
+    if plan is None:
+        return GraphCommitment({op.name: WeightCommitment.build(op.name.encode(), op.weight, op.bias, rate=rate,
+                                                                device=device) for op in graph.mat_ops})
+    ops = {op.name: op for op in graph.mat_ops}
+    groups = {g: GroupCommitment.build(g.encode(), {m: (ops[m].weight, ops[m].bias) for m in members},
+                                       plan.op(members[0]).n_points, device=device) for g, members in plan.groups}
+    members = {m: c for g in groups.values() for m, c in g.members.items()}
+    return GraphCommitment({name: members[name] for name in ops}, plan, groups)
 
 
 class Challenger:
@@ -235,6 +281,12 @@ class Prover:
                 for name, chi in chis.items()}
 
     def open(self, cols: dict[str, torch.Tensor]):
+        """The opened columns and multiproof of every tree: each weight op's, or under a commitment
+        plan each group's (its members' columns stacked in member order)."""
+        groups = getattr(self.commitments, "groups", None)
+        if groups:
+            return {g: groups[g].open(idx, self.device, weights=[self._weight(m) for m in groups[g].members])
+                    for g, idx in cols.items()}
         return {name: self.commitments[name].open(idx, self.device, weight=self._weight(name))
                 for name, idx in cols.items()}
 
@@ -386,10 +438,20 @@ def _disagrees(checks: list[tuple]) -> torch.Tensor:
     return bad
 
 
-def _columns_verdict(codes: list[bool], merkle: list, n_ok: int, exc: Exception | None, n_ops: int) -> str | None:
-    """The column check's verdict, op by op -- shape, code, Merkle -- for the ``n_ok`` leading ops
-    with well-formed openings (``exc``: what the next one raised): ``codes[i]`` and ``merkle[i] =
-    (ok, exception)`` of op ``i`` (``merkle`` may end at the first code failure)."""
+def _unit_codes(units: list, failed: list[bool]) -> list[bool]:
+    """Per tree of ``units``, whether the code check of every member passed (``failed``: one flag
+    per member op, in unit order)."""
+    out, i = [], 0
+    for _, members in units:
+        out.append(not any(failed[i:i + len(members)]))
+        i += len(members)
+    return out
+
+
+def _columns_verdict(codes: list[bool], merkle: list, n_ok: int, exc: Exception | None, n_trees: int) -> str | None:
+    """The column check's verdict, tree by tree -- shape, code, Merkle -- for the ``n_ok`` leading
+    trees (weight ops, or groups) with well-formed openings (``exc``: what the next one raised):
+    ``codes[i]`` and ``merkle[i] = (ok, exception)`` of tree ``i``."""
     for i in range(n_ok):
         if not codes[i]:
             return "columns_code"
@@ -400,7 +462,7 @@ def _columns_verdict(codes: list[bool], merkle: list, n_ok: int, exc: Exception 
             return "columns_merkle"
     if exc is not None:
         raise exc
-    return "columns_shape" if n_ok < n_ops else None
+    return "columns_shape" if n_ok < n_trees else None
 
 
 def _to_host(flags: list[torch.Tensor]) -> list[bool]:
@@ -444,6 +506,7 @@ class Verifier:
     lean: bool = False
     device: str = "cpu"      # "cuda" / "cuda:1": a client with a GPU (Merkle hashing stays on the CPU)
     stream: bool = False     # run_query checks with verify_streaming (the same verdicts and labels)
+    groups: dict[str, GroupPublic] = field(default_factory=dict)   # a commitment plan's trees (mode C)
     _pre: dict = field(default_factory=dict)
     _wdev: dict = field(default_factory=dict)   # mode K on a GPU: the weights stay on the device
     _ranged: dict = field(default_factory=dict)  # name -> (weakref, _version) of the claim derive() range-checked
@@ -451,9 +514,26 @@ class Verifier:
     _consts: list = field(default_factory=list)  # a GPU client: the cheap ops' constants (source, copy, versions)
 
     def __post_init__(self) -> None:
+        if self.groups:
+            self._check_plan()
         if torch.device(self.device).type != "cpu":   # the cheap ops' constants live on the device
             self.graph, pairs = self.graph.with_constants_on(self.device)
             self._consts = [(src, dst, (src._version, dst._version)) for src, dst in pairs]
+
+    def _check_plan(self) -> None:
+        """A key of groups (a commitment plan) fits the graph and the parameters: mode C, every weight
+        op in exactly one group of its codeword length, and a column count for every group."""
+        if self.mode != "C":
+            raise ValueError(f"commitment groups are a mode-C key, not one of mode {self.mode}")
+        members = [m for g in self.groups.values() for m in g.members]
+        if sorted(members) != sorted(op.name for op in self.graph.mat_ops):
+            raise ValueError("every weight op must be in exactly one commitment group")
+        columns = dict(self.params.group_columns)
+        for name, g in self.groups.items():
+            if any(self.publics[m].n_points != g.n_points for m in g.members):
+                raise ValueError(f"group {name} holds a matrix of another codeword length")
+            if not 1 <= columns.get(name, 0) <= g.n_points:
+                raise ValueError(f"the parameters give group {name} no column count: use params_for(..., plan=)")
 
     def _refresh_constants(self) -> None:
         """Copy again every device constant whose source (or copy) was modified since."""
@@ -689,18 +769,63 @@ class Verifier:
             raise exc
         return n_ok == len(mats)
 
-    def _columns_shape_ok(self, op: MatOp, us, cols, openings, *, wire: bool = False) -> bool:
-        """The opening of ``op`` is well formed: int64 columns ``[N, t]``, or with ``wire`` the
-        int32 rows ``[t, N]`` of the streaming verifier (``None``: not representable); in the field."""
-        pub = self.publics[op.name]
-        opened, proof = openings[op.name]
-        idx = cols[op.name]
+    # A column check opens trees: each weight op's own (the paper), or each group's of a commitment
+    # plan, whose opening stacks its members' columns and whose index set they share.  Every member
+    # is then checked against its own Enc(u) exactly as an op on its own tree, and the verdict is
+    # that of checking tree by tree.
+
+    def column_challenges(self, ch: Challenger) -> dict[str, torch.Tensor]:
+        """Step 5's column indices, drawn after ``u``: ``t`` distinct columns of every tree."""
+        if not self.groups:
+            return {op.name: ch.columns(op.name, self.publics[op.name].n_points, self.params.columns)
+                    for op in self.graph.mat_ops}
+        return {name: ch.columns(name, g.n_points, self.params.columns_for(name)) for name, g in self.groups.items()}
+
+    def _column_units(self) -> list[tuple[str, list[MatOp]]]:
+        """The trees, in order, each with its member ops in leaf order."""
+        if not self.groups:
+            return [(op.name, [op]) for op in self.graph.mat_ops]
+        ops = {op.name: op for op in self.graph.mat_ops}
+        return [(name, [ops[m] for m in g.members]) for name, g in self.groups.items()]
+
+    def _tree(self, name: str):
+        """The public of tree ``name`` (``tag``, ``root``, ``depth``): an op's own or a group's."""
+        return self.groups[name] if self.groups else self.publics[name]
+
+    def _offsets(self, members: list[MatOp]) -> list[int]:
+        """Where each member's rows start in its tree's stacked columns."""
+        out, off = [], 0
+        for op in members:
+            out.append(off)
+            off += self.publics[op.name].n_rows
+        return out
+
+    def _member_columns(self, units, opened: dict, *, rows: bool = False) -> dict:
+        """Each member op's opened columns ``[N, t]`` (views): ``opened`` holds each tree's columns
+        ``[sum N, t]``, or with ``rows`` its int32 rows ``[t, sum N]``."""
+        out = {}
+        for name, members in units:
+            o = opened[name].T if rows else opened[name]
+            for op, off in zip(members, self._offsets(members)):
+                out[op.name] = o if len(members) == 1 else o[off:off + self.publics[op.name].n_rows]
+        return out
+
+    def _columns_shape_ok(self, unit, us, cols, openings, *, wire: bool = False) -> bool:
+        """The opening of tree ``unit = (name, members)`` is well formed: int64 columns ``[N, t]``
+        (``N``: its members' rows together), or with ``wire`` the int32 rows ``[t, N]`` of the
+        streaming verifier (``None``: not representable); in the field; with ``u`` of every member
+        of its row length."""
+        name, members = unit
+        tree = self._tree(name)
+        n_rows = sum(self.publics[op.name].n_rows for op in members)
+        opened, proof = openings[name]
+        idx = cols[name]
         if wire and opened is None:
             return False
-        shape, dtype = ((len(idx), pub.n_rows), torch.int32) if wire else ((pub.n_rows, len(idx)), torch.int64)
-        return not (tuple(opened.shape) != shape or len(proof) > len(idx) * pub.depth
+        shape, dtype = ((len(idx), n_rows), torch.int32) if wire else ((n_rows, len(idx)), torch.int64)
+        return not (tuple(opened.shape) != shape or len(proof) > len(idx) * tree.depth
                     or opened.dtype != dtype or not _in_field(opened)
-                    or us[op.name].shape[1] != pub.row_length)
+                    or any(us[op.name].shape[1] != self.publics[op.name].row_length for op in members))
 
     def _codewords(self, mats, us, cols) -> dict:
         """``Enc(u)[columns]`` per op.  ``Enc(u)`` is only needed at the ``t`` opened columns: it
@@ -722,7 +847,13 @@ class Verifier:
                     enc.update(zip(part, res))
         return enc
 
-    def _code_flags(self, mats, chis, us, cols, opened: dict) -> list[torch.Tensor]:
+    @staticmethod
+    def _members_of(units, cols) -> tuple[list[MatOp], dict]:
+        """The member ops of ``units``, in order, and each one's column indices (its tree's)."""
+        return ([op for _, members in units for op in members],
+                {op.name: cols[name] for name, members in units for op in members})
+
+    def _code_flags(self, mats, cols, chis, us, opened: dict) -> list[torch.Tensor]:
         """``chi^T (opened columns) != Enc(u)[columns]`` of every op, as booleans left where they
         were computed, which :func:`_to_host` reads as one per op: ``opened`` holds each op's
         opened columns ``[N, t]`` in the field, next to its ``u`` (int64, or a view of the int32
@@ -734,34 +865,45 @@ class Verifier:
             return [torch.tensor([not torch.equal(prod[op.name], enc[op.name]) for op in mats], dtype=torch.bool)]
         return [(prod[op.name] != enc[op.name]).any() for op in mats]
 
-    def _merkle(self, mats, cols, openings, rows: dict | None = None) -> list[tuple[bool, Exception | None]]:
-        """``(multiproof verified, exception)`` per op: its opened columns (``rows``, or cast from
-        ``openings``) hashed into leaves, large ones on threads, then its Merkle multiproof."""
-        def leaves(op):
-            r = rows[op.name] if rows is not None else column_rows(openings[op.name][0])
-            return row_leaves(self.publics[op.name].tag, cols[op.name].tolist(), r)
+    def _merkle(self, units, cols, openings, rows: dict | None = None) -> list[tuple[bool, Exception | None]]:
+        """``(multiproof verified, exception)`` per tree: each member's opened columns (``rows``, or
+        cast from ``openings``) hashed into its column digests, large ones on threads -- the leaves of
+        an op's own tree, or through :func:`group_leaf` those of a group's -- then its multiproof."""
+        if self.groups and rows is None:       # a group's columns are cast once, then sliced per member
+            rows = {name: column_rows(openings[name][0]) for name, _ in units}
+        parts = [(name, op, off) for name, members in units for op, off in zip(members, self._offsets(members))]
+
+        def digests(part):
+            name, op, off = part
+            pub = self.publics[op.name]
+            r = rows[name] if rows is not None else column_rows(openings[name][0])
+            return row_leaves(pub.tag, cols[name].tolist(), r[:, off:off + pub.n_rows] if self.groups else r)
 
         workers = torch.get_num_threads()
-        hashed = map_threaded(leaves, mats, [4 * self.publics[op.name].n_rows for op in mats], workers)
-        return verify_multiproofs([(self.publics[op.name].root, self.publics[op.name].depth, lv, openings[op.name][1])
-                                   for op, lv in zip(mats, hashed)], workers)
+        hashed = iter(map_threaded(digests, parts, [4 * self.publics[op.name].n_rows for _, op, _ in parts], workers))
+        jobs = []
+        for name, members in units:
+            tree, own = self._tree(name), [next(hashed) for _ in members]
+            leaves = {c: group_leaf(tree.tag, c, [d[c] for d in own]) for c in own[0]} if self.groups else own[0]
+            jobs.append((tree.root, tree.depth, leaves, openings[name][1]))
+        return verify_multiproofs(jobs, workers)
 
     def check_columns(self, chis, us, cols, openings) -> str | None:
         """``None`` if every opened column is consistent, else the failing check: the verdict
-        (and any exception) of checking op by op -- shape, then code, then Merkle.  The code
-        checks are queued first (on a GPU they run there while the host checks the Merkle
-        paths) and come back with one copy."""
-        mats = self.graph.mat_ops
-        n_ok, exc = _leading_passes(mats, lambda op: self._columns_shape_ok(op, us, cols, openings))
-        good = mats[:n_ok]
+        (and any exception) of checking tree by tree -- shape, then code (of every member), then
+        Merkle.  The code checks are queued first (on a GPU they run there while the host checks
+        the Merkle paths) and come back with one copy."""
+        units = self._column_units()
+        n_ok, exc = _leading_passes(units, lambda unit: self._columns_shape_ok(unit, us, cols, openings))
+        good = units[:n_ok]
         if _defer(self.device):       # the rows the leaves hash, cast once and uploaded for the code checks
-            rows = {op.name: column_rows(openings[op.name][0]) for op in good}
-            opened = {name: r.T for name, r in _upload_rows(rows, self.device).items()}
+            rows = {name: column_rows(openings[name][0]) for name, _ in good}
+            opened = self._member_columns(good, _upload_rows(rows, self.device), rows=True)
         else:                         # the columns as they are (the leaves cast them, on threads)
-            rows, opened = None, {op.name: openings[op.name][0] for op in good}
-        flags = self._code_flags(good, chis, us, cols, opened)
+            rows, opened = None, self._member_columns(good, {name: openings[name][0] for name, _ in good})
+        flags = self._code_flags(*self._members_of(good, cols), chis, us, opened)
         merkle = self._merkle(good, cols, openings, rows)
-        return _columns_verdict([not bad for bad in _to_host(flags)], merkle, n_ok, exc, len(mats))
+        return _columns_verdict(_unit_codes(good, _to_host(flags)), merkle, n_ok, exc, len(units))
 
     # -- the streaming verifier -------------------------------------------------------------
     # The same checks, arranged for a GPU client (the wire formats and the claim uploads are in
@@ -822,7 +964,7 @@ class Verifier:
             if derived is None:
                 return "range_or_shape"
             pending = derived[1]
-            got = _to_host(pending + x_flags + flags + (columns[2] if columns else []))   # the one round trip
+            got = _to_host(pending + x_flags + flags + (columns[3] if columns else []))   # the one round trip
             a, b, c = len(pending), len(pending) + len(x_flags), len(pending) + len(x_flags) + len(flags)
             if any(got[:a]):
                 return "range_or_shape"
@@ -834,20 +976,21 @@ class Verifier:
                 raise u_exc
             if columns is None:
                 return None
-            n_ok, exc, _, merkle = columns
-            return _columns_verdict([not bad for bad in got[c:]], merkle.result(), n_ok, exc, len(mats))
+            units, n_ok, exc, _, merkle = columns
+            return _columns_verdict(_unit_codes(units[:n_ok], got[c:]), merkle.result(), n_ok, exc, len(units))
 
     def _start_columns(self, chis, us, cols, openings, host: ThreadPoolExecutor):
-        """The column checks, started: ``(n_ok, exception, code flags on the device, Merkle future)``
-        for the leading ops whose openings are well formed."""
-        mats = self.graph.mat_ops
-        n_ok, exc = _leading_passes(mats, lambda op: self._columns_shape_ok(op, us, cols, openings, wire=True))
-        good = mats[:n_ok]
-        rows = {op.name: openings[op.name][0].numpy() for op in good}
+        """The column checks, started: ``(trees, n_ok, exception, code flags on the device, Merkle
+        future)`` for the leading trees whose openings are well formed."""
+        units = self._column_units()
+        n_ok, exc = _leading_passes(units, lambda unit: self._columns_shape_ok(unit, us, cols, openings, wire=True))
+        good = units[:n_ok]
+        rows = {name: openings[name][0].numpy() for name, _ in good}
         dev = torch.device(self.device)
-        on_dev = _upload_rows(rows, dev) if dev.type != "cpu" else {op.name: openings[op.name][0] for op in good}
-        code_flags = self._code_flags(good, chis, us, cols, {name: r.T for name, r in on_dev.items()})
-        return n_ok, exc, code_flags, host.submit(self._merkle, good, cols, openings, rows)
+        on_dev = _upload_rows(rows, dev) if dev.type != "cpu" else {name: openings[name][0] for name, _ in good}
+        code_flags = self._code_flags(*self._members_of(good, cols), chis, us,
+                                      self._member_columns(good, on_dev, rows=True))
+        return units, n_ok, exc, code_flags, host.submit(self._merkle, good, cols, openings, rows)
 
 
 def _input_bindings(graph: IntGraph) -> dict[str, tuple[str, int]]:
@@ -877,6 +1020,10 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
         if pub is not None:
             blob += pub.tag + pub.root + struct.pack("<Q", pub.n_points)
         ch.absorb(b"op/" + op.name.encode(), blob)
+    for name, g in verifier.groups.items():      # a commitment plan: its trees, members (in order) and t
+        blob = struct.pack("<H", len(g.tag)) + g.tag + g.root + struct.pack("<QQQ", g.n_points, p.columns_for(name),
+                                                                            len(g.members))
+        ch.absorb(b"group/" + name.encode(), blob + b"".join(struct.pack("<H", len(m)) + m.encode() for m in g.members))
     ch.absorb(b"x", _tensor_blob(x.cpu()))
 
 
@@ -942,8 +1089,7 @@ def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, 
         for k in sorted(us):
             ch.absorb(b"u/" + k.encode(), _tensor_blob(us[k]))
         t["fs_hash"] += time.perf_counter() - t0
-    mats = verifier.graph.mat_ops
-    cols = {op.name: ch.columns(op.name, verifier.publics[op.name].n_points, p.columns) for op in mats}
+    cols = verifier.column_challenges(ch)
     _sync(prover.device)
     t0 = time.perf_counter()
     opened = prover.open(cols)
