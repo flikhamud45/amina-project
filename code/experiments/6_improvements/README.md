@@ -346,10 +346,15 @@ section) -- to be confirmed with `bench.py --policy` on the cluster.
 ### On the cluster
 
 The stored roots are frozen, so the policies and a same-hardware baseline go to a new root; each
-policy's cells are named `..._pol<name>` next to the baseline's (from the repository root):
+policy's cells are named `..._pol<name>` next to the baseline's (from the repository root).  As for
+the report's root (`../../README.md`), every job of a root must run on one kind of machine:
+`bench.sbatch` alone asks for any GPU (`--gres=gpu:1`), and the first job's machine owns the root
+(`PLATFORM.json`), so pin the partition and the L40S, and keep the jobs off t-806 (the L40S node
+with a Xeon: `bench.py` refuses a second CPU model in one root), e.g. with an `sbatch` wrapper on
+`PATH` that adds `--exclude=t-806`:
 
 ```bash
-export PVI_PLATFORM=l40s_plans && mkdir -p logs/$PVI_PLATFORM
+export PVI_PLATFORM=l40s_plans SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1 && mkdir -p logs/$PVI_PLATFORM
 B=code/experiments/4_defence_benchmark/slurm/bench.sbatch
 for m in mlp_mnist lenet5 vgg11 vgg16 resnet18_cifar; do
   sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m                         # the baseline (paper)
@@ -580,10 +585,11 @@ L40S client: ~2.3 ms, ~13.9 ms, ~0.118 s) by this laptop's plan + wire / plan ra
 ### On the cluster
 
 The combination goes to a new root next to its baseline; `--policy <p> --wire --tag _wire` cells
-are named `..._wire_pol<p>` (from the repository root):
+are named `..._wire_pol<p>` (from the repository root; the partition and the L40S pinned, and the
+jobs kept off t-806, as for `l40s_plans` above):
 
 ```bash
-export PVI_PLATFORM=l40s_combined && mkdir -p logs/$PVI_PLATFORM
+export PVI_PLATFORM=l40s_combined SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1 && mkdir -p logs/$PVI_PLATFORM
 B=code/experiments/4_defence_benchmark/slurm/bench.sbatch
 for m in lenet5 vgg16; do
   sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B cnn --model $m                             # the baseline (paper)
