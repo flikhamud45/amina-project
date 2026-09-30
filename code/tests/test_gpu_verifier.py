@@ -368,10 +368,12 @@ def test_the_wire_formats():
     far = o.clone()
     far[0, 0] = (1 << 32) + 5                      # would wrap to 5 in int32
     opened = {"a": (o, ["p"]), "b": (o.to(torch.int32), []), "c": (o[:, 0], []), "d": (far, []), "e": None,
-              "f": (o, [], "extra")}
+              "f": (o, [], "extra"), "g": [o, ["p"]]}
     got = pipeline.wire_openings(opened)
-    assert got["a"][0].dtype == torch.int32 and got["a"][0].is_contiguous() and torch.equal(got["a"][0], o.T.int())
-    assert got["a"][1] == ["p"] and all(got[k][0] is None for k in "bcd")
+    for k in "ag":                                 # a tuple or a list of two, as run_query unpacks them
+        assert got[k][0].dtype == torch.int32 and got[k][0].is_contiguous() and torch.equal(got[k][0], o.T.int())
+        assert got[k][1] == ["p"]
+    assert all(got[k][0] is None for k in "bcd")
     assert got["e"] is None and got["f"] == opened["f"]
 
 
@@ -474,6 +476,7 @@ def _fold_and_open_attacks(graph):
             "path forged": opening({victim: lambda o, pr: (o, [bytes(32)] + pr[1:])}),
             "path short": opening({victim: lambda o, pr: (o, pr[:-1])}),
             "path long": opening({victim: lambda o, pr: (o, pr + [bytes(32)])}),
+            "as a list": opening({victim: lambda o, pr: [o, pr]}),
             "merkle then code": opening({victim: lambda o, pr: (o, [bytes(32)] + pr[1:]), other: plus_one}),
             "code then narrow": opening({victim: plus_one, other: lambda o, pr: (o[:, :-1], pr)})}
 
@@ -495,6 +498,7 @@ def test_streaming_gives_the_verdicts_of_run_query_on_forged_folds_and_openings(
     shape_labels = {labels[k] for k in ("opened=P", "opened=-1", "opened>int32", "opened narrow", "opened int32")}
     assert shape_labels == {"columns_shape"}
     assert labels["path forged"] == labels["path short"] == labels["path long"] == "columns_merkle"
+    assert labels["as a list"] is None
     assert labels["merkle then code"] == "columns_merkle" and labels["code then narrow"] == "columns_code"
     # an exception is raised where run_query raises it (a proof entry that is not bytes)
     prover.open = lambda cols: {k: ((o, [0] + pr[1:]) if k == graph.mat_ops[2].name else (o, pr))

@@ -74,10 +74,11 @@ def wire_openings(openings: dict) -> dict:
     """``{name: (rows, proof)}``: each opening's int64 columns ``[N, t]`` as the int32 rows ``[t, N]``
     the Merkle leaves hash, or ``None`` when they are not a 2-d int64 tensor of int32 values
     (rejected at ``columns_shape``, as ``run_query`` rejects them); anything that is not a pair
-    is passed on unchanged (and raises where ``run_query`` raises)."""
+    (a tuple or list of two, which ``run_query`` unpacks alike) is passed on unchanged (and
+    raises where ``run_query`` raises)."""
     out = {}
     for name, item in openings.items():
-        if isinstance(item, tuple) and len(item) == 2:
+        if isinstance(item, (tuple, list)) and len(item) == 2:
             o, proof = item
             ok = torch.is_tensor(o) and o.dtype == torch.int64 and o.dim() == 2 and _fits_int32(o)
             item = (o.to(torch.int32).T.contiguous() if ok else None, proof)
