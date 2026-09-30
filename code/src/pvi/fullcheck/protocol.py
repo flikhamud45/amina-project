@@ -723,11 +723,15 @@ class Verifier:
         return enc
 
     def _code_flags(self, mats, chis, us, cols, opened: dict) -> list[torch.Tensor]:
-        """``chi^T (opened columns) != Enc(u)[columns]`` per op, left where it was computed:
-        ``opened`` holds each op's opened columns ``[N, t]`` in the field, next to its ``u``
-        (int64, or a view of the int32 rows ``[t, N]`` uploaded to a device)."""
+        """``chi^T (opened columns) != Enc(u)[columns]`` of every op, as booleans left where they
+        were computed, which :func:`_to_host` reads as one per op: ``opened`` holds each op's
+        opened columns ``[N, t]`` in the field, next to its ``u`` (int64, or a view of the int32
+        rows ``[t, N]`` uploaded to a device).  On the CPU, where a value costs nothing to read,
+        ``torch.equal`` (the fastest there) gives all of them in one tensor."""
         enc = self._codewords(mats, us, cols)
         prod = self._field_products({op.name: (chis[op.name], opened[op.name]) for op in mats}, P)
+        if not _defer(self.device):
+            return [torch.tensor([not torch.equal(prod[op.name], enc[op.name]) for op in mats], dtype=torch.bool)]
         return [(prod[op.name] != enc[op.name]).any() for op in mats]
 
     def _merkle(self, mats, cols, openings, rows: dict | None = None) -> list[tuple[bool, Exception | None]]:
