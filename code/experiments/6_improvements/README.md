@@ -174,3 +174,132 @@ check by all three verifiers.  One group of 4 heads at 2,048 tokens with a head 
 |---:|---:|---:|---:|---:|
 | 1 | 507 ms | 371 ms | 234 ms | 2.17x |
 | 4 | 213 ms | 159 ms | 101 ms | 2.11x |
+
+## Commitment plans for mode C: `plan_bytes.py`, `perf.py --policy`, `bench.py --policy`
+
+A commitment plan (`pvi.fullcheck.plans`, opt-in by name; the default `paper` is the report's
+commitment and parameters, bit for bit) changes three things of mode C:
+
+* **exact t**: each tree opens the smallest `t` whose exact column error
+  `prod_{i<t} (k_l-1-i)/(n_l-i)` meets the per-op budget `2^-beta` the report already assigns
+  (`beta = lambda + log2(2L)`, plus 64 grinding bits under Fiat--Shamir), instead of
+  `ceil(beta / log2 rate)`, which assumes `(k-1)/n = 1/rate` and ignores the power-of-two padding;
+* **shared trees**: matrices of one codeword length share one Merkle tree (leaf `c` =
+  SHA-256 of the group tag, `c` and every member's own column digest of column `c`, in the public
+  member order), one set of `t_g = max t_l` column indices and one multiproof; the members of a
+  length are split into the runs of `t` whose groups minimise the expected column and multiproof
+  bytes at lambda = 128 (a tall matrix never opens extra columns; small ones share a multiproof);
+* **per-op codeword lengths**: `tight` keeps the report's `4 next_pow2(k)`; `cnn<e>` gives every
+  matrix `max(2^e, 2 next_pow2(k))`; `R<R>` gives rate `R` to every matrix but the embedding
+  tables (their rows are the vocabulary: setup would multiply for columns of `d` entries).
+
+The bound is the report's: `eps <= sum_l [p^-r + 2^-beta] = 2L 2^-beta = 2^-lambda` (interactive;
+`2^-(lambda+64)` per transcript under Fiat--Shamir).  Every member of a group gets `t_g >= t_l`
+distinct uniform columns of its own codeword, drawn after `u`; the union bound never needed the
+ops' index sets to be independent.  Fiat--Shamir absorbs every op's codeword length and every
+group's tag, root, length, `t` and member order.  `tests/test_plans.py` checks `soundness_bits >=
+lambda` for the five CNNs and all decoder configurations, every policy, lambda 40/80/128, modes
+C, K and Kpre, interactive and Fiat--Shamir, and that honest queries pass and every forgery is
+rejected at its check (by `run_query`, the streaming verifier and the GPU forms).
+
+```bash
+cd code && export PYTHONPATH=$PWD/src
+python experiments/6_improvements/plan_bytes.py --out results/plan_bytes.csv          # the byte model, every model
+python experiments/6_improvements/plan_bytes.py --run mlp_mnist lenet5 vgg11 vgg16 resnet18_cifar \
+    --queries 5 --out results/plan_bytes_run_cnn.csv                                  # run_query, exact bytes
+python experiments/6_improvements/plan_bytes.py --run gpt2:64,512:12 --policies paper tight R8 R16 \
+    --queries 3 --out results/plan_bytes_run_gpt2.csv
+python experiments/6_improvements/plan_bytes.py --run qwen3-4b:8:1:1024 qwen3-4b:8:2:1024 opt-125m:2048:1 \
+    opt-125m:2048:2 llama2-7b:64:1:1024 llama2-7b:64:2:1024 --policies tight R8 --queries 2 \
+    --out results/plan_bytes_run_decoders.csv                                         # the model on few-block builds
+python experiments/6_improvements/perf.py --model lenet5 --random-init --modes C --queries 31 --threads 1 \
+    --policy paper tight cnn16 cnn17 cnn18 R8 R16 R64                                 # interleaved timing
+```
+
+### Proof bytes (lambda = 128)
+
+Every row of `results/plan_bytes_run_cnn.csv` (random-init CNNs committed under every policy, 5
+honest queries each through `run_query`) has claim, `u` and column bytes equal to the byte model
+(`analytic.proof_bytes`), and its median total within 0.5% of the model's (the Merkle paths
+depend on the random indices).  Measured medians, interactive / Fiat--Shamir:
+
+| Model | paper | tight | cnn16 | cnn17 | cnn18 | R8 | R16 | R64 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| MLP (MNIST) | 270.0 / 391.7 kB | 214.6 / 309.1 | 106.8 / 153.1 | 97.2 / 140.3 | 90.8 / 130.8 | 170.1 / 243.1 | 141.6 / 202.8 | 112.8 / 161.4 |
+| LeNet-5 | 130.6 / 172.2 kB | 111.0 / 142.7 | 65.0 / 82.7 | 63.2 / 79.6 | 62.2 / 76.6 | 98.1 / 125.3 | 90.4 / 116.8 | 82.7 / 106.1 |
+| VGG-11 | 2,201 / 2,908 kB | 1,791 / 2,308 | 1,500 / 1,888 | 1,420 / 1,768 | 1,365 / 1,693 | 1,613 / 2,051 | 1,507 / 1,889 | 1,383 / 1,706 |
+| VGG-16 | 3,433 / 4,461 kB | 2,833 / 3,593 | 2,454 / 3,040 | 2,339 / 2,871 | 2,263 / 2,754 | 2,584 / 3,229 | 2,436 / 3,001 | 2,266 / 2,748 |
+| ResNet-18 (CIFAR) | 4,630 / 5,583 kB | 4,036 / 4,715 | 3,642 / 4,154 | 3,550 / 4,017 | 3,491 / 3,925 | 3,807 / 4,392 | 3,676 / 4,190 | 3,521 / 3,965 |
+
+The decoders from the byte model (`results/plan_bytes.csv`; the paper column reproduces the
+stored L40S measurements, e.g. GPT-2 T64 62,072 kB vs 62,071.5 kB stored, Llama-2-7B T64 761.7 MB,
+Qwen3-4B T8 410.3 MB, OPT-6.7B T2048 10,101 MB), interactive / Fiat--Shamir, MB:
+
+| Model, prompt | paper | tight | cnn16 | cnn17 | cnn18 | R8 | R16 | R64 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| GPT-2, 64 | 62.1 / 80.7 | 54.6 / 69.4 | 37.0 / 43.3 | 35.3 / 41.0 | 34.0 / 39.6 | 46.3 / 57.2 | 41.5 / 50.2 | 36.7 / 42.8 |
+| GPT-2, 512 | 213.5 / 232.1 | 206.0 / 220.8 | 188.4 / 194.7 | 186.7 / 192.4 | 185.4 / 191.0 | 197.7 / 208.6 | 192.9 / 201.6 | 188.1 / 194.2 |
+| Llama-2-7B, 1 | 418.0 / 607.4 | 406.5 / 585.4 | 236.1 / 339.8 | 191.9 / 276.8 | 161.6 / 234.2 | 282.7 / 407.9 | 222.5 / 320.4 | 157.2 / 227.9 |
+| Llama-2-7B, 64 | 761.7 / 951.1 | 750.3 / 929.1 | 579.9 / 683.6 | 535.6 / 620.5 | 505.3 / 577.9 | 626.4 / 751.7 | 566.2 / 664.2 | 501.0 / 571.6 |
+| Llama-2-7B, 2048 | 11,586 / 11,776 | 11,575 / 11,754 | 11,404 / 11,508 | 11,360 / 11,445 | 11,330 / 11,402 | 11,451 / 11,576 | 11,391 / 11,489 | 11,325 / 11,396 |
+| Qwen3-4B, 8 | 410.3 / 582.0 | 321.8 / 453.9 | 219.4 / 298.8 | 190.5 / 258.1 | 168.5 / 230.0 | 252.7 / 348.9 | 211.3 / 287.4 | 165.3 / 224.8 |
+| OPT-125M, 2048 | 732.5 / 751.2 | 725.1 / 739.9 | 707.5 / 713.8 | 705.8 / 711.4 | 704.5 / 709.6 | 716.7 / 727.7 | 711.9 / 720.7 | 707.1 / 713.3 |
+| OPT-1.3B, 2048 | 3,807 / 3,876 | 3,764 / 3,812 | 3,727 / 3,757 | 3,716 / 3,743 | 3,709 / 3,732 | 3,738 / 3,775 | 3,725 / 3,754 | 3,709 / 3,731 |
+| OPT-6.7B, 2048 | 10,101 / 10,271 | 9,989 / 10,105 | 9,948 / 10,046 | 9,905 / 9,984 | 9,877 / 9,944 | 9,932 / 10,023 | 9,897 / 9,972 | 9,857 / 9,912 |
+| OPT-13B, 2048 | 15,752 / 16,012 | 15,618 / 15,809 | 15,548 / 15,711 | 15,469 / 15,593 | 15,423 / 15,527 | 15,512 / 15,657 | 15,452 / 15,566 | 15,383 / 15,476 |
+
+Soundness at lambda = 128 (`soundness_bits`, interactive): paper 131-153 bits, every plan 129.2-140.7
+bits.  At 2,048 tokens the claims are 94-99% of the proof, so the best plans save 2-4% there.
+
+### Setup (the one-time commitment)
+
+Encoded field entries `sum_l N_l n_l` (what the NTTs produce and the leaves hash) and trees
+(`analytic.setup_size`); the stored L40S commits run at about 9 ns per entry (Llama-2-7B: 29.8 G
+entries in 257-281 s), which gives the estimates for that node:
+
+| Model | paper | tight | cnn16 | cnn17 | cnn18 | R8 | R16 | R64 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| LeNet-5 | 0.3 M, 5 trees | 0.3 M, 4 | 15.5 M, 1 | 30.9 M, 1 | 61.9 M, 1 | 0.6 M, 4 | 1.2 M, 4 | 5.0 M, 4 |
+| VGG-16 | 0.11 G, 16 | 0.11 G, 6 | 0.34 G, 4 | 0.69 G, 3 | 1.38 G, 3 | 0.22 G, 6 | 0.44 G, 5 | 1.74 G, 5 |
+| ResNet-18 | 0.08 G, 21 | 0.08 G, 8 | 0.32 G, 4 | 0.63 G, 4 | 1.26 G, 4 | 0.16 G, 8 | 0.32 G, 8 | 1.27 G, 8 |
+| GPT-2 | 0.86 G, 75 | 0.86 G, 5 | 8.9 G, 4 | 17.7 G, 4 | 35.3 G, 3 | 1.5 G, 4 | 2.8 G, 4 | 10.7 G, 4 |
+| Llama-2-7B | 29.8 G, 226 | 29.8 G, 3 | 91 G, 3 | 183 G, 3 | 366 G, 3 | 59 G, 3 | 118 G, 3 | 468 G, 3 |
+| Qwen3-4B | 27.8 G, 254 | 27.8 G, 4 | 84 G, 4 | 166 G, 4 | 331 G, 4 | 53 G, 4 | 103 G, 4 | 405 G, 4 |
+
+On this laptop's CPU (NTT on the CPU, shared machine) the commits took 90-160 ns per entry:
+LeNet-5 cnn16 2.1 s, cnn18 8.7 s; VGG-16 paper 11 s, cnn16 36 s, cnn17 103 s, cnn18 218 s, R16 58 s,
+R64 289 s (`commit_s` in `results/plan_bytes_run_cnn.csv`).  At about 9 ns per entry: VGG-16 cnn17
+~6 s and cnn18 ~12 s; GPT-2 R16 ~26 s, R64 ~1.6 min, cnn18 ~5 min; Llama-2-7B R8 ~9 min, R16
+~18 min, R64 ~70 min (paper and tight: 4.5 min).  The verifier's key shrinks from one root per
+matrix to one per tree (Llama-2-7B: 226 -> 3).
+
+### Timing on this laptop (`perf.py --policy`, `results/perf_plans_laptop_*.jsonl`)
+
+Random-init models, 1 thread, every policy committed in one process and its queries
+interleaved with the others' (the order rotating from query to query); medians over 31 (LeNet-5)
+and 15 (VGG-16) honest queries, all accepted; the ratios are to `paper` in the same run.  The
+laptop was shared with other jobs, so absolute times are noisy; the ratios come from interleaved
+runs.
+
+| Model | Policy | Verifier (ms) | Column check (ms) | Prover open (ms) | Prover total (ms) | Proof |
+|---|---|---:|---:|---:|---:|---:|
+| LeNet-5 | paper | 7.86 | 5.49 | 3.37 | 6.14 | 130.9 kB |
+| | tight | 7.30 (0.93x) | 4.86 (0.88x) | 2.81 (0.83x) | 5.48 (0.89x) | 111.0 kB |
+| | cnn16 | 4.98 (0.63x) | 2.50 (0.46x) | 1.64 (0.49x) | 4.57 (0.74x) | 65.1 kB |
+| | cnn17 | 4.77 (0.61x) | 2.39 (0.44x) | 1.55 (0.46x) | 4.33 (0.71x) | 63.0 kB |
+| | cnn18 | 4.48 (0.57x) | 2.20 (0.40x) | 1.50 (0.44x) | 4.17 (0.68x) | 62.3 kB |
+| | R8 | 6.59 (0.84x) | 4.31 (0.79x) | 2.49 (0.74x) | 5.08 (0.83x) | 98.3 kB |
+| | R16 | 6.52 (0.83x) | 4.08 (0.74x) | 2.48 (0.74x) | 5.22 (0.85x) | 90.8 kB |
+| | R64 | 6.11 (0.78x) | 3.78 (0.69x) | 2.47 (0.73x) | 5.18 (0.84x) | 83.1 kB |
+| VGG-16 | paper | 35.5 | 24.5 | 93.2 | 154.5 | 3,432.9 kB |
+| | tight | 26.2 (0.74x) | 15.5 (0.63x) | 57.1 (0.61x) | 119.4 (0.77x) | 2,833.4 kB |
+| | cnn16 | 23.0 (0.65x) | 12.0 (0.49x) | 58.7 (0.63x) | 121.4 (0.79x) | 2,454.2 kB |
+| | cnn17 | 21.4 (0.60x) | 10.5 (0.43x) | 55.6 (0.60x) | 118.3 (0.77x) | 2,339.1 kB |
+| | cnn18 | 20.6 (0.58x) | 9.5 (0.39x) | 63.6 (0.68x) | 125.7 (0.81x) | 2,263.2 kB |
+| | R8 | 24.3 (0.69x) | 13.4 (0.55x) | 55.3 (0.59x) | 116.8 (0.76x) | 2,583.7 kB |
+| | R16 | 22.2 (0.63x) | 11.3 (0.46x) | 53.7 (0.58x) | 115.0 (0.74x) | 2,436.3 kB |
+| | R64 | 20.9 (0.59x) | 10.1 (0.41x) | 35.9 (0.38x) | 97.5 (0.63x) | 2,265.6 kB |
+
+Derive and the products are the same under every policy (they do not depend on the
+commitment); the column check falls with the columns opened and the multiproofs, and the
+prover's open with the `sum N k t` of its column products.
