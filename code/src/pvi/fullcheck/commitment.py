@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
+import sys
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -44,7 +46,9 @@ __all__ = [
     "multiproof",
     "multiproof_size",
     "verify_multiproof",
+    "verify_multiproofs",
     "column_leaf",
+    "column_leaves",
     "CommitmentPublic",
     "WeightCommitment",
     "vandermonde_columns",
@@ -52,6 +56,13 @@ __all__ = [
 ]
 
 HASH_BYTES = 32
+MERKLE_PROCESSES = os.environ.get("PVI_MERKLE_PROCESSES") == "1"
+"""Opt-in (``PVI_MERKLE_PROCESSES=1``): a multi-threaded verifier checks its multiproofs in
+worker processes (:func:`verify_multiproofs`).  Off by default: with the ``spawn`` start
+method (Windows, macOS) the calling script needs an ``if __name__ == "__main__"`` guard, and
+forking a large verifier process is a deployment choice."""
+MERKLE_PROCESSES_MIN_HASHES = 6000
+"""Fewer sibling hashes than this in one check are not worth the inter-process traffic."""
 
 
 def _node(left: bytes, right: bytes) -> bytes:
@@ -64,6 +75,26 @@ def column_leaf(tag: bytes, index: int, column: np.ndarray) -> bytes:
     h.update(np.ascontiguousarray(column, dtype="<u4").tobytes())
     return h.digest()
 
+
+def column_leaves(tag: bytes, indices: list[int], opened: torch.Tensor) -> dict[int, bytes]:
+    """``{c: column_leaf(tag, c, opened[:, j])}`` for the int64 columns ``opened`` ``[N, t]``.
+
+    One transposing cast to 32 bits for all columns instead of a strided gather and a
+    cast per column; the bytes hashed are the same (both keep the low 32 bits).
+    """
+    if opened.shape[0] <= 1 << 14:
+        rows = opened.cpu().numpy().T.astype(np.int32, order="C")   # [t, N]
+    else:                                                            # tall columns: torch transposes faster
+        rows = opened.to(torch.int32).T.contiguous().cpu().numpy()
+    if sys.byteorder != "little":  # pragma: no cover - column_leaf hashes little-endian words
+        rows = rows.astype("<u4")
+    prefix = b"pvi/col" + tag
+    out = {}
+    for j, c in enumerate(indices):
+        h = hashlib.sha256(prefix + int(c).to_bytes(8, "big"))
+        h.update(rows[j])
+        out[c] = h.digest()
+    return out
 
 
 class MerkleTree:
@@ -128,6 +159,47 @@ def verify_multiproof(root: bytes, depth: int, leaves: dict[int, bytes], proof: 
         return False
     return next(it, None) is None and list(known.items()) == [(0, root)]
 
+
+def _verify_jobs(jobs: list) -> list[tuple[bool, Exception | None]]:
+    out = []
+    for job in jobs:
+        try:
+            out.append((verify_multiproof(*job), None))
+        except Exception as exc:   # e.g. a proof entry that is not bytes: the caller raises it in op order
+            out.append((False, exc))
+    return out
+
+
+_PROCESS_POOLS: dict = {}
+
+
+def verify_multiproofs(jobs: list, workers: int = 1) -> list[tuple[bool, Exception | None]]:
+    """``(verify_multiproof(*job), exception or None)`` for every ``(root, depth, leaves,
+    proof)`` job, in order.
+
+    SHA-256 of a 72-byte node holds the GIL, so threads cannot share this work.  With
+    :data:`MERKLE_PROCESSES`, ``workers > 1`` and enough hashes, the jobs go to ``workers``
+    worker processes in batches balanced by proof length; each result is the same
+    function of the same job.
+    """
+    if (not MERKLE_PROCESSES or workers <= 1 or len(jobs) < 2
+            or sum(len(job[3]) for job in jobs) < MERKLE_PROCESSES_MIN_HASHES):
+        return _verify_jobs(jobs)
+    if workers not in _PROCESS_POOLS:
+        from concurrent.futures import ProcessPoolExecutor
+        _PROCESS_POOLS[workers] = ProcessPoolExecutor(max_workers=workers)
+    batches, load = [[] for _ in range(workers)], [0] * workers
+    for i in sorted(range(len(jobs)), key=lambda i: -len(jobs[i][3])):   # longest first, to the least loaded
+        w = load.index(min(load))
+        batches[w].append(i)
+        load[w] += len(jobs[i][2]) + len(jobs[i][3])
+    batches = [b for b in batches if b]
+    futures = [_PROCESS_POOLS[workers].submit(_verify_jobs, [jobs[i] for i in b]) for b in batches]
+    out: list = [None] * len(jobs)
+    for b, fut in zip(batches, futures):
+        for i, res in zip(b, fut.result()):
+            out[i] = res
+    return out
 
 
 def _next_pow2(x: int) -> int:

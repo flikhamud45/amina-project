@@ -145,3 +145,43 @@ def test_vandermonde_columns_index_with_a_mask():
     table = fld.power_table(fld.root_of_unity(1024), 1024)
     j = torch.arange(700)[:, None]
     assert torch.equal(com.vandermonde_columns(1024, 700, idx), table[(j * idx[None, :]) % 1024])
+
+
+@pytest.mark.parametrize("n_rows", [1, 7, 3000, (1 << 14) + 1])
+def test_column_leaves_hash_the_bytes_of_column_leaf(n_rows):
+    g = torch.Generator().manual_seed(n_rows)
+    opened = _rand(g, 0, P, (n_rows, 9))
+    opened[0, 0] = P - 1
+    opened[-1, 1] = -1                      # outside the field: both keep the low 32 bits
+    opened[-1, 2] = 1 << 40
+    idx = sorted(random.Random(n_rows).sample(range(10 * n_rows + 20), 9))
+    assert com.column_leaves(b"tag", idx, opened) == ref.column_leaves(b"tag", idx, opened)
+
+
+def _merkle_jobs(rnd):
+    jobs, want = [], []
+    for depth in (6, 9, 12):
+        n = 1 << depth
+        leaves = [rnd.randbytes(32) for _ in range(n)]
+        tree = com.MerkleTree(leaves)
+        for bad in (False, True):
+            idx = sorted(rnd.sample(range(n), 20))
+            proof = com.multiproof(tree, idx)
+            if bad:
+                proof = [bytes(32)] + proof[1:]
+            jobs.append((tree.root, depth, {i: leaves[i] for i in idx}, proof))
+            want.append(not bad)
+    return jobs, want
+
+
+def test_merkle_worker_processes_give_the_same_results(monkeypatch):
+    jobs, want = _merkle_jobs(random.Random(3))
+    jobs.append((jobs[0][0], jobs[0][1], jobs[0][2], [0] + jobs[0][3][1:]))   # not bytes: raises
+    sequential = com.verify_multiproofs(jobs, workers=2)                      # off by default
+    assert [ok for ok, _ in sequential[:-1]] == want and all(exc is None for _, exc in sequential[:-1])
+    assert isinstance(sequential[-1][1], TypeError)
+    monkeypatch.setattr(com, "MERKLE_PROCESSES", True)
+    monkeypatch.setattr(com, "MERKLE_PROCESSES_MIN_HASHES", 1)
+    parallel = com.verify_multiproofs(jobs, workers=2)
+    assert [ok for ok, _ in parallel] == [ok for ok, _ in sequential]
+    assert [type(exc) for _, exc in parallel] == [type(exc) for _, exc in sequential]
