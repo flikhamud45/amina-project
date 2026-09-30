@@ -640,6 +640,9 @@ python experiments/6_improvements/plan_bytes.py --run gpt2:64:12 --policies R64 
 
 ## The col layout and fusion: the policies with the suffix `c`
 
+(The `c` policies have since also looked the embedding tables up: the next section.  This section's
+decoder numbers are those of the col layout alone, commit `894eb6f`; its CNN numbers still hold.)
+
 A commitment plan can now commit a linear op's matrix transposed (`pvi.fullcheck.plans`, opt-in by
 policy name: `tightc`, `cnn<e>c` and `R<R>c` take the codeword lengths of `tight`, `cnn<e>` and
 `R<R>` and add per-op layouts; `commit_graph(..., policy=)`, `bench.py --policy`, `perf.py
@@ -899,4 +902,321 @@ python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --quer
     --policy paper R16 R16c cnn17c cnn18c --wire off on --verifier-device cuda
 python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 15 --threads 8 \
     --policy paper R16 R16c cnn18c --wire off on --verifier-device cpu
+```
+
+## Embedding lookups and last-block pruning
+
+Two more opt-in options.  The default (`paper`, no wire, no pruning) is unchanged: the Phase-2
+reviewers' default fingerprint is byte-identical, and a same-process A/B against `44d96bb` (`paper`,
+`tight`, `cnn12`, `R8`, `R16` on the tiny MLP, LeNet-5, GPT-2, Llama and OPT; with and without wire,
+batched and streaming, interactive and Fiat--Shamir, honest and forged queries) gives identical
+Merkle roots, groups, parameters, verdicts, labels, bytes and transcripts; every row policy's plan of
+every decoder configuration and build is Phase 2's.  The `c` policies now also look up the
+embedding tables; on the CNNs, which have none, they are the col-layout commit's (`894eb6f`) bit for
+bit (same-process A/B of `tightc`, `cnn12c`, `R8c`, `cnn16c` on the MLP and LeNet-5, and the plans of
+the five CNNs under all seven `c` policies).
+
+* **Lookup tables (mode C, every `c` policy).**  An embedding op's table `W` `[d, V]` (the tokens',
+  and a learned position table) is committed as a Merkle tree over its `V` rows
+  (`commitment.TableCommitment`: leaf `j` = SHA-256 of `pvi/row`, the tag, `j` and row `j`'s `d` int8
+  bytes; the leaves past `V`, up to a power of two, in another domain).  It is in no group and has
+  no code.  Its claims are the looked-up rows, one column of `d` int8 values per position, sent in
+  the claims message (one byte each; with wire as the int8 bytes of `claimcodec.pack_rows`, not in
+  `PVC3`), with ONE multiproof over the distinct ids (`Prover.open_tables`).  The verifier checks,
+  before it draws any challenge: in derive, that the claims are int8 (so a leaf's bytes are the
+  claim, one to one) and every id names a row of the table (`range_or_shape`); then equal rows for
+  equal ids (`lookup_consistency`) and the multiproof (`lookup_merkle`).  No `u`, no columns, no
+  Freivalds.  The LM head is an op of its own (the benchmark's decoders draw it separately, as an
+  untied model; for a tied one the owner commits the head once more), and keeps its encoded (row or
+  col) commitment.
+* **Why always.**  A lookup drops the table's `u` (`4 r V` bytes: 1.0 MB for GPT-2's tokens) and its
+  opened columns (`4 t d` per tree), and its claims take a byte each (int32: four; `PVC3`: about one),
+  for one multiproof of at most one path per position -- less than the three bytes per claim it
+  saves on int32 claims for every benchmark decoder (`d >= 512`), and less than `u` alone with wire.
+* **Soundness.**  The lookup check has no challenge and no chance: accepting a claim other than the
+  committed rows at the ids means other bytes for a leaf the root binds, a SHA-256 collision -- the
+  assumption every Merkle tree here already makes, not a term of the statistical bound.  So a table
+  adds no term (`plan.shapes()` and `soundness_bits` leave it out) and the other matrices keep
+  their budgets (`L` stays the number of weight ops in `beta`, a conservative count).  Fiat--Shamir
+  absorbs each table's tag, root, `d` and `V` with the statement, and each multiproof (its length,
+  then its hashes) after the claims and before `chi` (with wire, the `rows/I8` bytes after
+  `claims/PVC3`).
+* **Modes K and Kpre** (`Verifier(lookups=True)`, `bench.py --lookups`, `perf.py --lookups on`): the
+  verifier reads the embedding rows from its own weights (the ids clamped to the table, and a query
+  with any other rejected), the prover sends no claims for them, Kpre precomputes no `chi` for them,
+  and Fiat--Shamir absorbs the list of those ops.  In mode C the tables do that (`lookups=True` there
+  is refused).
+* **Last-block pruning** (`build_decoder(..., prune_last=True)`, `bench.py --prune-last`, `perf.py
+  --prune-last on`, `plan_bytes.py --prune-last`).  Only the last position reaches the next-token
+  logits, so the last block computes q, the attention output and its projection, the residuals and
+  the MLP at that position only; k and v stay at every position, which its one query row attends
+  to.  `_attention` / `_attention_heads` take the queries of the last `Tq <= T` positions (the last
+  rows of the causal mask: for one row, all ones), RoPE takes the position offset `T - Tq`, and the
+  builder calibrates the pruned block on every position (`_Builder.last(..., calibrate_all=True)`),
+  so the pruned graph has the unpruned graph's weights and multipliers and gives the same logits,
+  `torch.equal` (tested: the tiny decoders and one-block GPT-2, OPT-350M (`embed_dim`), Llama-2-7B
+  and Qwen3-4B (GQA, q/k norm) at 1, 2 and 9 tokens).  Both parties run the pruned graph: the
+  protocol needs nothing new, the ops' claims have one column (`chi' = I` for a col matrix), and a
+  plan sees the last block's q as a set of its own (it reads the last position) with k and v fused.
+  `analytic.decoder_shapes` / `decoder_claim_columns(..., prune_last=True)` give its shapes, and a
+  build of 1 and 2 pruned blocks extrapolates to the whole model (both hold the pruned block).
+* **Verifiers.**  The batched verifier, its deferred and int8 forms (tested on the CPU with `_defer`
+  and `int8_ok` forced), the streaming verifier (the ids come back with its one copy, queued before
+  it; the rows are hashed on the host from the claims as received) and a GPU client take both;
+  `reference.check_lookups` is the position-by-position specification the vectorised check is
+  tested against.  A key whose table names no embedding op, has another shape, or leaves an op
+  unchecked (or checked twice) is refused.
+* **Setup.**  A table hashes its rows as they are: no NTT, `V` leaves (`analytic.setup_size` counts
+  its tree and leaves, not encoded entries).  Against the col layout alone the `c` plans encode
+  0.20 G entries fewer on GPT-2 (0.40 G under `cnn18c`: both tables at `2^18`), 0.54 G (1.07 G) on
+  Llama-2-7B and 2.68 G (1.34 G) on Qwen3-4B, whose 151,936-row table was encoded at `4 x 2^18`.
+
+`tests/test_lookups.py` (58 tests) holds what is particular to the lookups: the table's tree (its
+leaves, padding, multiproof; a row moved or changed fails); every `c` plan of GPT-2, OPT-350M,
+Llama-2-7B and Qwen3-4B, pruned or not, looks every embedding table up and keeps the head encoded;
+honest queries with a token three times are accepted and every forgery is rejected at its check --
+a row changed at all positions of its token or replaced by another token's row, and a changed
+position-table row (`lookup_merkle`), one position of a repeated token changed
+(`lookup_consistency`), an entry of 128 (`range_or_shape`; with wire the prover cannot encode it),
+a forged, short, long or non-bytes path, a missing proof and swapped proofs (`lookup_merkle`) -- on
+GPT-2, OPT, Llama and Qwen shapes, pruned and not, interactive and Fiat--Shamir, with and without
+wire, by `run_query` and the streaming verifier alike, and in the deferred, int8 and deferred+int8
+forms; the vectorised check against `reference.check_lookups`; an id outside the table rejected
+as a malformed query (tables and a verifier's own rows); malformed int8 rows on the wire
+(`range_or_shape`), a changed row on the wire (`lookup_merkle`); the transcript (table records
+with the statement, each multiproof after the claims and before `chi`, every table field changing
+the challenges); the refused keys; modes K and Kpre with `lookups` (no embedding claims sent,
+`precompute` without them, a wrong embedding caught at the next op, the `lookups` record, the
+malformed `PVC3` of the other claims); the byte model (`expected_lookup_nodes` against sampling, the
+tables' claims and exact multiproofs, the setup's trees); and the experiment scripts' options.
+`tests/test_pruning.py` (20 tests): the pruned logits `torch.equal` to the unpruned on the tiny
+decoders and on GPT-2, OPT-350M, Llama-2-7B and Qwen3-4B blocks at 1, 2 and 9 tokens, with the same
+weights and the pruned shapes and claim columns of `analytic`; the attention of the last `Tq`
+queries equal to the last rows of the whole attention and to `reference.attention` (int32 and int64
+paths, GQA stacked and in groups), RoPE at an offset, and a pruned block's plan (q alone, k and v
+fused, `chi' = I` for a transposed q).  `tests/test_plans.py` runs its plan tests with the lookup
+tables (the `c` policies) and on pruned GPT-2, Llama, OPT and Qwen (honest queries and their bytes
+-- the tables' claims a byte each, their multiproofs exact -- in C, and in K and Kpre with and
+without `lookups`; every column forgery on pruned OPT and Qwen; the GPU forms on pruned GPT-2; the
+byte model on pruned GPT-2 and Qwen; builds of 1 and 2 pruned blocks get the whole model's matrices
+and trees).
+
+```bash
+cd code && export PYTHONPATH=$PWD/src
+A="paper tightc cnn16c cnn17c cnn18c R8c R16c R64c"
+python experiments/6_improvements/plan_bytes.py --policies $A --kpre off on --out results/lookup_bytes.csv  # the model
+python experiments/6_improvements/plan_bytes.py --policies $A --kpre off on --prune-last --out results/lookup_bytes_prune.csv
+python experiments/6_improvements/plan_bytes.py --run gpt2:64,512:12 --policies paper tightc R16c cnn16c --wire off on \
+    --queries 3 --out results/lookup_run_gpt2.csv                          # run_query (and --prune-last: _prune)
+python experiments/6_improvements/plan_bytes.py --run gpt2:64,512:12 --claims-only --policies paper tightc cnn16c cnn17c \
+    cnn18c R16c R64c --kpre off on --wire off on --queries 3 --out results/lookup_model_gpt2.csv
+python experiments/6_improvements/plan_bytes.py --run llama2-7b:64:1,2:1024 qwen3-4b:8:1,2:1024 opt-125m:2048:1,2 \
+    --policies tightc R8c --kpre off on --wire off on --queries 2 --prune-last --out results/lookup_run_decoders.csv
+python experiments/6_improvements/plan_bytes.py --run qwen3-4b:8:4,8 --policies --kpre off on --wire off on --queries 3 \
+    --out results/lookup_kpre_qwen.csv                                     # Kpre, run_query (and --prune-last)
+python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 11 --threads 1 --device cpu \
+    --policy paper R16 R16c --wire off on --prune-last off on > results/perf_lookup_laptop_gpt2.jsonl
+```
+
+(and `--claims-only --kpre off on --wire off on` with and without `--prune-last` for
+`llama2-7b:1,64:1,2`, `llama2-7b:2048:1,2`, `qwen3-4b:8,64:4,8`, `opt-{125m,1.3b,2.7b,6.7b}:2048:1,2`:
+`results/lookup_model_*.csv`; `results/lookup_run_gpt2_cnn18c*.csv` and `lookup_run_gpt2_R64c_prune.csv`
+measure those two policies.)
+
+### Proof bytes (lambda = 128)
+
+The CNNs have no embedding table and no decoder block: their `c` plans and proofs are the col
+layout's (the table of the section above).  GPT-2 with all 12 blocks, interactive / Fiat--Shamir, MB;
+`run_query` medians of 3 random prompts (every claim, `u` and column count equal to the byte
+model's, totals within 7 kB of it: the multiproofs, 2.6 kB for the `c` plans) unless marked (model:
+the byte model on the measured claims of the same prompts); the col-layout columns are the section
+above's, of `894eb6f`:
+
+| Prompt | Policy | col layout (`894eb6f`) | + lookups | + lookups, pruned | col layout + wire | + lookups + wire | + lookups + wire, pruned |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 64 | paper | 62.07 / 80.69 | 62.07 / 80.69 | 60.72 / 79.34 | 50.73 / 68.77 | 50.73 / 68.77 | 50.01 / 68.06 |
+| 64 | tightc | 32.15 / 36.82 | 30.45 / 34.54 | 29.30 / 33.49 | 21.72 / 26.25 | 20.36 / 24.32 | 19.84 / 23.89 |
+| 64 | cnn16c | 28.46 / 31.46 | 26.78 / 29.19 | 25.49 / 27.93 | 18.15 / 21.06 | 16.80 / 19.14 | 16.14 / 18.51 |
+| 64 | cnn17c | 27.75 / 30.38 | 26.08 / 28.12 (model) | 24.78 / 26.85 (model) | 17.46 / 20.00 | 16.12 / 18.10 (model) | 15.46 / 17.46 (model) |
+| 64 | cnn18c | 27.03 / 29.34 | 25.50 / 27.26 | 24.20 / 25.98 | 16.76 / 19.00 | 15.56 / 17.27 | 14.89 / 16.62 |
+| 64 | R16c | 28.61 / 31.70 | 26.89 / 29.39 | 25.65 / 28.19 | 18.29 / 21.29 | 16.91 / 19.33 | 16.30 / 18.76 |
+| 64 | R64c | 27.28 / 29.66 | 25.57 / 27.35 (model) | 24.29 / 26.10 | 17.00 / 19.31 | 15.63 / 17.35 (model) | 14.98 / 16.73 |
+| 512 | paper | 213.46 / 232.08 | 213.46 / 232.08 | 202.47 / 221.09 | 130.31 / 148.35 | 130.31 / 148.35 | 124.55 / 142.60 |
+| 512 | tightc | - | 179.85 / 183.94 | 169.07 / 173.25 | - | 100.00 / 103.96 | 94.43 / 98.49 |
+| 512 | cnn16c | - | 176.18 / 178.59 | 165.26 / 167.70 | - | 96.44 / 98.78 | 90.74 / 93.11 |
+| 512 | cnn17c | - | 175.48 / 177.52 (model) | 164.55 / 166.62 (model) | - | 95.76 / 97.74 (model) | 90.05 / 92.06 (model) |
+| 512 | cnn18c | 178.42 / 180.73 | 174.90 / 176.66 | 163.96 / 165.75 | 96.33 / 98.58 | 95.20 / 96.90 | 89.49 / 91.21 |
+| 512 | R16c | 179.99 / 183.09 | 176.29 / 178.79 | 165.42 / 167.96 | 97.86 / 100.86 | 96.55 / 98.97 | 90.90 / 93.36 |
+| 512 | R64c | 178.67 / 181.05 | 174.97 / 176.75 (model) | 164.06 / 165.87 | 96.58 / 98.88 | 95.26 / 96.99 (model) | 89.58 / 91.33 |
+
+At 64 tokens the lookups take 1.5-1.7 MB off each `c` plan without wire -- `u` of the token table
+(1.01 MB) and of the position table (0.02 MB), their opened columns (0.2-0.4 MB) and 3 bytes of each
+of their 98,304 claims (0.29 MB), for 23 kB of multiproofs (the position table's 64 aligned rows
+need 4 hashes) -- and 1.2-1.4 MB with wire (`PVC3` sent those claims at about a byte already).
+Pruning takes the last block's q, o, fc1 and fc2 claims at 63 of the 64 positions (5,376 per
+position: 1.35 MB as int32, 0.72 MB with wire) and opens one set of columns more (the pruned q is a
+matrix of its own: +0.05-0.2 MB); at 512 tokens it takes 11.0 MB (5.8 MB with wire).  What is left of
+GPT-2 at 64 tokens under `cnn18c` + wire, pruned: 10.99 MB of claims (the tables' 98,304 bytes among
+them), 0.71 MB of `u` (the fc2s', in rows), 3.12 MB of opened columns and 0.06 MB of paths.
+
+The decoders too large to run here: the byte model on the whole model with the claims measured on
+builds of 1 and 2 blocks (Qwen3-4B: 4 and 8) and extrapolated (exact without wire: checked), the
+tables' multiproofs for the prompt's tokens and positions.  The model is validated by `run_query`
+on pruned builds of 1 and 2 blocks under `tightc` and `R8c`, and in mode Kpre with and without
+`lookups` (`results/lookup_run_decoders.csv`: Llama-2-7B at 64 tokens and Qwen3-4B at 8 with a
+1,024-token vocabulary, OPT-125M at 2,048 with its own; interactive and Fiat--Shamir, with and
+without wire): every build's claim, `u` and column bytes equal the model's (the tables' claims and
+multiproofs exactly), the totals are within 1.3 kB of it (the column multiproofs), and the 1- and
+2-block claims, `u` and columns extrapolated over the blocks are the whole model's to the byte.
+(The totals extrapolate within 0.43%: a pruned 1-block build lacks one tree of the unpruned blocks,
+so its multiproof would be counted `L - 1` times; the model counts each tree once.)  MB,
+interactive / Fiat--Shamir:
+
+| Model, prompt | paper | paper, pruned | R64c | cnn18c | R64c + wire | cnn18c + wire | R64c + wire, pruned | cnn18c + wire, pruned |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Llama-2-7B, 1 | 418.0 / 607.4 | 418.0 / 607.4 | 58.7 / 83.2 | 77.9 / 111.5 | 54.8 / 78.5 | 73.4 / 106.0 | 55.2 / 79.1 | 73.8 / 106.5 |
+| Llama-2-7B, 64 | 761.7 / 951.1 | 753.1 / 942.5 | 401.6 / 426.1 | 420.9 / 454.5 | 256.8 / 280.5 | 275.5 / 308.0 | 252.0 / 276.0 | 270.6 / 303.3 |
+| Llama-2-7B, 2,048 | 11,586.2 / 11,775.6 | 11,305.3 / 11,494.7 | 11,201.9 / 11,226.4 | 11,221.2 / 11,254.7 | 6,662.7 / 6,686.5 | 6,681.4 / 6,713.9 | 6,475.0 / 6,498.9 | 6,493.6 / 6,526.3 |
+| Qwen3-4B, 8 | 410.3 / 582.0 | 409.5 / 581.2 | 78.3 / 96.8 | 89.2 / 113.5 | 61.8 / 79.7 | 72.4 / 95.9 | 61.6 / 79.6 | 72.1 / 95.7 |
+| Qwen3-4B, 64 | 658.6 / 830.3 | 651.4 / 823.1 | 326.2 / 344.7 | 337.1 / 361.4 | 204.2 / 222.1 | 214.8 / 238.3 | 200.2 / 218.2 | 210.7 / 234.3 |
+| OPT-125M, 2,048 | 732.5 / 751.2 | 688.5 / 707.1 | 687.1 / 688.9 | 687.0 / 688.8 | 372.2 / 373.9 | 372.2 / 373.9 | 350.9 / 352.7 | 350.8 / 352.5 |
+| OPT-1.3B, 2,048 | 3,807.1 / 3,875.5 | 3,689.7 / 3,758.1 | 3,654.2 / 3,663.9 | 3,657.2 / 3,668.1 | 2,062.2 / 2,071.6 | 2,065.1 / 2,075.7 | 2,002.1 / 2,011.7 | 2,005.0 / 2,015.6 |
+| OPT-2.7B, 2,048 | 6,319.7 / 6,428.7 | 6,173.0 / 6,281.9 | 6,085.7 / 6,101.6 | 6,093.3 / 6,112.3 | 3,444.8 / 3,460.1 | 3,452.1 / 3,470.5 | 3,373.9 / 3,389.4 | 3,381.3 / 3,399.8 |
+| OPT-6.7B, 2,048 | 10,101.0 / 10,270.7 | 9,866.3 / 10,035.9 | 9,738.0 / 9,763.8 | 9,757.4 / 9,792.5 | 5,690.7 / 5,715.8 | 5,709.6 / 5,743.5 | 5,601.9 / 5,627.2 | 5,620.7 / 5,654.8 |
+
+With pruning at 2,048 tokens the claims shrink by the last block's `2047 (q + o + MLP)` columns:
+OPT-125M -21.3 MB with wire (-5.7%), OPT-6.7B -88.8 MB (-1.6%), Llama-2-7B -187.7 MB (-2.8%); at one
+token pruning changes no claim and opens one set of columns more (the pruned q is a matrix of its
+own: Llama-2-7B `R64c` + wire 54.8 -> 55.2 MB), so it is for prompts.  The lookups take the
+embeddings' `u` off: 0.62 MB of Llama-2-7B's 7.44 MB (what is left is the downs', in rows), 2.9 MB
+of Qwen3-4B's.  What is left of Llama-2-7B at one token under `R64c` + wire: 3.34 MB of claims, 6.83
+MB of `u` (the downs'), 44.55 MB of opened columns and 0.05 MB of paths -- against ZKTorch's 22.85 MB
+still 2.4x larger.
+
+Mode Kpre (the proof is the claims; the Maverick row): Qwen3-4B at 8 tokens measured by `run_query`
+on builds of 4 and 8 blocks (full vocabulary) and extrapolated to 36 (`results/lookup_kpre_qwen*.csv`,
+median of 3 prompts), and the table from the claims measured as above (Qwen3-4B's rows there with the
+builds of the 64-token runs, calibrated on 32 tokens: 20.81 MB with wire where the 8-token builds give
+20.78), MB:
+
+| Model, prompt | Kpre | + wire | lookups | lookups + wire | pruned | pruned + wire | lookups, pruned | lookups, pruned + wire |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| GPT-2, 64 | 21.8 | 11.7 | 21.4 | 11.6 | 20.5 | 11.0 | 20.1 | 10.9 |
+| GPT-2, 512 | 173.2 | 91.3 | 170.1 | 90.5 | 162.2 | 85.5 | 159.1 | 84.7 |
+| Llama-2-7B, 1 | 5.6 | 3.3 | 5.6 | 3.3 | 5.6 | 3.3 | 5.6 | 3.3 |
+| Llama-2-7B, 64 | 349.3 | 205.5 | 348.3 | 205.1 | 340.7 | 200.3 | 339.6 | 199.9 |
+| Llama-2-7B, 2,048 | 11,173.8 | 6,614.8 | 11,140.2 | 6,602.7 | 10,892.9 | 6,428.3 | 10,859.3 | 6,414.6 |
+| Qwen3-4B, 8 | 36.1 | 20.8 | 36.0 | 20.8 | 35.3 | 20.3 | 35.2 | 20.3 |
+| Qwen3-4B, 64 | 284.4 | 163.2 | 283.7 | 163.0 | 277.2 | 159.0 | 276.5 | 158.8 |
+| OPT-125M, 2,048 | 692.3 | 368.1 | 679.7 | 364.9 | 648.2 | 348.2 | 635.7 | 343.5 |
+| OPT-6.7B, 2,048 | 9,731.0 | 5,635.6 | 9,663.9 | 5,618.4 | 9,496.2 | 5,556.6 | 9,429.1 | 5,529.2 |
+
+A verifier with `lookups` saves the embeddings' claims (Qwen3-4B at 8 tokens: 20,480 claims, 82 kB
+as int32, 20 kB with wire); pruning saves the last block's `(T - 1) (q + o + gate + up + down)`
+claims (7 x 28,672: 0.80 MB, 0.43 MB with wire).  Qwen3-4B, 8 tokens, Kpre: 36.08 MB (the report,
+equal to Maverick's 36.08 MB) -> 35.19 MB with both (2.5% smaller) -> 20.33 MB with wire too (1.77x
+smaller than Maverick).  GPT-2 at 64 tokens: 21.83 -> 20.08 MB, 10.90 MB with wire.
+
+### Setup (the one-time commitment)
+
+A lookup table is `V` leaves of `d` bytes, hashed once; the encoded entries of the `c` plans, G
+(`analytic.setup_size`; the pruned graphs' within 2%), against the col layout alone (`894eb6f`):
+
+| Model | tightc | R16c | R64c | cnn18c |
+|---|---:|---:|---:|---:|
+| GPT-2 | 0.90 -> 0.69 | 2.97 -> 2.77 | 11.28 -> 11.08 | 10.28 -> 9.87 |
+| Llama-2-7B | 37.6 -> 37.0 | 148.7 -> 148.2 | 593.2 -> 592.7 | 139.6 -> 138.5 |
+| Qwen3-4B | 28.0 -> 25.3 | 104.0 -> 101.3 | 408.0 -> 405.3 | 99.3 -> 98.0 |
+
+On this laptop (4 threads, the machine otherwise idle) GPT-2 committed in 69-83 s (`paper`,
+`tightc`), 264-312 s (`cnn16c`, `R16c`), 1,257-1,275 s (`cnn18c`) and 1,644 s (`R64c`, pruned):
+`commit_s` in `results/lookup_run_gpt2*.csv`.
+
+### Timing on this laptop
+
+One thread, the machine otherwise idle, every query accepted; GPT-2 with all 12 blocks, 64 tokens, 11
+random prompts, every variant committed and its queries interleaved in one process, the order
+rotating (`perf.py --policy paper R16 R16c --wire off on --prune-last off on`,
+`results/perf_lookup_laptop_gpt2.jsonl`); ratios to `paper` without wire:
+
+| Policy | Pruned | Wire | Verifier (ms) | derive | products | columns | lookups | verify_decode | Prover (ms) | prove_fold | prove_open | Proof |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| paper | no | no | 269.4 | 72.2 | 33.5 | 163.7 | | | 1,491 | 373.5 | 817.6 | 62.07 MB |
+| | no | yes | 307.1 (1.14x) | 71.3 | 34.7 | 144.6 | | 56.5 | 1,735 (1.16x) | 372.3 | 811.7 | 50.68 MB |
+| | yes | no | 264.5 (0.98x) | 66.5 | 32.7 | 165.3 | | | 1,481 (0.99x) | 374.4 | 816.2 | 60.72 MB |
+| | yes | yes | 300.4 (1.12x) | 65.5 | 33.4 | 144.6 | | 56.8 | 1,720 (1.15x) | 376.0 | 812.7 | 49.97 MB |
+| R16 | no | no | 185.8 (0.69x) | 74.2 | 34.8 | 76.8 | | | 1,175 (0.79x) | 374.3 | 500.5 | 41.48 MB |
+| | no | yes | 212.5 (0.79x) | 71.7 | 33.7 | 62.4 | | 44.7 | 1,384 (0.93x) | 373.4 | 507.1 | 30.71 MB |
+| | yes | no | 178.9 (0.66x) | 66.1 | 33.1 | 79.6 | | | 1,156 (0.78x) | 370.6 | 499.6 | 40.12 MB |
+| | yes | yes | 203.0 (0.75x) | 64.6 | 33.5 | 62.7 | | 42.3 | 1,357 (0.91x) | 369.5 | 500.1 | 29.99 MB |
+| R16c | no | no | 159.6 (0.59x) | 72.8 | 45.7 | 39.5 | 1.6 | | 743 (0.50x) | 55.0 | 385.0 | 26.89 MB |
+| | no | yes | 188.2 (0.70x) | 70.8 | 45.5 | 34.8 | 1.5 | 35.6 | 902 (0.61x) | 53.4 | 377.8 | 16.86 MB |
+| | yes | no | 153.0 (0.57x) | 67.6 | 43.5 | 40.4 | 1.5 | | 729 (0.49x) | 57.1 | 382.6 | 25.65 MB |
+| | yes | yes | 181.5 (0.67x) | 66.9 | 43.8 | 36.1 | 1.5 | 33.2 | 884 (0.59x) | 55.9 | 382.0 | 16.26 MB |
+
+(prove_forward: 287-302 ms in every variant; setup at one thread: `paper` 157-161 s, `R16` 502-518 s,
+`R16c` 640-648 s.)  The lookups against the col layout alone, in a same-process A/B of `R16c` at
+`894eb6f` and at this commit (the old package imported under another name, the same graph and
+prompts, 11 interleaved queries): the verifier 184.6 -> 154.5 ms (0.84x; with wire 218.6 -> 185.7 ms,
+0.85x) -- the products 0.65x (67.3 -> 43.8 ms: the token table's Freivalds check, with its 50,257-wide
+`u`, is gone), the columns 0.81x (its opened columns), and the lookup check itself 1.5-1.6 ms (the
+consistency of 64 rows, 64 leaf hashes and the multiproofs) -- and the prover 1,016 -> 737 ms (0.73x;
+`prove_fold` 0.34x, `prove_open` 0.68x), for 0.94x (0.92x with wire) of the proof.  Pruning: the
+verifier 0.96x of the unpruned (derive 0.93x: the last block's attention, projections and MLP on one
+position), the prover 0.98x (its forward pass 0.95x), for 0.95x of the proof (0.96x with wire).
+
+Mode Kpre (`perf.py --modes Kpre --lookups off on --prune-last off on --wire off on`,
+`results/perf_lookup_laptop_{gpt2,qwen}_kpre.jsonl`): on GPT-2 at 64 tokens the verifier takes 95.9 ms,
+96.7 ms with lookups (1.01x: the gather of 128 rows costs what the precomputed embedding's check
+did), 90.1 ms pruned (0.94x) and 90.8 ms with both (0.95x; with wire 127.4 -> 122.3 ms, 0.96x).  On
+Qwen3-4B with 4 of its 36 blocks at 8 tokens (lambda = 40): 24.9 ms, 21.7 ms pruned (0.87x), 23.5 ms
+with both, 28.9 ms with both and wire against 32.0 ms with wire alone (0.90x).  So in mode Kpre the
+lookups save bytes, not time; pruning saves both.
+
+### Table 4 (lambda = 128; Maverick: mode Kpre)
+
+| Row | Competitor | Ours, report | Before this section | This section | Flips? |
+|---|---:|---:|---|---|---|
+| DeepProve GPT-2-64 proof | 21.7 MB | 62.1 MB | 16.76 / 19.00 MB (`cnn18c` + wire) | **14.89 / 16.62 MB** (`cnn18c` + wire, lookups, pruned), 14.98 / 16.73 (`R64c`), 16.30 / 18.76 (`R16c`): measured | yes, 1.46x smaller interactive and 1.31x under Fiat--Shamir (was 1.29x / 1.14x) |
+| Maverick Qwen3-4B-8 proof | 36.08 MB | 36.08 MB (equal) | 20.78 MB (wire) | **35.19 MB** without wire, **20.33 MB** with it (lookups, pruned) | yes: now also without wire (2.5% smaller); 1.77x with wire |
+| ZKTorch Llama-2-7B-1 proof | 22.85 MB | 418.0 MB | 56.5 / 81.0 MB (`R64c` + wire) | 54.8 / 78.5 MB (`R64c` + wire, lookups; pruning does nothing at one token) | no: 2.40x larger; the columns alone are 44.6 MB |
+| zkGPT (GPT-2) verifier | 0.35 s | 0.468 s | ~0.13 s (`R16c` + wire; est.) | ~0.11 s (`R16c` + wire, lookups, pruned; est.) | yes, as before (~3.2x better) |
+
+The verifier estimate scales the col section's (the L40S client's stored stage medians by this
+laptop's ratios) by this laptop's 0.85x of the lookups (the same-process A/B against `894eb6f`) and
+0.96x of pruning; the cluster runs below confirm it.
+
+### On the cluster
+
+A new root next to its baseline (the partition and the L40S pinned, and the jobs kept off t-806, as
+for `l40s_plans` above); cells are named `..._wire_prune_pol<p>c` and `..._wire_prune_lookups`:
+
+```bash
+export PVI_PLATFORM=l40s_lookup SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1 && mkdir -p logs/$PVI_PLATFORM
+B=code/experiments/4_defence_benchmark/slurm/bench.sbatch
+sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model gpt2 --seq 64 512 --modes C:int,C:fs --lams 128   # the baseline
+for p in R16c cnn18c R64c; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model gpt2 --seq 64 512 --policy $p --wire --tag _wire --prune-last \
+      --lams 128 --llm-tampers 10
+done
+sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model qwen3-4b --seq 8 --builds full --modes Kpre:int --lams 40
+sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model qwen3-4b --seq 8 --builds full --modes Kpre:int --lams 40 \
+    --wire --tag _wire --prune-last --lookups
+for p in R64c cnn18c; do
+  sbatch -o logs/$PVI_PLATFORM/%x-%j.out $B llm --model llama2-7b --seq 1 64 --policy $p --wire --tag _wire --prune-last \
+      --lams 128
+done
+python code/experiments/5_comparison/aggregate.py --platform l40s_lookup
+```
+
+and interactively on a GPU node (`cd code && export PYTHONPATH=$PWD/src`), the GPU tests (a GPU
+client and prover under `R8c`, lookup tables included) and the interleaved timing:
+
+```bash
+python -m pytest tests/test_plans.py tests/test_lookups.py tests/test_pruning.py tests/test_gpu_verifier.py -q \
+    -p no:cacheprovider -o addopts=""
+python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --queries 15 --threads 8 \
+    --policy paper R16 R16c cnn18c --wire off on --prune-last off on --verifier-device cuda
+python experiments/6_improvements/perf.py --model qwen3-4b --layers 8 --seq 8 --modes Kpre --lam 40 --queries 15 \
+    --threads 8 --lookups off on --prune-last off on --wire off on --verifier-device cuda
 ```
