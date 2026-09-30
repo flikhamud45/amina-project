@@ -16,10 +16,10 @@
 | File | Contents |
 |---|---|
 | `field.py` | BabyBear field arithmetic, NTT and Reed–Solomon encoding, exact modular matrix products |
-| `commitment.py` | Merkle trees with multiproofs; the weight commitment (rows encoded, Merkle root over columns) and its column openings |
+| `commitment.py` | Merkle trees with multiproofs; the weight commitment (rows encoded, Merkle root over columns) and its column openings; the transposed and grouped commitments of the plans, and lookup tables (a tree over an embedding's rows) |
 | `graph.py` | integer computation graphs: weight operations (`MatOp`) and verifier-recomputed operations (`CheapOp`), exact GPU matrix products |
 | `quantize.py`, `models.py`, `datasets.py` | float CNN → int8 graph (per-channel weights, BatchNorm folded); the benchmarked CNNs and their data |
-| `transformer.py` | integer GPT-2/OPT/Llama/Qwen decoders (norms, GELU/SiLU tables, RoPE, integer softmax, causal attention) |
-| `protocol.py` | security parameters from λ (`params_for`), prover, verifier (modes C, K, Kpre; interactive or Fiat–Shamir), `run_query` |
+| `transformer.py` | integer GPT-2/OPT/Llama/Qwen decoders (norms, GELU/SiLU tables, RoPE, integer softmax, causal attention); optionally the last block at the last position (`prune_last`) |
+| `protocol.py` | security parameters from λ (`params_for`), prover, verifier (modes C, K, Kpre; interactive or Fiat–Shamir; a plan's col layouts and lookup tables; in K and Kpre optionally the verifier's own embedding rows, `lookups`), `run_query` |
 | `sampling.py` | the original path test on the same integer graphs (the like-for-like baseline), with exact per-neuron detection |
 | `analytic.py` | decoder weight-op shapes and the expected multiproof size (for runs made before multiproofs) |
