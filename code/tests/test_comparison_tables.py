@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("matplotlib")
+pytestmark = pytest.mark.filterwarnings("ignore:.enablePackrat. deprecated")   # matplotlib's own pyparsing call
 SCRIPTS = Path(__file__).resolve().parents[1] / "experiments" / "5_comparison"
 
 
