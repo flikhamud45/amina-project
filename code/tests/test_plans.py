@@ -221,8 +221,8 @@ def test_every_plan_meets_lambda_for_every_model_and_mode(policy, all_models):
                 for (g, t), (g2, ms) in zip(params.group_columns, plan.groups):
                     assert g == g2 and t == max(exact_columns(plan.op(m).row_length, plan.op(m).n_points, bits)
                                                 for m in ms)
-                for mode in ("C", "K", "Kpre"):
-                    got = proto.soundness_bits(params, plan.shapes(), "C" if mode == "C" else "K", columns=cols)
+                for mode in ("C", "K"):          # (Kpre: the bound of K, Freivalds alone)
+                    got = proto.soundness_bits(params, plan.shapes(), mode, columns=cols)
                     assert got >= lam, (name, policy, lam, fs, mode, got)
                 if policy == "tight":            # the report's lengths: exact t never opens more
                     assert max(cols) <= paper.columns
