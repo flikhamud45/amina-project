@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
+from . import claimcodec
 from .commitment import (HASH_BYTES, CommitmentPublic, WeightCommitment, codeword_at, column_rows, map_threaded,
                          row_leaves, verify_multiproofs)
 from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
@@ -217,14 +218,15 @@ class Prover:
         self.lean = lean  # free dead activations and stream each claim to the host during the forward pass
         self._ops = {op.name: op for op in graph.mat_ops}
 
-    def claims(self, x: torch.Tensor, *, send=None, **forward_kwargs) -> dict[str, torch.Tensor]:
-        """The claims of query ``x``, on the host.  ``send(z)`` (see ``IntGraph.forward``), if given,
-        is applied to each claim on the prover's device as it is computed, and its results are
-        returned as they are."""
+    def claims(self, x: torch.Tensor, *, send=None, to_host: bool = True, **forward_kwargs) -> dict[str, torch.Tensor]:
+        """The claims of query ``x``, on the host (``to_host=False``: where the prover keeps them, its
+        device, or the host in lean mode).  ``send(z)`` (see ``IntGraph.forward``), if given, is
+        applied to each claim on the prover's device as it is computed, and its results are returned
+        as they are."""
         if self.lean:
             forward_kwargs = dict(forward_kwargs, free=True, claims_device="cpu")
         _, claims = self.graph.forward(x.to(self.device), send=send, **forward_kwargs)
-        return claims if send is not None else {k: v.to("cpu") for k, v in claims.items()}
+        return claims if send is not None or not to_host else {k: v.to("cpu") for k, v in claims.items()}
 
     def _weight(self, name: str) -> torch.Tensor:
         # the int8 weights the forward pass already keeps on the device
@@ -887,60 +889,119 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
 # first failing check; the streaming verifier receives them all, then checks.
 
 def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, out: dict,
-                    forward_kwargs: dict, send=None) -> dict:
-    """The claims (``send``: the wire format they travel in), absorbed with the statement."""
+                    forward_kwargs: dict, send=None, wire: bool = False) -> dict | bytes:
+    """The claims (``send``: the wire format they travel in; ``wire``: their ``PVC3`` bytes, encoded
+    where the prover keeps them), absorbed with the statement."""
     t = out["timings"]
     _sync(prover.device)
     t0 = time.perf_counter()
-    claims = prover.claims(x, send=send, **forward_kwargs)
+    claims = prover.claims(x, send=send, to_host=not wire, **forward_kwargs)
     _sync(prover.device)
     t["prove_forward"] = time.perf_counter() - t0
-    out["bytes"] = {"claims": sum(z.numel() for z in claims.values()) * 4, "u": 0, "columns": 0, "paths": 0}
+    if wire:
+        t0 = time.perf_counter()
+        claims = claimcodec.encode([claims[op.name] for op in prover.graph.mat_ops])
+        _sync(prover.device)
+        t["prove_encode"] = time.perf_counter() - t0
+    size = len(claims) if wire else sum(z.numel() for z in claims.values()) * 4
+    out["bytes"] = {"claims": size, "u": 0, "columns": 0, "paths": 0}
     t0 = time.perf_counter()
     if verifier.params.fiat_shamir:
         _absorb_statement(ch, verifier, x)
-        for k in sorted(claims):       # int32 wire claims hash as the int64 ones
-            ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
+        if wire:
+            ch.absorb(b"claims/" + claimcodec.MAGIC, claims)
+        else:
+            for k in sorted(claims):       # int32 wire claims hash as the int64 ones
+                ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
     t["fs_hash"] = time.perf_counter() - t0
     return claims
 
 
-def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, out: dict) -> tuple[dict, dict]:
-    """``(chi, u)``: fresh ``chi`` and the prover's ``u`` (mode C), the verifier's own (K), or the
-    precomputed pair (Kpre)."""
+def _decoded_claims(verifier: Verifier, blob: bytes, x: torch.Tensor, out: dict, dtype: torch.dtype,
+                    pin: bool = False) -> dict | None:
+    """The verifier's claims from their ``PVC3`` bytes (``None``: malformed), as ``dtype`` host
+    tensors (int32 in pinned memory with ``pin``), timed as ``verify_decode``."""
+    mats = verifier.graph.mat_ops
+    t0 = time.perf_counter()
+    try:
+        zs = claimcodec.decode_torch(blob, [op.n_rows for op in mats], x.numel(), dtype=dtype,
+                                     workers=torch.get_num_threads(), pin=pin)
+    except claimcodec.ClaimCodecError:
+        zs = None
+    out["timings"]["verify_decode"] = out["timings"].get("verify_decode", 0.0) + time.perf_counter() - t0
+    return None if zs is None else {op.name: z for op, z in zip(mats, zs)}
+
+
+def _field_message(blob: bytes, shapes: list[tuple[int, int]], out: dict, dtype: torch.dtype) -> list | None:
+    """The field elements of a 31-bit packed message as ``dtype`` host tensors of ``shapes``
+    (``None``: malformed), timed as ``verify_decode``."""
+    t0 = time.perf_counter()
+    try:
+        flat = claimcodec.unpack_field(blob, sum(a * b for a, b in shapes), workers=torch.get_num_threads())
+    except claimcodec.ClaimCodecError:
+        flat = None
+    parts = None
+    if flat is not None:
+        flat = torch.from_numpy(flat.view(np.int32)).to(dtype)
+        parts, o = [], 0
+        for a, b in shapes:
+            parts.append(flat[o:o + a * b].view(a, b))
+            o += a * b
+    out["timings"]["verify_decode"] = out["timings"].get("verify_decode", 0.0) + time.perf_counter() - t0
+    return parts
+
+
+def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, out: dict,
+                  wire: bool = False) -> tuple[dict, dict, bytes | None]:
+    """``(chi, u, the bytes of u with wire)``: fresh ``chi`` and the prover's ``u`` (mode C; with
+    ``wire`` 31-bit packed, and ``{}`` if the packed ``u`` is malformed), the verifier's own (K),
+    or the precomputed pair (Kpre)."""
     p, t = verifier.params, out["timings"]
     mats = verifier.graph.mat_ops
     if verifier.mode == "Kpre":
         t["prove_fold"] = t["verify_fold"] = 0.0
         return ({op.name: verifier._pre[op.name][0] for op in mats},
-                {op.name: verifier._pre[op.name][1] for op in mats})
+                {op.name: verifier._pre[op.name][1] for op in mats}, None)
     vdev = torch.device(verifier.device)
     chis = {op.name: ch.folding(op.name, op.n_rows, p.reps).to(vdev) for op in mats}
     _sync(prover.device)
     t0 = time.perf_counter()
+    blob = None
     if verifier.mode == "C":
         us = prover.fold(chis)
         _sync(prover.device)
         t["prove_fold"] = time.perf_counter() - t0
         t["verify_fold"] = 0.0
         out["bytes"]["u"] = sum(u.numel() for u in us.values()) * 4
+        if wire:
+            t0 = time.perf_counter()
+            blob = claimcodec.pack_field([us[op.name] for op in prover.graph.mat_ops])
+            t["prove_encode"] += time.perf_counter() - t0
+            out["bytes"]["u"] = len(blob)
+            parts = _field_message(blob, [(p.reps, op.row_length) for op in mats], out, torch.int64)
+            us = {} if parts is None else {op.name: u for op, u in zip(mats, parts)}
     else:  # K: the verifier folds its own copy of the weights
         us = {op.name: verifier._fold_local(op, chis[op.name]) for op in mats}
         _sync(vdev)
         t["verify_fold"] = time.perf_counter() - t0
         t["prove_fold"] = 0.0
-    return chis, us
+    return chis, us, blob
 
 
 def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, out: dict,
-                  package=None) -> tuple[dict, dict]:
-    """Mode C: ``u`` absorbed, the column indices, and the openings (``package``: the wire format
-    they travel in)."""
+                  package=None, u_blob: bytes | None = None) -> tuple[dict, dict]:
+    """Mode C: ``u`` absorbed (its bytes ``u_blob`` with wire), the column indices, and the openings
+    (``package``: the wire format they travel in).  With ``u_blob`` the opened columns travel
+    31-bit packed, column by column, and arrive as the int32 rows ``[t, N]`` of
+    :func:`pipeline.wire_openings` (``None`` if the packed columns are malformed)."""
     p, t = verifier.params, out["timings"]
     if p.fiat_shamir:
         t0 = time.perf_counter()
-        for k in sorted(us):
-            ch.absorb(b"u/" + k.encode(), _tensor_blob(us[k]))
+        if u_blob is not None:
+            ch.absorb(b"u/F31", u_blob)
+        else:
+            for k in sorted(us):
+                ch.absorb(b"u/" + k.encode(), _tensor_blob(us[k]))
         t["fs_hash"] += time.perf_counter() - t0
     mats = verifier.graph.mat_ops
     cols = {op.name: ch.columns(op.name, verifier.publics[op.name].n_points, p.columns) for op in mats}
@@ -948,15 +1009,24 @@ def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, 
     t0 = time.perf_counter()
     opened = prover.open(cols)
     _sync(prover.device)
-    openings = opened if package is None else package(opened)
-    t["prove_open"] = time.perf_counter() - t0
-    out["bytes"]["columns"] = sum(o[0].numel() for o in opened.values()) * 4
+    if u_blob is None:
+        openings = opened if package is None else package(opened)
+        t["prove_open"] = time.perf_counter() - t0
+        out["bytes"]["columns"] = sum(o[0].numel() for o in opened.values()) * 4
+    else:
+        t["prove_open"] = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        blob = claimcodec.pack_field([opened[op.name][0].T for op in prover.graph.mat_ops])
+        t["prove_encode"] += time.perf_counter() - t0
+        out["bytes"]["columns"] = len(blob)
+        rows = _field_message(blob, [(len(cols[op.name]), op.n_rows) for op in mats], out, torch.int32)
+        openings = {op.name: (None if rows is None else rows[i], opened[op.name][1]) for i, op in enumerate(mats)}
     out["bytes"]["paths"] = sum(len(proof) * HASH_BYTES for _, proof in opened.values())
     return cols, openings
 
 
 def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
-              forward_kwargs: dict | None = None) -> dict:
+              forward_kwargs: dict | None = None, wire: bool = False) -> dict:
     """One full interaction.  Returns acceptance, the rejecting check, timings (s)
     and proof bytes.  With Fiat--Shamir, ``fs_hash`` is paid by both parties.
 
@@ -965,22 +1035,37 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
     the same verdict and label, its overlapped work timed as one ``verify_total``.  An accepted
     query has the same proof bytes and Fiat--Shamir transcript; a rejected one has also received
     (counted, and absorbed) the messages this function no longer asks for once a check fails --
-    in mode C, ``u`` and the openings -- so the transcript here is a prefix of the streaming one."""
+    in mode C, ``u`` and the openings -- so the transcript here is a prefix of the streaming one.
+
+    ``wire=True`` sends the proof in the compact encoding of :mod:`pvi.fullcheck.claimcodec`: the
+    claims as ``PVC3`` bytes, encoded where the prover keeps them (``prove_encode``), and ``u`` and
+    the opened columns 31-bit packed.  The verifier decodes them (``verify_decode``) before it
+    checks anything and rejects a malformed message at the check that rejects a malformed message
+    of the same kind (``range_or_shape`` for the claims, ``freivalds`` for ``u``, ``columns_shape``
+    for the columns); ``bytes`` counts the encoded sizes, and with Fiat--Shamir the transcript
+    absorbs these bytes.  A GPU client uploads the decoded claims as int32 and widens them there."""
     ch = Challenger(fiat_shamir=verifier.params.fiat_shamir, seed=seed)
     out = {"accepted": False, "rejected_at": None, "timings": {}}
     if verifier.stream:
-        out["rejected_at"] = _run_streaming(prover, verifier, x, ch, out, forward_kwargs or {})
+        out["rejected_at"] = _run_streaming(prover, verifier, x, ch, out, forward_kwargs or {}, wire)
         out["accepted"] = out["rejected_at"] is None
         return out
     t = out["timings"]
-    claims = _claims_message(prover, verifier, x, ch, out, forward_kwargs or {})
+    claims = _claims_message(prover, verifier, x, ch, out, forward_kwargs or {}, wire=wire)
 
     vdev = torch.device(verifier.device)
     x_v, claims_v = x.cpu(), claims
+    if wire:                      # a GPU client uploads int32 claims
+        claims_v = _decoded_claims(verifier, claims, x, out, torch.int64 if vdev.type == "cpu" else torch.int32)
+        if claims_v is None:
+            out["rejected_at"] = "range_or_shape"
+            return out
     if vdev.type != "cpu":        # a GPU client: receiving the proof includes uploading it
         _sync(vdev)
         t0 = time.perf_counter()
-        x_v, claims_v = x.to(vdev), {k: v.to(vdev) for k, v in claims.items()}
+        x_v, claims_v = x.to(vdev), {k: v.to(vdev) for k, v in claims_v.items()}
+        if wire:
+            claims_v = {k: v.to(torch.int64) for k, v in claims_v.items()}
         _sync(vdev)
         t["verify_upload"] = time.perf_counter() - t0
 
@@ -992,7 +1077,7 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
         out["rejected_at"] = "range_or_shape"
         return out
 
-    chis, us = _fold_message(prover, verifier, ch, out)
+    chis, us, u_blob = _fold_message(prover, verifier, ch, out, wire)
     if verifier.mode == "C" and vdev.type != "cpu":
         t0 = time.perf_counter()
         us = {k: v.to(vdev) for k, v in us.items()}
@@ -1008,7 +1093,12 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
         return out
 
     if verifier.mode == "C":
-        cols, openings = _open_message(prover, verifier, ch, us, out)
+        cols, openings = _open_message(prover, verifier, ch, us, out, u_blob=u_blob)
+        if wire:                  # the int32 rows [t, N] as the columns [N, t] check_columns takes
+            if any(rows is None for rows, _ in openings.values()):
+                out["rejected_at"] = "columns_shape"
+                return out
+            openings = {k: (rows.T.to(torch.int64), proof) for k, (rows, proof) in openings.items()}
         t0 = time.perf_counter()
         reason = verifier.check_columns(chis, us, cols, openings)
         _sync(vdev)
@@ -1021,17 +1111,22 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
 
 
 def _run_streaming(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, out: dict,
-                   forward_kwargs: dict) -> str | None:
+                   forward_kwargs: dict, wire: bool) -> str | None:
     """:func:`run_query` with ``stream=True``: every message, then :meth:`Verifier.verify_streaming`.
     ``verify_total`` times the verifier's work from the moment it holds the messages (its uploads
-    included)."""
+    included; with ``wire``, after ``verify_decode``, which gives it the int32 claims and rows of
+    :mod:`pvi.fullcheck.pipeline`'s wire formats)."""
     vdev = torch.device(verifier.device)
-    claims = _claims_message(prover, verifier, x, ch, out, forward_kwargs,
-                             send=lambda z: wire_claim(z, pin=vdev.type == "cuda"))
-    chis, us = _fold_message(prover, verifier, ch, out)
+    claims = _claims_message(prover, verifier, x, ch, out, forward_kwargs, wire=wire,
+                             send=None if wire else lambda z: wire_claim(z, pin=vdev.type == "cuda"))
+    chis, us, u_blob = _fold_message(prover, verifier, ch, out, wire)
     cols = openings = None
     if verifier.mode == "C":
-        cols, openings = _open_message(prover, verifier, ch, us, out, package=wire_openings)
+        cols, openings = _open_message(prover, verifier, ch, us, out, package=wire_openings, u_blob=u_blob)
+    if wire:
+        claims = _decoded_claims(verifier, claims, x, out, torch.int32, pin=vdev.type == "cuda")
+        if claims is None:
+            return "range_or_shape"
     _sync(vdev)
     t0 = time.perf_counter()
     reason = verifier.verify_streaming(x, claims, chis, us, cols, openings)
