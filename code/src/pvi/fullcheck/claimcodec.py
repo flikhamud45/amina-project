@@ -57,10 +57,10 @@ Decoding (:func:`decode`) rejects with :class:`ClaimCodecError`, never with anot
 any input that is not exactly such an encoding: a bad magic or op count, an ``M`` other than
 the expected one, other flag bits, ``B > 30``, a base outside ``(-2**30, 2**30 - 2**B]``,
 truncated or trailing bytes, non-zero padding, ``k > 32``, exception positions out of order or
-range, and exceptions reaching ``|x| >= 2**30``.  So every segment value is ``|x| < 2**30`` and every claim fits in
-int32.  The range check stays the verifier's (``|z| < 2**29`` in ``Verifier.derive``): the codec
-only guarantees well-formed matrices of the expected shapes.  The work and the memory are
-linear in the input and in the claims' size ``sum(N M)``.
+range, and exceptions reaching ``|x| >= 2**30``.  So every segment value is ``|x| < 2**30`` and
+every claim fits in int32.  The range check stays the verifier's (``|z| < 2**29`` in
+``Verifier.derive``): the codec only guarantees well-formed matrices of the expected shapes.
+The work and the memory are linear in the input and in the claims' size ``sum(N M)``.
 
 Soundness.  Decoding is a deterministic function from bytes to claim matrices (or a rejection),
 applied to what the prover sent before any challenge; with Fiat--Shamir the transcript absorbs
