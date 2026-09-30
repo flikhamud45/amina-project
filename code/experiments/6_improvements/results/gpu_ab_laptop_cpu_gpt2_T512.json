@@ -1,0 +1,68 @@
+[
+ {
+  "model": "gpt2",
+  "seq": 512,
+  "layers": 12,
+  "mode": "Kpre",
+  "lam": 128,
+  "reps": 3,
+  "impls": [
+   "base",
+   "new",
+   "stream"
+  ],
+  "device": "cpu",
+  "verifier_device": "cpu",
+  "torch": "2.2.2+cpu",
+  "cuda": null,
+  "threads": 4,
+  "gpu": null,
+  "int8_gemm": false,
+  "claims": 43304017,
+  "claims_identical": true,
+  "setup_s": 7.22056089999387,
+  "derive_bit_exact": true,
+  "labels": {
+   "claim+1": [
+    "freivalds",
+    "freivalds",
+    "freivalds"
+   ],
+   "claim=Z_BOUND": [
+    "range_or_shape",
+    "range_or_shape",
+    "range_or_shape"
+   ]
+  },
+  "base": {
+   "upload": 0.00013419997412711382,
+   "derive": 0.8422042999882251,
+   "products": 0.34665900003165007,
+   "total": 1.194753199990373
+  },
+  "new": {
+   "upload": 0.00012479996075853705,
+   "derive": 0.501748199982103,
+   "products": 0.1125148999853991,
+   "total": 0.6178783000214025
+  },
+  "stream": {
+   "total": 0.6084980999585241
+  },
+  "peak_bytes": {
+   "base": 0,
+   "new": 0,
+   "stream": 0
+  },
+  "ratio_new": {
+   "upload": 1.0753206436239504,
+   "derive": 1.6785397536418984,
+   "products": 3.08100527198296,
+   "total": 1.9336383879300962
+  },
+  "ratio_stream": {
+   "total": 1.9634460651098316
+  },
+  "ratio_stream_vs_new_total": 1.0154153317216894
+ }
+]

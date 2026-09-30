@@ -1,0 +1,68 @@
+[
+ {
+  "model": "llama2-7b",
+  "seq": 2048,
+  "layers": 1,
+  "mode": "Kpre",
+  "lam": 128,
+  "reps": 3,
+  "impls": [
+   "base",
+   "new",
+   "stream"
+  ],
+  "device": "cpu",
+  "verifier_device": "cpu",
+  "torch": "2.2.2+cpu",
+  "cuda": null,
+  "threads": 4,
+  "gpu": null,
+  "int8_gemm": false,
+  "claims": 95421440,
+  "claims_identical": true,
+  "setup_s": 23.47102530003758,
+  "derive_bit_exact": true,
+  "labels": {
+   "claim+1": [
+    "freivalds",
+    "freivalds",
+    "freivalds"
+   ],
+   "claim=Z_BOUND": [
+    "range_or_shape",
+    "range_or_shape",
+    "range_or_shape"
+   ]
+  },
+  "base": {
+   "upload": 4.5900000259280205e-05,
+   "derive": 3.461985800007824,
+   "products": 0.7533909999765456,
+   "total": 4.26675869995961
+  },
+  "new": {
+   "upload": 4.269997589290142e-05,
+   "derive": 2.0457577999914065,
+   "products": 0.24433630000567064,
+   "total": 2.2828080000472255
+  },
+  "stream": {
+   "total": 2.106513300037477
+  },
+  "peak_bytes": {
+   "base": 0,
+   "new": 0,
+   "stream": 0
+  },
+  "ratio_new": {
+   "upload": 1.0749420649417922,
+   "derive": 1.6922754981173072,
+   "products": 3.0834182229945393,
+   "total": 1.8690834708268682
+  },
+  "ratio_stream": {
+   "total": 2.0255076005851467
+  },
+  "ratio_stream_vs_new_total": 1.0836902857468842
+ }
+]
