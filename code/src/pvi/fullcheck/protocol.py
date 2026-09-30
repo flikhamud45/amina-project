@@ -215,11 +215,14 @@ class Prover:
         self.lean = lean  # free dead activations and stream each claim to the host during the forward pass
         self._ops = {op.name: op for op in graph.mat_ops}
 
-    def claims(self, x: torch.Tensor, **forward_kwargs) -> dict[str, torch.Tensor]:
+    def claims(self, x: torch.Tensor, *, send=None, **forward_kwargs) -> dict[str, torch.Tensor]:
+        """The claims of query ``x``, on the host.  ``send(z)`` (see ``IntGraph.forward``), if given,
+        is applied to each claim on the prover's device as it is computed, and its results are
+        returned as they are."""
         if self.lean:
             forward_kwargs = dict(forward_kwargs, free=True, claims_device="cpu")
-        _, claims = self.graph.forward(x.to(self.device), **forward_kwargs)
-        return {k: v.to("cpu") for k, v in claims.items()}
+        _, claims = self.graph.forward(x.to(self.device), send=send, **forward_kwargs)
+        return claims if send is not None else {k: v.to("cpu") for k, v in claims.items()}
 
     def _weight(self, name: str) -> torch.Tensor:
         # the int8 weights the forward pass already keeps on the device
@@ -424,6 +427,7 @@ class Verifier:
     weights: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = field(default_factory=dict)
     lean: bool = False
     device: str = "cpu"      # "cuda" / "cuda:1": a client with a GPU (Merkle hashing stays on the CPU)
+    stream: bool = False     # run_query with the streaming verifier (pvi.fullcheck.pipeline): same verdicts
     _pre: dict = field(default_factory=dict)
     _wdev: dict = field(default_factory=dict)   # mode K on a GPU: the weights stay on the device
     _ranged: dict = field(default_factory=dict)  # name -> (weakref, _version) of the claim derive() range-checked
@@ -473,13 +477,16 @@ class Verifier:
         self._ranged = out[2]
         return out[0]
 
-    def _derive(self, x: torch.Tensor, claims):
+    def _derive(self, x: torch.Tensor, claims, *, dtype: torch.dtype = torch.int64, visit=None):
         """The derive loop: ``None`` to reject, else ``(inputs, pending, ranged)``.
 
-        A claim on the CPU is range-checked at once; a claim on a device leaves its (deferred)
-        verdict in ``pending``, and the ops after it run on whatever it holds: every cheap op is
-        a total function of int64 tensors, so they only compute values that are never used, and
-        an exception there is reported as the rejection it follows.
+        ``claims.get(name)`` gives each claim, of ``dtype``.  A claim on the CPU is range-checked
+        at once; a claim on a device leaves its (deferred) verdict in ``pending``, and the ops
+        after it run on whatever it holds: every cheap op is a total function of int64
+        tensors, so they only compute values that are never used, and an exception there is
+        reported as the rejection it follows.  ``visit(op, z, x)``, if given, is called for
+        each weight op once its claim has the right shape; the op's input is then not kept
+        (``inputs`` stays empty) and every tensor is freed after its last reader.
         """
         env = {self.graph.input_name: x}
         inputs: dict[str, torch.Tensor] = {}
@@ -487,10 +494,11 @@ class Verifier:
         ranged: dict[str, tuple] = {}
         self._ranged = {}
         self._refresh_constants()
-        last = self.graph.last_use() if self.lean else None
+        free = self.lean or visit is not None
+        last = self.graph.last_use() if free else None
         try:
             for i, op in enumerate(self.graph.ops):
-                if last is not None and i > 0:  # free what no later op reads (weight-op inputs stay in ``inputs``)
+                if free and i > 0:  # free what no later op reads (weight-op inputs stay in ``inputs``)
                     for n in self.graph.ops[i - 1].inputs:
                         if last.get(n, -1) <= i - 1:
                             env.pop(n, None)
@@ -498,7 +506,7 @@ class Verifier:
                     z = claims.get(op.name)
                     xin = env[op.inputs[0]]
                     m = op.n_cols(xin)
-                    if z is None or m is None or z.dtype != torch.int64 or tuple(z.shape) != (op.n_rows, m):
+                    if z is None or m is None or z.dtype != dtype or tuple(z.shape) != (op.n_rows, m):
                         return None
                     if not _defer(z.device):
                         if not _in_range(z, Z_BOUND):
@@ -506,8 +514,12 @@ class Verifier:
                     elif z.numel():
                         pending.append(_out_of_range(z, Z_BOUND))
                     ranged[op.name] = _stamp(z)
-                    inputs[op.name] = xin
-                    env[op.output] = op.fold(z, xin)
+                    if visit is None:
+                        inputs[op.name] = xin
+                    else:
+                        visit(op, z, xin)
+                    y = op.fold(z, xin)
+                    env[op.output] = y if y.dtype == torch.int64 else y.to(torch.int64)
                 else:
                     env[op.output] = op.fn(*[env[n] for n in op.inputs])
         except Exception:
@@ -667,12 +679,17 @@ class Verifier:
             raise exc
         return n_ok == len(mats)
 
-    def _columns_shape_ok(self, op: MatOp, us, cols, openings) -> bool:
+    def _columns_shape_ok(self, op: MatOp, us, cols, openings, *, wire: bool = False) -> bool:
+        """The opening of ``op`` is well formed: int64 columns ``[N, t]``, or with ``wire`` the
+        int32 rows ``[t, N]`` of the streaming verifier (``None``: not representable); in the field."""
         pub = self.publics[op.name]
         opened, proof = openings[op.name]
         idx = cols[op.name]
-        return not (tuple(opened.shape) != (pub.n_rows, len(idx)) or len(proof) > len(idx) * pub.depth
-                    or opened.dtype != torch.int64 or not _in_field(opened)
+        if wire and opened is None:
+            return False
+        shape, dtype = ((len(idx), pub.n_rows), torch.int32) if wire else ((pub.n_rows, len(idx)), torch.int64)
+        return not (tuple(opened.shape) != shape or len(proof) > len(idx) * pub.depth
+                    or opened.dtype != dtype or not _in_field(opened)
                     or us[op.name].shape[1] != pub.row_length)
 
     def _codewords(self, mats, us, cols) -> dict:
@@ -762,7 +779,12 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
 def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
               forward_kwargs: dict | None = None) -> dict:
     """One full interaction.  Returns acceptance, the rejecting check, timings (s)
-    and proof bytes.  With Fiat--Shamir, ``fs_hash`` is paid by both parties."""
+    and proof bytes.  With Fiat--Shamir, ``fs_hash`` is paid by both parties.  A verifier
+    with ``stream=True`` checks with the streaming verifier (:mod:`pvi.fullcheck.pipeline`):
+    the same verdicts, with the verifier's overlapped work timed as one ``verify_total``."""
+    if verifier.stream:
+        from .pipeline import run_query_streaming
+        return run_query_streaming(prover, verifier, x, seed=seed, forward_kwargs=forward_kwargs)
     p = verifier.params
     mode = verifier.mode
     ch = Challenger(fiat_shamir=p.fiat_shamir, seed=seed)

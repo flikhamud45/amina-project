@@ -10,6 +10,7 @@ commitment (Ligero-style).  Modules:
 * ``quantize``   -- float CNN -> int8 graph (per-channel weights, BN folded);
 * ``transformer``-- integer GPT-2 / OPT / Llama / Qwen style decoders;
 * ``protocol``   -- prover, verifier, security parameters (modes C, K, Kpre);
+* ``pipeline``   -- the streaming verifier for a GPU client (optional: ``Verifier(stream=True)``);
 * ``sampling``   -- Anchuri et al.'s path test on the same integer graphs, for a
                     like-for-like baseline;
 * ``analytic``   -- decoder weight-op shapes and the expected multiproof size;

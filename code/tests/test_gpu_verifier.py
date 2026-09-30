@@ -9,17 +9,25 @@
   is not modified, and a modified constant is copied again.
 * Deferred range checks (an exception after an out-of-range claim is its rejection) and inputs
   that are not int8-valued (the int8 right-hand side falls back).
+* The streaming verifier (``pvi.fullcheck.pipeline``): the verdicts and labels of ``run_query``
+  on honest and tampered queries, its proof bytes on accepted ones, and its Fiat--Shamir
+  transcript.
 
 Tests taking ``device`` also run on CUDA when it is available; there they exercise the int8
-tensor cores and the device-resident constants.
+tensor cores, the side stream, the events and the pinned memory, and check that the GPU
+verifier copies nothing back but its one set of verdicts per check.
 """
 
 from __future__ import annotations
+
+import contextlib
+import hashlib
 
 import pytest
 import torch
 
 from pvi.fullcheck import field as fld
+from pvi.fullcheck import pipeline
 from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
 from pvi.fullcheck import transformer as tr
@@ -335,3 +343,258 @@ def test_products_of_inputs_that_are_not_int8_valued_fall_back(deferred, monkeyp
     bad["fc"][2, 3] += 1
     inputs = v.derive(x, bad)
     assert v.check_products(bad, inputs, chis, us) is ref.check_products(v, bad, inputs, chis, us) is False
+    wire = {"fc": pipeline.wire_claim(claims["fc"])}
+    assert pipeline.verify_streaming(v, x, wire, chis, us) is None
+    assert pipeline.verify_streaming(v, x, {"fc": pipeline.wire_claim(bad["fc"])}, chis, us) == "freivalds"
+
+
+# -- the streaming verifier ------------------------------------------------------------------------
+
+def test_the_wire_formats():
+    g = torch.Generator().manual_seed(8)
+    z = _rand(g, 1 - Z, Z, (6, 5))
+    w = pipeline.wire_claim(z)
+    assert w.dtype == torch.int32 and torch.equal(w.to(torch.int64), z)
+    assert pipeline.wire_claim(torch.zeros(3, 0, dtype=torch.int64)).shape == (3, 0)
+    wide = z.clone()
+    wide[0, 0] = 1 << 31
+    for bad in (z.to(torch.int32), wide, "not a tensor", None):
+        assert pipeline.wire_claim(bad) is None
+    o = _rand(g, 0, P, (7, 3))
+    far = o.clone()
+    far[0, 0] = (1 << 32) + 5                      # would wrap to 5 in int32
+    opened = {"a": (o, ["p"]), "b": (o.to(torch.int32), []), "c": (o[:, 0], []), "d": (far, []), "e": None,
+              "f": (o, [], "extra")}
+    got = pipeline.wire_openings(opened)
+    assert got["a"][0].dtype == torch.int32 and got["a"][0].is_contiguous() and torch.equal(got["a"][0], o.T.int())
+    assert got["a"][1] == ["p"] and all(got[k][0] is None for k in "bcd")
+    assert got["e"] is None and got["f"] == opened["f"]
+
+
+def _claim_attacks(mats):
+    mid = mats[len(mats) // 2]
+
+    def at(op, change):
+        def tamper(o, z):
+            return change(z.clone()) if o.name == op.name else z
+        return {"tamper": tamper}
+
+    def setting(index, value):
+        def change(z):
+            z.view(-1)[index] = value
+            return z
+        return change
+
+    def plus_one(z):
+        z.view(-1)[z.numel() // 3] += 1
+        return z
+
+    return {"honest": {}, "first+1": at(mats[0], plus_one), "mid+1": at(mid, plus_one), "last+1": at(mats[-1], plus_one),
+            "Z_BOUND": at(mid, setting(0, Z)), "1-Z_BOUND": at(mid, setting(-1, 1 - Z)),
+            "beyond int32": at(mid, setting(0, 1 << 40)), "int32 dtype": at(mid, lambda z: z.to(torch.int32))}
+
+
+def _setup(graph, mode, fiat_shamir=False, device="cpu"):
+    params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fiat_shamir)
+    coms = proto.commit_graph(graph, params.rate) if mode == "C" else {}
+    prover = proto.Prover(graph, commitments=coms)
+    kw = dict(publics={k: c.public for k, c in coms.items()}, weights={op.name: (op.weight, op.bias)
+                                                                      for op in graph.mat_ops})
+    pair = [proto.Verifier(graph.public(), params, mode, **kw),
+            proto.Verifier(graph.public(), params, mode, stream=True, device=device, **kw)]
+    if mode == "Kpre":
+        for v in pair:
+            v.precompute(proto.Challenger(seed=9))
+    return prover, pair
+
+
+def _same_outcome(prover, pair, x, seed, **kw):
+    a, b = (proto.run_query(prover, v, x, seed=seed, **kw) for v in pair)
+    assert (a["accepted"], a["rejected_at"]) == (b["accepted"], b["rejected_at"]), (a["rejected_at"], b["rejected_at"])
+    assert b["bytes"] == a["bytes"] or not a["accepted"]      # a rejected streaming query also got the openings
+    assert "verify_total" in b["timings"]
+    return a
+
+
+@pytest.mark.parametrize("kind", list(_TINY))
+@pytest.mark.parametrize("mode,fiat_shamir", [("C", False), ("C", True), ("K", False), ("Kpre", False)])
+def test_streaming_gives_the_verdicts_of_run_query_on_tampered_claims(kind, mode, fiat_shamir, device):
+    graph, x = _decoder(kind)
+    prover, pair = _setup(graph, mode, fiat_shamir, device)
+    labels = {name: _same_outcome(prover, pair, x, seed=i, forward_kwargs=kw)["rejected_at"]
+              for i, (name, kw) in enumerate(_claim_attacks(graph.mat_ops).items())}
+    assert labels["honest"] is None and {labels["first+1"], labels["mid+1"], labels["last+1"]} == {"freivalds"}
+    assert {labels[k] for k in ("Z_BOUND", "beyond int32", "int32 dtype")} == {"range_or_shape"}
+    assert labels["1-Z_BOUND"] == "freivalds"
+
+
+def _fold_and_open_attacks(graph):
+    mats = graph.mat_ops
+    victim, other = mats[1].name, mats[-2].name
+
+    def fold(change):
+        def patched(fold_):
+            return lambda chis: {k: (change(u) if k == victim else u) for k, u in fold_(chis).items()}
+        return ("fold", patched)
+
+    def opening(changes):
+        def patched(open_):
+            return lambda cols: {k: (changes[k](*o) if k in changes else o) for k, o in open_(cols).items()}
+        return ("open", patched)
+
+    def plus_one(o, pr):
+        o = o.clone()
+        o[0, 0] = (o[0, 0] + 1) % P
+        return o, pr
+
+    def setting(value):
+        def change(o, pr):
+            o = o.clone()
+            o[0, 0] = value
+            return o, pr
+        return change
+
+    return {"u+1": fold(lambda u: (u + (torch.arange(u.numel()).reshape(u.shape) == 0)) % P),
+            "u=P": fold(lambda u: torch.where(torch.arange(u.numel()).reshape(u.shape) == 0, P, u)),
+            "u narrow": fold(lambda u: u[:, :-1]),
+            "opened+1": opening({victim: plus_one}), "opened=P": opening({victim: setting(P)}),
+            "opened=-1": opening({victim: setting(-1)}), "opened>int32": opening({victim: setting((1 << 32) + 5)}),
+            "opened narrow": opening({victim: lambda o, pr: (o[:, :-1], pr)}),
+            "opened int32": opening({victim: lambda o, pr: (o.to(torch.int32), pr)}),
+            "path forged": opening({victim: lambda o, pr: (o, [bytes(32)] + pr[1:])}),
+            "path short": opening({victim: lambda o, pr: (o, pr[:-1])}),
+            "path long": opening({victim: lambda o, pr: (o, pr + [bytes(32)])}),
+            "merkle then code": opening({victim: lambda o, pr: (o, [bytes(32)] + pr[1:]), other: plus_one}),
+            "code then narrow": opening({victim: plus_one, other: lambda o, pr: (o[:, :-1], pr)})}
+
+
+@pytest.mark.parametrize("kind", ["gpt2", "qwen"])
+def test_streaming_gives_the_verdicts_of_run_query_on_forged_folds_and_openings(kind, device):
+    graph, x = _decoder(kind)
+    prover, pair = _setup(graph, "C", device=device)
+    real = {"fold": prover.fold, "open": prover.open}
+    labels = {}
+    for i, (name, (what, patched)) in enumerate(_fold_and_open_attacks(graph).items()):
+        setattr(prover, what, patched(real[what]))
+        try:
+            labels[name] = _same_outcome(prover, pair, x, seed=i)["rejected_at"]
+        finally:
+            setattr(prover, what, real[what])
+    assert labels["u+1"] == labels["u=P"] == labels["u narrow"] == "freivalds" and labels["opened+1"] == "columns_code"
+    assert {labels[k] for k in ("opened=P", "opened=-1", "opened>int32", "opened narrow", "opened int32")}         == {"columns_shape"}
+    assert labels["path forged"] == labels["path short"] == labels["path long"] == "columns_merkle"
+    assert labels["merkle then code"] == "columns_merkle" and labels["code then narrow"] == "columns_code"
+    # an exception is raised where run_query raises it (a proof entry that is not bytes)
+    prover.open = lambda cols: {k: ((o, [0] + pr[1:]) if k == graph.mat_ops[2].name else (o, pr))
+                                for k, (o, pr) in real["open"](cols).items()}
+    for v in pair:
+        with pytest.raises(TypeError):
+            proto.run_query(prover, v, x, seed=99)
+
+
+def test_streaming_gives_the_verdicts_of_run_query_on_a_cnn(device):
+    from pvi.fullcheck.models import build_float_model
+    from pvi.fullcheck.quantize import quantize_input, quantize_model
+
+    torch.manual_seed(0)
+    g = torch.Generator().manual_seed(1)
+    graph = quantize_model(build_float_model("lenet5", 10).eval(), torch.randn(16, 1, 28, 28, generator=g))
+    x = quantize_input(graph, torch.randn(1, 1, 28, 28, generator=g))
+    for mode in ("C", "Kpre"):
+        prover, pair = _setup(graph, mode, device=device)
+        for i, (name, kw) in enumerate(_claim_attacks(graph.mat_ops).items()):
+            _same_outcome(prover, pair, x, seed=i, forward_kwargs=kw)
+
+
+def test_streaming_keeps_the_fiat_shamir_transcript(monkeypatch):
+    absorbed = []
+    absorb = proto.Challenger.absorb
+    monkeypatch.setattr(proto.Challenger, "absorb", lambda self, label, blob: (
+        absorbed.append((label, hashlib.sha256(blob).digest())), absorb(self, label, blob)))
+    graph, x = _decoder("llama")
+    prover, pair = _setup(graph, "C", fiat_shamir=True)
+    transcripts = []
+    for v in pair:
+        absorbed.clear()
+        assert proto.run_query(prover, v, x)["accepted"]
+        transcripts.append(list(absorbed))
+    assert transcripts[0] and transcripts[0] == transcripts[1]
+
+
+@pytest.mark.parametrize("paths", ["int8", "deferred_int8"])
+def test_streaming_with_int8_products_gives_the_verdicts_of_run_query(paths, monkeypatch):
+    if paths == "deferred_int8":
+        monkeypatch.setattr(proto, "_defer", lambda device: True)
+    monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+    graph, x = _decoder("qwen")
+    for mode in ("C", "Kpre"):
+        prover, pair = _setup(graph, mode)
+        for i, (name, kw) in enumerate(_claim_attacks(graph.mat_ops).items()):
+            _same_outcome(prover, pair, x, seed=i, forward_kwargs=kw)
+
+
+@cuda_only
+@pytest.mark.parametrize("ahead", [0, 1, 1000])
+def test_streaming_on_a_gpu_with_any_upload_window(ahead, monkeypatch):
+    monkeypatch.setattr(pipeline, "AHEAD", ahead)
+    graph, x = _decoder("llama")
+    for mode in ("C", "Kpre"):
+        prover, pair = _setup(graph, mode, device="cuda")
+        for i, (name, kw) in enumerate(_claim_attacks(graph.mat_ops).items()):
+            _same_outcome(prover, pair, x, seed=i, forward_kwargs=kw)
+
+
+# -- a GPU verifier copies nothing back but its verdicts -------------------------------------------
+
+@contextlib.contextmanager
+def _only_verdicts_come_back(monkeypatch):
+    """CUDA's sync debug mode set to "error" (any host round trip raises) except inside
+    ``_to_host``, whose calls are counted."""
+    calls = []
+    real = proto._to_host
+
+    def counted(flags):
+        torch.cuda.set_sync_debug_mode(0)
+        try:
+            calls.append(len(flags))
+            return real(flags)
+        finally:
+            torch.cuda.set_sync_debug_mode("error")
+
+    monkeypatch.setattr(proto, "_to_host", counted)
+    monkeypatch.setattr(pipeline, "_to_host", counted)
+    torch.cuda.set_sync_debug_mode("error")
+    try:
+        yield calls
+    finally:
+        torch.cuda.set_sync_debug_mode(0)
+
+
+@cuda_only
+@pytest.mark.parametrize("kind", list(_TINY))
+def test_a_gpu_verifier_makes_one_round_trip_per_check(kind, monkeypatch):
+    graph, x = _decoder(kind)
+    params = proto.params_for(40, len(graph.mat_ops))
+    coms = proto.commit_graph(graph, params.rate)
+    prover = proto.Prover(graph, commitments=coms)
+    v = proto.Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()}, device="cuda")
+    ch = proto.Challenger(seed=3)
+    claims = {k: z.cuda() for k, z in prover.claims(x).items()}
+    chis = {op.name: ch.folding(op.name, op.n_rows, params.reps).cuda() for op in graph.mat_ops}
+    us = {k: u.cuda() for k, u in prover.fold(chis).items()}
+    cols = {op.name: ch.columns(op.name, v.publics[op.name].n_points, params.columns) for op in graph.mat_ops}
+    openings = prover.open(cols)
+    xd = x.cuda()
+    for _ in range(2):                  # the first query fills the caches (tables, masks, constants)
+        inputs = v.derive(xd, claims)
+        assert v.check_products(claims, inputs, chis, us) and v.check_columns(chis, us, cols, openings) is None
+    with _only_verdicts_come_back(monkeypatch) as calls:
+        inputs = v.derive(xd, claims)
+        assert v.check_products(claims, inputs, chis, us) and v.check_columns(chis, us, cols, openings) is None
+    assert len(calls) == 3
+    wire = {k: pipeline.wire_claim(z.cpu(), pin=True) for k, z in claims.items()}
+    wired = pipeline.wire_openings(openings)
+    assert pipeline.verify_streaming(v, xd, wire, chis, us, cols, wired) is None
+    with _only_verdicts_come_back(monkeypatch) as calls:
+        assert pipeline.verify_streaming(v, xd, wire, chis, us, cols, wired) is None
+    assert len(calls) == 1

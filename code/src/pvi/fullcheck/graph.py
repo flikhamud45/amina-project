@@ -301,7 +301,7 @@ class IntGraph:
 
     def forward(self, x: torch.Tensor, *, tamper: Callable[[MatOp, torch.Tensor], torch.Tensor] | None = None,
                 weights_override: dict[str, MatOp] | None = None, free: bool = False,
-                claims_device=None) -> tuple[dict, dict]:
+                claims_device=None, send: Callable[[torch.Tensor], object] | None = None) -> tuple[dict, dict]:
         """Honest (or tampered) execution.  Returns ``(env, claims)``.
 
         ``claims[op.name]`` is the ``[N, M]`` pre-activation matrix the prover
@@ -309,6 +309,8 @@ class IntGraph:
         is re-propagated honestly from the modified value, which is exactly the
         trace-tampering attack.  ``weights_override`` runs some ops with other
         weights (the model-substitution attack) while claiming the committed model.
+        ``send(Z)``, if given, is what is kept of each claim instead of ``Z`` (moved to
+        ``claims_device``), e.g. the streaming verifier's int32 wire format.
         """
         env = {self.input_name: x}
         claims: dict[str, torch.Tensor] = {}
@@ -321,7 +323,10 @@ class IntGraph:
                 if tamper is not None:
                     z = tamper(op, z)
                 env[op.output] = op.fold(z, xin)
-                claims[op.name] = z if claims_device is None else z.to(claims_device)
+                if send is not None:
+                    claims[op.name] = send(z)
+                else:
+                    claims[op.name] = z if claims_device is None else z.to(claims_device)
                 del z
             else:
                 env[op.output] = op.fn(*[env[n] for n in op.inputs])
