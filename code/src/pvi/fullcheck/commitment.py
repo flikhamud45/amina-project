@@ -35,7 +35,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
-from .field import P, field_matmul_mod, power_table, root_of_unity, rs_encode, small_matmul_mod, to_field
+from .field import (_LIMB_MAX, NP_SMALL, P, exact_chunk, field_matmul_mod, np_field_matmul_mod, power_table,
+                    root_of_unity, rs_encode, small_matmul_mod, to_field)
 
 __all__ = [
     "HASH_BYTES",
@@ -47,6 +48,7 @@ __all__ = [
     "CommitmentPublic",
     "WeightCommitment",
     "vandermonde_columns",
+    "codeword_at",
 ]
 
 HASH_BYTES = 32
@@ -61,6 +63,7 @@ def column_leaf(tag: bytes, index: int, column: np.ndarray) -> bytes:
     h = hashlib.sha256(b"pvi/col" + tag + int(index).to_bytes(8, "big"))
     h.update(np.ascontiguousarray(column, dtype="<u4").tobytes())
     return h.digest()
+
 
 
 class MerkleTree:
@@ -126,6 +129,7 @@ def verify_multiproof(root: bytes, depth: int, leaves: dict[int, bytes], proof: 
     return next(it, None) is None and list(known.items()) == [(0, root)]
 
 
+
 def _next_pow2(x: int) -> int:
     return 1 << max(0, (x - 1).bit_length())
 
@@ -140,7 +144,51 @@ def vandermonde_columns(n_points: int, row_length: int, columns: torch.Tensor,
     table = power_table(root_of_unity(n_points), n_points, device)
     j = torch.arange(row_length, dtype=torch.int64, device=device)[:, None]
     c = columns.to(device=device, dtype=torch.int64)[None, :]
-    return table[(j * c) % n_points]
+    return table[(j * c) & (n_points - 1)]    # n_points is a power of two and j * c >= 0
+
+
+def codeword_at(u: torch.Tensor, n_points: int, columns: torch.Tensor) -> torch.Tensor:
+    """``Enc(u)[..., columns]``, the same field elements as ``field_matmul_mod(u,
+    vandermonde_columns(n_points, k, columns))``.
+
+    ``u`` is ``[r, k]``, or ``[G, r, k]`` with ``columns`` ``[G, t]`` (G matrices at
+    once).  Baby-step giant-step: with ``j = a S + b`` (``b < S ~ sqrt(k)``, ``a < G' =
+    ceil(k / S)``), ``Enc(u)[c] = sum_a w**(a S c) sum_b u[a S + b] w**(b c)``.  The inner
+    sums are one limb product with an ``S x t`` table of powers, the outer sum an
+    elementwise product with a ``G' x t`` table: ``(S + G') t`` table entries instead of
+    the ``k t`` of the Vandermonde block (69x fewer for GPT-2's embedding).
+    """
+    r, k = u.shape[-2], u.shape[-1]
+    s = 1 << (max(k, 1).bit_length() + 1) // 2          # a power of two >= sqrt(k)
+    g = -(-k // s)
+    if (u.device.type == "cpu" and u.dtype == torch.int64 and columns.device.type == "cpu"
+            and 3 * u.numel() + (s + g) * columns.numel() <= NP_SMALL):
+        return torch.from_numpy(_np_codeword_at(u.numpy(), n_points, columns.to(torch.int64).numpy(), s, g))
+    dev = u.device
+    table = power_table(root_of_unity(n_points), n_points, dev)
+    c = columns.to(device=dev, dtype=torch.int64).unsqueeze(-2)                  # [..., 1, t]
+    steps = torch.arange(max(s, g), dtype=torch.int64, device=dev)[:, None]
+    powers = table[torch.cat([steps[:s] * c, steps[:g] * (s * c)], -2) & (n_points - 1)]   # [..., S + G', t]
+    baby, giant = powers[..., :s, :], powers[..., s:, :]
+    u = torch.nn.functional.pad(u, (0, g * s - k))
+    inner = field_matmul_mod(u.reshape(*u.shape[:-2], r * g, s), baby).reshape(*u.shape[:-2], r, g, -1)
+    inner *= giant.unsqueeze(-3)                  # products of two field elements < 2**62
+    inner %= P
+    return inner.sum(-2) % P                      # G' < 2**32 terms below 2**31
+
+
+def _np_codeword_at(u: np.ndarray, n_points: int, columns: np.ndarray, s: int, g: int) -> np.ndarray:
+    """:func:`codeword_at` in numpy, for small CPU operands: the same integer steps."""
+    r, k = u.shape[-2], u.shape[-1]
+    table = power_table(root_of_unity(n_points), n_points).numpy()
+    c = columns[..., None, :]
+    steps = np.arange(max(s, g), dtype=np.int64)[:, None]
+    powers = table[np.concatenate([steps[:s] * c, steps[:g] * (s * c)], -2) & (n_points - 1)]
+    baby, giant = powers[..., :s, :], powers[..., s:, :]
+    u = np.concatenate([u, np.zeros((*u.shape[:-1], g * s - k), dtype=np.int64)], -1)
+    inner = np_field_matmul_mod(u.reshape(*u.shape[:-2], r * g, s), baby, True, exact_chunk(_LIMB_MAX, P - 1))
+    inner = inner.reshape(*u.shape[:-2], r, g, -1) * giant[..., None, :, :]
+    return np.remainder(inner, P).sum(-2) % P
 
 
 @dataclass(frozen=True)
