@@ -189,7 +189,7 @@ default flow's; without `wire` nothing of the codec runs (`tests/test_wire.py`).
 cd code && export PYTHONPATH=$PWD/src
 python experiments/6_improvements/wire.py --mnist <dir holding MNIST/raw> --out results/wire_laptop.json \
     lenet5 mlp_mnist vgg16 resnet18_cifar gpt2:64 gpt2:512 llama2-7b:64:1,2 qwen3-4b:8:1,2,4,8
-python experiments/6_improvements/wire.py --out results/wire_laptop.json --summary
+python experiments/6_improvements/wire.py --out results/wire_laptop.json --summary   # --threads 1,8: the paper's verifier
 ```
 
 Results on this laptop (`results/wire_laptop.json`; the CNNs are random-init, queried on MNIST
@@ -217,10 +217,10 @@ Whole proofs, lambda = 128 (mode C of the decoders sized exactly, without a comm
 
 | Model | Mode | Default (B) | Wire (B) | Smaller |
 |---|---|---:|---:|---:|
-| LeNet-5 | C | 130,648 | 115,809 | 1.13x |
+| LeNet-5 | C | 130,840 | 116,001 | 1.13x |
 | LeNet-5 | Kpre | 26,072 | 13,577 | 1.92x |
-| VGG-16 | C | 3,432,956 | 2,862,256 | 1.20x |
-| ResNet-18 CIFAR | C | 4,629,888 | 3,383,381 | 1.37x |
+| VGG-16 | C | 3,433,116 | 2,862,416 | 1.20x |
+| ResNet-18 CIFAR | C | 4,629,920 | 3,383,413 | 1.37x |
 | MLP MNIST | C | 269,972 | 261,391 | 1.03x |
 | GPT-2 T64 | C | 62,071,240 | 50,747,048 | 1.22x |
 | GPT-2 T64 | Kpre | 21,827,908 | 11,676,676 | 1.87x |

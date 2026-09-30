@@ -13,12 +13,12 @@ not on this machine), calibrated on 512 training digits.
 
 Per spec and mode (C at lambda = 128 with interactive challenges; Kpre at lambda = 128, 40 for
 Qwen3-4B as in the Maverick row), ``run_query`` with and without ``wire`` alternate on the same
-queries and seeds, at 1 and 4 threads: the medians of every byte and timing part, and the bits per
-claim.  Mode C of a decoder is sized without a commitment (the rate-4 commitment of a decoder takes
+queries and seeds, at each of ``--threads`` (1 and 4 by default): the medians of every byte and
+timing part, and the bits per claim.  Mode C of a decoder is sized without a commitment (the rate-4 commitment of a decoder takes
 minutes on a laptop CPU): the claims are encoded as the prover encodes them, ``u`` and the columns
 have fixed sizes, and the Merkle paths are those of the challenge ``run_query`` draws with seed 0.
-The codec's own throughput (encode, decode into int64, at 1 and 4 threads) is compared with reading
-the same claims as int32 and widening them.  Nothing here writes to the benchmark's roots.
+The codec's own throughput (encode, decode into int64, at the same thread counts) is compared with
+reading the same claims as int32 and widening them.  Nothing here writes to the benchmark's roots.
 """
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ def _ab(prover: Prover, v: Verifier, xs: list, reps: int) -> dict:
     return out
 
 
-def _codec(zs: list[torch.Tensor], reps: int) -> dict:
+def _codec(zs: list[torch.Tensor], reps: int, thread_counts: list[int]) -> dict:
     """Encode and decode (into int64) throughput against reading int32 claims and widening them."""
     rows, mc = [z.shape[0] for z in zs], max(z.shape[1] for z in zs)
     n = sum(z.numel() for z in zs)
@@ -129,7 +129,7 @@ def _codec(zs: list[torch.Tensor], reps: int) -> dict:
     assert all(torch.equal(a, b) for a, b in zip(zs, claimcodec.decode_torch(blob, rows, mc)))
     out = {"claims": n, "bytes": len(blob), "bits_per_claim": 8 * len(blob) / n,
            "bits_per_claim_uncentred": 8 * len(claimcodec.encode(zs, centre=False)) / n}
-    for threads in (1, 4):
+    for threads in thread_counts:
         torch.set_num_threads(threads)
         t = {"encode": [], "decode": [], "int32_parse": []}
         for _ in range(reps):
@@ -188,7 +188,7 @@ def run(spec: str, args) -> dict:
                 graph = None
     mats = graph.mat_ops
     zs, _ = _claim_bytes(graph, xs[0])
-    out["codec"] = _codec(zs, args.reps)
+    out["codec"] = _codec(zs, args.reps, args.threads)
     out["ops"] = len(mats)
     prover = Prover(graph)
     weights = {op.name: (op.weight, op.bias) for op in mats}
@@ -203,7 +203,7 @@ def run(spec: str, args) -> dict:
         else:
             v = Verifier(graph.public(), params, "Kpre", weights=weights)
             v.precompute(Challenger())
-        for threads in (1, 4):
+        for threads in args.threads:
             torch.set_num_threads(threads)
             out[f"{mode}_lam{lam}_threads{threads}"] = _ab(prover, v, xs, args.reps)
     if name not in CNNS and name != "mlp_mnist":
@@ -222,7 +222,8 @@ def summary(results: dict) -> str:
     rows += ["", "| Model | Mode | Default (B) | Wire (B) | Smaller | claims / u / columns / paths (wire) |",
              "|---|---|---:|---:|---:|---|"]
     for spec, r in results.items():
-        for key in sorted(k for k in r if k.endswith("threads1") or k.endswith("_exact")):
+        for key in sorted(k for k in r if k.endswith("_threads" + min(k2.split("threads")[1] for k2 in r if "_threads" in k2))
+                          or k.endswith("_exact")):
             d, w = (r[key][s] if key.endswith("_exact") else r[key][s]["bytes"] for s in ("default", "wire"))
             rows.append(f"| {spec} | {key.split('_threads')[0]} | {sum(d.values()):,.0f} | {sum(w.values()):,.0f} | "
                         f"{sum(d.values()) / sum(w.values()):.3f}x | "
@@ -236,12 +237,12 @@ def summary(results: dict) -> str:
             rows.append(f"| {spec} | {key.split('_threads')[0]} | {key.split('threads')[1]} | {1e3 * d['verify']:.2f} | "
                         f"{1e3 * w['verify']:.2f} | {1e3 * dec:.2f} | {100 * dec / d['verify']:.0f}% | "
                         f"{1e3 * w['timings']['prove_encode']:.2f} |")
-    rows += ["", "| Model | Encode 1 / 4 thr (M claims/s) | Decode 1 / 4 thr | int32 parse 1 / 4 thr |", "|---|---:|---:|---:|"]
+    rows += ["", "| Model | Threads | Encode (M claims/s) | Decode | int32 parse |", "|---|---|---:|---:|---:|"]
     for spec, r in results.items():
         c = r["codec"]
-        rows.append(f"| {spec} | " + " | ".join(
-            f"{c['threads1'][k + '_Mclaims_per_s']:.0f} / {c['threads4'][k + '_Mclaims_per_s']:.0f}"
-            for k in ("encode", "decode", "int32_parse")) + " |")
+        threads = sorted(k for k in c if k.startswith("threads"))
+        rows.append(f"| {spec} | {' / '.join(t[7:] for t in threads)} | " + " | ".join(
+            " / ".join(f"{c[t][k + '_Mclaims_per_s']:.0f}" for t in threads) for k in ("encode", "decode", "int32_parse")) + " |")
     for spec, r in results.items():
         builds = sorted((int(b), v) for b, v in r.get("builds", {}).items())
         if len(builds) >= 2:
@@ -264,6 +265,8 @@ def main() -> None:
     ap.add_argument("--mnist", help="directory holding MNIST/raw (read with download=False), for the CNNs")
     ap.add_argument("--queries", type=int, default=5)
     ap.add_argument("--reps", type=int, default=7)
+    ap.add_argument("--threads", type=lambda s: [int(t) for t in s.split(",")], default=[1, 4],
+                    help="torch threads (and decoder workers), e.g. 1,8 for the paper's verifier")
     ap.add_argument("--out", required=True)
     ap.add_argument("--summary", action="store_true", help="print the tables of --out")
     args = ap.parse_args()
