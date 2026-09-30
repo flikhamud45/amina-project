@@ -11,7 +11,8 @@ a subgroup of order ``2**27``, which is what the number-theoretic transform
 Everything here works on torch tensors on any device and is deterministic:
 the same inputs give bit-identical outputs on CPU and GPU.  Small CPU operands of
 the modular products run the same integer steps in numpy, whose per-call cost is
-a fraction of torch's.
+a fraction of torch's; on a GPU with int8 tensor cores the verifier's products can
+run as exact int8 GEMMs instead (``int8_*``).
 """
 
 from __future__ import annotations
@@ -40,6 +41,14 @@ __all__ = [
     "field_matmul_mod",
     "NP_SMALL",
     "np_field_matmul_mod",
+    "INT8_TERMS",
+    "int8_ok",
+    "int8_bytes",
+    "int8_gemm",
+    "int8_left",
+    "int8_field_matmul",
+    "int8_right",
+    "int8_small_matmul",
 ]
 
 P = 2013265921
@@ -76,9 +85,15 @@ def _power_table_cpu(base: int, length: int) -> torch.Tensor:
     return table
 
 
-def power_table(base: int, length: int, device: torch.device | str = "cpu") -> torch.Tensor:
-    """``[base**0, base**1, ..., base**(length-1)] mod P`` as int64."""
+@lru_cache(maxsize=128)
+def _power_table_on(base: int, length: int, device: str) -> torch.Tensor:
     return _power_table_cpu(base, length).to(device)
+
+
+def power_table(base: int, length: int, device: torch.device | str = "cpu") -> torch.Tensor:
+    """``[base**0, base**1, ..., base**(length-1)] mod P`` as int64 (cached per device, so a
+    GPU gets it once; callers only read it)."""
+    return _power_table_on(base, length, str(torch.device(device)))
 
 
 @lru_cache(maxsize=32)
@@ -285,3 +300,154 @@ def np_field_matmul_mod(left: np.ndarray, right: np.ndarray, reduce_right: bool,
         acc = acc + np.matmul(lf[..., s:s + chunk], rf[..., s:s + chunk, :]).astype(np.int64)
     acc = np.remainder(acc, P).reshape(*acc.shape[:-2], 3, r, acc.shape[-1])
     return np.remainder((acc * _NP_WEIGHTS).sum(-3), P)
+
+
+# -- the same products on int8 GEMMs (GPU tensor cores) -----------------------------------
+# Flipping the sign bit of bytes 0-2 of an int32 (XOR 0x00808080) makes each of its four
+# bytes a signed int8 s_b with  x = sum_b 256**b (s_b + o_b),  o = (128, 128, 128, 0)  (the top
+# byte keeps its sign), for EVERY int32 x.  A product of two such bytes is at most 2**14 in
+# magnitude, so an int8 GEMM over INT8_TERMS of them is exact in its int32 accumulator, and the
+# offsets o are exact int64 arithmetic mod P afterwards.  Operands are zero-padded to the sizes
+# torch._int_mm needs; a zero byte adds nothing to any product or column sum.
+
+INT8_TERMS = 1 << 16
+"""Contraction block of one int8 GEMM (``2**16`` terms below ``2**14`` sum below ``2**30``)."""
+_BYTE_FLIP = 0x00808080
+_BYTE_OFFSET = 128 * (1 + (1 << 8) + (1 << 16))         # O = sum_b 256**b o_b
+_INT8: dict[str, bool] = {}
+
+
+def _int_mm_exact(device: str) -> bool:
+    """``torch._int_mm`` runs on ``device`` and matches float64, at the int8 bounds and at the
+    accumulation bound of :data:`INT8_TERMS` terms (every entry ``2**30``)."""
+    try:
+        g = torch.Generator().manual_seed(0)
+        a = torch.randint(-128, 128, (24, 4096), generator=g, dtype=torch.int64).to(torch.int8)
+        b = torch.randint(-128, 128, (4096, 40), generator=g, dtype=torch.int64).to(torch.int8)
+        a[0], b[:, 0] = -128, -128
+        want = (a.double() @ b.double()).to(torch.int32)
+        if not torch.equal(torch._int_mm(a.to(device), b.to(device)).cpu(), want):
+            return False
+        full = torch.full((24, INT8_TERMS), -128, dtype=torch.int8, device=device)
+        return bool((torch._int_mm(full, full[:8].T.contiguous()) == 1 << 30).all())
+    except (RuntimeError, AttributeError):       # no int8 GEMM on this build or GPU
+        return False
+
+
+def int8_ok(device) -> bool:
+    """Whether the verifier's products on ``device`` run as int8 GEMMs: a GPU whose
+    ``torch._int_mm`` passes a self-check (once per device).  Off the GPU the float64 limb
+    products are faster; there :func:`int8_gemm` is a float64 emulation, which the tests use."""
+    d = torch.device(device)
+    if d.type != "cuda":
+        return False
+    key = str(d if d.index is not None else torch.device("cuda", torch.cuda.current_device()))
+    if key not in _INT8:
+        _INT8[key] = _int_mm_exact(key)
+    return _INT8[key]
+
+
+def int8_bytes(x: torch.Tensor) -> torch.Tensor:
+    """int32-valued ``x [..., m]`` -> int8 ``[..., 4m]``: the bytes ``s_b`` above, little-endian."""
+    y = torch.bitwise_xor(x, _BYTE_FLIP) if x.dtype == torch.int32 else x.to(torch.int32).bitwise_xor_(_BYTE_FLIP)
+    return y.contiguous().view(torch.int8)
+
+
+def int8_gemm(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """Exact ``a @ b`` in int32 for int8 ``a [m, k]`` and ``b [k, n]`` (``m > 16``, ``k`` and ``n``
+    multiples of 8, both contiguous): ``torch._int_mm`` where :func:`int8_ok`, else float64
+    (exact: every sum is below ``2**31``).  A GPU whose int8 GEMM fails at run time falls back."""
+    if a.is_cuda and int8_ok(a.device):
+        try:
+            return torch._int_mm(a, b)
+        except RuntimeError:
+            _INT8[str(a.device)] = False
+    return (a.to(torch.float64) @ b.to(torch.float64)).to(torch.int32)
+
+
+def _pad8(n: int) -> int:
+    return -(-n // 8) * 8
+
+
+@lru_cache(maxsize=None)
+def _byte_consts(device: str) -> tuple[torch.Tensor, torch.Tensor]:
+    """``256**b`` and the offsets ``o_b`` for ``b < 4`` (read-only)."""
+    return (torch.tensor([1, 1 << 8, 1 << 16, 1 << 24], dtype=torch.int64, device=device),
+            torch.tensor([128, 128, 128, 0], dtype=torch.int64, device=device))
+
+
+def int8_left(left: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """The operand of :func:`int8_field_matmul` for field elements ``left [r, N]``: the ``4r`` byte
+    rows ``t_c`` (row ``c r + i`` is byte ``c`` of row ``i``) and a row of ones, padded; and
+    ``sum_c 256**c t_c 1`` per row, mod P."""
+    r, n = left.shape
+    cb = int8_bytes(left).reshape(r, n, 4)
+    lb = torch.zeros(max(24, _pad8(4 * r + 1)), _pad8(n), dtype=torch.int8, device=left.device)
+    lb[:4 * r, :n] = cb.permute(2, 0, 1).reshape(4 * r, n)
+    lb[4 * r, :n] = 1
+    return lb, (cb.sum(1, dtype=torch.int64) * _byte_consts(str(left.device))[0]).sum(-1) % P
+
+
+def int8_field_matmul(operand: tuple[torch.Tensor, torch.Tensor], right: torch.Tensor) -> torch.Tensor:
+    """``left @ right mod P`` for field elements ``left [r, N]`` (``operand = int8_left(left)``)
+    and int32 values ``right [N, M]`` (int32, or int64 holding int32 values; any sign), on int8
+    GEMMs.
+
+    With ``left = sum_c 256**c (t_c + o_c)`` and ``right = sum_b 256**b (s_b + o_b)`` bytewise,
+    ``left @ right = sum_{b,c} 256**(b+c) t_c s_b + O sum_b 256**b 1^T s_b + O sum_c 256**c t_c 1
+    + N O**2``: ONE GEMM of the byte rows of ``left`` and a row of ones with the ``[N, 4M]``
+    bytes of ``right`` gives every ``t_c s_b`` and every column sum.  The result is the
+    canonical residue.
+    """
+    lb, row_sums = operand
+    r, (n, m) = row_sums.shape[0], right.shape
+    if m == 0:
+        return torch.zeros(r, 0, dtype=torch.int64, device=right.device)
+    zb = int8_bytes(right).reshape(n, 4 * m)
+    if lb.shape[1] != n or 4 * m % 8:
+        zb = torch.nn.functional.pad(zb, (0, _pad8(4 * m) - 4 * m, 0, lb.shape[1] - n))
+    acc = None
+    for s in range(0, lb.shape[1], INT8_TERMS):
+        a = lb if lb.shape[1] <= INT8_TERMS else lb[:, s:s + INT8_TERMS].contiguous()
+        part = int8_gemm(a, zb[s:s + INT8_TERMS]).to(torch.int64)
+        acc = part if acc is None else acc.add_(part)
+    acc = acc[:4 * r + 1, :4 * m] % P
+    w = _byte_consts(str(right.device))[0]
+    per_c = (acc[:4 * r].reshape(4, r, m, 4) * w).sum(-1) % P          # [c, i, column]: sum_b 256**b t_c s_b
+    main = (per_c * w[:, None, None]).sum(0)                            # < 4 * 2**31 * 2**24
+    ones = (acc[4 * r].reshape(m, 4) * w).sum(-1) % P                   # sum_b 256**b 1^T s_b
+    o = _BYTE_OFFSET
+    return (main + o * ones[None, :] + o * row_sums[:, None] + (n * o * o) % P) % P
+
+
+def int8_right(field: torch.Tensor) -> tuple[torch.Tensor, int]:
+    """The operand of :func:`int8_small_matmul` for field elements ``field [R, K]``: the ``[K, 4R]``
+    bytes ``t_c`` (column ``c R + i`` is byte ``c`` of row ``i``) and a column of ones, padded; and ``R``."""
+    rr, k = field.shape
+    tb = int8_bytes(field).reshape(rr, k, 4)
+    out = torch.zeros(_pad8(k), _pad8(4 * rr + 1), dtype=torch.int8, device=field.device)
+    out[:k, :4 * rr] = tb.permute(1, 2, 0).reshape(k, 4 * rr)
+    out[:k, 4 * rr] = 1
+    return out, rr
+
+
+def int8_small_matmul(operand: tuple[torch.Tensor, int], small: torch.Tensor) -> torch.Tensor:
+    """``field @ small.T mod P`` (``[R, M]``) for field elements ``field [R, K]`` (``operand =
+    int8_right(field)``) and int8 ``small [M, K]``, on int8 GEMMs: with ``field = sum_c 256**c
+    (t_c + o_c)`` bytewise, ``small @ field.T = sum_c 256**c (small @ t_c.T + o_c (small 1))``:
+    ONE GEMM of ``small`` with the bytes of ``field`` and a column of ones."""
+    right, rr = operand
+    m, k = small.shape
+    if m == 0:
+        return torch.zeros(rr, 0, dtype=torch.int64, device=small.device)
+    rows = max(24, _pad8(m))
+    if rows != m or right.shape[0] != k:
+        small = torch.nn.functional.pad(small, (0, right.shape[0] - k, 0, rows - m))
+    acc = None
+    for s in range(0, right.shape[0], INT8_TERMS):
+        part = int8_gemm(small[:, s:s + INT8_TERMS].contiguous(), right[s:s + INT8_TERMS]).to(torch.int64)
+        acc = part if acc is None else acc.add_(part)
+    acc = acc[:m, :4 * rr + 1] % P
+    w, offsets = _byte_consts(str(small.device))
+    per_c = (acc[:, :4 * rr].reshape(m, 4, rr) + offsets[:, None] * acc[:, 4 * rr, None, None]) % P
+    return ((per_c * w[:, None]).sum(1) % P).T
