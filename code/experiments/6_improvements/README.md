@@ -300,6 +300,27 @@ runs.
 | | R16 | 22.2 (0.63x) | 11.3 (0.46x) | 53.7 (0.58x) | 115.0 (0.74x) | 2,436.3 kB |
 | | R64 | 20.9 (0.59x) | 10.1 (0.41x) | 35.9 (0.38x) | 97.5 (0.63x) | 2,265.6 kB |
 
+| GPT-2, 12 blocks, 64 tokens | paper | 260.0 | 161.6 | 795.0 | 1,391 | 62.07 MB |
+| | tight | 212.1 (0.82x) | 114.1 (0.71x) | 640.5 (0.81x) | 1,229 (0.88x) | 54.61 MB |
+| | R8 | 189.1 (0.73x) | 89.2 (0.55x) | 531.7 (0.67x) | 1,124 (0.81x) | 46.27 MB |
+| | R16 | 174.6 (0.67x) | 74.7 (0.46x) | 487.9 (0.61x) | 1,078 (0.77x) | 41.48 MB |
+
+(GPT-2: 11 queries; `cnn<e>` and R64 need 9-35 G encoded entries, too long for this laptop.)
 Derive and the products are the same under every policy (they do not depend on the
 commitment); the column check falls with the columns opened and the multiproofs, and the
 prover's open with the `sum N k t` of its column products.
+
+### Table 4 (interactive, lambda = 128)
+
+Proof sizes are exact.  Verifier times are estimates for the L40S node's client (EPYC, 8
+threads): its stored stage medians (paper code) scaled by laptop ratios -- the Phase 1 ratios
+of each stage (above: derive, products, columns) and the policy's column-check ratio (this
+section) -- to be confirmed with `bench.py --policy` on the cluster.
+
+| Row | Competitor | Ours, report | Ours, Phase 1 only (est.) | Ours, Phase 1 + policy | Flips with |
+|---|---:|---:|---:|---:|---|
+| zkCNN LeNet-5 proof | 71.3 kB | 130.9 kB (1.84x worse) | 130.9 kB | 65.0 / 63.2 / 62.2 kB (cnn16 / 17 / 18; 1.10-1.15x better) | cnn16, cnn17, cnn18 (not under Fiat--Shamir: 76.6 kB at best) |
+| zkCNN LeNet-5 verifier | 5.8 ms | 6.96 ms (1.2x worse) | ~3.7 ms | ~2.3 ms (cnn16), ~2.2 ms (cnn18) | Phase 1 already; ~2.5x better with cnn16-18 (policy alone ~4.2 ms) |
+| zkCNN VGG-16 verifier | 59.3 ms | 63.4 ms (1.07x worse) | ~24 ms | ~13.9 ms (cnn17), ~14.4 ms (R16) | Phase 1 already; ~4.3x better with cnn17 (policy alone ~37 ms) |
+| zkGPT (GPT-2) verifier | 0.35 s | 0.468 s (1.34x worse) | ~0.18 s | ~0.118 s (R16), ~0.129 s (R8) | Phase 1 already; ~3.0x better with R16 (policy alone ~0.30 s) |
+| DeepProve GPT-2-64 proof | 21.7 MB | 62.1 MB (2.86x worse) | 62.1 MB | 41.5 (R16) / 36.7 (R64) / 34.0 MB (cnn18) | no: the claims alone are 21.8 MB (still 1.57x worse at best) |
