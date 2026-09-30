@@ -6,7 +6,9 @@ commitment and parameters, which the rest of the suite checks bit for bit.
 Every plan must keep the report's guarantee (``soundness_bits >= lambda`` for every model, mode
 and challenge kind), honest queries must be accepted, and every forgery must be rejected at the
 check that catches it, by ``run_query``, by the streaming verifier and in the forms a GPU
-verifier runs, interactive and under Fiat--Shamir.
+verifier runs, interactive and under Fiat--Shamir -- with the proof in its default form and in
+the compact wire encoding (``run_query(wire=True)``, :mod:`pvi.fullcheck.claimcodec`), whose
+malformed messages are rejected too.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import pytest
 import torch
 
 from pvi.fullcheck import analytic
+from pvi.fullcheck import claimcodec as cc
 from pvi.fullcheck import field as fld
 from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
@@ -266,16 +269,23 @@ def _verifiers(graph, coms, fiat_shamir, device="cpu", lam=40):
 @pytest.mark.parametrize("kind", ["lenet5", "gpt", "llama", "opt"])
 @pytest.mark.parametrize("policy", POLICIES)
 @pytest.mark.parametrize("fiat_shamir", [False, True])
-def test_honest_queries_are_accepted_and_sized_as_planned(kind, policy, fiat_shamir):
+@pytest.mark.parametrize("wire", [False, True])
+def test_honest_queries_are_accepted_and_sized_as_planned(kind, policy, fiat_shamir, wire):
     graph, x, coms = _planned(kind, policy)
     prover = proto.Prover(graph, commitments=coms)
+    claims = [prover.claims(x)[op.name] for op in graph.mat_ops]
+    rows = {op.name: op.n_rows for op in graph.mat_ops}
+    size = cc.field_size if wire else (lambda numel: 4 * numel)
     for v in _verifiers(graph, coms, fiat_shamir):
-        res = proto.run_query(prover, v, x, seed=None if fiat_shamir else 1)
+        res = proto.run_query(prover, v, x, seed=None if fiat_shamir else 1, wire=wire)
         assert res["accepted"], res["rejected_at"]
-        rows = {op.name: op.n_rows for op in graph.mat_ops}
-        assert res["bytes"]["columns"] == 4 * sum(v.params.columns_for(g) * sum(rows[m] for m in ms)
-                                                  for g, ms in coms.plan.groups)
+        assert res["bytes"]["claims"] == (len(cc.encode(claims)) if wire else 4 * sum(z.numel() for z in claims))
+        assert res["bytes"]["u"] == size(v.params.reps * sum(op.row_length for op in graph.mat_ops))
+        assert res["bytes"]["columns"] == size(sum(v.params.columns_for(g) * sum(rows[m] for m in ms)
+                                                   for g, ms in coms.plan.groups))
         assert res["bytes"]["paths"] <= 32 * sum(v.params.columns_for(g) * gp.depth for g, gp in v.groups.items())
+        if wire and not fiat_shamir:     # the same challenges as without wire: the same multiproofs
+            assert res["bytes"]["paths"] == proto.run_query(prover, v, x, seed=1)["bytes"]["paths"]
     # modes K and Kpre take the plan's parameters (they open no columns)
     params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fiat_shamir, plan=coms.plan)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
@@ -284,8 +294,8 @@ def test_honest_queries_are_accepted_and_sized_as_planned(kind, policy, fiat_sha
         v = proto.Verifier(graph.public(), params, mode, weights=weights)
         if mode == "Kpre":
             v.precompute(proto.Challenger(seed=3))
-        assert proto.run_query(proto.Prover(graph), v, x, seed=2)["accepted"]
-        tampered = proto.run_query(proto.Prover(graph), v, x, seed=3,
+        assert proto.run_query(proto.Prover(graph), v, x, seed=2, wire=wire)["accepted"]
+        tampered = proto.run_query(proto.Prover(graph), v, x, seed=3, wire=wire,
                                    forward_kwargs={"tamper": lambda op, z: z + 1 if op.name == victim else z})
         assert tampered["rejected_at"] == "freivalds"
 
@@ -403,17 +413,26 @@ EXPECTED = {"claim+1": "freivalds", "u+1": "freivalds", "forged fold": "columns_
             "path forged": "columns_merkle", "path short": "columns_merkle", "path long": "columns_merkle"}
 
 
-def _labels(graph, x, coms, verifiers, seed=0):
+TENSOR_FORMS = ("opened=-1", "opened>int32", "opened narrow", "opened short", "opened int32")
+"""Forgeries of the opened columns' tensor (an entry outside ``[0, 2**31)``, another shape or dtype).
+With ``wire`` the columns travel as one run of 31-bit field elements instead, which cannot carry
+them (:func:`claimcodec.pack_field` refuses such entries, and no dtype is sent):
+:func:`test_malformed_wire_messages_are_rejected_under_a_plan` forges that message itself."""
+
+
+def _labels(graph, x, coms, verifiers, seed=0, wire=False):
     """``{attack: the check that rejects it}``; every verifier of ``verifiers`` must agree."""
     prover = proto.Prover(graph, commitments=coms)
     real = {"fold": prover.fold, "open": prover.open}
     out = {}
     for i, (name, (tamper, fold, open_)) in enumerate(_attacks(graph, coms).items()):
+        if wire and name in TENSOR_FORMS:
+            continue
         prover.fold = fold(real["fold"]) if fold else real["fold"]
         prover.open = open_(real["open"]) if open_ else real["open"]
         try:
-            got = [proto.run_query(prover, v, x, seed=seed + i, forward_kwargs={"tamper": tamper} if tamper else None)
-                   for v in verifiers]
+            got = [proto.run_query(prover, v, x, seed=seed + i, wire=wire,
+                                   forward_kwargs={"tamper": tamper} if tamper else None) for v in verifiers]
         finally:
             prover.fold, prover.open = real["fold"], real["open"]
         assert all(not r["accepted"] for r in got), name
@@ -426,31 +445,38 @@ def _labels(graph, x, coms, verifiers, seed=0):
 @pytest.mark.parametrize("kind", ["lenet5", "gpt", "llama"])
 @pytest.mark.parametrize("policy", POLICIES)
 @pytest.mark.parametrize("fiat_shamir", [False, True])
-def test_every_forgery_is_rejected_at_its_check(kind, policy, fiat_shamir):
+@pytest.mark.parametrize("wire", [False, True])
+def test_every_forgery_is_rejected_at_its_check(kind, policy, fiat_shamir, wire):
     graph, x, coms = _planned(kind, policy)
-    labels = _labels(graph, x, coms, _verifiers(graph, coms, fiat_shamir))
-    assert labels == {k: EXPECTED[k] for k in labels} and len(labels) >= len(EXPECTED) - 1
+    labels = _labels(graph, x, coms, _verifiers(graph, coms, fiat_shamir), wire=wire)
+    expected = {k: v for k, v in EXPECTED.items() if not (wire and k in TENSOR_FORMS)}
+    assert labels == {k: expected[k] for k in labels} and len(labels) >= len(expected) - 1
 
 
 @pytest.mark.parametrize("paths", ["deferred", "int8", "deferred_int8"])
-def test_the_gpu_forms_of_the_checks_give_the_same_verdicts(paths, monkeypatch):
+@pytest.mark.parametrize("wire", [False, True])
+def test_the_gpu_forms_of_the_checks_give_the_same_verdicts(paths, wire, monkeypatch):
     if "deferred" in paths:
         monkeypatch.setattr(proto, "_defer", lambda device: True)
     if "int8" in paths:
         monkeypatch.setattr(proto, "int8_ok", lambda device: True)
     for kind, policy in (("lenet5", "cnn12"), ("llama", "R8")):
         graph, x, coms = _planned(kind, policy)
-        labels = _labels(graph, x, coms, _verifiers(graph, coms, False), seed=10)
+        labels = _labels(graph, x, coms, _verifiers(graph, coms, False), seed=10, wire=wire)
         assert labels == {k: EXPECTED[k] for k in labels}
 
 
-def test_a_gpu_client_and_prover_give_the_cpu_verdicts(device):
+@pytest.mark.parametrize("wire", [False, True])
+def test_a_gpu_client_and_prover_give_the_cpu_verdicts(device, wire):
     graph, x, coms = _planned("llama", "R8")
-    cpu = _labels(graph, x, coms, _verifiers(graph, coms, False), seed=20)
-    assert _labels(graph, x, coms, _verifiers(graph, coms, False, device=device), seed=20) == cpu
+    cpu = _labels(graph, x, coms, _verifiers(graph, coms, False), seed=20, wire=wire)
+    assert _labels(graph, x, coms, _verifiers(graph, coms, False, device=device), seed=20, wire=wire) == cpu
     if device == "cuda":
-        prover = proto.Prover(graph, device="cuda", commitments=coms)
-        assert all(proto.run_query(prover, v, x, seed=1)["accepted"] for v in _verifiers(graph, coms, False))
+        on_device = proto.Prover(graph, device="cuda", commitments=coms)
+        for v in _verifiers(graph, coms, False):
+            a, b = (proto.run_query(p, v, x, seed=1, wire=wire) for p in (proto.Prover(graph, commitments=coms),
+                                                                            on_device))
+            assert a["accepted"] and (b["accepted"], b["bytes"]) == (True, a["bytes"])
 
 
 @pytest.mark.parametrize("paths", ["at_once", "deferred", "int8", "deferred_int8"])
@@ -571,6 +597,136 @@ def test_the_fiat_shamir_transcript_absorbs_the_plan(monkeypatch):
     base = first_columns(v)
     for w in changed:
         assert not torch.equal(first_columns(w), base)
+
+
+def _flip_lowest_bit(packed: bytes, e: int, numel: int) -> bytes:
+    """``packed`` (``numel`` field elements at 31 bits) with the lowest bit of element ``e`` flipped:
+    element ``j G + g`` starts at bit ``31 j`` of the words ``g, G + g, ...`` (:func:`claimcodec.pack32`)."""
+    lanes = (numel + 31) // 32
+    j, g = divmod(e, lanes)
+    word, bit = ((31 * j) >> 5) * lanes + g, (31 * j) & 31
+    out = bytearray(packed)
+    out[4 * word + bit // 8] ^= 1 << (bit % 8)
+    return bytes(out)
+
+
+def _unpacked(tensors: list, packed: bytes) -> list:
+    """The tensors of ``tensors``' shapes that the verifier unpacks from ``packed``."""
+    flat = torch.from_numpy(cc.unpack_field(packed, sum(t.numel() for t in tensors)).view(np.int32)).long()
+    return [a.view(t.shape) for a, t in zip(flat.split([t.numel() for t in tensors]), tensors)]
+
+
+@pytest.mark.parametrize("kind,policy", [("lenet5", "cnn12"), ("gpt", "R8"), ("llama", "tight")])
+@pytest.mark.parametrize("fiat_shamir", [False, True])
+def test_malformed_wire_messages_are_rejected_under_a_plan(kind, policy, fiat_shamir, monkeypatch):
+    """The encoded claims, ``u`` and the opened columns of every tree (its members' rows side by side),
+    malformed or altered, are rejected where the default flow rejects a malformed message of that
+    kind -- a well-formed message of other elements where it rejects those elements -- by both
+    verifiers."""
+    graph, x, coms = _planned(kind, policy)
+    verifiers = _verifiers(graph, coms, fiat_shamir)
+    params = verifiers[0].params
+    prover = proto.Prover(graph, commitments=coms)
+    real = {"fold": prover.fold, "open": prover.open}
+    u_shapes = [(params.reps, op.row_length) for op in graph.mat_ops]
+    pack, encode = cc.pack_field, cc.encode
+
+    def label(seed, wire=True):
+        got = {proto.run_query(prover, v, x, seed=seed, wire=wire)["rejected_at"] for v in verifiers}
+        assert len(got) == 1, got
+        return got.pop()
+
+    def sent(which, change):            # the prover's packed u or opened columns, as ``change`` makes them
+        def patched(tensors):
+            is_u = [tuple(t.shape) for t in tensors] == u_shapes
+            return change(pack(tensors)) if is_u == (which == "u") else pack(tensors)
+        monkeypatch.setattr(proto.claimcodec, "pack_field", patched)
+
+    for i, change in enumerate((lambda b: b + b"\0", lambda b: b[:-1], lambda b: b"PVC0" + b[4:])):
+        monkeypatch.setattr(proto.claimcodec, "encode", lambda zs, change=change: change(encode(zs)))
+        assert label(i) == "range_or_shape"
+        monkeypatch.undo()
+    rows = {op.name: op.n_rows for op in graph.mat_ops}
+    opened = [(params.columns_for(g), sum(rows[m] for m in ms)) for g, ms in coms.plan.groups]
+    n_opened = sum(t * n for t, n in opened)
+    cases = [("u", lambda b: b + b"\0", "freivalds"), ("u", lambda b: b[:-4], "freivalds"),
+             ("columns", lambda b: b + b"\0", "columns_shape"), ("columns", lambda b: b[:-4], "columns_shape")]
+    if n_opened % 32:                   # then the last element of the last lane is padding: its top bit set
+        cases.append(("columns", lambda b: b[:-1] + bytes([b[-1] ^ 0x80]), "columns_shape"))
+    for i, (which, change, want) in enumerate(cases):
+        sent(which, change)
+        assert label(10 + i) == want, (which, want)
+        monkeypatch.undo()
+    # one element changed: that of the middle op's u, and in the opened columns the first entry of the
+    # last member of a tree of several (the first tree, if none has several)
+    tree = next((i for i, (_, ms) in enumerate(coms.plan.groups) if len(ms) > 1), 0)
+    members = coms.plan.groups[tree][1]
+    targets = {"u": (params.reps * sum(op.row_length for op in graph.mat_ops[:len(graph.mat_ops) // 2]),
+                     params.reps * sum(op.row_length for op in graph.mat_ops)),
+               "columns": (sum(t * n for t, n in opened[:tree]) + sum(rows[m] for m in members[:-1]), n_opened)}
+    for i, (which, (e, numel)) in enumerate(targets.items()):
+        flip = lambda b, e=e, numel=numel: _flip_lowest_bit(b, e, numel)
+        sent(which, flip)
+        got = label(20 + i)
+        monkeypatch.undo()
+
+        def fold(chis):                 # the same elements, sent without wire
+            us = real["fold"](chis)
+            return dict(zip(us, _unpacked(list(us.values()), flip(pack(list(us.values()))))))
+
+        def open_(cols):
+            out = real["open"](cols)
+            columns = [o.T for o, _ in out.values()]
+            changed = _unpacked(columns, flip(pack(columns)))
+            assert sum(int((a != b).sum()) for a, b in zip(changed, columns)) == 1
+            return {k: (c.T, pr) for (k, (_, pr)), c in zip(out.items(), changed)}
+
+        prover.fold, prover.open = (fold, real["open"]) if which == "u" else (real["fold"], open_)
+        try:
+            assert got is not None and got == label(20 + i, wire=False), which
+        finally:
+            prover.fold, prover.open = real["fold"], real["open"]
+    # an entry outside [0, 2**31) has no wire form: the prover cannot even encode it
+    g0 = coms.plan.groups[0][0]
+
+    def outside(cols):
+        out = real["open"](cols)
+        o = out[g0][0].clone()
+        o[0, 0] = -1
+        return dict(out, **{g0: (o, out[g0][1])})
+
+    prover.open = outside
+    try:
+        with pytest.raises(ValueError, match="field elements"):
+            proto.run_query(prover, verifiers[0], x, seed=30, wire=True)
+    finally:
+        prover.open = real["open"]
+
+
+def test_the_wire_transcript_absorbs_the_plan_and_the_encoded_bytes(monkeypatch):
+    graph, x, coms = _planned("llama", "R8")
+    absorbed = []
+    absorb = proto.Challenger.absorb
+    monkeypatch.setattr(proto.Challenger, "absorb", lambda self, label, blob: (
+        absorbed.append((label, bytes(blob))), absorb(self, label, blob)))
+    verifiers = _verifiers(graph, coms, True)
+    prover = proto.Prover(graph, commitments=coms)
+    transcripts = []
+    for v in verifiers:
+        absorbed.clear()
+        assert proto.run_query(prover, v, x, wire=True)["accepted"]
+        transcripts.append(list(absorbed))
+    assert transcripts[0] == transcripts[1]         # the streaming verifier's is the batched one's
+    labels = [label for label, _ in transcripts[0]]
+    assert labels == [b"params", *(b"op/" + op.name.encode() for op in graph.mat_ops),
+                      *(b"group/" + g.encode() for g in verifiers[0].groups), b"x", b"claims/PVC3", b"u/F31"]
+    assert transcripts[0][-2][1] == cc.encode([prover.claims(x)[op.name] for op in graph.mat_ops])
+    reps = verifiers[0].params.reps
+    assert len(transcripts[0][-1][1]) == cc.field_size(reps * sum(op.row_length for op in graph.mat_ops))
+    # the statement -- the plan's trees, their members and t -- is absorbed as without wire
+    absorbed.clear()
+    assert proto.run_query(prover, verifiers[0], x)["accepted"]
+    assert absorbed[:len(labels) - 2] == transcripts[0][:-2]
 
 
 def test_a_verifier_refuses_a_key_that_does_not_fit():
