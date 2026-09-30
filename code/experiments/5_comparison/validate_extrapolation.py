@@ -21,8 +21,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TABLES = ROOT / "artifacts" / "comparison" / "tables"   # set by main() from --platform
-METRICS = {"prove_forward", "prove_fold", "prove_open", "fs_hash", "verify_derive", "verify_fold",
-           "verify_products", "verify_columns", "verify_total", "bytes_total", "bytes_claims", "bytes_paths",
+METRICS = {"prove_forward", "prove_fold", "prove_open", "prove_encode", "fs_hash", "verify_decode", "verify_derive",
+           "verify_fold", "verify_products", "verify_columns", "verify_total", "bytes_total", "bytes_claims", "bytes_paths",
            "gpu_peak_memory", "gpu_peak_reserved", "gpu_peak_memory_verifier", "host_peak_rss"}
 
 

@@ -2,11 +2,14 @@
 
     cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model lenet5 --modes C Kpre --queries 10
     cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --verifier-device cuda
+    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C Kpre --wire
 
 Builds the model exactly as bench.py does (trained CNN weights, random-weight decoders with seed 0),
 commits it, runs one warm-up and ``--queries`` honest queries with ``run_query`` and prints one JSON
 line per (model, mode): the median of every timing part and every byte part, the acceptance count,
-and the git commit, so results of two checkouts can be compared line by line.
+and the git commit, so results of two checkouts can be compared line by line.  ``--wire`` sends the
+proof in the compact encoding (``run_query(wire=True)``: encoded bytes, ``prove_encode`` and
+``verify_decode``).
 """
 from __future__ import annotations
 
@@ -47,6 +50,7 @@ def main() -> None:
     ap.add_argument("--lean", action="store_true")
     ap.add_argument("--label", default="")
     ap.add_argument("--extra", default="{}", help="JSON dict of extra keyword arguments for Verifier (new options)")
+    ap.add_argument("--wire", action="store_true", help="run_query(wire=True): the compact encoding of the proof")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     bench = _bench()
@@ -97,16 +101,16 @@ def main() -> None:
             v = Verifier(graph.public(), params, mode, weights=weights, lean=lean, device=args.verifier_device, **extra)
             if mode == "Kpre":
                 v.precompute(Challenger())
-        run_query(prover, v, queries[0])  # warm-up
-        runs = [run_query(prover, v, q) for q in queries[1:]]
+        run_query(prover, v, queries[0], wire=args.wire)  # warm-up
+        runs = [run_query(prover, v, q, wire=args.wire) for q in queries[1:]]
         timing = {k: statistics.median(r["timings"].get(k, 0.0) for r in runs)
                   for k in sorted({k for r in runs for k in r["timings"]})}
         nbytes = {k: statistics.median(r["bytes"].get(k, 0) for r in runs)
                   for k in sorted({k for r in runs for k in r["bytes"]})}
-        prove = sum(timing.get(k, 0.0) for k in ("prove_forward", "prove_fold", "prove_open", "fs_hash"))
+        prove = sum(timing.get(k, 0.0) for k in ("prove_forward", "prove_fold", "prove_open", "prove_encode", "fs_hash"))
         verify = sum(v_ for k, v_ in timing.items() if k.startswith("verify_") or k == "fs_hash")
         out = {"label": args.label, "git": sha, "model": args.model, "seq": seq, "layers": args.layers or None,
-               "mode": mode, "lam": args.lam, "rate": args.rate, "reps": params.reps, "columns": params.columns,
+               "mode": mode, "wire": args.wire, "lam": args.lam, "rate": args.rate, "reps": params.reps, "columns": params.columns,
                "device": args.device, "verifier_device": args.verifier_device, "threads": args.threads,
                "accepted": sum(bool(r["accepted"]) for r in runs), "queries": len(runs),
                "prove_s": prove, "verify_s": verify, "proof_bytes": sum(nbytes.values()),

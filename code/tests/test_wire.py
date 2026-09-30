@@ -5,7 +5,8 @@ verifier (and its deferred and int8 forms), the streaming verifier and a GPU cli
 queries are accepted with smaller proofs; tampered claims, forged ``u``, forged or misplaced opened
 columns, forged paths and malformed encodings are rejected at the check that rejects them without
 ``wire``; the Fiat--Shamir transcript absorbs the encoded bytes; the default flow runs none of the
-codec; the security parameters are those of the default flow, which meet ``lambda`` on every model.
+codec; the security parameters are those of the default flow, which meet ``lambda`` on every model;
+and bench.py records wire cells only under a ``_wire`` tag.
 """
 
 from __future__ import annotations
@@ -423,3 +424,20 @@ def test_the_parameters_meet_lambda_on_every_model():
                 for mode in ("C", "K"):
                     assert proto.soundness_bits(params, shapes, mode) >= lam, (model, lam, fs, mode)
                 assert params.reps == math.ceil((lam + math.log2(2 * len(ks)) + (64 if fs else 0)) / proto.LOG2_P)
+
+
+# -- bench.py --------------------------------------------------------------------------------------
+
+def test_bench_wire_cells_carry_a_wire_tag(monkeypatch):
+    import importlib.util
+    import sys
+
+    path = Path(__file__).resolve().parents[1] / "experiments" / "4_defence_benchmark" / "bench.py"
+    spec = importlib.util.spec_from_file_location("bench_wire_test", path)
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    for argv, needs in ((["--wire"], "_wire"), (["--tag", "_wire"], "_wire")):
+        monkeypatch.setattr(sys, "argv", ["bench.py", "cnn", "--model", "lenet5", *argv])
+        with pytest.raises(SystemExit, match=needs):
+            bench.main()
+    assert bench.build_parser().parse_args(["cnn", "--model", "x", "--wire"]).wire

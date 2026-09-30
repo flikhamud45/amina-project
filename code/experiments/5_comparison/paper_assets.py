@@ -59,13 +59,14 @@ def hw_short(name) -> str:
 # inside that platform (e.g. "_nolean"); "" = the plain runs.
 DEFAULT = {"rate": "4", "threads": "8", "variant": os.environ.get("PVI_LLM_VARIANT", ""), "lam": 128}
 CNN_ORDER = ["mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224"]
-# the timing parts that make up one proof and one verification (fs_hash is paid by both)
-PROVE = ("prove_forward", "prove_fold", "prove_open", "fs_hash")
+# the timing parts that make up one proof and one verification (fs_hash is paid by both; prove_encode and
+# verify_decode: the compact encoding of the proof, bench.py --wire)
+PROVE = ("prove_forward", "prove_fold", "prove_open", "prove_encode", "fs_hash")
 # verify_upload: a GPU client's host-to-device copy of the proof (absent for the CPU verifier);
 # verify_total: the streaming verifier (bench.py --verifier-impl stream), which times its overlapped
 # derive, uploads, products and columns as one phase, recorded instead of those four (OVERLAPPED)
-VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "verify_upload", "verify_total",
-          "fs_hash")
+VERIFY = ("verify_decode", "verify_derive", "verify_fold", "verify_products", "verify_columns", "verify_upload",
+          "verify_total", "fs_hash")
 OVERLAPPED = ("verify_derive", "verify_products", "verify_columns", "verify_upload")
 
 

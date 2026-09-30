@@ -69,6 +69,7 @@ LAMBDAS = (40, 80, 128)
 TAG = ""  # appended to every cell name (``--tag``), so variant runs never collide
 VDEV = "cpu"   # --verifier-device: where the client's checks run (the report: the CPU)
 IMPL = "default"   # --verifier-impl: "stream" = the streaming verifier (Verifier(stream=True))
+WIRE = False       # --wire: the proof in the compact encoding of pvi.fullcheck.claimcodec
 PLATFORM = ""  # ``--platform``: "" is the earlier RTX 2080 Ti run's root ``raw/`` (frozen)
 
 
@@ -200,6 +201,12 @@ def _verifier(*args, **kwargs) -> Verifier:
     return Verifier(*args, device=VDEV, stream=IMPL == "stream", **kwargs)
 
 
+def _query(prover: Prover, v: Verifier, x: torch.Tensor, **kwargs) -> dict:
+    """One interaction of this benchmark: ``run_query``, with ``--wire`` in the compact encoding of the
+    proof (``prove_encode`` / ``verify_decode`` recorded, and the encoded sizes as ``bytes_*``)."""
+    return run_query(prover, v, x, wire=WIRE, **kwargs)
+
+
 def _verifier_hw(env: dict) -> str:
     cpu = f"{env.get('cpu')} x{env.get('torch_threads')} threads"
     if VDEV == "cpu":
@@ -237,7 +244,8 @@ class Recorder:
                      "config": dict(config, variant=TAG, device=env.get("device"), merkle="multiproof",
                                     verifier_device=VDEV,
                                     **({"platform": PLATFORM} if PLATFORM else {}),
-                                    **({"verifier_impl": IMPL} if IMPL != "default" else {})),
+                                    **({"verifier_impl": IMPL} if IMPL != "default" else {}),
+                                    **({"wire": True} if WIRE else {})),
                      "prover_hw": prover_hw, "verifier_hw": _verifier_hw(env),
                      "host": env.get("host"), "git_sha": env.get("git_sha")}
         part = self.path.with_suffix(".jsonl.part")
@@ -525,9 +533,9 @@ def suite_cnn(args, env) -> None:
                 if mode == "Kpre":
                     v.precompute(Challenger())
             _reset_peaks(device)
-            run_query(prover, v, q_inputs[:1])  # untimed warm-up (lazy CUDA/BLAS initialisation)
+            _query(prover, v, q_inputs[:1])  # untimed warm-up (lazy CUDA/BLAS initialisation)
             for i in range(args.queries):
-                _record_query(r, run_query(prover, v, q_inputs[i:i + 1]), i)
+                _record_query(r, _query(prover, v, q_inputs[i:i + 1]), i)
             _record_peaks(r, device)
             # batch amortisation: B queries in one interaction (mode C, interactive only)
             if mode == "C" and chal == "int":
@@ -536,7 +544,7 @@ def suite_cnn(args, env) -> None:
                         continue
                     _reset_peaks(device)
                     for tr in range(args.batch_trials):
-                        _record_query(r, run_query(prover, v, q_inputs[:bsz]), tr, batch=bsz)
+                        _record_query(r, _query(prover, v, q_inputs[:bsz]), tr, batch=bsz)
                     _record_peaks(r, device, batch=bsz)
             r.done()
 
@@ -551,7 +559,7 @@ def suite_cnn(args, env) -> None:
         x0 = q_inputs[:1]
 
         def attempt(kind, i, **kw):
-            res = run_query(prover, v, x0, **kw)
+            res = _query(prover, v, x0, **kw)
             r.rec("rejected", int(not res["accepted"]), "", i, attack=kind, stage=res["rejected_at"])
 
         for i in range(args.tampers):
@@ -757,16 +765,16 @@ def suite_llm(args, env) -> None:
                             v.precompute(Challenger())   # ends with a sync of the verifier's device
                             r.rec("verifier_precompute", time.perf_counter() - t0, "s")
                     _reset_peaks(device)
-                    run_query(prover, v, tokens[:1])  # untimed warm-up
+                    _query(prover, v, tokens[:1])  # untimed warm-up
                     for i in range(args.queries):
-                        _record_query(r, run_query(prover, v, tokens[i:i + 1]), i)
+                        _record_query(r, _query(prover, v, tokens[i:i + 1]), i)
                     _record_peaks(r, device)
                     # batch amortisation: B prompts against one set of u and openings (as the CNN suite)
                     if chal == "int" and mode in ("C", "Kpre"):
                         for bsz in args.batches:
                             _reset_peaks(device)
                             for tr in range(args.batch_trials):
-                                _record_query(r, run_query(prover, v, tokens[:bsz]), tr, batch=bsz)
+                                _record_query(r, _query(prover, v, tokens[:bsz]), tr, batch=bsz)
                             _record_peaks(r, device, batch=bsz)
                     # one tampered query per cell: must be rejected
                     victim = mats[len(mats) // 2].name
@@ -777,7 +785,7 @@ def suite_llm(args, env) -> None:
                             z.view(-1)[0] += 1
                         return z
 
-                    res = run_query(prover, v, tokens[:1], forward_kwargs={"tamper": tamper})
+                    res = _query(prover, v, tokens[:1], forward_kwargs={"tamper": tamper})
                     r.rec("tamper_rejected", int(not res["accepted"]), "", stage=res["rejected_at"])
                     r.done()
             # ---- attacks on this build (report Sec. 4.3): random single values anywhere, the top
@@ -795,7 +803,7 @@ def suite_llm(args, env) -> None:
                 x0 = tokens[:1]
 
                 def attempt(kind, i, **kw):
-                    res = run_query(prover, v, x0, forward_kwargs=kw)
+                    res = _query(prover, v, x0, forward_kwargs=kw)
                     r.rec("rejected", int(not res["accepted"]), "", i, attack=kind, stage=res["rejected_at"])
 
                 def t_logit(o, z):
@@ -884,6 +892,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="cpu (the report) or cuda / cuda:1: run the client's checks on a GPU (needs a _gpuv tag)")
     ap.add_argument("--verifier-impl", default="default", choices=["default", "stream"],
                     help="'stream': the streaming verifier, the same verdicts (needs a _stream tag)")
+    ap.add_argument("--wire", action="store_true",
+                    help="the proof in the compact encoding of pvi.fullcheck.claimcodec (run_query(wire=True): "
+                         "PVC3 claims, 31-bit u and columns; needs a _wire tag)")
     ap.add_argument("--tf32", action="store_true",
                     help="TF32 tensor cores for the float32 GEMMs (exact: operands <= 255; needs a _tf32 tag)")
     ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
@@ -895,12 +906,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     _require_this_pvi()
     args = build_parser().parse_args()
-    global TAG, PLATFORM, RAW, VDEV, IMPL
+    global TAG, PLATFORM, RAW, VDEV, IMPL, WIRE
     TAG = args.tag
     VDEV = args.verifier_device
     IMPL = args.verifier_impl
+    WIRE = args.wire
     if (IMPL == "stream") != ("_stream" in TAG):
         raise SystemExit("--verifier-impl stream goes with a --tag containing _stream, and only then")
+    if WIRE != ("_wire" in TAG):
+        raise SystemExit("--wire goes with a --tag containing _wire (the stored cells have none), and only then")
     if VDEV != "cpu" and "_gpuv" not in TAG:
         raise SystemExit("--verifier-device other than cpu needs a --tag containing _gpuv (a different client)")
     if (os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1") != ("_nofix" in TAG):
