@@ -116,9 +116,12 @@ def _isqrt(s: torch.Tensor) -> torch.Tensor:
     """``max(1, floor(sqrt(s)))``: a float64 root, then one integer correction each way.
 
     The (tiny, one entry per row) CPU tensors go through numpy: the same correctly rounded
-    IEEE root and the same corrections, at a third of the call cost."""
-    if s.device.type == "cpu" and s.dtype == torch.int64:
-        n = s.numpy()
+    IEEE root and the same corrections, at a third of the call cost.  A negative ``s`` (an
+    int64 sum of squares that wrapped, which only adversarial claims reach) takes the torch
+    steps, those of ``reference.isqrt``: its root is NaN, which numpy would warn about and
+    cast to an integer by its own rules."""
+    n = s.numpy() if s.device.type == "cpu" and s.dtype == torch.int64 else None
+    if n is not None and (n.size == 0 or n.min() >= 0):
         r = np.floor(np.sqrt(n.astype(np.float64))).astype(np.int64)
         r += (r + 1) * (r + 1) <= n
         r -= r * r > n

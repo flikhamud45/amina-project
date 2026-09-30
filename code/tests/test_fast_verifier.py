@@ -14,7 +14,9 @@ verdicts, int8 GEMMs), on the CPU.
 from __future__ import annotations
 
 import random
+import warnings
 
+import numpy as np
 import pytest
 import torch
 
@@ -439,6 +441,28 @@ def test_isqrt_matches_reference():
     assert torch.equal(_isqrt(s), ref.isqrt(s))
     small = s[s.view(-1) < (1 << 52)].reshape(-1, 1)
     assert torch.equal(_isqrt(small), torch.tensor([[max(1, math.isqrt(int(v)))] for v in small.view(-1)]))
+    # a sum of squares that wrapped (adversarial claims only): the reference's steps, silently
+    wrapped = torch.cat([s[:5], torch.tensor([[-1], [INT64_MIN], [-(1 << 40)], [3]])])
+    with warnings.catch_warnings(), np.errstate(all="raise"):
+        warnings.simplefilter("error")
+        assert torch.equal(_isqrt(wrapped), ref.isqrt(wrapped))
+        assert torch.equal(_isqrt(torch.zeros(0, 1, dtype=torch.int64)), ref.isqrt(torch.zeros(0, 1, dtype=torch.int64)))
+
+
+def test_derive_is_silent_on_claims_whose_norm_sums_wrap(monkeypatch):
+    # an in-range embedding claim, scaled x8 into the residual stream, makes x * x wrap in the norm
+    from pvi.fullcheck import transformer as tr
+
+    graph, prover, v, x = _decoder_setup("Kpre")
+    claims = prover.claims(x)
+    emb = graph.mat_ops[0].name
+    bad = dict(claims, **{emb: torch.full_like(claims[emb], Z - 1)})
+    with warnings.catch_warnings(), np.errstate(all="raise"):
+        warnings.simplefilter("error")
+        got = v.derive(x, bad)
+    monkeypatch.setattr(tr, "_isqrt", ref.isqrt)
+    want = v.derive(x, bad)
+    assert got.keys() == want.keys() and all(torch.equal(got[k], want[k]) for k in got)
 
 
 def test_transformer_ops_match_reference(device):
