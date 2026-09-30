@@ -229,6 +229,10 @@ def test_every_plan_meets_lambda_for_every_model_and_mode(policy, all_models):
                     assert got >= lam, (name, policy, lam, fs, mode, got)
                 if policy == "tight":            # the report's lengths: exact t never opens more
                     assert max(cols) <= paper.columns
+                with pytest.raises(ValueError, match="columns=plan.op_columns"):
+                    proto.soundness_bits(params, plan.shapes(), "C")    # would credit every op the largest t
+                assert proto.soundness_bits(params, plan.shapes(), "K") == proto.soundness_bits(
+                    params, plan.shapes(), "K", columns=cols)
 
 
 # -- the protocol with a plan ---------------------------------------------------------------------------

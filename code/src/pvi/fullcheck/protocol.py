@@ -117,8 +117,12 @@ def params_for(lam: float, n_checks: int, *, rate: int = 4, fiat_shamir: bool = 
 def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: str = "C",
                    columns: list[int] | None = None) -> float:
     """``-log2`` of the total soundness error.  ``shapes`` holds ``(k, n)`` per op and ``columns``
-    each op's ``t`` (default: ``params.columns`` for every op; under a plan,
-    ``plan.op_columns(params.group_columns)``)."""
+    each op's ``t`` (default: ``params.columns`` for every op).  Under a plan's parameters mode C
+    needs ``columns=plan.op_columns(params.group_columns)``: ``params.columns`` is only the largest
+    group's ``t``, which would credit every op with more columns than its tree opens."""
+    if mode == "C" and params.group_columns and columns is None:
+        raise ValueError("a commitment plan's ops open their groups' t: "
+                         "pass columns=plan.op_columns(params.group_columns)")
     total = 0.0
     for i, (k, n) in enumerate(shapes):
         err = 2.0 ** (-params.reps * LOG2_P)
