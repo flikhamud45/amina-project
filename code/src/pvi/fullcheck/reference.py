@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import torch
 
-from .commitment import column_leaf, group_leaf, vandermonde_columns, verify_multiproof
+from .commitment import column_leaf, group_leaf, table_leaf, vandermonde_columns, verify_multiproof
 from .field import P, small_matmul_mod, to_field
 from .graph import INT8_MAX, MatOp, exact_matmul
 from .transformer import _EXP_TABLE, RES_MAX, SHIFT, _rope_tables
@@ -76,10 +76,11 @@ def in_field(a: torch.Tensor) -> bool:
 
 def check_products(verifier, claims, inputs, chis, us) -> bool:
     """``Verifier.check_products``, op by op (a commitment plan's col-layout ops are left to the column
-    check)."""
-    stacked = {o for pub in verifier.publics.values() for o in pub.members}
+    check, its lookup tables to the lookup check, and a verifier's own rows need none)."""
+    skip = {o for pub in verifier.publics.values() for o in pub.members} | set(verifier.tables)
+    skip |= {op.name for op in verifier.graph.mat_ops if verifier.lookups and op.layout == "embed"}
     for op in verifier.graph.mat_ops:
-        if op.name in stacked:
+        if op.name in skip:
             continue
         u = us.get(op.name)
         if (u is None or u.dtype != torch.int64 or tuple(u.shape) != (verifier.params.reps, op.row_length)
@@ -89,6 +90,27 @@ def check_products(verifier, claims, inputs, chis, us) -> bool:
         if not torch.equal(lhs, rhs(op, us[op.name], inputs[op.name])):
             return False
     return True
+
+
+def check_lookups(verifier, claims, inputs, proofs) -> str | None:
+    """``Verifier.check_lookups``, position by position: each position's row equals the first row of its
+    id, then the rows of the distinct ids and the table's multiproof give its root."""
+    for name, table in verifier.tables.items():
+        rows = claims[name].T.to(torch.int8).cpu().numpy()
+        first: dict[int, int] = {}
+        for j, token in enumerate(inputs[name].reshape(-1).tolist()):
+            if token not in first:
+                first[token] = j
+            elif (rows[j] != rows[first[token]]).any():
+                return "lookup_consistency"
+        proof = (proofs or {}).get(name)
+        if (not isinstance(proof, (list, tuple)) or len(proof) > len(first) * table.depth
+                or not all(isinstance(h, bytes) and len(h) == 32 for h in proof)
+                or not verify_multiproof(table.root, table.depth,
+                                         {token: table_leaf(table.tag, token, rows[j]) for token, j in first.items()},
+                                         list(proof))):
+            return "lookup_merkle"
+    return None
 
 
 def column_operands(verifier, claims, inputs, chis, us) -> tuple[dict, dict]:

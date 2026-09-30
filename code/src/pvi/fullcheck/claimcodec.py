@@ -5,7 +5,8 @@ The claims of an int8 model are far below the range check ``|z| < 2**29``: the b
 random-weight LLM claims need 18-21 signed bits and carry about 17 bits of entropy, embedding
 look-ups 8.  In mode Kpre the proof is only the claims, so their encoding is the proof size.
 Field elements (``u``, the opened columns) are below ``p < 2**31`` and travel at 31 bits
-(:func:`pack_field`).
+(:func:`pack_field`).  The claims of a commitment plan's lookup tables are rows of int8 weights
+and travel as their bytes (:func:`pack_rows`), not in ``PVC3``.
 
 Claims: format ``PVC3``
 -----------------------
@@ -82,7 +83,7 @@ import torch
 from .commitment import map_threaded
 
 __all__ = ["ClaimCodecError", "MAGIC", "BMAX", "encode", "decode", "decode_torch", "FIELD_BITS", "field_size",
-           "pack_field", "unpack_field"]
+           "pack_field", "unpack_field", "pack_rows", "unpack_rows"]
 
 MAGIC = b"PVC3"
 BMAX = 30                   # slot widths 0..30
@@ -669,3 +670,34 @@ def unpack_field(buf, numel: int, *, workers: int = 1) -> np.ndarray:
     if len(buf) != field_size(numel):
         raise ClaimCodecError("wrong length of packed field elements")
     return unpack32(buf, 0, numel, FIELD_BITS, workers=workers)[0]
+
+
+# ---------------------------------------------------------------------------- lookup rows
+def pack_rows(claims: list[torch.Tensor]) -> bytes:
+    """The claims ``[d, M]`` of lookup tables (int8 values: one looked-up row of ``d`` weights per
+    column), claim after claim, each as its ``M`` rows of ``d`` bytes."""
+    if not claims:
+        return b""
+    flat = torch.cat([z.detach().T.reshape(-1) for z in claims])
+    if flat.numel() and (int(flat.min()) < -128 or int(flat.max()) > 127):
+        raise ValueError("looked-up rows must be int8")
+    return flat.to(torch.int8).cpu().numpy().tobytes()
+
+
+def unpack_rows(buf, shapes: list[tuple[int, int]], *, dtype: torch.dtype = torch.int64,
+                pin: bool = False) -> list[torch.Tensor]:
+    """The claims of :func:`pack_rows`'s bytes, as ``dtype`` tensors of ``shapes`` (``[d, M]`` each,
+    known to the verifier; int32 in pinned memory with ``pin``); raises :class:`ClaimCodecError`
+    unless ``buf`` is exactly that many bytes."""
+    if not isinstance(buf, bytes):
+        raise ClaimCodecError("not bytes")
+    if len(buf) != sum(d * m for d, m in shapes):
+        raise ClaimCodecError("wrong length of looked-up rows")
+    flat = torch.from_numpy(np.frombuffer(buf, dtype=np.int8).copy()).to(dtype)
+    if pin and dtype == torch.int32:
+        flat = flat.pin_memory()
+    out, o = [], 0
+    for d, m in shapes:
+        out.append(flat[o:o + d * m].view(m, d).T)
+        o += d * m
+    return out

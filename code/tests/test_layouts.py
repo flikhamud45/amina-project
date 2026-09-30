@@ -97,11 +97,12 @@ def test_col_policy_names():
             plan_commitment(ops, bad)
 
 
-def _length(policy, m, embed=False):
-    """The codeword length of a message of length ``m`` under ``policy`` (the policies' definitions)."""
+def _length(policy, m):
+    """The codeword length of a message of length ``m`` of a linear op under ``policy`` (the policies'
+    definitions)."""
     if policy.startswith("cnn"):
         return max(1 << int(policy[3:].rstrip("c")), 2 * next_pow2(m))
-    rate = 4 if policy.startswith("tight") or embed else int(policy[1:].rstrip("c"))
+    rate = 4 if policy.startswith("tight") else int(policy[1:].rstrip("c"))
     return rate * next_pow2(m)
 
 
@@ -117,13 +118,15 @@ def _opened_bytes(ops, plan) -> float:
 def test_a_col_policy_fuses_the_ops_of_one_input_and_opens_less(model, policy):
     """Every set of linear ops reading one tensor with one row length is committed all in rows, each
     op transposed or all in one col matrix (q/k/v, gate/up: one matrix, the head transposed), every
-    other op in rows; each matrix at the policy's codeword length of its message length; and the
-    plan opens fewer bytes than its base policy's."""
+    embedding table is looked up; each encoded matrix at the policy's codeword length of its message
+    length, each table on a tree of its rows; and the plan opens fewer bytes than its base policy's."""
     cfg = CONFIGS[model]
     ops = analytic.decoder_shapes(cfg)
     plan = plan_commitment(ops, policy)
-    for m in plan.matrices:
-        assert m.n_points == _length(policy, m.row_length, m.layout == "row" and m.name in ("embed", "pos"))
+    for m in plan.coded:
+        assert m.n_points == _length(policy, m.row_length)
+    assert [m.name for m in plan.tables] == [op.name for op in ops if op.layout == "embed"]
+    assert all(m.n_points == next_pow2(m.row_length) for m in plan.tables)
     sets: dict = {}
     for op in ops:
         sets.setdefault((op.input, op.row_length) if op.layout == "linear" else op.name, []).append(op)
@@ -132,13 +135,16 @@ def test_a_col_policy_fuses_the_ops_of_one_input_and_opens_less(model, policy):
         chosen = [m for m in plan.matrices if set(m.ops) & set(names)]
         assert sorted(o for m in chosen for o in m.ops) == sorted(names)
         layouts = [m.layout for m in chosen]
+        if members[0].layout == "embed":
+            assert layouts == ["lookup"]
+            continue
         assert layouts == ["row"] * len(names) or layouts == ["col"] * len(chosen) and len(chosen) in (1, len(names))
         assert members[0].layout == "linear" or layouts == ["row"]
     for i in range(cfg.n_layers):
         for names in ((f"q{i}", f"k{i}", f"v{i}"),) + (((f"gate{i}", f"up{i}"),) if cfg.mlp == "swiglu" else ()):
             m = plan.matrix(col_name(names))
             assert (m.members, m.n_rows) == (names, ops[[op.name for op in ops].index(names[0])].row_length)
-    assert plan.matrix_of("head").layout == "col" and plan.matrix_of("embed").layout == "row"
+    assert plan.matrix_of("head").layout == "col" and plan.matrix_of("embed").layout == "lookup"
     assert _opened_bytes(ops, plan) < 0.6 * _opened_bytes(ops, plan_commitment(ops, policy[:-1]))
 
 
@@ -160,11 +166,11 @@ def test_the_byte_and_setup_models_of_a_col_plan():
     params = proto.params_for(128, len(ops), plan=plan)
     got = analytic.proof_bytes(ops, params, 64, plan=plan)
     folded = [op for op in ops if plan.matrix_of(op.name).layout == "row"]
-    assert {op.name[:3] for op in folded} <= {"emb", "pos", "fc2", "o0", "o1"}        # u only for the row ops
+    assert {op.name[:3] for op in folded} <= {"fc2", "o0", "o1"}        # u only for the row ops (the tables: none)
     assert got["u"] == 4 * params.reps * sum(op.row_length for op in folded)
     rows = {m.name: m.n_rows for m in plan.matrices}                                   # a col matrix opens k rows
     assert got["columns"] == 4 * sum(params.columns_for(g) * sum(rows[m] for m in ms) for g, ms in plan.groups)
-    assert analytic.setup_size(ops, plan=plan)["encoded_entries"] == sum(m.n_rows * m.n_points for m in plan.matrices)
+    assert analytic.setup_size(ops, plan=plan)["encoded_entries"] == sum(m.n_rows * m.n_points for m in plan.coded)
 
 
 # -- the verifier's challenges and checks ---------------------------------------------------------------
@@ -224,14 +230,15 @@ def test_a_streaming_verifier_rejects_a_query_its_claims_do_not_fit(kind, policy
     cols = stream.column_challenges(proto.Challenger(seed=2))
     openings = wire_openings(prover.open(cols))
     claims = {k: wire_claim(z) for k, z in prover.claims(x).items()}
-    assert stream.verify_streaming(x, claims, chis, us, cols, openings) is None
+    proofs = prover.open_tables()
+    assert stream.verify_streaming(x, claims, chis, us, cols, openings, proofs) is None
     # another query: chi' of its claim columns (none for a malformed one), and derive rejects these claims
     other = x[:, :5] if kind in _TINY else x[:, :700]
     folded = {op.name for op in stream._row_ops()}
     chis = stream.fold_challenges(proto.Challenger(seed=1), other)
     assert chis.keys() == (folded if kind == "mlp_wide" else folded | {m.name for m in coms.plan.matrices
                                                                        if m.layout == "col"})
-    assert stream.verify_streaming(other, claims, chis, us, cols, openings) == "range_or_shape"
+    assert stream.verify_streaming(other, claims, chis, us, cols, openings, proofs) == "range_or_shape"
 
 
 @pytest.mark.parametrize("kind", ["gpt", "qwen"])
@@ -241,7 +248,8 @@ def test_a_lean_prover_and_a_lean_verifier_under_a_col_plan(kind, mode):
     params = proto.params_for(40, len(graph.mat_ops), plan=coms.plan)
     prover = proto.Prover(graph, commitments=coms, lean=True)
     if mode == "C":
-        v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics, lean=True)
+        v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                           tables=coms.table_publics, lean=True)
     else:
         v = proto.Verifier(graph.public(), params, mode, weights={o.name: (o.weight, o.bias) for o in graph.mat_ops},
                            lean=True)

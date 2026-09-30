@@ -24,6 +24,10 @@ The prover does not keep the encoded matrix.  An opened column is recomputed
 from the weights with one small matrix product (``A @ V[:, C]`` for the
 Vandermonde columns ``C``), which costs ``t * N * k`` multiply-adds per matrix and
 avoids storing ``rate`` times the model.
+
+An embedding table can instead be committed as a lookup table (:class:`TableCommitment`, a
+commitment plan's ``lookup`` layout): a Merkle tree over its rows, one leaf per token, which the
+prover opens at the looked-up tokens with one multiproof -- no code, nothing encoded.
 """
 
 from __future__ import annotations
@@ -62,6 +66,10 @@ __all__ = [
     "vandermonde_columns",
     "codeword_at",
     "next_pow2",
+    "table_leaf",
+    "table_leaves",
+    "TablePublic",
+    "TableCommitment",
 ]
 
 HASH_BYTES = 32
@@ -644,3 +652,64 @@ class GroupCommitment:
         cols = [m.columns_at(v, device, None if weights is None else weights[i])
                 for i, m in enumerate(self.members.values())]
         return torch.cat(cols, 0).cpu(), multiproof(self.tree, columns.tolist())
+
+
+# -- lookup tables --------------------------------------------------------------------------
+
+def table_leaf(tag: bytes, index: int, row) -> bytes:
+    """Leaf ``index`` of a lookup table's tree: the table's row ``index`` as its int8 bytes (every row
+    of a table has the table's public length, so the leaf input has one fixed length)."""
+    return hashlib.sha256(b"pvi/row" + tag + int(index).to_bytes(8, "big")
+                          + np.ascontiguousarray(row, dtype=np.int8).tobytes()).digest()
+
+
+def _padding_leaf(tag: bytes, index: int) -> bytes:
+    """Leaf ``index >= V`` of a table of ``V`` rows, up to a power of two: no row's leaf (another domain)."""
+    return hashlib.sha256(b"pvi/pad" + tag + int(index).to_bytes(8, "big")).digest()
+
+
+def table_leaves(tag: bytes, indices: list[int], rows: np.ndarray) -> dict[int, bytes]:
+    """``{j: table_leaf(tag, j, row)}`` for the rows ``rows`` (int8 ``[len(indices), d]``) of ``indices``."""
+    return {j: table_leaf(tag, j, rows[i]) for i, j in enumerate(indices)}
+
+
+@dataclass(frozen=True)
+class TablePublic:
+    """What a verifier holds for a lookup table (an embedding op's ``W`` ``[d, V]``): the root of the
+    Merkle tree over its ``V`` rows (:func:`table_leaf`, padded to a power of two), ``d`` and ``V``."""
+
+    tag: bytes
+    root: bytes
+    n_rows: int
+    n_tokens: int
+
+    @property
+    def depth(self) -> int:
+        return (self.n_tokens - 1).bit_length()          # log2 next_pow2(V)
+
+
+@dataclass
+class TableCommitment:
+    """Prover side of a lookup table: the Merkle tree over the rows of an embedding op's ``W``
+    ``[d, V]``, leaf ``j`` holding token ``j``'s ``d`` int8 weights (column ``j`` of ``W``)."""
+
+    tag: bytes
+    n_rows: int
+    n_tokens: int
+    tree: MerkleTree = field(repr=False)
+
+    @classmethod
+    def build(cls, tag: bytes, weight: torch.Tensor) -> "TableCommitment":
+        rows = weight.to(torch.int8).T.contiguous().cpu().numpy()      # [V, d]
+        v = rows.shape[0]
+        leaves = [table_leaf(tag, j, rows[j]) for j in range(v)]
+        leaves += [_padding_leaf(tag, j) for j in range(v, next_pow2(v))]
+        return cls(tag=tag, n_rows=weight.shape[0], n_tokens=v, tree=MerkleTree(leaves))
+
+    @property
+    def public(self) -> TablePublic:
+        return TablePublic(self.tag, self.tree.root, self.n_rows, self.n_tokens)
+
+    def open(self, ids) -> list[bytes]:
+        """One multiproof for the rows of the distinct ``ids``."""
+        return multiproof(self.tree, sorted(set(ids)))

@@ -41,6 +41,15 @@ Layouts of a weight op ``Z = A [X ; 1]`` (``X``: ``k' x M``, one column per pixe
   dimension ``N``, which agree on at most ``N - 1`` of the ``n`` positions; the opened columns are
   those of ``E'`` (the Merkle root binds them) and are drawn after the claims, independently of
   ``chi'``, so all ``t`` of them fall where the two agree with probability at most the product.
+* ``lookup`` (embedding ops: ``W`` ``[d, V]`` is the table, ``X`` the token ids): the table is
+  committed as a Merkle tree over its ``V`` rows (int8, padded to a power of two), no code.  The
+  claims are the looked-up rows, one column of ``d`` int8 values per position, and the prover
+  opens the tree at the distinct ids with ONE multiproof, sent with the claims.  The verifier checks
+  that every id names a row of the table, that the claims are int8 (so a leaf's bytes are the
+  claim, one to one), that repeated ids carry equal columns, and the multiproof: no challenge, no
+  ``u``, no columns, ``d M`` bytes of claims instead of ``4 d M``.  Its error is 0: accepting any
+  other claim means other bytes for a leaf the root binds, a SHA-256 collision (the assumption of
+  every Merkle tree here, not a term of the statistical bound).
 
 Policies (``bench.py --policy``; the plan is public, part of the verifier's key):
 
@@ -51,21 +60,25 @@ Policies (``bench.py --policy``; the plan is public, part of the verifier's key)
 * ``R<R>`` -- rate ``R`` (a power of two) for every matrix but the embedding tables, which keep
   the base rate (their rows are the vocabulary, so a higher rate multiplies the setup, while
   their columns hold only ``d`` entries);
-* the same with the suffix ``c`` (``tightc``, ``cnn18c``, ``R64c``, ...): a linear op may take the
-  col layout, alone or with the other linear ops that read its input with its row length in one
-  col matrix.  The ops of a set (of one input and row length) take one of three options: every op
-  in the row layout, every op transposed on its own, or all in one col matrix; sets of equal shapes
+* the same with the suffix ``c`` (``tightc``, ``cnn18c``, ``R64c``, ...): every embedding table
+  takes the lookup layout, and a linear op may take the col layout, alone or with the other linear
+  ops that read its input with its row length in one col matrix.  A lookup costs less than the
+  table's row layout: it drops ``u`` (``4 r V`` bytes) and the columns (``4 t d`` per tree), and its
+  claims take one byte each (four as int32, about one in ``PVC3``), for one multiproof of at most
+  one path (``32 log2 V`` bytes) per position -- less than the three bytes per claim it saves on
+  int32 claims for every benchmark decoder (``d >= 512``), and less than ``u`` alone with wire.
+  The linear ops of a set (of one input and row length) take one of three options: every op in
+  the row layout, every op transposed on its own, or all in one col matrix; sets of equal shapes
   (the blocks of a decoder) take the same.  The options are those of least expected proof bytes of
   the whole plan at ``REFERENCE_LAMBDA`` (interactive): ``u`` (row: ``4 r k``), the opened
   columns (row: ``4 t N``, col: ``4 t k``) and the multiproofs of the shared trees they end up
   in, found by descent from the base policy's plan, so a ``c`` plan never costs more than its base
-  policy's in that model.  Convolutions and embedding tables keep the row layout (a convolution's
-  ``w`` would need the unfolded input, and neither opens fewer bytes transposed: their ``N`` is
-  small against their ``k``).
+  policy's in that model.  Convolutions keep the row layout (a convolution's ``w`` would need the
+  unfolded input, and it opens no fewer bytes transposed: its ``N`` is small against its ``k``).
 
-Every policy opens exact ``t`` and shares trees between matrices of one length: the matrices of
-a length, ordered by their ``t``, are split into the runs whose groups minimise the expected
-proof bytes -- ``4 t_g sum n_rows`` of columns plus the multiproof -- at ``REFERENCE_LAMBDA``.
+Every policy opens exact ``t`` and shares trees between the encoded matrices of one length: the
+matrices of a length, ordered by their ``t``, are split into the runs whose groups minimise the
+expected proof bytes -- ``4 t_g sum n_rows`` of columns plus the multiproof -- at ``REFERENCE_LAMBDA``.
 A tall matrix then opens no extra columns for a group's larger ``t`` (a decoder's groups are one
 per length and ``t``), while matrices of few rows share one multiproof (a CNN's are one or a
 few trees).  Row and col matrices of one length may share a tree: every tree's columns are drawn
@@ -139,17 +152,20 @@ class PlannedMatrix:
     """One committed matrix, whose ``n_rows`` rows are encoded (message length ``row_length``) at
     ``n_points``: a weight op's ``[W | b]`` (the row layout, named after the op), or with
     ``members`` the transposed stack ``[A_1 ; A_2 ; ...]^T`` of these weight ops (the col layout:
-    ``n_rows`` is their row length, ``row_length`` their rows together)."""
+    ``n_rows`` is their row length, ``row_length`` their rows together); or with ``lookup`` an
+    embedding op's table ``W`` ``[d, V]``, not encoded: a tree over its ``V`` rows of ``d`` entries
+    (``n_rows = d``, ``row_length = V``, ``n_points``: the tree's ``next_pow2(V)`` leaves)."""
 
     name: str
     n_rows: int
     row_length: int
     n_points: int
     members: tuple[str, ...] = ()
+    lookup: bool = False
 
     @property
     def layout(self) -> str:
-        return "col" if self.members else "row"
+        return "lookup" if self.lookup else "col" if self.members else "row"
 
     @property
     def ops(self) -> tuple[str, ...]:
@@ -159,8 +175,9 @@ class PlannedMatrix:
 
 @dataclass(frozen=True)
 class CommitmentPlan:
-    """Public: the committed matrices (in the order of their first ops), and the groups, each with
-    its matrices in the order their column digests enter the group's leaves."""
+    """Public: the committed matrices (in the order of their first ops), and the groups of the
+    encoded ones, each with its matrices in the order their column digests enter the group's
+    leaves (a lookup table is a tree of its own)."""
 
     policy: str
     matrices: tuple[PlannedMatrix, ...]
@@ -173,6 +190,16 @@ class CommitmentPlan:
     @cached_property
     def _by_op(self) -> dict[str, PlannedMatrix]:
         return {op: m for m in self.matrices for op in m.ops}
+
+    @cached_property
+    def coded(self) -> tuple[PlannedMatrix, ...]:
+        """The encoded matrices (row and col layouts), each in one group: those with a column check."""
+        return tuple(m for m in self.matrices if not m.lookup)
+
+    @cached_property
+    def tables(self) -> tuple[PlannedMatrix, ...]:
+        """The lookup tables."""
+        return tuple(m for m in self.matrices if m.lookup)
 
     def matrix(self, name: str) -> PlannedMatrix:
         return self._by_name[name]
@@ -187,21 +214,22 @@ class CommitmentPlan:
                      for g, members in self.groups)
 
     def matrix_columns(self, group_columns) -> list[int]:
-        """The columns each matrix opens (its group's ``t``), in matrix order."""
+        """The columns each encoded matrix opens (its group's ``t``), in matrix order."""
         t = dict(group_columns)
         of = {m: g for g, members in self.groups for m in members}
-        return [t[of[m.name]] for m in self.matrices]
+        return [t[of[m.name]] for m in self.coded]
 
     def shapes(self) -> list[tuple[int, int]]:
-        """``(message length, n)`` per matrix, in matrix order: one check each (as
-        :func:`protocol.soundness_bits` takes them in mode C)."""
-        return [(m.row_length, m.n_points) for m in self.matrices]
+        """``(message length, n)`` per encoded matrix, in matrix order: one check each (as
+        :func:`protocol.soundness_bits` takes them in mode C; a lookup table adds no term)."""
+        return [(m.row_length, m.n_points) for m in self.coded]
 
 
 def _policy(policy: str, rate: int):
     """``(length, col)``: the codeword length ``length(m, embed)`` of a message of length ``m``
-    (``embed``: an embedding table's rows) under ``policy``, and whether its linear ops may take the
-    col layout (one spelling per plan: no leading zeros)."""
+    (``embed``: an embedding table's rows) under ``policy``, and whether it takes the layouts of the
+    suffix ``c`` -- lookup tables, and the col layout for linear ops (one spelling per plan: no
+    leading zeros)."""
     m = re.fullmatch(r"(?:(tight)|cnn([1-9][0-9]*)|R([1-9][0-9]*))(c?)", policy)
     if m is None:
         raise ValueError(f"unknown commitment policy {policy!r}: expected paper, tight, cnn<e> or R<rate> "
@@ -240,8 +268,12 @@ def _sets(ops, col: bool) -> list[list]:
 def _options(members, policy: str, rate: int) -> list[list[PlannedMatrix]]:
     """The ways to commit one set of ops: every op in the row layout (the base policy's), and under a
     ``c`` policy for linear ops every op transposed on its own and, for several, all of them in one
-    col matrix (an option whose codeword would be longer than the field's NTT is left out)."""
+    col matrix (an option whose codeword would be longer than the field's NTT is left out); under a
+    ``c`` policy an embedding table is looked up, its one way."""
     length, col = _policy(policy, rate)
+    if col and members[0].layout == "embed":
+        return [[PlannedMatrix(op.name, op.n_rows, op.row_length, next_pow2(op.row_length), lookup=True)
+                 for op in members]]
 
     def row(op):
         m = PlannedMatrix(op.name, op.n_rows, op.row_length, length(op.row_length, op.layout == "embed"))
@@ -285,10 +317,12 @@ def _runs(n: int, ts: list[int], rows: list[int]) -> tuple[float, list[tuple[int
 
 
 def _shapes(matrices, bits: float, weights=None) -> dict[int, dict[int, int]]:
-    """``{n: {t: rows}}``: the rows of the matrices of each codeword length and exact ``t`` (each
-    matrix counted ``weights[i]`` times)."""
+    """``{n: {t: rows}}``: the rows of the encoded matrices of each codeword length and exact ``t``
+    (each matrix counted ``weights[i]`` times; lookup tables open no columns)."""
     out: dict = {}
     for i, m in enumerate(matrices):
+        if m.lookup:
+            continue
         at = out.setdefault(m.n_points, {})
         t = exact_columns(m.row_length, m.n_points, bits)
         at[t] = at.get(t, 0) + m.n_rows * (1 if weights is None else weights[i])
@@ -361,7 +395,7 @@ def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None) -> Commi
         for a, b in _runs(n, ts, [at[t] for t in ts])[1]:
             runs.update(((n, t), (n, ts[a])) for t in ts[a:b])
     classes: dict[tuple, list[str]] = {}
-    for m in mats:                   # groups in the order of their first member, members in matrix order
+    for m in (m for m in mats if not m.lookup):   # groups in the order of their first member, members in order
         key = (m.n_points, exact_columns(m.row_length, m.n_points, bits))
         if key not in runs:
             raise ValueError(f"{m.name}: (codeword length, t) = {key} is not a shape of the model")

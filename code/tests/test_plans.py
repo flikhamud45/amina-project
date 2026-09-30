@@ -1,7 +1,8 @@
 """Commitment plans (``pvi.fullcheck.plans``): exact per-op column counts, shared Merkle trees,
 per-op codeword lengths and, under the policies with the suffix ``c``, per-op layouts (the col
-layout, with the ops reading one tensor fused), opt-in by policy name (``commit_graph(...,
-policy=)``, ``params_for(..., plan=)``, a verifier with ``groups``).  The default --
+layout, with the ops reading one tensor fused, and lookup tables for the embeddings), opt-in by
+policy name (``commit_graph(..., policy=)``, ``params_for(..., plan=)``, a verifier with ``groups``
+and ``tables``), also on decoders built with their last block pruned (``prune_last``).  The default --
 ``policy="paper"`` -- is the report's commitment and parameters, which the rest of the suite
 checks bit for bit.
 
@@ -30,11 +31,11 @@ from pvi.fullcheck import field as fld
 from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
 from pvi.fullcheck.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
-                                      group_leaf, verify_multiproof)
+                                      group_leaf, multiproof_size, verify_multiproof)
 from pvi.fullcheck.models import build_float_model
 from pvi.fullcheck.pipeline import wire_openings
-from pvi.fullcheck.plans import (MAX_N, REFERENCE_LAMBDA, column_bits, column_error_log2, exact_columns, next_pow2,
-                                 plan_commitment)
+from pvi.fullcheck.plans import (MAX_N, REFERENCE_LAMBDA, col_name, column_bits, column_error_log2, exact_columns,
+                                 next_pow2, plan_commitment)
 from pvi.fullcheck.quantize import quantize_input, quantize_model
 from pvi.fullcheck.transformer import CONFIGS, DecoderConfig, build_decoder
 
@@ -176,19 +177,36 @@ def test_groups_are_runs_of_one_length_chosen_for_bytes():
 
 
 @pytest.mark.parametrize("model", ["opt-350m", "llama2-7b"])
-def test_a_build_of_a_few_blocks_gets_the_whole_models_groups(model):
+@pytest.mark.parametrize("prune_last", [False, True])
+def test_a_build_of_a_few_blocks_gets_the_whole_models_groups(model, prune_last):
+    """A build's matrices and groups are the whole model's restricted to the built ops -- its blocks
+    being the model's last ones (with ``prune_last`` the last is the pruned one), under their names."""
     cfg = CONFIGS[model]
-    full = analytic.decoder_shapes(cfg)
+    full = analytic.decoder_shapes(cfg, prune_last=prune_last)
     for policy in ("tight", "cnn16", "R16", "tightc", "cnn16c", "R16c"):
         whole = plan_commitment(full, policy)
         of = {m: g for g, ms in whole.groups for m in ms}
         for layers in (1, 2):
-            built = analytic.decoder_shapes(cfg, layers)
+            built = analytic.decoder_shapes(cfg, layers, prune_last=prune_last)
+            first = next(i for i, op in enumerate(built) if op.name == "q0")
+            skip = (len(full) - len(built))                  # the ops of the model's first L - layers blocks
+            rename = {op.name: full[i if i < first else i + skip].name for i, op in enumerate(built)}
+
+            def named(m):
+                return dataclasses.replace(m, name=col_name(rename[o] for o in m.members) if m.members
+                                           else rename[m.name], members=tuple(rename[o] for o in m.members))
+
             plan = plan_commitment(built, policy, model_ops=full)
-            names = {m.name for m in plan.matrices}
-            assert plan.groups == tuple((g, tuple(m for m in ms if m in names)) for g, ms in whole.groups
-                                        if any(m in names for m in ms))
-            assert list(plan.matrices) == [m for m in whole.matrices if m.name in names] and set(of) >= names
+            matrices = [named(m) for m in plan.matrices]
+            names = {m.name for m in matrices}
+            assert matrices == [m for m in whole.matrices if m.name in names]
+            assert set(of) | {m.name for m in whole.tables} >= names
+            wanted = tuple((g, tuple(m for m in ms if m in names)) for g, ms in whole.groups if set(ms) & names)
+            got = tuple((g, tuple(named(plan.matrix(m)).name for m in ms)) for g, ms in plan.groups)
+            # the same trees (members and lengths; a pruned build meets them in another order)
+            assert sorted((g.split("_n")[1], ms) for g, ms in got) == sorted((g.split("_n")[1], ms) for g, ms in wanted)
+            if not prune_last:           # every block alike: the groups come in the model's order, named alike
+                assert got == wanted
 
 
 # -- the guarantee, for every model, policy, mode and challenge kind ----------------------------------
@@ -223,12 +241,17 @@ def test_every_plan_meets_lambda_for_every_model_and_mode(policy, all_models):
     for name, ops in all_models.items():
         plan = plan_commitment(ops, policy)
         of = {op.name: op for op in ops}
-        # one check per committed matrix, of its message length: a row matrix's k, a col matrix's stacked rows
+        # one check per encoded matrix, of its message length: a row matrix's k, a col matrix's stacked rows;
+        # under a c policy every embedding table is a lookup table, which adds no term
         assert plan.shapes() == [(sum(of[o].n_rows for o in m.members) if m.members else of[m.name].row_length,
-                                  m.n_points) for m in plan.matrices]
+                                  m.n_points) for m in plan.coded]
         assert sorted(o for m in plan.matrices for o in m.ops) == sorted(of)
         assert policy.endswith("c") or all(m.layout == "row" for m in plan.matrices)
+        assert [m.name for m in plan.tables] == ([op.name for op in ops if op.layout == "embed"]
+                                                 if policy.endswith("c") else [])
+        assert all(m.n_points == next_pow2(m.row_length) and m.n_rows == of[m.name].n_rows for m in plan.tables)
         per_op = [(op.row_length, 0) for op in ops]      # modes K and Kpre: one Freivalds check per op
+        own_rows = [(op.row_length, 0) for op in ops if op.layout != "embed"]     # K, Kpre: lookups=True
         for lam in (40, 80, 128):
             for fs in (False, True):
                 paper = proto.params_for(lam, len(ops), fiat_shamir=fs)
@@ -245,6 +268,7 @@ def test_every_plan_meets_lambda_for_every_model_and_mode(policy, all_models):
                 for (m_len, n), t in zip(plan.shapes(), cols):
                     assert column_error_log2(m_len, n, t) <= -bits and params.reps * fld.LOG2_P >= bits
                 assert proto.soundness_bits(params, per_op, "K") >= lam      # (Kpre: the bound of K, Freivalds alone)
+                assert proto.soundness_bits(params, own_rows, "K") >= proto.soundness_bits(params, per_op, "K")
                 if policy == "tight":            # the report's lengths: exact t never opens more
                     assert max(cols) <= paper.columns
                 with pytest.raises(ValueError, match="columns=plan.matrix_columns"):
@@ -266,10 +290,13 @@ _TINY = {
 
 
 def _model(kind):
+    """A tiny model and a query: a CNN, or a decoder of :data:`_TINY` (``<decoder>-pruned``: built with
+    its last block pruned)."""
     if kind in ("lenet5", "mlp_wide"):
         return _cnn(kind)
-    graph = build_decoder(_TINY[kind], calib_tokens=8, seed=1)
-    return graph, torch.randint(0, _TINY[kind].vocab, (1, 9), generator=torch.Generator().manual_seed(2))
+    base, _, variant = kind.partition("-")
+    graph = build_decoder(_TINY[base], calib_tokens=8, seed=1, prune_last=variant == "pruned")
+    return graph, torch.randint(0, _TINY[base].vocab, (1, 9), generator=torch.Generator().manual_seed(2))
 
 
 _BUILT: dict = {}
@@ -285,7 +312,7 @@ def _planned(kind, policy):
 
 def _verifiers(graph, coms, fiat_shamir, device="cpu", lam=40):
     params = proto.params_for(lam, len(graph.mat_ops), fiat_shamir=fiat_shamir, plan=coms.plan)
-    kw = dict(publics=coms.publics, groups=coms.group_publics)
+    kw = dict(publics=coms.publics, groups=coms.group_publics, tables=coms.table_publics)
     return (proto.Verifier(graph.public(), params, "C", device=device, **kw),
             proto.Verifier(graph.public(), params, "C", stream=True, device=device, **kw))
 
@@ -295,38 +322,68 @@ def _folded(graph, coms):
     return [op for op in graph.mat_ops if coms.plan.matrix_of(op.name).layout == "row"]
 
 
-@pytest.mark.parametrize("kind", ["lenet5", "mlp_wide", "gpt", "llama", "opt", "qwen"])
+def _claim_bytes(graph, tables, claims: dict, wire: bool) -> int:
+    """The claims' bytes as they are sent: 4 each, a lookup table's 1, or with ``wire`` the ``PVC3`` bytes
+    of all but the tables' and their int8 rows."""
+    if wire:
+        return (len(cc.encode([claims[op.name] for op in graph.mat_ops if op.name in claims and op.name not in tables]))
+                + len(cc.pack_rows([claims[name] for name in tables])))
+    return sum((1 if name in tables else 4) * z.numel() for name, z in claims.items())
+
+
+def _looked_up(graph, x, tables) -> dict[str, list[int]]:
+    """The ids each lookup table of ``tables`` looks up on query ``x``."""
+    ids = {}
+    graph.forward(x, watch=lambda op, xin: ids.update({op.name: xin.reshape(-1).tolist()}) if op.name in tables
+                  else None)
+    return ids
+
+
+DECODERS = ("gpt", "llama", "opt", "qwen")
+PRUNED = tuple(k + "-pruned" for k in DECODERS)
+
+
+@pytest.mark.parametrize("kind", ["lenet5", "mlp_wide", *DECODERS, *PRUNED])
 @pytest.mark.parametrize("policy", POLICIES)
 @pytest.mark.parametrize("fiat_shamir", [False, True])
 @pytest.mark.parametrize("wire", [False, True])
 def test_honest_queries_are_accepted_and_sized_as_planned(kind, policy, fiat_shamir, wire):
     graph, x, coms = _planned(kind, policy)
     prover = proto.Prover(graph, commitments=coms)
-    claims = [prover.claims(x)[op.name] for op in graph.mat_ops]
-    rows = {name: c.public.n_rows for name, c in coms.items()}         # each committed matrix's column length
+    claims = prover.claims(x)
+    rows = {name: c.public.n_rows for name, c in coms.items()}         # each encoded matrix's column length
     size = cc.field_size if wire else (lambda numel: 4 * numel)
+    ids = _looked_up(graph, x, coms.tables)
+    assert bool(coms.tables) == (policy.endswith("c") and kind not in ("lenet5", "mlp_wide"))
+    table_paths = 32 * sum(multiproof_size(set(ids[name]), t.public.depth) for name, t in coms.tables.items())
     for v in _verifiers(graph, coms, fiat_shamir):
         res = proto.run_query(prover, v, x, seed=None if fiat_shamir else 1, wire=wire)
         assert res["accepted"], res["rejected_at"]
-        assert res["bytes"]["claims"] == (len(cc.encode(claims)) if wire else 4 * sum(z.numel() for z in claims))
+        assert res["bytes"]["claims"] == _claim_bytes(graph, coms.tables, claims, wire)
         assert res["bytes"]["u"] == size(v.params.reps * sum(op.row_length for op in _folded(graph, coms)))
         assert res["bytes"]["columns"] == size(sum(v.params.columns_for(g) * sum(rows[m] for m in ms)
                                                    for g, ms in coms.plan.groups))
-        assert res["bytes"]["paths"] <= 32 * sum(v.params.columns_for(g) * gp.depth for g, gp in v.groups.items())
+        assert table_paths < res["bytes"]["paths"] <= table_paths + 32 * sum(
+            v.params.columns_for(g) * gp.depth for g, gp in v.groups.items())
         if wire and not fiat_shamir:     # the same challenges as without wire: the same multiproofs
             assert res["bytes"]["paths"] == proto.run_query(prover, v, x, seed=1)["bytes"]["paths"]
-    # modes K and Kpre take the plan's parameters (they open no columns)
+    # modes K and Kpre take the plan's parameters (they open no columns); with lookups the verifier reads
+    # the embedding rows itself and the prover sends no claims for them
     params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fiat_shamir, plan=coms.plan)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
     victim = graph.mat_ops[len(graph.mat_ops) // 2].name
     for mode in ("K", "Kpre"):
-        v = proto.Verifier(graph.public(), params, mode, weights=weights)
-        if mode == "Kpre":
-            v.precompute(proto.Challenger(seed=3))
-        assert proto.run_query(proto.Prover(graph), v, x, seed=2, wire=wire)["accepted"]
-        tampered = proto.run_query(proto.Prover(graph), v, x, seed=3, wire=wire,
-                                   forward_kwargs={"tamper": lambda op, z: z + 1 if op.name == victim else z})
-        assert tampered["rejected_at"] == "freivalds"
+        for lookups in (False, True):
+            v = proto.Verifier(graph.public(), params, mode, weights=weights, lookups=lookups)
+            if mode == "Kpre":
+                v.precompute(proto.Challenger(seed=3))
+            res = proto.run_query(proto.Prover(graph), v, x, seed=2, wire=wire)
+            own = {op.name for op in graph.mat_ops if lookups and op.layout == "embed"}
+            assert res["accepted"] and res["bytes"] == {"claims": _claim_bytes(graph, (), {
+                k: z for k, z in claims.items() if k not in own}, wire), "u": 0, "columns": 0, "paths": 0}
+            tampered = proto.run_query(proto.Prover(graph), v, x, seed=3, wire=wire,
+                                       forward_kwargs={"tamper": lambda op, z: z + 1 if op.name == victim else z})
+            assert tampered["rejected_at"] == "freivalds"
 
 
 def _kernel_shift(left):
@@ -369,7 +426,11 @@ def _attacks(graph, coms, x):
     rows = coms[victim].public.n_rows
     final = mats[-1]
     folded = _folded(graph, coms)
-    u_victim = victim if matrix.layout == "row" else folded[len(folded) // 2].name
+    # u + 1 (every entry) passes Freivalds where [X ; 1] sums to 0 in every column -- which a normed
+    # input of one column (a pruned block's q) can: a folded op of several claim columns then
+    wide = [op.name for op in folded if dict(zip((o.name for o in mats), graph.claim_columns(x)))[op.name] > 1]
+    wide = wide or [op.name for op in folded]
+    u_victim = victim if matrix.layout == "row" else wide[len(wide) // 2]
     state: dict = {}
     hit = off                           # a row of the victim's block that its code check reads
     if matrix.layout == "col":          # its check folds the columns with w = chi' [X ; 1]^T: a shift in the kernel
@@ -518,7 +579,7 @@ def _labels(graph, x, coms, verifiers, seed=0, wire=False):
     return out
 
 
-@pytest.mark.parametrize("kind", ["lenet5", "mlp_wide", "gpt", "llama", "opt", "qwen"])
+@pytest.mark.parametrize("kind", ["lenet5", "mlp_wide", *DECODERS, "opt-pruned", "qwen-pruned"])
 @pytest.mark.parametrize("policy", POLICIES)
 @pytest.mark.parametrize("fiat_shamir", [False, True])
 @pytest.mark.parametrize("wire", [False, True])
@@ -536,7 +597,8 @@ def test_the_gpu_forms_of_the_checks_give_the_same_verdicts(paths, wire, monkeyp
         monkeypatch.setattr(proto, "_defer", lambda device: True)
     if "int8" in paths:
         monkeypatch.setattr(proto, "int8_ok", lambda device: True)
-    for kind, policy in (("lenet5", "cnn12"), ("llama", "R8"), ("mlp_wide", "cnn12c"), ("qwen", "R8c")):
+    for kind, policy in (("lenet5", "cnn12"), ("llama", "R8"), ("mlp_wide", "cnn12c"), ("qwen", "R8c"),
+                         ("gpt-pruned", "tightc")):
         graph, x, coms = _planned(kind, policy)
         labels = _labels(graph, x, coms, _verifiers(graph, coms, False), seed=10, wire=wire)
         assert labels == {k: _expected(graph, coms)[k] for k in labels}
@@ -670,8 +732,10 @@ def test_the_fiat_shamir_transcript_absorbs_the_plan(policy, monkeypatch):
     assert [label for label in labels if label.startswith(b"group/")] == [b"group/" + g.encode() for g in v.groups]
     stacked = [name for name, pub in v.publics.items() if pub.members]
     assert [label for label in labels if label.startswith(b"col/")] == [b"col/" + m.encode() for m in stacked]
-    assert bool(stacked) == policy.endswith("c")
-    # every challenge follows the message it must: chi and chi' (drawn when M > r) the claims, the columns u
+    assert bool(stacked) == policy.endswith("c") == bool(v.tables)
+    assert [label for label in labels if label.startswith(b"table/")] == [b"table/" + t.encode() for t in v.tables]
+    # every challenge follows the message it must: chi and chi' (drawn when M > r) the claims and the lookup
+    # tables' multiproofs (sent with them), the columns u
 
     def at(prefix):
         return [i for i, e in enumerate(events) if type(e) is type(prefix) and e.startswith(prefix)]
@@ -682,6 +746,9 @@ def test_the_fiat_shamir_transcript_absorbs_the_plan(policy, monkeypatch):
     assert sorted(events[i] for i in folds) == sorted("fold/" + n for n in [op.name for op in v._row_ops()] + wide)
     assert max(at(b"claim/")) < min(folds) and max(folds) < min(at(b"u/")) <= max(at(b"u/")) < min(columns)
     assert len(columns) == len(v.groups)
+    if v.tables:
+        assert max(at(b"claim/")) < min(at(b"lookup/")) <= max(at(b"lookup/")) < min(folds)
+        assert [events[i] for i in at(b"lookup/")] == [b"lookup/" + t.encode() for t in v.tables]
     # every public parameter of the plan changes the challenges: a group's root, its t, its member order
     # (with the same messages), each op's codeword length (absorbed in its op record) and a col matrix's
     # (in its col record), and the ops a col matrix stacks and their order
@@ -706,7 +773,8 @@ def test_the_fiat_shamir_transcript_absorbs_the_plan(policy, monkeypatch):
                variant(groups=dict(v.groups, **{multi: dataclasses.replace(
                    v.groups[multi], members=v.groups[multi].members[::-1])})),
                variant(publics=dict(v.publics, **{name: dataclasses.replace(
-                   v.publics[name], n_points=2 * v.publics[name].n_points)}))]
+                   v.publics[name], n_points=2 * v.publics[name].n_points)})) if name in v.publics else
+               variant(tables=dict(v.tables, **{name: dataclasses.replace(v.tables[name], root=bytes(32))}))]
     for m in stacked:
         pub = v.publics[m]
         changed.append(variant(publics=dict(v.publics, **{m: dataclasses.replace(pub, n_points=2 * pub.n_points)})))
@@ -839,16 +907,26 @@ def test_the_wire_transcript_absorbs_the_plan_and_the_encoded_bytes(policy, monk
         transcripts.append(list(absorbed))
     assert transcripts[0] == transcripts[1]         # the streaming verifier's is the batched one's
     labels = [label for label, _ in transcripts[0]]
-    assert labels == [b"params", *(b"op/" + op.name.encode() for op in graph.mat_ops),
-                      *(b"col/" + m.name.encode() for m in coms.plan.matrices if m.layout == "col"),
-                      *(b"group/" + g.encode() for g in verifiers[0].groups), b"x", b"claims/PVC3", b"u/F31"]
-    assert transcripts[0][-2][1] == cc.encode([prover.claims(x)[op.name] for op in graph.mat_ops])
+    tables = list(verifiers[0].tables)
+    statement = [b"params", *(b"op/" + op.name.encode() for op in graph.mat_ops),
+                 *(b"col/" + m.name.encode() for m in coms.plan.matrices if m.layout == "col"),
+                 *(b"group/" + g.encode() for g in verifiers[0].groups), *(b"table/" + t.encode() for t in tables),
+                 b"x"]
+    assert labels == [*statement, b"claims/PVC3", *([b"rows/I8"] if tables else []),
+                      *(b"lookup/" + t.encode() for t in tables), b"u/F31"]
+    blobs = dict(transcripts[0])
+    claims = prover.claims(x)
+    assert blobs[b"claims/PVC3"] == cc.encode([claims[op.name] for op in graph.mat_ops if op.name not in tables])
+    assert not tables or blobs[b"rows/I8"] == cc.pack_rows([claims[t] for t in tables])
     reps = verifiers[0].params.reps
-    assert len(transcripts[0][-1][1]) == cc.field_size(reps * sum(op.row_length for op in _folded(graph, coms)))
-    # the statement -- the plan's trees, their members and t -- is absorbed as without wire
+    assert len(blobs[b"u/F31"]) == cc.field_size(reps * sum(op.row_length for op in _folded(graph, coms)))
+    # the statement -- the plan's trees, their members and t, its tables -- is absorbed as without wire,
+    # and so are the tables' multiproofs
     absorbed.clear()
     assert proto.run_query(prover, verifiers[0], x)["accepted"]
-    assert absorbed[:len(labels) - 2] == transcripts[0][:-2]
+    assert absorbed[:len(statement)] == transcripts[0][:len(statement)]
+    assert [a for a in absorbed if a[0].startswith(b"lookup/")] == [a for a in transcripts[0]
+                                                                    if a[0].startswith(b"lookup/")]
 
 
 def test_a_verifier_refuses_a_key_that_does_not_fit():
@@ -875,8 +953,8 @@ def test_a_verifier_refuses_a_col_key_that_does_not_fit():
     checked by exactly one matrix."""
     graph, x, coms = _planned("gpt", "R8c")
     params = proto.params_for(40, len(graph.mat_ops), plan=coms.plan)
-    groups = coms.group_publics
-    proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=groups)
+    groups, tables = coms.group_publics, coms.table_publics
+    proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=groups, tables=tables)
     fused = next(m for m in coms.plan.matrices if len(m.members) > 1)       # q, k and v
     pub = coms.publics[fused.name]
     ops = {op.name: op for op in graph.mat_ops}
@@ -887,7 +965,7 @@ def test_a_verifier_refuses_a_col_key_that_does_not_fit():
     def refused(match, **changes):
         publics = dict(coms.publics, **changes)
         with pytest.raises(ValueError, match=match):
-            proto.Verifier(graph.public(), params, "C", publics=publics, groups=groups)
+            proto.Verifier(graph.public(), params, "C", publics=publics, groups=groups, tables=tables)
 
     one = dataclasses.replace(pub, members=pub.members[:1])                    # k and v checked by nothing
     refused("shape of its ops", **{fused.name: one})
@@ -985,7 +1063,7 @@ def test_perf_random_init_builds_every_cnn_it_accepts(monkeypatch, capsys):
 
 # -- the proof-size model ----------------------------------------------------------------------------
 
-@pytest.mark.parametrize("kind", ["lenet5", "mlp_wide", "gpt", "opt", "qwen"])
+@pytest.mark.parametrize("kind", ["lenet5", "mlp_wide", "gpt", "opt", "qwen", "gpt-pruned", "qwen-pruned"])
 @pytest.mark.parametrize("policy", ("paper",) + POLICIES)
 def test_the_proof_size_model_is_what_run_query_sends(kind, policy):
     graph, x = _model(kind) if policy == "paper" else _planned(kind, policy)[:2]
@@ -993,14 +1071,19 @@ def test_the_proof_size_model_is_what_run_query_sends(kind, policy):
     prover = proto.Prover(graph, commitments=coms)
     _, claims = graph.forward(x)
     cols = {k: z.shape[1] for k, z in claims.items()}
-    if kind in _TINY:
-        assert list(cols.values()) == list(analytic.decoder_claim_columns(_TINY[kind], x.shape[1]).values())
+    base, _, variant = kind.partition("-")
+    if base in _TINY:
+        assert list(cols.values()) == list(analytic.decoder_claim_columns(
+            _TINY[base], x.shape[1], prune_last=variant == "pruned").values())
+    ids = _looked_up(graph, x, coms.tables)
     for fs in (False, True):
         params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fs, plan=coms.plan)
-        v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics)
-        want = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan)
-        encoded = len(cc.encode([claims[op.name] for op in graph.mat_ops]))
-        wired = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, wire_claims=encoded)
+        v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                           tables=coms.table_publics)
+        want = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, table_ids=ids)
+        encoded = _claim_bytes(graph, coms.tables, claims, wire=True)
+        wired = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, wire_claims=encoded,
+                                     table_ids=ids)
         assert wired["paths"] == want["paths"] and wired["claims"] == encoded
         paths = []
         for seed in range(12):
@@ -1011,11 +1094,21 @@ def test_the_proof_size_model_is_what_run_query_sends(kind, policy):
                 sent = proto.run_query(prover, v, x, seed=seed, wire=True)["bytes"]
                 assert sent == dict(wired, paths=sent["paths"] if fs else got["paths"])
         assert abs(np.mean(paths) - want["paths"]) < 0.1 * want["paths"]
-        k_modes = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre")
-        assert k_modes == {"claims": want["claims"], "u": 0, "columns": 0, "paths": 0.0}
-        k_wired = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre", wire_claims=encoded)
-        assert k_wired == {"claims": encoded, "u": 0, "columns": 0, "paths": 0.0}
+        # modes K and Kpre send the claims only, all as integers (a plan's tables are mode C's), and with
+        # lookups none of the embedding ops'
+        for lookups in (False, True):
+            own = {op.name for op in graph.mat_ops if lookups and op.layout == "embed"}
+            sent = {k: z for k, z in claims.items() if k not in own}
+            k_modes = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre", lookups=lookups)
+            assert k_modes == {"claims": _claim_bytes(graph, (), sent, False), "u": 0, "columns": 0, "paths": 0.0}
+            k_wired = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre",
+                                           wire_claims=_claim_bytes(graph, (), sent, True), lookups=lookups)
+            assert k_wired == {"claims": _claim_bytes(graph, (), sent, True), "u": 0, "columns": 0, "paths": 0.0}
+    with pytest.raises(ValueError, match="lookups"):
+        analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, lookups=True)
     setup = analytic.setup_size(graph.mat_ops, plan=coms.plan)
     assert setup["encoded_entries"] == sum(c.public.n_rows * c.n_points for c in coms.values())
-    assert setup["trees"] == (len(coms.groups) or len(coms))
+    assert setup["trees"] == (len(coms.groups) + len(coms.tables) or len(coms))
+    assert setup["leaves"] == (sum(g.n_points for g in coms.groups.values()) + sum(
+        next_pow2(t.n_tokens) for t in coms.tables.values()) or sum(c.n_points for c in coms.values()))
     assert setup["max_n"] <= MAX_N

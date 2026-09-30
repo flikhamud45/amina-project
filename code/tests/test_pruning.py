@@ -3,7 +3,9 @@
 
 Its pieces: attention of the queries of the last positions (``transformer._attention``,
 ``_attention_heads``: the last rows of the causal mask), RoPE at an offset, and the shapes of the
-pruned graph (``analytic.decoder_shapes`` / ``decoder_claim_columns(..., prune_last=True)``).
+pruned graph (``analytic.decoder_shapes`` / ``decoder_claim_columns(..., prune_last=True)``).  The
+protocol runs pruned decoders in ``tests/test_plans.py`` (every plan, the forgeries, the GPU forms, the
+byte model) and ``tests/test_lookups.py``.
 """
 
 from __future__ import annotations
@@ -14,11 +16,12 @@ import pytest
 import torch
 
 from pvi.fullcheck import analytic
+from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
 from pvi.fullcheck import transformer as tr
 from pvi.fullcheck.transformer import CONFIGS, build_decoder
 
-from test_plans import _TINY   # the plan tests' tiny decoders
+from test_plans import _TINY, _planned, _verifiers   # the plan tests' tiny decoders and helpers
 
 _REAL = {name: dataclasses.replace(CONFIGS[name], vocab=512) for name in ("gpt2", "opt-350m", "llama2-7b", "qwen3-4b")}
 
@@ -95,3 +98,19 @@ def test_rope_at_an_offset_rotates_as_at_those_positions():
             assert torch.equal(tr._rope(x[:, -tq:], theta, 9 - tq), whole[:, -tq:])
             assert torch.equal(ref.rope(x[:, -tq:], theta, 9 - tq), whole[:, -tq:])
 
+
+@pytest.mark.parametrize("policy", ["R8c", "tightc"])
+def test_a_pruned_block_commits_its_q_on_its_own(policy):
+    """The pruned last block's q reads the last position, k and v every position: under a ``c`` policy
+    q is a set of its own (in rows, or transposed with ``chi' = I``: it has one claim column) and k and v
+    share their col matrix."""
+    graph, x, coms = _planned("qwen-pruned", policy)
+    q, k, v = (op.name for op in graph.mat_ops[-8:-5])     # the last block: q, k, v, o, gate, up, down; the head
+    plan = coms.plan
+    assert plan.matrix_of(q) != plan.matrix_of(k) == plan.matrix_of(v) and plan.matrix_of(k).layout == "col"
+    assert plan.matrix_of(k).members == (k, v)
+    verifier = _verifiers(graph, coms, False)[0]
+    assert graph.claim_columns(x)[-8:] == [1, 9, 9, 1, 1, 1, 1, 1]
+    chis = verifier.fold_challenges(proto.Challenger(seed=1), x)
+    if plan.matrix_of(q).layout == "col":
+        assert torch.equal(chis[plan.matrix_of(q).name], torch.eye(1, dtype=torch.int64))

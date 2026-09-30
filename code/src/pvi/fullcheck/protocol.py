@@ -34,12 +34,17 @@ and per-op codeword lengths -- and under its ``c`` policies commits some linear 
 verifier computes both sides of its code check itself (``w = chi' [X ; 1]^T`` and ``z = chi'
 Z^T``), and step 5 opens columns of its transposed matrix, which must satisfy ``w . E'[:, c] ==
 Enc(z)[c]``.  All trees' columns are drawn in step 4, so row and col matrices of one codeword
-length share trees.  Two preconditions make the *integer* claim, not just its
-residue, the thing that is checked: claims are range-checked to ``|z| < 2**29``
-(so two in-range integers with equal residues are equal, since ``2 * 2**29 < p``),
-and every weight op is checked at commitment time to have honest outputs inside
-that range (:func:`claim_bound`).  Completeness is exact: every quantity is an
-integer and both parties compute cheap ops with the same integer rules.
+length share trees.  The ``c`` policies also commit every embedding table as a lookup table (a
+Merkle tree over its rows): its claims are the looked-up rows, sent as int8 in step 1 with one
+multiproof over the distinct ids, and checked once derive has the ids, before any challenge --
+int8 and ids of the table (in derive), equal rows for equal ids (``lookup_consistency``), the
+multiproof (``lookup_merkle``) -- with no ``u`` and no columns.  In modes K and Kpre a verifier
+with ``lookups=True`` (opt-in) reads the embedding rows from its own weights, and the prover sends
+no claims for them.  Two preconditions make the *integer* claim, not just its residue, the thing
+that is checked: claims are range-checked to ``|z| < 2**29`` (so two in-range integers with equal
+residues are equal, since ``2 * 2**29 < p``), and every weight op is checked at commitment time to
+have honest outputs inside that range (:func:`claim_bound`).  Completeness is exact: every
+quantity is an integer and both parties compute cheap ops with the same integer rules.
 """
 
 from __future__ import annotations
@@ -58,9 +63,9 @@ import numpy as np
 import torch
 
 from . import claimcodec
-from .commitment import (HASH_BYTES, CommitmentPublic, GroupCommitment, GroupPublic, TransposedCommitment,
-                         WeightCommitment, codeword_at, column_rows, group_leaf, map_threaded, row_leaves,
-                         verify_multiproofs)
+from .commitment import (HASH_BYTES, CommitmentPublic, GroupCommitment, GroupPublic, TableCommitment, TablePublic,
+                         TransposedCommitment, WeightCommitment, codeword_at, column_rows, group_leaf, map_threaded,
+                         row_leaves, table_leaves, verify_multiproof, verify_multiproofs)
 from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
                     int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64, min_max,
                     small_matmul_mod, to_field)
@@ -134,7 +139,10 @@ def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: 
     group's ``t``, which would credit every matrix with more columns than its tree opens.  In modes K
     and Kpre every op is a check of its own (Freivalds): pass one shape per op.  A col matrix whose
     claims have ``M <= r`` columns is checked on each of them (``chi' = I``), without the Freivalds
-    term this sum still counts for it (an upper bound)."""
+    term this sum still counts for it (an upper bound).  A lookup is no check of chance and adds no
+    term: a plan's lookup table (its claims are the rows the root binds; ``plan.shapes()`` leaves the
+    tables out), or in modes K and Kpre an embedding op whose rows the verifier reads itself
+    (``lookups``: leave its shape out)."""
     if mode == "C" and params.group_columns and columns is None:
         raise ValueError("a commitment plan's matrices open their groups' t: "
                          "pass columns=plan.matrix_columns(params.group_columns)")
@@ -161,15 +169,18 @@ def claim_bound(op: MatOp) -> int:
 
 class GraphCommitment(dict):
     """``{op name: WeightCommitment}`` for every weight op; under a commitment plan
-    ``{matrix name: its commitment}`` for every committed matrix (a row-layout op's
+    ``{matrix name: its commitment}`` for every encoded matrix (a row-layout op's
     ``WeightCommitment`` under the op's name, a col-layout matrix's ``TransposedCommitment``), the
-    ``plan`` and its ``groups`` (``{name: GroupCommitment}``), whose trees bind the members' columns."""
+    ``plan``, its ``groups`` (``{name: GroupCommitment}``), whose trees bind the members' columns,
+    and its lookup ``tables`` (``{op name: TableCommitment}``)."""
 
     def __init__(self, members: dict[str, WeightCommitment | TransposedCommitment], plan: CommitmentPlan | None = None,
-                 groups: dict[str, GroupCommitment] | None = None) -> None:
+                 groups: dict[str, GroupCommitment] | None = None,
+                 tables: dict[str, TableCommitment] | None = None) -> None:
         super().__init__(members)
         self.plan = plan
         self.groups = groups or {}
+        self.tables = tables or {}
 
     @property
     def publics(self) -> dict[str, CommitmentPublic]:
@@ -178,6 +189,10 @@ class GraphCommitment(dict):
     @property
     def group_publics(self) -> dict[str, GroupPublic]:
         return {name: g.public for name, g in self.groups.items()}
+
+    @property
+    def table_publics(self) -> dict[str, TablePublic]:
+        return {name: t.public for name, t in self.tables.items()}
 
 
 def commit_graph(graph: IntGraph, rate: int, device="cpu", *, policy: str = "paper",
@@ -205,7 +220,8 @@ def commit_graph(graph: IntGraph, rate: int, device="cpu", *, policy: str = "pap
     groups = {g: GroupCommitment.build(g.encode(), {m: member(plan.matrix(m)) for m in members}, device=device)
               for g, members in plan.groups}
     members = {m: c for g in groups.values() for m, c in g.members.items()}
-    return GraphCommitment({m.name: members[m.name] for m in plan.matrices}, plan, groups)
+    tables = {m.name: TableCommitment.build(m.name.encode(), ops[m.name].weight) for m in plan.tables}
+    return GraphCommitment({m.name: members[m.name] for m in plan.coded}, plan, groups, tables)
 
 
 class Challenger:
@@ -291,20 +307,34 @@ class Prover:
         self.commitments = commitments or {}
         self.lean = lean  # free dead activations and stream each claim to the host during the forward pass
         self._ops = {op.name: op for op in graph.mat_ops}
+        self._looked_up: dict[str, list[int]] = {}    # a plan's lookup tables: the ids of the last query
 
     def claims(self, x: torch.Tensor, *, send=None, to_host: bool = True, **forward_kwargs) -> dict[str, torch.Tensor]:
         """The claims of query ``x``, on the host (``to_host=False``: where the prover keeps them, its
         device, or the host in lean mode).  ``send(z)`` (see ``IntGraph.forward``), if given, is
         applied to each claim on the prover's device as it is computed, and its results are returned
-        as they are."""
+        as they are.  The ids each lookup table of a commitment plan looks up are kept for
+        :meth:`open_tables`."""
         if self.lean:
             forward_kwargs = dict(forward_kwargs, free=True, claims_device="cpu")
+        tables = getattr(self.commitments, "tables", {})
+        self._looked_up = {}
+        if tables:
+            def watch(op, xin):
+                if op.name in tables:
+                    self._looked_up[op.name] = xin.reshape(-1).tolist()
+            forward_kwargs = dict(forward_kwargs, watch=watch)
         _, claims = self.graph.forward(x.to(self.device), send=send, **forward_kwargs)
         return claims if send is not None or not to_host else {k: v.to("cpu") for k, v in claims.items()}
 
     def _weight(self, name: str) -> torch.Tensor:
         # the int8 weights the forward pass already keeps on the device
         return self._ops[name]._weights_on(self.device)[0]
+
+    def open_tables(self) -> dict[str, list[bytes]]:
+        """The multiproof of every lookup table of a commitment plan for the rows the last
+        :meth:`claims` looked up (sent with the claims)."""
+        return {name: t.open(self._looked_up[name]) for name, t in getattr(self.commitments, "tables", {}).items()}
 
     def fold(self, chis: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {name: self.commitments[name].fold(chi, self.device, weight=self._weight(name))
@@ -394,6 +424,14 @@ def _in_range(z: torch.Tensor, bound: int) -> bool:
         return True
     lo, hi = min_max(z)
     return lo > -bound and hi < bound
+
+
+def _in_bounds(a: torch.Tensor, lo: int, hi: int) -> bool:
+    """``lo <= a <= hi`` everywhere."""
+    if a.numel() == 0:
+        return True
+    amin, amax = min_max(a)
+    return amin >= lo and amax <= hi
 
 
 def _in_field(a: torch.Tensor) -> bool:
@@ -518,6 +556,14 @@ def _to_device(t: torch.Tensor, device) -> torch.Tensor:
     return t.pin_memory().to(device, non_blocking=True)
 
 
+def _host_copy(t: torch.Tensor) -> torch.Tensor:
+    """``t`` on the host: from a CUDA device a non-blocking copy into pinned memory, which holds ``t``
+    once the device has run what was queued before it (after any later copy back that waits)."""
+    if t.device.type != "cuda":
+        return t
+    return torch.empty(t.shape, dtype=t.dtype, pin_memory=True).copy_(t, non_blocking=True)
+
+
 def _upload_rows(rows: dict[str, np.ndarray], device) -> dict[str, torch.Tensor]:
     """Host int32 arrays on ``device``: per shape, one staging buffer (pinned) and one
     non-blocking copy (a copy from pageable memory would wait for the device each time)."""
@@ -544,25 +590,31 @@ class Verifier:
     device: str = "cpu"      # "cuda" / "cuda:1": a client with a GPU (Merkle hashing stays on the CPU)
     stream: bool = False     # run_query checks with verify_streaming (the same verdicts and labels)
     groups: dict[str, GroupPublic] = field(default_factory=dict)   # a commitment plan's trees (mode C)
+    tables: dict[str, TablePublic] = field(default_factory=dict)   # a plan's lookup tables (mode C)
+    lookups: bool = False    # modes K and Kpre: the verifier reads the embedding rows itself (none are sent)
     _pre: dict = field(default_factory=dict)
-    _wdev: dict = field(default_factory=dict)   # mode K on a GPU: the weights stay on the device
+    _wdev: dict = field(default_factory=dict)   # modes K and Kpre on a GPU: the weights they read stay there
     _ranged: dict = field(default_factory=dict)  # name -> (weakref, _version) of the claim derive() range-checked
     _kept: dict = field(default_factory=dict)    # Kpre: stacked operands of the fixed chi and u
     _consts: list = field(default_factory=list)  # a GPU client: the cheap ops' constants (source, copy, versions)
     _columns: dict = field(default_factory=dict)  # query shape -> claim_columns
 
     def __post_init__(self) -> None:
-        if self.groups:
+        if self.groups or self.tables:
             self._check_plan()
+        if self.lookups and self.mode == "C":
+            raise ValueError("lookups=True is for modes K and Kpre, whose verifier holds the weights "
+                             "(mode C looks rows up in a commitment plan's tables: its c policies)")
         if torch.device(self.device).type != "cpu":   # the cheap ops' constants live on the device
             self.graph, pairs = self.graph.with_constants_on(self.device)
             self._consts = [(src, dst, (src._version, dst._version)) for src, dst in pairs]
 
     def _check_plan(self) -> None:
-        """A key of groups (a commitment plan) fits the graph and the parameters: mode C; every weight
-        op checked by exactly one committed matrix of its shape -- its own (named after it: the row
-        layout) or a col-layout matrix of linear ops that read one tensor with one row length; every
-        matrix in exactly one group of its codeword length; and a column count for every group."""
+        """A key of groups and tables (a commitment plan) fits the graph and the parameters: mode C;
+        every weight op checked by exactly one committed matrix of its shape -- its own (named after
+        it: the row layout), a col-layout matrix of linear ops that read one tensor with one row
+        length, or for an embedding op a lookup table of its ``d`` and ``V``; every encoded matrix in
+        exactly one group of its codeword length; and a column count for every group."""
         if self.mode != "C":
             raise ValueError(f"commitment groups are a mode-C key, not one of mode {self.mode}")
         ops = {op.name: op for op in self.graph.mat_ops}
@@ -580,8 +632,15 @@ class Verifier:
             if (pub.n_rows, pub.row_length) != shape:
                 raise ValueError(f"committed matrix {name} does not have the shape of its ops")
             checked += [op.name for op in of]
+        for name, table in self.tables.items():
+            op = ops.get(name)
+            if op is None or op.layout != "embed":
+                raise ValueError(f"lookup table {name} names no embedding op of this graph")
+            if (table.n_rows, table.n_tokens) != (op.n_rows, op.n_in):
+                raise ValueError(f"lookup table {name} does not have the shape of its op")
+            checked.append(name)
         if sorted(checked) != sorted(ops):
-            raise ValueError("every weight op must be checked by exactly one committed matrix")
+            raise ValueError("every weight op must be checked by exactly one committed matrix or table")
         members = [m for g in self.groups.values() for m in g.members]
         if sorted(members) != sorted(self.publics):
             raise ValueError("every committed matrix must be in exactly one commitment group")
@@ -601,19 +660,24 @@ class Verifier:
 
     def precompute(self, challenger: Challenger) -> None:
         """Mode Kpre: fix a secret ``chi`` per op and precompute ``u``."""
-        for op in self.graph.mat_ops:
+        for op in self._row_ops():
             chi = challenger.folding(op.name, op.n_rows, self.params.reps).to(self.device)
             self._pre[op.name] = (chi, self._fold_local(op, chi))
-        self._wdev.clear()   # Kpre never folds again: keep no device copy of the model after this
+        self._wdev.clear()   # Kpre never folds again: no device copy of the model (but the tables of lookups)
         _sync(self.device)   # the precompute is timed by its callers
 
-    def _fold_local(self, op: MatOp, chi: torch.Tensor) -> torch.Tensor:
+    def _weights_on(self, op: MatOp, device) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Modes K and Kpre: op's weights on ``device`` (uploaded once, not on every query)."""
         w, b = self.weights[op.name]
-        if chi.device.type != "cpu":   # upload once, not on every query
-            key = (op.name, str(chi.device))
+        if torch.device(device).type != "cpu":
+            key = (op.name, str(device))
             if key not in self._wdev:
-                self._wdev[key] = (w.to(chi.device), None if b is None else b.to(chi.device))
+                self._wdev[key] = (w.to(device), None if b is None else b.to(device))
             w, b = self._wdev[key]
+        return w, b
+
+    def _fold_local(self, op: MatOp, chi: torch.Tensor) -> torch.Tensor:
+        w, b = self._weights_on(op, chi.device)
         u = small_matmul_mod(w.T.to(torch.int64).contiguous(), chi.T.contiguous()).T
         if b is not None:
             u = torch.cat([u, field_matmul_mod(chi, to_field(b)[:, None])], 1)
@@ -627,9 +691,27 @@ class Verifier:
         return {name: [ops[o] for o in pub.members] for name, pub in self.publics.items() if pub.members}
 
     def _row_ops(self) -> list[MatOp]:
-        """The weight ops checked with Freivalds (step 4): every one but a plan's col-layout ops."""
-        stacked = {op.name for members in self._col_matrices().values() for op in members}
-        return [op for op in self.graph.mat_ops if op.name not in stacked]
+        """The weight ops checked with Freivalds (step 4): every one but a plan's col-layout ops and
+        lookup tables, and the embedding ops whose rows a verifier with ``lookups`` reads itself."""
+        skip = {op.name for members in self._col_matrices().values() for op in members}
+        skip |= set(self.tables) | {op.name for op in self._own_rows()}
+        return [op for op in self.graph.mat_ops if op.name not in skip]
+
+    def _own_rows(self) -> list[MatOp]:
+        """Modes K and Kpre with ``lookups``: the embedding ops, whose claims the verifier reads from its
+        own weights (the prover sends none)."""
+        return [op for op in self.graph.mat_ops if op.layout == "embed"] if self.lookups else []
+
+    def _sent_ops(self) -> list[MatOp]:
+        """The weight ops whose claims the prover sends: all but a verifier's own rows."""
+        own = {op.name for op in self._own_rows()}
+        return [op for op in self.graph.mat_ops if op.name not in own]
+
+    def _own_claim(self, op: MatOp, xin: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        """``W[:, ids]`` of embedding op ``op`` from the verifier's own weights, as ``dtype`` (the ids
+        clamped to the table: derive rejects a query with any other)."""
+        w = self._weights_on(op, xin.device)[0]
+        return w[:, xin.reshape(-1).clamp(0, op.n_in - 1)].to(dtype)
 
     def fold_challenges(self, ch: Challenger, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """Step 2's challenges, drawn after the claims: ``r`` rows ``chi`` over the outputs of every op
@@ -658,7 +740,8 @@ class Verifier:
         """Recompute every cheap op; return each weight op's input, or ``None`` to reject.
 
         The range checks of claims on a GPU are deferred: they come back with one copy at
-        the end instead of one per weight op."""
+        the end instead of one per weight op.  A lookup table's claims must be int8, and every op
+        that looks rows up (a table, or the verifier's own rows) must look up ids of its table."""
         out = self._derive(x, claims)
         if out is None or any(_to_host(out[1])):
             return None
@@ -684,6 +767,8 @@ class Verifier:
         self._refresh_constants()
         free = self.lean or visit is not None
         last = self.graph.last_use() if free else None
+        own = {op.name for op in self._own_rows()}
+        looked = own | set(self.tables)
         try:
             for i, op in enumerate(self.graph.ops):
                 if free and i > 0:  # free what no later op reads (weight-op inputs stay in ``inputs``)
@@ -691,16 +776,32 @@ class Verifier:
                         if last.get(n, -1) <= i - 1:
                             env.pop(n, None)
                 if isinstance(op, MatOp):
-                    z = claims.get(op.name)
                     xin = env[op.inputs[0]]
                     m = op.n_cols(xin)
+                    if op.name in own:
+                        z = None if m is None else self._own_claim(op, xin, dtype)
+                    else:
+                        z = claims.get(op.name)
                     if z is None or m is None or z.dtype != dtype or tuple(z.shape) != (op.n_rows, m):
                         return None
-                    if not _defer(z.device):
-                        if not _in_range(z, Z_BOUND):
-                            return None
-                    elif z.numel():
-                        pending.append(_out_of_range(z, Z_BOUND))
+                    if op.name in self.tables:      # rows of int8 weights
+                        if not _defer(z.device):
+                            if not _in_bounds(z, -128, 127):
+                                return None
+                        elif z.numel():
+                            pending.append(_outside(z, -128, 127))
+                    elif op.name not in own:
+                        if not _defer(z.device):
+                            if not _in_range(z, Z_BOUND):
+                                return None
+                        elif z.numel():
+                            pending.append(_out_of_range(z, Z_BOUND))
+                    if op.name in looked:           # every id names a row of the table
+                        if not _defer(xin.device):
+                            if not _in_bounds(xin, 0, op.n_in - 1):
+                                return None
+                        elif xin.numel():
+                            pending.append(_outside(xin, 0, op.n_in - 1))
                     ranged[op.name] = _stamp(z)
                     if visit is None:
                         inputs[op.name] = xin
@@ -844,6 +945,32 @@ class Verifier:
         :func:`_disagrees`)."""
         u = us.get(op.name)
         return u is not None and u.dtype == torch.int64 and tuple(u.shape) == (self.params.reps, op.row_length)
+
+    def check_lookups(self, claims, inputs, proofs: dict) -> str | None:
+        """A plan's lookup tables: ``None`` if every table op's claim is the table's rows at the ids it
+        looks up, else the failing check, table by table -- ``lookup_consistency`` (two positions of one
+        id with different rows), then ``lookup_merkle`` (the rows of the distinct ids and
+        ``proofs[name]``, their one multiproof, do not give the table's root).  ``claims`` and
+        ``inputs``: the ones derive() accepted, so every row is int8 (its bytes are the claim, one to
+        one) and every id names a row."""
+        return self._lookup_verdict(claims, {name: inputs[name] for name in self.tables}, proofs)
+
+    def _lookup_verdict(self, claims, ids: dict, proofs) -> str | None:
+        """:meth:`check_lookups` on the table ops' ``claims`` and ``ids`` (on any device)."""
+        proofs = proofs or {}
+        for name, table in self.tables.items():
+            rows = claims[name].T.to(torch.int8).cpu().numpy()             # [M, d]
+            uniq, first, inverse = np.unique(ids[name].reshape(-1).cpu().numpy(), return_index=True,
+                                             return_inverse=True)
+            if not np.array_equal(rows, rows[first][inverse.reshape(-1)]):
+                return "lookup_consistency"
+            proof = proofs.get(name)
+            if (not isinstance(proof, (list, tuple)) or len(proof) > len(uniq) * table.depth
+                    or not all(isinstance(h, bytes) and len(h) == HASH_BYTES for h in proof)
+                    or not verify_multiproof(table.root, table.depth,
+                                             table_leaves(table.tag, uniq.tolist(), rows[first]), list(proof))):
+                return "lookup_merkle"
+        return None
 
     def check_products(self, claims, inputs, chis, us) -> bool:
         """Freivalds for every weight op checked with it (all but a plan's col-layout ops; ``claims``
@@ -1063,21 +1190,24 @@ class Verifier:
     # its last reader, so the device holds a window of claims and one block's activations, not
     # the whole proof.  In mode C the column code checks are queued on the device first and the
     # Merkle checks run on a host thread while the device derives.  Every verdict stays on the
-    # device until ONE copy decides the query.  Only the verifier's local computations are
-    # reordered, each a function of messages it already holds.
+    # device until ONE copy decides the query; a lookup table's ids come back with it (queued
+    # before it), and its rows are hashed on the host from the claims as received.  Only the
+    # verifier's local computations are reordered, each a function of messages it already holds.
 
     def verify_streaming(self, x: torch.Tensor, claims: dict, chis: dict, us: dict,
-                         cols: dict | None = None, openings: dict | None = None) -> str | None:
+                         cols: dict | None = None, openings: dict | None = None,
+                         table_proofs: dict | None = None) -> str | None:
         """``None`` to accept, else the check that rejects, with ``run_query``'s labels: the verdict
-        of :meth:`derive`, :meth:`check_products` and (with ``openings``) :meth:`check_columns` on
-        these messages.  ``claims`` from :func:`pipeline.wire_claim`, ``openings`` from
+        of :meth:`derive`, :meth:`check_lookups` (``table_proofs``: the multiproofs of a plan's lookup
+        tables), :meth:`check_products` and (with ``openings``) :meth:`check_columns` on these
+        messages.  ``claims`` from :func:`pipeline.wire_claim`, ``openings`` from
         :func:`pipeline.wire_openings`."""
-        reason = self._streamed(x, claims, chis, us, cols, openings, int8=True)
+        reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=True)
         if reason is _NOT_INT8:        # (the graphs here clamp every weight op's input to int8)
-            reason = self._streamed(x, claims, chis, us, cols, openings, int8=False)
+            reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=False)
         return reason
 
-    def _streamed(self, x, claims, chis, us, cols, openings, *, int8: bool):
+    def _streamed(self, x, claims, chis, us, cols, openings, table_proofs, *, int8: bool):
         dev = torch.device(self.device)
         mats = self._row_ops()
         stacked = self._col_matrices()
@@ -1095,8 +1225,14 @@ class Verifier:
         flags: list = []
         lefts: dict = {}                           # col-layout matrices: w, and chi' Z^T of each of their ops
         parts: dict = {}
+        looked: dict = {}                          # lookup tables: the ids each looks up
+        elsewhere = set(self.tables) | {op.name for op in self._own_rows()}
 
         def visit(op: MatOp, z: torch.Tensor, xin: torch.Tensor) -> None:
+            if op.name in elsewhere:           # a table (checked on the host after derive) or the verifier's own rows
+                if op.name in self.tables:
+                    looked[op.name] = xin
+                return
             name = matrix_of.get(op.name)
             if name is not None:               # both sides of its matrix's code check, if it is checked
                 if columns is not None and name in chis:     # (no chi': a malformed x, which derive rejects)
@@ -1119,11 +1255,12 @@ class Verifier:
             # one that is not, the verdict is freivalds or u_exc, and the columns are never looked at)
             well_formed = openings is not None and n_u == len(mats)
             columns = self._start_columns(chis, us, cols, openings, host) if well_formed else None
-            derived = self._derive(_to_device(x, dev), ClaimUploads(claims, [op.name for op in self.graph.mat_ops],
-                                                                    dev), dtype=torch.int32, visit=visit)
+            derived = self._derive(_to_device(x, dev), ClaimUploads(claims, [op.name for op in self._sent_ops()], dev),
+                                   dtype=torch.int32, visit=visit)
             if derived is None:
                 return "range_or_shape"
             pending = derived[1]
+            ids = {name: _host_copy(xin) for name, xin in looked.items()}   # read after the one round trip
             code = [] if columns is None else columns.flags
             if columns is not None and columns.later:    # the col matrices' code checks: derive gave w and z
                 sources = {name: torch.cat([parts[op.name] for op in stacked[name]], 1) for name in columns.later}
@@ -1132,6 +1269,9 @@ class Verifier:
             a, b, c = len(pending), len(pending) + len(x_flags), len(pending) + len(x_flags) + len(flags)
             if any(got[:a]):
                 return "range_or_shape"
+            reason = self._lookup_verdict(claims, ids, table_proofs)       # (the rows on the host, as received)
+            if reason is not None:
+                return reason
             if any(got[a:b]):
                 return _NOT_INT8
             if any(got[b:c]) or (u_exc is None and n_u < len(mats)):
@@ -1214,6 +1354,12 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
         blob = struct.pack("<H", len(g.tag)) + g.tag + g.root + struct.pack("<QQQ", g.n_points, p.columns_for(name),
                                                                             len(g.members))
         ch.absorb(b"group/" + name.encode(), blob + b"".join(struct.pack("<H", len(m)) + m.encode() for m in g.members))
+    for name, table in verifier.tables.items():   # a plan's lookup tables: the root over each one's rows
+        ch.absorb(b"table/" + name.encode(), struct.pack("<H", len(table.tag)) + table.tag + table.root
+                  + struct.pack("<QQ", table.n_rows, table.n_tokens))
+    if verifier.lookups:                          # modes K and Kpre: the embedding ops the verifier reads itself
+        ch.absorb(b"lookups", b"".join(struct.pack("<H", len(op.name)) + op.name.encode()
+                                       for op in verifier._own_rows()))
     ch.absorb(b"x", _tensor_blob(x.cpu()))
 
 
@@ -1223,50 +1369,87 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
 # recorded in ``out``.  run_query checks each message as it arrives and stops asking at the
 # first failing check; the streaming verifier receives them all, then checks.
 
+def _proof_hashes(proof) -> list[bytes]:
+    """The hashes of a multiproof as they travel (nothing if it is not a list of byte strings)."""
+    ok = isinstance(proof, (list, tuple)) and all(isinstance(h, bytes) for h in proof)
+    return list(proof) if ok else []
+
+
 def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, out: dict,
-                    forward_kwargs: dict, send=None, wire: bool = False) -> dict | bytes:
-    """The claims (``send``: the wire format they travel in; ``wire``: their ``PVC3`` bytes, encoded
-    where the prover keeps them), absorbed with the statement."""
+                    forward_kwargs: dict, send=None, wire: bool = False) -> tuple[dict | bytes, bytes | None, dict]:
+    """``(claims, rows, proofs)``: the claims of every weight op but those whose rows the verifier reads
+    itself (``send``: the wire format they travel in; ``wire``: the ``PVC3`` bytes of all but a plan's
+    lookup tables, encoded where the prover keeps them, and ``rows`` the tables' as int8 bytes, else
+    ``None``) and the multiproof of every lookup table, absorbed with the statement.  A table's claims
+    count one byte each."""
     t = out["timings"]
     _sync(prover.device)
     t0 = time.perf_counter()
     claims = prover.claims(x, send=send, to_host=not wire, **forward_kwargs)
     _sync(prover.device)
     t["prove_forward"] = time.perf_counter() - t0
+    sent = {op.name for op in verifier._sent_ops()}
+    if len(sent) < len(claims):
+        claims = {k: z for k, z in claims.items() if k in sent}
+    proofs, rows = {}, None
+    if verifier.tables:
+        t0 = time.perf_counter()
+        proofs = prover.open_tables()
+        t["prove_lookups"] = time.perf_counter() - t0
     if wire:
         t0 = time.perf_counter()
-        claims = claimcodec.encode([claims[op.name] for op in prover.graph.mat_ops])
+        if verifier.tables:
+            rows = claimcodec.pack_rows([claims[name] for name in verifier.tables])
+        claims = claimcodec.encode([claims[op.name] for op in prover.graph.mat_ops
+                                    if op.name in sent and op.name not in verifier.tables])
         _sync(prover.device)
         t["prove_encode"] = time.perf_counter() - t0
-    size = len(claims) if wire else sum(z.numel() for z in claims.values()) * 4
-    out["bytes"] = {"claims": size, "u": 0, "columns": 0, "paths": 0}
+    size = len(claims) + len(rows or b"") if wire else sum(z.numel() * (1 if k in verifier.tables else 4)
+                                                          for k, z in claims.items())
+    out["bytes"] = {"claims": size, "u": 0, "columns": 0,
+                    "paths": HASH_BYTES * sum(len(_proof_hashes(p)) for p in proofs.values())}
     t0 = time.perf_counter()
     if verifier.params.fiat_shamir:
         _absorb_statement(ch, verifier, x)
         if wire:
             ch.absorb(b"claims/" + claimcodec.MAGIC, claims)
+            if rows is not None:
+                ch.absorb(b"rows/I8", rows)
         else:
             for k in sorted(claims):       # int32 wire claims hash as the int64 ones
                 ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
+        for name in verifier.tables:       # the tables' multiproofs, in table order
+            hashes = _proof_hashes(proofs.get(name))
+            ch.absorb(b"lookup/" + name.encode(), struct.pack("<Q", len(hashes)) + b"".join(hashes))
     t["fs_hash"] = time.perf_counter() - t0
-    return claims
+    return claims, rows, proofs
 
 
-def _decoded_claims(verifier: Verifier, blob: bytes, x: torch.Tensor, out: dict, dtype: torch.dtype,
-                    pin: bool = False) -> dict | None:
-    """The verifier's claims from their ``PVC3`` bytes (``None``: malformed), as ``dtype`` host
-    tensors (int32 in pinned memory with ``pin``), timed as ``verify_decode``.  Each claim must have
-    the shape the query gives it, which the decoder checks before it allocates the claims."""
-    mats = verifier.graph.mat_ops
+def _decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torch.Tensor, out: dict,
+                    dtype: torch.dtype, pin: bool = False) -> dict | None:
+    """The verifier's claims from their ``PVC3`` bytes and a plan's lookup tables' from their int8
+    ``rows`` (``None``: malformed), as ``dtype`` host tensors (int32 in pinned memory with ``pin``),
+    timed as ``verify_decode``.  Each claim must have the shape the query gives it, which the decoders
+    check before they allocate the claims."""
+    sent = verifier._sent_ops()
+    mats = [op for op in sent if op.name not in verifier.tables]
+    tables = [op for op in sent if op.name in verifier.tables]
     t0 = time.perf_counter()
     cols = verifier.claim_columns(x)
-    try:
-        zs = None if cols is None else claimcodec.decode_torch(blob, [op.n_rows for op in mats], cols, dtype=dtype,
-                                                               workers=torch.get_num_threads(), pin=pin)
-    except claimcodec.ClaimCodecError:
-        zs = None
+    zs = None
+    if cols is not None:
+        m_of = dict(zip((op.name for op in verifier.graph.mat_ops), cols))
+        try:
+            zs = dict(zip((op.name for op in mats), claimcodec.decode_torch(
+                blob, [op.n_rows for op in mats], [m_of[op.name] for op in mats], dtype=dtype,
+                workers=torch.get_num_threads(), pin=pin)))
+            if tables:
+                zs.update(zip((op.name for op in tables), claimcodec.unpack_rows(
+                    rows, [(op.n_rows, m_of[op.name]) for op in tables], dtype=dtype, pin=pin)))
+        except claimcodec.ClaimCodecError:
+            zs = None
     out["timings"]["verify_decode"] = out["timings"].get("verify_decode", 0.0) + time.perf_counter() - t0
-    return None if zs is None else {op.name: z for op, z in zip(mats, zs)}
+    return zs
 
 
 def _field_message(blob: bytes, shapes: list[tuple[int, int]], out: dict, dtype: torch.dtype) -> list | None:
@@ -1295,7 +1478,7 @@ def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, x: torch.T
     op checked with Freivalds (mode C; with ``wire`` 31-bit packed, and ``{}`` if the packed ``u``
     is malformed), the verifier's own (K), or the precomputed pair (Kpre)."""
     p, t = verifier.params, out["timings"]
-    mats = verifier.graph.mat_ops
+    mats = verifier._row_ops()
     if verifier.mode == "Kpre":
         t["prove_fold"] = t["verify_fold"] = 0.0
         return ({op.name: verifier._pre[op.name][0] for op in mats},
@@ -1306,7 +1489,7 @@ def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, x: torch.T
     t0 = time.perf_counter()
     blob = None
     if verifier.mode == "C":
-        rows = verifier._row_ops()
+        rows = mats
         us = prover.fold({op.name: chis[op.name] for op in rows})
         _sync(prover.device)
         t["prove_fold"] = time.perf_counter() - t0
@@ -1362,7 +1545,7 @@ def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, 
         rows = _field_message(blob, [(len(cols[name]), sum(verifier.publics[m].n_rows for m in members))
                                      for name, members in units], out, torch.int32)
         openings = {name: (None if rows is None else rows[i], opened[name][1]) for i, (name, _) in enumerate(units)}
-    out["bytes"]["paths"] = sum(len(proof) * HASH_BYTES for _, proof in opened.values())
+    out["bytes"]["paths"] += sum(len(proof) * HASH_BYTES for _, proof in opened.values())
     return cols, openings
 
 
@@ -1392,12 +1575,12 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
         out["accepted"] = out["rejected_at"] is None
         return out
     t = out["timings"]
-    claims = _claims_message(prover, verifier, x, ch, out, forward_kwargs or {}, wire=wire)
+    claims, rows, proofs = _claims_message(prover, verifier, x, ch, out, forward_kwargs or {}, wire=wire)
 
     vdev = torch.device(verifier.device)
     x_v, claims_v = x.cpu(), claims
     if wire:                      # a GPU client uploads int32 claims
-        claims_v = _decoded_claims(verifier, claims, x, out, torch.int64 if vdev.type == "cpu" else torch.int32)
+        claims_v = _decoded_claims(verifier, claims, rows, x, out, torch.int64 if vdev.type == "cpu" else torch.int32)
         if claims_v is None:
             out["rejected_at"] = "range_or_shape"
             return out
@@ -1417,6 +1600,13 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
     if inputs is None:
         out["rejected_at"] = "range_or_shape"
         return out
+    if verifier.tables:
+        t0 = time.perf_counter()
+        reason = verifier.check_lookups(claims_v, inputs, proofs)
+        t["verify_lookups"] = time.perf_counter() - t0
+        if reason is not None:
+            out["rejected_at"] = reason
+            return out
 
     chis, us, u_blob = _fold_message(prover, verifier, ch, x, out, wire)
     if verifier.mode == "C" and vdev.type != "cpu":
@@ -1455,19 +1645,19 @@ def _run_streaming(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Chal
     included; with ``wire``, after ``verify_decode``, which gives it the int32 claims and rows of
     :mod:`pvi.fullcheck.pipeline`'s wire formats)."""
     vdev = torch.device(verifier.device)
-    claims = _claims_message(prover, verifier, x, ch, out, forward_kwargs, wire=wire,
-                             send=None if wire else lambda z: wire_claim(z, pin=vdev.type == "cuda"))
+    claims, rows, proofs = _claims_message(prover, verifier, x, ch, out, forward_kwargs, wire=wire,
+                                           send=None if wire else lambda z: wire_claim(z, pin=vdev.type == "cuda"))
     chis, us, u_blob = _fold_message(prover, verifier, ch, x, out, wire)
     cols = openings = None
     if verifier.mode == "C":
         cols, openings = _open_message(prover, verifier, ch, us, out, package=wire_openings, u_blob=u_blob)
     if wire:
-        claims = _decoded_claims(verifier, claims, x, out, torch.int32, pin=vdev.type == "cuda")
+        claims = _decoded_claims(verifier, claims, rows, x, out, torch.int32, pin=vdev.type == "cuda")
         if claims is None:
             return "range_or_shape"
     _sync(vdev)
     t0 = time.perf_counter()
-    reason = verifier.verify_streaming(x, claims, chis, us, cols, openings)
+    reason = verifier.verify_streaming(x, claims, chis, us, cols, openings, proofs)
     _sync(vdev)
     out["timings"]["verify_total"] = time.perf_counter() - t0
     return reason

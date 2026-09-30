@@ -7,7 +7,8 @@
 * ``expected_multiproof_nodes`` is the exact expected number of hashes in one
   multiproof for ``t`` distinct uniform columns, which ``aggregate.py`` uses as
   the Merkle term of LLM runs made before multiproofs (checked by Monte Carlo in
-  ``tests/test_fullcheck.py``);
+  ``tests/test_fullcheck.py``), and ``expected_lookup_nodes`` its analogue for the
+  rows of a lookup table (a tree whose last leaves pad it to a power of two);
 * ``proof_bytes`` and ``setup_size`` give a query's proof bytes and the commitment's size for
   weight-op shapes alone, under the report's parameters or a commitment plan
   (:mod:`pvi.fullcheck.plans`), in the default form or the compact wire encoding, for models too
@@ -20,10 +21,10 @@ import math
 from dataclasses import dataclass
 
 from .claimcodec import field_size
-from .commitment import next_pow2
+from .commitment import multiproof_size, next_pow2
 
-__all__ = ["OpShape", "decoder_shapes", "decoder_claim_columns", "expected_multiproof_nodes", "proof_bytes",
-           "setup_size"]
+__all__ = ["OpShape", "decoder_shapes", "decoder_claim_columns", "expected_multiproof_nodes",
+           "expected_lookup_nodes", "proof_bytes", "setup_size"]
 
 
 @dataclass(frozen=True)
@@ -106,13 +107,42 @@ def expected_multiproof_nodes(n: int, t: int) -> float:
     return total
 
 
+def expected_lookup_nodes(v: int, m: int) -> float:
+    """Expected hashes in the multiproof of ``m`` distinct uniform rows of a lookup table of ``v`` rows,
+    whose tree pads them with leaves ``v .. next_pow2(v) - 1`` that are never opened.
+
+    At a level whose nodes cover ``s`` leaves, each pair of siblings covers ``2 s`` leaves, ``a`` and
+    ``b`` of them rows; exactly one of the two covers an opened row with probability ``[C(v-b, m) +
+    C(v-a, m) - 2 C(v-a-b, m)] / C(v, m)``: ``floor(v / 2s)`` pairs of ``s`` and ``s`` rows, at most one
+    pair with fewer, and none past the rows (:func:`expected_multiproof_nodes` for ``v = n``)."""
+    n, m = next_pow2(v), min(m, v)
+    base = _log_comb(v, m)
+
+    def exactly_one(a: int, b: int) -> float:
+        return (math.exp(_log_comb(v - b, m) - base) + math.exp(_log_comb(v - a, m) - base)
+                - 2 * math.exp(_log_comb(v - a - b, m) - base))
+
+    total, s = 0.0, 1
+    while s < n:
+        full, rest = divmod(v, 2 * s)
+        total += full * exactly_one(s, s) + (exactly_one(min(s, rest), max(0, rest - s)) if rest else 0.0)
+        s *= 2
+    return total
+
+
 def _matrices(ops, plan, rate: int) -> list[tuple[str, int, int]]:
-    """``(name, rows, codeword length)`` of every committed matrix of ``ops``: each op's own (the
+    """``(name, rows, codeword length)`` of every encoded matrix of ``ops``: each op's own (the
     report), or the plan's matrices of ``ops``."""
     if plan is None:
         return [(op.name, op.n_rows, rate * next_pow2(op.row_length)) for op in ops]
     names = {op.name for op in ops}
-    return [(m.name, m.n_rows, m.n_points) for m in plan.matrices if m.ops[0] in names]
+    return [(m.name, m.n_rows, m.n_points) for m in plan.coded if m.ops[0] in names]
+
+
+def _tables(ops, plan) -> list:
+    """The plan's lookup tables of ``ops``."""
+    names = {op.name for op in ops}
+    return [] if plan is None else [m for m in plan.tables if m.name in names]
 
 
 def _trees(ops, plan, rate: int) -> list[tuple[str, int, int]]:
@@ -125,37 +155,54 @@ def _trees(ops, plan, rate: int) -> list[tuple[str, int, int]]:
 
 
 def proof_bytes(ops, params, claim_columns, *, plan=None, rate: int = 4, mode: str = "C",
-                wire_claims: int | None = None) -> dict[str, float]:
+                wire_claims: int | None = None, lookups: bool = False,
+                table_ids: dict | None = None) -> dict[str, float]:
     """One query's proof bytes as ``run_query`` counts them: the claims, ``u`` and the opened columns
     exactly, and the Merkle multiproofs' expected size (the column indices are random).  ``ops``:
     weight-op shapes (``decoder_shapes`` or a graph's ``MatOp``s), whose claims have
     ``claim_columns`` columns (an int for all of them, e.g. the prompt length of a decoder, or
     ``{name: columns}``); ``plan``: a commitment plan (its groups restricted to ``ops``), else the
     report's trees at ``rate``; under a plan ``u`` is that of its row-layout ops, and a tree opens
-    the rows of its matrices (a col-layout one's: ``k``).  Modes K and Kpre send only the claims.
-    ``wire_claims``: the size
-    of the claims in the compact wire encoding (``PVC3``, which depends on their values: measured),
-    for the proof of ``run_query(wire=True)``, whose ``u`` and opened columns travel as two runs of
-    31-bit field elements (:func:`claimcodec.field_size`)."""
+    the rows of its matrices (a col-layout one's: ``k``).  A lookup table's claims (mode C, under a
+    plan) are its looked-up rows, a byte per entry, and its multiproof counts with the paths: exact
+    for the ids ``table_ids[name]`` it looks up, else the expectation for distinct uniform ids
+    (:func:`expected_lookup_nodes`).  Modes K and Kpre send only the claims, and with ``lookups`` none
+    for the embedding ops (the verifier reads their rows).  ``wire_claims``: the size of the claims
+    in the compact wire encoding (``PVC3``, which depends on their values: measured, with a plan's
+    table rows as int8 bytes), for the proof of ``run_query(wire=True)``, whose ``u`` and opened
+    columns travel as two runs of 31-bit field elements (:func:`claimcodec.field_size`)."""
+    if lookups and mode == "C":
+        raise ValueError("lookups are modes K and Kpre's; mode C looks rows up in a plan's tables")
+
     def cols(op):
         return claim_columns if isinstance(claim_columns, int) else claim_columns[op.name]
 
+    tables = _tables(ops, plan) if mode == "C" else []
+    table_names = {m.name for m in tables}
+    sent = [op for op in ops if not (lookups and op.layout == "embed")]
     size = (lambda numel: 4 * numel) if wire_claims is None else field_size
-    claims = 4 * sum(op.n_rows * cols(op) for op in ops) if wire_claims is None else wire_claims
+    claims = sum((1 if op.name in table_names else 4) * op.n_rows * cols(op) for op in sent) \
+        if wire_claims is None else wire_claims
     out = {"claims": claims, "u": 0, "columns": 0, "paths": 0.0}
     if mode == "C":
         trees = [(n, min(params.columns if plan is None else params.columns_for(g), n), rows)
                  for g, n, rows in _trees(ops, plan, rate)]
         folded = [op for op in ops if plan is None or plan.matrix_of(op.name).layout == "row"]
+        of = {op.name: op for op in ops}
+        looked_up = [multiproof_size(set(table_ids[m.name]), m.n_points.bit_length() - 1)
+                     if table_ids is not None and m.name in table_ids else
+                     expected_lookup_nodes(m.row_length, cols(of[m.name])) for m in tables]
         out["u"] = size(params.reps * sum(op.row_length for op in folded))
         out["columns"] = size(sum(t * rows for _, t, rows in trees))
-        out["paths"] = 32 * sum(expected_multiproof_nodes(n, t) for n, t, _ in trees)
+        out["paths"] = 32 * sum(expected_multiproof_nodes(n, t) for n, t, _ in trees) + 32 * sum(looked_up)
     return out
 
 
 def setup_size(ops, *, plan=None, rate: int = 4) -> dict[str, int]:
     """The one-time commitment of ``ops``: encoded field entries (``sum_l N_l n_l``, what the NTTs
-    produce and the column digests hash), Merkle leaves, trees and the longest codeword."""
-    trees = _trees(ops, plan, rate)
+    produce and the column digests hash), Merkle leaves and trees (a plan's lookup tables' too, whose
+    rows are hashed as they are) and the longest codeword."""
+    trees, tables = _trees(ops, plan, rate), _tables(ops, plan)
     return {"encoded_entries": sum(rows * n for _, rows, n in _matrices(ops, plan, rate)),
-            "leaves": sum(n for _, n, _ in trees), "trees": len(trees), "max_n": max(n for _, n, _ in trees)}
+            "leaves": sum(n for _, n, _ in trees) + sum(m.n_points for m in tables),
+            "trees": len(trees) + len(tables), "max_n": max(n for _, n, _ in trees)}

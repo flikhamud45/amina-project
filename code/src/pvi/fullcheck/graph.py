@@ -322,7 +322,8 @@ class IntGraph:
 
     def forward(self, x: torch.Tensor, *, tamper: Callable[[MatOp, torch.Tensor], torch.Tensor] | None = None,
                 weights_override: dict[str, MatOp] | None = None, free: bool = False,
-                claims_device=None, send: Callable[[torch.Tensor], object] | None = None) -> tuple[dict, dict]:
+                claims_device=None, send: Callable[[torch.Tensor], object] | None = None,
+                watch: Callable[[MatOp, torch.Tensor], None] | None = None) -> tuple[dict, dict]:
         """Honest (or tampered) execution.  Returns ``(env, claims)``.
 
         ``claims[op.name]`` is the ``[N, M]`` pre-activation matrix the prover
@@ -331,7 +332,9 @@ class IntGraph:
         trace-tampering attack.  ``weights_override`` runs some ops with other
         weights (the model-substitution attack) while claiming the committed model.
         ``send(Z)``, if given, is what is kept of each claim instead of ``Z`` (moved to
-        ``claims_device``), e.g. the streaming verifier's int32 wire format.
+        ``claims_device``), e.g. the streaming verifier's int32 wire format.  ``watch(op, x)``, if
+        given, sees each weight op's input as the op runs (e.g. the token ids a lookup table is
+        opened at).
         """
         env = {self.input_name: x}
         claims: dict[str, torch.Tensor] = {}
@@ -340,6 +343,8 @@ class IntGraph:
             if isinstance(op, MatOp):
                 runner = (weights_override or {}).get(op.name, op)
                 xin = env[op.inputs[0]]
+                if watch is not None:
+                    watch(op, xin)
                 z = runner.compute(xin)
                 if tamper is not None:
                     z = tamper(op, z)
