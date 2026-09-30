@@ -72,6 +72,12 @@ These numbers are of commit `1d3df18`.  The GPU work that followed leaves the CP
 within noise on these cases (`results/ab_laptop_vs_1d3df18.csv`, that commit as the
 baseline, 11-41 repetitions: totals 0.99-1.15x); it is faster only where prompts are long
 (the int32 attention below) and where Merkle columns are large (threaded leaf hashing).
+The review fixes after that (commit `a5adbf3`: one verdict form for the CPU and the GPU, one
+message flow for both verifiers) leave it within noise as well
+(`results/ab_laptop_a5adbf3_vs_5c9b83c.csv`, 21 repetitions: totals 0.98-1.01x).  Against the
+paper code at `a5adbf3` (`results/ab_laptop_a5adbf3.csv`, 11 repetitions), the totals are
+LeNet-5 C 1.67x / 1.72x (1 / 4 threads), VGG-16 C 2.59x / 2.25x, GPT-2 C 2.45x / 2.33x,
+LeNet-5 Kpre 1.43x, VGG-16 Kpre 2.79x, GPT-2 Kpre 2.57x and Qwen3-4B (1 block) Kpre 5.43x.
 
 ## The GPU verifier: `gpu_ab.py` and `attention_ab.py`
 
