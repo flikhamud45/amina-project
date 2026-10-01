@@ -3,7 +3,11 @@
 Slot streams, Rice vectors and 31-bit field elements round trip; the vectorised, lane-by-lane,
 threaded and torch (GPU prover) paths give the same bytes and values; every malformed input is
 rejected with ``ClaimCodecError`` (truncations, trailing bytes, header fields, padding,
-exceptions) and random corruptions never make the decoder raise anything else.
+exceptions) and random corruptions never make the decoder raise anything else.  The host and the
+device encoders give the bytes of the per-op encoder that defined the format
+(``claimcodec_reference``) on every input, threaded or not; the device encoder's kernels grow with
+the widths, not the ops, and it waits for the device four times at most (on a GPU: checked in
+CUDA's sync debug mode).
 """
 
 from __future__ import annotations
@@ -11,15 +15,18 @@ from __future__ import annotations
 import struct
 import tracemalloc
 
+import claimcodec_reference as ref
 import numpy as np
 import pytest
 import torch
+from torch.utils._python_dispatch import TorchDispatchMode
 
 from pvi.fullcheck import claimcodec as cc
 from pvi.fullcheck.protocol import P, Z_BOUND
 from pvi.fullcheck.transformer import DecoderConfig, build_decoder
 
 LIM = Z_BOUND - 1
+cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 
 
 @pytest.fixture(params=["cpu", "cuda"])
@@ -161,6 +168,7 @@ def test_threaded_decoding_gives_the_same_claims_and_rejections(monkeypatch):
     # every step split over the workers (lanes, exceptions, ops), in jobs above the pool's threshold
     monkeypatch.setattr(cc, "_SMALL", 1 << 9)
     monkeypatch.setattr(cc, "_THREADED", 1 << 11)
+    monkeypatch.setattr(cc, "_SPLIT", 1 << 6)
     rng = np.random.default_rng(7)
     zs = [np.round(rng.standard_cauchy((64, 900)) * 2e3).clip(-LIM, LIM).astype(np.int64),
           np.round(rng.normal(0, 3e4, (160, 400))).astype(np.int64) + rng.integers(-9e4, 9e4, (160, 1)),
@@ -359,3 +367,294 @@ def test_exception_positions_are_checked():
     b[-len(tail) + 4] = 33                                    # the gaps' Rice parameter k > 32
     with pytest.raises(cc.ClaimCodecError, match="Rice"):
         cc.decode(bytes(b), [1], [1])
+
+
+# -- the host and device encoders against the reference -------------------------------------------
+
+def _claim_sets() -> dict:
+    """Claim lists covering the planner's cases: sampling steps (by rows and by values), centring and its
+    boundary (M = 1, 2), widths 0..30, exception-heavy and incompressible ops, extremes, empty ops,
+    dtypes and layouts, many ops of few widths, and decoder claims."""
+    rng = np.random.default_rng(11)
+
+    def normal(shape, sd, mean=0.0):
+        return np.round(rng.normal(mean, sd, shape)).clip(-LIM, LIM).astype(np.int64)
+
+    def rows_off(n, m, sd):
+        return normal((n, m), sd) + rng.integers(-40 * sd, 40 * sd, (n, 1))
+
+    sets = {
+        "llm": [normal((64, 8), 3e4), normal((512, 8), 3e4), normal((3000, 1), 2e5), normal((1, 3000), 50)],
+        "row_means": [rows_off(300, 64, 2e3), rows_off(70, 3, 50), rows_off(20, 2, 9)],
+        "sampling": [normal((70_000, 1), 1e4), normal((300, 400), 1e3), normal((257, 255), 77),
+                     normal((513, 2), 5e3), normal((1, 70_000), 3)],
+        "tails": [np.round(rng.standard_cauchy((90, 90)) * 1e3).clip(-LIM, LIM).astype(np.int64),
+                  normal((50, 60), 1e7), rng.integers(-LIM, LIM, (33, 31))],
+        "narrow": [np.zeros((40, 9), np.int64), np.full((7, 7), 1234, np.int64), rng.integers(-1, 2, (80, 5)),
+                   rng.integers(-127, 128, (32, 4)), np.repeat(rng.integers(-5000, 5000, (256, 1)), 16, 1)],
+        "extremes": [np.array([[LIM, -LIM, 0, 1, -1]]), np.array([[LIM, LIM], [-LIM, -LIM]]),
+                     np.full((3, 4), -LIM, np.int64)],
+        "empty": [np.zeros((0, 4), np.int64), normal((5, 6), 100), np.zeros((3, 0), np.int64),
+                  np.zeros((0, 0), np.int64)],
+        "all_empty": [np.zeros((0, 4), np.int64), np.zeros((3, 0), np.int64)],
+        "dtypes": [torch.from_numpy(normal((30, 8), 3e3)).int(), normal((12, 5), 10).astype(np.int16),
+                   torch.from_numpy(normal((9, 40), 2e4)).T, torch.from_numpy(normal((16, 16), 3e2))[::2, 1::3]],
+        "one_op": [normal((4096, 64), 2e4)],
+    }
+    many = [normal((int(rng.integers(1, 90)), int(rng.integers(1, 12))), float(rng.choice([1e2, 1e4])))
+            for _ in range(60)]
+    sets["many_ops"] = many * 5                                   # 300 ops, few widths
+    for kind, cfg in (("gpt", DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64)),
+                      ("qwen", DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
+                                             pos="rope", bias=False, qk_norm=True))):
+        graph = build_decoder(cfg, calib_tokens=16, seed=3)
+        tokens = torch.randint(0, cfg.vocab, (1, 16), generator=torch.Generator().manual_seed(5))
+        _, claims = graph.forward(tokens)
+        sets[f"decoder_{kind}"] = [claims[op.name] for op in graph.mat_ops]
+    return sets
+
+
+@pytest.fixture(scope="module")
+def claim_sets():
+    return _claim_sets()
+
+
+def test_the_host_and_device_encoders_give_the_reference_bytes(claim_sets):
+    for name, zs in claim_sets.items():
+        for centre in (True, False):
+            want = ref.encode(zs, centre=centre)
+            for workers in (1, 4):
+                assert cc.encode(zs, centre=centre, impl="host", workers=workers) == want, (name, centre, workers)
+            assert cc.encode(zs, centre=centre, impl="device") == want, (name, centre)   # torch ops on CPU tensors
+
+
+def test_the_encoders_threaded_in_small_jobs_give_the_reference_bytes(claim_sets, monkeypatch):
+    # every step of the host encoder on the workers (stats, clipping, fills, scans, packing), the lane packer
+    monkeypatch.setattr(cc, "_JOB", 1 << 8)
+    monkeypatch.setattr(cc, "_SMALL", 1 << 6)
+    for name, zs in claim_sets.items():
+        want = ref.encode(zs)
+        for workers in (2, 3, 8):
+            assert cc.encode(zs, impl="host", workers=workers) == want, (name, workers)
+        assert cc.encode(zs, impl="device") == want, name
+
+
+def test_the_encoders_refuse_the_claims_the_reference_refuses():
+    for z in (1 << 29, -(1 << 29), 1 << 31, -(1 << 33), 1 << 62):
+        zs = [np.zeros((3, 3), np.int64), np.array([[0, z], [1, 2]])]
+        with pytest.raises(ref.Unencodable):
+            ref.encode(zs)
+        for impl in ("host", "device"):
+            with pytest.raises(cc.Unencodable):
+                cc.encode(zs, impl=impl)
+    assert cc.encode([], impl="host") == cc.encode([], impl="device") == ref.encode([])
+
+
+def test_the_planners_costs_and_centres_are_the_references():
+    rng = np.random.default_rng(3)
+    for trial in range(300):
+        n = int(rng.integers(0, 3000))
+        x = (np.round(rng.normal(0, 10.0 ** rng.uniform(0, 6), n)) * rng.choice([1, 1, 7])).astype(np.int64)
+        x = x.clip(-LIM, LIM)
+        c = ref._median(x)
+        if n:
+            srt = np.sort(x)
+            assert int(cc._round_half(np.int64(srt[(n - 1) // 2] + srt[n // 2]))) == c, trial
+            assert int(cc._medians(x.copy(), np.array([0, n]))[0]) == c, trial
+        scale = float(rng.uniform(0.5, 300))
+        d = x - c
+        hist = np.bincount(np.frexp(((d << 1) ^ (d >> 63)).astype(np.float64))[1], minlength=64)
+        mine = cc._costs(hist[None], [n], [scale])[0]
+        assert np.array_equal(mine, ref._width_costs(x, c, scale)), trial          # float for float
+        assert int(np.argmin(mine)) == ref._choose(x, c, scale)[0]
+        bins = np.full(n, -1022, dtype=np.int64)
+        got = cc._hist(x, np.array([0, n]), np.array([c]), bins, 1, np.empty(n, np.int64), np.empty(n, np.int64))
+        assert np.array_equal(got[0], hist), trial
+
+
+def test_the_rice_parameter_and_bytes_are_the_references():
+    rng = np.random.default_rng(5)
+    vs = [rng.geometric(p, int(rng.integers(1, 5000))) - 1 for p in (0.9, 0.5, 0.1, 0.01, 0.001)]
+    vs += [rng.integers(0, 1 << b, 777) for b in (1, 5, 20, 33, 36)]
+    vs += [np.zeros(9, np.int64), np.array([(1 << 36) - 1])]
+    for v in vs:
+        v = np.asarray(v, dtype=np.int64)
+        assert cc._rice_k(v) == ref._rice_k(v)
+        assert cc._rice_encode(v) == ref._rice_encode(v)
+
+
+def test_the_lane_packer_gives_the_references_bytes():
+    rng = np.random.default_rng(8)
+    for k in (1, 7, 16, 17, 19, 30, 31, 32):
+        for n in (cc._SMALL + 1, cc._SMALL + 777, 3 * cc._JOB + 5):
+            v = rng.integers(0, 1 << k, n, dtype=np.uint64).astype(np.uint32)
+            want = ref.pack32(v, k)
+            for workers in (1, 3):
+                assert cc.pack32(v, k, workers) == want, (k, n, workers)
+
+
+class _Ops(TorchDispatchMode):
+    """Counts the aten ops that launch work on a device (views and detach launch none)."""
+
+    VIEWS = ("view", "slice", "detach", "lift_fresh", "alias", "_reshape_alias", "select", "unsqueeze", "expand",
+             "as_strided", "t.default", "transpose", "squeeze", "unbind", "split", "reshape")
+
+    def __init__(self):
+        super().__init__()
+        self.n = 0
+
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        if not any(str(func).startswith("aten." + v) for v in self.VIEWS):
+            self.n += 1
+        return func(*args, **(kwargs or {}))
+
+
+def _device_encode(zs, monkeypatch):
+    """``encode(zs, impl="device")`` with its kernels counted (aten ops) and its waits for the device."""
+    waits = {"d2h": 0, "nonzero": 0}
+    real_d2h, real_nonzero = cc._d2h, cc._nonzero_dev
+
+    def d2h(t):
+        waits["d2h"] += 1
+        return real_d2h(t)
+
+    def nonzero(t):
+        waits["nonzero"] += 1
+        return real_nonzero(t)
+
+    monkeypatch.setattr(cc, "_d2h", d2h)
+    monkeypatch.setattr(cc, "_nonzero_dev", nonzero)
+    try:
+        with _Ops() as ops:
+            blob = cc.encode(zs, impl="device")
+    finally:
+        monkeypatch.setattr(cc, "_d2h", real_d2h)
+        monkeypatch.setattr(cc, "_nonzero_dev", real_nonzero)
+    return blob, ops.n, waits
+
+
+def _header_widths(blob: bytes, n_ops: int) -> set:
+    widths, off = set(), 8
+    for _ in range(n_ops):
+        flags = blob[off + 4]
+        off += 5
+        for _ in range(2 if flags & cc._F_CENTRED else 1):
+            widths.add(blob[off])
+            off += 5
+    return widths
+
+
+def test_the_device_encoders_kernels_grow_with_the_widths_not_the_ops(claim_sets, monkeypatch):
+    # decoder claims (centred ops, several widths) repeated 1, 4 and 16 times: the same widths, 4-16x the ops
+    base = claim_sets["decoder_gpt"]
+    counts = []
+    for reps in (1, 4, 16):
+        zs = [z.clone() for _ in range(reps) for z in base]
+        blob, n, waits = _device_encode(zs, monkeypatch)
+        assert blob == ref.encode(zs)
+        assert waits == {"d2h": 3, "nonzero": 1}                  # statistics, Rice statistics, the encoding
+        counts.append((n, len(_header_widths(blob, len(zs)))))
+    assert len({w for _, w in counts}) == 1 and counts[0][1] >= 3
+    assert counts[0][0] == counts[1][0] == counts[2][0], counts
+    n, widths = counts[0]
+    assert n <= 110 + 12 * (widths + 2), counts                  # fixed work, ~10 a packed stream (Rice: 2 more)
+    with _Ops() as old:                                           # the reference: ~24 aten ops an op
+        ref.encode([z.clone() for _ in range(16) for z in base])
+    assert old.n > 10 * n
+
+
+@cuda_only
+def test_the_gpu_encoder_gives_the_reference_bytes(claim_sets):
+    for name, zs in claim_sets.items():
+        on = [(z if torch.is_tensor(z) else torch.from_numpy(np.asarray(z))).cuda() for z in zs]
+        for centre in (True, False):
+            assert cc.encode(on, centre=centre) == ref.encode(zs, centre=centre), (name, centre)
+    for z in (1 << 29, 1 << 40):
+        with pytest.raises(cc.Unencodable):
+            cc.encode([torch.tensor([[0, z]], device="cuda")])
+        with pytest.raises(cc.Unencodable):
+            cc.encode([cc.narrow(torch.tensor([[0, z]], device="cuda"))])
+
+
+@cuda_only
+def test_the_gpu_encoder_waits_four_times_and_launches_kernels_per_width(claim_sets, monkeypatch):
+    """In CUDA's sync debug mode "error" any other host round trip raises; the kernels (counted by the
+    profiler, in another run) are the same for 4x and 16x the ops of the same widths, up to ``cat``'s
+    batches of inputs."""
+    base = [z.cuda() for z in claim_sets["decoder_gpt"]]
+    waits = []
+
+    def allowed(real):
+        def call(t):
+            torch.cuda.set_sync_debug_mode(0)
+            try:
+                waits.append(real.__name__)
+                return real(t)
+            finally:
+                torch.cuda.set_sync_debug_mode("error")
+        return call
+
+    kernels = []
+    for reps in (1, 4, 16):
+        zs = [z.clone() for _ in range(reps) for z in base]
+        want = ref.encode([z.cpu() for z in zs])
+        assert cc.encode(zs) == want                              # warm: layout tables and lane maps uploaded
+        waits.clear()
+        monkeypatch.setattr(cc, "_d2h", allowed(cc._d2h))
+        monkeypatch.setattr(cc, "_nonzero_dev", allowed(cc._nonzero_dev))
+        torch.cuda.synchronize()
+        torch.cuda.set_sync_debug_mode("error")
+        try:
+            assert cc.encode(zs) == want
+        finally:
+            torch.cuda.set_sync_debug_mode(0)
+            monkeypatch.undo()
+        assert sorted(waits) == ["_d2h", "_d2h", "_d2h", "_nonzero_dev"]
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as prof:   # a run of its own
+            assert cc.encode(zs) == want
+            torch.cuda.synchronize()
+        kernels.append(sum(1 for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA))
+    widths = len(_header_widths(cc.encode(base), len(base)))
+    assert kernels[2] <= kernels[0] + 16 and kernels[0] <= 250 + 30 * (widths + 2), kernels
+
+
+@cuda_only
+def test_field_elements_packed_on_a_gpu_are_the_hosts_bytes():
+    g = torch.Generator().manual_seed(4)
+    ts = [torch.randint(0, P, (5, 333), generator=g), torch.randint(0, P, (77, 3), generator=g).T]
+    want = ref.pack32(torch.cat([t.reshape(-1) for t in ts]).numpy().astype(np.uint32), 31)
+    assert cc.pack_field([t.cuda() for t in ts]) == cc.pack_field(ts) == want
+    for bad in (-1, 1 << 31, 1 << 40):
+        for dev in ("cpu", "cuda"):
+            with pytest.raises(cc.Unencodable):
+                cc.pack_field([torch.tensor([[1, bad]], device=dev)])
+
+
+@cuda_only
+def test_claims_decoded_into_pinned_memory_are_the_claims():
+    rng = np.random.default_rng(2)
+    zs = [np.round(rng.normal(0, 3e4, (300, 9))).astype(np.int64), rng.integers(-127, 128, (64, 9))]
+    blob = cc.encode(zs)
+    out = cc.decode_torch(blob, [300, 64], [9, 9], dtype=torch.int32, pin=True)
+    assert all(t.is_pinned() and torch.equal(t.long(), torch.from_numpy(z)) for t, z in zip(out, zs))
+
+
+def test_random_corruptions_never_crash_the_split_decoder(sample, monkeypatch):
+    # the two Rice vectors located by counting their levels' bits and decoded as parallel jobs, on corrupted
+    # inputs: the same claims or the same rejection as the one-thread decoder, never another exception
+    monkeypatch.setattr(cc, "_THREADED", 1)
+    monkeypatch.setattr(cc, "_SPLIT", 1)
+    zs, blob, rows, cols = sample
+    assert all(np.array_equal(a, b) for a, b in zip(zs, cc.decode(blob, rows, cols, workers=3)))
+    rng = np.random.default_rng(13)
+    for _ in range(400):
+        b = bytearray(blob)
+        for _ in range(int(rng.integers(1, 4))):
+            b[int(rng.integers(0, len(b)))] ^= 1 << int(rng.integers(0, 8))
+        one = _decode_or_reject(bytes(b), rows, cols)
+        try:
+            split = cc.decode(bytes(b), rows, cols, workers=3)
+        except cc.ClaimCodecError:
+            split = None
+        assert (one is None) == (split is None)
+        assert one is None or all(np.array_equal(p, q) for p, q in zip(one, split))
