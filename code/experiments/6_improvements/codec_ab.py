@@ -29,10 +29,12 @@ warm-up, the order alternating), at each ``--threads`` count ``n``:
   branches off).
 
 After them, ``encode_cold_t{n}`` (the last count): this checkout's encode of a shape set it has not seen (its
-layout built: on a device, its tables), the median of 3.  It checks that both checkouts give the same bytes
-(claims and field elements) and decode the same claims, and counts (``device_encoder``) this checkout's
-device encoder's aten ops that launch kernels, warm and cold, and its waits for the device (``_d2h``,
-``_nonzero_dev``) -- on a GPU's claims, or with ``--device-path`` (with the baseline's GPU path's ops).
+layout built: on a device, its tables), the median of 3 (with ``--device-path`` also
+``encode_cold_device_path``).  It checks that both checkouts give the same bytes (claims and field elements)
+and decode the same claims, and reports (``device_encoder``) this checkout's device encoder's aten ops that
+launch kernels, warm and cold, its waits for the device (``_d2h``, ``_nonzero_dev``) and the size of its
+layout's device tables (``tables_mb``) -- on a GPU's claims, or with ``--device-path`` (with the baseline's
+GPU path's ops).
 Without ``--base`` only this checkout runs.  Nothing here writes to the benchmark's roots.
 """
 from __future__ import annotations
@@ -129,7 +131,9 @@ def _counted(zs) -> dict:
     claimcodec._layout.cache_clear()
     with opcount.KernelOps() as cold:
         claimcodec.encode(zs, impl="device")
-    return {"kernel_ops": ops.n, "kernel_ops_cold": cold.n, **waits}
+    lay = claimcodec._layout(tuple((int(z.shape[0]), int(z.shape[1])) for z in zs))
+    size = sum(t.numel() * t.element_size() for tb in lay._dev.values() for t in tb.values() if torch.is_tensor(t))
+    return {"kernel_ops": ops.n, "kernel_ops_cold": cold.n, **waits, "tables_mb": size / 1e6}
 
 
 def _torch_path(base) -> types.ModuleType | None:
@@ -218,6 +222,11 @@ def run(spec: str, args, base) -> dict:
         claimcodec._layout.cache_clear()
         cold.append(_time(lambda: encode("new", args.threads[-1]), dev))
     times[f"encode_cold_t{args.threads[-1]}_new"] = cold
+    if args.device_path:
+        for _ in range(COLD):
+            claimcodec._layout.cache_clear()
+            times.setdefault("encode_cold_device_path_new", []).append(
+                _time(lambda: claimcodec.encode(zs["new"], impl="device"), cpu))
     out = {"spec": spec, **info, "medians_ms": {k: 1e3 * statistics.median(v) for k, v in times.items()},
            "min_ms": {k: 1e3 * min(v) for k, v in times.items()}}
     if base is not None:
