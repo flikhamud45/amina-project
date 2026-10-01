@@ -176,6 +176,30 @@ def test_the_lookup_tables_accept_honest_rows_and_reject_every_forgery(kind, fia
         assert got == want, name
 
 
+@pytest.mark.parametrize("kind", [*KINDS, "gpt-pruned"])
+def test_the_streaming_verifier_receives_the_bytes_counted(kind, monkeypatch):
+    """Without wire the claims travel as the streaming verifier receives them: int32, and a lookup
+    table's as its int8 rows (``pipeline.wire_rows``), so ``bytes["claims"]`` is exactly the size of
+    the tensors it is handed (the row policies' and the ``c`` policies')."""
+    seen = {}
+    real = proto.Verifier.verify_streaming
+
+    def spy(self, x, claims, *args, **kw):
+        seen.update(claims)
+        return real(self, x, claims, *args, **kw)
+
+    monkeypatch.setattr(proto.Verifier, "verify_streaming", spy)
+    for policy in ("R8", "R8c"):
+        graph, _, coms = _planned(kind, policy)
+        v = _verifiers(graph, coms, False)[1]
+        seen.clear()
+        res = proto.run_query(proto.Prover(graph, commitments=coms), v, _query(kind), seed=1)
+        assert res["accepted"]
+        assert {n: z.dtype for n, z in seen.items()} == {op.name: torch.int8 if op.name in coms.tables else torch.int32
+                                                         for op in graph.mat_ops}
+        assert res["bytes"]["claims"] == sum(z.numel() * z.element_size() for z in seen.values())
+
+
 @pytest.mark.parametrize("paths", ["deferred", "int8", "deferred_int8"])
 def test_the_gpu_forms_check_the_lookups_alike(paths, monkeypatch):
     if "deferred" in paths:

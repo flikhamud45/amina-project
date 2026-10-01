@@ -71,7 +71,7 @@ from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm
                     int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64, min_max,
                     small_matmul_mod, to_field)
 from .graph import IntGraph, MatOp
-from .pipeline import ClaimUploads, wire_claim, wire_openings
+from .pipeline import ClaimUploads, wire_claim, wire_openings, wire_rows
 from .plans import CommitmentPlan, column_bits, column_error_log2, plan_commitment
 
 __all__ = [
@@ -1206,8 +1206,8 @@ class Verifier:
         """``None`` to accept, else the check that rejects, with ``run_query``'s labels: the verdict
         of :meth:`derive`, :meth:`check_lookups` (``table_proofs``: the multiproofs of a plan's lookup
         tables), :meth:`check_products` and (with ``openings``) :meth:`check_columns` on these
-        messages.  ``claims`` from :func:`pipeline.wire_claim`, ``openings`` from
-        :func:`pipeline.wire_openings`."""
+        messages.  ``claims`` from :func:`pipeline.wire_claim` (a lookup table's from
+        :func:`pipeline.wire_rows`), ``openings`` from :func:`pipeline.wire_openings`."""
         reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=True)
         if reason is _NOT_INT8:        # (the graphs here clamp every weight op's input to int8)
             reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=False)
@@ -1261,8 +1261,8 @@ class Verifier:
             # one that is not, the verdict is freivalds or u_exc, and the columns are never looked at)
             well_formed = openings is not None and n_u == len(mats)
             columns = self._start_columns(chis, us, cols, openings, host) if well_formed else None
-            derived = self._derive(_to_device(x, dev), ClaimUploads(claims, [op.name for op in self._sent_ops()], dev),
-                                   dtype=torch.int32, visit=visit)
+            uploads = ClaimUploads(claims, [op.name for op in self._sent_ops()], dev, rows=set(self.tables))
+            derived = self._derive(_to_device(x, dev), uploads, dtype=torch.int32, visit=visit)
             if derived is None:
                 return "range_or_shape"
             pending = derived[1]
@@ -1677,8 +1677,8 @@ def _run_streaming(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Chal
     pin = vdev.type == "cuda"
     claims, rows, proofs = _claims_message(prover, verifier, x, ch, out, forward_kwargs, wire=wire,
                                            send=None if wire else lambda z: wire_claim(z, pin=pin))
-    if not wire:                  # (what wire_claim gave the prover: its own tensors, read after it runs again)
-        claims = _passed(claims, pin=pin)
+    if not wire:   # the verifier's own copies (read after the prover runs again); a lookup table's as its int8 rows
+        claims = {k: wire_rows(z, pin=pin) if k in verifier.tables else z for k, z in _passed(claims, pin).items()}
     chis, us, u_blob = _fold_message(prover, verifier, ch, x, out, wire)
     cols = openings = None
     if verifier.mode == "C":

@@ -379,6 +379,20 @@ def test_the_wire_formats():
         assert got[k][1] == ["p"]
     assert all(got[k][0] is None for k in "bcd")
     assert got["e"] is None and got["f"] == opened["f"]
+    rows = _rand(g, -128, 128, (4, 9))                 # a lookup table's claim: int8 rows, a byte per value
+    for honest in (rows, rows.to(torch.int32)):
+        got = pipeline.wire_rows(honest)
+        assert got.dtype == torch.int8 and torch.equal(got.to(torch.int64), rows)
+    outside = rows.clone()
+    outside[1, 2] = 128
+    for bad in (outside, outside.to(torch.int32), rows.to(torch.float32)):   # not narrowed: int64, its size and blob
+        got = pipeline.wire_rows(bad)
+        assert got.dtype == torch.int64 and proto._tensor_blob(got) == proto._tensor_blob(bad)
+    assert pipeline.wire_rows(None) is None
+    uploads = pipeline.ClaimUploads({"t": pipeline.wire_rows(rows), "u": pipeline.wire_rows(rows), "z": w},
+                                    ["t", "u", "z"], torch.device("cpu"), rows={"t", "z"})
+    t, u, zz = (uploads.get(n) for n in "tuz")         # a table's int8 rows widened to int32 after the upload
+    assert t.dtype == torch.int32 and torch.equal(t.to(torch.int64), rows) and u.dtype == torch.int8 and zz is w
 
 
 def _claim_attacks(mats):

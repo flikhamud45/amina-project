@@ -922,14 +922,15 @@ the five CNNs under all seven `c` policies).
   over its `V` rows (`commitment.TableCommitment`: leaf `j` = SHA-256 of `pvi/row`, the tag, `j` and
   row `j`'s `d` int8 bytes; the leaves past `V`, up to a power of two, in another domain).  It is in
   no group and has no code.  Its claims are the looked-up rows, one column of `d` int8 values per
-  position, sent in the claims message (one byte each; with wire as the int8 bytes of
-  `claimcodec.pack_rows`, not in `PVC3`), with ONE multiproof over the distinct ids
-  (`Prover.open_tables`).  The verifier checks, before it draws any challenge: in derive, that the
-  claims are int8 (so a leaf's bytes are the claim, one to one) and every id names a row of the
-  table (`range_or_shape`); then equal rows for equal ids (`lookup_consistency`) and the multiproof
-  (`lookup_merkle`).  No `u`, no columns, no Freivalds.  The LM head is an op of its own (the
-  benchmark's decoders draw it separately, as an untied model; for a tied one the owner commits the
-  head once more), and keeps its encoded (row or col) commitment.
+  position, sent in the claims message (one byte each: without wire as int8 tensors,
+  `pipeline.wire_rows`, which the streaming verifier uploads as they are and widens on its device;
+  with wire as the int8 bytes of `claimcodec.pack_rows`, not in `PVC3`), with ONE multiproof over
+  the distinct ids (`Prover.open_tables`).  The verifier checks, before it draws any challenge: in
+  derive, that the claims are int8 (so a leaf's bytes are the claim, one to one) and every id names
+  a row of the table (`range_or_shape`); then equal rows for equal ids (`lookup_consistency`) and
+  the multiproof (`lookup_merkle`).  No `u`, no columns, no Freivalds.  The LM head is an op of its
+  own (the benchmark's decoders draw it separately, as an untied model; for a tied one the owner
+  commits the head once more), and keeps its encoded (row or col) commitment.
 * **Why always.**  A lookup drops the table's `u` (`4 r V` bytes: 1.0 MB for GPT-2's tokens) and its
   opened columns (`4 t d` per tree), and its claims take a byte each (int32: four; `PVC3`: about one),
   for one multiproof of at most one path per position -- less than the three bytes per claim it
