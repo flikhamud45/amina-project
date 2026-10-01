@@ -1403,6 +1403,10 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
     count one byte each."""
     t = out["timings"]
     query = _passed(x)
+    if wire and send is None and prover.lean and prover.device.type != "cpu":
+        # a lean GPU prover keeps each claim on its device as int32 (not the host's int64) and encodes
+        # them there: about 2.3 bytes a claim come back instead of 8
+        send = claimcodec.narrow
     _sync(prover.device)
     t0 = time.perf_counter()
     claims = prover.claims(query, send=send, to_host=not wire, **forward_kwargs)
@@ -1419,12 +1423,14 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
         proofs = _passed(proofs)
     if wire:
         t0 = time.perf_counter()
-        if verifier.tables:
+        held = claims          # freed after the timing: dropping the claims is not encoding them (it took
+        if verifier.tables:    # 50-70 ms on a Windows host for 17 MB, and the default flow frees them untimed)
             rows = _encoded(claimcodec.pack_rows, [claims[name] for name in verifier.tables])
         claims = _encoded(claimcodec.encode, [claims[op.name] for op in prover.graph.mat_ops
                                               if op.name in sent and op.name not in verifier.tables])
         _sync(prover.device)
         t["prove_encode"] = time.perf_counter() - t0
+        del held
     size = len(claims) + len(rows or b"") if wire else sum(z.numel() * (1 if k in verifier.tables else 4)
                                                           for k, z in claims.items())
     out["bytes"] = {"claims": size, "u": 0, "columns": 0,

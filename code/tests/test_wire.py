@@ -490,6 +490,37 @@ def test_a_gpu_prover_encodes_on_its_device_and_sends_the_cpu_provers_bytes(devi
     assert encoded_on[1::2] == [{torch.device(device).type}] * (len(encoded_on) // 2)
 
 
+def test_a_lean_gpu_prover_encodes_int32_claims_on_its_device_and_sends_the_cpu_provers_bytes(device, monkeypatch):
+    # lean on the host: int64 claims come to the host (claims_device="cpu"), encoded there; lean on a GPU:
+    # each claim stays on the device as clipped int32 (claimcodec.narrow), encoded there
+    graph, x = _graph("qwen")
+    seen = []
+    monkeypatch.setattr(proto.claimcodec, "encode", lambda zs: (seen.append({(z.device.type, z.dtype) for z in zs}),
+                                                                _ENCODE(zs))[1])
+    attacks = dict(_claim_attacks(graph.mat_ops), big={"tamper": lambda o, z: z * (1 << 40)})   # beyond int32
+    for mode in ("C", "Kpre"):
+        prover, pair = _setup(graph, mode)
+        lean = proto.Prover(graph, commitments=prover.commitments, device=device, lean=True)
+        for i, (name, kw) in enumerate(attacks.items()):
+            a, b = (proto.run_query(p, pair[0], x, seed=i, wire=True, forward_kwargs=kw) for p in (prover, lean))
+            assert (a["accepted"], a["rejected_at"], a["bytes"]) == (b["accepted"], b["rejected_at"], b["bytes"]), name
+            assert a["accepted"] == (name == "honest")
+    on = (device, torch.int32) if device != "cpu" else ("cpu", torch.int64)
+    assert seen[1::2] == [{on}] * (len(seen) // 2)
+
+
+def test_narrowed_claims_encode_as_the_claims_and_keep_their_range():
+    rng = np.random.default_rng(9)
+    z = torch.from_numpy(np.round(rng.normal(0, 3e4, (40, 7))).astype(np.int64))
+    assert cc.encode([cc.narrow(z)]) == cc.encode([z])
+    for big in (1 << 29, -(1 << 29), 1 << 40, -(1 << 62)):
+        w = z.clone()
+        w[3, 2] = big
+        assert cc.narrow(w).dtype == torch.int32
+        with pytest.raises(cc.Unencodable):
+            cc.encode([cc.narrow(w)])
+
+
 # -- the security parameters ----------------------------------------------------------------------
 
 def _cnn_shapes(kind: str, shape: tuple) -> list[tuple[int, int]]:
