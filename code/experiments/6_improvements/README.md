@@ -973,12 +973,12 @@ the five CNNs under all seven `c` policies).
   0.20 G entries fewer on GPT-2 (0.40 G under `cnn18c`: both tables at `2^18`), 0.54 G (1.07 G) on
   Llama-2-7B and 2.68 G (1.34 G) on Qwen3-4B, whose 151,936-row table was encoded at `4 x 2^18`.
 
-`tests/test_lookups.py` (58 tests) holds what is particular to the lookups: the table's tree (its
-leaves, padding, multiproof; a row moved or changed fails); every `c` plan of GPT-2, OPT-350M,
-Llama-2-7B and Qwen3-4B, pruned or not, looks every embedding table up and keeps the head encoded;
-honest queries with a token three times are accepted and every forgery is rejected at its check -- a
-row changed at all positions of its token or replaced by another token's row, and a changed
-position-table row (`lookup_merkle`), one position of a repeated token changed
+`tests/test_lookups.py` (73 tests, with the review fixes' below) holds what is particular to the
+lookups: the table's tree (its leaves, padding, multiproof; a row moved or changed fails); every `c`
+plan of GPT-2, OPT-350M, Llama-2-7B and Qwen3-4B, pruned or not, looks every embedding table up and
+keeps the head encoded; honest queries with a token three times are accepted and every forgery is
+rejected at its check -- a row changed at all positions of its token or replaced by another token's
+row, and a changed position-table row (`lookup_merkle`), one position of a repeated token changed
 (`lookup_consistency`), an entry of 128 (`range_or_shape`; with wire too, where it travels as no
 bytes), a forged, short, long or non-bytes path, a missing proof and swapped proofs
 (`lookup_merkle`) -- on GPT-2, OPT, Llama and Qwen shapes, pruned and not, interactive and
@@ -1222,3 +1222,104 @@ python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --quer
 python experiments/6_improvements/perf.py --model qwen3-4b --layers 8 --seq 8 --modes Kpre --lam 40 --queries 15 \
     --threads 8 --lookups off on --prune-last off on --wire off on --verifier-device cuda
 ```
+
+## Review fixes of the col layout, the lookups and pruning
+
+The Phase-3 review's findings, each reproduced, fixed and tested (commits after `665e7aa`).  None
+changes a byte count, a plan or an honest verdict: the Phase-2 reviewers' default fingerprint is
+byte-identical; a same-process A/B against `44d96bb` (`paper`, `tight`, `cnn12`, `R8`, `R16` on the
+tiny MLP, LeNet-5, GPT-2, Llama and OPT) and one against `665e7aa` (`paper`, `tight`, `R8`,
+`tightc`, `cnn12c`, `R8c` and modes K and Kpre with and without `lookups`, on the tiny GPT-2, Llama,
+OPT and Qwen decoders and pruned GPT-2 and Qwen; `paper`, `tight`, `cnn12`, `R8`, `tightc`,
+`cnn12c`, `R8c`, `cnn16c` on the MLP and LeNet-5) give identical roots, plans, parameters, verdicts,
+labels, bytes and transcripts of honest and forged queries, batched and streaming, with and without
+wire, interactive and Fiat--Shamir; every plan of the five CNNs and of every decoder configuration
+(pruned or not, whole and 1- and 2-block builds) under all 16 policies is `665e7aa`'s.
+
+* **A biased embedding is not a lookup table.**  A table's tree binds the rows of `W`, but an
+  embedding op with a bias claims `W[:, ids] + b`: under a `c` policy the lookup check accepted the
+  claims without the bias (and rejected the honest ones), and so did a K/Kpre verifier with
+  `lookups`, whose own rows left the bias out.  Now an embedding with a bias keeps its row layout
+  (`plans._options`; the planner's sets and signatures take `has_bias`, which `analytic.OpShape` and
+  `decoder_shapes` now carry), a key that makes it a table is refused, a verifier with `lookups`
+  adds the bias to its own claim, and `claim_bound` counts an embedding's bias.  The benchmark
+  decoders' embeddings have none.
+* **Each party holds its own copy of what the other hands it.**  `run_query` runs both parties in
+  one process, and they shared tensors: the prover received the verifier's own query, `chi` and
+  column indices, and the verifier kept the prover's claims, `u` and the tables' multiproofs by
+  reference while the prover ran again.  A prover could therefore change them in place after they
+  were read or fixed and have a wrong output accepted -- a claim forged and restored inside `fold`,
+  after derive read it (the review's attack; batched, without wire), `u` put back to the honest one
+  inside `open`, after Freivalds read a forged one (batched), or set after the column indices to one
+  that passes both checks (streaming), every `chi` zeroed inside `fold` with `u = 0` (every path,
+  wire included), the query rewritten.  The paper default had the same weakness.  Every such message
+  is now passed as a copy (`protocol._passed`): the query, `chi` and the column indices to the
+  prover; the claims (without wire; a streaming GPU client's into pinned memory), `u` and the
+  multiproofs to the verifier.  The copies are not timed, as no in-process message was (the A/B
+  below).
+* **A key's tables in any order.**  With wire the prover packed the tables' int8 rows in the order
+  of the key's `tables` dict and the verifier unpacked them in graph order, which nothing fixed: a
+  key listing GPT-2's token and position tables the other way round rejected every honest wire
+  query.  The verifier now keeps the tables in graph order (the rows on the wire, the transcript,
+  the checks).
+* **A table's claims travel as a byte each without wire too.**  The streaming verifier received them
+  as `wire_claim`'s int32 tensors while `bytes["claims"]` counted one byte each; they now travel as
+  the table's int8 rows (`pipeline.wire_rows`; a claim outside int8 is passed on as int64 and
+  rejected at `range_or_shape`), which `ClaimUploads` widens to int32 on the device after uploading
+  their bytes.  `bytes["claims"]` is exactly the size of what the streaming verifier is handed
+  (tested on every decoder under row and `c` policies); no count changes.
+* **Values the wire cannot carry travel as no bytes.**  A prover whose claims, `u` or opened columns
+  the compact encoding cannot carry (a claim outside the range check, a looked-up row outside int8,
+  a field element of 32 bits) made `run_query(wire=True)` raise in the encoder:
+  `bench.py llm --policy <c policy> --wire --llm-tampers N` aborted its tamper cell once a
+  single-value tamper moved a table's row out of int8.  The encoders raise `claimcodec.Unencodable`,
+  and the message then travels as no bytes, which the verifier rejects as malformed where those
+  values are rejected without wire (`range_or_shape`, `freivalds`, `columns_shape`).
+* **The lookups' timings in the tables.**  `prove_lookups` and `verify_lookups` are additive in
+  `aggregate.py`, part of `paper_assets.py`'s prover and verifier time (`verify_lookups` among the
+  phases the streaming verifier's `verify_total` covers) and checked by `validate_extrapolation.py`.
+  On the stored roots nothing changes: re-aggregated copies of `raw/`, `raw_l40s` and
+  `raw_rtx2080ti-v2` give the committed tables byte for byte, `paper_assets --check` 0 missing.
+* **Smaller points.**  One bounds check in derive (`_check_bounds`: a table's int8 rows, the range
+  check and a table's ids, at once or deferred), without the range check's own pair of helpers; no
+  `rows = mats` alias; PEP 8 blank lines in `plan_bytes.py`.
+* **Not changed.**  The K/Kpre soundness bits: `bench.py` records a plan's mode-C bound
+  (`_plan_soundness`) only where a plan exists, and under `--policy` it runs no K or Kpre cell (the
+  CNN suite's `_todo` and the LLM suite's mode filter, checked by running both), so no K/Kpre cell
+  records it; with `--lookups` there is no plan (the policy must be `paper`) and no bound is
+  recorded.
+
+Tests: `tests/test_lookups.py` (73 tests now) -- a biased embedding under `tightc`, `cnn12c`, `R8c`
+(row layout, honest accepted, claims without the bias rejected at `freivalds`, the table key
+refused) and in K/Kpre with `lookups`; a key with its tables reversed (honest accepted with the same
+transcript, forged rows rejected, every form); the streaming verifier's received claims against
+`bytes["claims"]`; the bench tamper cell under `R8c --wire` (every attack rejected, a table's row
+out of int8 at `range_or_shape`); a GPU client's lookups
+(`test_a_gpu_client_checks_the_lookups_alike`, CUDA only: mode C forgeries and K/Kpre own rows on
+the device, a prover on the device).  `tests/test_plans.py`: an honest prover that overwrites in
+place everything it handed over or was handed (accepted by every verifier, modes C, K, Kpre) and the
+four in-place forgeries above (rejected by every verifier, interactive and Fiat--Shamir, with and
+without wire), under `paper` and `R8c`; the unencodable claims, `u` and columns with wire.
+`tests/test_comparison_tables.py`: every timing `run_query` records is carried into the tables once.
+`tests/test_fullcheck.py`: `decoder_shapes` has the built graphs' layouts and biases.  The whole
+suite: 1322 passed, 201 skipped (CUDA only) on this laptop.
+
+### Timing on this laptop
+
+GPT-2 with all 12 blocks, 64 tokens, mode C, one thread, 11 random prompts, `665e7aa` and this
+commit imported side by side in one process, every variant committed (4 threads) and the queries
+interleaved (the order rotating, the same challenges in both); medians, ms, and the ratio to
+`665e7aa`:
+
+| Policy | Verifier | Wire | Verifier (ms) | Prover (ms) | Proof |
+|---|---|---|---:|---:|---:|
+| paper | batched | no | 265.8 -> 271.5 (1.02x) | 1,478 -> 1,496 (1.01x) | 62.07 MB |
+| | batched | yes | 303.4 -> 308.7 (1.02x) | 1,732 -> 1,747 (1.01x) | 50.68 MB |
+| | streaming | no | 242.9 -> 246.0 (1.01x) | 1,512 -> 1,520 (1.01x) | 62.07 MB |
+| R16c | batched | no | 154.6 -> 153.1 (0.99x) | 743 -> 728 (0.98x) | 26.89 MB |
+| | batched | yes | 186.6 -> 185.6 (0.99x) | 903 -> 908 (1.01x) | 16.86 MB |
+| | streaming | no | 167.6 -> 166.5 (0.99x) | 743 -> 752 (1.01x) | 26.89 MB |
+
+Every query was accepted with the same bytes in both; every stage is within 0.98-1.04x of
+`665e7aa`'s (the most, derive of `paper` without wire: 69.0 -> 72.0 ms, against 1.01x with wire and
+0.99x under `R16c`), so the timing tables above stand.
