@@ -28,7 +28,8 @@ Fiat–Shamir, and malicious-prover tests (tampered claims, forged u, columns, p
 and wire bytes) in modes C, K and Kpre. Tests: 1560 passed on the RTX 2080 Ti node and on the
 L40S (CUDA included); on this branch `python -m pytest tests` collects 1,551 tests without CUDA
 (1,560 with it, 3 more with `transformers`), of which 1,346 pass on a CPU and the 205 GPU-only
-ones are skipped.
+ones are skipped. The report's "237 tests" (§3.4) counts the submission's code before the merge
+(68cd7f8).
 
 ## Development measurements (RTX 2080 Ti prover, Xeon Silver 4114 verifier, 8 threads)
 

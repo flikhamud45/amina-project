@@ -15,6 +15,11 @@ and by 17 other systems, from LeNet-5 to Llama-2-13B.
 | [`code/`](code/) | the implementation, one folder per experiment, the stored measurements, and a [README](code/README.md) with exact commands to reproduce every table and figure |
 | [`IMPROVEMENTS.md`](IMPROVEMENTS.md) | improvements of the defence made after the report, and their measurements on the report's hardware: the verifier engineering is always on and changes only the timings (verdicts, proof bytes, Fiat–Shamir transcripts and Merkle roots are the report's); the commitment plans, the wire encoding, pruning, lookups and the streaming GPU verifier are opt-in |
 
+The report describes the code as of the report, before the improvements were merged: its
+benchmark numbers were measured by commit `9401431`, and its "237 tests" (§3.4) are those of
+the submission's code before the merge (`68cd7f8`); this branch has 1,551 tests (1,554 with
+`transformers`).
+
 The submission tarball (`<groupname>/code`, `<groupname>/report`) is this branch as
 committed (from a checkout of it):
 

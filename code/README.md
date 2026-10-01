@@ -237,7 +237,8 @@ replaced (`pvi.fullcheck.reference`), and forged claims, `u`, columns, paths, lo
 wire bytes are rejected in modes C, K and Kpre. Without CUDA and without `transformers`
 (which is not in `requirements.txt`), `python -m pytest --collect-only -q` lists 1,551 tests,
 or 1,554 with `transformers` installed (the 3 tests of `tests/test_real_weights.py`, the
-real-weight OPT loader on a tiny random OPT, are skipped without it). Without CUDA the 205
+real-weight OPT loader on a tiny random OPT, are skipped without it); the report's 237 tests
+(§3.4) are those of the code before the improvements were merged. Without CUDA the 205
 GPU-only tests are skipped: 46 in `tests/test_gpu_exactness.py` (GPU/CPU bit-exactness at the
 sizes of the real models, with TF32 off and on), 106 in `tests/test_gpu_verifier.py` and 37 in
 `tests/test_fast_verifier.py` (the verifier's GPU forms against its CPU ones), 3 in
