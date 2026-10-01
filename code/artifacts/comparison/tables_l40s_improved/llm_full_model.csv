@@ -1,0 +1,206 @@
+model,seq,mode,challenges,lam,metric,threads,rate,variant,device,prover_hw,verifier_hw,n_layers_full,params_full,value,provenance
+gpt2,512,C,fs,128,bytes_total,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,91220810.5,measured
+gpt2,512,C,fs,128,fs_hash,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.046180954203009605,measured
+gpt2,512,C,fs,128,prove_encode,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.06223411485552788,measured
+gpt2,512,C,fs,128,prove_fold,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.00600908137857914,measured
+gpt2,512,C,fs,128,prove_forward,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.022463465109467506,measured
+gpt2,512,C,fs,128,prove_lookups,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0014231633394956589,measured
+gpt2,512,C,fs,128,prove_open,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.04297652468085289,measured
+gpt2,512,C,fs,128,verify_columns,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.023452309891581535,measured
+gpt2,512,C,fs,128,verify_decode,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.06137661635875702,measured
+gpt2,512,C,fs,128,verify_derive,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.16880440153181553,measured
+gpt2,512,C,fs,128,verify_fold,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,512,C,fs,128,verify_lookups,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.005285635590553284,measured
+gpt2,512,C,fs,128,verify_products,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.12717221677303314,measured
+gpt2,512,C,int,128,bytes_total,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,213461032.0,measured
+gpt2,512,C,int,128,bytes_total,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,89491750.5,measured
+gpt2,512,C,int,128,fs_hash,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,7.897615432739258e-07,measured
+gpt2,512,C,int,128,fs_hash,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,1.989305019378662e-06,measured
+gpt2,512,C,int,128,prove_encode,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.06627555377781391,measured
+gpt2,512,C,int,128,prove_fold,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.032680319622159004,measured
+gpt2,512,C,int,128,prove_fold,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.005709480494260788,measured
+gpt2,512,C,int,128,prove_forward,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.04459455423057079,measured
+gpt2,512,C,int,128,prove_forward,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.02126143127679825,measured
+gpt2,512,C,int,128,prove_lookups,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0014467444270849228,measured
+gpt2,512,C,int,128,prove_open,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.08420366607606411,measured
+gpt2,512,C,int,128,prove_open,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.03927356190979481,measured
+gpt2,512,C,int,128,verify_columns,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.08911783434450626,measured
+gpt2,512,C,int,128,verify_columns,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.017373764887452126,measured
+gpt2,512,C,int,128,verify_decode,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.062170322984457016,measured
+gpt2,512,C,int,128,verify_derive,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.29537069611251354,measured
+gpt2,512,C,int,128,verify_derive,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.16594606265425682,measured
+gpt2,512,C,int,128,verify_fold,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,512,C,int,128,verify_fold,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,512,C,int,128,verify_lookups,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.005209667608141899,measured
+gpt2,512,C,int,128,verify_products,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.14979364909231663,measured
+gpt2,512,C,int,128,verify_products,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.12404119409620762,measured
+gpt2,512,Kpre,int,128,bytes_total,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,173216068.0,measured
+gpt2,512,Kpre,int,128,fs_hash,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,7.189810276031494e-07,measured
+gpt2,512,Kpre,int,128,prove_fold,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,512,Kpre,int,128,prove_forward,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.04420405067503452,measured
+gpt2,512,Kpre,int,128,verify_derive,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.26128953881561756,measured
+gpt2,512,Kpre,int,128,verify_fold,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,512,Kpre,int,128,verify_products,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.13977554254233837,measured
+gpt2,64,C,fs,128,bytes_total,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,16574665.5,measured
+gpt2,64,C,fs,128,fs_hash,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0065252091735601425,measured
+gpt2,64,C,fs,128,prove_encode,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.015985531732439995,measured
+gpt2,64,C,fs,128,prove_fold,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0057517159730196,measured
+gpt2,64,C,fs,128,prove_forward,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.020430216565728188,measured
+gpt2,64,C,fs,128,prove_lookups,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.00029647909104824066,measured
+gpt2,64,C,fs,128,prove_open,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0421177614480257,measured
+gpt2,64,C,fs,128,verify_columns,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.024569401517510414,measured
+gpt2,64,C,fs,128,verify_decode,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.020064525306224823,measured
+gpt2,64,C,fs,128,verify_derive,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.03257635980844498,measured
+gpt2,64,C,fs,128,verify_fold,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,64,C,fs,128,verify_lookups,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0010242927819490433,measured
+gpt2,64,C,fs,128,verify_products,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.020738238468766212,measured
+gpt2,64,C,int,128,bytes_total,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,62072456.0,measured
+gpt2,64,C,int,128,bytes_total,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,14847316.5,measured
+gpt2,64,C,int,128,bytes_total,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,14846404.5,measured
+gpt2,64,C,int,128,fs_hash,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,6.854534149169922e-07,measured
+gpt2,64,C,int,128,fs_hash,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,1.2256205081939697e-06,measured
+gpt2,64,C,int,128,fs_hash,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,1.1883676052093506e-06,measured
+gpt2,64,C,int,128,prove_encode,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.012954289093613625,measured
+gpt2,64,C,int,128,prove_encode,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.01345335878431797,measured
+gpt2,64,C,int,128,prove_fold,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.03262960538268089,measured
+gpt2,64,C,int,128,prove_fold,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.005298888310790062,measured
+gpt2,64,C,int,128,prove_fold,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.005926311016082764,measured
+gpt2,64,C,int,128,prove_forward,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.025134488940238953,measured
+gpt2,64,C,int,128,prove_forward,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.019880598410964012,measured
+gpt2,64,C,int,128,prove_forward,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.021115999668836594,measured
+gpt2,64,C,int,128,prove_lookups,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.00028595514595508575,measured
+gpt2,64,C,int,128,prove_lookups,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0002985987812280655,measured
+gpt2,64,C,int,128,prove_open,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.08513450063765049,measured
+gpt2,64,C,int,128,prove_open,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.03868376463651657,measured
+gpt2,64,C,int,128,prove_open,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.03942975774407387,measured
+gpt2,64,C,int,128,verify_columns,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.10857713408768177,measured
+gpt2,64,C,int,128,verify_columns,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.009657157585024834,measured
+gpt2,64,C,int,128,verify_columns,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.018195195123553276,measured
+gpt2,64,C,int,128,verify_decode,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.017072750255465508,measured
+gpt2,64,C,int,128,verify_decode,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.020122788846492767,measured
+gpt2,64,C,int,128,verify_derive,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.04990704357624054,measured
+gpt2,64,C,int,128,verify_derive,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.013598965480923653,measured
+gpt2,64,C,int,128,verify_derive,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.033569782972335815,measured
+gpt2,64,C,int,128,verify_fold,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,64,C,int,128,verify_fold,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,64,C,int,128,verify_fold,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,64,C,int,128,verify_lookups,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0010551679879426956,measured
+gpt2,64,C,int,128,verify_lookups,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.001055913046002388,measured
+gpt2,64,C,int,128,verify_products,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.03881701081991196,measured
+gpt2,64,C,int,128,verify_products,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.024767102673649788,measured
+gpt2,64,C,int,128,verify_products,8,4,_wire_prune_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.019019365310668945,measured
+gpt2,64,C,int,128,verify_upload,8,4,_wire_gpuv_prune_polauto,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.003145212307572365,measured
+gpt2,64,Kpre,int,128,bytes_total,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,21827908.0,measured
+gpt2,64,Kpre,int,128,fs_hash,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,5.364418029785156e-07,measured
+gpt2,64,Kpre,int,128,prove_fold,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,64,Kpre,int,128,prove_forward,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.02507815510034561,measured
+gpt2,64,Kpre,int,128,verify_derive,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.04977555200457573,measured
+gpt2,64,Kpre,int,128,verify_fold,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.0,measured
+gpt2,64,Kpre,int,128,verify_products,8,4,,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,12,124401408,0.01592414081096649,measured
+llama2-13b,2048,C,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,18129943600.0,measured
+llama2-13b,2048,C,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,3.1441450119018555e-06,measured
+llama2-13b,2048,C,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,1.4506247621029615,measured
+llama2-13b,2048,C,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,7.7259870786219835,measured
+llama2-13b,2048,C,int,128,prove_open,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,6.104905683547258,measured
+llama2-13b,2048,C,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,0.0,measured
+llama2-13b,2048,C,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,9.059395054355264,measured
+llama2-13b,2048,Kpre,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,17490375680.0,measured
+llama2-13b,2048,Kpre,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,3.458932042121887e-06,measured
+llama2-13b,2048,Kpre,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,0.0,measured
+llama2-13b,2048,Kpre,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,7.593646263703704,measured
+llama2-13b,2048,Kpre,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,0.0,measured
+llama2-13b,2048,Kpre,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,40,13015449600,3.423470137640834,measured
+llama2-7b,1,C,int,128,bytes_total,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,130167100.0,measured
+llama2-7b,1,C,int,128,fs_hash,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,9.653158485889435e-07,measured
+llama2-7b,1,C,int,128,prove_encode,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.22447322309017181,measured
+llama2-7b,1,C,int,128,prove_fold,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.14331288123503327,measured
+llama2-7b,1,C,int,128,prove_forward,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.0947123165242374,measured
+llama2-7b,1,C,int,128,prove_lookups,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,4.516029730439186e-05,measured
+llama2-7b,1,C,int,128,prove_open,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,1.0190582610666752,measured
+llama2-7b,1,C,int,128,verify_columns,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.21859514340758324,measured
+llama2-7b,1,C,int,128,verify_decode,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.03639433439821005,measured
+llama2-7b,1,C,int,128,verify_derive,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.02165355859324336,measured
+llama2-7b,1,C,int,128,verify_fold,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.0,measured
+llama2-7b,1,C,int,128,verify_lookups,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.00014037592336535454,measured
+llama2-7b,1,C,int,128,verify_products,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.02260674024000764,measured
+llama2-7b,2048,C,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,11586190800.0,measured
+llama2-7b,2048,C,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,1.0523945093154907e-06,measured
+llama2-7b,2048,C,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.5215226821601391,measured
+llama2-7b,2048,C,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,2.8440974205732346,measured
+llama2-7b,2048,C,int,128,prove_open,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,2.0212416108697653,measured
+llama2-7b,2048,C,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.0,measured
+llama2-7b,2048,C,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,1.6815036721527576,measured
+llama2-7b,2048,Kpre,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,11173753856.0,measured
+llama2-7b,2048,Kpre,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,1.911073923110962e-06,measured
+llama2-7b,2048,Kpre,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.0,measured
+llama2-7b,2048,Kpre,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,2.8627602253109217,measured
+llama2-7b,2048,Kpre,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.0,measured
+llama2-7b,2048,Kpre,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,1.3124915473163128,measured
+llama2-7b,64,C,int,128,bytes_total,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,328537998.5,measured
+llama2-7b,64,C,int,128,fs_hash,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,2.0549632608890533e-06,measured
+llama2-7b,64,C,int,128,prove_encode,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.42495806561782956,measured
+llama2-7b,64,C,int,128,prove_fold,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.1438235049135983,measured
+llama2-7b,64,C,int,128,prove_forward,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.11685380339622498,measured
+llama2-7b,64,C,int,128,prove_lookups,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.0003622765652835369,measured
+llama2-7b,64,C,int,128,prove_open,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,1.0226285220123827,measured
+llama2-7b,64,C,int,128,verify_columns,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.30522963451221585,measured
+llama2-7b,64,C,int,128,verify_decode,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.19040727661922574,measured
+llama2-7b,64,C,int,128,verify_derive,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.3320402945391834,measured
+llama2-7b,64,C,int,128,verify_fold,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.0,measured
+llama2-7b,64,C,int,128,verify_lookups,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.001028943806886673,measured
+llama2-7b,64,C,int,128,verify_products,8,4,_wire_polauto,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,0.26105443574488163,measured
+opt-1.3b,2048,C,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,3807062624.0,measured
+opt-1.3b,2048,C,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,1.2386590242385864e-06,measured
+opt-1.3b,2048,C,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.10260877199470997,measured
+opt-1.3b,2048,C,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.9611409120261669,measured
+opt-1.3b,2048,C,int,128,prove_open,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.4963866248726845,measured
+opt-1.3b,2048,C,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.0,measured
+opt-1.3b,2048,C,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.7283221911638975,measured
+opt-1.3b,2048,Kpre,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,3657634176.0,measured
+opt-1.3b,2048,Kpre,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,1.0989606380462646e-06,measured
+opt-1.3b,2048,Kpre,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.0,measured
+opt-1.3b,2048,Kpre,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.9604943376034498,measured
+opt-1.3b,2048,Kpre,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.0,measured
+opt-1.3b,2048,Kpre,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,24,1315553280,0.6453155614435673,measured
+opt-125m,2048,C,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,732532048.0,measured
+opt-125m,2048,C,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,8.996576070785522e-07,measured
+opt-125m,2048,C,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.03283619321882725,measured
+opt-125m,2048,C,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.14233173429965973,measured
+opt-125m,2048,C,int,128,prove_open,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.09321391582489014,measured
+opt-125m,2048,C,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.0,measured
+opt-125m,2048,C,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.16537662968039513,measured
+opt-125m,2048,Kpre,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,692261248.0,measured
+opt-125m,2048,Kpre,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,9.294599294662476e-07,measured
+opt-125m,2048,Kpre,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.0,measured
+opt-125m,2048,Kpre,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.14130409061908722,measured
+opt-125m,2048,Kpre,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.0,measured
+opt-125m,2048,Kpre,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,12,125199360,0.11009824462234974,measured
+opt-6.7b,2048,C,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,10101025024.0,measured
+opt-6.7b,2048,C,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,1.1213123798370361e-06,measured
+opt-6.7b,2048,C,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,0.5398486778140068,measured
+opt-6.7b,2048,C,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,2.7213797383010387,measured
+opt-6.7b,2048,C,int,128,prove_open,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,1.9045272879302502,measured
+opt-6.7b,2048,C,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,0.0,measured
+opt-6.7b,2048,C,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,1.452537139877677,measured
+opt-6.7b,2048,Kpre,int,128,bytes_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,9730986368.0,measured
+opt-6.7b,2048,Kpre,int,128,fs_hash,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,1.084059476852417e-06,measured
+opt-6.7b,2048,Kpre,int,128,prove_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,0.0,measured
+opt-6.7b,2048,Kpre,int,128,prove_forward,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,2.733774760738015,measured
+opt-6.7b,2048,Kpre,int,128,verify_fold,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,0.0,measured
+opt-6.7b,2048,Kpre,int,128,verify_total,8,4,_gpuv_stream,cuda,NVIDIA L40S,NVIDIA L40S (GPU client) + AMD EPYC 9334 32-Core Processor x8 threads,32,6657933312,1.1729095745831728,measured
+qwen3-4b,8,Kpre,int,40,bytes_total,1,4,_thr1_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,35194368.0,measured
+qwen3-4b,8,Kpre,int,40,bytes_total,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,20302628.5,measured
+qwen3-4b,8,Kpre,int,40,fs_hash,1,4,_thr1_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,8.23289155960083e-07,measured
+qwen3-4b,8,Kpre,int,40,fs_hash,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,1.6670674085617065e-06,measured
+qwen3-4b,8,Kpre,int,40,prove_encode,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.010941613465547562,measured
+qwen3-4b,8,Kpre,int,40,prove_fold,1,4,_thr1_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.0,measured
+qwen3-4b,8,Kpre,int,40,prove_fold,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.0,measured
+qwen3-4b,8,Kpre,int,40,prove_forward,1,4,_thr1_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.11683765053749084,measured
+qwen3-4b,8,Kpre,int,40,prove_forward,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.10840827412903309,measured
+qwen3-4b,8,Kpre,int,40,verify_decode,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.04337012395262718,measured
+qwen3-4b,8,Kpre,int,40,verify_derive,1,4,_thr1_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.08062092401087284,measured
+qwen3-4b,8,Kpre,int,40,verify_derive,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.08072816394269466,measured
+qwen3-4b,8,Kpre,int,40,verify_fold,1,4,_thr1_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.0,measured
+qwen3-4b,8,Kpre,int,40,verify_fold,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.0,measured
+qwen3-4b,8,Kpre,int,40,verify_products,1,4,_thr1_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.03041762299835682,measured
+qwen3-4b,8,Kpre,int,40,verify_products,1,4,_thr1_wire_prune_lookups,cuda,NVIDIA L40S,AMD EPYC 9334 32-Core Processor x1 threads,36,4022272000,0.03142625093460083,measured

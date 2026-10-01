@@ -21,7 +21,7 @@ policy and λ reaches at least λ bits, interactive and Fiat–Shamir, and malic
 (tampered claims, forged u, columns, paths, look-up rows and wire bytes) in modes C, K and Kpre.
 Tests: 1560 passed on the RTX 2080 Ti node (CUDA included), 1335 locally.
 
-## Same hardware, before and after (RTX 2080 Ti prover, Xeon Silver 4114 verifier, 8 threads)
+## Development measurements (RTX 2080 Ti prover, Xeon Silver 4114 verifier, 8 threads)
 
 Paper code (729b997) against `improve-results` (b3a08d8). All queries accepted. Policies: the
 `auto` choice, with `--wire` and, for GPT-2, `--prune-last`. λ = 128 unless stated.
@@ -36,36 +36,67 @@ Paper code (729b997) against `improve-results` (b3a08d8). All queries accepted. 
 | OPT-125M, 2048 tokens, GPU verifier (Phase 1) | C 1.70 → 0.49 s, Kpre 1.05 → 0.21 s (streaming) | | unchanged |
 | Llama-2-7B, 2048 tokens, GPU verifier (from 1- and 2-block builds) | C 17.5 → 3.7 s, Kpre 13.2 → 2.1 s (streaming) | | unchanged |
 
-## What it means against published systems
+## Measured on the L40S (the paper's hardware)
 
-L40S/EPYC numbers below are **projections**: the paper's stored L40S/EPYC measurements scaled by the
-same-node before/after ratios above. Proof sizes are exact. They must be confirmed on the L40S
-(see the run list).
+The list below was run by Edo on 2026-10-01: 27 jobs, L40S prover and 8 threads of AMD EPYC 9334
+(1 thread for the Maverick rows), branch at c8be5eb. The records are in
+`code/artifacts/comparison/raw_l40s_improved/` (frozen), the tables in `tables_l40s_improved/`.
 
-| Against | Their prover / verifier / proof | Ours (projected L40S) | Better on |
+Checks:
+- **Integrity:** 195 cells, all from one clean commit, all L40S + EPYC; no partial or rejected cells.
+- **Counts:** 4,380/4,380 honest queries accepted, 4,973/4,973 attacks rejected.
+- **Unchanged default:** all 565 hardware-independent fingerprints match the paper's `raw_l40s`.
+- **Tests:** 1560 passed on sm_89.
+- **Cross-check:** a re-aggregation reproduces the tables byte for byte, and an independent
+  recomputation of the table below reproduces Edo's numbers exactly.
+
+Same hardware, before (paper code, `raw_l40s`) and after:
+
+| Configuration | Prover / verifier / proof, before | After |
+|---|---|---|
+| LeNet-5, C | 4.3 ms / 7.0 ms / 130.9 kB | **3.0 ms / 1.9 ms / 62.1 kB** (wire: 5.3 / 2.4 ms / 49.5 kB) |
+| LeNet-5, C, Fiat-Shamir | 4.5 / 8.5 ms / 172.6 kB | wire: 5.4 / 2.6 ms / 63.3 kB |
+| VGG-16, C | 21.5 / 63.4 ms / 3.43 MB | 13.5 / 16.2 ms / 2.24 MB (wire: 17.3 / 14.9 ms / 1.71 MB) |
+| GPT-2, 64 tokens, C (wire, pruned) | 173 / 468 ms / 62.1 MB | **80 / 92 ms / 14.85 MB**; GPU verifier 69 ms; Fiat-Shamir 91 / 106 ms / 16.57 MB |
+| GPT-2, 512 tokens, C (wire, pruned) | 163 ms / 1.01 s / 213 MB | 134 / 375 ms / 89.5 MB |
+| Qwen3-4B, 8 tokens, Kpre, lambda=40, 1 thread | 136 / 263 ms / 36.08 MB | 117 / 111 ms / 35.19 MB (wire: 119 / 156 ms / 20.30 MB) |
+| Llama-2-7B, 1 token, C (wire) | 2.72 / 2.53 s / 418 MB | 1.48 s / 299 ms / 130 MB |
+| Llama-2-7B, 2048 tokens, GPU verifier (C / Kpre) | 18.7 s, 6.88 s / 16.7 s, 4.16 s | **5.39 s, 1.68 s / 2.86 s, 1.31 s** (streaming verifier; the proof is unchanged) |
+
+## Against published systems (measured; theirs as reported on their own hardware)
+
+| Against | Theirs: prover / verifier / proof | Ours: prover / verifier / proof | Better on |
 |---|---|---|---|
-| zkCNN, LeNet-5 | 441 ms / 5.8 ms / 71.3 kB | ~1.8 ms / **~1.6 ms** / **62 kB** (49 kB with wire) | **all three** (with Fiat–Shamir the proof needs wire: 62.5 kB) |
-| DeepProve, GPT-2, 64 tokens | 34.2 s / 1.35 s / 21.7 MB | ~48 ms / ~98 ms / **14.8 MB** (FS 16.6) | **all three**, also with Fiat–Shamir (needs wire) |
-| Maverick, Qwen3-4B, 8 tokens (its setting) | 354.5 ms / 87.1 ms / 36.08 MB | ~86 ms / **~59 ms** / **20.3 MB** (wire) | **all three** |
-| zkCNN, VGG-16 | 88.3 s / 59.3 ms / 341 kB | ~9 ms / **~10 ms** / 2.24 MB | prover, verifier |
-| ZKML, VGG-16 | 637 s / 9.6 ms / 12 kB | ~9 ms / ~10 ms / 2.24 MB | prover; verifier about tied |
-| zkGPT, GPT-2 | 21.8 s / 0.35 s / 101 kB | ~48 ms / **~98 ms** / 14.8 MB | prover, verifier |
-| zkLLM, Llama-2-7B, 2048 tokens (A100) | 620 s / 2.36 s / 183 kB | 17.6 s / **~1.45 s** (C) or ~0.66 s (Kpre), GPU verifier / 11.6 GB | prover (48–56× on the same GPU), verifier |
+| zkCNN, LeNet-5 | 441 ms / 5.8 ms / 71.3 kB | 3.0 ms / 1.9 ms / 62.1 kB | **all three** (145x, 3.0x, 1.15x); FS + wire: 5.4 / 2.6 ms / 63.3 kB, all three |
+| DeepProve, GPT-2, 64 tokens | 34.2 s / 1.35 s / 21.7 MB | 80 ms / 92 ms / 14.85 MB | **all three** (426x, 14.7x, 1.46x); FS: 1.31x smaller; GPU verifier 69 ms |
+| DeepProve, GPT-2, 512 tokens | 176 s / 1.65 s / 25.5 MB | 134 ms / 375 ms / 89.5 MB | prover, verifier (proof 3.5x larger) |
+| zkGPT, GPT-2 | 21.8 s / 0.35 s / 101 kB | 80 ms / 92 ms / 14.85 MB | prover, verifier (3.8x) |
+| zkCNN, VGG-16 | 88.3 s / 59.3 ms / 341 kB | 13.5 ms / 16.2 ms / 2.24 MB | prover, verifier (3.7x) |
+| Bionetta, LeNet-5 | 3.75 s / 10 ms / 0.9 kB | 3.0 ms / 1.9 ms / 62.1 kB | prover, verifier (5.1x) |
+| ZKML, VGG-16 | 637 s / 9.6 ms / 12 kB | 17.3 ms / 14.9 ms / 1.71 MB | prover only (verifier 1.5x slower) |
+| ZKTorch, Llama-2-7B, 1 token | 2645 s / 100 s / 22.9 MB | 1.48 s / 0.30 s / 130 MB | prover, verifier (335x); proof 5.7x larger |
+| Maverick, Qwen3-4B, 8 tokens (lambda=40, 1 thread) | 354.5 ms / 87.1 ms / 36.08 MB | no wire: 117 / 111 ms / 35.19 MB; wire: 119 / 156 ms / 20.30 MB | prover (3.0x) and proof (1.78x with wire); **verifier 1.3-1.8x slower** than its 87.1 ms. Its 87.1 ms excludes a 37.4 ms nonlinear replay; against 124.5 ms our no-wire verifier is 1.12x faster, but then the proof is only 2.5% smaller. |
+| zkLLM, 2048 tokens (A100), GPU verifier | OPT-125M 73.9 s / 0.34 s; OPT-1.3B 221 s / 0.90 s; OPT-6.7B 548 s / 2.08 s; Llama-2-7B 620 s / 2.36 s; Llama-2-13B 803 s / 3.95 s | C: 0.27/0.17, 1.56/0.73, 5.17/1.45, 5.39/1.68, 15.3/9.06 s; Kpre: 0.14/0.11, 0.96/0.65, 2.73/1.17, 2.86/1.31, 7.59/3.42 s | prover everywhere (52-523x); verifier everywhere (1.2-3.1x) **except Llama-2-13B in mode C (2.3x slower)**; proof 5,000-96,000x larger |
+
+What did not hold as projected from the 2080 Ti ratios:
+- **Maverick:** the EPYC's paper-code baseline was already faster, so the gain is 2.4x there instead of 4-6x.
+- **ZKML:** VGG-16's verifier is 1.5x slower than ZKML's, not tied.
+- **Llama-2-13B, mode C:** the streaming verifier takes 9.06 s against 1.68 s for Llama-2-7B, and the prover's opening grows to 6.1 s against 2.9 s in the paper run. Host memory rose to 63 GiB against 36 GiB for 7B; pinned-buffer pressure is a likely cause, not yet confirmed.
+- **Better than projected:** the prover at 2048 tokens is 3-6x faster than in the paper run, from the int32 attention its forward pass shares with the verifier.
 
 Caveats to state in any text:
-- **Projections:** every L40S/EPYC time above is a projection until the L40S re-run below.
-- **Wire encoding:** the DeepProve, Maverick and Fiat–Shamir zkCNN rows need it.
-- **Interactive vs Fiat–Shamir:** Table 4 compares our interactive protocol; the Fiat–Shamir numbers are given where it matters.
-- **Maverick's 87.1 ms** excludes its 37.4 ms nonlinear replay, while ours includes all our non-weight work. The fair gap is therefore larger in our favour.
-- **Setup grows** with the higher-rate plans (GPT-2: 0.86 → 9.9 G encoded entries, about 6 minutes on the 2080 Ti node). `auto` caps it at max(2 × paper, 2^34).
+- **Wire encoding:** the DeepProve, Fiat-Shamir zkCNN and smaller-proof Maverick rows need it.
+- **Interactive vs Fiat-Shamir:** Table 4 compares our interactive protocol; the Fiat-Shamir numbers are given where it matters.
+- **Setup grows** with the higher-rate plans (GPT-2: 0.86 -> 9.9 G encoded entries). `auto` caps it at max(2 x paper, 2^34).
 - **Random weights:** the LLM costs use random int8 weights, as in the paper. Trained weights compress better.
-- **Remaining inefficiency:** the verifier still widens decoded claims to int64 (Qwen: 88 ms vs 31 ms for int32). Not addressed.
+- **Remaining inefficiency:** the verifier widens decoded claims to int64 (Qwen: 88 ms vs 31 ms for int32), which matters for the Maverick row. Not addressed.
 - **Harness fix:** the in-process harness now copies every message at its boundary. A prover sharing memory with the verifier could otherwise rewrite a message after handing it over; this was possible in the paper code too, but not in a real deployment.
+- **Open controls:** the new code at 2048 tokens with the non-streaming GPU verifier would separate the attention and streaming gains in the prover. Llama-2-13B in mode C with a smaller streaming window would test the host-memory hypothesis.
 
-## L40S runs needed (the friend's account; mine cannot use `killable`)
+## The L40S runs (done 2026-10-01; recorded in `raw_l40s_improved/`)
 
-From a clean clone of `improve-results` at b3a08d8 (or later), with the strong-GPU setup used for
-`raw_l40s` (exclude the Xeon node t-806):
+Run from a clean clone of `improve-results` at c8be5eb, with the strong-GPU setup used for `raw_l40s`
+(the Xeon node t-806 excluded). The pytest step ran as a batch job; Llama-2-13B got `--mem=128G`.
 
 ```bash
 export PVI_PLATFORM=l40s_improved SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1
@@ -93,6 +124,5 @@ sbatch $L $B llm --model llama2-7b --seq 1 64 --builds full --lams 128 --modes C
 python code/experiments/5_comparison/aggregate.py --platform l40s_improved
 ```
 
-Afterwards the paper tables can be regenerated from `tables_l40s_improved/`. Updating
-`paper_assets.py` and `text_numbers.py` for the new cells is a separate, later step, done only if we
-decide to merge.
+The paper tables can be regenerated from `tables_l40s_improved/`. Updating `paper_assets.py` and
+`text_numbers.py` for the new cells is a separate, later step, done only if we decide to merge.
