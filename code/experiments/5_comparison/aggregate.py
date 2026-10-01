@@ -39,10 +39,11 @@ def dirs_for(platform: str) -> tuple[Path, Path]:
     return BASE / (f"raw_{p}" if p else "raw"), BASE / (f"tables_{p}" if p else "tables")
 GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
 # verify_total: the streaming verifier's (bench.py --verifier-impl stream) overlapped verify phases, timed as one;
-# prove_encode / verify_decode: the compact encoding of the proof (bench.py --wire)
-ADDITIVE = {"prove_forward", "prove_fold", "prove_open", "prove_encode", "verify_decode", "verify_derive",
-            "verify_products", "verify_columns", "verify_fold", "verify_upload", "verify_total", "fs_hash", "bytes_total",
-            "bytes_total_multiproof"}
+# prove_encode / verify_decode: the compact encoding of the proof (bench.py --wire); prove_lookups /
+# verify_lookups: a commitment plan's lookup tables (bench.py --policy <c policy>)
+ADDITIVE = {"prove_forward", "prove_lookups", "prove_fold", "prove_open", "prove_encode", "verify_decode",
+            "verify_derive", "verify_lookups", "verify_products", "verify_columns", "verify_fold", "verify_upload",
+            "verify_total", "fs_hash", "bytes_total", "bytes_total_multiproof"}
 
 
 def load_rows() -> list[dict]:

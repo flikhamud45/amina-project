@@ -29,6 +29,43 @@ def test_verify_total_is_carried_into_the_tables():
     assert "verify_total" in _script("validate_extrapolation").METRICS
 
 
+def test_every_timing_of_run_query_is_carried_into_the_tables():
+    """Every timing ``run_query`` records -- modes C, K and Kpre, a ``c`` policy's lookup tables and a K
+    verifier's own rows, with and without wire, batched and streaming -- is additive in aggregate.py,
+    checked by validate_extrapolation.py and part of paper_assets.py's prover or verifier time (once:
+    never both), and the batched verify phases the streaming verifier's ``verify_total`` covers are
+    those ``OVERLAPPED`` names."""
+    from pvi.fullcheck import protocol as proto
+    from test_plans import _planned, _verifiers
+
+    graph, x, coms = _planned("gpt", "R8c")
+    weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
+    verifiers = [*_verifiers(graph, coms, False), *_verifiers(graph, coms, True)]
+    for mode in ("K", "Kpre"):
+        for lookups in (False, True):
+            for stream in (False, True):
+                v = proto.Verifier(graph.public(), proto.params_for(40, len(graph.mat_ops)), mode, weights=weights,
+                                   lookups=lookups, stream=stream)
+                if mode == "Kpre":
+                    v.precompute(proto.Challenger(seed=1))
+                verifiers.append(v)
+    keys = {False: set(), True: set()}                 # by stream
+    for v in verifiers:
+        for wire in (False, True):
+            res = proto.run_query(proto.Prover(graph, commitments=coms), v, x, seed=None if v.params.fiat_shamir
+                                  else 1, wire=wire)
+            assert res["accepted"]
+            keys[v.stream] |= set(res["timings"])
+    emitted = keys[False] | keys[True]
+    assert {"prove_lookups", "verify_lookups", "verify_total"} <= emitted
+    pa = _script("paper_assets")
+    assert emitted <= _script("aggregate").ADDITIVE and emitted <= _script("validate_extrapolation").METRICS
+    assert emitted <= set(pa.PROVE) | set(pa.VERIFY) and set(pa.PROVE) & set(pa.VERIFY) == {"fs_hash"}
+    batched_only = {k for k in keys[False] - keys[True] if k.startswith("verify_")}
+    assert batched_only <= set(pa.OVERLAPPED) and not keys[True] & set(pa.OVERLAPPED)
+    assert set(pa.OVERLAPPED) - batched_only == {"verify_upload"}    # (a GPU client's: none on the CPU)
+
+
 def test_the_streaming_verifier_is_timed_once():
     pa = _script("paper_assets")
     row = {"prove_forward": (2.0, "measured", 7e6, "gpu"), "prove_fold": (0.5, "measured", 7e6, "gpu"),
