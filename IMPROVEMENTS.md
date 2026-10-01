@@ -1,10 +1,13 @@
-# Improvements on branch `improve-results` (not merged)
+# Improvements after the report (merged into `submission`)
 
-Constant-factor improvements to the defence, so the paper can show clear wins against published
-systems. Every change keeps the guarantee ε ≤ 2^-λ, and **the default behaviour is unchanged**:
-with no new flag, verdicts, proof bytes, Fiat–Shamir transcripts and Merkle roots are byte-identical
-to the paper code (729b997). The stored results therefore still reproduce. Details, scripts and raw
-results are in `code/experiments/6_improvements/` (README.md, results/).
+Constant-factor improvements to the defence, made after the report on branch `improve-results`
+and merged into the submission; the report itself is not updated and does not use them. Every
+change keeps the guarantee ε ≤ 2^-λ, and **the default behaviour is unchanged**: with no new flag,
+verdicts, proof bytes, Fiat–Shamir transcripts and Merkle roots are byte-identical to the paper
+code (729b997, and the submission's code before the merge). The stored results therefore still
+reproduce: Route A of `code/README.md` gives the report's tables, figures and numbers byte for
+byte. Details, scripts and raw results are in `code/experiments/6_improvements/` (README.md,
+results/); the `bench.py` options are described in `code/experiments/4_defence_benchmark/README.md`.
 
 ## What changed
 
@@ -16,10 +19,13 @@ results are in `code/experiments/6_improvements/` (README.md, results/).
 | 4. Codec speed | GPU encoder with 4 host syncs per query (was about one per weight op), faster host encoder, same bytes | automatic with `--wire` |
 | `auto` | Picks the plan with the fewest non-claim bytes within a setup budget, max(2 × paper setup, 2^34 encoded entries). Deterministic, from the validated byte model, one rule for every model. | `--policy auto` |
 
-Soundness: each new option has a written argument (README), an automated check that every model,
-policy and λ reaches at least λ bits, interactive and Fiat–Shamir, and malicious-prover tests
-(tampered claims, forged u, columns, paths, look-up rows and wire bytes) in modes C, K and Kpre.
-Tests: 1560 passed on the RTX 2080 Ti node (CUDA included), 1335 locally.
+Soundness: each new option has a written argument (`code/experiments/6_improvements/README.md`),
+an automated check that every model, policy and λ reaches at least λ bits, interactive and
+Fiat–Shamir, and malicious-prover tests (tampered claims, forged u, columns, paths, look-up rows
+and wire bytes) in modes C, K and Kpre. Tests: 1560 passed on the RTX 2080 Ti node and on the
+L40S (CUDA included); on this branch `python -m pytest tests` collects 1,551 tests without CUDA
+(1,560 with it, 3 more with `transformers`), of which 1,346 pass on a CPU and the 205 GPU-only
+ones are skipped.
 
 ## Development measurements (RTX 2080 Ti prover, Xeon Silver 4114 verifier, 8 threads)
 
@@ -40,7 +46,14 @@ Paper code (729b997) against `improve-results` (b3a08d8). All queries accepted. 
 
 The list below was run by Edo on 2026-10-01: 27 jobs, L40S prover and 8 threads of AMD EPYC 9334
 (1 thread for the Maverick rows), branch at c8be5eb. The records are in
-`code/artifacts/comparison/raw_l40s_improved/` (frozen), the tables in `tables_l40s_improved/`.
+`code/artifacts/comparison/raw_l40s_improved/` (frozen, 68,363 records), the tables in
+`tables_l40s_improved/`. From `code/`:
+
+```bash
+python experiments/5_comparison/aggregate.py --platform l40s_improved       # -> tables_l40s_improved/, unchanged
+python experiments/5_comparison/count_outcomes.py --platform l40s_improved  # the counts below
+python experiments/5_comparison/fingerprint_check.py artifacts/comparison/raw_l40s artifacts/comparison/raw_l40s_improved
+```
 
 Checks:
 - **Integrity:** 195 cells, all from one clean commit, all L40S + EPYC; no partial or rejected cells.
@@ -97,6 +110,9 @@ Caveats to state in any text:
 
 Run from a clean clone of `improve-results` at c8be5eb, with the strong-GPU setup used for `raw_l40s`
 (the Xeon node t-806 excluded). The pytest step ran as a batch job; Llama-2-13B got `--mem=128G`.
+The same commands run on this branch (`bench.py` has the same options; the Reed–Solomon rate is
+fixed at 4, the base rate of every plan). `raw_l40s_improved/` is frozen, so a re-run uses a new
+`PVI_PLATFORM`.
 
 ```bash
 export PVI_PLATFORM=l40s_improved SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1
@@ -124,5 +140,6 @@ sbatch $L $B llm --model llama2-7b --seq 1 64 --builds full --lams 128 --modes C
 python code/experiments/5_comparison/aggregate.py --platform l40s_improved
 ```
 
-The paper tables can be regenerated from `tables_l40s_improved/`. Updating `paper_assets.py` and
-`text_numbers.py` for the new cells is a separate, later step, done only if we decide to merge.
+The report's tables, figures and numbers stay those of `l40s`: `paper_assets.py` and
+`text_numbers.py` are written for that platform and do not draw the new cells (`_polauto`, `_wire`,
+`_prune`, `_lookups`, `_gpuv_stream`). The tables above come from `tables_l40s_improved/`.

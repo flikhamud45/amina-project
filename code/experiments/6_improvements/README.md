@@ -1,4 +1,14 @@
-# 6. Constant-factor improvements: verifier A/B timing
+# 6. Constant-factor improvements after the report
+
+The options added to the defence after the report, the harnesses that measured them during
+development, and their results (`results/`). `IMPROVEMENTS.md` at the repository root
+summarises what changed, the before/after numbers and the L40S runs
+(`artifacts/comparison/raw_l40s_improved/`, frozen); this file is the development log, one
+section per step. Every option is off by default, and without them the code runs the report's
+protocol bit for bit (the same verdicts, proof bytes, Fiat--Shamir transcripts and Merkle roots).
+`bench.py`'s options are described in `../4_defence_benchmark/README.md`.
+
+## Verifier A/B timing: `ab_verifier.py`
 
 `ab_verifier.py` times the verifier of this checkout against a baseline checkout (the
 paper code, commit `729b997`) in the same process: the baseline `pvi.fullcheck` is

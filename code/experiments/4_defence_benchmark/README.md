@@ -7,8 +7,9 @@ and a `_gpuv` tag, on the prover's GPU: §4.4). Nothing is aggregated here:
 every measurement is appended, one JSON line per trial, to
 `artifacts/comparison/raw_<platform>/<suite>/<model>/<cell>.jsonl`, where the platform
 (`--platform` or `$PVI_PLATFORM`) names one GPU and CPU model. The report's numbers are
-the root `raw_l40s/`; `raw_rtx2080ti-v2/` is the second platform and `raw/` the earliest
-run, with an older version of the code. All three are frozen (see `code/README.md`, *The
+the root `raw_l40s/`; `raw_rtx2080ti-v2/` is the second platform, `raw/` the earliest
+run, with an older version of the code, and `raw_l40s_improved/` the options added after the
+report (below) on the report's hardware. All four are frozen (see `code/README.md`, *The
 stored benchmark runs*), so a re-measurement uses a new platform name.
 
 **1. Train the CNNs** (GPU; minutes for LeNet-5, a few hours for the 224-pixel ResNets):
@@ -26,7 +27,7 @@ which is committed (see `experiments/0_train_models`).
 `should` and `nice` tiers of `slurm/strong_gpu.sh` list every job of the report):
 
 ```bash
-export PVI_PLATFORM=<new name>     # raw/, raw_rtx2080ti-v2/ and raw_l40s/ are the stored runs
+export PVI_PLATFORM=<new name>     # raw/, raw_rtx2080ti-v2/, raw_l40s/ and raw_l40s_improved/ are the stored runs
 python experiments/4_defence_benchmark/bench.py cnn --model lenet5 --queries 30 --tampers 100
 python experiments/4_defence_benchmark/bench.py llm --model gpt2 --seq 64 128 256 512 --queries 10 --lean
 python experiments/4_defence_benchmark/bench.py llm --model llama2-7b --seq 64 --builds 1,2,full --queries 10 \
@@ -68,8 +69,9 @@ threads), `--tag` (a cell-name suffix for variant runs: `_gpuv`, `_batch`, `_thr
 type; 0 skips the tamper cell, for timing-only controls) and `--cnn-batches`. LLM suite:
 `--seq` (prompt lengths), `--lams` and `--modes` (e.g. `C:int,Kpre:int`), `--builds`,
 `--lean`, `--llm-tampers` and `--batches`; the CNN suite always runs every mode at λ = 40,
-80 and 128. The Reed–Solomon rate is 4 throughout. A cell with a `.done` marker is
-skipped, so an interrupted job can simply be restarted.
+80 and 128. The Reed–Solomon rate is 4 throughout (also as the base rate of a `--policy`
+plan, below). A cell with a `.done` marker is skipped, so an interrupted job can simply be
+restarted.
 
 The report's variant runs (the exact lines are in `slurm/strong_gpu.sh`):
 `--verifier-device cuda` runs the client's checks on the prover's GPU (`_gpuv`, §4.4);
@@ -82,6 +84,31 @@ under `bench.sbatch`) give `_thr1` and `_thr12`; the LLM jobs without `--lean` a
 re-uploaded the committed weights to the GPU twice per query (`_nofix`). `bench.py`
 refuses `--verifier-device cuda` or `--tf32` without the matching tag, and
 `PVI_LEGACY_WEIGHT_KEY=1` without a `_nofix` tag, or such a tag without it.
+
+**Options added after the report** (`experiments/6_improvements`, summarised in
+`IMPROVEMENTS.md` at the repository root). Without them `bench.py` runs exactly the report's
+protocol: the same verdicts, proof bytes, Fiat–Shamir transcripts and Merkle roots.
+
+* `--policy <name>`: commit under a commitment plan of `pvi.fullcheck.plans` over the base
+  rate 4 (exact column counts, Merkle trees shared by the matrices of one codeword length,
+  per-op codeword lengths): `tight`, `cnn<e>` or `R<rate>`, each also with the suffix `c` (wide
+  matrices committed transposed, q/k/v and gate/up fused, embedding tables as Merkle lookup
+  tables), or `auto` (the `c` plan of fewest non-claim bytes within a setup budget, recorded as
+  the cells' `policy`). Only the commitment (`commit_*`, with its setup time and size; for the
+  CNNs `commit_rate4_pol<name>`) and the mode-C cells run, named with a `_pol<name>` suffix.
+* `--wire` (tag `_wire`): the proof in the compact, lossless encoding of
+  `pvi.fullcheck.claimcodec` (`prove_encode`, `verify_decode` and the encoded `bytes_*`).
+* `--verifier-impl stream` (tag `_stream`; with `--verifier-device cuda`, `_gpuv_stream`): the
+  streaming verifier, the same verdicts, which records one `verify_total` per query instead of
+  the verify phases it overlaps.
+* LLM suite: `--prune-last` (suffix `_prune`) builds the last block at the last position only;
+  `--lookups` (suffix `_lookups`) runs the K and Kpre cells with a verifier that reads the
+  embedding rows itself.
+
+`bench.py` adds the `_pol`, `_prune` and `_lookups` suffixes itself (and refuses them in
+`--tag`), refuses `--wire` or `--verifier-impl stream` without their tags, and `--lookups`
+together with `--policy`. Their L40S runs are `raw_l40s_improved/`, whose job list is in
+`IMPROVEMENTS.md`.
 
 An honest query that is rejected stops the job and keeps that cell's records as
 `<cell>.rejected-<run_id>.jsonl`, which `count_outcomes.py` counts. `gpu_peak_memory` is
@@ -124,6 +151,6 @@ clean clone at commit `9401431`. Pre-empted jobs were resubmitted by re-running 
 tier. The second platform, `raw_rtx2080ti-v2/`, is the `must` jobs except `ab-opt13` (too
 large for the card) and `microbench` (no records): 29 SLURM jobs, 945088–945116, on
 `studentbatch` (RTX 2080 Ti, Xeon Silver 4114) from the same commit. Both roots are frozen
-(`"frozen": true` in their `PLATFORM.json`). After a re-measurement, run
+(`"frozen": true` in their `PLATFORM.json`), as is `raw_l40s_improved/`. After a re-measurement, run
 `experiments/5_comparison` with `--platform <new name>` to turn the raw records into the
 tables and figures.

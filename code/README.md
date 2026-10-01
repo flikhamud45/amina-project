@@ -8,7 +8,10 @@ Everything behind the report (`../report/main.pdf`):
 3. the analysis of smarter sampling rules;
 4. our defence, which checks every weight layer with Freivalds' algorithm against a
    Reed–Solomon/Merkle commitment to the weights;
-5. the benchmark and the comparison with the literature.
+5. the benchmark and the comparison with the literature;
+6. after the report, opt-in constant-factor improvements of the defence (summarised in
+   `../IMPROVEMENTS.md`), measured on the report's hardware; without their options the code
+   runs exactly the report's protocol.
 
 All results are stored in the repository. Every figure and generated table
 (`report/figures`, `report/tables`) is rebuilt from the stored benchmark records in a
@@ -30,14 +33,18 @@ code/
     3_sampling_fixes/      smarter samplers, and why they fail        CPU  ~40 min
     4_defence_benchmark/   our defence vs. the path test, CNNs + LLMs GPU  hours (SLURM)
     5_comparison/          tables, counts and every report figure     CPU   ~1 min
+    6_improvements/        the options added after the report: A/B    CPU/GPU
+                           harnesses, byte models and their results
   artifacts/models/        the MNIST models the report used (committed, with MODELS.sha256)
   artifacts/results/       the JSON results of experiments 1-3 (Table 1, §3.2, §4.2), of the
                            real-LLM runs (§4.1, §4.2) and zkLLM's timings on our GPU (§4.4)
   artifacts/comparison/    the benchmark's raw records, derived tables and the literature
-  tests/                   234 tests (237 with transformers); 44 need a GPU, which adds 9 more
+                           (raw_l40s_improved/: the improvements' runs)
+  tests/                   1,551 tests (1,554 with transformers); 205 need a GPU, which adds 9 more
 ```
 
-The experiments import the library (`pvi`) and never each other. Times are for 8 CPU
+The experiments import the library (`pvi`) and never each other (except
+`6_improvements/perf.py`, which builds the models as `bench.py` does). Times are for 8 CPU
 threads.
 
 ## Installation
@@ -101,7 +108,9 @@ cd ../report && latexmk -pdf main.tex                                      # or:
 §4.1 and §4.3 also quote the second platform: `count_outcomes.py --platform rtx2080ti-v2`
 gives its verdicts, and `fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2
 artifacts/comparison/raw_l40s` compares the 1,978 hardware-independent numbers the two
-runs share (0 differences).
+runs share (0 differences). The improvements' root, which the report does not use, goes
+through the same scripts with `--platform l40s_improved` (see
+`experiments/5_comparison/README.md`).
 
 `--platform` defaults to `$PVI_PLATFORM` when it is set (as after Route B's `export`), else
 to `l40s`. `aggregate.py --platform rtx2080ti` rebuilds the earliest run's
@@ -117,6 +126,7 @@ smaller, which can change the page count (see the last note below).
 |---|---|---|
 | `raw_l40s/` | 123,832 | **The report's numbers.** Every tier of `strong_gpu.sh` (`must`, `should`, `nice`; in `experiments/4_defence_benchmark/slurm/`) on the `killable` partition: an NVIDIA L40S (48 GB) prover and 8 threads of an AMD EPYC 9334 verifier, nodes n-801..804 (the L40S node t-806 has a different CPU and was excluded; `bench.py` refuses to mix CPU models in one root), run from a clean clone of this code (commit `9401431`, stored in every record) with `PVI_PLATFORM=l40s` (the script at that commit also submitted a kernel microbenchmark, `microbench`, which writes only a log and no records; it is not in this version). Every decoder up to 13B parameters is built at full depth (`--lean`) at up to 2,048 tokens, Llama-2-7B also at 4,096; the 30–70B shapes (OPT-30B, OPT-66B, Llama-2-70B) only with 1 and 2 blocks (the full Llama-2-70B build is skipped with a `SKIP` line: 64.2 GiB of int8 weights). The full models are also attacked (§4.3). The root also holds variants of the same protocol: `_gpuv` (the verifier on the GPU, §4.4), `_batch` (8 and 32 prompts per proof, §4.4; for the CNNs 8 to 256 images, 8 to 128 for the 224-pixel ResNet), `_thr1` (one verifier thread: the Maverick row of Table 4), and the controls `_thr12`, `_tf32`, `_nofix` (the earliest run's weight cache, `PVI_LEGACY_WEIGHT_KEY=1`) and `_nolean`, which enter no table or figure. All of them count as runs in §4.3. Frozen (`"frozen": true` in its `PLATFORM.json`: the code refuses to add records). |
 | `raw_rtx2080ti-v2/` | 78,266 | The second platform, quoted in §4.1 and §4.3 (identical hardware-independent numbers, same verdicts). `strong_gpu.sh must` without `ab-opt13` (the non-lean OPT-1.3B control at 2,048 tokens, about 27 GiB, too large for the card) and `microbench` (a kernel microbenchmark that writes only a log, no records): 29 SLURM jobs, 945088–945116, on `studentbatch`: an RTX 2080 Ti (11 GB) prover and 8 threads of a Xeon Silver 4114 verifier, from the same commit `9401431`, with `PVI_PLATFORM=rtx2080ti-v2`. Every decoder is built at full depth except Llama-2-13B, whose 12.1 GiB of int8 weights exceed the card (it is extrapolated from its 1- and 2-block builds). Controls `_nofix`, `_nolean`, `_thr1`. Frozen. `aggregate.py --platform rtx2080ti-v2` rebuilds its stored tables unchanged; the report quotes only its verdicts and record total (`count_outcomes.py --platform rtx2080ti-v2`) and its hardware-independent numbers (`fingerprint_check.py`). `paper_assets.py` refuses this platform, since it lacks the `should` jobs' cells that the report draws (e.g. OPT-13B at 2,048 tokens). The report's previous version, drawn from it, is commit `d5671bf` in the project's git repository. |
+| `raw_l40s_improved/` | 68,363 | The options added after the report (`experiments/6_improvements`, `../IMPROVEMENTS.md`), on the hardware of `raw_l40s/` (nodes n-801, n-803 and n-804): 27 SLURM jobs, 958570–958596, from commit `c8be5eb` of the improvements' branch, with `PVI_PLATFORM=l40s_improved` (the job list is in `IMPROVEMENTS.md`). Its cells are the report's format run by the new code and the opt-in variants `_polauto` (a commitment plan), `_wire` (the compact encoding of the proof), `_prune` and `_lookups` (decoders; with `_thr1`, one verifier thread, for Qwen3-4B), and `_gpuv_stream` (the streaming GPU verifier). 4,380 honest queries accepted and 4,973 attacks rejected; its 565 hardware-independent numbers shared with `raw_l40s/` agree. The report does not use it. `aggregate.py --platform l40s_improved` rebuilds its tables in `tables_l40s_improved/` unchanged. Frozen. |
 | `raw/` | 59,547 | The earliest run, on the 2080 Ti with an older version of the code. Its committed-weights (C) prover re-uploaded the weights to the GPU twice per query (a weight cache keyed `cuda` vs `cuda:0`), so its C prover times are too slow (the `_nofix` controls of `raw_rtx2080ti-v2/` measure this on the same GPU: Llama-2-7B at 64 tokens 11.0 s against 7.9 s, GPT-2 1.15×, OPT-1.3B at 2,048 tokens 1.16×; within noise for the small CNNs), and every decoder above 12 blocks was built only with 1 and 2 blocks and extrapolated. The report does not use it. It is frozen (the code refuses to write there) and kept for provenance, and as the reference of `smoke.sbatch`'s fingerprint check: `aggregate.py --platform rtx2080ti` still rebuilds its tables in `tables/` exactly (its LLM runs sent one Merkle path per opened column; `multiproof_adjust` in `aggregate.py`, which exists only for this, adds the expected multiproof size next to them). The job list that produced it (`slurm/sweep.sh`) and the report version drawn from it are in the project's git repository at commit `336a03c`, not in the submission archive. |
 
 ### Route B: from scratch
@@ -150,16 +160,18 @@ bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must     # then sh
 is installed; none may be skipped), small benchmarks into a throw-away root, and
 `fingerprint_check.py` against `raw/` (every hardware-independent number the two share must
 agree). Each job appends raw records to `artifacts/comparison/raw_<platform>/`, one root
-per GPU and CPU model; `raw/`, `raw_rtx2080ti-v2/` and `raw_l40s/` are the stored runs and
-are frozen, so re-measure under a new name. `bench.py` refuses records from a second CPU
-model in one root, so on a partition whose nodes differ (the L40S node t-806 has a Xeon)
-keep the jobs on one kind of node, e.g. with an `sbatch` wrapper on `PATH` that adds
-`--exclude`. A cell that has finished is skipped, and a pre-empted job is resubmitted by
+per GPU and CPU model; `raw/`, `raw_rtx2080ti-v2/`, `raw_l40s/` and `raw_l40s_improved/` are
+the stored runs and are frozen, so re-measure under a new name. `bench.py` refuses records
+from a second CPU model in one root, so on a partition whose nodes differ (the L40S node
+t-806 has a Xeon) keep the jobs on one kind of node, e.g. with an `sbatch` wrapper on `PATH`
+that adds `--exclude`. A cell that has finished is skipped, and a pre-empted job is resubmitted by
 running the same tier command again. On a card too small for a build (Llama-2-70B on
 48 GB, Llama-2-13B on 11 GB) that build is skipped with a `SKIP` line and its job ends
 with an error; the rest of the job is recorded. Then run Route A with
 `--platform <new name>`.
-`experiments/4_defence_benchmark/README.md` shows how to run a single model without SLURM.
+`experiments/4_defence_benchmark/README.md` shows how to run a single model without SLURM,
+and the options added after the report (`--policy`, `--wire`, `--verifier-impl stream`,
+`--prune-last`, `--lookups`); `../IMPROVEMENTS.md` lists the jobs of `raw_l40s_improved/`.
 
 The real-LLM experiments of §4.1–4.2 (OPT checkpoints from Hugging Face, one GPU with
 16 GB or more, and `transformers`: see *Installation*) are described in
@@ -201,17 +213,25 @@ The tests cover the Merkle commitment, the path test, the exact acceptance-proba
 dynamic program against Monte Carlo, the attacks and samplers, and the whole defence.
 The defence tests include forged claims, a forged folded row (caught by the
 Reed–Solomon check), a forged column (caught by the Merkle check), the lean prover and
-verifier, the verifier on a GPU, and GPU/CPU agreement. Without CUDA and without
-`transformers` (which is not in `requirements.txt`), `python -m pytest --collect-only -q`
-lists 234 tests, or 237 with `transformers` installed (the 3 tests of
-`tests/test_real_weights.py`, the real-weight OPT loader on a tiny random OPT, are skipped
-without it). Without CUDA the 44 GPU-only tests are skipped: 41 in
-`tests/test_gpu_exactness.py` (GPU/CPU bit-exactness at the sizes of the real models, with
-TF32 off and on) and 3 in `tests/test_fullcheck.py` (a GPU prover against the CPU verifier
-on two tiny CNNs, and a decoder's forward pass on the GPU against the CPU). On a GPU they
-run too, together with the 9 GPU-verifier cases of `tests/test_lean_and_verifier_device.py`
-(243 tests, or 246 with `transformers`), and `smoke.sbatch` requires that none is skipped
-(it leaves out `tests/test_real_weights.py` when `transformers` is missing).
+verifier, the verifier on a GPU, and GPU/CPU agreement. The options added after the report
+have their own tests (`test_plans.py`, `test_plan_auto.py`, `test_layouts.py`,
+`test_lookups.py`, `test_pruning.py`, `test_wire.py`, `test_claimcodec.py`,
+`test_fast_verifier.py`, `test_gpu_verifier.py`, `test_comparison_tables.py`): every model,
+policy and λ reaches λ bits, the verifier's fast routines give the integers of the code they
+replaced (`pvi.fullcheck.reference`), and forged claims, `u`, columns, paths, lookup rows and
+wire bytes are rejected in modes C, K and Kpre. Without CUDA and without `transformers`
+(which is not in `requirements.txt`), `python -m pytest --collect-only -q` lists 1,551 tests,
+or 1,554 with `transformers` installed (the 3 tests of `tests/test_real_weights.py`, the
+real-weight OPT loader on a tiny random OPT, are skipped without it). Without CUDA the 205
+GPU-only tests are skipped: 46 in `tests/test_gpu_exactness.py` (GPU/CPU bit-exactness at the
+sizes of the real models, with TF32 off and on), 106 in `tests/test_gpu_verifier.py` and 37 in
+`tests/test_fast_verifier.py` (the verifier's GPU forms against its CPU ones), 3 in
+`tests/test_fullcheck.py` (a GPU prover against the CPU verifier on two tiny CNNs, and a
+decoder's forward pass on the GPU against the CPU) and 13 in the tests of the codec, the
+plans, the wire encoding and the lookups. On a GPU they run too, together with the 9
+GPU-verifier cases of `tests/test_lean_and_verifier_device.py` (1,560 tests, or 1,563 with
+`transformers`), and `smoke.sbatch` requires that none is skipped (it leaves out
+`tests/test_real_weights.py` when `transformers` is missing).
 
 ## Notes on reproducibility
 

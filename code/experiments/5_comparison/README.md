@@ -40,6 +40,19 @@ python experiments/5_comparison/validate_extrapolation.py --platform l40s   # op
 | `validate_extrapolation.py --platform <p>` | `tables_<p>/measured_summary.csv` | `tables_<p>/llm_extrapolation_validation.csv` (per timing, byte and memory metric: the two-point rule and a line fit through every block count, against the full builds) |
 | `fingerprint_check.py <root A> <root B>` | two raw roots | checks that every hardware-independent number the two roots share (parameters, accuracies, path-test facts, security parameters, proof bytes except the Merkle term, verdicts) agrees (equal; the float accuracy within 0.002), and prints every honest rejection and accepted attack in B: §4.1's 1,978 numbers (`raw_rtx2080ti-v2` against `raw_l40s`, 0 differences), and `smoke.sbatch`'s check of a new GPU against `raw/` |
 
+**The improvements' root.** `raw_l40s_improved/` (platform `l40s_improved`, 68,363 records)
+holds the options added after the report (`experiments/6_improvements`, `IMPROVEMENTS.md` at
+the repository root), measured on the report's hardware. The same scripts read it:
+`aggregate.py --platform l40s_improved` rebuilds `tables_l40s_improved/` unchanged,
+`count_outcomes.py --platform l40s_improved` gives its verdicts (4,380 honest queries
+accepted, 4,973 attacks rejected), and `fingerprint_check.py artifacts/comparison/raw_l40s
+artifacts/comparison/raw_l40s_improved` finds its 565 hardware-independent numbers shared with
+the report's root equal. The new timing parts add up like the others: `prove_lookups` and
+`verify_lookups` (a plan's lookup tables), `prove_encode` and `verify_decode` (`--wire`), and the
+streaming verifier's `verify_total`, which replaces the verify phases it overlaps
+(`paper_assets.py` refuses a row with both). The report does not use these cells:
+`paper_assets.py` and `text_numbers.py` are written for `l40s` and do not draw them.
+
 Table 3 stars the rows extrapolated from 1- and 2-block builds, and Figure 5 would hatch
 such bars (there are none on `l40s`, where every drawn model is measured at full depth).
 Figure 4 and the text's ranges use the full builds only.
