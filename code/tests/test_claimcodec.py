@@ -12,7 +12,9 @@ CUDA's sync debug mode).
 
 from __future__ import annotations
 
+import collections
 import struct
+import threading
 import tracemalloc
 
 import claimcodec_reference as ref
@@ -22,6 +24,7 @@ import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 
 from pvi.fullcheck import claimcodec as cc
+from pvi.fullcheck import commitment
 from pvi.fullcheck.protocol import P, Z_BOUND
 from pvi.fullcheck.transformer import DecoderConfig, build_decoder
 
@@ -641,20 +644,38 @@ def test_claims_decoded_into_pinned_memory_are_the_claims():
 
 def test_random_corruptions_never_crash_the_split_decoder(sample, monkeypatch):
     # the two Rice vectors located by counting their levels' bits and decoded as parallel jobs, on corrupted
-    # inputs: the same claims or the same rejection as the one-thread decoder, never another exception
-    monkeypatch.setattr(cc, "_THREADED", 1)
-    monkeypatch.setattr(cc, "_SPLIT", 1)
+    # inputs: the same claims or the same rejection as the one-thread decoder (default sizes), never another
+    # exception; every job of the split decoder on the pool's threads (lanes, Rice vectors, patches, means)
     zs, blob, rows, cols = sample
-    assert all(np.array_equal(a, b) for a, b in zip(zs, cc.decode(blob, rows, cols, workers=3)))
     rng = np.random.default_rng(13)
+    bad = []
     for _ in range(400):
         b = bytearray(blob)
         for _ in range(int(rng.integers(1, 4))):
             b[int(rng.integers(0, len(b)))] ^= 1 << int(rng.integers(0, 8))
-        one = _decode_or_reject(bytes(b), rows, cols)
+        bad.append(bytes(b))
+    want = [_decode_or_reject(b, rows, cols) for b in bad]
+    for name, value in (("_SMALL", 1 << 4), ("_THREADED", 1), ("_SPLIT", 1)):
+        monkeypatch.setattr(cc, name, value)
+    monkeypatch.setattr(commitment, "LEAF_THREAD_BYTES", 1)        # no job too small for the pool
+    caller, ran = threading.get_ident(), collections.Counter()
+
+    def where(fn):
+        def job(*a, **k):
+            ran[fn.__name__, threading.get_ident() != caller] += 1
+            return fn(*a, **k)
+        return job
+
+    for fn in ("_rice_job", "_unpack_lanes", "_patch_slice", "_add_means"):
+        monkeypatch.setattr(cc, fn, where(getattr(cc, fn)))
+    assert all(np.array_equal(a, b) for a, b in zip(zs, cc.decode(blob, rows, cols, workers=3)))
+    assert ran[("_rice_job", True)] == 2 and ran[("_rice_job", False)] == 0, ran
+    assert ran[("_patch_slice", True)] >= 2 and ran[("_unpack_lanes", True)] >= 3 and ran[("_add_means", True)] >= 1, ran
+    for b, one in zip(bad, want):
         try:
-            split = cc.decode(bytes(b), rows, cols, workers=3)
+            split = cc.decode(b, rows, cols, workers=3)
         except cc.ClaimCodecError:
             split = None
         assert (one is None) == (split is None)
         assert one is None or all(np.array_equal(p, q) for p, q in zip(one, split))
+    assert ran[("_rice_job", True)] > 400, ran                    # most corruptions reach the Rice vectors

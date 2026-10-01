@@ -1401,8 +1401,9 @@ streams 10 ms, Rice 4.3 ms, exceptions and bases 13.7 ms, the int64 widening 3.2
   large streams, while the lane is in cache), the residuals' together with their row means, so only the
   centred ops take a second pass; exceptions are scattered as int32; a GPU client decodes straight into
   pinned memory (no copy of the claims to pin them).  Malformed input is rejected as before
-  (`ClaimCodecError` only, the same checks; the split decoder is tested on 400 random corruptions to
-  accept and reject exactly what the one-thread decoder does).
+  (`ClaimCodecError` only, the same checks; on 400 random corruptions the split decoder, every job of
+  it on the pool's threads -- lanes, both Rice vectors, patches, row means -- accepts and rejects
+  exactly what the one-thread decoder does).
 
 ### Codec timings on this laptop (`results/codec_laptop.json`)
 
@@ -1476,8 +1477,8 @@ and strided tensors, 300 ops of few widths, decoder claims), centred or not, at 
 with every step forced onto the workers in small jobs; they refuse the claims the reference refuses;
 `_costs`, the medians and the histograms are the reference's float for float; the Rice parameter and
 bytes and the packer are the reference's; the device path's kernel-launching aten ops are the same
-for 1x, 4x and 16x the ops of the same widths (152) and it waits four times; the split decoder on
-random corruptions.  On CUDA: the GPU encoder gives the reference's bytes on every set and refuses
+for 1x, 4x and 16x the ops of the same widths (152) and it waits four times; the split decoder, its
+jobs on the pool's threads, on random corruptions.  On CUDA: the GPU encoder gives the reference's bytes on every set and refuses
 out-of-range claims (also narrowed ones); it runs in CUDA's sync debug mode "error" with only its four
 waits allowed, and the profiler's CUDA kernels for 16x the ops are those for 1x up to `cat`'s input
 batches; `pack_field` on the GPU gives the host's bytes; claims decoded into pinned memory.
