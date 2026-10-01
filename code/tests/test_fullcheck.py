@@ -534,12 +534,12 @@ def test_gpu_decoder_matches_cpu():
 from pvi.fullcheck.analytic import decoder_shapes  # noqa: E402
 
 
-@pytest.mark.parametrize("family", ["gpt", "llama", "qwen"])
+@pytest.mark.parametrize("family", ["gpt", "opt", "llama", "qwen"])
 def test_decoder_shapes_match_built_graph(family):
     cfg = _TINY[family]
     graph = build_decoder(cfg, calib_tokens=12, seed=3)
-    built = [(op.n_rows, op.row_length) for op in graph.mat_ops]
-    formula = [(s.n_rows, s.row_length) for s in decoder_shapes(cfg)]
+    built = [(op.n_rows, op.row_length, op.layout, op.has_bias) for op in graph.mat_ops]
+    formula = [(s.n_rows, s.row_length, s.layout, s.has_bias) for s in decoder_shapes(cfg)]
     assert built == formula
 
 
@@ -586,22 +586,22 @@ def test_expected_multiproof_size_matches_monte_carlo():
         assert abs(mean - expected_multiproof_nodes(n, t)) < 0.02 * mean + 0.1
 
 
-def test_grouped_attention_equals_all_heads_at_once():
-    from pvi.fullcheck.transformer import _attention, _attention_heads
+@pytest.mark.parametrize("m_s", [1 << 20, 1000])          # int32 scores, and the int64 fallback
+def test_grouped_attention_equals_all_heads_at_once(m_s, monkeypatch):
+    import pvi.fullcheck.transformer as tr
 
     g = torch.Generator().manual_seed(4)
     b, t, h, dh = 1, 40, 6, 8
     q = torch.randint(-127, 128, (b, t, h * dh), generator=g)
     k = torch.randint(-127, 128, (b, t, h * dh), generator=g)
     v = torch.randint(-127, 128, (b, t, h * dh), generator=g)
-    m_s, m_o = 1 << 20, 1 << 22
-    whole = _attention_heads(q.reshape(b, t, h, dh).transpose(1, 2), k.reshape(b, t, h, dh).transpose(1, 2),
-                             v.reshape(b, t, h, dh).transpose(1, 2), m_s, m_o).transpose(1, 2).reshape(b, t, h * dh)
-    import pvi.fullcheck.transformer as tr
-
-    saved = tr.ATTN_BYTES
-    try:
-        tr.ATTN_BYTES = 8 * t * t * 4            # force groups of 4 heads (6 = 4 + 2)
-        assert torch.equal(_attention(q, k, v, m_s, m_o, h, h, dh), whole)
-    finally:
-        tr.ATTN_BYTES = saved
+    m_o = 1 << 22
+    heads = []
+    attention_heads = tr._attention_heads
+    monkeypatch.setattr(tr, "_attention_heads",
+                        lambda q, *args: heads.append(q.shape[1]) or attention_heads(q, *args))
+    whole = tr._attention(q, k, v, m_s, m_o, h, h, dh)
+    width = 4 if tr._int32_scores(m_s, dh, t) else 8             # bytes per score on the path taken
+    monkeypatch.setattr(tr, "ATTN_BYTES", width * b * t * t * 4)  # force groups of 4 heads (6 = 4 + 2)
+    assert torch.equal(tr._attention(q, k, v, m_s, m_o, h, h, dh), whole)
+    assert heads == [6, 4, 2]

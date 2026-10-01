@@ -23,9 +23,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "artifacts" / "comparison"
-METRICS = {"prove_forward", "prove_fold", "prove_open", "fs_hash", "verify_derive", "verify_fold",
-           "verify_products", "verify_columns", "bytes_total", "bytes_claims", "bytes_paths",
-           "gpu_peak_memory", "gpu_peak_reserved", "host_peak_rss"}
+METRICS = {"prove_forward", "prove_lookups", "prove_fold", "prove_open", "prove_encode", "fs_hash", "verify_decode",
+           "verify_derive", "verify_lookups", "verify_fold", "verify_products", "verify_columns", "verify_upload",
+           "verify_total", "bytes_total", "bytes_claims", "bytes_paths", "gpu_peak_memory", "gpu_peak_reserved",
+           "host_peak_rss"}
 
 
 def main() -> None:

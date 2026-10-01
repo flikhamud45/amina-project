@@ -11,6 +11,14 @@ nothing is aggregated here, so figures can be re-made later without re-running.
 A cell that has a ``.done`` marker is skipped, so an interrupted job resumes where it
 stopped.  An honest query that is rejected stops the job and keeps the cell's records as
 ``<cell>.rejected-<run_id>.jsonl`` (``count_outcomes.py`` counts them).
+``--policy <name>`` (a commitment plan of ``pvi.fullcheck.plans``: tight, cnn<e>, R<rate>, each also
+with the suffix c: the col layouts and lookup tables; or auto, the c policy it picks for the model,
+recorded as the cells' ``policy``, with ``policy_requested`` auto) commits under that plan and runs only the cells
+it changes -- the commitment (``commit_*``, with its setup time and size) and the mode-C cells --
+named with a ``_pol<name>`` suffix.  ``--prune-last`` (LLM suite) builds the decoders with their last
+block at the last position (``build_decoder(..., prune_last=True)``), every cell named with a
+``_prune`` suffix; ``--lookups`` runs the K and Kpre cells with a verifier that reads the embedding
+rows itself (``Verifier(lookups=True)``), named with a ``_lookups`` suffix.
 The ``pvi`` package must be this checkout's ``src/pvi`` (``export PYTHONPATH=<checkout>/code/src``,
 as the sbatch scripts do): with a shared venv that has another clone's pvi installed,
 bench.py refuses to run.
@@ -50,8 +58,10 @@ def _require_this_pvi() -> Path:
 if __name__ == "__main__":  # before the imports below, which an older pvi may not even have
     _require_this_pvi()
 
+from pvi.fullcheck.analytic import setup_size  # noqa: E402
 from pvi.fullcheck.field import P  # noqa: E402
 from pvi.fullcheck.graph import MatOp  # noqa: E402
+from pvi.fullcheck.plans import plan_commitment  # noqa: E402
 from pvi.fullcheck.protocol import (  # noqa: E402
     Challenger,
     Prover,
@@ -71,14 +81,16 @@ LAMBDAS = (40, 80, 128)
 RATE = 4       # Reed-Solomon rate (codeword length / row length) of the weight commitment
 TAG = ""  # appended to every cell name (``--tag``), so variant runs never collide
 VDEV = "cpu"   # --verifier-device: the client's device (the report's headline: the CPU; Sec. 4.4 also a GPU, _gpuv)
+IMPL = "default"   # --verifier-impl: "stream" = the streaming verifier (Verifier(stream=True))
+WIRE = False       # --wire: the proof in the compact encoding of pvi.fullcheck.claimcodec
 PLATFORM = ""  # ``--platform``: "" is the earliest RTX 2080 Ti run's root ``raw/`` (frozen)
 
 
 def raw_root(platform: str) -> Path:
     """``raw/`` holds the records of the earliest RTX 2080 Ti run (frozen), ``raw_rtx2080ti-v2/``
-    its re-run with the fixed code and ``raw_l40s/`` the report's numbers (both frozen too); every
-    other prover/verifier pair writes its own ``raw_<platform>/``, so records of different
-    hardware can never share a cell (or a median)."""
+    its re-run with the fixed code, ``raw_l40s/`` the report's numbers and ``raw_l40s_improved/`` the
+    opt-in improvements on the same hardware (all frozen too); every other prover/verifier pair writes
+    its own ``raw_<platform>/``, so records of different hardware can never share a cell (or a median)."""
     p = "" if platform in ("", "rtx2080ti") else platform
     return BASE / (f"raw_{p}" if p else "raw")
 
@@ -197,8 +209,15 @@ def _env_extra() -> dict:
 
 def _verifier(*args, **kwargs) -> Verifier:
     """Every verifier of this benchmark runs on ``--verifier-device`` (the report's headline: the CPU;
-    Sec. 4.4 also a GPU, tag ``_gpuv``)."""
-    return Verifier(*args, device=VDEV, **kwargs)
+    Sec. 4.4 also a GPU, tag ``_gpuv``), with ``--verifier-impl`` (the report: the default; ``stream``
+    records one ``verify_total`` per query instead of the verify_* phases, which overlap)."""
+    return Verifier(*args, device=VDEV, stream=IMPL == "stream", **kwargs)
+
+
+def _query(prover: Prover, v: Verifier, x: torch.Tensor, **kwargs) -> dict:
+    """One interaction of this benchmark: ``run_query``, with ``--wire`` in the compact encoding of the
+    proof (``prove_encode`` / ``verify_decode`` recorded, and the encoded sizes as ``bytes_*``)."""
+    return run_query(prover, v, x, wire=WIRE, **kwargs)
 
 
 def _verifier_hw(env: dict) -> str:
@@ -237,7 +256,9 @@ class Recorder:
         self.base = {"run_id": uuid.uuid4().hex[:12], "suite": suite, "model": model, "cell": cell,
                      "config": dict(config, variant=TAG, device=env.get("device"), merkle="multiproof",
                                     verifier_device=VDEV,
-                                    **({"platform": PLATFORM} if PLATFORM else {})),
+                                    **({"platform": PLATFORM} if PLATFORM else {}),
+                                    **({"verifier_impl": IMPL} if IMPL != "default" else {}),
+                                    **({"wire": True} if WIRE else {})),
                      "prover_hw": prover_hw, "verifier_hw": _verifier_hw(env),
                      "host": env.get("host"), "git_sha": env.get("git_sha")}
         part = self.path.with_suffix(".jsonl.part")
@@ -271,6 +292,61 @@ class Recorder:
 
 def is_done(suite, model, cell) -> bool:
     return (RAW / suite / model / f"{cell}{TAG}.done").exists()
+
+
+PLAN_CELLS = ("commit_", "defence_C_", "tamper_C_")
+"""The cells a commitment policy changes (the others are the same under every policy)."""
+
+
+def _todo(args, suite, model, cell) -> bool:
+    """Run this cell?  Not yet done; under ``--policy`` or ``--lookups`` only the cells the option
+    changes."""
+    if args.policy != "paper" and not cell.startswith(PLAN_CELLS):
+        return False
+    if args.lookups and not cell.startswith(("defence_K_", "defence_Kpre_")):
+        return False
+    return not is_done(suite, model, cell)
+
+
+def _commit(graph, rate: int, device, policy: str, model_ops=None):
+    """``(commitment, seconds)``: the weight commitment under ``policy``, timed to its end on the GPU."""
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    coms = commit_graph(graph, rate, device=device, policy=policy, model_ops=model_ops)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    return coms, time.perf_counter() - t0
+
+
+def _plan_config(coms, params=None) -> dict:
+    """What a cell records of a commitment plan, and with ``params`` its trees' column counts
+    (nothing for the report's commitment)."""
+    if coms is None or coms.plan is None:
+        return {}
+    return {"policy": coms.plan.policy, **({"policy_requested": coms.plan.requested} if coms.plan.requested else {}),
+            "trees": len(coms.groups),
+            **({"group_columns": dict(params.group_columns)} if params is not None else {})}
+
+
+def _record_setup(r: "Recorder", coms, ops) -> None:
+    """A commitment plan's setup size (``analytic.setup_size``: encoded entries, leaves, trees)."""
+    for k, v in setup_size(ops, plan=coms.plan).items():
+        r.rec("setup_" + k, v, "")
+
+
+def _plan_soundness(params, plan, mode: str) -> float:
+    return soundness_bits(params, plan.shapes(), mode, columns=plan.matrix_columns(params.group_columns))
+
+
+def _opening_of(coms, name: str) -> tuple[str, int]:
+    """Where op ``name``'s opened columns are: its own opening, or from row ``offset`` of its group's
+    (those of its committed matrix: under a ``c`` policy maybe a col-layout one, of ``k`` rows)."""
+    if coms.plan is None:
+        return name, 0
+    matrix = coms.plan.matrix_of(name).name
+    g, members = next((g, ms) for g, ms in coms.plan.groups if matrix in ms)
+    return g, sum(coms[m].public.n_rows for m in members[:members.index(matrix)])
 
 
 def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
@@ -394,7 +470,7 @@ def suite_cnn(args, env) -> None:
 
     # ---- model facts and fidelity ------------------------------------------------
     cell = "facts"
-    if not is_done("cnn", name, cell):
+    if _todo(args, "cnn", name, cell):
         r = Recorder("cnn", name, cell, {}, env)
         r.rec("n_params", n_params, "")
         r.rec("model_bytes_int8", sum(op.weight.numel() + 4 * (op.bias.numel() if op.bias is not None else 0)
@@ -414,7 +490,7 @@ def suite_cnn(args, env) -> None:
 
     # ---- the single-neuron attack on the float model --------------------------------
     cell = "attack_float"
-    if not is_done("cnn", name, cell):
+    if _todo(args, "cnn", name, cell):
         r = Recorder("cnn", name, cell, {"n": len(xs)}, env)
         seq = isinstance(model_f, nn.Sequential)
         head = model_f[-1] if seq else model_f.head
@@ -456,7 +532,7 @@ def suite_cnn(args, env) -> None:
 
     # ---- the sampling baseline (Anchuri et al.) on the integer graph -----------------------
     cell = "sampling"
-    if not is_done("cnn", name, cell):
+    if _todo(args, "cnn", name, cell):
         r = Recorder("cnn", name, cell, {}, env)
         env1, _ = graph.forward(q_inputs[:1])
         tc = TraceCommitment(graph, env1)
@@ -481,31 +557,43 @@ def suite_cnn(args, env) -> None:
     # The commitment is one-time and takes seconds for these models, so it is
     # always rebuilt (the Merkle roots are deterministic).
     rate = RATE
-    coms = commit_graph(graph, rate, device=device)
+    _reset_peaks(device)
+    coms, commit_s = _commit(graph, rate, device, args.policy)
+    cell = f"commit_rate{rate}"
+    if coms.plan is not None and _todo(args, "cnn", name, cell):     # a policy's setup cost
+        r = Recorder("cnn", name, cell, {"rate": rate, **_plan_config(coms)}, env)
+        r.rec("commit_total", commit_s, "s")
+        _record_setup(r, coms, mats)
+        _record_peaks(r, device)
+        r.done()
 
     prover = Prover(graph, device=device, commitments=coms)
     weights = {op.name: (op.weight, op.bias) for op in mats}
     for lam in LAMBDAS:
         for mode, chal in (("C", "int"), ("C", "fs"), ("K", "int"), ("Kpre", "int")):
             cell = f"defence_{mode}_{chal}_lam{lam}_rate{rate}"
-            if is_done("cnn", name, cell):
+            if not _todo(args, "cnn", name, cell):
                 continue
-            params = params_for(lam, len(mats), rate=rate, fiat_shamir=(chal == "fs"))
-            cfg = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": params.rate,
-                   "columns": params.columns, "threads": torch.get_num_threads()}
+            params = params_for(lam, len(mats), rate=rate, fiat_shamir=(chal == "fs"), plan=coms.plan)
+            cfg = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": rate,
+                   "columns": params.columns, "threads": torch.get_num_threads(), **_plan_config(coms, params)}
             r = Recorder("cnn", name, cell, cfg, env)
-            shapes = [(op.row_length, rate * (1 << max(0, (op.row_length - 1).bit_length()))) for op in mats]
-            r.rec("soundness_bits", soundness_bits(params, shapes, "C" if mode == "C" else "K"), "bits")
+            if coms.plan is None:
+                shapes = [(op.row_length, rate * (1 << max(0, (op.row_length - 1).bit_length()))) for op in mats]
+                r.rec("soundness_bits", soundness_bits(params, shapes, "C" if mode == "C" else "K"), "bits")
+            else:
+                r.rec("soundness_bits", _plan_soundness(params, coms.plan, "C"), "bits")
             if mode == "C":
-                v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+                v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                              tables=coms.table_publics)
             else:
                 v = _verifier(graph.public(), params, mode, weights=weights)
                 if mode == "Kpre":
                     v.precompute(Challenger())
             _reset_peaks(device)
-            run_query(prover, v, q_inputs[:1])  # untimed warm-up (lazy CUDA/BLAS initialisation)
+            _query(prover, v, q_inputs[:1])  # untimed warm-up (lazy CUDA/BLAS initialisation)
             for i in range(args.queries):
-                _record_query(r, run_query(prover, v, q_inputs[i:i + 1]), i)
+                _record_query(r, _query(prover, v, q_inputs[i:i + 1]), i)
             _record_peaks(r, device)
             # batch amortisation: B queries in one interaction (mode C, interactive only)
             if mode == "C" and chal == "int":
@@ -514,22 +602,24 @@ def suite_cnn(args, env) -> None:
                         continue
                     _reset_peaks(device)
                     for tr in range(args.batch_trials):
-                        _record_query(r, run_query(prover, v, q_inputs[:bsz]), tr, batch=bsz)
+                        _record_query(r, _query(prover, v, q_inputs[:bsz]), tr, batch=bsz)
                     _record_peaks(r, device, batch=bsz)
             r.done()
 
     # ---- soundness experiments: every attack must be rejected (--tampers 0: none) ------------
     cell = "tamper_C_int_lam40"
-    if args.tampers and not is_done("cnn", name, cell):
-        params = params_for(40, len(mats), rate=rate)
-        v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
-        r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns}, env)
+    if args.tampers and _todo(args, "cnn", name, cell):
+        params = params_for(40, len(mats), rate=rate, plan=coms.plan)
+        v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                      tables=coms.table_publics)
+        r = Recorder("cnn", name, cell, {"lam": 40, "mode": "C", "reps": params.reps, "columns": params.columns,
+                                         **_plan_config(coms, params)}, env)
         g = torch.Generator().manual_seed(123)
         pen = _penultimate_mat(graph)
         x0 = q_inputs[:1]
 
         def attempt(kind, i, **kw):
-            res = run_query(prover, v, x0, **kw)
+            res = _query(prover, v, x0, **kw)
             r.rec("rejected", int(not res["accepted"]), "", i, attack=kind, stage=res["rejected_at"])
 
         for i in range(args.tampers):
@@ -583,6 +673,8 @@ def suite_cnn(args, env) -> None:
         #     only the Reed-Solomon column check can reject it.
         # (2) forged column: an honest u plus an opened column shifted by a vector in
         #     the kernel of chi, so the code check passes; only the Merkle path can reject it.
+        #     (A col-layout matrix's check folds its columns with w = chi' [X ; 1]^T: a shift in
+        #     the kernel of [X ; 1]^T, which the prover knows, passes it for every chi'.)
         real_fold, real_open = prover.fold, prover.open
         final = mats[-1]
         state: dict = {}
@@ -605,32 +697,48 @@ def suite_cnn(args, env) -> None:
             us[final.name] = u
             return us
 
-        def kernel_vector(chi):
-            """A nonzero delta with chi @ delta = 0 mod P (Gaussian elimination)."""
-            r_, n_ = chi.shape
-            if n_ <= r_:
-                return None
-            m = [[int(v) % P for v in chi[i_, :r_].tolist()] + [(-int(chi[i_, r_])) % P] for i_ in range(r_)]
-            for col in range(r_):
-                piv = next((i_ for i_ in range(col, r_) if m[i_][col]), None)
+        def kernel_vector(left):
+            """A nonzero delta with left @ delta = 0 mod P (Gaussian elimination; None: full column rank)."""
+            m = [[int(v) % P for v in row] for row in left.tolist()]
+            pivots = []
+            for col in range(left.shape[1]):
+                piv = next((i_ for i_ in range(len(pivots), len(m)) if m[i_][col]), None)
                 if piv is None:
-                    return None
-                m[col], m[piv] = m[piv], m[col]
-                inv = pow(m[col][col], P - 2, P)
-                m[col] = [(v_ * inv) % P for v_ in m[col]]
-                for i_ in range(r_):
-                    if i_ != col and m[i_][col]:
+                    continue
+                r_ = len(pivots)
+                m[r_], m[piv] = m[piv], m[r_]
+                inv = pow(m[r_][col], P - 2, P)
+                m[r_] = [(v_ * inv) % P for v_ in m[r_]]
+                for i_ in range(len(m)):
+                    if i_ != r_ and m[i_][col]:
                         f_ = m[i_][col]
-                        m[i_] = [(vi - f_ * vc) % P for vi, vc in zip(m[i_], m[col])]
-            delta = torch.zeros(n_, dtype=torch.int64)
-            delta[:r_] = torch.tensor([m[i_][r_] for i_ in range(r_)], dtype=torch.int64)
-            delta[r_] = 1
+                        m[i_] = [(vi - f_ * vc) % P for vi, vc in zip(m[i_], m[r_])]
+                pivots.append(col)
+            free = next((c_ for c_ in range(left.shape[1]) if c_ not in pivots), None)
+            if free is None:
+                return None
+            delta = torch.zeros(left.shape[1], dtype=torch.int64)
+            delta[free] = 1
+            for i_, c_ in enumerate(pivots):
+                delta[c_] = (-m[i_][free]) % P
             return delta
 
+        def folded_with(victim):
+            """What the code check folds the victim's opened columns with: its chi, or for a col-layout
+            victim [X ; 1]^T of the honest query."""
+            matrix = coms.plan.matrix_of(victim) if coms.plan is not None else None
+            if matrix is None or matrix.layout == "row":
+                return state["chis"][victim]
+            first = next(op for op in mats if op.name == matrix.members[0])
+            xt = first.unfold(prover.graph.forward(x0.to(prover.device))[0][first.inputs[0]]).T.cpu()
+            return torch.cat([xt, torch.ones(xt.shape[0], 1, dtype=torch.int64)], 1) if first.has_bias else xt
+
+        folded_final = coms.plan is None or coms.plan.matrix_of(final.name).layout == "row"
         for i in range(max(3, args.tampers // 10)):
-            prover.fold = forged_fold
-            attempt("forged_fold", i, forward_kwargs={"tamper": t_forge})
-            prover.fold = real_fold
+            if folded_final:                 # (a col-layout final op has no u to forge: output_logit covers it)
+                prover.fold = forged_fold
+                attempt("forged_fold", i, forward_kwargs={"tamper": t_forge})
+                prover.fold = real_fold
             victim = mats[i % len(mats)].name
 
             def capture_fold(chis):
@@ -639,12 +747,13 @@ def suite_cnn(args, env) -> None:
 
             def forged_open(cols, victim=victim):
                 out = real_open(cols)
-                c, pth = out[victim]
-                delta = kernel_vector(state["chis"][victim])
+                key, off = _opening_of(coms, victim)      # (under a plan: the victim's rows of its group's)
+                c, pth = out[key]
+                delta = kernel_vector(folded_with(victim))
                 if delta is not None:
                     c = c.clone()
-                    c[:, 0] = (c[:, 0] + delta) % P
-                out[victim] = (c, pth)
+                    c[off:off + len(delta), 0] = (c[off:off + len(delta), 0] + delta) % P
+                out[key] = (c, pth)
                 return out
 
             prover.fold, prover.open = capture_fold, forged_open
@@ -660,12 +769,17 @@ def suite_llm(args, env) -> None:
 
     device = torch.device(env["device"])
     cfg = CONFIGS[args.model]
+    prune = args.prune_last
     if args.builds == "auto":      # 12 blocks or fewer: all of them; else 1 and 2 (the 30-70B jobs)
         builds = [cfg.n_layers] if cfg.n_layers <= 12 else [1, 2]
     else:                          # e.g. "full" or "1,2,full" (L1, L2 and the full model in one job)
         builds = [cfg.n_layers if b == "full" else int(b) for b in args.builds.split(",")]
     modes = [("C", "int"), ("C", "fs"), ("Kpre", "int"), ("K", "int")] if not args.modes else \
         [tuple(m.split(":")) for m in args.modes.split(",")]
+    if args.policy != "paper":        # a commitment policy changes the mode-C cells only
+        modes = [m for m in modes if m[0] == "C"]
+    if args.lookups:                  # and the verifier's own rows the K and Kpre cells only
+        modes = [m for m in modes if m[0] != "C"]
     skipped = []
     for seq in args.seq:
         for n_layers in builds:
@@ -676,7 +790,8 @@ def suite_llm(args, env) -> None:
             if all(is_done("llm", cfg.name, t) for t in todo):
                 continue
             if device.type == "cuda":  # a build whose int8 weights alone fill the GPU would only OOM
-                need = sum(sh.n_rows * sh.row_length for sh in decoder_shapes(cfg, n_layers=n_layers))
+                need = sum(sh.n_rows * sh.row_length for sh in decoder_shapes(cfg, n_layers=n_layers,
+                                                                              prune_last=prune))
                 have = torch.cuda.get_device_properties(device).total_memory
                 if need > 0.85 * have:     # ... after its build and commit: skip it, run the others
                     print(f"SKIP {cfg.name} T{seq} L{n_layers}: {need / 2**30:.1f} GiB of int8 weights "
@@ -685,7 +800,7 @@ def suite_llm(args, env) -> None:
                     continue
             _reset_peaks(device)
             t0 = time.perf_counter()
-            graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0)
+            graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0, prune_last=prune)
             build_s = time.perf_counter() - t0
             mats = graph.mat_ops
             # the first ``queries`` rows are the single-prompt queries of the stored runs
@@ -693,20 +808,18 @@ def suite_llm(args, env) -> None:
                                    generator=torch.Generator().manual_seed(1))
             coms = None
             if any(m == "C" for m, _ in modes):
-                if device.type == "cuda":
-                    torch.cuda.synchronize()
-                t0 = time.perf_counter()
-                coms = commit_graph(graph, RATE, device=device)
-                if device.type == "cuda":
-                    torch.cuda.synchronize()
-                commit_s = time.perf_counter() - t0
+                coms, commit_s = _commit(graph, RATE, device, args.policy, decoder_shapes(cfg, prune_last=prune))
                 cell = f"commit_{base}"
-                if not is_done("llm", cfg.name, cell):
+                if _todo(args, "llm", cfg.name, cell):
                     r = Recorder("llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": RATE,
                                                          "n_layers_full": cfg.n_layers, "lean": args.lean,
-                                                         "params_full": decoder_param_count(cfg)}, env)
+                                                         "params_full": decoder_param_count(cfg),
+                                                         **({"prune_last": True} if prune else {}),
+                                                         **_plan_config(coms)}, env)
                     r.rec("build_graph", build_s, "s")
                     r.rec("commit_total", commit_s, "s")
+                    if coms.plan is not None:
+                        _record_setup(r, coms, mats)
                     _record_peaks(r, device)
                     r.done()
             prover = Prover(graph, device=device, commitments=coms, lean=args.lean)
@@ -714,37 +827,44 @@ def suite_llm(args, env) -> None:
             for lam in args.lams:
                 for mode, chal in modes:
                     cell = f"defence_{mode}_{chal}_lam{lam}_{base}"
-                    if is_done("llm", cfg.name, cell):
+                    if not _todo(args, "llm", cfg.name, cell):
                         continue
                     # size (r, t) for the FULL model's op count, so extrapolated rows keep their lambda
-                    full_shapes = decoder_shapes(cfg)
-                    params = params_for(lam, len(full_shapes), rate=RATE, fiat_shamir=(chal == "fs"))
+                    full_shapes = decoder_shapes(cfg, prune_last=prune)
+                    plan = None if coms is None else coms.plan
+                    params = params_for(lam, len(full_shapes), rate=RATE, fiat_shamir=(chal == "fs"), plan=plan)
                     conf = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": RATE,
                             "columns": params.columns, "seq": seq, "n_layers": n_layers,
                             "n_layers_full": cfg.n_layers, "params_full": decoder_param_count(cfg),
                             "params_built": graph.n_params(), "lean": args.lean,
-                            "threads": torch.get_num_threads()}
+                            "threads": torch.get_num_threads(), **({"prune_last": True} if prune else {}),
+                            **({"lookups": True} if args.lookups else {}), **_plan_config(coms, params)}
                     r = Recorder("llm", cfg.name, cell, conf, env)
+                    if plan is not None:      # the whole model's bound, under the whole model's plan
+                        whole = plan_commitment(full_shapes, args.policy, rate=RATE)
+                        r.rec("soundness_bits", _plan_soundness(params_for(
+                            lam, len(full_shapes), fiat_shamir=(chal == "fs"), plan=whole), whole, "C"), "bits")
                     if mode == "C":
-                        v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
-                                     lean=args.lean)
+                        v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                                      tables=coms.table_publics, lean=args.lean)
                     else:
-                        v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean)
+                        v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean,
+                                      lookups=args.lookups)
                         if mode == "Kpre":
                             t0 = time.perf_counter()
                             v.precompute(Challenger())   # ends with a sync of the verifier's device
                             r.rec("verifier_precompute", time.perf_counter() - t0, "s")
                     _reset_peaks(device)
-                    run_query(prover, v, tokens[:1])  # untimed warm-up
+                    _query(prover, v, tokens[:1])  # untimed warm-up
                     for i in range(args.queries):
-                        _record_query(r, run_query(prover, v, tokens[i:i + 1]), i)
+                        _record_query(r, _query(prover, v, tokens[i:i + 1]), i)
                     _record_peaks(r, device)
                     # batch amortisation: B prompts against one set of u and openings (as the CNN suite)
                     if chal == "int" and mode in ("C", "Kpre"):
                         for bsz in args.batches:
                             _reset_peaks(device)
                             for tr in range(args.batch_trials):
-                                _record_query(r, run_query(prover, v, tokens[:bsz]), tr, batch=bsz)
+                                _record_query(r, _query(prover, v, tokens[:bsz]), tr, batch=bsz)
                             _record_peaks(r, device, batch=bsz)
                     # one tampered query per cell: must be rejected
                     victim = mats[len(mats) // 2].name
@@ -755,25 +875,27 @@ def suite_llm(args, env) -> None:
                             z.view(-1)[0] += 1
                         return z
 
-                    res = run_query(prover, v, tokens[:1], forward_kwargs={"tamper": tamper})
+                    res = _query(prover, v, tokens[:1], forward_kwargs={"tamper": tamper})
                     r.rec("tamper_rejected", int(not res["accepted"]), "", stage=res["rejected_at"])
                     r.done()
             # ---- attacks on this build (report Sec. 4.3): random single values anywhere, the top
             # logit, and one random block run with 1%-perturbed weights; mode C, lambda = 40
             cell = f"tamper_C_int_lam40_{base}"
             if (args.llm_tampers and coms is not None and n_layers == cfg.n_layers
-                    and not is_done("llm", cfg.name, cell)):
-                params = params_for(40, len(decoder_shapes(cfg)), rate=RATE)
-                v = _verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
-                             lean=args.lean)
+                    and _todo(args, "llm", cfg.name, cell)):
+                params = params_for(40, len(decoder_shapes(cfg)), rate=RATE, plan=coms.plan)
+                v = _verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                              tables=coms.table_publics, lean=args.lean)
                 r = Recorder("llm", cfg.name, cell, {"lam": 40, "mode": "C", "reps": params.reps,
                                                      "columns": params.columns, "seq": seq, "n_layers": n_layers,
-                                                     "n_layers_full": cfg.n_layers, "lean": args.lean}, env)
+                                                     "n_layers_full": cfg.n_layers, "lean": args.lean,
+                                                     **({"prune_last": True} if prune else {}),
+                                                     **_plan_config(coms, params)}, env)
                 g = torch.Generator().manual_seed(123)
                 x0 = tokens[:1]
 
                 def attempt(kind, i, **kw):
-                    res = run_query(prover, v, x0, forward_kwargs=kw)
+                    res = _query(prover, v, x0, forward_kwargs=kw)
                     r.rec("rejected", int(not res["accepted"]), "", i, attack=kind, stage=res["rejected_at"])
 
                 def t_logit(o, z):
@@ -845,8 +967,21 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--modes", default="",
                     help="LLM suite: e.g. C:int,Kpre:int (default: C:int, C:fs, Kpre:int and K:int)")
     ap.add_argument("--threads", type=int, default=0, help="verifier threads (0: torch's default)")
+    ap.add_argument("--policy", default="paper",
+                    help="commitment plan (pvi.fullcheck.plans) over the base rate 4: paper (the report), tight, "
+                         "cnn<e> or R<rate>, the last three also with the suffix c (col layouts and lookup tables), "
+                         "or auto (the c plan of fewest non-claim bytes within a setup budget, recorded as the "
+                         "cells' policy); runs the commitment and mode-C cells only, named with a _pol<name> suffix")
+    ap.add_argument("--prune-last", action="store_true",
+                    help="LLM suite: the last decoder block at the last position only "
+                         "(build_decoder(prune_last=True)); every cell named with a _prune suffix")
+    ap.add_argument("--lookups", action="store_true",
+                    help="modes K and Kpre: the verifier reads the embedding rows itself and the prover sends no "
+                         "claims for them (Verifier(lookups=True)); runs those cells only, named with a _lookups "
+                         "suffix")
     ap.add_argument("--tag", default="",
-                    help="cell-name suffix of a variant run: _thr1, _thr12, _nolean, _nofix, _gpuv, _batch or _tf32")
+                    help="cell-name suffix of a variant run: _thr1, _thr12, _nolean, _nofix, _gpuv, _batch, _tf32, "
+                         "_stream or _wire (--policy, --prune-last and --lookups add their own)")
     ap.add_argument("--builds", default="auto",
                     help="LLM block counts: 'auto' (all if <=12, else 1,2), 'full', or e.g. '1,2,full'")
     ap.add_argument("--llm-tampers", type=int, default=0,
@@ -861,6 +996,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--verifier-device", default="cpu", choices=["cpu", "cuda"],
                     help="cpu (the report's headline) or cuda: run the client's checks on the prover's GPU "
                          "(needs a _gpuv tag)")
+    ap.add_argument("--verifier-impl", default="default", choices=["default", "stream"],
+                    help="'stream': the streaming verifier, the same verdicts (needs a _stream tag)")
+    ap.add_argument("--wire", action="store_true",
+                    help="the proof in the compact encoding of pvi.fullcheck.claimcodec (run_query(wire=True): "
+                         "PVC3 claims, 31-bit u and columns; needs a _wire tag)")
     ap.add_argument("--tf32", action="store_true",
                     help="TF32 tensor cores for the float32 GEMMs (exact: operands <= 255; needs a _tf32 tag)")
     ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM", ""),
@@ -872,9 +1012,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     _require_this_pvi()
     args = build_parser().parse_args()
-    global TAG, PLATFORM, RAW, VDEV
+    global TAG, PLATFORM, RAW, VDEV, IMPL, WIRE
     TAG = args.tag
     VDEV = args.verifier_device
+    IMPL = args.verifier_impl
+    WIRE = args.wire
+    if (IMPL == "stream") != ("_stream" in TAG):
+        raise SystemExit("--verifier-impl stream goes with a --tag containing _stream, and only then")
+    if WIRE != ("_wire" in TAG):
+        raise SystemExit("--wire goes with a --tag containing _wire (the stored cells have none), and only then")
     if VDEV != "cpu" and "_gpuv" not in TAG:
         raise SystemExit("--verifier-device other than cpu needs a --tag containing _gpuv (a different client)")
     if (os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1") != ("_nofix" in TAG):
@@ -885,6 +1031,25 @@ def main() -> None:
     if args.tf32 and os.environ.get("NVIDIA_TF32_OVERRIDE") == "0":
         raise SystemExit("--tf32 with NVIDIA_TF32_OVERRIDE=0: cuBLAS would ignore it and the _tf32 cells would "
                          "hold non-TF32 timings (bench.sbatch: export PVI_TF32=1)")
+    if "_pol" in TAG:
+        raise SystemExit("--tag must not contain _pol: --policy adds it (a paper run must not take a policy's cells)")
+    for flag, sfx in (("--prune-last", "_prune"), ("--lookups", "_lookups")):
+        if sfx in TAG:
+            raise SystemExit(f"--tag must not contain {sfx}: {flag} adds it")
+    if args.suite == "cnn" and (args.prune_last or args.lookups):
+        raise SystemExit("--prune-last and --lookups are for the decoders (the llm suite)")
+    if args.lookups and args.policy != "paper":
+        raise SystemExit("--lookups runs the K and Kpre cells, --policy the mode-C ones: one at a time")
+    if args.prune_last:
+        TAG += "_prune"
+    if args.lookups:
+        TAG += "_lookups"
+    try:
+        plan_commitment([], args.policy)
+    except ValueError as exc:
+        raise SystemExit(f"--policy: {exc}")
+    if args.policy != "paper":        # its cells never share a name (or a median) with the report's
+        TAG += f"_pol{args.policy}"
     PLATFORM = args.platform
     RAW = raw_root(PLATFORM)
     if args.threads:

@@ -1,0 +1,41 @@
+d013a7d threads 4 q1 accepted True: prove_encode 85.9 ms, inside encode 27.2, the rest 58.6; the claims again: dropped 0.0; encoded 25.7, then dropped 46.4
+d013a7d threads 4 q2 accepted True: prove_encode 81.3 ms, inside encode 27.5, the rest 53.8; the claims again: dropped 0.1; encoded 24.6, then dropped 56.9
+d013a7d threads 4 q3 accepted True: prove_encode 90.6 ms, inside encode 27.0, the rest 63.6; the claims again: dropped 0.0; encoded 31.0, then dropped 60.5
+d013a7d threads 4 q4 accepted True: prove_encode 24.8 ms, inside encode 24.6, the rest 0.1; the claims again: dropped 0.1; encoded 22.7, then dropped 58.0
+d013a7d threads 4 q5 accepted True: prove_encode 83.6 ms, inside encode 23.8, the rest 59.8; the claims again: dropped 0.0; encoded 23.6, then dropped 60.0
+d013a7d threads 4 q6 accepted True: prove_encode 83.7 ms, inside encode 26.0, the rest 57.8; the claims again: dropped 0.0; encoded 25.8, then dropped 60.9
+d013a7d threads 4 q7 accepted True: prove_encode 90.9 ms, inside encode 30.7, the rest 60.2; the claims again: dropped 0.0; encoded 27.1, then dropped 64.5
+d013a7d threads 4 medians: prove_encode 83.7 ms, inside encode 27.0, the rest 56.7; the claims again: dropped 0.0; encoded 25.7, then dropped 60.0
+6c2059a threads 4 q1 accepted True: prove_encode 101.2 ms, inside encode 101.0, the rest 0.1; the claims again: dropped 0.0; encoded 120.6, then dropped 0.1
+6c2059a threads 4 q2 accepted True: prove_encode 106.9 ms, inside encode 106.8, the rest 0.1; the claims again: dropped 0.0; encoded 102.9, then dropped 0.0
+6c2059a threads 4 q3 accepted True: prove_encode 104.7 ms, inside encode 104.5, the rest 0.1; the claims again: dropped 0.0; encoded 112.5, then dropped 0.1
+6c2059a threads 4 q4 accepted True: prove_encode 115.5 ms, inside encode 115.4, the rest 0.1; the claims again: dropped 0.1; encoded 99.6, then dropped 0.1
+6c2059a threads 4 q5 accepted True: prove_encode 103.6 ms, inside encode 103.5, the rest 0.1; the claims again: dropped 0.0; encoded 112.8, then dropped 0.1
+6c2059a threads 4 q6 accepted True: prove_encode 52.6 ms, inside encode 52.5, the rest 0.1; the claims again: dropped 0.1; encoded 133.6, then dropped 0.1
+6c2059a threads 4 q7 accepted True: prove_encode 127.7 ms, inside encode 127.5, the rest 0.1; the claims again: dropped 0.0; encoded 111.0, then dropped 0.1
+6c2059a threads 4 medians: prove_encode 104.7 ms, inside encode 104.5, the rest 0.1; the claims again: dropped 0.0; encoded 112.5, then dropped 0.1
+d013a7d threads 1 q1 accepted True: prove_encode 26.7 ms, inside encode 26.6, the rest 0.1; the claims again: dropped 0.0; encoded 27.1, then dropped 0.1
+d013a7d threads 1 q2 accepted True: prove_encode 25.9 ms, inside encode 25.8, the rest 0.1; the claims again: dropped 0.0; encoded 24.7, then dropped 0.1
+d013a7d threads 1 q3 accepted True: prove_encode 25.7 ms, inside encode 25.6, the rest 0.1; the claims again: dropped 0.0; encoded 30.3, then dropped 0.1
+d013a7d threads 1 q4 accepted True: prove_encode 26.2 ms, inside encode 26.1, the rest 0.1; the claims again: dropped 0.0; encoded 31.3, then dropped 0.1
+d013a7d threads 1 q5 accepted True: prove_encode 27.3 ms, inside encode 27.2, the rest 0.1; the claims again: dropped 0.0; encoded 28.8, then dropped 0.1
+d013a7d threads 1 q6 accepted True: prove_encode 25.7 ms, inside encode 25.6, the rest 0.1; the claims again: dropped 0.0; encoded 27.2, then dropped 0.1
+d013a7d threads 1 q7 accepted True: prove_encode 26.7 ms, inside encode 26.6, the rest 0.1; the claims again: dropped 0.0; encoded 28.9, then dropped 0.1
+d013a7d threads 1 medians: prove_encode 26.2 ms, inside encode 26.1, the rest 0.1; the claims again: dropped 0.0; encoded 28.8, then dropped 0.1
+6c2059a threads 1 q1 accepted True: prove_encode 44.2 ms, inside encode 44.1, the rest 0.1; the claims again: dropped 0.0; encoded 43.9, then dropped 0.1
+6c2059a threads 1 q2 accepted True: prove_encode 44.7 ms, inside encode 44.7, the rest 0.1; the claims again: dropped 0.0; encoded 43.1, then dropped 0.0
+6c2059a threads 1 q3 accepted True: prove_encode 44.8 ms, inside encode 44.7, the rest 0.1; the claims again: dropped 0.0; encoded 44.6, then dropped 0.0
+6c2059a threads 1 q4 accepted True: prove_encode 43.4 ms, inside encode 43.3, the rest 0.1; the claims again: dropped 0.0; encoded 43.2, then dropped 0.0
+6c2059a threads 1 q5 accepted True: prove_encode 42.7 ms, inside encode 42.6, the rest 0.1; the claims again: dropped 0.0; encoded 43.9, then dropped 0.1
+6c2059a threads 1 q6 accepted True: prove_encode 42.3 ms, inside encode 42.2, the rest 0.1; the claims again: dropped 0.0; encoded 47.4, then dropped 0.1
+6c2059a threads 1 q7 accepted True: prove_encode 44.0 ms, inside encode 43.9, the rest 0.1; the claims again: dropped 0.0; encoded 43.9, then dropped 0.0
+6c2059a threads 1 medians: prove_encode 44.0 ms, inside encode 43.9, the rest 0.1; the claims again: dropped 0.0; encoded 43.9, then dropped 0.0
+KMP_BLOCKTIME=0:
+d013a7d threads 4 q1 accepted True: prove_encode 84.9 ms, inside encode 29.3, the rest 55.6; the claims again: dropped 0.0; encoded 27.2, then dropped 0.1
+d013a7d threads 4 q2 accepted True: prove_encode 95.7 ms, inside encode 31.6, the rest 64.1; the claims again: dropped 0.0; encoded 24.5, then dropped 47.5
+d013a7d threads 4 q3 accepted True: prove_encode 22.1 ms, inside encode 22.0, the rest 0.1; the claims again: dropped 0.0; encoded 23.5, then dropped 0.1
+d013a7d threads 4 q4 accepted True: prove_encode 24.3 ms, inside encode 24.2, the rest 0.1; the claims again: dropped 0.1; encoded 22.7, then dropped 0.1
+d013a7d threads 4 q5 accepted True: prove_encode 79.0 ms, inside encode 24.2, the rest 54.7; the claims again: dropped 0.1; encoded 21.6, then dropped 0.1
+d013a7d threads 4 q6 accepted True: prove_encode 25.0 ms, inside encode 24.9, the rest 0.1; the claims again: dropped 0.0; encoded 22.9, then dropped 48.7
+d013a7d threads 4 q7 accepted True: prove_encode 21.7 ms, inside encode 21.6, the rest 0.1; the claims again: dropped 0.0; encoded 22.4, then dropped 0.1
+d013a7d threads 4 medians: prove_encode 25.0 ms, inside encode 24.2, the rest 0.8; the claims again: dropped 0.0; encoded 22.9, then dropped 0.1

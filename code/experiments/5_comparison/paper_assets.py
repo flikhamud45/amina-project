@@ -56,10 +56,23 @@ def hw_short(name) -> str:
 # the headline selection: Reed-Solomon rate 4, 8 verifier threads, untagged cells, lambda = 128
 DEFAULT = {"rate": "4", "threads": "8", "variant": "", "lam": 128}
 CNN_ORDER = ["mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224"]
-# the timing parts that make up one proof and one verification (fs_hash is paid by both)
-PROVE = ("prove_forward", "prove_fold", "prove_open", "fs_hash")
-# verify_upload: a GPU client's host-to-device copy of the proof (absent for the CPU verifier)
-VERIFY = ("verify_derive", "verify_fold", "verify_products", "verify_columns", "verify_upload", "fs_hash")
+# the timing parts that make up one proof and one verification (fs_hash is paid by both; prove_encode and
+# verify_decode: the compact encoding of the proof, bench.py --wire; prove_lookups and verify_lookups: a
+# commitment plan's lookup tables, bench.py --policy <c policy>)
+PROVE = ("prove_forward", "prove_lookups", "prove_fold", "prove_open", "prove_encode", "fs_hash")
+# verify_upload: a GPU client's host-to-device copy of the proof (absent for the CPU verifier);
+# verify_total: the streaming verifier (bench.py --verifier-impl stream), which times its overlapped
+# derive, uploads, lookup check, products and columns as one phase, recorded instead of those five (OVERLAPPED)
+VERIFY = ("verify_decode", "verify_derive", "verify_lookups", "verify_fold", "verify_products", "verify_columns",
+          "verify_upload", "verify_total", "fs_hash")
+OVERLAPPED = ("verify_derive", "verify_lookups", "verify_products", "verify_columns", "verify_upload")
+
+
+def _one_verifier(metrics, where: str) -> None:
+    """The verify phases of one row come from one verifier: never ``verify_total`` with the
+    phases it overlaps (they would be counted twice)."""
+    if "verify_total" in metrics and any(k in metrics for k in OVERLAPPED):
+        raise SystemExit(f"{where}: verify_total (the streaming verifier) together with {OVERLAPPED}")
 
 
 LITERATURE = ("reported_curated.csv",)  # not measured by us: in tables/, shared by every platform
@@ -106,8 +119,9 @@ class Measured:
         return _f(r["median"]) if r else None
 
     def total(self, model, cell, parts):
-        vals = [self.get(model, cell, k) for k in parts]
-        return None if all(v is None for v in vals) else sum(v or 0 for v in vals)
+        vals = {k: self.get(model, cell, k) for k in parts}
+        _one_verifier({k for k, v in vals.items() if v is not None}, f"cnn/{model}/{cell}")
+        return None if all(v is None for v in vals.values()) else sum(v or 0 for v in vals.values())
 
     def attack_rate(self, model, cell, attack):
         """(fraction rejected, number of attempts) for one attack type."""
@@ -142,6 +156,7 @@ def llm_rows(mode="C", lam=DEFAULT["lam"], threads=DEFAULT["threads"], variant=D
 
 def _llm_cost(d: dict):
     """(prove seconds, verify seconds, proof bytes, parameters) of one LLM row."""
+    _one_verifier(d, "an LLM row")
     prove = sum(d[k][0] for k in PROVE if k in d)
     verify = sum(d[k][0] for k in VERIFY if k in d)
     return prove, verify, d.get("bytes_total", (None,))[0], d["prove_forward"][2]
@@ -642,7 +657,8 @@ def missing(M) -> list[str]:
         rows = llm_rows(mode, lam=lam, threads=thr, variant=var)
         for model, seq in sorted(keys):
             d = rows.get((model, seq), {})
-            if "prove_forward" not in d or "verify_products" not in d or "bytes_total" not in d:
+            verified = "verify_products" in d or "verify_total" in d
+            if "prove_forward" not in d or not verified or "bytes_total" not in d:
                 out.append(f"llm/{model} {mode}:int lam{lam} T{seq} threads {thr} variant '{var}'")
     return out
 

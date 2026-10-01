@@ -3,8 +3,9 @@
 The three GPU tests in ``test_fullcheck.py`` use tiny graphs (T = 12 tokens, K <= 4608),
 so they never reach the regimes where a new GPU could behave differently: split-K /
 stream-K GEMM kernels at K = 11,008, the batched P @ V product at T = 2,048 (4 chunks
-of 512 terms), every partial sum at its 2**24 bound, the float64 field products of the
-prover's fold/open, and the Reed--Solomon/NTT commitment on the device.  Run this file
+of 512 terms, or ONE float32 GEMM on the int32 attention path), every partial sum at its
+2**24 bound, the float64 field products of the prover's fold/open, the verifier's int8
+tensor-core products, and the Reed--Solomon/NTT commitment on the device.  Run this file
 on every new GPU type before any benchmark job (``smoke.sbatch`` does); every test must
 pass with TF32 off (what bench.py uses, except its ``--tf32`` cells tagged ``_tf32``)
 and on (which shows exactness does not depend on the flag).
@@ -96,14 +97,14 @@ def test_batched_pv_product_at_its_bound(heads, t, dh, tf32):
     assert torch.equal(out, ref)
 
 
+@pytest.mark.parametrize("m_s", [1 << 12, 2_600_000], ids=["int64_path", "int32_path"])
 @pytest.mark.parametrize("heads,t,dh", [(4, 2048, 128), (1, 4096, 128)])
-def test_attention_matches_cpu_at_long_prompts(heads, t, dh, tf32):
+def test_attention_matches_cpu_at_long_prompts(heads, t, dh, m_s, tf32):
     g = torch.Generator().manual_seed(t + heads)
     q, k, v = (torch.randint(-127, 128, (1, heads, t, dh), generator=g) for _ in range(3))
     k[:, :, ::3] = q[:, :, ::3]                         # peaked softmax rows as well as flat ones
-    m_s = 1 << 12
-    cpu = _attention_heads(q, k, v, m_s, None)          # m_o=None: the raw P @ V integers
-    dev = _attention_heads(q.to(DEV), k.to(DEV), v.to(DEV), m_s, None).cpu()
+    cpu = _attention_heads(q, k, v, m_s)                # the raw P @ V integers
+    dev = _attention_heads(q.to(DEV), k.to(DEV), v.to(DEV), m_s).cpu()
     assert torch.equal(cpu, dev)
 
 
@@ -124,6 +125,25 @@ def test_field_products_on_device_are_exact():
     left = torch.randint(0, P, (4, 5000), generator=g, dtype=torch.int64)
     right = torch.randint(0, P, (5000, 2), generator=g, dtype=torch.int64)
     assert torch.equal(fld.field_matmul_mod(left.to(DEV), right.to(DEV)).cpu(), fld.field_matmul_mod(left, right))
+
+
+def test_int8_products_at_model_sizes():
+    # the verifier's int8 tensor-core products at Llama-2-7B sizes (checked against float64):
+    # chi^T Z for a down projection's claims at the int32 extremes, u^T X for q/k/v's input
+    if not fld.int8_ok(DEV):
+        pytest.skip("no exact int8 GEMM on this device: the verifier uses float64 there")
+    g = torch.Generator().manual_seed(13)
+    chi = torch.randint(0, P, (5, 4096), generator=g, dtype=torch.int64)
+    chi[0] = P - 1
+    z = torch.randint(-(1 << 31), 1 << 31, (4096, 2048), generator=g, dtype=torch.int64)
+    z[0], z[-1] = (1 << 31) - 1, -(1 << 31)
+    want = fld.field_matmul_mod(chi, fld.to_field(z))
+    assert torch.equal(fld.int8_field_matmul(fld.int8_left(chi.to(DEV)), z.to(torch.int32).to(DEV)).cpu(), want)
+    u = torch.randint(0, P, (15, 4096), generator=g, dtype=torch.int64)
+    x = torch.randint(-128, 128, (2048, 4096), generator=g, dtype=torch.int64)
+    x[0], u[0] = -128, P - 1
+    want = fld.field_matmul_mod(u, x.T.contiguous())
+    assert torch.equal(fld.int8_small_matmul(fld.int8_right(u.to(DEV)), x.to(torch.int8).to(DEV)).cpu(), want)
 
 
 def test_commitment_fold_and_open_match_cpu():

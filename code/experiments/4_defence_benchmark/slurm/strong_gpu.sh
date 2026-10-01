@@ -2,7 +2,7 @@
 # Every benchmark job of the report (raw_l40s/), by tier: smoke, must, should, nice.  From the
 # repository root (of the checkout whose code should run: the jobs put its code/src first on
 # PYTHONPATH, whatever pvi the venv has installed):
-#     export PVI_PLATFORM=<new name>    # one name per GPU + CPU model; raw/, raw_rtx2080ti-v2/ and raw_l40s/ are frozen
+#     export PVI_PLATFORM=<new name>    # one name per GPU + CPU model; raw/, raw_rtx2080ti-v2/, raw_l40s/ and raw_l40s_improved/ are frozen
 #     export SBATCH_PARTITION=<gpu partition> SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...] [SBATCH_CONSTRAINT=...]
 #     bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke    # once per GPU type; wait for "SMOKE OK"
 #     bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must     # then should, then nice
@@ -24,7 +24,7 @@
 # a fraction of the memory; the _nolean jobs measure what that changes.
 set -euo pipefail
 unset PVI_THREADS PVI_TF32 PVI_LEGACY_WEIGHT_KEY   # variant switches: only the per-job --export lines set them
-: "${PVI_PLATFORM:?export PVI_PLATFORM=<new name> (raw/, raw_rtx2080ti-v2/ and raw_l40s/ are frozen)}"
+: "${PVI_PLATFORM:?export PVI_PLATFORM=<new name> (raw/, raw_rtx2080ti-v2/, raw_l40s/ and raw_l40s_improved/ are frozen)}"
 export PVI_PLATFORM
 [ -f code/experiments/4_defence_benchmark/slurm/strong_gpu.sh ] || { echo "run this from the repository root" >&2; exit 2; }
 export PROJECT_DIR="$PWD"   # the jobs run this checkout (bench.sbatch/smoke.sbatch), never an inherited PROJECT_DIR

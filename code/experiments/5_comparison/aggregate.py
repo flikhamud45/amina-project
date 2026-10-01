@@ -49,9 +49,13 @@ def dirs_for(platform: str) -> tuple[Path, Path]:
 # the record fields a median is grouped by, besides (suite, model, cell, metric); "op" is set only
 # in raw/'s records (its column is in every measured_summary.csv, empty outside tables/)
 GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
-# the timing and byte parts of one query, which add up over the blocks of a decoder
-ADDITIVE = {"prove_forward", "prove_fold", "prove_open", "verify_derive", "verify_products", "verify_columns",
-            "verify_fold", "verify_upload", "fs_hash", "bytes_total", "bytes_total_multiproof"}
+# the timing and byte parts of one query, which add up over the blocks of a decoder; verify_total: the
+# streaming verifier's (bench.py --verifier-impl stream) overlapped verify phases, timed as one;
+# prove_encode / verify_decode: the compact encoding of the proof (bench.py --wire); prove_lookups /
+# verify_lookups: a commitment plan's lookup tables (bench.py --policy <c policy>)
+ADDITIVE = {"prove_forward", "prove_lookups", "prove_fold", "prove_open", "prove_encode", "verify_decode",
+            "verify_derive", "verify_lookups", "verify_products", "verify_columns", "verify_fold", "verify_upload",
+            "verify_total", "fs_hash", "bytes_total", "bytes_total_multiproof"}
 
 
 def load_rows() -> list[dict]:

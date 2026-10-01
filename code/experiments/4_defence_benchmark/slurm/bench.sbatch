@@ -17,7 +17,7 @@ set -euo pipefail
 PROJECT_DIR="${PROJECT_DIR:-$SLURM_SUBMIT_DIR}"
 cd "$PROJECT_DIR/code"
 umask 002
-: "${PVI_PLATFORM:?export PVI_PLATFORM=<new name> before sbatch (raw/, raw_rtx2080ti-v2/ and raw_l40s/ are frozen; records go to raw_<name>/)}"
+: "${PVI_PLATFORM:?export PVI_PLATFORM=<new name> before sbatch (raw/, raw_rtx2080ti-v2/, raw_l40s/ and raw_l40s_improved/ are frozen; records go to raw_<name>/)}"
 export PVI_PLATFORM
 export PYTHONPATH="$PROJECT_DIR/code/src${PYTHONPATH:+:$PYTHONPATH}"
 THREADS="${PVI_THREADS:-8}"

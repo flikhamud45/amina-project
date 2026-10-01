@@ -21,8 +21,11 @@ chunked so every partial sum stays below ``2**24`` and is therefore exact.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import os
+import types
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Callable
 
 import torch
@@ -34,6 +37,8 @@ __all__ = [
     "CheapOp",
     "IntGraph",
     "exact_matmul",
+    "int_scalar",
+    "mul_add_half",
     "requant",
     "INT8_MAX",
 ]
@@ -58,10 +63,33 @@ def exact_matmul(w: torch.Tensor, x: torch.Tensor, *, max_w: int = 128, max_x: i
     return out
 
 
-def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int) -> torch.Tensor:
-    """``clamp(round(z * mult / 2**shift), lo, hi)`` with round-half-up, exactly."""
-    out = (z * mult + (1 << (shift - 1))) >> shift
-    return out.clamp(lo, hi)
+@lru_cache(maxsize=None)
+def int_scalar(value: int, device: str) -> torch.Tensor:
+    """A 0-d int64 tensor on ``device`` (cached; callers only read it)."""
+    return torch.tensor(value, dtype=torch.int64, device=device)
+
+
+def mul_add_half(z: torch.Tensor, mult: torch.Tensor, shift: int, out: torch.Tensor | None = None) -> torch.Tensor:
+    """``z * mult + 2**(shift-1)``, fresh or written into ``out``: one ``addcmul`` pass for
+    int64 operands (the same int64 values as the multiply and the add)."""
+    if z.dtype == torch.int64 and torch.is_tensor(mult) and mult.dtype == torch.int64:
+        return torch.addcmul(int_scalar(1 << (shift - 1), str(z.device)), z, mult, out=out)
+    if out is None:
+        return z * mult + (1 << (shift - 1))
+    torch.mul(z, mult, out=out)
+    out += 1 << (shift - 1)
+    return out
+
+
+def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int,
+            out: torch.Tensor | None = None) -> torch.Tensor:
+    """``clamp(round(z * mult / 2**shift), lo, hi)`` with round-half-up, exactly: fresh, or
+    written into ``out``.
+
+    The shift and the clamp run in place on the product."""
+    out = mul_add_half(z, mult, shift, out=out)
+    out >>= shift
+    return out.clamp_(lo, hi)
 
 
 @dataclass
@@ -140,7 +168,12 @@ class MatOp(Op):
         return x.numel() // self.n_in
 
     def fold(self, z: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        """Claimed ``Z [N, M]`` -> output tensor shaped like the op's output."""
+        """Claimed ``Z [N, M]`` -> output tensor shaped like the op's output.
+
+        Linear layers and embeddings return a transposed *view* of ``z``: their readers
+        are elementwise (requantisation, residual additions), so a transposing copy would
+        be one more pass for the same values.  Nothing modifies a fold output in place.
+        """
         if self.layout == "conv":
             k, s, p = self.conv
             b, _, h, w = x.shape
@@ -148,8 +181,8 @@ class MatOp(Op):
             wo = (w + 2 * p - k) // s + 1
             return z.reshape(self.n_rows, b, ho, wo).permute(1, 0, 2, 3).contiguous()
         if self.layout == "embed":
-            return z.T.reshape(*x.shape, self.n_rows).contiguous()
-        return z.T.reshape(*x.shape[:-1], self.n_rows).contiguous()
+            return z.T.reshape(*x.shape, self.n_rows)
+        return z.T.reshape(*x.shape[:-1], self.n_rows)
 
     # -- prover ---------------------------------------------------------------
     def _weights_on(self, device) -> tuple[torch.Tensor, torch.Tensor | None]:
@@ -191,6 +224,41 @@ class CheapOp(Op):
     params: dict = field(default_factory=dict)
 
 
+def _with_tensors_on(fn, device: torch.device, copies: dict):
+    """``fn`` with every tensor among its default arguments and closure cells replaced by its
+    copy on ``device`` (``copies``: ``id(tensor) -> (tensor, copy)``, shared across calls so a
+    tensor is copied once); ``fn`` itself when it captured no tensor or is not a plain function."""
+    if not isinstance(fn, types.FunctionType):
+        return fn
+
+    def on(v):
+        if not torch.is_tensor(v):
+            return v
+        if id(v) not in copies:
+            copies[id(v)] = (v, v.to(device))
+        return copies[id(v)][1]
+
+    defaults = tuple(map(on, fn.__defaults__ or ()))
+    kwdefaults = {k: on(v) for k, v in (fn.__kwdefaults__ or {}).items()}
+    cells = tuple(types.CellType(on(c.cell_contents)) if torch.is_tensor(_cell_value(c)) else c
+                  for c in fn.__closure__ or ())
+    if (all(a is b for a, b in zip(defaults, fn.__defaults__ or ()))
+            and all(v is fn.__kwdefaults__[k] for k, v in kwdefaults.items())
+            and all(a is b for a, b in zip(cells, fn.__closure__ or ()))):
+        return fn
+    new = types.FunctionType(fn.__code__, fn.__globals__, fn.__name__, defaults or None, cells or None)
+    new.__kwdefaults__ = kwdefaults or None
+    new.__qualname__, new.__doc__ = fn.__qualname__, fn.__doc__
+    return new
+
+
+def _cell_value(cell):
+    try:
+        return cell.cell_contents
+    except ValueError:            # an empty cell
+        return None
+
+
 @dataclass
 class IntGraph:
     """An ordered list of operations; ``inputs[0]`` of the first op is the query."""
@@ -208,6 +276,39 @@ class IntGraph:
         return IntGraph([op.public() for op in self.ops], self.input_name,
                         self.output_name, dict(self.meta))
 
+    def with_constants_on(self, device) -> tuple["IntGraph", list[tuple[torch.Tensor, torch.Tensor]]]:
+        """This graph with the tensors its cheap ops captured (requantisation multipliers, norm
+        gains, look-up tables) copied to ``device`` once, and the ``(source, copy)`` pairs.
+
+        The cheap ops are new ``CheapOp`` objects whose functions are the same code with the
+        copies as their default arguments (or closure cells); this graph and its ops are not
+        modified.  Each ``c.to(x.device)`` the functions do is then a no-op instead of a host
+        round trip per call on a GPU."""
+        copies: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        ops = [dataclasses.replace(op, fn=_with_tensors_on(op.fn, torch.device(device), copies))
+               if isinstance(op, CheapOp) else op for op in self.ops]
+        pairs = [pair for pair in copies.values() if pair[0] is not pair[1]]
+        return IntGraph(ops, self.input_name, self.output_name, dict(self.meta)), pairs
+
+    def claim_columns(self, x: torch.Tensor) -> list[int] | None:
+        """Every weight op's column count ``M`` on the query ``x``, in op order (``None`` if ``x``
+        is malformed for one of them): the ops run on meta tensors, which carry shapes and no
+        values, so nothing is computed or allocated."""
+        graph, _ = self.with_constants_on("meta")
+        env = {self.input_name: x.to("meta")}
+        out = []
+        for op in graph.ops:
+            if isinstance(op, MatOp):
+                xin = env[op.inputs[0]]
+                m = op.n_cols(xin)
+                if m is None:
+                    return None
+                out.append(m)
+                env[op.output] = op.fold(torch.empty(op.n_rows, m, dtype=torch.int64, device="meta"), xin)
+            else:
+                env[op.output] = op.fn(*[env[n] for n in op.inputs])
+        return out
+
     def n_params(self) -> int:
         return sum(op.n_rows * op.row_length for op in self.mat_ops)
 
@@ -222,7 +323,8 @@ class IntGraph:
 
     def forward(self, x: torch.Tensor, *, tamper: Callable[[MatOp, torch.Tensor], torch.Tensor] | None = None,
                 weights_override: dict[str, MatOp] | None = None, free: bool = False,
-                claims_device=None) -> tuple[dict, dict]:
+                claims_device=None, send: Callable[[torch.Tensor], object] | None = None,
+                watch: Callable[[MatOp, torch.Tensor], None] | None = None) -> tuple[dict, dict]:
         """Honest (or tampered) execution.  Returns ``(env, claims)``.
 
         ``claims[op.name]`` is the ``[N, M]`` pre-activation matrix the prover
@@ -234,6 +336,10 @@ class IntGraph:
         tensor once no later op reads it, and ``claims_device="cpu"``, which moves each
         claim to host memory as soon as it is computed: the same integers, much less
         GPU memory.
+        ``send(Z)``, if given, is what is kept of each claim instead of ``Z`` (moved to
+        ``claims_device``), e.g. the streaming verifier's int32 wire format.  ``watch(op, x)``, if
+        given, sees each weight op's input as the op runs (e.g. the token ids a lookup table is
+        opened at).
         """
         env = {self.input_name: x}
         claims: dict[str, torch.Tensor] = {}
@@ -242,11 +348,16 @@ class IntGraph:
             if isinstance(op, MatOp):
                 runner = (weights_override or {}).get(op.name, op)
                 xin = env[op.inputs[0]]
+                if watch is not None:
+                    watch(op, xin)
                 z = runner.compute(xin)
                 if tamper is not None:
                     z = tamper(op, z)
                 env[op.output] = op.fold(z, xin)
-                claims[op.name] = z if claims_device is None else z.to(claims_device)
+                if send is not None:
+                    claims[op.name] = send(z)
+                else:
+                    claims[op.name] = z if claims_device is None else z.to(claims_device)
                 del z
             else:
                 env[op.output] = op.fn(*[env[n] for n in op.inputs])

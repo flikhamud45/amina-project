@@ -16,11 +16,15 @@
 | File | Contents |
 |---|---|
 | `field.py` | BabyBear field arithmetic, NTT and Reed–Solomon encoding, exact modular matrix products |
-| `commitment.py` | Merkle trees with multiproofs; the weight commitment (rows encoded, Merkle root over columns) and its column openings |
+| `commitment.py` | Merkle trees with multiproofs; the weight commitment (rows encoded, Merkle root over columns) and its column openings; the transposed and grouped commitments of the plans, and lookup tables (a tree over an embedding's rows) |
 | `graph.py` | integer computation graphs: weight operations (`MatOp`) and verifier-recomputed operations (`CheapOp`), exact GPU matrix products; the lean forward pass (dead tensors freed, claims streamed to the host); `PVI_LEGACY_WEIGHT_KEY=1` restores the weight cache of the earliest run (`raw/`), for the benchmark's `_nofix` controls |
 | `quantize.py`, `models.py`, `datasets.py` | float CNN → int8 graph (per-channel weights, BatchNorm folded); the benchmarked CNNs and their data |
-| `transformer.py` | integer GPT-2/OPT/Llama/Qwen decoders (norms, GELU/SiLU tables, RoPE, integer softmax, causal attention) |
-| `protocol.py` | security parameters from λ (`params_for`), prover, verifier (modes C, K, Kpre; interactive or Fiat–Shamir; `lean=True` for the language models; `device="cuda"` for a verifier on a GPU, the `_gpuv` cells of §4.4, with Merkle hashing on the CPU), `run_query` |
+| `transformer.py` | integer GPT-2/OPT/Llama/Qwen decoders (norms, GELU/SiLU tables, RoPE, integer softmax, causal attention); optionally the last block at the last position (`prune_last`) |
+| `protocol.py` | security parameters from λ (`params_for`), prover, verifier (modes C, K, Kpre; interactive or Fiat–Shamir; `lean=True` for the language models; `device="cuda"` for a verifier on a GPU, the `_gpuv` cells of §4.4, with Merkle hashing on the CPU, and `stream=True` for its streaming checks; a plan's col layouts and lookup tables; in K and Kpre optionally the verifier's own embedding rows, `lookups`), `run_query` |
+| `plans.py` | commitment plans for mode C (`policy=`): exact `t`, Merkle trees shared by matrices of one codeword length, per-op codeword lengths and layouts |
+| `pipeline.py` | the wire formats and claim uploads of the streaming GPU verifier |
+| `claimcodec.py` | the compact, lossless encoding of the proof (`run_query(wire=True)`) |
+| `reference.py`, `opcount.py` | the straightforward code the verifier's fast routines are tested against; counting launched work (tests and benchmarks only) |
 | `sampling.py` | the original path test on the same integer graphs (the like-for-like baseline), with exact per-neuron detection |
 | `analytic.py` | decoder weight-op shapes and the expected multiproof size (for runs made before multiproofs) |
 | `real_weights.py` | integer OPT decoders built from real Hugging Face checkpoints (the same ops and shapes as `build_decoder`, LayerNorm folded into the next matrix), for the int8 perplexities of §4.1 (`experiments/2_attack/real_weights_ppl.py`) |

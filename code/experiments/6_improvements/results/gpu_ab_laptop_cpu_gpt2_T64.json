@@ -1,0 +1,152 @@
+[
+ {
+  "model": "gpt2",
+  "seq": 64,
+  "layers": 12,
+  "mode": "Kpre",
+  "lam": 128,
+  "reps": 5,
+  "impls": [
+   "base",
+   "new",
+   "stream"
+  ],
+  "device": "cpu",
+  "verifier_device": "cpu",
+  "torch": "2.2.2+cpu",
+  "cuda": null,
+  "threads": 4,
+  "gpu": null,
+  "int8_gemm": false,
+  "claims": 5456977,
+  "claims_identical": true,
+  "setup_s": 4.5346431999932975,
+  "derive_bit_exact": true,
+  "labels": {
+   "claim+1": [
+    "freivalds",
+    "freivalds",
+    "freivalds"
+   ],
+   "claim=Z_BOUND": [
+    "range_or_shape",
+    "range_or_shape",
+    "range_or_shape"
+   ]
+  },
+  "base": {
+   "upload": 0.0001756999990902841,
+   "derive": 0.07876899995608255,
+   "products": 0.09387919999426231,
+   "total": 0.1756298000109382
+  },
+  "new": {
+   "upload": 0.00017629994545131922,
+   "derive": 0.046238599985372275,
+   "products": 0.020317499991506338,
+   "total": 0.06646389997331426
+  },
+  "stream": {
+   "total": 0.08224399999016896
+  },
+  "peak_bytes": {
+   "base": 0,
+   "new": 0,
+   "stream": 0
+  },
+  "ratio_new": {
+   "upload": 0.9965970133484768,
+   "derive": 1.7035334110678388,
+   "products": 4.62060785202452,
+   "total": 2.642484116662652
+  },
+  "ratio_stream": {
+   "total": 2.1354724968621674
+  },
+  "ratio_stream_vs_new_total": 0.8081306840773677
+ },
+ {
+  "model": "gpt2",
+  "seq": 64,
+  "layers": 12,
+  "mode": "C",
+  "lam": 128,
+  "reps": 5,
+  "impls": [
+   "base",
+   "new",
+   "stream"
+  ],
+  "device": "cpu",
+  "verifier_device": "cpu",
+  "torch": "2.2.2+cpu",
+  "cuda": null,
+  "threads": 4,
+  "gpu": null,
+  "int8_gemm": false,
+  "claims": 5456977,
+  "claims_identical": true,
+  "setup_s": 75.20491160004167,
+  "derive_bit_exact": true,
+  "labels": {
+   "claim+1": [
+    "freivalds",
+    "freivalds",
+    "freivalds"
+   ],
+   "claim=Z_BOUND": [
+    "range_or_shape",
+    "range_or_shape",
+    "range_or_shape"
+   ],
+   "u+1": [
+    "freivalds",
+    "freivalds",
+    "freivalds"
+   ],
+   "opened+1": [
+    "columns_code",
+    "columns_code",
+    "columns_code"
+   ],
+   "path forged": [
+    "columns_merkle",
+    "columns_merkle",
+    "columns_merkle"
+   ]
+  },
+  "base": {
+   "upload": 0.00017449998995289207,
+   "derive": 0.07777229999192059,
+   "products": 0.10110789997270331,
+   "columns": 0.33907549997093156,
+   "total": 0.5172617999487557
+  },
+  "new": {
+   "upload": 0.0001713000237941742,
+   "derive": 0.051489199977368116,
+   "products": 0.027059800049755722,
+   "columns": 0.15160879999166355,
+   "total": 0.23412410006858408
+  },
+  "stream": {
+   "total": 0.2265766000491567
+  },
+  "peak_bytes": {
+   "base": 0,
+   "new": 0,
+   "stream": 0
+  },
+  "ratio_new": {
+   "upload": 1.0186804770241176,
+   "derive": 1.5104585044262702,
+   "products": 3.7364614589462217,
+   "columns": 2.2365159541502617,
+   "total": 2.209348801756118
+  },
+  "ratio_stream": {
+   "total": 2.282944486926424
+  },
+  "ratio_stream_vs_new_total": 1.0333110304320479
+ }
+]
