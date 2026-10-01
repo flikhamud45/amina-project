@@ -124,3 +124,20 @@ def test_an_auto_query_is_accepted_and_a_tampered_claim_rejected(kind, fiat_sham
         bad = proto.run_query(prover, v, x, seed=None if fiat_shamir else 2,
                               forward_kwargs={"tamper": lambda op, z: z + 1 if op.name == victim else z})
         assert not bad["accepted"] and bad["rejected_at"] in ("freivalds", "columns_code")
+
+
+def test_perf_writes_chosen_on_every_mode_c_line_as_plan_bytes_does():
+    """``perf.py``'s ``chosen`` is ``plan_bytes.py``'s: the policy itself when it commits no plan
+    (``paper``), else the plan's policy (``auto``: the one it picked), so every mode-C line has it."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "experiments" / "6_improvements" / "perf.py"
+    spec = importlib.util.spec_from_file_location("perf_chosen_test", path)
+    perf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(perf)
+    for policy in ("paper", "auto", "R16c"):
+        plan = _planned("lenet5", policy)[2].plan
+        assert perf._chosen(policy, plan) == (policy if plan is None else plan.policy)
+    assert _planned("lenet5", "paper")[2].plan is None and perf._chosen("paper", None) == "paper"
+    assert perf._chosen("auto", _planned("lenet5", "auto")[2].plan) == auto_policy(_planned("lenet5", "auto")[0].mat_ops)

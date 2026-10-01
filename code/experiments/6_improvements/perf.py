@@ -51,6 +51,12 @@ def _load(name: str, path: str):
     return mod
 
 
+def _chosen(policy: str, plan) -> str:
+    """The policy whose plan was committed, as ``plan_bytes.py`` records it: ``policy`` itself when it
+    has no plan (``paper``), else ``plan.policy`` (``auto``: the c plan it picked)."""
+    return policy if plan is None else plan.policy
+
+
 def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
     """``(timings, bytes, prove_s, verify_s)``: the medians over ``runs`` of ``run_query``."""
     timing = {k: statistics.median(r["timings"].get(k, 0.0) for r in runs)
@@ -180,7 +186,7 @@ def main() -> None:
             timing, nbytes, prove, verify = _medians(runs)
             out = {"label": args.label, "git": sha, "model": args.model, "seq": seq, "layers": args.layers or None,
                    "mode": mode, "policy": policy, "wire": wire,
-                   **({"chosen": coms[prune, policy].plan.policy} if mode == "C" and coms[prune, policy].plan else {}),
+                   **({"chosen": _chosen(policy, coms[prune, policy].plan)} if mode == "C" else {}),
                    "lam": args.lam, "rate": args.rate,
                    "prune_last": prune, "lookups": looked,
                    "reps": v.params.reps, "columns": v.params.columns,
