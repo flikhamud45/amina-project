@@ -9,9 +9,13 @@ Everything behind the report (`../report/main.pdf`):
 4. our defence, which checks every weight layer with Freivalds' algorithm against a
    Reed–Solomon/Merkle commitment to the weights;
 5. the benchmark and the comparison with the literature;
-6. after the report, opt-in constant-factor improvements of the defence (summarised in
-   `../IMPROVEMENTS.md`), measured on the report's hardware; without their options the code
-   runs exactly the report's protocol.
+6. after the report, constant-factor improvements of the defence (summarised in
+   `../IMPROVEMENTS.md`), measured on the report's hardware. Their verifier engineering is
+   always on and changes only the timings: verdicts, proof bytes, Fiat–Shamir transcripts and
+   Merkle roots are the report's, but the verifier (and in part the prover) runs faster than
+   in the report's runs, which were measured by commit `9401431`. The rest is opt-in
+   (`--policy`, `--wire`, `--prune-last`, `--lookups`, `--verifier-impl stream`); without
+   these options the code runs the report's protocol.
 
 All results are stored in the repository. Every figure and generated table
 (`report/figures`, `report/tables`) is rebuilt from the stored benchmark records in a
@@ -124,9 +128,9 @@ smaller, which can change the page count (see the last note below).
 
 | Root | Records | What it is |
 |---|---|---|
-| `raw_l40s/` | 123,832 | **The report's numbers.** Every tier of `strong_gpu.sh` (`must`, `should`, `nice`; in `experiments/4_defence_benchmark/slurm/`) on the `killable` partition: an NVIDIA L40S (48 GB) prover and 8 threads of an AMD EPYC 9334 verifier, nodes n-801..804 (the L40S node t-806 has a different CPU and was excluded; `bench.py` refuses to mix CPU models in one root), run from a clean clone of this code (commit `9401431`, stored in every record) with `PVI_PLATFORM=l40s` (the script at that commit also submitted a kernel microbenchmark, `microbench`, which writes only a log and no records; it is not in this version). Every decoder up to 13B parameters is built at full depth (`--lean`) at up to 2,048 tokens, Llama-2-7B also at 4,096; the 30–70B shapes (OPT-30B, OPT-66B, Llama-2-70B) only with 1 and 2 blocks (the full Llama-2-70B build is skipped with a `SKIP` line: 64.2 GiB of int8 weights). The full models are also attacked (§4.3). The root also holds variants of the same protocol: `_gpuv` (the verifier on the GPU, §4.4), `_batch` (8 and 32 prompts per proof, §4.4; for the CNNs 8 to 256 images, 8 to 128 for the 224-pixel ResNet), `_thr1` (one verifier thread: the Maverick row of Table 4), and the controls `_thr12`, `_tf32`, `_nofix` (the earliest run's weight cache, `PVI_LEGACY_WEIGHT_KEY=1`) and `_nolean`, which enter no table or figure. All of them count as runs in §4.3. Frozen (`"frozen": true` in its `PLATFORM.json`: the code refuses to add records). |
+| `raw_l40s/` | 123,832 | **The report's numbers.** Every tier of `strong_gpu.sh` (`must`, `should`, `nice`; in `experiments/4_defence_benchmark/slurm/`) on the `killable` partition: an NVIDIA L40S (48 GB) prover and 8 threads of an AMD EPYC 9334 verifier, nodes n-801..804 (the L40S node t-806 has a different CPU and was excluded; `bench.py` refuses to mix CPU models in one root), run from a clean clone of the report's code (commit `9401431`, stored in every record; this code's always-on verifier engineering is faster, see *Route B*) with `PVI_PLATFORM=l40s` (the script at that commit also submitted a kernel microbenchmark, `microbench`, which writes only a log and no records; it is not in this version). Every decoder up to 13B parameters is built at full depth (`--lean`) at up to 2,048 tokens, Llama-2-7B also at 4,096; the 30–70B shapes (OPT-30B, OPT-66B, Llama-2-70B) only with 1 and 2 blocks (the full Llama-2-70B build is skipped with a `SKIP` line: 64.2 GiB of int8 weights). The full models are also attacked (§4.3). The root also holds variants of the same protocol: `_gpuv` (the verifier on the GPU, §4.4), `_batch` (8 and 32 prompts per proof, §4.4; for the CNNs 8 to 256 images, 8 to 128 for the 224-pixel ResNet), `_thr1` (one verifier thread: the Maverick row of Table 4), and the controls `_thr12`, `_tf32`, `_nofix` (the earliest run's weight cache, `PVI_LEGACY_WEIGHT_KEY=1`) and `_nolean`, which enter no table or figure. All of them count as runs in §4.3. Frozen (`"frozen": true` in its `PLATFORM.json`: the code refuses to add records). |
 | `raw_rtx2080ti-v2/` | 78,266 | The second platform, quoted in §4.1 and §4.3 (identical hardware-independent numbers, same verdicts). `strong_gpu.sh must` without `ab-opt13` (the non-lean OPT-1.3B control at 2,048 tokens, about 27 GiB, too large for the card) and `microbench` (a kernel microbenchmark that writes only a log, no records): 29 SLURM jobs, 945088–945116, on `studentbatch`: an RTX 2080 Ti (11 GB) prover and 8 threads of a Xeon Silver 4114 verifier, from the same commit `9401431`, with `PVI_PLATFORM=rtx2080ti-v2`. Every decoder is built at full depth except Llama-2-13B, whose 12.1 GiB of int8 weights exceed the card (it is extrapolated from its 1- and 2-block builds). Controls `_nofix`, `_nolean`, `_thr1`. Frozen. `aggregate.py --platform rtx2080ti-v2` rebuilds its stored tables unchanged; the report quotes only its verdicts and record total (`count_outcomes.py --platform rtx2080ti-v2`) and its hardware-independent numbers (`fingerprint_check.py`). `paper_assets.py` refuses this platform, since it lacks the `should` jobs' cells that the report draws (e.g. OPT-13B at 2,048 tokens). The report's previous version, drawn from it, is commit `d5671bf` in the project's git repository. |
-| `raw_l40s_improved/` | 68,363 | The options added after the report (`experiments/6_improvements`, `../IMPROVEMENTS.md`), on the hardware of `raw_l40s/` (nodes n-801, n-803 and n-804): 27 SLURM jobs, 958570–958596, from commit `c8be5eb` of the improvements' branch, with `PVI_PLATFORM=l40s_improved` (the job list is in `IMPROVEMENTS.md`). Its cells are the report's format run by the new code and the opt-in variants `_polauto` (a commitment plan), `_wire` (the compact encoding of the proof), `_prune` and `_lookups` (decoders; with `_thr1`, one verifier thread, for Qwen3-4B), and `_gpuv_stream` (the streaming GPU verifier). 4,380 honest queries accepted and 4,973 attacks rejected; its 565 hardware-independent numbers shared with `raw_l40s/` agree. The report does not use it. `aggregate.py --platform l40s_improved` rebuilds its tables in `tables_l40s_improved/` unchanged. Frozen. |
+| `raw_l40s_improved/` | 68,363 | The options added after the report (`experiments/6_improvements`, `../IMPROVEMENTS.md`), on the hardware of `raw_l40s/` (nodes n-801, n-803 and n-804): 27 SLURM jobs, 958570–958596, from commit `c8be5eb` of the improvements' branch, with `PVI_PLATFORM=l40s_improved` (the job list is in `IMPROVEMENTS.md`). Its cells are the report's format run by the new code (the untagged cells: what *Route B* gives on this branch) and the opt-in variants `_polauto` (a commitment plan), `_wire` (the compact encoding of the proof), `_prune` and `_lookups` (decoders; with `_thr1`, one verifier thread, for Qwen3-4B), and `_gpuv_stream` (the streaming GPU verifier). 4,380 honest queries accepted and 4,973 attacks rejected; its 565 hardware-independent numbers shared with `raw_l40s/` agree. The report does not use it. `aggregate.py --platform l40s_improved` rebuilds its tables in `tables_l40s_improved/` unchanged. Frozen. |
 | `raw/` | 59,547 | The earliest run, on the 2080 Ti with an older version of the code. Its committed-weights (C) prover re-uploaded the weights to the GPU twice per query (a weight cache keyed `cuda` vs `cuda:0`), so its C prover times are too slow (the `_nofix` controls of `raw_rtx2080ti-v2/` measure this on the same GPU: Llama-2-7B at 64 tokens 11.0 s against 7.9 s, GPT-2 1.15×, OPT-1.3B at 2,048 tokens 1.16×; within noise for the small CNNs), and every decoder above 12 blocks was built only with 1 and 2 blocks and extrapolated. The report does not use it. It is frozen (the code refuses to write there) and kept for provenance, and as the reference of `smoke.sbatch`'s fingerprint check: `aggregate.py --platform rtx2080ti` still rebuilds its tables in `tables/` exactly (its LLM runs sent one Merkle path per opened column; `multiproof_adjust` in `aggregate.py`, which exists only for this, adds the expected multiproof size next to them). The job list that produced it (`slurm/sweep.sh`) and the report version drawn from it are in the project's git repository at commit `336a03c`, not in the submission archive. |
 
 ### Route B: from scratch
@@ -150,7 +154,7 @@ cluster; new ones make every CNN number incomparable with the report):
 ```bash
 mkdir -p logs
 sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/train.sbatch lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel
-# when it has finished (squeue -u $USER), the report's jobs, as for raw_l40s/:
+# when it has finished (squeue -u $USER), the report's jobs (those of raw_l40s/):
 export PVI_PLATFORM=<new name> SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1
 bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke    # once per GPU type: wait for SMOKE OK
 bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must     # then should, then nice
@@ -169,6 +173,17 @@ running the same tier command again. On a card too small for a build (Llama-2-70
 48 GB, Llama-2-13B on 11 GB) that build is skipped with a `SKIP` line and its job ends
 with an error; the rest of the job is recorded. Then run Route A with
 `--platform <new name>`.
+
+**Timings on this branch.** The jobs record the report's cells, configuration fields and
+metrics, with the report's verdicts, proof bytes, transcripts and Merkle roots, but their
+timings are the new code's: the verifier engineering of `../IMPROVEMENTS.md` is always on, so
+the verifier (and in part the prover) is faster than in `raw_l40s/` (on the same L40S and EPYC,
+the mode-C verifier of LeNet-5 takes 2.9 ms against 7.0 ms, and GPT-2's at 64 tokens 197 ms
+against 468 ms). The untagged cells of `raw_l40s_improved/` are such a re-measurement. To
+re-measure the report's timings, run these jobs from commit `9401431`, which recorded
+`raw_l40s/` (or from `68cd7f8`, the submission before the improvements were merged, with the
+same protocol code).
+
 `experiments/4_defence_benchmark/README.md` shows how to run a single model without SLURM,
 and the options added after the report (`--policy`, `--wire`, `--verifier-impl stream`,
 `--prune-last`, `--lookups`); `../IMPROVEMENTS.md` lists the jobs of `raw_l40s_improved/`.

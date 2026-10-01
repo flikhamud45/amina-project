@@ -87,7 +87,9 @@ refuses `--verifier-device cuda` or `--tf32` without the matching tag, and
 
 **Options added after the report** (`experiments/6_improvements`, summarised in
 `IMPROVEMENTS.md` at the repository root). Without them `bench.py` runs exactly the report's
-protocol: the same verdicts, proof bytes, Fiat–Shamir transcripts and Merkle roots.
+protocol: the same verdicts, proof bytes, Fiat–Shamir transcripts and Merkle roots. Only the
+timings differ from the report's runs, since the verifier engineering of `IMPROVEMENTS.md` is
+always on (see *Route B* in `code/README.md`).
 
 * `--policy <name>`: commit under a commitment plan of `pvi.fullcheck.plans` over the base
   rate 4 (exact column counts, Merkle trees shared by the matrices of one codeword length,

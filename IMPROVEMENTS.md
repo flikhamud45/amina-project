@@ -6,8 +6,11 @@ change keeps the guarantee ε ≤ 2^-λ, and **the default behaviour is unchange
 verdicts, proof bytes, Fiat–Shamir transcripts and Merkle roots are byte-identical to the paper
 code (729b997, and the submission's code before the merge). The stored results therefore still
 reproduce: Route A of `code/README.md` gives the report's tables, figures and numbers byte for
-byte. Details, scripts and raw results are in `code/experiments/6_improvements/` (README.md,
-results/); the `bench.py` options are described in `code/experiments/4_defence_benchmark/README.md`.
+byte. Only the timings change: Phase 1 below is always on, so the report's jobs run on this
+branch are faster than the report's, which commit 9401431 measured (their re-measurement on the
+report's hardware is the untagged cells of `raw_l40s_improved/`). Details, scripts and raw
+results are in `code/experiments/6_improvements/` (README.md, results/); the `bench.py` options
+are described in `code/experiments/4_defence_benchmark/README.md`.
 
 ## What changed
 

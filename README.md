@@ -13,7 +13,7 @@ and by 17 other systems, from LeNet-5 to Llama-2-13B.
 |---|---|
 | [`report/`](report/) | the report: `main.pdf` and its LaTeX source |
 | [`code/`](code/) | the implementation, one folder per experiment, the stored measurements, and a [README](code/README.md) with exact commands to reproduce every table and figure |
-| [`IMPROVEMENTS.md`](IMPROVEMENTS.md) | opt-in improvements of the defence made after the report (the default protocol is unchanged), and their measurements on the report's hardware |
+| [`IMPROVEMENTS.md`](IMPROVEMENTS.md) | improvements of the defence made after the report, and their measurements on the report's hardware: the verifier engineering is always on and changes only the timings (verdicts, proof bytes, Fiat–Shamir transcripts and Merkle roots are the report's); the commitment plans, the wire encoding, pruning, lookups and the streaming GPU verifier are opt-in |
 
 The submission tarball (`<groupname>/code`, `<groupname>/report`) is this branch as
 committed (from a checkout of it):

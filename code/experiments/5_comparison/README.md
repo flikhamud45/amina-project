@@ -42,8 +42,9 @@ python experiments/5_comparison/validate_extrapolation.py --platform l40s   # op
 
 **The improvements' root.** `raw_l40s_improved/` (platform `l40s_improved`, 68,363 records)
 holds the options added after the report (`experiments/6_improvements`, `IMPROVEMENTS.md` at
-the repository root), measured on the report's hardware. The same scripts read it:
-`aggregate.py --platform l40s_improved` rebuilds `tables_l40s_improved/` unchanged,
+the repository root), measured on the report's hardware, and the report's cells run by the new
+code (untagged; faster than `raw_l40s/`, since its verifier engineering is always on). The same
+scripts read it: `aggregate.py --platform l40s_improved` rebuilds `tables_l40s_improved/` unchanged,
 `count_outcomes.py --platform l40s_improved` gives its verdicts (4,380 honest queries
 accepted, 4,973 attacks rejected), and `fingerprint_check.py artifacts/comparison/raw_l40s
 artifacts/comparison/raw_l40s_improved` finds its 565 hardware-independent numbers shared with
