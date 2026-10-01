@@ -39,6 +39,13 @@ from test_plans import _TINY, _planned, _verifiers   # the plan tests' models an
 KINDS = ("gpt", "opt", "llama", "qwen")
 
 
+@pytest.fixture(params=["cpu", "cuda"])
+def device(request):
+    if request.param == "cuda" and not torch.cuda.is_available():
+        pytest.skip("needs a GPU")
+    return request.param
+
+
 def _query(kind, t=9):
     """A prompt in which one token comes three times (a table's repeated id)."""
     x = torch.randint(0, _TINY[kind.partition("-")[0]].vocab, (1, t), generator=torch.Generator().manual_seed(7))
@@ -229,6 +236,46 @@ def test_the_gpu_forms_check_the_lookups_alike(paths, monkeypatch):
                         "tamper": lambda op, z: _bump(z) if op.name == embed else z})["rejected_at"] == "freivalds"
                     rejected = proto.run_query(proto.Prover(graph), v, bad, seed=1, wire=wire)["rejected_at"]
                     assert rejected == "range_or_shape"
+
+
+def test_a_gpu_client_checks_the_lookups_alike(device):
+    """A client on ``device`` (the CPU forms of its checks are the test above's): a plan's tables (honest
+    queries, also from a prover on the device with the CPU prover's bytes; every lookup forgery; an id
+    outside the table) and, in modes K and Kpre with ``lookups``, the verifier's own rows gathered from
+    its weights on the device (Kpre's re-uploaded after ``precompute``: honest queries, a wrong embedding
+    caught at the next op, an id outside the table) -- batched and streaming, with and without wire."""
+    for kind in ("opt", "qwen-pruned"):
+        graph, _, coms = _planned(kind, "R8c")
+        x = _query(kind)
+        bad = x.clone()
+        bad[0, 0] = -1
+        verifiers = _verifiers(graph, coms, False, device=device)
+        for wire in (False, True):
+            for v in verifiers:
+                cpu = proto.run_query(proto.Prover(graph, commitments=coms), v, x, seed=1, wire=wire)
+                assert cpu["accepted"], (kind, v.stream, wire, cpu["rejected_at"])
+                if device == "cuda":
+                    on_device = proto.run_query(proto.Prover(graph, device=device, commitments=coms), v, x, seed=1,
+                                                wire=wire)
+                    assert on_device["accepted"] and on_device["bytes"] == cpu["bytes"]
+                assert proto.run_query(proto.Prover(graph, commitments=coms), v, bad, seed=2,
+                                       wire=wire)["rejected_at"] == "range_or_shape"
+            for name, (got, want) in _rejections(graph, coms, x, verifiers, wire, seed=5).items():
+                assert got == want, (kind, wire, name)
+        weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
+        embed = next(op.name for op in graph.mat_ops if op.layout == "embed")
+        for mode in ("K", "Kpre"):
+            for stream in (False, True):
+                v = proto.Verifier(graph.public(), proto.params_for(40, len(graph.mat_ops)), mode, weights=weights,
+                                   lookups=True, stream=stream, device=device)
+                if mode == "Kpre":
+                    v.precompute(proto.Challenger(seed=3))
+                for wire in (False, True):
+                    assert proto.run_query(proto.Prover(graph), v, x, seed=1, wire=wire)["accepted"]
+                    assert proto.run_query(proto.Prover(graph), v, x, seed=1, wire=wire, forward_kwargs={
+                        "tamper": lambda op, z: _bump(z) if op.name == embed else z})["rejected_at"] == "freivalds"
+                    assert proto.run_query(proto.Prover(graph), v, bad, seed=1, wire=wire)["rejected_at"] == \
+                        "range_or_shape"
 
 
 def test_the_lookup_check_gives_the_reference_verdicts():
