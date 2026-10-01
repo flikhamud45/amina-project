@@ -1,4 +1,4 @@
-"""Where the per-op wire encoder of ``6c2059a`` spends its time: its stages timed one by one.
+"""Where the per-op wire codec of ``6c2059a`` spends its time: its stages timed one by one.
 
     cd code && export PYTHONPATH=$PWD/src
     python experiments/6_improvements/codec_stages.py --base ../../base/code/src --threads 4 \\
@@ -7,7 +7,10 @@
 The baseline's ``claimcodec.encode`` (``--base``: the ``src`` of a checkout of ``6c2059a``, whose encoder
 is ``tests/claimcodec_reference.py``) re-run here stage by stage from its own functions, with a timer
 between the stages, on the claims of one query of each spec (as ``codec_ab.py`` builds them, on the host:
-the numpy path, which a CPU prover runs); its bytes are checked against the baseline's ``encode``.
+the numpy path, which a CPU prover runs); its bytes are checked against the baseline's ``encode``.  Its
+``decode_torch`` into int64 at 1, 4 and 8 workers (torch's threads as many), the stages timed around its
+own calls: the slot streams with the exception list (on the calling thread meanwhile; the list's time
+also on its own), the exceptions patched in, the bases and row means added, the widening to int64.
 Prints and writes per spec the ops, centred ops, claims, exceptions, per width (segments, values,
 exceptions) and the median of ``--reps`` runs of each stage (ms).  Nothing here writes to the benchmark's
 roots.
@@ -111,6 +114,56 @@ def stages(cc, claims, centre: bool = True):
     return out, times, widths, pos.size, len(centred)
 
 
+def decode_stages(cc, blob: bytes, rows: list, cols: list, workers: int) -> dict:
+    """``cc.decode_torch(blob, rows, cols, workers=workers)`` (``cc``: ``6c2059a``'s ``claimcodec``), into
+    int64, its stages timed around its own calls (s)."""
+    times, state = {}, {"first": True, "patching": False, "depth": 0}
+    real = {k: getattr(cc, k) for k in ("_run", "_exceptions", "_patch")}
+
+    def add(key, t0):
+        times[key] = times.get(key, 0.0) + time.perf_counter() - t0
+
+    def run(jobs, sizes, w):          # the decoder's own calls, not those of its jobs (unpack32's)
+        t0 = time.perf_counter()
+        state["depth"] += 1
+        try:
+            real["_run"](jobs, sizes, w)
+        finally:
+            state["depth"] -= 1
+        if state["depth"]:
+            return
+        if state["first"]:
+            state["first"] = False
+            add("1 slot streams, the exception list meanwhile", t0)
+        elif not state["patching"]:
+            add("3 bases and row means", t0)
+
+    def exceptions(*a):
+        t0 = time.perf_counter()
+        real["_exceptions"](*a)
+        add("  of which the exception list (Rice, one thread)", t0)
+
+    def patch(*a):
+        t0, state["patching"] = time.perf_counter(), True
+        try:
+            real["_patch"](*a)
+        finally:
+            state["patching"] = False
+            add("2 exceptions patched in", t0)
+
+    cc._run, cc._exceptions, cc._patch = run, exceptions, patch
+    try:
+        t0 = time.perf_counter()
+        x, _ = cc._decode(blob, rows, cols, workers)
+        add("total (the header, 1-3)", t0)
+        t0 = time.perf_counter()
+        torch.from_numpy(x).to(torch.int64)
+        add("4 widening to int64 (torch)", t0)
+    finally:
+        cc._run, cc._exceptions, cc._patch = real["_run"], real["_exceptions"], real["_patch"]
+    return times
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("specs", nargs="+", help="as codec_ab.py's")
@@ -139,9 +192,20 @@ def main() -> None:
         for k, v in med.items():
             print(f"  {k:45s} {v:8.2f} ms")
         print(f"  {'total':45s} {sum(med.values()):8.2f} ms", flush=True)
+        rows, cols = [z.shape[0] for z in zs], [z.shape[1] for z in zs]
+        dec = {}
+        for w in (1, 4, 8):
+            torch.set_num_threads(w)
+            want = cc.decode_torch(blob, rows, cols, workers=w)
+            assert all(torch.equal(a, b) for a, b in zip(want, zs))
+            runs = [decode_stages(cc, blob, rows, cols, w) for _ in range(args.reps)]
+            dec[f"workers_{w}"] = {k: 1e3 * statistics.median(r.get(k, 0.0) for r in runs) for k in runs[0]}
+            print(f"  decode, {w} workers: " + ", ".join(f"{k.strip()} {v:.2f}" for k, v in dec[f"workers_{w}"].items()))
+        torch.set_num_threads(args.threads)
         res[spec] = {**info, "ops": len(zs), "centred": n_centred, "claims": n, "exceptions": n_exc,
                      "widths": {str(b): list(v) for b, v in widths.items()}, "stage_ms": med,
-                     "total_ms": sum(med.values()), "threads": args.threads, "reps": args.reps}
+                     "total_ms": sum(med.values()), "decode_int64_stage_ms": dec, "threads": args.threads,
+                     "reps": args.reps}
         if args.out:
             args.out.write_text(json.dumps(res, indent=1))
 
