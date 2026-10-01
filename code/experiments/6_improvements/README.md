@@ -1443,9 +1443,10 @@ decode (the paper's 8-thread EPYC client); `codec_ab.py` measures it there.
 
 `6c2059a` (`base`) and this checkout (`new`) run alternately in their own processes, each process the
 queries of all its variants interleaved; random-weight decoders, CPU prover and verifier, every query
-accepted with the same proof bytes; medians of 15 (Qwen3-4B) and 11 (GPT-2) queries.  Both time
-`prove_encode` without dropping the claims (the baseline patched for this A/B the same way: on this
-Windows host freeing 17 MB of claim tensors took 50-70 ms, which `prove_encode` used to include).
+accepted with the same proof bytes; medians of 15 (Qwen3-4B) and 11 (GPT-2) queries.  Both timed
+`prove_encode` without dropping the claims (the baseline patched the same way).  That made no
+difference: dropping them takes 0.1-0.2 ms here (`6c2059a`'s own flow, Qwen3-4B 8 blocks at 4
+threads, `prove_encode` less the time inside `encode`), and `prove_encode` includes it again.
 
 | Model | Mode | Threads | Prover, no wire | Prover, wire | prove_encode | verify_decode | Proof, no wire / wire |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -1508,6 +1509,5 @@ for d in . ../../base/code; do (cd $d && PYTHONPATH=$PWD/src python experiments/
 `codec_ab.py` checks both checkouts' bytes are equal, times `encode` of claims computed on the GPU (to
 the bytes on the host), `pack_field`, and `decode_torch` (int64 and int32) at each thread count, and
 records the device encoder's kernel-launching aten ops and waits; `perf.py`'s `prove_encode` and
-`verify_decode` are the prover's and verifier's wire costs in a full query (the baseline's
-`prove_encode` there still includes dropping the claims, which a GPU's caching allocator does in
-microseconds).  No GPU timing is claimed here: this laptop has none.
+`verify_decode` are the prover's and verifier's wire costs in a full query.  No GPU timing is
+claimed here: this laptop has none.
