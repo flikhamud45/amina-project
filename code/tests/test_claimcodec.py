@@ -125,8 +125,11 @@ def test_bases_are_always_in_the_decoders_range():
 
 def test_the_encoder_refuses_claims_outside_the_range_check():
     for z in (1 << 29, -(1 << 29)):
-        with pytest.raises(ValueError):
+        with pytest.raises(cc.Unencodable):
             cc.encode([np.array([[z]])])
+    for rows in (torch.tensor([[128]]), torch.tensor([[-129]])):    # nor rows outside int8
+        with pytest.raises(cc.Unencodable):
+            cc.pack_rows([rows])
 
 
 def test_numpy_torch_and_decoded_forms_agree():
@@ -226,8 +229,9 @@ def test_field_packing_round_trip_and_size():
     for bad, n in ((b + b"\0", 241), (b[:-1], 241), (b, 240), (b, 272), (bytearray(b), 241)):
         with pytest.raises(cc.ClaimCodecError):
             cc.unpack_field(bad, n)
-    with pytest.raises(ValueError):
-        cc.pack_field([torch.tensor([1 << 31])])
+    for bad in (1 << 31, -1):
+        with pytest.raises(cc.Unencodable):
+            cc.pack_field([torch.tensor([bad])])
 
 
 # -- claims: malformed input --------------------------------------------------------------------

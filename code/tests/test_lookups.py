@@ -126,7 +126,7 @@ def _lookup_attacks(graph, coms, x):
     out = {"row forged": (at(token, lambda z: shifted(z, repeated)), None, "lookup_merkle"),
            "row of another token": (at(token, another_row), None, "lookup_merkle"),
            "repeat inconsistent": (at(token, lambda z: shifted(z, repeated[-1:])), None, "lookup_consistency"),
-           "row outside int8": (at(token, outside), None, "range_or_shape"),
+           "row outside int8": (at(token, outside), None, "range_or_shape"),       # (with wire: not encodable)
            "path forged": (None, proofs(lambda p: dict(p, **{token: [bytes(32)] + p[token][1:]})), "lookup_merkle"),
            "path short": (None, proofs(lambda p: dict(p, **{token: p[token][:-1]})), "lookup_merkle"),
            "path long": (None, proofs(lambda p: dict(p, **{token: p[token] + [bytes(32)]})), "lookup_merkle"),
@@ -145,10 +145,6 @@ def _rejections(graph, coms, x, verifiers, wire, seed=0):
     real = prover.open_tables
     out = {}
     for i, (name, (tamper, patch, want)) in enumerate(_lookup_attacks(graph, coms, x).items()):
-        if wire and name == "row outside int8":           # no int8 wire form: the prover cannot even send it
-            with pytest.raises(ValueError, match="int8"):
-                proto.run_query(prover, verifiers[0], x, seed=seed, wire=True, forward_kwargs={"tamper": tamper})
-            continue
         prover.open_tables = patch(real) if patch else real
         try:
             got = {proto.run_query(prover, v, x, seed=seed + i, wire=wire,
@@ -610,6 +606,31 @@ def test_bench_names_the_pruned_and_lookup_cells_once(monkeypatch):
     assert bench._todo(args, "llm", "gpt2", "defence_Kpre_int_lam40_T8_L1")
     assert not bench._todo(args, "llm", "gpt2", "defence_C_int_lam40_T8_L1")
     assert not bench._todo(args, "llm", "gpt2", "commit_T8_L1")
+
+
+def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_path):
+    """``bench.py llm --policy R8c --wire``: the tamper cell's single values land on lookup tables too,
+    whose rows they move out of int8 -- values the wire cannot carry, which the prover sends as no bytes
+    and the verifier rejects at ``range_or_shape`` (as without wire): every attack of the cell rejected,
+    none raising."""
+    import json
+
+    import pvi.fullcheck.transformer as tr
+
+    bench = _script("4_defence_benchmark", "bench")
+    monkeypatch.setitem(tr.CONFIGS, "tiny-gpt", _TINY["gpt"])
+    monkeypatch.setattr(bench, "RAW", tmp_path)
+    monkeypatch.setattr(bench, "WIRE", True)
+    monkeypatch.setattr(bench, "TAG", "_wire_polR8c")
+    args = bench.build_parser().parse_args(["llm", "--model", "tiny-gpt", "--seq", "9", "--builds", "full",
+                                            "--modes", "C:int", "--lams", "40", "--queries", "1", "--policy", "R8c",
+                                            "--wire", "--llm-tampers", "34"])    # (attack 33 hits a table)
+    bench.suite_llm(args, {"device": "cpu", "cpu": "test", "torch_threads": 1})
+    cell = tmp_path / "llm" / "tiny-gpt" / "tamper_C_int_lam40_T9_L2_wire_polR8c.jsonl"
+    rows = [json.loads(line) for line in cell.read_text().splitlines()]
+    attempts = [r for r in rows if r["metric"] == "rejected"]
+    assert len(attempts) == 3 * 34 + 3 and all(r["value"] == 1 for r in attempts)
+    assert "range_or_shape" in {r["stage"] for r in attempts if r["attack"] == "single_value"}
 
 
 def test_plan_bytes_rows_of_pruned_builds_with_lookups():

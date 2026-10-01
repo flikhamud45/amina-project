@@ -976,32 +976,32 @@ the five CNNs under all seven `c` policies).
 `tests/test_lookups.py` (58 tests) holds what is particular to the lookups: the table's tree (its
 leaves, padding, multiproof; a row moved or changed fails); every `c` plan of GPT-2, OPT-350M,
 Llama-2-7B and Qwen3-4B, pruned or not, looks every embedding table up and keeps the head encoded;
-honest queries with a token three times are accepted and every forgery is rejected at its check --
-a row changed at all positions of its token or replaced by another token's row, and a changed
+honest queries with a token three times are accepted and every forgery is rejected at its check -- a
+row changed at all positions of its token or replaced by another token's row, and a changed
 position-table row (`lookup_merkle`), one position of a repeated token changed
-(`lookup_consistency`), an entry of 128 (`range_or_shape`; with wire the prover cannot encode it),
-a forged, short, long or non-bytes path, a missing proof and swapped proofs (`lookup_merkle`) -- on
-GPT-2, OPT, Llama and Qwen shapes, pruned and not, interactive and Fiat--Shamir, with and without
-wire, by `run_query` and the streaming verifier alike, and in the deferred, int8 and deferred+int8
-forms; the vectorised check against `reference.check_lookups`; an id outside the table rejected
-as a malformed query (tables and a verifier's own rows); malformed int8 rows on the wire
-(`range_or_shape`), a changed row on the wire (`lookup_merkle`); the transcript (table records
-with the statement, each multiproof after the claims and before `chi`, every table field changing
-the challenges); the refused keys; modes K and Kpre with `lookups` (no embedding claims sent,
-`precompute` without them, a wrong embedding caught at the next op, the `lookups` record, the
-malformed `PVC3` of the other claims); the byte model (`expected_lookup_nodes` against sampling, the
-tables' claims and exact multiproofs, the setup's trees); and the experiment scripts' options.
-`tests/test_pruning.py` (20 tests): the pruned logits `torch.equal` to the unpruned on the tiny
-decoders and on GPT-2, OPT-350M, Llama-2-7B and Qwen3-4B blocks at 1, 2 and 9 tokens, with the same
-weights and the pruned shapes and claim columns of `analytic`; the attention of the last `Tq`
-queries equal to the last rows of the whole attention and to `reference.attention` (int32 and int64
-paths, GQA stacked and in groups), RoPE at an offset, and a pruned block's plan (q alone, k and v
-fused, `chi' = I` for a transposed q).  `tests/test_plans.py` runs its plan tests with the lookup
-tables (the `c` policies) and on pruned GPT-2, Llama, OPT and Qwen (honest queries and their bytes
--- the tables' claims a byte each, their multiproofs exact -- in C, and in K and Kpre with and
-without `lookups`; every column forgery on pruned OPT and Qwen; the GPU forms on pruned GPT-2; the
-byte model on pruned GPT-2 and Qwen; builds of 1 and 2 pruned blocks get the whole model's matrices
-and trees).
+(`lookup_consistency`), an entry of 128 (`range_or_shape`; with wire too, where it travels as no
+bytes), a forged, short, long or non-bytes path, a missing proof and swapped proofs
+(`lookup_merkle`) -- on GPT-2, OPT, Llama and Qwen shapes, pruned and not, interactive and
+Fiat--Shamir, with and without wire, by `run_query` and the streaming verifier alike, and in the
+deferred, int8 and deferred+int8 forms; the vectorised check against `reference.check_lookups`; an
+id outside the table rejected as a malformed query (tables and a verifier's own rows); malformed
+int8 rows on the wire (`range_or_shape`), a changed row on the wire (`lookup_merkle`); the
+transcript (table records with the statement, each multiproof after the claims and before `chi`,
+every table field changing the challenges); the refused keys; modes K and Kpre with `lookups` (no
+embedding claims sent, `precompute` without them, a wrong embedding caught at the next op, the
+`lookups` record, the malformed `PVC3` of the other claims); the byte model (`expected_lookup_nodes`
+against sampling, the tables' claims and exact multiproofs, the setup's trees); and the experiment
+scripts' options.  `tests/test_pruning.py` (20 tests): the pruned logits `torch.equal` to the
+unpruned on the tiny decoders and on GPT-2, OPT-350M, Llama-2-7B and Qwen3-4B blocks at 1, 2 and 9
+tokens, with the same weights and the pruned shapes and claim columns of `analytic`; the attention
+of the last `Tq` queries equal to the last rows of the whole attention and to `reference.attention`
+(int32 and int64 paths, GQA stacked and in groups), RoPE at an offset, and a pruned block's plan (q
+alone, k and v fused, `chi' = I` for a transposed q).  `tests/test_plans.py` runs its plan tests
+with the lookup tables (the `c` policies) and on pruned GPT-2, Llama, OPT and Qwen (honest queries
+and their bytes -- the tables' claims a byte each, their multiproofs exact -- in C, and in K and
+Kpre with and without `lookups`; every column forgery on pruned OPT and Qwen; the GPU forms on
+pruned GPT-2; the byte model on pruned GPT-2 and Qwen; builds of 1 and 2 pruned blocks get the whole
+model's matrices and trees).
 
 ```bash
 cd code && export PYTHONPATH=$PWD/src

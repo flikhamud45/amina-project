@@ -550,11 +550,11 @@ def _expected(graph, coms) -> dict:
                              for attack, op in (("claim+1", mats[len(mats) // 2]), ("logit+1000", mats[-1]))})
 
 
-TENSOR_FORMS = ("opened=-1", "opened>int32", "opened narrow", "opened short", "opened int32")
-"""Forgeries of the opened columns' tensor (an entry outside ``[0, 2**31)``, another shape or dtype).
-With ``wire`` the columns travel as one run of 31-bit field elements instead, which cannot carry
-them (:func:`claimcodec.pack_field` refuses such entries, and no dtype is sent):
-:func:`test_malformed_wire_messages_are_rejected_under_a_plan` forges that message itself."""
+TENSOR_FORMS = ("opened narrow", "opened short", "opened int32")
+"""Forgeries of the opened columns' tensor (another shape or dtype).  With ``wire`` the columns travel
+as one run of 31-bit field elements instead, which carries neither a dtype nor the trees' shapes:
+:func:`test_malformed_wire_messages_are_rejected_under_a_plan` forges that message itself.  (An entry
+outside ``[0, 2**31)``, which the run cannot carry either, travels as no bytes: ``columns_shape``.)"""
 
 
 def _labels(graph, x, coms, verifiers, seed=0, wire=False):
@@ -994,21 +994,39 @@ def test_malformed_wire_messages_are_rejected_under_a_plan(kind, policy, fiat_sh
             assert got is not None and got == label(20 + i, wire=False), which
         finally:
             prover.fold, prover.open = real["fold"], real["open"]
-    # an entry outside [0, 2**31) has no wire form: the prover cannot even encode it
+    # values the encoding cannot carry (a claim outside the range check, an entry of u or of an opened
+    # column outside [0, 2**31)) travel as no bytes: rejected where those values are without wire
     g0 = coms.plan.groups[0][0]
+    victim = graph.mat_ops[len(graph.mat_ops) // 2].name
 
-    def outside(cols):
+    def huge(op, z):
+        if op.name == victim:
+            z = z.clone()
+            z[0, 0] = proto.Z_BOUND
+        return z
+
+    def outside_u(chis):
+        us = real["fold"](chis)
+        u = next(iter(us))
+        return dict(us, **{u: torch.full_like(us[u], -1)})
+
+    def outside_columns(cols):
         out = real["open"](cols)
         o = out[g0][0].clone()
         o[0, 0] = -1
         return dict(out, **{g0: (o, out[g0][1])})
 
-    prover.open = outside
-    try:
-        with pytest.raises(ValueError, match="field elements"):
-            proto.run_query(prover, verifiers[0], x, seed=30, wire=True)
-    finally:
-        prover.open = real["open"]
+    for i, (fold, open_, kw, want) in enumerate(((real["fold"], real["open"], {"tamper": huge}, "range_or_shape"),
+                                                 (outside_u, real["open"], None, "freivalds"),
+                                                 (real["fold"], outside_columns, None, "columns_shape"))):
+        prover.fold, prover.open = fold, open_
+        try:
+            for wire in (True, False):
+                got = {proto.run_query(prover, v, x, seed=30 + i, wire=wire, forward_kwargs=kw)["rejected_at"]
+                       for v in verifiers}
+                assert got == {want}, (want, wire, got)
+        finally:
+            prover.fold, prover.open = real["fold"], real["open"]
 
 
 @pytest.mark.parametrize("policy", ["R8", "R8c"])

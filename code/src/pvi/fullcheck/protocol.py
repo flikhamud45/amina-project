@@ -1391,6 +1391,17 @@ def _passed(message, pin: bool = False):
     return {k: copy(v) if torch.is_tensor(v) else list(v) if isinstance(v, list) else v for k, v in message.items()}
 
 
+def _encoded(encode, values) -> bytes:
+    """``encode(values)``, the bytes of a message in the compact encoding; none for values it cannot
+    carry (:class:`claimcodec.Unencodable`), which a prover can only replace with other bytes: no
+    bytes, a message the verifier rejects as malformed at that message's check (``range_or_shape``,
+    ``freivalds``, ``columns_shape``), as it rejects those values without wire."""
+    try:
+        return encode(values)
+    except claimcodec.Unencodable:
+        return b""
+
+
 def _proof_hashes(proof) -> list[bytes]:
     """The hashes of a multiproof as they travel (nothing if it is not a list of byte strings)."""
     ok = isinstance(proof, (list, tuple)) and all(isinstance(h, bytes) for h in proof)
@@ -1423,9 +1434,9 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
     if wire:
         t0 = time.perf_counter()
         if verifier.tables:
-            rows = claimcodec.pack_rows([claims[name] for name in verifier.tables])
-        claims = claimcodec.encode([claims[op.name] for op in prover.graph.mat_ops
-                                    if op.name in sent and op.name not in verifier.tables])
+            rows = _encoded(claimcodec.pack_rows, [claims[name] for name in verifier.tables])
+        claims = _encoded(claimcodec.encode, [claims[op.name] for op in prover.graph.mat_ops
+                                              if op.name in sent and op.name not in verifier.tables])
         _sync(prover.device)
         t["prove_encode"] = time.perf_counter() - t0
     size = len(claims) + len(rows or b"") if wire else sum(z.numel() * (1 if k in verifier.tables else 4)
@@ -1521,7 +1532,7 @@ def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, x: torch.T
         out["bytes"]["u"] = sum(u.numel() for u in us.values()) * 4
         if wire:
             t0 = time.perf_counter()
-            blob = claimcodec.pack_field([us[op.name] for op in mats])
+            blob = _encoded(claimcodec.pack_field, [us[op.name] for op in mats])
             t["prove_encode"] += time.perf_counter() - t0
             out["bytes"]["u"] = len(blob)
             parts = _field_message(blob, [(p.reps, op.row_length) for op in mats], out, torch.int64)
@@ -1565,7 +1576,7 @@ def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, 
     else:
         t["prove_open"] = time.perf_counter() - t0
         t0 = time.perf_counter()
-        blob = claimcodec.pack_field([opened[name][0].T for name in cols])
+        blob = _encoded(claimcodec.pack_field, [opened[name][0].T for name in cols])
         t["prove_encode"] += time.perf_counter() - t0
         out["bytes"]["columns"] = len(blob)
         units = verifier._column_units()
@@ -1593,8 +1604,10 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
     the opened columns 31-bit packed.  The verifier decodes them (``verify_decode``) before it
     checks anything and rejects a malformed message at the check that rejects a malformed message
     of the same kind (``range_or_shape`` for the claims, ``freivalds`` for ``u``, ``columns_shape``
-    for the columns); ``bytes`` counts the encoded sizes, and with Fiat--Shamir the transcript
-    absorbs these bytes.  A GPU client uploads the decoded claims as int32 and widens them there."""
+    for the columns) -- so too a prover's values that the encoding cannot carry (a claim outside the
+    range check, a looked-up row outside int8, a field element of 32 bits), which travel as no
+    bytes; ``bytes`` counts the encoded sizes, and with Fiat--Shamir the transcript absorbs these
+    bytes.  A GPU client uploads the decoded claims as int32 and widens them there."""
     ch = Challenger(fiat_shamir=verifier.params.fiat_shamir, seed=seed)
     out = {"accepted": False, "rejected_at": None, "timings": {}}
     if verifier.stream:

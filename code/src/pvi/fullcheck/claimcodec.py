@@ -82,8 +82,8 @@ import torch
 
 from .commitment import map_threaded
 
-__all__ = ["ClaimCodecError", "MAGIC", "BMAX", "encode", "decode", "decode_torch", "FIELD_BITS", "field_size",
-           "pack_field", "unpack_field", "pack_rows", "unpack_rows"]
+__all__ = ["ClaimCodecError", "Unencodable", "MAGIC", "BMAX", "encode", "decode", "decode_torch", "FIELD_BITS",
+           "field_size", "pack_field", "unpack_field", "pack_rows", "unpack_rows"]
 
 MAGIC = b"PVC3"
 BMAX = 30                   # slot widths 0..30
@@ -100,6 +100,12 @@ _PLAN_VALUES = 1 << 16
 
 class ClaimCodecError(ValueError):
     """Malformed encoded proof: the verifier rejects."""
+
+
+class Unencodable(ValueError):
+    """Values the encoding cannot carry -- a claim outside the range check, a looked-up row outside
+    int8, a field element of 32 bits: no honest message holds them, and whatever a prover with such
+    values sends instead, the verifier rejects or decodes into other values."""
 
 
 # ---------------------------------------------------------------------------- slot streams
@@ -409,7 +415,7 @@ def encode(claims: list, *, centre: bool = True) -> bytes:
         raise ValueError("claims must be 2-D")
     ext = _host([torch.stack(torch.aminmax(z)).to(torch.int64) for z in zts if z.numel()])
     if ext and (max(int(e[1]) for e in ext) >= _Z_LIMIT or min(int(e[0]) for e in ext) <= -_Z_LIMIT):
-        raise ValueError("a claim outside the range check cannot be encoded")
+        raise Unencodable("a claim outside the range check cannot be encoded")
     z32s = [z.to(torch.int32) for z in zts]            # every claim is < 2**29: the rest runs in int32
     rows = [_sample_rows(*z.shape) for z in zts]
     samples = _host([z[torch.from_numpy(r).to(z.device)] for z, r in zip(z32s, rows)])
@@ -657,7 +663,7 @@ def pack_field(tensors: list[torch.Tensor]) -> bytes:
     flat = torch.cat([t.detach().reshape(-1).cpu().to(torch.int64) for t in tensors]) if tensors else \
         torch.zeros(0, dtype=torch.int64)
     if flat.numel() and (int(flat.min()) < 0 or int(flat.max()) >= 1 << FIELD_BITS):
-        raise ValueError("field elements must be in [0, 2**31)")
+        raise Unencodable("field elements must be in [0, 2**31)")
     return pack32(flat.to(torch.int32).numpy().view(np.uint32), FIELD_BITS)
 
 
@@ -680,7 +686,7 @@ def pack_rows(claims: list[torch.Tensor]) -> bytes:
         return b""
     flat = torch.cat([z.detach().T.reshape(-1) for z in claims])
     if flat.numel() and (int(flat.min()) < -128 or int(flat.max()) > 127):
-        raise ValueError("looked-up rows must be int8")
+        raise Unencodable("looked-up rows must be int8")
     return flat.to(torch.int8).cpu().numpy().tobytes()
 
 
