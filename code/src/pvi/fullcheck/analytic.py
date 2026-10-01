@@ -34,6 +34,7 @@ class OpShape:
     row_length: int
     layout: str = "linear"       # "embed" for the lookup tables (as ``MatOp.layout``)
     input: str | None = None     # the tensor it reads (ops reading one tensor may share a col matrix)
+    has_bias: bool = False       # as ``MatOp.has_bias`` (``row_length`` counts its column)
 
     @property
     def inputs(self) -> tuple[str | None]:
@@ -51,6 +52,10 @@ def decoder_shapes(cfg, n_layers: int | None = None, prune_last: bool = False) -
     d, dh, hq, hkv, f = cfg.d_model, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads, cfg.d_ff
     b = 1 if cfg.bias else 0
     e = getattr(cfg, "embed_dim", 0) or d
+
+    def block(name, rows, k, src):       # a projection of a block, with the config's bias
+        return OpShape(name, rows, k + b, input=src, has_bias=bool(b))
+
     ops = [OpShape("embed", e, cfg.vocab, "embed", "tokens")]
     if e != d:
         ops.append(OpShape("proj_in", d, e, input="embedded"))
@@ -59,13 +64,12 @@ def decoder_shapes(cfg, n_layers: int | None = None, prune_last: bool = False) -
     for i in range(L):
         a, m = f"attn_in{i}", f"mlp_in{i}"
         aq = f"attn_last{i}" if prune_last and i == L - 1 else a
-        ops += [OpShape(f"q{i}", hq * dh, d + b, input=aq), OpShape(f"k{i}", hkv * dh, d + b, input=a),
-                OpShape(f"v{i}", hkv * dh, d + b, input=a), OpShape(f"o{i}", d, hq * dh + b, input=f"attn_out{i}")]
+        ops += [block(f"q{i}", hq * dh, d, aq), block(f"k{i}", hkv * dh, d, a), block(f"v{i}", hkv * dh, d, a),
+                block(f"o{i}", d, hq * dh, f"attn_out{i}")]
         if cfg.mlp == "swiglu":
-            ops += [OpShape(f"gate{i}", f, d + b, input=m), OpShape(f"up{i}", f, d + b, input=m),
-                    OpShape(f"down{i}", d, f + b, input=f"mlp_act{i}")]
+            ops += [block(f"gate{i}", f, d, m), block(f"up{i}", f, d, m), block(f"down{i}", d, f, f"mlp_act{i}")]
         else:
-            ops += [OpShape(f"fc1{i}", f, d + b, input=m), OpShape(f"fc2{i}", d, f + b, input=f"mlp_act{i}")]
+            ops += [block(f"fc1{i}", f, d, m), block(f"fc2{i}", d, f, f"mlp_act{i}")]
     if e != d:
         ops.append(OpShape("proj_out", e, d, input="final"))
     ops.append(OpShape("head", cfg.vocab, e, input="final" if e == d else "final_projected"))

@@ -30,6 +30,7 @@ from pvi.fullcheck import claimcodec as cc
 from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
 from pvi.fullcheck.commitment import MerkleTree, TableCommitment, multiproof_size, table_leaves, verify_multiproof
+from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp, requant
 from pvi.fullcheck.plans import next_pow2, plan_commitment
 from pvi.fullcheck.transformer import CONFIGS
 
@@ -415,6 +416,72 @@ def test_the_transcript_of_a_verifier_with_lookups(monkeypatch):
         assert claims == {op.name for op in graph.mat_ops} - (set(embeds) if lookups else set())
         if lookups:
             assert records[b"lookups"] == b"".join(len(n).to_bytes(2, "little") + n.encode() for n in embeds)
+
+
+def _biased_embedding():
+    """``(graph, x, b)``: an embedding op WITH a bias (its claims ``W[:, ids] + b``), requantised, then a
+    linear op; and a prompt with a repeated token."""
+    g = torch.Generator().manual_seed(0)
+    b = torch.randint(-50, 50, (8,), generator=g)
+    m = torch.tensor(1 << 29)
+    ops = [MatOp("emb", ("x",), "emb.z", weight=torch.randint(-100, 100, (8, 13), generator=g).to(torch.int8), bias=b,
+                 layout="embed"),
+           CheapOp("rq", ("emb.z",), "rq.y", fn=lambda a, m=m: requant(a, m.to(a.device), 30, -127, 127)),
+           MatOp("fc", ("rq.y",), "fc.z", weight=torch.randint(-100, 100, (6, 8), generator=g).to(torch.int8),
+                 bias=torch.randint(-50, 50, (6,), generator=g))]
+    return IntGraph(ops, "x", "fc.z"), torch.tensor([[3, 7, 3, 12, 0]]), b
+
+
+def _unbiased(b):
+    """A forgery of a biased embedding: its claims without the bias (``W[:, ids]``, what a table over the
+    rows of ``W`` binds), every op after it re-propagated honestly (so the output changes)."""
+    return lambda op, z: z - b[:, None] if op.name == "emb" else z
+
+
+@pytest.mark.parametrize("policy", ["tightc", "cnn12c", "R8c"])
+def test_a_biased_embedding_keeps_its_row_layout(policy):
+    """A tree over the rows of ``W`` does not bind an embedding's bias: under a ``c`` policy an embedding
+    with one keeps its row layout (Freivalds and the column check of ``[W | b]``), so the honest query
+    is accepted and claims without the bias are rejected (interactive and Fiat--Shamir, batched and
+    streaming, with and without wire); a key that makes it a lookup table is refused."""
+    graph, x, b = _biased_embedding()
+    _, forged = graph.forward(x, tamper=_unbiased(b))
+    assert not torch.equal(forged["fc"], graph.forward(x)[1]["fc"])
+    coms = proto.commit_graph(graph, 4, policy=policy)
+    assert coms.plan.matrix_of("emb").layout == "row" and not coms.plan.tables and not coms.tables
+    prover = proto.Prover(graph, commitments=coms)
+    for fiat_shamir in (False, True):
+        for v in _verifiers(graph, coms, fiat_shamir):
+            for wire in (False, True):
+                seed = None if fiat_shamir else 1
+                assert proto.run_query(prover, v, x, seed=seed, wire=wire)["accepted"]
+                bad = proto.run_query(prover, v, x, seed=seed, wire=wire, forward_kwargs={"tamper": _unbiased(b)})
+                assert bad["rejected_at"] == "freivalds"
+    params = proto.params_for(40, len(graph.mat_ops), plan=coms.plan)
+    with pytest.raises(ValueError, match="has a bias"):
+        proto.Verifier(graph.public(), params, "C", publics={k: p for k, p in coms.publics.items() if k != "emb"},
+                       groups=coms.group_publics, tables={"emb": TableCommitment.build(b"emb", graph.mat_ops[0].weight)
+                                                          .public})
+
+
+@pytest.mark.parametrize("mode", ["K", "Kpre"])
+def test_a_verifier_with_lookups_adds_an_embeddings_bias(mode):
+    """Modes K and Kpre with ``lookups``: the verifier's own claim of a biased embedding is ``W[:, ids] +
+    b`` (the graph's), so the honest query is accepted and a prover that drops the bias is caught at
+    the next op; ``claim_bound`` counts the bias of an embedding too."""
+    graph, x, b = _biased_embedding()
+    emb = graph.mat_ops[0]
+    assert proto.claim_bound(emb) == int((emb.weight.to(torch.int64).abs().amax(1) + b.abs()).max())
+    weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
+    for stream in (False, True):
+        v = proto.Verifier(graph.public(), proto.params_for(40, len(graph.mat_ops)), mode, weights=weights,
+                           lookups=True, stream=stream)
+        if mode == "Kpre":
+            v.precompute(proto.Challenger(seed=3))
+        for wire in (False, True):
+            assert proto.run_query(proto.Prover(graph), v, x, seed=1, wire=wire)["accepted"]
+            bad = proto.run_query(proto.Prover(graph), v, x, seed=1, wire=wire, forward_kwargs={"tamper": _unbiased(b)})
+            assert bad["rejected_at"] == "freivalds"
 
 
 def test_the_lookup_byte_model():

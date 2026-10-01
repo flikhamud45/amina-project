@@ -41,15 +41,16 @@ Layouts of a weight op ``Z = A [X ; 1]`` (``X``: ``k' x M``, one column per pixe
   dimension ``N``, which agree on at most ``N - 1`` of the ``n`` positions; the opened columns are
   those of ``E'`` (the Merkle root binds them) and are drawn after the claims, independently of
   ``chi'``, so all ``t`` of them fall where the two agree with probability at most the product.
-* ``lookup`` (embedding ops: ``W`` ``[d, V]`` is the table, ``X`` the token ids): the table is
-  committed as a Merkle tree over its ``V`` rows (int8, padded to a power of two), no code.  The
-  claims are the looked-up rows, one column of ``d`` int8 values per position, and the prover
-  opens the tree at the distinct ids with ONE multiproof, sent with the claims.  The verifier checks
-  that every id names a row of the table, that the claims are int8 (so a leaf's bytes are the
-  claim, one to one), that repeated ids carry equal columns, and the multiproof: no challenge, no
-  ``u``, no columns, ``d M`` bytes of claims instead of ``4 d M``.  Its error is 0: accepting any
-  other claim means other bytes for a leaf the root binds, a SHA-256 collision (the assumption of
-  every Merkle tree here, not a term of the statistical bound).
+* ``lookup`` (embedding ops without a bias: ``W`` ``[d, V]`` is the table, ``X`` the token ids, and
+  the claim at id ``j`` is ``W[:, j]``): the table is committed as a Merkle tree over its ``V`` rows
+  (int8, padded to a power of two), no code.  The claims are the looked-up rows, one column of ``d``
+  int8 values per position, and the prover opens the tree at the distinct ids with ONE multiproof,
+  sent with the claims.  The verifier checks that every id names a row of the table, that the claims
+  are int8 (so a leaf's bytes are the claim, one to one), that repeated ids carry equal columns, and
+  the multiproof: no challenge, no ``u``, no columns, ``d M`` bytes of claims instead of ``4 d M``.
+  Its error is 0: accepting any other claim means other bytes for a leaf the root binds, a SHA-256
+  collision (the assumption of every Merkle tree here, not a term of the statistical bound).  The
+  tree binds ``W`` alone, so an embedding with a bias (claims ``W[:, j] + b``) keeps the row layout.
 
 Policies (``bench.py --policy``; the plan is public, part of the verifier's key):
 
@@ -61,12 +62,13 @@ Policies (``bench.py --policy``; the plan is public, part of the verifier's key)
   the base rate (their rows are the vocabulary, so a higher rate multiplies the setup, while
   their columns hold only ``d`` entries);
 * the same with the suffix ``c`` (``tightc``, ``cnn18c``, ``R64c``, ...): every embedding table
-  takes the lookup layout, and a linear op may take the col layout, alone or with the other linear
-  ops that read its input with its row length in one col matrix.  A lookup costs less than the
-  table's row layout: it drops ``u`` (``4 r V`` bytes) and the columns (``4 t d`` per tree), and its
-  claims take one byte each (four as int32, about one in ``PVC3``), for one multiproof of at most
-  one path (``32 log2 V`` bytes) per position -- less than the three bytes per claim it saves on
-  int32 claims for every benchmark decoder (``d >= 512``), and less than ``u`` alone with wire.
+  without a bias takes the lookup layout, and a linear op may take the col layout, alone or with the
+  other linear ops that read its input with its row length in one col matrix.  A lookup costs less
+  than the table's row layout: it drops ``u`` (``4 r V`` bytes) and the columns (``4 t d`` per
+  tree), and its claims take one byte each (four as int32, about one in ``PVC3``), for one
+  multiproof of at most one path (``32 log2 V`` bytes) per position -- less than the three bytes
+  per claim it saves on int32 claims for every benchmark decoder (``d >= 512``), and less than ``u``
+  alone with wire.
   The linear ops of a set (of one input and row length) take one of three options: every op in
   the row layout, every op transposed on its own, or all in one col matrix; sets of equal shapes
   (the blocks of a decoder) take the same.  The options are those of least expected proof bytes of
@@ -269,9 +271,9 @@ def _options(members, policy: str, rate: int) -> list[list[PlannedMatrix]]:
     """The ways to commit one set of ops: every op in the row layout (the base policy's), and under a
     ``c`` policy for linear ops every op transposed on its own and, for several, all of them in one
     col matrix (an option whose codeword would be longer than the field's NTT is left out); under a
-    ``c`` policy an embedding table is looked up, its one way."""
+    ``c`` policy an embedding table without a bias is looked up, its one way."""
     length, col = _policy(policy, rate)
-    if col and members[0].layout == "embed":
+    if col and members[0].layout == "embed" and not any(op.has_bias for op in members):
         return [[PlannedMatrix(op.name, op.n_rows, op.row_length, next_pow2(op.row_length), lookup=True)
                  for op in members]]
 
@@ -294,8 +296,8 @@ def _options(members, policy: str, rate: int) -> list[list[PlannedMatrix]]:
 
 
 def _signature(members) -> tuple:
-    """What a set's options depend on: its ops' shapes, in order."""
-    return tuple((op.n_rows, op.row_length, op.layout) for op in members)
+    """What a set's options depend on: its ops' shapes and biases, in order."""
+    return tuple((op.n_rows, op.row_length, op.layout, op.has_bias) for op in members)
 
 
 def _runs(n: int, ts: list[int], rows: list[int]) -> tuple[float, list[tuple[int, int]]]:
@@ -375,8 +377,9 @@ def _matrices(ops, policy: str, rate: int, choice: dict) -> list[PlannedMatrix]:
 
 def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None) -> CommitmentPlan | None:
     """The plan of ``policy`` for weight ops ``ops`` (objects with ``name``, ``n_rows``,
-    ``row_length``, ``layout`` and ``inputs``: a graph's ``MatOp``s or ``analytic.decoder_shapes``),
-    in their order; ``None`` for ``"paper"``.  ``rate`` is the base rate (the report's, 4).
+    ``row_length``, ``layout``, ``inputs`` and ``has_bias``: a graph's ``MatOp``s or
+    ``analytic.decoder_shapes``), in their order; ``None`` for ``"paper"``.  ``rate`` is the base
+    rate (the report's, 4).
 
     ``model_ops``: the whole model's ops when ``ops`` are those of a build of a few of its
     decoder blocks.  The layouts are chosen, and the runs split, on the whole model (at its op

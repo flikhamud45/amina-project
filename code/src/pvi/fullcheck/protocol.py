@@ -34,13 +34,14 @@ and per-op codeword lengths -- and under its ``c`` policies commits some linear 
 verifier computes both sides of its code check itself (``w = chi' [X ; 1]^T`` and ``z = chi'
 Z^T``), and step 5 opens columns of its transposed matrix, which must satisfy ``w . E'[:, c] ==
 Enc(z)[c]``.  All trees' columns are drawn in step 4, so row and col matrices of one codeword
-length share trees.  The ``c`` policies also commit every embedding table as a lookup table (a
-Merkle tree over its rows): its claims are the looked-up rows, sent as int8 in step 1 with one
-multiproof over the distinct ids, and checked once derive has the ids, before any challenge --
-int8 and ids of the table (in derive), equal rows for equal ids (``lookup_consistency``), the
-multiproof (``lookup_merkle``) -- with no ``u`` and no columns.  In modes K and Kpre a verifier
-with ``lookups=True`` (opt-in) reads the embedding rows from its own weights, and the prover sends
-no claims for them.  Two preconditions make the *integer* claim, not just its residue, the thing
+length share trees.  The ``c`` policies also commit every embedding table without a bias as a
+lookup table (a Merkle tree over its rows): its claims are the looked-up rows, sent as int8 in step
+1 with one multiproof over the distinct ids, and checked once derive has the ids, before any
+challenge -- int8 and ids of the table (in derive), equal rows for equal ids
+(``lookup_consistency``), the multiproof (``lookup_merkle``) -- with no ``u`` and no columns.  In
+modes K and Kpre a verifier with ``lookups=True`` (opt-in) computes the embedding ops from its own
+weights (the rows at the ids, plus the bias of an embedding that has one), and the prover sends no
+claims for them.  Two preconditions make the *integer* claim, not just its residue, the thing
 that is checked: claims are range-checked to ``|z| < 2**29`` (so two in-range integers with equal
 residues are equal, since ``2 * 2**29 < p``), and every weight op is checked at commitment time to
 have honest outputs inside that range (:func:`claim_bound`).  Completeness is exact: every
@@ -159,9 +160,7 @@ def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: 
 def claim_bound(op: MatOp) -> int:
     """Largest ``|z|`` an honest execution of ``op`` can produce."""
     w = op.weight.to(torch.int64)
-    if op.layout == "embed":
-        return int(w.abs().max())
-    bound = (op.max_input + 1) * w.abs().sum(1)
+    bound = w.abs().amax(1) if op.layout == "embed" else (op.max_input + 1) * w.abs().sum(1)
     if op.bias is not None:
         bound = bound + op.bias.abs()
     return int(bound.max())
@@ -614,7 +613,8 @@ class Verifier:
         every weight op checked by exactly one committed matrix of its shape -- its own (named after
         it: the row layout), a col-layout matrix of linear ops that read one tensor with one row
         length, or for an embedding op a lookup table of its ``d`` and ``V``; every encoded matrix in
-        exactly one group of its codeword length; and a column count for every group."""
+        exactly one group of its codeword length; and a column count for every group.  A table binds
+        the rows of ``W`` alone: an embedding op with a bias cannot be one."""
         if self.mode != "C":
             raise ValueError(f"commitment groups are a mode-C key, not one of mode {self.mode}")
         ops = {op.name: op for op in self.graph.mat_ops}
@@ -638,6 +638,9 @@ class Verifier:
                 raise ValueError(f"lookup table {name} names no embedding op of this graph")
             if (table.n_rows, table.n_tokens) != (op.n_rows, op.n_in):
                 raise ValueError(f"lookup table {name} does not have the shape of its op")
+            if op.has_bias:
+                raise ValueError(f"lookup table {name}: its op has a bias, which a tree over the table's rows "
+                                 "does not bind")
             checked.append(name)
         if sorted(checked) != sorted(ops):
             raise ValueError("every weight op must be checked by exactly one committed matrix or table")
@@ -698,8 +701,8 @@ class Verifier:
         return [op for op in self.graph.mat_ops if op.name not in skip]
 
     def _own_rows(self) -> list[MatOp]:
-        """Modes K and Kpre with ``lookups``: the embedding ops, whose claims the verifier reads from its
-        own weights (the prover sends none)."""
+        """Modes K and Kpre with ``lookups``: the embedding ops, whose claims the verifier computes from
+        its own weights (the prover sends none)."""
         return [op for op in self.graph.mat_ops if op.layout == "embed"] if self.lookups else []
 
     def _sent_ops(self) -> list[MatOp]:
@@ -708,10 +711,11 @@ class Verifier:
         return [op for op in self.graph.mat_ops if op.name not in own]
 
     def _own_claim(self, op: MatOp, xin: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
-        """``W[:, ids]`` of embedding op ``op`` from the verifier's own weights, as ``dtype`` (the ids
-        clamped to the table: derive rejects a query with any other)."""
-        w = self._weights_on(op, xin.device)[0]
-        return w[:, xin.reshape(-1).clamp(0, op.n_in - 1)].to(dtype)
+        """``W[:, ids] + b`` of embedding op ``op`` (``W[:, ids]`` without a bias) from the verifier's
+        own weights, as ``dtype`` (the ids clamped to the table: derive rejects a query with any other)."""
+        w, b = self._weights_on(op, xin.device)
+        z = w[:, xin.reshape(-1).clamp(0, op.n_in - 1)].to(dtype)
+        return z if b is None else z + b[:, None].to(dtype)
 
     def fold_challenges(self, ch: Challenger, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """Step 2's challenges, drawn after the claims: ``r`` rows ``chi`` over the outputs of every op

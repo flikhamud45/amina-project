@@ -534,12 +534,12 @@ def test_gpu_decoder_matches_cpu():
 from pvi.fullcheck.analytic import decoder_shapes  # noqa: E402
 
 
-@pytest.mark.parametrize("family", ["gpt", "llama", "qwen"])
+@pytest.mark.parametrize("family", ["gpt", "opt", "llama", "qwen"])
 def test_decoder_shapes_match_built_graph(family):
     cfg = _TINY[family]
     graph = build_decoder(cfg, calib_tokens=12, seed=3)
-    built = [(op.n_rows, op.row_length) for op in graph.mat_ops]
-    formula = [(s.n_rows, s.row_length) for s in decoder_shapes(cfg)]
+    built = [(op.n_rows, op.row_length, op.layout, op.has_bias) for op in graph.mat_ops]
+    formula = [(s.n_rows, s.row_length, s.layout, s.has_bias) for s in decoder_shapes(cfg)]
     assert built == formula
 
 

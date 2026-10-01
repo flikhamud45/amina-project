@@ -916,36 +916,37 @@ embedding tables; on the CNNs, which have none, they are the col-layout commit's
 bit (same-process A/B of `tightc`, `cnn12c`, `R8c`, `cnn16c` on the MLP and LeNet-5, and the plans of
 the five CNNs under all seven `c` policies).
 
-* **Lookup tables (mode C, every `c` policy).**  An embedding op's table `W` `[d, V]` (the tokens',
-  and a learned position table) is committed as a Merkle tree over its `V` rows
-  (`commitment.TableCommitment`: leaf `j` = SHA-256 of `pvi/row`, the tag, `j` and row `j`'s `d` int8
-  bytes; the leaves past `V`, up to a power of two, in another domain).  It is in no group and has
-  no code.  Its claims are the looked-up rows, one column of `d` int8 values per position, sent in
-  the claims message (one byte each; with wire as the int8 bytes of `claimcodec.pack_rows`, not in
-  `PVC3`), with ONE multiproof over the distinct ids (`Prover.open_tables`).  The verifier checks,
-  before it draws any challenge: in derive, that the claims are int8 (so a leaf's bytes are the
-  claim, one to one) and every id names a row of the table (`range_or_shape`); then equal rows for
-  equal ids (`lookup_consistency`) and the multiproof (`lookup_merkle`).  No `u`, no columns, no
-  Freivalds.  The LM head is an op of its own (the benchmark's decoders draw it separately, as an
-  untied model; for a tied one the owner commits the head once more), and keeps its encoded (row or
-  col) commitment.
+* **Lookup tables (mode C, every `c` policy).**  The table `W` `[d, V]` of an embedding op without a
+  bias (the tokens', and a learned position table: every benchmark decoder's; a tree over `W`'s rows
+  does not bind a bias, so an embedding with one keeps its row layout) is committed as a Merkle tree
+  over its `V` rows (`commitment.TableCommitment`: leaf `j` = SHA-256 of `pvi/row`, the tag, `j` and
+  row `j`'s `d` int8 bytes; the leaves past `V`, up to a power of two, in another domain).  It is in
+  no group and has no code.  Its claims are the looked-up rows, one column of `d` int8 values per
+  position, sent in the claims message (one byte each; with wire as the int8 bytes of
+  `claimcodec.pack_rows`, not in `PVC3`), with ONE multiproof over the distinct ids
+  (`Prover.open_tables`).  The verifier checks, before it draws any challenge: in derive, that the
+  claims are int8 (so a leaf's bytes are the claim, one to one) and every id names a row of the
+  table (`range_or_shape`); then equal rows for equal ids (`lookup_consistency`) and the multiproof
+  (`lookup_merkle`).  No `u`, no columns, no Freivalds.  The LM head is an op of its own (the
+  benchmark's decoders draw it separately, as an untied model; for a tied one the owner commits the
+  head once more), and keeps its encoded (row or col) commitment.
 * **Why always.**  A lookup drops the table's `u` (`4 r V` bytes: 1.0 MB for GPT-2's tokens) and its
   opened columns (`4 t d` per tree), and its claims take a byte each (int32: four; `PVC3`: about one),
   for one multiproof of at most one path per position -- less than the three bytes per claim it
   saves on int32 claims for every benchmark decoder (`d >= 512`), and less than `u` alone with wire.
-* **Soundness.**  The lookup check has no challenge and no chance: accepting a claim other than the
-  committed rows at the ids means other bytes for a leaf the root binds, a SHA-256 collision -- the
-  assumption every Merkle tree here already makes, not a term of the statistical bound.  So a table
-  adds no term (`plan.shapes()` and `soundness_bits` leave it out) and the other matrices keep
-  their budgets (`L` stays the number of weight ops in `beta`, a conservative count).  Fiat--Shamir
-  absorbs each table's tag, root, `d` and `V` with the statement, and each multiproof (its length,
-  then its hashes) after the claims and before `chi` (with wire, the `rows/I8` bytes after
-  `claims/PVC3`).
+* **Soundness.**  The lookup check has no challenge and no chance: the claim of a bias-free
+  embedding at id `j` is row `j` of `W`, and accepting a claim other than the committed rows at the
+  ids means other bytes for a leaf the root binds, a SHA-256 collision -- the assumption every
+  Merkle tree here already makes, not a term of the statistical bound.  So a table adds no term
+  (`plan.shapes()` and `soundness_bits` leave it out) and the other matrices keep their budgets (`L`
+  stays the number of weight ops in `beta`, a conservative count).  Fiat--Shamir absorbs each
+  table's tag, root, `d` and `V` with the statement, and each multiproof (its length, then its
+  hashes) after the claims and before `chi` (with wire, the `rows/I8` bytes after `claims/PVC3`).
 * **Modes K and Kpre** (`Verifier(lookups=True)`, `bench.py --lookups`, `perf.py --lookups on`): the
-  verifier reads the embedding rows from its own weights (the ids clamped to the table, and a query
-  with any other rejected), the prover sends no claims for them, Kpre precomputes no `chi` for them,
-  and Fiat--Shamir absorbs the list of those ops.  In mode C the tables do that (`lookups=True` there
-  is refused).
+  verifier computes the embedding ops from its own weights (the rows at the ids, clamped to the
+  table -- a query with any other is rejected -- plus the bias of an embedding with one), the prover
+  sends no claims for them, Kpre precomputes no `chi` for them, and Fiat--Shamir absorbs the list of
+  those ops.  In mode C the tables do that (`lookups=True` there is refused).
 * **Last-block pruning** (`build_decoder(..., prune_last=True)`, `bench.py --prune-last`, `perf.py
   --prune-last on`, `plan_bytes.py --prune-last`).  Only the last position reaches the next-token
   logits, so the last block computes q, the attention output and its projection, the residuals and
@@ -964,8 +965,8 @@ the five CNNs under all seven `c` policies).
   and `int8_ok` forced), the streaming verifier (the ids come back with its one copy, queued before
   it; the rows are hashed on the host from the claims as received) and a GPU client take both;
   `reference.check_lookups` is the position-by-position specification the vectorised check is
-  tested against.  A key whose table names no embedding op, has another shape, or leaves an op
-  unchecked (or checked twice) is refused.
+  tested against.  A key whose table names no embedding op or one with a bias, has another shape, or
+  leaves an op unchecked (or checked twice) is refused.
 * **Setup.**  A table hashes its rows as they are: no NTT, `V` leaves (`analytic.setup_size` counts
   its tree and leaves, not encoded entries).  Against the col layout alone the `c` plans encode
   0.20 G entries fewer on GPT-2 (0.40 G under `cnn18c`: both tables at `2^18`), 0.54 G (1.07 G) on
