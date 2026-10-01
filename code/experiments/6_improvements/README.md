@@ -1335,30 +1335,32 @@ table above stands.  The default flow (no wire) runs none of this.
 
 ### Where the time went (`6c2059a`, this laptop's CPU)
 
-The encoder per stage (its own code with timers between the stages; the numpy path, which a CPU
-prover runs), medians of 5, ms; GPT-2 with 12 blocks at 64 tokens (75 ops, 5.46 M claims, 64 of them
-centred), Qwen3-4B at 8 tokens with 36 blocks (254 ops, 9.02 M claims: the 8-block build's embedding,
-head and 8 blocks cycled to 36, the real model's shapes and value distributions; 36 blocks do not fit
-this laptop's memory):
+The encoder per stage (`codec_stages.py`: its own functions re-run with a timer between the stages; the
+numpy path, which a CPU prover runs), 4 threads, medians of 5, ms; GPT-2 with 12 blocks at 64 tokens (75
+ops, 65 of them centred, 5.46 M claims), Qwen3-4B at 8 tokens with 36 blocks (254 ops, 9.02 M claims: the
+8-block build's embedding, head and 8 blocks cycled to 36, the real model's shapes and value
+distributions; 36 blocks do not fit this laptop's memory):
 
 | Stage | GPT-2 T64 | Qwen3-4B T8, 36 blocks |
 |---|---:|---:|
-| per op: range (`aminmax`), int32 copy, sampled rows (one index upload each) | 10.4 | 30.5 |
-| per op: the plan on the host (287 / 760 `_width_costs`, as many medians) | 51.0 | 66.3 |
-| row means and residuals of the centred ops | 14.9 | 0.7 |
-| per width: slots, exceptions (mask, `nonzero`, high parts) | 20.4 | 32.9 |
-| per width: packing | 18.3 | 34.3 |
-| Rice coding of the exceptions (386 K / 355 K) | 28.6 | 26.4 |
-| header, join | 2.2 | 3.6 |
-| total | 145.9 | 194.7 |
+| per op: range (`aminmax`), int32 copy, sampled rows (one index upload each) | 11.7 | 32.8 |
+| per op: the plan on the host (`_width_costs`, medians) | 57.7 | 74.2 |
+| row means and residuals of the centred ops | 17.1 | 0.8 |
+| per width: slots, exceptions (mask, `nonzero`, high parts) | 20.1 | 35.9 |
+| per width: packing | 19.8 | 37.5 |
+| Rice coding of the exceptions (445 K / 353 K) | 35.4 | 26.5 |
+| header, join | 2.4 | 3.9 |
+| total | 164.2 | 211.7 |
 
 (`results/codec_profile_laptop.json`, with LeNet-5, VGG-16 and Qwen3-4B's 8-block build.)  On a GPU the
 old torch path ran the same host plan (the per-op work is Python and numpy whatever the device) and
-issued 862 / 1332 kernel-launching aten ops (1,804 / 3,168 with views: ~24 per op), 75 / 254 pageable
-uploads of the sampled rows' indices (each a stream sync), and per width three copies back and five
-uploads of lane maps; the Rice coding stayed on the host.  The decoder (1 thread, GPT-2):
-streams 10 ms, Rice 4.3 ms, exceptions and bases 13.7 ms, the int64 widening 3.2 ms; at 4-8 threads
-17-19 ms, with the two Rice vectors decoded one after the other on the calling thread.
+issued 868 / 1332 kernel-launching aten ops (`codec_ab.py --device-path`: its GPU path forced on CPU
+tensors), 75 / 254 pageable uploads of the sampled rows' indices (each a stream sync), and per width
+three copies back and five uploads of lane maps; the Rice coding stayed on the host.  The decoder into
+int64 (the same file, GPT-2, 1 / 4 / 8 workers): the slot streams 15.4 / 9.1 / 11.0 ms, with the
+exception list decoded meanwhile on the calling thread (5.9 / 7.9 / 9.5 ms: its two Rice vectors one
+after the other), the exceptions patched in 10.2 / 6.1 / 6.2, the bases and row means 4.1 / 2.4 / 2.5,
+the widening to int64 4.3 / 3.5 / 2.7: 35 / 23 / 23 ms.
 
 ### What changed (`pvi.fullcheck.claimcodec`)
 
@@ -1379,30 +1381,30 @@ streams 10 ms, Rice 4.3 ms, exceptions and bases 13.7 ms, the int64 widening 3.2
   `nonzero` (a wait for their number); (3) each width packed (about ten kernels), the two Rice vectors'
   parameters from 16-bin histograms (one copy back), their low parts packed; (4) one copy back of the
   words, low parts and quotients (~2.3 bytes a claim), through pinned memory.  That is a fixed number
-  of kernels plus about ten per distinct width -- 137-178 kernel-launching aten ops for every model here
-  (Qwen3-4B: 137 for 58 ops and for 254) -- and four waits for the device (`_d2h` x 3, `_nonzero_dev`),
-  against 94-1332 ops and 3 + 3 per width transfers plus one upload per op before.  Uploads go through
-  pinned memory (a pageable one synchronises).  A new shape set (another prompt length, another model)
-  first builds its layout's tables -- each sampled value's place in the buffer, its row, each row's
-  start -- on the device from per-op arrays: one upload of a few KB and ~33 kernel-launching aten ops,
-  no wait; only the shape set last used on a device keeps them there (5.2 / 20.6 / 18.9 MB for Qwen3-4B
-  8 blocks / GPT-2 T64 / Qwen3-4B 36 blocks, where the first version built 17.0 / 43.7 / 59.0 MB with
-  numpy on the host, uploaded them, and kept up to four shape sets').  On this laptop's CPU (the device
-  path on CPU tensors) a cold query costs 2.0 / 3.5 / 16 ms more than a warm one (first version: 11 /
-  34 / 54 ms); the host encoder's cold query pays 10-27 ms for its index arrays (GPT-2 T64, Qwen3-4B 36
-  blocks, 1 and 4 threads).
+  of kernels plus about ten per distinct width -- 145-186 kernel-launching aten ops a query for every
+  model here (Qwen3-4B: 145 for 58 ops and for 254) -- and four waits for the device (`_d2h` x 3,
+  `_nonzero_dev`), against 94-1332 ops and 3 + 3 per width transfers plus one upload per op before.
+  Uploads go through pinned memory (a pageable one synchronises).  A new shape set (another prompt
+  length, another model) first builds its layout's tables -- each sampled value's place in the buffer,
+  its row, each row's start -- on the device from per-op arrays: one upload of a few KB and 33 more
+  aten ops (178-219 on such a query), no wait; only the shape set last used on a device keeps its tables
+  there (0.1-20.6 MB here: 5.2 for Qwen3-4B 8 blocks, 20.6 for GPT-2 T64, 18.9 for Qwen3-4B 36 blocks,
+  where the first version, `bdd0d71`, built 17.0 / 43.7 / 59.0 MB with numpy on the host, uploaded them,
+  and kept up to four shape sets').
 * **The host's encoder** (`impl="host"`, the default for CPU claims; `_encode_host`): the claims clipped
   into one int32 buffer (a claim outside the range check stays outside), the statistics of op chunks
   on `workers` threads (default `torch.get_num_threads()`) in place on scratch buffers (on a fresh large
   array every pass pays its page faults: 6x slower here), the histograms' bit lengths read from the
   float64 exponent of `zz + 0.5`, the Rice parameter from one 16-bin histogram (`v >> k == (v >> kmin) >>
   (k - kmin)`: the reference's bit counts exactly), and a packer that writes each lane straight into the
-  output, columns split over the threads.
+  output, columns split over the threads.  Its per-sample index arrays are built on its first query of
+  a shape set (`encode_cold` below).
 * **Field elements and lookup rows**: `pack_field` (`u`, the opened columns) and `pack_rows` pack on the
   prover's device and copy the words and their range back once.
 * **A lean GPU prover** (`Prover(lean=True)` with wire) keeps each claim on its device as clipped int32
-  (`claimcodec.narrow`, 4 bytes a claim instead of the host's int64) and encodes there, so ~2.3 bytes a
-  claim cross PCIe instead of 8; a lean CPU prover encodes on the host as before.
+  (`claimcodec.narrow`, 4 bytes a claim instead of the host's int64; a claim of a narrower dtype, which
+  only a tamper hook returns, widened first) and encodes there, so ~2.3 bytes a claim cross PCIe
+  instead of 8; a lean CPU prover encodes on the host as before.
 * **The decoder**: with several workers and at least 64 K exceptions both Rice vectors decode as jobs
   of their own (the second one's start found by counting the bits set in the first one's unary levels)
   while the streams are unpacked; each segment's base is added as its slots are written (per lane for
@@ -1413,87 +1415,131 @@ streams 10 ms, Rice 4.3 ms, exceptions and bases 13.7 ms, the int64 widening 3.2
   it on the pool's threads -- lanes, both Rice vectors, patches, row means -- accepts and rejects
   exactly what the one-thread decoder does).
 
-### Codec timings on this laptop (`results/codec_laptop.json`)
+### Codec timings on this laptop (`codec_ab.py`, `results/codec_laptop.json`)
 
 The claims of one query (the benchmark's random-weight decoders, the CNNs random-init on a random
-query), both checkouts in one process, interleaved, medians of 15; encode with `workers` = threads:
+query), both checkouts in one process, every timing interleaved with the others, medians of 15, ms;
+encode with `workers` = threads; cold: a shape set this checkout has not encoded (median of 3); kernel
+ops: the aten ops that launch work (`pvi.fullcheck.opcount`) of the old GPU path and of the device path,
+both on CPU tensors (in brackets: on a new shape set), every query four waits:
 
-| Claims | Ops | Claims | Encode 1 thread | 4 threads | 8 threads | Device path: kernel ops, waits |
-|---|---:|---:|---:|---:|---:|---|
-| LeNet-5 | 5 | 6,518 | 2.1 -> 1.5 (1.41x) | 2.4 -> 1.9 (1.27x) | 2.7 -> 1.9 (1.43x) | 94 -> 148, 4 |
-| VGG-16 | 16 | 277,514 | 16.8 -> 16.2 (1.03x) | 23.5 -> 22.3 (1.05x) | 24.5 -> 23.0 (1.07x) | 255 -> 178, 4 |
-| GPT-2, 64 tokens | 75 | 5,456,977 | 152.8 -> 132.2 (1.16x) | 180.6 -> 117.2 (1.54x) | 222.9 -> 119.3 (1.87x) | 862 -> 168, 4 |
-| Qwen3-4B, 8 tokens, 8 blocks | 58 | 2,138,496 | 51.1 -> 30.5 (1.67x) | 54.5 -> 28.0 (1.94x) | 66.3 -> 38.4 (1.73x) | 352 -> 137, 4 |
-| Qwen3-4B, 8 tokens, 36 blocks | 254 | 9,019,776 | 201.3 -> 124.9 (1.61x) | 242.6 -> 114.9 (2.11x) | 270.0 -> 120.8 (2.23x) | 1332 -> 137, 4 |
+| Claims | Ops | Claims | Encode 1 thread | 4 threads | 8 threads | Cold (8 threads) | Kernel ops: GPU path -> device path (cold) | Device tables |
+|---|---:|---:|---:|---:|---:|---:|---|---:|
+| LeNet-5 | 5 | 6,518 | 2.8 -> 2.1 (1.33x) | 2.8 -> 2.1 (1.30x) | 2.8 -> 2.2 (1.32x) | 2.2 | 94 -> 156 (189) | 0.1 MB |
+| VGG-16 | 16 | 277,514 | 17.6 -> 16.6 (1.06x) | 26.2 -> 24.6 (1.07x) | 27.3 -> 25.1 (1.09x) | 31.2 | 255 -> 186 (219) | 4.3 MB |
+| GPT-2, 64 tokens | 75 | 5,456,977 | 163 -> 144 (1.13x) | 194 -> 135 (1.44x) | 221 -> 129 (1.71x) | 159 | 868 -> 176 (209) | 20.6 MB |
+| Qwen3-4B, 8 tokens, 8 blocks | 58 | 2,138,496 | 46.0 -> 26.9 (1.71x) | 52.1 -> 24.8 (2.10x) | 77.6 -> 33.0 (2.35x) | 37.1 | 352 -> 145 (178) | 5.2 MB |
+| Qwen3-4B, 8 tokens, 36 blocks | 254 | 9,019,776 | 217 -> 126 (1.73x) | 250 -> 122 (2.05x) | 273 -> 122 (2.24x) | 171 | 1332 -> 145 (178) | 18.9 MB |
 
-(Kernel ops: the aten ops that launch work, counted by a `TorchDispatchMode`, of the old torch path and
-the new device path on CPU tensors; waits: `_d2h` and `_nonzero_dev` calls.)  On this 4-core laptop the
-host encoder's passes are memory-bound, so threads give 1.2-1.4x at most.  The device path on CPU
-tensors (`impl="device"`, for the byte-identity tests) takes 1.1-1.4x the old torch path's time here: a
-CPU sorts and gathers slowly what a GPU does in well under a millisecond.  Decoding into int64 (a CPU
-verifier) and int32 (a GPU client), workers = threads, `6c2059a` -> this checkout, ms:
+On this 4-core laptop the host encoder's passes are memory-bound, so threads give it 1.1x at most
+(GPT-2), and VGG-16 and Qwen3-4B's 8 blocks get slower at 4 or 8; the old one got slower with threads
+everywhere.  A cold query costs the host encoder its index arrays and fresh
+pages (0-49 ms here).  The device path on CPU tensors (`impl="device"`, for the byte-identity tests)
+takes 0.97-1.41x the old GPU path's time on them: a CPU sorts and gathers slowly what a GPU does in well
+under a millisecond.  `pack_field` of the opened columns' size is 1.1-1.7x faster (Qwen3-4B 36 blocks:
+359 -> 208 ms), of `u`'s 0.93-1.35x.  Decoding into int64 (a CPU verifier) and int32 (a GPU client),
+workers = threads, `6c2059a` -> this checkout, ms:
 
 | Claims | int64, 1 thread | 4 threads | 8 threads | int32, 1 thread | 4 threads | 8 threads |
 |---|---:|---:|---:|---:|---:|---:|
-| LeNet-5 | 0.38 -> 0.39 (0.97x) | 0.49 -> 0.50 (0.98x) | 0.48 -> 0.50 (0.96x) | 0.39 -> 0.38 (1.01x) | 0.45 -> 0.48 (0.93x) | 0.49 -> 0.49 (1.00x) |
-| VGG-16 | 2.02 -> 2.06 (0.98x) | 3.05 -> 3.02 (1.01x) | 3.27 -> 2.97 (1.10x) | 1.84 -> 1.79 (1.03x) | 2.92 -> 2.68 (1.09x) | 3.21 -> 2.91 (1.10x) |
-| GPT-2, 64 tokens | 31.9 -> 31.9 (1.00x) | 24.0 -> 24.0 (1.00x) | 27.8 -> 24.8 (1.12x) | 27.4 -> 26.9 (1.02x) | 20.4 -> 20.0 (1.02x) | 25.0 -> 23.5 (1.06x) |
-| Qwen3-4B, 8 tokens, 8 blocks | 11.0 -> 11.4 (0.96x) | 10.8 -> 11.9 (0.91x) | 12.8 -> 11.9 (1.07x) | 10.7 -> 9.2 (1.17x) | 9.25 -> 10.72 (0.86x) | 11.6 -> 10.6 (1.09x) |
-| Qwen3-4B, 8 tokens, 36 blocks | 48.2 -> 45.4 (1.06x) | 31.1 -> 31.1 (1.00x) | 38.5 -> 34.8 (1.11x) | 39.5 -> 37.5 (1.05x) | 24.8 -> 26.3 (0.94x) | 30.5 -> 28.2 (1.08x) |
+| LeNet-5 | 0.56 -> 0.57 (0.98x) | 0.56 -> 0.64 (0.88x) | 0.58 -> 0.60 (0.97x) | 0.53 -> 0.57 (0.93x) | 0.52 -> 0.55 (0.95x) | 0.60 -> 0.59 (1.02x) |
+| VGG-16 | 2.2 -> 2.2 (0.98x) | 3.6 -> 3.4 (1.07x) | 3.9 -> 3.4 (1.14x) | 1.9 -> 2.1 (0.90x) | 3.4 -> 3.4 (1.00x) | 3.5 -> 3.1 (1.13x) |
+| GPT-2, 64 tokens | 33.6 -> 33.3 (1.01x) | 24.5 -> 27.1 (0.90x) | 28.9 -> 27.2 (1.06x) | 28.4 -> 28.5 (1.00x) | 21.2 -> 22.7 (0.93x) | 26.4 -> 24.3 (1.08x) |
+| Qwen3-4B, 8 tokens, 8 blocks | 11.1 -> 12.3 (0.90x) | 9.8 -> 11.0 (0.90x) | 12.8 -> 13.1 (0.98x) | 9.3 -> 9.0 (1.03x) | 7.8 -> 9.7 (0.81x) | 10.7 -> 10.6 (1.01x) |
+| Qwen3-4B, 8 tokens, 36 blocks | 50.3 -> 48.5 (1.04x) | 28.9 -> 37.5 (0.77x) | 34.3 -> 31.4 (1.09x) | 39.5 -> 36.6 (1.08x) | 22.7 -> 26.3 (0.87x) | 30.6 -> 27.3 (1.12x) |
 
-The decoder is at parity (0.86-1.17x, within this machine's noise): it was already near numpy's floor
-here.  Per claim it writes the slots, patches 4-7% of them at scattered positions and (for a CPU
-verifier) widens to int64, all memory-bound on this laptop, whose 8 threads are 4 cores' hyper-threads.
-The parallel Rice decode should shorten the critical path where the cores outpace a 1-thread Rice
-decode (the paper's 8-thread EPYC client); `codec_ab.py` measures it there.
+The decoder is not faster here: at 1 and 8 threads 0.90-1.14x, at 4 threads 0.77-1.07x, slower on the
+large claim sets (an earlier run of the same decoder, `7c27e63`'s `codec_laptop.json`, gave 0.86-1.09x
+at 4 threads).  Per claim it writes the slots, patches 3-8% of them at scattered positions and (for a
+CPU verifier) widens to int64, all memory-bound on this laptop, whose 8 threads are 4 cores'
+hyper-threads; why 4 workers favour the old decoder here we have not found.  The parallel Rice decode
+should shorten the critical path where the cores outpace a 1-thread Rice decode (the paper's 8-thread
+EPYC client); `codec_ab.py` measures it there.
 
 ### End-to-end on this laptop (`perf.py --wire off on`, `results/perf_codec_laptop.jsonl`)
 
-`6c2059a` (`base`) and this checkout (`new`) run alternately in their own processes, each process the
-queries of all its variants interleaved; random-weight decoders, CPU prover and verifier, every query
-accepted with the same proof bytes; medians of 15 (Qwen3-4B) and 11 (GPT-2) queries.  Both timed
-`prove_encode` without dropping the claims (the baseline patched the same way).  That made no
-difference: dropping them takes 0.1-0.2 ms here (`6c2059a`'s own flow, Qwen3-4B 8 blocks at 4
-threads, `prove_encode` less the time inside `encode`), and `prove_encode` includes it again.
+`6c2059a` (`base`) and this checkout (`new`, at `40f1742`: the codec and protocol of this one) run
+alternately in their own processes, three rounds (three processes per checkout and row), each process
+the queries of all its variants interleaved; random-weight decoders, CPU prover and verifier.  All 888
+queries were accepted, with the same claims, `u` and opened columns' bytes in every process (the Merkle
+paths' bytes, and so mode C's proof bytes, vary from process to process: `perf.py`'s interactive
+queries draw their column indices unseeded).  The median over the three processes of each process's
+median (15 queries of Qwen3-4B, 11 of GPT-2), ms; for the wire costs also the ratio and the ranges of
+the three, base / new:
 
 | Model | Mode | Threads | Prover, no wire | Prover, wire | prove_encode | verify_decode | Proof, no wire / wire |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Qwen3-4B, 8 blocks, 8 tokens (lambda 40) | Kpre | 1 | 1,586 -> 1,592 ms | 1,631 -> 1,627 | 44.6 -> 26.2 (1.71x) | 10.7 -> 10.1 | 8.55 / 4.91 MB |
-| Qwen3-4B, 8 blocks, 8 tokens (lambda 40) | Kpre | 4 | 752 -> 759 ms | 860 -> 777 | 106.5 -> 26.5 (4.02x) | 9.4 -> 11.2 | 8.55 / 4.91 MB |
-| GPT-2, 12 blocks, 64 tokens | Kpre | 1 | 296 -> 296 ms | 454 -> 433 | 159.3 -> 135.2 (1.18x) | 31.7 -> 32.0 | 21.83 / 11.67 MB |
-| GPT-2, 12 blocks, 64 tokens | Kpre | 4 | 194 -> 200 ms | 376 -> 348 | 176.5 -> 134.4 (1.31x) | 23.3 -> 29.5 | 21.83 / 11.67 MB |
-| GPT-2, 12 blocks, 64 tokens | C | 1 | 1,388 -> 1,410 ms | 1,650 -> 1,610 | 244.9 -> 206.1 (1.19x) | 58.9 -> 57.4 | 62.07 / 50.69 MB |
-| GPT-2, 12 blocks, 64 tokens | C | 4 | 989 -> 975 ms | 1,274 -> 1,190 | 292.1 -> 214.1 (1.36x) | 40.3 -> 44.2 | 62.07 / 50.68 MB |
+| Qwen3-4B, 8 blocks, 8 tokens (lambda 40) | Kpre | 1 | 1,606 -> 1,643 | 1,658 -> 1,659 | 45.8 -> 26.8 (1.71x; 44.5-45.9 / 26.3-27.1) | 10.9 -> 10.2 (1.07x; 10.9-11.6 / 9.8-10.6) | 8.55 / 4.91 MB |
+| Qwen3-4B, 8 blocks, 8 tokens (lambda 40) | Kpre | 4 | 757 -> 755 | 874 -> 834 | 107.6 -> 81.7 (1.32x; 105.5-111.1 / 80.2-83.2) | 9.9 -> 11.0 (0.90x; 9.4-10.2 / 10.7-11.2) | 8.55 / 4.91 MB |
+| GPT-2, 12 blocks, 64 tokens | Kpre | 1 | 299 -> 297 | 456 -> 428 | 158.7 -> 136.6 (1.16x; 158.5-162.4 / 134.3-142.8) | 32.7 -> 31.8 (1.03x; 32.1-33.7 / 31.2-32.0) | 21.83 / 11.67 MB |
+| GPT-2, 12 blocks, 64 tokens | Kpre | 4 | 189 -> 201 | 358 -> 332 | 174.3 -> 129.8 (1.34x; 169.3-175.9 / 129.3-134.9) | 24.0 -> 28.2 (0.85x; 22.9-24.6 / 27.3-28.4) | 21.83 / 11.67 MB |
+| GPT-2, 12 blocks, 64 tokens | C | 1 | 1,412 -> 1,413 | 1,660 -> 1,619 | 250.6 -> 208.7 (1.20x; 246.1-252.7 / 206.5-210.9) | 57.2 -> 57.3 (1.00x; 56.9-57.7 / 57.2-58.1) | 62.07 / 50.69 MB |
+| GPT-2, 12 blocks, 64 tokens | C | 4 | 957 -> 1,007 | 1,249 -> 1,218 | 286.5 -> 224.5 (1.28x; 284.8-288.2 / 210.6-225.8) | 40.3 -> 43.7 (0.92x; 39.6-40.3 / 42.6-44.3) | 62.07 / 50.69 MB |
 
-The prover's wire cost falls 1.2-1.4x on GPT-2 (host encoder, memory-bound here) and 1.7x / 4.0x on
-Qwen3-4B (1 / 4 threads): the old encoder, run right after the forward pass on 4 threads, contended
-with torch's still-spinning threads (103 ms there against 53 ms on an idle pool, the new one 30 / 27 ms).
-`verify_decode` at 4 threads differs between the processes, not the decoders: in one process,
-alternating them query by query (GPT-2 Kpre, 4 threads, 12 queries) the new decoder takes 24.5 ms, the
-new one without the split Rice decode 25.0 ms and the old one 24.7 ms.
+The prover's wire cost falls 1.2x on GPT-2 (host encoder, memory-bound here) and 1.7x on Qwen3-4B at 1
+thread, and 1.3x on both at 4 threads; each checkout's three processes are within 7% of one another
+(the no-wire prover, the same code in both, differs by up to 6% between the checkouts' processes at 4
+threads).  The first version of this table showed 106.5 -> 26.5 ms (4.0x) for Qwen3-4B at 4 threads,
+and a re-run of that version for its review 79.6 -> 37.5 ms: that version dropped the claims after the
+`prove_encode` timer, and here, at 4 threads, dropping them after the new host encoder has run on them
+takes about 55 ms (`claims_drop.py`, `results/claims_drop_laptop.txt`, Qwen3-4B 8 blocks: per query
+23-31 ms inside `encode`, then 46-65 ms to drop the claims in 13 of 14 drops; the same claims dropped
+without being encoded, or at 1 thread, 0.1 ms; with `KMP_BLOCKTIME=0`, Intel OpenMP's workers sleeping
+at once, still in 5 of 14).  `6c2059a` drops its claims in 0.1 ms, but its encoder takes 100-134 ms in
+that setting (once 53), against 52 ms on the same claims alone (the codec table).  We have not found
+the cause; the drop is a cost the new encoder brings on this host, so `prove_encode` includes it.  On
+the same claims in one process the encoder alone is 2.1x faster at 4 threads (the codec table).
+`verify_decode` at 4 threads is 0.85-0.92x, as in the codec table.
 
 ### Bytes and tests
 
 The encoded messages of `run_query(wire=True)` -- claims, lookup rows, `u` and opened columns -- of both
-checkouts hash the same: 86 messages of 40 queries over 14 cases (LeNet-5 C under `paper`, `cnn16`,
-`cnn17c`, `R16` and Kpre; VGG-16 C and Kpre; GPT-2 12 blocks at 64 tokens Kpre, Kpre with lookups and
-pruning, and C; GPT-2 2 blocks C under `tightc` pruned; Qwen3-4B 4 blocks Kpre with and without lookups
-and pruning; Llama-2-7B 1 block Kpre), every query accepted with the same byte counts
-(`results/codec_bytes_identity.jsonl`).  `tests/test_claimcodec.py` (65 tests, 5 of them CUDA only): both
-encoders give the reference's bytes on 16 claim sets (sampling steps by rows and by values, centring
-and its boundary, widths 0-30, exception-heavy and incompressible ops, extremes, empty ops, int16/int32
-and strided tensors, 300 ops of few widths, decoder claims), centred or not, at 1 and 4 workers and
-with every step forced onto the workers in small jobs; they refuse the claims the reference refuses;
-`_costs`, the medians and the histograms are the reference's float for float; the Rice parameter and
-bytes and the packer are the reference's; the device path's kernel-launching aten ops are the same
-for 1x, 4x and 16x the ops of the same widths (152) and it waits four times; the split decoder, its
-jobs on the pool's threads, on random corruptions.  On CUDA: the GPU encoder gives the reference's bytes on every set and refuses
-out-of-range claims (also narrowed ones); it runs in CUDA's sync debug mode "error" with only its four
-waits allowed, and the profiler's CUDA kernels for 16x the ops are those for 1x up to `cat`'s input
-batches; `pack_field` on the GPU gives the host's bytes; claims decoded into pinned memory.
-`tests/test_wire.py`: a lean GPU prover encodes int32 claims on its device and sends the CPU prover's
-bytes and verdicts (honest, tampered, beyond int32), and narrowed claims encode as the claims.  The
-whole suite: 1,332 passed, 206 skipped (CUDA only) on this laptop.
+checkouts hash the same (`wire_hashes.py`): 88 messages of 42 queries over 15 cases (LeNet-5 C under
+`paper`, `cnn16`, `cnn17c`, `R16` and Kpre; VGG-16 C and Kpre; GPT-2 12 blocks at 64 tokens Kpre, Kpre
+with lookups and pruning, and C; GPT-2 2 blocks C under `tightc` pruned; Qwen3-4B 4 blocks Kpre with
+and without lookups and pruning, and with a lean prover; Llama-2-7B 1 block Kpre), every query
+accepted with the same byte counts (`results/codec_bytes_identity.jsonl`).  `tests/test_claimcodec.py`
+(67 tests, 5 of them CUDA only): both encoders give the reference's bytes on 16 claim sets (sampling
+steps by rows and by values, centring and its boundary, widths 0-30, exception-heavy and incompressible
+ops, extremes, empty ops, int16/int32 and strided tensors, 300 ops of few widths, decoder claims),
+centred or not, at 1 and 4 workers and with every step forced onto the workers in small jobs; they
+refuse the claims the reference refuses; `_costs`, the medians and the histograms are the reference's
+float for float; the Rice parameter and bytes and the packer are the reference's; the device path's
+kernel-launching aten ops are the same for 1x, 4x and 16x the ops of the same widths (156 a query,
+189 on a new shape set) and it waits four times; the device tables built on the device are the host
+encoder's index element for element on every claim set, and a new shape set releases the last one's;
+the split decoder, its jobs on the pool's threads, on random corruptions.  On CUDA: the GPU encoder
+gives the reference's bytes on every set and refuses out-of-range claims (also narrowed ones); it runs
+in CUDA's sync debug mode "error" with only its four waits allowed, on a new shape set and on a known
+one, and the profiler's CUDA kernels for 16x the ops are those for 1x up to `cat`'s input batches;
+`pack_field` on the GPU gives the host's bytes; claims decoded into pinned memory.  `tests/test_wire.py`:
+a lean GPU prover encodes int32 claims on its device and sends the CPU prover's bytes and verdicts
+(honest, tampered, beyond int32, int16), narrowed claims of any integer dtype encode as the claims, and
+a lean forward narrows a claim tampered into another dtype.  The whole suite: 1,335 passed, 206 skipped
+(CUDA only) on this laptop.
+
+### On this laptop
+
+The commands behind the result files above (`cd code && export PYTHONPATH=$PWD/src`, the baseline
+`git worktree add ../base 6c2059a` next to this checkout):
+
+```bash
+C=$PWD; B=$C/../../base/code; R=experiments/6_improvements/results
+python experiments/6_improvements/codec_stages.py --base $B/src --threads 4 lenet5 vgg16 gpt2:64:12 qwen3-4b:8:8 \
+    qwen3-4b:8:8/36 --out $R/codec_profile_laptop.json
+python experiments/6_improvements/codec_ab.py --base $B/src --device cpu --threads 1,4,8 --reps 15 --device-path \
+    lenet5 vgg16 gpt2:64:12 qwen3-4b:8:8 qwen3-4b:8:8/36 --out $R/codec_laptop.json
+python experiments/6_improvements/wire_hashes.py --base $B/src --out $R/codec_bytes_identity.jsonl
+for round in 1 2 3; do for t in 1 4; do
+  for w in new base; do d=$C; [ $w = base ] && d=$B; (cd $d && PYTHONPATH=src python experiments/6_improvements/perf.py \
+      --model qwen3-4b --layers 8 --seq 8 --modes Kpre --lam 40 --queries 15 --threads $t --wire off on --device cpu \
+      --label $w); done
+  for w in base new; do d=$C; [ $w = base ] && d=$B; (cd $d && PYTHONPATH=src python experiments/6_improvements/perf.py \
+      --model gpt2 --seq 64 --modes Kpre C --queries 11 --threads $t --wire off on --device cpu --label $w); done
+done; done >> $R/perf_codec_laptop.jsonl
+for t in 4 1; do for w in new base; do d=$C; [ $w = base ] && d=$B
+  (cd $d && PYTHONPATH=src python $C/experiments/6_improvements/claims_drop.py --threads $t); done; done > $R/claims_drop_laptop.txt
+```
 
 ### On the cluster
 
@@ -1510,6 +1556,9 @@ for d in . ../../base/code; do (cd $d && PYTHONPATH=$PWD/src python experiments/
     --seq 64 --modes C Kpre --queries 15 --threads 8 --wire off on --device cuda --label $d); done >> $OUT/perf_codec_gpu.jsonl
 for d in . ../../base/code; do (cd $d && PYTHONPATH=$PWD/src python experiments/6_improvements/perf.py --model qwen3-4b \
     --seq 8 --modes Kpre --lam 40 --queries 15 --threads 8 --wire off on --device cuda --label $d); done >> $OUT/perf_codec_gpu.jsonl
+for d in . ../../base/code; do (cd $d && PYTHONPATH=$PWD/src python experiments/6_improvements/perf.py --model qwen3-4b \
+    --seq 8 --modes Kpre --lam 40 --queries 15 --threads 8 --wire off on --device cuda --lean --label $d-lean); done \
+    >> $OUT/perf_codec_gpu.jsonl
 for d in . ../../base/code; do (cd $d && PYTHONPATH=$PWD/src python experiments/6_improvements/perf.py --model lenet5 \
     --random-init --modes C --queries 31 --threads 8 --wire off on --device cuda --label $d); done >> $OUT/perf_codec_gpu.jsonl
 ```
@@ -1518,7 +1567,7 @@ for d in . ../../base/code; do (cd $d && PYTHONPATH=$PWD/src python experiments/
 the bytes on the host; with `--lean`, each checkout's claims as its lean prover keeps them: the
 baseline's int64 on the host, this checkout's int32 on the GPU, `send=claimcodec.narrow`), a new shape
 set's encode (`encode_cold`: its tables built on the GPU), `pack_field`, and `decode_torch` (int64 and
-int32) at each thread count, and records the device encoder's kernel-launching aten ops (warm and cold)
-and waits, on the GPU's claims; `perf.py`'s `prove_encode` and
-`verify_decode` are the prover's and verifier's wire costs in a full query.  No GPU timing is
-claimed here: this laptop has none.
+int32) at each thread count, and records the device encoder's kernel-launching aten ops (warm and cold),
+waits and device tables' size, on the GPU's claims; `perf.py`'s `prove_encode` and `verify_decode` are
+the prover's and verifier's wire costs in a full query (with `--lean`, the prover's claims stay on the
+GPU as int32 and are encoded there).  No GPU timing is claimed here: this laptop has none.

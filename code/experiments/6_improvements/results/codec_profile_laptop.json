@@ -1,5 +1,6 @@
 {
  "lenet5": {
+  "model": "lenet5",
   "ops": 5,
   "centred": 1,
   "claims": 6518,
@@ -22,22 +23,51 @@
    ]
   },
   "stage_ms": {
-   "1 range (aminmax per op)": 0.13400003081187606,
-   "2 to int32 per op": 0.028699985705316067,
-   "3 sample rows": 0.1574999769218266,
-   "4 plan (host, per op)": 0.8913000347092748,
-   "5 row means of centred ops": 0.07680000271648169,
-   "6 segments (means plan, residuals)": 0.13290002243593335,
-   "7 header": 0.009400013368576765,
-   "8a slots: x - lo per segment": 0.1542000100016594,
-   "8b exceptions (mask, nonzero, high parts)": 0.278000021353364,
-   "8c pack32": 0.3347999881953001,
-   "9 Rice (gaps, payloads)": 0.26599998818710446,
-   "10 join": 0.002800021320581436
+   "1 range (aminmax per op)": 0.15080004232004285,
+   "2 to int32 per op": 0.03279995871707797,
+   "3 sample rows": 0.17950002802535892,
+   "4 plan (host, per op)": 0.9716000058688223,
+   "5 row means of centred ops": 0.08520000847056508,
+   "6 segments (means plan, residuals)": 0.13569998554885387,
+   "7 header": 0.009700015652924776,
+   "8a slots: x - lo per segment": 0.16170006711035967,
+   "8b exceptions (mask, nonzero, high parts)": 0.27730001602321863,
+   "8c pack32": 0.34959998447448015,
+   "9 Rice (gaps, payloads)": 0.22839999292045832,
+   "10 join": 0.002300017513334751
   },
-  "total_ms": 2.4664000957272947
+  "total_ms": 2.5846001226454973,
+  "decode_int64_stage_ms": {
+   "workers_1": {
+    "  of which the exception list (Rice, one thread)": 0.17770001431927085,
+    "1 slot streams, the exception list meanwhile": 0.28849998489022255,
+    "2 exceptions patched in": 0.12779998360201716,
+    "3 bases and row means": 0.032299954909831285,
+    "total (the header, 1-3)": 0.5592000088654459,
+    "4 widening to int64 (torch)": 0.031200004741549492
+   },
+   "workers_4": {
+    "  of which the exception list (Rice, one thread)": 0.15110004460439086,
+    "1 slot streams, the exception list meanwhile": 0.2579999854788184,
+    "2 exceptions patched in": 0.10569998994469643,
+    "3 bases and row means": 0.029200047720223665,
+    "total (the header, 1-3)": 0.4700000281445682,
+    "4 widening to int64 (torch)": 0.022799998987466097
+   },
+   "workers_8": {
+    "  of which the exception list (Rice, one thread)": 0.16240001423284411,
+    "1 slot streams, the exception list meanwhile": 0.27489999774843454,
+    "2 exceptions patched in": 0.12089998926967382,
+    "3 bases and row means": 0.03650004509836435,
+    "total (the header, 1-3)": 0.5104999872855842,
+    "4 widening to int64 (torch)": 0.02889998722821474
+   }
+  },
+  "threads": 4,
+  "reps": 5
  },
  "vgg16": {
+  "model": "vgg16",
   "ops": 16,
   "centred": 9,
   "claims": 277514,
@@ -75,143 +105,268 @@
    ]
   },
   "stage_ms": {
-   "1 range (aminmax per op)": 0.5570999928750098,
-   "2 to int32 per op": 0.24269998539239168,
-   "3 sample rows": 0.6818000110797584,
-   "4 plan (host, per op)": 11.60690002143383,
-   "5 row means of centred ops": 0.5556000396609306,
-   "6 segments (means plan, residuals)": 1.3209000462666154,
-   "7 header": 0.026799971237778664,
-   "8a slots: x - lo per segment": 0.7894999580457807,
-   "8b exceptions (mask, nonzero, high parts)": 1.4118999242782593,
-   "8c pack32": 1.807900087442249,
-   "9 Rice (gaps, payloads)": 0.8576999534852803,
-   "10 join": 0.04680000711232424
+   "1 range (aminmax per op)": 0.6437000120058656,
+   "2 to int32 per op": 0.29639998683705926,
+   "3 sample rows": 0.8277000160887837,
+   "4 plan (host, per op)": 12.614000006578863,
+   "5 row means of centred ops": 0.6126000080257654,
+   "6 segments (means plan, residuals)": 1.5082000172697008,
+   "7 header": 0.0295999925583601,
+   "8a slots: x - lo per segment": 0.9278999059461057,
+   "8b exceptions (mask, nonzero, high parts)": 1.6531999572180212,
+   "8c pack32": 2.203600015491247,
+   "9 Rice (gaps, payloads)": 1.0520000359974802,
+   "10 join": 0.048200017772614956
   },
-  "total_ms": 19.90559999831021
+  "total_ms": 22.417099971789867,
+  "decode_int64_stage_ms": {
+   "workers_1": {
+    "  of which the exception list (Rice, one thread)": 0.32489997101947665,
+    "1 slot streams, the exception list meanwhile": 1.4338999753817916,
+    "2 exceptions patched in": 0.416700029745698,
+    "3 bases and row means": 0.3085000207647681,
+    "total (the header, 1-3)": 2.5525999953970313,
+    "4 widening to int64 (torch)": 0.29500003438442945
+   },
+   "workers_4": {
+    "  of which the exception list (Rice, one thread)": 0.3769000177271664,
+    "1 slot streams, the exception list meanwhile": 1.4859999646432698,
+    "2 exceptions patched in": 0.41969999438151717,
+    "3 bases and row means": 0.48180000158026814,
+    "total (the header, 1-3)": 2.576200000476092,
+    "4 widening to int64 (torch)": 0.1542000100016594
+   },
+   "workers_8": {
+    "  of which the exception list (Rice, one thread)": 0.4068000125698745,
+    "1 slot streams, the exception list meanwhile": 1.6915000160224736,
+    "2 exceptions patched in": 0.46359997941181064,
+    "3 bases and row means": 0.6542999763041735,
+    "total (the header, 1-3)": 3.0573999974876642,
+    "4 widening to int64 (torch)": 0.18580001778900623
+   }
+  },
+  "threads": 4,
+  "reps": 5
  },
- "gpt2_T64": {
+ "gpt2:64:12": {
+  "model": "gpt2",
+  "seq": 64,
+  "blocks": 12,
+  "vocab": 50257,
   "ops": 75,
-  "centred": 64,
+  "centred": 65,
   "claims": 5456977,
-  "exceptions": 386400,
+  "exceptions": 444973,
   "widths": {
    "7": [
     2,
     98304,
-    10819
+    10880
    ],
    "14": [
     5,
     245760,
-    44071
+    43067
    ],
    "15": [
     7,
     295680,
-    22225
+    22256
    ],
    "16": [
-    31,
-    1970688,
-    238402
+    38,
+    2563584,
+    309375
    ],
    "17": [
-    94,
-    2918737,
-    70883
+    88,
+    2328913,
+    59395
    ]
   },
   "stage_ms": {
-   "1 range (aminmax per op)": 4.042099986691028,
-   "2 to int32 per op": 2.8152000159025192,
-   "3 sample rows": 3.585200000088662,
-   "4 plan (host, per op)": 50.993400043807924,
-   "5 row means of centred ops": 4.139699973165989,
-   "6 segments (means plan, residuals)": 10.807799990288913,
-   "7 header": 0.1047999830916524,
-   "8a slots: x - lo per segment": 4.730299930088222,
-   "8b exceptions (mask, nonzero, high parts)": 15.7065000385046,
-   "8c pack32": 18.28169997315854,
-   "9 Rice (gaps, payloads)": 28.615400020498782,
-   "10 join": 2.0952000049874187
+   "1 range (aminmax per op)": 5.132799968123436,
+   "2 to int32 per op": 3.5795000148937106,
+   "3 sample rows": 3.0346999992616475,
+   "4 plan (host, per op)": 57.67690000357106,
+   "5 row means of centred ops": 5.506199959199876,
+   "6 segments (means plan, residuals)": 11.569600028451532,
+   "7 header": 0.11879997327923775,
+   "8a slots: x - lo per segment": 5.104400042910129,
+   "8b exceptions (mask, nonzero, high parts)": 15.029100002720952,
+   "8c pack32": 19.81360005447641,
+   "9 Rice (gaps, payloads)": 35.39270005421713,
+   "10 join": 2.2442000336013734
   },
-  "total_ms": 145.91729996027425
+  "total_ms": 164.2025001347065,
+  "decode_int64_stage_ms": {
+   "workers_1": {
+    "  of which the exception list (Rice, one thread)": 5.908899998757988,
+    "1 slot streams, the exception list meanwhile": 15.436000016052276,
+    "2 exceptions patched in": 10.225599980913103,
+    "3 bases and row means": 4.109800036530942,
+    "total (the header, 1-3)": 30.644899990875274,
+    "4 widening to int64 (torch)": 4.27450001006946
+   },
+   "workers_4": {
+    "  of which the exception list (Rice, one thread)": 7.889200001955032,
+    "1 slot streams, the exception list meanwhile": 9.081199998036027,
+    "2 exceptions patched in": 6.074500037357211,
+    "3 bases and row means": 2.3507000296376646,
+    "total (the header, 1-3)": 19.218400004319847,
+    "4 widening to int64 (torch)": 3.4895999706350267
+   },
+   "workers_8": {
+    "  of which the exception list (Rice, one thread)": 9.510700008831918,
+    "1 slot streams, the exception list meanwhile": 10.98449999699369,
+    "2 exceptions patched in": 6.238400004804134,
+    "3 bases and row means": 2.4698000052012503,
+    "total (the header, 1-3)": 20.64469998003915,
+    "4 widening to int64 (torch)": 2.6695000124163926
+   }
+  },
+  "threads": 4,
+  "reps": 5
  },
- "qwen8_T8": {
+ "qwen3-4b:8:8": {
+  "model": "qwen3-4b",
+  "seq": 8,
+  "blocks": 8,
+  "vocab": 151936,
   "ops": 58,
   "centred": 0,
   "claims": 2138496,
-  "exceptions": 85831,
+  "exceptions": 85116,
   "widths": {
    "7": [
     1,
     20480,
-    2285
+    2247
    ],
    "18": [
     49,
     1954176,
-    82612
+    82004
    ],
    "19": [
     8,
     163840,
-    934
+    865
    ]
   },
   "stage_ms": {
-   "1 range (aminmax per op)": 2.412599977105856,
-   "2 to int32 per op": 1.5638000331819057,
-   "3 sample rows": 2.4693000013940036,
-   "4 plan (host, per op)": 15.744500036817044,
-   "5 row means of centred ops": 0.016900012269616127,
-   "6 segments (means plan, residuals)": 0.24780002422630787,
-   "7 header": 0.05609996151179075,
-   "8a slots: x - lo per segment": 2.5671999319456518,
-   "8b exceptions (mask, nonzero, high parts)": 5.707399977836758,
-   "8c pack32": 8.129199966788292,
-   "9 Rice (gaps, payloads)": 3.6082000005990267,
-   "10 join": 0.902900006622076
+   "1 range (aminmax per op)": 2.9876999906264246,
+   "2 to int32 per op": 1.9718999974429607,
+   "3 sample rows": 2.942599996458739,
+   "4 plan (host, per op)": 22.115600004326552,
+   "5 row means of centred ops": 0.02139998832717538,
+   "6 segments (means plan, residuals)": 0.3418999840505421,
+   "7 header": 0.08049997268244624,
+   "8a slots: x - lo per segment": 3.2809999538585544,
+   "8b exceptions (mask, nonzero, high parts)": 7.209699950180948,
+   "8c pack32": 10.964900022372603,
+   "9 Rice (gaps, payloads)": 4.317199985962361,
+   "10 join": 1.1811000294983387
   },
-  "total_ms": 43.42589993029833
+  "total_ms": 57.415499875787646,
+  "decode_int64_stage_ms": {
+   "workers_1": {
+    "  of which the exception list (Rice, one thread)": 1.0789000079967082,
+    "1 slot streams, the exception list meanwhile": 5.805700027849525,
+    "2 exceptions patched in": 2.3685000487603247,
+    "3 bases and row means": 1.5608000103384256,
+    "total (the header, 1-3)": 9.86030005151406,
+    "4 widening to int64 (torch)": 3.103199996985495
+   },
+   "workers_4": {
+    "  of which the exception list (Rice, one thread)": 3.2142000272870064,
+    "1 slot streams, the exception list meanwhile": 4.336199956014752,
+    "2 exceptions patched in": 2.8609000146389008,
+    "3 bases and row means": 1.2513999827206135,
+    "total (the header, 1-3)": 8.94450000487268,
+    "4 widening to int64 (torch)": 1.4832000015303493
+   },
+   "workers_8": {
+    "  of which the exception list (Rice, one thread)": 3.0385999707505107,
+    "1 slot streams, the exception list meanwhile": 4.239799978677183,
+    "2 exceptions patched in": 2.9296999564394355,
+    "3 bases and row means": 1.2439999845810235,
+    "total (the header, 1-3)": 9.187999996356666,
+    "4 widening to int64 (torch)": 1.2640999630093575
+   }
+  },
+  "threads": 4,
+  "reps": 5
  },
- "qwen36_T8": {
+ "qwen3-4b:8:8/36": {
+  "model": "qwen3-4b",
+  "seq": 8,
+  "blocks": 36,
+  "vocab": 151936,
+  "built_blocks": 8,
   "ops": 254,
   "centred": 0,
   "claims": 9019776,
-  "exceptions": 355439,
+  "exceptions": 353013,
   "widths": {
    "7": [
     1,
     20480,
-    2285
+    2247
    ],
    "18": [
     217,
     8262016,
-    348957
+    346850
    ],
    "19": [
     36,
     737280,
-    4197
+    3916
    ]
   },
   "stage_ms": {
-   "1 range (aminmax per op)": 10.215899965260178,
-   "2 to int32 per op": 9.052000008523464,
-   "3 sample rows": 11.210299970116466,
-   "4 plan (host, per op)": 66.33639999199659,
-   "5 row means of centred ops": 0.030499999411404133,
-   "6 segments (means plan, residuals)": 0.6763000274077058,
-   "7 header": 0.12350000906735659,
-   "8a slots: x - lo per segment": 9.514300036244094,
-   "8b exceptions (mask, nonzero, high parts)": 23.368499998468906,
-   "8c pack32": 34.32319994317368,
-   "9 Rice (gaps, payloads)": 26.42439998453483,
-   "10 join": 3.4502000198699534
+   "1 range (aminmax per op)": 10.762999998405576,
+   "2 to int32 per op": 9.929499996360391,
+   "3 sample rows": 12.151399976573884,
+   "4 plan (host, per op)": 74.16089996695518,
+   "5 row means of centred ops": 0.028900045435875654,
+   "6 segments (means plan, residuals)": 0.7811999530531466,
+   "7 header": 0.15239999629557133,
+   "8a slots: x - lo per segment": 9.276000026147813,
+   "8b exceptions (mask, nonzero, high parts)": 26.65130002424121,
+   "8c pack32": 37.549000000581145,
+   "9 Rice (gaps, payloads)": 26.46869997261092,
+   "10 join": 3.7726000300608575
   },
-  "total_ms": 194.72549995407462
+  "total_ms": 211.68489998672158,
+  "decode_int64_stage_ms": {
+   "workers_1": {
+    "  of which the exception list (Rice, one thread)": 4.11139999050647,
+    "1 slot streams, the exception list meanwhile": 21.23610000126064,
+    "2 exceptions patched in": 9.985900018364191,
+    "3 bases and row means": 5.249799985904247,
+    "total (the header, 1-3)": 37.624699994921684,
+    "4 widening to int64 (torch)": 13.939999975264072
+   },
+   "workers_4": {
+    "  of which the exception list (Rice, one thread)": 7.154499995522201,
+    "1 slot streams, the exception list meanwhile": 9.571000002324581,
+    "2 exceptions patched in": 4.947600013110787,
+    "3 bases and row means": 2.913600008469075,
+    "total (the header, 1-3)": 19.32600000873208,
+    "4 widening to int64 (torch)": 5.931799998506904
+   },
+   "workers_8": {
+    "  of which the exception list (Rice, one thread)": 9.200200031045824,
+    "1 slot streams, the exception list meanwhile": 9.90439997985959,
+    "2 exceptions patched in": 5.231200018897653,
+    "3 bases and row means": 2.9276999994181097,
+    "total (the header, 1-3)": 19.70399997662753,
+    "4 widening to int64 (torch)": 5.3521000081673265
+   }
+  },
+  "threads": 4,
+  "reps": 5
  }
 }
