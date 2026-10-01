@@ -77,6 +77,13 @@ Policies (``bench.py --policy``; the plan is public, part of the verifier's key)
   in, found by descent from the base policy's plan, so a ``c`` plan never costs more than its base
   policy's in that model.  Convolutions keep the row layout (a convolution's ``w`` would need the
   unfolded input, and it opens no fewer bytes transposed: its ``N`` is small against its ``k``).
+* ``auto`` -- one of :data:`AUTO_CANDIDATES` (:func:`auto_policy`): on the whole model's shapes, at
+  ``REFERENCE_LAMBDA`` (interactive), the candidate of fewest expected non-claim bytes
+  (:func:`plan_overhead`: ``u``, opened columns, the encoded trees' multiproofs) whose setup
+  (``analytic.setup_size``'s encoded entries) is within a budget, by default ``max(2 x the paper's
+  setup, 2**34)``; ties go to the first candidate, and with no candidate within the budget the one of
+  least setup.  The plan is exactly that candidate's (``plan.policy``, which the Fiat--Shamir
+  statement binds through its trees as for the concrete policy), with ``plan.requested = "auto"``.
 
 Every policy opens exact ``t`` and shares trees between the encoded matrices of one length: the
 matrices of a length, ordered by their ``t``, are split into the runs whose groups minimise the
@@ -96,20 +103,25 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property, lru_cache
 
-from .analytic import expected_multiproof_nodes
+from .analytic import expected_multiproof_nodes, setup_size
 from .commitment import next_pow2
 from .field import LOG2_P, TWO_ADICITY
 
-__all__ = ["MAX_N", "REFERENCE_LAMBDA", "PlannedMatrix", "CommitmentPlan", "column_error_log2", "exact_columns",
-           "column_bits", "next_pow2", "plan_commitment", "col_name"]
+__all__ = ["MAX_N", "REFERENCE_LAMBDA", "AUTO_CANDIDATES", "AUTO_MIN_BUDGET", "PlannedMatrix", "CommitmentPlan",
+           "column_error_log2", "exact_columns", "column_bits", "next_pow2", "plan_commitment", "col_name",
+           "plan_overhead", "auto_budget", "auto_policy"]
 
 MAX_N = 1 << TWO_ADICITY
 """The longest codeword the field's NTT supports."""
 REFERENCE_LAMBDA = 128
 """The security level (interactive) at which a plan chooses layouts and splits equal-length groups by ``t``."""
+AUTO_CANDIDATES = ("tightc", "cnn16c", "cnn17c", "cnn18c", "R16c", "R64c")
+"""The policies ``auto`` chooses from, in tie-break order (a ``c`` plan never costs more than its base's)."""
+AUTO_MIN_BUDGET = 1 << 34
+"""The least default setup budget of ``auto`` (encoded entries)."""
 
 
 def column_bits(lam: float, n_checks: int, fiat_shamir: bool = False, grinding_bits: int = 64) -> float:
@@ -184,6 +196,7 @@ class CommitmentPlan:
     policy: str
     matrices: tuple[PlannedMatrix, ...]
     groups: tuple[tuple[str, tuple[str, ...]], ...]
+    requested: str | None = None    # "auto" when ``policy`` is the concrete policy it chose
 
     @cached_property
     def _by_name(self) -> dict[str, PlannedMatrix]:
@@ -234,7 +247,7 @@ def _policy(policy: str, rate: int):
     leading zeros)."""
     m = re.fullmatch(r"(?:(tight)|cnn([1-9][0-9]*)|R([1-9][0-9]*))(c?)", policy)
     if m is None:
-        raise ValueError(f"unknown commitment policy {policy!r}: expected paper, tight, cnn<e> or R<rate> "
+        raise ValueError(f"unknown commitment policy {policy!r}: expected paper, auto, tight, cnn<e> or R<rate> "
                          "(decimal, no leading zero), the last three optionally with the suffix c")
     if m.group(1):
         def length(k, embed):
@@ -375,7 +388,59 @@ def _matrices(ops, policy: str, rate: int, choice: dict) -> list[PlannedMatrix]:
     return sorted(out, key=lambda m: order[m.ops[0]])
 
 
-def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None) -> CommitmentPlan | None:
+def plan_overhead(model_ops, plan: CommitmentPlan | None, *, rate: int = 4) -> float:
+    """The expected non-claim bytes of one query of the whole model ``model_ops`` at
+    ``REFERENCE_LAMBDA`` (interactive), as ``analytic.proof_bytes`` counts them: ``u`` of the row-layout
+    ops, the opened columns and the encoded trees' multiproofs (``plan``: ``None`` for the report's).
+    A ``c`` plan's lookup tables are left out: their multiproofs depend on the prompt, and every ``c``
+    policy looks the same tables up."""
+    ops = list(model_ops)
+    bits = column_bits(REFERENCE_LAMBDA, len(ops))
+    reps = max(1, math.ceil(bits / LOG2_P))
+    if plan is None:
+        columns = max(1, math.ceil(bits / math.log2(rate)))
+        trees = [(rate * next_pow2(op.row_length), op.n_rows, columns) for op in ops]     # (n, rows, t)
+        u = sum(op.row_length for op in ops)
+    else:
+        group_t = dict(plan.group_columns(bits))
+        trees = [(plan.matrix(ms[0]).n_points, sum(plan.matrix(m).n_rows for m in ms), group_t[g])
+                 for g, ms in plan.groups]
+        u = sum(m.row_length for m in plan.coded if m.layout == "row")
+    return (4 * reps * u + 4 * sum(min(t, n) * rows for n, rows, t in trees)
+            + 32 * sum(expected_multiproof_nodes(n, t) for n, _, t in trees))
+
+
+def auto_budget(model_ops, *, rate: int = 4) -> int:
+    """``auto``'s default setup budget: ``max(2 x the paper's encoded entries, AUTO_MIN_BUDGET)``."""
+    ops = list(model_ops)
+    paper = sum(op.n_rows * rate * next_pow2(op.row_length) for op in ops)
+    return max(2 * paper, AUTO_MIN_BUDGET)
+
+
+def auto_policy(model_ops, *, rate: int = 4, setup_budget: float | None = None) -> str:
+    """The policy ``auto`` resolves to for the whole model ``model_ops``: of :data:`AUTO_CANDIDATES`
+    (those whose codewords fit the field), the one of least :func:`plan_overhead` among those whose
+    encoded entries are ``<= setup_budget`` (default :func:`auto_budget`), the first on a tie; if
+    none fits, the one of least setup (the first on a tie)."""
+    ops = list(model_ops)
+    if not ops:
+        return AUTO_CANDIDATES[0]
+    budget = auto_budget(ops, rate=rate) if setup_budget is None else setup_budget
+    costs = []                                   # (policy, non-claim bytes, encoded entries)
+    for policy in AUTO_CANDIDATES:
+        try:
+            plan = plan_commitment(ops, policy, rate=rate)
+        except ValueError:                       # a codeword longer than the field's NTT
+            continue
+        costs.append((policy, plan_overhead(ops, plan, rate=rate), setup_size(ops, plan=plan)["encoded_entries"]))
+    if not costs:
+        raise ValueError("policy 'auto': no candidate policy fits this model")
+    within = [c for c in costs if c[2] <= budget]
+    return (min(within, key=lambda c: c[1]) if within else min(costs, key=lambda c: c[2]))[0]
+
+
+def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None,
+                    setup_budget: float | None = None) -> CommitmentPlan | None:
     """The plan of ``policy`` for weight ops ``ops`` (objects with ``name``, ``n_rows``,
     ``row_length``, ``layout``, ``inputs`` and ``has_bias``: a graph's ``MatOp``s or
     ``analytic.decoder_shapes``), in their order; ``None`` for ``"paper"``.  ``rate`` is the base
@@ -384,7 +449,15 @@ def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None) -> Commi
     ``model_ops``: the whole model's ops when ``ops`` are those of a build of a few of its
     decoder blocks.  The layouts are chosen, and the runs split, on the whole model (at its op
     count), so the build's matrices and groups are the whole model's restricted to the built ops,
-    and its costs extrapolate over blocks."""
+    and its costs extrapolate over blocks.
+
+    ``policy="auto"`` takes the plan of :func:`auto_policy` on the whole model (``setup_budget``: its
+    budget in encoded entries), recorded as ``plan.policy`` with ``plan.requested = "auto"``."""
+    if setup_budget is not None and policy != "auto":
+        raise ValueError("setup_budget: only for policy 'auto'")
+    if policy == "auto":
+        chosen = auto_policy(ops if model_ops is None else model_ops, rate=rate, setup_budget=setup_budget)
+        return replace(plan_commitment(ops, chosen, rate=rate, model_ops=model_ops), requested="auto")
     if policy == "paper":
         return None
     ops = list(ops)

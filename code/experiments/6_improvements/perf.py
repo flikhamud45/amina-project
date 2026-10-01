@@ -81,7 +81,7 @@ def main() -> None:
     ap.add_argument("--extra", default="{}", help="JSON dict of extra keyword arguments for Verifier (new options)")
     ap.add_argument("--policy", nargs="+", default=["paper"],
                     help="mode C: commitment plans (paper, tight, cnn<e>, R<rate>; with the suffix c, their col "
-                         "layouts), timed interleaved in this process")
+                         "layouts; auto: the c plan it picks, printed as 'chosen'), timed interleaved in this process")
     ap.add_argument("--wire", nargs="*", choices=["off", "on"], default=["off"],
                     help="run_query(wire=True), the compact encoding of the proof: '--wire' for every variant, "
                          "'--wire off on' for each policy both ways, timed interleaved")
@@ -179,7 +179,9 @@ def main() -> None:
         for (prune, policy, looked, wire), (_, v, runs) in pairs.items():
             timing, nbytes, prove, verify = _medians(runs)
             out = {"label": args.label, "git": sha, "model": args.model, "seq": seq, "layers": args.layers or None,
-                   "mode": mode, "policy": policy, "wire": wire, "lam": args.lam, "rate": args.rate,
+                   "mode": mode, "policy": policy, "wire": wire,
+                   **({"chosen": coms[prune, policy].plan.policy} if mode == "C" and coms[prune, policy].plan else {}),
+                   "lam": args.lam, "rate": args.rate,
                    "prune_last": prune, "lookups": looked,
                    "reps": v.params.reps, "columns": v.params.columns,
                    **({"group_columns": dict(v.params.group_columns)} if v.groups else {}),

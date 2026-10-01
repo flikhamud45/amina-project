@@ -92,7 +92,8 @@ def analytic_rows(lam: int, policies, prune_last: bool = False, kpre=()) -> list
                 shapes = plan.shapes() if plan is not None else [(op.row_length, 4 * next_pow2(op.row_length))
                                                                   for op in ops]
                 b = proof_bytes(ops, params, claim_cols, plan=plan, table_ids=ids)
-                rows.append({"model": name, "seq": seq, "mode": "C", "policy": policy, "prune_last": prune_last,
+                rows.append({"model": name, "seq": seq, "mode": "C", "policy": policy,
+                             "chosen": policy if plan is None else plan.policy, "prune_last": prune_last,
                              "challenges": chal, "lam": lam, "reps": params.reps,
                              **{f"bytes_{k}": v for k, v in b.items()}, "bytes_total": sum(b.values()),
                              "soundness_bits": soundness_bits(params, shapes, "C", columns=cols),
@@ -198,7 +199,8 @@ def _build_rows(graph, cases, policies, lam: int, n_checks: int, wires, claims_o
                         got = dict(_medians([r["bytes"] for r in res]), model_paths=statistics.median(
                             w["paths"] for w in wants), model_total=statistics.median(sum(w.values()) for w in wants),
                                    source="run_query")
-                    rows.append({**head, "seq": seq, "mode": mode, "policy": policy, "lookups": lookups, "wire": wire,
+                    rows.append({**head, "seq": seq, "mode": mode, "policy": policy,
+                                 "chosen": policy if plan is None else plan.policy, "lookups": lookups, "wire": wire,
                                  "challenges": chal, "lam": lam, **got, "queries": len(xs), "commit_s": commit_s,
                                  **(setup_size(graph.mat_ops, plan=plan) if mode == "C" else {})})
     return rows
@@ -232,7 +234,8 @@ def _whole_model_rows(rows: list, cfg, lam: int) -> list:
             bits = soundness_bits(params, [(op.row_length, 0) for op in model_ops
                                            if not (lookups and op.layout == "embed")], "K")
         out.append({"model": cfg.name, "seq": seq, "layers": cfg.n_layers, "vocab": cfg.vocab, "prune_last": prune_last,
-                    "mode": mode, "policy": policy, "lookups": lookups, "wire": wire, "challenges": chal, "lam": lam,
+                    "mode": mode, "policy": policy, "chosen": policy if whole is None else whole.policy,
+                    "lookups": lookups, "wire": wire, "challenges": chal, "lam": lam,
                     **{f"bytes_{k}": v for k, v in b.items()}, "bytes_total": sum(b.values()),
                     "source": f"model, claims extrapolated from L{b0} and L{b1}", "soundness_bits": bits,
                     **(setup_size(model_ops, plan=whole) if mode == "C" else {})})
@@ -292,7 +295,8 @@ def run_rows(spec: str, lam: int, policies, queries: int, wires=(False,), claims
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--lam", type=int, default=128)
-    ap.add_argument("--policies", nargs="*", default=list(POLICIES), help="mode-C commitment plans (none: no C rows)")
+    ap.add_argument("--policies", nargs="*", default=list(POLICIES), help="mode-C commitment plans (none: no C rows; auto: the "
+                    "c plan it picks, in the column chosen)")
     ap.add_argument("--run", nargs="*", default=[], help="model[:seqs[:blocks[:vocab]]]: build, commit, measure")
     ap.add_argument("--queries", type=int, default=5)
     ap.add_argument("--wire", nargs="*", choices=["off", "on"], default=["off"],
@@ -321,7 +325,8 @@ def main() -> None:
             w.writerows(rows)
     if not args.run:
         for r in rows:
-            print(f"{r['model']:>15} {str(r['seq']):>5} {r['mode']:>4} {r['policy']:>6} {r['challenges']:>3} "
+            policy = r["policy"] if r.get("chosen", r["policy"]) == r["policy"] else f"{r['policy']}={r['chosen']}"
+            print(f"{r['model']:>15} {str(r['seq']):>5} {r['mode']:>4} {policy:>6} {r['challenges']:>3} "
                   f"{r['bytes_total'] / 1e3:12.1f} kB  x{r.get('ratio_vs_paper', float('nan')):.3f}  "
                   f"{r['soundness_bits']:.1f} bits" + (f"  trees {r['trees']:>3}  entries "
                                                       f"{r['encoded_entries'] / 1e6:10.1f}M  max_n "

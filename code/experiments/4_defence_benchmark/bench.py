@@ -10,7 +10,8 @@ A cell that has a ``.done`` marker is skipped (resume after pre-emption); pass
 ``--force`` to redo it.  An honest query that is rejected stops the job and keeps the
 cell's records as ``<cell>.rejected-<run_id>.jsonl`` (``count_outcomes.py`` counts them).
 ``--policy <name>`` (a commitment plan of ``pvi.fullcheck.plans``: tight, cnn<e>, R<rate>, each also
-with the suffix c: the col layouts and lookup tables) commits under that plan and runs only the cells
+with the suffix c: the col layouts and lookup tables; or auto, the c policy it picks for the model,
+recorded as the cells' ``policy``, with ``policy_requested`` auto) commits under that plan and runs only the cells
 it changes -- the commitment (``commit_*``, with its setup time and size) and the mode-C cells --
 named with a ``_pol<name>`` suffix.  ``--prune-last`` (LLM suite) builds the decoders with their last
 block at the last position (``build_decoder(..., prune_last=True)``), every cell named with a
@@ -320,7 +321,8 @@ def _plan_config(coms, params=None) -> dict:
     (nothing for the report's commitment)."""
     if coms is None or coms.plan is None:
         return {}
-    return {"policy": coms.plan.policy, "trees": len(coms.groups),
+    return {"policy": coms.plan.policy, **({"policy_requested": coms.plan.requested} if coms.plan.requested else {}),
+            "trees": len(coms.groups),
             **({"group_columns": dict(params.group_columns)} if params is not None else {})}
 
 
@@ -983,7 +985,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "every cell records as its rate (the codeword lengths are the plan's: policy, group_columns)")
     ap.add_argument("--policy", default="paper",
                     help="commitment plan (pvi.fullcheck.plans): paper (the report), tight, cnn<e> or R<rate>, "
-                         "the last three also with the suffix c (col layouts and lookup tables); "
+                         "the last three also with the suffix c (col layouts and lookup tables), or auto (the c "
+                         "plan of fewest non-claim bytes within a setup budget, recorded as the cells' policy); "
                          "runs the commitment and mode-C cells only, named with a _pol<name> suffix")
     ap.add_argument("--prune-last", action="store_true",
                     help="LLM suite: the last decoder block at the last position only "

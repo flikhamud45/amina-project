@@ -1571,3 +1571,47 @@ int32) at each thread count, and records the device encoder's kernel-launching a
 waits and device tables' size, on the GPU's claims; `perf.py`'s `prove_encode` and `verify_decode` are
 the prover's and verifier's wire costs in a full query (with `--lean`, the prover's claims stay on the
 GPU as int32 and are encoded there).  No GPU timing is claimed here: this laptop has none.
+
+## Policy `auto`
+
+`plan_commitment(ops, "auto", setup_budget=None)` (and `bench.py --policy auto`, cells `_polauto`;
+`perf.py --policy auto`; `plan_bytes.py --policies auto`) resolves, on the whole model's shapes
+(`model_ops` for a build of a few blocks), to one of `tightc cnn16c cnn17c cnn18c R16c R64c`
+(`plans.AUTO_CANDIDATES`; their row bases never cost less, the descent ensures it): the one of fewest
+expected non-claim bytes at `REFERENCE_LAMBDA` = 128, interactive (`plans.plan_overhead`: `u`, opened
+columns and the encoded trees' multiproofs; the lookup tables' multiproofs depend on the prompt and
+are the same for every candidate) among those whose encoded entries (`analytic.setup_size`) are
+within the budget, by default `max(2 x paper, 2^34)`.  Ties go to the first candidate; with no
+candidate within the budget (e.g. `setup_budget=0`) it falls back to the candidate of least setup.
+The plan is exactly the chosen policy's (`plan.policy`, which the cells' `policy`, `perf.py`'s
+`chosen` and `plan_bytes.py`'s `chosen` record; `plan.requested == "auto"`, recorded by `bench.py` as
+`policy_requested`), so the verifier's key and the Fiat--Shamir statement are that policy's
+(`tests/test_plan_auto.py`).  Setup in encoded entries, non-claim bytes of one query (lambda = 128,
+interactive), against the paper's and the best candidate with no budget:
+
+| Model | auto | setup (paper) | budget | non-claim bytes (paper) | vs paper | best candidate: bytes, setup | auto vs best |
+|---|---|---:|---:|---:|---:|---|---:|
+| MLP-MNIST | `cnn18c` | 0.28 G (3.2 M) | 17.2 G | 84.8 kB (267 kB) | 0.32x | `cnn18c` | 1.00x |
+| LeNet-5 | `cnn18c` | 72 M (0.31 M) | 17.2 G | 36.0 kB (105 kB) | 0.34x | `cnn18c` | 1.00x |
+| VGG-11 | `cnn18c` | 0.99 G (70 M) | 17.2 G | 735 kB (1.59 MB) | 0.46x | `cnn18c` | 1.00x |
+| VGG-16 | `cnn18c` | 1.38 G (0.11 G) | 17.2 G | 1.13 MB (2.32 MB) | 0.49x | `cnn18c` | 1.00x |
+| ResNet-18 | `cnn18c` | 1.26 G (80 M) | 17.2 G | 1.03 MB (2.17 MB) | 0.48x | `cnn18c` | 1.00x |
+| GPT-2 | `cnn18c` | 9.9 G (0.86 G) | 17.2 G | 3.95 MB (40.2 MB) | 0.10x | `cnn18c` | 1.00x |
+| OPT-125M | `cnn18c` | 9.9 G (0.87 G) | 17.2 G | 3.95 MB (40.3 MB) | 0.10x | `cnn18c` | 1.00x |
+| OPT-350M | `cnn17c` | 13.1 G (2.7 G) | 17.2 G | 12.4 MB (83.4 MB) | 0.15x | `cnn18c`: 10.7 MB, 26 G | 1.16x |
+| OPT-1.3B | `cnn16c` | 13.2 G (10.6 G) | 21.3 G | 36.3 MB (149 MB) | 0.24x | `R64c`: 21.5 MB, 118 G | 1.69x |
+| OPT-2.7B | `cnn16c` | 21.8 G (17.6 G) | 35.2 G | 65.7 MB (238 MB) | 0.28x | `R64c`: 35.0 MB, 247 G | 1.88x |
+| Qwen3-4B | `cnn17c` | 49.7 G (27.8 G) | 55.6 G | 65.0 MB (374 MB) | 0.17x | `R64c`: 42.3 MB, 405 G | 1.54x |
+| OPT-6.7B | `cnn17c` | 69 G (54 G) | 107 G | 96.1 MB (370 MB) | 0.26x | `R64c`: 57.0 MB, 601 G | 1.68x |
+| Llama-2-7B | `tightc` | 37 G (29.8 G) | 59.6 G | 131 MB (412 MB) | 0.32x | `R64c`: 53.1 MB, 593 G | 2.47x |
+| OPT-13B | `cnn17c` | 108 G (84 G) | 167 G | 165 MB (568 MB) | 0.29x | `R64c`: 87.3 MB, 1,203 G | 1.89x |
+| Llama-2-13B | `cnn17c` | 108 G (78 G) | 156 G | 160 MB (640 MB) | 0.25x | `R64c`: 83.7 MB, 977 G | 1.91x |
+| OPT-30B | `cnn17c` | 181 G (139 G) | 278 G | 322 MB (941 MB) | 0.34x | `R64c`: 152 MB, 2,380 G | 2.12x |
+| OPT-66B | `cnn18c` | 621 G (470 G) | 939 G | 451 MB (1,600 MB) | 0.28x | `R64c`: 251 MB, 6,840 G | 1.80x |
+| Llama-2-70B | `tightc` | 323 G (287 G) | 573 G | 696 MB (2,030 MB) | 0.34x | `R64c`: 285 MB, 5,170 G | 2.44x |
+
+The CNNs and the decoders up to 125M parameters fit `cnn18c` (their best) in the `2^34` floor, and
+OPT-350M `cnn17c` (4.9x the paper's entries, still under the floor); from OPT-1.3B on the budget of
+twice the paper's setup keeps `auto` at 1.1-1.8x the paper's entries (`cnn16c`, `cnn17c`, `cnn18c`,
+`tightc`), at 1.5-2.5x the non-claim bytes of `R64c`, which needs 11-20x the paper's setup.  A
+larger `setup_budget` trades setup for bytes (`setup_budget=math.inf`: the overall least).
