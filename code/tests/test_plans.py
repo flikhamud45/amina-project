@@ -618,6 +618,126 @@ def test_a_gpu_client_and_prover_give_the_cpu_verdicts(device, policy, wire):
             assert a["accepted"] and (b["accepted"], b["bytes"]) == (True, a["bytes"])
 
 
+# -- in-process messages: each party holds its own copy --------------------------------------------------
+
+class _Scribbler(proto.Prover):
+    """An honest prover that, once it has used them, overwrites in place every tensor it was handed or
+    handed over -- the query, its claims and the tables' multiproofs (in ``fold``), ``chi`` (in
+    ``fold``), ``u`` and the column indices (in ``open``)."""
+
+    def claims(self, x, **kw):
+        out = super().claims(x, **kw)
+        x.zero_()
+        self.sent = out
+        return out
+
+    def open_tables(self):
+        self.proofs = super().open_tables()
+        return self.proofs
+
+    def fold(self, chis):
+        self.us = super().fold(chis)
+        for t in [*chis.values(), *(z for z in self.sent.values() if torch.is_tensor(z))]:
+            t.add_(1)
+        for proof in getattr(self, "proofs", {}).values():
+            proof.clear()
+        return self.us
+
+    def open(self, cols):
+        out = super().open(cols)
+        for t in [*cols.values(), *self.us.values()]:
+            t.copy_(t.flip(-1))
+        return out
+
+
+@pytest.mark.parametrize("policy", ["paper", "R8c"])
+@pytest.mark.parametrize("fiat_shamir", [False, True])
+def test_a_party_cannot_change_what_it_handed_the_other(policy, fiat_shamir):
+    """The query and the challenges the prover receives, and the claims, multiproofs and ``u`` the
+    verifier reads after the prover has run again, are each party's own copies: an honest prover that
+    then overwrites all of them in place is still accepted, by every verifier (batched and streaming,
+    with and without wire; modes C, K and Kpre)."""
+    graph, x, coms = _planned("gpt", policy)
+    for v in _verifiers(graph, coms, fiat_shamir):
+        for wire in (False, True):
+            res = proto.run_query(_Scribbler(graph, commitments=coms), v, x.clone(), seed=None if fiat_shamir else 1,
+                                  wire=wire)
+            assert res["accepted"], (v.stream, wire, res["rejected_at"])
+    weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
+    for mode in ("K", "Kpre"):
+        for stream in (False, True):
+            v = proto.Verifier(graph.public(), proto.params_for(40, len(graph.mat_ops), fiat_shamir=fiat_shamir),
+                               mode, weights=weights, stream=stream)
+            if mode == "Kpre":
+                v.precompute(proto.Challenger(seed=3))
+            assert proto.run_query(_Scribbler(graph), v, x.clone(), seed=None if fiat_shamir else 1)["accepted"]
+
+
+@pytest.mark.parametrize("policy", ["paper", "R8c"])
+def test_a_prover_cannot_change_its_messages_or_the_challenges_in_place(policy):
+    """Forgeries that would pass if the parties shared tensors, each rejected by every verifier
+    (interactive and Fiat--Shamir, with and without wire): a claim forged (re-propagated) and restored
+    in place inside ``fold``, after derive read it (a col-layout op's under ``R8c``); a bias shift of a
+    row op's claims with the ``u`` that passes Freivalds for it, put back to the honest ``u`` in place
+    inside ``open``, after Freivalds read it; every ``chi`` zeroed in place inside ``fold``, with ``u =
+    0``; and the query rewritten in place (another prompt, proved honestly)."""
+    graph, x, coms = _planned("gpt", policy)
+    mats = graph.mat_ops
+    restored = mats[len(mats) // 2].name if coms.plan is None else next(
+        m for m in coms.plan.matrices if m.layout == "col").members[0]
+    shifted = next(op for op in reversed(mats) if op.has_bias and (coms.plan is None
+                                                                  or coms.plan.matrix_of(op.name).layout == "row"))
+    kept = {}
+
+    def forge(op, z):
+        if op.name == restored:
+            z = z.clone()
+            z[:, -1] += 40000
+            kept["z"] = z
+        elif op.name == shifted.name:
+            z = z.clone()
+            z[0] += 40000                                      # as if the bias of row 0 were larger
+        return z
+
+    class Restorer(proto.Prover):
+        def fold(self, chis):
+            kept["z"][:, -1] -= 40000
+            return super().fold(chis)
+
+    class Unshifter(proto.Prover):
+        def fold(self, chis):
+            us = super().fold(chis)
+            kept["honest"] = us[shifted.name].clone()
+            us[shifted.name][:, shifted.n_in] = (us[shifted.name][:, shifted.n_in]
+                                                 + 40000 * chis[shifted.name][:, 0]) % P
+            kept["u"] = us[shifted.name]
+            return us
+
+        def open(self, cols):
+            kept["u"].copy_(kept["honest"])
+            return super().open(cols)
+
+    class Zeroer(proto.Prover):
+        def fold(self, chis):
+            for chi in chis.values():
+                chi.zero_()
+            return {k: torch.zeros_like(u) for k, u in super().fold(chis).items()}
+
+    class Rewriter(proto.Prover):
+        def claims(self, x, **kw):
+            x.copy_((x + 1) % _TINY["gpt"].vocab)
+            return super().claims(x, **kw)
+
+    for fiat_shamir in (False, True):
+        for v in _verifiers(graph, coms, fiat_shamir):
+            for wire in (False, True):
+                for prover, kw in ((Restorer, {"tamper": forge}), (Unshifter, {"tamper": forge}), (Zeroer, None),
+                                   (Rewriter, None)):
+                    res = proto.run_query(prover(graph, commitments=coms), v, x.clone(),
+                                          seed=None if fiat_shamir else 2, wire=wire, forward_kwargs=kw)
+                    assert not res["accepted"], (prover.__name__, v.stream, wire)
+
+
 @pytest.mark.parametrize("paths", ["at_once", "deferred", "int8", "deferred_int8"])
 def test_grouped_column_checks_give_the_reference_verdicts(paths, monkeypatch):
     """The batched check of group openings against ``reference.check_columns``, group by group
