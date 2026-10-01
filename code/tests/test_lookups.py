@@ -317,6 +317,40 @@ def test_the_transcript_absorbs_the_tables_and_their_multiproofs(monkeypatch):
             assert not torch.equal(first_columns(w), base)
 
 
+@pytest.mark.parametrize("fiat_shamir", [False, True])
+def test_a_key_lists_its_tables_in_any_order(fiat_shamir, monkeypatch):
+    """The tables of a key are public data in no fixed order: a verifier takes them in graph order (the
+    order of their int8 rows on the wire, of the transcript and of the checks), so a key with them
+    reversed accepts every honest query -- batched and streaming, with and without wire -- with the same
+    transcript, and rejects a forged row of either table."""
+    graph, _, coms = _planned("gpt", "R8c")
+    x = _query("gpt")
+    assert len(coms.tables) == 2
+    reversed_key = dict(reversed(list(coms.table_publics.items())))
+    absorbed = []
+    absorb = proto.Challenger.absorb
+    monkeypatch.setattr(proto.Challenger, "absorb", lambda self, label, blob: (
+        absorbed.append((label, bytes(blob))), absorb(self, label, blob)))
+    params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fiat_shamir, plan=coms.plan)
+    prover = proto.Prover(graph, commitments=coms)
+    seed = None if fiat_shamir else 1
+    for stream in (False, True):
+        for wire in (False, True):
+            transcripts = []
+            for tables in (coms.table_publics, reversed_key):
+                v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                                   tables=tables, stream=stream)
+                absorbed.clear()
+                res = proto.run_query(prover, v, x, seed=seed, wire=wire)
+                assert res["accepted"], (stream, wire, res["rejected_at"])
+                transcripts.append(list(absorbed))
+                for name in tables:
+                    bad = proto.run_query(prover, v, x, seed=seed, wire=wire, forward_kwargs={
+                        "tamper": lambda op, z, name=name: _bump(z) if op.name == name and z[0, 0] < 127 else z})
+                    assert bad["rejected_at"] == "lookup_merkle", (name, stream, wire)
+            assert transcripts[0] == transcripts[1]
+
+
 def test_a_verifier_refuses_a_table_key_that_does_not_fit():
     graph, _, coms = _planned("gpt", "R8c")
     params = proto.params_for(40, len(graph.mat_ops), plan=coms.plan)

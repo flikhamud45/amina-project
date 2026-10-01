@@ -589,7 +589,7 @@ class Verifier:
     device: str = "cpu"      # "cuda" / "cuda:1": a client with a GPU (Merkle hashing stays on the CPU)
     stream: bool = False     # run_query checks with verify_streaming (the same verdicts and labels)
     groups: dict[str, GroupPublic] = field(default_factory=dict)   # a commitment plan's trees (mode C)
-    tables: dict[str, TablePublic] = field(default_factory=dict)   # a plan's lookup tables (mode C)
+    tables: dict[str, TablePublic] = field(default_factory=dict)   # a plan's lookup tables (mode C; kept in graph order)
     lookups: bool = False    # modes K and Kpre: the verifier reads the embedding rows itself (none are sent)
     _pre: dict = field(default_factory=dict)
     _wdev: dict = field(default_factory=dict)   # modes K and Kpre on a GPU: the weights they read stay there
@@ -601,6 +601,8 @@ class Verifier:
     def __post_init__(self) -> None:
         if self.groups or self.tables:
             self._check_plan()
+            # one order of the tables, the graph's, for their rows on the wire, the transcript and the checks
+            self.tables = {op.name: self.tables[op.name] for op in self.graph.mat_ops if op.name in self.tables}
         if self.lookups and self.mode == "C":
             raise ValueError("lookups=True is for modes K and Kpre, whose verifier holds the weights "
                              "(mode C looks rows up in a commitment plan's tables: its c policies)")
