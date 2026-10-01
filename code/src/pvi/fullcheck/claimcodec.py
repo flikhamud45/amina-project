@@ -10,9 +10,11 @@ and travel as their bytes (:func:`pack_rows`), not in ``PVC3``.
 
 Claims: format ``PVC3``
 -----------------------
-A frame of reference whose exceptions carry only their high part (as "NewPFD"); the prototype
-``PVC2`` of branch research-claims without its raw (int32) ops, which are never smaller than
-``B = 30``, and with median centres (smaller on the CNNs, the same on the decoders).  The verifier
+A frame of reference whose exceptions carry only their high part (as "NewPFD").  There are no raw
+(int32) ops, since a slot of ``B = 30`` bits is never larger, and the encoder places each segment
+around the rounded median of a sample of its values (smaller than around the mean on the CNNs, the
+same on the decoders; ``PVC2``, an earlier prototype, had raw ops and mean centres, and its magic is
+rejected).  The verifier
 knows every weight op's shape ``[N, M]``: ``N`` from the public graph, ``M`` from the query's shape
 (``Verifier.claim_columns``).  The header repeats ``M``, and the decoder rejects any other before
 it allocates anything, so a malformed input costs it no more memory than the honest claims.
