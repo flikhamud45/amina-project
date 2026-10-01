@@ -678,7 +678,12 @@ def encode(claims: list, *, centre: bool = True, impl: str | None = None, worker
 
 def narrow(z: torch.Tensor) -> torch.Tensor:
     """A claim kept for :func:`encode` on its device as int32, clipped to the range check's limits (so a
-    claim with ``|z| >= 2**29`` still has one, and the encoder still refuses it)."""
+    claim with ``|z| >= 2**29`` still has one, and the encoder still refuses it).  A new tensor: ``z`` is
+    not modified (the forward pass may still hold a view of it).  A claim of a narrower dtype (a tampered
+    one: int16, bool, ...) is widened first, as the encoder takes it, since ``clamp`` cannot hold the
+    limits in its dtype."""
+    if z.dtype not in (torch.int32, torch.int64):
+        z = z.to(torch.int64)
     return torch.clamp(z, -_Z_LIMIT, _Z_LIMIT).to(torch.int32)
 
 

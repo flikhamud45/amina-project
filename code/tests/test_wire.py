@@ -497,7 +497,10 @@ def test_a_lean_gpu_prover_encodes_int32_claims_on_its_device_and_sends_the_cpu_
     seen = []
     monkeypatch.setattr(proto.claimcodec, "encode", lambda zs: (seen.append({(z.device.type, z.dtype) for z in zs}),
                                                                 _ENCODE(zs))[1])
-    attacks = dict(_claim_attacks(graph.mat_ops), big={"tamper": lambda o, z: z * (1 << 40)})   # beyond int32
+    last = graph.mat_ops[-1].name
+    attacks = dict(_claim_attacks(graph.mat_ops), big={"tamper": lambda o, z: z * (1 << 40)},   # beyond int32
+                   int16={"tamper": lambda o, z: z.to(torch.int16) if o.name == last else z})    # |Z| > 2**15 here
+    want = []
     for mode in ("C", "Kpre"):
         prover, pair = _setup(graph, mode)
         lean = proto.Prover(graph, commitments=prover.commitments, device=device, lean=True)
@@ -505,8 +508,11 @@ def test_a_lean_gpu_prover_encodes_int32_claims_on_its_device_and_sends_the_cpu_
             a, b = (proto.run_query(p, pair[0], x, seed=i, wire=True, forward_kwargs=kw) for p in (prover, lean))
             assert (a["accepted"], a["rejected_at"], a["bytes"]) == (b["accepted"], b["rejected_at"], b["bytes"]), name
             assert a["accepted"] == (name == "honest")
-    on = (device, torch.int32) if device != "cpu" else ("cpu", torch.int64)
-    assert seen[1::2] == [{on}] * (len(seen) // 2)
+            if device != "cpu":
+                want.append({(device, torch.int32)})
+            else:
+                want.append({("cpu", torch.int64)} | ({("cpu", torch.int16)} if name == "int16" else set()))
+    assert seen[1::2] == want
 
 
 def test_narrowed_claims_encode_as_the_claims_and_keep_their_range():
@@ -519,6 +525,27 @@ def test_narrowed_claims_encode_as_the_claims_and_keep_their_range():
         assert cc.narrow(w).dtype == torch.int32
         with pytest.raises(cc.Unencodable):
             cc.encode([cc.narrow(w)])
+    # claims of narrower dtypes (a tamper hook's), which clamp cannot bound in their own dtype: widened,
+    # the same values, and the input untouched
+    for small in (z.clamp(-(1 << 15), (1 << 15) - 1).to(torch.int16), z.to(torch.int8), z > 0, z.to(torch.int32)):
+        before = small.clone()
+        n = cc.narrow(small)
+        assert n.dtype == torch.int32 and torch.equal(n.long(), small.long()) and torch.equal(small, before)
+        assert cc.encode([n]) == cc.encode([small])
+
+
+def test_a_lean_forward_narrows_tampered_claims_of_any_integer_dtype():
+    # what a lean GPU prover with wire runs (send=claimcodec.narrow on its device, as the forward pass
+    # computes each claim), here on the host; the last op's claim tampered into another dtype
+    graph, x = _graph("qwen")
+    last = graph.mat_ops[-1].name
+    _, honest = graph.forward(x)
+    for dt in (torch.int16, torch.int8, torch.bool, torch.int32):
+        _, sent = graph.forward(x, free=True, send=cc.narrow,
+                                tamper=lambda op, z, dt=dt: z.to(dt) if op.name == last else z)
+        assert all(z.dtype == torch.int32 for z in sent.values())
+        assert torch.equal(sent[last].long(), honest[last].to(dt).long())
+        assert all(torch.equal(sent[k].long(), z) for k, z in honest.items() if k != last)
 
 
 # -- the security parameters ----------------------------------------------------------------------
