@@ -1515,7 +1515,10 @@ for d in . ../../base/code; do (cd $d && PYTHONPATH=$PWD/src python experiments/
 ```
 
 `codec_ab.py` checks both checkouts' bytes are equal, times `encode` of claims computed on the GPU (to
-the bytes on the host), `pack_field`, and `decode_torch` (int64 and int32) at each thread count, and
-records the device encoder's kernel-launching aten ops and waits; `perf.py`'s `prove_encode` and
+the bytes on the host; with `--lean`, each checkout's claims as its lean prover keeps them: the
+baseline's int64 on the host, this checkout's int32 on the GPU, `send=claimcodec.narrow`), a new shape
+set's encode (`encode_cold`: its tables built on the GPU), `pack_field`, and `decode_torch` (int64 and
+int32) at each thread count, and records the device encoder's kernel-launching aten ops (warm and cold)
+and waits, on the GPU's claims; `perf.py`'s `prove_encode` and
 `verify_decode` are the prover's and verifier's wire costs in a full query.  No GPU timing is
 claimed here: this laptop has none.
