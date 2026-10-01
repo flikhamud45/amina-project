@@ -1382,7 +1382,15 @@ streams 10 ms, Rice 4.3 ms, exceptions and bases 13.7 ms, the int64 widening 3.2
   of kernels plus about ten per distinct width -- 137-178 kernel-launching aten ops for every model here
   (Qwen3-4B: 137 for 58 ops and for 254) -- and four waits for the device (`_d2h` x 3, `_nonzero_dev`),
   against 94-1332 ops and 3 + 3 per width transfers plus one upload per op before.  Uploads go through
-  pinned memory (a pageable one synchronises), and the layout tables are cached per shape.
+  pinned memory (a pageable one synchronises).  A new shape set (another prompt length, another model)
+  first builds its layout's tables -- each sampled value's place in the buffer, its row, each row's
+  start -- on the device from per-op arrays: one upload of a few KB and ~33 kernel-launching aten ops,
+  no wait; only the shape set last used on a device keeps them there (5.2 / 20.6 / 18.9 MB for Qwen3-4B
+  8 blocks / GPT-2 T64 / Qwen3-4B 36 blocks, where the first version built 17.0 / 43.7 / 59.0 MB with
+  numpy on the host, uploaded them, and kept up to four shape sets').  On this laptop's CPU (the device
+  path on CPU tensors) a cold query costs 2.0 / 3.5 / 16 ms more than a warm one (first version: 11 /
+  34 / 54 ms); the host encoder's cold query pays 10-27 ms for its index arrays (GPT-2 T64, Qwen3-4B 36
+  blocks, 1 and 4 threads).
 * **The host's encoder** (`impl="host"`, the default for CPU claims; `_encode_host`): the claims clipped
   into one int32 buffer (a claim outside the range check stays outside), the statistics of op chunks
   on `workers` threads (default `torch.get_num_threads()`) in place on scratch buffers (on a fresh large

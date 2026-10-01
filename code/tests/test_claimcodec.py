@@ -515,22 +515,61 @@ def _header_widths(blob: bytes, n_ops: int) -> set:
 
 
 def test_the_device_encoders_kernels_grow_with_the_widths_not_the_ops(claim_sets):
-    # decoder claims (centred ops, several widths) repeated 1, 4 and 16 times: the same widths, 4-16x the ops
+    # decoder claims (centred ops, several widths) repeated 1, 4 and 16 times: the same widths, 4-16x the ops;
+    # a new shape set (cold: its tables built on the device) and the same again (warm)
     base = claim_sets["decoder_gpt"]
     counts = []
     for reps in (1, 4, 16):
         zs = [z.clone() for _ in range(reps) for z in base]
-        blob, n, waits = _device_encode(zs)
-        assert blob == ref.encode(zs)
-        assert waits == {"_d2h": 3, "_nonzero_dev": 1}                  # statistics, Rice statistics, the encoding
-        counts.append((n, len(_header_widths(blob, len(zs)))))
-    assert len({w for _, w in counts}) == 1 and counts[0][1] >= 3
-    assert counts[0][0] == counts[1][0] == counts[2][0], counts
-    n, widths = counts[0]
-    assert n <= 110 + 12 * (widths + 2), counts                  # fixed work, ~10 a packed stream (Rice: 2 more)
+        cc._layout.cache_clear()
+        (blob, cold, cold_waits), (again, n, waits) = _device_encode(zs), _device_encode(zs)
+        assert blob == again == ref.encode(zs)
+        assert waits == cold_waits == {"_d2h": 3, "_nonzero_dev": 1}     # statistics, Rice statistics, the encoding
+        counts.append((n, cold, len(_header_widths(blob, len(zs)))))
+    assert len({w for _, _, w in counts}) == 1 and counts[0][2] >= 3
+    assert counts[0][:2] == counts[1][:2] == counts[2][:2], counts
+    n, cold, widths = counts[0]
+    assert n <= 118 + 12 * (widths + 2), counts                  # fixed work, ~10 a packed stream (Rice: 2 more)
+    assert cold - n <= 40, counts                                 # the tables: a fixed number of ops, once
     with opcount.KernelOps() as old:                              # the reference: ~24 aten ops an op
         ref.encode([z.clone() for _ in range(16) for z in base])
-    assert old.n > 10 * n
+    assert old.n > 9 * n
+
+
+def test_the_device_tables_are_the_host_index(claim_sets):
+    # built on the device from per-op arrays: the host encoder's index arrays, element for element
+    for name, zs in claim_sets.items():
+        lay = cc._Layout(tuple((int(z.shape[0]), int(z.shape[1])) for z in zs))
+        if lay.total == 0:
+            continue
+        lay.host_index()
+        n = lay.n_ops
+        op_of_frow = np.repeat(np.arange(n, dtype=np.int64), lay.rows)
+        for centre in (False, True):
+            tb = lay.on(torch.device("cpu"), centre)
+            assert np.array_equal(tb["sample_idx"].numpy(), lay.sample_idx), name
+            seg = [lay.op_of_sample]
+            if centre:
+                seg += [n + lay.op_of_sample, 2 * n + lay.op_of_row, 3 * n + op_of_frow]
+            segkey = np.concatenate([(k << 32) + (1 << 31) for k in seg])
+            assert np.array_equal(torch.repeat_interleave(tb["segbase"], tb["seg_size"]).numpy(), segkey), name
+            assert tb["n_keys"] == segkey.size and tb["n_seg"] == len(seg) * n
+            if centre:
+                assert np.array_equal(tb["srow"].numpy(), lay.srow), name
+                assert np.array_equal(tb["sample_row"].numpy(), np.repeat(np.arange(lay.roff[-1]), lay.row_m)), name
+                assert np.array_equal(tb["frow"].numpy(), cc._cum0(lay.cols[op_of_frow])), name
+
+
+def test_a_new_shape_set_releases_the_device_tables_of_the_last(claim_sets):
+    # only the layout last used on a device keeps its tables there (not every cached shape set's)
+    first, second = claim_sets["llm"], claim_sets["row_means"]
+    shapes = [tuple((int(z.shape[0]), int(z.shape[1])) for z in zs) for zs in (first, second)]
+    cc.encode(first, impl="device")
+    assert cc._layout(shapes[0])._dev
+    assert cc.encode(second, impl="device") == ref.encode(second)
+    assert not cc._layout(shapes[0])._dev and cc._layout(shapes[1])._dev
+    assert cc.encode(first, impl="device") == ref.encode(first)       # rebuilt
+    assert cc._layout(shapes[0])._dev and not cc._layout(shapes[1])._dev
 
 
 @cuda_only
@@ -548,9 +587,9 @@ def test_the_gpu_encoder_gives_the_reference_bytes(claim_sets):
 
 @cuda_only
 def test_the_gpu_encoder_waits_four_times_and_launches_kernels_per_width(claim_sets, monkeypatch):
-    """In CUDA's sync debug mode "error" any other host round trip raises; the kernels (counted by the
-    profiler, in another run) are the same for 4x and 16x the ops of the same widths, up to ``cat``'s
-    batches of inputs."""
+    """In CUDA's sync debug mode "error" any other host round trip raises, on a new shape set (its tables
+    built on the device) and on a known one; the kernels (counted by the profiler, in another run) are
+    the same for 4x and 16x the ops of the same widths, up to ``cat``'s batches of inputs."""
     base = [z.cuda() for z in claim_sets["decoder_gpt"]]
     waits = []
 
@@ -568,18 +607,19 @@ def test_the_gpu_encoder_waits_four_times_and_launches_kernels_per_width(claim_s
     for reps in (1, 4, 16):
         zs = [z.clone() for _ in range(reps) for z in base]
         want = ref.encode([z.cpu() for z in zs])
-        assert cc.encode(zs) == want                              # warm: layout tables and lane maps uploaded
-        waits.clear()
-        monkeypatch.setattr(cc, "_d2h", allowed(cc._d2h))
-        monkeypatch.setattr(cc, "_nonzero_dev", allowed(cc._nonzero_dev))
-        torch.cuda.synchronize()
-        torch.cuda.set_sync_debug_mode("error")
-        try:
-            assert cc.encode(zs) == want
-        finally:
-            torch.cuda.set_sync_debug_mode(0)
-            monkeypatch.undo()
-        assert sorted(waits) == ["_d2h", "_d2h", "_d2h", "_nonzero_dev"]
+        cc._layout.cache_clear()
+        for run in ("cold", "warm"):                              # cold: the tables built on the device
+            waits.clear()
+            monkeypatch.setattr(cc, "_d2h", allowed(cc._d2h))
+            monkeypatch.setattr(cc, "_nonzero_dev", allowed(cc._nonzero_dev))
+            torch.cuda.synchronize()
+            torch.cuda.set_sync_debug_mode("error")
+            try:
+                assert cc.encode(zs) == want, run
+            finally:
+                torch.cuda.set_sync_debug_mode(0)
+                monkeypatch.undo()
+            assert sorted(waits) == ["_d2h", "_d2h", "_d2h", "_nonzero_dev"], run
         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as prof:   # a run of its own
             assert cc.encode(zs) == want
             torch.cuda.synchronize()
@@ -637,7 +677,8 @@ def test_random_corruptions_never_crash_the_split_decoder(sample, monkeypatch):
         monkeypatch.setattr(cc, fn, where(getattr(cc, fn)))
     assert all(np.array_equal(a, b) for a, b in zip(zs, cc.decode(blob, rows, cols, workers=3)))
     assert ran[("_rice_job", True)] == 2 and ran[("_rice_job", False)] == 0, ran
-    assert ran[("_patch_slice", True)] >= 2 and ran[("_unpack_lanes", True)] >= 3 and ran[("_add_means", True)] >= 1, ran
+    assert ran[("_patch_slice", True)] >= 2 and ran[("_unpack_lanes", True)] >= 3, ran
+    assert ran[("_add_means", True)] >= 1, ran
     for b, one in zip(bad, want):
         try:
             split = cc.decode(b, rows, cols, workers=3)

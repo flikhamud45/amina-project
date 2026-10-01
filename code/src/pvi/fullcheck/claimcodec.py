@@ -518,71 +518,108 @@ def _cum0(a: np.ndarray) -> np.ndarray:
 
 
 class _Layout:
-    """What the shapes ``[(N, M), ...]`` of a query's claims fix (:func:`_layout`: once per shape): each
-    op's place in the flat buffer of all claims, its sampled rows (every ``step``-th of its ``N``) and
-    their place in the flat sample, and their copies on a device."""
+    """What the shapes ``[(N, M), ...]`` of a query's claims fix (:func:`_layout`: once per shape set), per op:
+    its place in the flat buffer of all claims, its sampled rows (every ``step``-th of its ``N``) and their
+    place in the flat sample.  The host encoder's per-row and per-sample index arrays are computed when it
+    first needs them (:meth:`host_index`); a device's tables are built there from the per-op arrays
+    (:meth:`on`), and only the layout last used on a device keeps them."""
 
     def __init__(self, shapes: tuple):
         sh = np.array(shapes, dtype=np.int64).reshape(-1, 2)
         rows, cols = sh[:, 0], sh[:, 1]
-        self.n_ops = n = len(sh)
+        self.n_ops = len(sh)
         self.rows, self.cols, self.size = rows, cols, rows * cols
         self.off = _cum0(self.size)                            # each op's values in the flat buffer
         self.total = int(self.off[-1])
-        step = np.maximum(np.maximum(1, rows // _PLAN_ROWS), self.size // _PLAN_VALUES)
-        r = np.where(rows > 0, (rows + step - 1) // step, 0)  # len(range(0, N, step))
+        self.step = np.maximum(np.maximum(1, rows // _PLAN_ROWS), self.size // _PLAN_VALUES)
+        r = np.where(rows > 0, (rows + self.step - 1) // self.step, 0)  # len(range(0, N, step))
         self.sampled, self.ssize = r, r * cols
         self.scale = rows / np.maximum(r, 1)                   # N / rows sampled, as Python divides
         self.soff, self.roff = _cum0(self.ssize), _cum0(r)     # each op's sample, its sampled rows
-        self.op_of_row = np.repeat(np.arange(n, dtype=np.int64), r)
-        self.row_m = cols[self.op_of_row]
-        t = np.arange(self.roff[-1], dtype=np.int64) - self.roff[:-1][self.op_of_row]
-        row_start = self.off[:-1][self.op_of_row] + t * step[self.op_of_row] * self.row_m
-        self.srow = _cum0(self.row_m)                          # the sampled rows tile the sample
-        self.sample_row = np.repeat(np.arange(self.roff[-1], dtype=np.int64), self.row_m)
-        within = np.arange(self.soff[-1], dtype=np.int64) - self.srow[:-1][self.sample_row]
-        self.sample_idx = row_start[self.sample_row] + within        # each sampled value's place in the buffer
-        self.op_of_sample = self.op_of_row[self.sample_row]
         self.frow0 = _cum0(rows)                               # each op's first row among all rows
         self.eligible = (cols >= 2) & (r > 0)                  # may be centred
+        self._indexed = False
         self._dev: dict = {}
 
+    def host_index(self) -> _Layout:
+        """Computes (once) the host encoder's arrays: per sampled row its op (``op_of_row``), its length
+        (``row_m``) and its start in the flat sample (``srow``, with the end), per sampled value its place
+        in the buffer (``sample_idx``) and its op (``op_of_sample``)."""
+        if not self._indexed:
+            self.op_of_row = np.repeat(np.arange(self.n_ops, dtype=np.int64), self.sampled)
+            self.row_m = self.cols[self.op_of_row]
+            t = np.arange(self.roff[-1], dtype=np.int64) - self.roff[:-1][self.op_of_row]
+            row_start = self.off[:-1][self.op_of_row] + t * self.step[self.op_of_row] * self.row_m
+            self.srow = _cum0(self.row_m)                      # the sampled rows tile the sample
+            sample_row = np.repeat(np.arange(self.roff[-1], dtype=np.int64), self.row_m)
+            within = np.arange(self.soff[-1], dtype=np.int64) - self.srow[:-1][sample_row]
+            self.sample_idx = row_start[sample_row] + within   # each sampled value's place in the buffer
+            self.op_of_sample = self.op_of_row[sample_row]
+            self._indexed = True
+        return self
+
     def on(self, device: torch.device, centre: bool) -> dict:
-        """The device tables of :func:`_encode_device` (uploaded once per device)."""
+        """The device tables of :func:`_encode_device` (built once per device; a layout used on a device
+        releases the tables another layout holds there, so a new shape set does not keep the last one's)."""
         key = (device, centre)
         if key not in self._dev:
+            held = _ON_DEVICE.get(device)
+            if held is not None and held is not self:
+                held._dev = {k: v for k, v in held._dev.items() if k[0] != device}
+            _ON_DEVICE[device] = self
             self._dev[key] = self._tables(device, centre)
         return self._dev[key]
 
     def _tables(self, device: torch.device, centre: bool) -> dict:
-        n = self.n_ops
-        up = functools.partial(_upload, device=device)
-        t = {"sample_idx": up(self.sample_idx), "pow2": up(np.int64(1) << np.arange(41, dtype=np.int64))}
-        kinds = [(self.op_of_sample, self.ssize)]
-        if centre:
-            op_of_frow = np.repeat(np.arange(n, dtype=np.int64), self.rows)
-            frow_m = self.cols[op_of_frow]
-            t.update(sample_row=up(self.sample_row), srow=up(self.srow), row_half=up(self.row_m // 2),
-                     row_div=up(np.maximum(self.row_m, 1)), frow=up(_cum0(frow_m)), frow_half=up(frow_m // 2),
-                     frow_div=up(np.maximum(frow_m, 1)))
-            kinds += [(n + self.op_of_sample, self.ssize), (2 * n + self.op_of_row, self.sampled),
-                      (3 * n + op_of_frow, self.rows)]
-        # the sort key of each statistic's value v: (segment << 32) + v + 2**31 (v clamped to int32)
-        t["segkey"] = up(np.concatenate([(seg << 32) + (1 << 31) for seg, _ in kinds]))
-        size = np.concatenate([s for _, s in kinds])
+        """Built on ``device`` from the per-op arrays and per-segment constants (one upload, a fixed number
+        of kernels): each sampled value's place in the buffer (``sample_idx``), and if ``centre`` its row
+        (``sample_row``), each sampled row's start in the sample (``srow``) and each row's in the buffer
+        (``frow``), each with the end; per statistic's segment its size, base key and middle positions."""
+        n, rs, ns, nr = self.n_ops, int(self.roff[-1]), int(self.soff[-1]), int(self.frow0[-1])
+        # the statistics' segments, per op: the samples' values, then if centring their residuals, the
+        # sampled rows' means and all rows' means
+        size = np.concatenate([self.ssize] + ([self.ssize, self.sampled, self.rows] if centre else []))
         start = _cum0(size)
         last = max(int(start[-1]) - 1, 0)
-        t["mid_lo"] = up(np.minimum(start[:-1] + np.maximum(size - 1, 0) // 2, last))
-        t["mid_hi"] = up(np.minimum(start[:-1] + size // 2, last))
-        t["nonempty"] = up((size > 0).astype(np.int64))
-        t["segbase"] = up((np.arange(len(size), dtype=np.int64) << 32) + (1 << 31))
         half = np.r_[0, np.int64(1) << np.arange(_SPAN - 1, dtype=np.int64)]       # 2**(B-1), B = 0.._SPAN-1
-        t["half"], t["half_hi"] = up(half[None, :]), up((half - (half > 0))[None, :])
-        t["n_seg"] = len(size)
-        return t
+        mid_lo = np.minimum(start[:-1] + np.maximum(size - 1, 0) // 2, last)
+        mid_hi = np.minimum(start[:-1] + size // 2, last)
+        segbase = (np.arange(size.size, dtype=np.int64) << 32) + (1 << 31)
+        (sampled, cols, off, step, soff, roff, rows, frow0, ends, seg_size, mid_lo, mid_hi, nonempty, segbase,
+         half_lo, half_hi, pow2) = _upload_all(
+            [self.sampled, self.cols, self.off[:-1], self.step, self.soff[:-1], self.roff[:-1], self.rows,
+             self.frow0[:-1], [ns, self.total], size, mid_lo, mid_hi, size > 0, segbase, half, half - (half > 0),
+             np.int64(1) << np.arange(41, dtype=np.int64)], device)
+        ops = torch.arange(n, device=device)
+        op_of_row = torch.repeat_interleave(ops, sampled, output_size=rs)              # per sampled row: its op,
+        row_m = cols[op_of_row]                                                        # its length,
+        t = torch.arange(rs, device=device) - roff[op_of_row]                          # its rank in its op,
+        srow = soff[op_of_row] + t * row_m                                             # its start in the sample,
+        shift = off[op_of_row] + t * step[op_of_row] * row_m - srow                    # its in the buffer less that
+        sample_row = torch.repeat_interleave(torch.arange(rs, device=device), row_m, output_size=ns)
+        tb = {"sample_idx": torch.arange(ns, device=device) + shift[sample_row], "pow2": pow2,
+              "seg_size": seg_size, "n_keys": int(start[-1]), "mid_lo": mid_lo, "mid_hi": mid_hi,
+              "nonempty": nonempty, "segbase": segbase, "half": half_lo[None, :], "half_hi": half_hi[None, :],
+              "n_seg": size.size}
+        if centre:
+            op_of_frow = torch.repeat_interleave(ops, rows, output_size=nr)
+            frow = off[op_of_frow] + (torch.arange(nr, device=device) - frow0[op_of_frow]) * cols[op_of_frow]
+            tb.update(sample_row=sample_row, srow=torch.cat([srow, ends[:1]]), frow=torch.cat([frow, ends[1:]]))
+        return tb
 
 
-@functools.lru_cache(maxsize=4)          # each holds its device tables (Qwen3-4B, 36 blocks: ~70 MB)
+_ON_DEVICE: dict = {}       # per device, the layout holding its tables there
+
+
+def _upload_all(arrays: list, device: torch.device) -> list[torch.Tensor]:
+    """The arrays (1-D, as int64) on ``device`` in one upload: views of one buffer, read only."""
+    parts = [np.asarray(a).astype(np.int64, copy=False).reshape(-1) for a in arrays]
+    flat = _upload(np.concatenate(parts), device)
+    cut = _cum0(np.array([p.size for p in parts], dtype=np.int64)).tolist()
+    return [flat[a:e] for a, e in zip(cut, cut[1:])]
+
+
+@functools.lru_cache(maxsize=4)          # per op only (and the host index once the host encoder needs it)
 def _layout(shapes: tuple) -> _Layout:
     return _Layout(shapes)
 
@@ -769,7 +806,7 @@ def _op_chunks(weights: np.ndarray, workers: int) -> list[tuple[int, int]]:
 
 def _encode_host(zts: list, centre: bool, workers: int) -> bytes:
     """:func:`encode` of CPU claims with numpy on ``workers`` threads."""
-    lay = _layout(tuple((int(z.shape[0]), int(z.shape[1])) for z in zts))
+    lay = _layout(tuple((int(z.shape[0]), int(z.shape[1])) for z in zts)).host_index()
     n = lay.n_ops
     # 1. every claim clipped into one int32 buffer: a claim outside the range check stays outside
     x = np.empty(lay.total, dtype=np.int32)
@@ -918,14 +955,20 @@ def _encode_device(zts: list, centre: bool) -> bytes:
     x = x.to(torch.int32)            # out-of-range claims wrap: the extremes refuse them below
     s = x.index_select(0, tb["sample_idx"]).to(torch.int64)
     vals = [s]
-    if centre:
+    if centre:                       # each row's integer mean floor((sum + M // 2) / M), M its length
+        srow, frow = tb["srow"], tb["frow"]
         cs = torch.cat([s.new_zeros(1), torch.cumsum(s, 0)])
-        off = torch.div(cs[tb["srow"][1:]] - cs[tb["srow"][:-1]] + tb["row_half"], tb["row_div"], rounding_mode="floor")
+        m = srow[1:] - srow[:-1]
+        off = torch.div(cs[srow[1:]] - cs[srow[:-1]] + (m >> 1), m.clamp(min=1), rounding_mode="floor")
         csx = torch.cat([s.new_zeros(1), torch.cumsum(x, 0, dtype=torch.int64)])
-        means = torch.div(csx[tb["frow"][1:]] - csx[tb["frow"][:-1]] + tb["frow_half"], tb["frow_div"],
-                          rounding_mode="floor")
+        m = frow[1:] - frow[:-1]
+        means = torch.div(csx[frow[1:]] - csx[frow[:-1]] + (m >> 1), m.clamp(min=1), rounding_mode="floor")
+        del m, cs, csx
         vals += [s - off[tb["sample_row"]], off, means]
-    keys = (torch.cat(vals) if len(vals) > 1 else s).clamp_(-(1 << 31), (1 << 31) - 1).add_(tb["segkey"])
+    # the sort key of each statistic's value v: (segment << 32) + v + 2**31 (v clamped to int32)
+    segkey = torch.repeat_interleave(tb["segbase"], tb["seg_size"], output_size=tb["n_keys"])
+    keys = (torch.cat(vals) if len(vals) > 1 else s).clamp_(-(1 << 31), (1 << 31) - 1).add_(segkey)
+    del segkey, vals
     keys = torch.sort(keys).values                  # each segment's values, sorted, in its own key range
     value = lambda k: (k & 0xFFFFFFFF) - (1 << 31)    # noqa: E731
     mid = _round_half(value(keys[tb["mid_lo"]]) + value(keys[tb["mid_hi"]])) * tb["nonempty"]
