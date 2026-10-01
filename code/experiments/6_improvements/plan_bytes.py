@@ -117,6 +117,7 @@ def _position_ids(cfg, seq: int) -> dict[str, list[int]]:
     ``decoder_shapes``), none for a model without one."""
     return {"pos": list(range(seq))} if cfg.pos == "learned" else {}
 
+
 def query_claims(graph, x) -> tuple[list[torch.Tensor], int]:
     """The honest claims of query ``x`` (in weight-op order) and the bytes of their wire encoding."""
     zs = list(Prover(graph).claims(x).values())
@@ -286,6 +287,7 @@ def run_rows(spec: str, lam: int, policies, queries: int, wires=(False,), claims
             rows.append(row)
             print(row, flush=True)
     return rows
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()

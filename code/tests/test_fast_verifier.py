@@ -241,11 +241,16 @@ def test_merkle_worker_processes_fall_back_when_the_pool_breaks(monkeypatch):
 
 # -- protocol kernels --------------------------------------------------------------------------
 
-def test_range_and_field_checks_match_reference():
+@pytest.mark.parametrize("deferred", [False, True])
+def test_range_and_field_checks_match_reference(deferred, monkeypatch):
+    monkeypatch.setattr(proto, "_defer", lambda device: deferred)
     for z in (torch.zeros(0, 3, dtype=torch.int64), torch.tensor([[Z - 1, 1 - Z]]), torch.tensor([[Z]]),
               torch.tensor([[-Z]]), torch.tensor([[INT64_MIN]]), torch.tensor([[INT64_MAX]]),
               torch.randint(1 - Z, Z, (50, 7)), torch.tensor([[0, INT64_MIN], [1, 2]]).T):
-        assert proto._in_range(z, Z) == ref.in_range(z, Z)
+        pending = []                                   # derive's range check of a claim (deferred: in pending)
+        ok = proto._check_bounds(z, 1 - Z, Z - 1, pending)
+        assert (ok and not any(proto._to_host(pending))) == ref.in_range(z, Z)
+        assert deferred or not pending
     for a in (torch.tensor([[0, P - 1]]), torch.tensor([[P]]), torch.tensor([[-1]]), torch.tensor([[INT64_MIN]]),
               torch.zeros(2, 0, dtype=torch.int64), torch.randint(0, P, (9, 4))):
         assert proto._in_field(a) == ref.in_field(a)

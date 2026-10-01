@@ -417,16 +417,9 @@ def _rhs(op: MatOp, u: torch.Tensor, xin: torch.Tensor) -> torch.Tensor:
     return out
 
 
-def _in_range(z: torch.Tensor, bound: int) -> bool:
-    """``-bound < z < bound`` everywhere (without abs(), which overflows on INT64_MIN)."""
-    if z.numel() == 0:
-        return True
-    lo, hi = min_max(z)
-    return lo > -bound and hi < bound
-
-
 def _in_bounds(a: torch.Tensor, lo: int, hi: int) -> bool:
-    """``lo <= a <= hi`` everywhere."""
+    """``lo <= a <= hi`` everywhere (a claim's range check: ``-Z_BOUND < z < Z_BOUND`` without abs(),
+    which overflows on INT64_MIN)."""
     if a.numel() == 0:
         return True
     amin, amax = min_max(a)
@@ -491,9 +484,14 @@ def _outside(a: torch.Tensor, lo: int, hi: int) -> torch.Tensor:
     return (amin < lo) | (amax > hi)
 
 
-def _out_of_range(z: torch.Tensor, bound: int) -> torch.Tensor:
-    """Some ``|z| >= bound``: :func:`_in_range`, deferred."""
-    return _outside(z, 1 - bound, bound - 1)
+def _check_bounds(a: torch.Tensor, lo: int, hi: int, pending: list) -> bool:
+    """``lo <= a <= hi`` everywhere (:func:`_in_bounds`), or where the checks defer (:func:`_defer`)
+    ``True``, with the verdict left in ``pending`` (:func:`_outside`)."""
+    if not _defer(a.device):
+        return _in_bounds(a, lo, hi)
+    if a.numel():
+        pending.append(_outside(a, lo, hi))
+    return True
 
 
 def _disagrees(checks: list[tuple]) -> torch.Tensor:
@@ -790,24 +788,12 @@ class Verifier:
                         z = claims.get(op.name)
                     if z is None or m is None or z.dtype != dtype or tuple(z.shape) != (op.n_rows, m):
                         return None
-                    if op.name in self.tables:      # rows of int8 weights
-                        if not _defer(z.device):
-                            if not _in_bounds(z, -128, 127):
-                                return None
-                        elif z.numel():
-                            pending.append(_outside(z, -128, 127))
-                    elif op.name not in own:
-                        if not _defer(z.device):
-                            if not _in_range(z, Z_BOUND):
-                                return None
-                        elif z.numel():
-                            pending.append(_out_of_range(z, Z_BOUND))
-                    if op.name in looked:           # every id names a row of the table
-                        if not _defer(xin.device):
-                            if not _in_bounds(xin, 0, op.n_in - 1):
-                                return None
-                        elif xin.numel():
-                            pending.append(_outside(xin, 0, op.n_in - 1))
+                    if op.name not in own:          # a table's rows of int8 weights, else the range check
+                        lo, hi = (-128, 127) if op.name in self.tables else (1 - Z_BOUND, Z_BOUND - 1)
+                        if not _check_bounds(z, lo, hi, pending):
+                            return None
+                    if op.name in looked and not _check_bounds(xin, 0, op.n_in - 1, pending):   # ids of the table
+                        return None
                     ranged[op.name] = _stamp(z)
                     if visit is None:
                         inputs[op.name] = xin
