@@ -1,0 +1,217 @@
+{
+ "lenet5": {
+  "ops": 5,
+  "centred": 1,
+  "claims": 6518,
+  "exceptions": 172,
+  "widths": {
+   "16": [
+    2,
+    6304,
+    168
+   ],
+   "17": [
+    3,
+    110,
+    2
+   ],
+   "18": [
+    1,
+    120,
+    2
+   ]
+  },
+  "stage_ms": {
+   "1 range (aminmax per op)": 0.13400003081187606,
+   "2 to int32 per op": 0.028699985705316067,
+   "3 sample rows": 0.1574999769218266,
+   "4 plan (host, per op)": 0.8913000347092748,
+   "5 row means of centred ops": 0.07680000271648169,
+   "6 segments (means plan, residuals)": 0.13290002243593335,
+   "7 header": 0.009400013368576765,
+   "8a slots: x - lo per segment": 0.1542000100016594,
+   "8b exceptions (mask, nonzero, high parts)": 0.278000021353364,
+   "8c pack32": 0.3347999881953001,
+   "9 Rice (gaps, payloads)": 0.26599998818710446,
+   "10 join": 0.002800021320581436
+  },
+  "total_ms": 2.4664000957272947
+ },
+ "vgg16": {
+  "ops": 16,
+  "centred": 9,
+  "claims": 277514,
+  "exceptions": 14609,
+  "widths": {
+   "16": [
+    1,
+    65536,
+    983
+   ],
+   "17": [
+    7,
+    180288,
+    11468
+   ],
+   "18": [
+    5,
+    24832,
+    2118
+   ],
+   "19": [
+    3,
+    522,
+    0
+   ],
+   "20": [
+    4,
+    1792,
+    35
+   ],
+   "21": [
+    5,
+    7168,
+    5
+   ]
+  },
+  "stage_ms": {
+   "1 range (aminmax per op)": 0.5570999928750098,
+   "2 to int32 per op": 0.24269998539239168,
+   "3 sample rows": 0.6818000110797584,
+   "4 plan (host, per op)": 11.60690002143383,
+   "5 row means of centred ops": 0.5556000396609306,
+   "6 segments (means plan, residuals)": 1.3209000462666154,
+   "7 header": 0.026799971237778664,
+   "8a slots: x - lo per segment": 0.7894999580457807,
+   "8b exceptions (mask, nonzero, high parts)": 1.4118999242782593,
+   "8c pack32": 1.807900087442249,
+   "9 Rice (gaps, payloads)": 0.8576999534852803,
+   "10 join": 0.04680000711232424
+  },
+  "total_ms": 19.90559999831021
+ },
+ "gpt2_T64": {
+  "ops": 75,
+  "centred": 64,
+  "claims": 5456977,
+  "exceptions": 386400,
+  "widths": {
+   "7": [
+    2,
+    98304,
+    10819
+   ],
+   "14": [
+    5,
+    245760,
+    44071
+   ],
+   "15": [
+    7,
+    295680,
+    22225
+   ],
+   "16": [
+    31,
+    1970688,
+    238402
+   ],
+   "17": [
+    94,
+    2918737,
+    70883
+   ]
+  },
+  "stage_ms": {
+   "1 range (aminmax per op)": 4.042099986691028,
+   "2 to int32 per op": 2.8152000159025192,
+   "3 sample rows": 3.585200000088662,
+   "4 plan (host, per op)": 50.993400043807924,
+   "5 row means of centred ops": 4.139699973165989,
+   "6 segments (means plan, residuals)": 10.807799990288913,
+   "7 header": 0.1047999830916524,
+   "8a slots: x - lo per segment": 4.730299930088222,
+   "8b exceptions (mask, nonzero, high parts)": 15.7065000385046,
+   "8c pack32": 18.28169997315854,
+   "9 Rice (gaps, payloads)": 28.615400020498782,
+   "10 join": 2.0952000049874187
+  },
+  "total_ms": 145.91729996027425
+ },
+ "qwen8_T8": {
+  "ops": 58,
+  "centred": 0,
+  "claims": 2138496,
+  "exceptions": 85831,
+  "widths": {
+   "7": [
+    1,
+    20480,
+    2285
+   ],
+   "18": [
+    49,
+    1954176,
+    82612
+   ],
+   "19": [
+    8,
+    163840,
+    934
+   ]
+  },
+  "stage_ms": {
+   "1 range (aminmax per op)": 2.412599977105856,
+   "2 to int32 per op": 1.5638000331819057,
+   "3 sample rows": 2.4693000013940036,
+   "4 plan (host, per op)": 15.744500036817044,
+   "5 row means of centred ops": 0.016900012269616127,
+   "6 segments (means plan, residuals)": 0.24780002422630787,
+   "7 header": 0.05609996151179075,
+   "8a slots: x - lo per segment": 2.5671999319456518,
+   "8b exceptions (mask, nonzero, high parts)": 5.707399977836758,
+   "8c pack32": 8.129199966788292,
+   "9 Rice (gaps, payloads)": 3.6082000005990267,
+   "10 join": 0.902900006622076
+  },
+  "total_ms": 43.42589993029833
+ },
+ "qwen36_T8": {
+  "ops": 254,
+  "centred": 0,
+  "claims": 9019776,
+  "exceptions": 355439,
+  "widths": {
+   "7": [
+    1,
+    20480,
+    2285
+   ],
+   "18": [
+    217,
+    8262016,
+    348957
+   ],
+   "19": [
+    36,
+    737280,
+    4197
+   ]
+  },
+  "stage_ms": {
+   "1 range (aminmax per op)": 10.215899965260178,
+   "2 to int32 per op": 9.052000008523464,
+   "3 sample rows": 11.210299970116466,
+   "4 plan (host, per op)": 66.33639999199659,
+   "5 row means of centred ops": 0.030499999411404133,
+   "6 segments (means plan, residuals)": 0.6763000274077058,
+   "7 header": 0.12350000906735659,
+   "8a slots: x - lo per segment": 9.514300036244094,
+   "8b exceptions (mask, nonzero, high parts)": 23.368499998468906,
+   "8c pack32": 34.32319994317368,
+   "9 Rice (gaps, payloads)": 26.42439998453483,
+   "10 join": 3.4502000198699534
+  },
+  "total_ms": 194.72549995407462
+ }
+}

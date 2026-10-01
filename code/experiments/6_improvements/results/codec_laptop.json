@@ -1,0 +1,167 @@
+{
+ "lenet5": {
+  "ops": 5,
+  "claims": 6518,
+  "bytes": 13449,
+  "median_ms": {
+   "encode/old numpy/t1": 2.1038000122644007,
+   "encode/new host/t1": 1.494100026320666,
+   "decode int32/old/t1": 0.3896999987773597,
+   "decode int32/new/t1": 0.3845000173896551,
+   "decode int64/old/t1": 0.3797999816015363,
+   "decode int64/new/t1": 0.39300002390518785,
+   "encode/old numpy/t4": 2.4074999964796007,
+   "encode/new host/t4": 1.900100032798946,
+   "decode int32/old/t4": 0.44739997247233987,
+   "decode int32/new/t4": 0.4807999939657748,
+   "decode int64/old/t4": 0.486500037368387,
+   "decode int64/new/t4": 0.4955999902449548,
+   "encode/old numpy/t8": 2.7322000241838396,
+   "encode/new host/t8": 1.909000042360276,
+   "decode int32/old/t8": 0.4922000225633383,
+   "decode int32/new/t8": 0.4930999712087214,
+   "decode int64/old/t8": 0.47749996883794665,
+   "decode int64/new/t8": 0.49589999252930284,
+   "encode/old torch path on CPU/t4": 2.6593999937176704,
+   "encode/new device path on CPU/t4": 3.230700036510825
+  },
+  "kernel_ops_old_torch_path": 94,
+  "kernel_ops_new_device": 148,
+  "waits_new_device": {
+   "d2h": 3,
+   "nonzero": 1
+  }
+ },
+ "vgg16": {
+  "ops": 16,
+  "claims": 277514,
+  "bytes": 614102,
+  "median_ms": {
+   "encode/old numpy/t1": 16.752699972130358,
+   "encode/new host/t1": 16.19100000243634,
+   "decode int32/old/t1": 1.8449000199325383,
+   "decode int32/new/t1": 1.7869999865069985,
+   "decode int64/old/t1": 2.0166999893262982,
+   "decode int64/new/t1": 2.0570000051520765,
+   "encode/old numpy/t4": 23.51309999357909,
+   "encode/new host/t4": 22.329600004013628,
+   "decode int32/old/t4": 2.9227000195533037,
+   "decode int32/new/t4": 2.6780999614857137,
+   "decode int64/old/t4": 3.0513000092469156,
+   "decode int64/new/t4": 3.0227999668568373,
+   "encode/old numpy/t8": 24.52629996696487,
+   "encode/new host/t8": 22.976999985985458,
+   "decode int32/old/t8": 3.209399990737438,
+   "decode int32/new/t8": 2.9101999825797975,
+   "decode int64/old/t8": 3.2742999610491097,
+   "decode int64/new/t8": 2.96770001295954,
+   "encode/old torch path on CPU/t4": 24.688299978151917,
+   "encode/new device path on CPU/t4": 26.887400017585605
+  },
+  "kernel_ops_old_torch_path": 255,
+  "kernel_ops_new_device": 178,
+  "waits_new_device": {
+   "d2h": 3,
+   "nonzero": 1
+  }
+ },
+ "gpt2_T64": {
+  "ops": 75,
+  "claims": 5456977,
+  "bytes": 11676676,
+  "median_ms": {
+   "encode/old numpy/t1": 152.76460000313818,
+   "encode/new host/t1": 132.18149996828288,
+   "decode int32/old/t1": 27.379200037103146,
+   "decode int32/new/t1": 26.927099970635027,
+   "decode int64/old/t1": 31.9197999779135,
+   "decode int64/new/t1": 31.901300011668354,
+   "encode/old numpy/t4": 180.6166999740526,
+   "encode/new host/t4": 117.19760001869872,
+   "decode int32/old/t4": 20.39860002696514,
+   "decode int32/new/t4": 20.015299960505217,
+   "decode int64/old/t4": 23.99729995522648,
+   "decode int64/new/t4": 24.024499987717718,
+   "encode/old numpy/t8": 222.88489999482408,
+   "encode/new host/t8": 119.28389995591715,
+   "decode int32/old/t8": 25.046300026588142,
+   "decode int32/new/t8": 23.519599984865636,
+   "decode int64/old/t8": 27.842000010423362,
+   "decode int64/new/t8": 24.78430001065135,
+   "encode/old torch path on CPU/t4": 191.59920001402497,
+   "encode/new device path on CPU/t4": 254.10900003043935
+  },
+  "kernel_ops_old_torch_path": 862,
+  "kernel_ops_new_device": 168,
+  "waits_new_device": {
+   "d2h": 3,
+   "nonzero": 1
+  }
+ },
+ "qwen8_T8": {
+  "ops": 58,
+  "claims": 2138496,
+  "bytes": 4906719,
+  "median_ms": {
+   "encode/old numpy/t1": 51.14080000203103,
+   "encode/new host/t1": 30.54479998536408,
+   "decode int32/old/t1": 10.66759997047484,
+   "decode int32/new/t1": 9.155599982477725,
+   "decode int64/old/t1": 11.01580000249669,
+   "decode int64/new/t1": 11.449099984019995,
+   "encode/old numpy/t4": 54.45080000208691,
+   "encode/new host/t4": 28.001900005619973,
+   "decode int32/old/t4": 9.251700015738606,
+   "decode int32/new/t4": 10.723399987909943,
+   "decode int64/old/t4": 10.803700017277151,
+   "decode int64/new/t4": 11.862399987876415,
+   "encode/old numpy/t8": 66.26009999308735,
+   "encode/new host/t8": 38.396299991291016,
+   "decode int32/old/t8": 11.615500028710812,
+   "decode int32/new/t8": 10.646700044162571,
+   "decode int64/old/t8": 12.813800014555454,
+   "decode int64/new/t8": 11.941300006583333,
+   "encode/old torch path on CPU/t4": 61.03330000769347,
+   "encode/new device path on CPU/t4": 84.73860000958666
+  },
+  "kernel_ops_old_torch_path": 352,
+  "kernel_ops_new_device": 137,
+  "waits_new_device": {
+   "d2h": 3,
+   "nonzero": 1
+  }
+ },
+ "qwen36_T8": {
+  "ops": 254,
+  "claims": 9019776,
+  "bytes": 20784434,
+  "median_ms": {
+   "encode/old numpy/t1": 201.30720001179725,
+   "encode/new host/t1": 124.90830000024289,
+   "decode int32/old/t1": 39.53030001139268,
+   "decode int32/new/t1": 37.486899993382394,
+   "decode int64/old/t1": 48.15380001673475,
+   "decode int64/new/t1": 45.43970001395792,
+   "encode/old numpy/t4": 242.62999999336898,
+   "encode/new host/t4": 114.89510000683367,
+   "decode int32/old/t4": 24.754100013524294,
+   "decode int32/new/t4": 26.254399970639497,
+   "decode int64/old/t4": 31.071400037035346,
+   "decode int64/new/t4": 31.11069998703897,
+   "encode/old numpy/t8": 269.97599995229393,
+   "encode/new host/t8": 120.8117000060156,
+   "decode int32/old/t8": 30.471300007775426,
+   "decode int32/new/t8": 28.150100028142333,
+   "decode int64/old/t8": 38.549299992155284,
+   "decode int64/new/t8": 34.809599979780614,
+   "encode/old torch path on CPU/t4": 256.08300004387274,
+   "encode/new device path on CPU/t4": 305.405699997209
+  },
+  "kernel_ops_old_torch_path": 1332,
+  "kernel_ops_new_device": 137,
+  "waits_new_device": {
+   "d2h": 3,
+   "nonzero": 1
+  }
+ }
+}
