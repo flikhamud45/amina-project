@@ -15,7 +15,7 @@
 
 | File | Contents |
 |---|---|
-| `field.py` | BabyBear field arithmetic, NTT and Reed–Solomon encoding, exact modular matrix products |
+| `field.py` | BabyBear field arithmetic, NTT and Reed–Solomon encoding, exact modular matrix products (on a GPU with int8 tensor cores, also as exact int8 GEMMs: `int8_*`) |
 | `commitment.py` | Merkle trees with multiproofs; the weight commitment (rows encoded, Merkle root over columns) and its column openings; the transposed and grouped commitments of the plans, and lookup tables (a tree over an embedding's rows) |
 | `graph.py` | integer computation graphs: weight operations (`MatOp`) and verifier-recomputed operations (`CheapOp`), exact GPU matrix products; the lean forward pass (dead tensors freed, claims streamed to the host); `PVI_LEGACY_WEIGHT_KEY=1` restores the weight cache of the earliest run (`raw/`), for the benchmark's `_nofix` controls |
 | `quantize.py`, `models.py`, `datasets.py` | float CNN → int8 graph (per-channel weights, BatchNorm folded); the benchmarked CNNs and their data |
@@ -26,5 +26,5 @@
 | `claimcodec.py` | the compact, lossless encoding of the proof (`run_query(wire=True)`) |
 | `reference.py`, `opcount.py` | the straightforward code the verifier's fast routines are tested against; counting launched work (tests and benchmarks only) |
 | `sampling.py` | the original path test on the same integer graphs (the like-for-like baseline), with exact per-neuron detection |
-| `analytic.py` | decoder weight-op shapes and the expected multiproof size (for runs made before multiproofs) |
+| `analytic.py` | decoder weight-op shapes and claim columns, without building the model; the expected multiproof size (for runs made before multiproofs) and its analogue for a lookup table's rows (`expected_lookup_nodes`); a query's proof bytes (`proof_bytes`) and the commitment's setup size (`setup_size`) from the shapes alone, under the report's parameters or a commitment plan, in the default form or with `--wire` (the setup budget of `plans.py`'s `auto`, `bench.py`'s setup records, `6_improvements/plan_bytes.py` and `wire.py`) |
 | `real_weights.py` | integer OPT decoders built from real Hugging Face checkpoints (the same ops and shapes as `build_decoder`, LayerNorm folded into the next matrix), for the int8 perplexities of §4.1 (`experiments/2_attack/real_weights_ppl.py`) |
