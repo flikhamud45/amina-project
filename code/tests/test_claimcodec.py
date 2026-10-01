@@ -21,10 +21,9 @@ import claimcodec_reference as ref
 import numpy as np
 import pytest
 import torch
-from torch.utils._python_dispatch import TorchDispatchMode
 
 from pvi.fullcheck import claimcodec as cc
-from pvi.fullcheck import commitment
+from pvi.fullcheck import commitment, opcount
 from pvi.fullcheck.protocol import P, Z_BOUND
 from pvi.fullcheck.transformer import DecoderConfig, build_decoder
 
@@ -92,7 +91,8 @@ def test_the_torch_packer_gives_the_bytes_of_numpy(k):
     g = torch.Generator().manual_seed(k)
     for n in [1, 31, 32, 100, 4097]:
         v = torch.randint(0, 1 << k, (n,), generator=g, dtype=torch.int64)
-        assert cc._pack32_torch(v, k) == cc.pack32(v.numpy().astype(np.uint32), k)
+        words = cc._d2h(cc._pack_dev(v, k))                      # int32 [k, G]: the words' bytes
+        assert words.astype("<i4", copy=False).tobytes() == cc.pack32(v.numpy().astype(np.uint32), k)
 
 
 def test_rice_round_trip():
@@ -496,44 +496,11 @@ def test_the_lane_packer_gives_the_references_bytes():
                 assert cc.pack32(v, k, workers) == want, (k, n, workers)
 
 
-class _Ops(TorchDispatchMode):
-    """Counts the aten ops that launch work on a device (views and detach launch none)."""
-
-    VIEWS = ("view", "slice", "detach", "lift_fresh", "alias", "_reshape_alias", "select", "unsqueeze", "expand",
-             "as_strided", "t.default", "transpose", "squeeze", "unbind", "split", "reshape")
-
-    def __init__(self):
-        super().__init__()
-        self.n = 0
-
-    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
-        if not any(str(func).startswith("aten." + v) for v in self.VIEWS):
-            self.n += 1
-        return func(*args, **(kwargs or {}))
-
-
-def _device_encode(zs, monkeypatch):
+def _device_encode(zs):
     """``encode(zs, impl="device")`` with its kernels counted (aten ops) and its waits for the device."""
-    waits = {"d2h": 0, "nonzero": 0}
-    real_d2h, real_nonzero = cc._d2h, cc._nonzero_dev
-
-    def d2h(t):
-        waits["d2h"] += 1
-        return real_d2h(t)
-
-    def nonzero(t):
-        waits["nonzero"] += 1
-        return real_nonzero(t)
-
-    monkeypatch.setattr(cc, "_d2h", d2h)
-    monkeypatch.setattr(cc, "_nonzero_dev", nonzero)
-    try:
-        with _Ops() as ops:
-            blob = cc.encode(zs, impl="device")
-    finally:
-        monkeypatch.setattr(cc, "_d2h", real_d2h)
-        monkeypatch.setattr(cc, "_nonzero_dev", real_nonzero)
-    return blob, ops.n, waits
+    with opcount.codec_waits(cc) as waits, opcount.KernelOps() as ops:
+        blob = cc.encode(zs, impl="device")
+    return blob, ops.n, dict(waits)
 
 
 def _header_widths(blob: bytes, n_ops: int) -> set:
@@ -547,21 +514,21 @@ def _header_widths(blob: bytes, n_ops: int) -> set:
     return widths
 
 
-def test_the_device_encoders_kernels_grow_with_the_widths_not_the_ops(claim_sets, monkeypatch):
+def test_the_device_encoders_kernels_grow_with_the_widths_not_the_ops(claim_sets):
     # decoder claims (centred ops, several widths) repeated 1, 4 and 16 times: the same widths, 4-16x the ops
     base = claim_sets["decoder_gpt"]
     counts = []
     for reps in (1, 4, 16):
         zs = [z.clone() for _ in range(reps) for z in base]
-        blob, n, waits = _device_encode(zs, monkeypatch)
+        blob, n, waits = _device_encode(zs)
         assert blob == ref.encode(zs)
-        assert waits == {"d2h": 3, "nonzero": 1}                  # statistics, Rice statistics, the encoding
+        assert waits == {"_d2h": 3, "_nonzero_dev": 1}                  # statistics, Rice statistics, the encoding
         counts.append((n, len(_header_widths(blob, len(zs)))))
     assert len({w for _, w in counts}) == 1 and counts[0][1] >= 3
     assert counts[0][0] == counts[1][0] == counts[2][0], counts
     n, widths = counts[0]
     assert n <= 110 + 12 * (widths + 2), counts                  # fixed work, ~10 a packed stream (Rice: 2 more)
-    with _Ops() as old:                                           # the reference: ~24 aten ops an op
+    with opcount.KernelOps() as old:                              # the reference: ~24 aten ops an op
         ref.encode([z.clone() for _ in range(16) for z in base])
     assert old.n > 10 * n
 

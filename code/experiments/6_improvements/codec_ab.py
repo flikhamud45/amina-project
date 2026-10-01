@@ -35,32 +35,14 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
-from torch.utils._python_dispatch import TorchDispatchMode
 
 CODE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ab_verifier as ab  # noqa: E402
 import pvi.fullcheck as fullcheck  # noqa: E402
-from pvi.fullcheck import claimcodec  # noqa: E402
+from pvi.fullcheck import claimcodec, opcount  # noqa: E402
 from pvi.fullcheck.field import P  # noqa: E402
-
-VIEWS = ("view", "slice", "detach", "lift_fresh", "alias", "_reshape_alias", "select", "unsqueeze", "expand",
-         "as_strided", "t.default", "transpose", "squeeze", "unbind", "split", "reshape")
-
-
-class _Ops(TorchDispatchMode):
-    """The aten ops that launch work on a device (views and detach launch none)."""
-
-    def __init__(self):
-        super().__init__()
-        self.n = 0
-
-    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
-        if not any(str(func).startswith("aten." + v) for v in VIEWS):
-            self.n += 1
-        return func(*args, **(kwargs or {}))
 
 
 def _sync(dev: torch.device) -> None:
@@ -103,23 +85,8 @@ def _time(fn, dev: torch.device) -> float:
 
 def _counted(zs) -> dict:
     """This checkout's device encoder: aten ops that launch kernels, waits for the device."""
-    waits = {"_d2h": 0, "_nonzero_dev": 0}
-    real = {k: getattr(claimcodec, k) for k in waits}
-
-    def wrap(name):
-        def call(t):
-            waits[name] += 1
-            return real[name](t)
-        return call
-
-    for k in waits:
-        setattr(claimcodec, k, wrap(k))
-    try:
-        with _Ops() as ops:
-            claimcodec.encode(zs, impl="device")
-    finally:
-        for k, f in real.items():
-            setattr(claimcodec, k, f)
+    with opcount.codec_waits(claimcodec) as waits, opcount.KernelOps() as ops:
+        claimcodec.encode(zs, impl="device")
     return {"kernel_ops": ops.n, **waits}
 
 

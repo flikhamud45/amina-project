@@ -277,13 +277,6 @@ def _pack_dev(v: torch.Tensor, k: int) -> torch.Tensor:
     return words[:k].to(torch.int32)                           # the low 32 bits: the uint32 words' bytes
 
 
-def _pack32_torch(v: torch.Tensor, k: int) -> bytes:
-    """:func:`pack32` with torch ops on ``v``'s device (:func:`_pack_dev`), the words copied back once."""
-    if k == 0 or v.numel() == 0:
-        return b""
-    return _d2h(_pack_dev(v, k)).astype("<i4", copy=False).tobytes()
-
-
 def _add_bases_in(out: np.ndarray, bases, a: int, e: int) -> None:
     """Adds to the slots ``out[a:e]`` (uint32, of one stream) the base of each segment over them: ``bases``
     are ``(starts, ends, bases)`` of the stream's segments in order (lists; a base as ``np.uint32``, or 0
@@ -932,7 +925,7 @@ def _encode_device(zts: list, centre: bool) -> bytes:
         means = torch.div(csx[tb["frow"][1:]] - csx[tb["frow"][:-1]] + tb["frow_half"], tb["frow_div"],
                           rounding_mode="floor")
         vals += [s - off[tb["sample_row"]], off, means]
-    keys = (torch.cat(vals) if len(vals) > 1 else s.clone()).clamp_(-(1 << 31), (1 << 31) - 1).add_(tb["segkey"])
+    keys = (torch.cat(vals) if len(vals) > 1 else s).clamp_(-(1 << 31), (1 << 31) - 1).add_(tb["segkey"])
     keys = torch.sort(keys).values                  # each segment's values, sorted, in its own key range
     value = lambda k: (k & 0xFFFFFFFF) - (1 << 31)    # noqa: E731
     mid = _round_half(value(keys[tb["mid_lo"]]) + value(keys[tb["mid_hi"]])) * tb["nonempty"]
@@ -1033,6 +1026,7 @@ def _width_runs(widths: np.ndarray, start: np.ndarray):
     cut = np.flatnonzero(np.r_[True, widths[1:] != widths[:-1]])
     ends = np.r_[cut[1:], widths.size]
     return [(int(widths[a]), int(start[a]), int(start[z])) for a, z in zip(cut, ends)]
+
 
 # ---------------------------------------------------------------------------- the decoder
 def _need(buf, off: int, n: int) -> int:
