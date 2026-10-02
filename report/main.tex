@@ -278,30 +278,14 @@ zero by construction.
 \subsection{Why sampling does not fix it}
 \label{sec:sampling}
 Anchuri et al.\ suggest sampling more paths, or sampling where it matters instead of uniformly.
-Against an adversary who knows the rule, neither helps if the rule ignores the claimed values.
-
-Fix a layer and let $U$ be the set of its neurons whose change can flip the output. A sampler is
-\emph{value-blind} if it chooses the neurons to open independently of the claimed values.
-
-\begin{proposition}[uniform sampling is minimax-optimal]
-A value-blind sampler that opens at most $s$ neurons of the layer catches the worst-case tampered
-neuron of $U$ with probability at most $s/|U|$, with equality when the $s$ neurons are distinct
-and uniform over $U$.
-\end{proposition}
-
-\noindent\emph{Proof.} Let $\pi(v)$ be the probability that the sampler opens neuron $v$. An
-adversary who knows the sampler, but not its random choices, tampers with the neuron of $U$ that
-minimises $\pi$. At most $s$ neurons are opened, so $\sum_{v\in U}\pi(v) \le s$, and the minimum
-is at most the average, $s/|U|$. Opening $s$ distinct neurons of $U$ uniformly at random opens
-each with probability exactly $s/|U|$. \qed
-
-\noindent The argument is elementary, but it rules out the fix Anchuri et al.\ suggest: no value-blind
-rule beats uniform sampling, so catching one tampered neuron with constant probability needs
-$s=\Omega(|U|)$ openings per layer, linear in the width, which is the cost the protocol was
-designed to avoid.
-
-A sampler is \emph{value-aware} if it chooses each neuron to open from the input, the claimed values, the weights of later layers, each neuron's
-natural range (the values it takes on honest inputs) and the rows it has already opened.
+Neither helps against an adversary who knows the rule. Fix a layer of width $N$ and let $U$ be the
+set of its neurons whose change can flip the output. If the sampler ignores the claimed values, the
+probabilities with which it opens each neuron are fixed before the adversary acts and sum to at
+most $s$ over $U$, so the adversary can tamper with a neuron that is opened with probability at
+most $s/|U|$, on every network. A sampler that reads the values could do better on a particular
+network, but not on every one. We call a sampler \emph{value-aware} if it chooses each neuron to
+open from the input, the claimed values, the weights of later layers, each neuron's natural range
+(the values it takes on honest inputs) and the rows it has already opened.
 
 \begin{proposition}[no sampler beats uniform on every network]
 \label{prop:anysampler}
@@ -320,12 +304,14 @@ copies a 1, so for a random $\sigma$ the zero's copier stays uniform among the u
 is opened with probability at most $s/N$; some $\sigma$ does no better. \qed
 
 \noindent Opening $s$ distinct neurons uniformly reaches $s/N$ on every dense network, so nothing
-beats uniform sampling in the worst case. On our MNIST network the \emph{contribution-weighted sampler}, which steps to parent
-$i$ with probability proportional to $|w_{ij} a_i|$, catches our single-neuron attack, whose value
-is unusually large, in 9\% of paths, but never visits a neuron whose claimed activation is zero,
-so zeroing a few neurons is never detected. A floor $\delta$, sampling by
-$|w_{ij}|(|a_i|+\delta)$, removes this blind spot but leaves detection low
-(Section~\ref{sec:break}), and a range check costs the attack only a few more neurons.
+beats uniform sampling in the worst case, and catching one tampered neuron with constant
+probability needs $s=\Omega(N)$ openings per layer, the cost the protocol was designed to avoid.
+On our MNIST network the \emph{contribution-weighted sampler}, which steps to parent $i$ with
+probability proportional to $|w_{ij} a_i|$, catches our single-neuron attack, whose value is
+unusually large, in 9\% of paths, but never visits a neuron whose claimed activation is zero, so
+zeroing a few neurons is never detected. A floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$,
+removes this blind spot but leaves detection low (Section~\ref{sec:break}), and a range check
+costs the attack only a few more neurons.
 
 \subsection{Our defence: checking every layer}
 \label{sec:defence}
