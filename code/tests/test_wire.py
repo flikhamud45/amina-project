@@ -550,7 +550,7 @@ def test_a_lean_forward_narrows_tampered_claims_of_any_integer_dtype():
 
 def test_a_proof_encoded_on_the_device_in_parts_is_the_proof_of_one_pass(monkeypatch):
     # a lean GPU prover's encoding (its claims narrowed to int32, the device encoder; here on the host) of more
-    # than _CHUNK claim values, in parts: the verdicts, the proof sizes and the Fiat--Shamir transcript of one pass
+    # than _ONE_PASS claim values, in parts: the verdicts, the proof sizes and the Fiat--Shamir transcript of one pass
     # and of the host encoder, honest and tampered, with the batched and the streaming verifier
     graph, x = _graph("qwen")
     n = sum(z.numel() for z in graph.forward(x)[1].values())
@@ -565,6 +565,7 @@ def test_a_proof_encoded_on_the_device_in_parts_is_the_proof_of_one_pass(monkeyp
             monkeypatch.setattr(proto.claimcodec, "encode", lambda zs, impl=impl: _ENCODE(
                 [cc.narrow(z) for z in zs] if impl == "device" else zs, impl=impl))
             if chunk:
+                monkeypatch.setattr(cc, "_ONE_PASS", chunk)
                 monkeypatch.setattr(cc, "_CHUNK", chunk)
             absorbed.clear()
             runs.append(([(r["accepted"], r["rejected_at"], r["bytes"]) for r in (

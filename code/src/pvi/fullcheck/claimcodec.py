@@ -54,9 +54,10 @@ and on a device (the per-op encoder that defined the format is ``tests/claimcode
 both are tested against it).  The host's runs numpy on ``workers`` threads; a device's runs torch
 where the claims are, with a fixed number of kernels plus about ten per distinct width (not per op)
 and four copies back: every op's statistics at once (one sort), the exceptions' number, the Rice
-parameters' statistics, and the encoding (about 2.3 bytes a claim).  A proof of more than ``_CHUNK``
-claim values is encoded on its device in parts of about ``_CHUNK`` values (:func:`_encode_chunked`:
-the same bytes, with temporaries bounded by the part however many claims there are).
+parameters' statistics, and the encoding (about 2.3 bytes a claim); its temporaries take about 40
+bytes a claim.  A proof of more than ``_ONE_PASS`` claim values is encoded on its device in parts of
+about ``_CHUNK`` values (:func:`_encode_chunked`: the same bytes, with temporaries bounded by the part
+however many claims there are).
 
 Rice vectors (:func:`_rice_encode`): a byte ``k <= 32``; the ``k``-bit low parts as a slot
 stream; the quotients ``q = v >> k <= 15`` in bit-plane unary: level ``l = 1..15`` holds one bit
@@ -86,6 +87,7 @@ import bisect
 import functools
 import itertools
 import struct
+import threading
 
 import numpy as np
 import torch
@@ -108,7 +110,9 @@ _PLAN_ROWS = 256            # rows sampled to plan an op
 _PLAN_VALUES = 1 << 16
 _JOB = 1 << 18              # values per job of the host encoder's threads (packing, scanning, statistics)
 _SPLIT = 1 << 16            # exceptions from which the decoder's workers decode both Rice vectors at once
-_CHUNK = 1 << 23            # a device's encoder: claim values of one pass (more: in parts of this many values)
+_ONE_PASS = 1 << 27         # a device's encoder: claim values of one pass (~40 bytes each, ~5 GiB; more: in parts)
+_CHUNK = 1 << 23            # a device's encoder in parts: claim values of a part (~40 bytes each, ~0.4 GiB)
+_SLAB = 1 << 28             # in parts, the encoding comes back into pinned host slabs of this many bytes
 
 
 class ClaimCodecError(ValueError):
@@ -145,7 +149,8 @@ def _cuts(n: int, parts: int) -> list[tuple[int, int]]:
 
 # ---------------------------------------------------------------------------- host <-> device
 # The device encoder copies to and from the host only through these: ``_upload`` (pinned memory, no
-# wait), ``_d2h`` and ``_nonzero_dev`` (each one wait for the device).
+# wait), ``_d2h`` and ``_nonzero_dev`` (each one wait for the device), and in parts ``_copy_back`` (into
+# ``_host_buffer``'s pinned memory, no wait; read after the next wait).
 
 def _upload(a: np.ndarray, device: torch.device) -> torch.Tensor:
     """A host array on ``device``, through pinned memory and without waiting for the device (a copy from
@@ -173,6 +178,41 @@ def _d2h(t: torch.Tensor) -> np.ndarray:
 def _nonzero_dev(t: torch.Tensor) -> torch.Tensor:
     """The positions of ``t``'s non-zero entries (1-D): one wait for the device, for their number."""
     return torch.nonzero(t).view(-1)
+
+
+def _host_buffer(n: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+    """``n`` uninitialised host values that :func:`_copy_back` fills from ``device`` without a wait (pinned
+    memory for a GPU)."""
+    return torch.empty(n, dtype=dtype, pin_memory=device.type == "cuda")
+
+
+def _copy_back(dst: torch.Tensor, src: torch.Tensor) -> None:
+    """``dst`` (contiguous, of a :func:`_host_buffer`) = ``src`` (contiguous, same size and dtype): queued on a
+    GPU's stream, so ``dst`` holds it after the next wait (:func:`_d2h`, :func:`_nonzero_dev`) and ``src``
+    may be freed at once.  Other devices copy at once."""
+    dst.copy_(src.view(dst.shape), non_blocking=src.device.type == "cuda")
+
+
+class _HostBytes:
+    """``n`` bytes on the host for copies from ``device`` without a wait (:func:`_copy_back`), in slabs of at
+    most ``_SLAB`` bytes (a power of two: pinned memory is allocated in powers of two)."""
+
+    def __init__(self, n: int, device: torch.device) -> None:
+        cuts = list(range(0, n, _SLAB)) + [n]
+        self.slabs = [_host_buffer(e - a, torch.uint8, device) for a, e in zip(cuts, cuts[1:])]
+
+    def put(self, at: int, src: torch.Tensor) -> None:
+        """Bytes ``[at, at + len(src))`` = ``src`` (1-D uint8, contiguous)."""
+        done, n = 0, src.numel()
+        while done < n:
+            i, a = divmod(at + done, _SLAB)
+            m = min(n - done, _SLAB - a)
+            _copy_back(self.slabs[i][a:a + m], src[done:done + m])
+            done += m
+
+    def views(self) -> list[memoryview]:
+        """The bytes, slab by slab (after a wait)."""
+        return [memoryview(s.numpy()) for s in self.slabs]
 
 
 # ---------------------------------------------------------------------------- slot streams
@@ -959,7 +999,7 @@ def _assemble(ops: list, workers: int = 1) -> bytes:
 def _encode_device(zts: list, centre: bool) -> bytes:
     """:func:`encode` with torch ops on the claims' device: a fixed number of kernels plus about ten per
     distinct width, and four waits for the device (:func:`_d2h`, :func:`_nonzero_dev`).  Its temporaries
-    take about 40 bytes a claim value: more than ``_CHUNK`` values are encoded in parts
+    take about 40 bytes a claim value: more than ``_ONE_PASS`` values are encoded in parts of ``_CHUNK``
     (:func:`_encode_chunked`, the same bytes)."""
     dev = zts[0].device
     lay = _layout(tuple((int(z.shape[0]), int(z.shape[1])) for z in zts))
@@ -968,7 +1008,7 @@ def _encode_device(zts: list, centre: bool) -> bytes:
     n = lay.n_ops
     centre = bool(centre and lay.eligible.any())
     tb = lay.on(dev, centre)
-    if lay.total > _CHUNK:
+    if lay.total > _ONE_PASS:
         return _encode_chunked(zts, lay, tb, centre)
     # 1. the claims in one int32 buffer, then the statistics of every op's samples and (if centring)
     # of every op's row means, in one sort and one scatter; one copy back
@@ -1103,15 +1143,20 @@ def _width_runs(widths: np.ndarray, start: np.ndarray):
 # 1. One pass over row-aligned windows of the claims (op after op): their extremes, the samples and every
 #    row's integer mean; the statistics are sorted in groups of ops of at most ``_CHUNK`` keys (the same
 #    integers: a group sorts whole segments).  One copy back; the plan on the host, as in one pass.
-# 2. Three passes over the global order, each part computing its values from the claims again:
-#    (a) parts of ``_CHUNK`` values: the exceptions' number and their Rice values' bit lengths and top four
-#        bits (:func:`_rice_bins`), from which the host picks each Rice parameter as :func:`_rice_k` does;
+# 2. Two passes over the global order, each part computing its values from the claims again:
+#    (a) parts of ``_CHUNK`` values: the exceptions in order (one wait a part, for their number), their Rice
+#        values (gaps, the last position carried over, and payloads), binned by bit length and top four bits
+#        (:func:`_rice_bins`) and copied back without a wait (4 bytes each); the bins come back once, and the
+#        host picks each Rice parameter as :func:`_rice_k` does;
 #    (b) each width's slot stream packed in blocks of ``_CHUNK / 32`` columns of its 32 lanes (consecutive
-#        whole streams of at most ``_CHUNK`` values at once), each block's words copied into their place;
-#    (c) parts of ``_CHUNK`` values again: the exceptions in order, their gaps (the last position carried
-#        over) and payloads, cut on the device into Rice low parts and quotients, which come back; the host
-#        packs the low parts (:func:`pack32`) and the quotients' unary levels (as one pass does the levels).
-# Each part waits for the device once or twice; only encoded bytes (and per-part statistics) come back.
+#        whole streams of at most ``_CHUNK`` values at once), each block's words copied back into their place
+#        without a wait.
+#    Between them the Rice values go up again part by part, are cut into low parts and quotients and come
+#    back (one wait); the host packs the low parts (:func:`pack32`) and the quotients' unary levels (as one
+#    pass does the levels) on a thread of its own while the device packs the slot streams.
+# Only encoded bytes, the Rice values and per-part statistics come back, into pinned memory (the encoding in
+# ``_SLAB``-byte slabs), from which the bytes are joined, as one pass joins them from its copy back.  A
+# proof of more than ``_ONE_PASS`` values waits once a part and four times more.
 
 _RBITS = 38                 # bit lengths of a Rice value 0..36, and 37 for any value >= 2**36 (refused)
 
@@ -1122,6 +1167,14 @@ def _rice_bins(rv: torch.Tensor) -> torch.Tensor:
     bits = torch.frexp(rv.to(torch.float64)).exponent.to(torch.int64)   # exact below 2**53; 0 for 0
     top = torch.bitwise_right_shift(rv, (bits - 4).clamp_(min=0))
     return bits.clamp_(max=_RBITS - 1).mul_(16).add_(top)
+
+
+def _count_bins(bins: torch.Tensor) -> torch.Tensor:
+    """How many of ``bins`` (int64, each in ``[0, 2 _RBITS 16)``, at most 2**24 of each) hold each value, as
+    int64: ``histc`` of the bins' centres in float32 (counts exact up to 2**24), which a GPU counts in each
+    thread block's shared memory first (an ``index_add_`` of ones serialises on the few bins most hold)."""
+    n = 2 * _RBITS * 16
+    return torch.histc(bins.to(torch.float32).add_(0.5), bins=n, min=0, max=n).to(torch.int64)
 
 
 def _rice_k_bins(n: int, counts) -> int:
@@ -1243,8 +1296,12 @@ class _Parts:
             return x - los.pop(), b, (1 << b) - 1
         table = _upload(np.array(rows, dtype=np.int64).T, self.dev)
         f = table.to(self.it)
-        idx = torch.repeat_interleave(torch.arange(len(rows), dtype=self.it, device=self.dev), table[0],
-                                      output_size=at)
+        # each value's piece: a 1 where each piece but the first starts, summed (repeat_interleave writes each
+        # piece's values in one thread)
+        idx = torch.zeros(at, dtype=self.it, device=self.dev)
+        if len(rows) > 1:
+            idx.index_fill_(0, torch.cumsum(table[0, :-1], 0), 1)
+            idx = torch.cumsum(idx, 0, dtype=self.it)
         if residual:
             k = torch.arange(at, dtype=self.it, device=self.dev).add_(f[1].index_select(0, idx))
             k = f[2].index_select(0, idx).add_(torch.div(k, f[3].index_select(0, idx), rounding_mode="floor"))
@@ -1258,8 +1315,10 @@ class _Parts:
         return v, f[5].index_select(0, idx).to(torch.int32), f[6].index_select(0, idx).to(torch.int32)
 
     def parts(self):
-        """The global order in ranges of ``_CHUNK`` values."""
-        return [(p, min(p + _CHUNK, self.total)) for p in range(0, self.total, _CHUNK)]
+        """The global order in ranges of ``_CHUNK`` values (at most 2**24: the gaps between a part's exceptions
+        fit in 4 bytes, and :func:`_count_bins` counts its exceptions exactly)."""
+        step = min(_CHUNK, 1 << 24)
+        return [(p, min(p + step, self.total)) for p in range(0, self.total, step)]
 
     def exceptions(self, p: int, q: int):
         """``(positions in the part, high parts)`` of the exceptions among values ``[p, q)``: one wait."""
@@ -1369,70 +1428,98 @@ def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
     gstart = _cum0(g["size"])
     parts = _Parts(src, lay, g, gstart, means if centred.any() else None)
     del means
-    # 3. (a) the exceptions' number and Rice statistics
+    # 3. (a) the exceptions in order: their Rice values' statistics, and the values copied back
     counts = torch.zeros(2 * _RBITS * 16, dtype=torch.int64, device=dev)
     second = _upload(np.array([[0], [_RBITS * 16]], dtype=np.int64), dev)     # the payloads' bins
     last = _upload(np.array([-1], dtype=np.int64), dev)
-    n_exc = 0
+    held, n_exc = [], 0
     for p, q in parts.parts():
         pos, high = parts.exceptions(p, q)
-        if pos.numel():
+        e = pos.numel()
+        if e:
             rv, last = _rice_values(pos, high, p, last)
-            bins = _rice_bins(rv).add_(second).view(-1)
-            counts.index_add_(0, bins, torch.ones_like(bins))
-            n_exc += pos.numel()
+            counts.add_(_count_bins(_rice_bins(rv).add_(second).view(-1)))
+            # the first gap as int64, then every gap and payload as 4 bytes (a gap after the part's first
+            # exception is below the part's length, a payload below 2**32)
+            h = _host_buffer(2 + 2 * e, torch.int32, dev)
+            _copy_back(h, torch.cat([rv[0, :1].view(torch.int32), rv.to(torch.int32).view(-1)]))
+            held.append(h)
+            n_exc += e
+            del rv
         del pos, high
-    ks = [0, 0]
+    ks, tail = [0, 0], [struct.pack("<I", n_exc)]
     if n_exc:
-        hc = _d2h(counts).reshape(2, _RBITS, 16)
+        hc = _d2h(counts).reshape(2, _RBITS, 16)                # (a)'s copies are on the host too
         ks = [_rice_k_bins(n_exc, hc[i]) for i in range(2)]
-    # (b) the slot streams
-    body = _slot_streams(parts, g, gstart)
-    # (c) the exceptions in order: Rice low parts and quotients
-    tail = [struct.pack("<I", n_exc)]
-    if n_exc:
-        q8 = np.empty((2, n_exc), dtype=np.uint8)
-        lows = [np.empty(n_exc, dtype=np.uint32) if k else None for k in ks]
+        # the Rice values up again, cut into quotients and low parts (1, 2 or 4 bytes by k) which come back
         nbytes = [1 if k <= 8 else 2 if k <= 16 else 4 for k in ks]
-        kt = _upload(np.array([[k] for k in ks], dtype=np.int64), dev)
-        last, done = _upload(np.array([-1], dtype=np.int64), dev), 0
-        for p, q in parts.parts():
-            pos, high = parts.exceptions(p, q)
-            e = pos.numel()
-            if e == 0:
-                continue
-            rv, last = _rice_values(pos, high, p, last)
-            del pos, high
-            out = [(rv >> kt).to(torch.uint8).view(-1)]
-            for i, k in enumerate(ks):
+        q8 = _host_buffer(2 * n_exc, torch.uint8, dev).view(2, n_exc)
+        lows = [_host_buffer(nbytes[i] * n_exc, torch.uint8, dev) if k else None for i, k in enumerate(ks)]
+        done = 0
+        for h in held:                                           # (none waits)
+            e = (h.numel() - 2) // 2
+            t = h.to(dev, non_blocking=True)
+            gaps = t[2:2 + e].to(torch.int64)
+            gaps[:1] = t[:2].view(torch.int64)
+            for i, v in enumerate((gaps, t[2 + e:].to(torch.int64).bitwise_and_(0xFFFFFFFF))):
+                k = ks[i]
+                _copy_back(q8[i, done:done + e], (v >> k).to(torch.uint8))
                 if k:
-                    low = rv[i] & ((1 << k) - 1)
-                    out.append((low.to(torch.uint8) if k <= 8 else low.to(torch.int16) if k <= 16
-                                else low.to(torch.int32)).view(torch.uint8))     # the low bits of each
-            got = _d2h(torch.cat(out))
-            q8[:, done:done + e] = got[:2 * e].reshape(2, e)
-            at = 2 * e
-            for i, k in enumerate(ks):
-                if k:
-                    lows[i][done:done + e] = got[at:at + nbytes[i] * e].view(f"<u{nbytes[i]}")
-                    at += nbytes[i] * e
+                    low = v.bitwise_and_((1 << k) - 1)
+                    low = low.to(torch.uint8) if k <= 8 else low.to(torch.int16) if k <= 16 else low.to(torch.int32)
+                    _copy_back(lows[i][nbytes[i] * done:nbytes[i] * (done + e)], low.view(torch.uint8))
             done += e
-        if done != n_exc:
-            raise RuntimeError("the exceptions changed between two passes over the claims")
-        workers = torch.get_num_threads()
-        for i, k in enumerate(ks):
-            tail += [bytes([k]), pack32(lows[i], k, workers) if k else b"", _pack_levels(q8[i])]
-    return b"".join([head, memoryview(body), *tail])
+            del t, gaps, v
+        del held
+        _d2h(last)                                               # one wait: the quotients and low parts are here
+        # the host packs them (pack32, the unary levels) while the device packs the slot streams
+        rice = _Background(_rice_tail, ks, [lows[i].numpy().view(f"<u{nbytes[i]}") if k else None
+                                           for i, k in enumerate(ks)], q8.numpy(), torch.get_num_threads())
+    # (b) the slot streams
+    body = _slot_streams(parts, g, gstart, dev)
+    _d2h(last)                                                   # one wait: every copy back is on the host
+    if n_exc:
+        tail += rice.result()
+    return b"".join([head, *body.views(), *tail])
 
 
-def _slot_streams(parts: _Parts, g: dict, gstart: np.ndarray) -> np.ndarray:
+def _rice_tail(ks: list, lows: list, q8: np.ndarray, workers: int) -> list[bytes]:
+    """The two Rice vectors after their parameters ``ks``: ``k``, the low parts packed, the unary levels."""
+    out = []
+    for i, k in enumerate(ks):
+        out += [bytes([k]), pack32(lows[i], k, workers) if k else b"", _pack_levels(q8[i])]
+    return out
+
+
+class _Background:
+    """``fn(*args)`` on a thread of its own (numpy releases the GIL in its passes); :meth:`result` waits for it."""
+
+    def __init__(self, fn, *args) -> None:
+        self._out = self._err = None
+        self._thread = threading.Thread(target=self._run, args=(fn, args), daemon=True)
+        self._thread.start()
+
+    def _run(self, fn, args) -> None:
+        try:
+            self._out = fn(*args)
+        except BaseException as e:            # raised again by result()
+            self._err = e
+
+    def result(self):
+        self._thread.join()
+        if self._err is not None:
+            raise self._err
+        return self._out
+
+
+def _slot_streams(parts: _Parts, g: dict, gstart: np.ndarray, dev: torch.device) -> _HostBytes:
     """The slot streams of every width ``B > 0`` (the body of the encoding), packed on the device in blocks of
     ``_CHUNK / 32`` columns of each stream's 32 lanes -- consecutive streams of at most ``_CHUNK`` values in one
-    part, whole -- and copied back block by block into their place."""
+    part, whole -- and copied back block by block into their place without a wait."""
     runs = [(b, a, z) for b, a, z in _width_runs(g["b"], gstart) if b and z > a]
     sizes = [4 * b * ((z - a + 31) // 32) for b, a, z in runs]
     offs = np.cumsum([0] + sizes).tolist()
-    body = np.empty(offs[-1], dtype=np.uint8)
+    body = _HostBytes(offs[-1], dev)
     cols = max(1, _CHUNK // 32)
     group, held = [], 0
 
@@ -1441,9 +1528,9 @@ def _slot_streams(parts: _Parts, g: dict, gstart: np.ndarray) -> np.ndarray:
             a0, z1 = runs[group[0]][1], runs[group[-1]][2]
             v, _, mask = parts.values([(a0, z1, 0, runs[group[0]][0])])
             slots = v.bitwise_and_(mask)
-            words = [_pack_dev(slots[a - a0:z - a0], b).view(-1) for b, a, z in (runs[w] for w in group)]
-            got = _d2h(words[0] if len(words) == 1 else torch.cat(words))
-            body[offs[group[0]]:offs[group[-1] + 1]] = got.view(np.uint8)
+            for w in group:
+                b, a, z = runs[w]
+                body.put(offs[w], _pack_dev(slots[a - a0:z - a0], b).view(torch.uint8).view(-1))
             group.clear()
 
     for w, (b, a, z) in enumerate(runs):
@@ -1458,7 +1545,6 @@ def _slot_streams(parts: _Parts, g: dict, gstart: np.ndarray) -> np.ndarray:
         flush()
         held = 0
         G = (cnt + 31) // 32
-        words = body[offs[w]:offs[w + 1]].view("<u4").reshape(b, G)
         for g0 in range(0, G, cols):
             m = min(cols, G - g0)
             ranges = []
@@ -1466,7 +1552,10 @@ def _slot_streams(parts: _Parts, g: dict, gstart: np.ndarray) -> np.ndarray:
                 p0, p1 = min(a + j * G + g0, z), min(a + j * G + g0 + m, z)
                 ranges.append((p0, p1, m - (p1 - p0), b))
             v, _, mask = parts.values(ranges)
-            words[:, g0:g0 + m] = _d2h(_pack_lanes(v.bitwise_and_(mask).view(32, m), b)).view(np.uint32)
+            words = _pack_lanes(v.bitwise_and_(mask).view(32, m), b).view(torch.uint8)   # [b, 4 m]: rows of [b, G]
+            for r in range(b):
+                body.put(offs[w] + 4 * (r * G + g0), words[r])
+            del v, words
     flush()
     return body
 

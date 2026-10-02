@@ -7,8 +7,9 @@ exceptions) and random corruptions never make the decoder raise anything else.  
 device encoders give the bytes of the per-op encoder that defined the format
 (``claimcodec_reference``) on every input, threaded or not; the device encoder's kernels grow with
 the widths, not the ops, and it waits for the device four times at most (on a GPU: checked in
-CUDA's sync debug mode).  In parts (a proof of more than ``_CHUNK`` values; here with tiny parts) the
-device encoder gives the same bytes on every input, its temporaries bounded by the part.
+CUDA's sync debug mode).  In parts (a proof of more than ``_ONE_PASS`` values, in parts of ``_CHUNK``;
+here with tiny parts) the device encoder gives the same bytes on every input, its temporaries bounded
+by the part, and it waits for the device once a part and four times more.
 """
 
 from __future__ import annotations
@@ -573,7 +574,7 @@ def test_a_new_shape_set_releases_the_device_tables_of_the_last(claim_sets):
     assert cc._layout(shapes[0])._dev and not cc._layout(shapes[1])._dev
 
 
-# -- the device encoder in parts (proofs of more than _CHUNK claim values) ---------------------------------
+# -- the device encoder in parts (proofs of more than _ONE_PASS claim values) ------------------------------
 
 def _numel(zs) -> int:
     return sum(int(np.prod(tuple(z.shape))) for z in zs)
@@ -581,12 +582,13 @@ def _numel(zs) -> int:
 
 def _one_pass(zs, monkeypatch, **kw) -> bytes:
     """The device encoder in one pass however many claims (the encoder of commit c8be5eb)."""
-    monkeypatch.setattr(cc, "_CHUNK", 1 << 40)
+    monkeypatch.setattr(cc, "_ONE_PASS", 1 << 40)
     return cc.encode(zs, impl="device", **kw)
 
 
 def _in_parts(zs, chunk: int, monkeypatch, **kw) -> bytes:
     """The device encoder in parts of ``chunk`` values (when there are more claims)."""
+    monkeypatch.setattr(cc, "_ONE_PASS", chunk)
     monkeypatch.setattr(cc, "_CHUNK", chunk)
     return cc.encode(zs, impl="device", **kw)
 
@@ -690,6 +692,17 @@ def test_parts_of_every_claim_dtype_give_the_bytes_of_one_pass(monkeypatch):
                 assert _in_parts(zs, chunk, monkeypatch, centre=centre) == want, (name, centre, chunk)
 
 
+@pytest.mark.parametrize("slab", [7, 64, 1000])
+def test_parts_come_back_into_host_slabs_of_any_size(slab, claim_sets, monkeypatch):
+    # the encoding comes back into host slabs: copies of whole streams and of lane blocks' word rows cut at the
+    # slabs' boundaries
+    monkeypatch.setattr(cc, "_SLAB", slab)
+    for name in ("decoder_gpt", "row_means", "tails"):
+        zs = claim_sets[name]
+        for chunk in (64, _numel(zs) // 5 + 1):
+            assert _in_parts(zs, chunk, monkeypatch) == ref.encode(zs), (name, slab, chunk)
+
+
 def test_parts_with_wide_indices_give_the_same_bytes(claim_sets, monkeypatch):
     # the int64 indices of more than 2**31 values (forced here)
     real = cc._Parts.__init__
@@ -730,8 +743,18 @@ def test_the_rice_parameter_from_bit_lengths_and_top_bits_is_rice_k():
 
 def test_the_parts_temporaries_are_bounded_by_the_part_not_the_claims(monkeypatch):
     # every tensor an op creates while encoding (views aside): in parts, at most a few times the part's bytes
-    # (plus the samples' and rows' tables, small here), whatever the claims; in one pass, several times the claims
-    from torch.utils._python_dispatch import TorchDispatchMode
+    # (plus the samples' and rows' tables, small here), whatever the claims; in one pass, several times the claims.
+    # In parts the encoding comes back into host buffers (pinned memory, on a GPU): made outside the count, and
+    # the copies into them (in place) not counted
+    from torch.utils._python_dispatch import TorchDispatchMode, _disable_current_modes
+
+    host_buffer = cc._host_buffer
+
+    def uncounted(*a):
+        with _disable_current_modes():
+            return host_buffer(*a)
+
+    monkeypatch.setattr(cc, "_host_buffer", uncounted)
 
     class Largest(TorchDispatchMode):
         def __init__(self):
@@ -740,7 +763,7 @@ def test_the_parts_temporaries_are_bounded_by_the_part_not_the_claims(monkeypatc
 
         def __torch_dispatch__(self, func, types, args=(), kwargs=None):
             out = func(*args, **(kwargs or {}))
-            if not any(str(func).startswith("aten." + v) for v in opcount.VIEWS):
+            if not any(str(func).startswith("aten." + v) for v in opcount.VIEWS + ("copy_",)):
                 for t in out if isinstance(out, (tuple, list)) else (out,):
                     if torch.is_tensor(t):
                         self.bytes = max(self.bytes, t.numel() * t.element_size())
@@ -764,16 +787,18 @@ def test_the_parts_temporaries_are_bounded_by_the_part_not_the_claims(monkeypatc
     assert results["in parts bytes"] <= 8 * 2 * chunk + 8 * 8 * 500, results     # ~32 KiB here, not ~2 MiB
 
 
-def test_parts_wait_for_the_device_a_few_times_a_part(monkeypatch):
+def test_parts_wait_for_the_device_once_a_part(monkeypatch):
+    # once a part for its exceptions' number, and four more times (the statistics, the Rice statistics, the Rice
+    # quotients and low parts, all the copies back): the slot streams and the Rice values come back without a wait
     rng = np.random.default_rng(6)
     zs = [_normal(rng, (400, 25), 3e4), _rows_off(rng, 100, 30, 1e3)]
     chunk = 500
+    monkeypatch.setattr(cc, "_ONE_PASS", chunk)
     monkeypatch.setattr(cc, "_CHUNK", chunk)
     with opcount.codec_waits(cc) as waits:
         assert cc.encode(zs, impl="device") == ref.encode(zs)
     parts = -(-(_numel(zs) + 100) // chunk)           # the global order: the claims and a centred op's row means
-    assert waits["_nonzero_dev"] <= 2 * parts                                   # (a) and (c)
-    assert waits["_d2h"] <= 2 + parts + 2 * parts + 2, dict(waits)             # stats, Rice, (c), (b) blocks
+    assert waits == {"_nonzero_dev": parts, "_d2h": 4}, dict(waits)
 
 
 @cuda_only
@@ -807,6 +832,7 @@ def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(cl
           for i in range(6)]
     extra, blobs = {}, {}
     for way, chunk in (("one pass", 1 << 40), ("in parts", 1 << 20)):
+        monkeypatch.setattr(cc, "_ONE_PASS", chunk)
         monkeypatch.setattr(cc, "_CHUNK", chunk)
         cc._layout.cache_clear()
         torch.cuda.synchronize()
@@ -817,6 +843,44 @@ def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(cl
         extra[way] = torch.cuda.max_memory_allocated() - before
     assert blobs["one pass"] == blobs["in parts"] == cc.encode([z.cpu() for z in zs], impl="host")
     assert extra["in parts"] < 100 * 2**20 < 600 * 2**20 < extra["one pass"], extra
+
+
+@cuda_only
+def test_the_gpu_encoder_in_parts_waits_once_a_part_and_four_times(claim_sets, monkeypatch):
+    """In CUDA's sync debug mode "error" any other host round trip raises: the copies back into pinned memory and
+    the Rice values' copies up again wait for nothing, on a new shape set (its tables built on the device) and on
+    a known one."""
+    zs = [z.cuda() for z in claim_sets["decoder_gpt"]]
+    want = ref.encode([z.cpu() for z in zs])
+    chunk = _numel(zs) // 6 + 1
+    waits = []
+    real = {name: getattr(cc, name) for name in ("_d2h", "_nonzero_dev")}
+
+    def allowed(fn):
+        def call(t):
+            torch.cuda.set_sync_debug_mode(0)
+            try:
+                waits.append(fn.__name__)
+                return fn(t)
+            finally:
+                torch.cuda.set_sync_debug_mode("error")
+        return call
+
+    cc._layout.cache_clear()
+    for run in ("cold", "warm"):
+        waits.clear()
+        monkeypatch.setattr(cc, "_ONE_PASS", chunk)
+        monkeypatch.setattr(cc, "_CHUNK", chunk)
+        for name, fn in real.items():
+            monkeypatch.setattr(cc, name, allowed(fn))
+        torch.cuda.synchronize()
+        torch.cuda.set_sync_debug_mode("error")
+        try:
+            assert cc.encode(zs) == want, run
+        finally:
+            torch.cuda.set_sync_debug_mode(0)
+            monkeypatch.undo()
+        assert waits.count("_d2h") == 4 and 6 <= waits.count("_nonzero_dev") <= 8, (run, waits)
 
 
 @cuda_only
