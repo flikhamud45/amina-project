@@ -339,7 +339,7 @@ attention products $QK^\T$ and $PV$. The answer $y$ is the last weight layer's p
 (the logits), so it is itself a claim, and it is correct if every claim is. Every claim equals the
 value that $M$ computes on $x$ if and only if three statements hold for every weight layer $\ell$:
 (S1)~its input $X_\ell$ follows from $x$ and the earlier claims through these operations, for
-example $X_\ell = \mathrm{ReLU}(Z_{\ell-1})$, requantised, in an MLP;
+example $X_\ell = \mathrm{requant}(\mathrm{ReLU}(Z_{\ell-1}))$ in an MLP;
 (S2)~its claims are the product of its weights and its input, $Z_\ell = A_\ell[X_\ell; \mathbf 1]$;
 and (S3)~$A_\ell$ is the committed matrix.
 
