@@ -60,23 +60,28 @@
 \email{edo@mail.tau.ac.il}
 
 \begin{abstract}
-A client that outsources inference to a cloud provider cannot tell whether the provider ran the
-agreed model. Proofs of inference let it check. zkSNARKs provide them but take minutes per query
-on large models; Anchuri et al.\ instead re-check one random path through the committed
-computation. We show that this misses targeted changes: tampering with a single neuron, with the
-rest computed honestly, passes 99.8\% of the time on an MNIST network and changes the next token
-of every prompt we tried on the real OPT-6.7B. Sampling more or smarter does not fix this
-cheaply. We therefore built a
-protocol that checks every layer with Freivalds' algorithm against a Reed--Solomon/Merkle
-commitment to the weights. It needs no SNARK, TEE or trusted setup and accepts a wrong output with
-probability at most $2^{-\lambda}$; in our runs it rejected all \NAttacks{} and \OptNAttacks{}
-attacks on its basic and optimised versions.
+A client that outsources inference cannot tell whether the provider ran the agreed model. Proofs
+of inference let it check. zkSNARKs provide them but take minutes per query on large models;
+Anchuri et al.\ instead re-check one random path through the committed computation. We show that
+this misses targeted changes: tampering with a single neuron, with the rest computed honestly,
+passes 99.8\% of the time on an MNIST network and changes the next token of every prompt we tried
+on the real OPT-6.7B. Neither more nor smarter sampling fixes this cheaply. We therefore built a
+protocol that checks every layer with Freivalds' algorithm against a Reed--Solomon/Merkle weight
+commitment. It needs no SNARK, TEE or trusted setup and accepts a wrong output with probability at
+most $2^{-\lambda}$; it rejected all \NAttacks{} and \OptNAttacks{} attacks on its basic and
+optimised versions.
 % PENDING: \OptNAttacks (count_outcomes.py --definition over the second run, tables/counts_opt.tex)
 % turns black when regenerated; the placeholder counts every cell of the first optimised run
-Its prover is one to four orders of magnitude faster than published zkSNARK provers, and on
-LeNet-5 and a 64-token GPT-2 prompt it also verifies faster and sends less than zkCNN (whose
-verifier used one core) and DeepProve's transparent configuration. Its weak point is a proof that
-grows with the input.
+Its prover beats every fully sound system we compare with, the zkSNARKs by one to four orders of
+magnitude. Its verifier is faster than most of theirs and
+within 2$\times$ of the rest, except zkLLM's, which is up to \pending{3.4}$\times$ faster while
+its prover is up to \pending{70}$\times$ slower.
+% PENDING: the zkLLM rows of Table 3 (verifier: the largest factor by which theirs is faster;
+% prover: the largest factor by which ours is faster; placeholders: the basic run's). The streaming
+% verifier on the basic proof format was slower than zkLLM's only on Llama-2-13B (2.3x): if the re-run
+% agrees, rewrite as "faster than zkLLM's on all but Llama-2-13B". text_numbers.py checks both numbers
+% and the "within 2x".
+Its weak point is a proof that grows with the input.
 \end{abstract}
 
 \keywords{verifiable inference, proof of inference, integrity attacks, Freivalds' algorithm, zkML}
