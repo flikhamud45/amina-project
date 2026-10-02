@@ -92,6 +92,7 @@ import threading
 import numpy as np
 import torch
 
+from . import hostmem
 from .commitment import map_threaded
 
 __all__ = ["ClaimCodecError", "Unencodable", "MAGIC", "BMAX", "encode", "decode", "decode_torch", "narrow",
@@ -159,7 +160,7 @@ def _upload(a: np.ndarray, device: torch.device) -> torch.Tensor:
     if device.type == "cpu":
         return t
     if device.type == "cuda":
-        return t.pin_memory().to(device, non_blocking=True)
+        return hostmem.pinned(t).to(device, non_blocking=True)
     return t.to(device)
 
 
@@ -168,7 +169,7 @@ def _d2h(t: torch.Tensor) -> np.ndarray:
     if t.device.type == "cpu":
         return t.numpy()
     if t.device.type == "cuda":
-        host = torch.empty(t.shape, dtype=t.dtype, pin_memory=True)
+        host = hostmem.empty(t.shape, t.dtype)
         host.copy_(t, non_blocking=True)
         torch.cuda.current_stream(t.device).synchronize()
         return host.numpy()
@@ -183,7 +184,7 @@ def _nonzero_dev(t: torch.Tensor) -> torch.Tensor:
 def _host_buffer(n: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
     """``n`` uninitialised host values that :func:`_copy_back` fills from ``device`` without a wait (pinned
     memory for a GPU)."""
-    return torch.empty(n, dtype=dtype, pin_memory=device.type == "cuda")
+    return hostmem.empty(n, dtype, pin=device.type == "cuda")
 
 
 def _copy_back(dst: torch.Tensor, src: torch.Tensor) -> None:
@@ -1796,7 +1797,7 @@ def decode_torch(buf, rows: list[int], cols: list[int], *, dtype: torch.dtype = 
     held = {}
 
     def pinned(n: int) -> np.ndarray:
-        held["t"] = torch.empty(n, dtype=torch.int32, pin_memory=True)
+        held["t"] = hostmem.empty(n, torch.int32)
         return held["t"].numpy()
 
     x, ops = _decode(buf, rows, cols, workers, alloc=pinned if pin and dtype == torch.int32 else None)
@@ -1884,7 +1885,7 @@ def unpack_rows(buf, shapes: list[tuple[int, int]], *, dtype: torch.dtype = torc
         raise ClaimCodecError("wrong length of looked-up rows")
     flat = torch.from_numpy(np.frombuffer(buf, dtype=np.int8).copy()).to(dtype)
     if pin and dtype == torch.int32:
-        flat = flat.pin_memory()
+        flat = hostmem.pinned(flat)
     out, o = [], 0
     for d, m in shapes:
         out.append(flat[o:o + d * m].view(m, d).T)

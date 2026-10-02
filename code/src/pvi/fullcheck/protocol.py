@@ -63,7 +63,7 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
-from . import claimcodec
+from . import claimcodec, hostmem
 from .commitment import (HASH_BYTES, CommitmentPublic, GroupCommitment, GroupPublic, TableCommitment, TablePublic,
                          TransposedCommitment, WeightCommitment, codeword_at, column_rows, group_leaf, map_threaded,
                          row_leaves, table_leaves, verify_multiproof, verify_multiproofs)
@@ -550,7 +550,7 @@ def _to_device(t: torch.Tensor, device) -> torch.Tensor:
     does not wait for the device."""
     if torch.device(device).type != "cuda" or t.device.type != "cpu":
         return t.to(device)
-    return t.pin_memory().to(device, non_blocking=True)
+    return hostmem.pinned(t).to(device, non_blocking=True)
 
 
 def _host_copy(t: torch.Tensor) -> torch.Tensor:
@@ -558,7 +558,7 @@ def _host_copy(t: torch.Tensor) -> torch.Tensor:
     once the device has run what was queued before it (after any later copy back that waits)."""
     if t.device.type != "cuda":
         return t
-    return torch.empty(t.shape, dtype=t.dtype, pin_memory=True).copy_(t, non_blocking=True)
+    return hostmem.empty(t.shape, t.dtype).copy_(t, non_blocking=True)
 
 
 def _upload_rows(rows: dict[str, np.ndarray], device) -> dict[str, torch.Tensor]:
@@ -569,7 +569,7 @@ def _upload_rows(rows: dict[str, np.ndarray], device) -> dict[str, torch.Tensor]
         by_shape.setdefault(a.shape, []).append(name)
     out = {}
     for shape, names in by_shape.items():
-        staged = torch.empty((len(names), *shape), dtype=torch.int32, pin_memory=torch.cuda.is_available())
+        staged = hostmem.empty((len(names), *shape), torch.int32, pin=torch.cuda.is_available())
         for j, name in enumerate(names):
             staged[j].numpy()[...] = rows[name]
         out.update(zip(names, staged.to(device, non_blocking=True)))
@@ -1370,7 +1370,7 @@ def _passed(message, pin: bool = False):
     tensor (with ``pin``, in pinned host memory: a GPU client's) and of every list among the values,
     so that neither party can change in place, when it runs again, what the other holds."""
     def copy(t):
-        return torch.empty(t.shape, dtype=t.dtype, pin_memory=True).copy_(t) if pin else t.clone()
+        return hostmem.empty(t.shape, t.dtype).copy_(t) if pin else t.clone()
 
     if torch.is_tensor(message):
         return copy(message)
