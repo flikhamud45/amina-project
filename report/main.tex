@@ -280,18 +280,19 @@ zero by construction.
 Anchuri et al.\ suggest sampling more paths, or sampling where it matters instead of uniformly.
 Against an adversary who knows the rule, neither helps if the rule ignores the claimed values.
 
-\begin{proposition}[no value-blind sampler beats uniform]
-Fix a layer and let $U$ be the set of its neurons whose change can flip the output. The verifier
-opens at most $s$ neurons of the layer at random, independently of the claimed values, and an
-adversary who knows this distribution tampers with one neuron of $U$. Then for every such sampler
-the adversary can pick a neuron that is opened with probability at most $s/|U|$, and sampling $s$
-neurons of $U$ uniformly attains this bound: uniform sampling is minimax-optimal.
+Fix a layer and let $U$ be the set of its neurons whose change can flip the output. A sampler is
+\emph{value-blind} if it chooses the neurons to open independently of the claimed values.
+
+\begin{proposition}[uniform sampling is minimax-optimal]
+A value-blind sampler that opens at most $s$ neurons of the layer catches the worst-case tampered
+neuron of $U$ with probability at most $s/|U|$, with equality for uniform sampling of $U$.
 \end{proposition}
 
-\noindent\emph{Proof.} Let $\pi(v)$ be the probability that neuron $v$ is opened. At most $s$
-neurons are opened, so $\sum_{v\in U}\pi(v) \le s$ and the least-opened neuron of $U$ has
-$\pi(v) \le s/|U|$; uniform sampling of $U$ opens every neuron with probability exactly $s/|U|$.
-\qed
+\noindent\emph{Proof.} Let $\pi(v)$ be the probability that the sampler opens neuron $v$. An
+adversary who knows the sampler, but not its random choices, tampers with the neuron of $U$ that
+minimises $\pi$. At most $s$ neurons are opened, so $\sum_{v\in U}\pi(v) \le s$, and the minimum
+is at most the average, $s/|U|$. Uniform sampling of $U$ opens every neuron of $U$ with probability
+exactly $s/|U|$. \qed
 
 \noindent The argument is elementary, but it rules out the fix Anchuri et al.\ suggest: no value-blind
 rule beats uniform sampling, so catching one tampered neuron with constant probability needs
