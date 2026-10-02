@@ -358,10 +358,12 @@ checks one random combination of the layer's rows,
   \chi^\T Z_\ell \;=\; \underbrace{(\chi^\T A_\ell)}_{u_\ell}\,[X_\ell; \mathbf{1}] ,
   \label{eq:freivalds}
 \end{equation}
-where we call $u_\ell$ the \emph{folded row}. Let $D = Z_\ell - A_\ell [X_\ell; \mathbf{1}]$; the
-two sides of Eq.~\eqref{eq:freivalds} differ by $\chi^\T D$. If $D_{im} \ne 0$, entry $m$ of
-$\chi^\T D$ equals $\chi_i D_{im}$ plus terms that do not involve $\chi_i$, so exactly one value
-of $\chi_i$ makes it vanish, and a wrong layer passes with probability at most $1/p$, or $p^{-r}$
+where we call $u_\ell$ the \emph{folded row}. Let $D = Z_\ell - A_\ell [X_\ell; \mathbf{1}]$ be the
+error of the claims: its entry $D_{im}$ is how far the claim of neuron $i$ at position $m$ (a pixel
+or token) is from the true value, so a correct layer has $D = 0$. The two sides of
+Eq.~\eqref{eq:freivalds} differ by $\chi^\T D$. If some $D_{im} \ne 0$, entry $m$ of $\chi^\T D$ is
+$\sum_{i'} \chi_{i'} D_{i'm}$, which equals $\chi_i D_{im}$ plus terms that do not involve
+$\chi_i$, so exactly one value of $\chi_i$ makes it vanish, and a wrong layer passes with probability at most $1/p$, or $p^{-r}$
 with $r$ independent vectors. This holds however many values are wrong and wherever they are: a
 single tampered neuron is caught as reliably as a wholly wrong layer. Given $u_\ell$, the two
 sides cost $O((N+k)T)$, against $O(NkT)$ for recomputing the layer; $u_\ell$ itself costs
