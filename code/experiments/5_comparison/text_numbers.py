@@ -299,8 +299,8 @@ def checks(M, opt_names: list[str]):
     bc, _ = counts([pa._platform_name(pa.TABLES)])
     oc, ost = counts(opt_names, COUNT_TAGS) if opt_names else ({}, PENDING)
     oget = lambda k: Tok([(C(oc[k]) if k in oc else None, ost)])   # noqa: E731
-    # abstract, Sec. 4.3, conclusion: the counts
-    for anchor in (r"rejected all [\d{},]+ and", r"attacks on the basic protocol and all"):
+    # Sec. 4.3 and the conclusion: the counts (the abstract states no numbers)
+    for anchor in (r"attacks on the basic protocol and all",):
         add(anchor, "attacks rejected: basic run; optimised runs", [Tok([(C(bc["NAttacks"]), FINAL)]), oget("NAttacks")])
     add(r"In the optimised runs the verifier accepted", "optimised: honest accepted, attacks, image-model attacks",
         [oget("NHonest"), oget("NAttacks"), oget("NAttacksCNN")])
@@ -505,18 +505,6 @@ def checks(M, opt_names: list[str]):
         add(r"the GPU verifier is", "Limitations: GPU verifier slower than zkLLM's (zkLLM rows, red)", zslow_tok)
     add(r"Our verifier is slower only than", "verifier: final rows where ours is slower (ours/theirs); zkLLM rows",
         slow)
-    # the abstract: every other verifier that beats ours does so by under 2x (else the text's "within 2x" is
-    # expected to name the factor and fails), and zkLLM's rows: the most its verifier wins by, and the most
-    # ours proves faster by
-    others = [1 / v[1].value for k, v in q.items() if not k[0].startswith("zkLLM") and v[1].value and v[1].value < 1]
-    add(r"and within 2", "abstract: the other verifiers that beat ours, by under 2x",
-        Tok([("2" if max(others) < 2 else f"{max(others):.1f}", FINAL)], "×"))
-    zkv = [V(1 / v[1].value, v[1].state) for k, v in q.items() if k[0] == "zkLLM" and v[1].value and v[1].value < 1]
-    zkp = [v[0] for k, v in q.items() if k[0] == "zkLLM"]
-    zkmax = lambda vals, fmt: Tok([(fmt(max(v.value for v in vals)) if vals else None,   # noqa: E731
-                                    worst(*(v.state for v in vals)) if vals else PENDING)], "×")
-    add(r"except zkLLM's, which is up to", "abstract: zkLLM rows: most theirs verifies faster; most ours proves faster",
-        [zkmax(zkv, lambda v: f"{v:.1f}"), zkmax(zkp, x2)])
     # Sec. 4.5: the streaming verifier on the basic proof format (the stored _gpuv_stream cells), Llama-2-13B
     l13 = pa.llm_cost(("llama2-13b", 2048), {"mode": "C", "variant": "_gpuv_stream"}, pa.opt_dirs())
     if l13 and stream["C"]:

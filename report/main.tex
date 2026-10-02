@@ -61,29 +61,21 @@
 
 \begin{abstract}
 A company that outsources inference to a cloud provider cannot tell whether the provider ran the
-agreed model or changed the answer on purpose. zkSNARK proofs of inference let the
-company check each answer but take minutes per query on large models, so Anchuri et al.\ proposed
-a lighter protocol that re-checks one random path through the committed computation. We show that
-this check misses targeted changes: a provider that tampers with a single neuron and computes the
-rest honestly passes it 99.8\% of the time on
-an MNIST network, and on the real OPT-6.7B it changes the next token of every prompt we tried.
-Neither more paths nor smarter sampling fixes this cheaply. We therefore built a protocol that
-checks every layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment to the
-weights. It needs no SNARK, TEE or trusted setup and accepts a wrong output with probability at
-most $2^{-\lambda}$; it rejected all \NAttacks{} and \OptNAttacks{} attacks on its basic and
-optimised versions.
-% PENDING: \OptNAttacks (count_outcomes.py --definition over the second run, tables/counts_opt.tex)
-% turns black when regenerated; the placeholder counts every cell of the first optimised run
-Its prover is one to four orders of magnitude faster than published zkSNARK provers. Its verifier
-is faster than most of theirs and
-within 2$\times$ of the rest, except zkLLM's, which is up to \pending{3.4}$\times$ faster while
-its prover is up to \pending{70}$\times$ slower.
-% PENDING: the zkLLM rows of Table 3 (verifier: the largest factor by which theirs is faster;
-% prover: the largest factor by which ours is faster; placeholders: the basic run's). The streaming
-% verifier on the basic proof format was slower than zkLLM's only on Llama-2-13B (2.3x): if the re-run
-% agrees, rewrite as "faster than zkLLM's on all but Llama-2-13B". text_numbers.py checks both numbers
-% and the "within 2x".
-Its weak point is a proof that grows with the input.
+agreed model or changed the answer on purpose. Proofs of inference let it check each answer. Those
+built on zkSNARKs give strong guarantees but take minutes per query on large models, which has
+motivated lighter protocols that check only a sample of the computation, such as that of Anchuri
+et al., in which the client re-checks one random path through a committed execution trace. We show
+that sampling misses targeted changes: a provider that tampers with a single neuron and computes
+everything else honestly almost always passes the path check, on image classifiers and on a real
+large language model, where one neuron is enough to change the next token. No sampling rule,
+however it chooses where to look, closes this gap on every network. We therefore build a protocol
+that checks every layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment to the
+weights. It needs no SNARK, trusted hardware or trusted setup, a wrong output passes with
+negligible probability, and in our experiments it rejected thousands of attacks without a miss. Its
+prover is orders of magnitude faster than published zkSNARK provers and its verifier is
+competitive with theirs; its main cost is a proof that grows with the input.
+% PENDING: "competitive" rests on Table 3's verifier column (zkLLM's rows are basic-run placeholders;
+% the streaming verifier on the basic proof format was slower than zkLLM's only on Llama-2-13B)
 \end{abstract}
 
 \keywords{verifiable inference, proof of inference, integrity attacks, Freivalds' algorithm, zkML}
@@ -142,9 +134,8 @@ model. They note that one path cannot catch a single changed node with probabili
 a layer of width $N$, and they leave \emph{full} soundness, against any wrong answer, open for
 LLMs.
 
-We reimplemented the protocol (no code was released), reproduced its main claims, and asked what
-a provider can do if it keeps the committed model and changes only what it needs to. It can
-overwrite \emph{a single neuron} and recompute everything after it honestly
+We present an attack on this protocol, which we implement and evaluate. A provider that keeps the
+committed model and changes only what it needs to can overwrite \emph{a single neuron} and recompute everything after it honestly
 (Figures~\ref{fig:overview-path} and~\ref{fig:overview-attack}). The trace is then inconsistent at
 one node, which a random path visits with probability $1/N$, so almost every tampered answer is
 accepted. Applied only to inputs that carry a trigger, the edit is a backdoor in the serving
@@ -439,7 +430,7 @@ positions, the prover fixes every value before it sees the randomness that tests
 
 \begin{theorem}[soundness]
 \label{thm:sound}
-If $C_M$ is honest and the prover cannot find a SHA-256 collision, then for any claimed
+If $C_M$ is honest and the prover cannot find a hash collision, then for any claimed
 $y \neq M(x)$ the verifier accepts with probability at most
 $\varepsilon = \sum_\ell \big[\,p^{-r} + \big(\tfrac{k_\ell - 1}{n_\ell}\big)^{t}\,\big]$.
 \end{theorem}
@@ -447,21 +438,21 @@ $\varepsilon = \sum_\ell \big[\,p^{-r} + \big(\tfrac{k_\ell - 1}{n_\ell}\big)^{t
 \noindent\emph{Proof sketch.} As shown in Section~\ref{sec:defence}, if $y \neq M(x)$ the first
 layer with a wrong claim passes only if Freivalds' check or its column check is fooled (the range
 check keeps the wrong claim distinct from the true value in $\F$, and the opened columns are the
-committed ones unless the prover finds a SHA-256 collision), which happens with probability at
-most $p^{-r}$ or $((k_\ell-1)/n_\ell)^t$. A union bound over the layers finishes the proof. \qed
+committed ones unless the prover finds a hash collision), which happens with probability at most
+$p^{-r}$ or $((k_\ell-1)/n_\ell)^t$. A union bound over the layers finishes the proof. \qed
 
 \para{Parameters.} For a target $\lambda$ and $L$ weight layers we set
 $\beta = \lambda + \log_2(2L)$, $r = \lceil \beta/\log_2 p \rceil$ and $t = \lceil \beta/2
 \rceil$; since $n_\ell \ge 4k_\ell$, each of the $2L$ terms of $\varepsilon$ is at most
 $2^{-\beta}$, so $\varepsilon \le 2^{-\lambda}$ (for VGG-16 at $\lambda{=}128$, $r{=}5$ and
 $t{=}67$). Interactively, each challenge is expanded with SHAKE-256 from a fresh 256-bit random
-key; deriving the keys from a SHA-256 hash of the transcript (Fiat--Shamir~\cite{fiatshamir1986})
+key; deriving the keys from a hash of the transcript (Fiat--Shamir~\cite{fiatshamir1986})
 makes the protocol non-interactive. Although it has two challenge rounds, the protocol is
 round-by-round sound~\cite{canetti2019fs}: once the claims are fixed, only the first wrong layer's
 $\chi$ can make them pass (probability at most $p^{-r}$), and once $u_\ell$ is fixed, only that
 layer's columns can (at most its column term). In the random-oracle model a prover that makes $Q$
 hash queries therefore succeeds with probability at most $Q\,2^{-\beta}$, plus that of finding a
-SHA-256 collision~\cite{holmgren2019rbr}; with 64 extra bits in $\beta$ this is below
+hash collision~\cite{holmgren2019rbr}; with 64 extra bits in $\beta$ this is below
 $2^{-\lambda}$ for $Q \le 2^{64}$.
 
 \para{Known weights.} In $\sK$ the verifier computes $u_\ell$ itself and messages (3)--(6) are
