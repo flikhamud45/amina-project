@@ -427,8 +427,6 @@ def checks(M, opt_names: list[str]):
         "Sec. 4.5 below 2,048 tokens (Qwen3-4B excluded): % fewer bytes, range; % less verifier time, range; "
         "% less prover time", [cut(t4(2)), *rng(t4(2), lambda v: f"{v:.1f}"), cut(t4(1)),
                                *rng(t4(1), lambda v: f"{v:.1f}"), cut(t4(0))])
-    add(r"keep the bound and shrink the proof", "Sec. 4.5 below 2,048 tokens (Qwen3-4B excluded): proof smaller "
-        "(Related Work, Where we fit)", rng(t4(2), lambda v: f"{v:.1f}"))
     add(r"Optimisations keep the bound and shrink", "Sec. 4.5 below 2,048 tokens (Qwen3-4B excluded): proof smaller (contributions)",
         rng(t4(2), lambda v: f"{v:.1f}"))
     eng = pa.llm_cost(("gpt2", 64), {}, pa.opt_dirs())

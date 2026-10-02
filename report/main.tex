@@ -60,20 +60,22 @@
 \email{edo@mail.tau.ac.il}
 
 \begin{abstract}
-A client that outsources inference cannot tell whether the provider ran the agreed model. Proofs
-of inference let it check. zkSNARKs provide them but take minutes per query on large models;
-Anchuri et al.\ instead re-check one random path through the committed computation. We show that
-this misses targeted changes: tampering with a single neuron, with the rest computed honestly,
-passes 99.8\% of the time on an MNIST network and changes the next token of every prompt we tried
-on the real OPT-6.7B. Neither more nor smarter sampling fixes this cheaply. We therefore built a
-protocol that checks every layer with Freivalds' algorithm against a Reed--Solomon/Merkle weight
-commitment. It needs no SNARK, TEE or trusted setup and accepts a wrong output with probability at
+A company that outsources inference to a cloud provider cannot tell whether the provider ran the
+agreed model or changed the answer on purpose. zkSNARK proofs of inference let the
+company check each answer but take minutes per query on large models, so Anchuri et al.\ proposed
+a lighter protocol that re-checks one random path through the committed computation. We show that
+this check misses targeted changes: a provider that tampers with a single neuron and computes the
+rest honestly passes it 99.8\% of the time on
+an MNIST network, and on the real OPT-6.7B it changes the next token of every prompt we tried.
+Neither more paths nor smarter sampling fixes this cheaply. We therefore built a protocol that
+checks every layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment to the
+weights. It needs no SNARK, TEE or trusted setup and accepts a wrong output with probability at
 most $2^{-\lambda}$; it rejected all \NAttacks{} and \OptNAttacks{} attacks on its basic and
 optimised versions.
 % PENDING: \OptNAttacks (count_outcomes.py --definition over the second run, tables/counts_opt.tex)
 % turns black when regenerated; the placeholder counts every cell of the first optimised run
-Its prover is one to four orders of magnitude faster than the zkSNARK provers we compare with. Its
-verifier is faster than most of theirs and
+Its prover is one to four orders of magnitude faster than published zkSNARK provers. Its verifier
+is faster than most of theirs and
 within 2$\times$ of the rest, except zkLLM's, which is up to \pending{3.4}$\times$ faster while
 its prover is up to \pending{70}$\times$ slower.
 % PENDING: the zkLLM rows of Table 3 (verifier: the largest factor by which theirs is faster;
@@ -115,9 +117,12 @@ Its weak point is a proof that grows with the input.
 \end{figure*}
 
 Consider a company that pays a cloud provider to serve a licensed or fine-tuned language model to
-its users. Nothing in a response shows that the provider ran that model with the agreed weights
-rather than a cheaper quantised copy, a model with a few edited weights, or one that misbehaves
-on certain inputs. The company cannot re-run the model to find out, since it lacks the weights
+its users. Nothing in a response shows that the provider ran that model with the agreed weights.
+The provider may cut costs by serving a cheaper quantised copy, but it may also return a wrong
+answer on purpose. A company that handles sensitive data and acts on the model's answers, for
+example to approve payments, flag fraud or triage medical records, is exposed to a provider, or an
+attacker inside it, that changes the answers to chosen queries and serves every other query
+correctly. The company cannot re-run the model to find out, since it lacks the weights
 and the hardware; that is why it outsourced inference. A \emph{proof of inference} closes this
 gap. With each answer the provider sends a proof, and the client (here, the company) runs a
 check, much cheaper than inference, that fails with high probability unless the answer was
@@ -239,10 +244,7 @@ al.\ public data that grows with every matrix and is generated with secret rando
 that verify against a Merkle root, such as DeepProve's transparent configuration, need no trusted
 setup but prove far more slowly. To our knowledge, ours is the first protocol that is fully sound
 for complete CNNs and transformers using only a hash function and a linear code, with no SNARK,
-TEE or trusted setup. Our optimisations keep the bound and shrink the proof 2.0--4.2$\times$
-(Sections~\ref{sec:opt} and~\ref{sec:effect}). Our prover is one to four orders of magnitude
-faster than the zkSNARKs', and on LeNet-5 and 64-token GPT-2 prompts we beat zkCNN and DeepProve on
-all three costs (Section~\ref{sec:compare}); on long prompts our proof remains larger.
+TEE or trusted setup.
 
 % =====================================================================================
 \section{Technical Approach}
