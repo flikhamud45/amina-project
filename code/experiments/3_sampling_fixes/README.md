@@ -15,7 +15,7 @@ All detection probabilities are exact (`pvi.experiments.analysis`), for one path
 | Block | Report |
 |---|---|
 | `sweep.<sampler>.detection_evasive` | detection against the adaptive attacker: uniform 0.20%, static-importance 0.11%, gradient-saliency 0.016% (`detection_naive` is the plain single-neuron attack) |
-| `zero_blind_spot` | contribution weighting: zeroing about 14 of 512 neurons flips the prediction (`mean_support` 14.35), detection 0 (`detection_contribution_weighted`), 2,000 of 2,000 real runs accepted (`protocol_accepts`; Table 1, last row); the zeroed neurons are zero on 65% of natural inputs (`natural_zero_fraction_at_chosen_neurons`) |
+| `zero_blind_spot` | contribution weighting: zeroing about 14 of 512 neurons flips the prediction (`mean_support` 14.35), detection 0 (`detection_contribution_weighted`), 2,000 of 2,000 real runs accepted (`protocol_accepts`; §4.2 *Other samplers*); the zeroed neurons are zero on 65% of natural inputs (`natural_zero_fraction_at_chosen_neurons`) |
 
 **`floor_sampler.py`** → `artifacts/results/floor_sampler.json` (20 queries): contribution
 weighting with an additive floor, `|w_ij| * (|a_i| + eps)`, measured on the tampered

@@ -9,15 +9,12 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{subcaption}
-\usepackage{colortbl}
 \setlength{\emergencystretch}{1.5em}
 
-% Table 5's cells (paper_assets.py): our cost lower (green, down arrow) or higher (orange, up arrow), by
-% the factor shown
-\definecolor{winbg}{RGB}{208,236,208}
-\definecolor{losebg}{RGB}{252,222,190}
-\newcommand{\win}[1]{\cellcolor{winbg}#1}
-\newcommand{\lose}[1]{\cellcolor{losebg}#1}
+% Table 3's cells (paper_assets.py): our cost lower (bold, down arrow) or higher (up arrow), by the
+% factor shown
+\newcommand{\win}[1]{{\bfseries\boldmath #1}}
+\newcommand{\lose}[1]{#1}
 
 % The figures in figures/ and the table bodies in tables/ are generated from the stored
 % measurements by code/experiments/5_comparison/paper_assets.py (see README.md). Numbers in the
@@ -427,7 +424,7 @@ zkCNN's and zkLLM's proofs, by contrast, stay between tens and a few hundred kil
 they leave the proof larger than it needs to be. We call the protocol so far the \emph{basic}
 protocol, and the one with the four changes below, checked by the engineered verifier described
 after them, the \emph{optimised} protocol. Section~\ref{sec:results} reports the optimised
-protocol, and Table~\ref{tab:opt} compares it with the basic one. The changes alter only how the
+protocol, and Section~\ref{sec:effect} compares it with the basic one. The changes alter only how the
 weights are committed, which positions of the last block are proved for a next-token output, and
 how messages are sent. Theorem~\ref{thm:sound} then holds in the form
 \begin{equation}
@@ -523,38 +520,13 @@ queries. Without the prescribed tolerance of $10^{-4}$, an honest prover is acce
 21--37\% of runs, because a layer-wide matrix product and a single-neuron dot product round
 differently.
 
-\begin{table}[t]
-  \caption{Path protocol, one path: known forgeries are always caught, ours almost never}
-  \label{tab:attack}
-  \small
-  \begin{tabular}{lrr}
-    \toprule
-    Attack & inconsistent nodes & accepted \\
-    \midrule
-    \multicolumn{3}{l}{\emph{Forgeries of~\cite{anchuri2026verifiable}, MLP (MNIST)}} \\
-    Substitute model $\tilde M$ & $\approx$574 & 0.000\phantom{00} \\
-    Inverse transform & 591 & 0.000\phantom{00} \\
-    Logit swap & 256 & 0.000\phantom{00} \\
-    Gradient reconstruction & $\approx$778 & 0.000\phantom{00} \\
-    \multicolumn{3}{l}{\emph{Our attacks, MLP (MNIST)}} \\
-    Single neuron, layer 1 & 1 & \textbf{0.998\phantom{00}} \\
-    Single neuron, layer 2 & 1 & \textbf{0.996\phantom{00}} \\
-    Backdoor, triggered inputs & 1 & \textbf{0.998\phantom{00}} \\
-    Stealthy (in natural range) & $\approx$5 & \textbf{0.989\phantom{00}} \\
-    Zeroing vs.\ contribution-weighted & $\approx$14 & \textbf{1.000\phantom{00}} \\
-    \multicolumn{3}{l}{\emph{Our attacks, OPT-6.7B (real weights)}} \\
-    One FFN neuron (40/40 prompts) & 1 & \textbf{0.99994} \\
-    Backdoor, target ``back'' (40/40) & 1 & \textbf{0.99994} \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\para{Attacks on MNIST.} Table~\ref{tab:attack} gives the number of inconsistent trace nodes and
-the exact acceptance probability, computed by dynamic programming over the paths. The forgeries
+\para{Attacks on MNIST.} We compute each attack's exact probability of passing one path by dynamic
+programming over the paths. The forgeries
 of~\cite{anchuri2026verifiable} are its substitute model, the inverse-transform and logit-swap
 forgeries of its Appendices~E and~F, and the gradient reconstruction of its Section~7.2. They
 corrupt hundreds of the MLP's 778 trace nodes and are always caught, while ours leave 1--14
-inconsistent nodes. One tampered neuron is accepted with the predicted probability $1-1/N$. Triggered by a
+inconsistent nodes. One tampered neuron is accepted with the predicted probability $1-1/N$
+(99.6--99.8\%). Triggered by a
 $3{\times}3$ bright patch, the backdoor returns the honest output on every clean query and
 succeeds on every triggered query not already in the target class. It passed 99.96\% of 2{,}300
 end-to-end runs, within sampling error of the predicted 99.8\%. Keeping each tampered value below
@@ -746,29 +718,14 @@ of~\cite{anchuri2026verifiable}, as reported on an RTX~3090.
 \subsection{Effect of the optimisations}
 \label{sec:effect}
 
-\begin{table}[t]
-  \caption{Basic $\to$ optimised protocol: smaller proofs, faster verification}
-  \label{tab:opt}
-  \footnotesize
-  \setlength{\tabcolsep}{3pt}
-  \begin{tabular}{lrrr}
-    \toprule
-    Model (data or tokens) & prove & verify & proof \\
-    \midrule
-    \input{tables/opt.tex}
-  \end{tabular}
-
-  \smallskip
-  {\footnotesize $^g$GPU verifier, streaming when optimised; prover and proof from the CPU-verifier
-  run. $^k\Kpre$, $\lambda{=}40$, one verifier thread.}
-\end{table}
-
-Table~\ref{tab:opt} compares the two protocols on the same machines, in setting $\sC$, interactive
-and at $\lambda{=}128$ unless marked; for \pendingclaim{GPT-2 and Qwen3-4B} the optimised rows also
+We compared the two protocols on the same machines, in setting $\sC$, interactive and at
+$\lambda{=}128$, on LeNet-5, VGG-16 and ResNet-18 (CIFAR), GPT-2 with 64- and 512-token prompts
+and Llama-2-7B with 1- and 64-token prompts; for \pendingclaim{GPT-2} the optimised runs also
 % PENDING: "the language models" once the pruned Llama-2-7B cells replace the unpruned stand-ins
-compute the last block at the last position only. Below 2{,}048 tokens the proof shrinks
-2.0--4.2$\times$ and verification speeds up 2.7--8.4$\times$.
-% PENDING: both ranges after the re-run (the Llama-2-7B rows change with pruning)
+compute the last block at the last position only. On average (geometric mean) the optimised
+protocol sends 61\% fewer bytes (2.0--4.2$\times$ fewer), verifies in 77\% less time
+(2.7--8.4$\times$ faster) and proves in 28\% less time.
+% PENDING: the averages and ranges after the re-run (the Llama-2-7B rows change with pruning)
 Much of the verifier gain comes from verifier engineering, which also speeds up the basic proofs (468 to 197\,ms for GPT-2 at 64 tokens). The prover gets faster too,
 except on the two MNIST models (4.3 to 5.3\,ms for LeNet-5 and 3.1 to 3.8\,ms for the MLP), where
 encoding the claims costs more time than the planning rule saves (3.0 and 1.9\,ms without the
@@ -776,7 +733,7 @@ compact encoding). \pendingclaim{At 2{,}048 tokens the optimised protocol proves
 \pending{17.6}\,s, verifies it on the GPU in \pending{6.9}\,s and sends \pending{11.6}\,GB,
 against 17.6\,s, 6.9\,s and 11.6\,GB for the basic protocol.} Without any change to the proof,
 % PENDING: Llama-2-7B T2048 C, prover and proof from the CPU-verifier cell, verifier from the
-% streaming GPU cell (Table 4's row g); placeholders: the basic run's. Rewrite as a comparison
+% streaming GPU cell (paper_assets.opt_pairs, row g); placeholders: the basic run's. Rewrite as a comparison
 % (e.g. "proves ... in x s instead of 17.6 s") once the values are in
 the released code's prover and the streaming verifier already take 5.4\,s and 1.7\,s on the basic proof
 format, and the prover then takes 1.9$\times$ the plain int8 forward pass (the $\Kpre$ prover).
@@ -796,8 +753,8 @@ The optimisations make the one-time setup longer
 \label{sec:compare}
 
 \begin{table}[t]
-  \caption{Ours against published systems: our prover always wins (green $\downarrow$: ours lower;
-  orange $\uparrow$: ours higher)}
+  \caption{Ours against published systems: our prover always wins (bold $\downarrow$: ours lower;
+  $\uparrow$: ours higher)}
   \label{tab:ratios}
   \footnotesize
   \setlength{\tabcolsep}{3.5pt}
@@ -819,8 +776,8 @@ The optimisations make the one-time setup longer
 \end{table}
 
 Table~\ref{tab:ratios} compares the optimised protocol with published systems on matched models;
-each cell gives the factor by which our time or size is lower ($\downarrow$, green) or higher
-($\uparrow$, orange). Our prover wins in
+each cell gives the factor by which our time or size is lower ($\downarrow$, in bold) or higher
+($\uparrow$). Our prover wins in
 every row, while the verifier and the proof win in some rows and lose in others. Our verifier uses
 \VerifierThreads{} CPU threads, or at 2{,}048 tokens the streaming GPU verifier, with prover and
 proof from the CPU-verifier run, as in Table~\ref{tab:llm}; for the language models ours prove the

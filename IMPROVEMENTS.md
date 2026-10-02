@@ -103,7 +103,7 @@ What did not hold as projected from the 2080 Ti ratios:
 
 Caveats to state in any text:
 - **Wire encoding:** the DeepProve, Fiat-Shamir zkCNN and smaller-proof Maverick rows need it.
-- **Interactive vs Fiat-Shamir:** Table 4 compares our interactive protocol; the Fiat-Shamir numbers are given where it matters.
+- **Interactive vs Fiat-Shamir:** Table 3 compares our interactive protocol; the Fiat-Shamir numbers are given where it matters.
 - **Setup grows** with the higher-rate plans (GPT-2: 0.86 -> 9.9 G encoded entries). `auto` caps it at max(2 x paper, 2^34).
 - **Random weights:** the LLM costs use random int8 weights, as in the paper. Trained weights compress better.
 - **Remaining inefficiency:** the verifier widens decoded claims to int64 (Qwen: 88 ms vs 31 ms for int32), which matters for the Maverick row. Not addressed.

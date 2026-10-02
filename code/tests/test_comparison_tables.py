@@ -85,16 +85,18 @@ def test_the_streaming_verifier_is_timed_once():
         m.total("lenet5", "cell", pa.VERIFY)
 
 
-def test_table4_cells_share_one_unit():
+def test_sec45_compares_both_protocols_on_every_configuration():
+    """Sec. 4.5 quotes the basic -> optimised comparison (opt_pairs; text_numbers.py checks its averages and
+    ranges): every configuration has both sides, the basic one complete."""
     pa = _script("paper_assets")
-    assert pa.pair(1.0117, 0.3747, "t") == r"1{,}012$\to$375\,ms"      # the smaller value's unit
-    assert pa.pair(0.0043, 0.0053, "t") == r"4.3$\to$5.3\,ms"
-    assert pa.pair(2.7, 1.48, "t") == r"2.7$\to$1.5\,s"
-    assert pa.pair(131e3, 49.5e3, "b") == r"131$\to$49.5\,kB"
-    assert pa.pair(11.586e9, 11.586e9, "b") == r"11.6\,GB"         # printed once when unchanged
+    pa.OPT_TABLES = [pa.tables_dir("l40s_improved")]
+    rows = pa.opt_pairs()
+    assert [r[0] for r in rows] == [label for label, *_ in pa.TAB_OPT]
+    assert all(None not in before for _, _, _, before, _, _ in rows)
+    assert all(a is not None for *_, after, _ in rows for a in after)
 
 
-def test_table5_follows_the_setting_rule():
+def test_table3_follows_the_setting_rule():
     """Fiat-Shamir against the non-interactive systems where it is stored (else interactive and marked),
     the interactive protocol against zkLLM and Maverick, Maverick's non-linear replay in its verifier
     time, ours better on all three costs exactly in the zkCNN and DeepProve rows, and each cell printed as the
@@ -108,7 +110,7 @@ def test_table5_follows_the_setting_rule():
     assert ("zkCNN$^a$", "VGG-16") in rows and ("DeepProve$^c$", "GPT-2 (512)") in rows   # their caveats
     assert pa._marks(["e", "a"]) == "$^{a,e}$" and pa._marks([]) == ""
     assert pa._marks([pa.INTERACTIVE_MARK, "a"]) == r"$^{a,\ast}$"     # letters first, the asterisk last
-    # the letters follow Table 5's reading order: the first mark of each kind a reader meets
+    # the letters follow Table 3's reading order: the first mark of each kind a reader meets
     order = [m for s, *_ in pa.ratio_rows() for m in __import__("re").findall(r"\^\{?([a-z])", s)]
     assert sorted(dict.fromkeys(order)) == list(dict.fromkeys(order))
     assert all(i for (s, w), (c, i, _) in rows.items() if s.startswith(("zkLLM", "Maverick")))
@@ -119,14 +121,13 @@ def test_table5_follows_the_setting_rule():
     # the 2,048-token rows need the second optimised run: pending, with the basic protocol standing in
     assert all(all(p) for (s, w), (c, i, p) in rows.items() if s == "zkLLM")
     assert not any(any(p) for (s, w), (c, i, p) in rows.items() if s.startswith(("zkCNN", "DeepProve", "Maverick")))
-    # the default ('cells'): the factor either way, with a down arrow where our cost is lower (shaded green)
-    # and an up arrow where it is higher (orange), the shade outside \pending{} so the colour is set at the
-    # cell's level
+    # the default ('cells'): the factor either way, with a down arrow where our cost is lower (in bold) and
+    # an up arrow where it is higher, the bold outside \pending{} so a red placeholder is bold too
     assert pa.RATIO_STYLE == "cells"
     assert pa.fac(844.0, 5.39)[0] == r"157$\times$$\downarrow$" and pa.fac(0.0871, 0.155)[0] == r"1.8$\times$$\uparrow$"
-    assert pa._shade(pa.red("2.2$\\times$", True), 2.2) == r"\win{\pending{2.2$\times$}}"
-    assert pa._shade("72$\\times$", 1 / 72) == r"\lose{72$\times$}"
-    assert pa._shade("--", None) == "--" and pa._shade("same", 1.0) == "same"
+    assert pa._mark(pa.red("2.2$\\times$", True), 2.2) == r"\win{\pending{2.2$\times$}}"
+    assert pa._mark("72$\\times$", 1 / 72) == r"\lose{72$\times$}"
+    assert pa._mark("--", None) == "--" and pa._mark("same", 1.0) == "same"
     pa.RATIO_STYLE = "fraction"
     assert pa.fac(844.0, 5.39)[0] == r"157$\times$" and pa.fac(0.0871, 0.155)[0] == "1/1.8"
     pa.RATIO_STYLE = "arrows"
@@ -170,7 +171,7 @@ def test_a_missing_optimised_cell_is_pending_with_the_basic_value():
     status = {r["row"]: r["status"] for r in pa.PENDING}
     assert status == {"r224": "pending", "l64": "acceptable", "kpre": "pending", "g64": "pending"}
     # at 2,048 tokens the stored _gpuv_stream cells send the basic proof: not the definition, so pending;
-    # the placeholder is the basic run's, the prover from the CPU-verifier run (as Table 3 prints it)
+    # the placeholder is the basic run's, the prover from the CPU-verifier run (as Table 2 prints it)
     v, p = pa.opt_llm("llama2-7b", 2048, "prove")
     assert p and v == pa.llm_cost(("llama2-7b", 2048), {})[0]
     v, p = pa.opt_llm("llama2-13b", 2048, "gpu")      # no basic GPU-verifier run: no placeholder
@@ -180,8 +181,6 @@ def test_a_missing_optimised_cell_is_pending_with_the_basic_value():
 def test_pending_cells_are_red_in_the_tables():
     pa = _script("paper_assets")
     assert pa.red(r"27.4\,ms", True) == r"\pending{27.4\,ms}" and pa.red("27.4", False) == "27.4"
-    assert pa.pair(17.6, 17.6, "t", pending=True) == r"17.6$\to$\pending{17.6}\,s"   # not printed once
-    assert pa.pair(11.586e9, None, "b", pending=True) == r"11.6\,GB$\to$\pending{--}"
 
 
 def test_later_optimised_runs_replace_earlier_cells(tmp_path):

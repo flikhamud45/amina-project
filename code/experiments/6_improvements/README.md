@@ -338,7 +338,7 @@ Derive and the products are the same under every policy (they do not depend on t
 commitment); the column check falls with the columns opened and the multiproofs, and the
 prover's open with the `sum N k t` of its column products.
 
-### Table 4 (interactive, lambda = 128)
+### Table 3, against published systems (interactive, lambda = 128)
 
 Proof sizes are exact.  Verifier times are estimates for the L40S node's client (EPYC, 8
 threads): its stored stage medians (paper code) scaled by laptop ratios -- the Phase 1 ratios
@@ -590,7 +590,7 @@ verifier read 33.5 ms instead: that is an artefact of alternating the two alloca
 one Windows process (two interleaved wire verifiers give 11.2 ms each, two without wire 10.6
 ms), not work the wire adds.
 
-### Table 4 (lambda = 128)
+### Table 3, against published systems (lambda = 128)
 
 | Row | Competitor | Ours, report | Plan + wire (this section) | Flips? |
 |---|---:|---:|---|---|
@@ -864,7 +864,7 @@ classifiers and time as their base policies (LeNet-5 `cnn18c` 2.81 ms against `c
 `cnn17c` 2.81 against 2.86; VGG-16 `cnn17c` 20.69 ms against `cnn17` 20.81; `paper` 4.44 and
 33.70 ms); LeNet-5's `prove_fold` takes 0.8x.
 
-### Table 4 (lambda = 128)
+### Table 3, against published systems (lambda = 128)
 
 | Row | Competitor | Ours, report | Plan + wire (Phase 2) | `c` plan + wire (this section) | Flips? |
 |---|---:|---:|---:|---:|---|
@@ -1185,7 +1185,7 @@ Qwen3-4B with 4 of its 36 blocks at 8 tokens (lambda = 40): 24.9 ms, 21.7 ms pru
 with both, 28.9 ms with both and wire against 32.0 ms with wire alone (0.90x).  So in mode Kpre the
 lookups save bytes, not time; pruning saves both.
 
-### Table 4 (lambda = 128; Maverick: mode Kpre)
+### Table 3, against published systems (lambda = 128; Maverick: mode Kpre)
 
 | Row | Competitor | Ours, report | Before this section | This section | Flips? |
 |---|---:|---:|---|---|---|

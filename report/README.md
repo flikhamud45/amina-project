@@ -7,9 +7,9 @@ the references included, which start on page 9).
 `code/experiments/5_comparison/paper_assets.py` and `count_outcomes.py` (no GPU needed). The
 report's benchmark numbers come from two runs on the same machines (an NVIDIA L40S prover and
 8 threads of an AMD EPYC 9334 verifier; see `code/README.md`): the *optimised protocol*, platforms
-`l40s_improved` and `l40s_improved2` (`raw_l40s_improved*/`; Tables 2, 3 and 5, Figure 4, the filled
+`l40s_improved` and `l40s_improved2` (`raw_l40s_improved*/`; Tables 1–3, Figure 4, the filled
 points of Figure 3), and the *basic protocol*, platform `l40s` (`code/artifacts/comparison/raw_l40s/`,
-measured at commit `9401431`; Table 4's left-hand side and the hollow points of Figure 3). Until
+measured at commit `9401431`; the basic side of §4.5's comparison and the hollow points of Figure 3). Until
 `l40s_improved2` is stored, the optimised numbers it will provide are printed in red with the basic
 protocol's value as a placeholder (`\pending{}`; `paper_assets.py --check` lists them):
 
@@ -26,12 +26,12 @@ python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s
 cd ../report && latexmk -pdf main.tex                                     # or: tectonic -X compile main.tex
 ```
 
-zkLLM's run on our GPU enters Table 5 through
+zkLLM's run on our GPU enters Table 3 through
 `code/artifacts/results/zkllm_l40s/summary.csv` (`summarise.py --csv`). Use the pinned
 matplotlib 3.11.2 of `code/requirements.txt` for the figures (they are then byte-identical).
 
 `tables/hardware.tex` defines `\ProverGPU`, `\VerifierCPU`, `\VerifierThreads`, `\LLMNote`
-(empty: every row of Table 3 is a full build) and `\NPendingCells` (the number of table and
+(empty: every row of Table 2 is a full build) and `\NPendingCells` (the number of table and
 figure numbers still pending), which `main.tex` inputs in its preamble. The table bodies use
 `\pending{}`, which `main.tex` defines. The numbers typed in the text are not generated:
 `text_numbers.py` (above) compares each one with the tables and fails on a mismatch, and `count_outcomes.py --tex` writes the counts of the abstract, §4.3 and the

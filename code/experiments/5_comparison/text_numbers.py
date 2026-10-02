@@ -370,7 +370,7 @@ def checks(M, opt_names: list[str]):
         rng([fixed(M.get(m, "sampling", "paths_bytes_shared", lam=40) / pa.basic_cnn(m, "bytes", lam=40))
              for m in pa.CNN_ORDER], lambda v: f"{v:.1f}"))
 
-    # 4.4 image models (Table 2, optimised)
+    # 4.4 image models (Table 1, optimised)
     cnn = lambda k: [elem(lambda s, m: s.cnn(m, k), m) for m in pa.CNN_ORDER]   # noqa: E731
     i8 = lambda s, m: M.get(m, "facts", "model_bytes_int8") / s.cnn(m, "bytes")   # noqa: E731
     add(r"With committed weights the prover needs", "CNN prover; verifier; proof (C, optimised)",
@@ -378,7 +378,7 @@ def checks(M, opt_names: list[str]):
     add(r"smaller than the int8 weights for|smaller than the int8 weights, by",
         "int8 weights / proof (the MNIST and CIFAR models)",
         rng([elem(i8, m) for m in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar")], lambda v: f"{v:.1f}"))
-    # 4.4 language models (Table 3, optimised)
+    # 4.4 language models (Table 2, optimised)
     L = lambda m, sq, k, mode="C": elem(lambda s: s.llm(m, sq, k, mode))   # noqa: E731
     l64 = lambda s: pa.opt_llm("llama2-7b", 64, "params")[0] / s.llm("llama2-7b", 64, "bytes")   # noqa: E731
     add(r"With a 64-token prompt GPT-2 is proved in", "GPT-2 T64 prover; Llama-2-7B T64 prover, proof, int8/proof",
@@ -390,7 +390,7 @@ def checks(M, opt_names: list[str]):
     gpu_rows = [(m, s) for m, s in pa.TAB_LLM_PICK if pa.basic_llm(m, s, "gpu") is not None or
                 pa.opt_llm(m, s, "gpu")[0] is not None]
     ratio = lambda m, sq: lambda s: s.llm(m, sq, "verify") / s.llm(m, sq, "gpu")   # noqa: E731
-    add(r"a GPU verifier is", "C: CPU / GPU verifier at 2,048 tokens; at 64 (Table 3 rows with both)",
+    add(r"a GPU verifier is", "C: CPU / GPU verifier at 2,048 tokens; at 64 (Table 2 rows with both)",
         [*rng([elem(ratio(m, s)) for m, s in gpu_rows if s == 2048]),
          *rng([elem(ratio(m, s)) for m, s in gpu_rows if s == 64], lambda v: f"{v:.1f}")])
 
@@ -414,18 +414,22 @@ def checks(M, opt_names: list[str]):
     add(r"For Llama-2-70B the extrapolated", "Llama-2-70B T64 (1-2 blocks): proof; int8 weights / proof",
         [one(elem(p70), pa.b), one(elem(lambda s: n70 / p70(s)), x, "×")])
 
-    # 4.5 / Table 4
+    # 4.5: basic -> optimised (paper_assets.opt_pairs)
     rows = pa.opt_pairs()
     short = [(lab, bf, af, pd) for lab, m, s, bf, af, pd in rows if s != 2048 and m != "qwen3-4b"]
-    acc = {r["row"] for r in pa.pending_rows(ACCEPTABLE) if r["asset"] == "Table 4"}
+    acc = {r["row"] for r in pa.pending_rows(ACCEPTABLE) if r["asset"] == "Sec. 4.5"}
     t4 = lambda i: [V(bf[i] / af[i], PENDING if pd[i] else (ACCEPTABLE if pa._plain(lab) in acc else FINAL))  # noqa: E731
                     for lab, bf, af, pd in short]
-    add(r"[Bb]elow 2\{,\}048 tokens,? the proof shrinks",
-        "Table 4 below 2,048 tokens (Qwen3-4B excluded): proof smaller; verifier faster",
-        [*rng(t4(2), lambda v: f"{v:.1f}"), *rng(t4(1), lambda v: f"{v:.1f}")])
-    add(r"keep the bound and shrink the proof", "Table 4 below 2,048 tokens (Qwen3-4B excluded): proof smaller "
+    # the averages: geometric means of basic/optimised over the same rows, printed as the % saved
+    cut = lambda vals: Tok([(f"{100 * (1 - 1 / math.exp(sum(math.log(v.value) for v in vals) / len(vals))):.0f}",  # noqa: E731
+                             worst(*(v.state for v in vals)))], "%")
+    add(r"On average \(geometric mean\) the optimised",
+        "Sec. 4.5 below 2,048 tokens (Qwen3-4B excluded): % fewer bytes, range; % less verifier time, range; "
+        "% less prover time", [cut(t4(2)), *rng(t4(2), lambda v: f"{v:.1f}"), cut(t4(1)),
+                               *rng(t4(1), lambda v: f"{v:.1f}"), cut(t4(0))])
+    add(r"keep the bound and shrink the proof", "Sec. 4.5 below 2,048 tokens (Qwen3-4B excluded): proof smaller "
         "(Related Work, Where we fit)", rng(t4(2), lambda v: f"{v:.1f}"))
-    add(r"Optimisations keep the bound and shrink", "Table 4 below 2,048 tokens (Qwen3-4B excluded): proof smaller",
+    add(r"Optimisations keep the bound and shrink", "Sec. 4.5 below 2,048 tokens (Qwen3-4B excluded): proof smaller (contributions)",
         rng(t4(2), lambda v: f"{v:.1f}"))
     eng = pa.llm_cost(("gpt2", 64), {}, pa.opt_dirs())
     add(r"speeds up the basic proofs", "GPT-2 T64 basic proof: basic run's verifier -> released code's",
@@ -439,7 +443,7 @@ def checks(M, opt_names: list[str]):
                      bare(pa.basic_cnn("mlp_mnist", "prove")), one(elem(lambda s: s.cnn("mlp_mnist", "prove")), pa.t),
                      bare(pol["lenet5"]), one(fixed(pol["mlp_mnist"]), pa.t)])
     l7 = [r for r in rows if r[1] == "llama2-7b" and r[2] == 2048][0]
-    add(r"the optimised protocol proves Llama-2-7B", "Table 4 row g: prover, verifier, proof optimised; basic",
+    add(r"the optimised protocol proves Llama-2-7B", "Sec. 4.5, Llama-2-7B T2048: prover, verifier, proof optimised; basic",
         [one(V(l7[4][0], PENDING if l7[5][0] else FINAL), pa.t), one(V(l7[4][1], PENDING if l7[5][1] else FINAL), pa.t),
          one(V(l7[4][2], PENDING if l7[5][2] else FINAL), pa.b),
          one(fixed(l7[3][0]), pa.t), one(fixed(l7[3][1]), pa.t), one(fixed(l7[3][2]), pa.b)])
@@ -471,8 +475,8 @@ def checks(M, opt_names: list[str]):
         Tok([(x(max(commit(MO, "gpt2", f"commit_T{s}_L12_wire_prune_polauto") / commit(MO, "gpt2", f"commit_T{s}_L12")
                     for s in (64, 512))), FINAL)], "×"))
 
-    # 4.6 / Table 5
-    # Table 5's rows; system() drops the footnote letters of SYSTEM_MARK (zkCNN$^a$ -> zkCNN), not Maverick's
+    # 4.6 / Table 3
+    # Table 3's rows; system() drops the footnote letters of SYSTEM_MARK (zkCNN$^a$ -> zkCNN), not Maverick's
     # d, zkLLM's own code's e (pa.ZKLLM_OWN) or the interactive asterisk
     rr = pa.ratio_rows()
     marks = {m for m in pa.SYSTEM_MARK.values()}
@@ -494,7 +498,7 @@ def checks(M, opt_names: list[str]):
     slow = [one(V(1 / v[1].value, FINAL), x, "×") for k, v in q.items()
             if v[1].state == FINAL and v[1].value and v[1].value < 1]
     # the zkLLM rows while any is red: the range of ours/theirs over the red rows where ours is slower, as
-    # Table 5 prints them (the basic GPU verifier's placeholders; a row with none, '--', is left out)
+    # Table 3 prints them (the basic GPU verifier's placeholders; a row with none, '--', is left out)
     zslow = [V(1 / v[1].value, PENDING) for k, v in q.items()
              if k[0] == "zkLLM" and v[1].state == PENDING and v[1].value and v[1].value < 1]
     if any(v[1].state == PENDING for k, v in q.items() if k[0] == "zkLLM"):
@@ -555,7 +559,7 @@ def checks(M, opt_names: list[str]):
           and r["seq"] == "2048" for _f in [pa._f(r["proof_bytes"])]]
     add(r"against zkLLM's 157", "zkLLM's proofs for the 7B models", rng([fixed(v) for v in zp], pa.b))
     cpu2048 = [elem(lambda s, m=m: s.llm(m, 2048, "verify")) for m, sq in pa.TAB_LLM_PICK if sq == 2048]
-    add(r"CPU verifier needs up to", "largest CPU verifier at 2,048 tokens (Table 3)",
+    add(r"CPU verifier needs up to", "largest CPU verifier at 2,048 tokens (Table 2)",
         one(max(cpu2048, key=lambda v: v.value), pa.t))
     add(r"optimised proof is far smaller than the model|far smaller than the model", "Llama-2-7B T64: int8 weights / proof",
         one(elem(l64), x, "×"))
