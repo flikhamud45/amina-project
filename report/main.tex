@@ -309,36 +309,43 @@ within its neuron's \emph{natural range}, the values it takes on honest inputs.
 \subsection{Our defence: checking every layer}
 \label{sec:defence}
 
-Since no sampler suffices, our verifier checks every neuron at once: it tests one random linear
-combination of all the neurons of each weight layer. A wrong
-value anywhere in the layer changes this combination except with probability $1/p$, for a prime
-$p$ fixed below, so the test needs no assumption about where the adversary tampers. We build it
-in four steps.
+Since sampling does not reliably catch a single tampered neuron, our verifier checks every neuron
+of every layer. We first split ``the
+answer is correct'' into three statements, then show how the verifier checks each one cheaply, and
+finally how the checks combine.
 
-\para{Step 1: an exact integer model.} A random combination is a reliable test only if prover and
-verifier compute exactly the same numbers, so the model runs in integers. Following integer-only
-inference~\cite{jacob2018quant}, each weight layer computes $Z = W X + b$, where $W$ is int8 with
-one scale per output channel, $X$ is int8 with one scale per tensor, and BatchNorm is folded into
-$W$ and $b$. The next layer's input is obtained by fixed-point requantisation followed by the
-activation or pooling, and convolutions become matrix products through im2col. On the prover's
-GPU the products are computed in float32 chunks of at most 1{,}024 terms, so every partial sum
-stays below $2^{24}$ in magnitude and is exact, and the prover's results are bit-identical to the
-verifier's. Exactness also removes the floating-point tolerance of the path protocol, which
-leaves an attacker room to hide small changes.
+\para{Exact integers.} All the checks compare exact values, so the model runs in integers.
+Following integer-only inference~\cite{jacob2018quant}, each weight layer $\ell$ computes
+$Z_\ell = W_\ell X_\ell + b_\ell$, where $W_\ell$ is int8 with one scale per output channel,
+$X_\ell$ is int8 with one scale per tensor, and BatchNorm is folded into $W_\ell$ and $b_\ell$;
+convolutions become matrix products through im2col. On the prover's GPU the products are computed
+in float32 chunks of at most 1{,}024 terms, so every partial sum stays below $2^{24}$ in magnitude
+and is exact, and the prover's results are bit-identical to the verifier's. Exactness also removes
+the floating-point tolerance of the path protocol, which leaves an attacker room to hide small
+changes.
 
-\para{Step 2: claims and recomputation.} For every weight layer $\ell$ the prover sends the
-claimed pre-activations $Z_\ell$, the \emph{claims}. The verifier recomputes every operation that
-does not involve the weights from the claims of earlier layers: requantisation, ReLU, pooling,
+\para{Three statements.} With the output $y$, the prover sends the pre-activations $Z_\ell$ of every
+weight layer, which we call the \emph{claims}. Write $A_\ell = [W_\ell \,|\, b_\ell]$. Between two
+weight layers the network applies only operations without weights: requantisation, ReLU, pooling,
 residual additions, LayerNorm/RMSNorm, GELU/SiLU (by table look-up), RoPE, softmax, and the
-attention products $QK^\T$ and $PV$. Each weight layer's input $X_\ell$ is therefore the
-verifier's own computation, so the checks are chained and a prover cannot pass one layer's check
-with one value and feed another into the next. What remains is to check $Z_\ell = W_\ell X_\ell +
-b_\ell$ for every $\ell$.
+attention products $QK^\T$ and $PV$. The claims and $y$ are those of $M$ on $x$ exactly when, for
+every weight layer $\ell$,
+(S1)~its input $X_\ell$ follows from $x$ and the earlier claims through these operations, and $y$
+from the last claims;
+(S2)~its claims are the product of its weights and its input, $Z_\ell = A_\ell[X_\ell; \mathbf 1]$;
+and (S3)~$A_\ell$ is the committed matrix.
 
-\para{Step 3: Freivalds' check.} Write $A_\ell = [W_\ell \,|\, b_\ell]$, a matrix with $N$ rows
-(one per output neuron) and row length $k$, and let $T$ be the number of columns of $X_\ell$
-(pixels or tokens); we drop the subscript $\ell$ from $N$, $k$ and $T$ when the layer is clear.
-The verifier draws a random $\chi \in \F^{N}$ and checks
+\para{Checking (S1): recomputation.} The verifier computes every operation without weights itself,
+from $x$ and the claims. Each input $X_\ell$ is therefore the verifier's own computation, not a
+value sent by the prover, and the checks are chained: a prover cannot pass one layer's check with
+one value and feed another into the next. This is also why non-linear layers such as ReLU and
+softmax need no proof here: the verifier never checks a claimed activation, it computes it.
+
+\para{Checking (S2): Freivalds' check.} Let $A_\ell$ have $N$ rows (one per output neuron) and row
+length $k$, and let $T$ be the number of columns of $X_\ell$ (pixels or tokens); we drop the
+subscript $\ell$ from $N$, $k$ and $T$ when the layer is clear. Recomputing $A_\ell[X_\ell;\mathbf
+1]$ would cost the verifier as much as inference. Instead it draws a random $\chi \in \F^{N}$ and
+checks one random combination of the layer's rows,
 \begin{equation}
   \chi^\T Z_\ell \;=\; \underbrace{(\chi^\T A_\ell)}_{u_\ell}\,[X_\ell; \mathbf{1}] ,
   \label{eq:freivalds}
@@ -360,19 +367,30 @@ in the same range ($128\sum_c |w_{ic}| + |b_i| < 2^{29}$ for every row $i$, sinc
 at most 128 in magnitude). A wrong claim and the correct value then differ by less than
 $2^{30} < p$, so they remain distinct in $\F$.
 
-\para{Step 4: committed weights.} In setting $\sC$ the verifier cannot compute $u_\ell$, so the
-prover sends it. Opening $t$ random entries of $u_\ell$ against the weights would be weak: a
-prover who changes one of the $k$ entries escapes with probability $1-t/k$. We therefore commit
-to an \emph{encoded} copy of the weights, in the style of Ligero~\cite{ligero}. At setup every row
-of $A_\ell$ is padded with zeros to a power of two $\bar k \ge k$ and Reed--Solomon
+\para{Checking (S3): committed weights.} In $\sK$ and $\Kpre$ the verifier holds the weights and
+computes $u_\ell$ itself, so (S3) holds by construction. In setting $\sC$ it cannot, so the prover
+sends $u_\ell$, and the verifier must check that $u_\ell = \chi^\T A_\ell$ for the committed
+$A_\ell$. Opening $t$ random entries of $u_\ell$ against the weights would be weak: a prover who
+changes one of the $k$ entries escapes with probability $1-t/k$. We therefore commit to an
+\emph{encoded} copy of the weights, in the style of Ligero~\cite{ligero}. At setup every row of
+$A_\ell$ is padded with zeros to a power of two $\bar k \ge k$ and Reed--Solomon
 encoded~\cite{reedsolomon1960} to length $n_\ell = 4\bar k$ (Section~\ref{sec:opt} relaxes this),
 giving $\hat A_\ell$. The commitment $C_M$ holds one Merkle root~\cite{merkle1987} per weight
 matrix, over the columns of $\hat A_\ell$. Encoding is linear, so $\chi^\T \hat A_\ell =
 \enc(\chi^\T A_\ell)$. The verifier encodes the claimed $u_\ell$ itself, opens $t$ random columns
-$c$, and checks $\chi^\T \hat A_{\ell,c} = \enc(u_\ell)_c$. If $u_\ell$ is wrong, $\enc(u_\ell)$
-and $\enc(\chi^\T A_\ell)$ are distinct codewords that agree on at most $k-1$ of the $n_\ell$
-positions, so $t$ distinct columns all miss the difference with probability at most
-$((k-1)/n_\ell)^t < 4^{-t}$.
+$c$ with their Merkle paths, and checks $\chi^\T \hat A_{\ell,c} = \enc(u_\ell)_c$. If $u_\ell$ is
+wrong, $\enc(u_\ell)$ and $\enc(\chi^\T A_\ell)$ are distinct codewords that agree on at most
+$k-1$ of the $n_\ell$ positions, so $t$ distinct columns all miss the difference with probability
+at most $((k-1)/n_\ell)^t < 4^{-t}$.
+
+\para{Putting the checks together.} Suppose $y \neq M(x)$. Then some claim is wrong (otherwise
+recomputation from correct claims gives the correct $y$); let $\ell$ be the first layer with a
+wrong claim. Its input $X_\ell$ is correct, because the verifier computed it from $x$ and correct
+earlier claims (S1). So $Z_\ell \neq A_\ell[X_\ell;\mathbf 1]$ for the committed $A_\ell$, and the
+prover can pass only by fooling one of the two random checks: if it sends the true $u_\ell$,
+Eq.~\eqref{eq:freivalds} fails except with probability $p^{-r}$ (S2); if it sends another
+$u_\ell$, a column check fails except with probability $((k_\ell-1)/n_\ell)^t$ (S3).
+Theorem~\ref{thm:sound} adds these terms over the layers.
 
 \begin{figure}[t]
   \centering
@@ -388,8 +406,8 @@ $((k-1)/n_\ell)^t < 4^{-t}$.
 Setup happens once per model: the owner encodes and commits the weights and publishes $C_M$.
 Figure~\ref{fig:protocol} shows one query of the basic protocol, with $r$ vectors $\chi$ and $t$
 columns per layer;
-besides the checks of Steps~3 and~4, the verifier range-checks the claims and checks that the
-recomputed layers lead to $y$. Because the claims precede $\chi$ and $u_\ell$ precedes the column
+besides the checks of (S2) and (S3), the verifier range-checks the claims and checks that the
+recomputed layers lead to $y$ (S1). Because the claims precede $\chi$ and $u_\ell$ precedes the column
 positions, the prover fixes every value before it sees the randomness that tests it.
 
 \begin{theorem}[soundness]
@@ -399,11 +417,10 @@ $y \neq M(x)$ the verifier accepts with probability at most
 $\varepsilon = \sum_\ell \big[\,p^{-r} + \big(\tfrac{k_\ell - 1}{n_\ell}\big)^{t}\,\big]$.
 \end{theorem}
 
-\noindent\emph{Sketch.} If $y \neq M(x)$, some claim is wrong; let $\ell$ be the first layer with a
-wrong claim. Its input $X_\ell$ is correct, because the verifier computed it from correct claims.
-If $u_\ell$ is correct, Eq.~\eqref{eq:freivalds} fails except with probability $p^{-r}$ (Step~3).
-If $u_\ell$ is wrong, a column check fails except with probability $((k_\ell-1)/n_\ell)^t$
-(Step~4). A union bound over the layers finishes the proof. \qed
+\noindent\emph{Proof sketch.} As shown in Section~\ref{sec:defence}, if $y \neq M(x)$ the first
+layer with a wrong claim passes only if Freivalds' check or its column check is fooled, which
+happens with probability at most $p^{-r}$ or $((k_\ell-1)/n_\ell)^t$. A union bound over the
+layers finishes the proof. \qed
 
 \para{Parameters.} For a target $\lambda$ and $L$ weight layers we set
 $\beta = \lambda + \log_2(2L)$, $r = \lceil \beta/\log_2 p \rceil$ and $t = \lceil \beta/2
