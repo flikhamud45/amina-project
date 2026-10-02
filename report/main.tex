@@ -327,15 +327,17 @@ neuron of every layer. We first split ``the
 answer is correct'' into three statements, then show how the verifier checks each one cheaply, and
 finally how the checks combine.
 
-\para{Exact integers.} All the checks compare exact values, so the model runs in integers.
-Following integer-only inference~\cite{jacob2018quant}, each weight layer $\ell$ computes
-$Z_\ell = W_\ell X_\ell + b_\ell$, where $W_\ell$ is int8 with one scale per output channel,
-$X_\ell$ is int8 with one scale per tensor, and BatchNorm is folded into $W_\ell$ and $b_\ell$;
-convolutions become matrix products through im2col. As in Slalom~\cite{slalom}, the prover's GPU
-computes the products in float32, in chunks of at most 1{,}024 terms, so every partial sum stays
-below $2^{24}$ in magnitude and is exact, and the prover's results are bit-identical to the verifier's. Exactness also removes
-the floating-point tolerance of the path protocol, which leaves an attacker room to hide small
-changes.
+\para{Exact integers.} The checks compare exact values, but floating-point results differ between
+devices and summation orders. The model that is committed and checked is therefore an int8 version
+of $M$, obtained by integer-only quantisation~\cite{jacob2018quant}, the form in which many models
+are already served; Section~\ref{sec:setup} measures its accuracy. Each weight layer $\ell$
+computes $Z_\ell = W_\ell X_\ell + b_\ell$, where $W_\ell$ is int8 with one scale per output
+channel, $X_\ell$ is int8 with one scale per tensor, and BatchNorm is folded into $W_\ell$ and
+$b_\ell$; convolutions become matrix products through im2col. These integer products can still use
+the GPU's fast float32 units: float32 represents every integer below $2^{24}$ exactly, so the
+prover sums at most 1{,}024 products of int8 values at a time, as in Slalom~\cite{slalom}, and its
+results are bit-identical to the verifier's. Exactness also removes the floating-point tolerance of
+the path protocol, which leaves an attacker room to hide small changes.
 
 \para{Three statements.} With the output $y$, the prover sends the pre-activations $Z_\ell$ of every
 weight layer, which we call the \emph{claims}. Write $A_\ell = [W_\ell \,|\, b_\ell]$. Between two
@@ -435,7 +437,7 @@ $y \neq M(x)$ the verifier accepts with probability at most
 $\varepsilon = \sum_\ell \big[\,p^{-r} + \big(\tfrac{k_\ell - 1}{n_\ell}\big)^{t}\,\big]$.
 \end{theorem}
 
-\noindent\emph{Proof sketch.} As shown in Section~\ref{sec:defence}, if $y \neq M(x)$ the first
+\noindent\emph{Proof.} As shown in Section~\ref{sec:defence}, if $y \neq M(x)$ the first
 layer with a wrong claim passes only if Freivalds' check or its column check is fooled (the range
 check keeps the wrong claim distinct from the true value in $\F$, and the opened columns are the
 committed ones unless the prover finds a hash collision), which happens with probability at most
@@ -468,15 +470,25 @@ $\chi$ with probability at most $Q\sum_\ell p^{-r}$.
 
 \para{Costs.} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns, which it
 recomputes from $W_\ell$; its extra work, $O((r+t)\sum_\ell N_\ell k_\ell)$, does not depend on the
-number of pixels or tokens. A proof consists of the claims, $4\sum_\ell N_\ell T_\ell$ bytes,
-which grow with the input, and of the folded rows, opened columns and Merkle hashes, which do not.
-zkCNN's and zkLLM's proofs, by contrast, stay between tens and a few hundred kilobytes.
+number of pixels or tokens. With 4-byte claims and field elements and 32-byte hashes, a proof in
+setting $\sC$ has
+\begin{equation}
+  |\pi| \;=\; 4\sum_\ell N_\ell T_\ell \;+\; 4r\sum_\ell k_\ell \;+\; 4t\sum_\ell N_\ell \;+\;
+  32\sum_\ell h_\ell \ \text{bytes}:
+  \label{eq:size}
+\end{equation}
+the claims, which grow with the input, and the folded rows, the $t$ opened columns of $N_\ell$
+entries and the $h_\ell \le t\log_2 n_\ell$ hashes of each layer's Merkle multiproof, which do not.
+For Llama-2-7B at 64 tokens these are 349, 23, 385 and 4\,MB of the basic protocol's 762\,MB
+proof. In $\sK$ and
+$\Kpre$ the proof is the claims alone. zkCNN's and zkLLM's proofs, by contrast, stay between tens
+and a few hundred kilobytes.
 
 \para{Optimisations.} The parameters above were chosen to keep the soundness argument short, and
 they leave the proof larger than it needs to be. We call the protocol so far the \emph{basic}
 protocol, and the one with the four changes below, checked by the engineered verifier described
-after them, the \emph{optimised} protocol. Section~\ref{sec:results} reports the optimised
-protocol, and Section~\ref{sec:effect} compares it with the basic one. The changes alter only how the
+after them, the \emph{optimised} protocol. The results of Section~\ref{sec:results} are measured
+with the optimised protocol, and Section~\ref{sec:effect} compares it with the basic one. The changes alter only how the
 weights are committed and checked, which positions of the last block are proved for a next-token output, and
 how messages are sent. Theorem~\ref{thm:sound} then holds in the form
 \begin{equation}
@@ -892,9 +904,11 @@ proof is larger, by 3.6--180$\times$ against the other short-input proofs and by
 who runs the committed model and edits the answer, and no sampling rule closes that gap in the
 worst case. Full soundness, however, does not need a zkSNARK prover: one
 random linear combination per weight layer gives a $2^{-\lambda}$ guarantee with no trusted setup
-and no assumption about how models behave. Because the verifier recomputes attention, the
-protocol suits a gateway or an auditor with a GPU and a fast link rather than a phone. It works
-best for large models with short prompts, where the proof is far smaller than the model.
+and no assumption about how models behave. For MLPs and CNNs, which have no attention, the client
+verifies in milliseconds on a CPU and the proof is usually smaller than the model, so even a
+modest client can check every answer. For language models the verifier recomputes attention, so
+the protocol suits a gateway or an auditor with a GPU and a fast link rather than a phone; it
+works best for large models with short prompts, where the proof is far smaller than the model.
 
 \para{Limitations.} (i)~The proof grows with the activations; \pendingclaim{at 2{,}048 tokens it is
 mostly claims and gigabytes for 7B models}, against zkLLM's 157--183\,kB. (ii)~The verifier's cost
@@ -914,7 +928,10 @@ row, so the protocol is not zero-knowledge. (vi)~We prove one forward pass, with
 (vii)~The prototype is Python, and the same-GPU zkLLM comparison rests on its demo.
 
 \para{Future work.} The claims, which the compact encoding roughly halves, could be replaced by a
-sum-check argument for the non-weight operations. A native verifier and a KV cache would also
+sum-check argument for the non-weight operations. Checking the attention products instead of
+recomputing them, with Freivalds' check on claimed scores or a sum-check argument as in
+zkLLM~\cite{zkllm}, could make the verifier much faster at long prompts, at some cost in proof
+size. A native verifier and a KV cache would also
 help, and per-channel normalisation gains may narrow the perplexity gap at no proving cost. Before
 any wider publication we will share the attack with the authors of~\cite{anchuri2026verifiable}.
 
