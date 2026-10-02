@@ -902,12 +902,8 @@ def fig_protocol():
 SECURITY_MODELS = ["mlp_mnist", "lenet5", "vgg16", "resnet18_224"]
 # one marker shape per model (no per-model colours); hollow: basic, filled: optimised
 SECURITY_MARKER = {"mlp_mnist": "o", "lenet5": "s", "vgg16": "^", "resnet18_224": "D"}
-# each model's name: (text, anchor point, offset in points, ha, va); anchors: the optimised or basic
-# point at a lambda
-SECURITY_LABEL = {"mlp_mnist": ("MLP", ("basic", 128), (5, 0), "left", "center"),
-                  "lenet5": ("LeNet-5", ("optimised", 128), (-5, 0), "right", "center"),
-                  "vgg16": ("VGG-16", ("basic", 40), (5, 0), "left", "center"),
-                  "resnet18_224": ("ResNet-18\n(224px)", ("basic", 128), (-1, 7), "right", "bottom")}
+# the legend's second row: each model's marker (the same for its paths and for our proofs) and name
+SECURITY_NAME = {"lenet5": "LeNet-5", "mlp_mnist": "MLP", "vgg16": "VGG-16", "resnet18_224": "ResNet-18 (224px)"}
 SECURITY_TITLE = "Optimised at 128 bits sends less than paths at 40 bits"
 # models whose path curve is not drawn: the 224-pixel ResNet's (13.7 MB at 2^-40) lies 0.05 decades from
 # VGG-16's (15.6 MB), so the two orange curves cannot be told apart; its blue points stay, and the title
@@ -928,9 +924,9 @@ def fig_security(M=None, MO=None):
     the optimised (filled) protocol at lambda = 40, 80, 128.  The bits axis is linear: the path protocol
     stays near zero bits until it opens almost the whole model and trace."""
     M = M or basic_measured()
-    size = (3.33, 2.2)
+    size = (3.33, 2.4)
     fig, ax = plt.subplots(figsize=size)
-    fig.subplots_adjust(left=0.115, right=0.985, bottom=0.165, top=0.80)
+    fig.subplots_adjust(left=0.115, right=0.985, bottom=0.151, top=0.75)
     top = 190
     any_pending = False
     for m in SECURITY_MODELS:
@@ -941,7 +937,6 @@ def fig_security(M=None, MO=None):
             cap = M.get(m, "sampling", "open_all_bytes")
             ax.plot(bx + [cap, cap], by + [max(by), top], ":", color=ANCH, lw=1.1, zorder=2)
             ax.scatter([x40], [40], s=PATH_MARK_S, marker=mk, facecolor="white", edgecolor=ANCH, lw=0.9, zorder=4)
-        drawn = {}
         basic = {lam: (basic_cnn(m, "bytes", lam=lam), basic_cnn(m, "bits", lam=lam)) for lam in (40, 80, 128)}
         basic = {lam: p for lam, p in basic.items() if None not in p}
         opt = {}
@@ -959,18 +954,12 @@ def fig_security(M=None, MO=None):
                                     ("optimised", opt, OURS, 1.0)):
             if not pts:
                 continue
-            drawn[kind] = {lam: p[:2] for lam, p in pts.items()}
             xy = [pts[lam] for lam in sorted(pts)]
             ax.plot([p[0] for p in xy], [p[1] for p in xy], "-", color=OURS, lw=lw, zorder=3)
             for x, y, pend in xy:
                 any_pending |= pend
                 ax.scatter([x], [y], s=13, marker=mk, facecolor=fill, edgecolor=PENDING_EDGE if pend else OURS,
                            lw=0.9 if pend else 0.8, zorder=4.5 if kind == "optimised" else 4)
-        text, (kind, lam), off, ha, va = SECURITY_LABEL[m]
-        if kind not in drawn:          # no optimised point of this model: label its basic point
-            kind = "basic"
-        ax.annotate(text, drawn[kind][lam], xytext=off, textcoords="offset points", ha=ha, va=va,
-                    color="0.15", linespacing=1.0, path_effects=WHITE, zorder=5)
     ax.axhline(40, color="0.6", lw=0.5, ls="--", zorder=1)
     ax.set_xscale("log")
     ax.set_xlim(2e3, 3e7)
@@ -980,17 +969,21 @@ def fig_security(M=None, MO=None):
     ax.set_xlabel("bytes sent per query")
     ax.set_ylabel("security (bits)")
     ax.grid(True, which="major", lw=0.3, alpha=0.4)
-    handles = [Line2D([], [], color=ANCH, ls=":", lw=1.1, marker="o", ms=3.6, mfc="white", mew=0.8,
-                      label="path protocol"),
-               Line2D([], [], color=OURS, ls="-", lw=0.6, marker="o", ms=3.6, mfc="white", mew=0.8,
-                      label="basic"),
-               Line2D([], [], color=OURS, ls="-", lw=1.0, marker="o", ms=3.6, mew=0.8, label="optimised")]
-    if any_pending:   # a temporary fourth entry, red: gone once every optimised point is stored
-        handles.append(Line2D([], [], ls="", marker="o", ms=3.6, mfc=OURS, mec=PENDING_EDGE, mew=0.9,
-                              label="red edge: basic placeholder"))
-    spacing = dict(handlelength=2.2, columnspacing=1.4, handletextpad=0.5) if not any_pending else         dict(handlelength=1.4, columnspacing=0.6, handletextpad=0.3)    # four entries in the same row
-    leg = fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.55 if not any_pending else 0.5, 0.905),
-                     ncol=len(handles), frameon=False, borderaxespad=0, **spacing)
+    # two legend rows: the line (who: the paths, our basic or optimised protocol; hollow or filled), and the
+    # marker (which model: the same shape for its paths and for our proofs)
+    handles = [Line2D([], [], color=ANCH, ls=":", lw=1.1, label="path protocol"),
+               Line2D([], [], color=OURS, ls="-", lw=0.6, label="basic (hollow)"),
+               Line2D([], [], color=OURS, ls="-", lw=1.0, label="optimised (filled)")]
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.55, 0.9125), ncol=len(handles),
+               frameon=False, borderaxespad=0, handlelength=1.8, columnspacing=1.2, handletextpad=0.4)
+    shapes = [Line2D([], [], ls="", marker=SECURITY_MARKER[m], ms=3.8, mfc="0.35", mec="0.35", label=SECURITY_NAME[m])
+              for m in SECURITY_NAME]
+    if any_pending:   # a temporary entry, red: gone once every optimised point is stored
+        shapes.append(Line2D([], [], ls="", marker="D", ms=3.6, mfc=OURS, mec=PENDING_EDGE, mew=0.9,
+                             label="red edge: placeholder"))
+    leg = fig.legend(handles=shapes, loc="upper center", bbox_to_anchor=(0.55 if not any_pending else 0.5, 0.846),
+                     ncol=len(shapes), frameon=False, borderaxespad=0, handlelength=0.8,
+                     columnspacing=0.9 if not any_pending else 0.6, handletextpad=0.3)
     for t in leg.get_texts():
         if t.get_text().startswith("red edge"):
             t.set_color(PENDING_EDGE)

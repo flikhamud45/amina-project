@@ -594,8 +594,8 @@ them on language models.
   \label{fig:security}
 \end{figure}
 
-Figure~\ref{fig:security} plots security against the bytes sent per query for the image models.
-Security, in bits, is $-\log_2$ of the probability that a wrong output is accepted: for the paths,
+Figure~\ref{fig:security} plots security against the bytes sent per query for the image models,
+each with its own marker, orange for its paths and blue for our protocols. Security, in bits, is $-\log_2$ of the probability that a wrong output is accepted: for the paths,
 that the single-neuron attack is missed, and for ours, the proven bound at $\lambda{=}40$, 80 and
 128. The paths reach 40 bits only by opening the whole model and trace (the vertical lines). The
 optimised protocol
