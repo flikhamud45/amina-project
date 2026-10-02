@@ -1,4 +1,4 @@
-"""Smarter path sampling, and why it does not stop the attack (report, Sec. 3.2 and 4.2).
+"""Smarter path sampling, and why it does not stop the attack (report, Sec. 3.3 and 4.2).
 
 Blocks
 ------

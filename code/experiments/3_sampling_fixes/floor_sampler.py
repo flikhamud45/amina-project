@@ -1,4 +1,4 @@
-"""Does an additive floor on contribution weighting beat uniform sampling? (report, Sec. 3.2)
+"""Does an additive floor on contribution weighting beat uniform sampling? (report, Sec. 3.3 and 4.2)
 
 ``ZeroAwareContributionSampler`` scores a parent by ``|w_ij| * (|a~_i| + eps)``.  At
 ``eps = 0`` it is ``LocalContributionSampler``, whose zero blind spot gives detection 0

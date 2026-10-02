@@ -96,7 +96,7 @@ cached in `artifacts/fullcheck/cache/` (or `$PVI_CACHE`).
 The report's benchmark numbers come from two protocols measured on the same machines (see
 *The stored benchmark runs* below): the *optimised protocol*, platforms `l40s_improved` and
 `l40s_improved2` (Tables 2, 3 and 5, Figure 4, the filled points of Figure 3, the counts of
-Sec. 5.2), and the *basic protocol*, platform `l40s` (`artifacts/comparison/raw_l40s/`, 123,832
+Sec. 4.3), and the *basic protocol*, platform `l40s` (`artifacts/comparison/raw_l40s/`, 123,832
 raw records; Table 4's left-hand side and the hollow points of Figure 3). Until `l40s_improved2`
 is stored, the numbers it will provide are printed in red with the basic value standing in
 (`paper_assets.py --check` lists them). These commands rebuild every derived table, the
@@ -214,7 +214,7 @@ checkout and environment under `$ZKLLM_HOME`, on the WikiText-2 test split at
 | §4.1 int8 perplexity of the real OPT-125M/1.3B/6.7B (73.8/37.4/36.0 against 64.7/34.9/27.1, per normalisation gain) | `2_attack/real_weights_ppl.py` (see `2_attack/REAL_LLM.md`) | `artifacts/results/real_weights_ppl_opt-*.json` |
 | §4.2 *A real LLM* (40/40 untargeted, backdoor 0/40 for " hacked" and 40/40 for " back", 6,187 reachable tokens, 454,248 paths) | `2_attack/real_llm.py` | `artifacts/results/real_llm_attack.json`, `real_llm_attack_auto.json` |
 | §4.2 *The same holds on larger models* (100% flips, 1/84–1/512, 1/28 million, paths for 2^-40; cells `attack_float`, `sampling`) | `4_defence_benchmark/bench.py` → `5_comparison/aggregate.py --platform l40s` | `tables_l40s/measured_summary.csv` |
-| Fig. 3, Tables 2–5, Fig. 4, the numbers of Sec. 5 except zkLLM's own run, the hardware of Sec. 5.1 | the basic run (`strong_gpu.sh must`, `should`, `nice`, platform `l40s`) and the optimised runs (`l40s_improved`, `l40s_improved2`) → `5_comparison/aggregate.py --platform <p>` → `paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2` | `report/figures`, `report/tables` (with `hardware.tex`) |
+| Fig. 3, Tables 2–5, Fig. 4, the numbers of Sec. 4 except zkLLM's own run, the hardware of Sec. 4.1 | the basic run (`strong_gpu.sh must`, `should`, `nice`, platform `l40s`) and the optimised runs (`l40s_improved`, `l40s_improved2`) → `5_comparison/aggregate.py --platform <p>` → `paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2` | `report/figures`, `report/tables` (with `hardware.tex`) |
 | §4.1 the extrapolation check on the models built in full (proof size exact; times off by up to 44% for the verifier and 120% for the prover of OPT-2.7B; totals are the sums of the prove and verify parts) | `5_comparison/aggregate.py --platform l40s` (every part, full build against the 1–2 block line); `validate_extrapolation.py --platform l40s` (with a fit through every block count); `text_numbers.py --platform l40s` prints the totals | `tables_l40s/llm_extrapolation_check.csv`, `llm_extrapolation_validation.csv` |
 | §4.1 the 1,978 hardware-independent numbers shared with the 2080 Ti run | `5_comparison/fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2 artifacts/comparison/raw_l40s` | printed |
 | §4.3 counts (8,709 honest queries; 2,091 CNN and 804 LLM attacks; Freivalds 2,747, Reed–Solomon 74, Merkle 74), the 2080 Ti's 5,547 and 2,456, and §4.1's 123,832 and 78,266 records | `5_comparison/count_outcomes.py --platform l40s` (and `--platform rtx2080ti-v2`) | printed |

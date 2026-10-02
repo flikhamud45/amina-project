@@ -21,7 +21,7 @@ the value the tables show (the basic protocol's value of the pending cells, elem
 different red placeholder is reported (``placeholder``) but does not fail: the value is temporary.
 Numbers shown from an acceptable stand-in (``paper_assets.OPTIMISED[...]["acceptable"]``) may be
 black or red.  ``\\pendingclaim{}`` is transparent: the numbers inside it are checked as usual.  The
-counts (abstract, Sec. 5.2, conclusion) are recomputed from the raw records by ``count_outcomes.py``;
+counts (abstract, Sec. 4.3, conclusion) are recomputed from the raw records by ``count_outcomes.py``;
 an optimised run that has no raw root yet makes the optimised counts pending.
 """
 
@@ -299,8 +299,8 @@ def checks(M, opt_names: list[str]):
     bc, _ = counts([pa._platform_name(pa.TABLES)])
     oc, ost = counts(opt_names, COUNT_TAGS) if opt_names else ({}, PENDING)
     oget = lambda k: Tok([(C(oc[k]) if k in oc else None, ost)])   # noqa: E731
-    # abstract, Sec. 5.2, conclusion: the counts
-    for anchor in (r"attacks on a basic version and all", r"attacks on the basic protocol and all"):
+    # abstract, Sec. 4.3, conclusion: the counts
+    for anchor in (r"rejected all [\d{},]+ and", r"attacks on the basic protocol and all"):
         add(anchor, "attacks rejected: basic run; optimised runs", [Tok([(C(bc["NAttacks"]), FINAL)]), oget("NAttacks")])
     add(r"In the optimised runs the verifier accepted", "optimised: honest accepted, attacks, image-model attacks",
         [oget("NHonest"), oget("NAttacks"), oget("NAttacksCNN")])
@@ -315,7 +315,7 @@ def checks(M, opt_names: list[str]):
     add(r"basic protocol's run accepted", "basic: honest accepted, attacks rejected, on language models",
         [Tok([(C(bc["NHonest"]), FINAL)]), Tok([(C(bc["NAttacks"]), FINAL)]), Tok([(C(bc["NAttacksLLM"]), FINAL)])])
 
-    # 3.4: the path protocol on the image models (basic run; hardware-independent)
+    # 4.2: the path protocol on the image models (basic run; hardware-independent)
     pdet = [M.get(m, "sampling", "p_detect_penultimate") for m in pa.CNN_ORDER]
     add(r"One path catches it with probability", "one path, attacked neuron: 1/p (LeNet-5; largest)",
         [Tok([(f"1/{1 / M.get('lenet5', 'sampling', 'p_detect_penultimate'):.0f}", FINAL)]),
@@ -337,7 +337,7 @@ def checks(M, opt_names: list[str]):
     add(r"takes paths that open about", "paths' bytes for 2^-40; optimised Llama-2-7B T64 proof",
         [one(fixed(opened), pa.b), one(elem(lambda s: s.llm("llama2-7b", 64, "bytes")), pa.b)])
 
-    # 5.1
+    # 4.1
     gap = [(M.get(m, "facts", "float_accuracy") or 0) - (M.get(m, "facts", "int8_accuracy") or 0) for m in pa.CNN_ORDER]
     for anchor in (r"quantisation changed accuracy by at most", r"changed CNN accuracy by at most"):
         add(anchor, "max |float - int8| accuracy (points)", Tok([(f"{100 * max(map(abs, gap)):.1f}", FINAL)]))
@@ -358,7 +358,7 @@ def checks(M, opt_names: list[str]):
         "decimals; optimised builds, else the basic run's as placeholder)",
         Tok([(f"{max(be):.2f}", FINAL if be_opt else PENDING)], "%"))
 
-    # 5.2: Figure 3
+    # 4.3: Figure 3
     bits = lambda lam: lambda s, m: s.cnn(m, "bits", lam=lam)   # noqa: E731
     add(r"lands close to", "optimised: CNN security bits at lambda=40; 128",
         [*rng([elem(bits(40), m) for m in pa.CNN_ORDER]), *rng([elem(bits(128), m) for m in pa.CNN_ORDER])])
@@ -370,15 +370,15 @@ def checks(M, opt_names: list[str]):
         rng([fixed(M.get(m, "sampling", "paths_bytes_shared", lam=40) / pa.basic_cnn(m, "bytes", lam=40))
              for m in pa.CNN_ORDER], lambda v: f"{v:.1f}"))
 
-    # 5.3 image models (Table 2, optimised)
+    # 4.4 image models (Table 2, optimised)
     cnn = lambda k: [elem(lambda s, m: s.cnn(m, k), m) for m in pa.CNN_ORDER]   # noqa: E731
     i8 = lambda s, m: M.get(m, "facts", "model_bytes_int8") / s.cnn(m, "bytes")   # noqa: E731
-    add(r"With committed weights \(Table", "CNN prover; verifier; proof (C, optimised)",
+    add(r"With committed weights the prover needs", "CNN prover; verifier; proof (C, optimised)",
         [*rng(cnn("prove"), pa.t), *rng(cnn("verify"), pa.t), *rng(cnn("bytes"), pa.b)])
     add(r"smaller than the int8 weights for|smaller than the int8 weights, by",
         "int8 weights / proof (the MNIST and CIFAR models)",
         rng([elem(i8, m) for m in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar")], lambda v: f"{v:.1f}"))
-    # 5.3 language models (Table 3, optimised)
+    # 4.4 language models (Table 3, optimised)
     L = lambda m, sq, k, mode="C": elem(lambda s: s.llm(m, sq, k, mode))   # noqa: E731
     l64 = lambda s: pa.opt_llm("llama2-7b", 64, "params")[0] / s.llm("llama2-7b", 64, "bytes")   # noqa: E731
     add(r"With a 64-token prompt GPT-2 is proved in", "GPT-2 T64 prover; Llama-2-7B T64 prover, proof, int8/proof",
@@ -414,17 +414,17 @@ def checks(M, opt_names: list[str]):
     add(r"For Llama-2-70B the extrapolated", "Llama-2-70B T64 (1-2 blocks): proof; int8 weights / proof",
         [one(elem(p70), pa.b), one(elem(lambda s: n70 / p70(s)), x, "×")])
 
-    # 5.4 / Table 4
+    # 4.5 / Table 4
     rows = pa.opt_pairs()
     short = [(lab, bf, af, pd) for lab, m, s, bf, af, pd in rows if s != 2048 and m != "qwen3-4b"]
     acc = {r["row"] for r in pa.pending_rows(ACCEPTABLE) if r["asset"] == "Table 4"}
     t4 = lambda i: [V(bf[i] / af[i], PENDING if pd[i] else (ACCEPTABLE if pa._plain(lab) in acc else FINAL))  # noqa: E731
                     for lab, bf, af, pd in short]
-    add(r"below 2\{,\}048 tokens, the proof shrinks|below 2\{,\}048 tokens the proof shrinks",
+    add(r"[Bb]elow 2\{,\}048 tokens,? the proof shrinks",
         "Table 4 below 2,048 tokens (Qwen3-4B excluded): proof smaller; verifier faster",
         [*rng(t4(2), lambda v: f"{v:.1f}"), *rng(t4(1), lambda v: f"{v:.1f}")])
-    add(r"verifier gain in setting", "Table 4 below 2,048 tokens (Qwen3-4B excluded): verifier faster (Sec. 5.4)",
-        rng(t4(1), lambda v: f"{v:.1f}"))
+    add(r"keep the bound and shrink the proof", "Table 4 below 2,048 tokens (Qwen3-4B excluded): proof smaller "
+        "(Related Work, Where we fit)", rng(t4(2), lambda v: f"{v:.1f}"))
     add(r"Optimisations keep the bound and shrink", "Table 4 below 2,048 tokens (Qwen3-4B excluded): proof smaller",
         rng(t4(2), lambda v: f"{v:.1f}"))
     eng = pa.llm_cost(("gpt2", 64), {}, pa.opt_dirs())
@@ -471,7 +471,7 @@ def checks(M, opt_names: list[str]):
         Tok([(x(max(commit(MO, "gpt2", f"commit_T{s}_L12_wire_prune_polauto") / commit(MO, "gpt2", f"commit_T{s}_L12")
                     for s in (64, 512))), FINAL)], "×"))
 
-    # 5.5 / Table 5
+    # 4.6 / Table 5
     # Table 5's rows; system() drops the footnote letters of SYSTEM_MARK (zkCNN$^a$ -> zkCNN), not Maverick's
     # d, zkLLM's own code's e (pa.ZKLLM_OWN) or the interactive asterisk
     rr = pa.ratio_rows()
@@ -486,8 +486,6 @@ def checks(M, opt_names: list[str]):
         ends(zk, x2))
     ours7 = elem(lambda s: s.llm("llama2-7b", 2048, "prove"))
     zk7 = pa.zkllm_l40s_whole_model_s()
-    add(r"faster than zkLLM's code", "zkLLM's code on our L40S / our Llama-2-7B T2048 prover",
-        one(V(zk7 / ours7.value, ours7.state), x))
     add(r"this gives about", "zkLLM's code on our L40S (s); / our prover; our prover",
         [Tok([(f"{zk7:.0f}", FINAL)], "s"), one(V(zk7 / ours7.value, ours7.state), x), one(ours7, pa.t)])
     zrows = {row["model"]: float(row["per_layer_s"]) for row in csv.DictReader(open(pa.ZKLLM_L40S, encoding="utf-8"))}
@@ -505,7 +503,7 @@ def checks(M, opt_names: list[str]):
         add(r"the GPU verifier is", "Limitations: GPU verifier slower than zkLLM's (zkLLM rows, red)", zslow_tok)
     add(r"Our verifier is slower only than", "verifier: final rows where ours is slower (ours/theirs); zkLLM rows",
         slow)
-    # Sec. 5.4: the streaming verifier on the basic proof format (the stored _gpuv_stream cells), Llama-2-13B
+    # Sec. 4.5: the streaming verifier on the basic proof format (the stored _gpuv_stream cells), Llama-2-13B
     l13 = pa.llm_cost(("llama2-13b", 2048), {"mode": "C", "variant": "_gpuv_stream"}, pa.opt_dirs())
     if l13 and stream["C"]:
         rss = pa.opt_measured().idx.get(("llm", "llama2-13b", "defence_C_int_lam128_T2048_L40_gpuv_stream",

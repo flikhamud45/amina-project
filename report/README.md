@@ -34,7 +34,7 @@ matplotlib 3.11.2 of `code/requirements.txt` for the figures (they are then byte
 (empty: every row of Table 3 is a full build) and `\NPendingCells` (the number of table and
 figure numbers still pending), which `main.tex` inputs in its preamble. The table bodies use
 `\pending{}`, which `main.tex` defines. The numbers typed in the text are not generated:
-`text_numbers.py` (above) compares each one with the tables and fails on a mismatch, and `count_outcomes.py --tex` writes the counts of the abstract, §5.2, §5.4 and the
+`text_numbers.py` (above) compares each one with the tables and fails on a mismatch, and `count_outcomes.py --tex` writes the counts of the abstract, §4.3 and the
 conclusion as macros (`tables/counts.tex`, `tables/counts_opt.tex`; `--platform rtx2080ti-v2`
 prints the second platform's). The real-LLM results and zkLLM's
 run on our GPU are in `code/artifacts/results/` (see `code/README.md`, *Where each result

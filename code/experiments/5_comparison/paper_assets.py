@@ -853,7 +853,7 @@ def fig_overview():
 
 
 def fig_protocol():
-    """Figure 2: the messages of one query in setting C, numbered as in Section 4.2."""
+    """Figure 2: the messages of one query in setting C, numbered as in Section 3.5."""
     W_, H_ = 3.33, 2.1
     fig = plt.figure(figsize=(W_, H_))
     ax = fig.add_axes([0, 0, 1, 1])
@@ -950,11 +950,11 @@ def fig_security(M=None, MO=None):
             (x, px), (y, py) = opt_cnn(m, "bytes", lam=lam, where=where), opt_cnn(m, "bits", lam=lam)
             if x is not None and y is not None:
                 opt[lam] = (x, y, px or py)
-        # the in-figure title (and Sec. 5.2's "on every model") claims the optimised proof at lambda 128 is
+        # the in-figure title (and Sec. 4.3's "on every model") claims the optimised proof at lambda 128 is
         # smaller than the paths' bytes for 2^-40: refuse to print it once a stored point makes it false
         if x40 is not None and 128 in opt and not opt[128][0] < x40:
             raise SystemExit(f"Fig. 3 title false for {m}: optimised lambda=128 sends {opt[128][0]:,.0f} B, "
-                             f"the paths need {x40:,.0f} B for 2^-40 (change SECURITY_TITLE and Sec. 5.2)")
+                             f"the paths need {x40:,.0f} B for 2^-40 (change SECURITY_TITLE and Sec. 4.3)")
         for kind, pts, fill, lw in (("basic", {k: (*v, False) for k, v in basic.items()}, "white", 0.6),
                                     ("optimised", opt, OURS, 1.0)):
             if not pts:
@@ -1312,12 +1312,16 @@ def write_hardware(M=None, starred=False, MO=None):
     print("table hardware:", hw_short(gpu), "/", cpu, f"/ {len(pending)} pending")
 
 
-RATIO_STYLE = "fraction"   # Table 5's cells: theirs/ours as 'n\times' or '1/n' ("arrows": n\times with up/down)
+# Table 5's cells: 'cells' prints the factor by which ours is better or worse, in main.tex's \win{} (green
+# cell) or \lose{} (orange cell); 'fraction' prints theirs/ours as 'n\times' or '1/n'; 'arrows' n\times
+# with an up or down arrow
+RATIO_STYLE = "cells"
 
 
 def fac(theirs, ours):
-    """theirs/ours as Table 5 prints it, and the ratio.  'fraction': '81$\\times$' when ours is 81x faster or
-    smaller, '1/72' when it is 72x slower or larger (the printed value is theirs/ours); 'arrows': '81$\\times$
+    """theirs/ours as Table 5 prints it, and the ratio.  'cells': '81$\\times$' when ours is 81x faster or
+    smaller and '72$\\times$' when it is 72x slower or larger (:func:`_shade` colours the cell by the
+    ratio); 'fraction': '81$\\times$' / '1/72' (the printed value is theirs/ours); 'arrows': '81$\\times$
     $\\uparrow$' / '72$\\times$$\\downarrow$'."""
     if not theirs or not ours:
         return "--", None
@@ -1326,9 +1330,20 @@ def fac(theirs, ours):
         return "same", q
     v = q if q >= 1 else 1 / q
     s = f"{v:,.0f}".replace(",", "{,}") if v >= 100 else (f"{v:.0f}" if v >= 10 else f"{v:.1f}")
+    if RATIO_STYLE == "cells":
+        return s + r"$\times$", q
     if RATIO_STYLE == "arrows":
         return s + r"$\times$" + (r"$\uparrow$" if q >= 1 else r"$\downarrow$"), q
     return (s + r"$\times$" if q >= 1 else "1/" + s), q
+
+
+def _shade(cell, q):
+    """A Table 5 cell in main.tex's \\win{} (ours better) or \\lose{} (theirs better); no shade when there is
+    nothing to compare or the two are the same.  The shade goes outside \\pending{}, since a cell colour
+    must be set at the cell's own level."""
+    if q is None or 0.99 < q < 1.01:
+        return cell
+    return rf"\win{{{cell}}}" if q >= 1 else rf"\lose{{{cell}}}"
 
 
 def _ours_t5(model, seq, ch, where, system=""):
@@ -1378,13 +1393,22 @@ def ratio_rows(MO=None):
 
 
 def tab_ratios(MO=None):
-    """Table 5: the optimised protocol against published systems (theirs/ours); bold: ours better on all three."""
-    lines = []
+    """Table 5: the optimised protocol against published systems.  'cells' style: each cell shaded by who is
+    better, with a rule between the image models, the short prompts and the 2,048-token prompts; the other
+    styles print theirs/ours and bold the rows where ours is better on all three."""
+    lines, group = [], None
     for system, what, cells, _, pend in ratio_rows(MO):
         shown = [fac(a, o) for a, o in cells]
-        cols = [system, what] + [red(s, p) for (s, _), p in zip(shown, pend)]
-        if all(q is not None and q >= 1 for _, q in shown):
-            cols = [rf"\textbf{{{c}}}" for c in cols]
+        if RATIO_STYLE == "cells":
+            g = "long" if f"({tokens(LONG)})" in what else ("short" if "(" in what else "image")
+            if group is not None and g != group:
+                lines.append(r"\midrule")
+            group = g
+            cols = [system, what] + [_shade(red(s, p), q) for (s, q), p in zip(shown, pend)]
+        else:
+            cols = [system, what] + [red(s, p) for (s, _), p in zip(shown, pend)]
+            if all(q is not None and q >= 1 for _, q in shown):
+                cols = [rf"\textbf{{{c}}}" for c in cols]
         lines.append(" & ".join(cols) + r" \\")
     write("ratios", lines)
 

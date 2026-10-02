@@ -1,4 +1,4 @@
-# 2. The single-neuron attack (report Table 1, §4.2 *The attack works*)
+# 2. The single-neuron attack (report Table 1, §4.2 *Attacks on MNIST*)
 
 ```bash
 python experiments/2_attack/run.py            # ~2 min; uses artifacts/models/mlp_mnist_full.npz

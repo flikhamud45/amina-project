@@ -1,16 +1,18 @@
-\textbf{zkCNN$^a$} & \textbf{LeNet-5} & \textbf{81$\times$} & \textbf{2.2$\times$} & \textbf{1.1$\times$} \\
-Bionetta & LeNet-5 & 690$\times$ & 3.8$\times$ & 1/72 \\
-zkCNN$^a$ & VGG-16 & 4{,}481$\times$ & 3.2$\times$ & 1/6.4 \\
-ZKML & VGG-16 & 32{,}334$\times$ & 1/1.9 & 1/180 \\
-zkGPT$^b$ & GPT-2 (64) & 239$\times$ & 3.3$\times$ & 1/164 \\
-\textbf{DeepProve$^c$} & \textbf{GPT-2 (64)} & \textbf{375$\times$} & \textbf{13$\times$} & \textbf{1.3$\times$} \\
-DeepProve$^c$ & GPT-2 (512) & 973$\times$ & 3.8$\times$ & 1/3.6 \\
-ZKTorch$^\ast$ & Llama-2-7B (1) & 1{,}786$\times$ & 334$\times$ & 1/5.7 \\
-Maverick$^d$ & Qwen3-4B (8) & 3.0$\times$ & 1/1.2 & 1.8$\times$ \\
-zkLLM & OPT-125M (2{,}048) & \pending{70$\times$} & \pending{1/2.0} & \pending{1/5{,}195} \\
-zkLLM & OPT-1.3B (2{,}048) & \pending{39$\times$} & \pending{1/3.4} & \pending{1/25{,}898} \\
-zkLLM & OPT-6.7B (2{,}048) & \pending{34$\times$} & \pending{1/3.1} & \pending{1/64{,}338} \\
-zkLLM & Llama-2-7B (2{,}048) & \pending{35$\times$} & \pending{1/2.9} & \pending{1/63{,}313} \\
-zkLLM & Llama-2-13B (2{,}048) & \pending{30$\times$} & \pending{--} & \pending{1/96{,}436} \\
-zkLLM$^e$ & Llama-2-7B (2{,}048) & \pending{48$\times$} & -- & -- \\
+zkCNN$^a$ & LeNet-5 & \win{81$\times$} & \win{2.2$\times$} & \win{1.1$\times$} \\
+Bionetta & LeNet-5 & \win{690$\times$} & \win{3.8$\times$} & \lose{72$\times$} \\
+zkCNN$^a$ & VGG-16 & \win{4{,}481$\times$} & \win{3.2$\times$} & \lose{6.4$\times$} \\
+ZKML & VGG-16 & \win{32{,}334$\times$} & \lose{1.9$\times$} & \lose{180$\times$} \\
+\midrule
+zkGPT$^b$ & GPT-2 (64) & \win{239$\times$} & \win{3.3$\times$} & \lose{164$\times$} \\
+DeepProve$^c$ & GPT-2 (64) & \win{375$\times$} & \win{13$\times$} & \win{1.3$\times$} \\
+DeepProve$^c$ & GPT-2 (512) & \win{973$\times$} & \win{3.8$\times$} & \lose{3.6$\times$} \\
+ZKTorch$^\ast$ & Llama-2-7B (1) & \win{1{,}786$\times$} & \win{334$\times$} & \lose{5.7$\times$} \\
+Maverick$^d$ & Qwen3-4B (8) & \win{3.0$\times$} & \lose{1.2$\times$} & \win{1.8$\times$} \\
+\midrule
+zkLLM & OPT-125M (2{,}048) & \win{\pending{70$\times$}} & \lose{\pending{2.0$\times$}} & \lose{\pending{5{,}195$\times$}} \\
+zkLLM & OPT-1.3B (2{,}048) & \win{\pending{39$\times$}} & \lose{\pending{3.4$\times$}} & \lose{\pending{25{,}898$\times$}} \\
+zkLLM & OPT-6.7B (2{,}048) & \win{\pending{34$\times$}} & \lose{\pending{3.1$\times$}} & \lose{\pending{64{,}338$\times$}} \\
+zkLLM & Llama-2-7B (2{,}048) & \win{\pending{35$\times$}} & \lose{\pending{2.9$\times$}} & \lose{\pending{63{,}313$\times$}} \\
+zkLLM & Llama-2-13B (2{,}048) & \win{\pending{30$\times$}} & \pending{--} & \lose{\pending{96{,}436$\times$}} \\
+zkLLM$^e$ & Llama-2-7B (2{,}048) & \win{\pending{48$\times$}} & -- & -- \\
 \bottomrule

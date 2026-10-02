@@ -97,7 +97,8 @@ def test_table4_cells_share_one_unit():
 def test_table5_follows_the_setting_rule():
     """Fiat-Shamir against the non-interactive systems where it is stored (else interactive and marked),
     the interactive protocol against zkLLM and Maverick, Maverick's non-linear replay in its verifier
-    time, bold exactly where ours is better on all three costs, and theirs/ours printed as n-times or 1/n."""
+    time, ours better on all three costs exactly in the zkCNN and DeepProve rows, and each cell printed as the
+    factor by which ours is better or worse, shaded by which (or, in the other styles, as n-times or 1/n)."""
     pa = _script("paper_assets")
     pa.OPT_TABLES = [pa.tables_dir("l40s_improved")]
     rows = {(s, w): (cells, interactive, pend) for s, w, cells, interactive, pend in pa.ratio_rows()}
@@ -118,6 +119,14 @@ def test_table5_follows_the_setting_rule():
     # the 2,048-token rows need the second optimised run: pending, with the basic protocol standing in
     assert all(all(p) for (s, w), (c, i, p) in rows.items() if s == "zkLLM")
     assert not any(any(p) for (s, w), (c, i, p) in rows.items() if s.startswith(("zkCNN", "DeepProve", "Maverick")))
+    # the default ('cells'): the factor either way, shaded green (ours better) or orange (theirs better),
+    # the shade outside \pending{} so the colour is set at the cell's level
+    assert pa.RATIO_STYLE == "cells"
+    assert pa.fac(844.0, 5.39)[0] == r"157$\times$" and pa.fac(0.0871, 0.155)[0] == r"1.8$\times$"
+    assert pa._shade(pa.red("2.2$\\times$", True), 2.2) == r"\win{\pending{2.2$\times$}}"
+    assert pa._shade("72$\\times$", 1 / 72) == r"\lose{72$\times$}"
+    assert pa._shade("--", None) == "--" and pa._shade("same", 1.0) == "same"
+    pa.RATIO_STYLE = "fraction"
     assert pa.fac(844.0, 5.39)[0] == r"157$\times$" and pa.fac(0.0871, 0.155)[0] == "1/1.8"
     pa.RATIO_STYLE = "arrows"
     assert pa.fac(844.0, 5.39)[0] == r"157$\times$$\uparrow$" and pa.fac(0.0871, 0.155)[0] == r"1.8$\times$$\downarrow$"

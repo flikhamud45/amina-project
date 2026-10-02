@@ -1,4 +1,4 @@
-# 3. Smarter sampling does not stop the attack (report §3.2, §4.2 *Smarter sampling*)
+# 3. Smarter sampling does not stop the attack (report §3.3, §4.2 *Other samplers*)
 
 ```bash
 python experiments/3_sampling_fixes/run.py            # ~2 min: samplers vs. an adaptive attacker
@@ -22,4 +22,4 @@ weighting with an additive floor, `|w_ij| * (|a_i| + eps)`, measured on the tamp
 traces against the better of the attacker's two attacks (`samplers.<name>.adversary_best`).
 The best floor, `eps=1`, detects 2.0% (10.2× uniform's 0.20%); `eps=0.1` and `eps=10`
 give 5.8× and 2.2×, and `eps=0.01` and `eps=100` fall below uniform (0.9×). At `eps=0`
-it is plain contribution weighting, with detection 0 (§3.2).
+it is plain contribution weighting, with detection 0 (§3.3).
