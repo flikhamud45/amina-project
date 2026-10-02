@@ -573,8 +573,6 @@ def checks(M, opt_names: list[str]):
     cpu2048 = [elem(lambda s, m=m: s.llm(m, 2048, "verify")) for m, sq in pa.TAB_LLM_PICK if sq == 2048]
     add(r"CPU verifier needs up to", "largest CPU verifier at 2,048 tokens (Table 2)",
         one(max(cpu2048, key=lambda v: v.value), pa.t))
-    add(r"optimised proof is far smaller than the model|far smaller than the model", "Llama-2-7B T64: int8 weights / proof",
-        one(elem(l64), x, "×"))
     return out
 
 

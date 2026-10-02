@@ -148,7 +148,8 @@ attack carries over to the real OPT-6.7B. Checking many queries does not close t
 provider chooses which queries to tamper with, and tampering with $k$ of them is caught with
 probability at most $k/N$. Nor do the fixes Anchuri et al.\ suggest, sampling more paths or
 sampling where it matters: uniform sampling is already optimal among rules that ignore the claimed
-values, the rules we tested that use them still miss almost every attack, and reaching $2^{-40}$
+values, no rule that reads them does better on every network, the rules we tested still miss
+almost every attack, and reaching $2^{-40}$
 forces the path protocol to open essentially the whole model and trace.
 
 This led us to a different design (Figure~\ref{fig:overview-defence}). The client tests one
@@ -171,9 +172,9 @@ that exploits the $1/N$ limit acknowledged in~\cite{anchuri2026verifiable}. One 
 accepted with probability $1-1/N$ (99.6--99.8\% on MNIST), works as a trigger backdoor that leaves
 the weights and clean answers unchanged, and changes the next token of 40 of 40 prompts on the
 real OPT-6.7B. (2)~\textbf{A bound on sampling-based fixes} (Section~\ref{sec:sampling}): no
-sampler that ignores the claimed values beats uniform sampling, which needs essentially the whole
-model and trace for $2^{-40}$, and a sampler that weights each parent by its contribution is blind
-to zeroed neurons. (3)~\textbf{A full-soundness protocol} for whole CNNs and transformers
+sampler that ignores the claimed values beats uniform sampling, no sampler at all does so on every
+network, and uniform sampling needs essentially the whole model and trace for $2^{-40}$; a sampler
+that weights each parent by its contribution is blind to zeroed neurons. (3)~\textbf{A full-soundness protocol} for whole CNNs and transformers
 (Sections~\ref{sec:defence}--\ref{sec:opt}), with error $2^{-\lambda}$ and no SNARK, TEE or
 trusted setup; to our knowledge it is the first in the setting of~\cite{anchuri2026verifiable}.
 Optimisations keep the bound and shrink the committed-weights proof 2.0--4.2$\times$ for images
@@ -185,10 +186,9 @@ systems and zkLLM's code on our GPU. Our prover is \pending{30}--32{,}000$\times
 zkSNARK provers.
 % PENDING: the smallest prover ratio of Table 5 (zkLLM, Llama-2-13B at 2,048 tokens; placeholder:
 % the basic prover's; the basic proof format's streaming run gives 53)
-Run non-interactively, the optimised protocol also beats zkCNN on LeNet-5 (our
-\VerifierThreads{} threads against its one core) and DeepProve's transparent configuration on
-64-token GPT-2 prompts (DeepProve proves every position, ours the next token; its trusted-setup
-configuration sends 9.4\,MB) on all three costs. Code and raw measurements are released.
+Run non-interactively, the optimised protocol also beats zkCNN on LeNet-5 and DeepProve's
+transparent configuration on 64-token GPT-2 prompts on all three costs, with the caveats of
+Section~\ref{sec:compare}. Code and raw measurements are released.
 
 % =====================================================================================
 \section{Related Work}
@@ -285,32 +285,53 @@ Fix a layer and let $U$ be the set of its neurons whose change can flip the outp
 
 \begin{proposition}[uniform sampling is minimax-optimal]
 A value-blind sampler that opens at most $s$ neurons of the layer catches the worst-case tampered
-neuron of $U$ with probability at most $s/|U|$, with equality for uniform sampling of $U$.
+neuron of $U$ with probability at most $s/|U|$, with equality when the $s$ neurons are distinct
+and uniform over $U$.
 \end{proposition}
 
 \noindent\emph{Proof.} Let $\pi(v)$ be the probability that the sampler opens neuron $v$. An
 adversary who knows the sampler, but not its random choices, tampers with the neuron of $U$ that
 minimises $\pi$. At most $s$ neurons are opened, so $\sum_{v\in U}\pi(v) \le s$, and the minimum
-is at most the average, $s/|U|$. Uniform sampling of $U$ opens every neuron of $U$ with probability
-exactly $s/|U|$. \qed
+is at most the average, $s/|U|$. Opening $s$ distinct neurons of $U$ uniformly at random opens
+each with probability exactly $s/|U|$. \qed
 
 \noindent The argument is elementary, but it rules out the fix Anchuri et al.\ suggest: no value-blind
 rule beats uniform sampling, so catching one tampered neuron with constant probability needs
 $s=\Omega(|U|)$ openings per layer, linear in the width, which is the cost the protocol was
 designed to avoid.
-Samplers that look at the claimed values are not safe either. The \emph{contribution-weighted
-sampler}, for example, steps to parent $i$ with probability proportional to its contribution
-$|w_{ij} a_i|$, so it never visits a neuron whose claimed activation is zero, and an adversary who
-flips the output by zeroing a few neurons is never detected. A floor $\delta$, sampling by
+
+A sampler is \emph{value-aware} if it chooses each neuron to open from the input, the claimed values, the weights of later layers, each neuron's
+natural range (the values it takes on honest inputs) and the rows it has already opened.
+
+\begin{proposition}[no sampler beats uniform on every network]
+\label{prop:anysampler}
+For every value-aware sampler that opens at most $s$ neurons of a hidden layer of width $N$ and
+accepts every network's honest trace, there is a network on which it catches a tampered neuron,
+kept within its natural range, with probability at most $s/N$.
+\end{proposition}
+
+\noindent\emph{Proof.} Let hidden neuron $i$ copy input bit $\sigma(i)$ for a permutation $\sigma$,
+let natural inputs have at most one zero, and let the output be 1 exactly when all hidden neurons
+are 1. The adversary sets the neuron that copies the input's zero to 1, which flips the output and
+stays in the range $\{0,1\}$. The forged trace, later weights and ranges do not depend on $\sigma$,
+and the forged trace is honest for the network in which that neuron copies another bit, so the
+sampler rejects only if it opens the tampered row. Every other row it opens shows a neuron that
+copies a 1, so for a random $\sigma$ the zero's copier stays uniform among the unopened neurons and
+is opened with probability at most $s/N$; some $\sigma$ does no better. \qed
+
+\noindent Opening $s$ distinct neurons uniformly reaches $s/N$ on every dense network, so nothing
+beats uniform sampling in the worst case. On our MNIST network the \emph{contribution-weighted sampler}, which steps to parent
+$i$ with probability proportional to $|w_{ij} a_i|$, catches our single-neuron attack, whose value
+is unusually large, in 9\% of paths, but never visits a neuron whose claimed activation is zero,
+so zeroing a few neurons is never detected. A floor $\delta$, sampling by
 $|w_{ij}|(|a_i|+\delta)$, removes this blind spot but leaves detection low
-(Section~\ref{sec:break}). Nor does a range check help, because an attack can keep every value
-within its neuron's \emph{natural range}, the values it takes on honest inputs.
+(Section~\ref{sec:break}), and a range check costs the attack only a few more neurons.
 
 \subsection{Our defence: checking every layer}
 \label{sec:defence}
 
-Since sampling does not reliably catch a single tampered neuron, our verifier checks every neuron
-of every layer. We first split ``the
+Since no sampler has a better worst-case guarantee than uniform sampling, our verifier checks every
+neuron of every layer. We first split ``the
 answer is correct'' into three statements, then show how the verifier checks each one cheaply, and
 finally how the checks combine.
 
@@ -556,7 +577,8 @@ inconsistent nodes. One tampered neuron is accepted with the predicted probabili
 $3{\times}3$ bright patch, the backdoor returns the honest output on every clean query and
 succeeds on every triggered query not already in the target class. It passed 99.96\% of 2{,}300
 end-to-end runs, within sampling error of the predicted 99.8\%. Keeping each tampered value below
-its neuron's 95th percentile takes about five neurons and still passes 99\% of the time. With 250
+its neuron's 95th percentile takes about five neurons and still passes 99\% of the time under
+uniform sampling. With 250
 paths, the single-neuron attack is accepted 61\% of the time.
 
 \para{Other samplers.} Against an adversary who knows the rule, uniform sampling detects 0.20\%
@@ -763,8 +785,7 @@ against 17.6\,s, 6.9\,s and 11.6\,GB for the basic protocol.} Without any change
 % (e.g. "proves ... in x s instead of 17.6 s") once the values are in
 the released code's prover and the streaming verifier already take 5.4\,s and 1.7\,s on the basic proof
 format, and the prover then takes 1.9$\times$ the plain int8 forward pass (the $\Kpre$ prover).
-The prover gains from int32 attention and the verifier from that and from streaming; we did not
-separate the two. On Llama-2-13B the same streaming verifier takes
+On Llama-2-13B the same streaming verifier takes
 9.1\,s, 5.4$\times$ Llama-2-7B's for a 1.9$\times$ larger model, with host memory peaking at
 63\,GiB, for reasons we have not found.
 % PENDING: check whether the re-run's streaming cell on the optimised proof
@@ -856,14 +877,12 @@ proof is larger, by 3.6--180$\times$ against the other short-input proofs and by
 \section{Discussion}
 
 \para{Implications.} The path protocol catches a provider who runs the wrong model, but not one
-who runs the committed model and edits the answer, and none of the sampling rules we analysed
-closes that gap at sub-linear cost. Full soundness, however, does not need a zkSNARK prover: one
+who runs the committed model and edits the answer, and no sampling rule closes that gap in the
+worst case. Full soundness, however, does not need a zkSNARK prover: one
 random linear combination per weight layer gives a $2^{-\lambda}$ guarantee with no trusted setup
 and no assumption about how models behave. Because the verifier recomputes attention, the
 protocol suits a gateway or an auditor with a GPU and a fast link rather than a phone. It works
-best for large models with short prompts, where the optimised proof is far smaller than the model
-(21$\times$ for Llama-2-7B at 64 tokens).
-% PENDING (acceptable stand-in, black): Llama-2-7B T64 int8 weights / optimised proof (pruned cell)
+best for large models with short prompts, where the proof is far smaller than the model.
 
 \para{Limitations.} (i)~The proof grows with the activations; \pendingclaim{at 2{,}048 tokens it is
 mostly claims and gigabytes for 7B models}, against zkLLM's 157--183\,kB. (ii)~The verifier's cost
@@ -890,17 +909,15 @@ any wider publication we will share the attack with the authors of~\cite{anchuri
 % =====================================================================================
 \section{Conclusion}
 A single tampered neuron defeats the path protocol of~\cite{anchuri2026verifiable}, on an MNIST
-network and on the real OPT-6.7B, and no sampling rule we analysed repairs it at sub-linear cost.
-Checking every layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment fixes it.
-The resulting protocol accepts a wrong output with probability at most $2^{-\lambda}$, and it
-rejected all \NAttacks{} attacks on the basic protocol and all \OptNAttacks{} on the optimised one.
+network and on the real OPT-6.7B, and no sampling rule repairs it in the worst case. Checking every
+layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment does: a wrong output is
+accepted with probability at most $2^{-\lambda}$, and the protocol rejected all \NAttacks{}
+attacks on the basic protocol and all \OptNAttacks{} on the optimised one.
 % PENDING: \OptNAttacks as in the abstract (count_outcomes.py --definition over the second run)
-Its prover is one to four orders of magnitude faster than published zkSNARK provers. Run
-non-interactively, the optimised protocol also beats zkCNN on LeNet-5 (our \VerifierThreads{}
-threads against its one core) and DeepProve's transparent configuration on GPT-2's next-token
-logits (DeepProve certifies all 64 positions; its trusted-setup configuration sends 9.4\,MB) in
-verifier time and proof size. Long prompts, \pendingclaim{where the proof is mostly claims}, remain
-its weak point.
+Its prover beats every fully sound system we compare with, and on LeNet-5 and 64-token GPT-2
+prompts it also verifies faster and sends less than zkCNN and DeepProve, with the caveats of
+Section~\ref{sec:compare}. Long prompts, \pendingclaim{where the proof is mostly claims}, remain its
+weak point.
 % PENDING: as Limitation (i), the claims' share of the optimised 2,048-token proof
 
 % =====================================================================================
