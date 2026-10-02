@@ -1193,7 +1193,11 @@ class Verifier:
         of :meth:`derive`, :meth:`check_lookups` (``table_proofs``: the multiproofs of a plan's lookup
         tables), :meth:`check_products` and (with ``openings``) :meth:`check_columns` on these
         messages.  ``claims`` from :func:`pipeline.wire_claim` (a lookup table's from
-        :func:`pipeline.wire_rows`), ``openings`` from :func:`pipeline.wire_openings`."""
+        :func:`pipeline.wire_rows`), ``openings`` from :func:`pipeline.wire_openings`.  In mode C the
+        opened columns are part of the proof: without them every column check would be skipped, so a
+        call without ``openings`` is refused rather than accepted on Freivalds' check alone."""
+        if self.mode == "C" and openings is None:
+            raise ValueError("mode C: verify_streaming needs the opened columns (openings)")
         reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=True)
         if reason is _NOT_INT8:        # (the graphs here clamp every weight op's input to int8)
             reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=False)
