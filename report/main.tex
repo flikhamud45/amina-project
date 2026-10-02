@@ -328,10 +328,10 @@ changes.
 weight layer, which we call the \emph{claims}. Write $A_\ell = [W_\ell \,|\, b_\ell]$. Between two
 weight layers the network applies only operations without weights: requantisation, ReLU, pooling,
 residual additions, LayerNorm/RMSNorm, GELU/SiLU (by table look-up), RoPE, softmax, and the
-attention products $QK^\T$ and $PV$. The claims and $y$ are those of $M$ on $x$ exactly when, for
-every weight layer $\ell$,
-(S1)~its input $X_\ell$ follows from $x$ and the earlier claims through these operations, and $y$
-from the last claims;
+attention products $QK^\T$ and $PV$. The answer $y$ is the last weight layer's pre-activations
+(the logits), so it is itself a claim. The claims are those of $M$ on $x$ exactly when, for every
+weight layer $\ell$,
+(S1)~its input $X_\ell$ follows from $x$ and the earlier claims through these operations;
 (S2)~its claims are the product of its weights and its input, $Z_\ell = A_\ell[X_\ell; \mathbf 1]$;
 and (S3)~$A_\ell$ is the committed matrix.
 
@@ -383,9 +383,8 @@ wrong, $\enc(u_\ell)$ and $\enc(\chi^\T A_\ell)$ are distinct codewords that agr
 $k-1$ of the $n_\ell$ positions, so $t$ distinct columns all miss the difference with probability
 at most $((k-1)/n_\ell)^t < 4^{-t}$.
 
-\para{Putting the checks together.} Suppose $y \neq M(x)$. Then some claim is wrong (otherwise
-recomputation from correct claims gives the correct $y$); let $\ell$ be the first layer with a
-wrong claim. Its input $X_\ell$ is correct, because the verifier computed it from $x$ and correct
+\para{Putting the checks together.} Suppose $y \neq M(x)$. Then some claim is wrong, since $y$ is
+one; let $\ell$ be the first layer with a wrong claim. Its input $X_\ell$ is correct, because the verifier computed it from $x$ and correct
 earlier claims (S1). So $Z_\ell \neq A_\ell[X_\ell;\mathbf 1]$ for the committed $A_\ell$, and the
 prover can pass only by fooling one of the two random checks: if it sends the true $u_\ell$,
 Eq.~\eqref{eq:freivalds} fails except with probability $p^{-r}$ (S2); if it sends another
@@ -406,8 +405,8 @@ Theorem~\ref{thm:sound} adds these terms over the layers.
 Setup happens once per model: the owner encodes and commits the weights and publishes $C_M$.
 Figure~\ref{fig:protocol} shows one query of the basic protocol, with $r$ vectors $\chi$ and $t$
 columns per layer;
-besides the checks of (S2) and (S3), the verifier range-checks the claims and checks that the
-recomputed layers lead to $y$ (S1). Because the claims precede $\chi$ and $u_\ell$ precedes the column
+besides recomputing the operations without weights (S1) and the checks of (S2) and (S3), the
+verifier range-checks the claims. Because the claims precede $\chi$ and $u_\ell$ precedes the column
 positions, the prover fixes every value before it sees the randomness that tests it.
 
 \begin{theorem}[soundness]
