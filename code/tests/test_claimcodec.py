@@ -7,7 +7,8 @@ exceptions) and random corruptions never make the decoder raise anything else.  
 device encoders give the bytes of the per-op encoder that defined the format
 (``claimcodec_reference``) on every input, threaded or not; the device encoder's kernels grow with
 the widths, not the ops, and it waits for the device four times at most (on a GPU: checked in
-CUDA's sync debug mode).
+CUDA's sync debug mode).  In parts (a proof of more than ``_CHUNK`` values; here with tiny parts) the
+device encoder gives the same bytes on every input, its temporaries bounded by the part.
 """
 
 from __future__ import annotations
@@ -572,6 +573,209 @@ def test_a_new_shape_set_releases_the_device_tables_of_the_last(claim_sets):
     assert cc._layout(shapes[0])._dev and not cc._layout(shapes[1])._dev
 
 
+# -- the device encoder in parts (proofs of more than _CHUNK claim values) ---------------------------------
+
+def _numel(zs) -> int:
+    return sum(int(np.prod(tuple(z.shape))) for z in zs)
+
+
+def _one_pass(zs, monkeypatch, **kw) -> bytes:
+    """The device encoder in one pass however many claims (the encoder of commit c8be5eb)."""
+    monkeypatch.setattr(cc, "_CHUNK", 1 << 40)
+    return cc.encode(zs, impl="device", **kw)
+
+
+def _in_parts(zs, chunk: int, monkeypatch, **kw) -> bytes:
+    """The device encoder in parts of ``chunk`` values (when there are more claims)."""
+    monkeypatch.setattr(cc, "_CHUNK", chunk)
+    return cc.encode(zs, impl="device", **kw)
+
+
+def _normal(rng, shape, sd, mean=0.0):
+    return np.round(rng.normal(mean, sd, shape)).clip(-LIM, LIM).astype(np.int64)
+
+
+def _rows_off(rng, n, m, sd):
+    """Rows of different means: centred ops."""
+    return _normal(rng, (n, m), sd) + rng.integers(-40 * sd, 40 * sd, (n, 1))
+
+
+def _centred_ops(blob: bytes, n_ops: int) -> int:
+    off, count = 8, 0
+    for _ in range(n_ops):
+        flags = blob[off + 4]
+        count += bool(flags & cc._F_CENTRED)
+        off += 5 + 5 * (2 if flags & cc._F_CENTRED else 1)
+    return count
+
+
+def test_the_device_encoder_in_parts_gives_the_bytes_of_one_pass(claim_sets, monkeypatch):
+    # every claim set, centred or not, in parts of one value, of 37, of a third and of all values but one: the
+    # bytes of the one-pass encoder and of the per-op reference
+    for name, zs in claim_sets.items():
+        n = _numel(zs)
+        for centre in (True, False):
+            want = ref.encode(zs, centre=centre)
+            assert _one_pass(zs, monkeypatch, centre=centre) == want, name
+            for chunk in sorted({1, 37, n // 3 + 1, n - 1}):
+                if 0 < chunk < n and n // chunk <= 400:
+                    assert _in_parts(zs, chunk, monkeypatch, centre=centre) == want, (name, centre, chunk)
+
+
+@pytest.mark.parametrize("chunk", [1, 32, 33, 64, 100])
+def test_parts_around_and_across_their_boundaries(chunk, monkeypatch):
+    # claim totals and single-width streams just below, at and above one and two parts, lanes that end inside a
+    # block of columns (padding), streams of a whole number of blocks and one column more; one op of one column
+    # or row, or ops of several widths with centred rows; values with exceptions in every part
+    rng = np.random.default_rng(chunk)
+    cols = max(1, chunk // 32)
+    sizes = {chunk - 1, chunk, chunk + 1, 2 * chunk - 1, 2 * chunk, 2 * chunk + 1, 3 * chunk + 31,
+             64 * cols, 64 * cols + 1, 64 * cols - 1, 96 * cols + 33}
+    for total in sorted(s for s in sizes if s > 0):
+        k = total // 6
+        cases = [[_normal(rng, (total, 1), 3e4)], [_normal(rng, (1, total), 50)],
+                 [np.round(rng.standard_cauchy((total, 1)) * 1e3).clip(-LIM, LIM).astype(np.int64)]]
+        if k:
+            cases.append([_rows_off(rng, k, 3, 2e3), _normal(rng, (total - 3 * k, 1), 1e2)])
+        for zs in cases:
+            assert _numel(zs) == total
+            for centre in (True, False):
+                assert _in_parts(zs, chunk, monkeypatch, centre=centre) == ref.encode(zs, centre=centre), \
+                    (chunk, total, [z.shape for z in zs], centre)
+
+
+def test_parts_over_empty_rows_long_rows_ops_above_a_part_and_far_exceptions(monkeypatch):
+    # rows of no values (M = 0) and ops of no rows between the others, rows longer than a part (a window of its
+    # own), ops whose statistics alone exceed a part (a sort group of their own), centred ops whose residuals and
+    # row means span several parts and blocks, exceptions in every part, and two exceptions thousands of values
+    # (hundreds of parts) apart, whose gap is carried across the parts between them
+    rng = np.random.default_rng(21)
+    far = np.full((3000, 1), 77, np.int64)
+    far[0, 0], far[-1, 0] = 5000, -9000                       # a constant op (B = 0) but its first and last values
+    zs = [np.zeros((5, 0), np.int64), _normal(rng, (3, 400), 1e4), np.zeros((0, 7), np.int64),
+          _rows_off(rng, 300, 9, 2e3), far, _rows_off(rng, 64, 40, 50),
+          np.round(rng.standard_cauchy((50, 30)) * 3e3).clip(-LIM, LIM).astype(np.int64),
+          np.array([[LIM, -LIM, 0], [-LIM, LIM, 1]]), np.zeros((4, 0), np.int64)]
+    lanes, whole = [], []
+    real_lanes, real_dev = cc._pack_lanes, cc._pack_dev
+    monkeypatch.setattr(cc, "_pack_lanes", lambda vv, k: (lanes.append(k), real_lanes(vv, k))[1])
+    monkeypatch.setattr(cc, "_pack_dev", lambda v, k: (whole.append(k), real_dev(v, k))[1])
+    for centre in (True, False):
+        want = ref.encode(zs, centre=centre)
+        if centre:
+            assert _centred_ops(want, len(zs)) >= 2
+        for chunk in (8, 50, 150, 700):
+            lanes.clear()
+            whole.clear()
+            assert _in_parts(zs, chunk, monkeypatch, centre=centre) == want, (centre, chunk)
+            assert lanes and whole, (centre, chunk)            # blocks of lanes, and whole streams
+    assert cc.decode(want, [z.shape[0] for z in zs], [z.shape[1] for z in zs])[4][-1, 0] == -9000
+
+
+def test_parts_of_every_claim_dtype_give_the_bytes_of_one_pass(monkeypatch):
+    # int32 (narrow's: no copy), int64, a narrower or a boolean claim (widened slice by slice), transposed and
+    # strided claims, and their mixtures
+    rng = np.random.default_rng(5)
+    base = [torch.from_numpy(_rows_off(rng, 40, 12, 3e3)), torch.from_numpy(_normal(rng, (90, 7), 2e4)),
+            torch.from_numpy(rng.integers(-127, 128, (33, 5)))]
+    forms = {"int32": [cc.narrow(z) for z in base], "int64": base,
+             "mixed": [base[0].int(), base[1], base[2].to(torch.int16)],
+             "bool": [base[0], (base[1] > 0), base[2].to(torch.uint8)],
+             "views": [base[0].T.contiguous().T, base[1][::1, :], torch.from_numpy(_normal(rng, (66, 10), 9e3))[::2]]}
+    for name, zs in forms.items():
+        for centre in (True, False):
+            want = _one_pass(zs, monkeypatch, centre=centre)
+            assert want == cc.encode([z.numpy() for z in zs], centre=centre, impl="host"), name
+            for chunk in (16, 100, 500):
+                assert _in_parts(zs, chunk, monkeypatch, centre=centre) == want, (name, centre, chunk)
+
+
+def test_parts_with_wide_indices_give_the_same_bytes(claim_sets, monkeypatch):
+    # the int64 indices of more than 2**31 values (forced here)
+    real = cc._Parts.__init__
+
+    def wide(self, *a, **k):
+        real(self, *a, **k)
+        self.it, self.huge = torch.int64, 1 << 62
+
+    monkeypatch.setattr(cc._Parts, "__init__", wide)
+    for name in ("row_means", "decoder_gpt", "tails"):
+        zs = claim_sets[name]
+        assert _in_parts(zs, _numel(zs) // 5 + 1, monkeypatch) == ref.encode(zs), name
+
+
+def test_parts_refuse_the_claims_one_pass_refuses(monkeypatch):
+    for z in (1 << 29, -(1 << 29), 1 << 31, -(1 << 33), 1 << 62):
+        zs = [np.zeros((30, 3), np.int64), np.array([[0, z], [1, 2]]), np.ones((20, 2), np.int64)]
+        for chunk in (4, 50):
+            with pytest.raises(cc.Unencodable):
+                _in_parts(zs, chunk, monkeypatch)
+            with pytest.raises(cc.Unencodable):
+                _in_parts([cc.narrow(torch.from_numpy(a)) for a in zs], chunk, monkeypatch)
+
+
+def test_the_rice_parameter_from_bit_lengths_and_top_bits_is_rice_k():
+    rng = np.random.default_rng(9)
+    vs = [rng.geometric(p, int(rng.integers(1, 4000))) - 1 for p in (0.9, 0.5, 0.1, 0.01, 0.001)]
+    vs += [rng.integers(0, 1 << b, int(rng.integers(1, 900))) for b in range(0, 37)]
+    vs += [np.zeros(7, np.int64), np.array([(1 << 36) - 1]), np.array([1, 2, 3]), np.array([15, 16, 17]),
+           np.array([1 << 33] * 9), rng.integers(0, 16, 50)]
+    for v in vs:
+        v = np.asarray(v, dtype=np.int64)
+        counts = np.bincount(cc._rice_bins(torch.from_numpy(v)).numpy(), minlength=cc._RBITS * 16)
+        assert cc._rice_k_bins(v.size, counts) == cc._rice_k(v) == ref._rice_k(v), v[:5]
+    with pytest.raises(ValueError):
+        cc._rice_k_bins(2, np.bincount(cc._rice_bins(torch.tensor([3, 1 << 36])).numpy(), minlength=cc._RBITS * 16))
+
+
+def test_the_parts_temporaries_are_bounded_by_the_part_not_the_claims(monkeypatch):
+    # every tensor an op creates while encoding (views aside): in parts, at most a few times the part's bytes
+    # (plus the samples' and rows' tables, small here), whatever the claims; in one pass, several times the claims
+    from torch.utils._python_dispatch import TorchDispatchMode
+
+    class Largest(TorchDispatchMode):
+        def __init__(self):
+            super().__init__()
+            self.bytes = 0
+
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            out = func(*args, **(kwargs or {}))
+            if not any(str(func).startswith("aten." + v) for v in opcount.VIEWS):
+                for t in out if isinstance(out, (tuple, list)) else (out,):
+                    if torch.is_tensor(t):
+                        self.bytes = max(self.bytes, t.numel() * t.element_size())
+            return out
+
+    monkeypatch.setattr(cc, "_PLAN_ROWS", 4)          # few samples: the tables stay small next to the claims
+    monkeypatch.setattr(cc, "_PLAN_VALUES", 256)
+    rng = np.random.default_rng(4)
+    zs = [cc.narrow(torch.from_numpy(_rows_off(rng, 64, 500, 3e3) if i % 2 else _normal(rng, (64, 500), 2e4)))
+          for i in range(8)]
+    n = _numel(zs)                                     # 256,000 int32 claim values: 1 MB
+    chunk = 2048
+    results = {}
+    for way in ("one pass", "in parts"):
+        cc._layout.cache_clear()                       # the tables are built (and measured) again
+        with Largest() as largest:
+            results[way] = _one_pass(zs, monkeypatch) if way == "one pass" else _in_parts(zs, chunk, monkeypatch)
+        results[way + " bytes"] = largest.bytes
+    assert results["one pass"] == results["in parts"]
+    assert results["one pass bytes"] >= 8 * n          # e.g. the int64 cumulative sums of every claim
+    assert results["in parts bytes"] <= 8 * 2 * chunk + 8 * 8 * 500, results     # ~32 KiB here, not ~2 MiB
+
+
+def test_parts_wait_for_the_device_a_few_times_a_part(monkeypatch):
+    rng = np.random.default_rng(6)
+    zs = [_normal(rng, (400, 25), 3e4), _rows_off(rng, 100, 30, 1e3)]
+    chunk = 500
+    monkeypatch.setattr(cc, "_CHUNK", chunk)
+    with opcount.codec_waits(cc) as waits:
+        assert cc.encode(zs, impl="device") == ref.encode(zs)
+    parts = -(-(_numel(zs) + 100) // chunk)           # the global order: the claims and a centred op's row means
+    assert waits["_nonzero_dev"] <= 2 * parts                                   # (a) and (c)
+    assert waits["_d2h"] <= 2 + parts + 2 * parts + 2, dict(waits)             # stats, Rice, (c), (b) blocks
+
+
 @cuda_only
 def test_the_gpu_encoder_gives_the_reference_bytes(claim_sets):
     for name, zs in claim_sets.items():
@@ -583,6 +787,36 @@ def test_the_gpu_encoder_gives_the_reference_bytes(claim_sets):
             cc.encode([torch.tensor([[0, z]], device="cuda")])
         with pytest.raises(cc.Unencodable):
             cc.encode([cc.narrow(torch.tensor([[0, z]], device="cuda"))])
+
+
+@cuda_only
+def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(claim_sets, monkeypatch):
+    for name, zs in claim_sets.items():
+        on = [(z if torch.is_tensor(z) else torch.from_numpy(np.asarray(z))).cuda() for z in zs]
+        n = _numel(zs)
+        for chunk in sorted({37, n // 3 + 1}):
+            if 0 < chunk < n and n // chunk <= 400:
+                for centre in (True, False):
+                    assert _in_parts(on, chunk, monkeypatch, centre=centre) == ref.encode(zs, centre=centre), \
+                        (name, chunk, centre)
+    # 25 M int32 claims (100 MB, as a lean prover keeps them) in parts of 2**20 values: the encoder's own
+    # memory stays near 40 bytes a part's value plus the tables, against about 40 bytes a claim in one pass
+    g = torch.Generator(device="cuda").manual_seed(0)
+    zs = [cc.narrow(torch.randn(4096, 1024, generator=g, device="cuda").mul_(3e4).round_().to(torch.int64)
+                    + (i % 2) * torch.randint(-9000, 9000, (4096, 1), generator=g, device="cuda"))
+          for i in range(6)]
+    extra, blobs = {}, {}
+    for way, chunk in (("one pass", 1 << 40), ("in parts", 1 << 20)):
+        monkeypatch.setattr(cc, "_CHUNK", chunk)
+        cc._layout.cache_clear()
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        before = torch.cuda.memory_allocated()
+        blobs[way] = cc.encode(zs)
+        torch.cuda.synchronize()
+        extra[way] = torch.cuda.max_memory_allocated() - before
+    assert blobs["one pass"] == blobs["in parts"] == cc.encode([z.cpu() for z in zs], impl="host")
+    assert extra["in parts"] < 100 * 2**20 < 600 * 2**20 < extra["one pass"], extra
 
 
 @cuda_only

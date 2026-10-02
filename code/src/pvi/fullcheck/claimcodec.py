@@ -54,7 +54,9 @@ and on a device (the per-op encoder that defined the format is ``tests/claimcode
 both are tested against it).  The host's runs numpy on ``workers`` threads; a device's runs torch
 where the claims are, with a fixed number of kernels plus about ten per distinct width (not per op)
 and four copies back: every op's statistics at once (one sort), the exceptions' number, the Rice
-parameters' statistics, and the encoding (about 2.3 bytes a claim).
+parameters' statistics, and the encoding (about 2.3 bytes a claim).  A proof of more than ``_CHUNK``
+claim values is encoded on its device in parts of about ``_CHUNK`` values (:func:`_encode_chunked`:
+the same bytes, with temporaries bounded by the part however many claims there are).
 
 Rice vectors (:func:`_rice_encode`): a byte ``k <= 32``; the ``k``-bit low parts as a slot
 stream; the quotients ``q = v >> k <= 15`` in bit-plane unary: level ``l = 1..15`` holds one bit
@@ -106,6 +108,7 @@ _PLAN_ROWS = 256            # rows sampled to plan an op
 _PLAN_VALUES = 1 << 16
 _JOB = 1 << 18              # values per job of the host encoder's threads (packing, scanning, statistics)
 _SPLIT = 1 << 16            # exceptions from which the decoder's workers decode both Rice vectors at once
+_CHUNK = 1 << 23            # a device's encoder: claim values of one pass (more: in parts of this many values)
 
 
 class ClaimCodecError(ValueError):
@@ -267,11 +270,19 @@ def _pack_dev(v: torch.Tensor, k: int) -> torch.Tensor:
     (each ``< 2**k``), all 32 lanes at once with about ten torch ops on ``v``'s device."""
     n, dev = v.numel(), v.device
     g = (n + 31) // 32
-    wi, sh, rsh, w2, spill = _lane_maps_on(k, dev)
     vv = torch.zeros(32 * g, dtype=torch.int64, device=dev)
     vv[:n] = v.reshape(-1)
-    vv = vv.view(32, g)
-    words = torch.zeros(k + 1, g, dtype=torch.int64, device=dev)
+    return _pack_lanes(vv.view(32, g), k)
+
+
+def _pack_lanes(vv: torch.Tensor, k: int) -> torch.Tensor:
+    """The words ``[k, C]`` (int32) of the lanes ``vv`` (``[32, C]``, each value ``< 2**k``): the columns of
+    :func:`_pack_dev`'s words that hold them, as each column's words depend on its 32 values alone."""
+    dev = vv.device
+    wi, sh, rsh, w2, spill = _lane_maps_on(k, dev)
+    if vv.dtype != torch.int64:
+        vv = vv.to(torch.int64)
+    words = torch.zeros(k + 1, vv.shape[1], dtype=torch.int64, device=dev)
     words.index_add_(0, wi, (vv << sh) & 0xFFFFFFFF)          # the bits of different lanes are disjoint: sum == or
     words.index_add_(0, w2, (vv >> rsh) * spill)
     return words[:k].to(torch.int32)                           # the low 32 bits: the uint32 words' bytes
@@ -557,6 +568,16 @@ class _Layout:
             self.op_of_sample = self.op_of_row[sample_row]
             self._indexed = True
         return self
+
+    def chunk_index(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Computed once, for :func:`_encode_chunked`'s windows: each row's start in the flat buffer (and the
+        end), each sampled row's index among all rows, and its start in the flat sample (and the end)."""
+        if getattr(self, "_chunk_ix", None) is None:
+            op_of_row = np.repeat(np.arange(self.n_ops, dtype=np.int64), self.sampled)
+            t = np.arange(self.roff[-1], dtype=np.int64) - self.roff[:-1][op_of_row]
+            self._chunk_ix = (_cum0(np.repeat(self.cols, self.rows)),
+                              self.frow0[:-1][op_of_row] + t * self.step[op_of_row], _cum0(self.cols[op_of_row]))
+        return self._chunk_ix
 
     def on(self, device: torch.device, centre: bool) -> dict:
         """The device tables of :func:`_encode_device` (built once per device; a layout used on a device
@@ -937,7 +958,9 @@ def _assemble(ops: list, workers: int = 1) -> bytes:
 
 def _encode_device(zts: list, centre: bool) -> bytes:
     """:func:`encode` with torch ops on the claims' device: a fixed number of kernels plus about ten per
-    distinct width, and four waits for the device (:func:`_d2h`, :func:`_nonzero_dev`)."""
+    distinct width, and four waits for the device (:func:`_d2h`, :func:`_nonzero_dev`).  Its temporaries
+    take about 40 bytes a claim value: more than ``_CHUNK`` values are encoded in parts
+    (:func:`_encode_chunked`, the same bytes)."""
     dev = zts[0].device
     lay = _layout(tuple((int(z.shape[0]), int(z.shape[1])) for z in zts))
     if lay.total == 0:                                         # nothing to encode on the device
@@ -945,6 +968,8 @@ def _encode_device(zts: list, centre: bool) -> bytes:
     n = lay.n_ops
     centre = bool(centre and lay.eligible.any())
     tb = lay.on(dev, centre)
+    if lay.total > _CHUNK:
+        return _encode_chunked(zts, lay, tb, centre)
     # 1. the claims in one int32 buffer, then the statistics of every op's samples and (if centring)
     # of every op's row means, in one sort and one scatter; one copy back
     flat = [z.reshape(-1) for z in zts]
@@ -1069,6 +1094,381 @@ def _width_runs(widths: np.ndarray, start: np.ndarray):
     cut = np.flatnonzero(np.r_[True, widths[1:] != widths[:-1]])
     ends = np.r_[cut[1:], widths.size]
     return [(int(widths[a]), int(start[a]), int(start[z])) for a, z in zip(cut, ends)]
+
+
+# -- a device's encoder in parts
+# :func:`_encode_device`'s plan and bytes for any number of claims, with temporaries of about ``_CHUNK``
+# values (~40 bytes each) and no buffer of all the claims: they stay the caller's tensors, read through
+# slices (one ``cat`` per part).
+# 1. One pass over row-aligned windows of the claims (op after op): their extremes, the samples and every
+#    row's integer mean; the statistics are sorted in groups of ops of at most ``_CHUNK`` keys (the same
+#    integers: a group sorts whole segments).  One copy back; the plan on the host, as in one pass.
+# 2. Three passes over the global order, each part computing its values from the claims again:
+#    (a) parts of ``_CHUNK`` values: the exceptions' number and their Rice values' bit lengths and top four
+#        bits (:func:`_rice_bins`), from which the host picks each Rice parameter as :func:`_rice_k` does;
+#    (b) each width's slot stream packed in blocks of ``_CHUNK / 32`` columns of its 32 lanes (consecutive
+#        whole streams of at most ``_CHUNK`` values at once), each block's words copied into their place;
+#    (c) parts of ``_CHUNK`` values again: the exceptions in order, their gaps (the last position carried
+#        over) and payloads, cut on the device into Rice low parts and quotients, which come back; the host
+#        packs the low parts (:func:`pack32`) and the quotients' unary levels (as one pass does the levels).
+# Each part waits for the device once or twice; only encoded bytes (and per-part statistics) come back.
+
+_RBITS = 38                 # bit lengths of a Rice value 0..36, and 37 for any value >= 2**36 (refused)
+
+
+def _rice_bins(rv: torch.Tensor) -> torch.Tensor:
+    """Per value ``v >= 0`` of ``rv`` (int64): ``16 L + (v >> max(L - 4, 0))``, ``L`` its bit length (37 for any
+    ``v >= 2**36``) -- the statistics of :func:`_rice_k_bins`."""
+    bits = torch.frexp(rv.to(torch.float64)).exponent.to(torch.int64)   # exact below 2**53; 0 for 0
+    top = torch.bitwise_right_shift(rv, (bits - 4).clamp_(min=0))
+    return bits.clamp_(max=_RBITS - 1).mul_(16).add_(top)
+
+
+def _rice_k_bins(n: int, counts) -> int:
+    """:func:`_rice_k` of ``n`` values from ``counts[L, t]``, how many of them have bit length ``L`` and top bits
+    ``t`` (:func:`_rice_bins`): ``kmin`` is the largest ``L`` less 4, and ``v >> kmin`` is
+    ``t >> (kmin - max(L - 4, 0))``."""
+    counts = np.asarray(counts, dtype=np.int64).reshape(_RBITS, 16)
+    if counts[_RBITS - 1].any():
+        raise ValueError("Rice values must be in [0, 2**36)")
+    used = np.flatnonzero(counts.any(1)).tolist()
+    kmin = max(0, used[-1] - 4) if used else 0
+    hist = np.zeros(16, dtype=np.int64)
+    for bits in used:
+        np.add.at(hist, np.arange(16) >> (kmin - max(bits - 4, 0)), counts[bits])
+    return _rice_k_hist(n, kmin, hist)
+
+
+def _rice_values(pos: torch.Tensor, high: torch.Tensor, start: int, last: torch.Tensor):
+    """``(Rice values [2, e], last position [1])`` of the exceptions ``pos`` of a part at ``start`` of the global
+    order (high parts ``high[pos]``), the exception before them at ``last`` (-1: none): gaps, payloads."""
+    at = pos + start
+    h = high[pos].to(torch.int64)
+    return torch.stack([at - torch.cat([last, at[:-1]]) - 1, ((h << 1) ^ (h >> 63)) - 1]), at[-1:]
+
+
+def _op_groups(weights: np.ndarray, budget: int) -> list[tuple[int, int]]:
+    """Consecutive op ranges whose ``weights`` sum to at most ``budget`` (an op above it alone)."""
+    out, a, acc = [], 0, 0
+    for i, w in enumerate(weights.tolist()):
+        if acc and acc + w > budget:
+            out.append((a, i))
+            a, acc = i, 0
+        acc += w
+    out.append((a, len(weights)))
+    return out
+
+
+class _Claims:
+    """The claims as one flat buffer (op after op, row-major) read through slices of the caller's tensors, in
+    one dtype ``dt``: int32 when every claim is int32 (:func:`narrow`'s), else int64 (others widened slice by
+    slice), as :func:`_encode_device` concatenates them."""
+
+    def __init__(self, zts: list, lay: _Layout) -> None:
+        self.flat = [z.reshape(-1) for z in zts]
+        self.dt = torch.int32 if all(f.dtype == torch.int32 for f in self.flat) else torch.int64
+        self.off = lay.off.tolist()
+
+    def piece(self, i: int, a: int, e: int) -> torch.Tensor:
+        p = self.flat[i][a:e]
+        return p if p.dtype == self.dt else p.to(self.dt)
+
+    def window(self, a: int, e: int) -> torch.Tensor:
+        """Values ``[a, e)`` of the buffer (a view of the caller's tensor when one op holds them)."""
+        i, parts = bisect.bisect_right(self.off, a) - 1, []
+        while a < e:
+            end = min(e, self.off[i + 1])
+            if end > a:
+                parts.append(self.piece(i, a - self.off[i], end - self.off[i]))
+                a = end
+            i += 1
+        return parts[0] if len(parts) == 1 else torch.cat(parts)
+
+
+class _Parts:
+    """The global order (:func:`_encode_device`'s step 3: by width, then segment order) of the claims and of the
+    centred ops' row means, any ranges of it at once (:meth:`values`)."""
+
+    def __init__(self, src: _Claims, lay: _Layout, g: dict, gstart: np.ndarray, means: torch.Tensor | None) -> None:
+        self.src, self.dev = src, means.device if means is not None else src.flat[0].device
+        self.start, self.total = gstart.tolist(), int(gstart[-1])
+        self.b, self.lo, self.kind, self.op = (g[k].tolist() for k in ("b", "lo", "kind", "op"))
+        self.frow0, self.cols = lay.frow0.tolist(), lay.cols.tolist()
+        self.zero = int(lay.frow0[-1])                     # where ``mr`` holds a 0
+        # residuals subtract their row's mean from ``mr`` (int32, then a 0); a centred op's row means are
+        # values themselves (``mv``, in the claims' dtype)
+        self.mr = None if means is None else torch.cat([means.to(torch.int32), means.new_zeros(1, dtype=torch.int32)])
+        self.mv = None if means is None else means.to(src.dt)
+        wide = max(int(g["size"].max(initial=0)), self.zero + 1, 2 * max(_CHUNK, 32)) >= (1 << 31) - 1
+        self.it = torch.int64 if wide else torch.int32     # index dtype
+        self.huge = (1 << 62) if wide else (1 << 31) - 1   # k // huge == 0: the 0 of ``mr``
+        self._zeros = None
+
+    def zeros(self, n: int) -> torch.Tensor:
+        if self._zeros is None or self._zeros.numel() < n:
+            self._zeros = torch.zeros(n, dtype=self.src.dt, device=self.dev)
+        return self._zeros[:n]
+
+    def values(self, ranges: list[tuple[int, int, int, int]]):
+        """``(v, b, mask)``: the values of the ranges ``(p0, p1, pad, b)`` of the global order, in order, each
+        range followed by ``pad`` zeros of width ``b``, each value minus its segment's base (a residual: and its
+        row's mean) as int32 (``|v| < 2**31``, a new tensor), and their widths and slot masks (ints when they
+        all have one, else int32 tensors)."""
+        pieces, rows, at, start = [], [], 0, self.start
+        for p0, p1, pad, bpad in ranges:
+            i = bisect.bisect_right(start, p0) - 1         # the (non-empty) segment holding p0
+            while p0 < p1:
+                a, e = p0 - start[i], min(p1, start[i + 1]) - start[i]
+                if e > a:
+                    op, kind = self.op[i], self.kind[i]
+                    pieces.append(self.mv[self.frow0[op] + a:self.frow0[op] + e] if kind == 2
+                                  else self.src.piece(op, a, e))
+                    res = kind == 1
+                    rows.append((e - a, a - at, self.frow0[op] if res else self.zero,
+                                 self.cols[op] if res else self.huge, self.lo[i], self.b[i], (1 << self.b[i]) - 1))
+                    at += e - a
+                    p0 += e - a
+                i += 1
+            if pad:
+                pieces.append(self.zeros(pad))
+                rows.append((pad, 0, self.zero, self.huge, 0, bpad, (1 << bpad) - 1))
+                at += pad
+        x = pieces[0] if len(pieces) == 1 else torch.cat(pieces)
+        if x.dtype != torch.int32:
+            x = x.to(torch.int32)
+        residual = any(r[2] != self.zero for r in rows)
+        los, bs = {r[4] for r in rows}, {r[5] for r in rows}
+        if not residual and len(los) == 1 and len(bs) == 1:
+            b = bs.pop()
+            return x - los.pop(), b, (1 << b) - 1
+        table = _upload(np.array(rows, dtype=np.int64).T, self.dev)
+        f = table.to(self.it)
+        idx = torch.repeat_interleave(torch.arange(len(rows), dtype=self.it, device=self.dev), table[0],
+                                      output_size=at)
+        if residual:
+            k = torch.arange(at, dtype=self.it, device=self.dev).add_(f[1].index_select(0, idx))
+            k = f[2].index_select(0, idx).add_(torch.div(k, f[3].index_select(0, idx), rounding_mode="floor"))
+            v = (x - self.mr.index_select(0, k)).sub_(f[4].index_select(0, idx).to(torch.int32))
+            del k
+        else:
+            v = x - f[4].index_select(0, idx).to(torch.int32)
+        if len(bs) == 1:
+            b = bs.pop()
+            return v, b, (1 << b) - 1
+        return v, f[5].index_select(0, idx).to(torch.int32), f[6].index_select(0, idx).to(torch.int32)
+
+    def parts(self):
+        """The global order in ranges of ``_CHUNK`` values."""
+        return [(p, min(p + _CHUNK, self.total)) for p in range(0, self.total, _CHUNK)]
+
+    def exceptions(self, p: int, q: int):
+        """``(positions in the part, high parts)`` of the exceptions among values ``[p, q)``: one wait."""
+        v, b, _ = self.values([(p, q, 0, 0)])
+        high = torch.bitwise_right_shift(v, b)             # non-zero: outside [0, 2**B), an exception
+        del v
+        return _nonzero_dev(high), high
+
+
+def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
+    """:func:`_encode_device` in parts of about ``_CHUNK`` claim values (its bytes; see above)."""
+    dev = zts[0].device
+    n = lay.n_ops
+    src = _Claims(zts, lay)
+    frow, samp_rows, srow = lay.chunk_index()
+    nr = frow.size - 1
+    # 1. the claims in row-aligned windows of at most _CHUNK values (a longer row alone): their extremes, the
+    # samples and, if centring, every row's integer mean floor((sum + M // 2) / M), kept on the device
+    s = torch.empty(int(lay.soff[-1]), dtype=torch.int32, device=dev)
+    means = torch.zeros(nr, dtype=torch.int64, device=dev) if centre else None    # 0: rows of no values
+    exts, ra = [], 0
+    while ra < nr:
+        a = int(frow[ra])
+        re = min(max(int(np.searchsorted(frow, a + _CHUNK, side="right")) - 1, ra + 1), nr)
+        e = int(frow[re])
+        if e > a:
+            xw = src.window(a, e)
+            exts.append(torch.stack(list(torch.aminmax(xw))).to(torch.int64))
+            xw = xw.to(torch.int32)          # out-of-range claims wrap: the extremes refuse them below
+            i0, i1 = np.searchsorted(samp_rows, [ra, re])
+            if srow[i1] > srow[i0]:
+                torch.index_select(xw, 0, tb["sample_idx"][int(srow[i0]):int(srow[i1])] - a,
+                                   out=s[int(srow[i0]):int(srow[i1])])
+            if centre:
+                cs = torch.empty(e - a + 1, dtype=torch.int64, device=dev)
+                cs[:1] = 0
+                torch.cumsum(xw, 0, dtype=torch.int64, out=cs[1:])
+                fr = tb["frow"][ra:re + 1] - a
+                m = fr[1:] - fr[:-1]
+                means[ra:re] = torch.div(cs[fr[1:]] - cs[fr[:-1]] + (m >> 1), m.clamp(min=1), rounding_mode="floor")
+                del cs, fr, m
+            del xw
+        ra = re
+    ext = torch.stack(exts)
+    ext = torch.stack([ext[:, 0].amin(), ext[:, 1].amax()])
+    # the statistics, in groups of ops of at most _CHUNK keys: the samples' values, then if centring their
+    # residuals, the sampled rows' means and all rows' means, each segment sorted in its own key range
+    kinds = 4 if centre else 1
+    size = np.concatenate([lay.ssize] + ([lay.ssize, lay.sampled, lay.rows] if centre else []))
+    value = lambda k: (k & 0xFFFFFFFF) - (1 << 31)    # noqa: E731
+    mids, withins, segs = [], [], []
+    for o0, o1 in _op_groups(size.reshape(kinds, n).sum(0), _CHUNK):
+        seg = np.concatenate([np.arange(k * n + o0, k * n + o1, dtype=np.int64) for k in range(kinds)])
+        sz = size[seg]
+        nk = int(sz.sum())
+        if nk == 0:                          # empty segments: centre 0, no values (the defaults below)
+            continue
+        first = _cum0(sz)[:-1]
+        sz_t, mid_lo, mid_hi, nonempty, segbase = _upload_all(
+            [sz, np.minimum(first + np.maximum(sz - 1, 0) // 2, nk - 1), np.minimum(first + sz // 2, nk - 1),
+             sz > 0, (seg << 32) + (1 << 31)], dev)
+        s0, s1 = int(lay.soff[o0]), int(lay.soff[o1])
+        sg = s[s0:s1].to(torch.int64)
+        vals = [sg]
+        if centre:
+            r0, r1 = int(lay.roff[o0]), int(lay.roff[o1])
+            sr = tb["srow"][r0:r1 + 1] - s0
+            cs = torch.cat([sg.new_zeros(1), torch.cumsum(sg, 0)])
+            m = sr[1:] - sr[:-1]
+            off = torch.div(cs[sr[1:]] - cs[sr[:-1]] + (m >> 1), m.clamp(min=1), rounding_mode="floor")
+            del cs, m, sr
+            vals += [sg - off[tb["sample_row"][s0:s1] - r0], off, means[int(lay.frow0[o0]):int(lay.frow0[o1])]]
+        segkey = torch.repeat_interleave(segbase, sz_t, output_size=nk)
+        keys = torch.cat(vals).clamp_(-(1 << 31), (1 << 31) - 1).add_(segkey)
+        del segkey, vals, sg
+        keys = torch.sort(keys).values
+        mid = _round_half(value(keys[mid_lo]) + value(keys[mid_hi])) * nonempty
+        lo_q = (mid[:, None] - tb["half"]).clamp_(-(1 << 31), (1 << 31) - 1).add_(segbase[:, None])
+        hi_q = (mid[:, None] + tb["half_hi"]).clamp_(-(1 << 31), (1 << 31) - 1).add_(segbase[:, None])
+        withins.append(torch.searchsorted(keys, hi_q.view(-1), right=True) - torch.searchsorted(keys, lo_q.view(-1)))
+        mids.append(mid)
+        segs.append(seg)
+        del keys, lo_q, hi_q
+    st = _d2h(torch.cat([ext] + mids + withins))
+    if st[1] >= _Z_LIMIT or st[0] <= -_Z_LIMIT:
+        raise Unencodable("a claim outside the range check cannot be encoded")
+    del s
+    n_seg = kinds * n
+    c, within, at = np.zeros(n_seg, dtype=np.int64), np.zeros((n_seg, _SPAN), dtype=np.int64), 2
+    for seg in segs:
+        c[seg] = st[at:at + seg.size]
+        at += seg.size
+    for seg in segs:
+        within[seg] = st[at:at + seg.size * _SPAN].reshape(-1, _SPAN)
+        at += seg.size * _SPAN
+    h = np.zeros((n_seg, _BINS), dtype=np.int64)
+    h[:, :_SPAN] = np.diff(within, axis=1, prepend=0)
+    # 2. the plan, on the host (as _encode_device)
+    centred, width, lo = _decide(lay, c, h, centre)
+    means_b = means_lo = np.zeros(n, dtype=np.int64)
+    if centre:
+        means_b, means_lo = _decide_means(c[3 * n:], h[3 * n:], lay.rows)
+    seg_t = _segments(lay, centred, width, lo, means_b, means_lo)
+    head = _write_header(lay, centred, seg_t["b"], seg_t["lo"])
+    order = np.argsort(seg_t["b"], kind="stable")
+    g = {k: v[order] for k, v in seg_t.items()}
+    gstart = _cum0(g["size"])
+    parts = _Parts(src, lay, g, gstart, means if centred.any() else None)
+    del means
+    # 3. (a) the exceptions' number and Rice statistics
+    counts = torch.zeros(2 * _RBITS * 16, dtype=torch.int64, device=dev)
+    second = _upload(np.array([[0], [_RBITS * 16]], dtype=np.int64), dev)     # the payloads' bins
+    last = _upload(np.array([-1], dtype=np.int64), dev)
+    n_exc = 0
+    for p, q in parts.parts():
+        pos, high = parts.exceptions(p, q)
+        if pos.numel():
+            rv, last = _rice_values(pos, high, p, last)
+            bins = _rice_bins(rv).add_(second).view(-1)
+            counts.index_add_(0, bins, torch.ones_like(bins))
+            n_exc += pos.numel()
+        del pos, high
+    ks = [0, 0]
+    if n_exc:
+        hc = _d2h(counts).reshape(2, _RBITS, 16)
+        ks = [_rice_k_bins(n_exc, hc[i]) for i in range(2)]
+    # (b) the slot streams
+    body = _slot_streams(parts, g, gstart)
+    # (c) the exceptions in order: Rice low parts and quotients
+    tail = [struct.pack("<I", n_exc)]
+    if n_exc:
+        q8 = np.empty((2, n_exc), dtype=np.uint8)
+        lows = [np.empty(n_exc, dtype=np.uint32) if k else None for k in ks]
+        nbytes = [1 if k <= 8 else 2 if k <= 16 else 4 for k in ks]
+        kt = _upload(np.array([[k] for k in ks], dtype=np.int64), dev)
+        last, done = _upload(np.array([-1], dtype=np.int64), dev), 0
+        for p, q in parts.parts():
+            pos, high = parts.exceptions(p, q)
+            e = pos.numel()
+            if e == 0:
+                continue
+            rv, last = _rice_values(pos, high, p, last)
+            del pos, high
+            out = [(rv >> kt).to(torch.uint8).view(-1)]
+            for i, k in enumerate(ks):
+                if k:
+                    low = rv[i] & ((1 << k) - 1)
+                    out.append((low.to(torch.uint8) if k <= 8 else low.to(torch.int16) if k <= 16
+                                else low.to(torch.int32)).view(torch.uint8))     # the low bits of each
+            got = _d2h(torch.cat(out))
+            q8[:, done:done + e] = got[:2 * e].reshape(2, e)
+            at = 2 * e
+            for i, k in enumerate(ks):
+                if k:
+                    lows[i][done:done + e] = got[at:at + nbytes[i] * e].view(f"<u{nbytes[i]}")
+                    at += nbytes[i] * e
+            done += e
+        if done != n_exc:
+            raise RuntimeError("the exceptions changed between two passes over the claims")
+        workers = torch.get_num_threads()
+        for i, k in enumerate(ks):
+            tail += [bytes([k]), pack32(lows[i], k, workers) if k else b"", _pack_levels(q8[i])]
+    return b"".join([head, memoryview(body), *tail])
+
+
+def _slot_streams(parts: _Parts, g: dict, gstart: np.ndarray) -> np.ndarray:
+    """The slot streams of every width ``B > 0`` (the body of the encoding), packed on the device in blocks of
+    ``_CHUNK / 32`` columns of each stream's 32 lanes -- consecutive streams of at most ``_CHUNK`` values in one
+    part, whole -- and copied back block by block into their place."""
+    runs = [(b, a, z) for b, a, z in _width_runs(g["b"], gstart) if b and z > a]
+    sizes = [4 * b * ((z - a + 31) // 32) for b, a, z in runs]
+    offs = np.cumsum([0] + sizes).tolist()
+    body = np.empty(offs[-1], dtype=np.uint8)
+    cols = max(1, _CHUNK // 32)
+    group, held = [], 0
+
+    def flush():
+        if group:
+            a0, z1 = runs[group[0]][1], runs[group[-1]][2]
+            v, _, mask = parts.values([(a0, z1, 0, runs[group[0]][0])])
+            slots = v.bitwise_and_(mask)
+            words = [_pack_dev(slots[a - a0:z - a0], b).view(-1) for b, a, z in (runs[w] for w in group)]
+            got = _d2h(words[0] if len(words) == 1 else torch.cat(words))
+            body[offs[group[0]]:offs[group[-1] + 1]] = got.view(np.uint8)
+            group.clear()
+
+    for w, (b, a, z) in enumerate(runs):
+        cnt = z - a
+        if cnt <= _CHUNK:
+            if held + cnt > _CHUNK:
+                flush()
+                held = 0
+            group.append(w)
+            held += cnt
+            continue
+        flush()
+        held = 0
+        G = (cnt + 31) // 32
+        words = body[offs[w]:offs[w + 1]].view("<u4").reshape(b, G)
+        for g0 in range(0, G, cols):
+            m = min(cols, G - g0)
+            ranges = []
+            for j in range(32):                  # lane j: values [j G, (j + 1) G) of the stream, padded with 0
+                p0, p1 = min(a + j * G + g0, z), min(a + j * G + g0 + m, z)
+                ranges.append((p0, p1, m - (p1 - p0), b))
+            v, _, mask = parts.values(ranges)
+            words[:, g0:g0 + m] = _d2h(_pack_lanes(v.bitwise_and_(mask).view(32, m), b)).view(np.uint32)
+    flush()
+    return body
 
 
 # ---------------------------------------------------------------------------- the decoder
