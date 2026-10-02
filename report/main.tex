@@ -225,14 +225,12 @@ challenger.
 (Sections~\ref{sec:attack} and~\ref{sec:sampling}), with full soundness $2^{-\lambda}$ for
 complete CNNs and transformers (Sections~\ref{sec:defence} and~\ref{sec:protocol}). To our
 knowledge ours is the first protocol to achieve this without a SNARK, a TEE or a structured
-reference string. Its parts are known (Freivalds' check, exact integer arithmetic and client-side
-non-linear layers as in Slalom and Maverick; a Reed--Solomon-encoded Merkle commitment as in
-Ligero and LAMP); we chain them through every layer with an end-to-end soundness proof. Unlike
+reference string. We chain known protocols through every layer with an end-to-end soundness proof. Unlike
 Slalom we need no enclave, unlike Maverick no weights at the client, and unlike LAMP no SNARK
 around a single product. Our optimisations keep the bound and shrink the proof 2.0--4.2$\times$
 (Sections~\ref{sec:opt} and~\ref{sec:effect}). Our prover is one to four orders of magnitude
 faster than the zkSNARKs', and on LeNet-5 and 64-token GPT-2 prompts we beat zkCNN and DeepProve on
-all three costs (Section~\ref{sec:compare}); on long prompts our proof remains much larger.
+all three costs (Section~\ref{sec:compare}); on long prompts our proof remains larger.
 
 % =====================================================================================
 \section{Technical Approach}
@@ -282,17 +280,23 @@ zero by construction.
 Anchuri et al.\ suggest sampling more paths, or sampling where it matters instead of uniformly.
 Against an adversary who knows the rule, neither helps if the rule ignores the claimed values.
 
-\begin{theorem}[uniform sampling is minimax-optimal]
-Fix a layer, let $U$ be the set of its neurons whose change can flip the output, and consider any
-sampler that opens at most $s$ neurons of the layer, chosen independently of the claimed trace. Let
-$\pi(v)$ be the probability that neuron $v$ is opened. Then $\min_{v\in U} \pi(v) \le s/|U|$, with
-equality only if $\pi$ is uniform on $U$.
-\end{theorem}
+\begin{proposition}[no value-blind sampler beats uniform]
+Fix a layer and let $U$ be the set of its neurons whose change can flip the output. The verifier
+opens at most $s$ neurons of the layer at random, independently of the claimed values, and an
+adversary who knows this distribution tampers with one neuron of $U$. Then for every such sampler
+the adversary can pick a neuron that is opened with probability at most $s/|U|$, and sampling $s$
+neurons of $U$ uniformly attains this bound: uniform sampling is minimax-optimal.
+\end{proposition}
 
-\noindent An adversary who knows the sampler tampers with a node of $U$ that minimises $\pi$, so
-it is detected with probability at most $s/|U|$. The bound holds because a minimum is at most the
-average and the $\pi(v)$ sum to at most $s$. Constant detection therefore needs $s=\Omega(|U|)$
-openings per layer, linear in the width, which is the cost the protocol was designed to avoid.
+\noindent\emph{Proof.} Let $\pi(v)$ be the probability that neuron $v$ is opened. At most $s$
+neurons are opened, so $\sum_{v\in U}\pi(v) \le s$ and the least-opened neuron of $U$ has
+$\pi(v) \le s/|U|$; uniform sampling of $U$ opens every neuron with probability exactly $s/|U|$.
+\qed
+
+\noindent The argument is elementary, but it rules out the fix Anchuri et al.\ suggest: no value-blind
+rule beats uniform sampling, so catching one tampered neuron with constant probability needs
+$s=\Omega(|U|)$ openings per layer, linear in the width, which is the cost the protocol was
+designed to avoid.
 Samplers that look at the claimed values are not safe either. The \emph{contribution-weighted
 sampler}, for example, steps to parent $i$ with probability proportional to its contribution
 $|w_{ij} a_i|$, so it never visits a neuron whose claimed activation is zero, and an adversary who
