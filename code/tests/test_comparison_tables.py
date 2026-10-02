@@ -119,10 +119,11 @@ def test_table5_follows_the_setting_rule():
     # the 2,048-token rows need the second optimised run: pending, with the basic protocol standing in
     assert all(all(p) for (s, w), (c, i, p) in rows.items() if s == "zkLLM")
     assert not any(any(p) for (s, w), (c, i, p) in rows.items() if s.startswith(("zkCNN", "DeepProve", "Maverick")))
-    # the default ('cells'): the factor either way, shaded green (ours better) or orange (theirs better),
-    # the shade outside \pending{} so the colour is set at the cell's level
+    # the default ('cells'): the factor either way, with a down arrow where our cost is lower (shaded green)
+    # and an up arrow where it is higher (orange), the shade outside \pending{} so the colour is set at the
+    # cell's level
     assert pa.RATIO_STYLE == "cells"
-    assert pa.fac(844.0, 5.39)[0] == r"157$\times$" and pa.fac(0.0871, 0.155)[0] == r"1.8$\times$"
+    assert pa.fac(844.0, 5.39)[0] == r"157$\times$$\downarrow$" and pa.fac(0.0871, 0.155)[0] == r"1.8$\times$$\uparrow$"
     assert pa._shade(pa.red("2.2$\\times$", True), 2.2) == r"\win{\pending{2.2$\times$}}"
     assert pa._shade("72$\\times$", 1 / 72) == r"\lose{72$\times$}"
     assert pa._shade("--", None) == "--" and pa._shade("same", 1.0) == "same"

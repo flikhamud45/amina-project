@@ -1312,17 +1312,17 @@ def write_hardware(M=None, starred=False, MO=None):
     print("table hardware:", hw_short(gpu), "/", cpu, f"/ {len(pending)} pending")
 
 
-# Table 5's cells: 'cells' prints the factor by which ours is better or worse, in main.tex's \win{} (green
-# cell) or \lose{} (orange cell); 'fraction' prints theirs/ours as 'n\times' or '1/n'; 'arrows' n\times
-# with an up or down arrow
+# Table 5's cells: 'cells' prints the factor by which our cost is lower (down arrow, in main.tex's \win{},
+# a green cell) or higher (up arrow, \lose{}, an orange cell); 'fraction' prints theirs/ours as 'n\times'
+# or '1/n'; 'arrows' n\times with an up arrow where ours is better
 RATIO_STYLE = "cells"
 
 
 def fac(theirs, ours):
-    """theirs/ours as Table 5 prints it, and the ratio.  'cells': '81$\\times$' when ours is 81x faster or
-    smaller and '72$\\times$' when it is 72x slower or larger (:func:`_shade` colours the cell by the
-    ratio); 'fraction': '81$\\times$' / '1/72' (the printed value is theirs/ours); 'arrows': '81$\\times$
-    $\\uparrow$' / '72$\\times$$\\downarrow$'."""
+    """theirs/ours as Table 5 prints it, and the ratio.  'cells': '81$\\times$$\\downarrow$' when our time or
+    size is 81x lower and '72$\\times$$\\uparrow$' when it is 72x higher (:func:`_shade` colours the cell by
+    the ratio); 'fraction': '81$\\times$' / '1/72' (the printed value is theirs/ours); 'arrows':
+    '81$\\times$$\\uparrow$' / '72$\\times$$\\downarrow$'."""
     if not theirs or not ours:
         return "--", None
     q = theirs / ours
@@ -1331,7 +1331,7 @@ def fac(theirs, ours):
     v = q if q >= 1 else 1 / q
     s = f"{v:,.0f}".replace(",", "{,}") if v >= 100 else (f"{v:.0f}" if v >= 10 else f"{v:.1f}")
     if RATIO_STYLE == "cells":
-        return s + r"$\times$", q
+        return s + r"$\times$" + (r"$\downarrow$" if q >= 1 else r"$\uparrow$"), q
     if RATIO_STYLE == "arrows":
         return s + r"$\times$" + (r"$\uparrow$" if q >= 1 else r"$\downarrow$"), q
     return (s + r"$\times$" if q >= 1 else "1/" + s), q

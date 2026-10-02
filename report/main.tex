@@ -12,7 +12,8 @@
 \usepackage{colortbl}
 \setlength{\emergencystretch}{1.5em}
 
-% Table 5's cells (paper_assets.py): ours better (green) or theirs better (orange), by the factor shown
+% Table 5's cells (paper_assets.py): our cost lower (green, down arrow) or higher (orange, up arrow), by
+% the factor shown
 \definecolor{winbg}{RGB}{208,236,208}
 \definecolor{losebg}{RGB}{252,222,190}
 \newcommand{\win}[1]{\cellcolor{winbg}#1}
@@ -796,8 +797,8 @@ The optimisations make the one-time setup longer
 \label{sec:compare}
 
 \begin{table}[t]
-  \caption{Ours against published systems: our prover always wins (green: ours better; orange:
-  theirs)}
+  \caption{Ours against published systems: our prover always wins (green $\downarrow$: ours lower;
+  orange $\uparrow$: ours higher)}
   \label{tab:ratios}
   \footnotesize
   \setlength{\tabcolsep}{3.5pt}
@@ -819,7 +820,8 @@ The optimisations make the one-time setup longer
 \end{table}
 
 Table~\ref{tab:ratios} compares the optimised protocol with published systems on matched models;
-each cell gives the factor by which ours is better (green) or worse (orange). Our prover wins in
+each cell gives the factor by which our time or size is lower ($\downarrow$, green) or higher
+($\uparrow$, orange). Our prover wins in
 every row, while the verifier and the proof win in some rows and lose in others. Our verifier uses
 \VerifierThreads{} CPU threads, or at 2{,}048 tokens the streaming GPU verifier, with prover and
 proof from the CPU-verifier run, as in Table~\ref{tab:llm}; for the language models ours prove the
