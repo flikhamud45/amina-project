@@ -108,9 +108,7 @@ grows with the input.
   \end{subfigure}
   \Description{Three small network diagrams: a random path checked by the path protocol, a
   single tampered neuron that the path misses, and every layer checked by our defence.}
-  \caption{A single tampered neuron, with everything after it recomputed honestly, leaves one
-  inconsistent node: a random path rarely visits it (b), while one random combination per layer
-  catches it (c).}
+  \caption{One tampered neuron slips past a random path, but not past a check of every layer}
   \label{fig:overview}
 \end{figure*}
 
@@ -374,16 +372,15 @@ $((k-1)/n_\ell)^t < 4^{-t}$.
   \includegraphics[width=\columnwidth]{figures/protocol.pdf}
   \Description{Message sequence between prover and verifier: query, output and claims, random
   challenge, folded rows, column positions, opened columns with Merkle proof.}
-  \caption{One query in setting $\sC$ (basic protocol). The claims are fixed before $\chi$ is
-  drawn and $u_\ell$ before the columns are chosen; in $\sK$ and $\Kpre$ the verifier computes
-  $u_\ell$ itself, so only (1) and (2) are sent.}
+  \caption{One query in setting $\sC$: each value is fixed before the randomness that tests it}
   \label{fig:protocol}
 \end{figure}
 
 \subsection{Protocol and soundness}
 \label{sec:protocol}
 Setup happens once per model: the owner encodes and commits the weights and publishes $C_M$.
-Figure~\ref{fig:protocol} shows one query, with $r$ vectors $\chi$ and $t$ columns per layer;
+Figure~\ref{fig:protocol} shows one query of the basic protocol, with $r$ vectors $\chi$ and $t$
+columns per layer;
 besides the checks of Steps~3 and~4, the verifier range-checks the claims and checks that the
 recomputed layers lead to $y$. Because the claims precede $\chi$ and $u_\ell$ precedes the column
 positions, the prover fixes every value before it sees the randomness that tests it.
@@ -621,14 +618,15 @@ them on language models.
   \includegraphics[width=\columnwidth]{figures/security_bits.pdf}
   \Description{Security bits against bytes sent per query for image models: the path protocol
   with more and more paths, and our basic and optimised protocols at three security levels.}
-  \caption{Security against bytes sent per query, in bits: $-\log_2$ of the probability that a
-  wrong output is accepted (paths: the single-neuron attack; ours: the proven bound at
-  $\lambda{=}40, 80, 128$; hollow: basic; shape: model). The paths reach 40 bits only by opening
-  the whole model and trace (vertical lines).}
+  \caption{Security against bytes sent: our proofs buy far more security per byte than the paths}
   \label{fig:security}
 \end{figure}
 
-Figure~\ref{fig:security} plots security against bytes. The optimised protocol
+Figure~\ref{fig:security} plots security against the bytes sent per query for the image models.
+Security, in bits, is $-\log_2$ of the probability that a wrong output is accepted: for the paths,
+that the single-neuron attack is missed, and for ours, the proven bound at $\lambda{=}40$, 80 and
+128. The paths reach 40 bits only by opening the whole model and trace (the vertical lines). The
+optimised protocol
 \pendingclaim{lands close to its target} (43--\pending{57} bits at $\lambda{=}40$ and
 131--\pending{150} at $\lambda{=}128$)
 % PENDING: the maxima are the 224-pixel ResNet's (placeholder: its basic bits); the other five
@@ -734,14 +732,15 @@ weights.}
   \includegraphics[width=\textwidth]{figures/cost_legend.pdf}
   \Description{Three log-log scatter plots of prover time, verifier time and proof size against
   model parameters, for our optimised protocol and published systems.}
-  \caption{Cost against model size: the optimised protocol (blue; verifier on \VerifierThreads{} CPU threads) and
-  published systems as reported on their own hardware (grey; orange: one path
-  of~\cite{anchuri2026verifiable}). Table~\ref{tab:ratios} compares them on matched models.}
+  \caption{Cost against model size: ours (blue) proves far faster than published systems (grey),
+  but usually sends more}
   \label{fig:cost}
 \end{figure*}
 
-Figure~\ref{fig:cost} places these runs among the published ones. Part of the prover gap is our
-GPU, since all the zkSNARKs except zkLLM ran on CPUs. The orange cross is one path
+Figure~\ref{fig:cost} places these runs among the published ones, with our verifier on
+\VerifierThreads{} CPU threads and the published systems as reported on their own hardware;
+Table~\ref{tab:ratios} compares them on matched models. Part of the prover gap is our GPU, since
+all the zkSNARKs except zkLLM ran on CPUs. The orange cross is one path
 of~\cite{anchuri2026verifiable}, as reported on an RTX~3090.
 
 \subsection{Effect of the optimisations}
