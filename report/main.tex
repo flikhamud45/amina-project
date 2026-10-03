@@ -630,7 +630,7 @@ need for $2^{-40}$.
     \toprule
     & & & \multicolumn{3}{c}{committed ($\sC$)} & \multicolumn{2}{c}{$\Kpre$} \\
     \cmidrule(lr){4-6}\cmidrule(lr){7-8}
-    Model & Params & acc. & prove & verify & proof & verify & proof \\
+    Model & Params & acc. & prove$\downarrow$ & verify$\downarrow$ & proof$\downarrow$ & verify$\downarrow$ & proof$\downarrow$ \\
     \midrule
     \input{tables/cnn.tex}
   \end{tabular}
@@ -656,7 +656,7 @@ CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
     \toprule
     & & \multicolumn{4}{c}{committed weights ($\sC$)} & \multicolumn{2}{c}{$\Kpre$} \\
     \cmidrule(lr){3-6}\cmidrule(lr){7-8}
-    Model & Params & prove & verify & GPU & proof & verify & proof \\
+    Model & Params & prove$\downarrow$ & verify$\downarrow$ & GPU$\downarrow$ & proof$\downarrow$ & verify$\downarrow$ & proof$\downarrow$ \\
     \midrule
     \multicolumn{8}{l}{\emph{64-token prompts}} \\
     \input{tables/llm.tex}
@@ -752,7 +752,7 @@ The optimisations make the one-time setup longer
   \setlength{\tabcolsep}{3.5pt}
   \begin{tabular}{llrrr}
     \toprule
-    System & Model (tokens) & prover & verifier & proof \\
+    System & Model (tokens) & prover$\downarrow$ & verifier$\downarrow$ & proof$\downarrow$ \\
     \midrule
     \input{tables/ratios.tex}
   \end{tabular}
