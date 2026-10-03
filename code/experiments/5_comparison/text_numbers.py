@@ -487,7 +487,7 @@ def checks(M, opt_names: list[str]):
     q = {(s, w): [V(a / o if a and o else None, st(p)) for (a, o), p in zip(cells, pend)] for s, w, cells, _, pend in rr}
     zk = [v[0] for (s, w), v in q.items() if s != pa.ZKLLM_OWN and not s.startswith("Maverick")]
     add(r"Our prover is .*faster than the zkSNARK", "prover: theirs/ours over the zkSNARK rows (contributions)", rng(zk, x2))
-    add(r"Ours is faster than every zkSNARK prover", "prover: theirs/ours over the zkSNARK rows (smallest; largest)",
+    add(r"faster than every zkSNARK prover", "prover: theirs/ours over the zkSNARK rows (smallest; largest)",
         ends(zk, x2))
     ours7 = elem(lambda s: s.llm("llama2-7b", 2048, "prove"))
     zk7 = pa.zkllm_l40s_whole_model_s()
@@ -526,7 +526,7 @@ def checks(M, opt_names: list[str]):
     mav_row = pa.llm_rows("Kpre", lam=mav_spec["lam"], threads=mav_spec["threads"], tables=pa.opt_dirs(),
                           tags=mav_spec["tags"]).get(("qwen3-4b", 8), {}) if pa.opt_dirs() else {}
     dec = mav_row.get("verify_decode", (None,))[0]
-    add(r"Maverick's 124\.5|Maverick's .*is its", "Maverick's verifier, matrix checks, replay; client total; ours; "
+    add(r"Maverick's 124\.5|Maverick's .*is its|verifier's 124\.5", "Maverick's verifier, matrix checks, replay; client total; ours; "
         "of it decoding",
         [Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"), Tok([(f"{(mav[1][0] - pa.MAVERICK_NONLINEAR_S) * 1e3:.1f}", FINAL)], "ms"),
          Tok([(f"{pa.MAVERICK_NONLINEAR_S * 1e3:.1f}", FINAL)], "ms"), Tok([(snippet[3], FINAL)], "ms"),
