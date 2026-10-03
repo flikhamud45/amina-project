@@ -600,7 +600,7 @@ language models).
 \para{Each check is needed.} Freivalds' check rejected
 \OptNFreivalds{} attacks and the column check against the code \OptNColumnsCode{}, including every
 forged folded row and every tampered claim of a layer in the transposed layout; the Merkle check
-rejected all \OptNColumnsMerkle{} forged columns (a range check caught the remaining two).
+rejected all \OptNColumnsMerkle{} forged columns (a range check caught the remaining \OptNRange{}).
 
 \begin{figure}[t]
   \centering
@@ -747,7 +747,8 @@ about 8.6 instead of 4.5\,min for Llama-2-7B).
 \label{sec:compare}
 
 \begin{table}[t]
-  \caption{Our costs against published systems: our prover always wins}
+  \caption{Our costs against published systems: our prover always wins (bold $\downarrow$: ours lower;
+  $\uparrow$: ours higher)}
   \label{tab:ratios}
   \scriptsize
   \setlength{\tabcolsep}{2pt}
@@ -761,7 +762,7 @@ about 8.6 instead of 4.5\,min for Llama-2-7B).
   \end{tabular}
 
   \smallskip
-  {\footnotesize In parentheses: the factor by which ours is lower ($\downarrow$) or higher ($\uparrow$) than theirs; bold: ours better. $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position (HyperKZG:
+  {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position (HyperKZG:
   9.4\,MB). $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, as Maverick; without the compact encoding; Maverick's prover runs on 64 CPU threads. $^e$zkLLM's code ran on our L40S
   (--: not reported).}
 \end{table}
