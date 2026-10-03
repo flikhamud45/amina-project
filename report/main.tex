@@ -100,7 +100,8 @@ prover is orders of magnitude faster than published zkSNARK provers and faster t
   \caption{Our costs against published systems: our prover always wins (in parentheses: ours lower
   $\downarrow$ or higher $\uparrow$, bold if lower)}
   \label{tab:ratios}
-  \scriptsize
+  \footnotesize
+  \setlength{\tabcolsep}{5pt}
   \begin{tabular}{ll@{\hspace{18pt}}rr@{\hspace{18pt}}rr@{\hspace{18pt}}rr}
     \toprule
     & & \multicolumn{2}{c}{prover$\downarrow$} & \multicolumn{2}{c}{verifier$\downarrow$} & \multicolumn{2}{c}{proof$\downarrow$} \\
@@ -111,7 +112,7 @@ prover is orders of magnitude faster than published zkSNARK provers and faster t
   \end{tabular}
 
   \smallskip
-  {\scriptsize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position. $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, as Maverick; without the compact encoding; Maverick's prover runs on 64 CPU threads. Setting in Section~\ref{sec:compare}.}
+  {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position. $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, as Maverick; without the compact encoding; Maverick's prover runs on 64 CPU threads. Setting in Section~\ref{sec:compare}.}
 \end{table*}
 
 Consider a company that pays a cloud provider to serve a licensed model to its users. Nothing in a
