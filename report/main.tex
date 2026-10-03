@@ -438,7 +438,7 @@ queries that reuse $\chi$ with probability at most $Q\sum_\ell p^{-r}$.
 \subsection{Costs and optimisations}
 \label{sec:opt}
 
-\para{Costs.} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns, which it
+\subsubsection{Costs.} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns, which it
 recomputes from $W_\ell$; its extra work, $O((r+t)\sum_\ell N_\ell k_\ell)$, does not depend on the
 number of pixels or tokens. With 4-byte claims and field elements and 32-byte hashes, a proof in
 setting $\sC$ has
@@ -452,7 +452,7 @@ For Llama-2-7B at 64 tokens these are 349, 23, 385 and 4\,MB of the basic protoc
 proof. In $\sK$ and
 $\Kpre$ the proof is the claims alone.
 
-\para{Optimisations.} The parameters above keep the soundness argument short but leave the proof
+\subsubsection{Optimisations.} The parameters above keep the soundness argument short but leave the proof
 larger than it needs to be. We call the protocol so far the \emph{basic} protocol, and the one with
 the four changes below and the engineered verifier described after them the \emph{optimised}
 protocol, which Section~\ref{sec:results} measures and Section~\ref{sec:effect} compares with the
@@ -724,31 +724,29 @@ zkLLM ran on CPUs.
 \subsection{Effect of the optimisations}
 \label{sec:effect}
 
-We compared the two protocols on the same machines, in setting $\sC$, interactive and at
-$\lambda{=}128$, on LeNet-5, VGG-16 and ResNet-18 (CIFAR), GPT-2 with 64- and 512-token prompts
-and Llama-2-7B with 1- and 64-token prompts; for the language models the optimised runs also
-compute the last block at the last position only. On average (geometric mean) the optimised
-protocol sends 61\% fewer bytes (2.0--4.2$\times$ fewer), verifies in 77\% less time
-(2.3--10.9$\times$ faster) and proves in 28\% less time.
-Much of the verifier gain comes from verifier engineering, which also speeds up the basic proofs (468 to 190\,ms for GPT-2 at 64 tokens). The prover gets faster too,
-except on the two MNIST models (4.3 to 5.3\,ms for LeNet-5 and 3.1 to 3.8\,ms for the MLP), where
-encoding the claims costs more time than the planning rule saves (3.0 and 1.9\,ms without the
-compact encoding). \pendingclaim{At 2{,}048 tokens the optimised protocol proves Llama-2-7B in
+We ran both protocols on the same machines (setting $\sC$, interactive, $\lambda{=}128$) on
+LeNet-5, VGG-16, ResNet-18 (CIFAR), GPT-2 (64 and 512 tokens) and Llama-2-7B (1 and 64 tokens).
+On average (geometric mean) the optimised protocol sends 61\% fewer bytes (2.0--4.2$\times$
+fewer), verifies in 77\% less time (2.3--10.9$\times$ faster) and proves in 28\% less time.
+Most of the verifier gain comes from verifier engineering, which also speeds up the basic proofs
+(468 to 190\,ms for GPT-2 at 64 tokens), and the prover is faster on every model but the two
+MNIST ones, where encoding the claims costs more than it saves.
+\pendingclaim{At 2{,}048 tokens the optimised protocol proves Llama-2-7B in
 \pending{17.6}\,s, verifies it on the GPU in \pending{6.9}\,s and sends 6.6\,GB,
-against 17.6\,s, 6.9\,s and 11.6\,GB for the basic protocol.} Without any change to the proof,
+against 17.6\,s, 6.9\,s and 11.6\,GB for the basic protocol.}
 % PENDING: the prover and GPU verifier are withheld (excluded_cells.csv); the proof is in.
 % Llama-2-7B T2048 C, prover and proof from the CPU-verifier cell, verifier from the
 % streaming GPU cell (paper_assets.opt_pairs, row g); placeholders: the basic run's. Rewrite as a comparison
 % (e.g. "proves ... in x s instead of 17.6 s") once the values are in
-the released code's prover and the streaming verifier already take 5.4\,s and 1.7\,s on the basic proof
-format, and the prover then takes 1.9$\times$ the plain int8 forward pass (the $\Kpre$ prover).
+With the basic proof format, the prover of Llama-2-7B at 2{,}048 tokens takes 1.9$\times$ the
+time of the int8 forward pass alone.
 % Not reported: Llama-2-13B's streaming verifier on the basic format (first L40S batch, n-801: 9.1 s,
 % 5.4x Llama-2-7B's). Every phase of that cell, the prover's forward pass included, varied 3-5x from
 % query to query (forward 5.3-18.2 s; Llama-2-7B's on the same node 2.84-2.92 s), as in the slow
 % periods of n-801 found in the second batch; that batch's same verifier phase on Llama-2-13B took
 % 2.4 s (2.32-2.89 s), 1.5x Llama-2-7B's, at 70 GiB of host memory
-The optimisations make the one-time setup longer
-(114--116\,s instead of 9--10\,s for GPT-2, about 8.6 instead of 4.5\,min for Llama-2-7B).
+The price is that the one-time setup is longer (114--116\,s instead of 9--10\,s for GPT-2,
+about 8.6 instead of 4.5\,min for Llama-2-7B).
 
 \subsection{Comparison with published systems}
 \label{sec:compare}

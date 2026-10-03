@@ -437,7 +437,8 @@ def checks(M, opt_names: list[str]):
     # ... (3.0 and 1.9 ms without the compact encoding)'
     pol = {m: opt_measured_cost(m, "defence_C_int_lam128_rate4_polauto") for m in ("lenet5", "mlp_mnist")}
     bare = lambda v: Tok([(pa.t(v).split("\\")[0], FINAL)])   # noqa: E731  (a number whose unit follows later)
-    add(r"except on the two MNIST models", "LeNet-5, MLP prover basic -> optimised; optimised without the compact "
+    # optional: Sec. 4.5 now states the MNIST exception without its timings
+    add(r"?except on the two MNIST models", "LeNet-5, MLP prover basic -> optimised; optimised without the compact "
         "encoding", [bare(pa.basic_cnn("lenet5", "prove")), one(elem(lambda s: s.cnn("lenet5", "prove")), pa.t),
                      bare(pa.basic_cnn("mlp_mnist", "prove")), one(elem(lambda s: s.cnn("mlp_mnist", "prove")), pa.t),
                      bare(pol["lenet5"]), one(fixed(pol["mlp_mnist"]), pa.t)])
@@ -449,9 +450,9 @@ def checks(M, opt_names: list[str]):
     stream = {mode: pa.llm_cost(("llama2-7b", 2048), {"mode": mode, "variant": "_gpuv_stream"}, pa.opt_dirs())
               for mode in ("C", "Kpre")}
     if stream["C"]:
-        add(r"already take", "basic proof format, released prover + streaming GPU verifier: prover, verifier; C/Kpre prover",
-            [one(fixed(stream["C"][0]), pa.t), one(fixed(stream["C"][1]), pa.t),
-             one(fixed(stream["C"][0] / stream["Kpre"][0]), x, "×")])
+        # Sec. 4.5 keeps only the prover / forward-pass ratio (the Kpre prover is the forward pass)
+        add(r"time of the int8 forward pass alone", "basic proof format, Llama-2-7B T2048: C prover / Kpre prover",
+            [one(fixed(stream["C"][0] / stream["Kpre"][0]), x, "×")])
 
     def commit(T, model, cell):
         key = ("llm", model, cell, "commit_total", "", "", "", "", "")
