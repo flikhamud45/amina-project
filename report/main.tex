@@ -262,8 +262,7 @@ for the smallest change that flips the output. It then recomputes all later laye
 later node is consistent with its parents and every earlier node is untouched, so $j$ is the only
 node whose local check fails, the only \emph{inconsistent node}. The verifier notices the attack
 only if its path visits $j$, which happens with probability $1/N$ in a layer of width $N$, or
-$1-(1-1/N)^s$ with $s$ paths. Applied only to inputs with a trigger, it becomes a backdoor: clean queries are
-answered honestly, bit for bit, with the committed weights, so no inspection of the weights reveals it.
+$1-(1-1/N)^s$ with $s$ paths. Applied only to inputs with a trigger, it becomes a \emph{backdoor}.
 
 \subsection{Why sampling does not fix it}
 \label{sec:sampling}
