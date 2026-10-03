@@ -2,17 +2,19 @@
 
     python experiments/5_comparison/count_outcomes.py --platform l40s --tex ../report/tables/counts.tex
         # the basic protocol's counts (abstract, Sec. 4.3, conclusion) -> \\NHonest, \\NAttacks, ...
-    python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --prefix Opt \\
-        --tex ../report/tables/counts_opt.tex
+    python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2,l40s_improved3 \\
+        --prefix Opt --definition --tex ../report/tables/counts_opt.tex
         # the optimised protocol's runs, added up (abstract, Sec. 4.3) -> \\OptNHonest, \\OptNAttacks, ...
-        # (add --definition once l40s_improved2 is stored: the text says "on the optimised one", and the
-        # unfiltered roots also hold basic-format, plan-only and by-product cells)
+        # (--definition: the text counts the optimised protocol only, and the unfiltered roots also hold
+        # basic-format, plan-only and by-product cells; l40s_improved3 re-measures cells of l40s_improved2,
+        # the same seeded instances, so it replaces them and leaves the totals as they were)
     python experiments/5_comparison/count_outcomes.py --platform rtx2080ti-v2   # print only
 
-``--platform`` takes one platform or a comma-separated list, whose counts are added.  A listed
+``--platform`` takes one platform or a comma-separated list, whose counts are added (a cell finished in a
+later platform's root replaces the same cell of an earlier one, as in the tables).  A listed
 platform that has no raw root yet (a run still to come) is skipped with a warning, and ``--tex`` then
-writes every count as ``\\pending{<count so far>}`` (red in main.tex, which defines \\pending): the
-total is not final until that run is stored.
+writes every count as ``\\pending{<count so far>}``: the total is not final until that run is stored
+(the final main.tex no longer defines \\pending, so such a partial count stops the build).
 ``--definition`` counts only the defence and tamper cells of the optimised protocol's definition
 (``paper_assets.definition_tagsets()``: no basic-format cells, stand-ins or by-products of the
 optimised roots); ``--require-tag TAG`` only the cells whose name carries TAG.
@@ -71,14 +73,22 @@ def _kept(suite: str, cell: str, tags, definition) -> bool:
     return mode is not None and ts in definition.get((suite, mode), set())
 
 
-def count(root: Path, policy: str = "auto", tags=(), definition=None) -> dict:
+def finished_cells(root: Path) -> set:
+    """(suite, model, cell) of every finished cell (a .done marker) of one raw root."""
+    return {(p.parts[-3], p.parts[-2], p.stem) for p in root.glob("*/*/*.done")}
+
+
+def count(root: Path, policy: str = "auto", tags=(), definition=None, skip=frozenset()) -> dict:
     """``tags``: count only the cells whose name carries all of them.  ``definition``: {(suite, mode): {tag
     sets}} (paper_assets.definition_tagsets()): count only the defence and tamper cells of the optimised
-    protocol's definition, as check_opt2.py's uniform cells."""
+    protocol's definition.  ``skip``: (suite, model, cell) of finished cells
+    not to count (a later run holds them: :func:`count_runs`)."""
     c = {k: Counter() for k in KINDS}
     records, rejected = 0, []
     for path in sorted(root.glob("*/*/*.jsonl")):
         if not path.with_suffix(".done").exists() or not _kept(path.parts[-3], path.stem, tags, definition):
+            continue
+        if (path.parts[-3], path.parts[-2], path.stem) in skip:
             continue
         suite = path.parts[-3]
         for line in path.open(encoding="utf-8"):
@@ -111,6 +121,18 @@ def count(root: Path, policy: str = "auto", tags=(), definition=None) -> dict:
                 c["honest"][(suite, 0)] += 1
                 rejected.append(f"{root.name}/{path.relative_to(root)} trial {r.get('trial')}")
     return dict(c, records=records, rejected=rejected)
+
+
+def count_runs(roots: list[Path], policy: str = "auto", tags=(), definition=None) -> dict:
+    """Several runs' counts, added up, where a cell finished in a later root replaces the same cell of an earlier
+    one (as paper_assets.py merges their tables): l40s_improved2 repeats l40s_improved's kept cells, and
+    l40s_improved3 re-measures cells of l40s_improved2, which would otherwise count twice.  Honest rejections
+    (.rejected-* files) always count."""
+    out, later = [], set()
+    for root in reversed(roots):
+        out.append(count(root, policy, tags, definition, skip=frozenset(later)))
+        later |= finished_cells(root)
+    return merge(out[::-1])
 
 
 def merge(counts: list[dict]) -> dict:
@@ -175,6 +197,7 @@ def macros(c: dict, prefix: str) -> dict:
          "NHonestLLM": honest(c, 1, "llm"), "NAttacks": attacks(c, 1), "NAttacksCNN": attacks(c, 1, "cnn"),
          "NAttacksLLM": attacks(c, 1, "llm"), "NFreivalds": c["stages"]["freivalds"],
          "NColumnsCode": c["stages"]["columns_code"], "NColumnsMerkle": c["stages"]["columns_merkle"],
+         "NRange": c["stages"]["range_or_shape"],     # rejected by the range (and shape) check
          "NAttacksPlusOne": sum(plus_one(c)[:2]),     # the '+1 on one pre-activation' LLM attacks ...
          "NAttacksPlusOnePartial": plus_one(c)[2]}     # ... of which on 1-2 block builds of the 30-70B shapes
     if attacks(c, 1, "cnn", "policy"):   # image-model attacks under the planning rule (the optimised runs)
@@ -228,7 +251,7 @@ def main() -> None:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import paper_assets   # noqa: E402  (the one definition of the optimised protocol's cells)
         definition = paper_assets.definition_tagsets()
-    c = merge([count(root, args.policy, args.require_tag, definition) for root in roots])
+    c = count_runs(roots, args.policy, args.require_tag, definition)
     label = " + ".join(r.name for r in roots) + (f" (cells tagged {', '.join(args.require_tag)})"
                                                   if args.require_tag else "") +         (" (the optimised definition's cells)" if definition else "")
     report(label, c, args.policy)

@@ -67,9 +67,11 @@ CURATED = [
     ("SLP (5 sampled chunks)", "GPT-2", 124e6, None, 28.0, 0.16, 916 * 1024, "Apple M3 Pro laptop", ("SLP: Seal, Then Sample", "GPT-2", "28.0 s")),
     ("LAMP (1 layer, matmuls only)", "GPT-2-medium, one layer", 12.58e6, 1024, 230.82, 6.52, 3342724, "AMD EPYC 7B13, 32 cores", ("LAMP", "GPT-2", "230.82 s")),
     ("Anchuri et al. (1 path)", "Llama-2-7B", 6.74e9, 64, 5.8e-3, 12.44e-3, 3.4 * MB, "RTX 3090", ("Anchuri et al.", "verification", "12.44 ms")),
-    ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", 4.02e9, 8, 0.3545, 0.0871, 36.08 * MB, "AWS c8i (client 1 thread)", ("Maverick", "verification-only mode", "354.5 ms")),
-    ("Maverick (verif.-only, 8 thr.)", "Qwen3-4B", 4.02e9, 8, 0.3144, 0.0128, 36.08 * MB, "AWS c8i (client 8 threads)", ("Maverick", "verification-only mode", "314.4 ms")),
-    ("Maverick (standard, 1 thr.)", "Qwen3-4B", 4.02e9, 8, 0.3633, 0.0896, 57.83 * MB, "AWS c8i (client 1 thread)", ("Maverick", "standard mode (8-token", "363.3 ms")),
+    # Maverick's verifier: its Table 8 'client time', everything its client computes per query (our
+    # verifier time is the same for ours); its prover: the server computation
+    ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", 4.02e9, 8, 0.3545, 0.2602, 36.08 * MB, "AWS c8i (client 1 thread)", ("Maverick", "verification-only mode", "354.5 ms")),
+    ("Maverick (verif.-only, 8 thr.)", "Qwen3-4B", 4.02e9, 8, 0.3144, 0.1425, 36.08 * MB, "AWS c8i (client 8 threads)", ("Maverick", "verification-only mode", "314.4 ms")),
+    ("Maverick (standard, 1 thr.)", "Qwen3-4B", 4.02e9, 8, 0.3633, 1.4605, 57.83 * MB, "AWS c8i (client 1 thread)", ("Maverick", "standard mode (8-token", "363.3 ms")),
 ]
 
 

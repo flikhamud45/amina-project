@@ -1,28 +1,31 @@
 """Every figure and table body of the report, built from the stored benchmark tables of the runs.
 
-    python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2
+    python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3
         # -> ../report/figures/*.pdf, ../report/tables/*.tex
-    python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2 \\
+    python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3 \\
         --check --pending-csv pending.csv
-        # write nothing: list the basic run's missing cells and the optimised numbers still pending
+        # write nothing: list the basic run's missing cells and the optimised numbers not measured
 
 Nothing here runs a model; every number is read from the stored benchmark tables
-(``aggregate.py``, ``literature.py``) and from zkLLM's run on our GPU
-(``artifacts/results/zkllm_l40s/summary.csv``), so the report can be rebuilt without a GPU.
+(``aggregate.py``, ``literature.py``), so the report can be rebuilt without a GPU.
 
 ``--platform`` (default ``l40s``, or ``$PVI_PLATFORM``) is the *basic protocol*, measured with the
 code of commit 9401431.  ``--optimised`` is a comma-separated list of runs of the *optimised protocol*
 on the same machines; a run whose ``tables_<name>/`` does not exist yet is skipped with a warning, and
-where two runs hold the same cell the later one in the list is used.  The report's results are the
-optimised protocol: Tables 2, 3 and 5, Figure 4 and the filled points of Figure 3.  The basic protocol
-appears in Table 4 (basic -> optimised, the same machines) and as the hollow points of Figure 3.
+where two runs hold the same cell the later one in the list is used, the whole cell (``merge_by_root``: a
+full-model value comes from the run that has the full-depth build; l40s_improved3 re-measures cells of
+l40s_improved2 whose timings excluded_cells.csv withholds).  The report's results are the
+optimised protocol: Tables 1-3, Figure 4 and the filled points of Figure 3.  The basic protocol
+appears in Sec. 4.5 (basic -> optimised, the same machines) and as the hollow points of Figure 3.
 
 Which stored cell holds each optimised number is defined in one place, ``OPTIMISED`` (below).  A number
-whose cell is not stored yet is *pending*: the basic protocol's value stands in for it, typeset
-``\\pending{...}`` (red; main.tex defines the macro) in the tables and drawn with a red edge in the
-figures (with a legend note).  ``--check`` lists the pending numbers, ``--pending-csv`` writes them, and
-``--strict`` refuses to write while any is pending.  Once the cells are stored, regenerating turns every
-table cell and figure point black by itself.
+whose cell is not stored, or whose timing excluded_cells.csv withholds and no later run re-measured, is
+*not measured*.  The final report omits such numbers (``OMIT_UNMEASURED``, the author's decision): a
+black '--' in Table 2, no point in Figure 4, and Table 3 and Sec. 4.5 list only rows whose numbers are
+measured.  ``--check`` lists the omitted numbers and ``--pending-csv`` writes them.  With
+``OMIT_UNMEASURED = False`` they are *pending* instead: the basic protocol's value stands in, typeset
+``\\pending{...}`` (red; main.tex would have to define the macro again) and drawn with a red edge, and
+``--strict`` refuses to write while any is pending.
 
 Figures: build them with the pinned matplotlib (``requirements.txt``).  Each panel is its own
 file (sub-captions are set in LaTeX), saved on a fixed canvas equal to its printed width, so the
@@ -58,7 +61,6 @@ TABLES = BASE / f"tables_{PLATFORM}"   # the basic run's tables; set by main() f
 # the optimised runs' tables, in order (a later run's cell replaces an earlier one's); set by main()
 # from --optimised.  A single Path is accepted too.
 OPT_TABLES: list[Path] | Path | None = None
-ZKLLM_L40S = ROOT / "artifacts" / "results" / "zkllm_l40s" / "summary.csv"   # zkLLM's code on our GPU
 
 
 def tables_dir(platform: str, required: bool = True) -> Path | None:
@@ -131,6 +133,29 @@ def _f(x):
         return None
 
 
+# Values withheld although their cell is stored: timings of the second L40S batch measured during slow periods of
+# two nodes (n-801, n-804), more than 1.5x their clean reference.  artifacts/comparison/excluded_cells.csv lists them
+# (platform, model, cell, quantity: prove, verify or setup) with the rule and the reference of each.  A withheld value
+# counts as not stored: the number is not measured, and the report omits it (OMIT_UNMEASURED).  The raw records
+# stay; bytes, verdicts and counts are unaffected.  The exclusion is per platform: a cell re-measured in a later
+# optimised run (l40s_improved3) replaces the withheld one and is shown from that run.
+EXCLUDED_CSV = BASE / "excluded_cells.csv"
+
+
+@lru_cache(maxsize=None)
+def excluded_values() -> frozenset:
+    if not EXCLUDED_CSV.exists():
+        return frozenset()
+    with open(EXCLUDED_CSV, newline="", encoding="utf-8") as fh:
+        return frozenset((r["platform"], r["model"], r["cell"], r["quantity"])
+                         for r in csv.DictReader(line for line in fh if not line.startswith("#")))
+
+
+def excluded(platform, model, cell, quantity) -> bool:
+    """Whether one stored value (quantity 'prove', 'verify' or 'setup') is withheld (excluded_cells.csv)."""
+    return (platform, model, cell, quantity) in excluded_values()
+
+
 # ------------------------------------------------------------------------------ cell names and tags
 # A cell's variant is bench.py's --tag (its parts in the runner's order) plus the suffixes bench.py adds
 # itself (_prune, _lookups, _pol<name>).  Cells are matched by the SET of their tags, so a re-run that
@@ -165,6 +190,24 @@ def cnn_cell(mode, ch, lam, tags, rate="4") -> str:
     return f"defence_{mode}_{ch}_lam{lam}_rate{rate}{variant_of(tags)}"
 
 
+def merge_by_root(per_root: list, full_build=lambda rows: False) -> dict:
+    """{selection: (root name, rows)} of several runs' rows, given as [(root name, {selection: rows})] in order of
+    precedence: a selection a later root holds replaces the earlier root's rows entirely (never mixed, never
+    averaged), as a cell of a later run replaces the same cell of an earlier one (``Measured``,
+    ``count_outcomes.count_runs``).  One exception, for full-model rows (``full_build(rows)``: whether rows come
+    from a full-depth build): a later root that has only the 1- and 2-block builds of a selection does not replace
+    an earlier root's full build of it, since the full-depth cell exists only in the earlier root (its value
+    stays that root's, withheld or not, and is never rebuilt from another root's partial builds)."""
+    merged: dict = {}
+    for name, sel in per_root:
+        for key, rows in sel.items():
+            old = merged.get(key)
+            if old is not None and full_build(old[1]) and not full_build(rows):
+                continue
+            merged[key] = (name, rows)
+    return merged
+
+
 class Measured:
     """Index over ``measured_summary.csv`` (median and mean per model, cell, metric) of one run, or of
     several runs merged (a list of tables directories; where two hold the same cell, the later one's
@@ -175,21 +218,20 @@ class Measured:
         self.dirs = dirs
         self.tables = dirs[-1] if dirs else None
         self.idx, self.src = {}, {}
-        by_cell: dict = {}
+        per_root = []
         for d in dirs:
             rows: dict = defaultdict(list)
             for r in _read("measured_summary.csv", d):
                 rows[(r["suite"], r["model"], r["cell"])].append(r)
-            for cell, rs in rows.items():
-                by_cell[cell] = (_platform_name(d), rs)       # a later run replaces the whole cell
-        for (suite, model, cell), (name, rs) in by_cell.items():
+            per_root.append((_platform_name(d), rows))
+        for (suite, model, cell), (name, rs) in merge_by_root(per_root).items():   # a later run replaces the whole cell
             for r in rs:
                 key = (r["suite"], r["model"], r["cell"], r["metric"], r.get("batch", ""), r.get("attack", ""),
                        r.get("lam", ""), r.get("stage", ""), r.get("k", ""))
                 self.idx[key] = r
                 self.src[key] = name
         # one machine and one thread count for the timed CNN cells (cells tagged _thr<n> excepted: they
-        # are a separate selection and never enter Tables 2-5 by default)
+        # are a separate selection and never enter Tables 1-3 by default)
         timed = [r for k, r in self.idx.items() if k[0] == "cnn" and k[2].startswith("defence_")
                  and not any(t.startswith("thr") for t in tagset(CNN_CELL.match(k[2]).group(5)
                                                                      if CNN_CELL.match(k[2]) else ""))]
@@ -198,7 +240,7 @@ class Measured:
             raise SystemExit(f"CNN timings of several machines in {[d.name for d in dirs]}: {sorted(map(str, hw))}")
         self.prover_hw = next(iter(hw), None)
         # CNN rows are not filtered by thread count, so a CNN job run with another --threads would
-        # enter Table 2 silently; the verifier string ('<cpu> x<n> threads') catches it
+        # enter Table 1 silently; the verifier string ('<cpu> x<n> threads') catches it
         vhw = {r.get("verifier_hw") for r in timed}
         if len(vhw) > 1:
             raise SystemExit(f"CNN verifier timings of several CPUs/thread counts: {sorted(map(str, vhw))}")
@@ -228,8 +270,11 @@ class Measured:
         return None if all(v is None for v in vals.values()) else sum(v or 0 for v in vals.values())
 
     def cost(self, model, cell):
-        """(prove seconds, verify seconds, proof bytes) of one CNN cell."""
-        return self.total(model, cell, PROVE), self.total(model, cell, VERIFY), self.get(model, cell, "bytes_total")
+        """(prove seconds, verify seconds, proof bytes) of one CNN cell (a withheld time: None)."""
+        plat = self.platform(model, cell)
+        return (None if excluded(plat, model, cell, "prove") else self.total(model, cell, PROVE),
+                None if excluded(plat, model, cell, "verify") else self.total(model, cell, VERIFY),
+                self.get(model, cell, "bytes_total"))
 
     def attack_rate(self, model, cell, attack):
         """(fraction rejected, number of attempts) for one attack type."""
@@ -239,19 +284,30 @@ class Measured:
         return (sum(v[0] * v[1] for v in vals) / n, int(n)) if n else (None, 0)
 
 
+def _llm_sel_key(r: dict) -> tuple:
+    """The selection of one ``llm_full_model.csv`` row: (model, length, setting, tags, batch), not the metric."""
+    return (r["model"], r["seq"], r["mode"], r["challenges"], r["lam"], r.get("threads", ""), r.get("rate", ""),
+            tagset(r.get("variant", "")), r.get("batch", ""))
+
+
+def _is_full_build(rows) -> bool:
+    return any(r.get("provenance") == "measured" for r in rows)
+
+
 @lru_cache(maxsize=None)
 def _llm_table(dirs: tuple) -> tuple:
-    """The rows of ``llm_full_model.csv`` of one or several runs; where two runs hold the same selection
-    (model, length, setting, tags), the later run's rows replace the earlier one's."""
-    merged: dict = {}
+    """The rows of ``llm_full_model.csv`` of one or several runs, each row tagged with its run (``_platform``).
+    Where two runs hold the same selection (model, length, setting, tags), the later run's rows replace the
+    earlier one's entirely, unless the later run has only the 1- and 2-block builds and the earlier one the full
+    build (:func:`merge_by_root`): a full-model value comes from the run that built the full model."""
+    per_root = []
     for d in dirs:
         sel: dict = defaultdict(list)
         for r in _read("llm_full_model.csv", Path(d)):
-            r = dict(r, _platform=_platform_name(Path(d)))
-            sel[(r["model"], r["seq"], r["mode"], r["challenges"], r["lam"], r.get("threads", ""),
-                 r.get("rate", ""), tagset(r.get("variant", "")), r.get("batch", ""))].append(r)
-        merged.update(sel)
-    return tuple(r for rows in merged.values() for r in rows)
+            sel[_llm_sel_key(r)].append(dict(r, _platform=_platform_name(Path(d))))
+        per_root.append((_platform_name(Path(d)), sel))
+    merged = merge_by_root(per_root, _is_full_build)
+    return tuple(r for _name, rows in merged.values() for r in rows)
 
 
 def _llm_dirs(tables) -> tuple:
@@ -305,18 +361,6 @@ def _measured(d: dict) -> bool:
     return bool(d) and all(v[1] == "measured" for v in d.values())
 
 
-def zkllm_l40s_whole_model_s(model: str = "llama2-7b", seq: int = 2048) -> float | None:
-    """zkLLM's public code on our L40S: its per-layer proving time times the layer count, as
-    ``artifacts/results/zkllm_l40s/summarise.py --csv`` stores it."""
-    if not ZKLLM_L40S.exists():
-        return None
-    with open(ZKLLM_L40S, newline="", encoding="utf-8") as fh:
-        for r in csv.DictReader(fh):
-            if (r["model"], int(r["seq"])) == (model, seq):
-                return float(r["whole_model_s"])
-    return None
-
-
 def _sel(sel: dict):
     """(mode, lam, threads, tags) of a selection dict (``variant`` or ``tags``)."""
     tags = frozenset(sel["tags"]) if "tags" in sel else tagset(sel.get("variant", DEFAULT["variant"]))
@@ -324,12 +368,18 @@ def _sel(sel: dict):
 
 
 def llm_cost(key, sel: dict, tables=None, challenges="int", full_only=False):
-    """(prove, verify, bytes, params) of one (model, seq) in one selection of one run (or several), or None."""
+    """(prove, verify, bytes, params) of one (model, seq) in one selection of one run (or several), or None.
+    A withheld time (excluded_cells.csv) is None, as if its cell were not stored."""
     mode, lam, thr, tags = _sel(sel)
     d = llm_rows(mode, lam=lam, threads=thr, challenges=challenges, tables=tables, tags=tags).get(key)
     if not d or "prove_forward" not in d or (full_only and not _measured(d)):
         return None
-    return _llm_cost(d)
+    prove, verify, nbytes, n = _llm_cost(d)
+    if excluded_values() and _measured(d):
+        plat, cell = _llm_platform(key, sel, tables, challenges), llm_cell(key[0], key[1], mode, challenges, lam, tags)
+        prove = None if excluded(plat, key[0], cell, "prove") else prove
+        verify = None if excluded(plat, key[0], cell, "verify") else verify
+    return prove, verify, nbytes, n
 
 
 def _llm_platform(key, sel, tables, challenges):
@@ -345,9 +395,10 @@ def _llm_platform(key, sel, tables, challenges):
 # ============================================================ THE OPTIMISED PROTOCOL: ONE DEFINITION
 # Which stored cell holds each optimised number, as the cell's settings and its set of variant tags.
 # "tags": the defining cell; "acceptable": cells that stand in, in black, until the defining one is
-# stored (listed with status 'acceptable' by --check); otherwise the number is pending and the basic
-# protocol's cell (the same settings without OPT_TAGS and pol*) stands in, in red.
-# This follows the re-run's definition (paper_final/rerun: bench.py at c8be5eb):
+# stored (listed with status 'acceptable' by --check); otherwise the number is not measured: omitted
+# (OMIT_UNMEASURED), or pending, with the basic protocol's cell (the same settings without OPT_TAGS and
+# pol*) standing in, in red.
+# The bench.py flags behind each defining cell:
 #   CNN, C (int/fs):      --policy auto --wire --tag _wire                 -> _wire_polauto
 #   CNN, K/Kpre:          --wire --tag _wire                               -> _wire
 #   LLM, C, CPU verifier: --policy auto --wire --prune-last --tag _wire    -> _wire_prune_polauto
@@ -361,12 +412,12 @@ OPTIMISED = {
     ("cnn", "C"): dict(tags=("wire", "polauto")),
     # image models with known weights (no columns, so no planning rule): compact encoding.  No stand-in:
     # l40s_improved's defence_{K,Kpre}_*_rate4 cells are the released code without --wire, whose proof is
-    # the basic one byte for byte, so the basic placeholder (red) is shown until the _wire cells are stored
+    # the basic one byte for byte
     ("cnn", "Kpre"): dict(tags=("wire",)),
     ("cnn", "K"): dict(tags=("wire",)),
     # language models, committed weights: planning rule + compact encoding + the last block at the last
-    # position only.  Llama-2-7B's 1- and 64-token runs without pruning stand in until the re-run (the
-    # authors' one sanctioned stand-in).
+    # position only.  Llama-2-7B's 1- and 64-token runs without pruning stand in where the pruned cell
+    # is missing.
     ("llm", "C", "short", "cpu"): dict(tags=("wire", "prune", "polauto"), acceptable=[("wire", "polauto")]),
     ("llm", "C", "long", "cpu"): dict(tags=("wire", "prune", "polauto")),
     # ... and with the streaming GPU verifier.  No stand-in: GPT-2's _wire_gpuv_prune_polauto cell has the
@@ -383,13 +434,13 @@ OPTIMISED = {
 OPTIMISED_SPECIAL = {
     ("qwen3-4b", 8, "Kpre"): dict(lam=40, threads="1", tags=("thr1", "wire", "prune", "lookups")),
 }
-# Table 5's verifier column against a published system whose verifier ran on fewer threads: () compares
+# Table 3's verifier column against a published system whose verifier ran on fewer threads: () compares
 # our 8-thread verifier (the text states the caveat); ("thr1",) our one-thread run of the re-run's
 # optional cells defence_C_<ch>_lam<l>_rate4_thr1_wire_polauto (platform l40s_improved2_thr1, listed in
-# --optimised), pending (red, '--') until it is stored.  zkCNN's verifier ran on one core.
+# --optimised).  zkCNN's verifier ran on one core.
 TABLE5_VERIFIER_EXTRA_TAGS = {"zkCNN": ()}
 # Which cell each column of an LLM row comes from, in order of preference: the prover and the proof
-# from the CPU-verifier cell (the same one at every prompt length, so Tables 3-5 and the text quote one
+# from the CPU-verifier cell (the same one at every prompt length, so Tables 2-3 and the text quote one
 # prover time per configuration), the CPU verifier from it, the GPU verifier from the GPU cell.
 COLUMN_CELLS = {"prove": ("cpu", "gpu"), "bytes": ("cpu", "gpu"), "verify": ("cpu",), "gpu": ("gpu",)}
 LLM_METRIC = {"prove": 0, "verify": 1, "gpu": 1, "bytes": 2, "params": 3}
@@ -439,21 +490,32 @@ def llm_cell(model, seq, mode, ch, lam, tags) -> str:
     return f"defence_{mode}_{ch}_lam{lam}_T{seq}_L{_n_layers().get(model, '?')}{variant_of(tags)}"
 
 
-# Every optimised number a builder needed and did not find (pending), or found only as an acceptable
-# stand-in: --check prints them and --pending-csv writes them.
+# The author's decision for the final report: an optimised number that was not measured -- a timing withheld by
+# excluded_cells.csv that the third batch (l40s_improved3) did not re-measure, or one of the two optional cells
+# never run (the streaming GPU verifier of Qwen3-4B and Llama-2-13B at 64 tokens) -- is omitted, not shown with
+# the basic protocol's value as a red placeholder: opt_cnn and opt_llm return (None, False) for it, so Table 2
+# prints a black '--' and Figure 4 draws no point, and Table 3 (OPT_MATCHES) and Sec. 4.5 (TAB_OPT) keep only rows
+# whose numbers are measured.  --check lists these numbers as 'omitted'.  False restores the pending placeholders
+# (\pending{}, which main.tex no longer defines).
+OMIT_UNMEASURED = True
+
+# Every optimised number a builder needed and did not find (omitted, or pending), or found only as an
+# acceptable stand-in: --check prints them and --pending-csv writes them.
 PENDING: list[dict] = []
 PENDING_FIELDS = ("asset", "row", "column", "model", "optimised_cell", "basic_cell", "status")
 
 
 def _note(where, model, opt_cell, shown_cell, status):
     """``shown_cell``: the cell whose value is shown instead ('<platform>:<cell>'; for a pending number the
-    basic protocol's, for an acceptable one the stand-in optimised cell)."""
+    basic protocol's, for an acceptable one the stand-in optimised cell; for an omitted one none)."""
     if where is None or status == "measured":
         return
     asset, row, column = where
     PENDING.append(dict(asset=asset, row=row, column=column, model=model, optimised_cell=opt_cell,
                         basic_cell=shown_cell or "(none: --)", status=status))
 
+
+OMITTED = "(omitted: --)"   # --check's 'shown' column for an omitted number
 
 _CACHE: dict = {}
 
@@ -485,8 +547,9 @@ def _cnn_value(Mx: Measured, model, cell, metric):
 
 def opt_cnn(model, metric, mode="C", ch="int", lam=None, where=None, extra=()):
     """(value, pending) of one image model's optimised number: metric 'prove', 'verify', 'bytes' or 'bits'.
-    Pending: the basic protocol's value of the same setting stands in (None if there is none).  ``extra``:
-    tags added to the definition (a one-thread run: ('thr1',)), with no acceptable stand-in."""
+    Not measured: (None, False) (OMIT_UNMEASURED), else pending: the basic protocol's value of the same setting
+    stands in (None if there is none).  ``extra``: tags added to the definition (a one-thread run: ('thr1',)),
+    with no acceptable stand-in."""
     lam = DEFAULT["lam"] if lam is None else lam
     spec = OPTIMISED[("cnn", mode)]
     if extra:
@@ -499,6 +562,9 @@ def opt_cnn(model, metric, mode="C", ch="int", lam=None, where=None, extra=()):
         if v is not None:
             _note(where, model, defining, f"{MO.platform(model, cell)}:{cell}", status)
             return v, False
+    if OMIT_UNMEASURED:
+        _note(where, model, defining, OMITTED, "omitted")
+        return None, False
     M = basic_measured()
     cell = M.find_cnn(model, mode, ch, lam, basic_tags(spec["tags"]))
     v = _cnn_value(M, model, cell, metric)
@@ -508,7 +574,7 @@ def opt_cnn(model, metric, mode="C", ch="int", lam=None, where=None, extra=()):
 
 
 def basic_cnn(model, metric, mode="C", ch="int", lam=None):
-    """The basic protocol's value of one image model (Table 4's left-hand side, Figure 3's hollow points)."""
+    """The basic protocol's value of one image model (Sec. 4.5's basic side, Figure 3's hollow points)."""
     lam = DEFAULT["lam"] if lam is None else lam
     M = basic_measured()
     return _cnn_value(M, model, M.find_cnn(model, mode, ch, lam, ()), metric)
@@ -521,7 +587,8 @@ def _specs(model, seq, mode, metric):
 def opt_llm(model, seq, metric, mode="C", ch="int", where=None, full_only=True):
     """(value, pending) of one language model's optimised number: 'prove', 'verify' (CPU verifier),
     'gpu' (GPU verifier), 'bytes' or 'params'.  Defining cells first (in COLUMN_CELLS order), then the
-    acceptable ones; else pending, with the basic protocol's value of the same setting standing in."""
+    acceptable ones; else not measured, (None, False) (OMIT_UNMEASURED), or pending, with the basic
+    protocol's value of the same setting standing in."""
     if metric == "params":
         c = llm_cost((model, seq), {"mode": mode}, None, "int") or llm_cost((model, seq), {"mode": mode}, None, ch)
         return (c[3] if c else None), False
@@ -539,6 +606,15 @@ def opt_llm(model, seq, metric, mode="C", ch="int", where=None, full_only=True):
                           f"{llm_cell(model, seq, mode, ch, spec['lam'], tags)}", status)
                     return c[i], False
     defining = llm_cell(model, seq, mode, ch, specs[0]["lam"], specs[0]["tags"]) if specs else "?"
+    quantity = "prove" if metric == "prove" else ("verify" if metric in ("verify", "gpu") else None)
+    held = [llm_cell(model, seq, mode, ch, s["lam"], s["tags"]) for s in specs if quantity and dirs and
+            excluded(_llm_platform((model, seq), s, dirs, ch), model,
+                     llm_cell(model, seq, mode, ch, s["lam"], s["tags"]), quantity)]
+    if held:   # stored, but withheld (excluded_cells.csv): say so in --check's list
+        defining += f" (stored, withheld: excluded_cells.csv {', '.join(held)})"
+    if OMIT_UNMEASURED:
+        _note(where, model, defining, OMITTED, "omitted")
+        return None, False
     for spec in specs:
         sel = dict(spec, tags=basic_tags(spec["tags"]))
         c = llm_cost((model, seq), sel, None, ch, full_only)
@@ -562,13 +638,14 @@ def basic_llm(model, seq, metric, mode="C", ch="int", full_only=True):
 
 def opt_cost(MO=None, model=None, seq=None, challenges="int", lam=None):
     """(prove, verify, bytes) of the optimised protocol on one model (seq None: an image model), or None
-    if any of the three is pending.  (The verifier is the GPU one at 2,048 tokens, as in Table 5.)"""
+    if any of the three is pending or not measured.  (The verifier is the GPU one at 2,048 tokens, as in
+    Table 3.)"""
     if seq is None:
         vals = [opt_cnn(model, k, "C", challenges, lam) for k in ("prove", "verify", "bytes")]
     else:
         vals = [opt_llm(model, seq, k, _llm_mode(model, seq), challenges)
                 for k in ("prove", "gpu" if seq >= LONG else "verify", "bytes")]
-    return None if any(p for _, p in vals) else tuple(v for v, _ in vals)
+    return None if any(p or v is None for v, p in vals) else tuple(v for v, _ in vals)
 
 
 def _llm_mode(model, seq):
@@ -576,7 +653,10 @@ def _llm_mode(model, seq):
 
 
 # (published system, its model and seq in reported_curated.csv, our model, our prompt length or None
-# for an image model, our setting): Table 5.  ZKTorch's 1-token Llama-2-7B is compared with our 1-token one.
+# for an image model, our setting): Table 3.  ZKTorch's 1-token Llama-2-7B is compared with our 1-token one.
+# Of zkLLM's 2,048-token rows the final report keeps OPT-125M and OPT-1.3B: the author dropped the OPT-6.7B,
+# Llama-2-7B and Llama-2-13B rows, and the row of zkLLM's own code on our L40S (against our Llama-2-7B
+# prover), with the timings the third batch did not re-measure (OMIT_UNMEASURED).
 MAVERICK = "Maverick (verif.-only, 1 thr.)"
 OPT_MATCHES = [
     ("zkCNN", "LeNet-5 MNIST", "", "lenet5", None, "C"),
@@ -590,27 +670,23 @@ OPT_MATCHES = [
     (MAVERICK, "Qwen3-4B", "8", "qwen3-4b", 8, "Kpre"),
     ("zkLLM", "OPT-125M", "2048", "opt-125m", 2048, "C"),
     ("zkLLM", "OPT-1.3B", "2048", "opt-1.3b", 2048, "C"),
-    ("zkLLM", "OPT-6.7B", "2048", "opt-6.7b", 2048, "C"),
-    ("zkLLM", "Llama-2-7B", "2048", "llama2-7b", 2048, "C"),
-    ("zkLLM", "Llama-2-13B", "2048", "llama2-13b", 2048, "C"),
 ]
 # non-interactive published systems: compared with our Fiat-Shamir proofs where those were run
 NONINTERACTIVE = {"zkCNN", "Bionetta", "ZKML", "zkGPT", "DeepProve", "ZKTorch"}
-# Maverick's verification-only client (Table 8 of Maverick, 1 client thread; catalogue row 90) spends
-# 87.1 ms on the matrix checks (reported_curated.csv's verifier_s) and 37.4 ms replaying the
-# non-linear layers, which our verifier's time includes, so Table 5 counts both.
-MAVERICK_NONLINEAR_S = 0.0374
+# Maverick's verifier in reported_curated.csv is its client's whole online time (Table 8 of Maverick,
+# 1 client thread: 260.2 ms, of which 87.1 ms matrix checks and 37.4 ms non-linear replay), as ours is.
 # published systems whose stated setting differs from the matched row: a footnote letter on their label
-# (main.tex's note under Table 5 explains each), lettered in the order a reader meets them in Table 5.
+# (main.tex's note under Table 3 explains each), lettered in the order a reader meets them in Table 3.
 # a: zkCNN's verifier ran on one core, ours on 8 threads; b: zkGPT states no prompt length, ours uses 64
-# tokens; c: DeepProve's figures are its transparent (BaseFold) configuration, which proves every position
-# (its HyperKZG one sends 9.4 MB at 64 tokens); d: Maverick (MAVERICK_MARK); e: zkLLM's code on our GPU
-# (ZKLLM_OWN).  The interactive stand-in for a missing Fiat-Shamir cell is marked with an asterisk
-# (INTERACTIVE_MARK), not a letter, so no letter changes when the second run removes it.
+# tokens; c: DeepProve's BaseFold configuration, proving every position; d: Maverick (MAVERICK_MARK).  The
+# interactive stand-in for a missing Fiat-Shamir cell is marked with an asterisk (INTERACTIVE_MARK), not a
+# letter, so no letter changes when the second run removes it.
 SYSTEM_MARK = {"zkCNN": "a", "zkGPT": "b", "DeepProve": "c"}
 MAVERICK_MARK = "d"
+# Table 3's Maverick row: our Qwen3-4B run in Maverick's setting without the compact encoding (note d says so;
+# the text gives the run with it, whose verifier, at 151.6 ms, is still faster than Maverick's 260.2 ms)
+TABLE3_MAVERICK_SEL = dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups"))
 INTERACTIVE_MARK = r"\ast"
-ZKLLM_OWN = "zkLLM$^e$"   # Table 5's last row: zkLLM's public code on our L40S
 
 
 def _marks(letters) -> str:
@@ -660,22 +736,9 @@ FAMILY = {"zkCNN": "sumcheck", "zkLLM": "sumcheck", "zkGPT": "sumcheck", "DeepPr
           "zkPyTorch": "sumcheck", "Jolt": "sumcheck", "SLP": "sumcheck",
           "ZKML": "other", "EZKL": "other", "ZKTorch": "other", "Bionetta": "other", "vCNN": "other",
           "Mystique": "other", "LAMP": "other", "Maverick": "known"}
-FAM_STYLE = {"sumcheck": ("^", "sum-check zkSNARKs"), "other": ("D", "Plonk/Groth16/other ZK"),
+# the cost figure draws every zkSNARK family with one marker and one legend entry; Maverick apart
+FAM_STYLE = {"sumcheck": ("D", "published zkSNARKs"), "other": ("D", "published zkSNARKs"),
              "known": ("*", "Maverick")}
-# a few landmark systems are named on each panel: (system, model[, seq]) -> (label, where, ha), where
-# where is ("off", (dx, dy)) in points from the marker, or ("at", (x, y)) in data coordinates with a
-# leader line.  zkCNN is named at its LeNet-5 point in (a) and (b), Table 5's bold comparison.
-LABELS = {
-    "prover": {("zkCNN", "LeNet-5 MNIST"): ("zkCNN", ("off", (5, 0)), "left"),
-               ("zkLLM", "Llama-2-7B"): ("zkLLM", ("at", (2.6e9, 55)), "center"),
-               ("DeepProve", "GPT-2", "64"): ("DeepProve", ("at", (9e7, 6)), "right")},
-    "verifier": {("zkCNN", "LeNet-5 MNIST"): ("zkCNN", ("at", (2.6e5, 4e-2)), "center"),
-                 ("zkLLM", "Llama-2-7B"): ("zkLLM", ("at", (3.0e9, 0.19)), "center"),
-                 ("ZKTorch", "Llama-2-7B (1 token)"): ("ZKTorch", ("off", (0, -9)), "center")},
-    "proof": {("zkCNN", "VGG-16 CIFAR-10"): ("zkCNN", ("off", (0, -8)), "center"),
-              ("zkLLM", "Llama-2-7B"): ("zkLLM", ("at", (3e9, 3e4)), "center"),
-              ("DeepProve", "GPT-2", "64"): ("DeepProve", ("at", (6e8, 3.2e6)), "center")},
-}
 
 
 def family(system: str):
@@ -777,7 +840,7 @@ WIDTHS = [5, 7, 7, 3]
 POS = {(l, i): (l, (i - (w - 1) / 2) * 0.55) for l, w in enumerate(WIDTHS) for i in range(w)}
 PATH = [(3, 1), (2, 4), (1, 2), (0, 3)]
 TAMPERED = (1, 5)
-OVERVIEW = (2.17, 1.45)   # printed at 0.31 of acmart sigconf's text width (7.006 in): fonts print at 7 pt
+OVERVIEW = (1.635, 1.2)   # printed at 0.49 of acmart sigconf's column width (3.337 in): fonts print at 7 pt
 
 
 def _network(ax, colour_node):
@@ -795,7 +858,7 @@ def _network(ax, colour_node):
 
 
 def _path(ax, colour_node):
-    """The checked path, drawn the same in (a) and (b): orange line and node edges, fill = node state."""
+    """The checked path of panel (a): orange line and node edges, fill = node state."""
     for a, b in zip(PATH[:-1], PATH[1:]):
         (x0, y0), (x1, y1) = POS[a], POS[b]
         ax.plot([x0, x1], [y0, y1], color=ANCH, lw=1.6, zorder=2)
@@ -805,7 +868,7 @@ def _path(ax, colour_node):
 
 def _finish(ax):
     ax.set_xlim(-0.35, 3.35)
-    ax.set_ylim(-2.02, 2.75)
+    ax.set_ylim(-2.02, 2.95)
     ax.axis("off")
     ax.figure.subplots_adjust(left=0, right=1, bottom=0, top=1)
 
@@ -819,21 +882,14 @@ def _attacked(n):
 
 
 def fig_overview():
-    """Figure 1: (a) one random path, (b) one tampered neuron the path misses, (c) the same attacked
+    """Figure 1 (one column): (a) one tampered neuron that a random path misses, (b) the same attacked
     network, every layer checked: the box of the tampered layer is the check that fails."""
-    white = lambda n: ("white", "0.35")   # noqa: E731
-    fig, ax = plt.subplots(figsize=OVERVIEW)
-    _network(ax, white)
-    _path(ax, white)
-    _finish(ax)
-    save(fig, "overview_path", OVERVIEW[0])
-
     fig, ax = plt.subplots(figsize=OVERVIEW)
     _network(ax, _attacked)
     _path(ax, _attacked)
-    ax.annotate("wrong value", xy=POS[TAMPERED], xytext=(0.2, 2.05), color=ATTACK,
+    ax.annotate("wrong value", xy=POS[TAMPERED], xytext=(0.2, 2.25), color=ATTACK,
                 arrowprops=dict(arrowstyle="->", color=ATTACK, lw=0.6, shrinkB=3))
-    ax.text(2.55, 2.05, "recomputed\nhonestly", color="0.35", ha="center", va="center", linespacing=1.0)
+    ax.text(2.55, 2.25, "recomputed\nhonestly", color="0.35", ha="center", va="center", linespacing=1.0)
     _finish(ax)
     save(fig, "overview_attack", OVERVIEW[0])
 
@@ -847,37 +903,37 @@ def fig_overview():
         failing = l == TAMPERED[0]
         ax.add_patch(FancyBboxPatch((l - 0.2, -h), 0.4, 2 * h, boxstyle="round,pad=0.02", fc="none",
                                     ec=ATTACK if failing else OURS, lw=1.4 if failing else 1.0, zorder=2))
-    ax.text(1.5, 2.45, "one random combination per layer", ha="center", va="center", color=OURS)
+    ax.text(1.5, 2.6, "one random combination per layer", ha="center", va="center", color=OURS)
     _finish(ax)
     save(fig, "overview_defence", OVERVIEW[0])
 
 
 def fig_protocol():
     """Figure 2: the messages of one query in setting C, numbered as in Section 3.5."""
-    W_, H_ = 3.33, 2.1
+    W_, H_ = 3.33, 1.82
     fig = plt.figure(figsize=(W_, H_))
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, W_)
     ax.set_ylim(H_, 0)                     # inches from the top
     ax.axis("off")
-    xp, xv = 0.62, 2.0                     # prover and verifier lifelines
+    xp, xv = 0.62, 1.88                    # prover and verifier lifelines
     ax.text(xp, 0.07, "prover (provider)", ha="center", va="center", weight="bold")
     ax.text(xv, 0.07, "verifier (client)", ha="center", va="center", weight="bold")
     ax.add_patch(Rectangle((0.03, 0.17), W_ - 0.06, 0.19, fc="0.91", ec="none"))
     ax.text(W_ / 2, 0.265, r"setup (once): owner publishes $C_M$ = Merkle roots of $\mathrm{Enc}(A_\ell)$",
             ha="center", va="center", color="0.2")
-    top, bottom = 0.42, 2.07
+    top, bottom = 0.42, 1.80
     for x in (xp, xv):
         ax.plot([x, x], [top, bottom], color="0.6", lw=0.8)
     steps = [  # (y, direction, message, verifier's note)
-        (0.58, "vp", r"query $x$", None),
-        (0.82, "pv", r"$y$, claims $Z_\ell$", "range-check the claims,\nrecompute non-weight ops;\n"
-                                               r"draw $\chi$"),
-        (1.18, "vp", r"random $\chi$", None),
-        (1.42, "pv", r"$u_\ell = \chi^\top\! A_\ell$", r"check $\chi^\top Z_\ell = u_\ell\,[X_\ell; 1]$;"
+        (0.53, "vp", r"query $x$", None),
+        (0.74, "pv", r"$y$, claims $Z_\ell$", "range-check the claims, recompute\n"
+                                               r"non-weight ops; draw $\chi$"),
+        (1.00, "vp", r"random $\chi$", None),
+        (1.21, "pv", r"$u_\ell = \chi^\top\! A_\ell$", r"check $\chi^\top Z_\ell = u_\ell\,[X_\ell; 1]$;"
                                                          "\n" r"draw positions $c$"),
-        (1.70, "vp", r"positions $c$", None),
-        (1.94, "pv", r"columns $\hat A_{\ell,c}$ + Merkle proof", "check the Merkle paths and\n"
+        (1.45, "vp", r"positions $c$", None),
+        (1.66, "pv", r"columns $\hat A_{\ell,c}$ + Merkle proof", "check the Merkle paths and\n"
                                                                      r"$\chi^\top \hat A_{\ell,c} = \mathrm{Enc}(u_\ell)_c$"),
     ]
     for i, (y, d, msg, note) in enumerate(steps, 1):
@@ -902,12 +958,8 @@ def fig_protocol():
 SECURITY_MODELS = ["mlp_mnist", "lenet5", "vgg16", "resnet18_224"]
 # one marker shape per model (no per-model colours); hollow: basic, filled: optimised
 SECURITY_MARKER = {"mlp_mnist": "o", "lenet5": "s", "vgg16": "^", "resnet18_224": "D"}
-# each model's name: (text, anchor point, offset in points, ha, va); anchors: the optimised or basic
-# point at a lambda
-SECURITY_LABEL = {"mlp_mnist": ("MLP", ("basic", 128), (5, 0), "left", "center"),
-                  "lenet5": ("LeNet-5", ("optimised", 128), (-5, 0), "right", "center"),
-                  "vgg16": ("VGG-16", ("basic", 40), (5, 0), "left", "center"),
-                  "resnet18_224": ("ResNet-18\n(224px)", ("basic", 128), (-1, 7), "right", "bottom")}
+# the legend's second row: each model's marker (the same for its paths and for our proofs) and name
+SECURITY_NAME = {"lenet5": "LeNet-5", "mlp_mnist": "MLP", "vgg16": "VGG-16", "resnet18_224": "ResNet-18 (224px)"}
 SECURITY_TITLE = "Optimised at 128 bits sends less than paths at 40 bits"
 # models whose path curve is not drawn: the 224-pixel ResNet's (13.7 MB at 2^-40) lies 0.05 decades from
 # VGG-16's (15.6 MB), so the two orange curves cannot be told apart; its blue points stay, and the title
@@ -928,9 +980,9 @@ def fig_security(M=None, MO=None):
     the optimised (filled) protocol at lambda = 40, 80, 128.  The bits axis is linear: the path protocol
     stays near zero bits until it opens almost the whole model and trace."""
     M = M or basic_measured()
-    size = (3.33, 2.2)
+    size = (3.33, 2.0)    # 0.6 of the width: the title, the two legend rows and the margins keep their size
     fig, ax = plt.subplots(figsize=size)
-    fig.subplots_adjust(left=0.115, right=0.985, bottom=0.165, top=0.80)
+    fig.subplots_adjust(left=0.115, right=0.985, bottom=0.181, top=0.70)
     top = 190
     any_pending = False
     for m in SECURITY_MODELS:
@@ -941,7 +993,6 @@ def fig_security(M=None, MO=None):
             cap = M.get(m, "sampling", "open_all_bytes")
             ax.plot(bx + [cap, cap], by + [max(by), top], ":", color=ANCH, lw=1.1, zorder=2)
             ax.scatter([x40], [40], s=PATH_MARK_S, marker=mk, facecolor="white", edgecolor=ANCH, lw=0.9, zorder=4)
-        drawn = {}
         basic = {lam: (basic_cnn(m, "bytes", lam=lam), basic_cnn(m, "bits", lam=lam)) for lam in (40, 80, 128)}
         basic = {lam: p for lam, p in basic.items() if None not in p}
         opt = {}
@@ -959,18 +1010,12 @@ def fig_security(M=None, MO=None):
                                     ("optimised", opt, OURS, 1.0)):
             if not pts:
                 continue
-            drawn[kind] = {lam: p[:2] for lam, p in pts.items()}
             xy = [pts[lam] for lam in sorted(pts)]
             ax.plot([p[0] for p in xy], [p[1] for p in xy], "-", color=OURS, lw=lw, zorder=3)
             for x, y, pend in xy:
                 any_pending |= pend
                 ax.scatter([x], [y], s=13, marker=mk, facecolor=fill, edgecolor=PENDING_EDGE if pend else OURS,
                            lw=0.9 if pend else 0.8, zorder=4.5 if kind == "optimised" else 4)
-        text, (kind, lam), off, ha, va = SECURITY_LABEL[m]
-        if kind not in drawn:          # no optimised point of this model: label its basic point
-            kind = "basic"
-        ax.annotate(text, drawn[kind][lam], xytext=off, textcoords="offset points", ha=ha, va=va,
-                    color="0.15", linespacing=1.0, path_effects=WHITE, zorder=5)
     ax.axhline(40, color="0.6", lw=0.5, ls="--", zorder=1)
     ax.set_xscale("log")
     ax.set_xlim(2e3, 3e7)
@@ -980,21 +1025,25 @@ def fig_security(M=None, MO=None):
     ax.set_xlabel("bytes sent per query")
     ax.set_ylabel("security (bits)")
     ax.grid(True, which="major", lw=0.3, alpha=0.4)
-    handles = [Line2D([], [], color=ANCH, ls=":", lw=1.1, marker="o", ms=3.6, mfc="white", mew=0.8,
-                      label="path protocol"),
-               Line2D([], [], color=OURS, ls="-", lw=0.6, marker="o", ms=3.6, mfc="white", mew=0.8,
-                      label="basic"),
-               Line2D([], [], color=OURS, ls="-", lw=1.0, marker="o", ms=3.6, mew=0.8, label="optimised")]
-    if any_pending:   # a temporary fourth entry, red: gone once every optimised point is stored
-        handles.append(Line2D([], [], ls="", marker="o", ms=3.6, mfc=OURS, mec=PENDING_EDGE, mew=0.9,
-                              label="red edge: basic placeholder"))
-    spacing = dict(handlelength=2.2, columnspacing=1.4, handletextpad=0.5) if not any_pending else         dict(handlelength=1.4, columnspacing=0.6, handletextpad=0.3)    # four entries in the same row
-    leg = fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.55 if not any_pending else 0.5, 0.905),
-                     ncol=len(handles), frameon=False, borderaxespad=0, **spacing)
+    # two legend rows: the line (who: the paths, our basic or optimised protocol; hollow or filled), and the
+    # marker (which model: the same shape for its paths and for our proofs)
+    handles = [Line2D([], [], color=ANCH, ls=":", lw=1.1, label="path protocol"),
+               Line2D([], [], color=OURS, ls="-", lw=0.6, label="basic (hollow)"),
+               Line2D([], [], color=OURS, ls="-", lw=1.0, label="optimised (filled)")]
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.55, 0.895), ncol=len(handles),
+               frameon=False, borderaxespad=0, handlelength=1.8, columnspacing=1.2, handletextpad=0.4)
+    shapes = [Line2D([], [], ls="", marker=SECURITY_MARKER[m], ms=3.8, mfc="0.35", mec="0.35", label=SECURITY_NAME[m])
+              for m in SECURITY_NAME]
+    if any_pending:   # a temporary entry, red: gone once every optimised point is stored
+        shapes.append(Line2D([], [], ls="", marker="D", ms=3.6, mfc=OURS, mec=PENDING_EDGE, mew=0.9,
+                             label="red edge: placeholder"))
+    leg = fig.legend(handles=shapes, loc="upper center", bbox_to_anchor=(0.55 if not any_pending else 0.5, 0.815),
+                     ncol=len(shapes), frameon=False, borderaxespad=0, handlelength=0.8,
+                     columnspacing=0.9 if not any_pending else 0.6, handletextpad=0.3)
     for t in leg.get_texts():
         if t.get_text().startswith("red edge"):
             t.set_color(PENDING_EDGE)
-    fig.text(0.015, 0.985, SECURITY_TITLE, ha="left", va="top", weight="bold")
+    fig.text(0.015, 0.982, SECURITY_TITLE, ha="left", va="top", weight="bold")
     save(fig, "security_bits", size[0])
 
 
@@ -1053,7 +1102,6 @@ def fig_cost(M=None):
     for key, col, name, ylabel in panels:
         fig, ax = plt.subplots(figsize=COST)
         fig.subplots_adjust(left=0.19, right=0.97, bottom=0.2, top=0.97)
-        named = set()
         for r in rep:
             y, x = _f(r[key]), _f(r["params"])
             if y is None:
@@ -1061,7 +1109,7 @@ def fig_cost(M=None):
             if r["system"].startswith("Anchuri"):
                 ax.scatter(x, y, marker="X", s=30, c=ANCH, zorder=6)
                 if name == "prover" and width:
-                    ax.annotate(f"one path: detects\n1 in {width:,}", (x, y), xytext=(2.2e10, 1.1e-3),
+                    ax.annotate("misses most attacks", (x, y), xytext=(2.2e10, 1.1e-3),
                                 textcoords="data", ha="right", va="center", color=ANCH, linespacing=1.0,
                                 path_effects=WHITE, zorder=7)
                 continue
@@ -1071,25 +1119,15 @@ def fig_cost(M=None):
             # published markers are hollow and drawn above ours, so ours never hide them
             ax.scatter(x, y, marker=FAM_STYLE[fam][0], s=12 if fam != "known" else 24, c="none",
                        edgecolors=THEM, linewidths=0.6, zorder=5)
-            lab = LABELS[name].get((r["system"], r["model"])) or LABELS[name].get((r["system"], r["model"], r["seq"]))
-            if lab and lab[0] not in named:
-                named.add(lab[0])
-                text, (how, where), ha = lab
-                kw = dict(xytext=where, textcoords="offset points") if how == "off" else \
-                    dict(xytext=where, textcoords="data",
-                         arrowprops=dict(arrowstyle="-", color="0.5", lw=0.4, shrinkA=0, shrinkB=1.0))
-                ax.annotate(text, (x, y), color="0.3", ha=ha, va="center", path_effects=WHITE, zorder=7, **kw)
         for n, vals, kind, colour in ours:
             v, pending = vals[col]
             if v is not None:
                 _our_marker(ax, n, v, kind, colour, pending)
-        if name == "proof":
-            ax.plot(XLIM, XLIM, "k--", lw=0.5, zorder=1)
-            ax.text(2.5e5, 7e6, "int8 model", color="0.3", rotation=31, ha="center", va="center",
-                    path_effects=WHITE)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(*XLIM)
+        if name == "prover" and width:   # the one-path label sits at 1.1 ms: keep the axis reaching below it
+            ax.set_ylim(bottom=min(ax.get_ylim()[0], 2e-4))
         _log_axes(ax)
         ax.set_xlabel("model parameters")
         ax.set_ylabel(ylabel)
@@ -1104,10 +1142,11 @@ def fig_cost(M=None):
             Patch(fc=OURS, ec=OURS, label=f"committed ({SF_C})"),
             Patch(fc=OURS_K, ec=OURS_K, label=f"known weights ({KPRE})")]
     row2 = [mk(FAM_STYLE[f][0], mfc="none", color=THEM, label=FAM_STYLE[f][1], ms=6 if f == "known" else 4)
-            for f in ("sumcheck", "other", "known")]
+            for f in ("sumcheck", "known")]
     row2 += [mk("X", color=ANCH, label="Anchuri et al., one path", ms=5),
              mk("o", mfc=OURS, mec=PENDING_EDGE, mew=0.9, label="red edge: basic placeholder") if any_pending
-             else Line2D([], [], ls="", label=" ")]
+             else Line2D([], [], ls="", label=" "),
+             Line2D([], [], ls="", label=" ")]
     handles = [h for col in zip(row1, row2) for h in col]   # a legend fills its columns top to bottom
     size = (7.0, 0.36)
     fig = plt.figure(figsize=size)
@@ -1145,31 +1184,6 @@ def red(s: str, pending: bool) -> str:
     return rf"\pending{{{s}}}" if pending else s
 
 
-def _num(v):
-    """A number in a shared unit: 1{,}012, 375, 14.8, 0.30."""
-    if v >= 99.5:
-        return f"{v:,.0f}".replace(",", "{,}")
-    return f"{v:.1f}" if v >= 1 else f"{v:.2f}"
-
-
-def pair(a, b_, kind, pending=False):
-    """'a$\\to$b unit' (Table 4), both in the unit ``t()``/``b()`` give the smaller value (1{,}012$\\to$375\\,ms);
-    one value if both print the same (unless b is a pending placeholder, which is printed red)."""
-    fmt = t if kind == "t" else b
-    if b_ is None:
-        return f"{fmt(a)}$\\to${red('--', pending)}"
-    if fmt(a) == fmt(b_) and not pending:
-        return fmt(a)
-    lo = min(a, b_)
-    if kind == "t":
-        if lo >= 100:
-            raise SystemExit("pair(): minutes are not used in Table 4")
-        scale, unit = ((1e-3, "ms") if lo < 1 else (1, "s"))
-    else:
-        scale, unit = next((k, u) for u, k in (("GB", 1e9), ("MB", 1e6), ("kB", 1e3), ("B", 1)) if lo >= k)
-    return f"{_num(a / scale)}$\\to${red(_num(b_ / scale), pending)}\\,{unit}"
-
-
 def params(n):
     if n >= 1e9:
         return f"{n / 1e9:.1f}B"
@@ -1192,7 +1206,7 @@ def write(name, lines):
 
 
 def tab_cnn(M=None):
-    """Table 2 (optimised protocol): Model | Params | acc. | C prove, verify, proof | Kpre verify, proof."""
+    """Table 1 (optimised protocol): Model | Params | acc. | C prove, verify, proof | Kpre verify, proof."""
     M = M or basic_measured()
     lines = []
     for m in CNN_ORDER:
@@ -1202,13 +1216,13 @@ def tab_cnn(M=None):
         cells = []
         for mode, metrics in (("C", ("prove", "verify", "bytes")), ("Kpre", ("verify", "bytes"))):
             for k in metrics:
-                v, p = opt_cnn(m, k, mode, where=("Table 2", row, f"{mode} {k}"))
+                v, p = opt_cnn(m, k, mode, where=("Table 1", row, f"{mode} {k}"))
                 cells.append(red((b if k == "bytes" else t)(v), p))
         lines.append(" & ".join([label, params(M.get(m, "facts", "n_params")), f"{acc * 100:.1f}\\%"] + cells) + r" \\")
     write("cnn", lines)
 
 
-# Table 3's rows by prompt length (the first block's heading row is in main.tex: after \midrule and
+# Table 2's rows by prompt length (the first block's heading row is in main.tex: after \midrule and
 # \input a \multicolumn is not allowed, so only the second heading is written here)
 TAB_LLM_BLOCKS = {64: ["gpt2", "qwen3-4b", "llama2-7b", "llama2-13b"],
                   2048: ["opt-125m", "opt-1.3b", "opt-6.7b", "llama2-7b", "llama2-13b"]}
@@ -1216,7 +1230,8 @@ TAB_LLM_PICK = [(m, seq) for seq, ms in TAB_LLM_BLOCKS.items() for m in ms]
 
 
 def tab_llm():
-    """Table 3 (optimised protocol): Model | Params | C prove, verify, GPU verify, proof | Kpre verify, proof."""
+    """Table 2 (optimised protocol): Model | Params | C prove, verify, GPU verify, proof | Kpre verify, proof.
+    A number not measured is a black '--' (OMIT_UNMEASURED; main.tex's note under the table says so)."""
     lines = []
     for i, (seq, models) in enumerate(TAB_LLM_BLOCKS.items()):
         if i:
@@ -1227,20 +1242,21 @@ def tab_llm():
                     ("Kpre", "verify", t), ("Kpre", "bytes", b)]
             cells = []
             for mode, k, fmt in cols:
-                v, p = opt_llm(model, seq, k, mode, where=("Table 3", row, f"{mode} {k}"))
+                v, p = opt_llm(model, seq, k, mode, where=("Table 2", row, f"{mode} {k}"))
                 cells.append(red(fmt(v), p))
             n, _ = opt_llm(model, seq, "params")
             lines.append(" & ".join([LLM_NAME[model], params(n)] + cells) + r" \\")
     write("llm", lines)
-    return False   # no extrapolated row: Table 3 has full builds only
+    return False   # no extrapolated row: Table 2 has full builds only
 
 
-# Table 4: (label, our model, prompt length or None for an image model, setting, the verifier column)
+# Sec. 4.5's comparison (basic -> optimised, quoted in the text): (label, our model, prompt length or None
+# for an image model, setting, the verifier column).  No 2,048-token row: Llama-2-7B's optimised prover and
+# verifiers there are withheld and not re-measured (OMIT_UNMEASURED); the text quotes its proof sizes only.
 TAB_OPT = [("LeNet-5 (MNIST)", "lenet5", None, "C", "verify"), ("VGG-16 (CIFAR)", "vgg16", None, "C", "verify"),
            ("ResNet-18 (CIFAR)", "resnet18_cifar", None, "C", "verify"),
            ("GPT-2 (64)", "gpt2", 64, "C", "verify"), ("GPT-2 (512)", "gpt2", 512, "C", "verify"),
            ("Llama-2-7B (1)", "llama2-7b", 1, "C", "verify"), ("Llama-2-7B (64)", "llama2-7b", 64, "C", "verify"),
-           ("Llama-2-7B (2{,}048)$^g$", "llama2-7b", 2048, "C", "gpu"),
            ("Qwen3-4B (8)$^k$", "qwen3-4b", 8, "Kpre", "verify")]
 
 
@@ -1249,13 +1265,13 @@ def _plain(label: str) -> str:
 
 
 def opt_pairs(M=None, MO=None):
-    """Table 4's rows: (label, model, seq, basic (prove, verify, bytes), optimised (prove, verify, bytes),
+    """Sec. 4.5's comparison: (label, model, seq, basic (prove, verify, bytes), optimised (prove, verify, bytes),
     optimised pending flags).  The two sides come from the same settings; at 2,048 tokens the prover and
-    the proof from the CPU-verifier runs (as in Table 3) and the verifier from the GPU-verifier runs."""
+    the proof from the CPU-verifier runs (as in Table 2) and the verifier from the GPU-verifier runs."""
     out = []
     for label, model, seq, mode, vcol in TAB_OPT:
         cols = ("prove", vcol, "bytes")
-        where = lambda k: ("Table 4", _plain(label), k)   # noqa: E731
+        where = lambda k: ("Sec. 4.5", _plain(label), k)   # noqa: E731
         if seq is None:
             before = tuple(basic_cnn(model, k) for k in ("prove", "verify", "bytes"))
             after = [opt_cnn(model, k, where=where(k)) for k in ("prove", "verify", "bytes")]
@@ -1266,20 +1282,8 @@ def opt_pairs(M=None, MO=None):
     return out
 
 
-def tab_opt(M=None, MO=None):
-    """Table 4: basic -> optimised protocol on the same machines, each cell 'a -> b'."""
-    lines = []
-    for label, model, seq, before, after, pend in opt_pairs(M, MO):
-        if None in before:
-            raise SystemExit(f"Table 4, {label}: the basic run lacks {before}")
-        lines.append(" & ".join([label, pair(before[0], after[0], "t", pend[0]), pair(before[1], after[1], "t", pend[1]),
-                                 pair(before[2], after[2], "b", pend[2])]) + r" \\")
-    write("opt", lines)
-
-
 def write_hardware(M=None, starred=False, MO=None):
-    """Macros for the text: the headline machine, the Table 3 note on extrapolated rows, and the number of
-    pending optimised numbers (main.tex can print its red note only while it is not zero)."""
+    """Macros for the text: the headline machine and the Table 2 note on extrapolated rows."""
     M = M or basic_measured()
     rows = llm_rows("C")
     hw = {v[3] for d in rows.values() for v in d.values()} | {M.prover_hw}
@@ -1298,30 +1302,28 @@ def write_hardware(M=None, starred=False, MO=None):
     gpu, cpu = next(iter(hw - {None})), next(iter(verifier - {None}))
     cpu_name, _, threads = cpu.partition(" x")
     cpu_name = re.sub(r"\(R\)|\(TM\)|\bCPU\b|@.*$|\d+-Core Processor", "", cpu_name)
-    pending = pending_rows("pending")
     # a tie before the name's last word ('RTX 2080~Ti'), so the text never breaks a line inside it
     lines = [r"\newcommand{\ProverGPU}{" + re.sub(r" (\S+)$", r"~\1", hw_short(gpu)) + "}",
              r"\newcommand{\VerifierCPU}{" + re.sub(r"\s+", " ", cpu_name).strip() + "}",
              r"\newcommand{\VerifierThreads}{" + threads.split()[0] + "}",
-             r"\newcommand{\LLMNote}{" + (r" ($^\ast$extrapolated from 1- and 2-block builds)" if starred else "") + "}",
-             r"\newcommand{\NPendingCells}{" + str(len(pending)) + "}"]
+             r"\newcommand{\LLMNote}{" + (r" ($^\ast$extrapolated from 1- and 2-block builds)" if starred else "") + "}"]
     if DRY:
         return
     TABS.mkdir(parents=True, exist_ok=True)
     (TABS / "hardware.tex").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-    print("table hardware:", hw_short(gpu), "/", cpu, f"/ {len(pending)} pending")
+    print("table hardware:", hw_short(gpu), "/", cpu)
 
 
-# Table 5's cells: 'cells' prints the factor by which our cost is lower (down arrow, in main.tex's \win{},
-# a green cell) or higher (up arrow, \lose{}, an orange cell); 'fraction' prints theirs/ours as 'n\times'
-# or '1/n'; 'arrows' n\times with an up arrow where ours is better
+# Table 3's cells: 'cells' prints the factor by which our cost is lower (down arrow, in main.tex's \win{}:
+# bold) or higher (up arrow, \lose{}: plain); 'fraction' prints theirs/ours as 'n\times' or '1/n'; 'arrows'
+# n\times with an up arrow where ours is better
 RATIO_STYLE = "cells"
 
 
 def fac(theirs, ours):
-    """theirs/ours as Table 5 prints it, and the ratio.  'cells': '81$\\times$$\\downarrow$' when our time or
-    size is 81x lower and '72$\\times$$\\uparrow$' when it is 72x higher (:func:`_shade` colours the cell by
-    the ratio); 'fraction': '81$\\times$' / '1/72' (the printed value is theirs/ours); 'arrows':
+    """theirs/ours as Table 3 prints it, and the ratio.  'cells': '81$\\times$$\\downarrow$' when our time or
+    size is 81x lower and '72$\\times$$\\uparrow$' when it is 72x higher (:func:`_mark` sets the better ones
+    in bold); 'fraction': '81$\\times$' / '1/72' (the printed value is theirs/ours); 'arrows':
     '81$\\times$$\\uparrow$' / '72$\\times$$\\downarrow$'."""
     if not theirs or not ours:
         return "--", None
@@ -1330,6 +1332,8 @@ def fac(theirs, ours):
         return "same", q
     v = q if q >= 1 else 1 / q
     s = f"{v:,.0f}".replace(",", "{,}") if v >= 100 else (f"{v:.0f}" if v >= 10 else f"{v:.1f}")
+    if v < 1.05:   # '1.0' would read as a tie: show the second decimal
+        s = f"{v:.2f}"
     if RATIO_STYLE == "cells":
         return s + r"$\times$" + (r"$\downarrow$" if q >= 1 else r"$\uparrow$"), q
     if RATIO_STYLE == "arrows":
@@ -1337,17 +1341,17 @@ def fac(theirs, ours):
     return (s + r"$\times$" if q >= 1 else "1/" + s), q
 
 
-def _shade(cell, q):
-    """A Table 5 cell in main.tex's \\win{} (ours better) or \\lose{} (theirs better); no shade when there is
-    nothing to compare or the two are the same.  The shade goes outside \\pending{}, since a cell colour
-    must be set at the cell's own level."""
+def _mark(cell, q):
+    """A Table 3 cell in main.tex's \\win{} (ours better: bold) or \\lose{} (theirs better: plain); unmarked
+    when there is nothing to compare or the two are the same.  The mark goes outside \\pending{}, so a red
+    placeholder is set in bold too."""
     if q is None or 0.99 < q < 1.01:
         return cell
     return rf"\win{{{cell}}}" if q >= 1 else rf"\lose{{{cell}}}"
 
 
 def _ours_t5(model, seq, ch, where, system=""):
-    """Our (prove, verify, bytes) and pending flags of one Table 5 row: the GPU verifier at 2,048 tokens."""
+    """Our (prove, verify, bytes) and pending flags of one Table 3 row: the GPU verifier at 2,048 tokens."""
     if seq is None:
         extra = {"verify": TABLE5_VERIFIER_EXTRA_TAGS.get(system, ())}
         vals = [opt_cnn(model, k, "C", ch, where=where and (*where, k), extra=extra.get(k, ()))
@@ -1360,42 +1364,49 @@ def _ours_t5(model, seq, ch, where, system=""):
 
 
 def ratio_rows(MO=None):
-    """Table 5's rows: (system label, model label, [(theirs, ours) for prover, verifier, proof], interactive?,
+    """Table 3's rows: (system label, model label, [(theirs, ours) for prover, verifier, proof], interactive?,
     [pending?] per column).  Fiat-Shamir proofs against the non-interactive systems (where they are
-    stored), the interactive protocol against zkLLM and Maverick; the last row is zkLLM's code on our GPU."""
+    stored), the interactive protocol against zkLLM and Maverick."""
     curated = {(r["system"], r["model"], r["seq"]): r for r in _read("reported_curated.csv")}
     out = []
     for system, pub, pub_seq, model, seq, mode in OPT_MATCHES:
         r = curated[(system, pub, pub_seq)]
-        fs_ok = system in NONINTERACTIVE and not any(_ours_t5(model, seq, "fs", None)[1][::2])
+        fs_vals, fs_pend = _ours_t5(model, seq, "fs", None)   # a Fiat-Shamir prover and proof measured?
+        fs_ok = system in NONINTERACTIVE and not any(fs_pend[::2]) and None not in fs_vals[::2]
         ch = "fs" if fs_ok else "int"
         what = SHORT[model] if seq is None else f"{LLM_NAME[model]} ({tokens(seq)})"
         name = system.split(" (")[0]
-        us, pend = _ours_t5(model, seq, ch, ("Table 5", f"{name} / {what.replace('{,}', ',')}"), name)
+        us, pend = _ours_t5(model, seq, ch, ("Table 3", f"{name} / {what.replace('{,}', ',')}"), name)
         them = [_f(r["prover_s"]), _f(r["verifier_s"]), _f(r["proof_bytes"])]
         letters = [SYSTEM_MARK[name]] if name in SYSTEM_MARK else []
         if system == MAVERICK:
-            them[1] += MAVERICK_NONLINEAR_S
             letters.append(MAVERICK_MARK)
+            nw = llm_cost((model, seq), TABLE3_MAVERICK_SEL, opt_dirs())
+            if nw and None not in nw[:3]:
+                us, pend = list(nw[:3]), [False, False, False]
         elif system in NONINTERACTIVE and ch == "int":
             letters.append(INTERACTIVE_MARK)   # interactive: no Fiat-Shamir cell of this model is stored
             spec = llm_spec(model, seq) if seq is not None else None
-            _note(("Table 5", f"{name} / {what.replace('{,}', ',')}", "Fiat-Shamir (mark *)"), model,
+            _note(("Table 3", f"{name} / {what.replace('{,}', ',')}", "Fiat-Shamir (mark *)"), model,
                   llm_cell(model, seq, "C", "fs", spec["lam"], spec["tags"]) if spec else
                   cnn_cell("C", "fs", LAM, OPTIMISED[("cnn", "C")]["tags"]), "(the interactive cell, marked *)",
                   "acceptable")
         out.append((name + _marks(letters), what, list(zip(them, us)), ch == "int", pend))
-    ours7, p7 = opt_llm("llama2-7b", 2048, "prove", where=("Table 5", "zkLLM^e / Llama-2-7B (2,048)", "prove"))
-    out.append((ZKLLM_OWN, f"Llama-2-7B ({tokens(2048)})",
-                [(zkllm_l40s_whole_model_s("llama2-7b", 2048), ours7), (None, None), (None, None)], True,
-                [p7, False, False]))
     return out
 
 
+def _with_ours(ours, col: int, factor: str) -> str:
+    """A Table 3 cell: our value (a time, or for the proof column a size), then in parentheses the factor
+    by which it is lower or higher than the published system's; just the factor's '--' when either is missing."""
+    if factor == "--" or ours is None:
+        return factor
+    return f"{(b if col == 2 else t)(ours)} ({factor})"
+
+
 def tab_ratios(MO=None):
-    """Table 5: the optimised protocol against published systems.  'cells' style: each cell shaded by who is
-    better, with a rule between the image models, the short prompts and the 2,048-token prompts; the other
-    styles print theirs/ours and bold the rows where ours is better on all three."""
+    """Table 3: the optimised protocol against published systems.  'cells' style: each cell marked by who is
+    better (ours in bold), with a rule between the image models, the short prompts and the 2,048-token
+    prompts; the other styles print theirs/ours and bold the rows where ours is better on all three."""
     lines, group = [], None
     for system, what, cells, _, pend in ratio_rows(MO):
         shown = [fac(a, o) for a, o in cells]
@@ -1404,7 +1415,8 @@ def tab_ratios(MO=None):
             if group is not None and g != group:
                 lines.append(r"\midrule")
             group = g
-            cols = [system, what] + [_shade(red(s, p), q) for (s, q), p in zip(shown, pend)]
+            cols = [system, what] + [_mark(red(_with_ours(o, i, s), p), q)
+                                     for i, ((_, o), (s, q), p) in enumerate(zip(cells, shown, pend))]
         else:
             cols = [system, what] + [red(s, p) for (s, _), p in zip(shown, pend)]
             if all(q is not None and q >= 1 for _, q in shown):
@@ -1415,7 +1427,7 @@ def tab_ratios(MO=None):
 
 def missing(M=None, MO=None) -> list[str]:
     """Every stored number of the BASIC run that the tables and figures need and its tables lack (the
-    optimised numbers it lacks are pending, not missing: see PENDING)."""
+    optimised numbers that are not stored are omitted or pending, not missing: see PENDING)."""
     M = M or basic_measured()
     out = []
     for m in CNN_ORDER:
@@ -1427,16 +1439,14 @@ def missing(M=None, MO=None) -> list[str]:
         out += [f"cnn/{m}/{c} {k}" for c, k, lam in need if M.get(m, c, k, lam=lam) is None]
         if not _path_curve(M, m)[0]:
             out.append(f"cnn/{m}/sampling paths_bytes_shared_k")
-    # Table 4's left-hand side and the placeholders of Table 3's C and Kpre CPU-verifier columns
+    # Sec. 4.5's basic side (and, with OMIT_UNMEASURED off, the placeholders of Table 2's CPU-verifier columns)
     for label, model, seq, mode, vcol in TAB_OPT:
         if seq is not None and None in [basic_llm(model, seq, k, mode) for k in ("prove", vcol, "bytes")]:
-            out.append(f"llm/{model} {mode} T{seq} (Table 4, basic side)")
-    for model, seq in TAB_LLM_PICK:
+            out.append(f"llm/{model} {mode} T{seq} (Sec. 4.5, basic side)")
+    for model, seq in TAB_LLM_PICK if not OMIT_UNMEASURED else ():
         for mode in ("C", "Kpre"):
             if basic_llm(model, seq, "verify", mode) is None:
-                out.append(f"llm/{model} {mode}:int lam{LAM} T{seq} threads {DEFAULT['threads']} (Table 3 placeholder)")
-    if zkllm_l40s_whole_model_s("llama2-7b", 2048) is None:
-        out.append(f"{ZKLLM_L40S.relative_to(ROOT)} llama2-7b T2048 (summarise.py --csv)")
+                out.append(f"llm/{model} {mode}:int lam{LAM} T{seq} threads {DEFAULT['threads']} (Table 2 placeholder)")
     return out
 
 
@@ -1459,10 +1469,11 @@ def write_pending_csv(path: Path) -> None:
         w.writeheader()
         w.writerows(rows)
     print(f"wrote {path} ({len(rows)} rows: {sum(r['status'] == 'pending' for r in rows)} pending, "
+          f"{sum(r['status'] == 'omitted' for r in rows)} omitted, "
           f"{sum(r['status'] == 'acceptable' for r in rows)} acceptable stand-ins)")
 
 
-OLD_FIGURES = ("llm_zkllm", "security_detection")   # dropped from the report: deleted if present
+OLD_FIGURES = ("llm_zkllm", "security_detection", "overview_path")   # dropped from the report: deleted if present
 
 
 def build_all(figures: bool = True):
@@ -1475,7 +1486,7 @@ def build_all(figures: bool = True):
         fig_cost()
     tab_cnn()
     starred = tab_llm()
-    tab_opt()
+    opt_pairs()   # Sec. 4.5's numbers, quoted in the text: their pending cells are listed by --check
     tab_ratios()
     write_hardware(starred=starred)
 
@@ -1488,10 +1499,12 @@ def main():
     ap.add_argument("--optimised", default="",
                     help="comma-separated runs of the optimised protocol on the same machines, in order (a later "
                          "run's cell replaces an earlier one's; a run not yet aggregated is skipped with a warning). "
-                         "The report: l40s_improved,l40s_improved2")
+                         "The report: l40s_improved,l40s_improved2,l40s_improved3")
     ap.add_argument("--check", action="store_true",
-                    help="write nothing: list the basic run's missing cells and the pending optimised numbers")
-    ap.add_argument("--pending-csv", type=Path, help="write the pending (and acceptable stand-in) numbers to this CSV")
+                    help="write nothing: list the basic run's missing cells and the optimised numbers not measured "
+                         "(omitted, or pending)")
+    ap.add_argument("--pending-csv", type=Path,
+                    help="write the omitted or pending (and acceptable stand-in) numbers to this CSV")
     ap.add_argument("--strict", action="store_true", help="refuse to write while any optimised number is pending")
     ap.add_argument("--draft", action="store_true", help="write figures despite layout problems (printed)")
     args = ap.parse_args()
@@ -1501,7 +1514,7 @@ def main():
     for name in [s.strip() for s in args.optimised.split(",") if s.strip()]:
         d = tables_dir(name, required=False)
         if d is None:
-            print(f"warning: no tables_{name}/ (not yet run or aggregated): skipped; its numbers stay pending",
+            print(f"warning: no tables_{name}/ (not yet run or aggregated): skipped; its numbers are not measured",
                   file=sys.stderr)
         else:
             dirs.append(d)
@@ -1513,13 +1526,15 @@ def main():
     DRY = True                 # first pass: compute everything, write nothing
     build_all()
     pend = pending_rows("pending")
+    omit = pending_rows("omitted")
     acc = pending_rows("acceptable")
     if args.pending_csv:
         write_pending_csv(args.pending_csv)
     if args.check or (args.strict and pend):
         print(f"{TABLES.name} + {[d.name for d in dirs]}: 0 missing basic cells; {len(pend)} pending optimised "
-              f"numbers (a basic placeholder, red), {len(acc)} shown from an acceptable stand-in (black)")
-        for p in pend + acc:
+              f"numbers (a basic placeholder, red), {len(omit)} omitted as not measured ('--' in Table 2, no "
+              f"point in Fig. 4), {len(acc)} shown from an acceptable stand-in (black)")
+        for p in pend + omit + acc:
             print(f"  {p['status']:10s} {p['asset']:8s} {p['row']:30s} {p['model']:15s} {p['column']:12s} "
                   f"{p['optimised_cell']}  <- {p['basic_cell']}")
         raise SystemExit(1 if args.strict and pend else 0)

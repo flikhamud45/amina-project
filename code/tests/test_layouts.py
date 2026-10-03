@@ -232,6 +232,8 @@ def test_a_streaming_verifier_rejects_a_query_its_claims_do_not_fit(kind, policy
     claims = {k: wire_claim(z) for k, z in prover.claims(x).items()}
     proofs = prover.open_tables()
     assert stream.verify_streaming(x, claims, chis, us, cols, openings, proofs) is None
+    with pytest.raises(ValueError, match="opened columns"):      # mode C never skips the column checks
+        stream.verify_streaming(x, claims, chis, us, cols, None, proofs)
     # another query: chi' of its claim columns (none for a malformed one), and derive rejects these claims
     other = x[:, :5] if kind in _TINY else x[:, :700]
     folded = {op.name for op in stream._row_ops()}

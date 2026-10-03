@@ -50,7 +50,7 @@ smoke)
   sub smoke code/experiments/4_defence_benchmark/slurm/smoke.sbatch
   ;;
 must)
-  # (a) the CNN jobs (Table 2, Figures 3-4, the CNN counts of Sec. 4.3; untagged, they give
+  # (a) the CNN jobs (Table 1, Figures 3-4, the CNN counts of Sec. 4.3; untagged, they give
   #     2,196 honest queries and 1,854 attacks, as in raw/)
   for m in mlp_mnist lenet5 vgg11 vgg16 resnet18_cifar; do
     sub "b-$m" "$S" cnn --model "$m" --queries 30 --tampers 100
@@ -76,7 +76,7 @@ must)
   # (d) controls, on this GPU.  _nolean: non-lean WITH the weight-key fix (the lean path's effect).
   #     _nofix: lean with the earliest run raw/'s weight re-upload (PVI_LEGACY_WEIGHT_KEY=1), against
   #     the fixed code (the fix's effect), at the cells the paper quotes committed-mode (C) numbers for:
-  #     every CNN (Table 2), gpt2 and llama2-7b at 64 tokens, opt-1.3b at 2,048.  raw/'s own code
+  #     every CNN (Table 1), gpt2 and llama2-7b at 64 tokens, opt-1.3b at 2,048.  raw/'s own code
   #     path is legacy key + non-lean; raw_rtx2080ti-v2/ is this script rerun on raw/'s hardware
   #     with today's code (the like-for-like hardware comparison).
   sub ab-gpt2   "$S" llm --model gpt2 --seq 512 --queries 10 $L128 --tag _nolean

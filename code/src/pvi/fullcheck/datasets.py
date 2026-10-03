@@ -1,14 +1,18 @@
 """Datasets for the comparison benchmark, all read from local copies.
 
 * MNIST     -- ``code/data``, the same copy as :mod:`pvi.data` (downloaded on first use).
-* CIFAR-10  -- ``$PVI_CIFAR_ROOT`` (default: the lab copy on the TAU cluster).
+* CIFAR-10  -- ``$PVI_CIFAR_ROOT`` (default: ``code/data/cifar10``), in torchvision's
+  ``cifar-10-batches-py`` layout; never downloaded.
 * ImageNet binary subsets reproducing Anchuri et al.'s classifiers:
   ``dogs_cats`` (their ``M``) and ``dogs_squirrels`` (their ``M~``), built from
-  ``$PVI_IMAGENET_ROOT`` (default: the lab copy).  That copy stores class
+  ``$PVI_IMAGENET_ROOT`` (default: ``code/data/imagenet``).  That root stores class
   ``i`` of the standard sorted-synset order in folder ``i + 1``; dogs are
   classes 151-268, cats 281-285 and the fox squirrel 335 (checked by eye).
   The paper used Kaggle's Animals-10; ImageNet's dog/cat/squirrel classes give
   the same task without an extra download.
+
+Where the datasets live elsewhere (as on the TAU cluster), export ``PVI_CIFAR_ROOT`` and
+``PVI_IMAGENET_ROOT`` before the job; the latter is not read once the ImageNet cache exists.
 
 Images are decoded once and cached as uint8 tensors (256x256 for ImageNet,
 from which training takes random 224 crops and evaluation the centre crop).
@@ -27,8 +31,8 @@ __all__ = ["load_dataset", "normalise", "DATA_ROOT", "CACHE_ROOT"]
 
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 CACHE_ROOT = Path(os.environ.get("PVI_CACHE", Path(__file__).resolve().parents[3] / "artifacts" / "fullcheck" / "cache"))
-CIFAR_ROOT = Path(os.environ.get("PVI_CIFAR_ROOT", "/home/sharifm/datasets/images/cifar10"))
-IMAGENET_ROOT = Path(os.environ.get("PVI_IMAGENET_ROOT", "/home/sharifm/datasets/images/imagenet"))
+CIFAR_ROOT = Path(os.environ.get("PVI_CIFAR_ROOT", DATA_ROOT / "cifar10"))
+IMAGENET_ROOT = Path(os.environ.get("PVI_IMAGENET_ROOT", DATA_ROOT / "imagenet"))
 
 _MEAN = {"mnist": (0.1307,), "cifar10": (0.4914, 0.4822, 0.4465), "imagenet": (0.485, 0.456, 0.406)}
 _STD = {"mnist": (0.3081,), "cifar10": (0.2470, 0.2435, 0.2616), "imagenet": (0.229, 0.224, 0.225)}

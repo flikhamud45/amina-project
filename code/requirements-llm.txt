@@ -1,0 +1,6 @@
+# Extra dependencies for the experiments on real language-model weights (the single-neuron attack on
+# OPT-6.7B and the perplexity of the integer OPT models). Install on top of requirements.txt:
+#   pip install -r requirements.txt -r requirements-llm.txt
+transformers==4.51.3
+tokenizers==0.21.4
+pyarrow==25.0.1
