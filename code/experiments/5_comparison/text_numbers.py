@@ -508,12 +508,14 @@ def checks(M, opt_names: list[str]):
         add(r"the GPU verifier is", "Limitations: GPU verifier slower than zkLLM's (zkLLM rows, red)", zslow_tok)
     add(r"slower only than", "verifier: final rows where ours is slower (ours/theirs); zkLLM rows",
         slow)
-    # Sec. 4.5: the streaming verifier on the basic proof format (the stored _gpuv_stream cells), Llama-2-13B
+    # Sec. 4.5: the streaming verifier on the basic proof format (the stored _gpuv_stream cells), Llama-2-13B.
+    # Optional: the sentence was dropped (PR #2 review), since that first-batch cell ran in a slow period of
+    # n-801 (every phase, the prover's forward pass included, varied 3-5x from query to query)
     l13 = pa.llm_cost(("llama2-13b", 2048), {"mode": "C", "variant": "_gpuv_stream"}, pa.opt_dirs())
     if l13 and stream["C"]:
         rss = pa.opt_measured().idx.get(("llm", "llama2-13b", "defence_C_int_lam128_T2048_L40_gpuv_stream",
                                          "host_peak_rss", "", "", "", "", ""))
-        add(r"On Llama-2-13B the same streaming verifier", "basic proof format, streaming GPU verifier: Llama-2-13B;"
+        add(r"?On Llama-2-13B the same streaming verifier", "basic proof format, streaming GPU verifier: Llama-2-13B;"
             " / Llama-2-7B's; params ratio; host memory (GiB)",
             [one(fixed(l13[1]), pa.t), one(fixed(l13[1] / stream["C"][1]), x, "×"),
              one(fixed(l13[3] / stream["C"][3]), x, "×"),
