@@ -1,281 +1,285 @@
-# Code: Certified but Compromised
+# Certified but Compromised: code and measurements
 
-Everything behind the report (`../report/main.pdf`):
+This folder holds the implementation and the stored measurements behind the paper *Certified but
+Compromised: Breaking and Fixing Lightweight Proofs of Inference* (`report/main.pdf`, next to this
+folder in the submission). It contains a from-scratch implementation of the path-sampling proof of
+inference of Anchuri et al. (SaTML 2026); our single-neuron attack and backdoor on it, on MNIST
+models, on CNNs and on the real OPT-6.7B; the analysis of smarter sampling rules; our protocol, which
+checks every weight layer with Freivalds' algorithm against a Reed–Solomon/Merkle commitment to the
+weights, in its basic and optimised forms; and the benchmark that measures both protocols on six image
+classifiers and ten language-model architectures and compares them with the path protocol and with
+published systems. Every table, figure and benchmark number of the paper can be regenerated from the
+stored measurements in about a minute, without a GPU.
 
-1. a from-scratch reimplementation of the path-sampling proof of inference of Anchuri
-   et al. (SaTML 2026);
-2. our single-neuron attack and backdoor on it;
-3. the analysis of smarter sampling rules;
-4. our defence, which checks every weight layer with Freivalds' algorithm against a
-   Reed–Solomon/Merkle commitment to the weights;
-5. the benchmark and the comparison with the literature;
-6. after the report, constant-factor improvements of the defence (summarised in
-   `../IMPROVEMENTS.md`), measured on the report's hardware. Their verifier engineering is
-   always on and changes only the timings: verdicts, proof bytes, Fiat–Shamir transcripts and
-   Merkle roots are the report's, but the verifier (and in part the prover) runs faster than
-   in the report's runs, which were measured by commit `9401431`. The rest is opt-in
-   (`--policy`, `--wire`, `--prune-last`, `--lookups`, `--verifier-impl stream`); without
-   these options the code runs the report's protocol.
+**Contents:** [Installation](#installation) · [Quick start](#quick-start) · [Tests](#tests) ·
+[Layout](#layout) · [Stored measurements](#stored-measurements) · [Results map](#results-map) ·
+[From scratch](#from-scratch) · [Notes on reproducibility](#notes-on-reproducibility) ·
+[Submission tarball](#submission-tarball)
 
-All results are stored in the repository. Every figure and generated table
-(`report/figures`, `report/tables`) is rebuilt from the stored benchmark records in a
-minute, with no GPU (Route A). The MNIST attack and sampling numbers of §4.2 are in
-`artifacts/results/*.json`, which Route B re-creates in about 45 minutes on a CPU, next
-to the real-LLM results of §4.1–4.2 and zkLLM's run on our GPU (§4.4), which need a GPU.
-Everything can also be re-measured from scratch.
+## Installation
+
+**Python and packages.** Python 3.11 or newer for the pinned versions (the stored runs used Python
+3.12.3). [`requirements.txt`](requirements.txt) pins the versions the results were produced with:
+
+| Package | Version | Needed for |
+|---|---|---|
+| `torch` | 2.5.1 (the GPU runs: the CUDA 12.1 build, `2.5.1+cu121`) | everything |
+| `torchvision` | 0.20.1 | loading MNIST, CIFAR-10 and ImageNet |
+| `numpy` | 2.5.2 | everything |
+| `matplotlib` | 3.11.2 | the figures (this version reproduces the committed PDFs byte for byte) |
+| `pytest` | 9.1.1 | the tests |
+
+The real-OPT experiments ([`experiments/2_attack/REAL_LLM.md`](experiments/2_attack/REAL_LLM.md)) also
+need `transformers`, `tokenizers` and `pyarrow` (the stored runs used 4.51.3, 0.21.4 and 25.0.1), and
+`tests/test_real_weights.py` needs `transformers`; they are not in `requirements.txt`. zkLLM's run on
+our GPU uses zkLLM's own environment ([`artifacts/results/zkllm_l40s`](artifacts/results/zkllm_l40s/README.md)).
+
+From the folder that holds `code/` (the unpacked submission):
+
+```bash
+python3 -m venv .venv
+# on a GPU machine, the CUDA build first (on the TAU cluster the default wheel does not match the drivers):
+.venv/bin/pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+.venv/bin/pip install -r code/requirements.txt    # the pinned versions
+.venv/bin/pip install -e code                     # the pvi package (src/pvi)
+source .venv/bin/activate
+```
+
+`pip install -e code` alone installs the ranges of [`pyproject.toml`](pyproject.toml) (Python 3.10 or
+newer, torch 2.2 or newer, numpy 1.26 or newer, matplotlib 3.8 or newer), which run the code; the
+figures are then not byte-identical. All commands below run from `code/` with the environment active;
+`export PYTHONPATH=$PWD/src` makes the scripts use this folder's `pvi` even without the editable
+install (the SLURM scripts do this themselves and run from the folder that holds `code/`).
+
+**Data and models.** Nothing needs downloading to regenerate the paper's tables and figures from the
+stored measurements.
+
+| Input | Where it comes from | Needed by |
+|---|---|---|
+| MNIST | downloaded by torchvision to `code/data/` on first use (needs network) | experiments 0–3; LeNet-5 and the MLP in the benchmark |
+| the MNIST models | included in `artifacts/models/` (with `MODELS.sha256`); `0_train_models/train.py` skips them | experiments 1–4 |
+| CIFAR-10 | not downloaded by the code: put torchvision's `cifar-10-batches-py/` under `$PVI_CIFAR_ROOT` (e.g. `python -c "from torchvision import datasets; datasets.CIFAR10('<dir>', download=True)"`) | training and querying VGG-11, VGG-16, ResNet-18 (CIFAR) |
+| ImageNet | not downloadable by the code: `$PVI_IMAGENET_ROOT` with `train/` and `val/`, one folder per class named by its 1-based index in sorted-synset order | the 224-pixel dog-vs-cat and dog-vs-squirrel ResNet-18 |
+| the benchmark's CNN weights | not included: trained by `4_defence_benchmark/train.py` (or `slurm/train.sbatch`) before any CNN benchmark job | experiment 4 |
+| the language models | none: exact shapes with random int8 weights | experiment 4 |
+| OPT checkpoints, WikiText-2 | `facebook/opt-*` from Hugging Face (open, no token) into `$HF_HOME`; the WikiText-2 test split as parquet at `$WIKITEXT_PARQUET` | the real-OPT experiments |
+| zkLLM | zkLLM's own checkout and the gated Llama-2 weights | zkLLM's run on our GPU |
+
+`$PVI_CIFAR_ROOT` and `$PVI_IMAGENET_ROOT` default to the course's copies on the TAU cluster. Details
+are in [`experiments/4_defence_benchmark`](experiments/4_defence_benchmark/README.md#1-train-the-cnns-gpu)
+and [`REAL_LLM.md`](experiments/2_attack/REAL_LLM.md).
+
+## Quick start
+
+```bash
+cd code && export PYTHONPATH=$PWD/src
+python -m pytest tests/test_merkle.py tests/test_protocol.py tests/test_comparison_tables.py -q   # a fast subset
+python experiments/5_comparison/aggregate.py --platform l40s              # the basic protocol's tables
+python experiments/5_comparison/aggregate.py --platform l40s_improved     # the optimised protocol's tables
+python experiments/5_comparison/aggregate.py --platform l40s_improved2
+python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2   # Tables 1-3, Figs. 1-4
+python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2 --definition   # checks the text
+python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --definition    # Sec. 4.3's counts
+```
+
+`paper_assets.py` writes into `../report/figures/` and `../report/tables/`; the full sequence, including
+the PDF build, is in [`experiments/5_comparison`](experiments/5_comparison/README.md#regenerate-everything).
+
+## Tests
+
+```bash
+cd code && PYTHONPATH=src python -m pytest tests
+```
+
+The tests cover the Merkle commitment, the path protocol, the exact acceptance-probability dynamic
+program against Monte Carlo, the attacks and samplers, and the whole protocol: honest queries, forged
+claims, a forged folded row (caught by the Reed–Solomon check), forged columns and paths (caught by the
+Merkle check), every commitment plan, the compact encoding, lookups and pruning in modes C, K and
+Kpre, the lean prover and verifier, the GPU verifier, GPU/CPU bit-exactness, and the table and figure
+scripts. All tests pass. The GPU-only tests are skipped on a machine without CUDA, and
+`tests/test_real_weights.py` is skipped unless `transformers` is installed. A CPU-only run takes about
+a quarter of an hour on a 4-core laptop. On the cluster, `slurm/smoke.sbatch` of
+[`experiments/4_defence_benchmark`](experiments/4_defence_benchmark/README.md#4-on-the-tau-slurm-cluster)
+runs every test on the GPU and requires that none is skipped.
 
 ## Layout
 
 ```
 code/
-  src/pvi/                 the library (see src/pvi/README.md)
-  experiments/             one folder per result; each has a README
-    0_train_models/        train the MNIST models used by 1-4        CPU   ~2 min
-    1_reproduction/        the original protocol on its threat model  CPU   ~1 min
-    2_attack/              the single-neuron attack and backdoor      CPU   ~2 min
-                           (and on real OPT weights: REAL_LLM.md)     GPU   ~1 h per run
-    3_sampling_fixes/      smarter samplers, and why they fail        CPU  ~40 min
-    4_defence_benchmark/   our defence vs. the path test, CNNs + LLMs GPU  hours (SLURM)
-    5_comparison/          tables, counts and every report figure     CPU   ~1 min
-    6_improvements/        the options added after the report: A/B    CPU/GPU
-                           harnesses, byte models and their results
-  artifacts/models/        the MNIST models the report used (committed, with MODELS.sha256)
-  artifacts/results/       the JSON results of experiments 1-3 (§4.2), of the
-                           real-LLM runs (§4.1, §4.2) and zkLLM's timings on our GPU (§4.4)
-  artifacts/comparison/    the benchmark's raw records, derived tables and the literature
-                           (raw_l40s_improved/: the improvements' runs)
-  tests/                   1,551 tests (1,554 with transformers); 205 need a GPU, which adds 9 more
+  README.md               this file
+  requirements.txt        the pinned versions
+  pyproject.toml          the pvi package
+  src/pvi/                the library                                         (src/pvi/README.md)
+  experiments/            one folder per result, each with a README
+    0_train_models/       train the MNIST models                              CPU   ~2 min
+    1_reproduction/       the path protocol on its own threat model           CPU   ~1 min
+    2_attack/             the single-neuron attack and backdoor (MNIST)       CPU   ~2 min
+                          ... and on the real OPT-6.7B (REAL_LLM.md)          GPU   ~1 h per run
+    3_sampling_fixes/     smarter samplers, and why they fail                 CPU   ~40 min
+    4_defence_benchmark/  both protocols and the path test, CNNs and LLMs     GPU   hours (SLURM)
+    5_comparison/         tables, counts and figures from the stored records  CPU   ~1 min
+    6_improvements/       the optimised protocol's development harnesses      CPU/GPU
+  artifacts/
+    models/               the MNIST models (with MODELS.sha256)
+    results/              JSON results of experiments 1-3 and of the real-OPT runs;
+                          zkllm_l40s/: zkLLM's code run on our GPU
+    comparison/           benchmark records raw_<platform>/, derived tables, the literature catalogue
+  tests/                  the test suite
 ```
 
 The experiments import the library (`pvi`) and never each other (except
-`6_improvements/perf.py`, which builds the models as `bench.py` does). Times are for 8 CPU
-threads.
+`6_improvements/perf.py`, which builds the models as `bench.py` does). Times are for 8 CPU threads.
 
-## Installation
+| README | Covers |
+|---|---|
+| [`src/pvi/README.md`](src/pvi/README.md) | the library's modules and where the paper uses them |
+| [`experiments/0_train_models`](experiments/0_train_models/README.md) | training the MNIST models |
+| [`experiments/1_reproduction`](experiments/1_reproduction/README.md) | Sec. 4.2 *Reproduction* |
+| [`experiments/2_attack`](experiments/2_attack/README.md), [`REAL_LLM.md`](experiments/2_attack/REAL_LLM.md) | Sec. 3.2 and 4.2: the attack on MNIST, larger models and the real OPT-6.7B; Sec. 4.1 *Real weights* |
+| [`experiments/3_sampling_fixes`](experiments/3_sampling_fixes/README.md) | Sec. 3.3 and 4.2 *Other samplers* |
+| [`experiments/4_defence_benchmark`](experiments/4_defence_benchmark/README.md) | the benchmark: re-measuring both protocols (bench.py, the SLURM scripts, hardware and time) |
+| [`experiments/5_comparison`](experiments/5_comparison/README.md) | every table, figure and benchmark number from the stored records |
+| [`experiments/6_improvements`](experiments/6_improvements/README.md) | the optimised protocol's options, their soundness, tests and development measurements |
+| [`artifacts/comparison`](artifacts/comparison/README.md) | the stored benchmark runs |
+| [`artifacts/results/zkllm_l40s`](artifacts/results/zkllm_l40s/README.md) | zkLLM's code on our GPU |
 
-Python 3.11 or newer for the pinned versions in `requirements.txt` (the results were
-produced with Python 3.12; `pip install -e code` alone, with the ranges in
-`pyproject.toml`, also works on 3.10). From the repository root:
+## Stored measurements
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r code/requirements.txt   # exact versions used for the results
-.venv/bin/pip install -e code                     # the pvi package
-```
-
-On the TAU SLURM cluster the default PyTorch wheel does not match the drivers, so run
-this before the two commands above:
-
-```bash
-.venv/bin/pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
-```
-
-The real-LLM experiments of §4.1–4.2 (`experiments/2_attack/REAL_LLM.md`) also need
-`transformers` and `pyarrow`, and the 3 tests of `tests/test_real_weights.py` need
-`transformers`; neither is in `requirements.txt`. The runs used a separate venv with
-`transformers==4.51.3`, `tokenizers==0.21.4` and `pyarrow==25.0.1` on top of the pinned
-versions; the real-LLM sbatch scripts take its python as `$PVI_PYTHON`. zkLLM's run
-(§4.4) uses zkLLM's own environment (see *Route B*).
-
-All commands below are run from `code/` with the virtual environment active
-(`source ../.venv/bin/activate`), except the SLURM commands, which are run from the
-repository root.
-
-**Data.** MNIST is downloaded to `code/data/` on first use. The benchmark also reads
-CIFAR-10 from `$PVI_CIFAR_ROOT` (torchvision's `cifar-10-batches-py/` layout) and
-ImageNet from `$PVI_IMAGENET_ROOT`, for the dog/cat and dog/squirrel classifiers; both
-default to the course's copies on the cluster. `$PVI_IMAGENET_ROOT` must contain
-`train/` and `val/` with one folder per class, named by the class's 1-based index in
-sorted-synset order (dogs 152–269, cats 282–286, fox squirrel 336). Decoded images are
-cached in `artifacts/fullcheck/cache/` (or `$PVI_CACHE`).
-
-## Reproducing the report
-
-### Route A: from the stored measurements (no GPU, about a minute)
-
-The report's benchmark numbers come from two protocols measured on the same machines (see
-*The stored benchmark runs* below): the *optimised protocol*, platforms `l40s_improved` and
-`l40s_improved2` (Tables 1–3, Figure 4, the filled points of Figure 3, the counts of
-Sec. 4.3), and the *basic protocol*, platform `l40s` (`artifacts/comparison/raw_l40s/`, 123,832
-raw records; the basic side of §4.5's comparison and the hollow points of Figure 3). Until `l40s_improved2`
-is stored, the numbers it will provide are printed in red with the basic value standing in
-(`paper_assets.py --check` lists them). These commands rebuild every derived table, the
-report's figures and generated tables, and the PDF:
-
-```bash
-python experiments/5_comparison/aggregate.py --platform l40s               # raw_l40s/ -> tables_l40s/measured_summary.csv, llm_full_model.csv, llm_extrapolation_check.csv
-python experiments/5_comparison/literature.py                              # published numbers -> tables/reported_curated.csv
-python experiments/5_comparison/analytic.py                                # the path test's cost of 2^-40 on Llama-2-7B -> tables/analytic.csv
-python experiments/5_comparison/aggregate.py --platform l40s_improved      # and l40s_improved2 once it is stored
-python experiments/5_comparison/count_outcomes.py --platform l40s --tex ../report/tables/counts.tex
-python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --prefix Opt --tex ../report/tables/counts_opt.tex
-python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2   # -> ../report/figures/*.pdf, ../report/tables/*.tex
-python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2   # every number typed in main.tex against the tables
-python experiments/5_comparison/validate_extrapolation.py --platform l40s  # optional: -> tables_l40s/llm_extrapolation_validation.csv
-cd ../report && latexmk -pdf main.tex                                      # or: tectonic -X compile main.tex
-```
-
-§4.1 and §4.3 also quote the second platform: `count_outcomes.py --platform rtx2080ti-v2`
-gives its verdicts, and `fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2
-artifacts/comparison/raw_l40s` compares the 1,978 hardware-independent numbers the two
-runs share (0 differences). The optimised runs go through the same scripts (see
-`experiments/5_comparison/README.md`, *The optimised runs*).
-
-`--platform` defaults to `$PVI_PLATFORM` when it is set (as after Route B's `export`), else
-to `l40s`. `aggregate.py --platform rtx2080ti` rebuilds the earliest run's
-`measured_summary.csv` and `llm_full_model.csv` in `tables/` from `raw/`, for provenance
-only: nothing in the report reads them (the other two files of `tables/`, the published
-numbers and the path test's cost, are shared by every platform). The committed figures were
-made with the pinned matplotlib 3.11.2; another version draws them slightly larger or
-smaller, which can change the page count (see the last note below).
-
-### The stored benchmark runs
+The benchmark records are stored per run in `artifacts/comparison/raw_<platform>/`, with the commit,
+host, GPU and CPU of every record; [`artifacts/comparison/README.md`](artifacts/comparison/README.md)
+describes each run in detail.
 
 | Root | Records | What it is |
-|---|---|---|
-| `raw_l40s/` | 123,832 | **The report's numbers.** Every tier of `strong_gpu.sh` (`must`, `should`, `nice`; in `experiments/4_defence_benchmark/slurm/`) on the `killable` partition: an NVIDIA L40S (48 GB) prover and 8 threads of an AMD EPYC 9334 verifier, nodes n-801..804 (the L40S node t-806 has a different CPU and was excluded; `bench.py` refuses to mix CPU models in one root), run from a clean clone of the report's code (commit `9401431`, stored in every record; this code's always-on verifier engineering is faster, see *Route B*) with `PVI_PLATFORM=l40s` (the script at that commit also submitted a kernel microbenchmark, `microbench`, which writes only a log and no records; it is not in this version). Every decoder up to 13B parameters is built at full depth (`--lean`) at up to 2,048 tokens, Llama-2-7B also at 4,096; the 30–70B shapes (OPT-30B, OPT-66B, Llama-2-70B) only with 1 and 2 blocks (the full Llama-2-70B build is skipped with a `SKIP` line: 64.2 GiB of int8 weights). The full models are also attacked (§4.3). The root also holds variants of the same protocol: `_gpuv` (the verifier on the GPU, §4.4), `_batch` (8 and 32 prompts per proof, §4.4; for the CNNs 8 to 256 images, 8 to 128 for the 224-pixel ResNet), `_thr1` (one verifier thread: the Maverick row of Table 3), and the controls `_thr12`, `_tf32`, `_nofix` (the earliest run's weight cache, `PVI_LEGACY_WEIGHT_KEY=1`) and `_nolean`, which enter no table or figure. All of them count as runs in §4.3. Frozen (`"frozen": true` in its `PLATFORM.json`: the code refuses to add records). |
-| `raw_rtx2080ti-v2/` | 78,266 | The second platform, quoted in §4.1 and §4.3 (identical hardware-independent numbers, same verdicts). `strong_gpu.sh must` without `ab-opt13` (the non-lean OPT-1.3B control at 2,048 tokens, about 27 GiB, too large for the card) and `microbench` (a kernel microbenchmark that writes only a log, no records): 29 SLURM jobs, 945088–945116, on `studentbatch`: an RTX 2080 Ti (11 GB) prover and 8 threads of a Xeon Silver 4114 verifier, from the same commit `9401431`, with `PVI_PLATFORM=rtx2080ti-v2`. Every decoder is built at full depth except Llama-2-13B, whose 12.1 GiB of int8 weights exceed the card (it is extrapolated from its 1- and 2-block builds). Controls `_nofix`, `_nolean`, `_thr1`. Frozen. `aggregate.py --platform rtx2080ti-v2` rebuilds its stored tables unchanged; the report quotes only its verdicts and record total (`count_outcomes.py --platform rtx2080ti-v2`) and its hardware-independent numbers (`fingerprint_check.py`). `paper_assets.py` refuses this platform, since it lacks the `should` jobs' cells that the report draws (e.g. OPT-13B at 2,048 tokens). The report's previous version, drawn from it, is commit `d5671bf` in the project's git repository. |
-| `raw_l40s_improved/` | 68,363 | The options added after the report (`experiments/6_improvements`, `../IMPROVEMENTS.md`), on the hardware of `raw_l40s/` (nodes n-801, n-803 and n-804): 27 SLURM jobs, 958570–958596, from commit `c8be5eb` of the improvements' branch, with `PVI_PLATFORM=l40s_improved` (the job list is in `IMPROVEMENTS.md`). Its cells are the report's format run by the new code (the untagged cells: what *Route B* gives on this branch) and the opt-in variants `_polauto` (a commitment plan), `_wire` (the compact encoding of the proof), `_prune` and `_lookups` (decoders; with `_thr1`, one verifier thread, for Qwen3-4B), and `_gpuv_stream` (the streaming GPU verifier). 4,380 honest queries accepted and 4,973 attacks rejected; its 565 hardware-independent numbers shared with `raw_l40s/` agree. The report's optimised protocol (with `raw_l40s_improved2/`, which adds the cells it lacks; `OPTIMISED` in `experiments/5_comparison/paper_assets.py` names the cells). `aggregate.py --platform l40s_improved` rebuilds its tables in `tables_l40s_improved/` unchanged. Frozen. |
-| `raw/` | 59,547 | The earliest run, on the 2080 Ti with an older version of the code. Its committed-weights (C) prover re-uploaded the weights to the GPU twice per query (a weight cache keyed `cuda` vs `cuda:0`), so its C prover times are too slow (the `_nofix` controls of `raw_rtx2080ti-v2/` measure this on the same GPU: Llama-2-7B at 64 tokens 11.0 s against 7.9 s, GPT-2 1.15×, OPT-1.3B at 2,048 tokens 1.16×; within noise for the small CNNs), and every decoder above 12 blocks was built only with 1 and 2 blocks and extrapolated. The report does not use it. It is frozen (the code refuses to write there) and kept for provenance, and as the reference of `smoke.sbatch`'s fingerprint check: `aggregate.py --platform rtx2080ti` still rebuilds its tables in `tables/` exactly (its LLM runs sent one Merkle path per opened column; `multiproof_adjust` in `aggregate.py`, which exists only for this, adds the expected multiproof size next to them). The job list that produced it (`slurm/sweep.sh`) and the report version drawn from it are in the project's git repository at commit `336a03c`, not in the submission archive. |
+|---|---:|---|
+| `raw_l40s/` | 123,832 | **the basic protocol**, measured on an NVIDIA L40S prover and 8 threads of an AMD EPYC 9334 verifier (commit `9401431`) |
+| `raw_l40s_improved/` | 68,363 | **the optimised protocol**, first batch, same machines (commit `c8be5eb`); also the basic proofs run by the released code |
+| `raw_l40s_improved2/` | 83,896 | **the optimised protocol**, second batch, same machines (commits `366e3d4`, `c2bdc49`); some timings withheld, see below |
+| `raw_l40s_improved2_thr1/` | 6,104 | optimised LeNet-5 and VGG-16 with one verifier thread; not used in the paper |
+| `raw_rtx2080ti-v2/` | 78,266 | the basic protocol on an RTX 2080 Ti and a Xeon Silver 4114 (commit `9401431`): Sec. 4.1's 1,978 hardware-independent values |
+| `raw/` | 59,547 | an earlier run with an earlier version of the code; not used in the paper |
 
-### Route B: from scratch
+`artifacts/comparison/excluded_cells.csv` lists 17 timings of the second batch that are withheld: during
+parts of that batch the L40S nodes n-801 and n-804 were slowed by other users' load, which inflated
+CPU-side stages. The paper shows these values as pending (in red, with the basic protocol's value as a
+placeholder) until they are re-measured; a re-run on unloaded nodes (platform `l40s_improved3`) is
+planned. Proof bytes and verdicts are unaffected.
 
-The MNIST experiments (CPU):
+## Results map
 
-```bash
-python experiments/0_train_models/train.py          # skips the committed models; --force retrains them
-python experiments/1_reproduction/run.py            # -> artifacts/results/reproduction.json
-python experiments/2_attack/run.py                  # -> artifacts/results/attack.json
-python experiments/3_sampling_fixes/run.py          # -> artifacts/results/defence.json
-python experiments/3_sampling_fixes/floor_sampler.py  # -> artifacts/results/floor_sampler.json
-```
+Every result of the paper, the command that reproduces it from the stored data (run from `code/` after
+`export PYTHONPATH=$PWD/src`; for the benchmark rows the three `aggregate.py` lines of the quick start
+come first), and the README with the detailed steps, including the from-scratch runs. Below,
+`paper_assets` stands for
+`python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2`
+and `text_numbers` for
+`python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2 --definition`,
+which recomputes the benchmark numbers of 39 sentences of the text and compares them with
+`report/main.tex` (exit 0: all match).
 
-The benchmark needs a GPU. On the cluster, from the repository root, train the CNNs
-first and wait for that job to finish, since the benchmark jobs load their weights (the
-report's CNN weights are not in this repository, since `code/artifacts/fullcheck/models/`
-is git-ignored, but they are in that folder of the team's project checkout on the TAU
-cluster; new ones make every CNN number incomparable with the report):
+**Tables, figures and generated macros**
 
-```bash
-mkdir -p logs
-sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/train.sbatch lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel
-# when it has finished (squeue -u $USER), the report's jobs (those of raw_l40s/):
-export PVI_PLATFORM=<new name> SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1
-bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke    # once per GPU type: wait for SMOKE OK
-bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must     # then should, then nice
-```
+| Paper | Result | From the stored data | Details |
+|---|---|---|---|
+| Fig. 1, Fig. 2 | overview and protocol schematics | `paper_assets` → `report/figures/overview_*.pdf`, `protocol.pdf` | [5_comparison](experiments/5_comparison/README.md) |
+| Fig. 3 | security against bytes sent (paths, basic, optimised) | `paper_assets` → `report/figures/security_bits.pdf`, from the `aggregate.py` tables | [5_comparison](experiments/5_comparison/README.md) |
+| Fig. 4 | cost against model size, with published systems | `paper_assets` → `report/figures/cost_*.pdf`, also reading `tables/reported_curated.csv` (`python experiments/5_comparison/literature.py`) and `artifacts/results/zkllm_l40s/summary.csv` | [5_comparison](experiments/5_comparison/README.md) |
+| Table 1 | image models (optimised, λ = 128) | `paper_assets` → `report/tables/cnn.tex` | [5_comparison](experiments/5_comparison/README.md), [4_defence_benchmark](experiments/4_defence_benchmark/README.md) |
+| Table 2 | language models at 64 and 2,048 tokens, CPU and GPU verifier | `paper_assets` → `report/tables/llm.tex` | [5_comparison](experiments/5_comparison/README.md), [4_defence_benchmark](experiments/4_defence_benchmark/README.md) |
+| Table 3 | ours against published systems | `paper_assets` → `report/tables/ratios.tex` (published numbers from `literature.py`; zkLLM on our GPU from `python artifacts/results/zkllm_l40s/summarise.py --csv`) | [5_comparison](experiments/5_comparison/README.md), [zkllm_l40s](artifacts/results/zkllm_l40s/README.md) |
+| Sec. 4.1 | hardware macros (`report/tables/hardware.tex`) | `paper_assets` | [5_comparison](experiments/5_comparison/README.md) |
+| Abstract, Sec. 4.3 | count macros (`report/tables/counts.tex`, `counts_opt.tex`) | `python experiments/5_comparison/count_outcomes.py --platform l40s --tex ../report/tables/counts.tex` and `... --platform l40s_improved,l40s_improved2 --prefix Opt --definition --tex ../report/tables/counts_opt.tex` | [5_comparison](experiments/5_comparison/README.md) |
+| red values | values still pending | `paper_assets --check` | [5_comparison](experiments/5_comparison/README.md#pending-values) |
 
-`smoke` runs every test on the GPU (`tests/test_real_weights.py` only where `transformers`
-is installed; none may be skipped), small benchmarks into a throw-away root, and
-`fingerprint_check.py` against `raw/` (every hardware-independent number the two share must
-agree). Each job appends raw records to `artifacts/comparison/raw_<platform>/`, one root
-per GPU and CPU model; `raw/`, `raw_rtx2080ti-v2/`, `raw_l40s/` and `raw_l40s_improved/` are
-the stored runs and are frozen, so re-measure under a new name. `bench.py` refuses records
-from a second CPU model in one root, so on a partition whose nodes differ (the L40S node
-t-806 has a Xeon) keep the jobs on one kind of node, e.g. with an `sbatch` wrapper on `PATH`
-that adds `--exclude`. A cell that has finished is skipped, and a pre-empted job is resubmitted by
-running the same tier command again. On a card too small for a build (Llama-2-70B on
-48 GB, Llama-2-13B on 11 GB) that build is skipped with a `SKIP` line and its job ends
-with an error; the rest of the job is recorded. Then run Route A with
-`--platform <new name>`.
+**Numbers in the text, by section**
 
-**Timings on this branch.** The jobs record the report's cells, configuration fields and
-metrics, with the report's verdicts, proof bytes, transcripts and Merkle roots, but their
-timings are the new code's: the verifier engineering of `../IMPROVEMENTS.md` is always on, so
-the verifier (and in part the prover) is faster than in `raw_l40s/` (on the same L40S and EPYC,
-the mode-C verifier of LeNet-5 takes 2.9 ms against 7.0 ms, and GPT-2's at 64 tokens 197 ms
-against 468 ms). The untagged cells of `raw_l40s_improved/` are such a re-measurement. To
-re-measure the report's timings, run these jobs from commit `9401431`, which recorded
-`raw_l40s/` (or from `68cd7f8`, the submission before the improvements were merged, with the
-same protocol code).
+| Paper | Result | From the stored data | Details |
+|---|---|---|---|
+| Sec. 1 | zkLLM needs about ten minutes for one Llama-2-7B prompt | `tables/reported_curated.csv` (620 s; `literature.py`) | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 1, 4.2 | one tampered neuron accepted with probability 1 - 1/N (99.6–99.8% on MNIST) | `artifacts/results/attack.json` (`experiments/2_attack/run.py`) | [2_attack](experiments/2_attack/README.md) |
+| Sec. 1 | 13.7 GB of paths against a 325 MB proof; 2.0–4.2x smaller proofs; prover 35–32,000x faster than the zkSNARKs | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 3.2 | the attack (method) | `experiments/2_attack/run.py` | [2_attack](experiments/2_attack/README.md) |
+| Sec. 3.3 | samplers, Proposition 3.1 (proved in the paper), the floor sampler | `experiments/3_sampling_fixes/run.py`, `floor_sampler.py` | [3_sampling_fixes](experiments/3_sampling_fixes/README.md) |
+| Sec. 3.5 | parameters (VGG-16 at λ = 128: r = 5, t = 67) | `cfg_reps`, `cfg_columns` of VGG-16's `defence_C_int_lam128_rate4` in `artifacts/comparison/tables_l40s/measured_summary.csv` | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 3.6.1 | Llama-2-7B at 64 tokens: 349, 23, 385 and 4 MB of a 762 MB basic proof | `bytes_claims`, `bytes_u`, `bytes_columns`, `bytes_paths`, `bytes_total` of `defence_C_int_lam128_T64_L32` in `tables_l40s/measured_summary.csv` | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 3.6.2 | six candidate plans, the 2^34 floor; LeNet-5 shares one tree of length 2^18 and opens 15 columns instead of 66 in each of five trees | `AUTO_CANDIDATES` and `AUTO_MIN_BUDGET` in `src/pvi/fullcheck/plans.py`; `cfg_group_columns`, `cfg_columns` of LeNet-5's `defence_C_int_lam128_rate4_wire_polauto` (`tables_l40s_improved2`) and `defence_C_int_lam128_rate4` (`tables_l40s`) | [6_improvements](experiments/6_improvements/README.md#7-the-planning-rule-auto) |
+| Sec. 3.6.2 | a claim takes 16–19 bits with the compact encoding | `experiments/6_improvements/results/wire_laptop.json` (`wire.py --summary`) | [6_improvements](experiments/6_improvements/README.md#3-the-compact-encoding) |
+| Sec. 4.1 | int8 accuracy within 0.4 points; extrapolated proof sizes within 2.83% | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.1 | real OPT perplexities (73.8, 37.4, 36.0 against 64.7, 34.9, 27.1) | `artifacts/results/real_weights_ppl_opt-*.json` | [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
+| Sec. 4.1 | 1,978 hardware-independent values reproduced on the RTX 2080 Ti | `python experiments/5_comparison/fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2 artifacts/comparison/raw_l40s` | [5_comparison](experiments/5_comparison/README.md), [artifacts/comparison](artifacts/comparison/README.md) |
+| Sec. 4.2 | *Reproduction* (3,000 runs per setting, 99.8–100% detection, 21–37% without tolerance) | `artifacts/results/reproduction.json` (`experiments/1_reproduction/run.py`) | [1_reproduction](experiments/1_reproduction/README.md) |
+| Sec. 4.2 | *Attacks on MNIST* (hundreds of nodes against 1–14, backdoor 99.96% of 2,300 runs, about five neurons at the 95th percentile, 250 paths 61%) | `artifacts/results/attack.json` | [2_attack](experiments/2_attack/README.md) |
+| Sec. 4.2 | *Other samplers* (0.20%, 0.11%, 0.016%; 14 zeroed neurons, 65%, 2,000 of 2,000; floor 2%, 0.9–6x) | `artifacts/results/defence.json`, `floor_sampler.json` | [3_sampling_fixes](experiments/3_sampling_fixes/README.md) |
+| Sec. 4.2 | *Larger models* (1/84 to 1/512, 1/28 million, 2,316–14,182 paths, incl. the 224-pixel ResNet-18; Llama-2-7B 1/11,008, 305,000 paths, 13.7 GB) | `text_numbers`; `python experiments/5_comparison/analytic.py` | [2_attack](experiments/2_attack/README.md#larger-models) |
+| Sec. 4.2 | *A real LLM* (40/40; " back" 40/40, " hacked" 0/40; 16,384 neurons reach 6,187 of 50,272 tokens; 1/16,384 per path, 454,248 paths) | `artifacts/results/real_llm_attack.json`, `real_llm_attack_auto.json` | [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
+| Sec. 4.3 | outcomes: optimised 3,792 honest accepted, 2,512 attacks rejected (1,848 image, 106 '+1'; Freivalds 1,601, code 853, Merkle 56, the range check the remaining two); basic 8,709 and 2,895 (804 language) | `python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --definition` (`range_or_shape 2`); `... --platform l40s`; `text_numbers` | [artifacts/comparison](artifacts/comparison/README.md), [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.3 | security per byte (43–47 and 131–141 bits; basic 48–58 and 150–153; 1.1–8.3x) | `text_numbers` (Fig. 3: `paper_assets`) | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.4 | image and language models (3.8–22.9 ms, 1.7–64.8 ms, 49.4 kB–6.7 MB; 76.1 ms, 1.8 s, 325 MB; GPU verifier 11–25x and 1.0–2.4x; batches of eight; Llama-2-70B 1.7 GB, 41x) | `text_numbers` (Tables 1–2, Fig. 4: `paper_assets`) | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.5 | effect of the optimisations (61% fewer bytes, 77% less verifier time, 28% less prover time; 468 → 190 ms; 2,048 tokens; 1.9x the forward pass; setup 114–116 s against 9–10 s) | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.6 | prover 35–32,000x; faster than Maverick by 200% (Table 3's 3.0x); zkLLM's code on our L40S about 844 s, 48x, 2.5x per layer for 13B; verifier ratios; Maverick with the encoding 20.3 MB, 151.6 ms; proofs 3.6–180x and 2,500–56,000x larger | `text_numbers`; Table 3 (`paper_assets`); `python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32` | [zkllm_l40s](artifacts/results/zkllm_l40s/README.md), [5_comparison](experiments/5_comparison/README.md) |
+| Table 3, note c | DeepProve's HyperKZG proof 9.4 MB | `artifacts/comparison/literature/reported_benchmarks.csv` | [artifacts/comparison](artifacts/comparison/README.md) |
+| Sec. 5 | zkLLM's 157–183 kB; CPU verifier up to 3.7 min; GPU verifier 2.9–3.1x slower than zkLLM's; setup up to 13x slower | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
 
-`experiments/4_defence_benchmark/README.md` shows how to run a single model without SLURM,
-and the options added after the report (`--policy`, `--wire`, `--verifier-impl stream`,
-`--prune-last`, `--lookups`); `../IMPROVEMENTS.md` lists the jobs of `raw_l40s_improved/`.
+Published numbers (Table 3, Fig. 4's grey points, zkLLM's proof sizes, the path protocol's time per
+path) come from `artifacts/comparison/literature/reported_benchmarks.csv` (413 published measurements
+from 32 systems, each with its table, page and a verbatim snippet) through `literature.py`.
 
-The real-LLM experiments of §4.1–4.2 (OPT checkpoints from Hugging Face, one GPU with
-16 GB or more, and `transformers`: see *Installation*) are described in
-`experiments/2_attack/REAL_LLM.md`, and zkLLM's run on our GPU (§4.4) in
-`artifacts/results/zkllm_l40s/zkllm.sbatch`, with its input builder (`mkinput.py`), the
-timing shims of zkLLM's binaries (`install_timing_shims.sh`), `summarise.py` and the run
-records next to it. `zkllm.sbatch` runs zkLLM's public code (commit `993311e`) from its own
-checkout and environment under `$ZKLLM_HOME`, on the WikiText-2 test split at
-`$WIKITEXT_PARQUET`; zkLLM's scripts need `transformers` 4.40.
+## From scratch
 
-### Where each result comes from
+| Part | Hardware, time | Inputs | Steps |
+|---|---|---|---|
+| MNIST experiments (Sec. 4.2 *Reproduction*, *Attacks on MNIST*, *Other samplers*) | CPU, about 45 min in total | MNIST (downloaded on first use); the included MNIST models (`train.py` skips them; `--force` retrains) | `1_reproduction/run.py`, `2_attack/run.py`, `3_sampling_fixes/run.py`, `floor_sampler.py`; they rewrite `artifacts/results/*.json`. See [1](experiments/1_reproduction/README.md), [2](experiments/2_attack/README.md), [3](experiments/3_sampling_fixes/README.md) |
+| The benchmark: both protocols, the path protocol's cells, the attacks on larger models (Tables 1–3, Figs. 3–4, Sec. 4.2–4.6) | one CUDA GPU and 8 CPU threads per job (the paper: an NVIDIA L40S and an AMD EPYC 9334, on TAU's SLURM cluster); jobs of minutes to about two hours, tens of jobs per protocol | CIFAR-10 at `$PVI_CIFAR_ROOT` and ImageNet at `$PVI_IMAGENET_ROOT` (neither is downloaded by the code); the CNN weights, which are not included and must be trained first | `4_defence_benchmark/train.py` (or `slurm/train.sbatch`), then `bench.py` jobs under a new platform name (`slurm/strong_gpu.sh` for the basic protocol; the optimised options for the optimised one), then the commands of `5_comparison` with that name. See [4_defence_benchmark](experiments/4_defence_benchmark/README.md) |
+| The real OPT-6.7B attack and backdoor (Sec. 4.2 *A real LLM*) | one GPU with 16 GB or more, about 1 h per run, two runs | `transformers` 4.51.3, `tokenizers` 0.21.4, `pyarrow` 25.0.1; `facebook/opt-6.7b` downloaded into `$HF_HOME` (open, no token) | `real_llm.sbatch`, once as is and once with `--target auto`. See [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
+| The real-OPT perplexities (Sec. 4.1) | one GPU | the same packages; the OPT checkpoints downloaded beforehand (the jobs run offline); WikiText-2's test split as parquet at `$WIKITEXT_PARQUET` | `real_weights_ppl.sbatch`. See [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
+| zkLLM's code on our GPU (Sec. 4.6, Table 3) | one L40S, hours | zkLLM's own checkout (commit `993311e`) and environment; the gated Llama-2 weights | `zkllm.sbatch`. See [zkllm_l40s](artifacts/results/zkllm_l40s/README.md) |
 
-| Report | Produced by | Output |
-|---|---|---|
-| Fig. 1, Fig. 2 (schematics) | `5_comparison/paper_assets.py` | `report/figures/overview_*`, `protocol` |
-| §4.2 *Reproduction* (acceptance, detection, exact-equality check) | `1_reproduction/run.py` | `artifacts/results/reproduction.json` |
-| §4.2 *Attacks on MNIST* (the forgeries of [2], one neuron, backdoor, stealth, 250 paths) | `2_attack/run.py` | `artifacts/results/attack.json` |
-| §4.2 *Other samplers* | `3_sampling_fixes/run.py` | `artifacts/results/defence.json` |
-| §3.2 the floor sampler | `3_sampling_fixes/floor_sampler.py` | `artifacts/results/floor_sampler.json` |
-| §4.1 int8 perplexity of the real OPT-125M/1.3B/6.7B (73.8/37.4/36.0 against 64.7/34.9/27.1, per normalisation gain) | `2_attack/real_weights_ppl.py` (see `2_attack/REAL_LLM.md`) | `artifacts/results/real_weights_ppl_opt-*.json` |
-| §4.2 *A real LLM* (40/40 untargeted, backdoor 0/40 for " hacked" and 40/40 for " back", 6,187 reachable tokens, 454,248 paths) | `2_attack/real_llm.py` | `artifacts/results/real_llm_attack.json`, `real_llm_attack_auto.json` |
-| §4.2 *The same holds on larger models* (100% flips, 1/84–1/512, 1/28 million, paths for 2^-40; cells `attack_float`, `sampling`) | `4_defence_benchmark/bench.py` → `5_comparison/aggregate.py --platform l40s` | `tables_l40s/measured_summary.csv` |
-| Fig. 3, Tables 1–3, Fig. 4, the numbers of Sec. 4 except zkLLM's own run, the hardware of Sec. 4.1 | the basic run (`strong_gpu.sh must`, `should`, `nice`, platform `l40s`) and the optimised runs (`l40s_improved`, `l40s_improved2`) → `5_comparison/aggregate.py --platform <p>` → `paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2` | `report/figures`, `report/tables` (with `hardware.tex`) |
-| §4.1 the extrapolation check on the models built in full (proof size exact; times off by up to 44% for the verifier and 120% for the prover of OPT-2.7B; totals are the sums of the prove and verify parts) | `5_comparison/aggregate.py --platform l40s` (every part, full build against the 1–2 block line); `validate_extrapolation.py --platform l40s` (with a fit through every block count); `text_numbers.py --platform l40s` prints the totals | `tables_l40s/llm_extrapolation_check.csv`, `llm_extrapolation_validation.csv` |
-| §4.1 the 1,978 hardware-independent numbers shared with the 2080 Ti run | `5_comparison/fingerprint_check.py artifacts/comparison/raw_rtx2080ti-v2 artifacts/comparison/raw_l40s` | printed |
-| §4.3 counts (8,709 honest queries; 2,091 CNN and 804 LLM attacks; Freivalds 2,747, Reed–Solomon 74, Merkle 74), the 2080 Ti's 5,547 and 2,456, and §4.1's 123,832 and 78,266 records | `5_comparison/count_outcomes.py --platform l40s` (and `--platform rtx2080ti-v2`) | printed |
-| §4.2 Llama-2-7B: 1/11,008 per path, 305,000 paths, 13.7 GB | `5_comparison/analytic.py` | `tables/analytic.csv` (`anchuri_*` columns) |
-| §4.4 *zkLLM on the same GPU* (26.4 s per layer, about 844 s for Llama-2-7B; 24 GiB; 65.7 s per layer for Llama-2-13B) | zkLLM's public code (commit `993311e`) under `artifacts/results/zkllm_l40s/zkllm.sbatch`, with its binaries timed by the shims of `install_timing_shims.sh`. `summarise.py <run dir> <layers>` recomputes every figure from the run's records, and `summarise.py --csv` writes `summary.csv` (per-layer and whole-model time of each run), which `paper_assets.py` reads for Table 3. The time per layer is the sum of the median times of the proof binaries in `bin_times.log` (3 runs on each of layers 0 and 1): for Llama-2-7B QKV linear 6.555 s, attention 2.79 s, FFN 12.79 s, the two RMSNorms 1.555 and 1.52 s and the skip connection 0.58 s, 25.79 s. The demo's attention stage writes no output, so the first skip connection of each layer does not run (its script exits with 'Input or output file does not exist'), and the measured one is counted twice: 26.37 s. For Llama-2-13B, 64.50 s + 1.21 s = 65.71 s. The peak memory is that of the job's GPU (index 2 of the node for Llama-2-7B: 25,020 MiB; the file also holds the node's other GPUs, which ran other jobs). `summarise.py` also prints the median script wall times, with Python and model loading (102 s and 243 s per layer, the failing first-skip script included) | `artifacts/results/zkllm_l40s/<run>/` (`bin_times.log`: each binary's time; `time-*.txt`: each script's wall time; `nvidia-smi.csv.gz`: memory and utilisation of every GPU of the node every 0.5 s, one row per GPU in index order; `verdicts.txt`; `env.txt`) |
-| Published results (Table 3, Fig. 4's grey points) | `5_comparison/literature.py` | `tables/reported_curated.csv` |
-| Numbers quoted only in the text | `5_comparison/aggregate.py`; `text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2` compares each with the tables (exit 1 on a mismatch) | `tables_l40s/measured_summary.csv`, `tables_l40s/llm_full_model.csv` (ratios with `tables/reported_curated.csv`) |
+The SLURM scripts run from the folder that holds `code/` (they `cd` into `code/` themselves), use the
+Python of `.venv/` in that folder unless `$PVI_PYTHON` is set, and the commands in the READMEs write
+their logs to `logs/` there.
 
-## Tests
-
-```bash
-python -m pytest tests
-```
-
-The tests cover the Merkle commitment, the path test, the exact acceptance-probability
-dynamic program against Monte Carlo, the attacks and samplers, and the whole defence.
-The defence tests include forged claims, a forged folded row (caught by the
-Reed–Solomon check), a forged column (caught by the Merkle check), the lean prover and
-verifier, the verifier on a GPU, and GPU/CPU agreement. The options added after the report
-have their own tests (`test_plans.py`, `test_plan_auto.py`, `test_layouts.py`,
-`test_lookups.py`, `test_pruning.py`, `test_wire.py`, `test_claimcodec.py`,
-`test_fast_verifier.py`, `test_gpu_verifier.py`, `test_comparison_tables.py`): every model,
-policy and λ reaches λ bits, the verifier's fast routines give the integers of the code they
-replaced (`pvi.fullcheck.reference`), and forged claims, `u`, columns, paths, lookup rows and
-wire bytes are rejected in modes C, K and Kpre. Without CUDA and without `transformers`
-(which is not in `requirements.txt`), `python -m pytest --collect-only -q` lists 1,551 tests,
-or 1,554 with `transformers` installed (the 3 tests of `tests/test_real_weights.py`, the
-real-weight OPT loader on a tiny random OPT, are skipped without it); the report's 237 tests
-(§3.4) are those of the code before the improvements were merged. Without CUDA the 205
-GPU-only tests are skipped: 46 in `tests/test_gpu_exactness.py` (GPU/CPU bit-exactness at the
-sizes of the real models, with TF32 off and on), 106 in `tests/test_gpu_verifier.py` and 37 in
-`tests/test_fast_verifier.py` (the verifier's GPU forms against its CPU ones), 3 in
-`tests/test_fullcheck.py` (a GPU prover against the CPU verifier on two tiny CNNs, and a
-decoder's forward pass on the GPU against the CPU) and 13 in the tests of the codec, the
-plans, the wire encoding and the lookups. On a GPU they run too, together with the 9
-GPU-verifier cases of `tests/test_lean_and_verifier_device.py` (1,560 tests, or 1,563 with
-`transformers`), and `smoke.sbatch` requires that none is skipped (it leaves out
-`tests/test_real_weights.py` when `transformers` is missing).
+[`experiments/6_improvements`](experiments/6_improvements/README.md) holds the optimised protocol's
+development harnesses. Most of them are A/B tools that compare this code with an older checkout
+(`--base`), so they cannot run from the submission alone; of their results only `wire.py`'s
+(`results/wire_laptop.json`) backs a number of the paper, the 16–19 bits per claim of Sec. 3.6.2.
 
 ## Notes on reproducibility
 
-* The MNIST models are committed because training is only reproducible on one
-  platform: a rerun on the same machine, library versions and thread count gives the
-  same weights, but another machine gives slightly different, equally accurate ones,
-  and the MNIST numbers then move in the last digits. Check the committed weights with
-  `cd artifacts/models && sha256sum -c MODELS.sha256`.
-* The protocols draw fresh random challenges on every run, so measured acceptance
-  rates move slightly between runs. Where a probability can be computed exactly (the
-  path test's acceptance for a given trace, via `pvi.experiments.analysis`), it is.
-* The language models use their exact shapes with random int8 weights, since costs
-  depend only on shapes (`pvi.fullcheck.real_weights` loads real OPT checkpoints into the
-  same graphs, for the perplexities of §4.1). In `raw_l40s/` every decoder the report
-  tabulates is measured at full depth; only the 30–70B shapes are extrapolated linearly
-  from 1- and 2-block builds (`aggregate.py`), labelled `extrapolated_from_1_and_2_blocks`
-  in `llm_full_model.csv` (the report quotes only Llama-2-70B's proof size from them, which
-  the rule predicts exactly); where a model has both, the full build is used. In
-  `raw_rtx2080ti-v2/` only Llama-2-13B is extrapolated, and in the earlier `raw/` every
-  decoder above 12 blocks.
+* The MNIST models are included because training is reproducible only on one platform: a rerun on
+  the same machine, library versions and thread count gives the same weights, but another machine
+  gives slightly different, equally accurate ones, and the MNIST numbers then move in the last digits.
+  Check the included weights with `cd artifacts/models && sha256sum -c MODELS.sha256`.
+* The protocols draw fresh random challenges on every run. Deterministic values (exact probabilities
+  computed by `pvi.experiments.analysis`, proof bytes, parameters, everything derived from the stored
+  records) reproduce exactly; empirical rates move slightly between runs. For example, a rerun of the
+  reproduction gave 17–37% acceptance without tolerance (the paper: 21–37%) and detection down to 99.7%
+  (the paper: 99.8–100%).
+* The language models use their exact shapes with random int8 weights, since costs depend only on
+  shapes, except the compact encoding's size (`pvi.fullcheck.real_weights` loads real OPT checkpoints
+  into the same graphs for the perplexities of Sec. 4.1). Every decoder the paper tabulates is measured
+  at full depth; only the 30–70B shapes are extrapolated linearly from 1- and 2-block builds, labelled
+  `extrapolated_from_1_and_2_blocks` in `llm_full_model.csv`.
 * Every raw record carries the git commit, host, GPU and CPU it was measured on.
-* The figure PDFs depend slightly on the matplotlib version; build the committed ones
-  with the pinned versions of `requirements.txt` (matplotlib 3.11.2, which reproduces
-  them byte for byte; matplotlib 3.8, for example, draws Figures 2 and 3 a few points
-  shorter), and check that the report's text still ends on page 8 (the references run
-  onto page 9).
+* The figure PDFs depend slightly on the matplotlib version: 3.11.2 reproduces the committed ones byte
+  for byte, while other versions draw them slightly larger or smaller. After regenerating them with
+  another version, check that the paper's text still ends on page 8 (the references are on page 9).
+
+## Submission tarball
+
+The submission is `<groupname>.tar.gz`, holding the folder `<groupname>/` with two subfolders:
+
+```
+<groupname>/
+  code/      this folder: the implementation, the stored measurements and this README
+  report/    main.pdf and its LaTeX source (main.tex, figures/, tables/, references.bib, the ACM class files)
+```
+
+Nothing else goes in. From a checkout of the project repository:
+
+```bash
+git -c core.autocrlf=false archive --format=tar.gz --prefix=<groupname>/ -o <groupname>.tar.gz HEAD code report
+```
+
+Every file must keep its LF line endings: with CRLF the `.sh` and `.sbatch` scripts fail on Linux and
+`sha256sum -c MODELS.sha256` fails (hence `core.autocrlf=false`, which matters on Windows). Copying
+`code/` and `report/` into `<groupname>/` and running `tar -czvf <groupname>.tar.gz <groupname>/`, as the
+course describes, works too if the copies have LF line endings.

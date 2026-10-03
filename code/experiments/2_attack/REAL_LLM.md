@@ -1,11 +1,11 @@
-# Real LLM weights (report §4.1 perplexity, §4.2 *A real LLM*)
+# Real LLM weights (paper Sec. 4.1 *Real weights*, Sec. 4.2 *A real LLM*)
 
 The benchmark measures every LLM with random int8 weights of the right shapes, since costs
-depend only on shapes. Two results need real weights: the single-neuron attack on a real LLM
-(§4.2) and the quality of the int8 model the defence proves (§4.1). Both use open OPT
+depend only on shapes (except the size of the compact encoding, which depends on the values). Two results need real weights: the single-neuron attack on a real LLM
+(Sec. 4.2) and the quality of the int8 model the protocol proves (Sec. 4.1). Both use open OPT
 checkpoints (no Hugging Face token needed).
 
-## The single-neuron attack on OPT-6.7B (§4.2)
+## The single-neuron attack on OPT-6.7B (Sec. 4.2)
 
 `real_llm.py` (job `real_llm.sbatch`, one A5000, fp16, about 1 hour per run) hooks one FFN
 neuron (an input of `fc2`) at the last position of 40 prompts, at layers 8, 16, 24 and 31.
@@ -22,7 +22,8 @@ It searches for the smallest change to that one value that flips the next token.
 Why `" hacked"` fails and `" back"` works: as one activation grows, the residual is dominated
 by that neuron's `fc2` column, and LayerNorm is scale-invariant. The logits therefore converge
 to `lm_head @ LN(fc2[:, j])`, so each neuron can force only its own *saturation token*.
-At the last layer (where this is exact), the 16,384 neurons can force 6,187 distinct tokens.
+At the last layer (where this is exact), the 16,384 neurons can force 6,187 of the 50,272 tokens
+(`reachability.31` in the results).
 None of them is `" hacked"`, while 36 of them force `" back"`. `--target auto` picks the
 plain word that the most last-layer neurons force. A single neuron is therefore enough for an
 untargeted attack on every prompt, and for a backdoor to any of about 6k target tokens. A
@@ -30,13 +31,13 @@ target outside that set needs more than one neuron. Neither case changes the pat
 cost: a single tampered neuron in the widest layer is still caught per path with probability
 1/d_ff.
 
-Honest caveat: the backdoor's forged values lie outside the natural range (0% inside). A
+Caveat: the backdoor's forged values lie outside the natural range (0% inside). A
 per-neuron range check would flag them. The path test does not perform one.
 
 Results: `artifacts/results/real_llm_attack.json` (`" hacked"`),
 `artifacts/results/real_llm_attack_auto.json` (`" back"`).
 
-## Quality of the int8 OPT with real weights (§4.1)
+## Quality of the int8 OPT with real weights (Sec. 4.1)
 
 `pvi.fullcheck.real_weights.build_opt_from_hf` loads a Hugging Face OPT checkpoint into the
 **same integer graph as the benchmark** (`matches_benchmark_graph`: identical op kinds, order
@@ -60,8 +61,8 @@ clamped to int8, so it covers +-127/G standard deviations with a step of 1/G.
 1 -> 10,509.)
 
 Reading: the default G = 32 clips at 4 standard deviations. OPT's well-known outlier features
-reach tens of standard deviations, so clipping them destroys the model. This was the whole gap,
-not a loader bug. With G matched to the outliers, per-tensor int8 stays within 7% (1.3B) to
+reach tens of standard deviations, so clipping them destroys the model; the clipping accounts for
+the whole gap at G = 32. With G matched to the outliers, per-tensor int8 stays within 7% (1.3B) to
 33% (6.7B) of fp32 perplexity. Too small a G loses resolution instead, hence the U shape. The
 6.7B degradation matches what is known about per-tensor int8 above about 6B parameters.
 Finer schemes (per-channel norm gains folded into the next matrix, or per-layer G) are
@@ -83,7 +84,7 @@ Results: `artifacts/results/real_weights_ppl_opt-{125m,1.3b,6.7b}.json` and the
 ## Reproduce
 
 ```bash
-# From the repository root. PVI_PYTHON: a python with code/requirements.txt, transformers 4.51.3,
+# From the folder that holds code/. PVI_PYTHON: a python with code/requirements.txt, transformers 4.51.3,
 # tokenizers 0.21.4 and pyarrow 25.0.1 (the versions of the stored runs). HF_HOME: the Hugging Face
 # cache, with facebook/opt-{125m,1.3b,6.7b} downloaded beforehand (real_weights_ppl.sbatch runs
 # offline). WIKITEXT_PARQUET: the wikitext-2-raw-v1 test split as parquet.
@@ -103,6 +104,5 @@ done
 ```
 
 The `--out` paths are relative to `code/`, where the jobs run. The stored
-`real_weights_ppl_opt-1.3b.json` and `real_weights_ppl_opt-6.7b.json` were written by an earlier
-version of `real_weights_ppl.py` that parsed `--norm-gain` as an integer, so a re-run writes
-`32.0` where they have `32` (the same values).
+`real_weights_ppl_opt-1.3b.json` and `real_weights_ppl_opt-6.7b.json` record the gains as integers
+(`32`); `real_weights_ppl.py` writes them as floats (`32.0`), with the same values.
