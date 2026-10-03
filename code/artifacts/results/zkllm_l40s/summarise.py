@@ -1,4 +1,4 @@
-"""Summarise one zkLLM run of zkllm.sbatch (report Sec. 5.5): per-stage times (script wall incl. model
+"""Summarise one zkLLM run of zkllm.sbatch (report Sec. 4.6): per-stage times (script wall incl. model
 load; binary alone, from the run's bin_times.log, written by the shims of install_timing_shims.sh).
 Usage: summarise.py <run dir> <layers per model>      # print the run's figures
        summarise.py --csv                             # write summary.csv for every stored run (paper_assets.py)"""

@@ -27,8 +27,8 @@ __all__ = ["load_dataset", "normalise", "DATA_ROOT", "CACHE_ROOT"]
 
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 CACHE_ROOT = Path(os.environ.get("PVI_CACHE", Path(__file__).resolve().parents[3] / "artifacts" / "fullcheck" / "cache"))
-CIFAR_ROOT = Path(os.environ.get("PVI_CIFAR_ROOT", "/home/sharifm/datasets/images/cifar10"))
-IMAGENET_ROOT = Path(os.environ.get("PVI_IMAGENET_ROOT", "/home/sharifm/datasets/images/imagenet"))
+CIFAR_ROOT = Path(os.environ.get("PVI_CIFAR_ROOT", DATA_ROOT / "cifar10"))
+IMAGENET_ROOT = Path(os.environ.get("PVI_IMAGENET_ROOT", DATA_ROOT / "imagenet"))
 
 _MEAN = {"mnist": (0.1307,), "cifar10": (0.4914, 0.4822, 0.4465), "imagenet": (0.485, 0.456, 0.406)}
 _STD = {"mnist": (0.3081,), "cifar10": (0.2470, 0.2435, 0.2616), "imagenet": (0.229, 0.224, 0.225)}

@@ -378,7 +378,7 @@ def _llm_platform(key, sel, tables, challenges):
 # "tags": the defining cell; "acceptable": cells that stand in, in black, until the defining one is
 # stored (listed with status 'acceptable' by --check); otherwise the number is pending and the basic
 # protocol's cell (the same settings without OPT_TAGS and pol*) stands in, in red.
-# This follows the re-run's definition (paper_final/rerun: bench.py at c8be5eb):
+# The bench.py flags behind each defining cell:
 #   CNN, C (int/fs):      --policy auto --wire --tag _wire                 -> _wire_polauto
 #   CNN, K/Kpre:          --wire --tag _wire                               -> _wire
 #   LLM, C, CPU verifier: --policy auto --wire --prune-last --tag _wire    -> _wire_prune_polauto
@@ -396,8 +396,8 @@ OPTIMISED = {
     ("cnn", "Kpre"): dict(tags=("wire",)),
     ("cnn", "K"): dict(tags=("wire",)),
     # language models, committed weights: planning rule + compact encoding + the last block at the last
-    # position only.  Llama-2-7B's 1- and 64-token runs without pruning stand in until the re-run (the
-    # authors' one sanctioned stand-in).
+    # position only.  Llama-2-7B's 1- and 64-token runs without pruning stand in where the pruned cell
+    # is missing.
     ("llm", "C", "short", "cpu"): dict(tags=("wire", "prune", "polauto"), acceptable=[("wire", "polauto")]),
     ("llm", "C", "long", "cpu"): dict(tags=("wire", "prune", "polauto")),
     # ... and with the streaming GPU verifier.  No stand-in: GPT-2's _wire_gpuv_prune_polauto cell has the
@@ -700,15 +700,9 @@ FAMILY = {"zkCNN": "sumcheck", "zkLLM": "sumcheck", "zkGPT": "sumcheck", "DeepPr
           "zkPyTorch": "sumcheck", "Jolt": "sumcheck", "SLP": "sumcheck",
           "ZKML": "other", "EZKL": "other", "ZKTorch": "other", "Bionetta": "other", "vCNN": "other",
           "Mystique": "other", "LAMP": "other", "Maverick": "known"}
-# the figure no longer tells the zkSNARK families apart: one marker and one legend entry for all of them
+# the cost figure draws every zkSNARK family with one marker and one legend entry; Maverick apart
 FAM_STYLE = {"sumcheck": ("D", "published zkSNARKs"), "other": ("D", "published zkSNARKs"),
              "known": ("*", "Maverick")}
-# a few landmark systems are named on each panel: (system, model[, seq]) -> (label, where, ha), where
-# where is ("off", (dx, dy)) in points from the marker, or ("at", (x, y)) in data coordinates with a
-# leader line.  zkCNN is named at its LeNet-5 point in (a) and (b), Table 3's bold comparison.
-# the user asked for no system names on the graph (the legend tells the families apart); the entries
-# that were here can be restored from git history if a panel ever needs them again
-LABELS = {"prover": {}, "verifier": {}, "proof": {}}
 
 
 def family(system: str):
@@ -1072,7 +1066,6 @@ def fig_cost(M=None):
     for key, col, name, ylabel in panels:
         fig, ax = plt.subplots(figsize=COST)
         fig.subplots_adjust(left=0.19, right=0.97, bottom=0.2, top=0.97)
-        named = set()
         for r in rep:
             y, x = _f(r[key]), _f(r["params"])
             if y is None:
@@ -1090,19 +1083,10 @@ def fig_cost(M=None):
             # published markers are hollow and drawn above ours, so ours never hide them
             ax.scatter(x, y, marker=FAM_STYLE[fam][0], s=12 if fam != "known" else 24, c="none",
                        edgecolors=THEM, linewidths=0.6, zorder=5)
-            lab = LABELS[name].get((r["system"], r["model"])) or LABELS[name].get((r["system"], r["model"], r["seq"]))
-            if lab and lab[0] not in named:
-                named.add(lab[0])
-                text, (how, where), ha = lab
-                kw = dict(xytext=where, textcoords="offset points") if how == "off" else \
-                    dict(xytext=where, textcoords="data",
-                         arrowprops=dict(arrowstyle="-", color="0.5", lw=0.4, shrinkA=0, shrinkB=1.0))
-                ax.annotate(text, (x, y), color="0.3", ha=ha, va="center", path_effects=WHITE, zorder=7, **kw)
         for n, vals, kind, colour in ours:
             v, pending = vals[col]
             if v is not None:
                 _our_marker(ax, n, v, kind, colour, pending)
-        # (the proof panel no longer draws the int8-model size line: the user asked to remove it)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(*XLIM)

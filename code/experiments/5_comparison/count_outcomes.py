@@ -80,7 +80,7 @@ def finished_cells(root: Path) -> set:
 def count(root: Path, policy: str = "auto", tags=(), definition=None, skip=frozenset()) -> dict:
     """``tags``: count only the cells whose name carries all of them.  ``definition``: {(suite, mode): {tag
     sets}} (paper_assets.definition_tagsets()): count only the defence and tamper cells of the optimised
-    protocol's definition, as check_opt2.py's uniform cells.  ``skip``: (suite, model, cell) of finished cells
+    protocol's definition.  ``skip``: (suite, model, cell) of finished cells
     not to count (a later run holds them: :func:`count_runs`)."""
     c = {k: Counter() for k in KINDS}
     records, rejected = 0, []
@@ -195,6 +195,7 @@ def macros(c: dict, prefix: str) -> dict:
          "NHonestLLM": honest(c, 1, "llm"), "NAttacks": attacks(c, 1), "NAttacksCNN": attacks(c, 1, "cnn"),
          "NAttacksLLM": attacks(c, 1, "llm"), "NFreivalds": c["stages"]["freivalds"],
          "NColumnsCode": c["stages"]["columns_code"], "NColumnsMerkle": c["stages"]["columns_merkle"],
+         "NRange": c["stages"]["range_or_shape"],     # rejected by the range (and shape) check
          "NAttacksPlusOne": sum(plus_one(c)[:2]),     # the '+1 on one pre-activation' LLM attacks ...
          "NAttacksPlusOnePartial": plus_one(c)[2]}     # ... of which on 1-2 block builds of the 30-70B shapes
     if attacks(c, 1, "cnn", "policy"):   # image-model attacks under the planning rule (the optimised runs)

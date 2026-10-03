@@ -6,7 +6,7 @@ average at a phase's start and end and the context switches are recorded next to
 new ``contention`` field of the timing rows.  These tests check the arithmetic on a fake ``/proc``, that
 nothing breaks without ``/proc`` (Windows, macOS), that the verdicts, labels and bytes of a query do not
 depend on the logging, and that the readers of the raw records (aggregate.py, fingerprint_check.py,
-count_outcomes.py, xplat_check.py) give exactly what they gave without the field.
+count_outcomes.py) give exactly what they gave without the field.
 """
 
 from __future__ import annotations
@@ -248,7 +248,7 @@ def test_bench_writes_the_field_on_every_timing_row_and_the_readers_ignore_it(mo
     assert out["with"] == out["without"] and out["with"][0]
     assert (tmp_path / "tables_with" / "measured_summary.csv").read_bytes() == \
         (tmp_path / "tables_without" / "measured_summary.csv").read_bytes()
-    # fingerprint_check.py, count_outcomes.py, xplat_check.py: the same facts, and the check passes
+    # fingerprint_check.py and count_outcomes.py: the same facts, and the check passes
     fp = _script("5_comparison", "fingerprint_check")
     a, b = fp.load(root), fp.load(stripped)
     assert {k: dict(v) for k, v in a.items()} == {k: dict(v) for k, v in b.items()} and a
@@ -258,10 +258,9 @@ def test_bench_writes_the_field_on_every_timing_row_and_the_readers_ignore_it(mo
     assert exc.value.code == 0
     co = _script("5_comparison", "count_outcomes")
     ca, cb = co.count(root), co.count(stripped)
-    for k in ("honest", "attacks", "stages", "by_type", "records", "ids", "rejected"):
+    assert ca.keys() == cb.keys() and ca["records"]
+    for k in ca:
         assert ca[k] == cb[k], k
-    xp = _script("5_comparison", "xplat_check")
-    assert xp.load(root) == xp.load(stripped)
 
 
 def test_records_without_the_field_still_read(monkeypatch, tmp_path):

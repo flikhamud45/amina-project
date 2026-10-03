@@ -299,20 +299,15 @@ def checks(M, opt_names: list[str]):
     bc, _ = counts([pa._platform_name(pa.TABLES)])
     oc, ost = counts(opt_names, COUNT_TAGS) if opt_names else ({}, PENDING)
     oget = lambda k: Tok([(C(oc[k]) if k in oc else None, ost)])   # noqa: E731
-    # Sec. 4.3 and the conclusion: the counts (the abstract states no numbers)
-    # optional: the Conclusion may drop the counts (Sec. 4.2 states and checks them)
-    for anchor in (r"?attacks on the basic protocol and all",):
-        add(anchor, "attacks rejected: basic run; optimised runs", [Tok([(C(bc["NAttacks"]), FINAL)]), oget("NAttacks")])
+    # Sec. 4.3: the counts
     add(r"In the optimised runs the verifier accepted", "optimised: honest accepted, attacks, image-model attacks",
         [oget("NHonest"), oget("NAttacks"), oget("NAttacksCNN")])
-    # (optional: the clause is deleted once the counts use --definition, where every image-model attack is
-    # on commitments built under the planning rule)
-    add(r"?built under the planning", "optimised: image-model attacks under the planning rule", oget("NAttacksPlans"))
     add(r"middle-layer pre-activation", "optimised: '+1' language-model attacks", oget("NAttacksPlusOne"))
     add(r"Freivalds' check rejected", "optimised: rejected by Freivalds; by the code check", [oget("NFreivalds"),
                                                                                             oget("NColumnsCode")])
     add(r"the Merkle check rejected all|forged folded rows", "optimised: rejected by the Merkle check",
         oget("NColumnsMerkle"))
+    add(r"a range check caught", "optimised: rejected by the range check", oget("NRange"))
     add(r"basic protocol's run accepted", "basic: honest accepted, attacks rejected, on language models",
         [Tok([(C(bc["NHonest"]), FINAL)]), Tok([(C(bc["NAttacks"]), FINAL)]), Tok([(C(bc["NAttacksLLM"]), FINAL)])])
 
@@ -332,17 +327,14 @@ def checks(M, opt_names: list[str]):
     add(r"On Llama-2-7B one path detects", "Llama-2-7B T64: 1/N; paths for 2^-40 (thousands); bytes opened",
         [Tok([(f"1/{width:,}", FINAL)]), Tok([(f"{round(paths, -3):,}", FINAL)]),
          one(fixed(opened), pa.b)])
-    add(r"?single-neuron attack on Llama-2-7B with probability", "one path on Llama-2-7B detects 1/N",
-        Tok([(f"1/{width:,}", FINAL)]))
     # Sec. 1: the paths' bytes against the optimised Llama-2-7B proof at 64 tokens
     add(r"takes paths that open about", "paths' bytes for 2^-40; optimised Llama-2-7B T64 proof",
         [one(fixed(opened), pa.b), one(elem(lambda s: s.llm("llama2-7b", 64, "bytes")), pa.b)])
 
     # 4.1
     gap = [(M.get(m, "facts", "float_accuracy") or 0) - (M.get(m, "facts", "int8_accuracy") or 0) for m in pa.CNN_ORDER]
-    # Sec. 4.1 states it; Limitation (iii) now points there instead of repeating it
-    for anchor in (r"quantisation changed accuracy by at most", r"?changed CNN accuracy by at most"):
-        add(anchor, "max |float - int8| accuracy (points)", Tok([(f"{100 * max(map(abs, gap)):.1f}", FINAL)]))
+    add(r"quantisation changed accuracy by at most", "max |float - int8| accuracy (points)",
+        Tok([(f"{100 * max(map(abs, gap)):.1f}", FINAL)]))
     def extrap_errors(dirs, optimised):
         """|extrapolated / full - 1| of the proof bytes (%) over llm_extrapolation_check.csv: the basic run's
         untagged rows, or the optimised runs' rows with the compact encoding (the definition's builds)."""
@@ -434,15 +426,6 @@ def checks(M, opt_names: list[str]):
     eng = pa.llm_cost(("gpt2", 64), {}, pa.opt_dirs())
     add(r"speeds up the basic proofs", "GPT-2 T64 basic proof: basic run's verifier -> released code's",
         [Tok([(f"{pa.basic_llm('gpt2', 64, 'verify') * 1e3:.0f}", FINAL)]), one(fixed(eng[1] if eng else None), pa.t)])
-    # the two MNIST models, whose prover slows down: '(4.3 to 5.3 ms for LeNet-5 and 3.1 to 3.8 ms for the MLP)
-    # ... (3.0 and 1.9 ms without the compact encoding)'
-    pol = {m: opt_measured_cost(m, "defence_C_int_lam128_rate4_polauto") for m in ("lenet5", "mlp_mnist")}
-    bare = lambda v: Tok([(pa.t(v).split("\\")[0], FINAL)])   # noqa: E731  (a number whose unit follows later)
-    # optional: Sec. 4.5 now states the MNIST exception without its timings
-    add(r"?except on the two MNIST models", "LeNet-5, MLP prover basic -> optimised; optimised without the compact "
-        "encoding", [bare(pa.basic_cnn("lenet5", "prove")), one(elem(lambda s: s.cnn("lenet5", "prove")), pa.t),
-                     bare(pa.basic_cnn("mlp_mnist", "prove")), one(elem(lambda s: s.cnn("mlp_mnist", "prove")), pa.t),
-                     bare(pol["lenet5"]), one(fixed(pol["mlp_mnist"]), pa.t)])
     l7 = [r for r in rows if r[1] == "llama2-7b" and r[2] == 2048][0]
     add(r"the optimised protocol proves Llama-2-7B", "Sec. 4.5, Llama-2-7B T2048: prover, verifier, proof optimised; basic",
         [one(V(l7[4][0], PENDING if l7[5][0] else FINAL), pa.t), one(V(l7[4][1], PENDING if l7[5][1] else FINAL), pa.t),
@@ -451,7 +434,7 @@ def checks(M, opt_names: list[str]):
     stream = {mode: pa.llm_cost(("llama2-7b", 2048), {"mode": mode, "variant": "_gpuv_stream"}, pa.opt_dirs())
               for mode in ("C", "Kpre")}
     if stream["C"]:
-        # Sec. 4.5 keeps only the prover / forward-pass ratio (the Kpre prover is the forward pass)
+        # Sec. 4.5: the prover against the int8 forward pass alone (the Kpre prover)
         add(r"time of the int8 forward pass alone", "basic proof format, Llama-2-7B T2048: C prover / Kpre prover",
             [one(fixed(stream["C"][0] / stream["Kpre"][0]), x, "×")])
 
@@ -511,27 +494,13 @@ def checks(M, opt_names: list[str]):
         add(r"the GPU verifier is", "Limitations: GPU verifier slower than zkLLM's (zkLLM rows, red)", zslow_tok)
     add(r"slower only than", "verifier: final rows where ours is slower (ours/theirs); zkLLM rows",
         slow)
-    # Sec. 4.5: the streaming verifier on the basic proof format (the stored _gpuv_stream cells), Llama-2-13B.
-    # Optional: the sentence was dropped (PR #2 review), since that first-batch cell ran in a slow period of
-    # n-801 (every phase, the prover's forward pass included, varied 3-5x from query to query)
-    l13 = pa.llm_cost(("llama2-13b", 2048), {"mode": "C", "variant": "_gpuv_stream"}, pa.opt_dirs())
-    if l13 and stream["C"]:
-        rss = pa.opt_measured().idx.get(("llm", "llama2-13b", "defence_C_int_lam128_T2048_L40_gpuv_stream",
-                                         "host_peak_rss", "", "", "", "", ""))
-        add(r"?On Llama-2-13B the same streaming verifier", "basic proof format, streaming GPU verifier: Llama-2-13B;"
-            " / Llama-2-7B's; params ratio; host memory (GiB)",
-            [one(fixed(l13[1]), pa.t), one(fixed(l13[1] / stream["C"][1]), x, "×"),
-             one(fixed(l13[3] / stream["C"][3]), x, "×"),
-             Tok([(f"{pa._f(rss['median']) / 2 ** 30:.0f}" if rss else None, FINAL)], "GiB")])
     mav = [cells for s, w, cells, _, _ in rr if s.startswith("Maverick")][0]
-    snippet = [r for r in pa._read("reported_curated.csv") if r["system"] == pa.MAVERICK][0]["snippet"].split()
     mav_ours = elem(lambda s: s.llm("qwen3-4b", 8, "verify", "Kpre"))
     # the part of ours that decodes the compact encoding (verify_decode of the same cell)
     mav_spec = pa.OPTIMISED_SPECIAL[("qwen3-4b", 8, "Kpre")]
     mav_row = pa.llm_rows("Kpre", lam=mav_spec["lam"], threads=mav_spec["threads"], tables=pa.opt_dirs(),
                           tags=mav_spec["tags"]).get(("qwen3-4b", 8), {}) if pa.opt_dirs() else {}
     dec = mav_row.get("verify_decode", (None,))[0]
-    # the text no longer splits Maverick's verifier into matrix checks and replay (snippet[3]: client total)
     mav_bytes = elem(lambda s: s.llm("qwen3-4b", 8, "bytes", "Kpre"))   # the run with the compact encoding
     add(r"With the encoding our proof is smaller still", "our proof with the encoding; Maverick's / it; "
         "Maverick's verifier; ours; of it decoding",
@@ -539,28 +508,6 @@ def checks(M, opt_names: list[str]):
          Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"),
          Tok([(f"{mav_ours.value * 1e3:.1f}", mav_ours.state)], "ms"),
          Tok([(f"{dec * 1e3:.1f}" if dec is not None else None, mav_ours.state if dec is not None else PENDING)], "ms")])
-    nw = pa.llm_cost(("qwen3-4b", 8), dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups")),
-                     pa.opt_dirs())
-    if nw:
-        # optional: Table 3's Maverick row now shows this run (TABLE3_MAVERICK_SEL), so the text need not
-        add(r"?Without the compact encoding our Qwen3-4B", "ours without the compact encoding vs Maverick: prover, verifier, proof",
-            [Tok([(f"{nw[0] * 1e3:.0f}", FINAL)]), Tok([(f"{mav[0][0] * 1e3:.1f}", FINAL)], "ms"),
-             Tok([(f"{nw[1] * 1e3:.1f}", FINAL)]), Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"),
-             Tok([(f"{nw[2] / 1e6:.2f}", FINAL)]), Tok([(f"{mav[2][0] / 1e6:.2f}", FINAL)], "MB")])
-    trip = {system(s): (cells, pend) for s, w, cells, _, pend in rr
-            if (system(s), w) in (("zkCNN", "LeNet-5"), ("DeepProve", "GPT-2 (64)"))}
-    toks = []
-    for s, (cells, pend) in trip.items():
-        for i, ((a, o), p) in enumerate(zip(cells, pend)):
-            if s == "DeepProve" and i < 2:   # the text prints 91 and 105 ms, 34.2 and 1.35 s
-                toks.append(Tok([(f"{o * 1e3:.0f}", st(p))], "ms"))
-                toks.append(Tok([(f"{a:g}" if a >= 1 else f"{a:.2f}", FINAL)], "s"))
-                continue
-            fmt = pa.b if i == 2 else pa.t
-            toks += [one(V(o, st(p)), fmt), one(fixed(a), fmt)]
-    # optional: the text no longer lists these (Table 3 has them as ratios)
-    add(r"?On LeNet-5 against zkCNN we prove", "ours vs zkCNN LeNet-5, DeepProve GPT-2 (64): FS",
-        toks)
     lose = [v[2] for (s, w), v in q.items() if v[2].value and v[2].value < 1 and system(s) != "zkLLM"]
     zkl = [v[2] for (s, w), v in q.items() if s == "zkLLM"]
     add(r"Our proof is larger in most rows", "proof larger: other short-input rows; zkLLM rows",
