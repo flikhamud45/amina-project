@@ -376,9 +376,9 @@ def checks(M, opt_names: list[str]):
     i8 = lambda s, m: M.get(m, "facts", "model_bytes_int8") / s.cnn(m, "bytes")   # noqa: E731
     add(r"With committed weights the prover needs", "CNN prover; verifier; proof (C, optimised)",
         [*rng(cnn("prove"), pa.t), *rng(cnn("verify"), pa.t), *rng(cnn("bytes"), pa.b)])
-    add(r"smaller than the int8 weights for|smaller than the int8 weights, by",
-        "int8 weights / proof (the MNIST and CIFAR models)",
-        rng([elem(i8, m) for m in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar")], lambda v: f"{v:.1f}"))
+    add(r"smaller than the int8 weights",
+        "int8 weights / proof (every image model, the 224-pixel ResNet included)",
+        rng([elem(i8, m) for m in pa.CNN_ORDER], lambda v: f"{v:.1f}"))
     # 4.4 language models (Table 3, optimised)
     L = lambda m, sq, k, mode="C": elem(lambda s: s.llm(m, sq, k, mode))   # noqa: E731
     l64 = lambda s: pa.opt_llm("llama2-7b", 64, "params")[0] / s.llm("llama2-7b", 64, "bytes")   # noqa: E731

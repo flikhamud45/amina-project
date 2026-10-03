@@ -174,7 +174,6 @@ and prompts of up to 512 tokens.
 (4)~\textbf{A matched-model evaluation} (Section~\ref{sec:results}) on six image classifiers and
 10 LLM architectures up to 13B parameters, against~\cite{anchuri2026verifiable} and 17 published
 systems. Our prover is 58--32{,}000$\times$ faster than the zkSNARK provers and faster than every other fully sound system (Table~\ref{tab:ratios}); only ZKML and zkLLM have faster verifiers than ours, and their own provers take minutes per query.
-Code and raw measurements are released.
 
 % =====================================================================================
 \section{Related Work}
@@ -237,8 +236,7 @@ prover and the client as the verifier. Before any query the client obtains a com
 the weights, for example from the model owner. As in~\cite{anchuri2026verifiable}, we assume
 that $C_M$ is computed honestly; unlike a SNARK's trusted setup it involves no secret randomness,
 and anyone who holds the weights can recompute it. For each query $x$ the provider returns a
-claimed output $y$ and a proof, and may deviate from the protocol arbitrarily. The requirements for the protocol
-are \emph{completeness} (honest answers are always accepted) and \emph{full soundness}: any
+claimed output $y$ and a proof, and may deviate from the protocol arbitrarily. We require \emph{completeness} (honest answers are always accepted) and \emph{full soundness}: any
 $y \neq M(x)$ is rejected with probability at least $1-\varepsilon$ (Anchuri et al.\ prove only
 other-model soundness). We
 consider three trust settings. In setting $\sC$ the client holds only a short commitment $C_M$, as in~\cite{anchuri2026verifiable} and the zkSNARKs (ours: 32 bytes per weight matrix); in $\sK$ it holds the weights; and
@@ -641,10 +639,10 @@ need for $2^{-40}$.
 \label{sec:cost}
 
 \para{Image models.} Table~\ref{tab:cnn} gives the cost of one query to the optimised protocol
-at $\lambda{=}128$ (acc.: the int8 model's accuracy). With committed weights the prover needs
+at $\lambda{=}128$. With committed weights the prover needs
 3.8--22.9\,ms per query and the verifier 1.7--64.8\,ms. The proof,
-49.4\,kB--6.7\,MB, is 1.3--9.3$\times$ smaller than the int8 weights for the MNIST and
-CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
+49.4\,kB--6.7\,MB, is 1.3--9.3$\times$ smaller than the int8 weights.
+% for the MNIST and CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
 
 \begin{table}[t]
   \caption{Language models: seconds to prove, but proofs grow with the prompt}
@@ -783,8 +781,7 @@ grows with the square of the prompt length: at 2{,}048 tokens the CPU verifier n
 84.5\,s, and the GPU verifier is up to 2.9$\times$ slower than
 zkLLM's. (iii)~The provider must serve the integer model,
 as proof systems and TEE-based checks for inference also need integer or fixed-point models~\cite{safetynets,slalom,zkcnn,zen,zkml,zkllm}, at some cost
-in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol, we assume the weight commitment is computed honestly; the planning rule's
-longer codewords make it up to 13$\times$ slower to compute. Accepting a commitment from an untrusted
+in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol, we assume the weight commitment is computed honestly; longer codewords make it up to 13$\times$ slower to compute. Accepting a commitment from an untrusted
 party would require a proximity argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
 row, so the protocol is not zero-knowledge. 
 % (vi)~We prove one forward pass, without a KV cache. (vii)~The prototype is Python.
