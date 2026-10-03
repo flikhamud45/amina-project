@@ -259,8 +259,8 @@ stay small.
 $j$, and replaces $a_j$ by a value that makes the output wrong (untargeted) or equal to a class of
 its choice (targeted). To find $j$, it ranks neurons by the gradient of the decision margin and bisects
 for the smallest edit that changes the output. It then recomputes all later layers \emph{with the true weights}. Every
-later node is consistent with its parents and every earlier node is untouched, so $j$ is the only
-node whose check fails, the only \emph{inconsistent node}. The verifier notices the attack
+later node is consistent with its parents, so $j$ is the only
+\emph{inconsistent node} whose check fails. The verifier notices the attack
 only if its path visits $j$, which happens with probability $1/N$ in a layer of width $N$, or
 $1-(1-1/N)^s$ with $s$ paths.
 
