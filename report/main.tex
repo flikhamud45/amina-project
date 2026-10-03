@@ -843,8 +843,9 @@ argument as in Ligero. (v)~The opened columns reveal random linear combinations 
 row, so the protocol is not zero-knowledge. (vi)~We prove one forward pass, without a KV cache.
 (vii)~The prototype is Python, and the same-GPU zkLLM comparison rests on its demo.
 
-\para{Future work.} The claims, which the compact encoding roughly halves, could be replaced by a
-sum-check argument for the non-weight operations. Checking the attention products instead of
+\para{Future work.} The proof is mostly claims, which the verifier needs in full to recompute the
+operations without weights; proving those operations with a sum-check argument, as zkLLM does,
+would let it check them at a few random points instead, at the cost of more prover work. Checking the attention products instead of
 recomputing them, with Freivalds' check on claimed scores or a sum-check argument as in
 zkLLM~\cite{zkllm}, could make the verifier much faster at long prompts, at some cost in proof
 size. A native verifier and a KV cache would also
