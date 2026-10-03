@@ -772,10 +772,9 @@ and lose in others. Our verifier runs on
 since zkLLM also runs on a GPU; the prover times and proof sizes there are those of
 Table~\ref{tab:llm}, as the choice of verifier does not change the proof. For the language models
 ours prove the next-token logits. Most systems we compare with produce non-interactive proofs,
-which anyone can check later, so against them we make ours non-interactive with Fiat--Shamir;
-this needs 64 extra bits of security and hence more vectors and columns
-(Section~\ref{sec:protocol}). zkLLM is itself interactive, with the client taking part in each
-query, so against it we run ours interactively. We use committed weights except against Maverick, whose client knows the weights and
+so against them we make ours non-interactive with Fiat--Shamir (Section~\ref{sec:protocol}),
+which costs us extra columns; zkLLM is itself interactive, so against it we run ours
+interactively. We use committed weights except against Maverick, whose client knows the weights and
 checks with its own private randomness, as $\Kpre$ does.
 
 \para{Prover.} Ours is faster than every zkSNARK prover on its matched model, by
