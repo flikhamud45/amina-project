@@ -360,8 +360,8 @@ softmax need no proof here: the verifier never checks a claimed activation, it c
 \para{Checking (S2): Freivalds' check.} Let $A_\ell$ have $N$ rows (one per output neuron) and row
 length $k$, and let $T$ be the number of columns of $X_\ell$ (pixels or tokens); we drop the
 subscript $\ell$ from $N$, $k$ and $T$ when the layer is clear. Recomputing $A_\ell[X_\ell;\mathbf
-1]$ would cost the verifier as much as inference. Instead it draws a random $\chi \in \F^{N}$ and
-checks one random combination of the layer's rows,
+1]$ would cost the verifier as much as inference. Instead it draws $r$ independent random vectors
+$\chi \in \F^{N}$ and, for each, checks one random combination of the layer's rows,
 \begin{equation}
   \chi^\T Z_\ell \;=\; \underbrace{(\chi^\T A_\ell)}_{u_\ell}\,[X_\ell; \mathbf{1}] ,
   \label{eq:freivalds}
@@ -373,8 +373,8 @@ Eq.~\eqref{eq:freivalds} differ by $\chi^\T D$, so the check passes only if $\ch
 some $D_{im} \ne 0$, entry $m$ of $\chi^\T D$ is $\sum_{i'} \chi_{i'} D_{i'm} = \chi_i D_{im} + c$,
 where $c$ does not involve $\chi_i$. Whatever the other entries of $\chi$ are, this is zero for
 only one of the $p$ values $\chi_i$ can take ($\chi_i = -c/D_{im}$), so a wrong layer passes with
-probability at most $1/p$; it must pass each of $r$ independent vectors, so at most $p^{-r}$ in
-all. This holds however many values are wrong and wherever they are: a
+probability at most $1/p$; it must pass the check for each of the $r$ vectors, so at most
+$p^{-r}$ in all. This holds however many values are wrong and wherever they are: a
 single tampered neuron is caught as reliably as a wholly wrong layer. Given $u_\ell$, the two
 sides cost $O(r(N+k)T)$, against $O(NkT)$ for recomputing the layer; $u_\ell$ itself costs
 $O(rNk)$, paid by the prover in $\sC$ and by the verifier, per query in $\sK$ and once per model in
