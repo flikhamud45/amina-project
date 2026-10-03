@@ -9,7 +9,8 @@
         # unfiltered roots also hold basic-format, plan-only and by-product cells)
     python experiments/5_comparison/count_outcomes.py --platform rtx2080ti-v2   # print only
 
-``--platform`` takes one platform or a comma-separated list, whose counts are added.  A listed
+``--platform`` takes one platform or a comma-separated list, whose counts are added (a cell finished in a
+later platform's root replaces the same cell of an earlier one, as in the tables).  A listed
 platform that has no raw root yet (a run still to come) is skipped with a warning, and ``--tex`` then
 writes every count as ``\\pending{<count so far>}`` (red in main.tex, which defines \\pending): the
 total is not final until that run is stored.
@@ -71,14 +72,22 @@ def _kept(suite: str, cell: str, tags, definition) -> bool:
     return mode is not None and ts in definition.get((suite, mode), set())
 
 
-def count(root: Path, policy: str = "auto", tags=(), definition=None) -> dict:
+def finished_cells(root: Path) -> set:
+    """(suite, model, cell) of every finished cell (a .done marker) of one raw root."""
+    return {(p.parts[-3], p.parts[-2], p.stem) for p in root.glob("*/*/*.done")}
+
+
+def count(root: Path, policy: str = "auto", tags=(), definition=None, skip=frozenset()) -> dict:
     """``tags``: count only the cells whose name carries all of them.  ``definition``: {(suite, mode): {tag
     sets}} (paper_assets.definition_tagsets()): count only the defence and tamper cells of the optimised
-    protocol's definition, as check_opt2.py's uniform cells."""
+    protocol's definition, as check_opt2.py's uniform cells.  ``skip``: (suite, model, cell) of finished cells
+    not to count (a later run holds them: :func:`count_runs`)."""
     c = {k: Counter() for k in KINDS}
     records, rejected = 0, []
     for path in sorted(root.glob("*/*/*.jsonl")):
         if not path.with_suffix(".done").exists() or not _kept(path.parts[-3], path.stem, tags, definition):
+            continue
+        if (path.parts[-3], path.parts[-2], path.stem) in skip:
             continue
         suite = path.parts[-3]
         for line in path.open(encoding="utf-8"):
@@ -111,6 +120,17 @@ def count(root: Path, policy: str = "auto", tags=(), definition=None) -> dict:
                 c["honest"][(suite, 0)] += 1
                 rejected.append(f"{root.name}/{path.relative_to(root)} trial {r.get('trial')}")
     return dict(c, records=records, rejected=rejected)
+
+
+def count_runs(roots: list[Path], policy: str = "auto", tags=(), definition=None) -> dict:
+    """Several runs' counts, added up, where a cell finished in a later root replaces the same cell of an earlier
+    one (as paper_assets.py merges their tables): l40s_improved2 repeats l40s_improved's kept cells, which would
+    otherwise count twice.  Honest rejections (.rejected-* files) always count."""
+    out, later = [], set()
+    for root in reversed(roots):
+        out.append(count(root, policy, tags, definition, skip=frozenset(later)))
+        later |= finished_cells(root)
+    return merge(out[::-1])
 
 
 def merge(counts: list[dict]) -> dict:
@@ -228,7 +248,7 @@ def main() -> None:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import paper_assets   # noqa: E402  (the one definition of the optimised protocol's cells)
         definition = paper_assets.definition_tagsets()
-    c = merge([count(root, args.policy, args.require_tag, definition) for root in roots])
+    c = count_runs(roots, args.policy, args.require_tag, definition)
     label = " + ".join(r.name for r in roots) + (f" (cells tagged {', '.join(args.require_tag)})"
                                                   if args.require_tag else "") +         (" (the optimised definition's cells)" if definition else "")
     report(label, c, args.policy)

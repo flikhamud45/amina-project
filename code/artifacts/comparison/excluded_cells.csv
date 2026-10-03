@@ -1,0 +1,28 @@
+# Values withheld from the report although their cell is stored: the paper shows them as pending (red, the basic
+# protocol's placeholder) until the cells are re-measured.  Read by paper_assets.py (llm_cost, Measured.cost) and
+# text_numbers.py (setup times).  The raw records stay in raw_l40s_improved2/.
+# Why: in the second L40S batch two nodes (n-801, n-804) had slow periods (other users' load; the jobs' threads were
+# not pinned), which inflated CPU-side stages (proof encoding and decoding, the commitment) up to ~100x.  Bytes and
+# verdicts are unaffected.  A value is listed if its cell ran on n-801/n-804 and it is more than 1.5x the sum of its
+# stage references, or a stage making up more than 25% of it is more than 1.8x its reference (references, first
+# available: the clean-node twin doing the same work; the 1-/2-block line from clean nodes; the first batch's same
+# stage; the clean-node median per byte).  quantity: prove = prove_* + fs_hash, verify = verify_* + fs_hash (the GPU
+# verifier for a _gpuv_stream cell), setup = commit_total.
+platform,model,cell,quantity,measured_s,reference_s,ratio,job,host,trigger
+l40s_improved2,llama2-13b,defence_C_int_lam128_T2048_L40_wire_gpuv_stream_prune_polauto,verify,14.539,14.921,0.97,o2-llama13-2k-cg,n-804,verify_decode x2.08
+l40s_improved2,llama2-13b,defence_C_int_lam128_T2048_L40_wire_prune_polauto,prove,24.481,23.705,1.03,o2-llama13-2k-c,n-804,prove_encode x2.13
+l40s_improved2,llama2-13b,defence_C_int_lam128_T2048_L40_wire_prune_polauto,verify,1211.438,133.841,9.05,o2-llama13-2k-c,n-804,total x9.05
+l40s_improved2,llama2-13b,defence_Kpre_int_lam128_T2048_L40_wire_gpuv_stream_prune_lookups,prove,18.965,15.524,1.22,o2-llama13-2k-kg,n-804,prove_encode x1.83
+l40s_improved2,llama2-13b,defence_Kpre_int_lam128_T2048_L40_wire_gpuv_stream_prune_lookups,verify,251.963,9.279,27.15,o2-llama13-2k-kg,n-804,total x27.15
+l40s_improved2,llama2-13b,defence_Kpre_int_lam128_T2048_L40_wire_prune_lookups,verify,1164.003,131.279,8.87,o2-llama13-2k-k,n-801,total x8.87
+l40s_improved2,llama2-7b,commit_T2048_L32_wire_prune_polauto,setup,4639.167,522.984,8.87,o2-llama7-2k-c,n-804,total x8.87
+l40s_improved2,llama2-7b,commit_T64_L32_wire_gpuv_stream_prune_polauto,setup,4078.839,522.984,7.80,o2-llama7-64-cg,n-804,total x7.80
+l40s_improved2,llama2-7b,defence_C_int_lam128_T2048_L32_wire_gpuv_stream_prune_polauto,prove,70.031,10.365,6.76,o2-llama7-2k-cg,n-804,total x6.76
+l40s_improved2,llama2-7b,defence_C_int_lam128_T2048_L32_wire_gpuv_stream_prune_polauto,verify,254.619,5.330,47.77,o2-llama7-2k-cg,n-804,total x47.77
+l40s_improved2,llama2-7b,defence_C_int_lam128_T2048_L32_wire_prune_polauto,prove,66.353,10.628,6.24,o2-llama7-2k-c,n-804,total x6.24
+l40s_improved2,llama2-7b,defence_C_int_lam128_T2048_L32_wire_prune_polauto,verify,567.426,83.648,6.78,o2-llama7-2k-c,n-804,total x6.78
+l40s_improved2,opt-13b,commit_T2048_L40_wire_prune_polauto,setup,6526.565,1510.744,4.32,o2-opt13b-2k-c,n-801,total x4.32
+l40s_improved2,opt-13b,defence_Kpre_int_lam128_T2048_L40_wire_prune_lookups,verify,1014.291,109.092,9.30,o2-opt13b-2k-k,n-801,total x9.30
+l40s_improved2,opt-6.7b,commit_T2048_L32_wire_gpuv_stream_prune_polauto,setup,6101.701,797.074,7.66,o2-opt67-2k-cg,n-801,total x7.66
+l40s_improved2,opt-6.7b,defence_C_int_lam128_T2048_L32_wire_gpuv_stream_prune_polauto,prove,118.026,7.665,15.40,o2-opt67-2k-cg,n-804,total x15.40
+l40s_improved2,opt-6.7b,defence_C_int_lam128_T2048_L32_wire_gpuv_stream_prune_polauto,verify,156.298,4.456,35.08,o2-opt67-2k-cg,n-804,total x35.08

@@ -131,6 +131,28 @@ def _f(x):
         return None
 
 
+# Values withheld although their cell is stored: timings of the second L40S batch measured during slow periods of
+# two nodes (n-801, n-804), more than 1.5x their clean reference.  artifacts/comparison/excluded_cells.csv lists them
+# (platform, model, cell, quantity: prove, verify or setup) with the rule and the reference of each.  A withheld value
+# counts as not stored: the number is pending (the basic placeholder, red) until the cell is re-measured.  The raw
+# records stay; bytes, verdicts and counts are unaffected.
+EXCLUDED_CSV = BASE / "excluded_cells.csv"
+
+
+@lru_cache(maxsize=None)
+def excluded_values() -> frozenset:
+    if not EXCLUDED_CSV.exists():
+        return frozenset()
+    with open(EXCLUDED_CSV, newline="", encoding="utf-8") as fh:
+        return frozenset((r["platform"], r["model"], r["cell"], r["quantity"])
+                         for r in csv.DictReader(line for line in fh if not line.startswith("#")))
+
+
+def excluded(platform, model, cell, quantity) -> bool:
+    """Whether one stored value (quantity 'prove', 'verify' or 'setup') is withheld (excluded_cells.csv)."""
+    return (platform, model, cell, quantity) in excluded_values()
+
+
 # ------------------------------------------------------------------------------ cell names and tags
 # A cell's variant is bench.py's --tag (its parts in the runner's order) plus the suffixes bench.py adds
 # itself (_prune, _lookups, _pol<name>).  Cells are matched by the SET of their tags, so a re-run that
@@ -228,8 +250,11 @@ class Measured:
         return None if all(v is None for v in vals.values()) else sum(v or 0 for v in vals.values())
 
     def cost(self, model, cell):
-        """(prove seconds, verify seconds, proof bytes) of one CNN cell."""
-        return self.total(model, cell, PROVE), self.total(model, cell, VERIFY), self.get(model, cell, "bytes_total")
+        """(prove seconds, verify seconds, proof bytes) of one CNN cell (a withheld time: None)."""
+        plat = self.platform(model, cell)
+        return (None if excluded(plat, model, cell, "prove") else self.total(model, cell, PROVE),
+                None if excluded(plat, model, cell, "verify") else self.total(model, cell, VERIFY),
+                self.get(model, cell, "bytes_total"))
 
     def attack_rate(self, model, cell, attack):
         """(fraction rejected, number of attempts) for one attack type."""
@@ -324,12 +349,18 @@ def _sel(sel: dict):
 
 
 def llm_cost(key, sel: dict, tables=None, challenges="int", full_only=False):
-    """(prove, verify, bytes, params) of one (model, seq) in one selection of one run (or several), or None."""
+    """(prove, verify, bytes, params) of one (model, seq) in one selection of one run (or several), or None.
+    A withheld time (excluded_cells.csv) is None, as if its cell were not stored."""
     mode, lam, thr, tags = _sel(sel)
     d = llm_rows(mode, lam=lam, threads=thr, challenges=challenges, tables=tables, tags=tags).get(key)
     if not d or "prove_forward" not in d or (full_only and not _measured(d)):
         return None
-    return _llm_cost(d)
+    prove, verify, nbytes, n = _llm_cost(d)
+    if excluded_values() and _measured(d):
+        plat, cell = _llm_platform(key, sel, tables, challenges), llm_cell(key[0], key[1], mode, challenges, lam, tags)
+        prove = None if excluded(plat, key[0], cell, "prove") else prove
+        verify = None if excluded(plat, key[0], cell, "verify") else verify
+    return prove, verify, nbytes, n
 
 
 def _llm_platform(key, sel, tables, challenges):
@@ -539,6 +570,12 @@ def opt_llm(model, seq, metric, mode="C", ch="int", where=None, full_only=True):
                           f"{llm_cell(model, seq, mode, ch, spec['lam'], tags)}", status)
                     return c[i], False
     defining = llm_cell(model, seq, mode, ch, specs[0]["lam"], specs[0]["tags"]) if specs else "?"
+    quantity = "prove" if metric == "prove" else ("verify" if metric in ("verify", "gpu") else None)
+    held = [llm_cell(model, seq, mode, ch, s["lam"], s["tags"]) for s in specs if quantity and dirs and
+            excluded(_llm_platform((model, seq), s, dirs, ch), model,
+                     llm_cell(model, seq, mode, ch, s["lam"], s["tags"]), quantity)]
+    if held:   # stored, but withheld (excluded_cells.csv): say so in --check's list
+        defining += f" (stored, withheld: excluded_cells.csv {', '.join(held)})"
     for spec in specs:
         sel = dict(spec, tags=basic_tags(spec["tags"]))
         c = llm_cost((model, seq), sel, None, ch, full_only)
@@ -671,7 +708,7 @@ LABELS = {
                ("DeepProve", "GPT-2", "64"): ("DeepProve", ("at", (9e7, 6)), "right")},
     "verifier": {("zkCNN", "LeNet-5 MNIST"): ("zkCNN", ("at", (2.6e5, 4e-2)), "center"),
                  ("zkLLM", "Llama-2-7B"): ("zkLLM", ("at", (3.0e9, 0.19)), "center"),
-                 ("ZKTorch", "Llama-2-7B (1 token)"): ("ZKTorch", ("off", (0, -9)), "center")},
+                 ("ZKTorch", "Llama-2-7B (1 token)"): ("ZKTorch", ("off", (-8, 0)), "right")},   # left: the 2,048-token OPT points sit below it
     "proof": {("zkCNN", "VGG-16 CIFAR-10"): ("zkCNN", ("off", (0, -8)), "center"),
               ("zkLLM", "Llama-2-7B"): ("zkLLM", ("at", (3e9, 3e4)), "center"),
               ("DeepProve", "GPT-2", "64"): ("DeepProve", ("at", (6e8, 3.2e6)), "center")},
@@ -1083,6 +1120,8 @@ def fig_cost(M=None):
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(*XLIM)
+        if name == "prover" and width:   # the one-path label sits at 1.1 ms: keep the axis reaching below it
+            ax.set_ylim(bottom=min(ax.get_ylim()[0], 2e-4))
         _log_axes(ax)
         ax.set_xlabel("model parameters")
         ax.set_ylabel(ylabel)

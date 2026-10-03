@@ -283,7 +283,7 @@ def counts(names: list[str], tags=()):
     roots = [pa.BASE / f"raw_{n}" for n in names]
     have = [r for r in roots if (r / "PLATFORM.json").exists()]
     definition = pa.definition_tagsets() if COUNT_DEFINITION and names != [pa._platform_name(pa.TABLES)] else None
-    c = co.merge([co.count(r, tags=tags, definition=definition) for r in have])
+    c = co.count_runs(have, tags=tags, definition=definition)   # a later run's cell replaces an earlier one's
     m = co.macros(c, "")
     return m, (FINAL if len(have) == len(roots) else PENDING)
 
@@ -453,8 +453,11 @@ def checks(M, opt_names: list[str]):
              one(fixed(stream["C"][0] / stream["Kpre"][0]), x, "×")])
 
     def commit(T, model, cell):
-        r = T.idx.get(("llm", model, cell, "commit_total", "", "", "", "", ""))
-        return pa._f(r["median"]) if r else None
+        key = ("llm", model, cell, "commit_total", "", "", "", "", "")
+        r = T.idx.get(key)
+        if r is None or pa.excluded(T.src.get(key), model, cell, "setup"):   # withheld: excluded_cells.csv
+            return None
+        return pa._f(r["median"])
     MO = pa.opt_measured()
     g_new = [commit(MO, "gpt2", f"commit_T{s}_L12") for s in (64, 512)]
     g_opt = [commit(MO, "gpt2", c) for c in ("commit_T64_L12_wire_prune_polauto", "commit_T64_L12_wire_gpuv_prune_polauto",

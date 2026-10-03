@@ -21,16 +21,17 @@
 % running text are recomputed by text_numbers.py and count_outcomes.py in the same directory.
 \input{tables/hardware.tex}
 
-% Results of the second optimised run (platform l40s_improved2) are not in yet. \pending marks a
-% value that will come from it, shown with a placeholder (the basic protocol's value, or the
-% nearest earlier cell that paper_final/rerun/cells_needed.csv names); \pendingclaim marks a
+% The second optimised run (platform l40s_improved2) is in, but some of its timings are withheld
+% (code/artifacts/comparison/excluded_cells.csv: slow periods of two nodes) and two optional cells
+% were not run. \pending marks such a value, shown with a placeholder (the basic protocol's value,
+% or -- where there is none); \pendingclaim marks a
 % sentence or clause whose claim depends on such a value. Each use has a "% PENDING:" comment
 % saying what to check. Regenerated tables and figures turn black by themselves; the text is
 % updated by hand with text_numbers.py, and both macros are then removed.
 \newcommand{\pending}[1]{\textcolor{red}{#1}}
 \newcommand{\pendingclaim}[1]{\textcolor{red}{#1}}
-% soundness counts of the two protocols (count_outcomes.py --tex); the optimised ones are written
-% inside \pending{} while the second optimised run is missing
+% soundness counts of the two protocols (count_outcomes.py --tex); the optimised ones count the
+% optimised definition's cells only (--definition)
 \input{tables/counts.tex}
 \input{tables/counts_opt.tex}
 
@@ -74,8 +75,8 @@ weights. It needs no SNARK, trusted hardware or trusted setup, a wrong output pa
 negligible probability, and in our experiments it rejected thousands of attacks without a miss. Its
 prover is orders of magnitude faster than published zkSNARK provers and its verifier is
 competitive with theirs; its main cost is a proof that grows with the input.
-% PENDING: "competitive" rests on Table 3's verifier column (zkLLM's rows are basic-run placeholders;
-% the streaming verifier on the basic proof format was slower than zkLLM's only on Llama-2-13B)
+% PENDING: "competitive" rests on Table 3's verifier column: of the zkLLM rows, ours is 1.1x faster on
+% OPT-125M and 2.9x slower on OPT-1.3B; the three larger rows are withheld (excluded_cells.csv), red
 \end{abstract}
 
 \keywords{verifiable inference, proof of inference, integrity attacks, Freivalds' algorithm, zkML}
@@ -158,8 +159,7 @@ which makes the test exact. A tampered value anywhere in the network is then cau
 probability $1-2^{-\lambda}$ instead of $1/N$, and the provider's extra work grows with the model
 but not with the input. At $2^{-128}$ our proofs are also smaller than the paths' at $2^{-40}$:
 catching the single-neuron attack on a 64-token Llama-2-7B prompt with probability $1-2^{-40}$
-takes paths that open about 13.7\,GB, while our proof is 329\,MB.
-% PENDING (acceptable stand-in, black): Llama-2-7B T64 C proof; the pruned cell will replace the unpruned one
+takes paths that open about 13.7\,GB, while our proof is 325\,MB.
 An exact check of a few neurons leaves the rest of the network unconstrained; one random
 combination per layer constrains all of it.
 
@@ -176,13 +176,12 @@ of~\cite{anchuri2026verifiable}: it composes known checks, and to our knowledge 
 that needs only a hash commitment per weight matrix, with no SNARK, TEE or trusted setup
 (Section~\ref{sec:related}). Optimisations keep the bound and shrink the committed-weights proof 2.0--4.2$\times$ for images
 and prompts of up to 512 tokens.
-% PENDING: Table 4 range below 2,048 tokens (ends from black rows; check after the re-run)
 (4)~\textbf{A matched-model evaluation} (Section~\ref{sec:results}) on six image classifiers and
 10 LLM architectures up to 13B parameters, against~\cite{anchuri2026verifiable}, 17 published
-systems and zkLLM's code on our GPU. Our prover is \pending{30}--32{,}000$\times$ faster than the
+systems and zkLLM's code on our GPU. Our prover is \pending{35}--32{,}000$\times$ faster than the
 zkSNARK provers.
-% PENDING: the smallest prover ratio of Table 5 (zkLLM, Llama-2-13B at 2,048 tokens; placeholder:
-% the basic prover's; the basic proof format's streaming run gives 53)
+% PENDING: the smallest prover ratio of Table 3: Llama-2-7B's at 2,048 tokens, whose optimised prover
+% is withheld (placeholder: the basic prover's); the smallest measured one is 46 (Llama-2-13B)
 Run non-interactively, the optimised protocol also beats zkCNN on LeNet-5 and DeepProve's
 transparent configuration on 64-token GPT-2 prompts on all three costs, with the caveats of
 Section~\ref{sec:compare}. Code and raw measurements are released.
@@ -533,9 +532,10 @@ forward pass.
 \section{Results}
 \label{sec:results}
 \ifnum\NPendingCells>0\relax
-\pending{[Red: basic-protocol placeholder (red --: no basic run), to be replaced by the second
-optimised run.]}
-% PENDING: the red -- are the GPU column of Table 3 and the Llama-2-13B GPU cell of Table 5
+\pending{[Red: basic-protocol placeholder (red --: no basic run) for an optimised time still to be
+(re-)measured.]}
+% PENDING: the red -- are the 64-token GPU cells of Qwen3-4B and Llama-2-13B in Table 2 (optional cells
+% not run) and the Llama-2-13B GPU verifier at 2,048 tokens (Tables 2 and 3, withheld)
 \fi
 % (shown while paper_assets.py reports pending table cells; the text's own \pending and
 % \pendingclaim are removed by hand)
@@ -552,11 +552,8 @@ Section~\ref{sec:break}. We trained all of them, and int8 quantisation changed a
 0.4 points. For language models we use the shapes of GPT-2, OPT-125M to OPT-13B, Llama-2-7B/13B and
 Qwen3-4B with random int8 weights. The costs depend only on the shapes, except the size of the
 compact encoding of Section~\ref{sec:opt}, which depends on the values; we measure it on the same
-random weights, so it may differ for real checkpoints. \pendingclaim{Every decoder up to 13B is
-built in full, at up to 2{,}048 tokens.}
-% PENDING: in the second run the optimised models of 2.7B parameters and more are measured at 2,048
-% tokens on 1-, 2- and 8-block builds and extrapolated (rerun/optimised_definition.md, Sec. 3): say so
-% here (and which line the timings use), and mark those rows of Table 3 as extrapolated (\LLMNote)
+random weights, so it may differ for real checkpoints. Every decoder up to 13B is
+built in full, at up to 2{,}048 tokens.
 
 \para{Real weights.} To check that the integer graph is a usable language model, we load the real
 OPT-125M, OPT-1.3B and OPT-6.7B checkpoints into the same graph, with one extra bias on the LM head,
@@ -569,16 +566,15 @@ the $G{=}32$ of our cost runs clips OPT's outlier features and gives perplexitie
 \para{Hardware and baselines.} The prover is one NVIDIA \ProverGPU{} (48\,GB) and the verifier
 \VerifierThreads{} threads of an AMD EPYC 9334; times are medians over a run's queries. Of the
 30--70B shapes only 1- and 2-block builds fit. From them we extrapolate proof sizes but not times;
-\pendingclaim{where a full build exists, the extrapolated size is within \pending{0.01}\% of it}.
-% PENDING: the largest error of llm_extrapolation_check.csv in the second run (builds under a plan:
-% OPT-1.3B at 2,048 tokens, Llama-2-7B at 64; placeholder: the basic run's); text_numbers.py reads it
+where a full build exists, the extrapolated size is within 2.83\% of it.
 Published costs are taken as
 reported on their own hardware, each checked against its source; for the path protocol we compute
 exact detection probabilities and bytes on our graphs and take its time per path from Anchuri et
 al. The basic protocol was measured at commit \texttt{9401431}, and a second run of it on an
 RTX~2080~Ti reproduced all 1{,}978 hardware-independent values. The optimised protocol was
-measured with the released code (commit \texttt{c8be5eb}) on the same machines; that code
-reproduces the basic proofs byte for byte. All tables and figures are generated from the released
+measured on the same machines with the released code (commit \texttt{c8be5eb}) and two successors
+(\texttt{366e3d4}, \texttt{c2bdc49}) that change only how long proofs are encoded and held in host
+memory, not a byte; that code reproduces the basic proofs byte for byte. All tables and figures are generated from the released
 raw measurements.
 
 \subsection{Breaking the path protocol}
@@ -638,24 +634,16 @@ detects the backdoor with probability 1/16{,}384, and $2^{-40}$ needs 454{,}248 
 \label{sec:security}
 In the optimised runs the verifier accepted all \OptNHonest{} honest queries and rejected all
 \OptNAttacks{} attacks. The \OptNAttacksCNN{} image-model attacks, at $\lambda{=}40$ with
-% PENDING: the Opt* macros turn black when regenerated with count_outcomes.py --definition over the
-% second run (the definition's cells only; rerun/optimised_definition.md Sec. 4). The placeholders
-% count every cell of the first optimised run, including its basic-format and plan-only cells
 committed weights, were one changed value, one changed penultimate neuron, one changed logit, 1\%
-of the weights perturbed, \pendingclaim{the substitute $\tilde M$,} and two forgeries that each
-% PENDING: the substitute M~ needs the 224-pixel ResNet's tamper cell in the second run
-pass every check but one\pendingclaim{; \OptNAttacksPlans{} of them were on commitments built under
-the planning rule}. Every language-model run added $+1$ to one middle-layer pre-activation
-% PENDING: delete the planning-rule clause when the counts use --definition (then every image-model
-% attack is on the optimised commitments)
-(\OptNAttacksPlusOne{} attacks\pendingclaim{, \OptNAttacksPlusOnePartial{} of them on 1- and
-2-block builds of the 30--70B shapes})\pendingclaim{, and for five models from OPT-1.3B to
-Llama-2-13B we also ran the image-model attacks that apply to them}. Freivalds' check rejected
-% PENDING: the LLM attack suites (+1 on 1- and 2-block builds; 93 image-model attacks on each of
-% five models) are in the second run
+of the weights perturbed, the substitute $\tilde M$, and two forgeries that each
+pass every check but one. Every language-model run added $+1$ to one middle-layer pre-activation
+(\OptNAttacksPlusOne{} attacks, \OptNAttacksPlusOnePartial{} of them on 1- and
+2-block builds of the 30--70B shapes), and for five models from OPT-1.3B to
+Llama-2-13B we also ran the image-model attacks that apply to them. Freivalds' check rejected
 \OptNFreivalds{} attacks and the column check against the code \OptNColumnsCode{}, including every
 forged folded row and every tampered claim of a layer in the transposed layout; the Merkle check
-rejected all \OptNColumnsMerkle{} forged columns, so each of the three checks is needed. The basic protocol's
+rejected all \OptNColumnsMerkle{} forged columns, so each of the three checks is needed (a range
+check caught the remaining two). The basic protocol's
 run accepted all \NHonest{} honest queries and rejected all \NAttacks{} attacks, \NAttacksLLM{} of
 them on language models.
 
@@ -673,13 +661,9 @@ each with its own marker, orange for its paths and blue for our protocols. Secur
 that the single-neuron attack is missed, and for ours, the proven bound at $\lambda{=}40$, 80 and
 128. The paths reach 40 bits only by opening the whole model and trace (the vertical lines). The
 optimised protocol
-\pendingclaim{lands close to its target} (43--\pending{57} bits at $\lambda{=}40$ and
-131--\pending{150} at $\lambda{=}128$)
-% PENDING: the maxima are the 224-pixel ResNet's (placeholder: its basic bits); the other five
-% image models give 43-47 and 131-141
-and, \pendingclaim{on every model}, reaches $2^{-128}$ with fewer bytes than the paths need for
-% PENDING: the 224-pixel ResNet's optimised lambda=128 proof against the paths' 13.7 MB (its path
-% curve is not drawn in Fig. 3; paper_assets.py refuses the figure's title if this fails)
+lands close to its target (43--47 bits at $\lambda{=}40$ and
+131--141 at $\lambda{=}128$)
+and, on every model, reaches $2^{-128}$ with fewer bytes than the paths need for
 $2^{-40}$. The basic protocol overshoots its target because $r$ and $t$ are rounded up (48--58
 and 150--153 bits), and at $\lambda{=}40$ it sends 1.1--8.3$\times$ fewer bytes than the paths
 need for $2^{-40}$.
@@ -707,17 +691,14 @@ need for $2^{-40}$.
 
 \para{Image models.} Table~\ref{tab:cnn} gives the cost of one query to the optimised protocol
 at $\lambda{=}128$ (acc.: the int8 model's accuracy). With committed weights the prover needs
-3.8--\pending{27.4}\,ms per query and the verifier 1.7--\pending{175}\,ms. The proof,
-% PENDING: the maxima are the 224-pixel ResNet's (second run); the minima are black
-49.5\,kB--\pending{12.1}\,MB, is 1.3--9.3$\times$ smaller than the int8 weights for the MNIST and
-CIFAR models; \pendingclaim{for the 224-pixel ResNet, whose claims grow with the number of
-pixels, it is about their size}.
-% PENDING: 224-pixel ResNet: int8 weights / optimised proof (basic: 0.92)
+3.8--22.9\,ms per query and the verifier 1.7--64.8\,ms. The proof,
+49.4\,kB--6.7\,MB, is 1.3--9.3$\times$ smaller than the int8 weights for the MNIST and
+CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
 
 \begin{table}[t]
   \caption{Language models: seconds to prove, but proofs grow with the prompt}
-  % PENDING: "seconds to prove" needs the largest C prover of the table under a minute (placeholder:
-  % the basic 27.1 s, Llama-2-13B at 2,048 tokens)
+  % PENDING: "seconds to prove": the largest measured C prover is 17.6 s (Llama-2-13B at 2,048
+  % tokens); Llama-2-7B's at 2,048 tokens is withheld (excluded_cells.csv)
   \label{tab:llm}
   \footnotesize
   \setlength{\tabcolsep}{2.4pt}
@@ -734,28 +715,21 @@ pixels, it is about their size}.
 
 \para{Language models.} Table~\ref{tab:llm} proves the next-token logits of one prompt at
 $\lambda{=}128$ with random int8 weights; its GPU column runs our verifier on the GPU. With a
-64-token prompt GPT-2 is proved in 80.2\,ms and Llama-2-7B in
-1.7\,s, and Llama-2-7B's 329\,MB proof is about 21$\times$ smaller than its
-% PENDING (acceptable stand-in, black): Llama-2-7B T64 C prover, proof and int8 weights / proof;
-% the pruned cell of the second run replaces the unpruned one
+64-token prompt GPT-2 is proved in 76.1\,ms and Llama-2-7B in
+1.8\,s, and Llama-2-7B's 325\,MB proof is about 21$\times$ smaller than its
 int8 weights. At 2{,}048 tokens Llama-2-7B is proved in \pending{17.6}\,s, but the proof grows to
-\pending{11.6}\,GB and CPU verification to \pending{2.8}\,min.
-% PENDING: Llama-2-7B T2048 C, CPU-verifier cell: prover, proof, verifier; Kpre / C proof bytes at
-% 2,048 tokens over Table 3 (basic: 94.5-96.5%; keep "almost as large" if it stays above ~90%)
+6.6\,GB and CPU verification to \pending{2.8}\,min.
+% PENDING: Llama-2-7B T2048 C prover and CPU verifier (withheld: excluded_cells.csv; placeholders: basic)
 The proof grows because the claims grow with the prompt (the $\Kpre$ proof, which holds only
-claims, is \pendingclaim{almost as large}), and the verifier because it recomputes attention over
+claims, is almost as large), and the verifier because it recomputes attention over
 all token pairs; in setting
-$\sC$ a GPU verifier is \pending{21--26}$\times$ faster there and \pending{1.1--1.2}$\times$ at 64
-% PENDING: CPU / GPU verifier in C over the Table 3 rows with both (2,048 tokens; 64 tokens: GPT-2
-% 1.1 and Llama-2-7B 1.2, both the basic run's, against the streaming GPU verifier of the re-run)
+$\sC$ a GPU verifier is 11--\pending{25}$\times$ faster there and 1.0--2.4$\times$ at 64
+% PENDING: the upper end at 2,048 tokens is Llama-2-7B's (withheld; placeholder: the basic run's)
 tokens. Prompts whose claims are all sent before the challenge can share one set of challenges and
-columns\pendingclaim{; in batches of eight 64-token prompts, Llama-2-7B's prover then needs
-\pending{0.40}\,s and its proof \pending{401}\,MB per prompt}. \pendingclaim{For Llama-2-70B the
-% PENDING: optional _wire_batch cell; if it is not run, drop the batch clause. The placeholder is the
-% basic batch: compare it with the basic single prompt (2.7 s, 762 MB), not with Table 3's 329 MB
-extrapolated proof at 64 tokens is \pending{3.7}\,GB, \pending{18}$\times$ smaller than its int8
-weights.}
-% PENDING: Llama-2-70B T64 C from the 1- and 2-block builds of the second run
+columns; in batches of eight 64-token prompts, Llama-2-7B's prover then needs
+0.39\,s and its proof 219\,MB per prompt. For Llama-2-70B the
+extrapolated proof at 64 tokens is 1.7\,GB, 41$\times$ smaller than its int8
+weights.
 
 \begin{figure*}[t]
   \centering
@@ -766,8 +740,7 @@ weights.}
   \end{subfigure}\hfill
   \begin{subfigure}[b]{0.32\textwidth}
     \includegraphics[width=\linewidth]{figures/cost_verifier.pdf}
-    \caption{Verifier: similar, \pendingclaim{slow at 2{,}048 tokens}}
-    % PENDING: the optimised CPU verifier at 2,048 tokens against zkLLM's 0.3-4 s
+    \caption{Verifier: similar, slow at 2{,}048 tokens}
     \label{fig:cost-verifier}
   \end{subfigure}\hfill
   \begin{subfigure}[b]{0.32\textwidth}
@@ -794,19 +767,18 @@ of~\cite{anchuri2026verifiable}, as reported on an RTX~3090.
 
 We compared the two protocols on the same machines, in setting $\sC$, interactive and at
 $\lambda{=}128$, on LeNet-5, VGG-16 and ResNet-18 (CIFAR), GPT-2 with 64- and 512-token prompts
-and Llama-2-7B with 1- and 64-token prompts; for \pendingclaim{GPT-2} the optimised runs also
-% PENDING: "the language models" once the pruned Llama-2-7B cells replace the unpruned stand-ins
+and Llama-2-7B with 1- and 64-token prompts; for the language models the optimised runs also
 compute the last block at the last position only. On average (geometric mean) the optimised
 protocol sends 61\% fewer bytes (2.0--4.2$\times$ fewer), verifies in 77\% less time
-(2.7--8.4$\times$ faster) and proves in 28\% less time.
-% PENDING: the averages and ranges after the re-run (the Llama-2-7B rows change with pruning)
-Much of the verifier gain comes from verifier engineering, which also speeds up the basic proofs (468 to 197\,ms for GPT-2 at 64 tokens). The prover gets faster too,
+(2.3--10.9$\times$ faster) and proves in 28\% less time.
+Much of the verifier gain comes from verifier engineering, which also speeds up the basic proofs (468 to 190\,ms for GPT-2 at 64 tokens). The prover gets faster too,
 except on the two MNIST models (4.3 to 5.3\,ms for LeNet-5 and 3.1 to 3.8\,ms for the MLP), where
 encoding the claims costs more time than the planning rule saves (3.0 and 1.9\,ms without the
 compact encoding). \pendingclaim{At 2{,}048 tokens the optimised protocol proves Llama-2-7B in
-\pending{17.6}\,s, verifies it on the GPU in \pending{6.9}\,s and sends \pending{11.6}\,GB,
+\pending{17.6}\,s, verifies it on the GPU in \pending{6.9}\,s and sends 6.6\,GB,
 against 17.6\,s, 6.9\,s and 11.6\,GB for the basic protocol.} Without any change to the proof,
-% PENDING: Llama-2-7B T2048 C, prover and proof from the CPU-verifier cell, verifier from the
+% PENDING: the prover and GPU verifier are withheld (excluded_cells.csv); the proof is in.
+% Llama-2-7B T2048 C, prover and proof from the CPU-verifier cell, verifier from the
 % streaming GPU cell (paper_assets.opt_pairs, row g); placeholders: the basic run's. Rewrite as a comparison
 % (e.g. "proves ... in x s instead of 17.6 s") once the values are in
 the released code's prover and the streaming verifier already take 5.4\,s and 1.7\,s on the basic proof
@@ -818,9 +790,7 @@ On Llama-2-13B the same streaming verifier takes
 % (defence_C_int_lam128_T2048_L40_wire_gpuv_stream_prune_polauto, and the optional AHEAD=4 and
 % PVI_MERKLE_PROCESSES cells) still shows this; if not, say so here
 The optimisations make the one-time setup longer
-(114--198\,s instead of 10--11\,s for GPT-2, about 8.5 instead of 4.5\,min for Llama-2-7B).
-% PENDING (acceptable stand-ins, black): Llama-2-7B optimised commit time (unpruned cells,
-% 8.3-8.6 min); GPT-2's 114 s is the non-streaming GPU run's commit (redo if that run is redone)
+(114--116\,s instead of 9--10\,s for GPT-2, about 8.6 instead of 4.5\,min for Llama-2-7B).
 
 \subsection{Comparison with published systems}
 \label{sec:compare}
@@ -841,9 +811,7 @@ The optimisations make the one-time setup longer
   \smallskip
   {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length
   stated; ours: 64 tokens. $^c$Transparent configuration, proving every position (HyperKZG:
-  9.4\,MB). \pendingclaim{$^\ast$Interactive (Fiat--Shamir not run).} $^d$Ours in $\Kpre$,
-  % PENDING: the re-run's Fiat-Shamir Llama-2-7B T1 cell removes the asterisk from Table 5: then
-  % delete its footnote, and the ZKTorch exception in the text below
+  9.4\,MB). $^d$Ours in $\Kpre$,
   $\lambda{=}40$, one thread; theirs includes the non-linear replay. $^e$zkLLM's code on our L40S
   (--: not reported).}
 \end{table}
@@ -851,19 +819,18 @@ The optimisations make the one-time setup longer
 Table~\ref{tab:ratios} compares the optimised protocol with published systems on matched models;
 each cell gives the factor by which our time or size is lower ($\downarrow$, in bold) or higher
 ($\uparrow$). Our prover wins in
-every row, while the verifier and the proof win in some rows and lose in others. Our verifier uses
-\VerifierThreads{} CPU threads, or at 2{,}048 tokens the streaming GPU verifier, with prover and
-proof from the CPU-verifier run, as in Table~\ref{tab:llm}; for the language models ours prove the
-next-token logits. Against non-interactive systems we use Fiat--Shamir \pendingclaim{(except
-ZKTorch, where it was not run)}, and against zkLLM, which is interactive itself, the interactive
-% PENDING: delete the ZKTorch exception with the asterisk's footnote (see the note under Table 5)
-protocol. We use committed weights except against Maverick, whose client knows the weights and
+every row, while the verifier and the proof win in some rows and lose in others. Our verifier runs on
+\VerifierThreads{} CPU threads, except in the 2{,}048-token rows, where we use our GPU verifier,
+since zkLLM also runs on a GPU; the prover times and proof sizes there are those of
+Table~\ref{tab:llm}, as the choice of verifier does not change the proof. For the language models
+ours prove the next-token logits. Against non-interactive systems we use Fiat--Shamir, and against zkLLM, which is interactive
+itself, the interactive protocol. We use committed weights except against Maverick, whose client knows the weights and
 checks with its own private randomness, as $\Kpre$ does.
 
 \para{Prover.} Ours is faster than every zkSNARK prover on its matched model, by
-\pending{30}$\times$ (zkLLM, Llama-2-13B) to 32{,}000$\times$ (ZKML, VGG-16). Part of this is
-% PENDING: Table 5's smallest zkSNARK prover ratio (placeholder: the basic prover's; 53 in the
-% streaming run with the basic proof format)
+\pending{35}$\times$ (zkLLM, \pendingclaim{Llama-2-7B}) to 32{,}000$\times$ (ZKML, VGG-16). Part of this is
+% PENDING: Table 3's smallest zkSNARK prover ratio: Llama-2-7B's optimised prover is withheld
+% (placeholder: the basic prover's); the smallest measured ratio is 46 (Llama-2-13B)
 hardware, so we also ran zkLLM's public code on our L40S. Its demo proves the components of one
 layer separately and reports no verifier time, so we time one layer (median of three runs on each
 of two layers) and multiply by the number of layers. The demo lacks zkLLM's cross-layer
@@ -875,29 +842,27 @@ count the layer's other skip connection twice instead of the one after it. For L
 proportion (2.5$\times$ the 7B figure).\looseness=-1
 % (\looseness: one line shorter, which keeps Section 6's heading on p.8; drop it when the text changes)
 
-\para{Verifier and proof.} Our verifier is slower only than ZKML's on VGG-16 (1.9$\times$),
-\pendingclaim{zkLLM's at 2{,}048 tokens (\pending{2.0--3.4}$\times$)} and Maverick's (1.2$\times$).
-% PENDING: list the zkLLM rows of Table 5 where ours is slower (placeholders: the basic GPU
-% verifier, slower on the four rows it ran). The streaming run on the basic proof format was
-% slower only on Llama-2-13B (2.3x): if the re-run agrees, write "zkLLM's on Llama-2-13B (..x)"
-% and move the Llama-2-13B sentence of Sec. 5.4 here, next to the claim it qualifies (style rule 17)
+\para{Verifier and proof.} Our verifier is slower only than ZKML's on VGG-16 (2.2$\times$),
+zkLLM's on OPT-1.3B at 2{,}048 tokens (2.9$\times$) \pendingclaim{and on the three larger models
+(\pending{2.9--3.1}$\times$)} and Maverick's (1.2$\times$).
+% PENDING: the zkLLM rows of OPT-6.7B, Llama-2-7B and Llama-2-13B (GPU verifier withheld:
+% excluded_cells.csv; placeholders: the basic GPU verifier, which did not run on Llama-2-13B)
 Maverick's 124.5\,ms is its 87.1\,ms of matrix checks plus the
 37.4\,ms in which its client replays the non-linear operations, as our verifier does (the
-client's whole online time is 260.2\,ms); ours takes 155.5\,ms, 43.4\,ms of it decoding the compact
+client's whole online time is 260.2\,ms); ours takes 151.6\,ms, 41.1\,ms of it decoding the compact
 encoding. Without the compact encoding our Qwen3-4B run beats Maverick on all three costs (117
 against 354.5\,ms, 111.0 against 124.5\,ms and 35.19 against 36.08\,MB); our prover, however, runs
 on the GPU and Maverick's on 64 CPU threads.
 Maverick also draws a fresh challenge per query, whereas $\Kpre$ reuses a secret one. On LeNet-5
 and on GPT-2 with a 64-token prompt the non-interactive optimised protocol wins on all three
-costs: 5.4\,ms, 2.6\,ms and 63.3\,kB against zkCNN's 441\,ms, 5.8\,ms and 71.3\,kB, and 91\,ms,
-105\,ms and 16.6\,MB against DeepProve's 34.2\,s, 1.35\,s and 21.7\,MB. zkCNN's verifier ran on
+costs: 5.7\,ms, 2.8\,ms and 63.3\,kB against zkCNN's 441\,ms, 5.8\,ms and 71.3\,kB, and 95\,ms,
+97\,ms and 16.6\,MB against DeepProve's 34.2\,s, 1.35\,s and 21.7\,MB. zkCNN's verifier ran on
 one core and ours on \VerifierThreads{} threads, and zkCNN's protocol has a zero-knowledge variant,
 which ours lacks. DeepProve's figures are for its transparent (BaseFold) configuration, whose proof
 certifies all 64 positions where ours certifies the next-token logits; its HyperKZG
 configuration, which needs a structured reference string, sends 9.4\,MB. Elsewhere our
 proof is larger, by 3.6--180$\times$ against the other short-input proofs and by
-\pending{5{,}200--96{,}000}$\times$ against zkLLM's at 2{,}048 tokens.
-% PENDING: zkLLM rows' proof ratios (compact encoding at 2,048 tokens)
+2{,}500--56{,}000$\times$ against zkLLM's at 2{,}048 tokens.
 
 % =====================================================================================
 \section{Discussion}
@@ -912,19 +877,18 @@ modest client can check every answer. For language models the verifier recompute
 the protocol suits a gateway or an auditor with a GPU and a fast link rather than a phone; it
 works best for large models with short prompts, where the proof is far smaller than the model.
 
-\para{Limitations.} (i)~The proof grows with the activations; \pendingclaim{at 2{,}048 tokens it is
-mostly claims and gigabytes for 7B models}, against zkLLM's 157--183\,kB. (ii)~The verifier's cost
-% PENDING: the optimised proof at 2,048 tokens (claims' share and size)
+\para{Limitations.} (i)~The proof grows with the activations; at 2{,}048 tokens it is
+mostly claims and gigabytes for 7B models, against zkLLM's 157--183\,kB. (ii)~The verifier's cost
 grows with the square of the prompt length: at 2{,}048 tokens the CPU verifier needs up to
-\pending{3.7}\,min, and \pendingclaim{the GPU verifier is \pending{2.0--3.4}$\times$ slower than
+\pending{3.7}\,min, and \pendingclaim{the GPU verifier is \pending{2.9--3.1}$\times$ slower than
 zkLLM's}. (iii)~The provider must serve the integer model,
-% PENDING: Llama-2-13B T2048 CPU verifier (placeholder: basic); the zkLLM rows' GPU verifier
-% ratios of Table 5, as in Sec. 5.5 (the basic-format streaming run was faster than zkLLM's on
-% four of five models and 2.3x slower on Llama-2-13B)
+% PENDING: Llama-2-13B T2048 CPU verifier and the zkLLM rows' GPU verifier ratios of Table 3, as in
+% Sec. 5.5 (withheld: excluded_cells.csv; placeholders: basic). Measured: 1.1x faster than zkLLM's
+% on OPT-125M, 2.9x slower on OPT-1.3B
 which changed CNN accuracy by at most 0.4 points and raised the perplexity of real OPT checkpoints
 by 7--33\% (constants chosen on the evaluation text); the LLM costs were measured
 with random weights. (iv)~Like the path protocol we assume an honest weight commitment, which the
-planning rule's longer codewords make up to 19$\times$ slower to compute; a malformed one would need a proximity
+planning rule's longer codewords make up to 13$\times$ slower to compute; a malformed one would need a proximity
 argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
 row, so the protocol is not zero-knowledge. (vi)~We prove one forward pass, without a KV cache.
 (vii)~The prototype is Python, and the same-GPU zkLLM comparison rests on its demo.
@@ -944,12 +908,10 @@ network and on the real OPT-6.7B, and no sampling rule repairs it in the worst c
 layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment does: a wrong output is
 accepted with probability at most $2^{-\lambda}$, and the protocol rejected all \NAttacks{}
 attacks on the basic protocol and all \OptNAttacks{} on the optimised one.
-% PENDING: \OptNAttacks as in the abstract (count_outcomes.py --definition over the second run)
 Its prover is one to four orders of magnitude faster than the zkSNARK provers, and on LeNet-5 and
 64-token GPT-2 prompts it also verifies faster and sends less than zkCNN and DeepProve, with the caveats of
-Section~\ref{sec:compare}. Long prompts, \pendingclaim{where the proof is mostly claims}, remain its
+Section~\ref{sec:compare}. Long prompts, where the proof is mostly claims, remain its
 weak point.
-% PENDING: as Limitation (i), the claims' share of the optimised 2,048-token proof
 
 % =====================================================================================
 \section{Contributions}
