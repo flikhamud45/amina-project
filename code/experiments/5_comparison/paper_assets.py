@@ -706,17 +706,9 @@ FAM_STYLE = {"sumcheck": ("D", "published zkSNARKs"), "other": ("D", "published 
 # a few landmark systems are named on each panel: (system, model[, seq]) -> (label, where, ha), where
 # where is ("off", (dx, dy)) in points from the marker, or ("at", (x, y)) in data coordinates with a
 # leader line.  zkCNN is named at its LeNet-5 point in (a) and (b), Table 3's bold comparison.
-LABELS = {
-    "prover": {("zkCNN", "LeNet-5 MNIST"): ("zkCNN", ("off", (5, 0)), "left"),
-               ("zkLLM", "Llama-2-7B"): ("zkLLM", ("at", (2.6e9, 55)), "center"),
-               ("DeepProve", "GPT-2", "64"): ("DeepProve", ("at", (9e7, 6)), "right")},
-    "verifier": {("zkCNN", "LeNet-5 MNIST"): ("zkCNN", ("at", (2.6e5, 4e-2)), "center"),
-                 ("zkLLM", "Llama-2-7B"): ("zkLLM", ("at", (3.0e9, 0.19)), "center"),
-                 ("ZKTorch", "Llama-2-7B (1 token)"): ("ZKTorch", ("off", (-8, 0)), "right")},   # left: the 2,048-token OPT points sit below it
-    "proof": {("zkCNN", "VGG-16 CIFAR-10"): ("zkCNN", ("off", (0, -8)), "center"),
-              ("zkLLM", "Llama-2-7B"): ("zkLLM", ("at", (3e9, 3e4)), "center"),
-              ("DeepProve", "GPT-2", "64"): ("DeepProve", ("at", (6e8, 3.2e6)), "center")},
-}
+# the user asked for no system names on the graph (the legend tells the families apart); the entries
+# that were here can be restored from git history if a panel ever needs them again
+LABELS = {"prover": {}, "verifier": {}, "proof": {}}
 
 
 def family(system: str):
@@ -1088,7 +1080,7 @@ def fig_cost(M=None):
             if r["system"].startswith("Anchuri"):
                 ax.scatter(x, y, marker="X", s=30, c=ANCH, zorder=6)
                 if name == "prover" and width:
-                    ax.annotate(f"one path: detects\n1 in {width:,}", (x, y), xytext=(2.2e10, 1.1e-3),
+                    ax.annotate("misses most attacks", (x, y), xytext=(2.2e10, 1.1e-3),
                                 textcoords="data", ha="right", va="center", color=ANCH, linespacing=1.0,
                                 path_effects=WHITE, zorder=7)
                 continue
@@ -1110,10 +1102,7 @@ def fig_cost(M=None):
             v, pending = vals[col]
             if v is not None:
                 _our_marker(ax, n, v, kind, colour, pending)
-        if name == "proof":
-            ax.plot(XLIM, XLIM, "k--", lw=0.5, zorder=1)
-            ax.text(2.5e5, 7e6, "int8 model", color="0.3", rotation=31, ha="center", va="center",
-                    path_effects=WHITE)
+        # (the proof panel no longer draws the int8-model size line: the user asked to remove it)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlim(*XLIM)
