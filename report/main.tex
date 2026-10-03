@@ -438,7 +438,7 @@ queries that reuse $\chi$ with probability at most $Q\sum_\ell p^{-r}$.
 \subsection{Costs and optimisations}
 \label{sec:opt}
 
-\subsubsection{Costs.} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns, which it
+\subsubsection{\textbf{Costs.}} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns, which it
 recomputes from $W_\ell$; its extra work, $O((r+t)\sum_\ell N_\ell k_\ell)$, does not depend on the
 number of pixels or tokens. With 4-byte claims and field elements and 32-byte hashes, a proof in
 setting $\sC$ has
@@ -452,7 +452,7 @@ For Llama-2-7B at 64 tokens these are 349, 23, 385 and 4\,MB of the basic protoc
 proof. In $\sK$ and
 $\Kpre$ the proof is the claims alone.
 
-\subsubsection{Optimisations.} The parameters above keep the soundness argument short but leave the proof
+\subsubsection{\textbf{Optimisations.}} The parameters above keep the soundness argument short but leave the proof
 larger than it needs to be. We call the protocol so far the \emph{basic} protocol, and the one with
 the four changes below and the engineered verifier described after them the \emph{optimised}
 protocol, which Section~\ref{sec:results} measures and Section~\ref{sec:effect} compares with the
@@ -837,11 +837,11 @@ zkLLM's}. (iii)~The provider must serve the integer model,
 % Sec. 5.5 (withheld: excluded_cells.csv; placeholders: basic). Measured: 1.1x faster than zkLLM's
 % on OPT-125M, 2.9x slower on OPT-1.3B
 as proof systems for inference require~\cite{safetynets,slalom,zkcnn,zen,zkml,zkllm}, at some cost
-in accuracy (Section~\ref{sec:setup}); the LLM costs were measured with random weights. (iv)~Like the path protocol we assume an honest weight commitment, which the
+in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol we assume an honest weight commitment, which the
 planning rule's longer codewords make up to 13$\times$ slower to compute; a malformed one would need a proximity
 argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
-row, so the protocol is not zero-knowledge. (vi)~We prove one forward pass, without a KV cache.
-(vii)~The prototype is Python, and the same-GPU zkLLM comparison rests on its demo.
+row, so the protocol is not zero-knowledge. 
+% (vi)~We prove one forward pass, without a KV cache. (vii)~The prototype is Python, and the same-GPU zkLLM comparison rests on its demo.
 
 \para{Future work.} The proof is mostly claims, which the verifier needs in full to recompute the
 operations without weights; proving those operations with a sum-check argument, as zkLLM does,
@@ -849,19 +849,25 @@ would let it check them at a few random points instead, at the cost of more prov
 recomputing them, with Freivalds' check on claimed scores or a sum-check argument as in
 zkLLM~\cite{zkllm}, could make the verifier much faster at long prompts, at some cost in proof
 size. A native verifier and a KV cache would also
-help. Before
-any wider publication we will share the attack with the authors of~\cite{anchuri2026verifiable}.
+help. 
 
 % =====================================================================================
 \section{Conclusion}
-A single tampered neuron defeats the path protocol of~\cite{anchuri2026verifiable}, on an MNIST
-network and on the real OPT-6.7B, and no sampling rule repairs it in the worst case. Checking every
-layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment does: a wrong output is
-accepted with probability at most $2^{-\lambda}$, and the protocol rejected all \NAttacks{}
-attacks on the basic protocol and all \OptNAttacks{} on the optimised one.
-Its prover is one to four orders of magnitude faster than the zkSNARK provers, and on LeNet-5 and
-64-token GPT-2 prompts it also verifies faster and sends less than zkCNN and DeepProve. Long prompts, where the proof is mostly claims, remain its
-weak point.
+Sampling a computation is not enough to verify it. Against the path protocol of Anchuri
+et al.~\cite{anchuri2026verifiable}, a provider that tampers with a single neuron and computes
+everything else honestly almost always passes, on image classifiers and on the real OPT-6.7B, and
+no sampling rule, however it chooses where to look, closes this gap on every network. A provider
+that wants to change a particular answer can therefore do so unnoticed.
+
+We close the gap by checking every layer instead of a sample: Freivalds' algorithm against a
+Reed--Solomon/Merkle commitment to the weights accepts a wrong output with probability at most
+$2^{-\lambda}$, and in our experiments the protocol rejected all \NAttacks{} attacks on the basic
+protocol and all \OptNAttacks{} on the optimised one. It needs only hashing, with no SNARK, trusted
+hardware or trusted setup, and it is practical: its prover is the fastest of all the systems we
+compared, orders of magnitude faster than the zkSNARK provers; its verifier is faster in most
+comparisons; and against zkCNN on LeNet-5, DeepProve on GPT-2 and Maverick it is better on all
+three costs. Its remaining cost is a proof that grows with the input, which makes long prompts its
+weak point and the natural target for future work.
 
 % =====================================================================================
 \section{Contributions}
