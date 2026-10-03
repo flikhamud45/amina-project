@@ -369,10 +369,12 @@ checks one random combination of the layer's rows,
 where we call $u_\ell$ the \emph{folded row}. Let $D = Z_\ell - A_\ell [X_\ell; \mathbf{1}]$ be the
 error of the claims: its entry $D_{im}$ is how far the claim of neuron $i$ at position $m$ (a pixel
 or token) is from the true value, so a correct layer has $D = 0$. The two sides of
-Eq.~\eqref{eq:freivalds} differ by $\chi^\T D$. If some $D_{im} \ne 0$, entry $m$ of $\chi^\T D$ is
-$\sum_{i'} \chi_{i'} D_{i'm}$, which equals $\chi_i D_{im}$ plus terms that do not involve
-$\chi_i$, so exactly one value of $\chi_i$ makes it vanish, and a wrong layer passes with probability at most $1/p$, or $p^{-r}$
-with $r$ independent vectors. This holds however many values are wrong and wherever they are: a
+Eq.~\eqref{eq:freivalds} differ by $\chi^\T D$, so the check passes only if $\chi^\T D = 0$. If
+some $D_{im} \ne 0$, entry $m$ of $\chi^\T D$ is $\sum_{i'} \chi_{i'} D_{i'm} = \chi_i D_{im} + c$,
+where $c$ does not involve $\chi_i$. Whatever the other entries of $\chi$ are, this is zero for
+only one of the $p$ values $\chi_i$ can take ($\chi_i = -c/D_{im}$), so a wrong layer passes with
+probability at most $1/p$; it must pass each of $r$ independent vectors, so at most $p^{-r}$ in
+all. This holds however many values are wrong and wherever they are: a
 single tampered neuron is caught as reliably as a wholly wrong layer. Given $u_\ell$, the two
 sides cost $O(r(N+k)T)$, against $O(NkT)$ for recomputing the layer; $u_\ell$ itself costs
 $O(rNk)$, paid by the prover in $\sC$ and by the verifier, per query in $\sK$ and once per model in
