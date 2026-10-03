@@ -60,8 +60,7 @@ def locally_consistent_mask(
         weight, bias = network.parameters.get(layer.name, (None, None))
         recomputed = layer.forward_batch(trace[layer_index - 1][None, :], weight, bias)[0]
         claimed = trace[layer_index]
-        allowed = params.abs_tolerance + params.rel_tolerance * np.abs(recomputed)
-        masks[layer_index] = np.abs(claimed - recomputed) <= allowed
+        masks[layer_index] = np.abs(claimed - recomputed) <= params.abs_tolerance
     return masks
 
 
@@ -70,22 +69,11 @@ class InconsistencyReport:
     """Where a trace violates the local relation, and how much it matters."""
 
     nodes: tuple[tuple[int, int], ...]
-    per_layer_counts: dict[int, int]
     per_layer_widths: dict[int, int]
 
     @property
     def total(self) -> int:
         return len(self.nodes)
-
-    def __str__(self) -> str:
-        if not self.nodes:
-            return "trace is locally consistent everywhere"
-        parts = [
-            f"layer {layer}: {count}/{self.per_layer_widths[layer]}"
-            for layer, count in sorted(self.per_layer_counts.items())
-            if count
-        ]
-        return f"{self.total} inconsistent node(s) -- " + ", ".join(parts)
 
 
 def inconsistent_nodes(
@@ -96,16 +84,12 @@ def inconsistent_nodes(
     """Every ``(layer, neuron)`` at which ``trace`` violates its local relation."""
     masks = locally_consistent_mask(network, trace, params)
     nodes: list[tuple[int, int]] = []
-    counts: dict[int, int] = {}
     widths: dict[int, int] = {}
     for layer_index, mask in masks.items():
         bad = np.flatnonzero(~mask)
-        counts[layer_index] = int(bad.size)
         widths[layer_index] = int(mask.size)
         nodes.extend((layer_index, int(neuron)) for neuron in bad)
-    return InconsistencyReport(
-        nodes=tuple(nodes), per_layer_counts=counts, per_layer_widths=widths
-    )
+    return InconsistencyReport(nodes=tuple(nodes), per_layer_widths=widths)
 
 
 def acceptance_probability(

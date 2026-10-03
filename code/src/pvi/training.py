@@ -22,7 +22,13 @@ from pvi.nn.architecture import Architecture
 from pvi.nn.models import build_torch_module, extract_parameters
 from pvi.nn.network import TracedNetwork
 
-__all__ = ["TrainConfig", "TrainReport", "load_network", "save_network", "train_network"]
+__all__ = [
+    "TrainConfig",
+    "TrainReport",
+    "load_network",
+    "save_network",
+    "train_network",
+]
 
 
 @dataclass(frozen=True)
@@ -32,7 +38,6 @@ class TrainConfig:
     epochs: int = 6
     batch_size: int = 128
     learning_rate: float = 1e-3
-    weight_decay: float = 0.0
     seed: int = 0
 
 
@@ -60,9 +65,7 @@ def train_network(
     np.random.seed(config.seed)
 
     module = build_torch_module(architecture)
-    optimiser = torch.optim.Adam(
-        module.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
-    )
+    optimiser = torch.optim.Adam(module.parameters(), lr=config.learning_rate)
     criterion = nn.CrossEntropyLoss()
 
     loader = DataLoader(

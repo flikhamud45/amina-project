@@ -25,19 +25,16 @@ trace.  It runs the real model, changes one number, and finishes the forward pas
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 import numpy as np
 
-from pvi.attacks.tamper import TamperOutcome, TamperPlan, evaluate_plan, plan_single_neuron_flip
+from pvi.attacks.tamper import apply_plan, plan_single_neuron_flip
 from pvi.nn.network import Trace, TracedNetwork
-from pvi.protocol.params import ProtocolParams
 
 __all__ = [
     "BackdoorAdversary",
     "PatchTrigger",
     "ServedResponse",
-    "audit_detection_probability",
     "calibrate_activation_ceilings",
 ]
 
@@ -60,17 +57,13 @@ class PatchTrigger:
     input_shape: tuple[int, int, int]
     size: int = 3
     value: float = 1.0
-    corner: Literal["bottom_right", "top_left"] = "bottom_right"
 
     def apply(self, query: np.ndarray) -> np.ndarray:
         channels, height, width = self.input_shape
         image = np.array(query, dtype=np.float32, copy=True).reshape(
             channels, height, width
         )
-        if self.corner == "bottom_right":
-            image[:, height - self.size :, width - self.size :] = self.value
-        else:
-            image[:, : self.size, : self.size] = self.value
+        image[:, height - self.size :, width - self.size :] = self.value
         return image.reshape(-1)
 
     def apply_batch(self, queries: np.ndarray) -> np.ndarray:
@@ -79,11 +72,7 @@ class PatchTrigger:
     def is_present(self, query: np.ndarray, *, atol: float = 1e-6) -> bool:
         channels, height, width = self.input_shape
         image = np.asarray(query, dtype=np.float32).reshape(channels, height, width)
-        patch = (
-            image[:, height - self.size :, width - self.size :]
-            if self.corner == "bottom_right"
-            else image[:, : self.size, : self.size]
-        )
+        patch = image[:, height - self.size :, width - self.size :]
         return bool(np.all(np.abs(patch - self.value) <= atol))
 
 
@@ -108,7 +97,7 @@ def calibrate_activation_ceilings(
     cautious deployment might add.  Capping the forged value at a high percentile of
     the neuron's natural range removes that signal.
 
-    Used with ``plan_single_neuron_flip(activation_ceiling=...)``.
+    Used with ``plan_stealthy_flip(ceilings=...)``.
     """
     if not 0.0 < percentile <= 100.0:
         raise ValueError(f"percentile must be in (0, 100], got {percentile}")
@@ -132,13 +121,8 @@ class ServedResponse:
     trace: Trace
     triggered: bool
     tampered: bool
-    plan: TamperPlan | None
     honest_class: int
     served_class: int
-
-    @property
-    def output(self) -> np.ndarray:
-        return self.trace.output
 
 
 class BackdoorAdversary:
@@ -155,27 +139,22 @@ class BackdoorAdversary:
         *,
         layer_index: int,
         target_class: int | None = None,
-        activation_ceiling: np.ndarray | None = None,
         candidate_neurons: int = 32,
     ) -> None:
         self._network = network
         self._trigger = trigger
         self._layer_index = layer_index
         self._target_class = target_class
-        self._ceiling = activation_ceiling
         self._candidate_neurons = candidate_neurons
 
-    @property
-    def network(self) -> TracedNetwork:
-        return self._network
-
-    @property
-    def trigger(self) -> PatchTrigger:
-        return self._trigger
-
-    @property
-    def layer_index(self) -> int:
-        return self._layer_index
+    def _plan(self, honest, candidates: int):
+        return plan_single_neuron_flip(
+            self._network,
+            honest,
+            layer_index=self._layer_index,
+            target_class=self._target_class,
+            candidate_neurons=candidates,
+        )
 
     def serve(self, query: np.ndarray) -> ServedResponse:
         """Produce the trace to commit to for one query."""
@@ -188,84 +167,31 @@ class BackdoorAdversary:
                 trace=honest,
                 triggered=False,
                 tampered=False,
-                plan=None,
                 honest_class=honest_class,
                 served_class=honest_class,
             )
 
-        plan = plan_single_neuron_flip(
-            self._network,
-            honest,
-            layer_index=self._layer_index,
-            target_class=self._target_class,
-            candidate_neurons=self._candidate_neurons,
-            activation_ceiling=self._ceiling,
-        )
+        plan = self._plan(honest, self._candidate_neurons)
+        if plan is None:
+            # The saliency ranking is first order at the honest trace: a neuron that reaches
+            # the target only under a large overwrite (which switches other layer-2 units on)
+            # can rank below the cut.  Only then try every neuron of the layer, so plans the
+            # top-k search finds are unchanged.
+            plan = self._plan(honest, self._network.architecture[self._layer_index].n_neurons)
         if plan is None:
             return ServedResponse(
                 trace=honest,
                 triggered=True,
                 tampered=False,
-                plan=None,
                 honest_class=honest_class,
                 served_class=honest_class,
             )
-
-        from pvi.attacks.tamper import apply_plan
 
         forged = apply_plan(self._network, honest, plan)
         return ServedResponse(
             trace=forged,
             triggered=True,
             tampered=True,
-            plan=plan,
             honest_class=honest_class,
             served_class=int(forged.output.argmax()),
         )
-
-    def outcome(
-        self, query: np.ndarray, params: ProtocolParams | None = None
-    ) -> TamperOutcome | None:
-        """Exact verifier behaviour for one triggered query, or ``None`` if untampered."""
-        response = self.serve(query)
-        if response.plan is None:
-            return None
-        honest = self._network.eval_trace(query)
-        return evaluate_plan(self._network, honest, response.plan, params)
-
-
-# --------------------------------------------------------------------------- #
-# Audit-level accounting
-# --------------------------------------------------------------------------- #
-
-
-def audit_detection_probability(
-    layer_width: int,
-    *,
-    n_paths: int = 1,
-    trigger_rate: float = 1.0,
-    n_audited_queries: int = 1,
-) -> float:
-    """Probability the adversary is caught over a whole audit campaign.
-
-    A single query is caught only if it is one the adversary cheated on *and* one of
-    the ``n_paths`` sampled paths hits the tampered node:
-
-        ``p_query = trigger_rate * (1 - (1 - 1/N)^n_paths)``
-
-    and over ``n`` independent queries, ``1 - (1 - p_query)^n``.
-
-    ``trigger_rate`` is the fraction of the *verifier's* queries that carry the
-    trigger.  This is the term the paper's amplification argument -- "repeated
-    queries amplify detection probability" (abstract) -- silently assumes to be 1.
-    An adversary who cheats only on inputs the auditor never sends sets it to 0, and
-    no number of queries helps.
-    """
-    if not 0.0 <= trigger_rate <= 1.0:
-        raise ValueError(f"trigger_rate must be in [0, 1], got {trigger_rate}")
-    if layer_width < 1 or n_paths < 1 or n_audited_queries < 0:
-        raise ValueError("invalid audit parameters")
-
-    per_path_miss = 1.0 - 1.0 / layer_width
-    per_query = trigger_rate * (1.0 - per_path_miss**n_paths)
-    return 1.0 - (1.0 - per_query) ** n_audited_queries

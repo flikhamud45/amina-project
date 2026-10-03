@@ -24,7 +24,6 @@ def run_protocol(
     query: np.ndarray,
     *,
     trace: Trace | None = None,
-    challenge: bytes | None = None,
 ) -> VerificationResult:
     """Run prover and verifier against each other once.
 
@@ -34,9 +33,6 @@ def run_protocol(
         Optional trace for the prover to commit to instead of the honest
         ``EvalTrace(M, qry)``.  This is how the adversarial experiments inject a
         forged trace.
-    challenge:
-        Optional fixed challenge, for reproducible runs.  When omitted a fresh
-        one is drawn, which is what an honest verifier does.
     """
     # Prover and verifier must agree on how the challenge maps to paths, or the
     # prover will open the wrong rows and every run will reject for the wrong
@@ -49,6 +45,6 @@ def run_protocol(
         )
 
     round1, state = prover.prove1(query, trace=trace)
-    rho = sample_challenge() if challenge is None else challenge
+    rho = sample_challenge()
     round2 = prover.prove2(state, rho)
     return verifier.verify(query, round1, round2, rho)

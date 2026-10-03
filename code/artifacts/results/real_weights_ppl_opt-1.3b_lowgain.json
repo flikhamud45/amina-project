@@ -1,0 +1,55 @@
+{
+  "model": "facebook/opt-1.3b",
+  "config": "opt-1.3b",
+  "dataset": "wikitext-2-raw-v1 test",
+  "seq": 128,
+  "windows": 32,
+  "tokens": 4064,
+  "fp32_ppl": 34.93077142000021,
+  "rows": [
+    {
+      "pct": 100.0,
+      "norm_gain": 2.0,
+      "embed_mult": 8,
+      "ppl": 41.05976449994084,
+      "top1_agreement_with_fp32": 0.7448326771653543,
+      "graph_differences": [
+        "mm392: bias True vs benchmark False"
+      ],
+      "seconds": 25.79314684867859
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 1.5,
+      "embed_mult": 8,
+      "ppl": 66.89495715334199,
+      "top1_agreement_with_fp32": 0.5713582677165354,
+      "graph_differences": [
+        "mm392: bias True vs benchmark False"
+      ],
+      "seconds": 25.31268572807312
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 1.0,
+      "embed_mult": 8,
+      "ppl": 3543.7757517996133,
+      "top1_agreement_with_fp32": 0.06373031496062992,
+      "graph_differences": [
+        "mm392: bias True vs benchmark False"
+      ],
+      "seconds": 26.289395570755005
+    }
+  ],
+  "best": {
+    "pct": 100.0,
+    "norm_gain": 2.0,
+    "embed_mult": 8,
+    "ppl": 41.05976449994084,
+    "top1_agreement_with_fp32": 0.7448326771653543,
+    "graph_differences": [
+      "mm392: bias True vs benchmark False"
+    ],
+    "seconds": 25.79314684867859
+  }
+}

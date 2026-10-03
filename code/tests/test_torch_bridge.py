@@ -17,7 +17,6 @@ from pvi.nn.models import (
     extract_parameters,
     mlp_architecture,
     small_cnn_architecture,
-    traced_from_module,
 )
 from pvi.nn.network import TracedNetwork
 
@@ -35,7 +34,7 @@ def test_torch_and_traced_network_agree(architecture):
     torch.manual_seed(0)
     module = build_torch_module(architecture)
     module.eval()
-    network = traced_from_module(module, architecture)
+    network = TracedNetwork(architecture, extract_parameters(module, architecture))
 
     rng = np.random.default_rng(0)
     batch = rng.standard_normal((16, architecture.input_layer.n_neurons)).astype(np.float32)
@@ -63,7 +62,7 @@ def test_predictions_agree_between_backends():
     torch.manual_seed(2)
     module = build_torch_module(architecture)
     module.eval()
-    network = traced_from_module(module, architecture)
+    network = TracedNetwork(architecture, extract_parameters(module, architecture))
 
     rng = np.random.default_rng(2)
     batch = rng.standard_normal((64, architecture.input_layer.n_neurons)).astype(np.float32)
@@ -75,7 +74,8 @@ def test_predictions_agree_between_backends():
 def test_eval_trace_final_layer_is_the_model_output():
     architecture = mlp_architecture(10, [8, 6], 3)
     torch.manual_seed(3)
-    network = traced_from_module(build_torch_module(architecture), architecture)
+    module = build_torch_module(architecture)
+    network = TracedNetwork(architecture, extract_parameters(module, architecture))
     rng = np.random.default_rng(3)
     query = rng.standard_normal(10).astype(np.float32)
     trace = network.eval_trace(query)
@@ -87,7 +87,8 @@ def test_saving_and_loading_round_trips(tmp_path):
 
     architecture = mlp_architecture(10, [8], 3)
     torch.manual_seed(4)
-    network = traced_from_module(build_torch_module(architecture), architecture)
+    module = build_torch_module(architecture)
+    network = TracedNetwork(architecture, extract_parameters(module, architecture))
     path = tmp_path / "model.npz"
     save_network(network, path)
     restored = load_network(architecture, path)

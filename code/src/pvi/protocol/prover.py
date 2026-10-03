@@ -32,7 +32,6 @@ __all__ = ["Prover", "ProverState"]
 class ProverState:
     """State carried from ``Prove1`` to ``Prove2``."""
 
-    query: np.ndarray
     trace: Trace
     trace_commitment: TraceCommitment
 
@@ -57,16 +56,8 @@ class Prover:
     # -- accessors ---------------------------------------------------------- #
 
     @property
-    def network(self) -> TracedNetwork:
-        return self._network
-
-    @property
     def model_commitment(self) -> ModelCommitment:
         return self._model_commitment
-
-    @property
-    def params(self) -> ProtocolParams:
-        return self._params
 
     @property
     def sampler(self) -> PathSampler:
@@ -88,13 +79,13 @@ class Prover:
         if trace is None:
             trace = self._network.eval_trace(query)
 
-        commitment = TraceCommitment(trace, security_bits=self._params.security_bits)
+        commitment = TraceCommitment(trace)
         message = Round1(
             claimed_output=trace.output.copy(),
             trace_digest=commitment.digest,
             trace_params=commitment.params,
         )
-        return message, ProverState(query=query, trace=trace, trace_commitment=commitment)
+        return message, ProverState(trace=trace, trace_commitment=commitment)
 
     def paths_for(self, state: ProverState, challenge: bytes) -> tuple[Path, ...]:
         """Reconstruct the paths the challenge determines.
@@ -108,7 +99,6 @@ class Prover:
             rng,
             self._params.n_paths,
             trace=state.trace,
-            network=self._network,
         )
 
     def prove2(self, state: ProverState, challenge: bytes) -> Round2:

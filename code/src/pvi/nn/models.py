@@ -27,14 +27,13 @@ from pvi.nn.architecture import (
     Layer,
     MaxPool2dLayer,
 )
-from pvi.nn.network import ModelParameters, TracedNetwork
+from pvi.nn.network import ModelParameters
 
 __all__ = [
     "build_torch_module",
     "extract_parameters",
     "mlp_architecture",
     "small_cnn_architecture",
-    "traced_from_module",
 ]
 
 
@@ -198,8 +197,3 @@ def extract_parameters(module: nn.Module, architecture: Architecture) -> ModelPa
                 sub.bias.detach().cpu().numpy().astype(np.float32).copy(),
             )
     return parameters
-
-
-def traced_from_module(module: nn.Module, architecture: Architecture) -> TracedNetwork:
-    """Convenience: freeze a trained module into a :class:`TracedNetwork`."""
-    return TracedNetwork(architecture, extract_parameters(module, architecture))

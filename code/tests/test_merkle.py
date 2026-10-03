@@ -170,11 +170,6 @@ def test_opening_does_not_verify_against_a_different_commitment():
 # --------------------------------------------------------------------------- #
 
 
-def test_security_parameter_beyond_sha256_is_refused():
-    with pytest.raises(ValueError):
-        MerkleVectorCommitment.gen_params(256, 8)
-
-
 def test_opening_size_is_logarithmic():
     small = MerkleVectorCommitment.commit(values(16))
     large = MerkleVectorCommitment.commit(values(1024))

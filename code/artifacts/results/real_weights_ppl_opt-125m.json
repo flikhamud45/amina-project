@@ -1,0 +1,176 @@
+{
+  "model": "facebook/opt-125m",
+  "config": "opt-125m",
+  "dataset": "wikitext-2-raw-v1 test",
+  "seq": 128,
+  "windows": 32,
+  "tokens": 4064,
+  "fp32_ppl": 64.68221513015452,
+  "rows": [
+    {
+      "pct": 100.0,
+      "norm_gain": 32.0,
+      "embed_mult": 8,
+      "ppl": 326.4749438113223,
+      "top1_agreement_with_fp32": 0.30413385826771655,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 22.356587409973145
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 8.0,
+      "embed_mult": 8,
+      "ppl": 94.09267117741804,
+      "top1_agreement_with_fp32": 0.5327263779527559,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 21.004961729049683
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 4.0,
+      "embed_mult": 8,
+      "ppl": 76.61907126588304,
+      "top1_agreement_with_fp32": 0.733513779527559,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 22.330851554870605
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 3.0,
+      "embed_mult": 8,
+      "ppl": 77.03217308885942,
+      "top1_agreement_with_fp32": 0.7162893700787402,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 23.05488610267639
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 2.0,
+      "embed_mult": 8,
+      "ppl": 80.86974987996088,
+      "top1_agreement_with_fp32": 0.6855314960629921,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 23.377042531967163
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 1.5,
+      "embed_mult": 8,
+      "ppl": 87.52181374478313,
+      "top1_agreement_with_fp32": 0.6523129921259843,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 22.929613828659058
+    },
+    {
+      "pct": 100.0,
+      "norm_gain": 1.0,
+      "embed_mult": 8,
+      "ppl": 112.14195974618657,
+      "top1_agreement_with_fp32": 0.5433070866141733,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 21.643784523010254
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 32.0,
+      "embed_mult": 8,
+      "ppl": 316.0512776199172,
+      "top1_agreement_with_fp32": 0.3051181102362205,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 24.393872022628784
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 8.0,
+      "embed_mult": 8,
+      "ppl": 91.09048648960363,
+      "top1_agreement_with_fp32": 0.5433070866141733,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 23.556030750274658
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 4.0,
+      "embed_mult": 8,
+      "ppl": 73.75927163660805,
+      "top1_agreement_with_fp32": 0.7463090551181102,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 23.984265089035034
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 3.0,
+      "embed_mult": 8,
+      "ppl": 74.28488311223376,
+      "top1_agreement_with_fp32": 0.7310531496062992,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 23.17155623435974
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 2.0,
+      "embed_mult": 8,
+      "ppl": 77.4506372715915,
+      "top1_agreement_with_fp32": 0.6916830708661418,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 23.016852140426636
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 1.5,
+      "embed_mult": 8,
+      "ppl": 85.496902558808,
+      "top1_agreement_with_fp32": 0.6380413385826772,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 22.28131890296936
+    },
+    {
+      "pct": 99.9,
+      "norm_gain": 1.0,
+      "embed_mult": 8,
+      "ppl": 109.31530324373917,
+      "top1_agreement_with_fp32": 0.5445374015748031,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "seconds": 21.92890214920044
+    }
+  ],
+  "best": {
+    "pct": 99.9,
+    "norm_gain": 4.0,
+    "embed_mult": 8,
+    "ppl": 73.75927163660805,
+    "top1_agreement_with_fp32": 0.7463090551181102,
+    "graph_differences": [
+      "mm200: bias True vs benchmark False"
+    ],
+    "seconds": 23.984265089035034
+  }
+}

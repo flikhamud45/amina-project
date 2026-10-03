@@ -1,0 +1,77 @@
+{
+  "config": {
+    "queries": 150,
+    "challenges": 20,
+    "setups": null
+  },
+  "setups": {
+    "shared_class": {
+      "title": "Different tasks with one shared class (MLP)",
+      "paper_reference": "Section 6.2",
+      "correctness": {
+        "runs": 3000,
+        "accepted": 3000,
+        "acceptance_rate": 1.0,
+        "tolerance": 0.0001,
+        "zero_tolerance_runs": 150,
+        "zero_tolerance_acceptance_rate": 0.36666666666666664
+      },
+      "other_model": {
+        "prediction_agreement": 0.9866666666666667,
+        "runs": 3000,
+        "detection_rate": 1.0
+      }
+    },
+    "disjoint_data": {
+      "title": "Same task, disjoint training data (MLP)",
+      "paper_reference": "Appendix G.1",
+      "correctness": {
+        "runs": 3000,
+        "accepted": 3000,
+        "acceptance_rate": 1.0,
+        "tolerance": 0.0001,
+        "zero_tolerance_runs": 150,
+        "zero_tolerance_acceptance_rate": 0.20666666666666667
+      },
+      "other_model": {
+        "prediction_agreement": 0.9866666666666667,
+        "runs": 3000,
+        "detection_rate": 1.0
+      }
+    },
+    "quantised": {
+      "title": "8-bit quantised substitute of the committed model (MLP)",
+      "paper_reference": "Section A (economic substitution)",
+      "correctness": {
+        "runs": 3000,
+        "accepted": 3000,
+        "acceptance_rate": 1.0,
+        "tolerance": 0.0001,
+        "zero_tolerance_runs": 150,
+        "zero_tolerance_acceptance_rate": 0.29333333333333333
+      },
+      "other_model": {
+        "prediction_agreement": 1.0,
+        "runs": 3000,
+        "detection_rate": 0.9983333333333333
+      }
+    },
+    "cnn_disjoint_data": {
+      "title": "Same task, disjoint training data (CNN)",
+      "paper_reference": "Appendix G.1, convolutional",
+      "correctness": {
+        "runs": 3000,
+        "accepted": 3000,
+        "acceptance_rate": 1.0,
+        "tolerance": 0.0001,
+        "zero_tolerance_runs": 150,
+        "zero_tolerance_acceptance_rate": 0.21333333333333335
+      },
+      "other_model": {
+        "prediction_agreement": 0.98,
+        "runs": 3000,
+        "detection_rate": 1.0
+      }
+    }
+  }
+}

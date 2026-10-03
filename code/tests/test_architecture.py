@@ -21,7 +21,7 @@ from pvi.nn.architecture import (
     MaxPool2dLayer,
 )
 from pvi.nn.models import mlp_architecture, small_cnn_architecture
-from pvi.nn.network import Trace, TraceLayout, TracedNetwork
+from pvi.nn.network import Trace, TracedNetwork
 
 from conftest import build_network
 
@@ -95,7 +95,7 @@ def test_max_pool_local_relation():
     layer = MaxPool2dLayer(name="pool", in_shape=(2, 4, 4), kernel_size=2)
     rng = np.random.default_rng(0)
     values = rng.standard_normal(2 * 4 * 4).astype(np.float32)
-    out = layer.forward(values, None, None)
+    out = layer.forward_batch(values[None, :], None, None)[0]
     for neuron in range(layer.n_neurons):
         parents, _ = layer.parents(neuron)
         assert out[neuron] == pytest.approx(layer.local_value(neuron, values[parents], None, None))
@@ -145,25 +145,11 @@ def test_architecture_rejects_a_second_input_layer():
 def test_layer_widths_and_trace_size_agree():
     architecture = mlp_architecture(8, [6, 4], 3)
     assert architecture.layer_widths == (8, 6, 4, 3)
-    assert architecture.n_trace_entries == 21
-    assert architecture.depth == 3
 
 
 # --------------------------------------------------------------------------- #
 # Traces
 # --------------------------------------------------------------------------- #
-
-
-def test_trace_layout_round_trip():
-    layout = TraceLayout((5, 3, 2))
-    seen = set()
-    for layer in range(3):
-        for neuron in range(layout.widths[layer]):
-            index = layout.to_global(layer, neuron)
-            assert layout.to_local(index) == (layer, neuron)
-            seen.add(index)
-    assert seen == set(range(layout.total))
-    assert list(layout.output_indices) == [8, 9]
 
 
 def test_trace_rejects_wrong_dtype():

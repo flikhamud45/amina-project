@@ -6,15 +6,8 @@ that each entry is associated with a specific layer and has a well-defined set o
 parents".  :class:`Trace` is that object; :class:`TracedNetwork` is the
 ``EvalTrace`` function of Definition 5.
 
-Two indexing schemes coexist and it is worth being explicit about both:
-
-*Layer-local* indices ``(layer, neuron)`` are what the architecture speaks in --
-``parents()`` returns positions inside the previous layer's activation vector.
-
-*Global* trace indices are what the formalism speaks in -- ``trc`` is one flat
-vector, and ``Idxs_out`` is a set of positions in it.  :class:`TraceLayout` maps
-between the two, so the code can use whichever is clearer at each point without
-ambiguity.
+Neurons are addressed layer-locally, as ``(layer, neuron)``: ``parents()`` returns
+positions inside the previous layer's activation vector.
 """
 
 from __future__ import annotations
@@ -26,49 +19,12 @@ import numpy as np
 
 from pvi.nn.architecture import Architecture, Layer, NO_WEIGHT_GROUP
 
-__all__ = ["ModelParameters", "Trace", "TraceLayout", "TracedNetwork"]
+__all__ = ["ModelParameters", "Trace", "TracedNetwork"]
 
 
 # --------------------------------------------------------------------------- #
 # Trace
 # --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class TraceLayout:
-    """Bijection between ``(layer, neuron)`` and a flat trace index."""
-
-    widths: tuple[int, ...]
-
-    @property
-    def offsets(self) -> tuple[int, ...]:
-        out, running = [], 0
-        for width in self.widths:
-            out.append(running)
-            running += width
-        return tuple(out)
-
-    @property
-    def total(self) -> int:
-        return sum(self.widths)
-
-    def to_global(self, layer: int, neuron: int) -> int:
-        if not 0 <= neuron < self.widths[layer]:
-            raise IndexError(f"neuron {neuron} out of range for layer {layer}")
-        return self.offsets[layer] + neuron
-
-    def to_local(self, index: int) -> tuple[int, int]:
-        if not 0 <= index < self.total:
-            raise IndexError(f"trace index {index} out of range")
-        offsets = self.offsets
-        layer = int(np.searchsorted(np.asarray(offsets), index, side="right")) - 1
-        return layer, index - offsets[layer]
-
-    @property
-    def output_indices(self) -> np.ndarray:
-        """``Idxs_out`` -- the trace positions holding the model's output."""
-        start = self.offsets[-1]
-        return np.arange(start, start + self.widths[-1], dtype=np.int64)
 
 
 @dataclass(frozen=True)
@@ -101,16 +57,9 @@ class Trace:
         return iter(self.activations)
 
     @property
-    def layout(self) -> TraceLayout:
-        return TraceLayout(tuple(len(layer) for layer in self.activations))
-
-    @property
     def output(self) -> np.ndarray:
         """``out(trc)`` -- the final layer's activations."""
         return self.activations[-1]
-
-    def flat(self) -> np.ndarray:
-        return np.concatenate(self.activations)
 
     # -- derived traces ----------------------------------------------------- #
 
@@ -184,10 +133,6 @@ class TracedNetwork:
     @property
     def parameters(self) -> ModelParameters:
         return dict(self._params)
-
-    @property
-    def layout(self) -> TraceLayout:
-        return TraceLayout(self._arch.layer_widths)
 
     def weight_rows(self, layer_index: int) -> np.ndarray:
         """All committed weight rows of one layer, shape ``(groups, group_size)``."""

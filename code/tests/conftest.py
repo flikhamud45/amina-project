@@ -84,7 +84,7 @@ def protocol_pair():
 
     def make(network: TracedNetwork, params: ProtocolParams | None = None):
         params = params or ProtocolParams()
-        commitment = ModelCommitment(network, security_bits=params.security_bits)
+        commitment = ModelCommitment(network)
         return (
             Prover(network, commitment, params),
             Verifier.from_commitment(commitment, params),

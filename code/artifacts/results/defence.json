@@ -1,0 +1,33 @@
+{
+  "config": {
+    "queries": 40
+  },
+  "layer": 1,
+  "layer_width": 512,
+  "sweep": {
+    "uniform": {
+      "detection_naive": 0.001953124999999778,
+      "detection_evasive": 0.001953124999999778
+    },
+    "static-importance": {
+      "detection_naive": 0.004074795280027743,
+      "detection_evasive": 0.00106592593106003
+    },
+    "local-contribution": {
+      "detection_naive": 0.11263554463098102,
+      "detection_evasive": 0.09230245861363628
+    },
+    "gradient-saliency": {
+      "detection_naive": 0.010271292572070267,
+      "detection_evasive": 0.00015681189998917322
+    }
+  },
+  "zero_blind_spot": {
+    "fraction_of_plans_using_only_zeros": 1.0,
+    "mean_support": 14.35,
+    "detection_contribution_weighted": 0.0,
+    "natural_zero_fraction_at_chosen_neurons": 0.6532084842984068,
+    "protocol_runs": 2000,
+    "protocol_accepts": 2000
+  }
+}

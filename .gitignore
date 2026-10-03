@@ -1,14 +1,17 @@
-# Virtual environment -- recreate with requirements.txt, do not ship
+# Virtual environment -- recreate with code/requirements.txt
 .venv/
 
-# Downloaded datasets and generated artifacts
+# Downloaded datasets and caches (regenerable), and the benchmark's CNN weights (not committed;
+# the report's are on the cluster, see code/README.md).
+# The MNIST models in code/artifacts/models/ are committed: they are the weights the report used.
 code/data/
-code/artifacts/models/
-code/artifacts/results/
-code/artifacts/figures/
+code/artifacts/fullcheck/models/
+code/artifacts/fullcheck/cache/
+# the smoke job's throw-away benchmark roots (smoke.sbatch moves them to logs/env/ when it ends)
+code/artifacts/comparison/raw_smoke*/
 
-# Extracted PDF text (regenerate from the PDFs)
-*.txt
+# SLURM job logs
+/logs/
 
 # Python
 __pycache__/
@@ -21,7 +24,12 @@ dist/
 # LaTeX build products
 *.aux
 *.log
+# zkLLM's per-binary timings are records, not build logs
+!code/artifacts/results/zkllm_l40s/*/bin_times.log
 *.out
 *.bbl
 *.blg
+*.xdv
+*.fls
+*.fdb_latexmk
 *.synctex.gz
