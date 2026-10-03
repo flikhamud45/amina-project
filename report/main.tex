@@ -440,7 +440,12 @@ queries that reuse $\chi$ with probability at most $Q\sum_\ell p^{-r}$.
 
 \subsubsection{\textbf{Costs.}} The prover runs the forward pass, computes $u_\ell$ and opens $t$ columns, which it
 recomputes from $W_\ell$; its extra work, $O((r+t)\sum_\ell N_\ell k_\ell)$, does not depend on the
-number of pixels or tokens. With 4-byte claims and field elements and 32-byte hashes, a proof in
+number of pixels or tokens. The verifier recomputes the operations without weights, $O(N_\ell T_\ell)$ per layer plus
+attention's $O(T^2d)$ for language models; checks Freivalds' equation, $O(r(N_\ell+k_\ell)T_\ell)$;
+and checks the columns, encoding the folded rows ($O(rn_\ell\log n_\ell)$), combining the opened
+columns ($O(rtN_\ell)$) and hashing the Merkle paths. No term grows with $N_\ell k_\ell T_\ell$, the
+cost of the layer's matrix product, and only attention, which inference also computes, grows faster
+than linearly in $T$. With 4-byte claims and field elements and 32-byte hashes, a proof in
 setting $\sC$ has
 \begin{equation}
   |\pi| = 4\sum_\ell N_\ell T_\ell + 4r\sum_\ell k_\ell + 4t\sum_\ell N_\ell + 32\sum_\ell h_\ell

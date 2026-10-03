@@ -300,7 +300,8 @@ def checks(M, opt_names: list[str]):
     oc, ost = counts(opt_names, COUNT_TAGS) if opt_names else ({}, PENDING)
     oget = lambda k: Tok([(C(oc[k]) if k in oc else None, ost)])   # noqa: E731
     # Sec. 4.3 and the conclusion: the counts (the abstract states no numbers)
-    for anchor in (r"attacks on the basic protocol and all",):
+    # optional: the Conclusion may drop the counts (Sec. 4.2 states and checks them)
+    for anchor in (r"?attacks on the basic protocol and all",):
         add(anchor, "attacks rejected: basic run; optimised runs", [Tok([(C(bc["NAttacks"]), FINAL)]), oget("NAttacks")])
     add(r"In the optimised runs the verifier accepted", "optimised: honest accepted, attacks, image-model attacks",
         [oget("NHonest"), oget("NAttacks"), oget("NAttacksCNN")])
