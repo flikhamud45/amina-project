@@ -17,6 +17,10 @@ named with a ``_pol<name>`` suffix.  ``--prune-last`` (LLM suite) builds the dec
 block at the last position (``build_decoder(..., prune_last=True)``), every cell named with a
 ``_prune`` suffix; ``--lookups`` runs the K and Kpre cells with a verifier that reads the embedding
 rows itself (``Verifier(lookups=True)``), named with a ``_lookups`` suffix.
+Every timing row (``s``) of a query, a commitment, a build or a precomputation also carries a
+``contention`` field (:mod:`pvi.fullcheck.contention`): this process's run-queue wait and on-CPU time while
+that phase ran, the load average at its start and end, and its context switches -- evidence that the
+machine was quiet (the aggregates ignore it; ``.tools/check_o3.py`` reads it).
 The ``pvi`` package must be this checkout's ``src/pvi`` (``export PYTHONPATH=<checkout>/code/src``,
 as the sbatch scripts do): with a shared venv that has another clone's pvi installed,
 bench.py refuses to run.
@@ -56,6 +60,7 @@ def _require_this_pvi() -> Path:
 if __name__ == "__main__":  # before the imports below, which an older pvi may not even have
     _require_this_pvi()
 
+from pvi.fullcheck import contention  # noqa: E402
 from pvi.fullcheck.analytic import setup_size  # noqa: E402
 from pvi.fullcheck.field import P  # noqa: E402
 from pvi.fullcheck.graph import MatOp  # noqa: E402
@@ -166,6 +171,7 @@ def _env_extra() -> dict:
     import torchvision
 
     out = {"raw_dir": str(RAW), "cpu_count": os.cpu_count(), "numpy": np.__version__,
+           "schedstat": contention.available(),   # the timing rows' contention evidence has run/wait times
            "torchvision": torchvision.__version__,
            "tf32_matmul": torch.backends.cuda.matmul.allow_tf32, "tf32_cudnn": torch.backends.cudnn.allow_tf32,
            "fp32_matmul_precision": torch.get_float32_matmul_precision(),
@@ -305,15 +311,29 @@ def _todo(args, suite, model, cell) -> bool:
     return args.force or not is_done(suite, model, cell)
 
 
-def _commit(graph, rate: int, device, policy: str, model_ops=None):
-    """``(commitment, seconds)``: the weight commitment under ``policy``, timed to its end on the GPU."""
+def _commit(graph, rate: int, device, policy: str, model_ops=None, cs: dict | None = None):
+    """``(commitment, seconds)``: the weight commitment under ``policy``, timed to its end on the GPU;
+    its contention evidence goes to ``cs["commit_total"]`` (:func:`_cs`)."""
     if device.type == "cuda":
         torch.cuda.synchronize()
+    c0 = contention.begin()
     t0 = time.perf_counter()
     coms = commit_graph(graph, rate, device=device, policy=policy, model_ops=model_ops)
     if device.type == "cuda":
         torch.cuda.synchronize()
-    return coms, time.perf_counter() - t0
+    dt = time.perf_counter() - t0
+    if cs is not None:
+        contention.add(cs, "commit_total", c0)
+    return coms, dt
+
+
+def _cs(store: dict | None, phase: str) -> dict:
+    """The ``contention`` field of a timing row: the evidence of whether its machine was quiet while
+    ``phase`` ran (:mod:`pvi.fullcheck.contention`: run-queue wait and on-CPU time of this process's
+    threads, the load average at start and end, context switches); nothing if none was taken.  A new
+    field: every reader of the records keys on metric, value and the group keys, and ignores it."""
+    c = (store or {}).get(phase)
+    return {"contention": c} if c is not None else {}
 
 
 def _plan_config(coms, params=None) -> dict:
@@ -348,7 +368,7 @@ def _opening_of(coms, name: str) -> tuple[str, int]:
 
 def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
     for k, v in res["timings"].items():
-        r.rec(k, v, "s", trial, **extra)
+        r.rec(k, v, "s", trial, **extra, **_cs(res.get("contention"), k))
     for k, v in res["bytes"].items():
         r.rec("bytes_" + k, v, "B", trial, **extra)
     r.rec("bytes_total", sum(res["bytes"].values()), "B", trial, **extra)
@@ -572,11 +592,12 @@ def suite_cnn(args, env) -> None:
     # always rebuilt (the Merkle roots are deterministic).
     rate = args.rate
     _reset_peaks(device)
-    coms, commit_s = _commit(graph, rate, device, args.policy)
+    commit_cs: dict = {}
+    coms, commit_s = _commit(graph, rate, device, args.policy, cs=commit_cs)
     cell = f"commit_rate{rate}"
     if coms.plan is not None and _todo(args, "cnn", name, cell):     # a policy's setup cost
         r = Recorder("cnn", name, cell, {"rate": rate, **_plan_config(coms)}, env)
-        r.rec("commit_total", commit_s, "s")
+        r.rec("commit_total", commit_s, "s", **_cs(commit_cs, "commit_total"))
         _record_setup(r, coms, mats)
         _record_peaks(r, device)
         r.done()
@@ -813,16 +834,20 @@ def suite_llm(args, env) -> None:
                     skipped.append(f"T{seq}_L{n_layers}")
                     continue
             _reset_peaks(device)
+            setup_cs: dict = {}
+            c0 = contention.begin()
             t0 = time.perf_counter()
             graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0, prune_last=prune)
             build_s = time.perf_counter() - t0
+            contention.add(setup_cs, "build_graph", c0)
             mats = graph.mat_ops
             # the first ``queries`` rows are the single-prompt queries of the stored runs
             tokens = torch.randint(0, cfg.vocab, (max([args.queries, *args.batches]), seq),
                                    generator=torch.Generator().manual_seed(1))
             coms = None
             if any(m == "C" for m, _ in modes):
-                coms, commit_s = _commit(graph, args.rate, device, args.policy, decoder_shapes(cfg, prune_last=prune))
+                coms, commit_s = _commit(graph, args.rate, device, args.policy, decoder_shapes(cfg, prune_last=prune),
+                                         cs=setup_cs)
                 cell = f"commit_{base}"
                 if _todo(args, "llm", cfg.name, cell):
                     r = Recorder("llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": args.rate,
@@ -830,8 +855,8 @@ def suite_llm(args, env) -> None:
                                                          "params_full": decoder_param_count(cfg),
                                                          **({"prune_last": True} if prune else {}),
                                                          **_plan_config(coms)}, env)
-                    r.rec("build_graph", build_s, "s")
-                    r.rec("commit_total", commit_s, "s")
+                    r.rec("build_graph", build_s, "s", **_cs(setup_cs, "build_graph"))
+                    r.rec("commit_total", commit_s, "s", **_cs(setup_cs, "commit_total"))
                     if coms.plan is not None:
                         _record_setup(r, coms, mats)
                     _record_peaks(r, device)
@@ -865,9 +890,13 @@ def suite_llm(args, env) -> None:
                         v = _verifier(graph.public(), params, mode, weights=weights, lean=args.lean,
                                       lookups=args.lookups)
                         if mode == "Kpre":
+                            pre_cs: dict = {}
+                            c0 = contention.begin()
                             t0 = time.perf_counter()
                             v.precompute(Challenger())   # ends with a sync of the verifier's device
-                            r.rec("verifier_precompute", time.perf_counter() - t0, "s")
+                            dt = time.perf_counter() - t0
+                            contention.add(pre_cs, "verifier_precompute", c0)
+                            r.rec("verifier_precompute", dt, "s", **_cs(pre_cs, "verifier_precompute"))
                     _reset_peaks(device)
                     _query(prover, v, tokens[:1])  # untimed warm-up
                     for i in range(args.queries):
