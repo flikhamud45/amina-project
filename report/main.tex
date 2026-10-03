@@ -853,11 +853,10 @@ help.
 
 % =====================================================================================
 \section{Conclusion}
-Sampling a computation is not enough to verify it. Against the path protocol of Anchuri
-et al.~\cite{anchuri2026verifiable}, a provider that tampers with a single neuron and computes
-everything else honestly almost always passes, on image classifiers and on the real OPT-6.7B, and
-no sampling rule, however it chooses where to look, closes this gap on every network. A provider
-that wants to change a particular answer can therefore do so unnoticed.
+We showed that the path protocol of Anchuri et al.~\cite{anchuri2026verifiable} cannot stop a
+provider that wants to change an answer: one that tampers with a single neuron and computes
+everything else honestly passes its check almost always, on image classifiers and on the real
+OPT-6.7B, and no sampling rule, however it chooses where to look, closes this gap on every network.
 
 We close the gap by checking every layer instead of a sample: Freivalds' algorithm against a
 Reed--Solomon/Merkle commitment to the weights accepts a wrong output with probability at most
