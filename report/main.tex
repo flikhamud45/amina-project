@@ -788,25 +788,27 @@ to eliminate hardware differences, we also ran zkLLM's public demo on our L40S. 
 % the streaming run with the basic proof format gives 5.4 s and 157
 proportion (2.5$\times$ the 7B figure).
 
-\para{Verifier and proof.} Our verifier is faster in most rows of Table~\ref{tab:ratios}; it is
+\para{Verifier.} Our verifier is faster in most rows of Table~\ref{tab:ratios}; it is
 slower only than ZKML's on VGG-16 (2.2$\times$) and zkLLM's on OPT-1.3B
 at 2{,}048 tokens (2.9$\times$) \pendingclaim{and on the three larger models (\pending{2.9--3.1}$\times$)}.
 % PENDING: the zkLLM rows of OPT-6.7B, Llama-2-7B and Llama-2-13B (GPU verifier withheld:
 % excluded_cells.csv; placeholders: the basic GPU verifier, which did not run on Llama-2-13B)
-Our proof is larger in most rows, since it carries every layer's claims and opened columns: by
-3.6--180$\times$ against the other short-input proofs and by 2{,}500--56{,}000$\times$ against
-zkLLM's at 2{,}048 tokens. It is smaller in three rows, and in each of them we win on all three costs.
 Against Maverick, Table~\ref{tab:ratios} shows our run without the compact encoding (note $d$). With the
 encoding our proof is smaller still (20.3\,MB, 1.8$\times$ smaller than Maverick's), but our verifier needs 151.6\,ms against Maverick's 124.5\,ms,
 since 41.1\,ms of it goes to decoding. Maverick also draws a fresh challenge per query, whereas
 $\Kpre$ reuses a secret one.
 
-\para{Why the costs fall this way.} Our prover does little beyond inference: it sends the
-pre-activations it computes anyway, plus a few folded vectors and $t$ opened columns per layer,
-and uses no cryptography beyond hashing, whereas a zkSNARK prover proves the whole computation as
-a circuit. Our verifier replaces each matrix product by Freivalds' check, which costs
-$O(r(N+k)T)$ instead of $O(NkT)$, and recomputes only the operations without weights. The price
-is the proof, which carries every layer's claims and therefore grows with the input.
+\para{Proof.} Our proof is larger in most rows, since it carries every layer's claims and opened columns: by
+3.6--180$\times$ against the other short-input proofs and by 2{,}500--56{,}000$\times$ against
+zkLLM's at 2{,}048 tokens (since its proof remains constant). It is smaller in three rows, and in each of them we win on all three costs.
+
+\para{Summary.} Our prover is the fastest of every system we compare with, by orders of magnitude
+against the zkSNARKs: it proves a query in milliseconds for the image models and in seconds for
+the language models. Our verifier is faster in most rows and slower only than ZKML's and zkLLM's, whose provers are so much slower than ours that proving each
+query with them is barely practical.
+Against zkCNN on LeNet-5, DeepProve on GPT-2 and Maverick we are better on all three costs.
+We get there with only hashing and Freivalds' check, without a SNARK or a trusted setup; the one
+cost we pay is a larger proof, which grows with the input.
 
 % =====================================================================================
 \section{Discussion}
