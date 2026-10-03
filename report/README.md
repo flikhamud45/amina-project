@@ -32,17 +32,17 @@ cd ../report && latexmk -pdf main.tex                                     # or: 
 | `figures/security_bits.pdf` | Fig. 3 |
 | `figures/cost_*.pdf` | Fig. 4 (three panels and the legend) |
 | `tables/cnn.tex`, `tables/llm.tex`, `tables/ratios.tex` | Tables 1–3 |
-| `tables/hardware.tex` | `\ProverGPU`, `\VerifierCPU`, `\VerifierThreads`, `\LLMNote` (empty: every row of Table 2 is a full build) and `\NPendingCells` (the number of table and figure values still pending) |
+| `tables/hardware.tex` | `\ProverGPU`, `\VerifierCPU`, `\VerifierThreads` and `\LLMNote` (empty: every row of Table 2 is a full build) |
 | `tables/counts.tex`, `tables/counts_opt.tex` | the soundness counts of the abstract and Sec. 4.3 as macros, for the basic and the optimised protocol |
 
 `main.tex` inputs `hardware.tex` and the count files in its preamble. The numbers typed in the text are
-not generated: `text_numbers.py` compares each one with the tables and fails on a mismatch. Values that
-are not final are printed in red: some timings of the second optimised batch are withheld
-(`code/artifacts/comparison/excluded_cells.csv`; two nodes were slowed by other users' load during
-parts of that batch) and two optional cells were not run. `\pending{}` marks such a value, shown with
-the basic protocol's value as a placeholder (or `--`), and `\pendingclaim{}` a claim that depends on
-one; `paper_assets.py --check` lists them. The real-LLM results and zkLLM's run on our GPU are in
-`code/artifacts/results/`.
+not generated: `text_numbers.py` compares each one with the tables and fails on a mismatch. Some
+timings of the second optimised batch are withheld (`code/artifacts/comparison/excluded_cells.csv`; two
+nodes were slowed by other users' load during parts of that batch); `l40s_improved3` re-measured some of
+them, and the paper, finalised without waiting for the rest, omits the others and the two optional cells
+that were not run: `--` in Table 2 ("not measured"), no Table 3 row or Fig. 4 point that needs one, and
+only measured values in the text (`paper_assets.py --check` lists them; nothing is pending). The real-LLM
+results are in `code/artifacts/results/`.
 
 Use matplotlib 3.11.2 (`code/requirements.txt`) for the figures: it reproduces the committed PDFs byte
 for byte. With another version they come out slightly larger or smaller, so after regenerating them

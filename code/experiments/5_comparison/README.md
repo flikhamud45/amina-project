@@ -11,8 +11,9 @@ The paper uses four runs on the same machines (an NVIDIA L40S prover and 8 threa
 * platform **`l40s`** (`raw_l40s/`): the **basic protocol**;
 * platforms **`l40s_improved`**, **`l40s_improved2`** and **`l40s_improved3`** (`raw_l40s_improved/`,
   `raw_l40s_improved2/`, `raw_l40s_improved3/`): the **optimised protocol**, read together (where
-  several hold a cell, the latest's is used, the whole cell; `l40s_improved3` re-measures the cells of
-  `l40s_improved2` whose timings are withheld and, for now, holds the cells finished so far).
+  several hold a cell, the latest's is used, the whole cell; `l40s_improved3` holds the cells of
+  `l40s_improved2` with withheld timings that it re-measured; the paper omits the withheld timings it
+  did not re-measure, see [Omitted values](#omitted-values)).
 
 ## Regenerate everything
 
@@ -46,7 +47,7 @@ python experiments/5_comparison/fingerprint_check.py artifacts/comparison/raw_rt
 python experiments/5_comparison/count_outcomes.py --platform rtx2080ti-v2     # the second platform's verdicts
 python experiments/5_comparison/validate_extrapolation.py --platform l40s     # optional: a line fit through every block count
 python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3 --check
-#   writes nothing; lists the pending numbers (below)
+#   writes nothing; reports 0 pending numbers and lists the omitted ones (below)
 ```
 
 `--platform` defaults to `$PVI_PLATFORM` when it is set, else to `l40s`. A new measurement (see
@@ -61,7 +62,7 @@ platform name.
 | `literature.py` | `literature/reported_benchmarks.csv` | `tables/reported_curated.csv`: the 41 published rows compared with ours |
 | `analytic.py` | the model shapes | `tables/analytic.csv`: the path protocol on Llama-2-7B at 64 tokens (1/11,008 per path, 305,193 paths for 2^-40, 13.7 GB opened) |
 | `count_outcomes.py --platform <p>[,<q>...]` | `raw_<p>/` (several roots are added up) | the soundness counts of Sec. 4.3: honest queries accepted, attacks rejected by type, the check that rejected each, the '+1' attacks on language models, and the record total. `--definition` counts only the defence and tamper cells of the optimised definition; `--require-tag TAG` only cells carrying a tag; `--tex F --prefix P` writes the counts as LaTeX macros (`\NHonest`, `\NAttacks`, ...; `\OptNHonest`, ... with `--prefix Opt`) and refuses if an honest query was rejected or an attack accepted |
-| `paper_assets.py --platform <p> --optimised <q>,<r>,...` | `tables_<p>/` (basic), `tables_<q>/`, `tables_<r>/`, ... (optimised; a later run's cell replaces an earlier one's, but never an earlier full build by its 1- and 2-block builds), `tables/reported_curated.csv`, `artifacts/results/zkllm_l40s/summary.csv`, `artifacts/comparison/excluded_cells.csv` | `../report/figures/*.pdf` (Figs. 1–4, one file per sub-figure, on a fixed canvas equal to its printed width) and `../report/tables/{cnn,llm,ratios,hardware}.tex` (Tables 1–3, and the hardware macros `\ProverGPU`, `\VerifierCPU`, `\VerifierThreads`, `\LLMNote`, `\NPendingCells`). `--check` writes nothing and lists missing basic cells (an error) and pending optimised numbers; `--pending-csv F` writes them to a CSV; `--strict` refuses to write while any number is pending; `--draft` writes figures despite layout problems |
+| `paper_assets.py --platform <p> --optimised <q>,<r>,...` | `tables_<p>/` (basic), `tables_<q>/`, `tables_<r>/`, ... (optimised; a later run's cell replaces an earlier one's, but never an earlier full build by its 1- and 2-block builds), `tables/reported_curated.csv`, `artifacts/comparison/excluded_cells.csv` | `../report/figures/*.pdf` (Figs. 1–4, one file per sub-figure, on a fixed canvas equal to its printed width) and `../report/tables/{cnn,llm,ratios,hardware}.tex` (Tables 1–3, and the hardware macros `\ProverGPU`, `\VerifierCPU`, `\VerifierThreads`, `\LLMNote`). `--check` writes nothing and lists missing basic cells (an error) and the optimised numbers that are not measured (omitted; pending only with `OMIT_UNMEASURED = False`); `--pending-csv F` writes them to a CSV; `--strict` refuses to write while any number is pending; `--draft` writes figures despite layout problems |
 | `text_numbers.py --platform <p> --optimised <q>,<r>,... --definition` | the runs' tables, the raw roots, `../report/tables/counts*.tex`, `../report/main.tex` | compares every benchmark number typed in the text with the value recomputed as the tables compute it (each sentence found by its wording); exits 1 on a mismatch, on a final number still marked pending, on a number that depends on a pending value but is not marked, or on a sentence it can no longer find. `--list` only prints the recomputed values |
 | `validate_extrapolation.py --platform <p>` | `tables_<p>/measured_summary.csv` | `tables_<p>/llm_extrapolation_validation.csv`: the two-point rule and a line fit through every block count, against the full builds |
 | `fingerprint_check.py <root A> <root B>` | two raw roots | checks that every hardware-independent value the two roots share (parameters, accuracies, path-protocol facts, security parameters, proof bytes except the Merkle term, verdicts) agrees, and prints every honest rejection and accepted attack of B |
@@ -85,7 +86,8 @@ Llama-2-7B's runs without pruning (`_wire_polauto`) are the one accepted stand-i
 defining cell. In a language-model row the prover time and the proof come from the CPU-verifier
 cell, the GPU verifier from the GPU cell. Table 3 uses the Fiat–Shamir cells against the
 non-interactive systems, the interactive cells against zkLLM (itself interactive) and Maverick, and
-for Maverick our Kpre run without the compact encoding (note d). Maverick's verifier time there is
+for Maverick our Kpre run without the compact encoding (note d). Of zkLLM's rows Table 3 keeps OPT-125M
+and OPT-1.3B at 2,048 tokens (see [Omitted values](#omitted-values)). Maverick's verifier time there is
 its total client time, 260.2 ms (its Table 8 "client time", one client thread), as ours is our whole
 verifier; `literature.py` records the client time for all three Maverick rows (260.2, 142.5 and
 1,460.5 ms). Tables 1–3 and Fig. 4 use full-depth builds only; the 30–70B
@@ -94,7 +96,7 @@ shapes enter only the text, through their 1- and 2-block builds. Fig. 3 draws no
 
 ## Numbers of the text that no script checks
 
-`text_numbers.py` makes 40 checks of the benchmark numbers in the text. The other numbers of the text
+`text_numbers.py` makes 38 checks of the benchmark numbers in the text. The other numbers of the text
 come from these sources:
 
 | Paper | Value | Source | Command (from `code/`) |
@@ -113,19 +115,30 @@ come from these sources:
 | Sec. 4.2 | *Attacks on MNIST*: hundreds of the 778 nodes against 1–14, backdoor 99.96% of 2,300 runs, about five neurons, 61% with 250 paths | `artifacts/results/attack.json` | `python experiments/2_attack/run.py` |
 | Sec. 4.2 | *Other samplers*: 0.20%, 0.11%, 0.016%; 14 of 512 neurons, 65%, 2,000 of 2,000; floor 2% (10x), 0.9–6x | `artifacts/results/defence.json`, `floor_sampler.json` | `python experiments/3_sampling_fixes/run.py`, `floor_sampler.py` ([3_sampling_fixes](../3_sampling_fixes/README.md)) |
 | Sec. 4.6 | our prover 3.0x faster than Maverick | Table 3's Maverick prover ratio | `paper_assets.py` (`report/tables/ratios.tex`) |
-| Sec. 4.6 | zkLLM's demo on our L40S: about 844 s; 2.5x per layer for Llama-2-13B | `artifacts/results/zkllm_l40s/` | `python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32` ([zkllm_l40s](../../artifacts/results/zkllm_l40s/README.md)); `text_numbers.py` checks both (and the 48x) against `summary.csv`, which `summarise.py --csv` writes from these logs |
 
-## Pending values
+## Omitted values
 
-Some optimised values are not final: the timings withheld in `artifacts/comparison/excluded_cells.csv`
+Some optimised values were not measured: the timings withheld in `artifacts/comparison/excluded_cells.csv`
 (cells of the second batch that ran while nodes n-801 and n-804 were slowed by other users' load; see
-[`artifacts/comparison/README.md`](../../artifacts/comparison/README.md)) that are not yet re-measured,
-and two optional cells that were not run (the streaming GPU verifier of Qwen3-4B and Llama-2-13B at 64
-tokens). `paper_assets.py` draws each such value in red, with the basic protocol's value as a
-placeholder (or `--` where there is none), and sets `\NPendingCells` (currently 16); `text_numbers.py`
-checks that the text marks every number that depends on one. The withheld cells are re-measured in
-the root `raw_l40s_improved3/`, the last run of `--optimised`
-(`l40s_improved,l40s_improved2,l40s_improved3`): a cell it holds replaces the withheld one (the
-exclusion is per platform), which turns its placeholders black, and `text_numbers.py` reports each
-number of the text that moves. It holds the cells finished so far; when the rest arrive,
-`aggregate.py --platform l40s_improved3` and the commands above take them in.
+[`artifacts/comparison/README.md`](../../artifacts/comparison/README.md)) that the third batch did not
+re-measure, and two optional cells that were not run (the streaming GPU verifier of Qwen3-4B and
+Llama-2-13B at 64 tokens). The paper was finalised without waiting for the remaining re-measurement jobs,
+so these values are omitted, not filled in (`OMIT_UNMEASURED = True` in `paper_assets.py`):
+
+* Table 2 prints a black `--` (its note: "--: not measured") for the C prover, CPU and GPU verifiers of
+  Llama-2-7B at 2,048 tokens, the C CPU and GPU verifiers of Llama-2-13B at 2,048 tokens and the GPU
+  verifiers of Qwen3-4B and Llama-2-13B at 64 tokens; every measured cell of those rows stays;
+* Fig. 4 draws no point for these timings (the proof sizes stay);
+* Table 3 has no row that needs one: zkLLM's OPT-6.7B, Llama-2-7B and Llama-2-13B rows at 2,048 tokens and
+  the row of zkLLM's code on our L40S were dropped (OPT-6.7B's with them, although measured), leaving
+  zkLLM's OPT-125M and OPT-1.3B rows;
+* Sec. 4.5 has no 2,048-token timing row, and the text quotes measured values only (`text_numbers.py`).
+
+`paper_assets.py --check` reports 0 pending numbers and lists the 10 omitted ones (7 cells of Table 2, 3
+points of Fig. 4). The root `raw_l40s_improved3/`, the last run of `--optimised`
+(`l40s_improved,l40s_improved2,l40s_improved3`), holds the cells the re-measurement did finish: each
+replaces the withheld cell of `raw_l40s_improved2/` (the exclusion is per platform), and in the paper
+gives Table 2's GPU verifier of OPT-6.7B and the Kpre verifier and proof of Llama-2-13B at 2,048 tokens.
+With `OMIT_UNMEASURED = False` the generators return to the drafts' placeholder mode (the basic protocol's
+value in red, `\pending{}`, which `main.tex` would have to define again, and `text_numbers.py` checks
+that the text marks every number that depends on one).

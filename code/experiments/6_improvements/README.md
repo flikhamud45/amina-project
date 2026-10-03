@@ -98,7 +98,7 @@ basic protocol reaches 131–153 bits and every plan 129.2–140.7 bits.
 | `tests/test_pruning.py` | pruned logits `torch.equal` to the unpruned ones on GPT-2, OPT-350M, Llama-2-7B and Qwen3-4B blocks at 1, 2 and 9 tokens; attention of the last `Tq` queries; RoPE at an offset; a pruned block's plan |
 | `tests/test_wire.py`, `tests/test_claimcodec.py` | the compact encoding: both encoders give the bytes of the reference encoder (`tests/claimcodec_reference.py`) on 16 claim sets; malformed input rejected; a lean GPU prover sends the CPU prover's bytes and verdicts; on CUDA, the GPU encoder's bytes and its four waits for the device |
 | `tests/test_fast_verifier.py`, `tests/test_gpu_verifier.py` | the verifier's fast routines give the integers of `pvi.fullcheck.reference`; the GPU forms agree with the CPU ones (GPU-only tests are skipped without CUDA) |
-| `tests/test_comparison_tables.py` | every timing `run_query` records is carried into the tables once (the streaming verifier's too); the scripts of `5_comparison`: cells matched by their tag set, later optimised runs replacing earlier cells, pending values, the count macros, `text_numbers.py` and the figure layout checks |
+| `tests/test_comparison_tables.py` | every timing `run_query` records is carried into the tables once (the streaming verifier's too); the scripts of `5_comparison`: cells matched by their tag set, later optimised runs replacing earlier cells, omitted (and pending) values, the count macros, `text_numbers.py` and the figure layout checks |
 
 ## Scripts and result files
 

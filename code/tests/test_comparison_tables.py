@@ -15,6 +15,7 @@ import pytest
 pytest.importorskip("matplotlib")
 pytestmark = pytest.mark.filterwarnings("ignore:.enablePackrat. deprecated")   # matplotlib's own pyparsing call
 SCRIPTS = Path(__file__).resolve().parents[1] / "experiments" / "5_comparison"
+REPORT_RUNS = ("l40s_improved", "l40s_improved2", "l40s_improved3")   # the report's --optimised runs, in order
 
 
 def _script(name: str):
@@ -87,13 +88,15 @@ def test_the_streaming_verifier_is_timed_once():
 
 def test_sec45_compares_both_protocols_on_every_configuration():
     """Sec. 4.5 quotes the basic -> optimised comparison (opt_pairs; text_numbers.py checks its averages and
-    ranges): every configuration has both sides, the basic one complete."""
+    ranges): every configuration has both sides, the basic one complete and the optimised one measured
+    (none omitted, none pending) on the report's runs."""
     pa = _script("paper_assets")
-    pa.OPT_TABLES = [pa.tables_dir("l40s_improved")]
+    pa.OPT_TABLES = [pa.tables_dir(n) for n in REPORT_RUNS]
     rows = pa.opt_pairs()
     assert [r[0] for r in rows] == [label for label, *_ in pa.TAB_OPT]
     assert all(None not in before for _, _, _, before, _, _ in rows)
     assert all(a is not None for *_, after, _ in rows for a in after)
+    assert not any(p for *_, pend in rows for p in pend)
 
 
 def test_table3_follows_the_setting_rule():
@@ -121,9 +124,15 @@ def test_table3_follows_the_setting_rule():
     assert bold == {("zkCNN$^a$", "LeNet-5"), ("DeepProve$^c$", "GPT-2 (64)"), ("Maverick$^d$", "Qwen3-4B (8)")}
     nw = pa.llm_cost(("qwen3-4b", 8), pa.TABLE3_MAVERICK_SEL, pa.opt_dirs())
     assert [o for _, o in rows[("Maverick$^d$", "Qwen3-4B (8)")][0]] == list(nw[:3])
-    # the 2,048-token rows need the second optimised run: pending, with the basic protocol standing in
-    assert all(all(p) for (s, w), (c, i, p) in rows.items() if s == "zkLLM")
-    assert not any(any(p) for (s, w), (c, i, p) in rows.items() if s.startswith(("zkCNN", "DeepProve", "Maverick")))
+    # nothing is pending: a number the runs lack is omitted (OMIT_UNMEASURED), never a red placeholder
+    assert not any(any(p) for (s, w), (c, i, p) in rows.items())
+    # on the report's runs every cell is measured (no '--'), and of zkLLM's 2,048-token rows only OPT-125M and
+    # OPT-1.3B remain (the OPT-6.7B, Llama-2-7B and Llama-2-13B rows and zkLLM's code on our L40S were dropped)
+    pa.OPT_TABLES = [pa.tables_dir(n) for n in REPORT_RUNS]
+    final = {(s, w): (cells, pend) for s, w, cells, _, pend in pa.ratio_rows()}
+    assert [w for s, w in final if s.startswith("zkLLM")] == ["OPT-125M (2{,}048)", "OPT-1.3B (2{,}048)"]
+    assert len(final) == len(pa.OPT_MATCHES) == 11
+    assert all(None not in (a, o) and not p for cells, pend in final.values() for (a, o), p in zip(cells, pend))
     # the default ('cells'): the factor either way, with a down arrow where our cost is lower (in bold) and
     # an up arrow where it is higher, the bold outside \pending{} so a red placeholder is bold too
     assert pa.RATIO_STYLE == "cells"
@@ -150,11 +159,50 @@ def test_cells_are_matched_by_their_tag_set():
         assert extra <= pa.OPT_TAGS | {"polauto"}
 
 
-def test_a_missing_optimised_cell_is_pending_with_the_basic_value():
-    """Without the optimised runs every optimised number is pending and the basic protocol's value stands
-    in; with l40s_improved the image models it covers are final, the 224-pixel ResNet stays pending,
-    and Llama-2-7B's unpruned run stands in (acceptable, black) for the pruned definition."""
+def test_unmeasured_numbers_are_omitted_not_red():
+    """The final report's decision (OMIT_UNMEASURED): an optimised number that is not measured is (None, False),
+    listed as 'omitted', and printed as a black '--' (Table 2) or not drawn (Figure 4); nothing is pending.  On
+    the report's runs the omitted numbers are exactly the withheld timings l40s_improved3 did not re-measure and
+    the two GPU cells never run, while every measured cell of those rows stays."""
     pa = _script("paper_assets")
+    assert pa.OMIT_UNMEASURED
+    pa.OPT_TABLES = []
+    assert pa.opt_cnn("lenet5", "bytes", where=("t", "r", "c")) == (None, False)
+    assert pa.opt_llm("gpt2", 64, "prove", where=("t", "g", "c")) == (None, False)
+    assert {r["status"] for r in pa.PENDING} == {"omitted"}
+    pa.OPT_TABLES = [pa.tables_dir(n) for n in REPORT_RUNS]
+    pa.DRY = True                                    # build everything, write nothing (as --check)
+    tables = {}
+    pa.write = lambda name, lines: tables.__setitem__(name, lines)
+    pa.build_all()
+    assert pa.pending_rows("pending") == []
+    omitted = {(r["asset"], r["row"], r["column"]) for r in pa.pending_rows("omitted")}
+    assert omitted == {("Table 2", "Qwen3-4B (64)", "C gpu"), ("Table 2", "Llama-2-13B (64)", "C gpu"),
+                       ("Table 2", "Llama-2-7B (2048)", "C prove"), ("Table 2", "Llama-2-7B (2048)", "C verify"),
+                       ("Table 2", "Llama-2-7B (2048)", "C gpu"), ("Table 2", "Llama-2-13B (2048)", "C verify"),
+                       ("Table 2", "Llama-2-13B (2048)", "C gpu"), ("Fig. 4", "LLM 2048 tokens, C", "prove"),
+                       ("Fig. 4", "LLM 2048 tokens, C", "verify")}
+    assert not any(r"\pending" in line for lines in tables.values() for line in lines)
+    llm = {line.split(" & ")[0] + (" 2048" if i > 4 else ""): line.split(" & ") for i, line in enumerate(tables["llm"])}
+    assert llm["Llama-2-7B 2048"][2:8] == ["--", "--", "--", r"6.6\,GB", r"58.2\,s", r"6.4\,GB \\"]
+    assert llm["Llama-2-13B 2048"][2:5] == [r"17.6\,s", "--", "--"]
+    assert llm["OPT-6.7B 2048"][4] == r"3.5\,s"           # re-measured by l40s_improved3
+    assert llm["Qwen3-4B"][4] == "--" and llm["Llama-2-13B"][4] == "--"
+    assert not any("--" in c for k, row in llm.items() if k.startswith(("GPT-2", "OPT")) for c in row)
+    assert not any("zkLLM$^e$" in line or "Llama-2-7B (2{,}048)" in line for line in tables["ratios"])
+    l7_bytes, _ = pa.opt_llm("llama2-7b", 2048, "bytes")
+    (l7,) = [[v for v, _ in vals] for n, vals, kind, colour in pa._ours_points()
+             if kind == "T2048" and colour == pa.OURS and vals[2][0] == l7_bytes]
+    assert l7[0] is None and l7[1] is None and l7[2]   # Fig. 4: no prover or verifier point; the proof's stays
+
+
+def test_a_missing_optimised_cell_is_pending_with_the_basic_value():
+    """With OMIT_UNMEASURED off (the placeholder mode the report used before its final version): without the
+    optimised runs every optimised number is pending and the basic protocol's value stands in; with
+    l40s_improved the image models it covers are final, the 224-pixel ResNet stays pending, and Llama-2-7B's
+    unpruned run stands in (acceptable, black) for the pruned definition."""
+    pa = _script("paper_assets")
+    pa.OMIT_UNMEASURED = False
     pa.OPT_TABLES = []
     v, p = pa.opt_cnn("lenet5", "bytes")
     assert p and v == pa.basic_cnn("lenet5", "bytes")
@@ -279,8 +327,12 @@ def test_withheld_values_are_withheld_per_platform(tmp_path):
     v, p = pa.opt_llm("opt-13b", 2048, "verify", where=("t", "opt", "verify"))
     assert (v, p) == (70.0, False)
     v, p = pa.opt_llm("llama2-13b", 2048, "verify", where=("t", "l13", "verify"))
-    assert p and v != 80.0                                          # pending: the basic placeholder, not b's line
-    assert "stored, withheld" in pa.PENDING[-1]["optimised_cell"]
+    assert (v, p) == (None, False)                                  # omitted (OMIT_UNMEASURED), not b's line (80.0)
+    assert pa.PENDING[-1]["status"] == "omitted" and "stored, withheld" in pa.PENDING[-1]["optimised_cell"]
+    pa.OMIT_UNMEASURED = False                                      # the placeholder mode: pending, the basic value
+    v, p = pa.opt_llm("llama2-13b", 2048, "verify", where=("t", "l13", "verify"))
+    assert p and v != 80.0
+    assert pa.PENDING[-1]["status"] == "pending" and "stored, withheld" in pa.PENDING[-1]["optimised_cell"]
 
 
 def test_the_figure_checks_catch_small_overlapping_and_clipped_text():

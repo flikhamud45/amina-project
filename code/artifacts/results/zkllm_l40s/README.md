@@ -1,19 +1,22 @@
-# zkLLM's public code on our GPU (paper Sec. 4.6 and Table 3)
+# zkLLM's public code on our GPU (not used in the final paper)
 
 To compare provers on the same hardware, we ran zkLLM's public demo (commit `993311e` of its
 repository, unchanged) on one of our L40S nodes (L40S prover, AMD EPYC 9334 host; TAU's `killable`
-partition) for Llama-2-7B and Llama-2-13B at 2,048 tokens. The paper quotes about 844 s for
-Llama-2-7B (48x our prover) and does not use the Llama-2-13B run, whose time per layer is 2.5x the
-7B figure; Table 3's last row (note e) is the Llama-2-7B run.
+partition) for Llama-2-7B and Llama-2-13B at 2,048 tokens: about 844 s for Llama-2-7B, and 2.5x the
+7B figure per layer for Llama-2-13B. The final paper does not use these runs: they were to be compared
+with our Llama-2-7B prover at 2,048 tokens, whose timing is withheld
+([`artifacts/comparison/README.md`](../../comparison/README.md#withheld-timings-excluded_cellscsv)) and
+was not re-measured, so that comparison (a drafts' Table 3 row, note e, and a sentence of Sec. 4.6) was
+dropped. The runs are kept as they were measured.
 
-## Reproduce the paper's numbers from the stored runs (no GPU)
+## Reproduce the numbers from the stored runs (no GPU)
 
 From `code/`:
 
 ```bash
 python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32
 python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-13b-T2048-948716 40
-python artifacts/results/zkllm_l40s/summarise.py --csv     # rewrites summary.csv, which paper_assets.py reads for Table 3
+python artifacts/results/zkllm_l40s/summarise.py --csv     # rewrites summary.csv (one row per run)
 ```
 
 `summarise.py <run dir> <layers>` prints each proof binary's median time, the time per layer and for

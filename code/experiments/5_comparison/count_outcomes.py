@@ -13,8 +13,8 @@
 ``--platform`` takes one platform or a comma-separated list, whose counts are added (a cell finished in a
 later platform's root replaces the same cell of an earlier one, as in the tables).  A listed
 platform that has no raw root yet (a run still to come) is skipped with a warning, and ``--tex`` then
-writes every count as ``\\pending{<count so far>}`` (red in main.tex, which defines \\pending): the
-total is not final until that run is stored.
+writes every count as ``\\pending{<count so far>}``: the total is not final until that run is stored
+(the final main.tex no longer defines \\pending, so such a partial count stops the build).
 ``--definition`` counts only the defence and tamper cells of the optimised protocol's definition
 (``paper_assets.definition_tagsets()``: no basic-format cells, stand-ins or by-products of the
 optimised roots); ``--require-tag TAG`` only the cells whose name carries TAG.

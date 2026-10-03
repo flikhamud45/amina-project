@@ -17,9 +17,12 @@ The exit status is 1 if any check fails:
 * ``UNMARKED``: a number that depends on a pending cell is not inside ``\\pending{}``;
 * ``ANCHOR``: the sentence is no longer found (update the anchor below with the text).
 
-A number that depends on a cell still pending is expected inside ``\\pending{}``; its placeholder is
-the value the tables show (the basic protocol's value of the pending cells, element by element).  A
-different red placeholder is reported (``placeholder``) but does not fail: the value is temporary.
+The final report has no pending numbers: ``paper_assets.OMIT_UNMEASURED`` omits every optimised number
+that was not measured, and the text quotes measured values only (a check that reaches an omitted value
+fails with an error rather than a placeholder).  With ``OMIT_UNMEASURED = False``, a number that depends
+on a cell still pending is expected inside ``\\pending{}``; its placeholder is the value the tables show
+(the basic protocol's value of the pending cells, element by element).  A different red placeholder is
+reported (``placeholder``) but does not fail: the value is temporary.
 Numbers shown from an acceptable stand-in (``paper_assets.OPTIMISED[...]["acceptable"]``) may be
 black or red.  ``\\pendingclaim{}`` is transparent: the numbers inside it are checked as usual.  The
 counts (abstract, Sec. 4.3, conclusion) are recomputed from the raw records by ``count_outcomes.py``;
@@ -29,7 +32,6 @@ an optimised run that has no raw root yet makes the optimised counts pending.
 from __future__ import annotations
 
 import argparse
-import csv
 import math
 import re
 import sys
@@ -383,11 +385,12 @@ def checks(M, opt_names: list[str]):
     add(r"With a 64-token prompt GPT-2 is proved in", "GPT-2 T64 prover; Llama-2-7B T64 prover, proof, int8/proof",
         [one(L("gpt2", 64, "prove"), pa.t), one(L("llama2-7b", 64, "prove"), pa.t), one(L("llama2-7b", 64, "bytes"), pa.b),
          one(elem(l64), x, "×")])
-    add(r"tokens Llama-2-7B is proved in", "Llama-2-7B T2048 prover, proof, CPU verifier",
-        [one(L("llama2-7b", 2048, "prove"), pa.t), one(L("llama2-7b", 2048, "bytes"), pa.b),
-         one(L("llama2-7b", 2048, "verify"), pa.t)])
-    gpu_rows = [(m, s) for m, s in pa.TAB_LLM_PICK if pa.basic_llm(m, s, "gpu") is not None or
-                pa.opt_llm(m, s, "gpu")[0] is not None]
+    add(r"same-sized OPT-6.7B is proved in", "OPT-6.7B T2048 prover, proof, CPU verifier",
+        [one(L("opt-6.7b", 2048, "prove"), pa.t), one(L("opt-6.7b", 2048, "bytes"), pa.b),
+         one(L("opt-6.7b", 2048, "verify"), pa.t)])
+    # the rows of Table 2 whose optimised CPU and GPU verifiers are both measured
+    gpu_rows = [(m, s) for m, s in pa.TAB_LLM_PICK
+                if None not in (pa.opt_llm(m, s, "verify")[0], pa.opt_llm(m, s, "gpu")[0])]
     ratio = lambda m, sq: lambda s: s.llm(m, sq, "verify") / s.llm(m, sq, "gpu")   # noqa: E731
     add(r"a GPU verifier is", "C: CPU / GPU verifier at 2,048 tokens; at 64 (Table 2 rows with both)",
         [*rng([elem(ratio(m, s)) for m, s in gpu_rows if s == 2048]),
@@ -431,11 +434,10 @@ def checks(M, opt_names: list[str]):
     eng = pa.llm_cost(("gpt2", 64), {}, pa.opt_dirs())
     add(r"speeds up the basic proofs", "GPT-2 T64 basic proof: basic run's verifier -> released code's",
         [Tok([(f"{pa.basic_llm('gpt2', 64, 'verify') * 1e3:.0f}", FINAL)]), one(fixed(eng[1] if eng else None), pa.t)])
-    l7 = [r for r in rows if r[1] == "llama2-7b" and r[2] == 2048][0]
-    add(r"the optimised protocol proves Llama-2-7B", "Sec. 4.5, Llama-2-7B T2048: prover, verifier, proof optimised; basic",
-        [one(V(l7[4][0], PENDING if l7[5][0] else FINAL), pa.t), one(V(l7[4][1], PENDING if l7[5][1] else FINAL), pa.t),
-         one(V(l7[4][2], PENDING if l7[5][2] else FINAL), pa.b),
-         one(fixed(l7[3][0]), pa.t), one(fixed(l7[3][1]), pa.t), one(fixed(l7[3][2]), pa.b)])
+    # (its timings are omitted: only the proof sizes, basic and optimised, of the CPU-verifier cells)
+    l7_basic, l7_opt = fixed(pa.basic_llm("llama2-7b", 2048, "bytes")), L("llama2-7b", 2048, "bytes")
+    add(r"shrinks Llama-2-7B's proof from", "Sec. 4.5, Llama-2-7B T2048 proof: basic; optimised",
+        [Tok([(pa.b(l7_basic.value).split("\\,")[0], FINAL)]), one(l7_opt, pa.b)])
     stream = {mode: pa.llm_cost(("llama2-7b", 2048), {"mode": mode, "variant": "_gpuv_stream"}, pa.opt_dirs())
               for mode in ("C", "Kpre")}
     if stream["C"]:
@@ -470,36 +472,23 @@ def checks(M, opt_names: list[str]):
 
     # 4.6 / Table 3
     # Table 3's rows; system() drops the footnote letters of SYSTEM_MARK (zkCNN$^a$ -> zkCNN), not Maverick's
-    # d, zkLLM's own code's e (pa.ZKLLM_OWN) or the interactive asterisk
+    # d or the interactive asterisk
     rr = pa.ratio_rows()
     marks = {m for m in pa.SYSTEM_MARK.values()}
     system = lambda s: re.sub(r"\$\^\{?([a-z,]+)\}?\$$",   # noqa: E731
                               lambda m: "" if set(m.group(1).split(",")) <= marks else m.group(0), s)
     st = lambda p: PENDING if p else FINAL   # noqa: E731
     q = {(s, w): [V(a / o if a and o else None, st(p)) for (a, o), p in zip(cells, pend)] for s, w, cells, _, pend in rr}
-    zk = [v[0] for (s, w), v in q.items() if s != pa.ZKLLM_OWN and not s.startswith("Maverick")]
+    zk = [v[0] for (s, w), v in q.items() if not s.startswith("Maverick")]
     add(r"Our prover is .*faster than the zkSNARK", "prover: theirs/ours over the zkSNARK rows (contributions)", rng(zk, x2))
     add(r"faster than every zkSNARK prover", "prover: theirs/ours over the zkSNARK rows (smallest; largest)",
         ends(zk, x2))
-    ours7 = elem(lambda s: s.llm("llama2-7b", 2048, "prove"))
-    zk7 = pa.zkllm_l40s_whole_model_s()
-    add(r"this gives about", "zkLLM's code on our L40S (s); / our prover; our prover",
-        [Tok([(f"{zk7:.0f}", FINAL)], "s"), one(V(zk7 / ours7.value, ours7.state), x), one(ours7, pa.t)])
-    zrows = {row["model"]: float(row["per_layer_s"]) for row in csv.DictReader(open(pa.ZKLLM_L40S, encoding="utf-8"))}
-    add(r"grows out of", "zkLLM demo time per layer, Llama-2-13B / Llama-2-7B",
-        Tok([(x(zrows["llama2-13b"] / zrows["llama2-7b"]), FINAL)], "×"))
-    slow = [one(V(1 / v[1].value, FINAL), x, "×") for k, v in q.items()
-            if v[1].state == FINAL and v[1].value and v[1].value < 1]
-    # the zkLLM rows while any is red: the range of ours/theirs over the red rows where ours is slower, as
-    # Table 3 prints them (the basic GPU verifier's placeholders; a row with none, '--', is left out)
-    zslow = [V(1 / v[1].value, PENDING) for k, v in q.items()
-             if k[0] == "zkLLM" and v[1].state == PENDING and v[1].value and v[1].value < 1]
-    if any(v[1].state == PENDING for k, v in q.items() if k[0] == "zkLLM"):
-        zslow_tok = rng(zslow, lambda v: f"{v:.1f}", "×") if zslow else [Tok([(None, PENDING)], "×")]
-        slow += zslow_tok
-        add(r"the GPU verifier is", "Limitations: GPU verifier slower than zkLLM's (zkLLM rows, red)", zslow_tok)
-    add(r"slower only than", "verifier: final rows where ours is slower (ours/theirs); zkLLM rows",
-        slow)
+    slow = [one(V(1 / v[1].value, v[1].state), x, "×") for k, v in q.items() if v[1].value and v[1].value < 1]
+    add(r"slower only than", "verifier: the rows where ours is slower (ours/theirs), in Table 3's order", slow)
+    # Limitations: the largest factor by which our GPU verifier is slower than zkLLM's (its 2,048-token rows)
+    zslow = [V(1 / v[1].value, v[1].state) for k, v in q.items() if k[0] == "zkLLM" and v[1].value and v[1].value < 1]
+    add(r"the GPU verifier is up to", "Limitations: GPU verifier slower than zkLLM's, at most (zkLLM rows)",
+        one(max(zslow, key=lambda v: v.value), lambda v: f"{v:.1f}", "×"))
     mav = [cells for s, w, cells, _, _ in rr if s.startswith("Maverick")][0]
     mav_ours = elem(lambda s: s.llm("qwen3-4b", 8, "verify", "Kpre"))
     mav_bytes = elem(lambda s: s.llm("qwen3-4b", 8, "bytes", "Kpre"))   # the run with the compact encoding
@@ -515,9 +504,11 @@ def checks(M, opt_names: list[str]):
     zp = [_f for r in pa._read("reported_curated.csv") if r["system"] == "zkLLM" and r["model"] in ("OPT-6.7B", "Llama-2-7B")
           and r["seq"] == "2048" for _f in [pa._f(r["proof_bytes"])]]
     add(r"against zkLLM's 157", "zkLLM's proofs for the 7B models", rng([fixed(v) for v in zp], pa.b))
-    cpu2048 = [elem(lambda s, m=m: s.llm(m, 2048, "verify")) for m, sq in pa.TAB_LLM_PICK if sq == 2048]
-    add(r"CPU verifier needs up to", "largest CPU verifier at 2,048 tokens (Table 2)",
-        one(max(cpu2048, key=lambda v: v.value), pa.t))
+    # the largest measured CPU verifier at 2,048 tokens, over Table 2's two CPU-verifier columns (C and Kpre)
+    cpu2048 = [elem(lambda s, m=m, mode=mode: s.llm(m, 2048, "verify", mode))
+               for m, sq in pa.TAB_LLM_PICK if sq == 2048 for mode in ("C", "Kpre")]
+    add(r"CPU verifier needs up to", "largest measured CPU verifier at 2,048 tokens (Table 2, C and Kpre)",
+        one(max((v for v in cpu2048 if v.value is not None), key=lambda v: v.value), pa.t))
     return out
 
 

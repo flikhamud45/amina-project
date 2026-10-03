@@ -21,17 +21,11 @@
 % running text are recomputed by text_numbers.py and count_outcomes.py in the same directory.
 \input{tables/hardware.tex}
 
-% The second optimised run (platform l40s_improved2) is in, but some of its timings are withheld
-% (code/artifacts/comparison/excluded_cells.csv: slow periods of two nodes) and two optional cells
-% were not run. Their re-measurement (platform l40s_improved3) is partly in: the cells it has
-% finished replace the withheld ones (OPT-6.7B's GPU verifier at 2,048 tokens, the Kpre CPU verifiers
-% of Llama-2-13B and OPT-13B at 2,048 tokens); the others are still pending. \pending marks such a value, shown with a placeholder (the basic protocol's value,
-% or -- where there is none); \pendingclaim marks a
-% sentence or clause whose claim depends on such a value. Each use has a "% PENDING:" comment
-% saying what to check. Regenerated tables and figures turn black by themselves; the text is
-% updated by hand with text_numbers.py, and both macros are then removed.
-\newcommand{\pending}[1]{\textcolor{red}{#1}}
-\newcommand{\pendingclaim}[1]{\textcolor{red}{#1}}
+% Optimised values that were not measured (timings withheld by
+% code/artifacts/comparison/excluded_cells.csv that l40s_improved3 did not re-measure, and two
+% optional cells never run) are omitted: "--" in Table 2, no point in Fig. 4, and no Table 3 row
+% that needs one (paper_assets.OMIT_UNMEASURED); the text quotes measured values only.
+
 % soundness counts of the two protocols (count_outcomes.py --tex); the optimised ones count the
 % optimised definition's cells only (--definition)
 \input{tables/counts.tex}
@@ -75,9 +69,6 @@ verifies every layer using Freivalds' algorithm against a Reed--Solomon/Merkle c
 weights. It needs no SNARK, trusted hardware or trusted setup, and a wrong output passes with
 negligible probability. Its
 prover is orders of magnitude faster than published zkSNARK provers and faster than every other fully sound system we compare with, and its verifier is faster than all of them but two, whose provers take minutes per query; its main cost is a proof that grows with the input.
-% PENDING: "all but two" rests on Table 3's verifier column (ZKML and zkLLM are faster): of the zkLLM rows, ours is 1.1x faster on
-% OPT-125M and 2.9x and 1.7x slower on OPT-1.3B and OPT-6.7B (re-measured, l40s_improved3); the Llama-2-7B and
-% Llama-2-13B rows are withheld (excluded_cells.csv), red. Holds whatever they turn out to be: zkLLM is faster already
 \end{abstract}
 
 \keywords{verifiable inference, proof of inference, integrity attacks, Freivalds' algorithm, zkML}
@@ -164,10 +155,8 @@ $2^{-\lambda}$, that composes known checks and needs only a commitment per weigh
 (Section~\ref{sec:related}). Optimisations keep the bound and shrink the committed-weights proof 2.0--4.2$\times$ for images
 and prompts of up to 512 tokens.
 (4)~\textbf{A matched-model evaluation} (Section~\ref{sec:results}) on six image classifiers and
-10 LLM architectures up to 13B parameters, against~\cite{anchuri2026verifiable}, 17 published
-systems and zkLLM's code on our GPU. Our prover is \pending{35}--32{,}000$\times$ faster than the zkSNARK provers and faster than every other fully sound system; only ZKML and zkLLM have faster verifiers than ours, and their own provers take minutes per query.
-% PENDING: the smallest prover ratio of Table 3: Llama-2-7B's at 2,048 tokens, whose optimised prover
-% is withheld (placeholder: the basic prover's); the smallest measured one is 46 (Llama-2-13B)
+10 LLM architectures up to 13B parameters, against~\cite{anchuri2026verifiable} and 17 published
+systems. Our prover is 58--32{,}000$\times$ faster than the zkSNARK provers and faster than every other fully sound system; only ZKML and zkLLM have faster verifiers than ours, and their own provers take minutes per query.
 Code and raw measurements are released.
 
 % =====================================================================================
@@ -497,14 +486,6 @@ int32 (as the released prover also does) and streams the claims to a GPU.
 % =====================================================================================
 \section{Results}
 \label{sec:results}
-% \ifnum\NPendingCells>0\relax
-% \pending{[Red: basic-protocol placeholder (red --: no basic run) for an optimised time still to be
-% (re-)measured.]}
-% % PENDING: the red -- are the 64-token GPU cells of Qwen3-4B and Llama-2-13B in Table 2 (optional cells
-% % not run) and the Llama-2-13B GPU verifier at 2,048 tokens (Tables 2 and 3, withheld)
-% \fi
-% (shown while paper_assets.py reports pending table cells; the text's own \pending and
-% \pendingclaim are removed by hand)
 
 \subsection{Experimental setup}
 \label{sec:setup}
@@ -650,8 +631,6 @@ CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
 
 \begin{table}[t]
   \caption{Language models: seconds to prove, but proofs grow with the prompt}
-  % PENDING: "seconds to prove": the largest measured C prover is 17.6 s (Llama-2-13B at 2,048
-  % tokens); Llama-2-7B's at 2,048 tokens is withheld (excluded_cells.csv)
   \label{tab:llm}
   \footnotesize
   \setlength{\tabcolsep}{2.4pt}
@@ -664,20 +643,21 @@ CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
     \multicolumn{8}{l}{\emph{64-token prompts}} \\
     \input{tables/llm.tex}
   \end{tabular}
+
+  \smallskip
+  {\footnotesize --: not measured.}
 \end{table}
 
 \para{Language models.} Table~\ref{tab:llm} proves the next-token logits of one prompt at
 $\lambda{=}128$ with random int8 weights; its GPU verify column runs our verifier on the GPU. With a
 64-token prompt GPT-2 is proved in 76.1\,ms and Llama-2-7B in
 1.8\,s, and Llama-2-7B's 325\,MB proof is about 21$\times$ smaller than its
-int8 weights. At 2{,}048 tokens Llama-2-7B is proved in \pending{17.6}\,s, but the proof grows to
-6.6\,GB and CPU verification to \pending{2.8}\,min.
-% PENDING: Llama-2-7B T2048 C prover and CPU verifier (withheld: excluded_cells.csv; placeholders: basic)
+int8 weights. At 2{,}048 tokens the same-sized OPT-6.7B is proved in 7.7\,s, but its proof grows to
+5.5\,GB and CPU verification to 46.5\,s.
 The proof grows because the claims grow with the prompt (the $\Kpre$ proof, which holds only
 claims, is almost as large), and the verifier because it recomputes attention over
 all token pairs; in setting
-$\sC$ a GPU verifier is 11--\pending{25}$\times$ faster there and 1.0--2.4$\times$ at 64
-% PENDING: the upper end at 2,048 tokens is Llama-2-7B's (withheld; placeholder: the basic run's)
+$\sC$ a GPU verifier is 11--15$\times$ faster there and 1.0--2.4$\times$ at 64
 tokens. Prompts whose claims are all sent before the challenge can share one set of challenges and
 columns; in batches of eight 64-token prompts, Llama-2-7B's prover then needs
 0.39\,s and its proof 219\,MB per prompt. For Llama-2-70B the
@@ -724,13 +704,8 @@ fewer), verifies in 77\% less time (2.3--10.9$\times$ faster) and proves in 28\%
 Most of the verifier gain comes from verifier engineering, which also speeds up the basic proofs
 (468 to 190\,ms for GPT-2 at 64 tokens), and the prover is faster on every model but the two
 MNIST ones, where encoding the claims costs more than it saves.
-\pendingclaim{At 2{,}048 tokens the optimised protocol proves Llama-2-7B in
-\pending{17.6}\,s, verifies it on the GPU in \pending{6.9}\,s and sends 6.6\,GB,
-against 17.6\,s, 6.9\,s and 11.6\,GB for the basic protocol.}
-% PENDING: the prover and GPU verifier are withheld (excluded_cells.csv); the proof is in.
-% Llama-2-7B T2048 C, prover and proof from the CPU-verifier cell, verifier from the
-% streaming GPU cell (paper_assets.opt_pairs, row g); placeholders: the basic run's. Rewrite as a comparison
-% (e.g. "proves ... in x s instead of 17.6 s") once the values are in
+At 2{,}048 tokens, where the claims dominate, the optimised protocol shrinks Llama-2-7B's proof
+from 11.6 to 6.6\,GB.
 With the basic proof format, the prover of Llama-2-7B at 2{,}048 tokens takes 1.9$\times$ the
 time of the int8 forward pass.
 % Not reported: Llama-2-13B's streaming verifier on the basic format (first L40S batch, n-801: 9.1 s,
@@ -760,8 +735,7 @@ $\sim$8.6 instead of 4.5\,min for Llama-2-7B).
   \end{tabular}
 
   \smallskip
-  {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position. $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, as Maverick; without the compact encoding; Maverick's prover runs on 64 CPU threads. $^e$zkLLM's code ran on our L40S
-  (--: not reported).}
+  {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position. $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, as Maverick; without the compact encoding; Maverick's prover runs on 64 CPU threads.}
 \end{table}
 
 In Table~\ref{tab:ratios}, which compares the optimised protocol with published systems on
@@ -776,25 +750,15 @@ which costs us extra columns; zkLLM is itself interactive, so against it we run 
 interactively. We use committed weights except against Maverick, whose client holds the weights, so we compare it with $\Kpre$; unlike $\Kpre$, it draws a fresh public challenge per query.
 
 \para{Prover.} Our prover is faster than every system in Table~\ref{tab:ratios}. It is faster than every zkSNARK prover, by
-\pending{35}$\times$ (zkLLM, \pendingclaim{Llama-2-7B}) to 32{,}000$\times$ (ZKML, VGG-16) and 3.0$\times$ faster than Maverick. 
-% PENDING: Table 3's smallest zkSNARK prover ratio: Llama-2-7B's optimised prover is withheld
-% (placeholder: the basic prover's); the smallest measured ratio is 46 (Llama-2-13B)
-To eliminate hardware differences, we also ran zkLLM's public demo on our L40S. For Llama-2-7B at 2{,}048 tokens this gives about 844\,s, \pending{48}$\times$ our
-\pending{17.6}\,s. We did not use the demo for Llama-2-13B, whose time per layer grows out of
-% PENDING: Llama-2-7B T2048 optimised prover (CPU-verifier cell, as in Table 3) and 843.84 s / it;
-% the streaming run with the basic proof format gives 5.4 s and 157
-proportion (2.5$\times$ the 7B figure).
+58$\times$ (zkLLM, OPT-1.3B) to 32{,}000$\times$ (ZKML, VGG-16) and 3.0$\times$ faster than Maverick.
 
 \para{Verifier.} Our verifier is faster in most rows of Table~\ref{tab:ratios}; it is
-slower only than ZKML's on VGG-16 (2.2$\times$) and zkLLM's on OPT-1.3B and OPT-6.7B
-at 2{,}048 tokens (2.9$\times$ and 1.7$\times$) \pendingclaim{and on Llama-2-7B and Llama-2-13B (\pending{2.9}$\times$)}. Both pay for their faster verifiers with provers that take minutes per query.
-% PENDING: the zkLLM rows of Llama-2-7B and Llama-2-13B (GPU verifier withheld:
-% excluded_cells.csv; placeholders: the basic GPU verifier, which did not run on Llama-2-13B);
-% OPT-6.7B's is re-measured (l40s_improved3: 3.5 s, 1.7x zkLLM's; its placeholder was 6.4 s, 3.1x)
+slower only than ZKML's on VGG-16 (2.2$\times$) and zkLLM's on OPT-1.3B
+at 2{,}048 tokens (2.9$\times$). Both pay for their faster verifiers with provers that take minutes per query.
 Against Maverick, we are better on all three costs, with or without the compact encoding (note $d$). With the encoding our proof is smaller (20.3\,MB, 1.8$\times$ smaller than Maverick's), and our verifier, at 151.6\,ms, is still faster than Maverick's 260.2\,ms. 
 
 \para{Proof.} Our proof is larger in most rows, since it carries every layer's claims and opened columns: by
-3.6--180$\times$ against the other short-input proofs and by 2{,}500--56{,}000$\times$ against
+3.6--180$\times$ against the other short-input proofs and by 2{,}500--14{,}000$\times$ against
 zkLLM, whose proof stays small even at 2{,}048 tokens. It is smaller in three rows, and in each of them we win on all three costs.
 
 \para{Summary.} Our prover is the fastest of every fully sound system we compare with, by orders of magnitude
@@ -818,17 +782,14 @@ fast link, so it fits a gateway or an auditor rather than an end device.
 \para{Limitations.} (i)~The proof grows with the activations; at 2{,}048 tokens it is
 mostly claims and gigabytes for 7B models, against zkLLM's 157--183\,kB. (ii)~The verifier's cost
 grows with the square of the prompt length: at 2{,}048 tokens the CPU verifier needs up to
-\pending{3.7}\,min, and \pendingclaim{the GPU verifier is 1.7--\pending{2.9}$\times$ slower than
-zkLLM's}. (iii)~The provider must serve the integer model,
-% PENDING: Llama-2-13B T2048 CPU verifier (setting C) and the Llama-2 rows' GPU verifier ratios of Table 3,
-% as in Sec. 5.5 (withheld: excluded_cells.csv; placeholders: basic). Measured: 1.1x faster than zkLLM's
-% on OPT-125M, 2.9x slower on OPT-1.3B, 1.7x slower on OPT-6.7B (re-measured, l40s_improved3)
+84.5\,s, and the GPU verifier is up to 2.9$\times$ slower than
+zkLLM's. (iii)~The provider must serve the integer model,
 as proof systems and TEE-based checks for inference also need integer or fixed-point models~\cite{safetynets,slalom,zkcnn,zen,zkml,zkllm}, at some cost
 in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol we assume an honest weight commitment, which the
 planning rule's longer codewords make up to 13$\times$ slower to compute; a malformed one would need a proximity
 argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
 row, so the protocol is not zero-knowledge. 
-% (vi)~We prove one forward pass, without a KV cache. (vii)~The prototype is Python, and the same-GPU zkLLM comparison rests on its demo.
+% (vi)~We prove one forward pass, without a KV cache. (vii)~The prototype is Python.
 
 \para{Future work.} The proof is mostly claims, which the verifier needs in full to recompute the
 operations without weights; proving those operations with a sum-check argument, as zkLLM does,
