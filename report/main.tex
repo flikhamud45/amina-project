@@ -863,10 +863,7 @@ provider that wants to change an answer: one that tampers with a single neuron a
 everything else honestly passes its check almost always, on image classifiers and on the real
 OPT-6.7B, and no sampling rule, however it chooses where to look, closes this gap on every network.
 
-We close the gap by checking every layer instead of a sample: Freivalds' algorithm against a
-Reed--Solomon/Merkle commitment to the weights accepts a wrong output with probability at most
-$2^{-\lambda}$, and in our experiments the protocol rejected all \NAttacks{} attacks on the basic
-protocol and all \OptNAttacks{} on the optimised one. It needs only hashing, with no SNARK, trusted
+We close the gap by checking every layer instead of a sample. It needs only hashing, with no SNARK, trusted
 hardware or trusted setup, and it is practical: its prover is the fastest of all the systems we
 compared, orders of magnitude faster than the zkSNARK provers; its verifier is faster in most
 comparisons; and against zkCNN on LeNet-5, DeepProve on GPT-2 and Maverick it is better on all
@@ -875,7 +872,7 @@ weak point and the natural target for future work.
 
 % =====================================================================================
 \section{Contributions}
-We are close friends and did most of this work sitting together. Edo Kadosh focused somewhat more
+We are close friends so we did most of this work sitting together. Edo Kadosh focused somewhat more
 on the optimisations, Ofek Lavi on the attack and the sampling proofs, and Erel Barzilay on the
 basic defence, but the vast majority of the work was joint. We used Claude to help write the code
 and correct the grammar of the text.
