@@ -813,17 +813,13 @@ cost we pay is a larger proof, which grows with the input.
 % =====================================================================================
 \section{Discussion}
 
-\para{Implications.} Spot-checking a sample of an inference catches a provider that runs a
-different model, but not one that edits the answer: one altered neuron suffices, and no sampling
-rule finds it reliably on every network. Schemes for verifying outsourced inference should
-therefore be judged against a provider that chooses what to change. Meeting that standard does not
-need a zkSNARK: one random linear combination per weight layer gives a $2^{-\lambda}$ guarantee
-using only hashing, with no trusted setup and no assumption about how models behave, while proving
-takes milliseconds to seconds per query. A company that outsources inference on sensitive data can
-thus check every answer. For MLPs and CNNs even a modest client verifies in milliseconds on a CPU,
-with a proof usually smaller than the model; for language models the verifier recomputes attention,
-so the check suits a gateway or an auditor with a GPU and a fast link, and works best for large
-models with short prompts.
+\para{Implications.} Anchuri et al.'s path protocol still catches a provider that substitutes a
+cheaper model, but one that wants to change a particular answer passes it almost surely, so it
+should not be relied on where a wrong answer is costly. Our protocol catches such a provider except
+with probability $2^{-\lambda}$, at a prover cost of milliseconds to seconds per query and without
+a zkSNARK or a trusted setup, which makes checking every answer practical. MLPs and CNNs are
+verified in milliseconds on an ordinary CPU; for language models the verifier needs a GPU and a
+fast link, so it fits a gateway or an auditor rather than an end device.
 
 \para{Limitations.} (i)~The proof grows with the activations; at 2{,}048 tokens it is
 mostly claims and gigabytes for 7B models, against zkLLM's 157--183\,kB. (ii)~The verifier's cost
