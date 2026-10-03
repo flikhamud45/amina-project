@@ -435,7 +435,7 @@ def checks(M, opt_names: list[str]):
               for mode in ("C", "Kpre")}
     if stream["C"]:
         # Sec. 4.5: the prover against the int8 forward pass alone (the Kpre prover)
-        add(r"time of the int8 forward pass alone", "basic proof format, Llama-2-7B T2048: C prover / Kpre prover",
+        add(r"time of the int8 forward pass", "basic proof format, Llama-2-7B T2048: C prover / Kpre prover",
             [one(fixed(stream["C"][0] / stream["Kpre"][0]), x, "×")])
 
     def commit(T, model, cell):
@@ -455,8 +455,9 @@ def checks(M, opt_names: list[str]):
     l_state = FINAL if None not in l_def else ACCEPTABLE
     l_opt = l_def if None not in l_def else l_acc
     mean = lambda v: sum(v) / len(v)   # noqa: E731
-    add(r"one-time setup (is )?longer", "setup: GPT-2 optimised; GPT-2 released code; Llama-2-7B optimised, basic (min)",
-        [*rng([fixed(v) for v in g_opt if v], lambda v: f"{v:.0f}", "s"), *rng([fixed(v) for v in g_new], lambda v: f"{v:.0f}", "s"),
+    # the text gives the GPT-2 setups as approximate means (~115 s, ~10 s)
+    add(r"one-time setup (is )?longer", "setup: GPT-2 optimised; GPT-2 released code (means); Llama-2-7B optimised, basic (min)",
+        [Tok([(f"{mean([v for v in g_opt if v]):.0f}", FINAL)], "s"), Tok([(f"{mean(g_new):.0f}", FINAL)], "s"),
          Tok([(f"{mean(l_opt) / 60:.1f}", l_state)]), Tok([(f"{mean(l_old) / 60:.1f}", FINAL)], "min")])
     add(r"longer codewords make up to", "setup slow-down, GPT-2 (same length, released code -> optimised)",
         Tok([(x(max(commit(MO, "gpt2", f"commit_T{s}_L12_wire_prune_polauto") / commit(MO, "gpt2", f"commit_T{s}_L12")
@@ -496,18 +497,12 @@ def checks(M, opt_names: list[str]):
         slow)
     mav = [cells for s, w, cells, _, _ in rr if s.startswith("Maverick")][0]
     mav_ours = elem(lambda s: s.llm("qwen3-4b", 8, "verify", "Kpre"))
-    # the part of ours that decodes the compact encoding (verify_decode of the same cell)
-    mav_spec = pa.OPTIMISED_SPECIAL[("qwen3-4b", 8, "Kpre")]
-    mav_row = pa.llm_rows("Kpre", lam=mav_spec["lam"], threads=mav_spec["threads"], tables=pa.opt_dirs(),
-                          tags=mav_spec["tags"]).get(("qwen3-4b", 8), {}) if pa.opt_dirs() else {}
-    dec = mav_row.get("verify_decode", (None,))[0]
     mav_bytes = elem(lambda s: s.llm("qwen3-4b", 8, "bytes", "Kpre"))   # the run with the compact encoding
-    add(r"With the encoding our proof is smaller still", "our proof with the encoding; Maverick's / it; "
-        "Maverick's verifier; ours; of it decoding",
+    add(r"With the encoding our proof is smaller", "our proof with the encoding; Maverick's / it; "
+        "Maverick's verifier; ours",
         [one(mav_bytes, pa.b), one(V(mav[2][0] / mav_bytes.value, mav_bytes.state), x, "×"),
          Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"),
-         Tok([(f"{mav_ours.value * 1e3:.1f}", mav_ours.state)], "ms"),
-         Tok([(f"{dec * 1e3:.1f}" if dec is not None else None, mav_ours.state if dec is not None else PENDING)], "ms")])
+         Tok([(f"{mav_ours.value * 1e3:.1f}", mav_ours.state)], "ms")])
     lose = [v[2] for (s, w), v in q.items() if v[2].value and v[2].value < 1 and system(s) != "zkLLM"]
     zkl = [v[2] for (s, w), v in q.items() if s == "zkLLM"]
     add(r"Our proof is larger in most rows", "proof larger: other short-input rows; zkLLM rows",
