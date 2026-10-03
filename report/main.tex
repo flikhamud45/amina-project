@@ -162,7 +162,7 @@ $2^{-\lambda}$, that composes known checks and needs only a commitment per weigh
 and prompts of up to 512 tokens.
 (4)~\textbf{A matched-model evaluation} (Section~\ref{sec:results}) on six image classifiers and
 10 LLM architectures up to 13B parameters, against~\cite{anchuri2026verifiable}, 17 published
-systems and zkLLM's code on our GPU. Our prover is \pending{35}--32{,}000$\times$ faster than the zkSNARK provers and faster than every other fully sound system, and only ZKML's and zkLLM's verifiers are faster than ours, at the cost of provers that take minutes per query.
+systems and zkLLM's code on our GPU. Our prover is \pending{35}--32{,}000$\times$ faster than the zkSNARK provers and faster than every other fully sound system; only ZKML and zkLLM have faster verifiers than ours, and their own provers take minutes per query.
 % PENDING: the smallest prover ratio of Table 3: Llama-2-7B's at 2,048 tokens, whose optimised prover
 % is withheld (placeholder: the basic prover's); the smallest measured one is 46 (Llama-2-13B)
 Code and raw measurements are released.
