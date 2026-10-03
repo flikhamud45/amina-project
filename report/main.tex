@@ -719,24 +719,24 @@ $\sim$8.6 instead of 4.5\,min for Llama-2-7B).
 \subsection{Comparison with published systems}
 \label{sec:compare}
 
-\begin{table}[t]
-  \caption{Our costs against published systems: our prover always wins (bold $\downarrow$: ours lower;
-  $\uparrow$: ours higher)}
+\begin{table*}[t]
+  \caption{Our costs against published systems: our prover always wins (in parentheses, the factor by
+  which ours is lower $\downarrow$ or higher $\uparrow$; bold: ours better)}
   \label{tab:ratios}
-  \scriptsize
-  \setlength{\tabcolsep}{2pt}
-  \begin{tabular}{llrrr}
+  \footnotesize
+  \setlength{\tabcolsep}{5pt}
+  \begin{tabular}{ll@{\hspace{18pt}}rr@{\hspace{18pt}}rr@{\hspace{18pt}}rr}
     \toprule
-    & & \multicolumn{3}{c}{our value (factor vs.\ theirs)} \\
-    \cmidrule(lr){3-5}
-    System & Model (tokens) & prover$\downarrow$ & verifier$\downarrow$ & proof$\downarrow$ \\
+    & & \multicolumn{2}{c}{prover$\downarrow$} & \multicolumn{2}{c}{verifier$\downarrow$} & \multicolumn{2}{c}{proof$\downarrow$} \\
+    \cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+    System & Model (tokens) & theirs & ours & theirs & ours & theirs & ours \\
     \midrule
     \input{tables/ratios.tex}
   \end{tabular}
 
   \smallskip
   {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position. $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, as Maverick; without the compact encoding; Maverick's prover runs on 64 CPU threads.}
-\end{table}
+\end{table*}
 
 In Table~\ref{tab:ratios}, which compares the optimised protocol with published systems on
 matched models, our prover wins in every row, while the verifier and the proof win in some rows

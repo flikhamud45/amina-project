@@ -1415,8 +1415,10 @@ def tab_ratios(MO=None):
             if group is not None and g != group:
                 lines.append(r"\midrule")
             group = g
-            cols = [system, what] + [_mark(red(_with_ours(o, i, s), p), q)
-                                     for i, ((_, o), (s, q), p) in enumerate(zip(cells, shown, pend))]
+            # each cost: the published value, then ours with the factor (Table 3 spans both columns)
+            cols = [system, what]
+            for i, ((a, o), (s, q), p) in enumerate(zip(cells, shown, pend)):
+                cols += [(b if i == 2 else t)(a), _mark(red(_with_ours(o, i, s), p), q)]
         else:
             cols = [system, what] + [red(s, p) for (s, _), p in zip(shown, pend)]
             if all(q is not None and q >= 1 for _, q in shown):
