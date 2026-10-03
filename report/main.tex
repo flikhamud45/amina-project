@@ -560,7 +560,7 @@ of attacks, a static importance score (outgoing weight magnitude) 0.11\% and gra
 0.016\%. The contribution-weighted sampler detects nothing: zeroing about 14 of the 512 neurons,
 their most common value (65\% of inputs), flips the prediction, and end-to-end runs accepted
 2{,}000 of 2{,}000 attacks. A floor
-$\delta=1$ raises detection to 2\% (10$\times$ uniform); other floors give 0.9--6$\times$.
+$\delta=1$ (sampling by $|w_{ij}|(|a_i|+\delta)$) raises detection to 2\% (10$\times$ uniform); other floors give 0.9--6$\times$.
 
 \para{Larger models.} On every CNN and every test query, changing one penultimate neuron suffices
 to flip the prediction. One path catches it with probability 1/84 (LeNet-5) to 1/512 (VGG,
@@ -661,8 +661,8 @@ CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
     \input{tables/llm.tex}
   \end{tabular}
 
-  \smallskip
-  {\footnotesize --: not measured.}
+  % \smallskip
+  % {\footnotesize --: not measured.}
 \end{table}
 
 \para{Language models.} Table~\ref{tab:llm} proves the next-token logits of one prompt at
@@ -752,7 +752,7 @@ interactively. We use committed weights except against Maverick, whose client ho
 
 \para{Verifier.} Our verifier is faster in most rows of Table~\ref{tab:ratios}; it is
 slower only than ZKML's on VGG-16 (2.2$\times$) and zkLLM's on OPT-1.3B
-at 2{,}048 tokens (2.9$\times$). Both pay for their faster verifiers with provers that take minutes per query.
+at 2{,}048 tokens (2.9$\times$). Both have provers that take minutes per query.
 Against Maverick, we are better on all three costs, with or without the compact encoding (note $d$). With the encoding our proof is smaller (20.3\,MB, 1.8$\times$ smaller than Maverick's), and our verifier, at 151.6\,ms, is still faster than Maverick's 260.2\,ms. 
 
 \para{Proof.} Our proof is larger in most rows, since it carries every layer's claims and opened columns: by
@@ -783,9 +783,9 @@ grows with the square of the prompt length: at 2{,}048 tokens the CPU verifier n
 84.5\,s, and the GPU verifier is up to 2.9$\times$ slower than
 zkLLM's. (iii)~The provider must serve the integer model,
 as proof systems and TEE-based checks for inference also need integer or fixed-point models~\cite{safetynets,slalom,zkcnn,zen,zkml,zkllm}, at some cost
-in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol we assume an honest weight commitment, which the
-planning rule's longer codewords make up to 13$\times$ slower to compute; a malformed one would need a proximity
-argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
+in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol, we assume the weight commitment is computed honestly; the planning rule's
+longer codewords make it up to 13$\times$ slower to compute. Accepting a commitment from an untrusted
+party would require a proximity argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
 row, so the protocol is not zero-knowledge. 
 % (vi)~We prove one forward pass, without a KV cache. (vii)~The prototype is Python.
 

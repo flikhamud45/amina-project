@@ -466,7 +466,7 @@ def checks(M, opt_names: list[str]):
     add(r"one-time setup (is )?longer", "setup: GPT-2 optimised; GPT-2 released code (means); Llama-2-7B optimised, basic (min)",
         [Tok([(f"{mean([v for v in g_opt if v]):.0f}", FINAL)], "s"), Tok([(f"{mean(g_new):.0f}", FINAL)], "s"),
          Tok([(f"{mean(l_opt) / 60:.1f}", l_state)]), Tok([(f"{mean(l_old) / 60:.1f}", FINAL)], "min")])
-    add(r"longer codewords make up to", "setup slow-down, GPT-2 (same length, released code -> optimised)",
+    add(r"longer codewords make (it )?up to", "setup slow-down, GPT-2 (same length, released code -> optimised)",
         Tok([(x(max(commit(MO, "gpt2", f"commit_T{s}_L12_wire_prune_polauto") / commit(MO, "gpt2", f"commit_T{s}_L12")
                     for s in (64, 512))), FINAL)], "×"))
 
