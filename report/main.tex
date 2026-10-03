@@ -72,8 +72,7 @@ that no sampling rule closes this gap on every network. We therefore create a pr
 verifies every layer using Freivalds' algorithm against a Reed--Solomon/Merkle commitment to the
 weights. It needs no SNARK, trusted hardware or trusted setup, and a wrong output passes with
 negligible probability. Its
-prover is orders of magnitude faster than published zkSNARK provers and faster than every other
-system we compare with, and its verifier is faster than most of them and competitive with the
+prover is orders of magnitude faster than published zkSNARK provers and faster than every other fully sound system we compare with, and its verifier is faster than most of them and competitive with the
 rest; its main cost is a proof that grows with the input.
 % PENDING: "competitive" rests on Table 3's verifier column: of the zkLLM rows, ours is 1.1x faster on
 % OPT-125M and 2.9x slower on OPT-1.3B; the three larger rows are withheld (excluded_cells.csv), red
@@ -775,11 +774,11 @@ so against them we make ours non-interactive with Fiat--Shamir (Section~\ref{sec
 which costs us extra columns; zkLLM is itself interactive, so against it we run ours
 interactively. We use committed weights except against Maverick, whose client holds the weights, so we compare it with $\Kpre$; unlike $\Kpre$, it draws a fresh public challenge per query.
 
-\para{Prover.} Our prover is faster than every system we tested. it is faster than every zkSNARK prover, by
+\para{Prover.} Our prover is faster than every system in Table~\ref{tab:ratios}. It is faster than every zkSNARK prover, by
 \pending{35}$\times$ (zkLLM, \pendingclaim{Llama-2-7B}) to 32{,}000$\times$ (ZKML, VGG-16) and 3.0$\times$ faster than Maverick. 
 % PENDING: Table 3's smallest zkSNARK prover ratio: Llama-2-7B's optimised prover is withheld
 % (placeholder: the basic prover's); the smallest measured ratio is 46 (Llama-2-13B)
-to eliminate hardware differences, we also ran zkLLM's public demo on our L40S. For Llama-2-7B at 2{,}048 tokens this gives about 844\,s, \pending{48}$\times$ our
+To eliminate hardware differences, we also ran zkLLM's public demo on our L40S. For Llama-2-7B at 2{,}048 tokens this gives about 844\,s, \pending{48}$\times$ our
 \pending{17.6}\,s. We did not use the demo for Llama-2-13B, whose time per layer grows out of
 % PENDING: Llama-2-7B T2048 optimised prover (CPU-verifier cell, as in Table 3) and 843.84 s / it;
 % the streaming run with the basic proof format gives 5.4 s and 157
@@ -796,7 +795,7 @@ Against Maverick, we are better on all three costs, with or without the compact 
 3.6--180$\times$ against the other short-input proofs and by 2{,}500--56{,}000$\times$ against
 zkLLM, whose proof stays small even at 2{,}048 tokens. It is smaller in three rows, and in each of them we win on all three costs.
 
-\para{Summary.} Our prover is the fastest of every system we compare with, by orders of magnitude
+\para{Summary.} Our prover is the fastest of every fully sound system we compare with, by orders of magnitude
 against the zkSNARKs: it proves a query in milliseconds for the image models and in seconds for
 the language models. Our verifier is faster in most rows and slower only than ZKML's and zkLLM's, whose provers are so much slower than ours that proving each
 query with them is barely practical.
@@ -846,8 +845,7 @@ everything else honestly passes its check almost always, on image classifiers an
 OPT-6.7B, and no sampling rule, however it chooses where to look, closes this gap on every network.
 
 We close the gap by checking every layer instead of a sample. It needs only hashing, with no SNARK, trusted
-hardware or trusted setup, and it is practical: its prover is the fastest of all the systems we
-compared, orders of magnitude faster than the zkSNARK provers; its verifier is faster in most
+hardware or trusted setup, and it is practical: its prover is the fastest of all the fully sound systems we compared, orders of magnitude faster than the zkSNARK provers; its verifier is faster in most
 comparisons; and against zkCNN on LeNet-5, DeepProve on GPT-2 at 64 tokens and Maverick it is better on all three costs. Its remaining cost is a proof that grows with the input, which makes long prompts its
 weak point and the natural target for future work.
 
@@ -858,6 +856,7 @@ on the optimisations, Ofek Lavi on the attack and the sampling proofs, and Erel 
 basic defence, but the vast majority of the work was joint. We used Claude to help write the code
 and correct our grammar.
 
+\newpage
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{references}
 
