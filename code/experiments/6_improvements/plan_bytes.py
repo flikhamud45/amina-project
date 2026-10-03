@@ -13,7 +13,7 @@
 Without ``--run``: one row per (model, prompt length, policy, challenges) at ``--lam`` from the
 shapes alone (``analytic.proof_bytes``: claims, ``u`` and opened columns exact, Merkle paths their
 expectation; ``analytic.setup_size``), for the benchmark's CNNs (random-init, the bytes depend on
-the shapes only) and the decoders of Table 1.  With ``--run model[:seqs[:blocks[:vocab]]]``: the
+the shapes only) and the benchmark's decoders.  With ``--run model[:seqs[:blocks[:vocab]]]``: the
 model is built and committed under every policy and ``--queries`` honest queries (distinct random
 inputs: ``ab_verifier.random_queries`` for a CNN, random prompts for a decoder) are run with
 ``run_query`` (interactive and Fiat--Shamir); each row holds the measured bytes (paths: the
@@ -74,7 +74,7 @@ def cnn_graph(name: str):
 
 
 def analytic_rows(lam: int, policies, prune_last: bool = False, kpre=()) -> list[dict]:
-    """The byte model of every CNN and decoder of Table 1: per policy (mode C) and, with ``kpre``, mode
+    """The byte model of every CNN and decoder of the benchmark: per policy (mode C) and, with ``kpre``, mode
     Kpre with the verifier reading the embedding rows itself off and/or on."""
     cases = [(name, None, *cnn_graph(name)[::2]) for name in CNNS]
     cases += [(name, seq, None, decoder_claim_columns(CONFIGS[name], seq, prune_last=prune_last))

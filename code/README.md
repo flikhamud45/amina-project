@@ -18,8 +18,8 @@ stored measurements in about a minute, without a GPU.
 
 ## Installation
 
-**Python and packages.** Python 3.11 or newer for the pinned versions (the stored runs used Python
-3.12.3). [`requirements.txt`](requirements.txt) pins the versions the results were produced with:
+**Python and packages.** Python 3.12 for the pinned versions (the stored runs used Python 3.12.3;
+`numpy==2.5.2` needs 3.12 or newer, and `torch==2.5.1` has no wheels for 3.14). [`requirements.txt`](requirements.txt) pins the versions the results were produced with:
 
 | Package | Version | Needed for |
 |---|---|---|
@@ -202,7 +202,7 @@ wording) and compares them with `report/main.tex` (exit 0: all match).
 | Table 2 | image models (optimised, λ = 128) | `paper_assets` → `report/tables/cnn.tex` | [5_comparison](experiments/5_comparison/README.md), [4_defence_benchmark](experiments/4_defence_benchmark/README.md) |
 | Table 3 | language models at 64 and 2,048 tokens, CPU and GPU verifier (`--`: not measured) | `paper_assets` → `report/tables/llm.tex` | [5_comparison](experiments/5_comparison/README.md), [4_defence_benchmark](experiments/4_defence_benchmark/README.md) |
 | Sec. 4.1 | hardware macros (`report/tables/hardware.tex`) | `paper_assets` | [5_comparison](experiments/5_comparison/README.md) |
-| Abstract, Sec. 4.3 | count macros (`report/tables/counts.tex`, `counts_opt.tex`) | `python experiments/5_comparison/count_outcomes.py --platform l40s --tex ../report/tables/counts.tex` and `... --platform l40s_improved,l40s_improved2,l40s_improved3 --prefix Opt --definition --tex ../report/tables/counts_opt.tex` | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.3 | count macros (`report/tables/counts.tex`, `counts_opt.tex`) | `python experiments/5_comparison/count_outcomes.py --platform l40s --tex ../report/tables/counts.tex` and `... --platform l40s_improved,l40s_improved2,l40s_improved3 --prefix Opt --definition --tex ../report/tables/counts_opt.tex` | [5_comparison](experiments/5_comparison/README.md) |
 | `--` in Table 3 | values not measured, omitted (0 pending) | `paper_assets --check` | [5_comparison](experiments/5_comparison/README.md#omitted-values) |
 
 **Numbers in the text, by section**
@@ -297,7 +297,7 @@ git -c core.autocrlf=false archive --format=tar.gz --prefix=<groupname>/ -o <gro
 
 Every file must keep its LF line endings: with CRLF the `.sh` and `.sbatch` scripts fail on Linux and
 `sha256sum -c MODELS.sha256` fails. The repository's `.gitattributes` keeps every `.sh`, `.sbatch`,
-`.py` and `.sha256` file in LF in every checkout and archive; `core.autocrlf=false` keeps the other
-files as committed (LF) too, which matters on Windows, where `core.autocrlf` is often `true`. Copying
+`.py` and `.sha256` file in LF in every checkout and archive; `core.autocrlf=false` keeps the other files exactly as committed (LF, except some stored CSVs that keep
+Python's CRLF), which matters on Windows, where `core.autocrlf` is often `true`. Copying
 `code/` and `report/` into `<groupname>/` and running `tar -czvf <groupname>.tar.gz <groupname>/`, as the
 course describes, works too if the copies have LF line endings.

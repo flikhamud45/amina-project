@@ -31,9 +31,9 @@ cd ../report && latexmk -pdf main.tex                                     # or: 
 | `figures/overview_*.pdf`, `figures/protocol.pdf` | Fig. 1 and Fig. 2 |
 | `figures/security_bits.pdf` | Fig. 3 |
 | `figures/cost_*.pdf` | Fig. 4 (three panels and the legend) |
-| `tables/cnn.tex`, `tables/llm.tex`, `tables/ratios.tex` | Tables 1–3 |
+| `tables/ratios.tex`, `tables/cnn.tex`, `tables/llm.tex` | Tables 1, 2 and 3 |
 | `tables/hardware.tex` | `\ProverGPU`, `\VerifierCPU`, `\VerifierThreads` and `\LLMNote` (empty: every row of Table 3 is a full build) |
-| `tables/counts.tex`, `tables/counts_opt.tex` | the soundness counts of the abstract and Sec. 4.3 as macros, for the basic and the optimised protocol |
+| `tables/counts.tex`, `tables/counts_opt.tex` | the soundness counts of Sec. 4.3 as macros, for the basic and the optimised protocol |
 
 `main.tex` inputs `hardware.tex` and the count files in its preamble. The numbers typed in the text are
 not generated: `text_numbers.py` compares each one with the tables and fails on a mismatch. Some

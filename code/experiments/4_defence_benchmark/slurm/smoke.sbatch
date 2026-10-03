@@ -56,7 +56,7 @@ if any(bad.values()) or int(s.get("tests", 0)) == 0:
 print(f"pytest: {s.get('tests')} tests, none failed, errored or skipped")
 PY
 
-# the shipped inputs (never retrain): trained CNNs, ImageNet caches, CIFAR-10 ($PVI_CIFAR_ROOT), MNIST
+# the required inputs (train the CNNs first with train.sbatch): trained CNNs, ImageNet caches, CIFAR-10 ($PVI_CIFAR_ROOT), MNIST
 for m in lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel; do
   test -f "artifacts/fullcheck/models/$m.pt" || { echo "FAIL: missing artifacts/fullcheck/models/$m.pt"; exit 1; }
 done

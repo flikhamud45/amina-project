@@ -41,7 +41,7 @@
 
 \begin{document}
 
-\title{Certified but Compromised: Breaking and Fixing\\ Lightweight Proofs of Inference}
+\title[Certified but Compromised: Breaking and Fixing Lightweight Proofs of Inference]{Certified but Compromised: Breaking and Fixing\\ Lightweight Proofs of Inference}
 \subtitle{Final Report --- Trustworthy Machine Learning, Spring 2026}
 
 \author{Ofek Lavi}
@@ -149,8 +149,7 @@ probability at most $k/N$. The fixes that Anchuri et al.\ suggest, sampling more
 sampling where it matters, prove unhelpful: no rule does better than uniform sampling on every network, and
 reaching $2^{-40}$ forces the path protocol to open essentially the whole model and trace.
 
-This led us to a different design (Figure~\ref{fig:overview-defence}). The client tests one
-random linear combination of all the neurons of every layer (Freivalds'
+This led us to a different design (Figure~\ref{fig:overview-defence}). The client tests a few random linear combinations of all the neurons of every layer (Freivalds'
 algorithm~\cite{freivalds1977}). When it does not hold the weights, it checks the combination
 against a Reed--Solomon-encoded, Merkle-committed copy of them in the style of
 Ligero~\cite{ligero}, so the client stores only a 32-byte Merkle root per weight matrix. The model
@@ -169,11 +168,9 @@ prompts on the real OPT-6.7B. (2)~\textbf{A bound on sampling-based fixes}
 sampling requires essentially the whole model and trace for $2^{-40}$. (3)~\textbf{A full-soundness
 protocol} for whole CNNs and transformers (Sections~\ref{sec:defence}--\ref{sec:opt}), with error
 $2^{-\lambda}$, that composes known checks and needs only a commitment per weight matrix
-(Section~\ref{sec:related}). Optimisations keep the bound and shrink the committed-weights proof 2.0--4.2$\times$ for images
-and prompts of up to 512 tokens.
+(Section~\ref{sec:related}). Optimisations keep the bound and shrink the committed-weights proof 2.0--4.2$\times$ on the models of Section~\ref{sec:effect}.
 (4)~\textbf{A matched-model evaluation} (Section~\ref{sec:results}) on six image classifiers and
-10 LLM architectures up to 13B parameters, against~\cite{anchuri2026verifiable} and 17 published
-systems. Our prover is 58--32{,}000$\times$ faster than the zkSNARK provers and faster than every other fully sound system (Table~\ref{tab:ratios}); only ZKML and zkLLM have faster verifiers than ours, and their own provers take minutes per query.
+10 LLM architectures up to 13B parameters, against~\cite{anchuri2026verifiable} and 15 published systems. In Table~\ref{tab:ratios} our prover is 58--32{,}000$\times$ faster than the zkSNARK provers and faster than every other fully sound system; only ZKML and zkLLM have faster verifiers than ours, and their own provers take minutes per query.
 
 % =====================================================================================
 \section{Related Work}
@@ -188,6 +185,7 @@ For LLMs they include zkLLM~\cite{zkllm} (also interactive), zkGPT~\cite{zkgpt},
 DeepProve~\cite{deepprove}, ZKTorch~\cite{zktorch} and Jolt Atlas~\cite{joltatlas}. They give
 computational soundness and mostly small proofs, but their provers are far slower than
 inference: from half a second for LeNet-5 and tens of seconds for GPT-2 to tens of minutes for 7B models.
+For brevity we call all of them zkSNARKs, although Mystique and zkLLM are interactive.
 
 \para{Interactive and Freivalds-style checks.} SafetyNets~\cite{safetynets} uses interactive proofs for networks
 with quadratic activations. Slalom~\cite{slalom} checks every linear layer of a GPU computation
@@ -518,10 +516,9 @@ compact encoding's size, which may differ for real weights.
 \para{Real weights.} To check that the integer graph is a usable language model, we load the real
 OPT-125M, OPT-1.3B and OPT-6.7B into it (with one extra bias on the LM head, from folding the final
 LayerNorm). On 4{,}064 tokens of WikiText-2 their perplexity is 73.8, 37.4 and 36.0, against 64.7,
-34.9 and 27.1 in fp32, slightly optimistic because two public constants (the normalisation gain
-$G$, 4, 3 and 2, and the calibration percentile) were chosen on this text.
+34.9 and 27.1 in fp32, slightly optimistic because two public constants (the LayerNorm output gain, 4, 3 and 2, and the calibration percentile) were chosen on this text.
 
-\para{Hardware and baselines.} The prover is one NVIDIA \ProverGPU{} (48\,GB) and the verifier
+\para{Hardware and baselines.} Our implementation is in Python and PyTorch, with SHA-256 Merkle trees. The prover is one NVIDIA \ProverGPU{} (48\,GB) and the verifier
 \VerifierThreads{} threads of an AMD EPYC 9334; times are medians over a run's queries. Of the
 30--70B shapes only 1- and 2-block builds fit, from which we extrapolate proof sizes (within
 2.83\% wherever a full build exists) but not times. Published costs are as reported on their own
@@ -529,7 +526,7 @@ hardware, each checked against its source; for the path protocol we compute exac
 probabilities and bytes on our graphs and take its time per path from Anchuri et al. The basic
 protocol was measured at commit \texttt{9401431} (a rerun on an RTX~2080~Ti reproduced all
 1{,}978 hardware-independent values), the optimised one with the released code (\texttt{c8be5eb}
-and two successors that change no proof byte), which reproduces the basic proofs byte for byte.
+and three successors that change no proof byte), which reproduces the basic proofs byte for byte.
 
 \subsection{Breaking the path protocol}
 \label{sec:break}
@@ -624,7 +621,8 @@ rejected all \OptNColumnsMerkle{} forged columns (a range check caught the remai
 \end{table}
 
 \para{Security per byte.} Figure~\ref{fig:security} plots security against the bytes sent per query for the image models,
-each with its own marker, orange for its paths and blue for our protocols. Security, in bits, is $-\log_2$ of the probability that a wrong output is accepted: for the paths,
+each with its own marker, orange for its paths and blue for our protocols (the 224-pixel ResNet's paths,
+which coincide with VGG-16's, are not drawn). Security, in bits, is $-\log_2$ of the probability that a wrong output is accepted: for the paths,
 that the single-neuron attack is missed, and for ours, the proven bound at $\lambda{=}40$, 80 and
 128. The paths reach 40 bits only by opening the whole model and trace (the vertical lines). The
 optimised protocol
@@ -645,7 +643,7 @@ at $\lambda{=}128$. With committed weights the prover needs
 % for the MNIST and CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
 
 \begin{table}[t]
-  \caption{Language models: seconds to prove, but proofs grow with the prompt}
+  \caption{Language models: seconds to prove, but proofs grow with the prompt (--: not measured)}
   \label{tab:llm}
   \footnotesize
   \setlength{\tabcolsep}{2.4pt}
@@ -658,9 +656,6 @@ at $\lambda{=}128$. With committed weights the prover needs
     \multicolumn{8}{l}{\emph{64-token prompts}} \\
     \input{tables/llm.tex}
   \end{tabular}
-
-  % \smallskip
-  % {\footnotesize --: not measured.}
 \end{table}
 
 \para{Language models.} Table~\ref{tab:llm} proves the next-token logits of one prompt at
@@ -717,17 +712,11 @@ LeNet-5, VGG-16, ResNet-18 (CIFAR), GPT-2 (64 and 512 tokens) and Llama-2-7B (1 
 On average (geometric mean) the optimised protocol sends 61\% fewer bytes (2.0--4.2$\times$
 fewer), verifies in 77\% less time (2.3--10.9$\times$ faster) and proves in 28\% less time.
 Most of the verifier gain comes from verifier engineering, which also speeds up the basic proofs
-(468 to 190\,ms for GPT-2 at 64 tokens), and the prover is faster on every model but the two
-MNIST ones, where encoding the claims costs more than it saves.
+(468 to 190\,ms for GPT-2 at 64 tokens), and the prover is faster on every model but LeNet-5, where encoding the claims costs more than it saves.
 At 2{,}048 tokens, where the claims dominate, the optimised protocol shrinks Llama-2-7B's proof
 from 11.6 to 6.6\,GB.
 With the basic proof format, the prover of Llama-2-7B at 2{,}048 tokens takes 1.9$\times$ the
 time of the int8 forward pass.
-% Not reported: Llama-2-13B's streaming verifier on the basic format (first L40S batch, n-801: 9.1 s,
-% 5.4x Llama-2-7B's). Every phase of that cell, the prover's forward pass included, varied 3-5x from
-% query to query (forward 5.3-18.2 s; Llama-2-7B's on the same node 2.84-2.92 s), as in the slow
-% periods of n-801 found in the second batch; that batch's same verifier phase on Llama-2-13B took
-% 2.4 s (2.32-2.89 s), 1.5x Llama-2-7B's, at 70 GiB of host memory
 The price is that the one-time setup is longer ($\sim$115\,s instead of $\sim$10\,s for GPT-2,
 $\sim$8.6 instead of 4.5\,min for Llama-2-7B).
 
@@ -737,7 +726,7 @@ $\sim$8.6 instead of 4.5\,min for Llama-2-7B).
 In Table~\ref{tab:ratios}, which compares the optimised protocol with published systems on
 matched models, our prover wins in every row, while the verifier and the proof win in some rows
 and lose in others. Our verifier runs on
-\VerifierThreads{} CPU threads, except in the 2{,}048-token rows, where we use our GPU verifier,
+\VerifierThreads{} CPU threads at $\lambda{=}128$, except against Maverick (note~$d$) and in the 2{,}048-token rows, where we use our GPU verifier,
 since zkLLM also runs on a GPU; the prover times and proof sizes there are those of
 Table~\ref{tab:llm}, as the choice of verifier does not change the proof. For the language models
 ours prove the next-token logits. Most systems we compare with produce non-interactive proofs,
@@ -759,7 +748,7 @@ zkLLM, whose proof stays small even at 2{,}048 tokens. It is smaller in three ro
 
 \para{Summary.} Our prover is the fastest of every fully sound system we compare with, by orders of magnitude
 against the zkSNARKs: it proves a query in milliseconds for the image models and in seconds for
-the language models. Our verifier is faster than every other system's except ZKML's and zkLLM's, whose provers take minutes per query, too slow to prove every answer.
+the language models. Our verifier is faster than every other fully sound system's except ZKML's and zkLLM's, whose provers take minutes per query, too slow to prove every answer.
 Against zkCNN on LeNet-5, DeepProve on GPT-2 at 64 tokens and Maverick we are better on all three costs.
 We get there with only hashing and Freivalds' check, without a SNARK or a trusted setup; the one
 cost we pay is a larger proof, which grows with the input.
@@ -772,7 +761,7 @@ cheaper model, but one that wants to change a particular answer passes it almost
 should not be relied on where a wrong answer is costly. Our protocol catches such a provider except
 with probability $2^{-\lambda}$, at a prover cost of milliseconds to seconds per query and without
 a zkSNARK or a trusted setup, which makes checking every answer practical. MLPs and CNNs are
-verified in milliseconds on an ordinary CPU; for language models the verifier needs a GPU and a
+verified in milliseconds on an ordinary CPU; for language models with long prompts the verifier needs a GPU and a
 fast link, so it fits a gateway or an auditor rather than an end device.
 
 \para{Limitations.} (i)~The proof grows with the activations; at 2{,}048 tokens it is
@@ -781,7 +770,7 @@ grows with the square of the prompt length: at 2{,}048 tokens the CPU verifier n
 84.5\,s, and the GPU verifier is up to 2.9$\times$ slower than
 zkLLM's. (iii)~The provider must serve the integer model,
 as proof systems and TEE-based checks for inference also need integer or fixed-point models~\cite{safetynets,slalom,zkcnn,zen,zkml,zkllm}, at some cost
-in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol, we assume the weight commitment is computed honestly; longer codewords make it up to 13$\times$ slower to compute. Accepting a commitment from an untrusted
+in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol, we assume the weight commitment is computed honestly; longer codewords make it up to 13$\times$ slower to compute for GPT-2. Accepting a commitment from an untrusted
 party would require a proximity argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
 row, so the protocol is not zero-knowledge. 
 % (vi)~We prove one forward pass, without a KV cache. (vii)~The prototype is Python.
@@ -802,7 +791,7 @@ everything else honestly passes its check almost always, on image classifiers an
 OPT-6.7B, and no sampling rule, however it chooses where to look, closes this gap on every network.
 
 We close the gap by checking every layer instead of a sample. It needs only hashing, with no SNARK, trusted
-hardware or trusted setup, and it is practical: its prover is the fastest of all the fully sound systems we compared, orders of magnitude faster than the zkSNARK provers; its verifier is faster than every other system's except ZKML's and zkLLM's, whose provers take minutes per query; and against zkCNN on LeNet-5, DeepProve on GPT-2 at 64 tokens and Maverick it is better on all three costs. Its remaining cost is a proof that grows with the input, which makes long prompts its
+hardware or trusted setup, and it is practical: its prover is the fastest of all the fully sound systems we compared, orders of magnitude faster than the zkSNARK provers; its verifier is faster than every other fully sound system's except ZKML's and zkLLM's, whose provers take minutes per query; and against zkCNN on LeNet-5, DeepProve on GPT-2 at 64 tokens and Maverick it is better on all three costs. Its remaining cost is a proof that grows with the input, which makes long prompts its
 weak point and the natural target for future work.
 
 % =====================================================================================

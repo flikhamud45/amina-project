@@ -103,7 +103,7 @@ def test_table3_follows_the_setting_rule():
     """Fiat-Shamir against the non-interactive systems where it is stored (else interactive and marked),
     the interactive protocol against zkLLM and Maverick, Maverick's whole client time as its verifier
     time, ours better on all three costs exactly in the zkCNN, DeepProve and Maverick rows (Maverick's: our
-    run without the compact encoding, TABLE3_MAVERICK_SEL), and each cell printed as the
+    run without the compact encoding, TABLE1_MAVERICK_SEL), and each cell printed as the
     factor by which ours is better or worse, shaded by which (or, in the other styles, as n-times or 1/n)."""
     pa = _script("paper_assets")
     pa.OPT_TABLES = [pa.tables_dir("l40s_improved")]
@@ -122,7 +122,7 @@ def test_table3_follows_the_setting_rule():
     assert abs(them - 0.2602) < 1e-9   # Maverick's Table 8 client time (1 client thread)
     bold = {k for k, (cells, _, _) in rows.items() if all(a and o and a / o >= 1 for a, o in cells)}
     assert bold == {("zkCNN$^a$", "LeNet-5"), ("DeepProve$^c$", "GPT-2 (64)"), ("Maverick$^d$", "Qwen3-4B (8)")}
-    nw = pa.llm_cost(("qwen3-4b", 8), pa.TABLE3_MAVERICK_SEL, pa.opt_dirs())
+    nw = pa.llm_cost(("qwen3-4b", 8), pa.TABLE1_MAVERICK_SEL, pa.opt_dirs())
     assert [o for _, o in rows[("Maverick$^d$", "Qwen3-4B (8)")][0]] == list(nw[:3])
     # nothing is pending: a number the runs lack is omitted (OMIT_UNMEASURED), never a red placeholder
     assert not any(any(p) for (s, w), (c, i, p) in rows.items())

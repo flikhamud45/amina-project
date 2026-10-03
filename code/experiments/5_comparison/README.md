@@ -62,7 +62,7 @@ platform name.
 | `literature.py` | `literature/reported_benchmarks.csv` | `tables/reported_curated.csv`: the 41 published rows compared with ours |
 | `analytic.py` | the model shapes | `tables/analytic.csv`: the path protocol on Llama-2-7B at 64 tokens (1/11,008 per path, 305,193 paths for 2^-40, 13.7 GB opened) |
 | `count_outcomes.py --platform <p>[,<q>...]` | `raw_<p>/` (several roots are added up) | the soundness counts of Sec. 4.3: honest queries accepted, attacks rejected by type, the check that rejected each, the '+1' attacks on language models, and the record total. `--definition` counts only the defence and tamper cells of the optimised definition; `--require-tag TAG` only cells carrying a tag; `--tex F --prefix P` writes the counts as LaTeX macros (`\NHonest`, `\NAttacks`, ...; `\OptNHonest`, ... with `--prefix Opt`) and refuses if an honest query was rejected or an attack accepted |
-| `paper_assets.py --platform <p> --optimised <q>,<r>,...` | `tables_<p>/` (basic), `tables_<q>/`, `tables_<r>/`, ... (optimised; a later run's cell replaces an earlier one's, but never an earlier full build by its 1- and 2-block builds), `tables/reported_curated.csv`, `artifacts/comparison/excluded_cells.csv` | `../report/figures/*.pdf` (Figs. 1–4, one file per sub-figure, on a fixed canvas equal to its printed width) and `../report/tables/{cnn,llm,ratios,hardware}.tex` (Tables 1–3, and the hardware macros `\ProverGPU`, `\VerifierCPU`, `\VerifierThreads`, `\LLMNote`). `--check` writes nothing and lists missing basic cells (an error) and the optimised numbers that are not measured (omitted; pending only with `OMIT_UNMEASURED = False`); `--pending-csv F` writes them to a CSV; `--strict` refuses to write while any number is pending; `--draft` writes figures despite layout problems |
+| `paper_assets.py --platform <p> --optimised <q>,<r>,...` | `tables_<p>/` (basic), `tables_<q>/`, `tables_<r>/`, ... (optimised; a later run's cell replaces an earlier one's, but never an earlier full build by its 1- and 2-block builds), `tables/reported_curated.csv`, `artifacts/comparison/excluded_cells.csv` | `../report/figures/*.pdf` (Figs. 1–4, one file per sub-figure, on a fixed canvas equal to its printed width) and `../report/tables/{ratios,cnn,llm,hardware}.tex` (Tables 1–3, and the hardware macros `\ProverGPU`, `\VerifierCPU`, `\VerifierThreads`, `\LLMNote`). `--check` writes nothing and lists missing basic cells (an error) and the optimised numbers that are not measured (omitted; pending only with `OMIT_UNMEASURED = False`); `--pending-csv F` writes them to a CSV; `--strict` refuses to write while any number is pending; `--draft` writes figures despite layout problems |
 | `text_numbers.py --platform <p> --optimised <q>,<r>,... --definition` | the runs' tables, the raw roots, `../report/tables/counts*.tex`, `../report/main.tex` | compares every benchmark number typed in the text with the value recomputed as the tables compute it (each sentence found by its wording); exits 1 on a mismatch, on a final number still marked pending, on a number that depends on a pending value but is not marked, or on a sentence it can no longer find. `--list` only prints the recomputed values |
 | `validate_extrapolation.py --platform <p>` | `tables_<p>/measured_summary.csv` | `tables_<p>/llm_extrapolation_validation.csv`: the two-point rule and a line fit through every block count, against the full builds |
 | `fingerprint_check.py <root A> <root B>` | two raw roots | checks that every hardware-independent value the two roots share (parameters, accuracies, path-protocol facts, security parameters, proof bytes except the Merkle term, verdicts) agrees, and prints every honest rejection and accepted attack of B |
@@ -102,6 +102,10 @@ come from these sources:
 | Paper | Value | Source | Command (from `code/`) |
 |---|---|---|---|
 | Sec. 1 | zkLLM needs about ten minutes for one Llama-2-7B prompt | zkLLM's reported 620 s in `artifacts/comparison/tables/reported_curated.csv` | `python experiments/5_comparison/literature.py` |
+| Sec. 1 | 15 published systems in the results | the systems of the same file with a parameter count, which Table 1 and Fig. 4 use (ZEN and ZENO have none) | the same |
+| Sec. 2 | zkSNARK provers take from half a second (LeNet-5) and tens of seconds (GPT-2) to tens of minutes (7B models) | `prover_s` of zkCNN's LeNet-5, zkGPT's and DeepProve's GPT-2, and zkLLM's and ZKTorch's Llama-2-7B rows in the same file | the same |
+| Sec. 4.1 | ZKML's ResNet-18 has 281K parameters | `params` of ZKML's ResNet-18 row in the same file | the same |
+| Sec. 4.1 | the released code reproduces the basic proofs byte for byte | the 565 hardware-independent values of the untagged cells of `raw_l40s_improved/` against `raw_l40s/` | `python experiments/5_comparison/fingerprint_check.py artifacts/comparison/raw_l40s artifacts/comparison/raw_l40s_improved` |
 | Sec. 1, 4.2 | 99.6–99.8% acceptance of one tampered neuron on MNIST | `artifacts/results/attack.json` (`baselines`) | `python experiments/2_attack/run.py` ([2_attack](../2_attack/README.md)) |
 | Sec. 1, 4.2 | 40/40 and 0/40 prompts; 16,384 neurons reach 6,187 of 50,272 tokens; 1/16,384 per path, 454,248 paths | `artifacts/results/real_llm_attack.json`, `real_llm_attack_auto.json` | `real_llm.sbatch` ([REAL_LLM.md](../2_attack/REAL_LLM.md)) |
 | Sec. 3.5 | VGG-16 at λ = 128: r = 5, t = 67 | `cfg_reps`, `cfg_columns` of `vgg16,defence_C_int_lam128_rate4` in `artifacts/comparison/tables_l40s/measured_summary.csv` | `python experiments/5_comparison/aggregate.py --platform l40s` |
@@ -125,7 +129,7 @@ re-measure, and two optional cells that were not run (the streaming GPU verifier
 Llama-2-13B at 64 tokens). The paper was finalised without waiting for the remaining re-measurement jobs,
 so these values are omitted, not filled in (`OMIT_UNMEASURED = True` in `paper_assets.py`):
 
-* Table 3 prints a black `--` (its note: "--: not measured") for the C prover, CPU and GPU verifiers of
+* Table 3 prints a black `--` (its caption: "--: not measured") for the C prover, CPU and GPU verifiers of
   Llama-2-7B at 2,048 tokens, the C CPU and GPU verifiers of Llama-2-13B at 2,048 tokens and the GPU
   verifiers of Qwen3-4B and Llama-2-13B at 64 tokens; every measured cell of those rows stays;
 * Fig. 4 draws no point for these timings (the proof sizes stay);
@@ -139,6 +143,6 @@ points of Fig. 4). The root `raw_l40s_improved3/`, the last run of `--optimised`
 (`l40s_improved,l40s_improved2,l40s_improved3`), holds the cells the re-measurement did finish: each
 replaces the withheld cell of `raw_l40s_improved2/` (the exclusion is per platform), and in the paper
 gives Table 3's GPU verifier of OPT-6.7B and the Kpre verifier and proof of Llama-2-13B at 2,048 tokens.
-With `OMIT_UNMEASURED = False` the generators return to the drafts' placeholder mode (the basic protocol's
+With `OMIT_UNMEASURED = False` the generators return to the placeholder mode of earlier versions of the paper (the basic protocol's
 value in red, `\pending{}`, which `main.tex` would have to define again, and `text_numbers.py` checks
 that the text marks every number that depends on one).

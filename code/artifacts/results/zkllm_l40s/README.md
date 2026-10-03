@@ -6,8 +6,8 @@ partition) for Llama-2-7B and Llama-2-13B at 2,048 tokens: about 844 s for Llama
 7B figure per layer for Llama-2-13B. The final paper does not use these runs: they were to be compared
 with our Llama-2-7B prover at 2,048 tokens, whose timing is withheld
 ([`artifacts/comparison/README.md`](../../comparison/README.md#withheld-timings-excluded_cellscsv)) and
-was not re-measured, so that comparison (a drafts' Table 1 row, note e, and a sentence of Sec. 4.6) was
-dropped. The runs are kept as they were measured.
+was not re-measured, so that comparison (a Table 1 row, its note and a sentence of Sec. 4.6 in earlier versions of the paper)
+was dropped. The runs are kept as they were measured.
 
 ## Reproduce the numbers from the stored runs (no GPU)
 

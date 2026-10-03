@@ -480,7 +480,7 @@ def checks(M, opt_names: list[str]):
     st = lambda p: PENDING if p else FINAL   # noqa: E731
     q = {(s, w): [V(a / o if a and o else None, st(p)) for (a, o), p in zip(cells, pend)] for s, w, cells, _, pend in rr}
     zk = [v[0] for (s, w), v in q.items() if not s.startswith("Maverick")]
-    add(r"Our prover is .*faster than the zkSNARK", "prover: theirs/ours over the zkSNARK rows (contributions)", rng(zk, x2))
+    add(r"[Oo]ur prover is .*faster than the zkSNARK", "prover: theirs/ours over the zkSNARK rows (contributions)", rng(zk, x2))
     add(r"faster than every zkSNARK prover", "prover: theirs/ours over the zkSNARK rows (smallest; largest)",
         ends(zk, x2))
     slow = [one(V(1 / v[1].value, v[1].state), x, "×") for k, v in q.items() if v[1].value and v[1].value < 1]

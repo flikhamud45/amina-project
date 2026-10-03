@@ -438,7 +438,7 @@ OPTIMISED_SPECIAL = {
 # our 8-thread verifier (the text states the caveat); ("thr1",) our one-thread run of the re-run's
 # optional cells defence_C_<ch>_lam<l>_rate4_thr1_wire_polauto (platform l40s_improved2_thr1, listed in
 # --optimised).  zkCNN's verifier ran on one core.
-TABLE5_VERIFIER_EXTRA_TAGS = {"zkCNN": ()}
+TABLE1_VERIFIER_EXTRA_TAGS = {"zkCNN": ()}
 # Which cell each column of an LLM row comes from, in order of preference: the prover and the proof
 # from the CPU-verifier cell (the same one at every prompt length, so Tables 1 and 3 and the text quote one
 # prover time per configuration), the CPU verifier from it, the GPU verifier from the GPU cell.
@@ -654,9 +654,9 @@ def _llm_mode(model, seq):
 
 # (published system, its model and seq in reported_curated.csv, our model, our prompt length or None
 # for an image model, our setting): Table 1.  ZKTorch's 1-token Llama-2-7B is compared with our 1-token one.
-# Of zkLLM's 2,048-token rows the final report keeps OPT-125M and OPT-1.3B: the author dropped the OPT-6.7B,
-# Llama-2-7B and Llama-2-13B rows, and the row of zkLLM's own code on our L40S (against our Llama-2-7B
-# prover), with the timings the third batch did not re-measure (OMIT_UNMEASURED).
+# Of zkLLM's 2,048-token rows Table 1 keeps OPT-125M and OPT-1.3B; the OPT-6.7B, Llama-2-7B and
+# Llama-2-13B rows and the row of zkLLM's own code on our L40S (against our Llama-2-7B prover) are left out,
+# as are the timings the third batch did not re-measure (OMIT_UNMEASURED).
 MAVERICK = "Maverick (verif.-only, 1 thr.)"
 OPT_MATCHES = [
     ("zkCNN", "LeNet-5 MNIST", "", "lenet5", None, "C"),
@@ -685,7 +685,7 @@ SYSTEM_MARK = {"zkCNN": "a", "zkGPT": "b", "DeepProve": "c"}
 MAVERICK_MARK = "d"
 # Table 1's Maverick row: our Qwen3-4B run in Maverick's setting without the compact encoding (note d says so;
 # the text gives the run with it, whose verifier, at 151.6 ms, is still faster than Maverick's 260.2 ms)
-TABLE3_MAVERICK_SEL = dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups"))
+TABLE1_MAVERICK_SEL = dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups"))
 INTERACTIVE_MARK = r"\ast"
 
 
@@ -1231,7 +1231,7 @@ TAB_LLM_PICK = [(m, seq) for seq, ms in TAB_LLM_BLOCKS.items() for m in ms]
 
 def tab_llm():
     """Table 3 (optimised protocol): Model | Params | C prove, verify, GPU verify, proof | Kpre verify, proof.
-    A number not measured is a black '--' (OMIT_UNMEASURED; main.tex's note under the table says so)."""
+    A number not measured is a black '--' (OMIT_UNMEASURED; Table 3's caption says so)."""
     lines = []
     for i, (seq, models) in enumerate(TAB_LLM_BLOCKS.items()):
         if i:
@@ -1350,10 +1350,10 @@ def _mark(cell, q):
     return rf"\win{{{cell}}}" if q >= 1 else rf"\lose{{{cell}}}"
 
 
-def _ours_t5(model, seq, ch, where, system=""):
+def _ours_t1(model, seq, ch, where, system=""):
     """Our (prove, verify, bytes) and pending flags of one Table 1 row: the GPU verifier at 2,048 tokens."""
     if seq is None:
-        extra = {"verify": TABLE5_VERIFIER_EXTRA_TAGS.get(system, ())}
+        extra = {"verify": TABLE1_VERIFIER_EXTRA_TAGS.get(system, ())}
         vals = [opt_cnn(model, k, "C", ch, where=where and (*where, k), extra=extra.get(k, ()))
                 for k in ("prove", "verify", "bytes")]
     else:
@@ -1371,17 +1371,17 @@ def ratio_rows(MO=None):
     out = []
     for system, pub, pub_seq, model, seq, mode in OPT_MATCHES:
         r = curated[(system, pub, pub_seq)]
-        fs_vals, fs_pend = _ours_t5(model, seq, "fs", None)   # a Fiat-Shamir prover and proof measured?
+        fs_vals, fs_pend = _ours_t1(model, seq, "fs", None)   # a Fiat-Shamir prover and proof measured?
         fs_ok = system in NONINTERACTIVE and not any(fs_pend[::2]) and None not in fs_vals[::2]
         ch = "fs" if fs_ok else "int"
         what = SHORT[model] if seq is None else f"{LLM_NAME[model]} ({tokens(seq)})"
         name = system.split(" (")[0]
-        us, pend = _ours_t5(model, seq, ch, ("Table 1", f"{name} / {what.replace('{,}', ',')}"), name)
+        us, pend = _ours_t1(model, seq, ch, ("Table 1", f"{name} / {what.replace('{,}', ',')}"), name)
         them = [_f(r["prover_s"]), _f(r["verifier_s"]), _f(r["proof_bytes"])]
         letters = [SYSTEM_MARK[name]] if name in SYSTEM_MARK else []
         if system == MAVERICK:
             letters.append(MAVERICK_MARK)
-            nw = llm_cost((model, seq), TABLE3_MAVERICK_SEL, opt_dirs())
+            nw = llm_cost((model, seq), TABLE1_MAVERICK_SEL, opt_dirs())
             if nw and None not in nw[:3]:
                 us, pend = list(nw[:3]), [False, False, False]
         elif system in NONINTERACTIVE and ch == "int":

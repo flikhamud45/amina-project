@@ -24,4 +24,5 @@ with an additive floor, `|w_ij| * (|a_i| + eps)`, measured on the tampered trace
 of the attacker's two attacks (`samplers.<name>.adversary_best`). The best floor, `eps=1`, detects
 2.0% (10.2x uniform's 0.20%); `eps=0.1` and `eps=10` give 5.8x and 2.2x, and `eps=0.01` and `eps=100`
 fall below uniform (0.9x). At `eps=0` it is plain contribution weighting, with detection 0. The paper
-reports these as "a floor ε = 1 raises detection to 2% (10x uniform); other floors give 0.9–6x".
+reports these with the floor written δ (the script's `eps`): "δ = 1 raises detection to 2% (10x uniform);
+other floors give 0.9–6x".
