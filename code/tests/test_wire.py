@@ -548,6 +548,33 @@ def test_a_lean_forward_narrows_tampered_claims_of_any_integer_dtype():
         assert all(torch.equal(sent[k].long(), z) for k, z in honest.items() if k != last)
 
 
+def test_a_proof_encoded_on_the_device_in_parts_is_the_proof_of_one_pass(monkeypatch):
+    # a lean GPU prover's encoding (its claims narrowed to int32, the device encoder; here on the host) of more
+    # than _ONE_PASS claim values, in parts: the verdicts, the proof sizes and the Fiat--Shamir transcript of one pass
+    # and of the host encoder, honest and tampered, with the batched and the streaming verifier
+    graph, x = _graph("qwen")
+    n = sum(z.numel() for z in graph.forward(x)[1].values())
+    absorbed = []
+    absorb = proto.Challenger.absorb
+    monkeypatch.setattr(proto.Challenger, "absorb", lambda self, label, blob: (
+        absorbed.append((label, bytes(blob))), absorb(self, label, blob)))
+    for mode, fiat_shamir in (("C", True), ("C", False), ("Kpre", True)):
+        prover, pair = _setup(graph, mode, fiat_shamir)
+        runs = []
+        for impl, chunk in (("host", 0), ("device", 1 << 40), ("device", n // 7 + 1), ("device", 97)):
+            monkeypatch.setattr(proto.claimcodec, "encode", lambda zs, impl=impl: _ENCODE(
+                [cc.narrow(z) for z in zs] if impl == "device" else zs, impl=impl))
+            if chunk:
+                monkeypatch.setattr(cc, "_ONE_PASS", chunk)
+                monkeypatch.setattr(cc, "_CHUNK", chunk)
+            absorbed.clear()
+            runs.append(([(r["accepted"], r["rejected_at"], r["bytes"]) for r in (
+                _both(prover, pair, x, seed=i, forward_kwargs=kw)
+                for i, kw in enumerate(_claim_attacks(graph.mat_ops).values()))], list(absorbed)))
+        assert all(r == runs[0] for r in runs[1:]), mode
+        assert [a for a, _, _ in runs[0][0]] == [True] + [False] * (len(runs[0][0]) - 1)
+
+
 # -- the security parameters ----------------------------------------------------------------------
 
 def _cnn_shapes(kind: str, shape: tuple) -> list[tuple[int, int]]:

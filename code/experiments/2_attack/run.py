@@ -1,4 +1,4 @@
-"""The single-neuron attack and backdoor on the original protocol (report, Table 1).
+"""The single-neuron attack and backdoor on the original protocol (report, Sections 3.2 and 4.2).
 
 Blocks
 ------

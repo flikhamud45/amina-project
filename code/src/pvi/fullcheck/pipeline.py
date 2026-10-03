@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import torch
 
+from . import hostmem
 from .field import min_max
 
 __all__ = ["AHEAD", "ClaimUploads", "wire_claim", "wire_openings", "wire_rows"]
@@ -41,7 +42,7 @@ def _narrowed(z: torch.Tensor, dtype: torch.dtype, pin: bool) -> torch.Tensor:
     narrow = z.to(dtype)
     if not (pin and torch.cuda.is_available()):
         return narrow.cpu()
-    return torch.empty(z.shape, dtype=dtype, pin_memory=True).copy_(narrow)
+    return hostmem.empty(z.shape, dtype).copy_(narrow)
 
 
 def wire_claim(z, pin: bool = False) -> torch.Tensor | None:
