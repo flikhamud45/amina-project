@@ -527,8 +527,11 @@ def checks(M, opt_names: list[str]):
                           tags=mav_spec["tags"]).get(("qwen3-4b", 8), {}) if pa.opt_dirs() else {}
     dec = mav_row.get("verify_decode", (None,))[0]
     # the text no longer splits Maverick's verifier into matrix checks and replay (snippet[3]: client total)
-    add(r"With the encoding our proof is smaller still", "Maverick's verifier; ours; of it decoding",
-        [Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"),
+    mav_bytes = elem(lambda s: s.llm("qwen3-4b", 8, "bytes", "Kpre"))   # the run with the compact encoding
+    add(r"With the encoding our proof is smaller still", "our proof with the encoding; Maverick's / it; "
+        "Maverick's verifier; ours; of it decoding",
+        [one(mav_bytes, pa.b), one(V(mav[2][0] / mav_bytes.value, mav_bytes.state), x, "×"),
+         Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"),
          Tok([(f"{mav_ours.value * 1e3:.1f}", mav_ours.state)], "ms"),
          Tok([(f"{dec * 1e3:.1f}" if dec is not None else None, mav_ours.state if dec is not None else PENDING)], "ms")])
     nw = pa.llm_cost(("qwen3-4b", 8), dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups")),
@@ -550,7 +553,8 @@ def checks(M, opt_names: list[str]):
                 continue
             fmt = pa.b if i == 2 else pa.t
             toks += [one(V(o, st(p)), fmt), one(fixed(a), fmt)]
-    add(r"we win on all three costs", "ours vs zkCNN LeNet-5, DeepProve GPT-2 (64): FS",
+    # optional: the text no longer lists these (Table 3 has them as ratios)
+    add(r"?On LeNet-5 against zkCNN we prove", "ours vs zkCNN LeNet-5, DeepProve GPT-2 (64): FS",
         toks)
     lose = [v[2] for (s, w), v in q.items() if v[2].value and v[2].value < 1 and system(s) != "zkLLM"]
     zkl = [v[2] for (s, w), v in q.items() if s == "zkLLM"]
