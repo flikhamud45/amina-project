@@ -633,10 +633,8 @@ OPT_MATCHES = [
 ]
 # non-interactive published systems: compared with our Fiat-Shamir proofs where those were run
 NONINTERACTIVE = {"zkCNN", "Bionetta", "ZKML", "zkGPT", "DeepProve", "ZKTorch"}
-# Maverick's verification-only client (Table 8 of Maverick, 1 client thread; catalogue row 90) spends
-# 87.1 ms on the matrix checks (reported_curated.csv's verifier_s) and 37.4 ms replaying the
-# non-linear layers, which our verifier's time includes, so Table 3 counts both.
-MAVERICK_NONLINEAR_S = 0.0374
+# Maverick's verifier in reported_curated.csv is its client's whole online time (Table 8 of Maverick,
+# 1 client thread: 260.2 ms, of which 87.1 ms matrix checks and 37.4 ms non-linear replay), as ours is.
 # published systems whose stated setting differs from the matched row: a footnote letter on their label
 # (main.tex's note under Table 3 explains each), lettered in the order a reader meets them in Table 3.
 # a: zkCNN's verifier ran on one core, ours on 8 threads; b: zkGPT states no prompt length, ours uses 64
@@ -1361,7 +1359,6 @@ def ratio_rows(MO=None):
         them = [_f(r["prover_s"]), _f(r["verifier_s"]), _f(r["proof_bytes"])]
         letters = [SYSTEM_MARK[name]] if name in SYSTEM_MARK else []
         if system == MAVERICK:
-            them[1] += MAVERICK_NONLINEAR_S
             letters.append(MAVERICK_MARK)
             nw = llm_cost((model, seq), TABLE3_MAVERICK_SEL, opt_dirs())
             if nw and None not in nw[:3]:

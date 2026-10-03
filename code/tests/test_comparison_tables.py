@@ -98,7 +98,7 @@ def test_sec45_compares_both_protocols_on_every_configuration():
 
 def test_table3_follows_the_setting_rule():
     """Fiat-Shamir against the non-interactive systems where it is stored (else interactive and marked),
-    the interactive protocol against zkLLM and Maverick, Maverick's non-linear replay in its verifier
+    the interactive protocol against zkLLM and Maverick, Maverick's whole client time as its verifier
     time, ours better on all three costs exactly in the zkCNN, DeepProve and Maverick rows (Maverick's: our
     run without the compact encoding, TABLE3_MAVERICK_SEL), and each cell printed as the
     factor by which ours is better or worse, shaded by which (or, in the other styles, as n-times or 1/n)."""
@@ -116,7 +116,7 @@ def test_table3_follows_the_setting_rule():
     assert sorted(dict.fromkeys(order)) == list(dict.fromkeys(order))
     assert all(i for (s, w), (c, i, _) in rows.items() if s.startswith(("zkLLM", "Maverick")))
     them, ours = rows[("Maverick$^d$", "Qwen3-4B (8)")][0][1]
-    assert abs(them - (0.0871 + pa.MAVERICK_NONLINEAR_S)) < 1e-9
+    assert abs(them - 0.2602) < 1e-9   # Maverick's Table 8 client time (1 client thread)
     bold = {k for k, (cells, _, _) in rows.items() if all(a and o and a / o >= 1 for a, o in cells)}
     assert bold == {("zkCNN$^a$", "LeNet-5"), ("DeepProve$^c$", "GPT-2 (64)"), ("Maverick$^d$", "Qwen3-4B (8)")}
     nw = pa.llm_cost(("qwen3-4b", 8), pa.TABLE3_MAVERICK_SEL, pa.opt_dirs())

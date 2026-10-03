@@ -761,7 +761,7 @@ about 8.6 instead of 4.5\,min for Llama-2-7B).
 
   \smallskip
   {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position (HyperKZG:
-  9.4\,MB). $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, without the compact encoding. Maverick: prover = its server's inference on 64 CPU threads (ours: GPU); verifier = its client's checks and non-linear replay (124.5 of its 260.2\,ms client time); proof = its total communication. $^e$zkLLM's code ran on our L40S
+  9.4\,MB). $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, without the compact encoding. Maverick: prover = its server's inference on 64 CPU threads (ours: GPU); verifier = its client's total time per query (260.2\,ms); proof = its total communication. $^e$zkLLM's code ran on our L40S
   (--: not reported).}
 \end{table}
 
@@ -791,9 +791,7 @@ slower only than ZKML's on VGG-16 (2.2$\times$) and zkLLM's on OPT-1.3B
 at 2{,}048 tokens (2.9$\times$) \pendingclaim{and on the three larger models (\pending{2.9--3.1}$\times$)}.
 % PENDING: the zkLLM rows of OPT-6.7B, Llama-2-7B and Llama-2-13B (GPU verifier withheld:
 % excluded_cells.csv; placeholders: the basic GPU verifier, which did not run on Llama-2-13B)
-Against Maverick, Table~\ref{tab:ratios} shows our run without the compact encoding (note $d$). With the
-encoding our proof is smaller still (20.3\,MB, 1.8$\times$ smaller than Maverick's), but our verifier needs 151.6\,ms against Maverick's 124.5\,ms,
-since 41.1\,ms of it goes to decoding. 
+Against Maverick, Table~\ref{tab:ratios} shows our run without the compact encoding (note $d$). With the encoding our proof is smaller still (20.3\,MB, 1.8$\times$ smaller than Maverick's), and our verifier, at 151.6\,ms (41.1\,ms of it decoding), is still faster than Maverick's 260.2\,ms. 
 
 \para{Proof.} Our proof is larger in most rows, since it carries every layer's claims and opened columns: by
 3.6--180$\times$ against the other short-input proofs and by 2{,}500--56{,}000$\times$ against
