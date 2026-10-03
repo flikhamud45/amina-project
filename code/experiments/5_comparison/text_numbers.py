@@ -506,7 +506,7 @@ def checks(M, opt_names: list[str]):
         zslow_tok = rng(zslow, lambda v: f"{v:.1f}", "×") if zslow else [Tok([(None, PENDING)], "×")]
         slow += zslow_tok
         add(r"the GPU verifier is", "Limitations: GPU verifier slower than zkLLM's (zkLLM rows, red)", zslow_tok)
-    add(r"Our verifier is slower only than", "verifier: final rows where ours is slower (ours/theirs); zkLLM rows",
+    add(r"slower only than", "verifier: final rows where ours is slower (ours/theirs); zkLLM rows",
         slow)
     # Sec. 4.5: the streaming verifier on the basic proof format (the stored _gpuv_stream cells), Llama-2-13B
     l13 = pa.llm_cost(("llama2-13b", 2048), {"mode": "C", "variant": "_gpuv_stream"}, pa.opt_dirs())
@@ -526,10 +526,9 @@ def checks(M, opt_names: list[str]):
     mav_row = pa.llm_rows("Kpre", lam=mav_spec["lam"], threads=mav_spec["threads"], tables=pa.opt_dirs(),
                           tags=mav_spec["tags"]).get(("qwen3-4b", 8), {}) if pa.opt_dirs() else {}
     dec = mav_row.get("verify_decode", (None,))[0]
-    add(r"Maverick's 124\.5|Maverick's .*is its|verifier's 124\.5", "Maverick's verifier, matrix checks, replay; client total; ours; "
-        "of it decoding",
-        [Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"), Tok([(f"{(mav[1][0] - pa.MAVERICK_NONLINEAR_S) * 1e3:.1f}", FINAL)], "ms"),
-         Tok([(f"{pa.MAVERICK_NONLINEAR_S * 1e3:.1f}", FINAL)], "ms"), Tok([(snippet[3], FINAL)], "ms"),
+    # the text no longer splits Maverick's verifier into matrix checks and replay (snippet[3]: client total)
+    add(r"its verifier is faster than ours", "Maverick's verifier; ours; of it decoding",
+        [Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"),
          Tok([(f"{mav_ours.value * 1e3:.1f}", mav_ours.state)], "ms"),
          Tok([(f"{dec * 1e3:.1f}" if dec is not None else None, mav_ours.state if dec is not None else PENDING)], "ms")])
     nw = pa.llm_cost(("qwen3-4b", 8), dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups")),
@@ -550,11 +549,11 @@ def checks(M, opt_names: list[str]):
                 continue
             fmt = pa.b if i == 2 else pa.t
             toks += [one(V(o, st(p)), fmt), one(fixed(a), fmt)]
-    add(r"costs: 5\.4|wins on all three\s*$|optimised protocol wins on all three", "ours vs zkCNN LeNet-5, DeepProve GPT-2 (64): FS",
+    add(r"we win on all three costs", "ours vs zkCNN LeNet-5, DeepProve GPT-2 (64): FS",
         toks)
     lose = [v[2] for (s, w), v in q.items() if v[2].value and v[2].value < 1 and system(s) != "zkLLM"]
     zkl = [v[2] for (s, w), v in q.items() if s == "zkLLM"]
-    add(r"Elsewhere our proof is larger", "proof larger: other short-input rows; zkLLM rows",
+    add(r"Our proof is larger in most rows", "proof larger: other short-input rows; zkLLM rows",
         [*rng([V(1 / v.value, v.state) for v in lose], x2), *rng([V(1 / v.value, v.state) for v in zkl], x2)])
     zp = [_f for r in pa._read("reported_curated.csv") if r["system"] == "zkLLM" and r["model"] in ("OPT-6.7B", "Llama-2-7B")
           and r["seq"] == "2048" for _f in [pa._f(r["proof_bytes"])]]

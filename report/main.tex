@@ -787,29 +787,23 @@ to eliminate hardware differences, we also ran zkLLM's public demo on our L40S. 
 % the streaming run with the basic proof format gives 5.4 s and 157
 proportion (2.5$\times$ the 7B figure).
 
-\para{Verifier.} Our verifier is slower only than ZKML's on VGG-16 (2.2$\times$), Maverick's
-(1.2$\times$) and zkLLM's on OPT-1.3B at 2{,}048 tokens (2.9$\times$) \pendingclaim{and on the three
-larger models (\pending{2.9--3.1}$\times$)}, and faster in every other row of
-Table~\ref{tab:ratios}.
+\para{Verifier and proof.} Our verifier is faster in most rows of Table~\ref{tab:ratios}; it is
+slower only than ZKML's on VGG-16 (2.2$\times$), Maverick's (1.2$\times$) and zkLLM's on OPT-1.3B
+at 2{,}048 tokens (2.9$\times$) \pendingclaim{and on the three larger models (\pending{2.9--3.1}$\times$)}.
 % PENDING: the zkLLM rows of OPT-6.7B, Llama-2-7B and Llama-2-13B (GPU verifier withheld:
 % excluded_cells.csv; placeholders: the basic GPU verifier, which did not run on Llama-2-13B)
-
-\para{Proof.} Our proof is smaller only than zkCNN's on LeNet-5, DeepProve's on GPT-2 with a
-64-token prompt, and Maverick's. On the first two the non-interactive optimised protocol wins on all three
-costs: 5.7\,ms, 2.8\,ms and 63.3\,kB against zkCNN's 441\,ms, 5.8\,ms and 71.3\,kB, and 95\,ms,
-97\,ms and 16.6\,MB against DeepProve's 34.2\,s, 1.35\,s and 21.7\,MB. zkCNN's protocol has a
-zero-knowledge variant, which ours lacks, and DeepProve's transparent proof certifies all 64
-positions where ours certifies the next-token logits (Table~\ref{tab:ratios}, notes $a$ and $c$).
-Elsewhere our proof is larger, because it carries the claims: by 3.6--180$\times$ against the other
-short-input proofs and by 2{,}500--56{,}000$\times$ against zkLLM's at 2{,}048 tokens.
-
-\para{Maverick.} Its verifier's 124.5\,ms consists of 87.1\,ms of matrix checks and 37.4\,ms in
-which the client replays the non-linear operations, as our verifier does (the client's whole online
-time is 260.2\,ms); ours takes 151.6\,ms, 41.1\,ms of it decoding the compact encoding.
-Without the compact encoding our Qwen3-4B run beats Maverick on all three costs (117 against
-354.5\,ms, 111.0 against 124.5\,ms and 35.19 against 36.08\,MB); our prover, however, runs on the
-GPU and Maverick's on 64 CPU threads. Maverick also draws a fresh challenge per query, whereas
-$\Kpre$ reuses a secret one.
+Our proof is larger in most rows, since it carries every layer's claims and opened columns: by
+3.6--180$\times$ against the other short-input proofs and by 2{,}500--56{,}000$\times$ against
+zkLLM's at 2{,}048 tokens. It is smaller in three rows, and in two of them we win on all three costs.
+On LeNet-5 against zkCNN we prove in 5.7\,ms against 441\,ms, verify in 2.8\,ms against 5.8\,ms and send 63.3\,kB against 71.3\,kB;
+on GPT-2 (64 tokens) against DeepProve, 95\,ms against 34.2\,s, 97\,ms against 1.35\,s and 16.6\,MB against 21.7\,MB.
+zkCNN, however, has a zero-knowledge variant, which ours lacks, and DeepProve's proof covers all 64
+positions, ours only the next-token logits (Table~\ref{tab:ratios}, notes $a$ and $c$). The third
+row is Maverick: its verifier is faster than ours, 124.5\,ms against 151.6\,ms, but 41.1\,ms of
+ours is spent decoding the compact encoding. Without the compact encoding our Qwen3-4B run
+beats Maverick on all three costs (117 against 354.5\,ms, 111.0 against 124.5\,ms and 35.19 against
+36.08\,MB), although our prover runs on the GPU and Maverick's on 64 CPU threads. Maverick also
+draws a fresh challenge per query, whereas $\Kpre$ reuses a secret one.
 
 % =====================================================================================
 \section{Discussion}
