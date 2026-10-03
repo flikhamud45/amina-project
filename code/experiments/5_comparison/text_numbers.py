@@ -339,7 +339,8 @@ def checks(M, opt_names: list[str]):
 
     # 4.1
     gap = [(M.get(m, "facts", "float_accuracy") or 0) - (M.get(m, "facts", "int8_accuracy") or 0) for m in pa.CNN_ORDER]
-    for anchor in (r"quantisation changed accuracy by at most", r"changed CNN accuracy by at most"):
+    # Sec. 4.1 states it; Limitation (iii) now points there instead of repeating it
+    for anchor in (r"quantisation changed accuracy by at most", r"?changed CNN accuracy by at most"):
         add(anchor, "max |float - int8| accuracy (points)", Tok([(f"{100 * max(map(abs, gap)):.1f}", FINAL)]))
     def extrap_errors(dirs, optimised):
         """|extrapolated / full - 1| of the proof bytes (%) over llm_extrapolation_check.csv: the basic run's

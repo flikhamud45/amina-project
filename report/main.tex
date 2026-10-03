@@ -838,9 +838,8 @@ zkLLM's}. (iii)~The provider must serve the integer model,
 % PENDING: Llama-2-13B T2048 CPU verifier and the zkLLM rows' GPU verifier ratios of Table 3, as in
 % Sec. 5.5 (withheld: excluded_cells.csv; placeholders: basic). Measured: 1.1x faster than zkLLM's
 % on OPT-125M, 2.9x slower on OPT-1.3B
-which changed CNN accuracy by at most 0.4 points and raised the perplexity of real OPT checkpoints
-by 7--33\%; the LLM costs were measured
-with random weights. (iv)~Like the path protocol we assume an honest weight commitment, which the
+as proof systems for inference require~\cite{safetynets,slalom,zkcnn,zen,zkml,zkllm}, at some cost
+in accuracy (Section~\ref{sec:setup}); the LLM costs were measured with random weights. (iv)~Like the path protocol we assume an honest weight commitment, which the
 planning rule's longer codewords make up to 13$\times$ slower to compute; a malformed one would need a proximity
 argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
 row, so the protocol is not zero-knowledge. (vi)~We prove one forward pass, without a KV cache.
