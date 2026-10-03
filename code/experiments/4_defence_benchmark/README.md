@@ -219,7 +219,7 @@ sbatch $L $B llm --model llama2-7b --seq 1 64 --builds full --lams 128 --modes C
 ```
 
 **The optimised protocol, second batch (`raw_l40s_improved2/`, `raw_l40s_improved2_thr1/`)** completes
-the definition's cells for every model of Tables 1–2 (and the 30–70B shapes with 1 and 2 blocks), with
+the definition's cells for every model of Tables 2–3 (and the 30–70B shapes with 1 and 2 blocks), with
 the streaming GPU verifier at 64 and 2,048 tokens. It ran with the setup of the first batch
 (`killable`, one L40S, t-806 excluded) at commit `366e3d4`, which is `c8be5eb` with the claim encoder
 working in parts for proofs of more than 2^27 claim values (the same bytes). 9 cells were produced by
@@ -340,7 +340,7 @@ encoding without pruning:
 
 Two further optional jobs, the streaming GPU verifier at 64 tokens for Qwen3-4B and Llama-2-13B
 (`--seq 64 --builds full --queries 30` with the flags of `o2-llama7-64-cg`, and `--mem=128G` for
-Llama-2-13B), were not run; their two cells are `--` (not measured) in Table 2. Five jobs (`o2-llama13-2k-cg`,
+Llama-2-13B), were not run; their two cells are `--` (not measured) in Table 3. Five jobs (`o2-llama13-2k-cg`,
 `o2-llama13-2k-k`, `o2-llama7-2k-cg`, `o2-opt13-2k-cg`, `o2-opt67-2k-cg`) were resubmitted to finish
 their remaining cells, so the 74 jobs that write to `raw_l40s_improved2/` left records under 79 SLURM
 job numbers (965320–968132); each record holds its job number (`env.slurm_job`). Every one of the 325 recorded cells (311 in `raw_l40s_improved2/`, 14 in

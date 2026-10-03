@@ -114,7 +114,7 @@ def test_table3_follows_the_setting_rule():
     assert ("zkCNN$^a$", "VGG-16") in rows and ("DeepProve$^c$", "GPT-2 (512)") in rows   # their caveats
     assert pa._marks(["e", "a"]) == "$^{a,e}$" and pa._marks([]) == ""
     assert pa._marks([pa.INTERACTIVE_MARK, "a"]) == r"$^{a,\ast}$"     # letters first, the asterisk last
-    # the letters follow Table 3's reading order: the first mark of each kind a reader meets
+    # the letters follow Table 1's reading order: the first mark of each kind a reader meets
     order = [m for s, *_ in pa.ratio_rows() for m in __import__("re").findall(r"\^\{?([a-z])", s)]
     assert sorted(dict.fromkeys(order)) == list(dict.fromkeys(order))
     assert all(i for (s, w), (c, i, _) in rows.items() if s.startswith(("zkLLM", "Maverick")))
@@ -161,7 +161,7 @@ def test_cells_are_matched_by_their_tag_set():
 
 def test_unmeasured_numbers_are_omitted_not_red():
     """The final report's decision (OMIT_UNMEASURED): an optimised number that is not measured is (None, False),
-    listed as 'omitted', and printed as a black '--' (Table 2) or not drawn (Figure 4); nothing is pending.  On
+    listed as 'omitted', and printed as a black '--' (Table 3) or not drawn (Figure 4); nothing is pending.  On
     the report's runs the omitted numbers are exactly the withheld timings l40s_improved3 did not re-measure and
     the two GPU cells never run, while every measured cell of those rows stays."""
     pa = _script("paper_assets")
@@ -177,10 +177,10 @@ def test_unmeasured_numbers_are_omitted_not_red():
     pa.build_all()
     assert pa.pending_rows("pending") == []
     omitted = {(r["asset"], r["row"], r["column"]) for r in pa.pending_rows("omitted")}
-    assert omitted == {("Table 2", "Qwen3-4B (64)", "C gpu"), ("Table 2", "Llama-2-13B (64)", "C gpu"),
-                       ("Table 2", "Llama-2-7B (2048)", "C prove"), ("Table 2", "Llama-2-7B (2048)", "C verify"),
-                       ("Table 2", "Llama-2-7B (2048)", "C gpu"), ("Table 2", "Llama-2-13B (2048)", "C verify"),
-                       ("Table 2", "Llama-2-13B (2048)", "C gpu"), ("Fig. 4", "LLM 2048 tokens, C", "prove"),
+    assert omitted == {("Table 3", "Qwen3-4B (64)", "C gpu"), ("Table 3", "Llama-2-13B (64)", "C gpu"),
+                       ("Table 3", "Llama-2-7B (2048)", "C prove"), ("Table 3", "Llama-2-7B (2048)", "C verify"),
+                       ("Table 3", "Llama-2-7B (2048)", "C gpu"), ("Table 3", "Llama-2-13B (2048)", "C verify"),
+                       ("Table 3", "Llama-2-13B (2048)", "C gpu"), ("Fig. 4", "LLM 2048 tokens, C", "prove"),
                        ("Fig. 4", "LLM 2048 tokens, C", "verify")}
     assert not any(r"\pending" in line for lines in tables.values() for line in lines)
     llm = {line.split(" & ")[0] + (" 2048" if i > 4 else ""): line.split(" & ") for i, line in enumerate(tables["llm"])}
@@ -222,7 +222,7 @@ def test_a_missing_optimised_cell_is_pending_with_the_basic_value():
     status = {r["row"]: r["status"] for r in pa.PENDING}
     assert status == {"r224": "pending", "l64": "acceptable", "kpre": "pending", "g64": "pending"}
     # at 2,048 tokens the stored _gpuv_stream cells send the basic proof: not the definition, so pending;
-    # the placeholder is the basic run's, the prover from the CPU-verifier run (as Table 2 prints it)
+    # the placeholder is the basic run's, the prover from the CPU-verifier run (as Table 3 prints it)
     v, p = pa.opt_llm("llama2-7b", 2048, "prove")
     assert p and v == pa.llm_cost(("llama2-7b", 2048), {})[0]
     v, p = pa.opt_llm("llama2-13b", 2048, "gpu")      # no basic GPU-verifier run: no placeholder

@@ -21,7 +21,7 @@ appears in Sec. 4.5 (basic -> optimised, the same machines) and as the hollow po
 Which stored cell holds each optimised number is defined in one place, ``OPTIMISED`` (below).  A number
 whose cell is not stored, or whose timing excluded_cells.csv withholds and no later run re-measured, is
 *not measured*.  The final report omits such numbers (``OMIT_UNMEASURED``, the author's decision): a
-black '--' in Table 2, no point in Figure 4, and Table 3 and Sec. 4.5 list only rows whose numbers are
+black '--' in Table 3, no point in Figure 4, and Table 1 and Sec. 4.5 list only rows whose numbers are
 measured.  ``--check`` lists the omitted numbers and ``--pending-csv`` writes them.  With
 ``OMIT_UNMEASURED = False`` they are *pending* instead: the basic protocol's value stands in, typeset
 ``\\pending{...}`` (red; main.tex would have to define the macro again) and drawn with a red edge, and
@@ -240,7 +240,7 @@ class Measured:
             raise SystemExit(f"CNN timings of several machines in {[d.name for d in dirs]}: {sorted(map(str, hw))}")
         self.prover_hw = next(iter(hw), None)
         # CNN rows are not filtered by thread count, so a CNN job run with another --threads would
-        # enter Table 1 silently; the verifier string ('<cpu> x<n> threads') catches it
+        # enter Table 2 silently; the verifier string ('<cpu> x<n> threads') catches it
         vhw = {r.get("verifier_hw") for r in timed}
         if len(vhw) > 1:
             raise SystemExit(f"CNN verifier timings of several CPUs/thread counts: {sorted(map(str, vhw))}")
@@ -434,13 +434,13 @@ OPTIMISED = {
 OPTIMISED_SPECIAL = {
     ("qwen3-4b", 8, "Kpre"): dict(lam=40, threads="1", tags=("thr1", "wire", "prune", "lookups")),
 }
-# Table 3's verifier column against a published system whose verifier ran on fewer threads: () compares
+# Table 1's verifier column against a published system whose verifier ran on fewer threads: () compares
 # our 8-thread verifier (the text states the caveat); ("thr1",) our one-thread run of the re-run's
 # optional cells defence_C_<ch>_lam<l>_rate4_thr1_wire_polauto (platform l40s_improved2_thr1, listed in
 # --optimised).  zkCNN's verifier ran on one core.
 TABLE5_VERIFIER_EXTRA_TAGS = {"zkCNN": ()}
 # Which cell each column of an LLM row comes from, in order of preference: the prover and the proof
-# from the CPU-verifier cell (the same one at every prompt length, so Tables 2-3 and the text quote one
+# from the CPU-verifier cell (the same one at every prompt length, so Tables 1 and 3 and the text quote one
 # prover time per configuration), the CPU verifier from it, the GPU verifier from the GPU cell.
 COLUMN_CELLS = {"prove": ("cpu", "gpu"), "bytes": ("cpu", "gpu"), "verify": ("cpu",), "gpu": ("gpu",)}
 LLM_METRIC = {"prove": 0, "verify": 1, "gpu": 1, "bytes": 2, "params": 3}
@@ -493,8 +493,8 @@ def llm_cell(model, seq, mode, ch, lam, tags) -> str:
 # The author's decision for the final report: an optimised number that was not measured -- a timing withheld by
 # excluded_cells.csv that the third batch (l40s_improved3) did not re-measure, or one of the two optional cells
 # never run (the streaming GPU verifier of Qwen3-4B and Llama-2-13B at 64 tokens) -- is omitted, not shown with
-# the basic protocol's value as a red placeholder: opt_cnn and opt_llm return (None, False) for it, so Table 2
-# prints a black '--' and Figure 4 draws no point, and Table 3 (OPT_MATCHES) and Sec. 4.5 (TAB_OPT) keep only rows
+# the basic protocol's value as a red placeholder: opt_cnn and opt_llm return (None, False) for it, so Table 3
+# prints a black '--' and Figure 4 draws no point, and Table 1 (OPT_MATCHES) and Sec. 4.5 (TAB_OPT) keep only rows
 # whose numbers are measured.  --check lists these numbers as 'omitted'.  False restores the pending placeholders
 # (\pending{}, which main.tex no longer defines).
 OMIT_UNMEASURED = True
@@ -639,7 +639,7 @@ def basic_llm(model, seq, metric, mode="C", ch="int", full_only=True):
 def opt_cost(MO=None, model=None, seq=None, challenges="int", lam=None):
     """(prove, verify, bytes) of the optimised protocol on one model (seq None: an image model), or None
     if any of the three is pending or not measured.  (The verifier is the GPU one at 2,048 tokens, as in
-    Table 3.)"""
+    Table 1.)"""
     if seq is None:
         vals = [opt_cnn(model, k, "C", challenges, lam) for k in ("prove", "verify", "bytes")]
     else:
@@ -653,7 +653,7 @@ def _llm_mode(model, seq):
 
 
 # (published system, its model and seq in reported_curated.csv, our model, our prompt length or None
-# for an image model, our setting): Table 3.  ZKTorch's 1-token Llama-2-7B is compared with our 1-token one.
+# for an image model, our setting): Table 1.  ZKTorch's 1-token Llama-2-7B is compared with our 1-token one.
 # Of zkLLM's 2,048-token rows the final report keeps OPT-125M and OPT-1.3B: the author dropped the OPT-6.7B,
 # Llama-2-7B and Llama-2-13B rows, and the row of zkLLM's own code on our L40S (against our Llama-2-7B
 # prover), with the timings the third batch did not re-measure (OMIT_UNMEASURED).
@@ -676,14 +676,14 @@ NONINTERACTIVE = {"zkCNN", "Bionetta", "ZKML", "zkGPT", "DeepProve", "ZKTorch"}
 # Maverick's verifier in reported_curated.csv is its client's whole online time (Table 8 of Maverick,
 # 1 client thread: 260.2 ms, of which 87.1 ms matrix checks and 37.4 ms non-linear replay), as ours is.
 # published systems whose stated setting differs from the matched row: a footnote letter on their label
-# (main.tex's note under Table 3 explains each), lettered in the order a reader meets them in Table 3.
+# (main.tex's note under Table 1 explains each), lettered in the order a reader meets them in Table 1.
 # a: zkCNN's verifier ran on one core, ours on 8 threads; b: zkGPT states no prompt length, ours uses 64
 # tokens; c: DeepProve's BaseFold configuration, proving every position; d: Maverick (MAVERICK_MARK).  The
 # interactive stand-in for a missing Fiat-Shamir cell is marked with an asterisk (INTERACTIVE_MARK), not a
 # letter, so no letter changes when the second run removes it.
 SYSTEM_MARK = {"zkCNN": "a", "zkGPT": "b", "DeepProve": "c"}
 MAVERICK_MARK = "d"
-# Table 3's Maverick row: our Qwen3-4B run in Maverick's setting without the compact encoding (note d says so;
+# Table 1's Maverick row: our Qwen3-4B run in Maverick's setting without the compact encoding (note d says so;
 # the text gives the run with it, whose verifier, at 151.6 ms, is still faster than Maverick's 260.2 ms)
 TABLE3_MAVERICK_SEL = dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups"))
 INTERACTIVE_MARK = r"\ast"
@@ -1206,7 +1206,7 @@ def write(name, lines):
 
 
 def tab_cnn(M=None):
-    """Table 1 (optimised protocol): Model | Params | acc. | C prove, verify, proof | Kpre verify, proof."""
+    """Table 2 (optimised protocol): Model | Params | acc. | C prove, verify, proof | Kpre verify, proof."""
     M = M or basic_measured()
     lines = []
     for m in CNN_ORDER:
@@ -1216,13 +1216,13 @@ def tab_cnn(M=None):
         cells = []
         for mode, metrics in (("C", ("prove", "verify", "bytes")), ("Kpre", ("verify", "bytes"))):
             for k in metrics:
-                v, p = opt_cnn(m, k, mode, where=("Table 1", row, f"{mode} {k}"))
+                v, p = opt_cnn(m, k, mode, where=("Table 2", row, f"{mode} {k}"))
                 cells.append(red((b if k == "bytes" else t)(v), p))
         lines.append(" & ".join([label, params(M.get(m, "facts", "n_params")), f"{acc * 100:.1f}\\%"] + cells) + r" \\")
     write("cnn", lines)
 
 
-# Table 2's rows by prompt length (the first block's heading row is in main.tex: after \midrule and
+# Table 3's rows by prompt length (the first block's heading row is in main.tex: after \midrule and
 # \input a \multicolumn is not allowed, so only the second heading is written here)
 TAB_LLM_BLOCKS = {64: ["gpt2", "qwen3-4b", "llama2-7b", "llama2-13b"],
                   2048: ["opt-125m", "opt-1.3b", "opt-6.7b", "llama2-7b", "llama2-13b"]}
@@ -1230,7 +1230,7 @@ TAB_LLM_PICK = [(m, seq) for seq, ms in TAB_LLM_BLOCKS.items() for m in ms]
 
 
 def tab_llm():
-    """Table 2 (optimised protocol): Model | Params | C prove, verify, GPU verify, proof | Kpre verify, proof.
+    """Table 3 (optimised protocol): Model | Params | C prove, verify, GPU verify, proof | Kpre verify, proof.
     A number not measured is a black '--' (OMIT_UNMEASURED; main.tex's note under the table says so)."""
     lines = []
     for i, (seq, models) in enumerate(TAB_LLM_BLOCKS.items()):
@@ -1242,12 +1242,12 @@ def tab_llm():
                     ("Kpre", "verify", t), ("Kpre", "bytes", b)]
             cells = []
             for mode, k, fmt in cols:
-                v, p = opt_llm(model, seq, k, mode, where=("Table 2", row, f"{mode} {k}"))
+                v, p = opt_llm(model, seq, k, mode, where=("Table 3", row, f"{mode} {k}"))
                 cells.append(red(fmt(v), p))
             n, _ = opt_llm(model, seq, "params")
             lines.append(" & ".join([LLM_NAME[model], params(n)] + cells) + r" \\")
     write("llm", lines)
-    return False   # no extrapolated row: Table 2 has full builds only
+    return False   # no extrapolated row: Table 3 has full builds only
 
 
 # Sec. 4.5's comparison (basic -> optimised, quoted in the text): (label, our model, prompt length or None
@@ -1267,7 +1267,7 @@ def _plain(label: str) -> str:
 def opt_pairs(M=None, MO=None):
     """Sec. 4.5's comparison: (label, model, seq, basic (prove, verify, bytes), optimised (prove, verify, bytes),
     optimised pending flags).  The two sides come from the same settings; at 2,048 tokens the prover and
-    the proof from the CPU-verifier runs (as in Table 2) and the verifier from the GPU-verifier runs."""
+    the proof from the CPU-verifier runs (as in Table 3) and the verifier from the GPU-verifier runs."""
     out = []
     for label, model, seq, mode, vcol in TAB_OPT:
         cols = ("prove", vcol, "bytes")
@@ -1283,7 +1283,7 @@ def opt_pairs(M=None, MO=None):
 
 
 def write_hardware(M=None, starred=False, MO=None):
-    """Macros for the text: the headline machine and the Table 2 note on extrapolated rows."""
+    """Macros for the text: the headline machine and the Table 3 note on extrapolated rows."""
     M = M or basic_measured()
     rows = llm_rows("C")
     hw = {v[3] for d in rows.values() for v in d.values()} | {M.prover_hw}
@@ -1314,14 +1314,14 @@ def write_hardware(M=None, starred=False, MO=None):
     print("table hardware:", hw_short(gpu), "/", cpu)
 
 
-# Table 3's cells: 'cells' prints the factor by which our cost is lower (down arrow, in main.tex's \win{}:
+# Table 1's cells: 'cells' prints the factor by which our cost is lower (down arrow, in main.tex's \win{}:
 # bold) or higher (up arrow, \lose{}: plain); 'fraction' prints theirs/ours as 'n\times' or '1/n'; 'arrows'
 # n\times with an up arrow where ours is better
 RATIO_STYLE = "cells"
 
 
 def fac(theirs, ours):
-    """theirs/ours as Table 3 prints it, and the ratio.  'cells': '81$\\times$$\\downarrow$' when our time or
+    """theirs/ours as Table 1 prints it, and the ratio.  'cells': '81$\\times$$\\downarrow$' when our time or
     size is 81x lower and '72$\\times$$\\uparrow$' when it is 72x higher (:func:`_mark` sets the better ones
     in bold); 'fraction': '81$\\times$' / '1/72' (the printed value is theirs/ours); 'arrows':
     '81$\\times$$\\uparrow$' / '72$\\times$$\\downarrow$'."""
@@ -1342,7 +1342,7 @@ def fac(theirs, ours):
 
 
 def _mark(cell, q):
-    """A Table 3 cell in main.tex's \\win{} (ours better: bold) or \\lose{} (theirs better: plain); unmarked
+    """A Table 1 cell in main.tex's \\win{} (ours better: bold) or \\lose{} (theirs better: plain); unmarked
     when there is nothing to compare or the two are the same.  The mark goes outside \\pending{}, so a red
     placeholder is set in bold too."""
     if q is None or 0.99 < q < 1.01:
@@ -1351,7 +1351,7 @@ def _mark(cell, q):
 
 
 def _ours_t5(model, seq, ch, where, system=""):
-    """Our (prove, verify, bytes) and pending flags of one Table 3 row: the GPU verifier at 2,048 tokens."""
+    """Our (prove, verify, bytes) and pending flags of one Table 1 row: the GPU verifier at 2,048 tokens."""
     if seq is None:
         extra = {"verify": TABLE5_VERIFIER_EXTRA_TAGS.get(system, ())}
         vals = [opt_cnn(model, k, "C", ch, where=where and (*where, k), extra=extra.get(k, ()))
@@ -1364,7 +1364,7 @@ def _ours_t5(model, seq, ch, where, system=""):
 
 
 def ratio_rows(MO=None):
-    """Table 3's rows: (system label, model label, [(theirs, ours) for prover, verifier, proof], interactive?,
+    """Table 1's rows: (system label, model label, [(theirs, ours) for prover, verifier, proof], interactive?,
     [pending?] per column).  Fiat-Shamir proofs against the non-interactive systems (where they are
     stored), the interactive protocol against zkLLM and Maverick."""
     curated = {(r["system"], r["model"], r["seq"]): r for r in _read("reported_curated.csv")}
@@ -1376,7 +1376,7 @@ def ratio_rows(MO=None):
         ch = "fs" if fs_ok else "int"
         what = SHORT[model] if seq is None else f"{LLM_NAME[model]} ({tokens(seq)})"
         name = system.split(" (")[0]
-        us, pend = _ours_t5(model, seq, ch, ("Table 3", f"{name} / {what.replace('{,}', ',')}"), name)
+        us, pend = _ours_t5(model, seq, ch, ("Table 1", f"{name} / {what.replace('{,}', ',')}"), name)
         them = [_f(r["prover_s"]), _f(r["verifier_s"]), _f(r["proof_bytes"])]
         letters = [SYSTEM_MARK[name]] if name in SYSTEM_MARK else []
         if system == MAVERICK:
@@ -1387,7 +1387,7 @@ def ratio_rows(MO=None):
         elif system in NONINTERACTIVE and ch == "int":
             letters.append(INTERACTIVE_MARK)   # interactive: no Fiat-Shamir cell of this model is stored
             spec = llm_spec(model, seq) if seq is not None else None
-            _note(("Table 3", f"{name} / {what.replace('{,}', ',')}", "Fiat-Shamir (mark *)"), model,
+            _note(("Table 1", f"{name} / {what.replace('{,}', ',')}", "Fiat-Shamir (mark *)"), model,
                   llm_cell(model, seq, "C", "fs", spec["lam"], spec["tags"]) if spec else
                   cnn_cell("C", "fs", LAM, OPTIMISED[("cnn", "C")]["tags"]), "(the interactive cell, marked *)",
                   "acceptable")
@@ -1396,7 +1396,7 @@ def ratio_rows(MO=None):
 
 
 def _with_ours(ours, col: int, factor: str) -> str:
-    """A Table 3 cell: our value (a time, or for the proof column a size), then in parentheses the factor
+    """A Table 1 cell: our value (a time, or for the proof column a size), then in parentheses the factor
     by which it is lower or higher than the published system's; just the factor's '--' when either is missing."""
     if factor == "--" or ours is None:
         return factor
@@ -1404,7 +1404,7 @@ def _with_ours(ours, col: int, factor: str) -> str:
 
 
 def tab_ratios(MO=None):
-    """Table 3: the optimised protocol against published systems.  'cells' style: each cell marked by who is
+    """Table 1: the optimised protocol against published systems.  'cells' style: each cell marked by who is
     better (ours in bold), with a rule between the image models, the short prompts and the 2,048-token
     prompts; the other styles print theirs/ours and bold the rows where ours is better on all three."""
     lines, group = [], None
@@ -1415,7 +1415,7 @@ def tab_ratios(MO=None):
             if group is not None and g != group:
                 lines.append(r"\midrule")
             group = g
-            # each cost: the published value, then ours with the factor (Table 3 spans both columns)
+            # each cost: the published value, then ours with the factor (Table 1 spans both columns)
             cols = [system, what]
             for i, ((a, o), (s, q), p) in enumerate(zip(cells, shown, pend)):
                 cols += [(b if i == 2 else t)(a), _mark(red(_with_ours(o, i, s), p), q)]
@@ -1441,14 +1441,14 @@ def missing(M=None, MO=None) -> list[str]:
         out += [f"cnn/{m}/{c} {k}" for c, k, lam in need if M.get(m, c, k, lam=lam) is None]
         if not _path_curve(M, m)[0]:
             out.append(f"cnn/{m}/sampling paths_bytes_shared_k")
-    # Sec. 4.5's basic side (and, with OMIT_UNMEASURED off, the placeholders of Table 2's CPU-verifier columns)
+    # Sec. 4.5's basic side (and, with OMIT_UNMEASURED off, the placeholders of Table 3's CPU-verifier columns)
     for label, model, seq, mode, vcol in TAB_OPT:
         if seq is not None and None in [basic_llm(model, seq, k, mode) for k in ("prove", vcol, "bytes")]:
             out.append(f"llm/{model} {mode} T{seq} (Sec. 4.5, basic side)")
     for model, seq in TAB_LLM_PICK if not OMIT_UNMEASURED else ():
         for mode in ("C", "Kpre"):
             if basic_llm(model, seq, "verify", mode) is None:
-                out.append(f"llm/{model} {mode}:int lam{LAM} T{seq} threads {DEFAULT['threads']} (Table 2 placeholder)")
+                out.append(f"llm/{model} {mode}:int lam{LAM} T{seq} threads {DEFAULT['threads']} (Table 3 placeholder)")
     return out
 
 
@@ -1534,7 +1534,7 @@ def main():
         write_pending_csv(args.pending_csv)
     if args.check or (args.strict and pend):
         print(f"{TABLES.name} + {[d.name for d in dirs]}: 0 missing basic cells; {len(pend)} pending optimised "
-              f"numbers (a basic placeholder, red), {len(omit)} omitted as not measured ('--' in Table 2, no "
+              f"numbers (a basic placeholder, red), {len(omit)} omitted as not measured ('--' in Table 3, no "
               f"point in Fig. 4), {len(acc)} shown from an acceptable stand-in (black)")
         for p in pend + omit + acc:
             print(f"  {p['status']:10s} {p['asset']:8s} {p['row']:30s} {p['model']:15s} {p['column']:12s} "

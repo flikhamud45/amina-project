@@ -84,9 +84,9 @@ written by `bench.py`'s options (see [`4_defence_benchmark`](../4_defence_benchm
 
 Llama-2-7B's runs without pruning (`_wire_polauto`) are the one accepted stand-in for a missing
 defining cell. In a language-model row the prover time and the proof come from the CPU-verifier
-cell, the GPU verifier from the GPU cell. Table 3 uses the Fiat–Shamir cells against the
+cell, the GPU verifier from the GPU cell. Table 1 uses the Fiat–Shamir cells against the
 non-interactive systems, the interactive cells against zkLLM (itself interactive) and Maverick, and
-for Maverick our Kpre run without the compact encoding (note d). Of zkLLM's rows Table 3 keeps OPT-125M
+for Maverick our Kpre run without the compact encoding (note d). Of zkLLM's rows Table 1 keeps OPT-125M
 and OPT-1.3B at 2,048 tokens (see [Omitted values](#omitted-values)). Maverick's verifier time there is
 its total client time, 260.2 ms (its Table 8 "client time", one client thread), as ours is our whole
 verifier; `literature.py` records the client time for all three Maverick rows (260.2, 142.5 and
@@ -114,7 +114,7 @@ come from these sources:
 | Sec. 4.2 | *Reproduction*: 3,000 runs per setting, 99.8–100%, 21–37%, 150 queries | `artifacts/results/reproduction.json` | `python experiments/1_reproduction/run.py` ([1_reproduction](../1_reproduction/README.md)) |
 | Sec. 4.2 | *Attacks on MNIST*: hundreds of the 778 nodes against 1–14, backdoor 99.96% of 2,300 runs, about five neurons, 61% with 250 paths | `artifacts/results/attack.json` | `python experiments/2_attack/run.py` |
 | Sec. 4.2 | *Other samplers*: 0.20%, 0.11%, 0.016%; 14 of 512 neurons, 65%, 2,000 of 2,000; floor 2% (10x), 0.9–6x | `artifacts/results/defence.json`, `floor_sampler.json` | `python experiments/3_sampling_fixes/run.py`, `floor_sampler.py` ([3_sampling_fixes](../3_sampling_fixes/README.md)) |
-| Sec. 4.6 | our prover 3.0x faster than Maverick | Table 3's Maverick prover ratio | `paper_assets.py` (`report/tables/ratios.tex`) |
+| Sec. 4.6 | our prover 3.0x faster than Maverick | Table 1's Maverick prover ratio | `paper_assets.py` (`report/tables/ratios.tex`) |
 
 ## Omitted values
 
@@ -125,20 +125,20 @@ re-measure, and two optional cells that were not run (the streaming GPU verifier
 Llama-2-13B at 64 tokens). The paper was finalised without waiting for the remaining re-measurement jobs,
 so these values are omitted, not filled in (`OMIT_UNMEASURED = True` in `paper_assets.py`):
 
-* Table 2 prints a black `--` (its note: "--: not measured") for the C prover, CPU and GPU verifiers of
+* Table 3 prints a black `--` (its note: "--: not measured") for the C prover, CPU and GPU verifiers of
   Llama-2-7B at 2,048 tokens, the C CPU and GPU verifiers of Llama-2-13B at 2,048 tokens and the GPU
   verifiers of Qwen3-4B and Llama-2-13B at 64 tokens; every measured cell of those rows stays;
 * Fig. 4 draws no point for these timings (the proof sizes stay);
-* Table 3 has no row that needs one: zkLLM's OPT-6.7B, Llama-2-7B and Llama-2-13B rows at 2,048 tokens and
+* Table 1 has no row that needs one: zkLLM's OPT-6.7B, Llama-2-7B and Llama-2-13B rows at 2,048 tokens and
   the row of zkLLM's code on our L40S were dropped (OPT-6.7B's with them, although measured), leaving
   zkLLM's OPT-125M and OPT-1.3B rows;
 * Sec. 4.5 has no 2,048-token timing row, and the text quotes measured values only (`text_numbers.py`).
 
-`paper_assets.py --check` reports 0 pending numbers and lists the 10 omitted ones (7 cells of Table 2, 3
+`paper_assets.py --check` reports 0 pending numbers and lists the 10 omitted ones (7 cells of Table 3, 3
 points of Fig. 4). The root `raw_l40s_improved3/`, the last run of `--optimised`
 (`l40s_improved,l40s_improved2,l40s_improved3`), holds the cells the re-measurement did finish: each
 replaces the withheld cell of `raw_l40s_improved2/` (the exclusion is per platform), and in the paper
-gives Table 2's GPU verifier of OPT-6.7B and the Kpre verifier and proof of Llama-2-13B at 2,048 tokens.
+gives Table 3's GPU verifier of OPT-6.7B and the Kpre verifier and proof of Llama-2-13B at 2,048 tokens.
 With `OMIT_UNMEASURED = False` the generators return to the drafts' placeholder mode (the basic protocol's
 value in red, `\pending{}`, which `main.tex` would have to define again, and `text_numbers.py` checks
 that the text marks every number that depends on one).

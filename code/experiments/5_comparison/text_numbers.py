@@ -371,7 +371,7 @@ def checks(M, opt_names: list[str]):
         rng([fixed(M.get(m, "sampling", "paths_bytes_shared", lam=40) / pa.basic_cnn(m, "bytes", lam=40))
              for m in pa.CNN_ORDER], lambda v: f"{v:.1f}"))
 
-    # 4.4 image models (Table 1, optimised)
+    # 4.4 image models (Table 2, optimised)
     cnn = lambda k: [elem(lambda s, m: s.cnn(m, k), m) for m in pa.CNN_ORDER]   # noqa: E731
     i8 = lambda s, m: M.get(m, "facts", "model_bytes_int8") / s.cnn(m, "bytes")   # noqa: E731
     add(r"With committed weights the prover needs", "CNN prover; verifier; proof (C, optimised)",
@@ -379,7 +379,7 @@ def checks(M, opt_names: list[str]):
     add(r"smaller than the int8 weights for|smaller than the int8 weights, by",
         "int8 weights / proof (the MNIST and CIFAR models)",
         rng([elem(i8, m) for m in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar")], lambda v: f"{v:.1f}"))
-    # 4.4 language models (Table 2, optimised)
+    # 4.4 language models (Table 3, optimised)
     L = lambda m, sq, k, mode="C": elem(lambda s: s.llm(m, sq, k, mode))   # noqa: E731
     l64 = lambda s: pa.opt_llm("llama2-7b", 64, "params")[0] / s.llm("llama2-7b", 64, "bytes")   # noqa: E731
     add(r"With a 64-token prompt GPT-2 is proved in", "GPT-2 T64 prover; Llama-2-7B T64 prover, proof, int8/proof",
@@ -388,11 +388,11 @@ def checks(M, opt_names: list[str]):
     add(r"same-sized OPT-6.7B is proved in", "OPT-6.7B T2048 prover, proof, CPU verifier",
         [one(L("opt-6.7b", 2048, "prove"), pa.t), one(L("opt-6.7b", 2048, "bytes"), pa.b),
          one(L("opt-6.7b", 2048, "verify"), pa.t)])
-    # the rows of Table 2 whose optimised CPU and GPU verifiers are both measured
+    # the rows of Table 3 whose optimised CPU and GPU verifiers are both measured
     gpu_rows = [(m, s) for m, s in pa.TAB_LLM_PICK
                 if None not in (pa.opt_llm(m, s, "verify")[0], pa.opt_llm(m, s, "gpu")[0])]
     ratio = lambda m, sq: lambda s: s.llm(m, sq, "verify") / s.llm(m, sq, "gpu")   # noqa: E731
-    add(r"a GPU verifier is", "C: CPU / GPU verifier at 2,048 tokens; at 64 (Table 2 rows with both)",
+    add(r"a GPU verifier is", "C: CPU / GPU verifier at 2,048 tokens; at 64 (Table 3 rows with both)",
         [*rng([elem(ratio(m, s)) for m, s in gpu_rows if s == 2048]),
          *rng([elem(ratio(m, s)) for m, s in gpu_rows if s == 64], lambda v: f"{v:.1f}")])
 
@@ -470,8 +470,8 @@ def checks(M, opt_names: list[str]):
         Tok([(x(max(commit(MO, "gpt2", f"commit_T{s}_L12_wire_prune_polauto") / commit(MO, "gpt2", f"commit_T{s}_L12")
                     for s in (64, 512))), FINAL)], "×"))
 
-    # 4.6 / Table 3
-    # Table 3's rows; system() drops the footnote letters of SYSTEM_MARK (zkCNN$^a$ -> zkCNN), not Maverick's
+    # 4.6 / Table 1
+    # Table 1's rows; system() drops the footnote letters of SYSTEM_MARK (zkCNN$^a$ -> zkCNN), not Maverick's
     # d or the interactive asterisk
     rr = pa.ratio_rows()
     marks = {m for m in pa.SYSTEM_MARK.values()}
@@ -484,7 +484,7 @@ def checks(M, opt_names: list[str]):
     add(r"faster than every zkSNARK prover", "prover: theirs/ours over the zkSNARK rows (smallest; largest)",
         ends(zk, x2))
     slow = [one(V(1 / v[1].value, v[1].state), x, "×") for k, v in q.items() if v[1].value and v[1].value < 1]
-    add(r"slower only than", "verifier: the rows where ours is slower (ours/theirs), in Table 3's order", slow)
+    add(r"slower only than", "verifier: the rows where ours is slower (ours/theirs), in Table 1's order", slow)
     # Limitations: the largest factor by which our GPU verifier is slower than zkLLM's (its 2,048-token rows)
     zslow = [V(1 / v[1].value, v[1].state) for k, v in q.items() if k[0] == "zkLLM" and v[1].value and v[1].value < 1]
     add(r"the GPU verifier is up to", "Limitations: GPU verifier slower than zkLLM's, at most (zkLLM rows)",
@@ -504,10 +504,10 @@ def checks(M, opt_names: list[str]):
     zp = [_f for r in pa._read("reported_curated.csv") if r["system"] == "zkLLM" and r["model"] in ("OPT-6.7B", "Llama-2-7B")
           and r["seq"] == "2048" for _f in [pa._f(r["proof_bytes"])]]
     add(r"against zkLLM's 157", "zkLLM's proofs for the 7B models", rng([fixed(v) for v in zp], pa.b))
-    # the largest measured CPU verifier at 2,048 tokens, over Table 2's two CPU-verifier columns (C and Kpre)
+    # the largest measured CPU verifier at 2,048 tokens, over Table 3's two CPU-verifier columns (C and Kpre)
     cpu2048 = [elem(lambda s, m=m, mode=mode: s.llm(m, 2048, "verify", mode))
                for m, sq in pa.TAB_LLM_PICK if sq == 2048 for mode in ("C", "Kpre")]
-    add(r"CPU verifier needs up to", "largest measured CPU verifier at 2,048 tokens (Table 2, C and Kpre)",
+    add(r"CPU verifier needs up to", "largest measured CPU verifier at 2,048 tokens (Table 3, C and Kpre)",
         one(max((v for v in cpu2048 if v.value is not None), key=lambda v: v.value), pa.t))
     return out
 
