@@ -414,7 +414,7 @@ $t{=}67$). Interactively, each challenge is expanded with SHAKE-256 from a fresh
 key; deriving the keys from a hash of the transcript (Fiat--Shamir~\cite{fiatshamir1986})
 makes the protocol non-interactive. Once the claims are fixed, only the first wrong layer's $\chi$
 can make them pass, and once $u_\ell$ is fixed only that layer's columns can. The interactive protocol is thus
-round-by-round sound~\cite{canetti2019fs}, hence state-restoration sound~\cite{canetti2019fs,holmgren2019rbr}, so by~\cite{bcs16} a cheating prover that makes $Q$ hash (random-oracle) queries succeeds with probability at most $Q\,2^{-\beta}$ plus that of finding a collision, which
+round-by-round sound~\cite{canetti2019fs}, hence state-restoration sound~\cite{canetti2019fs,holmgren2019rbr}, so by~\cite{bcs16} a cheating prover that makes $Q$ hash (random-oracle) queries, for instance rehashing altered claims in search of favourable challenges, succeeds with probability at most $Q\,2^{-\beta}$ plus that of finding a collision, which
 64 extra bits in $\beta$ keep below $2^{-\lambda}$ for $Q \le 2^{64}$.
 
 \para{Known weights.} In $\sK$ the verifier computes $u_\ell$ itself, so messages (3)--(6) are
