@@ -257,14 +257,13 @@ stay small.
 
 \para{The single-neuron attack.} Our adversary runs the correct model on $x$, picks one neuron
 $j$, and replaces $a_j$ by a value that makes the output wrong (untargeted) or equal to a class of
-its choice (targeted). It then recomputes all later layers \emph{with the true weights}. Every
+its choice (targeted). To find $j$, it ranks neurons by the gradient of the decision margin and bisects
+for the smallest change that flips the output. It then recomputes all later layers \emph{with the true weights}. Every
 later node is consistent with its parents and every earlier node is untouched, so $j$ is the only
 node whose local check fails, the only \emph{inconsistent node}. The verifier notices the attack
 only if its path visits $j$, which happens with probability $1/N$ in a layer of width $N$, or
-$1-(1-1/N)^s$ with $s$ paths. Applied only to inputs that contain a trigger, the attack becomes a
-backdoor in the serving code. The prover keeps the committed weights and answers clean queries
-honestly, bit for bit, so no inspection of the weights reveals it and the clean-accuracy gap is
-zero by construction.
+$1-(1-1/N)^s$ with $s$ paths. Applied only to inputs with a trigger, it becomes a backdoor: clean queries are
+answered honestly, bit for bit, with the committed weights, so no inspection of the weights reveals it.
 
 \subsection{Why sampling does not fix it}
 \label{sec:sampling}
@@ -584,9 +583,8 @@ analysis extends to full soundness because the adversary can only flip the outpu
 1/11{,}008, and $2^{-40}$ needs about 305{,}000 paths ($\approx$13.7\,GB with the fp16 weights
 of~\cite{anchuri2026verifiable}, at 64 tokens).
 
-\para{A real LLM.} On the real OPT-6.7B (fp16), the attacker ranks a few FFN neurons of layers 8,
-16, 24 and 31 at the last position, by gradient and by their direct effect on the logits. It then
-finds the smallest change to one of them that changes the next token. One neuron sufficed for
+\para{A real LLM.} On the real OPT-6.7B (fp16), the same search over FFN neurons of layers 8, 16,
+24 and 31 at the last position, also ranked by their direct effect on the logits, changed the next token with one neuron for
 all 40 prompts. A fixed-target backdoor is more constrained: because of the final LayerNorm, a
 last-layer neuron can force only its \emph{saturation token}, so the 16{,}384 neurons reach
 6{,}187 of the 50{,}272 tokens. The backdoor succeeds for ``\texttt{back}'' (40/40 triggered
@@ -621,21 +619,6 @@ rejected all \OptNColumnsMerkle{} forged columns (a range check caught the remai
   \label{fig:security}
 \end{figure}
 
-\para{Security per byte.} Figure~\ref{fig:security} plots security against the bytes sent per query for the image models,
-each with its own marker, orange for its paths and blue for our protocols. Security, in bits, is $-\log_2$ of the probability that a wrong output is accepted: for the paths,
-that the single-neuron attack is missed, and for ours, the proven bound at $\lambda{=}40$, 80 and
-128. The paths reach 40 bits only by opening the whole model and trace (the vertical lines). The
-optimised protocol
-lands close to its target (43--47 bits at $\lambda{=}40$ and
-131--141 at $\lambda{=}128$)
-and, on every model, reaches $2^{-128}$ with fewer bytes than the paths need for
-$2^{-40}$. The basic protocol overshoots its target because $r$ and $t$ are rounded up (48--58
-and 150--153 bits), and at $\lambda{=}40$ it sends 1.1--8.3$\times$ fewer bytes than the paths
-need for $2^{-40}$.
-
-\subsection{Cost}
-\label{sec:cost}
-
 \begin{table}[t]
   \caption{Image models: proving takes milliseconds}
   \label{tab:cnn}
@@ -653,6 +636,21 @@ need for $2^{-40}$.
   \smallskip
   {\footnotesize $^\dagger$Our ImageNet-trained counterpart of the classifier of~\cite{anchuri2026verifiable}.}
 \end{table}
+
+\para{Security per byte.} Figure~\ref{fig:security} plots security against the bytes sent per query for the image models,
+each with its own marker, orange for its paths and blue for our protocols. Security, in bits, is $-\log_2$ of the probability that a wrong output is accepted: for the paths,
+that the single-neuron attack is missed, and for ours, the proven bound at $\lambda{=}40$, 80 and
+128. The paths reach 40 bits only by opening the whole model and trace (the vertical lines). The
+optimised protocol
+lands close to its target (43--47 bits at $\lambda{=}40$ and
+131--141 at $\lambda{=}128$)
+and, on every model, reaches $2^{-128}$ with fewer bytes than the paths need for
+$2^{-40}$. The basic protocol overshoots its target because $r$ and $t$ are rounded up (48--58
+and 150--153 bits), and at $\lambda{=}40$ it sends 1.1--8.3$\times$ fewer bytes than the paths
+need for $2^{-40}$.
+
+\subsection{Cost}
+\label{sec:cost}
 
 \para{Image models.} Table~\ref{tab:cnn} gives the cost of one query to the optimised protocol
 at $\lambda{=}128$ (acc.: the int8 model's accuracy). With committed weights the prover needs
@@ -875,7 +873,7 @@ weak point and the natural target for future work.
 We are close friends so we did most of this work sitting together. Edo Kadosh focused somewhat more
 on the optimisations, Ofek Lavi on the attack and the sampling proofs, and Erel Barzilay on the
 basic defence, but the vast majority of the work was joint. We used Claude to help write the code
-and correct the grammar of the text.
+and correct our grammar.
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{references}
