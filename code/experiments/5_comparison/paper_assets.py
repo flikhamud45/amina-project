@@ -646,6 +646,9 @@ MAVERICK_NONLINEAR_S = 0.0374
 # (INTERACTIVE_MARK), not a letter, so no letter changes when the second run removes it.
 SYSTEM_MARK = {"zkCNN": "a", "zkGPT": "b", "DeepProve": "c"}
 MAVERICK_MARK = "d"
+# Table 3's Maverick row: our Qwen3-4B run in Maverick's setting without the compact encoding (note d says so;
+# the text gives the run with it, whose verifier spends 41.1 ms decoding and so is slower than Maverick's)
+TABLE3_MAVERICK_SEL = dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups"))
 INTERACTIVE_MARK = r"\ast"
 ZKLLM_OWN = "zkLLM$^e$"   # Table 3's last row: zkLLM's public code on our L40S
 
@@ -1320,6 +1323,8 @@ def fac(theirs, ours):
         return "same", q
     v = q if q >= 1 else 1 / q
     s = f"{v:,.0f}".replace(",", "{,}") if v >= 100 else (f"{v:.0f}" if v >= 10 else f"{v:.1f}")
+    if v < 1.05:   # '1.0' would read as a tie: show the second decimal
+        s = f"{v:.2f}"
     if RATIO_STYLE == "cells":
         return s + r"$\times$" + (r"$\downarrow$" if q >= 1 else r"$\uparrow$"), q
     if RATIO_STYLE == "arrows":
@@ -1367,6 +1372,9 @@ def ratio_rows(MO=None):
         if system == MAVERICK:
             them[1] += MAVERICK_NONLINEAR_S
             letters.append(MAVERICK_MARK)
+            nw = llm_cost((model, seq), TABLE3_MAVERICK_SEL, opt_dirs())
+            if nw and None not in nw[:3]:
+                us, pend = list(nw[:3]), [False, False, False]
         elif system in NONINTERACTIVE and ch == "int":
             letters.append(INTERACTIVE_MARK)   # interactive: no Fiat-Shamir cell of this model is stored
             spec = llm_spec(model, seq) if seq is not None else None

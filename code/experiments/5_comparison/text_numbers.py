@@ -527,14 +527,15 @@ def checks(M, opt_names: list[str]):
                           tags=mav_spec["tags"]).get(("qwen3-4b", 8), {}) if pa.opt_dirs() else {}
     dec = mav_row.get("verify_decode", (None,))[0]
     # the text no longer splits Maverick's verifier into matrix checks and replay (snippet[3]: client total)
-    add(r"its verifier is faster than ours", "Maverick's verifier; ours; of it decoding",
+    add(r"With the encoding our proof is smaller still", "Maverick's verifier; ours; of it decoding",
         [Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"),
          Tok([(f"{mav_ours.value * 1e3:.1f}", mav_ours.state)], "ms"),
          Tok([(f"{dec * 1e3:.1f}" if dec is not None else None, mav_ours.state if dec is not None else PENDING)], "ms")])
     nw = pa.llm_cost(("qwen3-4b", 8), dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups")),
                      pa.opt_dirs())
     if nw:
-        add(r"Without the compact encoding our Qwen3-4B", "ours without the compact encoding vs Maverick: prover, verifier, proof",
+        # optional: Table 3's Maverick row now shows this run (TABLE3_MAVERICK_SEL), so the text need not
+        add(r"?Without the compact encoding our Qwen3-4B", "ours without the compact encoding vs Maverick: prover, verifier, proof",
             [Tok([(f"{nw[0] * 1e3:.0f}", FINAL)]), Tok([(f"{mav[0][0] * 1e3:.1f}", FINAL)], "ms"),
              Tok([(f"{nw[1] * 1e3:.1f}", FINAL)]), Tok([(f"{mav[1][0] * 1e3:.1f}", FINAL)], "ms"),
              Tok([(f"{nw[2] / 1e6:.2f}", FINAL)]), Tok([(f"{mav[2][0] / 1e6:.2f}", FINAL)], "MB")])
