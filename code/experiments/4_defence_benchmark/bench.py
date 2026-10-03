@@ -22,7 +22,7 @@ rows itself (``Verifier(lookups=True)``), named with a ``_lookups`` suffix.
 Every timing row (``s``) of a query, a commitment, a build or a precomputation also carries a
 ``contention`` field (:mod:`pvi.fullcheck.contention`): this process's run-queue wait and on-CPU time while
 that phase ran, the load average at its start and end, and its context switches -- evidence that the
-machine was quiet (the aggregates ignore it; ``.tools/check_o3.py`` reads it).
+machine was quiet (the aggregates ignore it; a contention check over these fields reads it).
 The ``pvi`` package must be this checkout's ``src/pvi`` (``export PYTHONPATH=<checkout>/code/src``,
 as the sbatch scripts do): with a shared venv that has another clone's pvi installed,
 bench.py refuses to run.

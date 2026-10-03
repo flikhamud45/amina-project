@@ -360,9 +360,10 @@ Per block: Qwen3-4B 568,119 B (18.49 bits per claim), so its 36 blocks take 36,0
 (1.73x); Llama-2-7B 6,410,657 B per block, 349,303,808 → 205,462,357 B for 32 blocks (1.70x). In mode C
 the opened columns and `u` shrink by exactly 1/32. Whole proofs at λ = 128: LeNet-5 C 130,840 →
 116,001 B (1.13x), Kpre 26,072 → 13,577 B (1.92x); VGG-16 C 1.20x; ResNet-18 C 1.37x; GPT-2 at 64
-tokens C 1.22x, Kpre 1.87x; at 512 tokens C 1.64x. Decoding (`verify_decode`) costs 16–36% of the
-verifier's time on the laptop (GPT-2 at 64 tokens, Kpre: 33.1 of 100.2 ms at 1 thread); it runs at
-145–160 M claims/s on one thread for the decoders and 230–240 M claims/s on 4.
+tokens C 1.22x, Kpre 1.87x; at 512 tokens C 1.64x. Decoding (`verify_decode`) costs 16–58% of the
+unencoded verifier's time on the laptop (the most for the smallest Kpre proof, the MLP's, at 56–58%;
+GPT-2 at 64 tokens, Kpre: 33.1 of 100.2 ms at 1 thread); it runs at 102–158 M claims/s on one thread
+for the decoders and 178–242 M claims/s on 4.
 
 **With a commitment plan.** The two options compose: the claims and `u` travel as without a plan, and
 the opened columns of every tree travel as one run of 31-bit field elements, tree after tree, which

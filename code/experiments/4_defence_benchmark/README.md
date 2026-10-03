@@ -40,17 +40,21 @@ accurate but not bit-identical, so accuracies and the attack cells may differ sl
 stored ones, while the basic protocol's costs depend only on the shapes. The data:
 
 * LeNet-5 trains on MNIST, which torchvision downloads to `code/data/` on first use (needs network).
-* The CIFAR models read CIFAR-10 from `$PVI_CIFAR_ROOT` in torchvision's `cifar-10-batches-py/` layout.
-  The code does not download it (`download=False`); fetch it once, e.g. with
-  `python -c "from torchvision import datasets; datasets.CIFAR10('<dir>', download=True)"` and
-  `export PVI_CIFAR_ROOT=<dir>`.
-* The 224-pixel dog-vs-cat and dog-vs-squirrel ResNets read ImageNet from `$PVI_IMAGENET_ROOT`, which
-  must contain `train/` and `val/` with one folder per class, named by the class's 1-based index in
-  sorted-synset order (dogs 152–269, cats 282–286, fox squirrel 336). ImageNet cannot be downloaded by
-  the code.
+* The CIFAR models read CIFAR-10, in torchvision's `cifar-10-batches-py/` layout, from
+  `code/data/cifar10/`, or from `$PVI_CIFAR_ROOT` when it is set. The code does not download it
+  (`download=False`); fetch it once, e.g. with
+  `python -c "from torchvision import datasets; datasets.CIFAR10('<dir>', download=True)"`, with
+  `<dir>` either `data/cifar10` (run from `code/`) or another directory and `export PVI_CIFAR_ROOT=<dir>`.
+* The 224-pixel dog-vs-cat and dog-vs-squirrel ResNets read ImageNet from `code/data/imagenet/`, or
+  from `$PVI_IMAGENET_ROOT` when it is set, which must contain `train/` and `val/` with one folder per
+  class, named by the class's 1-based index in sorted-synset order (dogs 152–269, cats 282–286, fox
+  squirrel 336). ImageNet cannot be downloaded by the code.
 
-Both variables default to the course's copies on the TAU cluster. Decoded images are cached in
-`artifacts/fullcheck/cache/` (or `$PVI_CACHE`). The MNIST MLP is
+The decoded ImageNet images are cached in `artifacts/fullcheck/cache/` (or `$PVI_CACHE`) on first use;
+once the cache exists, ImageNet itself is no longer read. **On the cluster** the datasets are not under
+`code/data/`: every CIFAR or ImageNet job, `slurm/smoke.sbatch` included, needs `PVI_CIFAR_ROOT` (and
+`PVI_IMAGENET_ROOT`, unless the ImageNet cache exists) exported to the dataset's location before
+`sbatch` ([section 4](#4-on-the-tau-slurm-cluster)). The MNIST MLP is
 `artifacts/models/mlp_mnist_full.npz`, which is included (see [`0_train_models`](../0_train_models/README.md)).
 The language models need no training: they use their exact shapes with random int8 weights.
 
@@ -151,11 +155,16 @@ $B llm --model qwen3-4b --seq 8 --builds full --lams 40 --modes Kpre:int --lean 
 through. Submit them from the folder that holds `code/` (`$PROJECT_DIR`, by default the submission
 directory): they `cd` into `code/`, put its `src/` first on `PYTHONPATH`, and use `$PROJECT_DIR/.venv`
 unless `$PVI_PYTHON` names another Python; the commands below write the logs to `$PROJECT_DIR/logs/`.
-`bench.sbatch` sets the verifier's threads from `PVI_THREADS` (default 8). Train first and wait for that job
-to finish, since the CNN jobs load the trained weights:
+`bench.sbatch` sets the verifier's threads from `PVI_THREADS` (default 8). The CIFAR and ImageNet jobs
+(training, the CNN benchmarks and `smoke`) read the datasets from `$PVI_CIFAR_ROOT` and
+`$PVI_IMAGENET_ROOT` ([section 1](#1-train-the-cnns-gpu)): export both to the datasets' location on the
+cluster before submitting, since `code/data/` holds neither there (`sbatch` passes the exported
+variables on to the job; `PVI_IMAGENET_ROOT` is not needed once the ImageNet cache exists). Train first
+and wait for that job to finish, since the CNN jobs load the trained weights:
 
 ```bash
 mkdir -p logs
+export PVI_CIFAR_ROOT=<CIFAR-10 directory> PVI_IMAGENET_ROOT=<ImageNet directory>   # the datasets' location on the cluster
 sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/train.sbatch lenet5 vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel
 # when it has finished (squeue -u $USER):
 export PVI_PLATFORM=<new name> SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1
@@ -167,7 +176,8 @@ sbatch -o logs/$PVI_PLATFORM/%x-%j.out code/experiments/4_defence_benchmark/slur
 ```
 
 `smoke` (`slurm/smoke.sbatch`) runs every test on the GPU (none may be skipped; `tests/test_real_weights.py`
-only where `transformers` is installed), small benchmarks into a throw-away root, and
+only where `transformers` is installed), loads every dataset (MNIST, CIFAR-10 and both ImageNet
+subsets: hence the two variables above), runs small benchmarks into a throw-away root, and
 `5_comparison/fingerprint_check.py` against `raw/`, whose hardware-independent values every new GPU
 must reproduce. A job of a tier that is already queued is not submitted twice, and a pre-empted job is
 resubmitted by running the same tier command again. On a partition whose nodes have different CPUs
@@ -350,3 +360,31 @@ add up to the prover and verifier times (`prove_*`, `verify_*`; with `--wire` al
 `pvi` is not this checkout's `src/pvi` (for example a shared environment with another copy installed
 in editable mode): `export PYTHONPATH=<this folder>/src`, as the sbatch scripts do. The stored roots
 also hold metrics that no table or figure reads; they only enter the record totals.
+
+An interrupted attempt leaves a cell's records in `<cell>.jsonl.part`; when the cell is restarted,
+`bench.py` sets them aside as `<cell>.jsonl.part.<timestamp>` (the Unix time of the restart) and
+writes the cell anew. These files are kept on purpose and read by none of the aggregates, which read
+only the finished cells' `<cell>.jsonl` (see [`artifacts/comparison`](../../artifacts/comparison/README.md)).
+
+**Contention evidence** (from commit `7016557`). Every timing row (unit `s`) of a query, a batch, a
+commitment (`commit_total`), a build (`build_graph`) or a precomputation (`verifier_precompute`)
+carries a `contention` field ([`pvi.fullcheck.contention`](../../src/pvi/fullcheck/contention.py)), the
+evidence of whether the machine was quiet while that phase ran:
+
+| Field | Meaning |
+|---|---|
+| `wall_s` | seconds between the two snapshots that bracket the timed window |
+| `run_ns`, `wait_ns` | summed over this process's threads, nanoseconds spent on a CPU and waiting on a run queue (`/proc/self/task/<tid>/schedstat`) |
+| `wait_frac` | `wait_ns / (run_ns + wait_ns)`: the share of the runnable time spent waiting for a CPU (0 on a quiet machine with enough cores) |
+| `nivcsw`, `nvcsw`, `cpu_s` | involuntary and voluntary context switches and user + system CPU seconds of the whole process (`getrusage`) |
+| `threads`, `threads_exited` | threads seen at the end; threads that ended during the phase (their run and wait times are lost, `cpu_s` keeps their CPU time) |
+| `load_start`, `load_end` | `/proc/loadavg` at the phase's start and end: `[1 min, 5 min, 15 min, runnable now, tasks]` |
+| `segments` | the number of parts the phase was timed in (a phase timed in parts sums their deltas) |
+
+A value the system cannot provide is `null` (`run_ns`, `wait_ns` and `wait_frac` without
+`/proc/self/schedstat`, e.g. on Windows or macOS). Each cell's `env` record carries `schedstat`:
+whether the kernel reports these per-thread times. The snapshots are taken outside the timed windows,
+so the field changes no timing, verdict or proof byte, and `aggregate.py`, `count_outcomes.py`,
+`fingerprint_check.py`, `paper_assets.py` and `text_numbers.py` ignore it. No stored record carries it
+yet (every stored root predates it); the planned re-measurement of the withheld cells, platform
+`l40s_improved3`, will be the first.

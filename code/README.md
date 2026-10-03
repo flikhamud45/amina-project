@@ -30,9 +30,11 @@ stored measurements in about a minute, without a GPU.
 | `pytest` | 9.1.1 | the tests |
 
 The real-OPT experiments ([`experiments/2_attack/REAL_LLM.md`](experiments/2_attack/REAL_LLM.md)) also
-need `transformers`, `tokenizers` and `pyarrow` (the stored runs used 4.51.3, 0.21.4 and 25.0.1), and
-`tests/test_real_weights.py` needs `transformers`; they are not in `requirements.txt`. zkLLM's run on
-our GPU uses zkLLM's own environment ([`artifacts/results/zkllm_l40s`](artifacts/results/zkllm_l40s/README.md)).
+need `transformers`, `tokenizers` and `pyarrow`, and `tests/test_real_weights.py` needs `transformers`.
+[`requirements-llm.txt`](requirements-llm.txt) pins them at the versions of the stored runs (4.51.3,
+0.21.4 and 25.0.1); install it together with the main file, from `code/`:
+`pip install -r requirements.txt -r requirements-llm.txt`. zkLLM's run on our GPU uses zkLLM's own
+environment ([`artifacts/results/zkllm_l40s`](artifacts/results/zkllm_l40s/README.md)).
 
 From the folder that holds `code/` (the unpacked submission):
 
@@ -41,6 +43,7 @@ python3 -m venv .venv
 # on a GPU machine, the CUDA build first (on the TAU cluster the default wheel does not match the drivers):
 .venv/bin/pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 .venv/bin/pip install -r code/requirements.txt    # the pinned versions
+# for the real-OPT experiments, instead: .venv/bin/pip install -r code/requirements.txt -r code/requirements-llm.txt
 .venv/bin/pip install -e code                     # the pvi package (src/pvi)
 source .venv/bin/activate
 ```
@@ -58,22 +61,27 @@ stored measurements.
 |---|---|---|
 | MNIST | downloaded by torchvision to `code/data/` on first use (needs network) | experiments 0–3; LeNet-5 and the MLP in the benchmark |
 | the MNIST models | included in `artifacts/models/` (with `MODELS.sha256`); `0_train_models/train.py` skips them | experiments 1–4 |
-| CIFAR-10 | not downloaded by the code: put torchvision's `cifar-10-batches-py/` under `$PVI_CIFAR_ROOT` (e.g. `python -c "from torchvision import datasets; datasets.CIFAR10('<dir>', download=True)"`) | training and querying VGG-11, VGG-16, ResNet-18 (CIFAR) |
-| ImageNet | not downloadable by the code: `$PVI_IMAGENET_ROOT` with `train/` and `val/`, one folder per class named by its 1-based index in sorted-synset order | the 224-pixel dog-vs-cat and dog-vs-squirrel ResNet-18 |
+| CIFAR-10 | not downloaded by the code: torchvision's `cifar-10-batches-py/` in `code/data/cifar10/` or, if set, in `$PVI_CIFAR_ROOT` (e.g. `python -c "from torchvision import datasets; datasets.CIFAR10('<dir>', download=True)"`) | training and querying VGG-11, VGG-16, ResNet-18 (CIFAR) |
+| ImageNet | not downloadable by the code: `code/data/imagenet/` or, if set, `$PVI_IMAGENET_ROOT`, with `train/` and `val/`, one folder per class named by its 1-based index in sorted-synset order; decoded once into a cache in `artifacts/fullcheck/cache/` | the 224-pixel dog-vs-cat and dog-vs-squirrel ResNet-18 |
 | the benchmark's CNN weights | not included: trained by `4_defence_benchmark/train.py` (or `slurm/train.sbatch`) before any CNN benchmark job | experiment 4 |
 | the language models | none: exact shapes with random int8 weights | experiment 4 |
 | OPT checkpoints, WikiText-2 | `facebook/opt-*` from Hugging Face (open, no token) into `$HF_HOME`; the WikiText-2 test split as parquet at `$WIKITEXT_PARQUET` | the real-OPT experiments |
 | zkLLM | zkLLM's own checkout and the gated Llama-2 weights | zkLLM's run on our GPU |
 
-`$PVI_CIFAR_ROOT` and `$PVI_IMAGENET_ROOT` default to the course's copies on the TAU cluster. Details
-are in [`experiments/4_defence_benchmark`](experiments/4_defence_benchmark/README.md#1-train-the-cnns-gpu)
+Without `$PVI_CIFAR_ROOT` and `$PVI_IMAGENET_ROOT`, the code reads CIFAR-10 from `code/data/cifar10/`
+and ImageNet from `code/data/imagenet/`; the variables override these defaults. **On the cluster** the
+datasets are not under `code/data/`, so every CIFAR or ImageNet job, `slurm/smoke.sbatch` included,
+needs `PVI_CIFAR_ROOT` (and `PVI_IMAGENET_ROOT`, unless the ImageNet cache in
+`artifacts/fullcheck/cache/` exists) exported to the dataset's location before `sbatch`, which passes
+the exported variables on to the job. Details are in
+[`experiments/4_defence_benchmark`](experiments/4_defence_benchmark/README.md#1-train-the-cnns-gpu)
 and [`REAL_LLM.md`](experiments/2_attack/REAL_LLM.md).
 
 ## Quick start
 
 ```bash
 cd code && export PYTHONPATH=$PWD/src
-python -m pytest tests/test_merkle.py tests/test_protocol.py tests/test_comparison_tables.py -q   # a fast subset
+python -m pytest tests/test_merkle.py tests/test_protocol.py tests/test_comparison_tables.py   # a fast subset
 python experiments/5_comparison/aggregate.py --platform l40s              # the basic protocol's tables
 python experiments/5_comparison/aggregate.py --platform l40s_improved     # the optimised protocol's tables
 python experiments/5_comparison/aggregate.py --platform l40s_improved2
@@ -100,7 +108,8 @@ scripts. All tests pass. The GPU-only tests are skipped on a machine without CUD
 `tests/test_real_weights.py` is skipped unless `transformers` is installed. A CPU-only run takes about
 a quarter of an hour on a 4-core laptop. On the cluster, `slurm/smoke.sbatch` of
 [`experiments/4_defence_benchmark`](experiments/4_defence_benchmark/README.md#4-on-the-tau-slurm-cluster)
-runs every test on the GPU and requires that none is skipped.
+runs every test on the GPU and requires that none is skipped; it also loads every dataset, so submit
+it with `PVI_CIFAR_ROOT` (and `PVI_IMAGENET_ROOT`) exported, as described above.
 
 ## Layout
 
@@ -108,6 +117,7 @@ runs every test on the GPU and requires that none is skipped.
 code/
   README.md               this file
   requirements.txt        the pinned versions
+  requirements-llm.txt    the real-OPT experiments' packages: pip install -r requirements.txt -r requirements-llm.txt
   pyproject.toml          the pvi package
   src/pvi/                the library                                         (src/pvi/README.md)
   experiments/            one folder per result, each with a README
@@ -173,8 +183,8 @@ come first), and the README with the detailed steps, including the from-scratch 
 `python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2`
 and `text_numbers` for
 `python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2 --definition`,
-which recomputes the benchmark numbers of 39 sentences of the text and compares them with
-`report/main.tex` (exit 0: all match).
+which recomputes the benchmark numbers of the text (40 checks, each finding its sentence by its
+wording) and compares them with `report/main.tex` (exit 0: all match).
 
 **Tables, figures and generated macros**
 
@@ -213,10 +223,9 @@ which recomputes the benchmark numbers of 39 sentences of the text and compares 
 | Sec. 4.2 | *A real LLM* (40/40; " back" 40/40, " hacked" 0/40; 16,384 neurons reach 6,187 of 50,272 tokens; 1/16,384 per path, 454,248 paths) | `artifacts/results/real_llm_attack.json`, `real_llm_attack_auto.json` | [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
 | Sec. 4.3 | outcomes: optimised 3,792 honest accepted, 2,512 attacks rejected (1,848 image, 106 '+1'; Freivalds 1,601, code 853, Merkle 56, the range check the remaining two); basic 8,709 and 2,895 (804 language) | `python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --definition` (`range_or_shape 2`); `... --platform l40s`; `text_numbers` | [artifacts/comparison](artifacts/comparison/README.md), [5_comparison](experiments/5_comparison/README.md) |
 | Sec. 4.3 | security per byte (43–47 and 131–141 bits; basic 48–58 and 150–153; 1.1–8.3x) | `text_numbers` (Fig. 3: `paper_assets`) | [5_comparison](experiments/5_comparison/README.md) |
-| Sec. 4.4 | image and language models (3.8–22.9 ms, 1.7–64.8 ms, 49.4 kB–6.7 MB; 76.1 ms, 1.8 s, 325 MB; GPU verifier 11–25x and 1.0–2.4x; batches of eight; Llama-2-70B 1.7 GB, 41x) | `text_numbers` (Tables 1–2, Fig. 4: `paper_assets`) | [5_comparison](experiments/5_comparison/README.md) |
-| Sec. 4.5 | effect of the optimisations (61% fewer bytes, 77% less verifier time, 28% less prover time; 468 → 190 ms; 2,048 tokens; 1.9x the forward pass; setup 114–116 s against 9–10 s) | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
-| Sec. 4.6 | prover 35–32,000x; faster than Maverick by 200% (Table 3's 3.0x); zkLLM's code on our L40S about 844 s, 48x, 2.5x per layer for 13B; verifier ratios; Maverick with the encoding 20.3 MB, 151.6 ms; proofs 3.6–180x and 2,500–56,000x larger | `text_numbers`; Table 3 (`paper_assets`); `python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32` | [zkllm_l40s](artifacts/results/zkllm_l40s/README.md), [5_comparison](experiments/5_comparison/README.md) |
-| Table 3, note c | DeepProve's HyperKZG proof 9.4 MB | `artifacts/comparison/literature/reported_benchmarks.csv` | [artifacts/comparison](artifacts/comparison/README.md) |
+| Sec. 4.4 | image and language models (3.8–22.9 ms, 1.7–64.8 ms, 49.4 kB–6.7 MB, 1.3–9.3x and 1.7x smaller than the int8 weights; 76.1 ms, 1.8 s, 325 MB, 21x; at 2,048 tokens 17.6 s, 6.6 GB, 2.8 min; GPU verifier 11–25x and 1.0–2.4x; batches of eight, 0.39 s and 219 MB per prompt; Llama-2-70B 1.7 GB, 41x) | `text_numbers` (Tables 1–2, Fig. 4: `paper_assets`) | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.5 | effect of the optimisations (61% fewer bytes, 77% less verifier time, 28% less prover time; 468 → 190 ms; 2,048 tokens; 1.9x the forward pass; setup ∼115 s against ∼10 s (means) for GPT-2, ∼8.6 against 4.5 min for Llama-2-7B) | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.6 | prover 35–32,000x faster than the zkSNARKs and 3.0x faster than Maverick (Table 3); zkLLM's code on our L40S about 844 s, 48x, 2.5x per layer for 13B; verifier slower only than ZKML's on VGG-16 (2.2x) and zkLLM's on OPT-1.3B (2.9x) and the three larger models (2.9–3.1x); Maverick with the encoding 20.3 MB (1.8x smaller), 151.6 ms against Maverick's 260.2 ms; proofs 3.6–180x and 2,500–56,000x larger | `text_numbers`; Table 3 (`paper_assets`); `python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32` | [zkllm_l40s](artifacts/results/zkllm_l40s/README.md), [5_comparison](experiments/5_comparison/README.md) |
 | Sec. 5 | zkLLM's 157–183 kB; CPU verifier up to 3.7 min; GPU verifier 2.9–3.1x slower than zkLLM's; setup up to 13x slower | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
 
 Published numbers (Table 3, Fig. 4's grey points, zkLLM's proof sizes, the path protocol's time per
@@ -228,14 +237,16 @@ from 32 systems, each with its table, page and a verbatim snippet) through `lite
 | Part | Hardware, time | Inputs | Steps |
 |---|---|---|---|
 | MNIST experiments (Sec. 4.2 *Reproduction*, *Attacks on MNIST*, *Other samplers*) | CPU, about 45 min in total | MNIST (downloaded on first use); the included MNIST models (`train.py` skips them; `--force` retrains) | `1_reproduction/run.py`, `2_attack/run.py`, `3_sampling_fixes/run.py`, `floor_sampler.py`; they rewrite `artifacts/results/*.json`. See [1](experiments/1_reproduction/README.md), [2](experiments/2_attack/README.md), [3](experiments/3_sampling_fixes/README.md) |
-| The benchmark: both protocols, the path protocol's cells, the attacks on larger models (Tables 1–3, Figs. 3–4, Sec. 4.2–4.6) | one CUDA GPU and 8 CPU threads per job (the paper: an NVIDIA L40S and an AMD EPYC 9334, on TAU's SLURM cluster); jobs of minutes to about two hours, tens of jobs per protocol | CIFAR-10 at `$PVI_CIFAR_ROOT` and ImageNet at `$PVI_IMAGENET_ROOT` (neither is downloaded by the code); the CNN weights, which are not included and must be trained first | `4_defence_benchmark/train.py` (or `slurm/train.sbatch`), then `bench.py` jobs under a new platform name (`slurm/strong_gpu.sh` for the basic protocol; the optimised options for the optimised one), then the commands of `5_comparison` with that name. See [4_defence_benchmark](experiments/4_defence_benchmark/README.md) |
-| The real OPT-6.7B attack and backdoor (Sec. 4.2 *A real LLM*) | one GPU with 16 GB or more, about 1 h per run, two runs | `transformers` 4.51.3, `tokenizers` 0.21.4, `pyarrow` 25.0.1; `facebook/opt-6.7b` downloaded into `$HF_HOME` (open, no token) | `real_llm.sbatch`, once as is and once with `--target auto`. See [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
+| The benchmark: both protocols, the path protocol's cells, the attacks on larger models (Tables 1–3, Figs. 3–4, Sec. 4.2–4.6) | one CUDA GPU and 8 CPU threads per job (the paper: an NVIDIA L40S and an AMD EPYC 9334, on TAU's SLURM cluster); jobs of minutes to about two hours, tens of jobs per protocol | CIFAR-10 and ImageNet (neither is downloaded by the code) in `code/data/cifar10/` and `code/data/imagenet/`, or on the cluster at the exported `$PVI_CIFAR_ROOT` and `$PVI_IMAGENET_ROOT`, which every CIFAR or ImageNet job needs, `smoke.sbatch` included; the CNN weights, which are not included and must be trained first | `4_defence_benchmark/train.py` (or `slurm/train.sbatch`), then `bench.py` jobs under a new platform name (`slurm/strong_gpu.sh` for the basic protocol; the optimised options for the optimised one), then the commands of `5_comparison` with that name. See [4_defence_benchmark](experiments/4_defence_benchmark/README.md) |
+| The real OPT-6.7B attack and backdoor (Sec. 4.2 *A real LLM*) | one GPU with 16 GB or more, about 1 h per run, two runs | `transformers` 4.51.3, `tokenizers` 0.21.4, `pyarrow` 25.0.1 (`pip install -r requirements.txt -r requirements-llm.txt`) in the Python named by `$PVI_PYTHON`; `facebook/opt-6.7b` downloaded into `$HF_HOME` (open, no token) | `real_llm.sbatch`, once as is and once with `--target auto`. See [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
 | The real-OPT perplexities (Sec. 4.1) | one GPU | the same packages; the OPT checkpoints downloaded beforehand (the jobs run offline); WikiText-2's test split as parquet at `$WIKITEXT_PARQUET` | `real_weights_ppl.sbatch`. See [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
 | zkLLM's code on our GPU (Sec. 4.6, Table 3) | one L40S, hours | zkLLM's own checkout (commit `993311e`) and environment; the gated Llama-2 weights | `zkllm.sbatch`. See [zkllm_l40s](artifacts/results/zkllm_l40s/README.md) |
 
-The SLURM scripts run from the folder that holds `code/` (they `cd` into `code/` themselves), use the
-Python of `.venv/` in that folder unless `$PVI_PYTHON` is set, and the commands in the READMEs write
-their logs to `logs/` there.
+The SLURM scripts run from the folder that holds `code/` (they `cd` into `code/` themselves), and the
+commands in the READMEs write their logs to `logs/` there. The benchmark's scripts (`train.sbatch`,
+`bench.sbatch`, `smoke.sbatch`) use the Python of `.venv/` in that folder unless `$PVI_PYTHON` names
+another; `real_llm.sbatch` and `real_weights_ppl.sbatch` require `$PVI_PYTHON` (a Python with both
+requirements files installed) and stop without it; `zkllm.sbatch` uses zkLLM's own environment.
 
 [`experiments/6_improvements`](experiments/6_improvements/README.md) holds the optimised protocol's
 development harnesses. Most of them are A/B tools that compare this code with an older checkout
@@ -280,6 +291,8 @@ git -c core.autocrlf=false archive --format=tar.gz --prefix=<groupname>/ -o <gro
 ```
 
 Every file must keep its LF line endings: with CRLF the `.sh` and `.sbatch` scripts fail on Linux and
-`sha256sum -c MODELS.sha256` fails (hence `core.autocrlf=false`, which matters on Windows). Copying
+`sha256sum -c MODELS.sha256` fails. The repository's `.gitattributes` keeps every `.sh`, `.sbatch`,
+`.py` and `.sha256` file in LF in every checkout and archive; `core.autocrlf=false` keeps the other
+files as committed (LF) too, which matters on Windows, where `core.autocrlf` is often `true`. Copying
 `code/` and `report/` into `<groupname>/` and running `tar -czvf <groupname>.tar.gz <groupname>/`, as the
 course describes, works too if the copies have LF line endings.

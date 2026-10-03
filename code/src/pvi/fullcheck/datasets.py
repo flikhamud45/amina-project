@@ -1,14 +1,18 @@
 """Datasets for the comparison benchmark, all read from local copies.
 
 * MNIST     -- ``code/data``, the same copy as :mod:`pvi.data` (downloaded on first use).
-* CIFAR-10  -- ``$PVI_CIFAR_ROOT`` (default: the lab copy on the TAU cluster).
+* CIFAR-10  -- ``$PVI_CIFAR_ROOT`` (default: ``code/data/cifar10``), in torchvision's
+  ``cifar-10-batches-py`` layout; never downloaded.
 * ImageNet binary subsets reproducing Anchuri et al.'s classifiers:
   ``dogs_cats`` (their ``M``) and ``dogs_squirrels`` (their ``M~``), built from
-  ``$PVI_IMAGENET_ROOT`` (default: the lab copy).  That copy stores class
+  ``$PVI_IMAGENET_ROOT`` (default: ``code/data/imagenet``).  That root stores class
   ``i`` of the standard sorted-synset order in folder ``i + 1``; dogs are
   classes 151-268, cats 281-285 and the fox squirrel 335 (checked by eye).
   The paper used Kaggle's Animals-10; ImageNet's dog/cat/squirrel classes give
   the same task without an extra download.
+
+Where the datasets live elsewhere (as on the TAU cluster), export ``PVI_CIFAR_ROOT`` and
+``PVI_IMAGENET_ROOT`` before the job; the latter is not read once the ImageNet cache exists.
 
 Images are decoded once and cached as uint8 tensors (256x256 for ImageNet,
 from which training takes random 224 crops and evaluation the centre crop).
