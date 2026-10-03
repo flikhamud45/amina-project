@@ -700,7 +700,8 @@ FAMILY = {"zkCNN": "sumcheck", "zkLLM": "sumcheck", "zkGPT": "sumcheck", "DeepPr
           "zkPyTorch": "sumcheck", "Jolt": "sumcheck", "SLP": "sumcheck",
           "ZKML": "other", "EZKL": "other", "ZKTorch": "other", "Bionetta": "other", "vCNN": "other",
           "Mystique": "other", "LAMP": "other", "Maverick": "known"}
-FAM_STYLE = {"sumcheck": ("^", "sum-check zkSNARKs"), "other": ("D", "Plonk/Groth16/other ZK"),
+# the figure no longer tells the zkSNARK families apart: one marker and one legend entry for all of them
+FAM_STYLE = {"sumcheck": ("D", "published zkSNARKs"), "other": ("D", "published zkSNARKs"),
              "known": ("*", "Maverick")}
 # a few landmark systems are named on each panel: (system, model[, seq]) -> (label, where, ha), where
 # where is ("off", (dx, dy)) in points from the marker, or ("at", (x, y)) in data coordinates with a
@@ -1132,10 +1133,11 @@ def fig_cost(M=None):
             Patch(fc=OURS, ec=OURS, label=f"committed ({SF_C})"),
             Patch(fc=OURS_K, ec=OURS_K, label=f"known weights ({KPRE})")]
     row2 = [mk(FAM_STYLE[f][0], mfc="none", color=THEM, label=FAM_STYLE[f][1], ms=6 if f == "known" else 4)
-            for f in ("sumcheck", "other", "known")]
+            for f in ("sumcheck", "known")]
     row2 += [mk("X", color=ANCH, label="Anchuri et al., one path", ms=5),
              mk("o", mfc=OURS, mec=PENDING_EDGE, mew=0.9, label="red edge: basic placeholder") if any_pending
-             else Line2D([], [], ls="", label=" ")]
+             else Line2D([], [], ls="", label=" "),
+             Line2D([], [], ls="", label=" ")]
     handles = [h for col in zip(row1, row2) for h in col]   # a legend fills its columns top to bottom
     size = (7.0, 0.36)
     fig = plt.figure(figsize=size)
