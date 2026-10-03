@@ -814,7 +814,7 @@ WIDTHS = [5, 7, 7, 3]
 POS = {(l, i): (l, (i - (w - 1) / 2) * 0.55) for l, w in enumerate(WIDTHS) for i in range(w)}
 PATH = [(3, 1), (2, 4), (1, 2), (0, 3)]
 TAMPERED = (1, 5)
-OVERVIEW = (2.17, 1.45)   # printed at 0.31 of acmart sigconf's text width (7.006 in): fonts print at 7 pt
+OVERVIEW = (1.635, 1.2)   # printed at 0.49 of acmart sigconf's column width (3.337 in): fonts print at 7 pt
 
 
 def _network(ax, colour_node):
@@ -832,7 +832,7 @@ def _network(ax, colour_node):
 
 
 def _path(ax, colour_node):
-    """The checked path, drawn the same in (a) and (b): orange line and node edges, fill = node state."""
+    """The checked path of panel (a): orange line and node edges, fill = node state."""
     for a, b in zip(PATH[:-1], PATH[1:]):
         (x0, y0), (x1, y1) = POS[a], POS[b]
         ax.plot([x0, x1], [y0, y1], color=ANCH, lw=1.6, zorder=2)
@@ -842,7 +842,7 @@ def _path(ax, colour_node):
 
 def _finish(ax):
     ax.set_xlim(-0.35, 3.35)
-    ax.set_ylim(-2.02, 2.75)
+    ax.set_ylim(-2.02, 2.95)
     ax.axis("off")
     ax.figure.subplots_adjust(left=0, right=1, bottom=0, top=1)
 
@@ -856,21 +856,14 @@ def _attacked(n):
 
 
 def fig_overview():
-    """Figure 1: (a) one random path, (b) one tampered neuron the path misses, (c) the same attacked
+    """Figure 1 (one column): (a) one tampered neuron that a random path misses, (b) the same attacked
     network, every layer checked: the box of the tampered layer is the check that fails."""
-    white = lambda n: ("white", "0.35")   # noqa: E731
-    fig, ax = plt.subplots(figsize=OVERVIEW)
-    _network(ax, white)
-    _path(ax, white)
-    _finish(ax)
-    save(fig, "overview_path", OVERVIEW[0])
-
     fig, ax = plt.subplots(figsize=OVERVIEW)
     _network(ax, _attacked)
     _path(ax, _attacked)
-    ax.annotate("wrong value", xy=POS[TAMPERED], xytext=(0.2, 2.05), color=ATTACK,
+    ax.annotate("wrong value", xy=POS[TAMPERED], xytext=(0.2, 2.25), color=ATTACK,
                 arrowprops=dict(arrowstyle="->", color=ATTACK, lw=0.6, shrinkB=3))
-    ax.text(2.55, 2.05, "recomputed\nhonestly", color="0.35", ha="center", va="center", linespacing=1.0)
+    ax.text(2.55, 2.25, "recomputed\nhonestly", color="0.35", ha="center", va="center", linespacing=1.0)
     _finish(ax)
     save(fig, "overview_attack", OVERVIEW[0])
 
@@ -884,37 +877,37 @@ def fig_overview():
         failing = l == TAMPERED[0]
         ax.add_patch(FancyBboxPatch((l - 0.2, -h), 0.4, 2 * h, boxstyle="round,pad=0.02", fc="none",
                                     ec=ATTACK if failing else OURS, lw=1.4 if failing else 1.0, zorder=2))
-    ax.text(1.5, 2.45, "one random combination per layer", ha="center", va="center", color=OURS)
+    ax.text(1.5, 2.6, "one random combination per layer", ha="center", va="center", color=OURS)
     _finish(ax)
     save(fig, "overview_defence", OVERVIEW[0])
 
 
 def fig_protocol():
     """Figure 2: the messages of one query in setting C, numbered as in Section 3.5."""
-    W_, H_ = 3.33, 2.1
+    W_, H_ = 3.33, 1.82
     fig = plt.figure(figsize=(W_, H_))
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, W_)
     ax.set_ylim(H_, 0)                     # inches from the top
     ax.axis("off")
-    xp, xv = 0.62, 2.0                     # prover and verifier lifelines
+    xp, xv = 0.62, 1.88                    # prover and verifier lifelines
     ax.text(xp, 0.07, "prover (provider)", ha="center", va="center", weight="bold")
     ax.text(xv, 0.07, "verifier (client)", ha="center", va="center", weight="bold")
     ax.add_patch(Rectangle((0.03, 0.17), W_ - 0.06, 0.19, fc="0.91", ec="none"))
     ax.text(W_ / 2, 0.265, r"setup (once): owner publishes $C_M$ = Merkle roots of $\mathrm{Enc}(A_\ell)$",
             ha="center", va="center", color="0.2")
-    top, bottom = 0.42, 2.07
+    top, bottom = 0.42, 1.80
     for x in (xp, xv):
         ax.plot([x, x], [top, bottom], color="0.6", lw=0.8)
     steps = [  # (y, direction, message, verifier's note)
-        (0.58, "vp", r"query $x$", None),
-        (0.82, "pv", r"$y$, claims $Z_\ell$", "range-check the claims,\nrecompute non-weight ops;\n"
-                                               r"draw $\chi$"),
-        (1.18, "vp", r"random $\chi$", None),
-        (1.42, "pv", r"$u_\ell = \chi^\top\! A_\ell$", r"check $\chi^\top Z_\ell = u_\ell\,[X_\ell; 1]$;"
+        (0.53, "vp", r"query $x$", None),
+        (0.74, "pv", r"$y$, claims $Z_\ell$", "range-check the claims, recompute\n"
+                                               r"non-weight ops; draw $\chi$"),
+        (1.00, "vp", r"random $\chi$", None),
+        (1.21, "pv", r"$u_\ell = \chi^\top\! A_\ell$", r"check $\chi^\top Z_\ell = u_\ell\,[X_\ell; 1]$;"
                                                          "\n" r"draw positions $c$"),
-        (1.70, "vp", r"positions $c$", None),
-        (1.94, "pv", r"columns $\hat A_{\ell,c}$ + Merkle proof", "check the Merkle paths and\n"
+        (1.45, "vp", r"positions $c$", None),
+        (1.66, "pv", r"columns $\hat A_{\ell,c}$ + Merkle proof", "check the Merkle paths and\n"
                                                                      r"$\chi^\top \hat A_{\ell,c} = \mathrm{Enc}(u_\ell)_c$"),
     ]
     for i, (y, d, msg, note) in enumerate(steps, 1):
@@ -961,9 +954,9 @@ def fig_security(M=None, MO=None):
     the optimised (filled) protocol at lambda = 40, 80, 128.  The bits axis is linear: the path protocol
     stays near zero bits until it opens almost the whole model and trace."""
     M = M or basic_measured()
-    size = (3.33, 2.4)
+    size = (3.33, 2.0)    # 0.6 of the width: the title, the two legend rows and the margins keep their size
     fig, ax = plt.subplots(figsize=size)
-    fig.subplots_adjust(left=0.115, right=0.985, bottom=0.151, top=0.75)
+    fig.subplots_adjust(left=0.115, right=0.985, bottom=0.181, top=0.70)
     top = 190
     any_pending = False
     for m in SECURITY_MODELS:
@@ -1011,20 +1004,20 @@ def fig_security(M=None, MO=None):
     handles = [Line2D([], [], color=ANCH, ls=":", lw=1.1, label="path protocol"),
                Line2D([], [], color=OURS, ls="-", lw=0.6, label="basic (hollow)"),
                Line2D([], [], color=OURS, ls="-", lw=1.0, label="optimised (filled)")]
-    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.55, 0.9125), ncol=len(handles),
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.55, 0.895), ncol=len(handles),
                frameon=False, borderaxespad=0, handlelength=1.8, columnspacing=1.2, handletextpad=0.4)
     shapes = [Line2D([], [], ls="", marker=SECURITY_MARKER[m], ms=3.8, mfc="0.35", mec="0.35", label=SECURITY_NAME[m])
               for m in SECURITY_NAME]
     if any_pending:   # a temporary entry, red: gone once every optimised point is stored
         shapes.append(Line2D([], [], ls="", marker="D", ms=3.6, mfc=OURS, mec=PENDING_EDGE, mew=0.9,
                              label="red edge: placeholder"))
-    leg = fig.legend(handles=shapes, loc="upper center", bbox_to_anchor=(0.55 if not any_pending else 0.5, 0.846),
+    leg = fig.legend(handles=shapes, loc="upper center", bbox_to_anchor=(0.55 if not any_pending else 0.5, 0.815),
                      ncol=len(shapes), frameon=False, borderaxespad=0, handlelength=0.8,
                      columnspacing=0.9 if not any_pending else 0.6, handletextpad=0.3)
     for t in leg.get_texts():
         if t.get_text().startswith("red edge"):
             t.set_color(PENDING_EDGE)
-    fig.text(0.015, 0.985, SECURITY_TITLE, ha="left", va="top", weight="bold")
+    fig.text(0.015, 0.982, SECURITY_TITLE, ha="left", va="top", weight="bold")
     save(fig, "security_bits", size[0])
 
 
@@ -1459,7 +1452,7 @@ def write_pending_csv(path: Path) -> None:
           f"{sum(r['status'] == 'acceptable' for r in rows)} acceptable stand-ins)")
 
 
-OLD_FIGURES = ("llm_zkllm", "security_detection")   # dropped from the report: deleted if present
+OLD_FIGURES = ("llm_zkllm", "security_detection", "overview_path")   # dropped from the report: deleted if present
 
 
 def build_all(figures: bool = True):

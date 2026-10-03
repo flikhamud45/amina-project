@@ -41,7 +41,7 @@
 \newcommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
 \newcommand{\sC}{\mathsf{C}}
 \newcommand{\sK}{\mathsf{K}}
-\newcommand{\para}[1]{\smallskip\noindent\textbf{#1}\quad}
+\newcommand{\para}[1]{\par\noindent\textbf{#1}\quad}
 
 \begin{document}
 
@@ -63,12 +63,12 @@
 \begin{abstract}
 A company that outsources inference to a cloud provider cannot tell whether the provider ran the
 agreed model or changed the answer on purpose. Proofs of inference let it check each answer. Those
-built on zkSNARKs give strong guarantees but take minutes per query on large models, which has
-motivated lighter protocols that check only a sample of the computation, such as that of Anchuri
-et al., in which the client re-checks one random path through a committed execution trace. We show
+built on zkSNARKs give strong guarantees but take minutes per query on large models, motivating
+lighter protocols that check only a sample of the computation, such as that of Anchuri
+et al., where the client re-checks one random path through a committed execution trace. We show
 that sampling misses targeted changes: a provider that tampers with a single neuron and computes
 everything else honestly almost always passes the path check, on image classifiers and on a real
-large language model, where one neuron is enough to change the next token. No sampling rule,
+large language model. No sampling rule,
 however it chooses where to look, closes this gap on every network. We therefore build a protocol
 that checks every layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment to the
 weights. It needs no SNARK, trusted hardware or trusted setup, a wrong output passes with
@@ -86,28 +86,23 @@ competitive with theirs; its main cost is a proof that grows with the input.
 % =====================================================================================
 \section{Introduction}
 
-\begin{figure*}[t]
+\begin{figure}[t]
   \centering
-  \begin{subfigure}[b]{0.31\textwidth}
-    \includegraphics[width=\linewidth]{figures/overview_path.pdf}
-    \caption{Path test: one node per layer}
-    \label{fig:overview-path}
-  \end{subfigure}\hfill
-  \begin{subfigure}[b]{0.31\textwidth}
+  \begin{subfigure}[b]{0.49\columnwidth}
     \includegraphics[width=\linewidth]{figures/overview_attack.pdf}
-    \caption{Attack: caught with prob.\ $1/N$}
+    \caption{Attack: caught w.p.\ $1/N$}
     \label{fig:overview-attack}
   \end{subfigure}\hfill
-  \begin{subfigure}[b]{0.31\textwidth}
+  \begin{subfigure}[b]{0.49\columnwidth}
     \includegraphics[width=\linewidth]{figures/overview_defence.pdf}
-    \caption{Defence: caught with prob.\ $1-2^{-\lambda}$}
+    \caption{Defence: caught w.p.\ $1-2^{-\lambda}$}
     \label{fig:overview-defence}
   \end{subfigure}
-  \Description{Three small network diagrams: a random path checked by the path protocol, a
-  single tampered neuron that the path misses, and every layer checked by our defence.}
+  \Description{Two small network diagrams: a single tampered neuron that a random path misses,
+  and every layer checked by our defence.}
   \caption{One tampered neuron slips past a random path, but not past a check of every layer}
   \label{fig:overview}
-\end{figure*}
+\end{figure}
 
 Consider a company that pays a cloud provider to serve a licensed or fine-tuned language model to
 its users. Nothing in a response shows that the provider ran that model with the agreed weights.
@@ -137,17 +132,15 @@ LLMs.
 
 We present an attack on this protocol, which we implement and evaluate. A provider that keeps the
 committed model and changes only what it needs to can overwrite \emph{a single neuron} and recompute everything after it honestly
-(Figures~\ref{fig:overview-path} and~\ref{fig:overview-attack}). The trace is then inconsistent at
+(Figure~\ref{fig:overview-attack}). The trace is then inconsistent at
 one node, which a random path visits with probability $1/N$, so almost every tampered answer is
 accepted. Applied only to inputs that carry a trigger, the edit is a backdoor in the serving
 code, which leaves the committed weights clean and answers clean queries bit for bit as before. The
 attack carries over to the real OPT-6.7B. Checking many queries does not close the gap, because the
 provider chooses which queries to tamper with, and tampering with $k$ of them is caught with
 probability at most $k/N$. Nor do the fixes Anchuri et al.\ suggest, sampling more paths or
-sampling where it matters: uniform sampling is already optimal among rules that ignore the claimed
-values, no rule that reads them does better on every network, the rules we tested still miss
-almost every attack, and reaching $2^{-40}$
-forces the path protocol to open essentially the whole model and trace.
+sampling where it matters: no rule does better than uniform sampling on every network, and
+reaching $2^{-40}$ forces the path protocol to open essentially the whole model and trace.
 
 This led us to a different design (Figure~\ref{fig:overview-defence}). The client tests one
 random linear combination of all the neurons of every layer (Freivalds'
@@ -160,20 +153,15 @@ probability $1-2^{-\lambda}$ instead of $1/N$, and the provider's extra work gro
 but not with the input. At $2^{-128}$ our proofs are also smaller than the paths' at $2^{-40}$:
 catching the single-neuron attack on a 64-token Llama-2-7B prompt with probability $1-2^{-40}$
 takes paths that open about 13.7\,GB, while our proof is 325\,MB.
-An exact check of a few neurons leaves the rest of the network unconstrained; one random
-combination per layer constrains all of it.
 
 \para{Contributions.} (1)~\textbf{An attack} (Sections~\ref{sec:attack} and~\ref{sec:break})
 that exploits the $1/N$ limit acknowledged in~\cite{anchuri2026verifiable}. One tampered neuron is
-accepted with probability $1-1/N$ (99.6--99.8\% on MNIST), works as a trigger backdoor that leaves
-the weights and clean answers unchanged, and changes the next token of 40 of 40 prompts on the
-real OPT-6.7B. (2)~\textbf{A bound on sampling-based fixes} (Section~\ref{sec:sampling}): no
-sampler that ignores the claimed values beats uniform sampling, no sampler at all does so on every
-network, and uniform sampling needs essentially the whole model and trace for $2^{-40}$; a sampler
-that weights each parent by its contribution is blind to zeroed neurons. (3)~\textbf{A full-soundness protocol} for whole CNNs and transformers
-(Sections~\ref{sec:defence}--\ref{sec:opt}), with error $2^{-\lambda}$, in the setting
-of~\cite{anchuri2026verifiable}: it composes known checks, and to our knowledge it is the first
-that needs only a hash commitment per weight matrix, with no SNARK, TEE or trusted setup
+accepted with probability $1-1/N$ (99.6--99.8\% on MNIST) and changes the next token of 40 of 40
+prompts on the real OPT-6.7B. (2)~\textbf{A bound on sampling-based fixes}
+(Section~\ref{sec:sampling}): no sampler beats uniform sampling on every network, and uniform
+sampling needs essentially the whole model and trace for $2^{-40}$. (3)~\textbf{A full-soundness
+protocol} for whole CNNs and transformers (Sections~\ref{sec:defence}--\ref{sec:opt}), with error
+$2^{-\lambda}$, that composes known checks and needs only a hash commitment per weight matrix
 (Section~\ref{sec:related}). Optimisations keep the bound and shrink the committed-weights proof 2.0--4.2$\times$ for images
 and prompts of up to 512 tokens.
 (4)~\textbf{A matched-model evaluation} (Section~\ref{sec:results}) on six image classifiers and
@@ -182,9 +170,7 @@ systems and zkLLM's code on our GPU. Our prover is \pending{35}--32{,}000$\times
 zkSNARK provers.
 % PENDING: the smallest prover ratio of Table 3: Llama-2-7B's at 2,048 tokens, whose optimised prover
 % is withheld (placeholder: the basic prover's); the smallest measured one is 46 (Llama-2-13B)
-Run non-interactively, the optimised protocol also beats zkCNN on LeNet-5 and DeepProve's
-transparent configuration on 64-token GPT-2 prompts on all three costs, with the caveats of
-Section~\ref{sec:compare}. Code and raw measurements are released.
+Code and raw measurements are released.
 
 % =====================================================================================
 \section{Related Work}
@@ -202,8 +188,8 @@ inference: from half a second for LeNet-5 to minutes or hours for larger models.
 
 \para{Freivalds-style checks.} SafetyNets~\cite{safetynets} uses interactive proofs for networks
 with quadratic activations. Slalom~\cite{slalom} checks every linear layer of a GPU computation
-from inside an SGX enclave with Freivalds' algorithm, in exact arithmetic modulo a 24-bit prime
-and optionally with a precomputed secret challenge; TwinShield~\cite{twinshield} and
+from inside an SGX enclave with Freivalds' algorithm, optionally with a precomputed secret
+challenge; TwinShield~\cite{twinshield} and
 VeriAttn~\cite{veriattn} extend this to attention inside TEEs. Several recent works need no
 enclave. Maverick~\cite{maverick} checks every linear layer of a language model with sparse
 Freivalds checks on a code-encoded copy of the weights that the client stores, drawing a fresh
@@ -239,8 +225,6 @@ TEE or trusted setup.
 % =====================================================================================
 \section{Technical Approach}
 \label{sec:approach}
-We fix the setting, break the path protocol (Sections~\ref{sec:attack}--\ref{sec:sampling}), and
-then build a protocol that checks every layer (Sections~\ref{sec:defence}--\ref{sec:opt}).
 
 
 \subsection{Setting and threat model}
@@ -251,8 +235,8 @@ that $C_M$ is computed honestly; unlike a SNARK's trusted setup it involves no s
 and anyone who holds the weights can recompute it. For each query $x$ the provider returns a
 claimed output $y$ and a proof, and may deviate from the protocol arbitrarily. We require
 \emph{completeness} (honest answers are always accepted) and \emph{full soundness}: any
-$y \neq M(x)$ is rejected except with probability $\varepsilon$. Anchuri et al.\ prove only
-\emph{other-model soundness}, in which the adversary must honestly run some different model. We
+$y \neq M(x)$ is rejected except with probability $\varepsilon$ (Anchuri et al.\ prove only
+other-model soundness). We
 consider three trust settings. In setting $\sC$ the client holds only $C_M$ (32 bytes per weight
 matrix), as in~\cite{anchuri2026verifiable} and the zkSNARKs; in $\sK$ it knows the weights; and
 $\Kpre$ is $\sK$ with a secret challenge precomputed once per model, as in Slalom's preprocessing
@@ -311,20 +295,15 @@ is opened with probability at most $s/N$; some $\sigma$ does no better. \qed
 \noindent Opening $s$ distinct neurons uniformly reaches $s/N$ on every dense network, so nothing
 beats uniform sampling in the worst case, and catching one tampered neuron with constant
 probability needs $s=\Omega(N)$ openings per layer, the cost the protocol was designed to avoid.
-On our MNIST network the \emph{contribution-weighted sampler}, which steps to parent $i$ with
-probability proportional to $|w_{ij} a_i|$, catches our single-neuron attack, whose value is
-unusually large, in 9\% of paths, but never visits a neuron whose claimed activation is zero, so
-zeroing a few neurons is never detected. A floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$,
-removes this blind spot but leaves detection low (Section~\ref{sec:break}), and a range check
-costs the attack only a few more neurons.
+The \emph{contribution-weighted sampler}, which steps to parent $i$ with probability proportional
+to $|w_{ij} a_i|$, never visits a neuron whose claimed activation is zero, and a floor $\delta$,
+sampling by $|w_{ij}|(|a_i|+\delta)$, leaves detection low (Section~\ref{sec:break}).
 
 \subsection{Our defence: checking every layer}
 \label{sec:defence}
 
 Since no sampler has a better worst-case guarantee than uniform sampling, our verifier checks every
-neuron of every layer. We first split ``the
-answer is correct'' into three statements, then show how the verifier checks each one cheaply, and
-finally how the checks combine.
+neuron of every layer.
 
 \para{Exact integers.} The checks compare exact values, but floating-point results differ between
 devices and summation orders. The model that is committed and checked is therefore an int8 version
@@ -374,25 +353,21 @@ where $c$ does not involve $\chi_i$. Whatever the other entries of $\chi$ are, t
 only one of the $p$ values $\chi_i$ can take ($\chi_i = -c/D_{im}$), so a wrong layer passes with
 probability at most $1/p$; it must pass the check for each of the $r$ vectors, so at most
 $p^{-r}$ in all. This holds however many values are wrong and wherever they are: a
-single tampered neuron is caught as reliably as a wholly wrong layer. Given $u_\ell$, the two
-sides cost $O(r(N+k)T)$, against $O(NkT)$ for recomputing the layer; $u_\ell$ itself costs
-$O(rNk)$, paid by the prover in $\sC$ and by the verifier, per query in $\sK$ and once per model in
-$\Kpre$.
+single tampered neuron is caught as reliably as a wholly wrong layer. Given $u_\ell$ (cost
+$O(rNk)$), the two sides cost $O(r(N+k)T)$, against $O(NkT)$ for recomputing the layer.
 
 We work in the BabyBear field $\F$, $p = 15\cdot2^{27}+1 \approx 2^{31}$. Integers map into $\F$
 without wrap-around as long as they are small, and two checks ensure this. The verifier
 range-checks every claim ($|z| < 2^{29}$), and setup checks that every honest pre-activation is
 in the same range: $128\sum_c |w_{ic}| + |b_i| < 2^{29}$ for every row $i$ of a product, whose
-inputs are int8 and so at most 128 in magnitude, and $\max_c |w_{ic}| + |b_i| < 2^{29}$ for an
-embedding, whose claim at each token is one column of its table. A wrong claim and the correct value then differ by less than
+inputs are int8 and so at most 128 in magnitude (for an embedding, $\max_c |w_{ic}| + |b_i|$). A wrong claim and the correct value then differ by less than
 $2^{30} < p$, so they remain distinct in $\F$.
 
 \para{Checking (S3): committed weights.} In $\sK$ and $\Kpre$ the verifier holds the weights and
 computes $u_\ell$ itself, so (S3) holds by construction. In setting $\sC$ it cannot, so the prover
 sends $u_\ell$, and the verifier must check that $u_\ell = \chi^\T A_\ell$ for the committed
-$A_\ell$. Opening $t$ random entries of $u_\ell$ against the weights would be weak: a prover who
-changes one of the $k$ entries escapes with probability $1-t/k$. We therefore commit to an
-\emph{encoded} copy of the weights, as in the Ligero and Brakedown commitments~\cite{ligero,brakedown}.
+$A_\ell$. Opening a few entries of $u_\ell$ would miss one changed entry, as a path misses one
+neuron, so we commit to an \emph{encoded} copy of the weights, as in the Ligero and Brakedown commitments~\cite{ligero,brakedown}.
 At setup every row of $A_\ell$ is Reed--Solomon encoded~\cite{reedsolomon1960}: the polynomial
 whose coefficients are the row is evaluated at $n_\ell = 4\bar k$ points, where $\bar k \ge k$ is a
 power of two (Section~\ref{sec:opt} relaxes this), giving $\hat A_\ell$. The commitment $C_M$ holds one Merkle root~\cite{merkle1987} per weight
@@ -405,13 +380,6 @@ and $t$ distinct columns all miss the difference with probability at most
 $((k-1)/n_\ell)^t < 4^{-t}$. Because $C_M$ is computed honestly, every committed row is a codeword
 and no proximity test is needed.
 
-\para{Putting the checks together.} Suppose $y \neq M(x)$. Then some claim is wrong, since $y$ is
-one; let $\ell$ be the first layer with a wrong claim. Its input $X_\ell$ is correct, because the verifier computed it from $x$ and correct
-earlier claims (S1). So $Z_\ell \neq A_\ell[X_\ell;\mathbf 1]$ for the committed $A_\ell$, and the
-prover can pass only by fooling one of the two random checks: if it sends the true $u_\ell$,
-Eq.~\eqref{eq:freivalds} fails except with probability $p^{-r}$ (S2); if it sends another
-$u_\ell$, a column check fails except with probability $((k_\ell-1)/n_\ell)^t$ (S3).
-Theorem~\ref{thm:sound} adds these terms over the layers.
 
 \begin{figure}[t]
   \centering
@@ -428,8 +396,7 @@ Setup happens once per model: the owner encodes and commits the weights and publ
 Figure~\ref{fig:protocol} shows one query of the basic protocol, with $r$ vectors $\chi$ and $t$
 columns per layer;
 besides recomputing the operations without weights (S1) and the checks of (S2) and (S3), the
-verifier range-checks the claims. Because the claims precede $\chi$ and $u_\ell$ precedes the column
-positions, the prover fixes every value before it sees the randomness that tests it.
+verifier range-checks the claims.
 
 \begin{theorem}[soundness]
 \label{thm:sound}
@@ -438,11 +405,14 @@ $y \neq M(x)$ the verifier accepts with probability at most
 $\varepsilon = \sum_\ell \big[\,p^{-r} + \big(\tfrac{k_\ell - 1}{n_\ell}\big)^{t}\,\big]$.
 \end{theorem}
 
-\noindent\emph{Proof.} As shown in Section~\ref{sec:defence}, if $y \neq M(x)$ the first
-layer with a wrong claim passes only if Freivalds' check or its column check is fooled (the range
-check keeps the wrong claim distinct from the true value in $\F$, and the opened columns are the
-committed ones unless the prover finds a hash collision), which happens with probability at most
-$p^{-r}$ or $((k_\ell-1)/n_\ell)^t$. A union bound over the layers finishes the proof. \qed
+\noindent\emph{Proof.} Some claim is wrong, since $y$ is one; let $\ell$ be the first layer with a
+wrong claim. Its input $X_\ell$ is correct, because the verifier computed it from $x$ and correct
+earlier claims (S1), and the range check keeps the wrong claim distinct from the true value in
+$\F$. So $Z_\ell \neq A_\ell[X_\ell;\mathbf 1]$ for the committed $A_\ell$, and the prover passes
+only by fooling a random check: with the true $u_\ell$, Eq.~\eqref{eq:freivalds} fails except
+with probability $p^{-r}$ (S2); with another $u_\ell$, a column check fails except with
+probability $((k_\ell-1)/n_\ell)^t$ (S3), since the opened columns are the committed ones unless
+the prover finds a hash collision. A union bound over the layers finishes the proof. \qed
 
 \para{Parameters.} For a target $\lambda$ and $L$ weight layers we set
 $\beta = \lambda + \log_2(2L)$, $r = \lceil \beta/\log_2 p \rceil$ and $t = \lceil \beta/2
@@ -450,21 +420,17 @@ $\beta = \lambda + \log_2(2L)$, $r = \lceil \beta/\log_2 p \rceil$ and $t = \lce
 $2^{-\beta}$, so $\varepsilon \le 2^{-\lambda}$ (for VGG-16 at $\lambda{=}128$, $r{=}5$ and
 $t{=}67$). Interactively, each challenge is expanded with SHAKE-256 from a fresh 256-bit random
 key; deriving the keys from a hash of the transcript (Fiat--Shamir~\cite{fiatshamir1986})
-makes the protocol non-interactive. Although it has two challenge rounds, the protocol is
-round-by-round sound~\cite{canetti2019fs}: once the claims are fixed, only the first wrong layer's
-$\chi$ can make them pass (probability at most $p^{-r}$), and once $u_\ell$ is fixed, only that
-layer's columns can (at most its column term). In the random-oracle model a prover that makes $Q$
-hash queries therefore succeeds with probability at most $Q\,2^{-\beta}$, plus that of finding a
-hash collision~\cite{holmgren2019rbr}; with 64 extra bits in $\beta$ this is below
-$2^{-\lambda}$ for $Q \le 2^{64}$.
+makes the protocol non-interactive. It is round-by-round sound~\cite{canetti2019fs} (once the
+claims are fixed only the first wrong layer's $\chi$ can make them pass, and once $u_\ell$ is fixed
+only that layer's columns can), so a prover that makes $Q$ random-oracle queries succeeds with
+probability at most $Q\,2^{-\beta}$ plus that of finding a collision~\cite{holmgren2019rbr}, which
+64 extra bits in $\beta$ keep below $2^{-\lambda}$ for $Q \le 2^{64}$.
 
 \para{Known weights.} In $\sK$ the verifier computes $u_\ell$ itself and messages (3)--(6) are
 omitted. In $\Kpre$ it computes the secret $\chi$ and $u_\ell$ once per model, so the proof is
-the claims alone. The prover never sees the secret $\chi$, but it learns each verdict and, once a
-forgery is accepted, can repeat it. Up to that point, rejecting every query with a wrong claim
-does not depend on $\chi$, so the prover's queries are fixed in advance, and each passes with
-probability at most $\sum_\ell p^{-r}$: a false acceptance occurs among $Q$ queries that reuse
-$\chi$ with probability at most $Q\sum_\ell p^{-r}$.
+the claims alone. The prover learns each verdict and could repeat an accepted forgery, but until
+one is accepted the verdicts do not depend on $\chi$, so a false acceptance occurs among $Q$
+queries that reuse $\chi$ with probability at most $Q\sum_\ell p^{-r}$.
 
 \subsection{Costs and optimisations}
 \label{sec:opt}
@@ -473,25 +439,20 @@ $\chi$ with probability at most $Q\sum_\ell p^{-r}$.
 recomputes from $W_\ell$; its extra work, $O((r+t)\sum_\ell N_\ell k_\ell)$, does not depend on the
 number of pixels or tokens. With 4-byte claims and field elements and 32-byte hashes, a proof in
 setting $\sC$ has
-\begin{equation}
-  |\pi| \;=\; 4\sum_\ell N_\ell T_\ell \;+\; 4r\sum_\ell k_\ell \;+\; 4t\sum_\ell N_\ell \;+\;
-  32\sum_\ell h_\ell \ \text{bytes}:
-  \label{eq:size}
-\end{equation}
-the claims, which grow with the input, and the folded rows, the $t$ opened columns of $N_\ell$
+$|\pi| = 4\sum_\ell N_\ell T_\ell + 4r\sum_\ell k_\ell + 4t\sum_\ell N_\ell + 32\sum_\ell h_\ell$
+bytes: the claims, which grow with the input, and the folded rows, the $t$ opened columns of $N_\ell$
 entries and the $h_\ell \le t\log_2 n_\ell$ hashes of each layer's Merkle multiproof, which do not.
 For Llama-2-7B at 64 tokens these are 349, 23, 385 and 4\,MB of the basic protocol's 762\,MB
 proof. In $\sK$ and
-$\Kpre$ the proof is the claims alone. zkCNN's and zkLLM's proofs, by contrast, stay between tens
-and a few hundred kilobytes.
+$\Kpre$ the proof is the claims alone.
 
-\para{Optimisations.} The parameters above were chosen to keep the soundness argument short, and
-they leave the proof larger than it needs to be. We call the protocol so far the \emph{basic}
-protocol, and the one with the four changes below, checked by the engineered verifier described
-after them, the \emph{optimised} protocol. The results of Section~\ref{sec:results} are measured
-with the optimised protocol, and Section~\ref{sec:effect} compares it with the basic one. The changes alter only how the
-weights are committed and checked, which positions of the last block are proved for a next-token output, and
-how messages are sent. Theorem~\ref{thm:sound} then holds in the form
+\para{Optimisations.} The parameters above keep the soundness argument short but leave the proof
+larger than it needs to be. We call the protocol so far the \emph{basic} protocol, and the one with
+the four changes below and the engineered verifier described after them the \emph{optimised}
+protocol, which Section~\ref{sec:results} measures and Section~\ref{sec:effect} compares with the
+basic one. The changes alter only how the weights are committed and checked, which positions of
+the last block are proved for a next-token output, and how messages are sent, and
+Theorem~\ref{thm:sound} holds in the form
 \begin{equation}
   \varepsilon \le \sum_j \left[\,p^{-r}+\prod_{i<t_j}\frac{m_j-1-i}{n_j-i}\,\right]
   \label{eq:eps}
@@ -504,18 +465,16 @@ of each of its matrices below $2^{-\beta}$, and matrices with codewords of equal
 column counts share one tree and one multiproof. A public \emph{planning rule} picks, among six
 candidate rules, the codeword lengths and layouts that send the fewest bytes per query besides the
 claims, using at most twice as many encoded entries at setup as the basic protocol, or $2^{34}$ if
-that is more. LeNet-5's matrices
-then share one tree of length $2^{18}$ and open 15 columns instead of 66 in each of five trees.
+that is more.
 (ii)~\emph{Transposed layout.} Committing the encoded rows $\hat A'$ of $A^\T$ lets the verifier
 combine positions instead of neurons: it draws $r$ vectors $\chi' \in \F^{T}$ (the $T$ unit
 vectors when $T \le r$), computes $z = Z\chi'$ and $w = [X;\mathbf 1]\chi'$ itself for each, and
 checks $\enc(z)_c = (w^\T \hat A')_c$ on $t$ opened columns of $k$ entries. Since $w^\T\hat A' =
 \enc(Aw)$, a wrong claim passes only if all $r$ products $(Z-A[X;\mathbf 1])\chi'$ vanish or all
-$t$ columns fall where two distinct codewords agree; in Eq.~\eqref{eq:eps} its $m_j$ is the number
-of rows of the matrices it stacks. No folded row is sent, and the opening shrinks from $rk+tN$ to $tk$ field
-elements, which pays off for wide layers such as GPT-2's output layer ($N{=}50{,}257$,
-$k{=}768$); projections of one input (query, key and value; gate and up) may share one such
-matrix. (iii)~\emph{Decoders.} Embedding tables without a bias are committed as Merkle trees over
+$t$ columns fall where two distinct codewords agree ($m_j$ in Eq.~\eqref{eq:eps} counts the rows
+it stacks). No folded row is sent and the opening shrinks from $rk+tN$ to $tk$ field elements,
+which pays off for wide layers such as GPT-2's output layer; projections of one input may share
+one such matrix. (iii)~\emph{Decoders.} Embedding tables without a bias are committed as Merkle trees over
 their rows, as in CommitLLM~\cite{commitllm2026}, so a wrong row needs a hash collision. For a
 next-token output, both parties compute the last block's keys and values at every position and
 the rest of that block at the last position only, which gives the same logits. (iv)~\emph{Compact encoding.} Claims travel at 16--19 bits instead of 32 and
@@ -524,9 +483,8 @@ bytes. The resulting plan (lengths, layouts, groups) follows from public shapes 
 $C_M$. In $\sK$ and $\Kpre$, which open no columns, the optimised protocol keeps (iii), with the
 verifier reading the embedding rows itself, and (iv). Separately, \emph{verifier engineering},
 which changes no proof byte, makes the verifier evaluate $\enc(u_\ell)$ only at the opened
-positions, batch its exact products and compute attention in int32, and lets it stream the claims
-to a GPU. The prover of the released code also computes attention in int32, which speeds up its
-forward pass.
+positions, batch its exact products, compute attention in int32 (as the released prover also does)
+and stream the claims to a GPU.
 
 % =====================================================================================
 \section{Results}
@@ -543,9 +501,8 @@ forward pass.
 \subsection{Experimental setup}
 \label{sec:setup}
 \para{Models.} LeNet-5 (MNIST) and VGG-11, VGG-16 and ResNet-18 (CIFAR-10) are the CNN
-architectures that zkCNN, ZKML and Bionetta report on. Some published versions are smaller variants
-(ZKML's ResNet-18 has 281K parameters), so Table~\ref{tab:ratios} compares only models that match
-ours. A 224$\times$224 dog-vs-cat ResNet-18 trained on ImageNet classes stands in
+architectures that zkCNN, ZKML and Bionetta report on; Table~\ref{tab:ratios} compares only the
+published versions that match ours (ZKML's ResNet-18, with 281K parameters, does not). A 224$\times$224 dog-vs-cat ResNet-18 trained on ImageNet classes stands in
 for the unreleased model of~\cite{anchuri2026verifiable}, and a dog-vs-squirrel one for its
 substitute $\tilde M$; the MNIST MLP (784--512--256--10) is the network attacked in
 Section~\ref{sec:break}. We trained all of them, and int8 quantisation changed accuracy by at most
@@ -559,9 +516,8 @@ built in full, at up to 2{,}048 tokens.
 OPT-125M, OPT-1.3B and OPT-6.7B checkpoints into the same graph, with one extra bias on the LM head,
 left over from folding the final LayerNorm into it. On 4{,}064 tokens of WikiText-2 their perplexity is 73.8,
 37.4 and 36.0, against 64.7, 34.9 and 27.1 in fp32. These values depend on two public constants,
-the gain $G$ of the integer normalisation (4, 3 and 2) and the activation-calibration percentile;
-the $G{=}32$ of our cost runs clips OPT's outlier features and gives perplexities of 326 to
-23{,}849. We chose both on the evaluation text, so these perplexities are slightly optimistic.
+the gain $G$ of the integer normalisation (4, 3 and 2) and the activation-calibration percentile,
+which we chose on the evaluation text, so these perplexities are slightly optimistic.
 
 \para{Hardware and baselines.} The prover is one NVIDIA \ProverGPU{} (48\,GB) and the verifier
 \VerifierThreads{} threads of an AMD EPYC 9334; times are medians over a run's queries. Of the
@@ -570,30 +526,25 @@ where a full build exists, the extrapolated size is within 2.83\% of it.
 Published costs are taken as
 reported on their own hardware, each checked against its source; for the path protocol we compute
 exact detection probabilities and bytes on our graphs and take its time per path from Anchuri et
-al. The basic protocol was measured at commit \texttt{9401431}, and a second run of it on an
-RTX~2080~Ti reproduced all 1{,}978 hardware-independent values. The optimised protocol was
-measured on the same machines with the released code (commit \texttt{c8be5eb}) and two successors
-(\texttt{366e3d4}, \texttt{c2bdc49}) that change only how long proofs are encoded and held in host
-memory, not a byte; that code reproduces the basic proofs byte for byte. All tables and figures are generated from the released
-raw measurements.
+al. The basic protocol was measured at commit \texttt{9401431} (a second run on an RTX~2080~Ti
+reproduced all 1{,}978 hardware-independent values) and the optimised one with the released code
+(commit \texttt{c8be5eb}, and two successors that change only how long proofs are encoded and
+held in host memory, not a byte), which reproduces the basic proofs byte for byte.
 
 \subsection{Breaking the path protocol}
 \label{sec:break}
 
 \para{Reproduction.} Our implementation behaves as Anchuri et al.\ describe. On MNIST versions of
-four of their substitute-model settings (three from their experiments, one from their motivation),
-honest provers were accepted in all 3{,}000 runs of each. Substitute models were caught in
-99.8--100\% of runs, including an 8-bit quantised copy that agrees with $M$ on all 150 evaluated
-queries. Without the prescribed tolerance of $10^{-4}$, an honest prover is accepted in
+four of their substitute-model settings, honest provers were accepted in all 3{,}000 runs of each,
+and substitute models were caught in 99.8--100\% of runs, even an 8-bit quantised copy that agrees
+with $M$ on all 150 evaluated queries. Without the prescribed tolerance of $10^{-4}$, an honest prover is accepted in
 21--37\% of runs, because a layer-wide matrix product and a single-neuron dot product round
 differently.
 
 \para{Attacks on MNIST.} We compute each attack's exact probability of passing one path by dynamic
-programming over the paths. The forgeries
-of~\cite{anchuri2026verifiable} are its substitute model, the inverse-transform and logit-swap
-forgeries of its Appendices~E and~F, and the gradient reconstruction of its Section~7.2. They
-corrupt hundreds of the MLP's 778 trace nodes and are always caught, while ours leave 1--14
-inconsistent nodes. One tampered neuron is accepted with the predicted probability $1-1/N$
+programming over the paths. The forgeries of~\cite{anchuri2026verifiable} (its substitute model,
+Appendices~E and~F and Section~7.2) corrupt hundreds of the MLP's 778 trace nodes and are always
+caught, while ours leave 1--14 inconsistent nodes. One tampered neuron is accepted with the predicted probability $1-1/N$
 (99.6--99.8\%). Triggered by a
 $3{\times}3$ bright patch, the backdoor returns the honest output on every clean query and
 succeeds on every triggered query not already in the target class. It passed 99.96\% of 2{,}300
@@ -603,11 +554,10 @@ uniform sampling. With 250
 paths, the single-neuron attack is accepted 61\% of the time.
 
 \para{Other samplers.} Against an adversary who knows the rule, uniform sampling detects 0.20\%
-of attacks, a static importance score (the total magnitude of a neuron's outgoing weights) 0.11\%,
-and gradient saliency, which a verifier cannot compute without the model, 0.016\%. The
-contribution-weighted sampler detects nothing: zeroing about 14 of the 512 neurons flips the
-prediction, and end-to-end runs accepted 2{,}000 of 2{,}000 attacks. Zero is also these neurons'
-most common value (65\% of inputs), so activation statistics do not flag the attack. A floor
+of attacks, a static importance score (outgoing weight magnitude) 0.11\% and gradient saliency
+0.016\%. The contribution-weighted sampler detects nothing: zeroing about 14 of the 512 neurons,
+their most common value (65\% of inputs), flips the prediction, and end-to-end runs accepted
+2{,}000 of 2{,}000 attacks. A floor
 $\delta=1$ raises detection to 2\% (10$\times$ uniform); other floors give 0.9--6$\times$.
 
 \para{Larger models.} On every CNN and every test query, changing one penultimate neuron suffices
@@ -622,13 +572,12 @@ of~\cite{anchuri2026verifiable}, at 64 tokens).
 \para{A real LLM.} On the real OPT-6.7B (fp16), the attacker ranks a few FFN neurons of layers 8,
 16, 24 and 31 at the last position, by gradient and by their direct effect on the logits. It then
 finds the smallest change to one of them that changes the next token. One neuron sufficed for
-all 40 prompts. A fixed-target backdoor is more constrained. Because of the final LayerNorm,
-raising one neuron's activation far enough forces a single token, the neuron's \emph{saturation
-token}, so the last layer's 16{,}384 neurons can force only 6{,}187 of the 50{,}272 tokens. The
-backdoor succeeds for a reachable target (``\texttt{back}'': 40/40 triggered prompts, clean
-prompts unchanged) and fails for ``\texttt{hacked}'' (0/40). A per-neuron range check would flag
-its values, which exceed the neurons' natural range, but the path protocol has none; one path
-detects the backdoor with probability 1/16{,}384, and $2^{-40}$ needs 454{,}248 paths.
+all 40 prompts. A fixed-target backdoor is more constrained: because of the final LayerNorm, a
+last-layer neuron can force only its \emph{saturation token}, so the 16{,}384 neurons reach
+6{,}187 of the 50{,}272 tokens. The backdoor succeeds for ``\texttt{back}'' (40/40 triggered
+prompts, clean prompts unchanged) and fails for ``\texttt{hacked}'' (0/40). Its values exceed the
+neurons' natural range, which the path protocol does not check; one path detects it with
+probability 1/16{,}384, and $2^{-40}$ needs 454{,}248 paths.
 
 \subsection{Soundness in practice}
 \label{sec:security}
@@ -757,10 +706,9 @@ weights.
 \end{figure*}
 
 Figure~\ref{fig:cost} places these runs among the published ones, with our verifier on
-\VerifierThreads{} CPU threads and the published systems as reported on their own hardware;
-Table~\ref{tab:ratios} compares them on matched models. Part of the prover gap is our GPU, since
-all the zkSNARKs except zkLLM ran on CPUs. The orange cross is one path
-of~\cite{anchuri2026verifiable}, as reported on an RTX~3090.
+\VerifierThreads{} CPU threads and the published systems (and the path of~\cite{anchuri2026verifiable})
+as reported on their own hardware. Part of the prover gap is our GPU, since all the zkSNARKs except
+zkLLM ran on CPUs.
 
 \subsection{Effect of the optimisations}
 \label{sec:effect}
@@ -812,14 +760,13 @@ The optimisations make the one-time setup longer
   {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length
   stated; ours: 64 tokens. $^c$Transparent configuration, proving every position (HyperKZG:
   9.4\,MB). $^d$Ours in $\Kpre$,
-  $\lambda{=}40$, one thread; theirs includes the non-linear replay. $^e$zkLLM's code on our L40S
+  $\lambda{=}40$, one thread. $^e$zkLLM's code ran on our L40S
   (--: not reported).}
 \end{table}
 
-Table~\ref{tab:ratios} compares the optimised protocol with published systems on matched models;
-each cell gives the factor by which our time or size is lower ($\downarrow$, in bold) or higher
-($\uparrow$). Our prover wins in
-every row, while the verifier and the proof win in some rows and lose in others. Our verifier runs on
+In Table~\ref{tab:ratios}, which compares the optimised protocol with published systems on
+matched models, our prover wins in every row, while the verifier and the proof win in some rows
+and lose in others. Our verifier runs on
 \VerifierThreads{} CPU threads, except in the 2{,}048-token rows, where we use our GPU verifier,
 since zkLLM also runs on a GPU; the prover times and proof sizes there are those of
 Table~\ref{tab:llm}, as the choice of verifier does not change the proof. For the language models
@@ -831,16 +778,14 @@ checks with its own private randomness, as $\Kpre$ does.
 \pending{35}$\times$ (zkLLM, \pendingclaim{Llama-2-7B}) to 32{,}000$\times$ (ZKML, VGG-16). Part of this is
 % PENDING: Table 3's smallest zkSNARK prover ratio: Llama-2-7B's optimised prover is withheld
 % (placeholder: the basic prover's); the smallest measured ratio is 46 (Llama-2-13B)
-hardware, so we also ran zkLLM's public code on our L40S. Its demo proves the components of one
-layer separately and reports no verifier time, so we time one layer (median of three runs on each
-of two layers) and multiply by the number of layers. The demo lacks zkLLM's cross-layer
-optimisation and the attention output projection, and its attention step writes no output, so we
-count the layer's other skip connection twice instead of the one after it. For Llama-2-7B at 2{,}048 tokens this gives about 844\,s, \pending{48}$\times$ our
+hardware, so we also ran zkLLM's public demo on our L40S. It proves one layer's components
+separately and reports no verifier time, so we time one layer (median of three runs on each of two
+layers) and multiply by the number of layers; the demo lacks zkLLM's cross-layer optimisation and
+the attention output projection. For Llama-2-7B at 2{,}048 tokens this gives about 844\,s, \pending{48}$\times$ our
 \pending{17.6}\,s. We do not use the demo for Llama-2-13B, whose time per layer grows out of
 % PENDING: Llama-2-7B T2048 optimised prover (CPU-verifier cell, as in Table 3) and 843.84 s / it;
 % the streaming run with the basic proof format gives 5.4 s and 157
-proportion (2.5$\times$ the 7B figure).\looseness=-1
-% (\looseness: one line shorter, which keeps Section 6's heading on p.8; drop it when the text changes)
+proportion (2.5$\times$ the 7B figure).
 
 \para{Verifier and proof.} Our verifier is slower only than ZKML's on VGG-16 (2.2$\times$),
 zkLLM's on OPT-1.3B at 2{,}048 tokens (2.9$\times$) \pendingclaim{and on the three larger models
@@ -856,20 +801,18 @@ on the GPU and Maverick's on 64 CPU threads.
 Maverick also draws a fresh challenge per query, whereas $\Kpre$ reuses a secret one. On LeNet-5
 and on GPT-2 with a 64-token prompt the non-interactive optimised protocol wins on all three
 costs: 5.7\,ms, 2.8\,ms and 63.3\,kB against zkCNN's 441\,ms, 5.8\,ms and 71.3\,kB, and 95\,ms,
-97\,ms and 16.6\,MB against DeepProve's 34.2\,s, 1.35\,s and 21.7\,MB. zkCNN's verifier ran on
-one core and ours on \VerifierThreads{} threads, and zkCNN's protocol has a zero-knowledge variant,
-which ours lacks. DeepProve's figures are for its transparent (BaseFold) configuration, whose proof
-certifies all 64 positions where ours certifies the next-token logits; its HyperKZG
-configuration, which needs a structured reference string, sends 9.4\,MB. Elsewhere our
+97\,ms and 16.6\,MB against DeepProve's 34.2\,s, 1.35\,s and 21.7\,MB. zkCNN's protocol has a
+zero-knowledge variant, which ours lacks, and DeepProve's transparent proof certifies all 64
+positions where ours certifies the next-token logits (Table~\ref{tab:ratios}, notes $a$ and $c$).
+Elsewhere our
 proof is larger, by 3.6--180$\times$ against the other short-input proofs and by
 2{,}500--56{,}000$\times$ against zkLLM's at 2{,}048 tokens.
 
 % =====================================================================================
 \section{Discussion}
 
-\para{Implications.} The path protocol catches a provider who runs the wrong model, but not one
-who runs the committed model and edits the answer, and no sampling rule closes that gap in the
-worst case. Full soundness, however, does not need a zkSNARK prover: one
+\para{Implications.} The path protocol catches a provider who runs the wrong model, not one who
+edits the answer. Full soundness, however, does not need a zkSNARK prover: one
 random linear combination per weight layer gives a $2^{-\lambda}$ guarantee with no trusted setup
 and no assumption about how models behave. For MLPs and CNNs, which have no attention, the client
 verifies in milliseconds on a CPU and the proof is usually smaller than the model, so even a
@@ -886,7 +829,7 @@ zkLLM's}. (iii)~The provider must serve the integer model,
 % Sec. 5.5 (withheld: excluded_cells.csv; placeholders: basic). Measured: 1.1x faster than zkLLM's
 % on OPT-125M, 2.9x slower on OPT-1.3B
 which changed CNN accuracy by at most 0.4 points and raised the perplexity of real OPT checkpoints
-by 7--33\% (constants chosen on the evaluation text); the LLM costs were measured
+by 7--33\%; the LLM costs were measured
 with random weights. (iv)~Like the path protocol we assume an honest weight commitment, which the
 planning rule's longer codewords make up to 13$\times$ slower to compute; a malformed one would need a proximity
 argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
@@ -898,7 +841,7 @@ sum-check argument for the non-weight operations. Checking the attention product
 recomputing them, with Freivalds' check on claimed scores or a sum-check argument as in
 zkLLM~\cite{zkllm}, could make the verifier much faster at long prompts, at some cost in proof
 size. A native verifier and a KV cache would also
-help, and per-channel normalisation gains may narrow the perplexity gap at no proving cost. Before
+help. Before
 any wider publication we will share the attack with the authors of~\cite{anchuri2026verifiable}.
 
 % =====================================================================================
@@ -909,8 +852,7 @@ layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment does: 
 accepted with probability at most $2^{-\lambda}$, and the protocol rejected all \NAttacks{}
 attacks on the basic protocol and all \OptNAttacks{} on the optimised one.
 Its prover is one to four orders of magnitude faster than the zkSNARK provers, and on LeNet-5 and
-64-token GPT-2 prompts it also verifies faster and sends less than zkCNN and DeepProve, with the caveats of
-Section~\ref{sec:compare}. Long prompts, where the proof is mostly claims, remain its
+64-token GPT-2 prompts it also verifies faster and sends less than zkCNN and DeepProve. Long prompts, where the proof is mostly claims, remain its
 weak point.
 
 % =====================================================================================
