@@ -8,7 +8,7 @@ Python 3.10) with random-initialised models, since costs depend on the shapes; t
 noisy and the ratios come from interleaved runs; `results/` holds no GPU timings (the GPU commands
 below are for re-running the harnesses on a GPU node). **The paper's benchmark numbers do not come
 from these files** but from the L40S runs of [`4_defence_benchmark`](../4_defence_benchmark/README.md)
-(platforms `l40s_improved` and `l40s_improved2`, turned into tables by
+(platforms `l40s_improved`, `l40s_improved2` and `l40s_improved3`, turned into tables by
 [`5_comparison`](../5_comparison/README.md)); the one number of the paper backed by this folder is the
 16–19 bits per claim of the compact encoding (Sec. 3.6.2), from `wire.py`'s `results/wire_laptop.json`.
 Nothing here writes to the stored benchmark roots.

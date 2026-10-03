@@ -37,7 +37,7 @@ and 2,316–14,182 paths for 2^-40. From the stored records (no GPU):
 ```bash
 python experiments/5_comparison/aggregate.py --platform l40s     # -> artifacts/comparison/tables_l40s/measured_summary.csv
 python experiments/5_comparison/analytic.py                      # Llama-2-7B: 1/11,008 per path, 305,193 paths, 13.7 GB
-python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2 --definition
+python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3 --definition
 ```
 
 To re-measure, run the CNN jobs of [`4_defence_benchmark`](../4_defence_benchmark/README.md) (the

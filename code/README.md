@@ -85,9 +85,10 @@ python -m pytest tests/test_merkle.py tests/test_protocol.py tests/test_comparis
 python experiments/5_comparison/aggregate.py --platform l40s              # the basic protocol's tables
 python experiments/5_comparison/aggregate.py --platform l40s_improved     # the optimised protocol's tables
 python experiments/5_comparison/aggregate.py --platform l40s_improved2
-python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2   # Tables 1-3, Figs. 1-4
-python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2 --definition   # checks the text
-python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --definition    # Sec. 4.3's counts
+python experiments/5_comparison/aggregate.py --platform l40s_improved3
+python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3   # Tables 1-3, Figs. 1-4
+python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3 --definition   # checks the text
+python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2,l40s_improved3 --definition    # Sec. 4.3's counts
 ```
 
 `paper_assets.py` writes into `../report/figures/` and `../report/tables/`; the full sequence, including
@@ -164,6 +165,7 @@ describes each run in detail.
 | `raw_l40s/` | 123,832 | **the basic protocol**, measured on an NVIDIA L40S prover and 8 threads of an AMD EPYC 9334 verifier (commit `9401431`) |
 | `raw_l40s_improved/` | 68,363 | **the optimised protocol**, first batch, same machines (commit `c8be5eb`); also the basic proofs run by the released code |
 | `raw_l40s_improved2/` | 83,896 | **the optimised protocol**, second batch, same machines (commits `366e3d4`, `c2bdc49`); some timings withheld, see below |
+| `raw_l40s_improved3/` | 1,600 | **the optimised protocol**, the re-measurement of the second batch's withheld cells, same machines without nodes n-801 and n-804 (commit `7016557`); interim: the cells finished so far |
 | `raw_l40s_improved2_thr1/` | 6,104 | optimised LeNet-5 and VGG-16 with one verifier thread; not used in the paper |
 | `raw_rtx2080ti-v2/` | 78,266 | the basic protocol on an RTX 2080 Ti and a Xeon Silver 4114 (commit `9401431`): Sec. 4.1's 1,978 hardware-independent values |
 | `raw/` | 59,547 | an earlier run with an earlier version of the code; not used in the paper |
@@ -171,18 +173,19 @@ describes each run in detail.
 `artifacts/comparison/excluded_cells.csv` lists 17 timings of the second batch that are withheld: during
 parts of that batch the L40S nodes n-801 and n-804 were slowed by other users' load, which inflated
 CPU-side stages. The paper shows these values as pending (in red, with the basic protocol's value as a
-placeholder) until they are re-measured; a re-run on unloaded nodes (platform `l40s_improved3`) is
-planned. Proof bytes and verdicts are unaffected.
+placeholder) until they are re-measured. The re-run on the other nodes, platform `l40s_improved3`, has
+re-measured 6 of them so far; its cells replace the same cells of the second batch, and the other 11
+values stay pending. Proof bytes and verdicts are unaffected.
 
 ## Results map
 
 Every result of the paper, the command that reproduces it from the stored data (run from `code/` after
-`export PYTHONPATH=$PWD/src`; for the benchmark rows the three `aggregate.py` lines of the quick start
+`export PYTHONPATH=$PWD/src`; for the benchmark rows the four `aggregate.py` lines of the quick start
 come first), and the README with the detailed steps, including the from-scratch runs. Below,
 `paper_assets` stands for
-`python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2`
+`python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3`
 and `text_numbers` for
-`python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2 --definition`,
+`python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3 --definition`,
 which recomputes the benchmark numbers of the text (40 checks, each finding its sentence by its
 wording) and compares them with `report/main.tex` (exit 0: all match).
 
@@ -197,7 +200,7 @@ wording) and compares them with `report/main.tex` (exit 0: all match).
 | Table 2 | language models at 64 and 2,048 tokens, CPU and GPU verifier | `paper_assets` → `report/tables/llm.tex` | [5_comparison](experiments/5_comparison/README.md), [4_defence_benchmark](experiments/4_defence_benchmark/README.md) |
 | Table 3 | ours against published systems | `paper_assets` → `report/tables/ratios.tex` (published numbers from `literature.py`; zkLLM on our GPU from `python artifacts/results/zkllm_l40s/summarise.py --csv`) | [5_comparison](experiments/5_comparison/README.md), [zkllm_l40s](artifacts/results/zkllm_l40s/README.md) |
 | Sec. 4.1 | hardware macros (`report/tables/hardware.tex`) | `paper_assets` | [5_comparison](experiments/5_comparison/README.md) |
-| Abstract, Sec. 4.3 | count macros (`report/tables/counts.tex`, `counts_opt.tex`) | `python experiments/5_comparison/count_outcomes.py --platform l40s --tex ../report/tables/counts.tex` and `... --platform l40s_improved,l40s_improved2 --prefix Opt --definition --tex ../report/tables/counts_opt.tex` | [5_comparison](experiments/5_comparison/README.md) |
+| Abstract, Sec. 4.3 | count macros (`report/tables/counts.tex`, `counts_opt.tex`) | `python experiments/5_comparison/count_outcomes.py --platform l40s --tex ../report/tables/counts.tex` and `... --platform l40s_improved,l40s_improved2,l40s_improved3 --prefix Opt --definition --tex ../report/tables/counts_opt.tex` | [5_comparison](experiments/5_comparison/README.md) |
 | red values | values still pending | `paper_assets --check` | [5_comparison](experiments/5_comparison/README.md#pending-values) |
 
 **Numbers in the text, by section**
@@ -221,12 +224,12 @@ wording) and compares them with `report/main.tex` (exit 0: all match).
 | Sec. 4.2 | *Other samplers* (0.20%, 0.11%, 0.016%; 14 zeroed neurons, 65%, 2,000 of 2,000; floor 2%, 0.9–6x) | `artifacts/results/defence.json`, `floor_sampler.json` | [3_sampling_fixes](experiments/3_sampling_fixes/README.md) |
 | Sec. 4.2 | *Larger models* (1/84 to 1/512, 1/28 million, 2,316–14,182 paths, incl. the 224-pixel ResNet-18; Llama-2-7B 1/11,008, 305,000 paths, 13.7 GB) | `text_numbers`; `python experiments/5_comparison/analytic.py` | [2_attack](experiments/2_attack/README.md#larger-models) |
 | Sec. 4.2 | *A real LLM* (40/40; " back" 40/40, " hacked" 0/40; 16,384 neurons reach 6,187 of 50,272 tokens; 1/16,384 per path, 454,248 paths) | `artifacts/results/real_llm_attack.json`, `real_llm_attack_auto.json` | [REAL_LLM.md](experiments/2_attack/REAL_LLM.md) |
-| Sec. 4.3 | outcomes: optimised 3,792 honest accepted, 2,512 attacks rejected (1,848 image, 106 '+1'; Freivalds 1,601, code 853, Merkle 56, the range check the remaining two); basic 8,709 and 2,895 (804 language) | `python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --definition` (`range_or_shape 2`); `... --platform l40s`; `text_numbers` | [artifacts/comparison](artifacts/comparison/README.md), [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.3 | outcomes: optimised 3,792 honest accepted, 2,512 attacks rejected (1,848 image, 106 '+1'; Freivalds 1,601, code 853, Merkle 56, the range check the remaining two); basic 8,709 and 2,895 (804 language) | `python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2,l40s_improved3 --definition` (`range_or_shape 2`); `... --platform l40s`; `text_numbers` | [artifacts/comparison](artifacts/comparison/README.md), [5_comparison](experiments/5_comparison/README.md) |
 | Sec. 4.3 | security per byte (43–47 and 131–141 bits; basic 48–58 and 150–153; 1.1–8.3x) | `text_numbers` (Fig. 3: `paper_assets`) | [5_comparison](experiments/5_comparison/README.md) |
 | Sec. 4.4 | image and language models (3.8–22.9 ms, 1.7–64.8 ms, 49.4 kB–6.7 MB, 1.3–9.3x and 1.7x smaller than the int8 weights; 76.1 ms, 1.8 s, 325 MB, 21x; at 2,048 tokens 17.6 s, 6.6 GB, 2.8 min; GPU verifier 11–25x and 1.0–2.4x; batches of eight, 0.39 s and 219 MB per prompt; Llama-2-70B 1.7 GB, 41x) | `text_numbers` (Tables 1–2, Fig. 4: `paper_assets`) | [5_comparison](experiments/5_comparison/README.md) |
 | Sec. 4.5 | effect of the optimisations (61% fewer bytes, 77% less verifier time, 28% less prover time; 468 → 190 ms; 2,048 tokens; 1.9x the forward pass; setup ∼115 s against ∼10 s (means) for GPT-2, ∼8.6 against 4.5 min for Llama-2-7B) | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
-| Sec. 4.6 | prover 35–32,000x faster than the zkSNARKs and 3.0x faster than Maverick (Table 3); zkLLM's code on our L40S about 844 s, 48x, 2.5x per layer for 13B; verifier slower only than ZKML's on VGG-16 (2.2x) and zkLLM's on OPT-1.3B (2.9x) and the three larger models (2.9–3.1x); Maverick with the encoding 20.3 MB (1.8x smaller), 151.6 ms against Maverick's 260.2 ms; proofs 3.6–180x and 2,500–56,000x larger | `text_numbers`; Table 3 (`paper_assets`); `python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32` | [zkllm_l40s](artifacts/results/zkllm_l40s/README.md), [5_comparison](experiments/5_comparison/README.md) |
-| Sec. 5 | zkLLM's 157–183 kB; CPU verifier up to 3.7 min; GPU verifier 2.9–3.1x slower than zkLLM's; setup up to 13x slower | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 4.6 | prover 35–32,000x faster than the zkSNARKs and 3.0x faster than Maverick (Table 3); zkLLM's code on our L40S about 844 s, 48x, 2.5x per layer for 13B; verifier slower only than ZKML's on VGG-16 (2.2x) and zkLLM's on OPT-1.3B and OPT-6.7B (2.9x and 1.7x) and on Llama-2-7B and Llama-2-13B (2.9x, pending); Maverick with the encoding 20.3 MB (1.8x smaller), 151.6 ms against Maverick's 260.2 ms; proofs 3.6–180x and 2,500–56,000x larger | `text_numbers`; Table 3 (`paper_assets`); `python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32` | [zkllm_l40s](artifacts/results/zkllm_l40s/README.md), [5_comparison](experiments/5_comparison/README.md) |
+| Sec. 5 | zkLLM's 157–183 kB; CPU verifier up to 3.7 min; GPU verifier 1.7–2.9x slower than zkLLM's; setup up to 13x slower | `text_numbers` | [5_comparison](experiments/5_comparison/README.md) |
 
 Published numbers (Table 3, Fig. 4's grey points, zkLLM's proof sizes, the path protocol's time per
 path) come from `artifacts/comparison/literature/reported_benchmarks.csv` (413 published measurements

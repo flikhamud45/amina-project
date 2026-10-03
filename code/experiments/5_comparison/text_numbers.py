@@ -1,6 +1,7 @@
 """Check every number ``report/main.tex`` quotes in running text against the stored tables.
 
-    python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2
+    python experiments/5_comparison/text_numbers.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3 \\
+        --definition
     python experiments/5_comparison/text_numbers.py ... --tex <draft.tex>        # check another file
     python experiments/5_comparison/text_numbers.py ... --list                    # only print the values
 
@@ -337,12 +338,16 @@ def checks(M, opt_names: list[str]):
         Tok([(f"{100 * max(map(abs, gap)):.1f}", FINAL)]))
     def extrap_errors(dirs, optimised):
         """|extrapolated / full - 1| of the proof bytes (%) over llm_extrapolation_check.csv: the basic run's
-        untagged rows, or the optimised runs' rows with the compact encoding (the definition's builds)."""
-        groups = {}
+        untagged rows, or the optimised runs' rows with the compact encoding (the definition's builds).  Where
+        two runs hold the same build, the later run's rows replace the earlier one's (pa.merge_by_root)."""
+        per_root = []
         for d in dirs:
+            sel = {}
             for r in pa._read("llm_extrapolation_check.csv", d):
                 key = tuple(r[f] for f in ("model", "seq", "mode", "challenges", "lam", "threads", "variant"))
-                groups.setdefault(key, {})[r["metric"]] = r
+                sel.setdefault(key, {})[r["metric"]] = r
+            per_root.append((pa._platform_name(d), sel))
+        groups = {k: d for k, (_name, d) in pa.merge_by_root(per_root).items()}
         return [abs(100 * (pa._f(d["bytes_total"]["extrapolated"]) / pa._f(d["bytes_total"]["value"]) - 1))
                 for kk, d in groups.items() if "bytes_total" in d and kk[5] == pa.DEFAULT["threads"]
                 and (("wire" in pa.tagset(kk[6])) if optimised else kk[6] == "")]

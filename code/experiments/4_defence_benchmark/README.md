@@ -385,6 +385,6 @@ A value the system cannot provide is `null` (`run_ns`, `wait_ns` and `wait_frac`
 `/proc/self/schedstat`, e.g. on Windows or macOS). Each cell's `env` record carries `schedstat`:
 whether the kernel reports these per-thread times. The snapshots are taken outside the timed windows,
 so the field changes no timing, verdict or proof byte, and `aggregate.py`, `count_outcomes.py`,
-`fingerprint_check.py`, `paper_assets.py` and `text_numbers.py` ignore it. No stored record carries it
-yet (every stored root predates it); the planned re-measurement of the withheld cells, platform
-`l40s_improved3`, will be the first.
+`fingerprint_check.py`, `paper_assets.py` and `text_numbers.py` ignore it. The records of
+`raw_l40s_improved3/`, the re-measurement of the withheld cells, are the first to carry it (every
+other stored root predates it).

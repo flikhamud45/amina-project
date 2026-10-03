@@ -1,8 +1,8 @@
 """Every figure and table body of the report, built from the stored benchmark tables of the runs.
 
-    python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2
+    python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3
         # -> ../report/figures/*.pdf, ../report/tables/*.tex
-    python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2 \\
+    python experiments/5_comparison/paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2,l40s_improved3 \\
         --check --pending-csv pending.csv
         # write nothing: list the basic run's missing cells and the optimised numbers still pending
 
@@ -13,7 +13,9 @@ Nothing here runs a model; every number is read from the stored benchmark tables
 ``--platform`` (default ``l40s``, or ``$PVI_PLATFORM``) is the *basic protocol*, measured with the
 code of commit 9401431.  ``--optimised`` is a comma-separated list of runs of the *optimised protocol*
 on the same machines; a run whose ``tables_<name>/`` does not exist yet is skipped with a warning, and
-where two runs hold the same cell the later one in the list is used.  The report's results are the
+where two runs hold the same cell the later one in the list is used, the whole cell (``merge_by_root``: a
+full-model value comes from the run that has the full-depth build; l40s_improved3 re-measures cells of
+l40s_improved2 whose timings excluded_cells.csv withholds).  The report's results are the
 optimised protocol: Tables 1-3, Figure 4 and the filled points of Figure 3.  The basic protocol
 appears in Sec. 4.5 (basic -> optimised, the same machines) and as the hollow points of Figure 3.
 
@@ -135,7 +137,8 @@ def _f(x):
 # two nodes (n-801, n-804), more than 1.5x their clean reference.  artifacts/comparison/excluded_cells.csv lists them
 # (platform, model, cell, quantity: prove, verify or setup) with the rule and the reference of each.  A withheld value
 # counts as not stored: the number is pending (the basic placeholder, red) until the cell is re-measured.  The raw
-# records stay; bytes, verdicts and counts are unaffected.
+# records stay; bytes, verdicts and counts are unaffected.  The exclusion is per platform: a cell re-measured in a
+# later optimised run (l40s_improved3) replaces the withheld one and is shown from that run, in black.
 EXCLUDED_CSV = BASE / "excluded_cells.csv"
 
 
@@ -187,6 +190,24 @@ def cnn_cell(mode, ch, lam, tags, rate="4") -> str:
     return f"defence_{mode}_{ch}_lam{lam}_rate{rate}{variant_of(tags)}"
 
 
+def merge_by_root(per_root: list, full_build=lambda rows: False) -> dict:
+    """{selection: (root name, rows)} of several runs' rows, given as [(root name, {selection: rows})] in order of
+    precedence: a selection a later root holds replaces the earlier root's rows entirely (never mixed, never
+    averaged), as a cell of a later run replaces the same cell of an earlier one (``Measured``,
+    ``count_outcomes.count_runs``).  One exception, for full-model rows (``full_build(rows)``: whether rows come
+    from a full-depth build): a later root that has only the 1- and 2-block builds of a selection does not replace
+    an earlier root's full build of it, since the full-depth cell exists only in the earlier root (its value
+    stays that root's, withheld or not, and is never rebuilt from another root's partial builds)."""
+    merged: dict = {}
+    for name, sel in per_root:
+        for key, rows in sel.items():
+            old = merged.get(key)
+            if old is not None and full_build(old[1]) and not full_build(rows):
+                continue
+            merged[key] = (name, rows)
+    return merged
+
+
 class Measured:
     """Index over ``measured_summary.csv`` (median and mean per model, cell, metric) of one run, or of
     several runs merged (a list of tables directories; where two hold the same cell, the later one's
@@ -197,14 +218,13 @@ class Measured:
         self.dirs = dirs
         self.tables = dirs[-1] if dirs else None
         self.idx, self.src = {}, {}
-        by_cell: dict = {}
+        per_root = []
         for d in dirs:
             rows: dict = defaultdict(list)
             for r in _read("measured_summary.csv", d):
                 rows[(r["suite"], r["model"], r["cell"])].append(r)
-            for cell, rs in rows.items():
-                by_cell[cell] = (_platform_name(d), rs)       # a later run replaces the whole cell
-        for (suite, model, cell), (name, rs) in by_cell.items():
+            per_root.append((_platform_name(d), rows))
+        for (suite, model, cell), (name, rs) in merge_by_root(per_root).items():   # a later run replaces the whole cell
             for r in rs:
                 key = (r["suite"], r["model"], r["cell"], r["metric"], r.get("batch", ""), r.get("attack", ""),
                        r.get("lam", ""), r.get("stage", ""), r.get("k", ""))
@@ -264,19 +284,30 @@ class Measured:
         return (sum(v[0] * v[1] for v in vals) / n, int(n)) if n else (None, 0)
 
 
+def _llm_sel_key(r: dict) -> tuple:
+    """The selection of one ``llm_full_model.csv`` row: (model, length, setting, tags, batch), not the metric."""
+    return (r["model"], r["seq"], r["mode"], r["challenges"], r["lam"], r.get("threads", ""), r.get("rate", ""),
+            tagset(r.get("variant", "")), r.get("batch", ""))
+
+
+def _is_full_build(rows) -> bool:
+    return any(r.get("provenance") == "measured" for r in rows)
+
+
 @lru_cache(maxsize=None)
 def _llm_table(dirs: tuple) -> tuple:
-    """The rows of ``llm_full_model.csv`` of one or several runs; where two runs hold the same selection
-    (model, length, setting, tags), the later run's rows replace the earlier one's."""
-    merged: dict = {}
+    """The rows of ``llm_full_model.csv`` of one or several runs, each row tagged with its run (``_platform``).
+    Where two runs hold the same selection (model, length, setting, tags), the later run's rows replace the
+    earlier one's entirely, unless the later run has only the 1- and 2-block builds and the earlier one the full
+    build (:func:`merge_by_root`): a full-model value comes from the run that built the full model."""
+    per_root = []
     for d in dirs:
         sel: dict = defaultdict(list)
         for r in _read("llm_full_model.csv", Path(d)):
-            r = dict(r, _platform=_platform_name(Path(d)))
-            sel[(r["model"], r["seq"], r["mode"], r["challenges"], r["lam"], r.get("threads", ""),
-                 r.get("rate", ""), tagset(r.get("variant", "")), r.get("batch", ""))].append(r)
-        merged.update(sel)
-    return tuple(r for rows in merged.values() for r in rows)
+            sel[_llm_sel_key(r)].append(dict(r, _platform=_platform_name(Path(d))))
+        per_root.append((_platform_name(Path(d)), sel))
+    merged = merge_by_root(per_root, _is_full_build)
+    return tuple(r for _name, rows in merged.values() for r in rows)
 
 
 def _llm_dirs(tables) -> tuple:
@@ -1467,7 +1498,7 @@ def main():
     ap.add_argument("--optimised", default="",
                     help="comma-separated runs of the optimised protocol on the same machines, in order (a later "
                          "run's cell replaces an earlier one's; a run not yet aggregated is skipped with a warning). "
-                         "The report: l40s_improved,l40s_improved2")
+                         "The report: l40s_improved,l40s_improved2,l40s_improved3")
     ap.add_argument("--check", action="store_true",
                     help="write nothing: list the basic run's missing cells and the pending optimised numbers")
     ap.add_argument("--pending-csv", type=Path, help="write the pending (and acceptable stand-in) numbers to this CSV")

@@ -23,7 +23,9 @@
 
 % The second optimised run (platform l40s_improved2) is in, but some of its timings are withheld
 % (code/artifacts/comparison/excluded_cells.csv: slow periods of two nodes) and two optional cells
-% were not run. \pending marks such a value, shown with a placeholder (the basic protocol's value,
+% were not run. Their re-measurement (platform l40s_improved3) is partly in: the cells it has
+% finished replace the withheld ones (OPT-6.7B's GPU verifier at 2,048 tokens, the Kpre CPU verifiers
+% of Llama-2-13B and OPT-13B at 2,048 tokens); the others are still pending. \pending marks such a value, shown with a placeholder (the basic protocol's value,
 % or -- where there is none); \pendingclaim marks a
 % sentence or clause whose claim depends on such a value. Each use has a "% PENDING:" comment
 % saying what to check. Regenerated tables and figures turn black by themselves; the text is
@@ -74,7 +76,8 @@ weights. It needs no SNARK, trusted hardware or trusted setup, and a wrong outpu
 negligible probability. Its
 prover is orders of magnitude faster than published zkSNARK provers and faster than every other fully sound system we compare with, and its verifier is faster than all of them but two, whose provers take minutes per query; its main cost is a proof that grows with the input.
 % PENDING: "all but two" rests on Table 3's verifier column (ZKML and zkLLM are faster): of the zkLLM rows, ours is 1.1x faster on
-% OPT-125M and 2.9x slower on OPT-1.3B; the three larger rows are withheld (excluded_cells.csv), red
+% OPT-125M and 2.9x and 1.7x slower on OPT-1.3B and OPT-6.7B (re-measured, l40s_improved3); the Llama-2-7B and
+% Llama-2-13B rows are withheld (excluded_cells.csv), red. Holds whatever they turn out to be: zkLLM is faster already
 \end{abstract}
 
 \keywords{verifiable inference, proof of inference, integrity attacks, Freivalds' algorithm, zkML}
@@ -783,10 +786,11 @@ To eliminate hardware differences, we also ran zkLLM's public demo on our L40S. 
 proportion (2.5$\times$ the 7B figure).
 
 \para{Verifier.} Our verifier is faster in most rows of Table~\ref{tab:ratios}; it is
-slower only than ZKML's on VGG-16 (2.2$\times$) and zkLLM's on OPT-1.3B
-at 2{,}048 tokens (2.9$\times$) \pendingclaim{and on the three larger models (\pending{2.9--3.1}$\times$)}. Both pay for their faster verifiers with provers that take minutes per query.
-% PENDING: the zkLLM rows of OPT-6.7B, Llama-2-7B and Llama-2-13B (GPU verifier withheld:
-% excluded_cells.csv; placeholders: the basic GPU verifier, which did not run on Llama-2-13B)
+slower only than ZKML's on VGG-16 (2.2$\times$) and zkLLM's on OPT-1.3B and OPT-6.7B
+at 2{,}048 tokens (2.9$\times$ and 1.7$\times$) \pendingclaim{and on Llama-2-7B and Llama-2-13B (\pending{2.9}$\times$)}. Both pay for their faster verifiers with provers that take minutes per query.
+% PENDING: the zkLLM rows of Llama-2-7B and Llama-2-13B (GPU verifier withheld:
+% excluded_cells.csv; placeholders: the basic GPU verifier, which did not run on Llama-2-13B);
+% OPT-6.7B's is re-measured (l40s_improved3: 3.5 s, 1.7x zkLLM's; its placeholder was 6.4 s, 3.1x)
 Against Maverick, we are better on all three costs, with or without the compact encoding (note $d$). With the encoding our proof is smaller (20.3\,MB, 1.8$\times$ smaller than Maverick's), and our verifier, at 151.6\,ms, is still faster than Maverick's 260.2\,ms. 
 
 \para{Proof.} Our proof is larger in most rows, since it carries every layer's claims and opened columns: by
@@ -814,11 +818,11 @@ fast link, so it fits a gateway or an auditor rather than an end device.
 \para{Limitations.} (i)~The proof grows with the activations; at 2{,}048 tokens it is
 mostly claims and gigabytes for 7B models, against zkLLM's 157--183\,kB. (ii)~The verifier's cost
 grows with the square of the prompt length: at 2{,}048 tokens the CPU verifier needs up to
-\pending{3.7}\,min, and \pendingclaim{the GPU verifier is \pending{2.9--3.1}$\times$ slower than
+\pending{3.7}\,min, and \pendingclaim{the GPU verifier is 1.7--\pending{2.9}$\times$ slower than
 zkLLM's}. (iii)~The provider must serve the integer model,
-% PENDING: Llama-2-13B T2048 CPU verifier and the zkLLM rows' GPU verifier ratios of Table 3, as in
-% Sec. 5.5 (withheld: excluded_cells.csv; placeholders: basic). Measured: 1.1x faster than zkLLM's
-% on OPT-125M, 2.9x slower on OPT-1.3B
+% PENDING: Llama-2-13B T2048 CPU verifier (setting C) and the Llama-2 rows' GPU verifier ratios of Table 3,
+% as in Sec. 5.5 (withheld: excluded_cells.csv; placeholders: basic). Measured: 1.1x faster than zkLLM's
+% on OPT-125M, 2.9x slower on OPT-1.3B, 1.7x slower on OPT-6.7B (re-measured, l40s_improved3)
 as proof systems and TEE-based checks for inference also need integer or fixed-point models~\cite{safetynets,slalom,zkcnn,zen,zkml,zkllm}, at some cost
 in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol we assume an honest weight commitment, which the
 planning rule's longer codewords make up to 13$\times$ slower to compute; a malformed one would need a proximity

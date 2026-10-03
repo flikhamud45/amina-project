@@ -207,6 +207,82 @@ def test_later_optimised_runs_replace_earlier_cells(tmp_path):
     assert M.find_cnn("lenet5", "C", "int", 128, {"polauto", "wire"}) == cell
 
 
+LLM_HEAD = ("model,seq,mode,challenges,lam,metric,threads,rate,variant,device,prover_hw,verifier_hw,n_layers_full,"
+            "params_full,value,provenance\n")
+LLM_CPU = "_wire_prune_polauto"
+
+
+def _llm_rows(model, provenance, prove, verify, nbytes, variant=LLM_CPU):
+    """llm_full_model.csv lines of one selection (Llama-2-13B shapes: 40 blocks; T2048, C:int, lambda 128)."""
+    return [f"{model},2048,C,int,128,{metric},8,4,{variant},cuda,NVIDIA L40S,AMD EPYC 9334 x8 threads,40,"
+            f"13015864320,{v},{provenance}"
+            for metric, v in (("prove_forward", prove), ("verify_products", verify), ("bytes_total", nbytes))
+            if v is not None]
+
+
+def _llm_tables(tmp_path, runs: dict) -> list:
+    dirs = []
+    for name, lines in runs.items():
+        d = tmp_path / f"tables_{name}"
+        d.mkdir()
+        (d / "llm_full_model.csv").write_text(LLM_HEAD + "\n".join(lines) + "\n", encoding="utf-8")
+        dirs.append(d)
+    return dirs
+
+
+def test_a_later_run_replaces_whole_llm_selections_but_not_an_earlier_full_build(tmp_path):
+    """The optimised runs are merged per selection, later wins, never mixing rows: l40s_improved3's re-measured
+    full builds replace l40s_improved2's, but its 1- and 2-block builds (an extrapolated row) never replace an
+    earlier run's full build, whose value stays that run's."""
+    pa = _script("paper_assets")
+    sel = {"mode": "C", "tags": ("wire", "prune", "polauto")}
+    dirs = _llm_tables(tmp_path, {
+        "a": _llm_rows("llama2-13b", "measured", 10.0, 100.0, 1e10) + _llm_rows("opt-13b", "measured", 9.0, 90.0, 8e9)
+        + _llm_rows("llama2-7b", "extrapolated_from_1_and_2_blocks", 5.0, 50.0, 6e9),
+        "b": _llm_rows("llama2-13b", "extrapolated_from_1_and_2_blocks", 11.0, 80.0, 1.1e10)  # partial builds only
+        + _llm_rows("opt-13b", "measured", 8.0, 70.0, None)                                    # a re-measured full build
+        + _llm_rows("llama2-7b", "extrapolated_from_1_and_2_blocks", 4.0, None, 6.1e9)})
+    merged = {}
+    for r in pa._llm_table(tuple(map(str, dirs))):
+        merged.setdefault(r["model"], set()).add((r["_platform"], r["metric"], r["provenance"]))
+    assert {p for p, _, _ in merged["llama2-13b"]} == {"a"}       # a's full build stays
+    assert {p for p, _, _ in merged["opt-13b"]} == {"b"}          # b's full build replaces a's ...
+    assert {m for _, m, _ in merged["opt-13b"]} == {"prove_forward", "verify_products"}   # ... whole: no a rows
+    assert {p for p, _, _ in merged["llama2-7b"]} == {"b"}        # partial against partial: the later run
+    assert pa.llm_cost(("llama2-13b", 2048), sel, dirs, full_only=True)[:3] == (10.0, 100.0, 1e10)
+    assert pa.llm_cost(("opt-13b", 2048), sel, dirs, full_only=True)[:3] == (8.0, 70.0, None)
+    assert pa._llm_platform(("llama2-13b", 2048), sel, dirs, "int") == "a"
+    # the generic rule, as Measured and count_outcomes.count_runs apply it: the later root, whole
+    m = pa.merge_by_root([("a", {"x": [1, 2], "y": [3]}), ("b", {"x": [4]})])
+    assert m == {"x": ("b", [4]), "y": ("a", [3])}
+
+
+def test_withheld_values_are_withheld_per_platform(tmp_path):
+    """excluded_cells.csv withholds a value of the platform it names only: the same cell re-measured by a later
+    run is shown (black), and a later run's 1- and 2-block builds do not stand in for a withheld full build."""
+    pa = _script("paper_assets")
+    cell = "defence_C_int_lam128_T2048_L40" + LLM_CPU
+    pa.EXCLUDED_CSV = tmp_path / "excluded_cells.csv"
+    pa.EXCLUDED_CSV.write_text("# withheld\nplatform,model,cell,quantity,measured_s\n"
+                               f"a,llama2-13b,{cell},verify,1000\na,opt-13b,{cell},verify,1000\n", encoding="utf-8")
+    assert pa.llm_cell("llama2-13b", 2048, "C", "int", 128, {"wire", "prune", "polauto"}) == cell
+    sel = {"mode": "C", "tags": ("wire", "prune", "polauto")}
+    dirs = _llm_tables(tmp_path, {
+        "a": _llm_rows("llama2-13b", "measured", 10.0, 1000.0, 1e10) + _llm_rows("opt-13b", "measured", 9.0, 1000.0, 8e9),
+        "b": _llm_rows("llama2-13b", "extrapolated_from_1_and_2_blocks", 11.0, 80.0, 1e10)
+        + _llm_rows("opt-13b", "measured", 9.5, 70.0, 8e9)})
+    assert pa.excluded("a", "opt-13b", cell, "verify") and not pa.excluded("b", "opt-13b", cell, "verify")
+    assert pa.llm_cost(("opt-13b", 2048), sel, dirs[:1]) == (9.0, None, 8e9, 13015864320.0)    # withheld in a
+    assert pa.llm_cost(("opt-13b", 2048), sel, dirs)[:3] == (9.5, 70.0, 8e9)                    # re-measured in b
+    assert pa.llm_cost(("llama2-13b", 2048), sel, dirs)[:3] == (10.0, None, 1e10)              # still withheld
+    pa.OPT_TABLES = dirs
+    v, p = pa.opt_llm("opt-13b", 2048, "verify", where=("t", "opt", "verify"))
+    assert (v, p) == (70.0, False)
+    v, p = pa.opt_llm("llama2-13b", 2048, "verify", where=("t", "l13", "verify"))
+    assert p and v != 80.0                                          # pending: the basic placeholder, not b's line
+    assert "stored, withheld" in pa.PENDING[-1]["optimised_cell"]
+
+
 def test_the_figure_checks_catch_small_overlapping_and_clipped_text():
     pa = _script("paper_assets")
     fig = pa.plt.figure(figsize=(2.0, 1.0))

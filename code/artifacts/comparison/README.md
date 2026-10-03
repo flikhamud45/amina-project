@@ -25,8 +25,8 @@ Records written from commit `7016557` on also carry contention evidence: every t
 switches and the load average (`wall_s`, `run_ns`, `wait_ns`, `wait_frac`, `nivcsw`, `nvcsw`, `cpu_s`,
 `threads`, `threads_exited`, `load_start`, `load_end`, `segments`; see
 [`4_defence_benchmark`](../../experiments/4_defence_benchmark/README.md#records)), and the `env` record
-has `schedstat`. The aggregates and the paper's generators ignore these fields. No stored record has
-them yet; the planned `l40s_improved3` re-measurement will be the first.
+has `schedstat`. The aggregates and the paper's generators ignore these fields. The records of
+`raw_l40s_improved3/` (the re-measurement of the withheld cells) are the first to have them.
 
 ## The roots
 
@@ -38,6 +38,7 @@ the one `env` record per cell).
 | `raw_l40s/` | 123,832 | basic | NVIDIA L40S (48 GB) prover, 8 threads of an AMD EPYC 9334 verifier; nodes n-801 to n-804 | `9401431` | the basic protocol: hollow points of Fig. 3, the basic side of Sec. 4.5, the basic counts of Sec. 4.3, the placeholders of pending values, the path protocol's detection and bytes (Sec. 4.2) |
 | `raw_l40s_improved/` | 68,363 | basic proofs with the released code, and optimised variants | as `raw_l40s/`; nodes n-801, n-803, n-804 | `c8be5eb` | optimised cells not repeated in `raw_l40s_improved2/` (e.g. Table 3's Maverick row, without the compact encoding), and the basic proof format with the streaming GPU verifier at 2,048 tokens (Sec. 4.5) |
 | `raw_l40s_improved2/` | 83,896 | optimised, and GPT-2's basic proofs with the released code | as `raw_l40s/`; nodes n-801, n-803, n-804, n-805 | `366e3d4`, `c2bdc49` | the optimised protocol: Tables 1–3, Fig. 4, the filled points of Fig. 3, the optimised counts of Sec. 4.3, Sec. 4.5 |
+| `raw_l40s_improved3/` | 1,600 | optimised: the re-measurement of the cells of `raw_l40s_improved2/` whose timings are withheld (interim: the cells finished so far) | as `raw_l40s/`; nodes n-803, n-805 (n-801 and n-804 excluded) | `7016557` | replaces the same cells of `raw_l40s_improved2/`; in the paper, the withheld values it has re-measured (OPT-6.7B's GPU verifier and Llama-2-13B's Kpre CPU verifier at 2,048 tokens, Tables 2–3) |
 | `raw_l40s_improved2_thr1/` | 6,104 | optimised, one verifier thread | as `raw_l40s/`; node n-805 | `366e3d4` | not used |
 | `raw_rtx2080ti-v2/` | 78,266 | basic | NVIDIA RTX 2080 Ti (11 GB) prover, 8 threads of an Intel Xeon Silver 4114 verifier; nodes s-004, s-005 | `9401431` | Sec. 4.1: its 1,978 hardware-independent values equal those of `raw_l40s/` |
 | `raw/` | 59,547 | basic (an earlier version of the code) | as `raw_rtx2080ti-v2/` | several earlier commits | not used; the reference of `smoke.sbatch`'s fingerprint check |
@@ -61,13 +62,17 @@ skipped with a `SKIP` line. Besides the headline cells the root holds variants o
 --platform l40s` counts every cell: 8,709 honest queries accepted and 2,895 attacks rejected (2,091 on
 image models, 804 on language models).
 
-### `raw_l40s_improved/` and `raw_l40s_improved2/`: the optimised protocol
+### `raw_l40s_improved/`, `raw_l40s_improved2/` and `raw_l40s_improved3/`: the optimised protocol
 
-The optimised protocol was measured in two batches on the hardware of `raw_l40s/`. Its definition,
-which stored cell holds each optimised number, is `OPTIMISED` in
+The optimised protocol was measured in two batches on the hardware of `raw_l40s/`, and the cells of
+the second whose timings are withheld are re-measured in a third. Its definition, which stored cell
+holds each optimised number, is `OPTIMISED` in
 [`paper_assets.py`](../../experiments/5_comparison/paper_assets.py) (see
 [`experiments/5_comparison`](../../experiments/5_comparison/README.md)). `paper_assets.py --optimised
-l40s_improved,l40s_improved2` reads both batches; where both hold a cell, the second batch's is used.
+l40s_improved,l40s_improved2,l40s_improved3` reads the three batches; where several hold a cell, the
+latest batch's is used, the whole cell (its rows are never mixed with an earlier batch's). A
+full-model value comes from the batch that has the full-depth build: a later batch's 1- and 2-block
+builds do not replace an earlier batch's full build of the same model and setting.
 
 * **`raw_l40s_improved/`** (platform `l40s_improved`): 26 benchmark jobs (SLURM 958571–958596; their
   list is in [`experiments/4_defence_benchmark`](../../experiments/4_defence_benchmark/README.md)) and
@@ -82,15 +87,29 @@ l40s_improved,l40s_improved2` reads both batches; where both hold a cell, the se
   the definition's cells for every model of Tables 1–2 (and the 30–70B shapes, with 1 and 2 blocks),
   with the streaming GPU verifier at 64 and 2,048 tokens, and that re-measure GPT-2's basic proofs
   with the released code. Over all its cells: 5,088 honest queries accepted and 2,518 attacks rejected.
+* **`raw_l40s_improved3/`** (platform `l40s_improved3`): the re-measurement of the second batch's jobs
+  whose timings `excluded_cells.csv` withholds (below), each re-run whole, on the L40S nodes other than
+  n-801 and n-804, at commit `7016557` (`c2bdc49` plus the contention evidence: every proof byte,
+  verdict and cell name is `c2bdc49`'s): 10 SLURM jobs (969059–969068), the 8 with a withheld value
+  the paper prints and 2 whose only withheld value is a setup time. **Interim:** the root holds the 22
+  cells finished so far, copied from the run's root (cells with a `.done` marker only): the jobs
+  `o2-llama13-2k-k`, `o2-opt13b-2k-k` and `o2-opt67-2k-cg` in full, the 1- and 2-block cells of
+  `o2-llama13-2k-c`, `o2-llama7-2k-c` and `o2-opt13b-2k-c`, and the full-depth commitments of
+  `o2-llama7-2k-c` and `o2-llama13-2k-cg`. No timed phase longer than 1 s waited on the run queue
+  for more than 0.1% of its runnable time, and `fingerprint_check.py
+  artifacts/comparison/raw_l40s_improved2 artifacts/comparison/raw_l40s_improved3` finds its 72
+  shared hardware-independent values equal. Over its cells: 90 honest queries accepted and 13
+  attacks rejected.
 * **`raw_l40s_improved2_thr1/`**: LeNet-5 and VGG-16 in mode C under the optimised protocol with one
   verifier thread (SLURM 965522–965523), for a single-core comparison with zkCNN's verifier. The
   paper does not use it: Table 3 compares our 8-thread verifier and says so.
 
 The paper's soundness counts for the optimised protocol (Sec. 4.3) count only the definition's cells
-of both batches:
+of the batches (a cell of `raw_l40s_improved3/` replaces the same cell of `raw_l40s_improved2/`, the
+same seeded instances, so the totals are those of the first two batches):
 
 ```bash
-python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --definition
+python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2,l40s_improved3 --definition
 # 61,629 records; 3,792 honest queries accepted (2,196 image, 1,596 language); 2,512 attacks rejected
 # (1,848 image, 664 language): Freivalds 1,601, column code check 853, Merkle check 56, range check 2
 ```
@@ -104,10 +123,14 @@ the 17 values of such cells that are withheld: a value is listed if its cell ran
 and it exceeds its reference by the thresholds stated in the file's header. `paper_assets.py` and
 `text_numbers.py` read the file; the paper shows each withheld value as pending (red, with the basic
 protocol's value as a placeholder) until it is re-measured. The raw records stay in
-`raw_l40s_improved2/`. A re-run of these cells on unloaded nodes, as platform `l40s_improved3`, is
-planned. `paper_assets.py --platform l40s --optimised l40s_improved,l40s_improved2 --check` lists the
-pending numbers: currently 19, the withheld values and two optional cells that were not run (the
-streaming GPU verifier of Qwen3-4B and Llama-2-13B at 64 tokens).
+`raw_l40s_improved2/`. The cells are re-measured on the other nodes as platform `l40s_improved3`
+(above). The exclusion is per platform: a value re-measured there replaces the withheld one and is
+shown in black. So far 6 of the 17 values are re-measured: OPT-6.7B's prover, verifier and commitment
+with the streaming GPU verifier, Llama-2-7B's commitment and the Kpre CPU verifiers of Llama-2-13B
+and OPT-13B, all at 2,048 tokens. `paper_assets.py --platform l40s
+--optimised l40s_improved,l40s_improved2,l40s_improved3 --check` lists the pending numbers: currently
+16, the remaining withheld values and two optional cells that were not run (the streaming GPU verifier
+of Qwen3-4B and Llama-2-13B at 64 tokens).
 
 ### `raw_rtx2080ti-v2/`: the second platform
 
