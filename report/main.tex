@@ -73,8 +73,9 @@ however it chooses where to look, closes this gap on every network. We therefore
 that checks every layer with Freivalds' algorithm against a Reed--Solomon/Merkle commitment to the
 weights. It needs no SNARK, trusted hardware or trusted setup, a wrong output passes with
 negligible probability, and in our experiments it rejected thousands of attacks without a miss. Its
-prover is orders of magnitude faster than published zkSNARK provers and its verifier is
-competitive with theirs; its main cost is a proof that grows with the input.
+prover is orders of magnitude faster than published zkSNARK provers and faster than every other
+system we compare with, and its verifier is faster than most of them and competitive with the
+rest; its main cost is a proof that grows with the input.
 % PENDING: "competitive" rests on Table 3's verifier column: of the zkLLM rows, ours is 1.1x faster on
 % OPT-125M and 2.9x slower on OPT-1.3B; the three larger rows are withheld (excluded_cells.csv), red
 \end{abstract}
