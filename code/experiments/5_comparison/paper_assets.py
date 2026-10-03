@@ -1378,6 +1378,14 @@ def ratio_rows(MO=None):
     return out
 
 
+def _with_ours(ours, col: int, factor: str) -> str:
+    """A Table 3 cell: our value (a time, or for the proof column a size), then in parentheses the factor
+    by which it is lower or higher than the published system's; just the factor's '--' when either is missing."""
+    if factor == "--" or ours is None:
+        return factor
+    return f"{(b if col == 2 else t)(ours)} ({factor})"
+
+
 def tab_ratios(MO=None):
     """Table 3: the optimised protocol against published systems.  'cells' style: each cell marked by who is
     better (ours in bold), with a rule between the image models, the short prompts and the 2,048-token
@@ -1390,7 +1398,8 @@ def tab_ratios(MO=None):
             if group is not None and g != group:
                 lines.append(r"\midrule")
             group = g
-            cols = [system, what] + [_mark(red(s, p), q) for (s, q), p in zip(shown, pend)]
+            cols = [system, what] + [_mark(red(_with_ours(o, i, s), p), q)
+                                     for i, ((_, o), (s, q), p) in enumerate(zip(cells, shown, pend))]
         else:
             cols = [system, what] + [red(s, p) for (s, _), p in zip(shown, pend)]
             if all(q is not None and q >= 1 for _, q in shown):

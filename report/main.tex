@@ -747,21 +747,22 @@ about 8.6 instead of 4.5\,min for Llama-2-7B).
 \label{sec:compare}
 
 \begin{table}[t]
-  \caption{Ours against published systems: our prover always wins (bold $\downarrow$: ours lower;
-  $\uparrow$: ours higher)}
+  \caption{Our costs against published systems: our prover always wins}
   \label{tab:ratios}
-  \footnotesize
-  \setlength{\tabcolsep}{3.5pt}
+  \scriptsize
+  \setlength{\tabcolsep}{2pt}
   \begin{tabular}{llrrr}
     \toprule
+    & & \multicolumn{3}{c}{our value (factor vs.\ theirs)} \\
+    \cmidrule(lr){3-5}
     System & Model (tokens) & prover$\downarrow$ & verifier$\downarrow$ & proof$\downarrow$ \\
     \midrule
     \input{tables/ratios.tex}
   \end{tabular}
 
   \smallskip
-  {\footnotesize $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position (HyperKZG:
-  9.4\,MB). $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, without the compact encoding. Maverick: prover = its server's inference on 64 CPU threads (ours: GPU); verifier = its client's total time per query (260.2\,ms); proof = its total communication. $^e$zkLLM's code ran on our L40S
+  {\footnotesize In parentheses: the factor by which ours is lower ($\downarrow$) or higher ($\uparrow$) than theirs; bold: ours better. $^a$Verifier on one core (ours: \VerifierThreads{} threads). $^b$No prompt length stated (its matrix shapes imply 32 tokens); ours: 64. $^c$BaseFold configuration, proving every position (HyperKZG:
+  9.4\,MB). $^d$Ours in $\Kpre$, $\lambda{=}40$, one thread, as Maverick; without the compact encoding; Maverick's prover runs on 64 CPU threads. $^e$zkLLM's code ran on our L40S
   (--: not reported).}
 \end{table}
 
