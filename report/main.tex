@@ -666,7 +666,7 @@ CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
     \toprule
     & & \multicolumn{4}{c}{committed weights ($\sC$)} & \multicolumn{2}{c}{$\Kpre$} \\
     \cmidrule(lr){3-6}\cmidrule(lr){7-8}
-    Model & Params & prove$\downarrow$ & verify$\downarrow$ & GPU$\downarrow$ & proof$\downarrow$ & verify$\downarrow$ & proof$\downarrow$ \\
+    Model & Params & prove$\downarrow$ & verify$\downarrow$ & GPU verify$\downarrow$ & proof$\downarrow$ & verify$\downarrow$ & proof$\downarrow$ \\
     \midrule
     \multicolumn{8}{l}{\emph{64-token prompts}} \\
     \input{tables/llm.tex}
@@ -674,7 +674,7 @@ CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
 \end{table}
 
 \para{Language models.} Table~\ref{tab:llm} proves the next-token logits of one prompt at
-$\lambda{=}128$ with random int8 weights; its GPU column runs our verifier on the GPU. With a
+$\lambda{=}128$ with random int8 weights; its GPU verify column runs our verifier on the GPU. With a
 64-token prompt GPT-2 is proved in 76.1\,ms and Llama-2-7B in
 1.8\,s, and Llama-2-7B's 325\,MB proof is about 21$\times$ smaller than its
 int8 weights. At 2{,}048 tokens Llama-2-7B is proved in \pending{17.6}\,s, but the proof grows to
