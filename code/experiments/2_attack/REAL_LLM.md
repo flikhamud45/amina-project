@@ -84,10 +84,11 @@ Results: `artifacts/results/real_weights_ppl_opt-{125m,1.3b,6.7b}.json` and the
 ## Reproduce
 
 ```bash
-# From the folder that holds code/. PVI_PYTHON: a python with code/requirements.txt, transformers 4.51.3,
-# tokenizers 0.21.4 and pyarrow 25.0.1 (the versions of the stored runs). HF_HOME: the Hugging Face
-# cache, with facebook/opt-{125m,1.3b,6.7b} downloaded beforehand (real_weights_ppl.sbatch runs
-# offline). WIKITEXT_PARQUET: the wikitext-2-raw-v1 test split as parquet.
+# From the folder that holds code/. PVI_PYTHON (required: these scripts do not fall back to .venv/):
+# a python with both requirements files, i.e. pip install -r code/requirements.txt -r code/requirements-llm.txt
+# (transformers 4.51.3, tokenizers 0.21.4 and pyarrow 25.0.1, the versions of the stored runs). HF_HOME:
+# the Hugging Face cache, with facebook/opt-{125m,1.3b,6.7b} downloaded beforehand (real_weights_ppl.sbatch
+# runs offline). WIKITEXT_PARQUET: the wikitext-2-raw-v1 test split as parquet.
 # The stored runs also passed -p killable --gres=gpu:a5000:1 (TAU).
 mkdir -p logs
 sbatch -o logs/%x-%j.out code/experiments/2_attack/real_llm.sbatch                       # " hacked" -> real_llm_attack.json

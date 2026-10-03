@@ -3,10 +3,10 @@
     python experiments/5_comparison/count_outcomes.py --platform l40s --tex ../report/tables/counts.tex
         # the basic protocol's counts (abstract, Sec. 4.3, conclusion) -> \\NHonest, \\NAttacks, ...
     python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --prefix Opt \\
-        --tex ../report/tables/counts_opt.tex
+        --definition --tex ../report/tables/counts_opt.tex
         # the optimised protocol's runs, added up (abstract, Sec. 4.3) -> \\OptNHonest, \\OptNAttacks, ...
-        # (add --definition once l40s_improved2 is stored: the text says "on the optimised one", and the
-        # unfiltered roots also hold basic-format, plan-only and by-product cells)
+        # (--definition, now that l40s_improved2 is stored: the text counts the optimised protocol only,
+        # and the unfiltered roots also hold basic-format, plan-only and by-product cells)
     python experiments/5_comparison/count_outcomes.py --platform rtx2080ti-v2   # print only
 
 ``--platform`` takes one platform or a comma-separated list, whose counts are added (a cell finished in a

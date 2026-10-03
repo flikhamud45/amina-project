@@ -82,15 +82,17 @@ Llama-2-7B's runs without pruning (`_wire_polauto`) are the one accepted stand-i
 defining cell. In a language-model row the prover time and the proof come from the CPU-verifier
 cell, the GPU verifier from the GPU cell. Table 3 uses the Fiat–Shamir cells against the
 non-interactive systems, the interactive cells against zkLLM (itself interactive) and Maverick, and
-for Maverick our Kpre run without the compact encoding (note d); it counts Maverick's 37.4 ms
-non-linear replay in its verifier time. Tables 1–3 and Fig. 4 use full-depth builds only; the 30–70B
+for Maverick our Kpre run without the compact encoding (note d). Maverick's verifier time there is
+its total client time, 260.2 ms (its Table 8 "client time", one client thread), as ours is our whole
+verifier; `literature.py` records the client time for all three Maverick rows (260.2, 142.5 and
+1,460.5 ms). Tables 1–3 and Fig. 4 use full-depth builds only; the 30–70B
 shapes enter only the text, through their 1- and 2-block builds. Fig. 3 draws no path curve for the
 224-pixel ResNet, which lies on VGG-16's.
 
 ## Numbers of the text that no script checks
 
-`text_numbers.py` checks the benchmark numbers of 39 sentences. The other numbers of the text come
-from these sources:
+`text_numbers.py` makes 40 checks of the benchmark numbers in the text. The other numbers of the text
+come from these sources:
 
 | Paper | Value | Source | Command (from `code/`) |
 |---|---|---|---|
@@ -107,10 +109,8 @@ from these sources:
 | Sec. 4.2 | *Reproduction*: 3,000 runs per setting, 99.8–100%, 21–37%, 150 queries | `artifacts/results/reproduction.json` | `python experiments/1_reproduction/run.py` ([1_reproduction](../1_reproduction/README.md)) |
 | Sec. 4.2 | *Attacks on MNIST*: hundreds of the 778 nodes against 1–14, backdoor 99.96% of 2,300 runs, about five neurons, 61% with 250 paths | `artifacts/results/attack.json` | `python experiments/2_attack/run.py` |
 | Sec. 4.2 | *Other samplers*: 0.20%, 0.11%, 0.016%; 14 of 512 neurons, 65%, 2,000 of 2,000; floor 2% (10x), 0.9–6x | `artifacts/results/defence.json`, `floor_sampler.json` | `python experiments/3_sampling_fixes/run.py`, `floor_sampler.py` ([3_sampling_fixes](../3_sampling_fixes/README.md)) |
-| Sec. 4.3 | the range check caught the remaining two attacks | `rejected by: ... range_or_shape 2` | `python experiments/5_comparison/count_outcomes.py --platform l40s_improved,l40s_improved2 --definition` |
-| Table 3, note c | DeepProve's HyperKZG proof, 9.4 MB | `artifacts/comparison/literature/reported_benchmarks.csv` | (the catalogue) |
-| Sec. 4.6 | our prover faster than Maverick by 200% | Table 3's Maverick prover ratio, 3.0x | `paper_assets.py` (`report/tables/ratios.tex`) |
-| Sec. 4.6 | zkLLM's demo on our L40S: about 844 s; 2.5x per layer for Llama-2-13B | `artifacts/results/zkllm_l40s/` | `python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32` ([zkllm_l40s](../../artifacts/results/zkllm_l40s/README.md)); the ratios are also checked by `text_numbers.py` |
+| Sec. 4.6 | our prover 3.0x faster than Maverick | Table 3's Maverick prover ratio | `paper_assets.py` (`report/tables/ratios.tex`) |
+| Sec. 4.6 | zkLLM's demo on our L40S: about 844 s; 2.5x per layer for Llama-2-13B | `artifacts/results/zkllm_l40s/` | `python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32` ([zkllm_l40s](../../artifacts/results/zkllm_l40s/README.md)); `text_numbers.py` checks both (and the 48x) against `summary.csv`, which `summarise.py --csv` writes from these logs |
 
 ## Pending values
 

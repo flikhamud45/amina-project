@@ -47,5 +47,6 @@ To re-measure, run the CNN jobs of [`4_defence_benchmark`](../4_defence_benchmar
 
 `real_llm.py` runs the attack and a fixed-target backdoor on the real OPT-6.7B, and
 `real_weights_ppl.py` measures the int8 perplexity of real OPT checkpoints in the benchmark's integer
-graph (Sec. 4.1). Both need a GPU, `transformers` and Hugging Face downloads; see
+graph (Sec. 4.1). Both need a GPU, the packages of [`requirements-llm.txt`](../../requirements-llm.txt)
+(`transformers`, `tokenizers`, `pyarrow`) and Hugging Face downloads; see
 [REAL_LLM.md](REAL_LLM.md).

@@ -638,14 +638,14 @@ NONINTERACTIVE = {"zkCNN", "Bionetta", "ZKML", "zkGPT", "DeepProve", "ZKTorch"}
 # published systems whose stated setting differs from the matched row: a footnote letter on their label
 # (main.tex's note under Table 3 explains each), lettered in the order a reader meets them in Table 3.
 # a: zkCNN's verifier ran on one core, ours on 8 threads; b: zkGPT states no prompt length, ours uses 64
-# tokens; c: DeepProve's figures are its transparent (BaseFold) configuration, which proves every position
-# (its HyperKZG one sends 9.4 MB at 64 tokens); d: Maverick (MAVERICK_MARK); e: zkLLM's code on our GPU
-# (ZKLLM_OWN).  The interactive stand-in for a missing Fiat-Shamir cell is marked with an asterisk
-# (INTERACTIVE_MARK), not a letter, so no letter changes when the second run removes it.
+# tokens; c: DeepProve's BaseFold configuration, proving every position; d: Maverick (MAVERICK_MARK);
+# e: zkLLM's code on our GPU (ZKLLM_OWN).  The interactive stand-in for a missing Fiat-Shamir cell is
+# marked with an asterisk (INTERACTIVE_MARK), not a letter, so no letter changes when the second run
+# removes it.
 SYSTEM_MARK = {"zkCNN": "a", "zkGPT": "b", "DeepProve": "c"}
 MAVERICK_MARK = "d"
 # Table 3's Maverick row: our Qwen3-4B run in Maverick's setting without the compact encoding (note d says so;
-# the text gives the run with it, whose verifier spends 41.1 ms decoding and so is slower than Maverick's)
+# the text gives the run with it, whose verifier, at 151.6 ms, is still faster than Maverick's 260.2 ms)
 TABLE3_MAVERICK_SEL = dict(mode="Kpre", lam=40, threads="1", tags=("thr1", "prune", "lookups"))
 INTERACTIVE_MARK = r"\ast"
 ZKLLM_OWN = "zkLLM$^e$"   # Table 3's last row: zkLLM's public code on our L40S

@@ -8,6 +8,7 @@ themselves are written by [`experiments/4_defence_benchmark/bench.py`](../../exp
 | Path | Contents |
 |---|---|
 | `raw_<platform>/<suite>/<model>/<cell>.jsonl` | raw records, one JSON line per measurement; `<suite>` is `cnn` or `llm` |
+| `raw_<platform>/<suite>/<model>/<cell>.jsonl.part.<timestamp>` | the records of an interrupted attempt at a cell, set aside by `bench.py` when the cell was restarted (`<timestamp>`: the Unix time of the restart); kept on purpose, and ignored by the aggregates and counts, which read only finished cells' `<cell>.jsonl` (19 files: 2 in `raw_l40s/`, 17 in `raw_l40s_improved2/`) |
 | `raw_<platform>/PLATFORM.json` | the root's GPU, CPU, driver and torch version; `"frozen": true` makes `bench.py` refuse new records |
 | `tables_<platform>/` | tables derived from `raw_<platform>/` by `aggregate.py --platform <platform>` |
 | `tables/` | `reported_curated.csv` (the published results the paper compares with) and `analytic.csv` (the path protocol's cost on Llama-2-7B), shared by every platform; also the derived tables of `raw/` |
@@ -18,6 +19,14 @@ Every record carries the git commit (`git_sha`), host, GPU and CPU it was measur
 record of each cell (`metric: env`) also holds the SLURM job, the Python, torch and CUDA versions,
 the thread count and the CPU affinity. Each root holds the records of one GPU model and one CPU
 model: `bench.py` refuses records from a second CPU model.
+
+Records written from commit `7016557` on also carry contention evidence: every timing row has a
+`contention` field, this process's run-queue wait and on-CPU time while the phase ran, its context
+switches and the load average (`wall_s`, `run_ns`, `wait_ns`, `wait_frac`, `nivcsw`, `nvcsw`, `cpu_s`,
+`threads`, `threads_exited`, `load_start`, `load_end`, `segments`; see
+[`4_defence_benchmark`](../../experiments/4_defence_benchmark/README.md#records)), and the `env` record
+has `schedstat`. The aggregates and the paper's generators ignore these fields. No stored record has
+them yet; the planned `l40s_improved3` re-measurement will be the first.
 
 ## The roots
 
