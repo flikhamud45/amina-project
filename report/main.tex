@@ -309,8 +309,9 @@ neuron of every layer.
 
 \para{Exact integers.} The checks compare exact values, but floating-point results differ between
 devices and summation orders. The model that is committed and checked is therefore an int8 version
-of $M$, obtained by integer-only quantisation~\cite{jacob2018quant}, the form in which many models
-are already served; Section~\ref{sec:setup} measures its accuracy. Each weight layer $\ell$
+of $M$, obtained by integer-only quantisation~\cite{jacob2018quant}, as many models are served and as
+proof systems for inference require~\cite{safetynets,slalom,zkcnn,zen,zkml,zkllm}; Section~\ref{sec:setup}
+measures its accuracy. Each weight layer $\ell$
 computes $Z_\ell = W_\ell X_\ell + b_\ell$, where $W_\ell$ is int8 with one scale per output
 channel, $X_\ell$ is int8 with one scale per tensor, and BatchNorm is folded into $W_\ell$ and
 $b_\ell$; convolutions become matrix products through im2col. These integer products can still use
