@@ -226,7 +226,7 @@ TEE or trusted setup.
 
 
 \subsection{Setting and threat model}
-A model $M$ has a public architecture and secret or public weights. The provider acts as the
+A model $M$ has a public architecture; the client may not hold its weights. The provider acts as the
 prover and the client as the verifier. Before any query the client obtains a commitment $C_M$ to
 the weights, for example from the model owner. As in~\cite{anchuri2026verifiable}, we assume
 that $C_M$ is computed honestly; unlike a SNARK's trusted setup it involves no secret randomness,
@@ -235,7 +235,7 @@ claimed output $y$ and a proof, and may deviate from the protocol arbitrarily. T
 are \emph{completeness} (honest answers are always accepted) and \emph{full soundness}: any
 $y \neq M(x)$ is rejected with probability at least $1-\varepsilon$ (Anchuri et al.\ prove only
 other-model soundness). We
-consider three trust settings. In setting $\sC$ the client holds only a short commitment $C_M$, as in~\cite{anchuri2026verifiable} and the zkSNARKs (ours: 32 bytes per weight matrix); in $\sK$ it knows the weights; and
+consider three trust settings. In setting $\sC$ the client holds only a short commitment $C_M$, as in~\cite{anchuri2026verifiable} and the zkSNARKs (ours: 32 bytes per weight matrix); in $\sK$ it holds the weights; and
 in $\Kpre$ it also precomputes secret Freivalds vectors and their folded rows
 (Eq.~\eqref{eq:freivalds}) once per model, following Slalom's preprocessing mode and
 CommitLLM~\cite{commitllm2026}. The architecture includes the integer constants of the operations without
@@ -314,7 +314,8 @@ the path protocol, which leaves an attacker room to hide small changes.
 
 \para{Three statements.} With the output $y$, the prover sends the pre-activations $Z_\ell$ of every
 weight layer, which we call the \emph{claims}. Write $A_\ell = [W_\ell \,|\, b_\ell]$. Between two
-weight layers the network applies only operations without weights. The answer $y$ is the last weight layer's pre-activations
+weight layers the network applies only operations without weights, such as softmax and the
+attention products $QK^\T$ and $PV$. The answer $y$ is the last weight layer's pre-activations
 (the logits), so it is itself a claim, and it is correct if every claim is. Every claim equals the
 value that $M$ computes on $x$ if and only if three statements hold for every weight layer $\ell$:
 (S1)~its input $X_\ell$ follows from $x$ and the previous claims through these operations, for
@@ -772,7 +773,7 @@ Table~\ref{tab:llm}, as the choice of verifier does not change the proof. For th
 ours prove the next-token logits. Most systems we compare with produce non-interactive proofs,
 so against them we make ours non-interactive with Fiat--Shamir (Section~\ref{sec:protocol}),
 which costs us extra columns; zkLLM is itself interactive, so against it we run ours
-interactively. We use committed weights except against Maverick, whose client knows the weights, so we compare it with $\Kpre$; unlike $\Kpre$, it draws a fresh public challenge per query.
+interactively. We use committed weights except against Maverick, whose client holds the weights, so we compare it with $\Kpre$; unlike $\Kpre$, it draws a fresh public challenge per query.
 
 \para{Prover.} Our prover is faster than every system we tested. it is faster than every zkSNARK prover, by
 \pending{35}$\times$ (zkLLM, \pendingclaim{Llama-2-7B}) to 32{,}000$\times$ (ZKML, VGG-16) and 3.0$\times$ faster than Maverick. 
