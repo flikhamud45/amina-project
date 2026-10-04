@@ -758,8 +758,7 @@ cheaper model, but one that wants to change a particular answer passes it almost
 should not be relied on where a wrong answer is costly. Our protocol catches such a provider except
 with probability $2^{-\lambda}$, at a prover cost of milliseconds to seconds per query and without
 a zkSNARK or a trusted setup, which makes checking every answer practical. MLPs and CNNs are
-verified in milliseconds on an ordinary CPU; for language models with long prompts the verifier needs a GPU and a
-fast link, so it fits a gateway or an auditor rather than an end device.
+verified in milliseconds on an ordinary CPU; for long prompts the verifier needs a GPU and a fast link, so it fits a gateway or an auditor rather than an end device.
 
 \para{Limitations.} (i)~The proof grows with the activations; at 2{,}048 tokens it is
 mostly claims and gigabytes for 7B models, against zkLLM's 157--183\,kB. (ii)~The verifier's cost
