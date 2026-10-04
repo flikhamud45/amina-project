@@ -16,7 +16,7 @@ Message flow for one query ``x`` (``mode="C"``, the verifier holds only the
    checks each against its commitment and against ``Enc(u_l)``.
 
 ``mode="K"`` is the setting of SafetyNets, Slalom and Maverick, where the
-verifier knows the weights: it computes ``u_l`` itself (fresh ``chi`` per query)
+verifier holds the weights: it computes ``u_l`` itself (fresh ``chi`` per query)
 and steps 3 and 5 disappear.  ``mode="Kpre"`` additionally precomputes ``u_l``
 for a secret ``chi`` once, so a query costs the verifier only step 2 and the two
 inner products; the proof is just the claims (Slalom's and Maverick's

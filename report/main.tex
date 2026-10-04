@@ -420,7 +420,7 @@ can make them pass, and once $u_\ell$ is fixed only that layer's columns can. Th
 round-by-round sound~\cite{canetti2019fs}, hence state-restoration sound~\cite{canetti2019fs,holmgren2019rbr}, so by~\cite{bcs16} a cheating prover that makes $Q$ hash (random-oracle) queries, for instance rehashing altered claims in search of favourable challenges, succeeds with probability at most $Q\,2^{-\beta}$ plus that of finding a collision, which
 64 extra bits in $\beta$ keep below $2^{-\lambda}$ for $Q \le 2^{64}$.
 
-\para{Known weights.} In $\sK$ the verifier computes $u_\ell$ itself, so messages (3)--(6) are
+\para{Holding the weights.} In $\sK$ the verifier computes $u_\ell$ itself, so messages (3)--(6) are
 unnecessary and omitted. In $\Kpre$ it computes the secret $\chi$ and $u_\ell$ once per model, so the proof is
 the claims alone. The prover learns each verdict and could repeat an accepted forgery, but until
 one is accepted the verdicts do not depend on $\chi$, so a false acceptance occurs among $Q$

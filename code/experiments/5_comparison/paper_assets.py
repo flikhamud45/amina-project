@@ -410,7 +410,7 @@ OPTIMISED = {
     # image models with committed weights: planning rule + compact encoding (interactive and Fiat-Shamir,
     # lambda 40/80/128)
     ("cnn", "C"): dict(tags=("wire", "polauto")),
-    # image models with known weights (no columns, so no planning rule): compact encoding.  No stand-in:
+    # image models, holding the weights (no columns, so no planning rule): compact encoding.  No stand-in:
     # l40s_improved's defence_{K,Kpre}_*_rate4 cells are the released code without --wire, whose proof is
     # the basic one byte for byte
     ("cnn", "Kpre"): dict(tags=("wire",)),
@@ -424,7 +424,7 @@ OPTIMISED = {
     # non-streaming GPU verifier, and the 2,048-token _gpuv_stream cells of l40s_improved send the basic proof
     ("llm", "C", "short", "gpu"): dict(tags=("wire", "gpuv", "stream", "prune", "polauto")),
     ("llm", "C", "long", "gpu"): dict(tags=("wire", "gpuv", "stream", "prune", "polauto")),
-    # known weights: compact encoding + embedding look-ups + pruning
+    # holding the weights: compact encoding + embedding look-ups + pruning
     ("llm", "Kpre", "short", "cpu"): dict(tags=("wire", "prune", "lookups")),
     ("llm", "Kpre", "long", "cpu"): dict(tags=("wire", "prune", "lookups")),
     ("llm", "Kpre", "short", "gpu"): dict(tags=("wire", "gpuv", "stream", "prune", "lookups")),
@@ -701,7 +701,7 @@ LAM = DEFAULT["lam"]
 
 # ------------------------------------------------------------------------------------- the palette
 OURS = "#1f5f99"        # ours, committed weights (C)
-OURS_K = "#7fb2e5"      # ours, known weights (Kpre)
+OURS_K = "#7fb2e5"      # ours, holding the weights (Kpre)
 ANCH = "#e67e22"        # Anchuri et al., the path protocol
 ANCH_LIGHT = "#f5cba7"
 ATTACK = "#c0392b"      # tampered values only
@@ -1140,7 +1140,7 @@ def fig_cost(M=None):
     row1 = [mk("o", color="0.3", label="CNN"), mk("s", color="0.3", label="LLM, 64 tokens"),
             mk("s", color="0.3", fillstyle="top", mfcalt="white", label="LLM, 2,048 tokens"),
             Patch(fc=OURS, ec=OURS, label=f"committed ({SF_C})"),
-            Patch(fc=OURS_K, ec=OURS_K, label=f"known weights ({KPRE})")]
+            Patch(fc=OURS_K, ec=OURS_K, label=f"holding the weights ({KPRE})")]
     row2 = [mk(FAM_STYLE[f][0], mfc="none", color=THEM, label=FAM_STYLE[f][1], ms=6 if f == "known" else 4)
             for f in ("sumcheck", "known")]
     row2 += [mk("X", color=ANCH, label="Anchuri et al., one path", ms=5),

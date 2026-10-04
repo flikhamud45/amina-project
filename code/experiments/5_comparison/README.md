@@ -76,7 +76,7 @@ written by `bench.py`'s options (see [`4_defence_benchmark`](../4_defence_benchm
 | Setting | Tags | `bench.py` options |
 |---|---|---|
 | image models, committed weights (C), interactive and Fiat–Shamir | `_wire_polauto` | `--policy auto --wire --tag _wire` |
-| image models, known weights (K, Kpre) | `_wire` | `--wire --tag _wire` |
+| image models, holding the weights (K, Kpre) | `_wire` | `--wire --tag _wire` |
 | language models, C, CPU verifier | `_wire_prune_polauto` | `--policy auto --wire --prune-last --tag _wire` |
 | language models, C, streaming GPU verifier | `_wire_gpuv_stream_prune_polauto` | the same with `--verifier-device cuda --verifier-impl stream --tag _wire_gpuv_stream` |
 | language models, Kpre (CPU and streaming GPU verifier) | `_wire_prune_lookups`, `_wire_gpuv_stream_prune_lookups` | `--lookups --wire --prune-last --tag _wire` (and the GPU options) |

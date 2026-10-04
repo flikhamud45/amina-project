@@ -213,7 +213,7 @@ def test_a_missing_optimised_cell_is_pending_with_the_basic_value():
     assert p and v == pa.basic_cnn("resnet18_224", "prove")
     v, p = pa.opt_llm("llama2-7b", 64, "bytes", where=("t", "l64", "c"))
     assert not p and v < 0.5 * pa.basic_llm("llama2-7b", 64, "bytes")
-    # no stand-in for the known-weights image models (the released code's Kpre cells send the basic proof)
+    # no stand-in for the image models when holding the weights (the released code's Kpre cells send the basic proof)
     # or for the GPU verifier at 64 tokens (GPT-2's stored GPU run is not the streaming one)
     v, p = pa.opt_cnn("resnet18_cifar", "bytes", "Kpre", where=("t", "kpre", "c"))
     assert p and v == pa.basic_cnn("resnet18_cifar", "bytes", "Kpre")
