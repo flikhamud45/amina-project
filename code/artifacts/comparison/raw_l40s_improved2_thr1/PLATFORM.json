@@ -1,0 +1,11 @@
+{
+ "gpu": "NVIDIA L40S",
+ "cpu": "AMD EPYC 9334 32-Core Processor",
+ "platform": "l40s_improved2_thr1",
+ "host": "n-805",
+ "torch": "2.5.1+cu121",
+ "cuda": "12.1",
+ "gpu_total_memory": 47665709056,
+ "driver": "580.173.02",
+ "created": 1790963449.7983649
+}

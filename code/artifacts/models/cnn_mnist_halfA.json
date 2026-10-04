@@ -1,0 +1,7 @@
+{
+  "train_accuracy": 0.9836333333333334,
+  "test_accuracy": 0.9777,
+  "final_loss": 0.05607386442919572,
+  "epochs": 4,
+  "seed": 0
+}

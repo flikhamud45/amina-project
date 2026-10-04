@@ -11,14 +11,11 @@ import numpy as np
 import pytest
 
 from pvi.commitments.merkle import MerkleOpening
-from pvi.nn.models import mlp_architecture
 from pvi.protocol import (
     ModelCommitment,
     ProtocolParams,
-    Prover,
     Round2,
     UniformPathSampler,
-    Verifier,
     challenge_rng,
     run_protocol,
     sample_challenge,
@@ -48,17 +45,6 @@ def test_honest_prover_is_always_accepted_cnn(cnn_net, query_for, protocol_pair)
             assert run_protocol(prover, verifier, query).accepted
 
 
-def test_honest_residuals_are_far_below_the_tolerance(mlp_net, query_for, protocol_pair):
-    """The default 1e-4 tolerance must be comfortably above float32 noise."""
-    params = ProtocolParams(n_paths=4)
-    prover, verifier = protocol_pair(mlp_net, params)
-    worst = 0.0
-    for seed in range(50):
-        result = run_protocol(prover, verifier, query_for(mlp_net, seed=seed))
-        worst = max(worst, result.max_residual)
-    assert worst < params.abs_tolerance / 100, f"worst honest residual {worst:.3e}"
-
-
 def test_verifier_arithmetic_stays_in_the_provers_precision(mlp_net, query_for):
     """Regression test for a precision bug that cost us a wrong result.
 
@@ -86,19 +72,13 @@ def test_zero_tolerance_completeness_is_not_degenerate(mlp_net, query_for, proto
     collapses to zero, the verifier has stopped matching the prover's arithmetic --
     which is a bug in us, not a finding about the protocol.
     """
-    params = ProtocolParams(n_paths=1, abs_tolerance=0.0, rel_tolerance=0.0)
+    params = ProtocolParams(n_paths=1, abs_tolerance=0.0)
     prover, verifier = protocol_pair(mlp_net, params)
     accepted = sum(
         run_protocol(prover, verifier, query_for(mlp_net, seed=seed)).accepted
         for seed in range(200)
     )
     assert accepted > 0, "no honest run passed exact equality: verifier arithmetic drifted"
-
-
-def test_full_input_check_accepts_honest_traces(mlp_net, query_for, protocol_pair):
-    prover, verifier = protocol_pair(mlp_net, ProtocolParams(check_full_input=True))
-    for seed in range(20):
-        assert run_protocol(prover, verifier, query_for(mlp_net, seed=seed)).accepted
 
 
 # --------------------------------------------------------------------------- #
@@ -359,8 +339,7 @@ def test_wrong_number_of_layer_openings_is_rejected(mlp_net, query_for, protocol
 def test_input_layer_tampering_is_caught_by_the_full_input_check(
     mlp_net, query_for, protocol_pair
 ):
-    params = ProtocolParams(check_full_input=True)
-    prover, verifier = protocol_pair(mlp_net, params)
+    prover, verifier = protocol_pair(mlp_net)
     query = query_for(mlp_net)
     honest = mlp_net.eval_trace(query)
     forged = mlp_net.forward_from(honest.tampered(0, 0, 5.0), 0)
@@ -368,32 +347,6 @@ def test_input_layer_tampering_is_caught_by_the_full_input_check(
     result = run_protocol(prover, verifier, query, trace=forged)
     assert not result.accepted
     assert result.failures[0].kind == "input_anchor"
-
-
-# --------------------------------------------------------------------------- #
-# Cost accounting
-# --------------------------------------------------------------------------- #
-
-
-def test_weight_rows_opened_is_bounded_by_paths_times_depth(
-    mlp_net, query_for, protocol_pair
-):
-    params = ProtocolParams(n_paths=5)
-    prover, verifier = protocol_pair(mlp_net, params)
-    result = run_protocol(prover, verifier, query_for(mlp_net))
-    architecture = mlp_net.architecture
-    parameterised_depth = len(architecture.parameterised_layers())
-    assert result.n_weight_rows_opened <= params.n_paths * parameterised_depth
-    assert result.proof_size_bytes > 0
-
-
-def test_proof_size_grows_with_the_number_of_paths(mlp_net, query_for, protocol_pair):
-    query = query_for(mlp_net)
-    sizes = []
-    for n_paths in (1, 4, 16):
-        prover, verifier = protocol_pair(mlp_net, ProtocolParams(n_paths=n_paths))
-        sizes.append(run_protocol(prover, verifier, query).proof_size_bytes)
-    assert sizes[0] < sizes[1] < sizes[2]
 
 
 def test_verifier_never_receives_the_model(mlp_net, protocol_pair):

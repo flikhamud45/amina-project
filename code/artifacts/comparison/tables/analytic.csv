@@ -1,0 +1,2 @@
+model,params,seq,lam,anchuri_width,anchuri_paths,anchuri_open_all_bytes
+llama2-7b,6738149376,64,40,11008,305193,13678673920

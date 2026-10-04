@@ -72,10 +72,6 @@ class Verifier:
         )
 
     @property
-    def params(self) -> ProtocolParams:
-        return self._params
-
-    @property
     def sampler(self) -> PathSampler:
         return self._sampler
 
@@ -105,7 +101,6 @@ class Verifier:
                         ),
                     ),
                 ),
-                proof_size_bytes=round2.size_bytes,
             )
 
         activations: list[np.ndarray] = []
@@ -118,14 +113,8 @@ class Verifier:
                 opening,
             )
             if values is None:
-                failures.append(
-                    CheckFailure(
-                        kind="opening",
-                        detail="invalid trace opening",
-                        layer=layer_index,
-                    )
-                )
-                return self._reject(failures, (), round2)
+                failures.append(CheckFailure(kind="opening", detail="invalid trace opening"))
+                return self._reject(failures, ())
             activations.append(values)
 
         trace = Trace(tuple(np.ascontiguousarray(a, dtype=np.float32) for a in activations))
@@ -138,54 +127,31 @@ class Verifier:
                 CheckFailure(
                     kind="output",
                     detail="claimed output does not match the committed trace",
-                    layer=len(architecture) - 1,
                 )
             )
-            return self._reject(failures, (), round2)
+            return self._reject(failures, ())
 
         # -- 3. derive the paths -------------------------------------------- #
         # Done after the trace is authenticated so that adaptive samplers, which
         # read the claimed activations, operate on values the prover is bound to.
         rng = challenge_rng(challenge)
         paths = self._sampler.sample_many(
-            architecture, rng, self._params.n_paths, trace=trace, network=None
+            architecture, rng, self._params.n_paths, trace=trace
         )
 
-        # -- 4. optional strengthening: the whole input layer is the query --- #
+        # -- 4. the whole input layer must be the query ---------------------- #
         query_flat = np.ascontiguousarray(query, dtype=np.float32).ravel()
-        if self._params.check_full_input:
-            if query_flat.shape != trace[0].shape or not np.array_equal(
-                query_flat, trace[0]
-            ):
-                failures.append(
-                    CheckFailure(
-                        kind="input_anchor",
-                        detail="committed input layer differs from the query",
-                        layer=0,
-                    )
+        if query_flat.shape != trace[0].shape or not np.array_equal(query_flat, trace[0]):
+            failures.append(
+                CheckFailure(
+                    kind="input_anchor",
+                    detail="committed input layer differs from the query",
                 )
-                return self._reject(failures, paths, round2)
+            )
+            return self._reject(failures, paths)
 
         # -- 5. local consistency along each path --------------------------- #
-        checked: list[tuple[int, int]] = []
-        residuals: list[float] = []
-
         for path in paths:
-            if self._params.check_input_anchor:
-                anchor = path[0]
-                if not np.array_equal(trace[0][anchor], query_flat[anchor]):
-                    failures.append(
-                        CheckFailure(
-                            kind="input_anchor",
-                            detail="path endpoint does not match the query",
-                            layer=0,
-                            neuron=anchor,
-                            claimed=float(trace[0][anchor]),
-                            recomputed=float(query_flat[anchor]),
-                        )
-                    )
-                    continue
-
             for layer_index in path.checked_layers:
                 layer = architecture[layer_index]
                 neuron = path[layer_index]
@@ -199,12 +165,7 @@ class Verifier:
                     opening = round2.weight_openings.get((layer_index, group))
                     if opening is None:
                         failures.append(
-                            CheckFailure(
-                                kind="opening",
-                                detail="missing weight-row opening",
-                                layer=layer_index,
-                                neuron=neuron,
-                            )
+                            CheckFailure(kind="opening", detail="missing weight-row opening")
                         )
                         continue
                     full_row = ModelCommitment.verify_row(
@@ -217,53 +178,23 @@ class Verifier:
                     )
                     if full_row is None:
                         failures.append(
-                            CheckFailure(
-                                kind="opening",
-                                detail="invalid weight-row opening",
-                                layer=layer_index,
-                                neuron=neuron,
-                            )
+                            CheckFailure(kind="opening", detail="invalid weight-row opening")
                         )
                         continue
                     weights, bias = layer.split_row(full_row, weight_idx)
 
                 claimed = float(trace[layer_index][neuron])
                 recomputed = layer.local_value(neuron, parent_values, weights, bias)
-                checked.append((layer_index, neuron))
-                residuals.append(abs(claimed - recomputed))
 
                 if not self._params.within_tolerance(claimed, recomputed):
                     failures.append(
-                        CheckFailure(
-                            kind="local",
-                            detail="local consistency check failed",
-                            layer=layer_index,
-                            neuron=neuron,
-                            claimed=claimed,
-                            recomputed=recomputed,
-                        )
+                        CheckFailure(kind="local", detail="local consistency check failed")
                     )
 
-        return VerificationResult(
-            accepted=not failures,
-            paths=paths,
-            checked_nodes=tuple(checked),
-            residuals=tuple(residuals),
-            failures=tuple(failures),
-            proof_size_bytes=round1.size_bytes + round2.size_bytes,
-            n_weight_rows_opened=round2.n_weight_rows,
-        )
+        return VerificationResult(accepted=not failures, paths=paths, failures=tuple(failures))
 
     # -- helpers ------------------------------------------------------------ #
 
     @staticmethod
-    def _reject(
-        failures: list[CheckFailure], paths: tuple[Path, ...], round2: Round2
-    ) -> VerificationResult:
-        return VerificationResult(
-            accepted=False,
-            paths=paths,
-            failures=tuple(failures),
-            proof_size_bytes=round2.size_bytes,
-            n_weight_rows_opened=round2.n_weight_rows,
-        )
+    def _reject(failures: list[CheckFailure], paths: tuple[Path, ...]) -> VerificationResult:
+        return VerificationResult(accepted=False, paths=paths, failures=tuple(failures))

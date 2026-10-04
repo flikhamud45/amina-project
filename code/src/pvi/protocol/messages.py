@@ -12,7 +12,7 @@ and cannot see, is worth the small amount of ceremony.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -30,10 +30,6 @@ class Round1:
     trace_digest: bytes
     trace_params: MerkleParams
 
-    @property
-    def size_bytes(self) -> int:
-        return self.claimed_output.nbytes + len(self.trace_digest)
-
 
 @dataclass(frozen=True)
 class Round2:
@@ -46,17 +42,6 @@ class Round2:
     layer_openings: tuple[MerkleOpening, ...]
     weight_openings: dict[tuple[int, int], MerkleOpening]
 
-    @property
-    def size_bytes(self) -> int:
-        return sum(o.size_bytes for o in self.layer_openings) + sum(
-            o.size_bytes for o in self.weight_openings.values()
-        )
-
-    @property
-    def n_weight_rows(self) -> int:
-        """The verifier's real budget: how many weight rows it got to see."""
-        return len(self.weight_openings)
-
 
 @dataclass(frozen=True)
 class CheckFailure:
@@ -64,52 +49,12 @@ class CheckFailure:
 
     kind: str
     detail: str
-    layer: int | None = None
-    neuron: int | None = None
-    claimed: float | None = None
-    recomputed: float | None = None
-
-    def __str__(self) -> str:
-        location = ""
-        if self.layer is not None:
-            location = f" at layer {self.layer}"
-            if self.neuron is not None:
-                location += f", neuron {self.neuron}"
-        return f"[{self.kind}]{location}: {self.detail}"
 
 
 @dataclass(frozen=True)
 class VerificationResult:
-    """Outcome of one protocol execution.
-
-    Carries more than a boolean on purpose: the experiments need the residuals of
-    the individual local checks (to justify the tolerance), the identity of the
-    checked nodes (to compare empirical detection against the analytic
-    probability), and the proof size (for the cost comparison).
-    """
+    """Outcome of one protocol execution: the verdict, the sampled paths and why it rejected."""
 
     accepted: bool
     paths: tuple[Path, ...]
-    checked_nodes: tuple[tuple[int, int], ...] = ()
-    residuals: tuple[float, ...] = ()
     failures: tuple[CheckFailure, ...] = ()
-    proof_size_bytes: int = 0
-    n_weight_rows_opened: int = 0
-    metadata: dict[str, object] = field(default_factory=dict)
-
-    @property
-    def max_residual(self) -> float:
-        """Largest local-check residual seen, or 0.0 if nothing was checked."""
-        return max(self.residuals, default=0.0)
-
-    def __bool__(self) -> bool:
-        return self.accepted
-
-    def __str__(self) -> str:
-        verdict = "ACCEPT" if self.accepted else "REJECT"
-        if self.accepted:
-            return (
-                f"{verdict} ({len(self.checked_nodes)} nodes checked, "
-                f"max residual {self.max_residual:.3e})"
-            )
-        return f"{verdict}: " + "; ".join(str(f) for f in self.failures[:3])

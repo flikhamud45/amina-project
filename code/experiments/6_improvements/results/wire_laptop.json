@@ -1,0 +1,1302 @@
+{
+ "lenet5": {
+  "spec": "lenet5",
+  "codec": {
+   "claims": 6518,
+   "bytes": 13413,
+   "bits_per_claim": 16.462718625345197,
+   "bits_per_claim_uncentred": 16.358392144829704,
+   "threads1": {
+    "encode_s": 0.002570200012996793,
+    "decode_s": 0.0005552999791689217,
+    "int32_parse_s": 6.849999772384763e-05,
+    "encode_Mclaims_per_s": 2.53598940434218,
+    "decode_Mclaims_per_s": 11.737799828040748,
+    "int32_parse_Mclaims_per_s": 95.15328783333405
+   },
+   "threads4": {
+    "encode_s": 0.0026277999859303236,
+    "decode_s": 0.0005730999982915819,
+    "int32_parse_s": 7.830001413822174e-05,
+    "encode_Mclaims_per_s": 2.4804018703472304,
+    "decode_Mclaims_per_s": 11.373233326522836,
+    "int32_parse_Mclaims_per_s": 83.2439185578419
+   }
+  },
+  "ops": 5,
+  "Kpre_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 26072,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 5.00003807246685e-07,
+     "prove_fold": 0.0,
+     "prove_forward": 0.0008209999650716782,
+     "verify_derive": 0.0003449000068940222,
+     "verify_fold": 0.0,
+     "verify_products": 0.0012848000042140484
+    },
+    "verify": 0.0016297000111080706,
+    "prove": 0.0008209999650716782
+   },
+   "wire": {
+    "bytes": {
+     "claims": 13577,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 5.00003807246685e-07,
+     "prove_encode": 0.0025056999875232577,
+     "prove_fold": 0.0,
+     "prove_forward": 0.0008184000034816563,
+     "verify_decode": 0.0005701000336557627,
+     "verify_derive": 0.0003735999925993383,
+     "verify_fold": 0.0,
+     "verify_products": 0.001325799967162311
+    },
+    "verify": 0.002269499993417412,
+    "prove": 0.003324099991004914
+   }
+  },
+  "Kpre_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 26072,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 4.00003045797348e-07,
+     "prove_fold": 0.0,
+     "prove_forward": 0.0007274000090546906,
+     "verify_derive": 0.0003282999969087541,
+     "verify_fold": 0.0,
+     "verify_products": 0.001248000015038997
+    },
+    "verify": 0.001576300011947751,
+    "prove": 0.0007274000090546906
+   },
+   "wire": {
+    "bytes": {
+     "claims": 13577,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 7.00005330145359e-07,
+     "prove_encode": 0.0027728999848477542,
+     "prove_fold": 0.0,
+     "prove_forward": 0.0007779999868944287,
+     "verify_decode": 0.0006213000160641968,
+     "verify_derive": 0.0003768999595195055,
+     "verify_fold": 0.0,
+     "verify_products": 0.0013384000048972666
+    },
+    "verify": 0.002336599980480969,
+    "prove": 0.003550899971742183
+   }
+  },
+  "C_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 26072,
+     "columns": 62304,
+     "paths": 26784,
+     "u": 15680
+    },
+    "timings": {
+     "fs_hash": 5.00003807246685e-07,
+     "prove_fold": 0.000888100010342896,
+     "prove_forward": 0.0008937999955378473,
+     "prove_open": 0.002000400039833039,
+     "verify_columns": 0.0032779000466689467,
+     "verify_derive": 0.00033740000799298286,
+     "verify_fold": 0.0,
+     "verify_products": 0.0011670999811030924
+    },
+    "verify": 0.004782400035765022,
+    "prove": 0.0037823000457137823
+   },
+   "wire": {
+    "bytes": {
+     "claims": 13577,
+     "columns": 60388,
+     "paths": 26784,
+     "u": 15252
+    },
+    "timings": {
+     "fs_hash": 5.999463610351086e-07,
+     "prove_encode": 0.0033990000374615192,
+     "prove_fold": 0.0009209000272676349,
+     "prove_forward": 0.000768299971241504,
+     "prove_open": 0.001980800007004291,
+     "verify_columns": 0.00293220003368333,
+     "verify_decode": 0.0008456999203190207,
+     "verify_derive": 0.00033710000570863485,
+     "verify_fold": 0.0,
+     "verify_products": 0.0010846999939531088
+    },
+    "verify": 0.005199699953664094,
+    "prove": 0.007069000042974949
+   }
+  },
+  "C_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 26072,
+     "columns": 62304,
+     "paths": 26784,
+     "u": 15680
+    },
+    "timings": {
+     "fs_hash": 5.00003807246685e-07,
+     "prove_fold": 0.0009395999950356781,
+     "prove_forward": 0.0007356000132858753,
+     "prove_open": 0.002113100024871528,
+     "verify_columns": 0.003862000012304634,
+     "verify_derive": 0.0002995000104419887,
+     "verify_fold": 0.0,
+     "verify_products": 0.0010380000458098948
+    },
+    "verify": 0.005199500068556517,
+    "prove": 0.0037883000331930816
+   },
+   "wire": {
+    "bytes": {
+     "claims": 13577,
+     "columns": 60388,
+     "paths": 26784,
+     "u": 15252
+    },
+    "timings": {
+     "fs_hash": 5.00003807246685e-07,
+     "prove_encode": 0.003316699992865324,
+     "prove_fold": 0.0009391999919898808,
+     "prove_forward": 0.0007029999978840351,
+     "prove_open": 0.0017590000061318278,
+     "verify_columns": 0.002927199995610863,
+     "verify_decode": 0.000825399998575449,
+     "verify_derive": 0.00033160002203658223,
+     "verify_fold": 0.0,
+     "verify_products": 0.0010497999610379338
+    },
+    "verify": 0.005133999977260828,
+    "prove": 0.006717899988871068
+   }
+  },
+  "git": "9dc0c86",
+  "seconds": 2.2366538000060245
+ },
+ "mlp_mnist": {
+  "spec": "mlp_mnist",
+  "codec": {
+   "claims": 778,
+   "bytes": 1871,
+   "bits_per_claim": 19.239074550128535,
+   "bits_per_claim_uncentred": 19.239074550128535,
+   "threads1": {
+    "encode_s": 0.0009104999480769038,
+    "decode_s": 0.00032619998091831803,
+    "int32_parse_s": 4.1899969801306725e-05,
+    "encode_Mclaims_per_s": 0.8544756116057325,
+    "decode_Mclaims_per_s": 2.3850399923684074,
+    "int32_parse_Mclaims_per_s": 18.5680324756639
+   },
+   "threads4": {
+    "encode_s": 0.0011366999824531376,
+    "decode_s": 0.0004112999886274338,
+    "int32_parse_s": 4.870002157986164e-05,
+    "encode_Mclaims_per_s": 0.6844374170931021,
+    "decode_Mclaims_per_s": 1.891563388066934,
+    "int32_parse_Mclaims_per_s": 15.975352263944732
+   }
+  },
+  "ops": 3,
+  "Kpre_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 3112,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 4.00003045797348e-07,
+     "prove_fold": 0.0,
+     "prove_forward": 0.0007462999783456326,
+     "verify_derive": 0.00014110002666711807,
+     "verify_fold": 0.0,
+     "verify_products": 0.0005982000147923827
+    },
+    "verify": 0.0007393000414595008,
+    "prove": 0.0007462999783456326
+   },
+   "wire": {
+    "bytes": {
+     "claims": 1871,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 5.00003807246685e-07,
+     "prove_encode": 0.0012615000014193356,
+     "prove_fold": 0.0,
+     "prove_forward": 0.0007025000522844493,
+     "verify_decode": 0.0004288000054657459,
+     "verify_derive": 0.000152299995534122,
+     "verify_fold": 0.0,
+     "verify_products": 0.0006272000027820468
+    },
+    "verify": 0.0012083000037819147,
+    "prove": 0.001964000053703785
+   }
+  },
+  "Kpre_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 3112,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 4.00003045797348e-07,
+     "prove_fold": 0.0,
+     "prove_forward": 0.0005046000005677342,
+     "verify_derive": 0.00014410004951059818,
+     "verify_fold": 0.0,
+     "verify_products": 0.000616899982560426
+    },
+    "verify": 0.0007610000320710242,
+    "prove": 0.0005046000005677342
+   },
+   "wire": {
+    "bytes": {
+     "claims": 1871,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 5.00003807246685e-07,
+     "prove_encode": 0.0011706000077538192,
+     "prove_fold": 0.0,
+     "prove_forward": 0.0004935999750159681,
+     "verify_decode": 0.00042289996054023504,
+     "verify_derive": 0.00015590002294629812,
+     "verify_fold": 0.0,
+     "verify_products": 0.0006283000111579895
+    },
+    "verify": 0.0012070999946445227,
+    "prove": 0.0016641999827697873
+   }
+  },
+  "C_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 3112,
+     "columns": 205392,
+     "paths": 30368,
+     "u": 31100
+    },
+    "timings": {
+     "fs_hash": 7.00005330145359e-07,
+     "prove_fold": 0.0013340999721549451,
+     "prove_forward": 0.0007362000178545713,
+     "prove_open": 0.003907500009518117,
+     "verify_columns": 0.0030991999665275216,
+     "verify_derive": 0.00013800000306218863,
+     "verify_fold": 0.0,
+     "verify_products": 0.0006087999790906906
+    },
+    "verify": 0.003845999948680401,
+    "prove": 0.005977799999527633
+   },
+   "wire": {
+    "bytes": {
+     "claims": 1871,
+     "columns": 199020,
+     "paths": 30368,
+     "u": 30132
+    },
+    "timings": {
+     "fs_hash": 7.999478839337826e-07,
+     "prove_encode": 0.0022412999533116817,
+     "prove_fold": 0.0015963000478222966,
+     "prove_forward": 0.0007651000050827861,
+     "prove_open": 0.004336199956014752,
+     "verify_columns": 0.0028942999779246747,
+     "verify_decode": 0.0008011999307200313,
+     "verify_derive": 0.00014720001490786672,
+     "verify_fold": 0.0,
+     "verify_products": 0.0006238000351004303
+    },
+    "verify": 0.004466499958653003,
+    "prove": 0.008938899962231517
+   }
+  },
+  "C_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 3112,
+     "columns": 205392,
+     "paths": 30368,
+     "u": 31100
+    },
+    "timings": {
+     "fs_hash": 7.00005330145359e-07,
+     "prove_fold": 0.0014273000415414572,
+     "prove_forward": 0.0005831999587826431,
+     "prove_open": 0.0032444000244140625,
+     "verify_columns": 0.003919599985238165,
+     "verify_derive": 0.0001653000363148749,
+     "verify_fold": 0.0,
+     "verify_products": 0.0007470999844372272
+    },
+    "verify": 0.004832000005990267,
+    "prove": 0.005254900024738163
+   },
+   "wire": {
+    "bytes": {
+     "claims": 1871,
+     "columns": 199020,
+     "paths": 30368,
+     "u": 30132
+    },
+    "timings": {
+     "fs_hash": 1.00000761449337e-06,
+     "prove_encode": 0.002481600036844611,
+     "prove_fold": 0.001476300007198006,
+     "prove_forward": 0.0006034999969415367,
+     "prove_open": 0.0029566999874077737,
+     "verify_columns": 0.003840700024738908,
+     "verify_decode": 0.0009678000351414084,
+     "verify_derive": 0.00017710000975057483,
+     "verify_fold": 0.0,
+     "verify_products": 0.0007501000072807074
+    },
+    "verify": 0.0057357000769115984,
+    "prove": 0.0075181000283919275
+   }
+  },
+  "git": "9dc0c86",
+  "seconds": 1.099392700009048
+ },
+ "vgg16": {
+  "spec": "vgg16",
+  "codec": {
+   "claims": 277514,
+   "bytes": 602346,
+   "bits_per_claim": 17.364053705398646,
+   "bits_per_claim_uncentred": 17.872885692253362,
+   "threads1": {
+    "encode_s": 0.0200429999968037,
+    "decode_s": 0.003922400006558746,
+    "int32_parse_s": 0.000554199970792979,
+    "encode_Mclaims_per_s": 13.845931250025233,
+    "decode_Mclaims_per_s": 70.75107065469145,
+    "int32_parse_Mclaims_per_s": 500.7470491254594
+   },
+   "threads4": {
+    "encode_s": 0.019759399991016835,
+    "decode_s": 0.004203199991025031,
+    "int32_parse_s": 0.0005386000266298652,
+    "encode_Mclaims_per_s": 14.044657232819088,
+    "decode_Mclaims_per_s": 66.02445769712779,
+    "int32_parse_Mclaims_per_s": 515.2506243574923
+   }
+  },
+  "ops": 16,
+  "Kpre_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 1110056,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.400010660290718e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 0.029144199972506613,
+     "verify_derive": 0.0025559000205248594,
+     "verify_fold": 0.0,
+     "verify_products": 0.006430299952626228
+    },
+    "verify": 0.008986199973151088,
+    "prove": 0.029144199972506613
+   },
+   "wire": {
+    "bytes": {
+     "claims": 605216,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.700012944638729e-06,
+     "prove_encode": 0.018768400012049824,
+     "prove_fold": 0.0,
+     "prove_forward": 0.029352899990044534,
+     "verify_decode": 0.002992899972014129,
+     "verify_derive": 0.002565000031609088,
+     "verify_fold": 0.0,
+     "verify_products": 0.0065947999828495085
+    },
+    "verify": 0.012152699986472726,
+    "prove": 0.04812130000209436
+   }
+  },
+  "Kpre_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 1110056,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.400010660290718e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 0.017726799997035414,
+     "verify_derive": 0.0024653999716974795,
+     "verify_fold": 0.0,
+     "verify_products": 0.007590699999127537
+    },
+    "verify": 0.010056099970825016,
+    "prove": 0.017726799997035414
+   },
+   "wire": {
+    "bytes": {
+     "claims": 605216,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.4999532140791416e-06,
+     "prove_encode": 0.020451400021556765,
+     "prove_fold": 0.0,
+     "prove_forward": 0.01849799999035895,
+     "verify_decode": 0.003640200011432171,
+     "verify_derive": 0.0022316999966278672,
+     "verify_fold": 0.0,
+     "verify_products": 0.007190799980890006
+    },
+    "verify": 0.013062699988950044,
+    "prove": 0.038949400011915714
+   }
+  },
+  "C_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 1110056,
+     "columns": 1409144,
+     "paths": 214176,
+     "u": 699740
+    },
+    "timings": {
+     "fs_hash": 1.400010660290718e-06,
+     "prove_fold": 0.029189500026404858,
+     "prove_forward": 0.030413600034080446,
+     "prove_open": 0.08025250001810491,
+     "verify_columns": 0.02384500001790002,
+     "verify_derive": 0.0027239000191912055,
+     "verify_fold": 0.0,
+     "verify_products": 0.007646500016562641
+    },
+    "verify": 0.034215400053653866,
+    "prove": 0.13985560007859021
+   },
+   "wire": {
+    "bytes": {
+     "claims": 605216,
+     "columns": 1365116,
+     "paths": 214176,
+     "u": 677908
+    },
+    "timings": {
+     "fs_hash": 1.700012944638729e-06,
+     "prove_encode": 0.02472209994448349,
+     "prove_fold": 0.029428600042592734,
+     "prove_forward": 0.030799200001638383,
+     "prove_open": 0.08096480002859607,
+     "verify_columns": 0.02391150000039488,
+     "verify_decode": 0.005383900075685233,
+     "verify_derive": 0.002636799996253103,
+     "verify_fold": 0.0,
+     "verify_products": 0.00763480004388839
+    },
+    "verify": 0.03956700011622161,
+    "prove": 0.16591470001731068
+   }
+  },
+  "C_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 1110056,
+     "columns": 1409144,
+     "paths": 214176,
+     "u": 699740
+    },
+    "timings": {
+     "fs_hash": 1.5999539755284786e-06,
+     "prove_fold": 0.022264999977778643,
+     "prove_forward": 0.017789000004995614,
+     "prove_open": 0.05404039996210486,
+     "verify_columns": 0.023691600013989955,
+     "verify_derive": 0.00256910000462085,
+     "verify_fold": 0.0,
+     "verify_products": 0.008103400003165007
+    },
+    "verify": 0.03436410002177581,
+    "prove": 0.09409439994487911
+   },
+   "wire": {
+    "bytes": {
+     "claims": 605216,
+     "columns": 1365116,
+     "paths": 214176,
+     "u": 677908
+    },
+    "timings": {
+     "fs_hash": 1.700012944638729e-06,
+     "prove_encode": 0.02528510004049167,
+     "prove_fold": 0.023842800001148134,
+     "prove_forward": 0.017994599998928607,
+     "prove_open": 0.05456769996089861,
+     "verify_columns": 0.02328490000218153,
+     "verify_decode": 0.006889599957503378,
+     "verify_derive": 0.002630599949043244,
+     "verify_fold": 0.0,
+     "verify_products": 0.009014500014018267
+    },
+    "verify": 0.04181959992274642,
+    "prove": 0.12169020000146702
+   }
+  },
+  "git": "9dc0c86",
+  "seconds": 28.244815799989738
+ },
+ "resnet18_cifar": {
+  "spec": "resnet18_cifar",
+  "codec": {
+   "claims": 614410,
+   "bytes": 1256852,
+   "bits_per_claim": 16.36499405934148,
+   "bits_per_claim_uncentred": 16.706394752689572,
+   "threads1": {
+    "encode_s": 0.03738649998558685,
+    "decode_s": 0.006876299972645938,
+    "int32_parse_s": 0.001894499990157783,
+    "encode_Mclaims_per_s": 16.434006933969904,
+    "decode_Mclaims_per_s": 89.35183200909435,
+    "int32_parse_Mclaims_per_s": 324.31248518973547
+   },
+   "threads4": {
+    "encode_s": 0.038292799959890544,
+    "decode_s": 0.008404800028074533,
+    "int32_parse_s": 0.0021296999766491354,
+    "encode_Mclaims_per_s": 16.045052872695607,
+    "decode_Mclaims_per_s": 73.1022746463554,
+    "int32_parse_Mclaims_per_s": 288.49603546820293
+   }
+  },
+  "ops": 21,
+  "Kpre_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 2457640,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.400010660290718e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 0.041278099990449846,
+     "verify_derive": 0.00445670000044629,
+     "verify_fold": 0.0,
+     "verify_products": 0.01186470000538975
+    },
+    "verify": 0.01632140000583604,
+    "prove": 0.041278099990449846
+   },
+   "wire": {
+    "bytes": {
+     "claims": 1271057,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.600012183189392e-06,
+     "prove_encode": 0.038635000004433095,
+     "prove_fold": 0.0,
+     "prove_forward": 0.041558200027793646,
+     "verify_decode": 0.0075045000412501395,
+     "verify_derive": 0.004307799972593784,
+     "verify_fold": 0.0,
+     "verify_products": 0.011962699994910508
+    },
+    "verify": 0.023775000008754432,
+    "prove": 0.08019320003222674
+   }
+  },
+  "Kpre_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 2457640,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.5999539755284786e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 0.027410299982875586,
+     "verify_derive": 0.004690000030677766,
+     "verify_fold": 0.0,
+     "verify_products": 0.013271200004965067
+    },
+    "verify": 0.017961200035642833,
+    "prove": 0.027410299982875586
+   },
+   "wire": {
+    "bytes": {
+     "claims": 1271057,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.8999562598764896e-06,
+     "prove_encode": 0.04400689998874441,
+     "prove_fold": 0.0,
+     "prove_forward": 0.027174599992576987,
+     "verify_decode": 0.009017800039146096,
+     "verify_derive": 0.003672199964057654,
+     "verify_fold": 0.0,
+     "verify_products": 0.012076899991370738
+    },
+    "verify": 0.024766899994574487,
+    "prove": 0.0711814999813214
+   }
+  },
+  "C_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 2457640,
+     "columns": 1289080,
+     "paths": 252480,
+     "u": 630720
+    },
+    "timings": {
+     "fs_hash": 1.200009137392044e-06,
+     "prove_fold": 0.022799700032919645,
+     "prove_forward": 0.041042700002435595,
+     "prove_open": 0.06492670002626255,
+     "verify_columns": 0.026697800029069185,
+     "verify_derive": 0.004600999993272126,
+     "verify_fold": 0.0,
+     "verify_products": 0.012278400012291968
+    },
+    "verify": 0.04357720003463328,
+    "prove": 0.1287691000616178
+   },
+   "wire": {
+    "bytes": {
+     "claims": 1271057,
+     "columns": 1248804,
+     "paths": 252480,
+     "u": 611072
+    },
+    "timings": {
+     "fs_hash": 1.500011421740055e-06,
+     "prove_encode": 0.04106649995082989,
+     "prove_fold": 0.022916600049939007,
+     "prove_forward": 0.04043759999331087,
+     "prove_open": 0.06601640000008047,
+     "verify_columns": 0.02674739999929443,
+     "verify_decode": 0.007648099970538169,
+     "verify_derive": 0.004251800011843443,
+     "verify_fold": 0.0,
+     "verify_products": 0.011903000005986542
+    },
+    "verify": 0.050550299987662584,
+    "prove": 0.17043709999416023
+   }
+  },
+  "C_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 2457640,
+     "columns": 1289080,
+     "paths": 252480,
+     "u": 630720
+    },
+    "timings": {
+     "fs_hash": 1.300009898841381e-06,
+     "prove_fold": 0.019665699976030737,
+     "prove_forward": 0.02742020000005141,
+     "prove_open": 0.04695990000618622,
+     "verify_columns": 0.03227199998218566,
+     "verify_derive": 0.004809400008525699,
+     "verify_fold": 0.0,
+     "verify_products": 0.013722799951210618
+    },
+    "verify": 0.05080419994192198,
+    "prove": 0.09404579998226836
+   },
+   "wire": {
+    "bytes": {
+     "claims": 1271057,
+     "columns": 1248804,
+     "paths": 252480,
+     "u": 611072
+    },
+    "timings": {
+     "fs_hash": 1.700012944638729e-06,
+     "prove_encode": 0.04637699999148026,
+     "prove_fold": 0.019842699985019863,
+     "prove_forward": 0.025522999989334494,
+     "prove_open": 0.04880450002383441,
+     "verify_columns": 0.02837869996437803,
+     "verify_decode": 0.010647599992807955,
+     "verify_derive": 0.004491099971346557,
+     "verify_fold": 0.0,
+     "verify_products": 0.013174699968658388
+    },
+    "verify": 0.05669209989719093,
+    "prove": 0.14054719998966902
+   }
+  },
+  "git": "9dc0c86",
+  "seconds": 35.55070230003912
+ },
+ "gpt2:64": {
+  "spec": "gpt2:64",
+  "codec": {
+   "claims": 5456977,
+   "bytes": 11733276,
+   "bits_per_claim": 17.201136819891307,
+   "bits_per_claim_uncentred": 17.516926312865163,
+   "threads1": {
+    "encode_s": 0.19310049997875467,
+    "decode_s": 0.03754489996936172,
+    "int32_parse_s": 0.00723170000128448,
+    "encode_Mclaims_per_s": 28.259776647913334,
+    "decode_Mclaims_per_s": 145.345359941114,
+    "int32_parse_Mclaims_per_s": 754.5911748317467
+   },
+   "threads4": {
+    "encode_s": 0.16891369997756556,
+    "decode_s": 0.02362580003682524,
+    "int32_parse_s": 0.006212599982973188,
+    "encode_Mclaims_per_s": 32.30630197979663,
+    "decode_Mclaims_per_s": 230.9753316922296,
+    "int32_parse_Mclaims_per_s": 878.3725034536077
+   }
+  },
+  "ops": 75,
+  "Kpre_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 21827908,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.700012944638729e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 0.3087433999753557,
+     "verify_derive": 0.07491970004048198,
+     "verify_fold": 0.0,
+     "verify_products": 0.02529870002763346
+    },
+    "verify": 0.10021840006811544,
+    "prove": 0.3087433999753557
+   },
+   "wire": {
+    "bytes": {
+     "claims": 11676676,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.600012183189392e-06,
+     "prove_encode": 0.16189420002046973,
+     "prove_fold": 0.0,
+     "prove_forward": 0.30484789999900386,
+     "verify_decode": 0.03309009998338297,
+     "verify_derive": 0.07134229998337105,
+     "verify_fold": 0.0,
+     "verify_products": 0.025418699951842427
+    },
+    "verify": 0.12985109991859645,
+    "prove": 0.4667421000194736
+   }
+  },
+  "Kpre_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 21827908,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.500011421740055e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 0.18040000001201406,
+     "verify_derive": 0.0517585999914445,
+     "verify_fold": 0.0,
+     "verify_products": 0.018335900036618114
+    },
+    "verify": 0.07009450002806261,
+    "prove": 0.18040000001201406
+   },
+   "wire": {
+    "bytes": {
+     "claims": 11676676,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.500011421740055e-06,
+     "prove_encode": 0.1591051999712363,
+     "prove_fold": 0.0,
+     "prove_forward": 0.17755429999670014,
+     "verify_decode": 0.022441499982960522,
+     "verify_derive": 0.04922599997371435,
+     "verify_fold": 0.0,
+     "verify_products": 0.019020600011572242
+    },
+    "verify": 0.09068809996824712,
+    "prove": 0.3366594999679364
+   }
+  },
+  "C_lam128_exact": {
+   "default": {
+    "claims": 21827908,
+    "u": 2701300,
+    "columns": 36648464,
+    "paths": 893568
+   },
+   "wire": {
+    "claims": 11733276,
+    "u": 2616896,
+    "columns": 35503308,
+    "paths": 893568
+   }
+  },
+  "git": "f3e40a7",
+  "seconds": 29.070804000017233
+ },
+ "gpt2:512": {
+  "spec": "gpt2:512",
+  "codec": {
+   "claims": 43304017,
+   "bytes": 91297251,
+   "bits_per_claim": 16.86628767026394,
+   "bits_per_claim_uncentred": 17.709731824648046,
+   "threads1": {
+    "encode_s": 1.4130809000344016,
+    "decode_s": 0.4200726999551989,
+    "int32_parse_s": 0.1109514000127092,
+    "encode_Mclaims_per_s": 30.64510814557451,
+    "decode_Mclaims_per_s": 103.08695853031728,
+    "int32_parse_Mclaims_per_s": 390.2971661019116
+   },
+   "threads4": {
+    "encode_s": 1.238004799990449,
+    "decode_s": 0.17887250002240762,
+    "int32_parse_s": 0.09684770001331344,
+    "encode_Mclaims_per_s": 34.97887649574063,
+    "decode_Mclaims_per_s": 242.0943241391228,
+    "int32_parse_Mclaims_per_s": 447.1352132683284
+   }
+  },
+  "ops": 75,
+  "Kpre_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 173216068,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.800013706088066e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 3.245490000001155,
+     "verify_derive": 1.6736175999976695,
+     "verify_fold": 0.0,
+     "verify_products": 0.28085829998599365
+    },
+    "verify": 1.9544758999836631,
+    "prove": 3.245490000001155
+   },
+   "wire": {
+    "bytes": {
+     "claims": 91294543,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.9000144675374031e-06,
+     "prove_encode": 1.381574200000614,
+     "prove_fold": 0.0,
+     "prove_forward": 3.199507299985271,
+     "verify_decode": 0.3675150999915786,
+     "verify_derive": 1.74304759997176,
+     "verify_fold": 0.0,
+     "verify_products": 0.27157760004047304
+    },
+    "verify": 2.3821403000038117,
+    "prove": 4.581081499985885
+   }
+  },
+  "Kpre_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 173216068,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.9000144675374031e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 1.6317359000095166,
+     "verify_derive": 0.8815715999808162,
+     "verify_fold": 0.0,
+     "verify_products": 0.14962420001393184
+    },
+    "verify": 1.031195799994748,
+    "prove": 1.6317359000095166
+   },
+   "wire": {
+    "bytes": {
+     "claims": 91294543,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 2.200016751885414e-06,
+     "prove_encode": 1.150345699978061,
+     "prove_fold": 0.0,
+     "prove_forward": 1.3892995999776758,
+     "verify_decode": 0.1608983000041917,
+     "verify_derive": 0.8761955000227317,
+     "verify_fold": 0.0,
+     "verify_products": 0.14238050003768876
+    },
+    "verify": 1.1794743000646122,
+    "prove": 2.539645299955737
+   }
+  },
+  "C_lam128_exact": {
+   "default": {
+    "claims": 173216068,
+    "u": 2701300,
+    "columns": 36648464,
+    "paths": 893568
+   },
+   "wire": {
+    "claims": 91297251,
+    "u": 2616896,
+    "columns": 35503308,
+    "paths": 893568
+   }
+  },
+  "git": "e3b5715",
+  "seconds": 190.53358669998124
+ },
+ "llama2-7b:64:1,2": {
+  "spec": "llama2-7b:64:1,2",
+  "builds": {
+   "1": {
+    "claims": 3013888,
+    "wire_bytes": 6731990
+   },
+   "2": {
+    "claims": 5733632,
+    "wire_bytes": 13142647
+   }
+  },
+  "codec": {
+   "claims": 5733632,
+   "bytes": 13142647,
+   "bits_per_claim": 18.337621947135776,
+   "bits_per_claim_uncentred": 18.470111789525383,
+   "threads1": {
+    "encode_s": 0.18100419995607808,
+    "decode_s": 0.056424800015520304,
+    "int32_parse_s": 0.01571409997995943,
+    "encode_Mclaims_per_s": 31.676789828033304,
+    "decode_Mclaims_per_s": 101.61545984075968,
+    "int32_parse_Mclaims_per_s": 364.8718034957293
+   },
+   "threads4": {
+    "encode_s": 0.16436309996061027,
+    "decode_s": 0.027679799997713417,
+    "int32_parse_s": 0.014351400022860616,
+    "encode_Mclaims_per_s": 34.88393685306537,
+    "decode_Mclaims_per_s": 207.1413810964547,
+    "int32_parse_Mclaims_per_s": 399.5172590037759
+   }
+  },
+  "ops": 16,
+  "Kpre_lam128_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 22934528,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 2.100015990436077e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 1.65758099994855,
+     "verify_derive": 0.13668799999868497,
+     "verify_fold": 0.0,
+     "verify_products": 0.03225029999157414
+    },
+    "verify": 0.1689382999902591,
+    "prove": 1.65758099994855
+   },
+   "wire": {
+    "bytes": {
+     "claims": 13151617,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 2.100015990436077e-06,
+     "prove_encode": 0.19942949997493997,
+     "prove_fold": 0.0,
+     "prove_forward": 1.7226144999731332,
+     "verify_decode": 0.05198349995771423,
+     "verify_derive": 0.11886059999233112,
+     "verify_fold": 0.0,
+     "verify_products": 0.028215400001499802
+    },
+    "verify": 0.19905949995154515,
+    "prove": 1.9220439999480732
+   }
+  },
+  "Kpre_lam128_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 22934528,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 2.100015990436077e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 0.9678165999939665,
+     "verify_derive": 0.07304239994846284,
+     "verify_fold": 0.0,
+     "verify_products": 0.016258199990261346
+    },
+    "verify": 0.08930059993872419,
+    "prove": 0.9678165999939665
+   },
+   "wire": {
+    "bytes": {
+     "claims": 13151617,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 2.100015990436077e-06,
+     "prove_encode": 0.2088352999999188,
+     "prove_fold": 0.0,
+     "prove_forward": 0.9379311999655329,
+     "verify_decode": 0.03186390001792461,
+     "verify_derive": 0.05857390002347529,
+     "verify_fold": 0.0,
+     "verify_products": 0.019763599964790046
+    },
+    "verify": 0.11020140000618994,
+    "prove": 1.1467664999654517
+   }
+  },
+  "C_lam128_exact": {
+   "default": {
+    "claims": 22934528,
+    "u": 2145280,
+    "columns": 33420288,
+    "paths": 262144
+   },
+   "wire": {
+    "claims": 13142647,
+    "u": 2078240,
+    "columns": 32375904,
+    "paths": 262144
+   }
+  },
+  "git": "e3b5715",
+  "seconds": 78.31574150000233
+ },
+ "qwen3-4b:8:1,2,4,8": {
+  "spec": "qwen3-4b:8:1,2,4,8",
+  "builds": {
+   "1": {
+    "claims": 418176,
+    "wire_bytes": 935235
+   },
+   "2": {
+    "claims": 663936,
+    "wire_bytes": 1501285
+   },
+   "4": {
+    "claims": 1155456,
+    "wire_bytes": 2633457
+   },
+   "8": {
+    "claims": 2138496,
+    "wire_bytes": 4905934
+   }
+  },
+  "codec": {
+   "claims": 2138496,
+   "bytes": 4905934,
+   "bits_per_claim": 18.352838630514157,
+   "bits_per_claim_uncentred": 18.352838630514157,
+   "threads1": {
+    "encode_s": 0.05493089999072254,
+    "decode_s": 0.013571000017691404,
+    "int32_parse_s": 0.0036641000187955797,
+    "encode_Mclaims_per_s": 38.93065652230671,
+    "decode_Mclaims_per_s": 157.5783654271769,
+    "int32_parse_Mclaims_per_s": 583.6347231326239
+   },
+   "threads4": {
+    "encode_s": 0.06201579998014495,
+    "decode_s": 0.012025000003632158,
+    "int32_parse_s": 0.004294799990020692,
+    "encode_Mclaims_per_s": 34.48308335431718,
+    "decode_Mclaims_per_s": 177.8375051437893,
+    "int32_parse_Mclaims_per_s": 497.92679635116065
+   }
+  },
+  "ops": 58,
+  "Kpre_lam40_threads1": {
+   "default": {
+    "bytes": {
+     "claims": 8553984,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.600012183189392e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 1.926892300019972,
+     "verify_derive": 0.04443279997212812,
+     "verify_fold": 0.0,
+     "verify_products": 0.012165799969807267
+    },
+    "verify": 0.05659859994193539,
+    "prove": 1.926892300019972
+   },
+   "wire": {
+    "bytes": {
+     "claims": 4906719,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.600012183189392e-06,
+     "prove_encode": 0.0520389000303112,
+     "prove_fold": 0.0,
+     "prove_forward": 1.93622360000154,
+     "verify_decode": 0.012400900013744831,
+     "verify_derive": 0.04119330004323274,
+     "verify_fold": 0.0,
+     "verify_products": 0.041161200031638145
+    },
+    "verify": 0.09475540008861572,
+    "prove": 1.9882625000318512
+   }
+  },
+  "Kpre_lam40_threads4": {
+   "default": {
+    "bytes": {
+     "claims": 8553984,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.9000144675374031e-06,
+     "prove_fold": 0.0,
+     "prove_forward": 0.9271963999490254,
+     "verify_derive": 0.04799619998084381,
+     "verify_fold": 0.0,
+     "verify_products": 0.013876400014851242
+    },
+    "verify": 0.061872599995695055,
+    "prove": 0.9271963999490254
+   },
+   "wire": {
+    "bytes": {
+     "claims": 4906719,
+     "columns": 0,
+     "paths": 0,
+     "u": 0
+    },
+    "timings": {
+     "fs_hash": 1.800013706088066e-06,
+     "prove_encode": 0.06227630004286766,
+     "prove_fold": 0.0,
+     "prove_forward": 0.8933936999528669,
+     "verify_decode": 0.012053499987814575,
+     "verify_derive": 0.0510581000125967,
+     "verify_fold": 0.0,
+     "verify_products": 0.012438199948519468
+    },
+    "verify": 0.07554979994893074,
+    "prove": 0.9556699999957345
+   }
+  },
+  "C_lam128_exact": {
+   "default": {
+    "claims": 8553984,
+    "u": 7349760,
+    "columns": 110470656,
+    "paths": 949312
+   },
+   "wire": {
+    "claims": 4905934,
+    "u": 7120080,
+    "columns": 107018448,
+    "paths": 949312
+   }
+  },
+  "git": "f3e40a7",
+  "seconds": 161.4791603999911
+ }
+}

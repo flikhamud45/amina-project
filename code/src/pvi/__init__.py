@@ -6,7 +6,7 @@ protocol of Anchuri, Campanelli, Cesaretti, Gennaro, Jois, Kayman and Ozdemir,
 (SaTML 2026 / ePrint 2026/541), together with the attack and defence study built
 on top of it.
 
-The package is organised in three layers, mirroring the structure of the paper:
+Sub-packages:
 
 ``pvi.commitments``
     Vector commitments (Appendix B of the paper).  We provide the Merkle-tree
@@ -23,9 +23,16 @@ The package is organised in three layers, mirroring the structure of the paper:
     ``RandPathTest`` (Figure 3), the cryptographic protocol compiled from it
     (Figure 4), and the prover / verifier that realise Definition 4.
 
-Nothing in this package requires a GPU.
+``pvi.attacks``, ``pvi.defences``, ``pvi.experiments``
+    Our single-neuron / backdoor attacks, the alternative path samplers, and the
+    exact acceptance probability of any trace under any sampler.
+
+``pvi.fullcheck``
+    Our defence (whole-layer Freivalds checks against a Reed--Solomon/Merkle weight
+    commitment) on integer CNNs and transformers, plus the path test re-implemented
+    on the same graphs as a baseline.  This part uses PyTorch and, optionally, a GPU.
 """
 
-__all__ = ["commitments", "nn", "protocol"]
+__all__ = ["attacks", "commitments", "defences", "experiments", "fullcheck", "nn", "protocol"]
 
 __version__ = "1.0.0"

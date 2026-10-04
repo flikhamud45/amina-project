@@ -3,10 +3,6 @@
 Anchuri et al. test their protocol against four cheating strategies and report that
 all of them fail:
 
-* **RandTestStrawman** (Section 2) -- check one uniformly random node instead of a
-  whole path.  The authors reject this design themselves, on the grounds that
-  "discrepancies in the activations typically manifest only in late layers", which
-  makes a random early-layer check pass even when the output is wrong.
 * **Gradient-descent reconstruction** (Section 7.2) -- optimise activations so that
   a chosen wrong output is backed by a trace consistent with ``M``'s weights.
 * **Inverse transform** (Appendix E) -- back-solve the network layer by layer with a
@@ -40,7 +36,6 @@ value and the support -- so the two objectives can be compared directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 import numpy as np
 import torch
@@ -56,8 +51,6 @@ __all__ = [
     "injection_forge",
     "inverse_transform_forge",
     "logit_swap_target",
-    "strawman_detection_probability",
-    "substitute_model_target",
 ]
 
 
@@ -68,98 +61,28 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ForgeryResult:
-    """Outcome of one forging attempt.
-
-    ``mean_separation`` and ``max_residual`` are the paper's view: how far the
-    forged trace is from satisfying the local relations.  ``n_inconsistent`` is the
-    view that actually predicts detection: how many nodes violate them at all.
-    """
+    """Outcome of one forging attempt: how many nodes it leaves inconsistent, and
+    how likely the verifier is to accept it."""
 
     name: str
-    trace: Trace
-    target_output: np.ndarray
-    achieved_output: np.ndarray
-    mean_separation: float
-    max_residual: float
     n_inconsistent: int
     n_nodes: int
     acceptance_probability: float
-    output_matches_target: bool
-    output_differs_from_honest: bool
-
-    @property
-    def support_fraction(self) -> float:
-        return self.n_inconsistent / self.n_nodes
-
-    def __str__(self) -> str:
-        return (
-            f"{self.name}: acceptance {self.acceptance_probability:.2e}, "
-            f"{self.n_inconsistent}/{self.n_nodes} nodes inconsistent "
-            f"({self.support_fraction:.1%}), mean separation "
-            f"{self.mean_separation:.4f}, target hit={self.output_matches_target}"
-        )
 
 
 def _summarise(
     name: str,
     network: TracedNetwork,
     trace: Trace,
-    target_output: np.ndarray,
-    honest_output: np.ndarray,
     params: ProtocolParams,
 ) -> ForgeryResult:
     report = inconsistent_nodes(network, trace, params)
-    residuals = []
-    architecture = network.architecture
-    for layer_index in range(1, len(architecture)):
-        layer = architecture[layer_index]
-        weight, bias = network.parameters.get(layer.name, (None, None))
-        recomputed = layer.forward_batch(trace[layer_index - 1][None, :], weight, bias)[0]
-        residuals.append(np.abs(trace[layer_index] - recomputed))
-    pooled = np.concatenate(residuals)
-
-    achieved = trace.output
     return ForgeryResult(
         name=name,
-        trace=trace,
-        target_output=np.asarray(target_output, dtype=np.float32),
-        achieved_output=achieved,
-        mean_separation=float(pooled.mean()),
-        max_residual=float(pooled.max()),
         n_inconsistent=report.total,
         n_nodes=int(sum(report.per_layer_widths.values())),
         acceptance_probability=acceptance_probability(network, trace, params),
-        output_matches_target=bool(
-            int(achieved.argmax()) == int(np.asarray(target_output).argmax())
-        ),
-        output_differs_from_honest=bool(
-            int(achieved.argmax()) != int(np.asarray(honest_output).argmax())
-        ),
     )
-
-
-# --------------------------------------------------------------------------- #
-# Section 2: the strawman test
-# --------------------------------------------------------------------------- #
-
-
-def strawman_detection_probability(
-    network: TracedNetwork,
-    trace: Trace,
-    params: ProtocolParams | None = None,
-) -> float:
-    """Detection probability of ``RandTestStrawman``: one uniformly random node.
-
-    The paper discards this design because "discrepancies in the activations
-    typically manifest only in late layers".  The claim is exactly quantifiable:
-    the strawman detects with probability ``(inconsistent nodes) / (total nodes)``,
-    and since late layers are also the *narrowest* layers, that ratio is tiny even
-    when every late-layer node is wrong.
-    """
-    params = params or ProtocolParams()
-    report = inconsistent_nodes(network, trace, params)
-    total = sum(report.per_layer_widths.values())
-    return report.total / total if total else 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -177,13 +100,6 @@ def logit_swap_target(honest_output: np.ndarray) -> np.ndarray:
     hi, lo = int(target.argmax()), int(target.argmin())
     target[hi], target[lo] = target[lo], target[hi]
     return target
-
-
-def substitute_model_target(
-    substitute: TracedNetwork, query: np.ndarray
-) -> np.ndarray:
-    """Strong other-model soundness (Appendix H): the output of a substitute model."""
-    return substitute.eval_trace(query).output
 
 
 # --------------------------------------------------------------------------- #
@@ -231,7 +147,6 @@ def gradient_forge(
     learning_rate: float = 0.01,
     weight_decay: float = 1e-3,
     params: ProtocolParams | None = None,
-    name: str = "gradient reconstruction (Sec. 7.2)",
 ) -> ForgeryResult:
     """Optimise every interior activation to make a wrong output look consistent.
 
@@ -283,7 +198,7 @@ def gradient_forge(
                 + [np.ascontiguousarray(target_output, dtype=np.float32)]
             )
         )
-    return _summarise(name, network, forged, target_output, honest.output, protocol)
+    return _summarise("gradient reconstruction (Sec. 7.2)", network, forged, protocol)
 
 
 # --------------------------------------------------------------------------- #
@@ -301,7 +216,6 @@ def injection_forge(
     learning_rate: float = 0.01,
     weight_decay: float = 1e-3,
     params: ProtocolParams | None = None,
-    name: str | None = None,
 ) -> ForgeryResult:
     """Appendix F's structure: optimise one layer's activations, propagate honestly.
 
@@ -347,8 +261,8 @@ def injection_forge(
     forged = network.forward_from(
         honest.replace_layer(injection_layer, values), injection_layer
     )
-    label = name or f"logit-swap injection at layer {injection_layer} (App. F)"
-    return _summarise(label, network, forged, target_output, honest.output, protocol)
+    label = f"logit-swap injection at layer {injection_layer} (App. F)"
+    return _summarise(label, network, forged, protocol)
 
 
 # --------------------------------------------------------------------------- #
@@ -361,8 +275,6 @@ def inverse_transform_forge(
     query: np.ndarray,
     target_output: np.ndarray,
     *,
-    method: Literal["pinv", "svd", "regularised"] = "pinv",
-    ridge: float = 1e-4,
     params: ProtocolParams | None = None,
 ) -> ForgeryResult:
     """Appendix E: back-solve the network from the target output down to the input.
@@ -378,20 +290,6 @@ def inverse_transform_forge(
     architecture = network.architecture
     honest = network.eval_trace(query)
 
-    def invert(weight: np.ndarray, rhs: np.ndarray) -> np.ndarray:
-        weight = weight.astype(np.float64)
-        if method == "pinv":
-            return np.linalg.pinv(weight) @ rhs
-        if method == "svd":
-            u, s, vt = np.linalg.svd(weight, full_matrices=False)
-            keep = s > (s.max() * 1e-10 if s.size else 0.0)
-            inverse = vt.T[:, keep] @ np.diag(1.0 / s[keep]) @ u.T[keep, :]
-            return inverse @ rhs
-        if method == "regularised":
-            gram = weight.T @ weight + ridge * np.eye(weight.shape[1])
-            return np.linalg.solve(gram, weight.T @ rhs)
-        raise ValueError(f"unknown inversion method {method!r}")
-
     activations: list[np.ndarray] = [np.asarray(target_output, dtype=np.float64)]
     for layer_index in range(len(architecture) - 1, 0, -1):
         layer = architecture[layer_index]
@@ -402,7 +300,7 @@ def inverse_transform_forge(
         # standard choice -- and the one the paper's setup implies -- is to take the
         # boundary value, which is the least-norm pre-image.
         pre_activation = above if layer.activation == "identity" else np.maximum(above, 0.0)
-        below = invert(weight, pre_activation - bias.astype(np.float64))
+        below = np.linalg.pinv(weight.astype(np.float64)) @ (pre_activation - bias.astype(np.float64))
         if layer_index > 1:
             below = np.maximum(below, 0.0)  # the layer below is a ReLU output
         activations.insert(0, below)
@@ -410,11 +308,4 @@ def inverse_transform_forge(
     # The input layer is not the adversary's to choose: the verifier anchors it.
     activations[0] = np.asarray(honest[0], dtype=np.float64)
     forged = Trace(tuple(np.ascontiguousarray(a, dtype=np.float32) for a in activations))
-    return _summarise(
-        f"inverse transform, {method} (App. E)",
-        network,
-        forged,
-        target_output,
-        honest.output,
-        protocol,
-    )
+    return _summarise("inverse transform (App. E)", network, forged, protocol)

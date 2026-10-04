@@ -45,12 +45,11 @@ import hashlib
 import hmac
 import struct
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import numpy as np
 
 __all__ = [
-    "HASH_BYTES",
     "MerkleOpening",
     "MerkleParams",
     "MerkleVectorCommitment",
@@ -61,9 +60,6 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 # Primitives
 # --------------------------------------------------------------------------- #
-
-HASH_BYTES = 32
-"""Digest length of SHA-256, in bytes."""
 
 _LEAF_TAG = b"\x00"
 _NODE_TAG = b"\x01"
@@ -134,22 +130,11 @@ def decode_f32_vector(blob: bytes) -> np.ndarray:
 
 @dataclass(frozen=True)
 class MerkleParams:
-    """Public parameters ``pp`` output by ``GenParams(1^lambda, n)``.
+    """Public parameters ``pp``: the length of the committed vector."""
 
-    SHA-256 is a fixed-output hash, so the security parameter is not a free knob:
-    we record the requested ``lambda`` and refuse values the instantiation cannot
-    deliver (collision resistance caps out at 128 bits).
-    """
-
-    security_bits: int
     length: int
 
     def __post_init__(self) -> None:
-        if self.security_bits > 128:
-            raise ValueError(
-                f"SHA-256 provides at most 128 bits of collision resistance, "
-                f"{self.security_bits} requested"
-            )
         if self.length <= 0:
             raise ValueError(f"vector length must be positive, got {self.length}")
 
@@ -166,11 +151,6 @@ class MerkleOpening:
     index: int
     value: bytes
     siblings: tuple[bytes, ...]
-
-    @property
-    def size_bytes(self) -> int:
-        """Wire size of the opening: the value plus the authentication path."""
-        return len(self.value) + len(self.siblings) * HASH_BYTES
 
 
 # --------------------------------------------------------------------------- #
@@ -202,21 +182,10 @@ class MerkleVectorCommitment:
 
     # -- construction ------------------------------------------------------- #
 
-    @staticmethod
-    def gen_params(security_bits: int, length: int) -> MerkleParams:
-        """``GenParams(1^lambda, n)``."""
-        return MerkleParams(security_bits=security_bits, length=length)
-
     @classmethod
-    def commit(
-        cls,
-        values: Sequence[bytes],
-        *,
-        security_bits: int = 128,
-    ) -> "MerkleVectorCommitment":
+    def commit(cls, values: Sequence[bytes]) -> "MerkleVectorCommitment":
         """``CommitVec(pp, v)`` -- build the tree over ``values``."""
-        params = cls.gen_params(security_bits, len(values))
-        return cls(params, values)
+        return cls(MerkleParams(length=len(values)), values)
 
     @staticmethod
     def _build(values: tuple[bytes, ...]) -> list[list[bytes]]:
@@ -244,9 +213,6 @@ class MerkleVectorCommitment:
         """The published commitment ``cm``, binding both the root and the length."""
         return _sha256(_ROOT_TAG, _u64(self._params.length), self._levels[-1][0])
 
-    def __len__(self) -> int:
-        return self._params.length
-
     # -- opening ------------------------------------------------------------ #
 
     def open(self, index: int) -> MerkleOpening:
@@ -263,10 +229,6 @@ class MerkleVectorCommitment:
         return MerkleOpening(
             index=index, value=self._values[index], siblings=tuple(siblings)
         )
-
-    def open_many(self, indices: Iterable[int]) -> tuple[MerkleOpening, ...]:
-        """Open several positions.  Duplicate indices are opened once each."""
-        return tuple(self.open(i) for i in indices)
 
     # -- verification ------------------------------------------------------- #
 

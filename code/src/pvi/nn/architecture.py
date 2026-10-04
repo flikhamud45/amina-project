@@ -211,15 +211,6 @@ class Layer(abc.ABC):
         exactly the same code path.
         """
 
-    def forward(
-        self,
-        inputs: np.ndarray,
-        weight: np.ndarray | None,
-        bias: np.ndarray | None,
-    ) -> np.ndarray:
-        """Single-sample convenience wrapper around :meth:`forward_batch`."""
-        return self.forward_batch(inputs[None, :], weight, bias)[0]
-
 
 @dataclass(frozen=True)
 class InputLayer(Layer):
@@ -577,11 +568,6 @@ class Architecture:
         return self.layers[index]
 
     @property
-    def depth(self) -> int:
-        """Number of *checkable* layers, i.e. everything above the input layer."""
-        return len(self.layers) - 1
-
-    @property
     def input_layer(self) -> InputLayer:
         first = self.layers[0]
         assert isinstance(first, InputLayer)
@@ -592,18 +578,9 @@ class Architecture:
         return self.layers[-1]
 
     @property
-    def n_outputs(self) -> int:
-        return self.output_layer.n_neurons
-
-    @property
     def layer_widths(self) -> tuple[int, ...]:
         """Neuron count per layer, input layer first."""
         return tuple(layer.n_neurons for layer in self.layers)
-
-    @property
-    def n_trace_entries(self) -> int:
-        """Total number of activations in one execution trace."""
-        return sum(self.layer_widths)
 
     def parameterised_layers(self) -> tuple[tuple[int, Layer], ...]:
         """``(index, layer)`` for every layer that owns weights."""
@@ -612,13 +589,3 @@ class Architecture:
             for i, layer in enumerate(self.layers)
             if layer.n_weight_groups > 0
         )
-
-    def describe(self) -> str:
-        lines = [f"Architecture: {self.depth} checkable layers, "
-                 f"{self.n_trace_entries} trace entries"]
-        for i, layer in enumerate(self.layers):
-            lines.append(
-                f"  [{i}] {layer.name:<12} {type(layer).__name__:<16} "
-                f"shape={layer.out_shape} neurons={layer.n_neurons}"
-            )
-        return "\n".join(lines)

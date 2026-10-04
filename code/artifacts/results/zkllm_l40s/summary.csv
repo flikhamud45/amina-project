@@ -1,0 +1,3 @@
+model,seq,layers,run,per_layer_s,whole_model_s
+llama2-13b,2048,40,llama2-13b-T2048-948716,65.7100,2628.40
+llama2-7b,2048,32,llama2-7b-T2048-948715,26.3700,843.84

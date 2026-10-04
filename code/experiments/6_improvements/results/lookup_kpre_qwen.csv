@@ -1,0 +1,13 @@
+model,layers,vocab,prune_last,seq,mode,policy,lookups,wire,challenges,lam,bytes_claims,bytes_u,bytes_columns,bytes_paths,bytes_total,model_paths,model_total,source,queries,commit_s,whole_model_total,soundness_bits
+qwen3-4b,4,151936,False,8,Kpre,-,False,False,int,128,4621824,0,0,0,4621824,0.0,4621824.0,run_query,3,,36079104.0,
+qwen3-4b,4,151936,False,8,Kpre,-,False,True,int,128,2638613,0,0,0,2638613,0.0,2638613.0,run_query,3,,,
+qwen3-4b,4,151936,False,8,Kpre,-,True,False,int,128,4539904,0,0,0,4539904,0.0,4539904.0,run_query,3,,35997184.0,
+qwen3-4b,4,151936,False,8,Kpre,-,True,True,int,128,2617993,0,0,0,2617993,0.0,2617993.0,run_query,3,,,
+qwen3-4b,8,151936,False,8,Kpre,-,False,False,int,128,8553984,0,0,0,8553984,0.0,8553984.0,run_query,3,,36079104.0,
+qwen3-4b,8,151936,False,8,Kpre,-,False,True,int,128,4906719,0,0,0,4906719,0.0,4906719.0,run_query,3,,,
+qwen3-4b,8,151936,False,8,Kpre,-,True,False,int,128,8472064,0,0,0,8472064,0.0,8472064.0,run_query,3,,35997184.0,
+qwen3-4b,8,151936,False,8,Kpre,-,True,True,int,128,4886072,0,0,0,4886072,0.0,4886072.0,run_query,3,,,
+qwen3-4b,36,151936,False,8,Kpre,-,False,False,int,128,36079104,0,0,0.0,36079104.0,,,"model, claims extrapolated from L4 and L8",,,,146.54576829485342
+qwen3-4b,36,151936,False,8,Kpre,-,False,True,int,128,20783461.0,0,0,0.0,20783461.0,,,"model, claims extrapolated from L4 and L8",,,,146.54576829485342
+qwen3-4b,36,151936,False,8,Kpre,-,True,False,int,128,35997184,0,0,0.0,35997184.0,,,"model, claims extrapolated from L4 and L8",,,,146.55145940693126
+qwen3-4b,36,151936,False,8,Kpre,-,True,True,int,128,20762625.0,0,0,0.0,20762625.0,,,"model, claims extrapolated from L4 and L8",,,,146.55145940693126
