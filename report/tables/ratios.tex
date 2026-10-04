@@ -1,18 +1,14 @@
-zkCNN$^a$ & LeNet-5 & \win{81$\times$$\downarrow$} & \win{2.2$\times$$\downarrow$} & \win{1.1$\times$$\downarrow$} \\
-Bionetta & LeNet-5 & \win{690$\times$$\downarrow$} & \win{3.8$\times$$\downarrow$} & \lose{72$\times$$\uparrow$} \\
-zkCNN$^a$ & VGG-16 & \win{4{,}481$\times$$\downarrow$} & \win{3.2$\times$$\downarrow$} & \lose{6.4$\times$$\uparrow$} \\
-ZKML & VGG-16 & \win{32{,}334$\times$$\downarrow$} & \lose{1.9$\times$$\uparrow$} & \lose{180$\times$$\uparrow$} \\
+zkCNN$^a$ & LeNet-5 & 441\,ms & \win{5.7\,ms (78$\times$$\downarrow$)} & 5.8\,ms & \win{2.8\,ms (2.1$\times$$\downarrow$)} & 71.3\,kB & \win{63.3\,kB (1.1$\times$$\downarrow$)} \\
+Bionetta & LeNet-5 & 3.8\,s & \win{5.7\,ms (664$\times$$\downarrow$)} & 10.0\,ms & \win{2.8\,ms (3.6$\times$$\downarrow$)} & 880\,B & \lose{63.3\,kB (72$\times$$\uparrow$)} \\
+zkCNN$^a$ & VGG-16 & 88.3\,s & \win{20.0\,ms (4{,}422$\times$$\downarrow$)} & 59.3\,ms & \win{20.9\,ms (2.8$\times$$\downarrow$)} & 341\,kB & \lose{2.2\,MB (6.4$\times$$\uparrow$)} \\
+ZKML & VGG-16 & 10.6\,min & \win{20.0\,ms (31{,}910$\times$$\downarrow$)} & 9.6\,ms & \lose{20.9\,ms (2.2$\times$$\uparrow$)} & 12.1\,kB & \lose{2.2\,MB (180$\times$$\uparrow$)} \\
 \midrule
-zkGPT$^b$ & GPT-2 (64) & \win{239$\times$$\downarrow$} & \win{3.3$\times$$\downarrow$} & \lose{164$\times$$\uparrow$} \\
-DeepProve$^c$ & GPT-2 (64) & \win{375$\times$$\downarrow$} & \win{13$\times$$\downarrow$} & \win{1.3$\times$$\downarrow$} \\
-DeepProve$^c$ & GPT-2 (512) & \win{973$\times$$\downarrow$} & \win{3.8$\times$$\downarrow$} & \lose{3.6$\times$$\uparrow$} \\
-ZKTorch$^\ast$ & Llama-2-7B (1) & \win{1{,}786$\times$$\downarrow$} & \win{334$\times$$\downarrow$} & \lose{5.7$\times$$\uparrow$} \\
-Maverick$^d$ & Qwen3-4B (8) & \win{3.0$\times$$\downarrow$} & \lose{1.2$\times$$\uparrow$} & \win{1.8$\times$$\downarrow$} \\
+zkGPT$^b$ & GPT-2 (64) & 21.8\,s & \win{95.0\,ms (229$\times$$\downarrow$)} & 350\,ms & \win{96.8\,ms (3.6$\times$$\downarrow$)} & 101\,kB & \lose{16.6\,MB (164$\times$$\uparrow$)} \\
+DeepProve$^c$ & GPT-2 (64) & 34.2\,s & \win{95.0\,ms (360$\times$$\downarrow$)} & 1.4\,s & \win{96.8\,ms (14$\times$$\downarrow$)} & 21.7\,MB & \win{16.6\,MB (1.3$\times$$\downarrow$)} \\
+DeepProve$^c$ & GPT-2 (512) & 2.9\,min & \win{177\,ms (995$\times$$\downarrow$)} & 1.6\,s & \win{437\,ms (3.8$\times$$\downarrow$)} & 25.5\,MB & \lose{91.2\,MB (3.6$\times$$\uparrow$)} \\
+ZKTorch & Llama-2-7B (1) & 44.1\,min & \win{2.2\,s (1{,}213$\times$$\downarrow$)} & 1.7\,min & \win{333\,ms (301$\times$$\downarrow$)} & 22.9\,MB & \lose{190\,MB (8.3$\times$$\uparrow$)} \\
+Maverick$^d$ & Qwen3-4B (8) & 354\,ms & \win{117\,ms (3.0$\times$$\downarrow$)} & 260\,ms & \win{111\,ms (2.3$\times$$\downarrow$)} & 36.1\,MB & \win{35.2\,MB (1.03$\times$$\downarrow$)} \\
 \midrule
-zkLLM & OPT-125M (2{,}048) & \win{\pending{70$\times$$\downarrow$}} & \lose{\pending{2.0$\times$$\uparrow$}} & \lose{\pending{5{,}195$\times$$\uparrow$}} \\
-zkLLM & OPT-1.3B (2{,}048) & \win{\pending{39$\times$$\downarrow$}} & \lose{\pending{3.4$\times$$\uparrow$}} & \lose{\pending{25{,}898$\times$$\uparrow$}} \\
-zkLLM & OPT-6.7B (2{,}048) & \win{\pending{34$\times$$\downarrow$}} & \lose{\pending{3.1$\times$$\uparrow$}} & \lose{\pending{64{,}338$\times$$\uparrow$}} \\
-zkLLM & Llama-2-7B (2{,}048) & \win{\pending{35$\times$$\downarrow$}} & \lose{\pending{2.9$\times$$\uparrow$}} & \lose{\pending{63{,}313$\times$$\uparrow$}} \\
-zkLLM & Llama-2-13B (2{,}048) & \win{\pending{30$\times$$\downarrow$}} & \pending{--} & \lose{\pending{96{,}436$\times$$\uparrow$}} \\
-zkLLM$^e$ & Llama-2-7B (2{,}048) & \win{\pending{48$\times$$\downarrow$}} & -- & -- \\
+zkLLM & OPT-125M (2{,}048) & 73.9\,s & \win{396\,ms (187$\times$$\downarrow$)} & 342\,ms & \win{318\,ms (1.1$\times$$\downarrow$)} & 141\,kB & \lose{348\,MB (2{,}467$\times$$\uparrow$)} \\
+zkLLM & OPT-1.3B (2{,}048) & 3.7\,min & \win{3.8\,s (58$\times$$\downarrow$)} & 899\,ms & \lose{2.6\,s (2.9$\times$$\uparrow$)} & 147\,kB & \lose{2.1\,GB (13{,}979$\times$$\uparrow$)} \\
 \bottomrule

@@ -1,0 +1,6 @@
+# Scripts, Python and checksum files keep LF line endings in every checkout and archive,
+# so they run (and sha256sum -c passes) on Linux even when packed on Windows.
+*.sh      text eol=lf
+*.sbatch  text eol=lf
+*.py      text eol=lf
+*.sha256  text eol=lf

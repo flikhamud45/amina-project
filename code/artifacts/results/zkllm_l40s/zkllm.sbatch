@@ -5,7 +5,7 @@
 #SBATCH --mem=160G
 #SBATCH -t 16:00:00
 # zkLLM (commit 993311e, built for sm_89 with CUDA 12.1 + gcc 11; its scripts need transformers 4.40) on
-# the same L40S + EPYC 9334 nodes as raw_l40s (report Sec. 4.4). Usage:
+# the same L40S + EPYC 9334 nodes as raw_l40s (report Sec. 4.6). Usage:
 #   sbatch --dependency=singleton zkllm.sbatch <7|13> [seq=2048] [reps=3] [layers="0 1"]
 # The stored runs are jobs 948715 (7B) and 948716 (13B) of this script with the default arguments,
 # submitted with -p killable --gres=gpu:l40s:1 --exclude=t-806 (TAU; t-806 has an Intel CPU). The
