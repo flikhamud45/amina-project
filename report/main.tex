@@ -21,10 +21,8 @@
 % running text are recomputed by text_numbers.py and count_outcomes.py in the same directory.
 \input{tables/hardware.tex}
 
-% Optimised values that were not measured (timings withheld by
-% code/artifacts/comparison/excluded_cells.csv that l40s_improved3 did not re-measure, and two
-% optional cells never run) are omitted: "--" in Table 3, no point in Fig. 4, and no Table 1 row
-% that needs one (paper_assets.OMIT_UNMEASURED); the text quotes measured values only.
+% Values that were not measured are omitted: "--" in Table 3, no point in Fig. 4 and no Table 1
+% row that needs one (paper_assets.OMIT_UNMEASURED; see code/experiments/5_comparison/README.md).
 
 % soundness counts of the two protocols (count_outcomes.py --tex); the optimised ones count the
 % optimised definition's cells only (--definition)
@@ -640,7 +638,6 @@ need for $2^{-40}$.
 at $\lambda{=}128$. With committed weights the prover needs
 3.8--22.9\,ms per query and the verifier 1.7--64.8\,ms. The proof,
 49.4\,kB--6.7\,MB, is 1.3--9.3$\times$ smaller than the int8 weights.
-% for the MNIST and CIFAR models and 1.7$\times$ smaller for the 224-pixel ResNet.
 
 \begin{table}[t]
   \caption{Language models: seconds to prove, but proofs grow with the prompt (--: not measured)}
@@ -773,7 +770,6 @@ as proof systems and TEE-based checks for inference also need integer or fixed-p
 in accuracy (Section~\ref{sec:setup}). (iv)~Like the path protocol, we assume the weight commitment is computed honestly; longer codewords make it up to 13$\times$ slower to compute for GPT-2. Accepting a commitment from an untrusted
 party would require a proximity argument as in Ligero. (v)~The opened columns reveal random linear combinations of each weight
 row, so the protocol is not zero-knowledge. 
-% (vi)~We prove one forward pass, without a KV cache. (vii)~The prototype is Python.
 
 \para{Future work.} The proof is mostly claims, which the verifier needs in full to recompute the
 operations without weights; proving those operations with a sum-check argument, as zkLLM does,
