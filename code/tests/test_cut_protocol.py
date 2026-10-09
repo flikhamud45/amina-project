@@ -232,3 +232,35 @@ def test_t7_the_byte_accounting_is_that_of_a_query(kind, mode, policy, fs, prune
     assert est["n_leaves"] == real["cut"]["n_leaves"] and v._cut_plan is None
     if mode == "C":                                    # other columns: about the same multiproofs
         assert 0.5 < est["paths"] / real["bytes"]["paths"] < 2
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+@pytest.mark.parametrize("mode,policy", [("C", "cnn16c"), ("Kpre", None)])
+def test_v1_with_a_gpu_prover_and_verifier(mode, policy):
+    # the GPU prover (Triton GKR where available) and the non-streaming GPU verifier: honest accepted, the
+    # trace-tampering attack rejected
+    g = build_decoder(_TINY["llama"], calib_tokens=8, seed=1, prune_last=True)
+    if mode == "C":
+        coms = proto.commit_graph(g, 4, device="cuda", policy=policy)
+        params = proto.params_for(40, len(g.mat_ops), fiat_shamir=True, plan=coms.plan, cut=True)
+        v = proto.Verifier(g.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                           tables=coms.table_publics, device="cuda")
+        prover = proto.Prover(g, device="cuda", commitments=coms)
+    else:
+        params = proto.params_for(40, len(g.mat_ops), fiat_shamir=True, cut=True)
+        v = proto.Verifier(g.public(), params, "Kpre", weights={op.name: (op.weight, op.bias) for op in g.mat_ops},
+                           device="cuda")
+        v.precompute(proto.Challenger())
+        prover = proto.Prover(g, device="cuda")
+    x = _x(40, seed=8)
+    out = cp.run_cut_query(prover, v, x)
+    assert out["accepted"], out["rejected_at"]
+    plan, o = _first_cut(v, x)
+
+    def tamper(op, z):
+        if op.name != o.name:
+            return z
+        z = z.clone()
+        z[1, 2] += 3 * o.widths[1]
+        return z
+    assert cp.run_cut_query(prover, v, x, forward_kwargs={"tamper": tamper})["rejected_at"] in ("cut_final", "kpre_y")
