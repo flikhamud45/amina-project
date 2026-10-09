@@ -31,7 +31,7 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## B. Verifier at long prompts (D1, D3; future work "native verifier", "check attention")
 
-- **B1 [TODO]** Profile the streaming GPU verifier (`torch.profiler`): split of the checks into decode / attention / element-wise / Freivalds / copies.
+- **B1 [DONE]** Profile of the streaming GPU verifier (`gpu_profile.py`, job 1005394; [doc](docs/improvements/B2_B3_gpu_verifier.md) Sec. 7): copies 32% of CUDA time (proof upload, lean claims), fused attention 12%, element-wise ~25%, int8 GEMMs 4%. Data movement dominates; V1 halves it.
 - **B2 [DONE] (G0)** GPU decoder for the claims (2a71a79; [doc](docs/improvements/B2_B3_gpu_verifier.md)): byte-exact, every malformed input rejected as on the host, offsets validated on the host before launch. Validated on the 2080 Ti (job 1005162: GPU decoder 2/2, GPU verifier 287 passed, exactness 77, generation and setup 40, wire 118, no failure). With B3: streaming GPU verifier Kpre @2048, OPT-1.3B 12 blocks 1.43 -> 0.53 s (2.7x), Llama-2-7B 2 blocks 0.36 -> 0.18 s. PVC4 (per-op frames) not needed so far.
 - **B3 [DONE] (G0)** Fused exact integer attention kernel (Triton; 2a71a79; same doc): three passes per block of query rows, causal blocks skipped, fp16 inputs with fp32 sums exact below 2^24; bit-identical to `_attention_core` (tested on the GPU).
 - **B4 [TODO]** Element-wise derive on the GPU fused (`torch.compile` now works on the GPU nodes, see infra I2) or Triton.

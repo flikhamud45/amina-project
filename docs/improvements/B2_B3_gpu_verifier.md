@@ -104,7 +104,27 @@ Kpre, no pruning, 3 queries each, all accepted), `prove_forward`:
 The forward pass is dominated by the weight products (int8 GEMMs since A2); OPT's 32 heads of 64 dimensions make
 attention a larger share, hence the larger gain. Plan A4's alternative (QK^T and PV on int8 GEMMs) is not needed.
 
-## 7. What remains
+## 7. Where the time goes now (plan B1)
+
+`experiments/6_improvements/gpu_profile.py` (job 1005394, RTX 2080 Ti, Kpre with lookups, 2,048 tokens, lean
+prover, streaming GPU verifier, one query under `torch.profiler` after a warm-up). Llama-2-7B, 2 blocks: the
+verifier's `verify_total` is 0.08 s and its GPU decode 0.24 s. OPT-1.3B, 12 blocks: `verify_total` 0.58 s, decode
+0.44 s. Over the whole query (prover and verifier together), CUDA time for OPT-1.3B:
+
+| Kernel family | CUDA time | Share |
+|---|---:|---:|
+| copies (`aten::copy_`: proof upload host-to-device 164 ms, the lean prover's claims device-to-host 158 ms) | 417 ms | 32% |
+| fused exact attention (`_attn_kernel`, prover and verifier) | 159 ms | 12% |
+| element-wise kernels (requantisation, residuals, norms, the decoder's passes), several families | about 330 ms | about 25% |
+| `index_select` (embedding rows, decoder gathers) | 71 ms | 5.5% |
+| int8 GEMMs (`_int_mm`) | 56 ms | 4.4% |
+
+Data movement, not arithmetic, now dominates: the verifier's share is mostly uploading the compressed proof and
+decoding it. Two consequences: V1 (C2), which halves the proof, also halves this upload; and on the L40S (PCIe 4,
+higher memory bandwidth) the verifier should gain more than the arithmetic ratio alone suggests. The element-wise
+derive (plan B4: `torch.compile` or Triton fusion on the GPU) is the next arithmetic item.
+
+## 8. What remains
 
 * L40S measurements on the full models (OPT-1.3B, OPT-6.7B, Llama-2-7B, Llama-2-13B at 2,048 tokens).
 * A per-phase GPU profile with both on (plan B1) to find the next bottleneck (likely the element-wise derive:
