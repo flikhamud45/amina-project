@@ -62,7 +62,7 @@ def _from_mont(planes: torch.Tensor) -> torch.Tensor:
 
 
 def _consts():
-    return dict(P=PRIME, MU=MU, B11=B11)
+    return dict(P_=PRIME, MU_=MU, B11_=B11)
 
 
 if triton is not None:
