@@ -24,7 +24,7 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 - **A1 [DONE]** Column opening and folding on exact int8 GEMMs (e2bcb31; [doc](docs/improvements/A1_int8_column_opening.md)). 2080 Ti: opening 9.7x, prover 3.7-4.3x on Llama-2-7B/13B blocks, bit-identical.
 - **A2 [DONE]** Forward-pass weight products on exact int8 GEMMs (9ce4305; [doc](docs/improvements/A2_int8_forward.md)). About 2x on Llama-sized layers.
-- **A3 [WIP] (G0)** Fused Triton claim encoder, byte-identical `PVC3`. Encoding is 17.9 of 24.5 s for Llama-2-13B at 2,048 tokens (L40S); profile: GPU kernels ~1 s, ~12k launches and syncs ~2 s, copy-back 0.34 s for OPT-1.3B. Target: encode within 2x of the copy-back floor; prover at 2,048 tokens 3-8x faster.
+- **A3 [DONE]** Claim encoder (29db2ce, 228ae2d, 71e8920, aa7e485; [doc](docs/improvements/A3_claim_encoder.md)). The profile showed the cost was assembling the result (one 2 GB `b"".join`), not the kernels: threaded assembly into one read-only buffer gives the encoder 2.1-2.3x on large proofs (OPT-1.3B @2048: 3.28 -> 1.54 s; Llama-2-7B 2 blocks: 0.542 -> 0.238 s), identical bytes. The fused Triton encoder is byte-identical but slower (1.74 s; fixed ~0.2 s per proof), kept opt-in (`PVI_FUSED_CODEC=1`) as a negative result; its one advantage is bounded device memory (183 MB vs ~1 GB at 885 M claims).
 - **A4 [TODO]** Attention of the prover's forward on int8 GEMMs (QK^T exact in int32; PV with p <= 255 split into two int8 halves) or a fused Triton kernel shared with B3.
 - **A5 [TODO]** Overlap encoding with the forward pass (side stream, per op), once A3 exists.
 - **A6 [TODO]** Kpre precompute (`Verifier._fold_local`) on int8 GEMMs (setup time).
@@ -32,17 +32,17 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 ## B. Verifier at long prompts (D1, D3; future work "native verifier", "check attention")
 
 - **B1 [TODO]** Profile the streaming GPU verifier (`torch.profiler`): split of the checks into decode / attention / element-wise / Freivalds / copies.
-- **B2 [WIP] (G0)** (2a71a79; GPU validation job 1005074) GPU decoder for the claims (byte-exact; every malformed input rejected as on the host; offsets validated on the host before launch). Removes the host decode (59-73% of GPU verifier time). Decide on the way whether a per-op framed format (PVC4) is needed (streaming, 13B on 11-12 GB cards).
-- **B3 [WIP] (G0)** (2a71a79; GPU validation job 1005074) Fused exact integer attention kernel (Triton): scores, row max, exp table, row sum, p, PV in one pass per block, causal blocks skipped; bit-identical to `_attention_core`. Shared by prover and verifier.
+- **B2 [DONE] (G0)** GPU decoder for the claims (2a71a79; [doc](docs/improvements/B2_B3_gpu_verifier.md)): byte-exact, every malformed input rejected as on the host, offsets validated on the host before launch. Validated on the 2080 Ti (job 1005162: GPU decoder 2/2, GPU verifier 287 passed, exactness 77, generation and setup 40, wire 118, no failure). With B3: streaming GPU verifier Kpre @2048, OPT-1.3B 12 blocks 1.43 -> 0.53 s (2.7x), Llama-2-7B 2 blocks 0.36 -> 0.18 s. PVC4 (per-op frames) not needed so far.
+- **B3 [DONE] (G0)** Fused exact integer attention kernel (Triton; 2a71a79; same doc): three passes per block of query rows, causal blocks skipped, fp16 inputs with fp32 sums exact below 2^24; bit-identical to `_attention_core` (tested on the GPU).
 - **B4 [TODO]** Element-wise derive on the GPU fused (`torch.compile` now works on the GPU nodes, see infra I2) or Triton.
-- **B5 [TODO]** CPU verifier: a C++ toolchain (install g++ in my folder or on the laptop) for inductor / C++ kernels of the derive and attention; the cheap fixes (causal blocking 1.3-1.4x, int32 derive, thread balance). Target: Llama-2-7B Kpre at 2,048 tokens from ~85 s to <= 20 s on 8 cores.
+- **B5 [WIP]** CPU verifier. Done: conda-forge g++ 13.4 in my server folder (I4); `torch.compile` of the CPU derive 1.3-1.6x at 2,048 tokens (none at 64; compile 20-120 s); a native C++/OpenMP exact attention (`native_kernels.py`, e501882; bit-identical, 165 tests on the node): Llama-2-7B 2 blocks Kpre @2048 on 8 cores verify 4.12 -> 2.73 s (1.51x; derive 3.01 -> 1.83 s), job 1005185. Next: tile query rows in the native kernel (it re-reads every key per query row), then the doc. Target: Llama-2-7B Kpre at 2,048 tokens from ~85 s to <= 20 s on 8 cores.
 - **B6 [TODO]** Report verifier / re-execution ratios everywhere (with F1), and position the GPU verifier as an auditor/gateway.
 - **Targets (G0):** GPU verifier OPT-1.3B @2048 <= 0.8 s (zkLLM 0.90 s, ours 2.6 s); Llama-2-7B Kpre @2048 <= 1.5 s (4.95 s).
 
 ## C. Proof size (D3; future work "sum-check for the non-weight operations")
 
-- **C1 [WIP]** V1 design spec (workflow `sp2027-v1-proof-size-design`, output `S/sp2027_research/v1_design/V1_SPEC.md`): send the int8 requantised activations in the clear, commit only the residues, range-check them (logUp-GKR over an extension field, or bit decomposition in the code-based commitment); Freivalds against committed values; soundness proof; byte model on the real shapes; implementation plan in this code base. Expected 2.2-2.4x smaller at 2,048 tokens.
-- **C2 [TODO]** V1 implementation and measurement (if C1's effort estimate fits; else a prototype on small models plus the cost model).
+- **C1 [DONE]** V1 design spec (`S/sp2027_research/v1_design/V1_SPEC.md`, executable toy `scratch/spec_toy.py`): send the int8 requantised values, prove each claim lies in its requantisation window by a windowed logUp-GKR over F_{p^8} reduced to the existing fold and column check (no new commitment); soundness theorem with integer multiplicities (Lemma 1); byte model on the real shapes: 2.14-2.37x smaller at 2,048 tokens (1.8-2.0x with real weights); 15-day milestone plan with kill criteria K1-K5.
+- **C2 [WIP] (G0)** V1 implementation, following the spec's milestones. Day 1 (c675181): `extfield.py` (F_{p^8}), `Challenger.ext`, T1. Day 2 (c675181): `logup_gkr.py`, eager prover and a verifier that checks all layers' round chains at once, T2 (n = 1..14, every element tampered). Day 3 (d67c0c2): `logup.py` (table, multiplicities, leaves, padding indicator, F4), T3, Lemma 1 by brute force on F_49, **K1 passed** (n = 20). Day 4: `graph.requant_fn` in all four builders (logits unchanged, T9), `cut.py` (P1-P5, col-matrix closure, instances, windows, split, public windows), T0. Next: Day 5 (prover cut claims, PVX1 exceptions frame, M1), Day 6-8 (verifier derive branch, the cut query driver, Kpre), Day 9-10 (tests T4-T7, `bench.py --proof v1`), Days 11-14 Triton GKR kernels.
 - **C3 [TODO]** V2 (commit everything but attention; the verifier recomputes attention only; 6-8x smaller at 2,048 tokens, verifier 2.5-4x faster) and V3 (everything proved; MB proofs) as an analysed design and cost model in the paper (fixes from the red-team: three folds, the norm gadget's sums split into 8-bit limbs, extension-field challenges).
 - **C4 [TODO]** Sessions: one opening for B queries (`bench.py --batches`) and a deferred chi per session; Llama-2-7B 64-token query 324.5 -> ~205 MB at B = 16.
 - **C5 [TODO]** Codec: real-weight claim entropy (E1 in the roadmap) and any cheap gain (per-op Rice parameters, better centring).
@@ -103,12 +103,13 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 - **I1 [DONE]** Lean server clones (sparse checkout, 66 MB); exact int8 GEMMs confirmed on the 2080 Ti (sm_75) ([doc](docs/improvements/I_server_setup.md)).
 - **I2 [DONE]** Triton and `torch.compile` on the GPU nodes, with copied Python headers (`logs/validation/sp2027/tri.py`, `pyinclude/`; same doc).
 - **I3 [DONE]** Freed server quota: my 22 old validation clones archived to `Desktop/server_backup_2026-10-09/validation_clones.tgz` (930 MB, listing verified), then deleted on the server: 19.5 -> 15.7 GB used.
-- **I4 [TODO]** A C++ toolchain for CPU inductor (B5): conda/micromamba `gxx` in my server folder, or the friend's EPYC node.
+- **I4 [DONE]** C++ toolchain on the compute nodes: conda-forge `gxx` 13.4 via micromamba in `logs/validation/sp2027/tools/cxx` (951 MB); used by `torch.compile` on the CPU and by `native_kernels` (`CXX`, `PVI_NATIVE_DIR`) ([doc](docs/improvements/I_server_setup.md)).
 
 ---
 
 ## Log
 
+- 2026-10-10: A3 done (threaded assembly 2.1-2.3x; fused encoder a negative result); B2, B3 validated and done; B5 native attention measured (1.51x); I4 done; C1 done; C2 days 1-4 (F_{p^8}, GKR, logUp with K1 passed, cut plan and windows). Pushed `sp2027`.
 - 2026-10-09: research workflow (8 agents) -> roadmap; A1, A2, E1, D1, D2 done; F1 measured on the 2080 Ti; I1, I2 done. Pushed to GitHub `sp2027` (2e91856).
 - 2026-10-09 (night): A3 validated on the 2080 Ti (encoder tests, wire and generation tests with it); D4, D5 done; B2, B3 written; I3 done; attack-theory workflow finished (G1, G2 drafts, G5 drafts and schedule).
 - 2026-10-09: plan written; detailed docs for every done item (`docs/improvements/`); workflows started for C1 (V1 design) and G1-G5 (attack theory, systematisation, experiments, disclosure drafts); A3 started.

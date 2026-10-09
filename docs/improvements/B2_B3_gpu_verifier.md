@@ -3,8 +3,9 @@
 Plan items B2 and B3 (reviewer objections D1 and D3: the long-prompt verifier, the future-work items
 "native verifier" and "checking attention"). Commit `2a71a79` (`claimcodec.decode_device`,
 `codec_kernels.unpack_stream`, `attention_kernels.attention_core`, their use in `protocol._decoded_claims` and
-`transformer._attention_heads`). Status: implemented and measured on an RTX 2080 Ti; the test run with explicit
-summaries is job 1005155; L40S numbers with the final runs.
+`transformer._attention_heads`). Status: done. Implemented, measured and validated on an RTX 2080 Ti (job 1005162: GPU decoder tests 2 passed,
+`test_gpu_verifier.py` 287 passed and 15 skipped, `test_gpu_exactness.py` 77, generation and setup proof 40,
+wire 118, no failure); L40S numbers with the final runs.
 
 ## 1. The problem
 
@@ -73,7 +74,7 @@ verifier on a GPU with Triton (`PVI_FUSED_ATTN=0` keeps torch), and needs no `T 
   queries (`hq/hkv` 4/4, 8/2, 6/2, 2/1), queries of the last positions only, `dh` 16, 64, 80, 128, `T` up to
   2,048, random, peaked and extreme patterns (every score at its bound, the largest `p v` sums), two `m_s`,
   strided inputs: `torch.equal` with `_attention_core`.
-* The verifier-level tests (wire, streaming, plans, generation) run with both on (job 1005155).
+* The verifier-level tests (wire, streaming, plans, generation) run with both on (job 1005162).
 
 ## 5. Measurements (RTX 2080 Ti, streaming GPU verifier, mode Kpre with lookups, 2,048 tokens, compact encoding,
 last block pruned; 3 queries each, all accepted)

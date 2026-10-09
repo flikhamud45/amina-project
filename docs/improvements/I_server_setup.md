@@ -34,4 +34,18 @@ installing anything system-wide:
 * `TRITON_CACHE_DIR` and `TORCHINDUCTOR_CACHE_DIR` in my folder (compute nodes cannot see `$HOME`).
 
 Checked by job 1004245: a Triton kernel and `torch.compile` on CUDA both run and give exact results.
-`torch.compile` on the CPU still fails (inductor needs g++): plan I4.
+`torch.compile` on the CPU still failed at that point (inductor needs g++): plan I4, below.
+
+## 4. A C++ compiler on the compute nodes (I4)
+
+Inductor's CPU backend and our native attention (`native_kernels.py`, B5) need a C++ compiler. Without root,
+conda-forge's `gxx` 13.4 was installed with a static micromamba into my folder, `logs/validation/sp2027/tools/cxx`
+(951 MB after deleting the package cache, within the 20 GB quota). A CPU job sets
+
+```
+export CXX=$V/tools/cxx/bin/x86_64-conda-linux-gnu-g++ PATH=$V/tools/cxx/bin:$PATH PVI_NATIVE_DIR=$V/.native
+export TORCHINDUCTOR_CACHE_DIR=$V/.inductor
+```
+
+Checked: `torch.compile` on the CPU builds and gives exact results (1.3-1.6x on the derive at 2,048 tokens, after a
+20-120 s compile); `native_kernels.available()` is True on the nodes and its exactness tests pass (165, job 1005185).
