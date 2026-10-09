@@ -278,6 +278,26 @@ class Challenger:
             block += 1
         return torch.from_numpy(np.concatenate(parts)[:n].reshape(reps, n_rows).copy())
 
+    def ext(self, name: str, count: int = 1, *, nonbase: bool = False) -> torch.Tensor:
+        """``count`` uniform elements of ``F_{p^8}`` (``extfield``) ``[count, 8]``, by the rejection sampling of
+        :meth:`folding`; with ``nonbase``, an element in ``F_p + x F_p`` (its coefficients 2..7 all zero, probability
+        ``p^-6``) is drawn again."""
+        key = self._key("ext/" + name)
+        out, block = [], 0
+        while len(out) < count:
+            words = np.frombuffer(self._stream(key, f"ext/{name}/{block}", 4 * 8 * (count - len(out) + 2) * 2),
+                                  dtype="<u4").astype(np.int64)
+            words = words[words < 2 * P] % P
+            for i in range(0, words.size - 7, 8):
+                v = words[i:i + 8]
+                if nonbase and not v[2:].any():
+                    continue
+                out.append(v)
+                if len(out) == count:
+                    break
+            block += 1
+        return torch.from_numpy(np.stack(out).copy())
+
     def columns(self, name: str, n_points: int, t: int) -> torch.Tensor:
         """``t`` distinct uniform indices in ``[0, n_points)``, sorted."""
         t = min(t, n_points)
