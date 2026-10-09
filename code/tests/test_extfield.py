@@ -64,6 +64,9 @@ def test_inverses():
         assert torch.equal(ef.mul(x, ef.inv(x)), ef.const(1))
     inv = ef.batch_inv(a)
     assert torch.equal(ef.mul(a, inv), ef.const(1).expand(6, ef.D))
+    assert torch.equal(ef.inv(a), ef.inv_fermat(a)) and torch.equal(ef.inv(ef.const(0)), ef.const(0))
+    assert torch.equal(ef.frobenius(a, 1), ef.power(a, P))                 # the Frobenius map is a -> a^p
+    assert torch.equal(ef.inv(ef.const(5)), ef.const(pow(5, P - 2, P)))
 
 
 @pytest.mark.parametrize("k", [0, 1, 3, 6])

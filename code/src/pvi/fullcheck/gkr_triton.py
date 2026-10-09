@@ -9,11 +9,15 @@ an add and a conditional subtraction.  An element of ``F = F_p[x]/(x^8 - 11)`` i
 structure-of-arrays ``[8, n]`` int32 tensors (the bits of the uint32 values).  The verifier-facing values (the top,
 the round polynomials, the child values) are converted to canonical form on the host.
 
-**Algorithm** (as the eager prover): the leaves of an instance are built on the device from the residues and
-widths (``leaves``) or uploaded (``prove``); the tree is combined layer by layer; for each layer ``k`` the child
-arrays are split into their even and odd halves, the eq table of the layer's point is built by doubling, and each
-sum-check round is one kernel (``_round_kernel``: the three values ``g(0), g(2), g(3)`` summed per block in 64 bits)
-then one fold of the five arrays at the round's challenge (``_fold_kernel``), with one host round trip per round.
+**Algorithm** (the eager prover's transcript): the leaves of an instance are built on the device from the residues
+and widths (``prove_leaves``) or uploaded (``prove``); the tree is combined layer by layer; for each layer ``k`` the
+child arrays are split into their even and odd halves.  Round ``j`` writes ``g_j(t) = s_j eq(rho_j, t) h_j(t)``,
+``s_j = prod_{i<j} eq(rho_i, r_i)``, ``h_j(t) = sum_y eq(rho_{>j}, y) F(t, y)`` of degree 2 with
+``F = PL QR + QL (PR + lambda QR)``: one kernel (``_round2_kernel``) sums ``h_j(0)`` and ``h_j(2)`` per block in 64 bits
+over the suffix eq table (built by doubling, never folded), the host gets ``h_j(1)`` from the claim
+``g_j(0) + g_j(1)``, extrapolates ``h_j(3)`` and sends the eager prover's ``g_j(0), g_j(2), g_j(3)``; then one fold of the
+four child arrays at the round's challenge (``_fold4_kernel``).  Per pair and round: 12 products in ``F`` instead of
+the direct evaluation's 20.
 """
 
 from __future__ import annotations
@@ -268,37 +272,21 @@ if triton is not None:
         tl.store(to + 7 * s_out + y + m, hi7.to(tl.int32, bitcast=True), mask=mask)
 
     @triton.jit(do_not_specialize=['lam0', 'lam1', 'lam2', 'lam3', 'lam4', 'lam5', 'lam6', 'lam7', 'half', 's', 'P_', 'MU_', 'B11_'])
-    def _round_kernel(e, pl, pr, ql, qr, out, lam0, lam1, lam2, lam3, lam4, lam5, lam6, lam7, half, s, P_, MU_, B11_, BLOCK: tl.constexpr):
+    def _round2_kernel(e, pl, pr, ql, qr, out, lam0, lam1, lam2, lam3, lam4, lam5, lam6, lam7, half, s, P_, MU_, B11_, BLOCK: tl.constexpr):
         P = P_.to(tl.uint32)
         MU = MU_.to(tl.uint32)
         B11 = B11_.to(tl.uint32)
         pid = tl.program_id(0)
         y = pid.to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
         mask = y < half
-        ea0 = tl.load(e + 0 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea1 = tl.load(e + 1 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea2 = tl.load(e + 2 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea3 = tl.load(e + 3 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea4 = tl.load(e + 4 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea5 = tl.load(e + 5 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea6 = tl.load(e + 6 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea7 = tl.load(e + 7 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb0 = tl.load(e + 0 * s + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb1 = tl.load(e + 1 * s + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb2 = tl.load(e + 2 * s + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb3 = tl.load(e + 3 * s + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb4 = tl.load(e + 4 * s + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb5 = tl.load(e + 5 * s + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb6 = tl.load(e + 6 * s + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb7 = tl.load(e + 7 * s + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ed0 = _sub(eb0, ea0, P)
-        ed1 = _sub(eb1, ea1, P)
-        ed2 = _sub(eb2, ea2, P)
-        ed3 = _sub(eb3, ea3, P)
-        ed4 = _sub(eb4, ea4, P)
-        ed5 = _sub(eb5, ea5, P)
-        ed6 = _sub(eb6, ea6, P)
-        ed7 = _sub(eb7, ea7, P)
+        et0 = tl.load(e + 0 * half + y, mask=mask, other=0).to(tl.uint32, bitcast=True)
+        et1 = tl.load(e + 1 * half + y, mask=mask, other=0).to(tl.uint32, bitcast=True)
+        et2 = tl.load(e + 2 * half + y, mask=mask, other=0).to(tl.uint32, bitcast=True)
+        et3 = tl.load(e + 3 * half + y, mask=mask, other=0).to(tl.uint32, bitcast=True)
+        et4 = tl.load(e + 4 * half + y, mask=mask, other=0).to(tl.uint32, bitcast=True)
+        et5 = tl.load(e + 5 * half + y, mask=mask, other=0).to(tl.uint32, bitcast=True)
+        et6 = tl.load(e + 6 * half + y, mask=mask, other=0).to(tl.uint32, bitcast=True)
+        et7 = tl.load(e + 7 * half + y, mask=mask, other=0).to(tl.uint32, bitcast=True)
         pla0 = tl.load(pl + 0 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
         pla1 = tl.load(pl + 1 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
         pla2 = tl.load(pl + 2 * s + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
@@ -395,22 +383,14 @@ if triton is not None:
         qrd5 = _sub(qrb5, qra5, P)
         qrd6 = _sub(qrb6, qra6, P)
         qrd7 = _sub(qrb7, qra7, P)
-        lm0 = lam0.to(tl.uint32) + ea0 * 0
-        lm1 = lam1.to(tl.uint32) + ea0 * 0
-        lm2 = lam2.to(tl.uint32) + ea0 * 0
-        lm3 = lam3.to(tl.uint32) + ea0 * 0
-        lm4 = lam4.to(tl.uint32) + ea0 * 0
-        lm5 = lam5.to(tl.uint32) + ea0 * 0
-        lm6 = lam6.to(tl.uint32) + ea0 * 0
-        lm7 = lam7.to(tl.uint32) + ea0 * 0
-        et0 = ea0
-        et1 = ea1
-        et2 = ea2
-        et3 = ea3
-        et4 = ea4
-        et5 = ea5
-        et6 = ea6
-        et7 = ea7
+        lm0 = lam0.to(tl.uint32) + et0 * 0
+        lm1 = lam1.to(tl.uint32) + et0 * 0
+        lm2 = lam2.to(tl.uint32) + et0 * 0
+        lm3 = lam3.to(tl.uint32) + et0 * 0
+        lm4 = lam4.to(tl.uint32) + et0 * 0
+        lm5 = lam5.to(tl.uint32) + et0 * 0
+        lm6 = lam6.to(tl.uint32) + et0 * 0
+        lm7 = lam7.to(tl.uint32) + et0 * 0
         plt0 = pla0
         plt1 = pla1
         plt2 = pla2
@@ -443,35 +423,34 @@ if triton is not None:
         qrt5 = qra5
         qrt6 = qra6
         qrt7 = qra7
+        u_0, u_1, u_2, u_3, u_4, u_5, u_6, u_7 = _emul(lm0, lm1, lm2, lm3, lm4, lm5, lm6, lm7, qrt0, qrt1, qrt2, qrt3, qrt4, qrt5, qrt6, qrt7, P, MU, B11)
+        v_0 = _add(prt0, u_0, P)
+        v_1 = _add(prt1, u_1, P)
+        v_2 = _add(prt2, u_2, P)
+        v_3 = _add(prt3, u_3, P)
+        v_4 = _add(prt4, u_4, P)
+        v_5 = _add(prt5, u_5, P)
+        v_6 = _add(prt6, u_6, P)
+        v_7 = _add(prt7, u_7, P)
         f1_0, f1_1, f1_2, f1_3, f1_4, f1_5, f1_6, f1_7 = _emul(plt0, plt1, plt2, plt3, plt4, plt5, plt6, plt7, qrt0, qrt1, qrt2, qrt3, qrt4, qrt5, qrt6, qrt7, P, MU, B11)
-        f2_0, f2_1, f2_2, f2_3, f2_4, f2_5, f2_6, f2_7 = _emul(prt0, prt1, prt2, prt3, prt4, prt5, prt6, prt7, qlt0, qlt1, qlt2, qlt3, qlt4, qlt5, qlt6, qlt7, P, MU, B11)
-        f3_0, f3_1, f3_2, f3_3, f3_4, f3_5, f3_6, f3_7 = _emul(qlt0, qlt1, qlt2, qlt3, qlt4, qlt5, qlt6, qlt7, qrt0, qrt1, qrt2, qrt3, qrt4, qrt5, qrt6, qrt7, P, MU, B11)
-        f4_0, f4_1, f4_2, f4_3, f4_4, f4_5, f4_6, f4_7 = _emul(lm0, lm1, lm2, lm3, lm4, lm5, lm6, lm7, f3_0, f3_1, f3_2, f3_3, f3_4, f3_5, f3_6, f3_7, P, MU, B11)
-        ff0 = _add(_add(f1_0, f2_0, P), f4_0, P)
-        ff1 = _add(_add(f1_1, f2_1, P), f4_1, P)
-        ff2 = _add(_add(f1_2, f2_2, P), f4_2, P)
-        ff3 = _add(_add(f1_3, f2_3, P), f4_3, P)
-        ff4 = _add(_add(f1_4, f2_4, P), f4_4, P)
-        ff5 = _add(_add(f1_5, f2_5, P), f4_5, P)
-        ff6 = _add(_add(f1_6, f2_6, P), f4_6, P)
-        ff7 = _add(_add(f1_7, f2_7, P), f4_7, P)
+        f2_0, f2_1, f2_2, f2_3, f2_4, f2_5, f2_6, f2_7 = _emul(qlt0, qlt1, qlt2, qlt3, qlt4, qlt5, qlt6, qlt7, v_0, v_1, v_2, v_3, v_4, v_5, v_6, v_7, P, MU, B11)
+        ff0 = _add(f1_0, f2_0, P)
+        ff1 = _add(f1_1, f2_1, P)
+        ff2 = _add(f1_2, f2_2, P)
+        ff3 = _add(f1_3, f2_3, P)
+        ff4 = _add(f1_4, f2_4, P)
+        ff5 = _add(f1_5, f2_5, P)
+        ff6 = _add(f1_6, f2_6, P)
+        ff7 = _add(f1_7, f2_7, P)
         g_0, g_1, g_2, g_3, g_4, g_5, g_6, g_7 = _emul(et0, et1, et2, et3, et4, et5, et6, et7, ff0, ff1, ff2, ff3, ff4, ff5, ff6, ff7, P, MU, B11)
-        tl.store(out + (pid * 3 + 0) * 8 + 0, tl.sum(tl.where(mask, g_0, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 0) * 8 + 1, tl.sum(tl.where(mask, g_1, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 0) * 8 + 2, tl.sum(tl.where(mask, g_2, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 0) * 8 + 3, tl.sum(tl.where(mask, g_3, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 0) * 8 + 4, tl.sum(tl.where(mask, g_4, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 0) * 8 + 5, tl.sum(tl.where(mask, g_5, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 0) * 8 + 6, tl.sum(tl.where(mask, g_6, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 0) * 8 + 7, tl.sum(tl.where(mask, g_7, 0).to(tl.uint64), axis=0).to(tl.int64))
-        et0 = _add(eb0, ed0, P)
-        et1 = _add(eb1, ed1, P)
-        et2 = _add(eb2, ed2, P)
-        et3 = _add(eb3, ed3, P)
-        et4 = _add(eb4, ed4, P)
-        et5 = _add(eb5, ed5, P)
-        et6 = _add(eb6, ed6, P)
-        et7 = _add(eb7, ed7, P)
+        tl.store(out + (pid * 2 + 0) * 8 + 0, tl.sum(tl.where(mask, g_0, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 0) * 8 + 1, tl.sum(tl.where(mask, g_1, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 0) * 8 + 2, tl.sum(tl.where(mask, g_2, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 0) * 8 + 3, tl.sum(tl.where(mask, g_3, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 0) * 8 + 4, tl.sum(tl.where(mask, g_4, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 0) * 8 + 5, tl.sum(tl.where(mask, g_5, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 0) * 8 + 6, tl.sum(tl.where(mask, g_6, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 0) * 8 + 7, tl.sum(tl.where(mask, g_7, 0).to(tl.uint64), axis=0).to(tl.int64))
         plt0 = _add(plb0, pld0, P)
         plt1 = _add(plb1, pld1, P)
         plt2 = _add(plb2, pld2, P)
@@ -504,146 +483,43 @@ if triton is not None:
         qrt5 = _add(qrb5, qrd5, P)
         qrt6 = _add(qrb6, qrd6, P)
         qrt7 = _add(qrb7, qrd7, P)
+        u_0, u_1, u_2, u_3, u_4, u_5, u_6, u_7 = _emul(lm0, lm1, lm2, lm3, lm4, lm5, lm6, lm7, qrt0, qrt1, qrt2, qrt3, qrt4, qrt5, qrt6, qrt7, P, MU, B11)
+        v_0 = _add(prt0, u_0, P)
+        v_1 = _add(prt1, u_1, P)
+        v_2 = _add(prt2, u_2, P)
+        v_3 = _add(prt3, u_3, P)
+        v_4 = _add(prt4, u_4, P)
+        v_5 = _add(prt5, u_5, P)
+        v_6 = _add(prt6, u_6, P)
+        v_7 = _add(prt7, u_7, P)
         f1_0, f1_1, f1_2, f1_3, f1_4, f1_5, f1_6, f1_7 = _emul(plt0, plt1, plt2, plt3, plt4, plt5, plt6, plt7, qrt0, qrt1, qrt2, qrt3, qrt4, qrt5, qrt6, qrt7, P, MU, B11)
-        f2_0, f2_1, f2_2, f2_3, f2_4, f2_5, f2_6, f2_7 = _emul(prt0, prt1, prt2, prt3, prt4, prt5, prt6, prt7, qlt0, qlt1, qlt2, qlt3, qlt4, qlt5, qlt6, qlt7, P, MU, B11)
-        f3_0, f3_1, f3_2, f3_3, f3_4, f3_5, f3_6, f3_7 = _emul(qlt0, qlt1, qlt2, qlt3, qlt4, qlt5, qlt6, qlt7, qrt0, qrt1, qrt2, qrt3, qrt4, qrt5, qrt6, qrt7, P, MU, B11)
-        f4_0, f4_1, f4_2, f4_3, f4_4, f4_5, f4_6, f4_7 = _emul(lm0, lm1, lm2, lm3, lm4, lm5, lm6, lm7, f3_0, f3_1, f3_2, f3_3, f3_4, f3_5, f3_6, f3_7, P, MU, B11)
-        ff0 = _add(_add(f1_0, f2_0, P), f4_0, P)
-        ff1 = _add(_add(f1_1, f2_1, P), f4_1, P)
-        ff2 = _add(_add(f1_2, f2_2, P), f4_2, P)
-        ff3 = _add(_add(f1_3, f2_3, P), f4_3, P)
-        ff4 = _add(_add(f1_4, f2_4, P), f4_4, P)
-        ff5 = _add(_add(f1_5, f2_5, P), f4_5, P)
-        ff6 = _add(_add(f1_6, f2_6, P), f4_6, P)
-        ff7 = _add(_add(f1_7, f2_7, P), f4_7, P)
+        f2_0, f2_1, f2_2, f2_3, f2_4, f2_5, f2_6, f2_7 = _emul(qlt0, qlt1, qlt2, qlt3, qlt4, qlt5, qlt6, qlt7, v_0, v_1, v_2, v_3, v_4, v_5, v_6, v_7, P, MU, B11)
+        ff0 = _add(f1_0, f2_0, P)
+        ff1 = _add(f1_1, f2_1, P)
+        ff2 = _add(f1_2, f2_2, P)
+        ff3 = _add(f1_3, f2_3, P)
+        ff4 = _add(f1_4, f2_4, P)
+        ff5 = _add(f1_5, f2_5, P)
+        ff6 = _add(f1_6, f2_6, P)
+        ff7 = _add(f1_7, f2_7, P)
         g_0, g_1, g_2, g_3, g_4, g_5, g_6, g_7 = _emul(et0, et1, et2, et3, et4, et5, et6, et7, ff0, ff1, ff2, ff3, ff4, ff5, ff6, ff7, P, MU, B11)
-        tl.store(out + (pid * 3 + 1) * 8 + 0, tl.sum(tl.where(mask, g_0, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 1) * 8 + 1, tl.sum(tl.where(mask, g_1, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 1) * 8 + 2, tl.sum(tl.where(mask, g_2, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 1) * 8 + 3, tl.sum(tl.where(mask, g_3, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 1) * 8 + 4, tl.sum(tl.where(mask, g_4, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 1) * 8 + 5, tl.sum(tl.where(mask, g_5, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 1) * 8 + 6, tl.sum(tl.where(mask, g_6, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 1) * 8 + 7, tl.sum(tl.where(mask, g_7, 0).to(tl.uint64), axis=0).to(tl.int64))
-        et0 = _add(et0, ed0, P)
-        et1 = _add(et1, ed1, P)
-        et2 = _add(et2, ed2, P)
-        et3 = _add(et3, ed3, P)
-        et4 = _add(et4, ed4, P)
-        et5 = _add(et5, ed5, P)
-        et6 = _add(et6, ed6, P)
-        et7 = _add(et7, ed7, P)
-        plt0 = _add(plt0, pld0, P)
-        plt1 = _add(plt1, pld1, P)
-        plt2 = _add(plt2, pld2, P)
-        plt3 = _add(plt3, pld3, P)
-        plt4 = _add(plt4, pld4, P)
-        plt5 = _add(plt5, pld5, P)
-        plt6 = _add(plt6, pld6, P)
-        plt7 = _add(plt7, pld7, P)
-        prt0 = _add(prt0, prd0, P)
-        prt1 = _add(prt1, prd1, P)
-        prt2 = _add(prt2, prd2, P)
-        prt3 = _add(prt3, prd3, P)
-        prt4 = _add(prt4, prd4, P)
-        prt5 = _add(prt5, prd5, P)
-        prt6 = _add(prt6, prd6, P)
-        prt7 = _add(prt7, prd7, P)
-        qlt0 = _add(qlt0, qld0, P)
-        qlt1 = _add(qlt1, qld1, P)
-        qlt2 = _add(qlt2, qld2, P)
-        qlt3 = _add(qlt3, qld3, P)
-        qlt4 = _add(qlt4, qld4, P)
-        qlt5 = _add(qlt5, qld5, P)
-        qlt6 = _add(qlt6, qld6, P)
-        qlt7 = _add(qlt7, qld7, P)
-        qrt0 = _add(qrt0, qrd0, P)
-        qrt1 = _add(qrt1, qrd1, P)
-        qrt2 = _add(qrt2, qrd2, P)
-        qrt3 = _add(qrt3, qrd3, P)
-        qrt4 = _add(qrt4, qrd4, P)
-        qrt5 = _add(qrt5, qrd5, P)
-        qrt6 = _add(qrt6, qrd6, P)
-        qrt7 = _add(qrt7, qrd7, P)
-        f1_0, f1_1, f1_2, f1_3, f1_4, f1_5, f1_6, f1_7 = _emul(plt0, plt1, plt2, plt3, plt4, plt5, plt6, plt7, qrt0, qrt1, qrt2, qrt3, qrt4, qrt5, qrt6, qrt7, P, MU, B11)
-        f2_0, f2_1, f2_2, f2_3, f2_4, f2_5, f2_6, f2_7 = _emul(prt0, prt1, prt2, prt3, prt4, prt5, prt6, prt7, qlt0, qlt1, qlt2, qlt3, qlt4, qlt5, qlt6, qlt7, P, MU, B11)
-        f3_0, f3_1, f3_2, f3_3, f3_4, f3_5, f3_6, f3_7 = _emul(qlt0, qlt1, qlt2, qlt3, qlt4, qlt5, qlt6, qlt7, qrt0, qrt1, qrt2, qrt3, qrt4, qrt5, qrt6, qrt7, P, MU, B11)
-        f4_0, f4_1, f4_2, f4_3, f4_4, f4_5, f4_6, f4_7 = _emul(lm0, lm1, lm2, lm3, lm4, lm5, lm6, lm7, f3_0, f3_1, f3_2, f3_3, f3_4, f3_5, f3_6, f3_7, P, MU, B11)
-        ff0 = _add(_add(f1_0, f2_0, P), f4_0, P)
-        ff1 = _add(_add(f1_1, f2_1, P), f4_1, P)
-        ff2 = _add(_add(f1_2, f2_2, P), f4_2, P)
-        ff3 = _add(_add(f1_3, f2_3, P), f4_3, P)
-        ff4 = _add(_add(f1_4, f2_4, P), f4_4, P)
-        ff5 = _add(_add(f1_5, f2_5, P), f4_5, P)
-        ff6 = _add(_add(f1_6, f2_6, P), f4_6, P)
-        ff7 = _add(_add(f1_7, f2_7, P), f4_7, P)
-        g_0, g_1, g_2, g_3, g_4, g_5, g_6, g_7 = _emul(et0, et1, et2, et3, et4, et5, et6, et7, ff0, ff1, ff2, ff3, ff4, ff5, ff6, ff7, P, MU, B11)
-        tl.store(out + (pid * 3 + 2) * 8 + 0, tl.sum(tl.where(mask, g_0, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 2) * 8 + 1, tl.sum(tl.where(mask, g_1, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 2) * 8 + 2, tl.sum(tl.where(mask, g_2, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 2) * 8 + 3, tl.sum(tl.where(mask, g_3, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 2) * 8 + 4, tl.sum(tl.where(mask, g_4, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 2) * 8 + 5, tl.sum(tl.where(mask, g_5, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 2) * 8 + 6, tl.sum(tl.where(mask, g_6, 0).to(tl.uint64), axis=0).to(tl.int64))
-        tl.store(out + (pid * 3 + 2) * 8 + 7, tl.sum(tl.where(mask, g_7, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 1) * 8 + 0, tl.sum(tl.where(mask, g_0, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 1) * 8 + 1, tl.sum(tl.where(mask, g_1, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 1) * 8 + 2, tl.sum(tl.where(mask, g_2, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 1) * 8 + 3, tl.sum(tl.where(mask, g_3, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 1) * 8 + 4, tl.sum(tl.where(mask, g_4, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 1) * 8 + 5, tl.sum(tl.where(mask, g_5, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 1) * 8 + 6, tl.sum(tl.where(mask, g_6, 0).to(tl.uint64), axis=0).to(tl.int64))
+        tl.store(out + (pid * 2 + 1) * 8 + 7, tl.sum(tl.where(mask, g_7, 0).to(tl.uint64), axis=0).to(tl.int64))
 
     @triton.jit(do_not_specialize=['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'half', 's_in', 's_out', 'P_', 'MU_', 'B11_'])
-    def _fold_kernel(e, pl, pr, ql, qr, eo, plo, pro, qlo, qro, r0, r1, r2, r3, r4, r5, r6, r7, half, s_in, s_out, P_, MU_, B11_,
-                     BLOCK: tl.constexpr):
+    def _fold4_kernel(pl, pr, ql, qr, plo, pro, qlo, qro, r0, r1, r2, r3, r4, r5, r6, r7, half, s_in, s_out, P_, MU_, B11_,
+                      BLOCK: tl.constexpr):
         P = P_.to(tl.uint32)
         MU = MU_.to(tl.uint32)
         B11 = B11_.to(tl.uint32)
         y = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
         mask = y < half
-        ea0 = tl.load(e + 0 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea1 = tl.load(e + 1 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea2 = tl.load(e + 2 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea3 = tl.load(e + 3 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea4 = tl.load(e + 4 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea5 = tl.load(e + 5 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea6 = tl.load(e + 6 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        ea7 = tl.load(e + 7 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb0 = tl.load(e + 0 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb1 = tl.load(e + 1 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb2 = tl.load(e + 2 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb3 = tl.load(e + 3 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb4 = tl.load(e + 4 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb5 = tl.load(e + 5 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb6 = tl.load(e + 6 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        eb7 = tl.load(e + 7 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
-        rr0 = r0.to(tl.uint32) + ea0 * 0
-        rr1 = r1.to(tl.uint32) + ea0 * 0
-        rr2 = r2.to(tl.uint32) + ea0 * 0
-        rr3 = r3.to(tl.uint32) + ea0 * 0
-        rr4 = r4.to(tl.uint32) + ea0 * 0
-        rr5 = r5.to(tl.uint32) + ea0 * 0
-        rr6 = r6.to(tl.uint32) + ea0 * 0
-        rr7 = r7.to(tl.uint32) + ea0 * 0
-        ed0 = _sub(eb0, ea0, P)
-        ed1 = _sub(eb1, ea1, P)
-        ed2 = _sub(eb2, ea2, P)
-        ed3 = _sub(eb3, ea3, P)
-        ed4 = _sub(eb4, ea4, P)
-        ed5 = _sub(eb5, ea5, P)
-        ed6 = _sub(eb6, ea6, P)
-        ed7 = _sub(eb7, ea7, P)
-        em0, em1, em2, em3, em4, em5, em6, em7 = _emul(ed0, ed1, ed2, ed3, ed4, ed5, ed6, ed7, rr0, rr1, rr2, rr3, rr4, rr5, rr6, rr7, P, MU, B11)
-        eo0 = _add(ea0, em0, P)
-        eo1 = _add(ea1, em1, P)
-        eo2 = _add(ea2, em2, P)
-        eo3 = _add(ea3, em3, P)
-        eo4 = _add(ea4, em4, P)
-        eo5 = _add(ea5, em5, P)
-        eo6 = _add(ea6, em6, P)
-        eo7 = _add(ea7, em7, P)
-        tl.store(eo + 0 * s_out + y, eo0.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(eo + 1 * s_out + y, eo1.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(eo + 2 * s_out + y, eo2.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(eo + 3 * s_out + y, eo3.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(eo + 4 * s_out + y, eo4.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(eo + 5 * s_out + y, eo5.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(eo + 6 * s_out + y, eo6.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(eo + 7 * s_out + y, eo7.to(tl.int32, bitcast=True), mask=mask)
         pla0 = tl.load(pl + 0 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
         pla1 = tl.load(pl + 1 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
         pla2 = tl.load(pl + 2 * s_in + 2 * y, mask=mask, other=0).to(tl.uint32, bitcast=True)
@@ -660,6 +536,14 @@ if triton is not None:
         plb5 = tl.load(pl + 5 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
         plb6 = tl.load(pl + 6 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
         plb7 = tl.load(pl + 7 * s_in + 2 * y + 1, mask=mask, other=0).to(tl.uint32, bitcast=True)
+        rr0 = r0.to(tl.uint32) + pla0 * 0
+        rr1 = r1.to(tl.uint32) + pla0 * 0
+        rr2 = r2.to(tl.uint32) + pla0 * 0
+        rr3 = r3.to(tl.uint32) + pla0 * 0
+        rr4 = r4.to(tl.uint32) + pla0 * 0
+        rr5 = r5.to(tl.uint32) + pla0 * 0
+        rr6 = r6.to(tl.uint32) + pla0 * 0
+        rr7 = r7.to(tl.uint32) + pla0 * 0
         pld0 = _sub(plb0, pla0, P)
         pld1 = _sub(plb1, pla1, P)
         pld2 = _sub(plb2, pla2, P)
@@ -855,35 +739,73 @@ def _prove_tree(layers: list, ch, label: str):
     _absorb(ch, label + "top", top)
     rho = [ch.ext(label + "mu0")[0]]
     dev = p1.device
+    one = ef.const(1)
+    prev = top                                   # the values the layer's claim comes from
     for k in range(1, n):
         lam = ch.ext(label + f"lam{k}")[0]
         cp, cq = layers[k + 1]
-        arrs = [_eq_table([_to_mont(r) for r in rho], dev),
-                cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
+        arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
         layers[k + 1] = None                     # its halves are all this layer reads
         lam_m = _to_mont(lam)
+        mu = rho[0]
+        claim = ef.add(ef.add(prev[0], ef.mul(mu, ef.sub(prev[1], prev[0]))),
+                       ef.mul(lam, ef.add(prev[2], ef.mul(mu, ef.sub(prev[3], prev[2])))))
+        scale = one                              # prod_{i<j} eq(rho_i, r_i)
         rounds, rs = [], []
         for j in range(k):
+            # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
+            # h(0), h(2); h(1) follows from g(0) + g(1) = claim; the transcript is the eager prover's g(0), g(2), g(3)
             m = arrs[0].shape[1]
             half = m // 2
             nb = _grid(half)[0]
-            part = torch.empty(nb, 3, 8, dtype=torch.int64, device=dev)
-            _round_kernel[(nb,)](*arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
-            g = _from_mont(part.sum(0).cpu() % PRIME)
+            suffix = _eq_table([_to_mont(r) for r in rho[j + 1:]], dev)
+            part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
+            _round2_kernel[(nb,)](suffix, *arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
+            del suffix
+            h0, h2 = _from_mont(part.sum(0).cpu() % PRIME)
+            rj = rho[j]
+            e0, e1 = ef.sub(one, rj), rj
+            e2, e3 = ef.sub(ef.scal(rj, 3), one), ef.sub(ef.scal(rj, 5), ef.const(2))
+            g0 = ef.mul(scale, ef.mul(e0, h0))
+            denom = ef.mul(scale, e1)
+            if not bool(denom.any()):            # probability ~ k / p^8: evaluate h(1) directly instead
+                h1 = _h_at_one(arrs, rho, j, lam_m, dev)
+            else:
+                h1 = ef.mul(ef.sub(claim, g0), ef.inv(denom))
+            h3 = ef.add(ef.sub(h0, ef.scal(h1, 3)), ef.scal(h2, 3))
+            g = torch.stack([g0, ef.mul(scale, ef.mul(e2, h2)), ef.mul(scale, ef.mul(e3, h3))])
             _absorb(ch, label + f"g{k}.{j}", g)
             rounds.append(g)
             r = ch.ext(label + f"r{k}.{j}")[0]
             rs.append(r)
-            outs = [torch.empty(8, half, dtype=torch.int32, device=dev) for _ in range(5)]
-            _fold_kernel[_grid(half)](*arrs, *outs, *_to_mont(r), half, m, half, **_consts(), BLOCK=BLOCK)
+            claim = ef.lagrange4(g[0], ef.sub(claim, g[0]), g[1], g[2], r)
+            scale = ef.mul(scale, ef.add(ef.mul(rj, r), ef.mul(ef.sub(one, rj), ef.sub(one, r))))
+            outs = [torch.empty(8, half, dtype=torch.int32, device=dev) for _ in range(4)]
+            _fold4_kernel[_grid(half)](*arrs, *outs, *_to_mont(r), half, m, half, **_consts(), BLOCK=BLOCK)
             arrs = outs
-        vals = _from_mont(torch.stack([a[:, 0] for a in arrs[1:]]).cpu())
+        vals = _from_mont(torch.stack([a[:, 0] for a in arrs]).cpu())
+        prev = vals
         _absorb(ch, label + f"v{k}", vals)
         tr.rounds.append(torch.stack(rounds))
         tr.vals.append(vals)
         rho = [ch.ext(label + f"mu{k}")[0]] + rs
     tr.point = torch.stack(rho)
     return tr
+
+
+def _h_at_one(arrs, rho, j, lam_m, dev):
+    """``h(1)`` of round ``j`` directly (the kernel at ``t = 1``: the odd halves): only when the claim cannot give
+    it, i.e. ``prod_{i<j} eq(rho_i, r_i) rho_j = 0``."""
+    m = arrs[0].shape[1]
+    odd = [a[:, 1::2].contiguous() for a in arrs]
+    half = m // 2
+    nb = _grid(half)[0]
+    suffix = _eq_table([_to_mont(r) for r in rho[j + 1:]], dev)
+    part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
+    # with A' = (a[2y+1], a[2y+1]) the kernel's t = 0 point is t = 1 of the original arrays
+    dup = [torch.stack([o, o], 2).reshape(8, m) for o in odd]
+    _round2_kernel[(nb,)](suffix, *dup, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
+    return _from_mont(part.sum(0).cpu() % PRIME)[0]
 
 
 def _tree(p: torch.Tensor, q: torch.Tensor) -> list:

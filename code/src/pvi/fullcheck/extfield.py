@@ -18,7 +18,8 @@ import torch
 
 from .field import P
 
-__all__ = ["D", "BETA", "const", "gen", "add", "sub", "neg", "mul", "scal", "lift", "inv", "batch_inv", "power",
+__all__ = ["D", "BETA", "const", "gen", "add", "sub", "neg", "mul", "scal", "lift", "inv", "inv_fermat", "frobenius",
+           "batch_inv", "power",
            "eq_eval", "eq_table", "prefix_eq_sum", "lagrange4", "frac_sum", "small_times", "pack", "unpack", "equal"]
 
 D = 8
@@ -91,8 +92,29 @@ def power(a: torch.Tensor, e: int) -> torch.Tensor:
 _ORDER = P ** D - 1
 
 
+_ZETA = pow(BETA, (P - 1) // D, P)              # x^p = 11^((p-1)/8) x, since x^8 = 11 and 8 | p - 1
+_FROB = torch.tensor([[pow(_ZETA, i * k, P) for k in range(D)] for i in range(D)], dtype=torch.int64)
+
+
+def frobenius(a: torch.Tensor, i: int = 1) -> torch.Tensor:
+    """``a^(p^i)``: coefficient ``k`` times ``zeta^(i k)`` (the Frobenius map fixes ``F_p`` and sends ``x`` to
+    ``zeta x``)."""
+    return (a * _FROB[i % D].to(a.device)) % P
+
+
 def inv(a: torch.Tensor) -> torch.Tensor:
-    """``a^-1`` by Fermat (``a^(p^8 - 2)``); 0 maps to 0."""
+    """``a^-1`` (0 maps to 0) through the norm: ``b = a^(p + p^2 + ... + p^7)`` is a product of Frobenius images,
+    ``N(a) = a b`` lies in ``F_p``, and ``a^-1 = b / N(a)``: six products and one base-field inversion."""
+    b = frobenius(a, 1)
+    for i in range(2, D):
+        b = mul(b, frobenius(a, i))
+    norm = mul(a, b)[..., 0]                       # coefficients 1..7 are zero
+    return scal(b, torch.as_tensor([pow(int(v), P - 2, P) for v in norm.reshape(-1).tolist()],
+                                   dtype=torch.int64, device=a.device).view(norm.shape))
+
+
+def inv_fermat(a: torch.Tensor) -> torch.Tensor:
+    """``a^-1`` by Fermat (``a^(p^8 - 2)``): the reference :func:`inv` is tested against."""
     return power(a, _ORDER - 1)
 
 

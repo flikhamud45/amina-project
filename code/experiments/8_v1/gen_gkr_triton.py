@@ -59,11 +59,15 @@ an add and a conditional subtraction.  An element of ``F = F_p[x]/(x^8 - 11)`` i
 structure-of-arrays ``[8, n]`` int32 tensors (the bits of the uint32 values).  The verifier-facing values (the top,
 the round polynomials, the child values) are converted to canonical form on the host.
 
-**Algorithm** (as the eager prover): the leaves of an instance are built on the device from the residues and
-widths (``leaves``) or uploaded (``prove``); the tree is combined layer by layer; for each layer ``k`` the child
-arrays are split into their even and odd halves, the eq table of the layer's point is built by doubling, and each
-sum-check round is one kernel (``_round_kernel``: the three values ``g(0), g(2), g(3)`` summed per block in 64 bits)
-then one fold of the five arrays at the round's challenge (``_fold_kernel``), with one host round trip per round.
+**Algorithm** (the eager prover's transcript): the leaves of an instance are built on the device from the residues
+and widths (``prove_leaves``) or uploaded (``prove``); the tree is combined layer by layer; for each layer ``k`` the
+child arrays are split into their even and odd halves.  Round ``j`` writes ``g_j(t) = s_j eq(rho_j, t) h_j(t)``,
+``s_j = prod_{i<j} eq(rho_i, r_i)``, ``h_j(t) = sum_y eq(rho_{>j}, y) F(t, y)`` of degree 2 with
+``F = PL QR + QL (PR + lambda QR)``: one kernel (``_round2_kernel``) sums ``h_j(0)`` and ``h_j(2)`` per block in 64 bits
+over the suffix eq table (built by doubling, never folded), the host gets ``h_j(1)`` from the claim
+``g_j(0) + g_j(1)``, extrapolates ``h_j(3)`` and sends the eager prover's ``g_j(0), g_j(2), g_j(3)``; then one fold of the
+four child arrays at the round's challenge (``_fold4_kernel``).  Per pair and round: 12 products in ``F`` instead of
+the direct evaluation's 20.
 """
 
 from __future__ import annotations
@@ -251,6 +255,58 @@ def _fold_kernel(e, pl, pr, ql, qr, eo, plo, pro, qlo, qro, {args('r')}, half, s
         body.append("\n".join(f"    {nm}o{k} = _add({nm}a{k}, {nm}m{k}, P)" for k in range(D)))
         body.append(store(f"{nm}o", optr, "y", "s_out", "mask"))
     parts.append("\n".join(body))
+    # ---- one round, the eq factor of the round's variable taken out (h(0), h(2) of the degree-2 h)
+    body = [f'''@triton.jit
+def _round2_kernel(e, pl, pr, ql, qr, out, {args('lam')}, half, s, P_, MU_, B11_, BLOCK: tl.constexpr):
+    P = P_.to(tl.uint32)
+    MU = MU_.to(tl.uint32)
+    B11 = B11_.to(tl.uint32)
+    pid = tl.program_id(0)
+    y = pid.to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
+    mask = y < half''']
+    body.append(load("et", "e", "y", "half", "mask"))
+    for nm, ptr in (("pl", "pl"), ("pr", "pr"), ("ql", "ql"), ("qr", "qr")):
+        body.append(load(f"{nm}a", ptr, "2 * y", "s", "mask"))
+        body.append(load(f"{nm}b", ptr, "2 * y + 1", "s", "mask"))
+        body.append("\n".join(f"    {nm}d{k} = _sub({nm}b{k}, {nm}a{k}, P)" for k in range(D)))
+    body.append("\n".join(f"    lm{k} = lam{k}.to(tl.uint32) + et0 * 0" for k in range(D)))
+    for ti, t in enumerate((0, 2)):
+        for nm in ("pl", "pr", "ql", "qr"):
+            if t == 0:
+                body.append("\n".join(f"    {nm}t{k} = {nm}a{k}" for k in range(D)))
+            else:
+                body.append("\n".join(f"    {nm}t{k} = _add({nm}b{k}, {nm}d{k}, P)" for k in range(D)))
+        body.append(emul_call("u_", "lm", "qrt"))                       # lambda QR
+        body.append("\n".join(f"    v_{k} = _add(prt{k}, u_{k}, P)" for k in range(D)))
+        body.append(emul_call("f1_", "plt", "qrt"))                     # PL QR
+        body.append(emul_call("f2_", "qlt", "v_"))                      # QL (PR + lambda QR)
+        body.append("\n".join(f"    ff{k} = _add(f1_{k}, f2_{k}, P)" for k in range(D)))
+        body.append(emul_call("g_", "et", "ff"))
+        body.append("\n".join(
+            f"    tl.store(out + (pid * 2 + {ti}) * 8 + {k}, tl.sum(tl.where(mask, g_{k}, 0).to(tl.uint64), axis=0).to(tl.int64))"
+            for k in range(D)))
+    parts.append("\n".join(body))
+    # ---- fold of the four child arrays
+    body = [f'''@triton.jit
+def _fold4_kernel(pl, pr, ql, qr, plo, pro, qlo, qro, {args('r')}, half, s_in, s_out, P_, MU_, B11_,
+                  BLOCK: tl.constexpr):
+    P = P_.to(tl.uint32)
+    MU = MU_.to(tl.uint32)
+    B11 = B11_.to(tl.uint32)
+    y = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
+    mask = y < half''']
+    first = True
+    for nm, ptr, optr in (("pl", "pl", "plo"), ("pr", "pr", "pro"), ("ql", "ql", "qlo"), ("qr", "qr", "qro")):
+        body.append(load(f"{nm}a", ptr, "2 * y", "s_in", "mask"))
+        body.append(load(f"{nm}b", ptr, "2 * y + 1", "s_in", "mask"))
+        if first:
+            body.append("\n".join(f"    rr{k} = r{k}.to(tl.uint32) + pla0 * 0" for k in range(D)))
+            first = False
+        body.append("\n".join(f"    {nm}d{k} = _sub({nm}b{k}, {nm}a{k}, P)" for k in range(D)))
+        body.append(emul_call(f"{nm}m", f"{nm}d", "rr"))
+        body.append("\n".join(f"    {nm}o{k} = _add({nm}a{k}, {nm}m{k}, P)" for k in range(D)))
+        body.append(store(f"{nm}o", optr, "y", "s_out", "mask"))
+    parts.append("\n".join(body))
     return parts
 
 
@@ -301,35 +357,73 @@ def _prove_tree(layers: list, ch, label: str):
     _absorb(ch, label + "top", top)
     rho = [ch.ext(label + "mu0")[0]]
     dev = p1.device
+    one = ef.const(1)
+    prev = top                                   # the values the layer's claim comes from
     for k in range(1, n):
         lam = ch.ext(label + f"lam{k}")[0]
         cp, cq = layers[k + 1]
-        arrs = [_eq_table([_to_mont(r) for r in rho], dev),
-                cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
+        arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
         layers[k + 1] = None                     # its halves are all this layer reads
         lam_m = _to_mont(lam)
+        mu = rho[0]
+        claim = ef.add(ef.add(prev[0], ef.mul(mu, ef.sub(prev[1], prev[0]))),
+                       ef.mul(lam, ef.add(prev[2], ef.mul(mu, ef.sub(prev[3], prev[2])))))
+        scale = one                              # prod_{i<j} eq(rho_i, r_i)
         rounds, rs = [], []
         for j in range(k):
+            # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
+            # h(0), h(2); h(1) follows from g(0) + g(1) = claim; the transcript is the eager prover's g(0), g(2), g(3)
             m = arrs[0].shape[1]
             half = m // 2
             nb = _grid(half)[0]
-            part = torch.empty(nb, 3, 8, dtype=torch.int64, device=dev)
-            _round_kernel[(nb,)](*arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
-            g = _from_mont(part.sum(0).cpu() % PRIME)
+            suffix = _eq_table([_to_mont(r) for r in rho[j + 1:]], dev)
+            part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
+            _round2_kernel[(nb,)](suffix, *arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
+            del suffix
+            h0, h2 = _from_mont(part.sum(0).cpu() % PRIME)
+            rj = rho[j]
+            e0, e1 = ef.sub(one, rj), rj
+            e2, e3 = ef.sub(ef.scal(rj, 3), one), ef.sub(ef.scal(rj, 5), ef.const(2))
+            g0 = ef.mul(scale, ef.mul(e0, h0))
+            denom = ef.mul(scale, e1)
+            if not bool(denom.any()):            # probability ~ k / p^8: evaluate h(1) directly instead
+                h1 = _h_at_one(arrs, rho, j, lam_m, dev)
+            else:
+                h1 = ef.mul(ef.sub(claim, g0), ef.inv(denom))
+            h3 = ef.add(ef.sub(h0, ef.scal(h1, 3)), ef.scal(h2, 3))
+            g = torch.stack([g0, ef.mul(scale, ef.mul(e2, h2)), ef.mul(scale, ef.mul(e3, h3))])
             _absorb(ch, label + f"g{k}.{j}", g)
             rounds.append(g)
             r = ch.ext(label + f"r{k}.{j}")[0]
             rs.append(r)
-            outs = [torch.empty(8, half, dtype=torch.int32, device=dev) for _ in range(5)]
-            _fold_kernel[_grid(half)](*arrs, *outs, *_to_mont(r), half, m, half, **_consts(), BLOCK=BLOCK)
+            claim = ef.lagrange4(g[0], ef.sub(claim, g[0]), g[1], g[2], r)
+            scale = ef.mul(scale, ef.add(ef.mul(rj, r), ef.mul(ef.sub(one, rj), ef.sub(one, r))))
+            outs = [torch.empty(8, half, dtype=torch.int32, device=dev) for _ in range(4)]
+            _fold4_kernel[_grid(half)](*arrs, *outs, *_to_mont(r), half, m, half, **_consts(), BLOCK=BLOCK)
             arrs = outs
-        vals = _from_mont(torch.stack([a[:, 0] for a in arrs[1:]]).cpu())
+        vals = _from_mont(torch.stack([a[:, 0] for a in arrs]).cpu())
+        prev = vals
         _absorb(ch, label + f"v{k}", vals)
         tr.rounds.append(torch.stack(rounds))
         tr.vals.append(vals)
         rho = [ch.ext(label + f"mu{k}")[0]] + rs
     tr.point = torch.stack(rho)
     return tr
+
+
+def _h_at_one(arrs, rho, j, lam_m, dev):
+    """``h(1)`` of round ``j`` directly (the kernel at ``t = 1``: the odd halves): only when the claim cannot give
+    it, i.e. ``prod_{i<j} eq(rho_i, r_i) rho_j = 0``."""
+    m = arrs[0].shape[1]
+    odd = [a[:, 1::2].contiguous() for a in arrs]
+    half = m // 2
+    nb = _grid(half)[0]
+    suffix = _eq_table([_to_mont(r) for r in rho[j + 1:]], dev)
+    part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
+    # with A' = (a[2y+1], a[2y+1]) the kernel's t = 0 point is t = 1 of the original arrays
+    dup = [torch.stack([o, o], 2).reshape(8, m) for o in odd]
+    _round2_kernel[(nb,)](suffix, *dup, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
+    return _from_mont(part.sum(0).cpu() % PRIME)[0]
 
 
 def _tree(p: torch.Tensor, q: torch.Tensor) -> list:
@@ -378,7 +472,8 @@ def no_specialize(text):
 
 
 def main():
-    text = HEADER + "\n" + indent(emul()) + "\n\n" + "\n\n".join(indent(k) for k in kernels()) + "\n" + HOST
+    used = [k for k in kernels() if "def _round_kernel(" not in k and "def _fold_kernel(" not in k]
+    text = HEADER + "\n" + indent(emul()) + "\n\n" + "\n\n".join(indent(k) for k in used) + "\n" + HOST
     text = no_specialize(text)
     OUT.write_text(text)
     print(OUT, len(text.splitlines()), "lines")
