@@ -144,11 +144,31 @@ entries listed with their exact claim) are a few dozen per proof.
 `2^25` leaves takes 0.83 s on the 2080 Ti (24.6 ns per leaf, 5.8 GB peak), `2^20` 0.16 s against 15.2 s for the eager
 prover on the CPU.
 
-**Timings, first version** (job 1005343, OPT-125M 12 blocks @2048, 3 queries, CPU verifier): v0 prove 0.72 s,
-verify 3.2 s; V1 prove 18.4 s (split 9.9 s and fold 3.2 s on the host, GKR 4.7 s), verify 8.5 s (final check 5.4 s).
-Since then the split, the counts and the folds run on the prover's device, the windows come from tables, the final
-check's products are batched, and the GKR's rounds take the eq factor out (12 products per pair instead of 20);
-the timings are being re-measured.
+**Timings** (RTX 2080 Ti prover, lean, the GKR on the GPU with `lmax` 24; CPU verifier on 8 cores of the Xeon Silver
+4114 with the native attention; Fiat-Shamir; medians of 3 interleaved queries after a warm-up; all accepted).
+First version (job 1005343) and after the speed-ups (job 1005498):
+
+| Cell | Mode | v0 prove / verify | V1 first version | V1 now | V1 now: where the prover's time goes |
+|---|---|---|---|---|---|
+| GPT-2, 12 blocks @512 | C | 0.23 / 0.68 s | 4.19 / 2.16 s | **1.38 / 1.59 s** | GKR 0.91 s |
+| GPT-2, 12 blocks @512 | Kpre | 0.15 / 0.57 s | 4.20 / 2.10 s | **1.34 / 1.64 s** | GKR 0.94 s |
+| OPT-125M, 12 blocks @2048 | C | 0.48 / 2.88 s | 18.4 / 8.5 s | **5.03 / 4.76 s** | GKR 3.82 s, split 0.44 s, fold 0.30 s, encode 0.28 s |
+| OPT-125M, 12 blocks @2048 | Kpre | 0.40 / 2.46 s | 18.8 / 8.6 s | **4.93 / 4.82 s** | GKR 3.69 s |
+
+What was changed between the two: the split and the counts run on the prover's device with keys from the op's own
+three widths (it was one pass per table width); a lean GPU prover keeps int32 claims, so the values are encoded as
+v0's are; `y = Z e` and the verifier's `L e`, `W e` and `[X; 1] e` are one exact float64 GEMM each with the field
+vector in 11-bit limbs (`extfield.int_times`), the final check runs in blocks of 256 rows, F inner products are one
+8x8 product (`extfield.inner`); the GKR's rounds take the eq factor out (16 instead of 20 products per pair), build
+each layer's suffix eq tables once, evaluate `h(0), h(1), h(2)` on the GPU and do no claim tracking on the host
+(an instance of `2^25` leaves: 0.83 -> 0.56 s).
+
+**Where V1 stands.** The proof is 2.0-2.3x smaller at 2,048 tokens. The prover pays the GKR, about 22 ns per leaf
+on the 2080 Ti (one leaf per cut claim): at 2,048 tokens it is 10x v0's prover on this card (v0's int8 forward is
+very fast), and the CPU verifier pays about 1.7x v0's (the final check's two exact products per claim). On the
+L40S the GKR's integer arithmetic is expected to be 3-4x faster. V1 is therefore presented as an option that trades
+prover time for a 2x smaller proof (still orders of magnitude faster than a zkSNARK prover); the next GKR step is
+the bottom layer, whose numerators are the real-row indicator (about half of the GKR's work).
 
 ## 9. Adversarial review (workflow `v1-soundness-review`, 15 agents)
 
