@@ -1,0 +1,473 @@
+{
+  "model": "facebook/opt-125m",
+  "windows": 16,
+  "seq": 128,
+  "tokens": 2032,
+  "pct": 100.0,
+  "norm_gain": 4.0,
+  "fp32_ppl": 64.76112207163645,
+  "builder_copy_differences": [],
+  "benchmark_graph_differences": [
+    "mm200: bias True vs benchmark False"
+  ],
+  "graph_report": {
+    "max_claim_bound_log2": 21.709,
+    "claims_ok": true,
+    "linear_mult_min_log2": 21.066,
+    "linear_mult_max_log2": 30.951,
+    "linear_mults_outside_P3": [
+      "res21(res, layer 0): 2^30.95",
+      "res37(res, layer 1): 2^29.58",
+      "res53(res, layer 2): 2^30.20",
+      "res69(res, layer 3): 2^29.51",
+      "res85(res, layer 4): 2^29.94",
+      "res149(res, layer 8): 2^29.28",
+      "res197(res, layer 11): 2^30.03"
+    ],
+    "vector_mult_ops": 0,
+    "distinct_mults_per_vector_op_max": 1,
+    "distinct_mults_per_vector_op_mean": 1,
+    "norm_gain_min": 4.0,
+    "norm_gain_max": 4.0
+  },
+  "int_ppl": 75.51980226951073,
+  "int_top1": 0.718011811023622,
+  "hybrid_all_int_max_abs_logit_diff": 0.0,
+  "hybrid_all_float_max_abs_logit_diff_vs_hf": 3.717066385178214e-05,
+  "rows": [
+    {
+      "component": "(none)",
+      "mode": "all integer (hybrid)",
+      "ppl": 75.51980226951073,
+      "top1": 0.718011811023622,
+      "seconds": 17.8
+    },
+    {
+      "component": "(all)",
+      "mode": "all float (hybrid)",
+      "ppl": 64.76112268365274,
+      "top1": 1.0,
+      "seconds": 10.5
+    },
+    {
+      "component": "weights (all matrices)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 72.54090189883333,
+      "top1": 0.7632874015748031,
+      "seconds": 17.2
+    },
+    {
+      "component": "weights (all matrices)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 66.64358839459861,
+      "top1": 0.8533464566929134,
+      "seconds": 23.7
+    },
+    {
+      "component": "weights: embeddings",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 75.53685643768537,
+      "top1": 0.71751968503937,
+      "seconds": 22.1
+    },
+    {
+      "component": "weights: embeddings",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.82005789383729,
+      "top1": 0.9724409448818898,
+      "seconds": 16.3
+    },
+    {
+      "component": "weights: q/k/v",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 74.75970117908615,
+      "top1": 0.7332677165354331,
+      "seconds": 10.1
+    },
+    {
+      "component": "weights: q/k/v",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.96528858480532,
+      "top1": 0.9350393700787402,
+      "seconds": 9.1
+    },
+    {
+      "component": "weights: out_proj",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 74.71436157057302,
+      "top1": 0.7219488188976378,
+      "seconds": 9.4
+    },
+    {
+      "component": "weights: out_proj",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.15563526917775,
+      "top1": 0.9665354330708661,
+      "seconds": 8.6
+    },
+    {
+      "component": "weights: fc1",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 74.7254055514859,
+      "top1": 0.7416338582677166,
+      "seconds": 9.6
+    },
+    {
+      "component": "weights: fc1",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.27921708616827,
+      "top1": 0.9114173228346457,
+      "seconds": 8.4
+    },
+    {
+      "component": "weights: fc2",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 74.82863577813596,
+      "top1": 0.7317913385826772,
+      "seconds": 9.9
+    },
+    {
+      "component": "weights: fc2",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.09592464283774,
+      "top1": 0.9153543307086615,
+      "seconds": 8.8
+    },
+    {
+      "component": "weights: LM head",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 75.57744325611921,
+      "top1": 0.7204724409448819,
+      "seconds": 8.9
+    },
+    {
+      "component": "weights: LM head",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.70152170709397,
+      "top1": 0.9758858267716536,
+      "seconds": 8.7
+    },
+    {
+      "component": "LayerNorm outputs (all three)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 69.39074916171687,
+      "top1": 0.8036417322834646,
+      "seconds": 11.2
+    },
+    {
+      "component": "LayerNorm outputs (all three)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 70.3328838431371,
+      "top1": 0.7947834645669292,
+      "seconds": 8.4
+    },
+    {
+      "component": "LayerNorm before attention",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 70.96279391104527,
+      "top1": 0.7903543307086615,
+      "seconds": 10.2
+    },
+    {
+      "component": "LayerNorm before attention",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 68.68964351741751,
+      "top1": 0.812007874015748,
+      "seconds": 13.7
+    },
+    {
+      "component": "LayerNorm before MLP",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 74.90132485232975,
+      "top1": 0.7293307086614174,
+      "seconds": 16.7
+    },
+    {
+      "component": "LayerNorm before MLP",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.91009601915289,
+      "top1": 0.9345472440944882,
+      "seconds": 12.2
+    },
+    {
+      "component": "final LayerNorm (LM head input)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 75.45960196632944,
+      "top1": 0.7263779527559056,
+      "seconds": 17.1
+    },
+    {
+      "component": "final LayerNorm (LM head input)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.93663045205253,
+      "top1": 0.9443897637795275,
+      "seconds": 9.5
+    },
+    {
+      "component": "q/k/v requant",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 75.11414543652933,
+      "top1": 0.718503937007874,
+      "seconds": 9.8
+    },
+    {
+      "component": "q/k/v requant",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.26194846366828,
+      "top1": 0.9763779527559056,
+      "seconds": 8.7
+    },
+    {
+      "component": "fc1 requant",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 72.66518437872831,
+      "top1": 0.7549212598425197,
+      "seconds": 13.4
+    },
+    {
+      "component": "fc1 requant",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 66.2708074760687,
+      "top1": 0.8828740157480315,
+      "seconds": 21.6
+    },
+    {
+      "component": "softmax (exp table + 8-bit p)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 75.85671391348515,
+      "top1": 0.7214566929133859,
+      "seconds": 28.2
+    },
+    {
+      "component": "softmax (exp table + 8-bit p)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.9329695851232,
+      "top1": 0.9758858267716536,
+      "seconds": 14.4
+    },
+    {
+      "component": "attention output requant",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 75.70014948543852,
+      "top1": 0.7209645669291339,
+      "seconds": 12.4
+    },
+    {
+      "component": "attention output requant",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.80818133483561,
+      "top1": 0.9832677165354331,
+      "seconds": 9.7
+    },
+    {
+      "component": "residual stream (round + clamp)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 75.87966409641699,
+      "top1": 0.7170275590551181,
+      "seconds": 9.7
+    },
+    {
+      "component": "residual stream (round + clamp)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.7651456973048,
+      "top1": 0.9965551181102362,
+      "seconds": 9.4
+    },
+    {
+      "component": "ReLU table",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 75.51980226951073,
+      "top1": 0.718011811023622,
+      "seconds": 12.3
+    },
+    {
+      "component": "ReLU table",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.76112268365274,
+      "top1": 1.0,
+      "seconds": 8.5
+    },
+    {
+      "component": "LayerNorm outputs: clip only (no rounding)",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.86070041366769,
+      "top1": 0.9827755905511811,
+      "seconds": 8.8
+    },
+    {
+      "component": "LayerNorm outputs: clip only (no rounding)",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 69.65941084773078,
+      "top1": 0.8065944881889764,
+      "seconds": 10.3
+    },
+    {
+      "component": "LayerNorm outputs: rounding only (no clip)",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 70.3328838431371,
+      "top1": 0.7947834645669292,
+      "seconds": 8.8
+    },
+    {
+      "component": "LayerNorm outputs: rounding only (no clip)",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 75.87296429923039,
+      "top1": 0.7234251968503937,
+      "seconds": 12.0
+    },
+    {
+      "component": "LayerNorm outputs: integer stats only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.86070041366769,
+      "top1": 0.9827755905511811,
+      "seconds": 12.9
+    },
+    {
+      "component": "LayerNorm outputs: integer stats only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 69.65941084773078,
+      "top1": 0.8065944881889764,
+      "seconds": 16.0
+    },
+    {
+      "component": "final LayerNorm: rounding only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.93663045205253,
+      "top1": 0.9443897637795275,
+      "seconds": 11.3
+    },
+    {
+      "component": "final LayerNorm: rounding only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 75.51980223576594,
+      "top1": 0.718011811023622,
+      "seconds": 12.7
+    },
+    {
+      "component": "final LayerNorm: clip only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.76783423777454,
+      "top1": 0.9965551181102362,
+      "seconds": 9.7
+    },
+    {
+      "component": "final LayerNorm: clip only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 75.437469117868,
+      "top1": 0.7268700787401575,
+      "seconds": 8.7
+    },
+    {
+      "component": "softmax: exp table only (float p)",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.77040847650176,
+      "top1": 0.9936023622047244,
+      "seconds": 8.7
+    },
+    {
+      "component": "softmax: exp table only (float p)",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 75.59948383208035,
+      "top1": 0.7096456692913385,
+      "seconds": 9.6
+    },
+    {
+      "component": "softmax: 8-bit p only (exact exp)",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.88316160657538,
+      "top1": 0.9763779527559056,
+      "seconds": 8.6
+    },
+    {
+      "component": "softmax: 8-bit p only (exact exp)",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 74.46973142482516,
+      "top1": 0.7165354330708661,
+      "seconds": 12.4
+    },
+    {
+      "component": "act requants: rounding only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 67.04648195051118,
+      "top1": 0.8730314960629921,
+      "seconds": 8.7
+    },
+    {
+      "component": "act requants: rounding only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 75.90093236532145,
+      "top1": 0.7140748031496063,
+      "seconds": 12.5
+    },
+    {
+      "component": "act requants: clip only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.77206865553313,
+      "top1": 0.9985236220472441,
+      "seconds": 8.9
+    },
+    {
+      "component": "act requants: clip only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 72.45792439642575,
+      "top1": 0.7598425196850394,
+      "seconds": 9.7
+    },
+    {
+      "component": "attention output: rounding only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.8159194575876,
+      "top1": 0.9832677165354331,
+      "seconds": 8.4
+    },
+    {
+      "component": "attention output: rounding only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 76.50202003355604,
+      "top1": 0.7160433070866141,
+      "seconds": 10.2
+    },
+    {
+      "component": "attention output: clip only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.78139553239387,
+      "top1": 0.9980314960629921,
+      "seconds": 8.6
+    },
+    {
+      "component": "attention output: clip only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 76.10727407002236,
+      "top1": 0.7219488188976378,
+      "seconds": 9.9
+    },
+    {
+      "component": "residual: rounding only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.7651456973048,
+      "top1": 0.9965551181102362,
+      "seconds": 8.7
+    },
+    {
+      "component": "residual: rounding only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 75.51980226951073,
+      "top1": 0.718011811023622,
+      "seconds": 9.3
+    },
+    {
+      "component": "residual: clamp only",
+      "mode": "add-one (feature): these features integer, rest float",
+      "ppl": 64.7611226836528,
+      "top1": 1.0,
+      "seconds": 8.6
+    },
+    {
+      "component": "residual: clamp only",
+      "mode": "restricted: rest integer, this component with these features only",
+      "ppl": 75.87966409641699,
+      "top1": 0.7170275590551181,
+      "seconds": 9.2
+    }
+  ]
+}

@@ -1,0 +1,419 @@
+{
+  "model": "facebook/opt-125m",
+  "windows": 16,
+  "seq": 128,
+  "tokens": 2032,
+  "fp32_ppl": 64.76112207163645,
+  "rows": [
+    {
+      "options": {},
+      "calib_windows": 1,
+      "ppl": 75.51980226951073,
+      "top1_agreement_with_fp32": 0.718011811023622,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.709,
+        "claims_ok": true,
+        "linear_mult_min_log2": 21.066,
+        "linear_mult_max_log2": 30.951,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.95",
+          "res37(res, layer 1): 2^29.58",
+          "res53(res, layer 2): 2^30.20",
+          "res69(res, layer 3): 2^29.51",
+          "res85(res, layer 4): 2^29.94",
+          "res149(res, layer 8): 2^29.28",
+          "res197(res, layer 11): 2^30.03"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 4.0,
+        "norm_gain_max": 4.0
+      },
+      "seconds": 13.3
+    },
+    {
+      "options": {
+        "norm_gain": 3,
+        "pct": 100.0
+      },
+      "calib_windows": 1,
+      "ppl": 76.81314273750169,
+      "top1_agreement_with_fp32": 0.7062007874015748,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.708,
+        "claims_ok": true,
+        "linear_mult_min_log2": 21.486,
+        "linear_mult_max_log2": 30.946,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.95",
+          "res37(res, layer 1): 2^29.59",
+          "res53(res, layer 2): 2^30.16",
+          "res69(res, layer 3): 2^29.50",
+          "res85(res, layer 4): 2^29.97",
+          "res149(res, layer 8): 2^29.28",
+          "res197(res, layer 11): 2^30.03"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 3.0,
+        "norm_gain_max": 3.0
+      },
+      "seconds": 12.3
+    },
+    {
+      "options": {
+        "norm_gain": 4,
+        "pct": 100.0
+      },
+      "calib_windows": 1,
+      "ppl": 75.51980226951073,
+      "top1_agreement_with_fp32": 0.718011811023622,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.709,
+        "claims_ok": true,
+        "linear_mult_min_log2": 21.066,
+        "linear_mult_max_log2": 30.951,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.95",
+          "res37(res, layer 1): 2^29.58",
+          "res53(res, layer 2): 2^30.20",
+          "res69(res, layer 3): 2^29.51",
+          "res85(res, layer 4): 2^29.94",
+          "res149(res, layer 8): 2^29.28",
+          "res197(res, layer 11): 2^30.03"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 4.0,
+        "norm_gain_max": 4.0
+      },
+      "seconds": 12.6
+    },
+    {
+      "options": {
+        "norm_gain": 6,
+        "pct": 100.0
+      },
+      "calib_windows": 1,
+      "ppl": 77.0009313503986,
+      "top1_agreement_with_fp32": 0.6387795275590551,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.71,
+        "claims_ok": true,
+        "linear_mult_min_log2": 20.469,
+        "linear_mult_max_log2": 30.963,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.96",
+          "res37(res, layer 1): 2^29.56",
+          "res53(res, layer 2): 2^30.17",
+          "res69(res, layer 3): 2^29.53",
+          "res85(res, layer 4): 2^29.98",
+          "res197(res, layer 11): 2^29.61"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 6.0,
+        "norm_gain_max": 6.0
+      },
+      "seconds": 12.4
+    },
+    {
+      "options": {
+        "norm_gain": 3,
+        "pct": 99.9
+      },
+      "calib_windows": 1,
+      "ppl": 74.36259285780592,
+      "top1_agreement_with_fp32": 0.7273622047244095,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.708,
+        "claims_ok": true,
+        "linear_mult_min_log2": 23.937,
+        "linear_mult_max_log2": 29.253,
+        "linear_mults_outside_P3": [
+          "res53(res, layer 2): 2^29.08",
+          "res85(res, layer 4): 2^29.25"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 3.0,
+        "norm_gain_max": 3.0
+      },
+      "seconds": 14.1
+    },
+    {
+      "options": {
+        "norm_gain": 4,
+        "pct": 99.9
+      },
+      "calib_windows": 1,
+      "ppl": 73.12048029841769,
+      "top1_agreement_with_fp32": 0.7421259842519685,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.709,
+        "claims_ok": true,
+        "linear_mult_min_log2": 23.501,
+        "linear_mult_max_log2": 29.233,
+        "linear_mults_outside_P3": [
+          "res53(res, layer 2): 2^29.05",
+          "res85(res, layer 4): 2^29.23"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 4.0,
+        "norm_gain_max": 4.0
+      },
+      "seconds": 16.0
+    },
+    {
+      "options": {
+        "norm_gain": 6,
+        "pct": 99.9
+      },
+      "calib_windows": 1,
+      "ppl": 76.15789173972986,
+      "top1_agreement_with_fp32": 0.6515748031496063,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.71,
+        "claims_ok": true,
+        "linear_mult_min_log2": 22.939,
+        "linear_mult_max_log2": 29.252,
+        "linear_mults_outside_P3": [
+          "res53(res, layer 2): 2^29.06",
+          "res85(res, layer 4): 2^29.25"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 6.0,
+        "norm_gain_max": 6.0
+      },
+      "seconds": 14.3
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.0
+      },
+      "calib_windows": 1,
+      "ppl": 78.49526650310776,
+      "top1_agreement_with_fp32": 0.6953740157480315,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 22.917,
+        "claims_ok": true,
+        "linear_mult_min_log2": 18.974,
+        "linear_mult_max_log2": 30.945,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.94",
+          "res37(res, layer 1): 2^29.57",
+          "res53(res, layer 2): 2^30.19",
+          "res69(res, layer 3): 2^29.54",
+          "res85(res, layer 4): 2^29.97",
+          "res149(res, layer 8): 2^29.28",
+          "res197(res, layer 11): 2^30.03"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.015625,
+        "norm_gain_max": 31.7041015625
+      },
+      "seconds": 16.7
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.25
+      },
+      "calib_windows": 1,
+      "ppl": 73.69282173713736,
+      "top1_agreement_with_fp32": 0.7401574803149606,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 22.21,
+        "claims_ok": true,
+        "linear_mult_min_log2": 18.976,
+        "linear_mult_max_log2": 30.945,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.94",
+          "res37(res, layer 1): 2^29.55",
+          "res53(res, layer 2): 2^30.19",
+          "res69(res, layer 3): 2^29.43",
+          "res85(res, layer 4): 2^29.91",
+          "res149(res, layer 8): 2^29.27",
+          "res197(res, layer 11): 2^30.03"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.015625,
+        "norm_gain_max": 40.14967346191406
+      },
+      "seconds": 13.8
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5
+      },
+      "calib_windows": 1,
+      "ppl": 70.30345015069437,
+      "top1_agreement_with_fp32": 0.78001968503937,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 18.972,
+        "linear_mult_max_log2": 30.949,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.95",
+          "res37(res, layer 1): 2^29.58",
+          "res53(res, layer 2): 2^30.13",
+          "res69(res, layer 3): 2^29.45",
+          "res85(res, layer 4): 2^29.79",
+          "res149(res, layer 8): 2^29.28",
+          "res197(res, layer 11): 2^30.03"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.0714874267578125,
+        "norm_gain_max": 46.78175354003906
+      },
+      "seconds": 13.6
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.65
+      },
+      "calib_windows": 1,
+      "ppl": 72.29136294603182,
+      "top1_agreement_with_fp32": 0.7947834645669292,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 18.975,
+        "linear_mult_max_log2": 30.947,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.95",
+          "res37(res, layer 1): 2^29.60",
+          "res53(res, layer 2): 2^30.15",
+          "res69(res, layer 3): 2^29.42",
+          "res85(res, layer 4): 2^29.83",
+          "res149(res, layer 8): 2^29.29",
+          "res197(res, layer 11): 2^30.04"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.35614013671875,
+        "norm_gain_max": 50.892486572265625
+      },
+      "seconds": 13.8
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.8
+      },
+      "calib_windows": 1,
+      "ppl": 75.66152376183776,
+      "top1_agreement_with_fp32": 0.7386811023622047,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 18.978,
+        "linear_mult_max_log2": 30.953,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.95",
+          "res37(res, layer 1): 2^29.56",
+          "res53(res, layer 2): 2^30.14",
+          "res69(res, layer 3): 2^29.55",
+          "res85(res, layer 4): 2^29.92",
+          "res149(res, layer 8): 2^29.29",
+          "res197(res, layer 11): 2^30.04"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 1.6699981689453125,
+        "norm_gain_max": 66.31901550292969
+      },
+      "seconds": 13.2
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 1.0
+      },
+      "calib_windows": 1,
+      "ppl": 104.50717300052717,
+      "top1_agreement_with_fp32": 0.5890748031496063,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 18.971,
+        "linear_mult_max_log2": 30.955,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.96",
+          "res37(res, layer 1): 2^29.63",
+          "res53(res, layer 2): 2^30.19",
+          "res69(res, layer 3): 2^29.44",
+          "res85(res, layer 4): 2^29.76",
+          "res149(res, layer 8): 2^29.28",
+          "res197(res, layer 11): 2^30.04"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 4.587066650390625,
+        "norm_gain_max": 99.834228515625
+      },
+      "seconds": 13.4
+    }
+  ]
+}

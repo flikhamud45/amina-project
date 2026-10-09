@@ -1,0 +1,347 @@
+{
+  "model": "facebook/opt-125m",
+  "windows": 16,
+  "seq": 128,
+  "tokens": 2032,
+  "fp32_ppl": 64.76112207163645,
+  "rows": [
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.9,
+        "pct": 99.99
+      },
+      "calib_windows": 1,
+      "ppl": 67.34638677271028,
+      "top1_agreement_with_fp32": 0.8262795275590551,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 20.122,
+        "linear_mult_max_log2": 29.852,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^29.67",
+          "res37(res, layer 1): 2^29.20",
+          "res53(res, layer 2): 2^29.85",
+          "res69(res, layer 3): 2^29.02",
+          "res85(res, layer 4): 2^29.56",
+          "res197(res, layer 11): 2^29.23"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.07513427734375,
+        "norm_gain_max": 47.26490783691406
+      },
+      "seconds": 16.5
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.9,
+        "pct": 99.99,
+        "pct_att": 99.99
+      },
+      "calib_windows": 1,
+      "ppl": 67.16139359616194,
+      "top1_agreement_with_fp32": 0.812007874015748,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 20.117,
+        "linear_mult_max_log2": 29.852,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^29.67",
+          "res37(res, layer 1): 2^29.20",
+          "res53(res, layer 2): 2^29.85",
+          "res69(res, layer 3): 2^29.03",
+          "res85(res, layer 4): 2^29.57",
+          "res197(res, layer 11): 2^29.23"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.076019287109375,
+        "norm_gain_max": 47.525665283203125
+      },
+      "seconds": 16.6
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.55,
+        "smooth_pct": 99.9,
+        "pct": 99.99,
+        "pct_att": 99.99
+      },
+      "calib_windows": 1,
+      "ppl": 66.62367901758496,
+      "top1_agreement_with_fp32": 0.8228346456692913,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 20.124,
+        "linear_mult_max_log2": 29.847,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^29.67",
+          "res37(res, layer 1): 2^29.22",
+          "res53(res, layer 2): 2^29.85",
+          "res69(res, layer 3): 2^29.03",
+          "res85(res, layer 4): 2^29.55",
+          "res197(res, layer 11): 2^29.23"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.1283416748046875,
+        "norm_gain_max": 48.91375732421875
+      },
+      "seconds": 16.0
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.5,
+        "pct": 99.99,
+        "pct_att": 99.99
+      },
+      "calib_windows": 1,
+      "ppl": 71.23145628479156,
+      "top1_agreement_with_fp32": 0.6343503937007874,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 20.013,
+        "linear_mult_max_log2": 29.861,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^29.66",
+          "res37(res, layer 1): 2^29.18",
+          "res53(res, layer 2): 2^29.86",
+          "res69(res, layer 3): 2^29.02",
+          "res85(res, layer 4): 2^29.56"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.106292724609375,
+        "norm_gain_max": 47.76210021972656
+      },
+      "seconds": 16.2
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.0,
+        "pct": 99.99,
+        "pct_att": 99.99
+      },
+      "calib_windows": 1,
+      "ppl": 122.62675171775258,
+      "top1_agreement_with_fp32": 0.45915354330708663,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 19.996,
+        "linear_mult_max_log2": 29.873,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^29.66",
+          "res37(res, layer 1): 2^29.15",
+          "res53(res, layer 2): 2^29.87",
+          "res69(res, layer 3): 2^29.04",
+          "res85(res, layer 4): 2^29.65"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.1262664794921875,
+        "norm_gain_max": 50.610137939453125
+      },
+      "seconds": 16.1
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.9,
+        "pct": 99.9,
+        "pct_att": 99.99
+      },
+      "calib_windows": 1,
+      "ppl": 68.88554417260286,
+      "top1_agreement_with_fp32": 0.8080708661417323,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 21.291,
+        "linear_mult_max_log2": 29.093,
+        "linear_mults_outside_P3": [
+          "res53(res, layer 2): 2^29.01",
+          "res85(res, layer 4): 2^29.09"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.0741424560546875,
+        "norm_gain_max": 47.70903015136719
+      },
+      "seconds": 16.1
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.9,
+        "pct": 99.99,
+        "pct_att": 99.99
+      },
+      "calib_windows": 4,
+      "ppl": 68.79517291662681,
+      "top1_agreement_with_fp32": 0.8115157480314961,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 20.28,
+        "linear_mult_max_log2": 29.882,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^29.65",
+          "res37(res, layer 1): 2^29.20",
+          "res53(res, layer 2): 2^29.88",
+          "res69(res, layer 3): 2^29.02",
+          "res85(res, layer 4): 2^29.54",
+          "res197(res, layer 11): 2^29.42"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.0701141357421875,
+        "norm_gain_max": 45.27044677734375
+      },
+      "seconds": 24.7
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.9,
+        "pct": 99.99,
+        "pct_att": 99.99
+      },
+      "calib_windows": 8,
+      "ppl": 68.6563013470193,
+      "top1_agreement_with_fp32": 0.8213582677165354,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.597,
+        "claims_ok": true,
+        "linear_mult_min_log2": 20.283,
+        "linear_mult_max_log2": 29.884,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^29.64",
+          "res37(res, layer 1): 2^29.16",
+          "res53(res, layer 2): 2^29.88",
+          "res69(res, layer 3): 2^29.01",
+          "res85(res, layer 4): 2^29.53",
+          "res197(res, layer 11): 2^29.42"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.07122802734375,
+        "norm_gain_max": 44.97178649902344
+      },
+      "seconds": 38.1
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.9,
+        "pct": 99.9,
+        "pct_att": 99.9
+      },
+      "calib_windows": 8,
+      "ppl": 70.27590223798127,
+      "top1_agreement_with_fp32": 0.8115157480314961,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.603,
+        "claims_ok": true,
+        "linear_mult_min_log2": 21.395,
+        "linear_mult_max_log2": 29.086,
+        "linear_mults_outside_P3": [
+          "res53(res, layer 2): 2^29.03",
+          "res85(res, layer 4): 2^29.09"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.0697479248046875,
+        "norm_gain_max": 44.35882568359375
+      },
+      "seconds": 37.3
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.5,
+        "smooth_pct": 99.9,
+        "pct": 99.99,
+        "pct_att": 99.99,
+        "relu_calib": true
+      },
+      "calib_windows": 1,
+      "ppl": 67.1806214407403,
+      "top1_agreement_with_fp32": 0.797736220472441,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.593,
+        "claims_ok": true,
+        "linear_mult_min_log2": 19.117,
+        "linear_mult_max_log2": 30.67,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.67",
+          "res53(res, layer 2): 2^29.51",
+          "res85(res, layer 4): 2^29.11",
+          "res197(res, layer 11): 2^29.64"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 0.075531005859375,
+        "norm_gain_max": 46.57733154296875
+      },
+      "seconds": 15.4
+    }
+  ]
+}

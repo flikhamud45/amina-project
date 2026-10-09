@@ -1,0 +1,296 @@
+{
+  "model": "facebook/opt-125m",
+  "windows": 16,
+  "seq": 128,
+  "tokens": 2032,
+  "pct": 99.99,
+  "norm_gain": 4.0,
+  "fp32_ppl": 64.76112207163645,
+  "opts": {
+    "norm_mode": "smooth",
+    "alpha": 0.55,
+    "smooth_pct": 99.9,
+    "pct_att": 99.99
+  },
+  "builder_copy_differences": "n/a (options differ)",
+  "benchmark_graph_differences": [
+    "mm200: bias True vs benchmark False"
+  ],
+  "graph_report": {
+    "max_claim_bound_log2": 21.593,
+    "claims_ok": true,
+    "linear_mult_min_log2": 20.124,
+    "linear_mult_max_log2": 29.847,
+    "linear_mults_outside_P3": [
+      "res21(res, layer 0): 2^29.67",
+      "res37(res, layer 1): 2^29.22",
+      "res53(res, layer 2): 2^29.85",
+      "res69(res, layer 3): 2^29.03",
+      "res85(res, layer 4): 2^29.55",
+      "res197(res, layer 11): 2^29.23"
+    ],
+    "vector_mult_ops": 0,
+    "distinct_mults_per_vector_op_max": 1,
+    "distinct_mults_per_vector_op_mean": 1,
+    "norm_gain_min": 0.1283416748046875,
+    "norm_gain_max": 48.91375732421875
+  },
+  "int_ppl": 66.62367901758496,
+  "int_top1": 0.8228346456692913,
+  "hybrid_all_int_max_abs_logit_diff": 0.0,
+  "hybrid_all_float_max_abs_logit_diff_vs_hf": 3.717066388020385e-05,
+  "rows": [
+    {
+      "component": "(none)",
+      "mode": "all integer (hybrid)",
+      "ppl": 66.62367901758496,
+      "top1": 0.8228346456692913,
+      "seconds": 11.9
+    },
+    {
+      "component": "(all)",
+      "mode": "all float (hybrid)",
+      "ppl": 64.76112268365274,
+      "top1": 1.0,
+      "seconds": 8.2
+    },
+    {
+      "component": "weights (all matrices)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 63.992263995808585,
+      "top1": 0.8828740157480315,
+      "seconds": 9.9
+    },
+    {
+      "component": "weights (all matrices)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 66.88319798954299,
+      "top1": 0.8607283464566929,
+      "seconds": 9.3
+    },
+    {
+      "component": "weights: embeddings",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.66121193061657,
+      "top1": 0.8238188976377953,
+      "seconds": 13.6
+    },
+    {
+      "component": "weights: embeddings",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.82005789383729,
+      "top1": 0.9724409448818898,
+      "seconds": 8.7
+    },
+    {
+      "component": "weights: q/k/v",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.73919603696055,
+      "top1": 0.8228346456692913,
+      "seconds": 9.7
+    },
+    {
+      "component": "weights: q/k/v",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.07412778728609,
+      "top1": 0.9650590551181102,
+      "seconds": 12.7
+    },
+    {
+      "component": "weights: out_proj",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 65.99560916611769,
+      "top1": 0.827755905511811,
+      "seconds": 15.7
+    },
+    {
+      "component": "weights: out_proj",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.15422133668312,
+      "top1": 0.9670275590551181,
+      "seconds": 13.8
+    },
+    {
+      "component": "weights: fc1",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.24919047368908,
+      "top1": 0.8420275590551181,
+      "seconds": 18.0
+    },
+    {
+      "component": "weights: fc1",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.30223744210917,
+      "top1": 0.9207677165354331,
+      "seconds": 15.4
+    },
+    {
+      "component": "weights: fc2",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 65.98456168766361,
+      "top1": 0.8454724409448819,
+      "seconds": 15.8
+    },
+    {
+      "component": "weights: fc2",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.07256647347968,
+      "top1": 0.9153543307086615,
+      "seconds": 17.4
+    },
+    {
+      "component": "weights: LM head",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.45751620855017,
+      "top1": 0.8223425196850394,
+      "seconds": 21.2
+    },
+    {
+      "component": "weights: LM head",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.94604642247691,
+      "top1": 0.96998031496063,
+      "seconds": 10.0
+    },
+    {
+      "component": "LayerNorm outputs (all three)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 68.58364137344793,
+      "top1": 0.844488188976378,
+      "seconds": 15.2
+    },
+    {
+      "component": "LayerNorm outputs (all three)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 63.52552475025956,
+      "top1": 0.9025590551181102,
+      "seconds": 9.8
+    },
+    {
+      "component": "LayerNorm before attention",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 68.26112383159737,
+      "top1": 0.84498031496063,
+      "seconds": 13.1
+    },
+    {
+      "component": "LayerNorm before attention",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 63.186744815076665,
+      "top1": 0.9104330708661418,
+      "seconds": 11.5
+    },
+    {
+      "component": "LayerNorm before MLP",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 67.22152811464575,
+      "top1": 0.827263779527559,
+      "seconds": 21.4
+    },
+    {
+      "component": "LayerNorm before MLP",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.10438357852875,
+      "top1": 0.968503937007874,
+      "seconds": 15.2
+    },
+    {
+      "component": "final LayerNorm (LM head input)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.65087554721939,
+      "top1": 0.8213582677165354,
+      "seconds": 36.6
+    },
+    {
+      "component": "final LayerNorm (LM head input)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.73243404227391,
+      "top1": 0.984251968503937,
+      "seconds": 15.4
+    },
+    {
+      "component": "q/k/v requant",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.65206890131984,
+      "top1": 0.8174212598425197,
+      "seconds": 18.9
+    },
+    {
+      "component": "q/k/v requant",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 65.136988860415,
+      "top1": 0.9753937007874016,
+      "seconds": 13.2
+    },
+    {
+      "component": "fc1 requant",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 65.87375498359839,
+      "top1": 0.8257874015748031,
+      "seconds": 15.5
+    },
+    {
+      "component": "fc1 requant",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 66.21926594883702,
+      "top1": 0.9232283464566929,
+      "seconds": 11.6
+    },
+    {
+      "component": "softmax (exp table + 8-bit p)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.61487643338874,
+      "top1": 0.8262795275590551,
+      "seconds": 15.9
+    },
+    {
+      "component": "softmax (exp table + 8-bit p)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.92793202195764,
+      "top1": 0.9753937007874016,
+      "seconds": 15.7
+    },
+    {
+      "component": "attention output requant",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.45258115740573,
+      "top1": 0.8326771653543307,
+      "seconds": 16.2
+    },
+    {
+      "component": "attention output requant",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.8755653086547,
+      "top1": 0.9817913385826772,
+      "seconds": 14.5
+    },
+    {
+      "component": "residual stream (round + clamp)",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.54806601944495,
+      "top1": 0.8208661417322834,
+      "seconds": 20.0
+    },
+    {
+      "component": "residual stream (round + clamp)",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.7651456973048,
+      "top1": 0.9965551181102362,
+      "seconds": 15.7
+    },
+    {
+      "component": "ReLU table",
+      "mode": "leave-one-out: this float, rest integer",
+      "ppl": 66.73065420446439,
+      "top1": 0.8184055118110236,
+      "seconds": 13.4
+    },
+    {
+      "component": "ReLU table",
+      "mode": "add-one: this integer, rest float",
+      "ppl": 64.76112268365274,
+      "top1": 1.0,
+      "seconds": 11.9
+    }
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "model": "facebook/opt-1.3b",
+  "windows": 16,
+  "seq": 128,
+  "tokens": 2032,
+  "fp32_ppl": 32.79223097982597,
+  "rows": [
+    {
+      "options": {
+        "norm_gain": 3
+      },
+      "calib_windows": 1,
+      "calib_offset": 0,
+      "ppl": 36.4360233110321,
+      "top1_agreement_with_fp32": 0.8193897637795275,
+      "graph_differences": [
+        "mm392: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 24.274,
+        "claims_ok": true,
+        "linear_mult_min_log2": 19.669,
+        "linear_mult_max_log2": 31.166,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.52",
+          "res37(res, layer 1): 2^29.48",
+          "res53(res, layer 2): 2^29.67",
+          "res69(res, layer 3): 2^29.81",
+          "res85(res, layer 4): 2^29.71",
+          "res101(res, layer 5): 2^30.00",
+          "res117(res, layer 6): 2^29.57",
+          "res133(res, layer 7): 2^29.97",
+          "res149(res, layer 8): 2^29.84",
+          "res165(res, layer 9): 2^30.13",
+          "res181(res, layer 10): 2^30.20",
+          "res197(res, layer 11): 2^30.36",
+          "res213(res, layer 12): 2^30.16",
+          "res229(res, layer 13): 2^30.12",
+          "res245(res, layer 14): 2^30.04",
+          "res261(res, layer 15): 2^29.60",
+          "res277(res, layer 16): 2^29.48",
+          "res293(res, layer 17): 2^30.09",
+          "res309(res, layer 18): 2^29.39",
+          "res325(res, layer 19): 2^29.62",
+          "res341(res, layer 20): 2^29.90",
+          "res357(res, layer 21): 2^30.75",
+          "res367(res, layer 22): 2^29.04",
+          "res373(res, layer 22): 2^31.17",
+          "res383(res, layer 23): 2^29.82",
+          "res389(res, layer 23): 2^30.25"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 3.0,
+        "norm_gain_max": 3.0
+      },
+      "seconds": 132.1
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.55,
+        "smooth_pct": 99.9,
+        "pct": 99.99,
+        "pct_att": 99.99
+      },
+      "calib_windows": 1,
+      "calib_offset": 0,
+      "ppl": 33.696988791776825,
+      "top1_agreement_with_fp32": 0.8971456692913385,
+      "graph_differences": [
+        "mm392: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 24.274,
+        "claims_ok": true,
+        "linear_mult_min_log2": 19.448,
+        "linear_mult_max_log2": 30.123,
+        "linear_mults_outside_P3": [
+          "res37(res, layer 1): 2^29.17",
+          "res53(res, layer 2): 2^29.12",
+          "res69(res, layer 3): 2^29.33",
+          "res85(res, layer 4): 2^29.08",
+          "res101(res, layer 5): 2^29.41",
+          "res133(res, layer 7): 2^29.41",
+          "res149(res, layer 8): 2^29.30",
+          "res165(res, layer 9): 2^29.52",
+          "res181(res, layer 10): 2^29.57",
+          "res197(res, layer 11): 2^29.75",
+          "res213(res, layer 12): 2^29.50",
+          "res229(res, layer 13): 2^29.62",
+          "res245(res, layer 14): 2^29.59",
+          "res261(res, layer 15): 2^29.14",
+          "res277(res, layer 16): 2^29.03",
+          "res293(res, layer 17): 2^29.69",
+          "res325(res, layer 19): 2^29.12",
+          "res341(res, layer 20): 2^29.24",
+          "res357(res, layer 21): 2^29.96",
+          "res373(res, layer 22): 2^30.12",
+          "res389(res, layer 23): 2^29.80"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 2.6773681640625,
+        "norm_gain_max": 68.12931823730469
+      },
+      "seconds": 146.8
+    }
+  ]
+}

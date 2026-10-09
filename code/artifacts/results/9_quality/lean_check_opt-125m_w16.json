@@ -1,0 +1,78 @@
+{
+  "model": "facebook/opt-125m",
+  "windows": 16,
+  "seq": 128,
+  "tokens": 2032,
+  "fp32_ppl": 64.76112207163645,
+  "rows": [
+    {
+      "options": {},
+      "calib_windows": 1,
+      "calib_offset": 0,
+      "ppl": 75.51980226951073,
+      "top1_agreement_with_fp32": 0.718011811023622,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 21.709,
+        "claims_ok": true,
+        "linear_mult_min_log2": 21.066,
+        "linear_mult_max_log2": 30.951,
+        "linear_mults_outside_P3": [
+          "res21(res, layer 0): 2^30.95",
+          "res37(res, layer 1): 2^29.58",
+          "res53(res, layer 2): 2^30.20",
+          "res69(res, layer 3): 2^29.51",
+          "res85(res, layer 4): 2^29.94",
+          "res149(res, layer 8): 2^29.28",
+          "res197(res, layer 11): 2^30.03"
+        ],
+        "vector_mult_ops": 0,
+        "distinct_mults_per_vector_op_max": 1,
+        "distinct_mults_per_vector_op_mean": 1,
+        "norm_gain_min": 4.0,
+        "norm_gain_max": 4.0
+      },
+      "seconds": 13.5
+    },
+    {
+      "options": {
+        "norm_mode": "smooth",
+        "alpha": 0.55,
+        "smooth_pct": 99.9,
+        "pct": 99.99,
+        "pct_att": 99.99,
+        "weight_scale": "row_pow2",
+        "row_buckets": 4
+      },
+      "calib_windows": 1,
+      "calib_offset": 0,
+      "ppl": 64.47765827360004,
+      "top1_agreement_with_fp32": 0.8681102362204725,
+      "graph_differences": [
+        "mm200: bias True vs benchmark False"
+      ],
+      "report": {
+        "max_claim_bound_log2": 23.202,
+        "claims_ok": true,
+        "linear_mult_min_log2": 17.124,
+        "linear_mult_max_log2": 29.864,
+        "linear_mults_outside_P3": [
+          "res21(res, vector): 15 rows outside",
+          "res37(res, vector): 12 rows outside",
+          "res53(res, vector): 7 rows outside",
+          "res69(res, vector): 4 rows outside",
+          "res85(res, vector): 2 rows outside",
+          "res197(res, vector): 5 rows outside"
+        ],
+        "vector_mult_ops": 72,
+        "distinct_mults_per_vector_op_max": 4,
+        "distinct_mults_per_vector_op_mean": 3.5972222222222223,
+        "norm_gain_min": 0.12652587890625,
+        "norm_gain_max": 47.611846923828125
+      },
+      "seconds": 17.7
+    }
+  ]
+}
