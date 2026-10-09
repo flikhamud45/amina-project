@@ -186,7 +186,7 @@ def _points(plan: cutmod.CutPlan, beta: int, rho: torch.Tensor):
 
 # ------------------------------------------------------------------ the query
 def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
-                  forward_kwargs: dict | None = None, cheat: dict | None = None) -> dict:
+                  forward_kwargs: dict | None = None, cheat: dict | None = None, sampler=None) -> dict:
     """One V1 query (always on the wire: ``PVC3`` values, packed field elements).  Returns what
     :func:`protocol.run_query` returns, with the cut's bytes (``cut_exc``, ``cut_mult``, ``cut_gkr``) and timings.
 
@@ -211,11 +211,11 @@ def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: 
                     p.cut_lmax)
     if mine.digest() != plan.digest():
         raise ValueError("prover and verifier derive different cut plans")
-    verifier._cut_plan = plan
+    verifier._cut_plan, verifier.sampler = plan, sampler
     try:
         out["rejected_at"] = _query(prover, verifier, x, ch, out, plan, forward_kwargs or {}, cheat or {})
     finally:
-        verifier._cut_plan = None
+        verifier._cut_plan = verifier.sampler = None
     out["accepted"] = out["rejected_at"] is None
     out["cut"] = {"n_ops": len(plan.ops), "n_instances": len(plan.instances), "n_leaves": plan.n_leaves(),
                   "table": plan.table_size(), "n_rounds": sum(n * (n - 1) // 2 for n in cutmod.instance_bits(plan))}

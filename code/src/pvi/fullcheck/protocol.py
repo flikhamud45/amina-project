@@ -638,6 +638,7 @@ class Verifier:
     _columns: dict = field(default_factory=dict)  # query shape -> claim_columns
     _digest: bytes = b""                          # the public graph's digest, once (Fiat--Shamir absorbs it)
     _cut_plan: object = None                      # V1: the query's cut.CutPlan (set by cut_protocol, per query)
+    sampler: object = None                        # E2: the query's token_sampler.TokenSampler (set by run_query)
 
     def __post_init__(self) -> None:
         if self.groups or self.tables:
@@ -805,6 +806,12 @@ class Verifier:
         z = claims.get(head.name)
         if not torch.is_tensor(z) or x.dim() != 2 or x.shape[1] < n or tuple(z.shape) != (head.n_rows, x.shape[0] * n):
             return True
+        if self.sampler is not None:      # E2: each token is the seeded sampler's choice from the logits before it
+            if x.shape[0] != 1:
+                return False
+            t = x.shape[1]
+            want = [self.sampler.choose(z[:, j], t - n + j) for j in range(n - 1)]
+            return x[0, t - n + 1:].cpu().tolist() == want
         chosen = z.reshape(head.n_rows, x.shape[0], n)[:, :, :-1].argmax(0)          # [B, n - 1]
         return torch.equal(chosen.cpu(), x[:, x.shape[1] - n + 1:].cpu().to(chosen.dtype))
 
@@ -1447,6 +1454,8 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
         ch.absorb(b"lookups", b"".join(struct.pack("<H", len(op.name)) + op.name.encode()
                                        for op in verifier._own_rows()))
     ch.absorb(b"x", _tensor_blob(x.cpu()))
+    if verifier.sampler is not None:              # E2: the client's seed and sampling rule
+        ch.absorb(b"sampler", verifier.sampler.digest())
 
 
 # -- one query ---------------------------------------------------------------------------
@@ -1704,7 +1713,7 @@ def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, 
 
 
 def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
-              forward_kwargs: dict | None = None, wire: bool = False) -> dict:
+              forward_kwargs: dict | None = None, wire: bool = False, sampler=None) -> dict:
     """One full interaction.  Returns acceptance, the rejecting check, timings (s)
     and proof bytes.  With Fiat--Shamir, ``fs_hash`` is paid by both parties.
 
@@ -1717,13 +1726,23 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
 
     ``wire=True`` sends the proof in the compact encoding of :mod:`pvi.fullcheck.claimcodec`: the
     claims as ``PVC3`` bytes, encoded where the prover keeps them (``prove_encode``), and ``u`` and
-    the opened columns 31-bit packed.  The verifier decodes them (``verify_decode``) before it
+    the opened columns 31-bit packed.  ``sampler`` (a ``token_sampler.TokenSampler``, generation graphs): the
+    response's tokens were sampled with the client's seed, and the token rule checks that sampler's choices
+    instead of the greedy ones (the seed is part of the statement).  The verifier decodes them (``verify_decode``) before it
     checks anything and rejects a malformed message at the check that rejects a malformed message
     of the same kind (``range_or_shape`` for the claims, ``freivalds`` for ``u``, ``columns_shape``
     for the columns) -- so too a prover's values that the encoding cannot carry (a claim outside the
     range check, a looked-up row outside int8, a field element of 32 bits), which travel as no
     bytes; ``bytes`` counts the encoded sizes, and with Fiat--Shamir the transcript absorbs these
     bytes.  A GPU client uploads the decoded claims as int32 and widens them there."""
+    verifier.sampler = sampler
+    try:
+        return _run_query(prover, verifier, x, seed, forward_kwargs, wire)
+    finally:
+        verifier.sampler = None
+
+
+def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forward_kwargs, wire) -> dict:
     ch = Challenger(fiat_shamir=verifier.params.fiat_shamir, seed=seed)
     out = {"accepted": False, "rejected_at": None, "timings": {}, "contention": {}}
     if verifier.stream:
