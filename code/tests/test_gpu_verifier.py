@@ -168,6 +168,26 @@ def test_int8_small_matmul_is_exact(rr, k, m, device):
     assert torch.equal(got, ref.field_matmul_mod(u, x.T))
 
 
+@pytest.mark.parametrize("n,k,m", [(24, 768, 64), (17, 4096, 1), (4096, 64, 9), (40, 70_000, 3), (33, 1 << 16, 8)])
+def test_int8_product_is_the_exact_weight_product(n, k, m, device):
+    # the prover's forward on int8 GEMMs: int8 weights and inputs at the extremes, M padded to 8, K in blocks
+    from pvi.fullcheck.graph import int8_product
+    g = torch.Generator().manual_seed(n + k + m)
+    w, x = _rand(g, -128, 128, (n, k)), _rand(g, -128, 128, (k, m))
+    w[0], x[:, 0] = -128, -128
+    want = (w.double() @ x.double()).to(torch.int64) if k < 1 << 16 else w @ x
+    got = int8_product(w.to(torch.int8).to(device), x.to(torch.int8).to(device))
+    assert torch.equal(got.cpu(), want)
+
+
+def test_int8_product_declines_shapes_the_int8_gemm_cannot_take():
+    w8 = torch.ones(16, 64, dtype=torch.int8)
+    assert fld.int8_ok("cpu") is False
+    from pvi.fullcheck.graph import int8_product
+    assert int8_product(w8, torch.ones(64, 8, dtype=torch.int8)) is None              # N <= 16
+    assert int8_product(torch.ones(24, 60, dtype=torch.int8), torch.ones(60, 8, dtype=torch.int8)) is None  # K % 8
+
+
 @pytest.mark.parametrize("m,k,rr", [(24, 768, 5), (4096, 64, 133), (3, 70_000, 2), (1, 7, 1), (17, 1 << 16, 3),
                                     (5, (1 << 16) + 3, 2)])
 def test_int8_weight_matmul_is_exact(m, k, rr, device):

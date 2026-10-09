@@ -4,8 +4,9 @@ The three GPU tests in ``test_fullcheck.py`` use tiny graphs (T = 12 tokens, K <
 so they never reach the regimes where a new GPU could behave differently: split-K /
 stream-K GEMM kernels at K = 11,008, the batched P @ V product at T = 2,048 (4 chunks
 of 512 terms, or ONE float32 GEMM on the int32 attention path), every partial sum at its
-2**24 bound, the float64 field products of the prover's fold/open, the verifier's int8
-tensor-core products, and the Reed--Solomon/NTT commitment on the device.  Run this file
+2**24 bound, the prover's weight products and fold/open (int8 tensor cores where ``int8_ok``,
+else float32 and float64), the verifier's int8 tensor-core products, and the Reed--Solomon/NTT
+commitment on the device.  Run this file
 on every new GPU type before any benchmark job (``smoke.sbatch`` does); every test must
 pass with TF32 off (what bench.py uses, except its ``--tf32`` cells tagged ``_tf32``)
 and on (which shows exactness does not depend on the flag).
@@ -22,7 +23,7 @@ import torch
 
 from pvi.fullcheck import field as fld
 from pvi.fullcheck.commitment import GroupCommitment, TransposedCommitment, WeightCommitment
-from pvi.fullcheck.graph import exact_matmul
+from pvi.fullcheck.graph import MatOp, exact_matmul
 from pvi.fullcheck.transformer import _attention_heads
 
 DEV = os.environ.get("PVI_TEST_DEVICE", "cuda")
@@ -82,6 +83,16 @@ def _reference(n, k, m, pattern):
 def test_exact_matmul_at_model_sizes(n, k, m, pattern, tf32):
     w, x = _operands(n, k, m, pattern)
     out = exact_matmul(w.to(DEV), x.to(DEV)).cpu()
+    assert torch.equal(out, _reference(n, k, m, pattern))
+
+
+@pytest.mark.parametrize("pattern", ["max", "alternating", "random"])
+@pytest.mark.parametrize("n,k,m", SHAPES)
+def test_weight_op_forward_at_model_sizes(n, k, m, pattern, tf32):
+    # the prover's MatOp.compute: int8 GEMMs where int8_ok (int8_product), else the float32 chunks
+    w, x = _operands(n, k, m, pattern)
+    op = MatOp("t", ("x",), "t.z", weight=w, bias=None)
+    out = op.compute(x.T.contiguous().to(torch.int64).to(DEV)).cpu()      # a linear op's input [M, K]
     assert torch.equal(out, _reference(n, k, m, pattern))
 
 

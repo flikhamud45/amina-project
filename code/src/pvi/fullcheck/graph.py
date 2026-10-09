@@ -15,7 +15,9 @@ small values).  Two kinds matter to the protocol:
 Every operation is deterministic integer arithmetic, so the prover's GPU and
 the verifier's CPU produce bit-identical results (tested).  Matrix products
 run as float32 GEMMs over int8-valued operands with the contraction dimension
-chunked so every partial sum stays below ``2**24`` and is therefore exact.
+chunked so every partial sum stays below ``2**24`` and is therefore exact; a weight
+op on a GPU whose int8 GEMM passes ``field.int8_ok`` runs as int8 GEMMs with int32
+sums instead (:func:`int8_product`), the same integers.
 """
 
 from __future__ import annotations
@@ -31,12 +33,15 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 
+from .field import INT8_TERMS, int8_gemm, int8_ok
+
 __all__ = [
     "Op",
     "MatOp",
     "CheapOp",
     "IntGraph",
     "exact_matmul",
+    "int8_product",
     "int_scalar",
     "mul_add_half",
     "requant",
@@ -61,6 +66,24 @@ def exact_matmul(w: torch.Tensor, x: torch.Tensor, *, max_w: int = 128, max_x: i
         part = part.to(torch.int64)
         out = part if out is None else out + part
     return out
+
+
+def int8_product(w: torch.Tensor, x: torch.Tensor) -> torch.Tensor | None:
+    """Exact ``w @ x`` (int64) for int8 ``w [N, K]`` and ``x [K, M]`` on int8 GEMMs (``field.int8_gemm``):
+    a block of ``INT8_TERMS`` products, each at most ``2**14`` in magnitude, sums below ``2**30`` in its
+    int32 accumulator.  ``None`` when ``torch._int_mm`` cannot take the shapes (``N <= 16`` or ``K`` not a
+    multiple of 8); ``M`` is zero-padded to a multiple of 8."""
+    n, k = w.shape
+    m = x.shape[1]
+    if n <= 16 or k % 8 or m == 0:
+        return None
+    x = F.pad(x, (0, -m % 8)) if m % 8 else x.contiguous()
+    out = None
+    for s in range(0, k, INT8_TERMS):
+        a = w if k <= INT8_TERMS else w[:, s:s + INT8_TERMS].contiguous()
+        part = int8_gemm(a, x[s:s + INT8_TERMS]).to(torch.int64)
+        out = part if out is None else out.add_(part)
+    return out if m % 8 == 0 else out[:, :m]
 
 
 @lru_cache(maxsize=None)
@@ -209,7 +232,11 @@ class MatOp(Op):
         if self.layout == "embed":
             z = w[:, x.reshape(-1)].to(torch.int64)
         else:
-            z = exact_matmul(w, self.unfold(x, torch.float32), max_x=self.max_input + 1)
+            z = None
+            if x.is_cuda and self.max_input <= INT8_MAX and w.dtype == torch.int8 and int8_ok(x.device):
+                z = int8_product(w, self.unfold(x, torch.int8))     # every input is int8 (max_input)
+            if z is None:
+                z = exact_matmul(w, self.unfold(x, torch.float32), max_x=self.max_input + 1)
         if b is not None:
             z = z + b[:, None]
         return z
