@@ -220,6 +220,31 @@ class _HostBytes:
         return [memoryview(s.numpy()) for s in self.slabs]
 
 
+_JOIN_PIECE = 1 << 26      # bytes per copy job of _join_pieces
+
+
+def _join_pieces(pieces: list) -> memoryview:
+    """The concatenation of ``pieces`` (bytes-like) as a read-only memoryview of one new buffer, copied on torch's
+    threads in jobs of ``_JOIN_PIECE`` bytes (numpy releases the GIL): a device encoder's result, where one
+    ``b"".join`` of gigabytes (a single-threaded copy into fresh pages) would cost more than the encoding."""
+    views = [np.frombuffer(p, dtype=np.uint8) for p in pieces if len(p)]
+    sizes = [v.size for v in views]
+    out = np.empty(sum(sizes), dtype=np.uint8)
+    jobs, at = [], 0
+    for v in views:
+        for a in range(0, v.size, _JOIN_PIECE):
+            jobs.append((at + a, v[a:a + _JOIN_PIECE]))
+        at += v.size
+
+    def copy(job):
+        dst, src = job
+        out[dst:dst + src.size] = src
+
+    map_threaded(copy, jobs, [j[1].size for j in jobs], torch.get_num_threads())
+    out.flags.writeable = False
+    return memoryview(out)
+
+
 # ---------------------------------------------------------------------------- slot streams
 @functools.lru_cache(maxsize=None)
 def _lane_maps(k: int):
@@ -749,14 +774,16 @@ def _segments(lay: _Layout, centred, width, lo, means_b, means_lo):
     return seg
 
 
-def encode(claims: list, *, centre: bool = True, impl: str | None = None, workers: int | None = None) -> bytes:
+def encode(claims: list, *, centre: bool = True, impl: str | None = None,
+           workers: int | None = None) -> bytes | memoryview:
     """``PVC3`` bytes of the claim matrices (``[N, M]`` integer tensors or arrays, in the graph's
     weight-op order, every ``|z| < 2**29``).  ``centre=False`` never centres (for measurements).
 
     Tensors on a device are encoded there (``impl="device"``; :func:`_encode_device`): only the
     statistics, the exceptions' number, the Rice statistics and the encoding itself come to the host,
-    each in one copy.  Host claims are encoded on ``workers`` threads (``impl="host"``; default
-    ``torch.get_num_threads()``).  Both give the same bytes."""
+    each in one copy; the result is a read-only memoryview of one buffer (:func:`_join_pieces`), which
+    hashing, sending and :func:`decode` take as they take bytes.  Host claims are encoded on ``workers``
+    threads (``impl="host"``; default ``torch.get_num_threads()``), into bytes.  Both give the same bytes."""
     zts = [z.detach() if torch.is_tensor(z) else torch.from_numpy(np.asarray(z)) for z in claims]
     if any(z.dim() != 2 for z in zts):
         raise ValueError("claims must be 2-D")
@@ -1131,7 +1158,7 @@ def _encode_device(zts: list, centre: bool) -> bytes:
             size = 4 * k * ((n_exc + 31) // 32)
             out += [bytes([k]), mv[at:at + size], _pack_levels(quot[i])]
             at += size
-    return b"".join(out)
+    return _join_pieces(out)
 
 
 def _width_runs(widths: np.ndarray, start: np.ndarray):
@@ -1496,7 +1523,7 @@ def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
     _d2h(last)                                                   # one wait: every copy back is on the host
     if n_exc:
         tail += rice.result()
-    return b"".join([head, *body.views(), *tail])
+    return _join_pieces([head, *body.views(), *tail])
 
 
 # -- a device's encoder with fused kernels (codec_kernels): the plan of _encode_chunked, then each width's slot
@@ -1564,7 +1591,7 @@ def _encode_fused(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
         del flags
     del table, flat, mr
     tail = rice.tail()                                 # one wait: the body's copies are on the host too
-    return b"".join([head, *body.views(), *tail])
+    return _join_pieces([head, *body.views(), *tail])
 
 
 class _RiceParts:
@@ -1775,9 +1802,10 @@ def _add_means(x: np.ndarray, ops: list) -> None:
 def _read_header(buf, rows: list[int], cols: list[int]) -> tuple[list, list, int]:
     """``(heads, segs, offset after the header)``: per op ``(N, M, its row means' segment or None, its main
     segment)``, per segment ``(B, lo, n)``; every field checked against the query's shapes."""
-    if not isinstance(buf, bytes):
-        raise ClaimCodecError("not bytes")
-    if len(buf) < 8 or buf[:4] != MAGIC:
+    if not (isinstance(buf, bytes) or (isinstance(buf, memoryview) and buf.readonly and buf.ndim == 1
+                                       and buf.itemsize == 1 and buf.c_contiguous)):
+        raise ClaimCodecError("not bytes")                   # (a mutable buffer could change after it is hashed)
+    if len(buf) < 8 or bytes(buf[:4]) != MAGIC:
         raise ClaimCodecError("bad magic")
     if struct.unpack_from("<I", buf, 4)[0] != len(rows):
         raise ClaimCodecError("wrong number of ops")

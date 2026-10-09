@@ -281,9 +281,16 @@ def test_every_truncation_is_rejected(sample):
 def test_trailing_bytes_magic_op_count_and_type_are_rejected(sample):
     _, blob, rows, cols = sample
     for bad, r in [(blob + b"\0", rows), (b"PVC2" + blob[4:], rows), (blob, rows[:-1]), (blob, rows + [3]),
-                   (bytearray(blob), rows), (memoryview(blob), rows), ("PVC3", rows)]:
+                   (bytearray(blob), rows), (memoryview(bytearray(blob)), rows), ("PVC3", rows),
+                   (memoryview(blob).cast("B", (1, len(blob))), rows)]:
         with pytest.raises(cc.ClaimCodecError):
             cc.decode(bad, r, cols)
+
+
+def test_a_read_only_buffer_decodes_as_its_bytes(sample):
+    # what a device encoder returns: a read-only memoryview of one buffer
+    zs, blob, rows, cols = sample
+    assert all(np.array_equal(a, b) for a, b in zip(cc.decode(memoryview(blob), rows, cols), cc.decode(blob, rows, cols)))
 
 
 def test_header_fields_are_validated(sample):
