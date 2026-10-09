@@ -44,6 +44,7 @@ class Transcript:
     top: torch.Tensor
     rounds: list = field(default_factory=list)
     vals: list = field(default_factory=list)
+    point: torch.Tensor | None = None          # the prover's own copy of the final point rho (not sent)
 
     def flat(self) -> torch.Tensor:
         parts = [self.top.reshape(-1, ef.D)]
@@ -123,6 +124,7 @@ def prove(p: torch.Tensor, q: torch.Tensor, ch, label: str) -> Transcript:
         tr.rounds.append(torch.stack(rounds))
         tr.vals.append(vals)
         rho = [ch.ext(label + f"mu{k}")[0]] + rs
+    tr.point = torch.stack(rho)
     return tr
 
 

@@ -71,6 +71,7 @@ from .commitment import (HASH_BYTES, CommitmentPublic, GroupCommitment, GroupPub
 from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
                     int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64, min_max,
                     small_matmul_mod, to_field)
+from .cut import delta_range as cut_delta_range
 from .graph import IntGraph, MatOp
 from .pipeline import ClaimUploads, wire_claim, wire_openings, wire_rows
 from .plans import CommitmentPlan, column_bits, column_error_log2, plan_commitment
@@ -106,27 +107,34 @@ class SecurityParams:
     group_columns: tuple[tuple[str, int], ...] = ()
     """Under a commitment plan, ``(group, t)`` per group: its members' largest exact ``t``
     (``rate`` is then 0 -- each op's is in the plan -- and ``columns`` the largest ``t``)."""
+    cut: bool = False
+    """V1's int8 cut (:mod:`pvi.fullcheck.cut_protocol`): requantised values sent, windows proved by logUp-GKR."""
+    cut_lmax: int = 27
+    """V1: the largest GKR instance, ``2**cut_lmax`` leaves (26 on an 11 GB card)."""
 
     def columns_for(self, group: str) -> int:
         return dict(self.group_columns)[group]
 
 
 def params_for(lam: float, n_checks: int, *, rate: int = 4, fiat_shamir: bool = False,
-               grinding_bits: int = 64, plan: CommitmentPlan | None = None) -> SecurityParams:
+               grinding_bits: int = 64, plan: CommitmentPlan | None = None, cut: bool = False,
+               cut_lmax: int = 27) -> SecurityParams:
     """Smallest ``(r, t)`` whose union bound over ``n_checks`` ops is ``<= 2**-lam``.
 
     With Fiat--Shamir the prover can grind offline, so ``grinding_bits`` more are
     required (security against ``2**grinding_bits`` hash evaluations).  Under a commitment
     ``plan`` (:mod:`pvi.fullcheck.plans`) ``r`` is the same, and each group opens its members'
-    largest exact ``t`` for the same per-op budget ``2**-beta``.
+    largest exact ``t`` for the same per-op budget ``2**-beta``.  With ``cut`` (V1) two more terms share the
+    budget: the logUp point and the GKR instances (``V1_SPEC.md`` Sec. 3), each far below it.
     """
-    bits = column_bits(lam, n_checks, fiat_shamir, grinding_bits)
+    bits = column_bits(lam, n_checks + (2 if cut else 0), fiat_shamir, grinding_bits)
     reps = max(1, math.ceil(bits / LOG2_P))
+    extra = {"cut": cut, "cut_lmax": cut_lmax}
     if plan is None:
         columns = max(1, math.ceil(bits / math.log2(rate)))
-        return SecurityParams(lam, reps, rate, columns, fiat_shamir, grinding_bits)
+        return SecurityParams(lam, reps, rate, columns, fiat_shamir, grinding_bits, **extra)
     groups = plan.group_columns(bits)
-    return SecurityParams(lam, reps, 0, max(t for _, t in groups), fiat_shamir, grinding_bits, groups)
+    return SecurityParams(lam, reps, 0, max(t for _, t in groups), fiat_shamir, grinding_bits, groups, **extra)
 
 
 def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: str = "C",
@@ -258,6 +266,13 @@ class Challenger:
             return secrets.token_bytes(32)
         self._count += 1
         return hashlib.sha256(f"test-seed/{self._seed}/{self._count}/{label}".encode()).digest()
+
+    def fork(self) -> "Challenger":
+        """A copy with the same transcript and test-seed counter: under Fiat--Shamir it draws exactly the
+        challenges this one would, from the messages both absorb (the prover's copy in V1's GKR)."""
+        out = Challenger(fiat_shamir=self.fiat_shamir, seed=self._seed)
+        out._state, out._count = self._state.copy(), self._count
+        return out
 
     @staticmethod
     def _stream(key: bytes, label: str, n_bytes: int) -> bytes:
@@ -622,6 +637,7 @@ class Verifier:
     _consts: list = field(default_factory=list)  # a GPU client: the cheap ops' constants (source, copy, versions)
     _columns: dict = field(default_factory=dict)  # query shape -> claim_columns
     _digest: bytes = b""                          # the public graph's digest, once (Fiat--Shamir absorbs it)
+    _cut_plan: object = None                      # V1: the query's cut.CutPlan (set by cut_protocol, per query)
 
     def __post_init__(self) -> None:
         if self.groups or self.tables:
@@ -720,13 +736,19 @@ class Verifier:
         if not self.groups:
             return {}
         ops = {op.name: op for op in self.graph.mat_ops}
-        return {name: [ops[o] for o in pub.members] for name, pub in self.publics.items() if pub.members}
+        cut = self._cut_names()
+        return {name: [ops[o] for o in pub.members] for name, pub in self.publics.items()
+                if pub.members and not cut.intersection(pub.members)}
+
+    def _cut_names(self) -> frozenset:
+        """V1: the weight ops of the query's cut set (none outside a cut query)."""
+        return self._cut_plan.names() if self._cut_plan is not None else frozenset()
 
     def _row_ops(self) -> list[MatOp]:
         """The weight ops checked with Freivalds (step 4): every one but a plan's col-layout ops and
         lookup tables, and the embedding ops whose rows a verifier with ``lookups`` reads itself."""
         skip = {op.name for members in self._col_matrices().values() for op in members}
-        skip |= set(self.tables) | {op.name for op in self._own_rows()}
+        skip |= set(self.tables) | {op.name for op in self._own_rows()} | self._cut_names()
         return [op for op in self.graph.mat_ops if op.name not in skip]
 
     def _own_rows(self) -> list[MatOp]:
@@ -819,6 +841,9 @@ class Verifier:
         last = self.graph.last_use() if free else None
         own = {op.name for op in self._own_rows()}
         looked = own | set(self.tables)
+        cut = self._cut_plan
+        cut_ops = {o.name: o for o in cut.ops} if cut is not None else {}
+        consumers = {o.consumer: o for o in cut.ops} if cut is not None else {}
         try:
             for i, op in enumerate(self.graph.ops):
                 if free and i > 0:  # free what no later op reads (weight-op inputs stay in ``inputs``)
@@ -836,6 +861,9 @@ class Verifier:
                         return None
                     if op.name not in own:          # a table's rows of int8 weights, else the range check
                         lo, hi = (-128, 127) if op.name in self.tables else (1 - Z_BOUND, Z_BOUND - 1)
+                        if op.name in cut_ops:      # V1: the sent requantised values (a, or the residual's Delta)
+                            c = cut_ops[op.name]
+                            lo, hi = (c.lo_, c.hi) if c.kind == "requant" else cut_delta_range(c.mult, c.sh)
                         if not _check_bounds(z, lo, hi, pending):
                             return None
                     if op.name in looked and not _check_bounds(xin, 0, op.n_in - 1, pending):   # ids of the table
@@ -847,6 +875,12 @@ class Verifier:
                         visit(op, z, xin)
                     y = op.fold(z, xin)
                     env[op.output] = y if y.dtype == torch.int64 else y.to(torch.int64)
+                elif op.name in consumers:          # V1: the requantisation the cut op's values already are
+                    if consumers[op.name].kind == "requant":
+                        env[op.output] = env[op.inputs[0]]
+                    else:
+                        res_max = int(op.params["requant"]["res_max"])
+                        env[op.output] = (env[op.inputs[0]] + env[op.inputs[1]]).clamp_(-res_max, res_max)
                 else:
                     env[op.output] = op.fn(*[env[n] for n in op.inputs])
         except Exception:
