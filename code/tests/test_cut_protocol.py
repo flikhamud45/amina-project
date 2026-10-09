@@ -280,3 +280,35 @@ def test_cut_folds_must_be_canonical_field_elements(mode):
         t[i] += P
         return parts
     assert cp.run_cut_query(prover, v, x, cheat={"fold": alias})["rejected_at"] == "cut_final"
+
+
+@pytest.mark.parametrize("mode", ["C", "Kpre"])
+def test_honest_exceptions_across_row_blocks(mode, monkeypatch):
+    # an honest model whose requant op clamps often (multiplier 8x): exceptions in many rows; the final check's row
+    # blocks (7 rows here) must route each exception to its block
+    import dataclasses
+    from pvi.fullcheck.graph import CheapOp, requant_fn
+    monkeypatch.setattr(cp, "_FINAL_ROWS", 7)
+    g = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)
+    ops = list(g.ops)
+    i = next(k for k, o in enumerate(ops) if isinstance(o, CheapOp) and o.params.get("requant", {}).get("kind") == "requant")
+    p = dict(ops[i].params["requant"])
+    p["mult"] = p["mult"] * 8
+    ops[i] = dataclasses.replace(ops[i], fn=requant_fn(p), params={"requant": p})
+    g = dataclasses.replace(g, ops=ops)
+    if mode == "C":
+        coms = proto.commit_graph(g, 4)
+        params = proto.params_for(40, len(g.mat_ops), fiat_shamir=True, cut=True)
+        v = proto.Verifier(g.public(), params, "C", publics=coms.publics)
+        prover = proto.Prover(g, commitments=coms)
+    else:
+        params = proto.params_for(40, len(g.mat_ops), fiat_shamir=True, cut=True)
+        v = proto.Verifier(g.public(), params, "Kpre", weights={op.name: (op.weight, op.bias) for op in g.mat_ops})
+        v.precompute(proto.Challenger())
+        prover = proto.Prover(g)
+    x = _x(30, seed=9)
+    est = cp.cut_proof_bytes(prover, v, x)
+    assert est["n_exceptions"] > 20
+    out = cp.run_cut_query(prover, v, x)
+    assert out["accepted"], out["rejected_at"]
+    assert out["bytes"]["cut_exc"] == est["cut_exc"]

@@ -45,6 +45,8 @@ from .protocol import (Challenger, Prover, Verifier, _absorb_statement, _decoded
 __all__ = ["run_cut_query", "cut_proof_bytes", "cut_plan", "pack_exceptions", "unpack_exceptions", "EXC_MAGIC"]
 
 EXC_MAGIC = b"PVX1"
+_FINAL_ROWS = 256
+"""Rows of a cut op per block of the final check (``[L ; W]`` of 256 rows x 2,048 columns: 8 MB of float64)."""
 _GKR_TRITON = os.environ.get("PVI_GKR_TRITON", "1") != "0"
 """A prover on a GPU with Triton runs the GKR there (``gkr_triton``: the same transcript); 0: the eager prover."""
 
@@ -237,7 +239,8 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
     verifier._cut_plan = plan
     try:
         _, offsets = plan.table()
-        zs = prover.claims(_passed(x), to_host=False)
+        narrow = claimcodec.narrow if prover.lean and prover.device.type != "cpu" else None
+        zs = prover.claims(_passed(x), send=narrow, to_host=False)
         mult = torch.zeros(plan.table_size(), dtype=torch.int64)
         exc, values = {}, {}
         sent = {op.name for op in verifier._sent_ops()}
@@ -302,7 +305,9 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     query = _passed(x)
     _sync(prover.device)
     with _timed(out, "prove_forward"):
-        zs = prover.claims(query, to_host=False, **forward_kwargs)
+        # as run_query's wire path: a lean GPU prover keeps each claim as int32 (``claimcodec.narrow``)
+        narrow = claimcodec.narrow if prover.lean and prover.device.type != "cpu" else None
+        zs = prover.claims(query, send=narrow, to_host=False, **forward_kwargs)
         _sync(prover.device)
     witness, exc = {}, {}
     mult = torch.zeros(plan.table_size(), dtype=torch.int64, device=prover.device)
@@ -314,8 +319,9 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
             mult += counts
             witness[o.name] = (d.to(torch.int32).cpu(), w.to(torch.int32).cpu())     # |delta|, W < 2^17
             exc[o.name] = (idx.cpu(), ez.cpu())
-            sent_vals[o.name] = s.to(zs[o.name].device)  # where the prover keeps its claims (a lean one: the host),
-            del d, w, counts                              # so the encoder sees them all on one device
+            # where the prover keeps its claims (a lean one: the host, int32), so the encoder sees them all alike
+            sent_vals[o.name] = s.to(zs[o.name].device, zs[o.name].dtype)
+            del d, w, counts
         mult = mult.cpu()
         _sync(prover.device)
     sent = {op.name for op in verifier._sent_ops()}
@@ -572,11 +578,18 @@ def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xb
         for o in plan.instance_ops(b):
             chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
             idx, z = exc[o.name]
-            lw = cutmod.public_lw_f64(values[o.name].to(vdev), idx.to(vdev), z.to(vdev), o)
-            lwe = ef.int_times(lw, e, 30).cpu()
-            del lw
+            vals = values[o.name].to(vdev)
+            le_parts, we_parts = [], []
+            for r0 in range(0, o.n_rows, _FINAL_ROWS):      # row blocks: the window matrix stays in cache
+                r1 = min(o.n_rows, r0 + _FINAL_ROWS)
+                sel = (idx >= r0 * plan.T) & (idx < r1 * plan.T)
+                lw = cutmod.public_lw_f64(vals[r0:r1], (idx[sel] - r0 * plan.T).to(vdev), z[sel].to(vdev), o)
+                lwe = ef.int_times(lw, e, 30).cpu()
+                le_parts.append(lwe[:r1 - r0])
+                we_parts.append(lwe[r1 - r0:])
+                del lw
             s_l = _dot(us_row[o.name], xbars[o.name]) if o.name in us_row else _dot(chi, ys[o.name])
-            le, we = _dot(chi, lwe[:o.n_rows]), _dot(chi, lwe[o.n_rows:])
+            le, we = _dot(chi, torch.cat(le_parts)), _dot(chi, torch.cat(we_parts))
             total = ef.add(total, ef.add(ef.sub(s_l, le), ef.mul(x_gen, we)))
         i_b = logup.indicator(rho, plan.rows(b), plan.T, plan.n_vars(b)[1])
         want_q = ef.add(ef.sub(ef.mul(alpha, i_b), total), ef.sub(ef.const(1), i_b))
