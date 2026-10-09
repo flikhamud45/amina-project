@@ -36,7 +36,7 @@ from functools import lru_cache
 import numpy as np
 import torch
 
-from . import attention_kernels
+from . import attention_kernels, native_kernels
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, requant
 
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
@@ -287,6 +287,8 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1) -> torch.Tensor:
     if _int32_scores(m_s, dh, t):
         if q.is_cuda and _FUSED_ATTN and attention_kernels.available(q.device):   # the same integers, no T x T tensors
             return attention_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
+        if q.device.type == "cpu" and native_kernels.available():                # a CPU verifier: native, exact
+            return native_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
         return _attention_core(q, k, v, _exp_lut(m_s, dev), _causal_notmask(t, rep, dev, q.shape[2] // rep))
     return _attention_int64(q, k, v, m_s, _causal_notmask(t, rep, dev, q.shape[2] // rep))
 

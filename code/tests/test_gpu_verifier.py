@@ -171,6 +171,28 @@ def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, t
                        want)
 
 
+@pytest.mark.parametrize("hq,hkv,t,tq,dh", [(4, 4, 64, 64, 64), (8, 2, 300, 300, 128), (4, 4, 1024, 1024, 128),
+                                            (8, 8, 513, 1, 80), (6, 2, 1000, 7, 64)])
+@pytest.mark.parametrize("pattern", ["random", "peaked", "extreme"])
+def test_the_native_cpu_attention_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern):
+    from pvi.fullcheck import native_kernels
+    if not native_kernels.available():
+        pytest.skip("no C++ compiler (or not Linux)")
+    m_s = 1 << 20
+    g = torch.Generator().manual_seed(hq * t + tq + dh)
+    rep = hq // hkv
+    q = _rand(g, -127, 128, (1, hkv, rep * tq, dh))
+    k, v = _rand(g, -127, 128, (1, hkv, t, dh)), _rand(g, -127, 128, (1, hkv, t, dh))
+    if pattern == "peaked":
+        k[:, :, ::3] = 127
+        q[..., : dh // 2] = 127
+    elif pattern == "extreme":
+        q.fill_(127), k.fill_(-127), v.fill_(-127)
+    lut = tr._exp_lut(m_s, "cpu")
+    want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cpu", tq))
+    assert torch.equal(native_kernels.attention_core(q, k, v, lut, tq), want)
+
+
 # -- int8 GEMMs -------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("r,n,m", [(5, 8, 8), (5, 1000, 3), (4, 4097, 64), (1, 9000, 1), (5, 70_000, 2), (3, 7, 0),
