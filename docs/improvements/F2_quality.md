@@ -54,9 +54,10 @@ scalar, every op and shape is unchanged**, so the protocol's costs, the verifier
 | Model (WikiText-2, 16 x 128) | fp32 | before (best scalar gain) | smoothing, alpha = 0.55 | top-1 agreement with fp32 |
 |---|---:|---:|---:|---:|
 | OPT-125M | 64.76 | 75.52 (x1.17) | **66.62 (x1.03)** | 0.72 -> 0.82 |
-| OPT-1.3B (the study's builder) | 32.79 | 36.44 (x1.11) | **33.70 (x1.03)** | 0.82 -> 0.90 |
+| OPT-1.3B | 32.79 | 36.44 (x1.11) | **33.70 (x1.03)** | 0.82 -> 0.90 |
 
-(OPT-1.3B's fp32 is 32.8 here and 34.9 in the earlier file because the calibration and windows differ by run; the
+Both rows are reproduced with the committed builder (`build_opt_from_hf(..., smooth=0.55, smooth_pct=99.9, pct=99.99,
+pct_att=99.99)`, laptop CPU, the same windows). (OPT-1.3B's fp32 is 32.8 here and 34.9 in the earlier file because the calibration and windows differ by run; the
 ratios are on the same windows.) Robustness (OPT-125M, 32 evaluation windows, three different calibration
 windows): smoothing alone gives 66.7-67.6 against fp32 64.7 (x1.03-1.05).
 
