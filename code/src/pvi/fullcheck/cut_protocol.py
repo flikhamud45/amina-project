@@ -390,6 +390,8 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     if _GKR_TRITON and prover.device.type == "cuda":
         from . import gkr_triton
         on_gpu = gkr_triton.available(prover.device)
+    if on_gpu:
+        torch.cuda.empty_cache()                       # the forward pass's cached blocks: the GKR needs ~160 B/leaf
     with _timed(out, "prove_gkr"):
         trs = []
         for b, names in enumerate(plan.instances):
