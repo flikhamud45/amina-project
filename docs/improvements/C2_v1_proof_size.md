@@ -114,8 +114,41 @@ transcript) offset most of the claim savings; the savings grow linearly with `T`
 
 ## 8. Measurements at real sizes
 
-(Job 1005287: GPT-2 @64/@512, OPT-125M @2048, Llama-2-7B 2 blocks @2048, Llama-2-13B 1 block @2048, OPT-1.3B
-@2048; job 1005296: the GPU prover's transcripts and timings.) To be filled in.
+**Proof bytes** (job 1005287, RTX 2080 Ti node; random-weight decoders built as in the benchmark, Fiat-Shamir,
+lambda = 128, the auto commitment plan in mode C, last block pruned; v0 = one `run_query(wire=True)`, V1 =
+`cut_proof_bytes` on the same query, exact except the multiproofs' sizes at freshly drawn columns; the full V1 query
+was also run and accepted on GPT-2 @64):
+
+| Cell | Mode | Plan | v0 (MB) | V1 (MB) | Ratio | Claims, v0 -> V1 (MB) | Exceptions |
+|---|---|---|---:|---:|---:|---:|---:|
+| GPT-2, 12 blocks @64 | C | cnn18c | 16.6 | 13.0 | 1.28x | 11.0 -> 5.0 | 0 |
+| GPT-2, 12 blocks @64 | Kpre | | 11.0 | 7.6 | 1.46x | 11.0 -> 5.0 | 0 |
+| GPT-2, 12 blocks @512 | C | cnn18c | 91.2 | 47.1 | 1.94x | 85.5 -> 39.0 | 2 |
+| GPT-2, 12 blocks @512 | Kpre | | 85.5 | 41.5 | 2.06x | 85.5 -> 39.0 | 2 |
+| OPT-125M, 12 blocks @2048 | C | cnn18c | 349.6 | 172.3 | 2.03x | 343.8 -> 164.0 | 12 |
+| OPT-125M, 12 blocks @2048 | Kpre | | 343.9 | 166.7 | 2.06x | 343.9 -> 164.1 | 12 |
+| Llama-2-7B, 2 blocks @2048 | C | cnn16c | 269.5 | 126.4 | 2.13x | 254.1 -> 109.4 | 6 |
+| Llama-2-7B, 2 blocks @2048 | Kpre | | 254.3 | 111.3 | 2.29x | 254.3 -> 109.6 | 6 |
+| Llama-2-13B, 1 block @2048 | C | cnn17c | 69.1 | 38.1 | 1.81x | 60.6 -> 29.2 | 3 |
+| Llama-2-13B, 1 block @2048 | Kpre | | 60.8 | 29.6 | 2.05x | 60.8 -> 29.3 | 3 |
+| **OPT-1.3B, 24 blocks @2048** | C | cnn16c | **2,073.9** | **960.8** | **2.16x** | 2,022.4 -> 896.1 | 65 |
+| **OPT-1.3B, 24 blocks @2048** | Kpre | | **2,023.1** | **910.6** | **2.22x** | 2,023.1 -> 896.7 | 65 |
+
+The claims shrink 2.2-2.3x (int8 values instead of int32 claims, after the same PVC3 codec); the fixed parts (the
+folds with 8 planes, the table's multiplicities, the GKR transcripts: 26 kB for GPT-2, under 1 MB everywhere) are
+what keeps short prompts at 1.3-1.5x. The spec's byte model predicted 2.24x (C) and 2.32x (Kpre) for the full
+Llama-2-7B at 2,048 tokens and 1.21x / 1.34x for GPT-2 @64; the measurements agree or are better. Exceptions (clamped
+entries listed with their exact claim) are a few dozen per proof.
+
+**GPU prover** (job 1005308): the Triton GKR gives the eager transcript byte for byte (12 tests); one instance of
+`2^25` leaves takes 0.83 s on the 2080 Ti (24.6 ns per leaf, 5.8 GB peak), `2^20` 0.16 s against 15.2 s for the eager
+prover on the CPU.
+
+**Timings, first version** (job 1005343, OPT-125M 12 blocks @2048, 3 queries, CPU verifier): v0 prove 0.72 s,
+verify 3.2 s; V1 prove 18.4 s (split 9.9 s and fold 3.2 s on the host, GKR 4.7 s), verify 8.5 s (final check 5.4 s).
+Since then the split, the counts and the folds run on the prover's device, the windows come from tables, the final
+check's products are batched, and the GKR's rounds take the eq factor out (12 products per pair instead of 20);
+the timings are being re-measured.
 
 ## 9. What remains
 
