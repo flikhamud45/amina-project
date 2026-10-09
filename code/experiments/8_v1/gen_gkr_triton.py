@@ -310,6 +310,59 @@ def _fold4_kernel(pl, pr, ql, qr, plo, pro, qlo, qro, {args('r')}, half, s_in, s
         body.append("\n".join(f"    {nm}o{k} = _add({nm}a{k}, {nm}m{k}, P)" for k in range(D)))
         body.append(store(f"{nm}o", optr, "y", "s_out", "mask"))
     parts.append("\n".join(body))
+    # ---- a bottom-layer round over the real rows: PL = PR = 1, F = QL + QR + lambda QL QR; also sum E
+    body = [f'''@triton.jit
+def _round_bot_kernel(e, ql, qr, out, {args('lam')}, half, s, se, P_, MU_, B11_, BLOCK: tl.constexpr):
+    P = P_.to(tl.uint32)
+    MU = MU_.to(tl.uint32)
+    B11 = B11_.to(tl.uint32)
+    pid = tl.program_id(0)
+    y = pid.to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
+    mask = y < half''']
+    body.append(load("et", "e", "y", "se", "mask"))
+    for nm, ptr in (("ql", "ql"), ("qr", "qr")):
+        body.append(load(f"{nm}a", ptr, "2 * y", "s", "mask"))
+        body.append(load(f"{nm}b", ptr, "2 * y + 1", "s", "mask"))
+        body.append("\n".join(f"    {nm}d{k} = _sub({nm}b{k}, {nm}a{k}, P)" for k in range(D)))
+    body.append("\n".join(f"    lm{k} = lam{k}.to(tl.uint32) + et0 * 0" for k in range(D)))
+    for ti, t in enumerate((0, 1, 2)):
+        for nm in ("ql", "qr"):
+            if t == 0:
+                body.append("\n".join(f"    {nm}t{k} = {nm}a{k}" for k in range(D)))
+            elif t == 1:
+                body.append("\n".join(f"    {nm}t{k} = {nm}b{k}" for k in range(D)))
+            else:
+                body.append("\n".join(f"    {nm}t{k} = _add({nm}b{k}, {nm}d{k}, P)" for k in range(D)))
+        body.append(emul_call("pq_", "qlt", "qrt"))
+        body.append(emul_call("lp_", "lm", "pq_"))
+        body.append("\n".join(f"    ff{k} = _add(_add(qlt{k}, qrt{k}, P), lp_{k}, P)" for k in range(D)))
+        body.append(emul_call("g_", "et", "ff"))
+        body.append("\n".join(
+            f"    tl.store(out + (pid * 4 + {ti}) * 8 + {k}, tl.sum(tl.where(mask, g_{k}, 0).to(tl.uint64), axis=0).to(tl.int64))"
+            for k in range(D)))
+    body.append("\n".join(
+        f"    tl.store(out + (pid * 4 + 3) * 8 + {k}, tl.sum(tl.where(mask, et{k}, 0).to(tl.uint64), axis=0).to(tl.int64))"
+        for k in range(D)))
+    parts.append("\n".join(body))
+    body = [f'''@triton.jit
+def _fold2_kernel(ql, qr, qlo, qro, {args('r')}, half, s_in, s_out, P_, MU_, B11_, BLOCK: tl.constexpr):
+    P = P_.to(tl.uint32)
+    MU = MU_.to(tl.uint32)
+    B11 = B11_.to(tl.uint32)
+    y = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
+    mask = y < half''']
+    first = True
+    for nm, ptr, optr in (("ql", "ql", "qlo"), ("qr", "qr", "qro")):
+        body.append(load(f"{nm}a", ptr, "2 * y", "s_in", "mask"))
+        body.append(load(f"{nm}b", ptr, "2 * y + 1", "s_in", "mask"))
+        if first:
+            body.append("\n".join(f"    rr{k} = r{k}.to(tl.uint32) + qla0 * 0" for k in range(D)))
+            first = False
+        body.append("\n".join(f"    {nm}d{k} = _sub({nm}b{k}, {nm}a{k}, P)" for k in range(D)))
+        body.append(emul_call(f"{nm}m", f"{nm}d", "rr"))
+        body.append("\n".join(f"    {nm}o{k} = _add({nm}a{k}, {nm}m{k}, P)" for k in range(D)))
+        body.append(store(f"{nm}o", optr, "y", "s_out", "mask"))
+    parts.append("\n".join(body))
     return parts
 
 
@@ -420,8 +473,10 @@ def _absorb(ch, label: str, v: torch.Tensor) -> None:
     ch.absorb(label.encode(), v.reshape(-1).to(torch.int64).contiguous().cpu().numpy().tobytes())
 
 
-def _prove_tree(layers: list, ch, label: str):
-    """The transcript from the tree's layers (``layers[k]``: Montgomery SoA ``(p, q)`` of ``2^k`` nodes)."""
+def _prove_tree(layers: list, ch, label: str, bottom: tuple[int, int] | None = None):
+    """The transcript from the tree's layers (``layers[k]``: Montgomery SoA ``(p, q)`` of ``2^k`` nodes).  ``bottom =
+    (rows, n_col)``: the leaves are an instance's, every one of its ``rows`` rows full (``T = 2^n_col``), so the bottom
+    layer's first ``n_col - 1`` rounds (its column bits) run on the real rows' ``q`` alone (:func:`_bottom_rounds`)."""
     from .logup_gkr import Transcript
 
     n = len(layers) - 1
@@ -435,16 +490,22 @@ def _prove_tree(layers: list, ch, label: str):
     one = _fc(1)
     for k in range(1, n):
         lam = ch.ext(label + f"lam{k}")[0]
-        cp, cq = layers[k + 1]
-        arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
-        layers[k + 1] = None                     # its halves are all this layer reads
-        _tick("halves", dev)
         lam_m = _to_mont(lam)
         scale = one                              # prod_{i<j} eq(rho_i, r_i)
         suffixes = _suffix_tables([_to_mont(r) for r in rho], dev)
         _tick("suffix", dev)
         rounds, rs = [], []
-        for j in range(k):
+        j0 = 0
+        cp, cq = layers[k + 1]
+        if k == n - 1 and bottom is not None and bottom[1] >= 2:
+            arrs, scale, j0 = _bottom_rounds(cq, bottom, rho, suffixes, lam_m, _li(lam), ch, label, k, rounds, rs,
+                                             dev)
+        else:
+            arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(),
+                    cq[:, 1::2].contiguous()]
+        layers[k + 1] = None                     # its halves are all this layer reads
+        _tick("halves", dev)
+        for j in range(j0, k):
             # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
             # h(0), h(1), h(2); the transcript is the eager prover's g(0), g(2), g(3)
             m = arrs[0].shape[1]
@@ -483,6 +544,63 @@ def _prove_tree(layers: list, ch, label: str):
     return tr
 
 
+def _bottom_rounds(cq, bottom, rho, suffixes, lam_m, lam_l, ch, label, k, rounds, rs, dev):
+    """The bottom layer's first ``n_col - 1`` rounds (``k = n - 1``; children = the leaves).  Every pair of the
+    current arrays lies in one row, real (``PL = PR = 1``) or padding (``PL = PR = 0``, ``QL = QR = 1``, so
+    ``F = lambda``): the kernel reads the real rows' ``q`` only, adds ``eq``-weighted ``F = QL + QR + lambda QL QR``
+    and the sum of ``eq`` over them, and the padding pairs add ``lambda (1 - that sum)`` (the suffix table sums to
+    1).  Afterwards one value per row is left; ``PL = PR`` is the rows' 0/1 indicator and the generic rounds go on.
+    Returns ``(arrays, scale, rounds done)``; the transcript is the eager prover's."""
+    rows, n_col = bottom
+    real = rows << n_col                          # leaves of the real rows
+    one = _fc(1)
+    ql = cq[:, 0:real:2].contiguous()
+    qr = cq[:, 1:real:2].contiguous()
+    scale = one
+    for j in range(n_col - 1):
+        m = ql.shape[1]                           # the real rows' pairs: m = rows 2^(n_col - 1 - j)
+        half = m // 2
+        nb = _grid(half)[0]
+        suffix, suffixes[j] = suffixes[j], None
+        part = torch.empty(nb, 4, 8, dtype=torch.int64, device=dev)
+        _round_bot_kernel[(nb,)](suffix, ql, qr, part, *lam_m, half, m, suffix.shape[1], **_consts(), BLOCK=BLOCK)
+        del suffix
+        _tick("round", dev)
+        h0, h1, h2, se = (_li(v) for v in _from_mont(part.sum(0).cpu() % PRIME))
+        pad = _fm(lam_l, _fs(one, se))            # the padding pairs: F = lambda, weights summing to 1 - se
+        h0, h1, h2 = _fa(h0, pad), _fa(h1, pad), _fa(h2, pad)
+        rj = _li(rho[j])
+        e0 = _fs(one, rj)
+        e2, e3 = _fs(_fk(rj, 3), one), _fs(_fk(rj, 5), _fc(2))
+        g0 = _fm(scale, _fm(e0, h0))
+        h3 = _fa(_fs(h0, _fk(h1, 3)), _fk(h2, 3))
+        g2, g3 = _fm(scale, _fm(e2, h2)), _fm(scale, _fm(e3, h3))
+        g = torch.tensor([g0, g2, g3], dtype=torch.int64)
+        _absorb(ch, label + f"g{k}.{j}", g)
+        rounds.append(g)
+        r = ch.ext(label + f"r{k}.{j}")[0]
+        rs.append(r)
+        rl = _li(r)
+        scale = _fm(scale, _fa(_fm(rj, rl), _fm(_fs(one, rj), _fs(one, rl))))
+        _tick("host", dev)
+        qlo = torch.empty(8, half, dtype=torch.int32, device=dev)
+        qro = torch.empty_like(qlo)
+        _fold2_kernel[_grid(half)](ql, qr, qlo, qro, *_to_mont(r), half, m, half, **_consts(), BLOCK=BLOCK)
+        ql, qr = qlo, qro
+        _tick("fold", dev)
+    # one value per row: q of the real rows, 1 for the padding rows; p = the rows' indicator
+    n_row_pairs = 1 << (k - (n_col - 1))          # the array length now: 2^(n_row) rows
+    def full(a, pad_value):
+        out = torch.zeros(8, n_row_pairs, dtype=torch.int32, device=dev)
+        out[0, :] = pad_value
+        out[:, :a.shape[1]] = a
+        return out
+    ql_f, qr_f = full(ql, R_MOD), full(qr, R_MOD)
+    ind = torch.zeros(8, n_row_pairs, dtype=torch.int32, device=dev)
+    ind[0, :rows] = R_MOD
+    return [ind, ind.clone(), ql_f, qr_f], scale, n_col - 1
+
+
 def _tree(p: torch.Tensor, q: torch.Tensor) -> list:
     _tick("start", p.device)
     layers = [(p, q)]
@@ -511,7 +629,7 @@ def prove_leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, a
     _leaf_kernel[_grid(total)](d, w, p, q, *_to_mont(alpha), rows, cols, n_col, total, total, PRIME, MU, R2, R_MOD,
                                BLOCK=BLOCK)
     del d, w
-    return _prove_tree(_tree(p, q), ch, label)
+    return _prove_tree(_tree(p, q), ch, label, (rows, n_col) if cols == 1 << n_col else None)
 '''
 
 
