@@ -1046,7 +1046,7 @@ def test_the_wire_transcript_absorbs_the_plan_and_the_encoded_bytes(policy, monk
     assert transcripts[0] == transcripts[1]         # the streaming verifier's is the batched one's
     labels = [label for label, _ in transcripts[0]]
     tables = list(verifiers[0].tables)
-    statement = [b"params", *(b"op/" + op.name.encode() for op in graph.mat_ops),
+    statement = [b"graph", b"params", *(b"op/" + op.name.encode() for op in graph.mat_ops),
                  *(b"col/" + m.name.encode() for m in coms.plan.matrices if m.layout == "col"),
                  *(b"group/" + g.encode() for g in verifiers[0].groups), *(b"table/" + t.encode() for t in tables),
                  b"x"]

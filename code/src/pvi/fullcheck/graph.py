@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
+import hashlib
 import os
+import struct
 import types
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -286,6 +289,47 @@ def _cell_value(cell):
         return None
 
 
+def _canonical(v, out: list, depth: int = 0) -> None:
+    """Append an injective byte description of ``v`` to ``out``: integers, floats, strings, booleans, devices
+    and dtypes by value, tensors by dtype, shape and bytes, sequences and mappings element by element, a
+    ``functools.partial`` by its function and arguments, a function by its module and qualified name and the
+    constants it captured (defaults and closure cells), a dataclass by its fields; anything else by its type."""
+    if depth > 16:
+        raise ValueError("graph constants nested too deeply to describe")
+    rec = functools.partial(_canonical, out=out, depth=depth + 1)
+    if torch.is_tensor(v):
+        t = v.detach().to("cpu").contiguous()
+        out.append(b"T" + str(t.dtype).encode() + struct.pack(f"<B{t.dim()}Q", t.dim(), *t.shape))
+        out.append(t.reshape(-1).view(torch.uint8).numpy().tobytes())
+    elif v is None or isinstance(v, (bool, int, float, str, torch.device, torch.dtype)):
+        b = repr(v).encode() if not isinstance(v, str) else v.encode()
+        out.append(type(v).__name__.encode() + struct.pack("<Q", len(b)) + b)
+    elif isinstance(v, (tuple, list)):
+        out.append(b"L" + struct.pack("<Q", len(v)))
+        for e in v:
+            rec(e)
+    elif isinstance(v, dict):
+        out.append(b"D" + struct.pack("<Q", len(v)))
+        for k in sorted(v, key=repr):
+            rec(k)
+            rec(v[k])
+    elif isinstance(v, functools.partial):
+        out.append(b"P")
+        rec(v.func)
+        rec(v.args)
+        rec(v.keywords)
+    elif isinstance(v, types.FunctionType):
+        rec(f"{v.__module__}.{v.__qualname__}")
+        rec(v.__defaults__)
+        rec(v.__kwdefaults__)
+        rec([_cell_value(c) for c in v.__closure__ or ()])
+    elif dataclasses.is_dataclass(v) and not isinstance(v, type):
+        rec(type(v).__qualname__)
+        rec({f.name: getattr(v, f.name) for f in dataclasses.fields(v)})
+    else:
+        rec("<" + type(v).__qualname__ + ">")
+
+
 @dataclass
 class IntGraph:
     """An ordered list of operations; ``inputs[0]`` of the first op is the query."""
@@ -316,6 +360,23 @@ class IntGraph:
                if isinstance(op, CheapOp) else op for op in self.ops]
         pairs = [pair for pair in copies.values() if pair[0] is not pair[1]]
         return IntGraph(ops, self.input_name, self.output_name, dict(self.meta)), pairs
+
+    def digest(self) -> bytes:
+        """SHA-256 of a canonical description of the public graph: every op in order -- its kind, name,
+        inputs, output and note; a weight op's shape, layout, convolution and input bound (not its weights:
+        a commitment binds those); a cheap op's function by name and every constant it captured (the
+        requantisation multipliers, norm gains, look-up tables) -- its input and output names and ``meta``.
+        A graph with other cheap ops or constants hashes to other bytes; Fiat--Shamir absorbs it
+        (``protocol._absorb_statement``), so a transcript is bound to the computation it checks."""
+        out: list[bytes] = [b"pvi/graph/v1"]
+        for op in self.ops:
+            if isinstance(op, MatOp):
+                _canonical(["mat", op.name, op.inputs, op.output, op.n_rows, op.n_in, op.has_bias, op.layout,
+                            op.conv, op.max_input], out)
+            else:
+                _canonical(["cheap", op.name, op.inputs, op.output, op.note, op.fn, op.params], out)
+        _canonical([self.input_name, self.output_name, self.meta], out)
+        return hashlib.sha256(b"".join(out)).digest()
 
     def claim_columns(self, x: torch.Tensor) -> list[int] | None:
         """Every weight op's column count ``M`` on the query ``x``, in op order (``None`` if ``x``

@@ -407,7 +407,8 @@ def test_fiat_shamir_absorbs_the_encoded_bytes(mode, monkeypatch):
     for name, (a, b) in transcripts.items():
         assert a == b                     # the streaming verifier's transcript is the batched one's
         labels = [label for label, _ in a]
-        assert labels[:2] == [b"params", b"op/" + graph.mat_ops[0].name.encode()] and labels[at - 1] == b"x"
+        assert labels[:3] == [b"graph", b"params", b"op/" + graph.mat_ops[0].name.encode()] and labels[at - 1] == b"x"
+        assert a[0][1] == graph.digest()
         assert a[at] == (b"claims/PVC3", (_ENCODE if name == "pvc" else _plain)(claims))
         if mode == "C":
             assert labels[-1] == b"u/F31"

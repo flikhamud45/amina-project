@@ -230,14 +230,16 @@ class Challenger:
     key drawn from the operating system's CSPRNG (``secrets``) at the moment the
     challenge is issued.  In particular the column indices are keyed only after
     the prover has sent ``u``, so nothing the prover saw earlier predicts them.
-    Fiat--Shamir: the key is the running SHA-256 transcript of the statement
-    (parameters, commitments, input) and of every prover message so far.
+    Fiat--Shamir: the key is read from the running SHAKE-256 transcript of the statement
+    (the graph's digest, parameters, commitments, input) and of every prover message so far:
+    each challenge absorbs its label into a copy of the transcript and reads 32 bytes, so the
+    challenges are random-oracle outputs of prefix-free inputs without a length-extension argument.
     ``seed`` makes interactive keys reproducible (tests only).
     """
 
     def __init__(self, *, fiat_shamir: bool = False, seed: int | None = None) -> None:
         self.fiat_shamir = fiat_shamir
-        self._state = hashlib.sha256(b"pvi/fullcheck/v2")
+        self._state = hashlib.shake_256(b"pvi/fullcheck/v3")
         self._seed = seed
         self._count = 0
 
@@ -250,7 +252,7 @@ class Challenger:
         if self.fiat_shamir:
             h = self._state.copy()
             h.update(b"challenge/" + label.encode())
-            return h.digest()
+            return h.digest(32)
         if self._seed is None:
             return secrets.token_bytes(32)
         self._count += 1
@@ -595,6 +597,7 @@ class Verifier:
     _kept: dict = field(default_factory=dict)    # Kpre: stacked operands of the fixed chi and u
     _consts: list = field(default_factory=list)  # a GPU client: the cheap ops' constants (source, copy, versions)
     _columns: dict = field(default_factory=dict)  # query shape -> claim_columns
+    _digest: bytes = b""                          # the public graph's digest, once (Fiat--Shamir absorbs it)
 
     def __post_init__(self) -> None:
         if self.groups or self.tables:
@@ -604,6 +607,8 @@ class Verifier:
         if self.lookups and self.mode == "C":
             raise ValueError("lookups=True is for modes K and Kpre, whose verifier holds the weights "
                              "(mode C looks rows up in a commitment plan's tables: its c policies)")
+        if self.params.fiat_shamir:
+            self._digest = self.graph.digest()
         if torch.device(self.device).type != "cpu":   # the cheap ops' constants live on the device
             self.graph, pairs = self.graph.with_constants_on(self.device)
             self._consts = [(src, dst, (src._version, dst._version)) for src, dst in pairs]
@@ -1360,6 +1365,7 @@ def _phase_done(out: dict, name: str, start) -> None:
 
 def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> None:
     p = verifier.params
+    ch.absorb(b"graph", verifier._digest or verifier.graph.digest())    # every op and cheap-op constant
     ch.absorb(b"params", struct.pack("<IIIi", p.reps, p.columns, p.rate, p.grinding_bits) + verifier.mode.encode())
     for op in verifier.graph.mat_ops:
         pub = verifier.publics.get(op.name)
