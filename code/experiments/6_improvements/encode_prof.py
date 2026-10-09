@@ -1,0 +1,61 @@
+"""Where the prover's claim encoding (``claimcodec.encode`` on its device) spends its time.
+
+    cd code && PYTHONPATH=src python experiments/6_improvements/encode_prof.py --model opt-1.3b --layers 4 --seq 2048
+
+Builds the decoder as bench.py does (random weights, seed 0, last block pruned), computes one query's
+claims on the device as the lean wire prover keeps them (int32, ``claimcodec.narrow``), then times
+``claimcodec.encode`` on them (median of ``--reps``) and prints a ``torch.profiler`` table of one more
+call, sorted by CPU and by CUDA time.
+"""
+from __future__ import annotations
+
+import argparse
+import statistics
+import time
+
+import torch
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="opt-1.3b")
+    ap.add_argument("--layers", type=int, default=4)
+    ap.add_argument("--seq", type=int, default=2048)
+    ap.add_argument("--reps", type=int, default=3)
+    ap.add_argument("--rows", type=int, default=25)
+    args = ap.parse_args()
+    from pvi.fullcheck import claimcodec
+    from pvi.fullcheck.protocol import Prover
+    from pvi.fullcheck.transformer import CONFIGS, build_decoder
+
+    device = torch.device("cuda")
+    cfg = CONFIGS[args.model]
+    graph = build_decoder(cfg, n_layers=args.layers, calib_tokens=32, seed=0, prune_last=True)
+    prover = Prover(graph, device=device, lean=True)
+    x = torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(1))
+    claims = prover.claims(x, send=claimcodec.narrow, to_host=False)
+    zs = [claims[op.name] for op in graph.mat_ops if op.name in claims]
+    n = sum(z.numel() for z in zs)
+    print(f"{args.model} {args.layers} blocks T={args.seq}: {len(zs)} ops, {n / 1e6:.1f} M claims, "
+          f"devices {sorted({str(z.device) for z in zs})}, dtypes {sorted({str(z.dtype) for z in zs})}")
+    times, size = [], 0
+    for _ in range(args.reps + 1):
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        size = len(claimcodec.encode(zs))
+        torch.cuda.synchronize()
+        times.append(time.perf_counter() - t0)
+    med = statistics.median(times[1:])
+    print(f"encode: median {med:.3f} s over {args.reps} ({n / med / 1e6:.0f} M claims/s), {size / 1e6:.1f} MB, "
+          f"{8 * size / n:.2f} bits/claim; first call {times[0]:.3f} s")
+    from torch.profiler import ProfilerActivity, profile
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+        claimcodec.encode(zs)
+        torch.cuda.synchronize()
+    ka = prof.key_averages()
+    print(ka.table(sort_by="self_cpu_time_total", row_limit=args.rows))
+    print(ka.table(sort_by="self_cuda_time_total", row_limit=args.rows))
+
+
+if __name__ == "__main__":
+    main()

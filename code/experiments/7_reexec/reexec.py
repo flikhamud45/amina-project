@@ -128,7 +128,9 @@ def main() -> None:
     for name in args.model:
         cfg = CONFIGS[name]
         for seq in args.seq:
-            tokens = torch.randint(0, cfg.vocab, (1, seq), generator=torch.Generator().manual_seed(1)).to(device)
+            if seq > cfg.max_pos:                     # e.g. GPT-2's 1,024 learned positions
+                continue
+            tokens =torch.randint(0, cfg.vocab, (1, seq), generator=torch.Generator().manual_seed(1)).to(device)
             for variant in args.variants:
                 measured = {}
                 for n_layers in args.layers:
