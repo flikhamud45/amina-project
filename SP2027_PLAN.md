@@ -25,7 +25,7 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 - **A1 [DONE]** Column opening and folding on exact int8 GEMMs (e2bcb31; [doc](docs/improvements/A1_int8_column_opening.md)). 2080 Ti: opening 9.7x, prover 3.7-4.3x on Llama-2-7B/13B blocks, bit-identical.
 - **A2 [DONE]** Forward-pass weight products on exact int8 GEMMs (9ce4305; [doc](docs/improvements/A2_int8_forward.md)). About 2x on Llama-sized layers.
 - **A3 [DONE]** Claim encoder (29db2ce, 228ae2d, 71e8920, aa7e485; [doc](docs/improvements/A3_claim_encoder.md)). The profile showed the cost was assembling the result (one 2 GB `b"".join`), not the kernels: threaded assembly into one read-only buffer gives the encoder 2.1-2.3x on large proofs (OPT-1.3B @2048: 3.28 -> 1.54 s; Llama-2-7B 2 blocks: 0.542 -> 0.238 s), identical bytes. The fused Triton encoder is byte-identical but slower (1.74 s; fixed ~0.2 s per proof), kept opt-in (`PVI_FUSED_CODEC=1`) as a negative result; its one advantage is bounded device memory (183 MB vs ~1 GB at 885 M claims).
-- **A4 [TODO]** Attention of the prover's forward on int8 GEMMs (QK^T exact in int32; PV with p <= 255 split into two int8 halves) or a fused Triton kernel shared with B3.
+- **A4 [DONE]** The prover's attention runs B3's fused Triton kernel (shared `_attention_heads`; [doc](docs/improvements/B2_B3_gpu_verifier.md) Sec. 6): `prove_forward` at 2,048 tokens 1.16x (Llama-2-7B 2 blocks), 1.15x (Llama-2-13B 1 block), 1.62x (OPT-1.3B 12 blocks), job 1005350. The int8-GEMM alternative is not needed.
 - **A5 [TODO]** Overlap encoding with the forward pass (side stream, per op), once A3 exists.
 - **A6 [TODO]** Kpre precompute (`Verifier._fold_local`) on int8 GEMMs (setup time).
 

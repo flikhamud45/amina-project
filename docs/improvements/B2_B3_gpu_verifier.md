@@ -89,7 +89,22 @@ compete for the 11 GB); the two together remove both bottlenecks. Extrapolated t
 1.1 s on the 2080 Ti, against 2.6 s on the L40S in the paper and zkLLM's 0.90 s (its own hardware). The L40S
 measurement is part of the final runs (target: <= 0.8 s).
 
-## 6. What remains
+## 6. The prover's attention (plan A4)
+
+The prover's forward pass calls the same `transformer._attention_heads`, so on a GPU with Triton it runs the same
+fused kernel (`PVI_FUSED_ATTN`, on by default). Measured on the prover (job 1005350, RTX 2080 Ti, 2,048 tokens,
+Kpre, no pruning, 3 queries each, all accepted), `prove_forward`:
+
+| Build | torch attention | fused attention |
+|---|---:|---:|
+| Llama-2-7B, 2 blocks | 0.163 s | 0.140 s (1.16x) |
+| Llama-2-13B, 1 block | 0.110 s | 0.096 s (1.15x) |
+| OPT-1.3B, 12 blocks | 0.538 s | 0.332 s (1.62x) |
+
+The forward pass is dominated by the weight products (int8 GEMMs since A2); OPT's 32 heads of 64 dimensions make
+attention a larger share, hence the larger gain. Plan A4's alternative (QK^T and PV on int8 GEMMs) is not needed.
+
+## 7. What remains
 
 * L40S measurements on the full models (OPT-1.3B, OPT-6.7B, Llama-2-7B, Llama-2-13B at 2,048 tokens).
 * A per-phase GPU profile with both on (plan B1) to find the next bottleneck (likely the element-wise derive:
