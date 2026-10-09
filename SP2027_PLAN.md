@@ -7,6 +7,8 @@ are met; otherwise USENIX, continuing with the proof-size track.
 
 Status tags: **[DONE]** finished and verified (commit or file named), **[WIP]** in progress, **[TODO]**,
 **[USER]** needs the team (a decision or an action only they can take), **[DROP]** decided against (reason given).
+**Every [DONE] improvement has a detailed write-up in `docs/improvements/`** (problem, idea, why it is exact or
+sound, implementation, tests, measurements, what remains); the item links to it.
 Reviewer objections (from the mock review, `S/sp2027_research/idea_mock-review.md`): **D1** verifier not cheaper
 than re-execution / weights leak; **D2** thin novelty; **D3** GB proofs; **D4** attack weak (contrived, worst
 case, no real aligned model); **D5** int8 quality, no real-weight LLM defence run; **D6** honest commitment, no
@@ -20,9 +22,9 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## A. Prover (already the strongest axis; keep it unbeatable, fix long prompts)
 
-- **A1 [DONE]** Column opening and folding on exact int8 GEMMs (e2bcb31). 2080 Ti: opening 9.7x, prover 3.7-4.3x on Llama-2-7B/13B blocks, bit-identical.
-- **A2 [DONE]** Forward-pass weight products on exact int8 GEMMs (9ce4305). About 2x on Llama-sized layers.
-- **A3 [TODO] (G0)** Fused Triton claim encoder, byte-identical `PVC3`. Encoding is 17.9 of 24.5 s for Llama-2-13B at 2,048 tokens (L40S); profile: GPU kernels ~1 s, ~12k launches and syncs ~2 s, copy-back 0.34 s for OPT-1.3B. Target: encode within 2x of the copy-back floor; prover at 2,048 tokens 3-8x faster.
+- **A1 [DONE]** Column opening and folding on exact int8 GEMMs (e2bcb31; [doc](docs/improvements/A1_int8_column_opening.md)). 2080 Ti: opening 9.7x, prover 3.7-4.3x on Llama-2-7B/13B blocks, bit-identical.
+- **A2 [DONE]** Forward-pass weight products on exact int8 GEMMs (9ce4305; [doc](docs/improvements/A2_int8_forward.md)). About 2x on Llama-sized layers.
+- **A3 [WIP] (G0)** Fused Triton claim encoder, byte-identical `PVC3`. Encoding is 17.9 of 24.5 s for Llama-2-13B at 2,048 tokens (L40S); profile: GPU kernels ~1 s, ~12k launches and syncs ~2 s, copy-back 0.34 s for OPT-1.3B. Target: encode within 2x of the copy-back floor; prover at 2,048 tokens 3-8x faster.
 - **A4 [TODO]** Attention of the prover's forward on int8 GEMMs (QK^T exact in int32; PV with p <= 255 split into two int8 halves) or a fused Triton kernel shared with B3.
 - **A5 [TODO]** Overlap encoding with the forward pass (side stream, per op), once A3 exists.
 - **A6 [TODO]** Kpre precompute (`Verifier._fold_local`) on int8 GEMMs (setup time).
@@ -39,7 +41,7 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## C. Proof size (D3; future work "sum-check for the non-weight operations")
 
-- **C1 [TODO]** V1 design spec (workflow): send the int8 requantised activations in the clear, commit only the residues, range-check them (logUp-GKR over an extension field, or bit decomposition in the code-based commitment); Freivalds against committed values; soundness proof; byte model on the real shapes; implementation plan in this code base. Expected 2.2-2.4x smaller at 2,048 tokens.
+- **C1 [WIP]** V1 design spec (workflow `sp2027-v1-proof-size-design`, output `S/sp2027_research/v1_design/V1_SPEC.md`): send the int8 requantised activations in the clear, commit only the residues, range-check them (logUp-GKR over an extension field, or bit decomposition in the code-based commitment); Freivalds against committed values; soundness proof; byte model on the real shapes; implementation plan in this code base. Expected 2.2-2.4x smaller at 2,048 tokens.
 - **C2 [TODO]** V1 implementation and measurement (if C1's effort estimate fits; else a prototype on small models plus the cost model).
 - **C3 [TODO]** V2 (commit everything but attention; the verifier recomputes attention only; 6-8x smaller at 2,048 tokens, verifier 2.5-4x faster) and V3 (everything proved; MB proofs) as an analysed design and cost model in the paper (fixes from the red-team: three folds, the norm gadget's sums split into 8-bit limbs, extension-field challenges).
 - **C4 [TODO]** Sessions: one opening for B queries (`bench.py --batches`) and a deferred chi per session; Llama-2-7B 64-token query 324.5 -> ~205 MB at B = 16.
@@ -47,8 +49,8 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## D. Trust and rigor (D2, D6)
 
-- **D1 [DONE]** Fiat-Shamir absorbs `IntGraph.digest()` (every op and cheap-op constant) (2dad363).
-- **D2 [DONE]** Transcript in SHAKE-256, challenges read from labelled copies (2dad363).
+- **D1 [DONE]** Fiat-Shamir absorbs `IntGraph.digest()` (every op and cheap-op constant) (2dad363; [doc](docs/improvements/D1_D2_fiat_shamir_binding.md)).
+- **D2 [DONE]** Transcript in SHAKE-256, challenges read from labelled copies (2dad363; same doc).
 - **D3 [TODO]** Canonical claim encoding: the decoder recomputes the encoder's plan and rejects other widths (no free re-encoding to grind Fiat-Shamir).
 - **D4 [TODO] (G0)** Untrusted commitment: "Fact 1" (r base-field vectors checked at the same columns = one combination over F_{p^r}: proximity error n/p^r = 2^-137 at r = 5), a one-time public setup proximity proof (Option B) implemented and tested, per-query column counts from the untrusted-commitment bound, a parameter table (setup proof size vs per-query bytes), the theorem and proof (appendix).
 - **D5 [TODO]** The split-commitment attack as a test: without D4 a commitment mixing two models passes with probability 2^-t_g per query (2^-35 for Llama-2-7B's smallest tree); with D4 it is rejected at setup.
@@ -57,13 +59,13 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## E. Features (D1, D3; future work "KV cache")
 
-- **E1 [DONE]** A generated response proved as one prefill with the token rule (03ae13d; `bench.py --gen`, cbb8c05). 2080 Ti: GPT-2, 64-token prompt + 256 tokens: prover 0.29 s, verifier 0.59 s, 87 MB (0.34 MB per token).
+- **E1 [DONE]** A generated response proved as one prefill with the token rule (03ae13d; `bench.py --gen`, cbb8c05; [doc](docs/improvements/E1_generation.md)). 2080 Ti: GPT-2, 64-token prompt + 256 tokens: prover 0.29 s, verifier 0.59 s, 87 MB (0.34 MB per token).
 - **E2 [TODO]** Sampling with a verifier-chosen seed (temperature, top-k with an integer sampler); stop rules (EOS, length).
 - **E3 [TODO]** Verifier KV cache for multi-turn chat (reuse K/V of accepted turns only); (n+1)/2 fewer claims for n turns.
 
 ## F. Evaluation (D1, D5, D7)
 
-- **F1 [WIP]** Re-execution baseline (`experiments/7_reexec/reexec.py`, 9a40bf2): measured on the 2080 Ti node (results file); re-run on the L40S and the EPYC with the final verifier.
+- **F1 [WIP]** Re-execution baseline (`experiments/7_reexec/reexec.py`, 9a40bf2; [doc](docs/improvements/F1_reexecution_baseline.md)): measured on the 2080 Ti node; re-run on the L40S and the EPYC with the final verifier.
 - **F2 [TODO] (G0)** Integer-model quality: 16-bit softmax probabilities (verifier and prover), SmoothQuant-style smoothing of the weights, per-token activation scales if integer-only; perplexity on WikiText-2 (and C4) for OPT-125M/1.3B/6.7B, Qwen3-4B (open, Apache-2.0), Llama-3-8B if licence access is available [USER for gated models].
 - **F3 [TODO] (G0)** A real-weight end-to-end defence run (Qwen3-4B and OPT-6.7B real weights): prover, verifier, proof bytes (claims' entropy differs from random weights), generation.
 - **F4 [TODO]** Memory accounting: prover and verifier peak GPU/host memory per cell (bench records `gpu_peak_memory`, `host_peak_rss` already).
@@ -74,11 +76,11 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## G. The attack and its generalisation (D4, D7)
 
-- **G1 [TODO] (G0)** Dichotomy theorem: a verifier that spot-checks q of N sites of an unencoded trace accepts a single-site edit with probability >= 1 - q/N for any (adaptive, value-aware) sampler; encoding/distance amplification (our defence) reaches 2^-lambda. Proof, checked by an independent pass (workflow).
-- **G2 [TODO] (G0)** Systematisation table of 5+ published schemes (Anchuri et al. SaTML 2026, SLP, CommitLLM routine audit, TensorCommitments, SPEX, NanoZK audit mode; Proof-of-Learning as precedent), each acceptance probability reproduced by a script from the scheme's own equations; say "broken" only where a scheme claims more than its sampling gives.
+- **G1 [WIP] (G0)** Dichotomy theorem (workflow `sp2027-attack-theory`, output `S/sp2027_research/attack_theory/`): a verifier that spot-checks q of N sites of an unencoded trace accepts a single-site edit with probability >= 1 - q/N for any (adaptive, value-aware) sampler; encoding/distance amplification (our defence) reaches 2^-lambda. Proof, checked by an independent pass (workflow).
+- **G2 [WIP] (G0)** Systematisation table (same workflow) of 5+ published schemes (Anchuri et al. SaTML 2026, SLP, CommitLLM routine audit, TensorCommitments, SPEX, NanoZK audit mode; Proof-of-Learning as precedent), each acceptance probability reproduced by a script from the scheme's own equations; say "broken" only where a scheme claims more than its sampling gives.
 - **G3 [TODO]** Adaptive game against the deployed value-aware sampler with range-respecting edits (measure detection vs edit size on real networks).
 - **G4 [TODO]** Real aligned-model threat characterisation (Qwen3 instruct): success rate vs edit size for a generation-level change that passes the path protocol; reported as measurements, not a recipe.
-- **G5 [USER] (G0)** Responsible disclosure to Anchuri et al. and the authors of the schemes in G2 by Mon 19 Oct (I draft the notices; the team sends them). Ethics paragraph.
+- **G5 [USER] (G0)** (drafts by the same workflow) Responsible disclosure to Anchuri et al. and the authors of the schemes in G2 by Mon 19 Oct (I draft the notices; the team sends them). Ethics paragraph.
 
 ## H. The paper
 
@@ -91,8 +93,8 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## I. Infrastructure
 
-- **I1 [DONE]** Lean server clones (sparse checkout, 66 MB); exact int8 GEMMs confirmed on the 2080 Ti (sm_75).
-- **I2 [DONE]** Triton and `torch.compile` on the GPU nodes, with copied Python headers (`logs/validation/sp2027/tri.py`, `pyinclude/`).
+- **I1 [DONE]** Lean server clones (sparse checkout, 66 MB); exact int8 GEMMs confirmed on the 2080 Ti (sm_75) ([doc](docs/improvements/I_server_setup.md)).
+- **I2 [DONE]** Triton and `torch.compile` on the GPU nodes, with copied Python headers (`logs/validation/sp2027/tri.py`, `pyinclude/`; same doc).
 - **I3 [TODO]** Free server quota (~20 GB per user, ~19 GB used): copy my old validation clones to the laptop, then delete them on the server.
 - **I4 [TODO]** A C++ toolchain for CPU inductor (B5): conda/micromamba `gxx` in my server folder, or the friend's EPYC node.
 
@@ -101,3 +103,4 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 ## Log
 
 - 2026-10-09: research workflow (8 agents) -> roadmap; A1, A2, E1, D1, D2 done; F1 measured on the 2080 Ti; I1, I2 done. Pushed to GitHub `sp2027` (2e91856).
+- 2026-10-09: plan written; detailed docs for every done item (`docs/improvements/`); workflows started for C1 (V1 design) and G1-G5 (attack theory, systematisation, experiments, disclosure drafts); A3 started.
