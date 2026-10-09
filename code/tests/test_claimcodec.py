@@ -581,15 +581,15 @@ def _int32_on_gpu(zs) -> list:
 
 
 @cuda_only
-@pytest.mark.parametrize("cols,flag_bytes,chunk", [(1 << 20, 1 << 28, 1 << 23), (1, 128, 33), (3, 384, 1 << 23),
-                                                   (7, 1 << 28, 1000)])
-def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, flag_bytes, chunk, monkeypatch):
-    # launches of one or a few columns, the flagged lanes one at a time, the plan's windows small or not
+@pytest.mark.parametrize("cols,flag_cols,chunk", [(1 << 20, 1 << 22, 1 << 23), (1, 1, 33), (3, 5, 1 << 23),
+                                                  (7, 1 << 22, 1000)])
+def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, flag_cols, chunk, monkeypatch):
+    # launches of one or a few columns, the flag words read a few columns at a time, the plan's windows small or not
     from pvi.fullcheck import codec_kernels
     if not codec_kernels.available("cuda"):
         pytest.skip("no Triton")
     monkeypatch.setattr(cc, "_FUSED_COLS", cols)
-    monkeypatch.setattr(cc, "_FLAG_BYTES", flag_bytes)
+    monkeypatch.setattr(cc, "_FLAG_COLS", flag_cols)
     monkeypatch.setattr(cc, "_CHUNK", chunk)
     for name, zs in claim_sets.items():
         dz = _int32_on_gpu(zs)

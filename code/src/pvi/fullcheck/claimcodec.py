@@ -1505,7 +1505,7 @@ def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
 
 _FUSED = os.environ.get("PVI_FUSED_CODEC", "1") != "0"   # 0: the torch encoders (for A/B measurements)
 _FUSED_COLS = 1 << 20       # columns of a stream per launch (2**25 values; their words at most 120 MiB)
-_FLAG_BYTES = 1 << 26       # the flag words are expanded into their lanes in blocks of about this many bytes
+_FLAG_COLS = 1 << 22        # flag words read per lane at a time (a piece of fewer than 2**24 positions)
 
 
 def _fused_ok(zts: list) -> bool:
@@ -1538,7 +1538,7 @@ def _encode_fused(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
     sizes = [4 * b * ((z - a + 31) // 32) for b, a, z in runs if b]
     offs = np.cumsum([0] + sizes).tolist()
     body = _HostBytes(offs[-1], dev)
-    pos, high, w = [], [], 0
+    rice, w = _RiceParts(dev), 0
     for b, a, z in runs:
         n, cnt = z - a, (z - a + 31) // 32
         s0, s1 = (int(i) for i in np.searchsorted(g["b"], [b, b + 1]))   # the segments of width b
@@ -1553,55 +1553,79 @@ def _encode_fused(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
                     body.put(offs[w] + 4 * (r * cnt + g0), rows[r])
             del words
         w += bool(b)
-        # the flagged positions (v = lane cnt + column), a block of columns at a time (its 32 lanes expanded),
-        # then in order
-        step = max(1, _FLAG_BYTES // 128)                      # 32 lanes of int32, twice
-        lanes = torch.arange(32, dtype=torch.int32, device=dev)
-        found = []
-        for c0 in range(0, cnt, step):
-            lane, col = torch.nonzero((flags[None, c0:c0 + step] >> lanes[:, None]) & 1, as_tuple=True)  # one wait
-            if lane.numel():
-                found.append(lane.to(torch.int64) * cnt + col + c0)
+        # the flagged positions in the global order: lane by lane (v = lane cnt + column), a block of columns at a
+        # time, their high parts from the claims, their Rice values into the statistics
+        for lane in range(32):
+            for c0 in range(0, cnt, _FLAG_COLS):
+                col = _nonzero_dev((flags[c0:c0 + _FLAG_COLS] >> lane) & 1)          # one wait
+                if col.numel():
+                    at = col.add_(lane * cnt + c0 + a)
+                    rice.add(at, ck.high_parts(table, s0, s1, b, at).to(torch.int64))
         del flags
-        if found:
-            at = torch.sort(torch.cat(found)).values.add_(a)
-            pos.append(at)
-            high.append(ck.high_parts(table, s0, s1, b, at).to(torch.int64))
-        del found
-    pos = torch.cat(pos) if pos else torch.zeros(0, dtype=torch.int64, device=dev)
-    hp = torch.cat(high) if high else pos
-    del high, table, flat, mr
-    n_exc = pos.numel()
-    ks, lows, q8 = [], [], []
-    if n_exc:   # the exceptions' Rice vectors, as one pass computes them
-        rv = torch.stack([pos - torch.cat([pos.new_full((1,), -1), pos[:-1]]) - 1, ((hp << 1) ^ (hp >> 63)) - 1])
-        vmin, vmax = rv.amin(1), rv.amax(1)
-        kmin = ((vmax[:, None] >= tb["pow2"][None, :]).sum(1) - 4).clamp_(min=0)
-        q = ((rv >> kmin[:, None]).clamp_(0, 15) + torch.arange(0, 32, 16, device=dev)[:, None]).view(-1)
-        qh = torch.bincount(q, minlength=32)
-        rs = _d2h(torch.cat([vmin, vmax, kmin, qh]))
-        if rs[:2].min() < 0 or rs[2:4].max() >= 1 << (_KMAX + 4):
-            raise ValueError("Rice values must be in [0, 2**36)")
-        ks = [_rice_k_hist(n_exc, int(rs[4 + i]), rs[6 + 16 * i:22 + 16 * i]) for i in range(2)]
-        lows = [_pack_dev(rv[i] & ((1 << k) - 1), k).view(-1) for i, k in enumerate(ks) if k]
-        q8 = [torch.stack([rv[i] >> k for i, k in enumerate(ks)]).to(torch.uint8).view(-1)]
-        del rv
-    pieces = [p.view(torch.uint8) for p in lows] + q8
-    if pieces:
-        host = _d2h(torch.cat(pieces))                 # one wait: the body's copies are on the host too
-    else:
-        torch.cuda.current_stream(dev).synchronize()
-        host = np.zeros(0, dtype=np.uint8)
-    mv = memoryview(host)
-    out = [head, *body.views(), struct.pack("<I", n_exc)]
-    at = 0
-    if n_exc:
-        quot = host[host.size - 2 * n_exc:].reshape(2, n_exc)
-        for i, k in enumerate(ks):
-            size = 4 * k * ((n_exc + 31) // 32)
-            out += [bytes([k]), mv[at:at + size], _pack_levels(quot[i])]
-            at += size
-    return b"".join(out)
+    del table, flat, mr
+    tail = rice.tail()                                 # one wait: the body's copies are on the host too
+    return b"".join([head, *body.views(), *tail])
+
+
+class _RiceParts:
+    """The exception list's Rice vectors from pieces of exceptions given in the global order, in bounded device
+    memory (as :func:`_encode_chunked`'s step 3): each piece's Rice values (gaps, the last position carried
+    over, and payloads) binned into the device's statistics and copied back to the host without a wait (4 bytes
+    each, the piece's first gap 8); then the parameters from the statistics, the values up again piece by piece,
+    cut into low parts and quotients, and back; the host packs them.  A piece spans fewer than ``2**31``
+    positions (its gaps after the first fit in 4 bytes) and holds at most ``2**24`` exceptions (exact counts)."""
+
+    def __init__(self, dev: torch.device) -> None:
+        self.dev = dev
+        self.counts = torch.zeros(2 * _RBITS * 16, dtype=torch.int64, device=dev)
+        self.second = _upload(np.array([[0], [_RBITS * 16]], dtype=np.int64), dev)   # the payloads' bins
+        self.last = _upload(np.array([-1], dtype=np.int64), dev)
+        self.held, self.n = [], 0
+
+    def add(self, at: torch.Tensor, high: torch.Tensor) -> None:
+        """Exceptions at the global positions ``at`` (int64, increasing, after the last piece's) with high parts
+        ``high`` (int64)."""
+        e = at.numel()
+        for i in range(0, e, 1 << 24):
+            a, h = at[i:i + (1 << 24)], high[i:i + (1 << 24)]
+            rv = torch.stack([a - torch.cat([self.last, a[:-1]]) - 1, ((h << 1) ^ (h >> 63)) - 1])
+            self.last = a[-1:]
+            self.counts.add_(_count_bins(_rice_bins(rv).add_(self.second).view(-1)))
+            buf = _host_buffer(2 + 2 * a.numel(), torch.int32, self.dev)
+            _copy_back(buf, torch.cat([rv[0, :1].view(torch.int32), rv.to(torch.int32).view(-1)]))
+            self.held.append(buf)
+            self.n += a.numel()
+
+    def tail(self) -> list[bytes]:
+        """``u32 e`` and the two Rice vectors (after one wait for the device)."""
+        dev, n_exc = self.dev, self.n
+        out = [struct.pack("<I", n_exc)]
+        if not n_exc:
+            _d2h(self.last)
+            return out
+        hc = _d2h(self.counts).reshape(2, _RBITS, 16)
+        ks = [_rice_k_bins(n_exc, hc[i]) for i in range(2)]
+        nbytes = [1 if k <= 8 else 2 if k <= 16 else 4 for k in ks]
+        q8 = _host_buffer(2 * n_exc, torch.uint8, dev).view(2, n_exc)
+        lows = [_host_buffer(nbytes[i] * n_exc, torch.uint8, dev) if k else None for i, k in enumerate(ks)]
+        done = 0
+        for h in self.held:
+            e = (h.numel() - 2) // 2
+            t = h.to(dev, non_blocking=True)
+            gaps = t[2:2 + e].to(torch.int64)
+            gaps[:1] = t[:2].view(torch.int64)
+            for i, v in enumerate((gaps, t[2 + e:].to(torch.int64).bitwise_and_(0xFFFFFFFF))):
+                k = ks[i]
+                _copy_back(q8[i, done:done + e], (v >> k).to(torch.uint8))
+                if k:
+                    low = v.bitwise_and_((1 << k) - 1)
+                    low = low.to(torch.uint8) if k <= 8 else low.to(torch.int16) if k <= 16 else low.to(torch.int32)
+                    _copy_back(lows[i][nbytes[i] * done:nbytes[i] * (done + e)], low.view(torch.uint8))
+            done += e
+        self.held = []
+        _d2h(self.last)                                # one wait: every copy back is on the host
+        return out + _rice_tail(ks, [lows[i].numpy().view(f"<u{nbytes[i]}") if k else None for i, k in enumerate(ks)],
+                                q8.numpy(), torch.get_num_threads())
 
 
 def _rice_tail(ks: list, lows: list, q8: np.ndarray, workers: int) -> list[bytes]:
