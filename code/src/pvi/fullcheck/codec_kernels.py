@@ -16,6 +16,11 @@ block of the stream's columns straight from the claims, through a table of the s
 A second kernel recomputes the high parts ``(x - lo) >> B`` of the flagged positions.  The values, slots and
 words are the integers of the torch encoder, so the bytes are the same (tested against it).
 
+The decoder's kernel is the inverse: each program reads the words of a block of columns of a ``B``-bit stream
+(``B <= 32``: also a Rice vector's low parts) and writes its 32 lanes' values in place, flagging an error if a
+padding slot (a lane position at or past ``n``) is not zero.  Every offset and length is checked on the host
+before the kernel reads anything (:func:`claimcodec.decode_device`).
+
 Triton builds a small C launcher on first use; on hosts without the Python headers, ``PVI_PY_INCLUDE`` names
 a directory holding a copy of them (``docs/improvements/I_server_setup.md``).
 """
@@ -38,7 +43,7 @@ try:                                   # Triton ships with CUDA builds of torch 
 except ImportError:                    # pragma: no cover - the CPU-only test environment
     triton = None
 
-__all__ = ["available", "SegmentTable", "pack_stream", "high_parts"]
+__all__ = ["available", "SegmentTable", "pack_stream", "high_parts", "unpack_stream"]
 
 BLOCK = 64                             # columns per program (32 lanes each)
 
@@ -129,6 +134,38 @@ if triton is not None:
         e = tl.load(pos_ptr + i, mask=ok, other=0)
         val = _values(e, ok, s0, s1, start_ptr, src_ptr, mean_ptr, cols_ptr, lo_ptr, mr_ptr, STEPS)
         tl.store(out_ptr + i, val >> B, mask=ok)
+
+
+if triton is not None:
+    @triton.jit
+    def _unpack_kernel(words_ptr, out_ptr, err_ptr, n, G, B: tl.constexpr, BLOCK: tl.constexpr):
+        """The values of a ``B``-bit stream of ``n`` values in ``G`` columns (words ``[B, G]``, int32) into
+        ``out[:n]``; ``err`` is set to 1 if a padding slot holds a non-zero value."""
+        g = (tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)).to(tl.int64)
+        colok = g < G
+        lane = tl.arange(0, 32).to(tl.int64)
+        bitpos = lane[:, None] * B
+        wi = bitpos >> 5
+        sh = bitpos & 31
+        spill = (sh + B) > 32
+        low = tl.load(words_ptr + wi * G + g[None, :], mask=colok[None, :], other=0).to(tl.int64) & 0xFFFFFFFF
+        high = tl.load(words_ptr + (wi + 1) * G + g[None, :], mask=colok[None, :] & spill, other=0)
+        high = high.to(tl.int64) & 0xFFFFFFFF
+        val = ((low >> sh) | (high << (32 - sh))) & ((1 << B) - 1)
+        v = lane[:, None] * G + g[None, :]
+        inside = colok[None, :] & (v < n)
+        tl.store(out_ptr + v, val, mask=inside)
+        bad = tl.where(colok[None, :] & (v >= n) & (val != 0), 1, 0)
+        tl.atomic_max(err_ptr, tl.max(tl.max(bad, axis=1), axis=0))
+
+
+def unpack_stream(words: torch.Tensor, out: torch.Tensor, err: torch.Tensor, n: int, b: int) -> None:
+    """The ``n`` values of the ``b``-bit stream ``words`` (int32 ``[b, ceil(n / 32)]``, contiguous; ``1 <= b <= 32``)
+    into ``out[:n]`` (int32 for slots, int64 for a Rice vector's low parts); ``err`` (int32 ``[1]``) becomes 1 on a
+    non-zero padding slot."""
+    g = -(-n // 32)
+    grid = (triton.cdiv(g, BLOCK),)
+    _unpack_kernel[grid](words, out, err, n, g, B=b, BLOCK=BLOCK)
 
 
 def pack_stream(t: SegmentTable, s0: int, s1: int, a: int, n: int, b: int, g0: int, m: int,

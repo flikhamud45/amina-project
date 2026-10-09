@@ -604,6 +604,59 @@ def test_the_fused_encoder_takes_int32_gpu_claims_only():
     assert not cc._fused_ok([z]) and not cc._fused_ok([z.long().cuda()]) and not cc._fused_ok([])
 
 
+# -- the decoder on a GPU (claimcodec.decode_device) --------------------------------------------------------
+
+def _shape(z) -> tuple[int, int]:
+    return tuple(int(d) for d in (z.shape if torch.is_tensor(z) else np.asarray(z).shape))
+
+
+def _device_verdict(blob, rows, cols):
+    """``decode_device``'s claims on the host, or ``None`` for a ClaimCodecError (anything else is a bug)."""
+    try:
+        out = cc.decode_device(blob, rows, cols, "cuda")
+    except cc.ClaimCodecError:
+        return None
+    assert [tuple(z.shape) for z in out] == list(zip(rows, cols)) and all(z.dtype == torch.int32 for z in out)
+    return [z.cpu().numpy() for z in out]
+
+
+@cuda_only
+def test_the_gpu_decoder_gives_the_host_decoders_claims(claim_sets):
+    if not cc.decode_device_ok("cuda"):
+        pytest.skip("no Triton")
+    for name, zs in claim_sets.items():
+        rows, cols = zip(*[_shape(z) for z in zs]) if zs else ((), ())
+        for centre in (True, False):
+            blob = cc.encode(zs, centre=centre, impl="host")
+            want = cc.decode(blob, list(rows), list(cols))
+            got = _device_verdict(blob, list(rows), list(cols))
+            assert got is not None and all(np.array_equal(w, g) for w, g in zip(want, got)), (name, centre)
+
+
+@cuda_only
+def test_the_gpu_decoder_rejects_exactly_what_the_host_decoder_rejects(sample):
+    # every truncation, the header fields, bit flips anywhere (incl. padding, Rice vectors, exceptions)
+    if not cc.decode_device_ok("cuda"):
+        pytest.skip("no Triton")
+    zs, blob, rows, cols = sample
+    cases = [blob[:n] for n in range(len(blob))] + [blob + b"\0", b"PVC2" + blob[4:]]
+    rng = np.random.default_rng(4)
+    for _ in range(400):
+        b = bytearray(blob)
+        for _ in range(int(rng.integers(1, 4))):
+            b[int(rng.integers(0, len(b)))] ^= 1 << int(rng.integers(0, 8))
+        cases.append(bytes(b))
+    for i, case in enumerate(cases):
+        host, dev = _decode_or_reject(case, rows, cols), _device_verdict(case, rows, cols)
+        assert (host is None) == (dev is None), i
+        if host is not None:
+            assert all(np.array_equal(h, d) for h, d in zip(host, dev)), i
+    for h in (-(1 << 31), (1 << 31) - 1, 1 << 20):           # exceptions out of range (as the host test)
+        for b in (0, 3):
+            one = _one_exception(h, b)
+            assert (_decode_or_reject(one, [1], [1]) is None) == (_device_verdict(one, [1], [1]) is None)
+
+
 # -- the device encoder in parts (proofs of more than _ONE_PASS claim values) ------------------------------
 
 def _numel(zs) -> int:

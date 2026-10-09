@@ -98,7 +98,8 @@ import torch
 from . import hostmem
 from .commitment import map_threaded
 
-__all__ = ["ClaimCodecError", "Unencodable", "MAGIC", "BMAX", "encode", "decode", "decode_torch", "narrow",
+__all__ = ["ClaimCodecError", "Unencodable", "MAGIC", "BMAX", "encode", "decode", "decode_torch", "decode_device",
+           "decode_device_ok", "narrow",
            "FIELD_BITS", "field_size", "pack_field", "unpack_field", "pack_rows", "unpack_rows"]
 
 MAGIC = b"PVC3"
@@ -1924,6 +1925,121 @@ def decode_torch(buf, rows: list[int], cols: list[int], *, dtype: torch.dtype = 
     if dtype != torch.int32:
         flat = flat.to(dtype)
     return [flat[s:s + n * m].view(n, m) for s, n, m in ops]
+
+
+# ---------------------------------------------------------------------------- the decoder on a GPU
+# :func:`decode` where the claims are needed, for a GPU verifier: the header, every stream's and Rice vector's
+# extent and the exceptions' count are read and checked on the host (as :func:`_decode` does) before the bytes
+# are uploaded once; then the streams are unpacked by :mod:`codec_kernels` (padding checked there), the bases
+# added, the exceptions' Rice vectors decoded, patched in and range-checked, and the row means added, with the
+# host decoder's integers and checks.  The checks' verdicts come back in one copy.
+
+def decode_device_ok(device) -> bool:
+    """Whether :func:`decode_device` runs on ``device`` (a CUDA device with Triton)."""
+    from . import codec_kernels
+    return codec_kernels.available(device)
+
+
+def _rice_device(dbuf: torch.Tensor, buf, off: int, n: int, err: torch.Tensor) -> tuple[torch.Tensor, int]:
+    """The Rice vector of ``n`` values at ``buf[off:]`` (checked by :func:`_rice_end`) on the device: int64."""
+    from . import codec_kernels as ck
+    dev = dbuf.device
+    k = buf[off]
+    g = (n + 31) // 32
+    off += 1
+    low = None
+    if k:                                   # the low parts: a k-bit stream (copied to an aligned buffer)
+        words = dbuf[off:off + 4 * k * g].clone().view(torch.int32).view(k, g)
+        low = torch.empty(n, dtype=torch.int64, device=dev)
+        ck.unpack_stream(words, low, err, n, k)
+        off += 4 * k * g
+    q = torch.zeros(n, dtype=torch.int64, device=dev)
+    idx, count = None, n
+    shifts = torch.arange(8, dtype=torch.uint8, device=dev)
+    for level in range(1, _QCAP + 1):
+        if count == 0:
+            break
+        nbytes = (count + 7) // 8
+        if count % 8 and buf[off + nbytes - 1] >> (count % 8):
+            raise ClaimCodecError("non-zero padding in unary levels")
+        bits = ((dbuf[off:off + nbytes, None] >> shifts) & 1).view(-1)[:count].bool()
+        idx = torch.nonzero(bits).view(-1) if idx is None else idx[bits]
+        q[idx] = level
+        count = idx.numel()
+        off += nbytes
+    return (q if low is None else (q << k) | low), off
+
+
+def decode_device(buf, rows: list[int], cols: list[int], device) -> list[torch.Tensor]:
+    """:func:`decode` on a GPU ``device``: the claim matrices as int32 tensors there (views of one buffer), with
+    every check of the host decoder; raises :class:`ClaimCodecError` on anything else."""
+    from . import codec_kernels as ck
+    dev = torch.device(device)
+    heads, segs, off = _read_header(buf, rows, cols)
+    total = sum(n for _, _, n in segs)
+    widths = sorted({s[0] for s in segs})
+    members = {b: [i for i, s in enumerate(segs) if s[0] == b] for b in widths}   # the global segment order
+    streams = []
+    for b in widths:                        # every stream's extent, on the host
+        cnt = sum(segs[i][2] for i in members[b])
+        nbytes = 4 * b * ((cnt + 31) // 32)
+        if off + nbytes > len(buf):
+            raise ClaimCodecError("truncated slot stream")
+        streams.append((b, cnt, off))
+        off += nbytes
+    n_exc, g_off, _ = _exceptions(buf, off, total, 1)
+    p_off = _rice_end(buf, g_off, n_exc)
+    if _rice_end(buf, p_off, n_exc) != len(buf):
+        raise ClaimCodecError("trailing bytes")
+    dbuf = _upload(np.frombuffer(buf, dtype=np.uint8), dev)
+    x = torch.empty(total, dtype=torch.int32, device=dev)
+    err = torch.zeros(1, dtype=torch.int32, device=dev)
+    residual = {main for _, _, means, main in heads if means is not None}
+    start, seg_order, base = [0] * len(segs), [], 0
+    for b, cnt, o in streams:
+        if b and cnt:
+            ck.unpack_stream(dbuf[o:o + 4 * b * ((cnt + 31) // 32)].view(torch.int32).view(b, -1),
+                             x[base:base + cnt], err, cnt, b)
+        elif cnt:
+            x[base:base + cnt].zero_()
+        for i in members[b]:
+            start[i] = base
+            seg_order.append(i)
+            if segs[i][1] and i not in residual:            # the base (a residual's comes with its row means)
+                x[base:base + segs[i][2]].add_(segs[i][1])
+            base += segs[i][2]
+    checks = [err]
+    if n_exc:
+        gaps, _ = _rice_device(dbuf, buf, g_off, n_exc, err)
+        hz, _ = _rice_device(dbuf, buf, p_off, n_exc, err)
+        pos = torch.cumsum(gaps.add_(1), 0).sub_(1)
+        h = hz + 1                                          # h = unzigzag(hz + 1)
+        sign = h & 1
+        h = (h >> 1) ^ (-sign)
+        seg_start = torch.tensor([start[i] for i in seg_order], dtype=torch.int64, device=dev)
+        seg = (torch.searchsorted(seg_start, pos, right=True) - 1).clamp_(min=0)
+        width = torch.tensor([segs[i][0] for i in seg_order], dtype=torch.int64, device=dev)[seg]
+        pend = torch.tensor([segs[i][1] if i in residual else 0 for i in seg_order], dtype=torch.int64, device=dev)
+        inside = (pos >= 0) & (pos < total)
+        h = (h << width) + x[pos.clamp(0, total - 1)].to(torch.int64)       # slot + lo + h 2**B (or a base pending)
+        v = h + pend[seg]
+        checks += [(pos.min() < 0) | (pos[-1] >= total) | ~inside.all(), hz.max() >= (1 << 32),
+                   (v <= -_X_LIMIT).any() | (v >= _X_LIMIT).any()]
+        verdicts = _d2h(torch.stack([c.to(torch.int64).view(-1)[0] for c in checks]))
+        if verdicts[0]:
+            raise ClaimCodecError("non-zero padding in a slot stream")
+        if verdicts[1]:
+            raise ClaimCodecError("exception position out of range")
+        if verdicts[2] or verdicts[3]:
+            raise ClaimCodecError("exception out of range")
+        x[pos] = h.to(torch.int32)
+    elif _d2h(err)[0]:
+        raise ClaimCodecError("non-zero padding in a slot stream")
+    for n_rows, m, means, main in heads:                    # the row means and base of each centred op
+        if means is not None:
+            z = x[start[main]:start[main] + n_rows * m].view(n_rows, m)
+            z.add_((x[start[means]:start[means] + n_rows].to(torch.int64) + segs[main][1]).to(torch.int32)[:, None])
+    return [x[start[main]:start[main] + n * m].view(n, m) for n, m, _, main in heads]
 
 
 # ---------------------------------------------------------------------------- field elements

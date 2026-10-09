@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import secrets
 import struct
 import time
@@ -358,6 +359,9 @@ class Prover:
         """The device weights of a committed matrix: its op's, or each of a col-layout matrix's ops'."""
         return [self._weight(o) for o in matrix.members] if matrix.layout == "col" else self._weight(matrix.name)
 
+
+_GPU_DECODE = os.environ.get("PVI_GPU_DECODE", "1") != "0"
+"""A GPU verifier decodes the claims on its device (``claimcodec.decode_device``); 0: on the host."""
 
 _RHS_CHUNK = 8192
 """Contraction block of the right-hand sides: that of ``small_matmul_mod``, which the
@@ -1499,20 +1503,28 @@ def _decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torc
     """The verifier's claims from their ``PVC3`` bytes and a plan's lookup tables' from their int8
     ``rows`` (``None``: malformed), as ``dtype`` host tensors (int32 in pinned memory with ``pin``),
     timed as ``verify_decode``.  Each claim must have the shape the query gives it, which the decoders
-    check before they allocate the claims."""
+    check before they allocate the claims.  A verifier on a GPU with Triton decodes the claims there
+    (``claimcodec.decode_device``: int32 device tensors, the same integers and checks; ``PVI_GPU_DECODE=0``
+    decodes on the host)."""
     sent = verifier._sent_ops()
     mats = [op for op in sent if op.name not in verifier.tables]
     tables = [op for op in sent if op.name in verifier.tables]
+    vdev = torch.device(verifier.device)
     c0 = contention.begin()
     t0 = time.perf_counter()
     cols = verifier.claim_columns(x)
     zs = None
     if cols is not None:
         m_of = dict(zip((op.name for op in verifier.graph.mat_ops), cols))
+        shapes = [op.n_rows for op in mats], [m_of[op.name] for op in mats]
         try:
-            zs = dict(zip((op.name for op in mats), claimcodec.decode_torch(
-                blob, [op.n_rows for op in mats], [m_of[op.name] for op in mats], dtype=dtype,
-                workers=torch.get_num_threads(), pin=pin)))
+            if vdev.type == "cuda" and _GPU_DECODE and claimcodec.decode_device_ok(vdev):
+                dec = claimcodec.decode_device(blob, *shapes, vdev)
+                dec = dec if dtype == torch.int32 else [d.to(dtype) for d in dec]
+                _sync(vdev)
+            else:
+                dec = claimcodec.decode_torch(blob, *shapes, dtype=dtype, workers=torch.get_num_threads(), pin=pin)
+            zs = dict(zip((op.name for op in mats), dec))
             if tables:
                 zs.update(zip((op.name for op in tables), claimcodec.unpack_rows(
                     rows, [(op.n_rows, m_of[op.name]) for op in tables], dtype=dtype, pin=pin)))

@@ -29,17 +29,21 @@ from __future__ import annotations
 import dataclasses
 import functools
 import math
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
 import torch
 
+from . import attention_kernels
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, requant
 
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
 
 SHIFT = 30
+_FUSED_ATTN = os.environ.get("PVI_FUSED_ATTN", "1") != "0"
+"""On a GPU with Triton, the int32 attention runs as one fused kernel (``attention_kernels``); 0: torch."""
 RES_MAX = (1 << 22) - 1
 ATTN_BYTES = 1 << 27
 """Budget for one ``[B, heads, T, T]`` score tensor (heads are grouped to fit): int32 scores
@@ -280,10 +284,11 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1) -> torch.Tensor:
     int64; both give the integers of ``reference.attention_heads(..., m_o=None)``."""
     t, dh = k.shape[2], k.shape[3]
     dev = str(q.device)
-    notmask = _causal_notmask(t, rep, dev, q.shape[2] // rep)
     if _int32_scores(m_s, dh, t):
-        return _attention_core(q, k, v, _exp_lut(m_s, dev), notmask)
-    return _attention_int64(q, k, v, m_s, notmask)
+        if q.is_cuda and _FUSED_ATTN and attention_kernels.available(q.device):   # the same integers, no T x T tensors
+            return attention_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
+        return _attention_core(q, k, v, _exp_lut(m_s, dev), _causal_notmask(t, rep, dev, q.shape[2] // rep))
+    return _attention_int64(q, k, v, m_s, _causal_notmask(t, rep, dev, q.shape[2] // rep))
 
 
 def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int) -> torch.Tensor:

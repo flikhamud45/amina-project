@@ -138,6 +138,39 @@ def test_grouped_attention_matches_the_reference_on_both_paths(hq, hkv, m_s, dev
         assert torch.equal(got, want), budget
 
 
+# -- the fused attention kernel (attention_kernels, Triton) ----------------------------------------------------
+
+@cuda_only
+@pytest.mark.parametrize("hq,hkv,t,tq,dh", [(4, 4, 64, 64, 64), (8, 2, 300, 300, 128), (4, 4, 2048, 2048, 128),
+                                            (8, 8, 513, 1, 80), (6, 2, 1000, 7, 64), (2, 1, 97, 33, 16)])
+@pytest.mark.parametrize("pattern", ["random", "peaked", "extreme"])
+@pytest.mark.parametrize("m_s", [1 << 20, 2_600_000])
+def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern, m_s):
+    from pvi.fullcheck import attention_kernels
+    if not attention_kernels.available("cuda"):
+        pytest.skip("no Triton")
+    if not tr._int32_scores(m_s, dh, t):
+        pytest.skip("the int64 fallback applies")
+    g = torch.Generator().manual_seed(hq * t + tq + dh)
+    rep = hq // hkv
+    q = _rand(g, -127, 128, (1, hkv, rep * tq, dh))
+    k, v = _rand(g, -127, 128, (1, hkv, t, dh)), _rand(g, -127, 128, (1, hkv, t, dh))
+    if pattern == "peaked":                       # a few large scores per row
+        k[:, :, ::3] = 127
+        q[..., : dh // 2] = 127
+    elif pattern == "extreme":                    # every score at its bound, the largest p v sums
+        q.fill_(127), k.fill_(-127), v.fill_(-127)
+    q, k, v = q.cuda(), k.cuda(), v.cuda()
+    lut = tr._exp_lut(m_s, "cuda")
+    want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cuda", tq))
+    got = attention_kernels.attention_core(q, k, v, lut, tq)
+    assert torch.equal(got, want)
+    # strided inputs, as transformer._attention passes them (a transposed [B, T, H, dh] view)
+    qs = q.transpose(1, 2).contiguous().transpose(1, 2)
+    assert torch.equal(attention_kernels.attention_core(qs, k.transpose(1, 2).contiguous().transpose(1, 2), v, lut, tq),
+                       want)
+
+
 # -- int8 GEMMs -------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("r,n,m", [(5, 8, 8), (5, 1000, 3), (4, 4097, 64), (1, 9000, 1), (5, 70_000, 2), (3, 7, 0),
