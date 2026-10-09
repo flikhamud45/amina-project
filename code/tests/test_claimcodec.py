@@ -595,6 +595,7 @@ def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, fl
     from pvi.fullcheck import codec_kernels
     if not codec_kernels.available("cuda"):
         pytest.skip("no Triton")
+    monkeypatch.setattr(cc, "_FUSED", True)                     # opt-in
     monkeypatch.setattr(cc, "_FUSED_COLS", cols)
     monkeypatch.setattr(cc, "_FLAG_COLS", flag_cols)
     monkeypatch.setattr(cc, "_CHUNK", chunk)
@@ -606,7 +607,8 @@ def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, fl
 
 
 @cuda_only
-def test_the_fused_encoder_takes_int32_gpu_claims_only():
+def test_the_fused_encoder_takes_int32_gpu_claims_only(monkeypatch):
+    monkeypatch.setattr(cc, "_FUSED", True)
     z = torch.zeros(4, 4, dtype=torch.int32)
     assert not cc._fused_ok([z]) and not cc._fused_ok([z.long().cuda()]) and not cc._fused_ok([])
 

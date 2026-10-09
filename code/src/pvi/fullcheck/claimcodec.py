@@ -1530,7 +1530,10 @@ def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
 # stream computed from the claims and packed by one kernel per block of its columns, which also flags its
 # exceptions; their high parts from a second kernel; their Rice vectors as in one pass.  The same bytes.
 
-_FUSED = os.environ.get("PVI_FUSED_CODEC", "1") != "0"   # 0: the torch encoders (for A/B measurements)
+_FUSED = os.environ.get("PVI_FUSED_CODEC", "0") == "1"
+"""Opt-in (``PVI_FUSED_CODEC=1``): on a 2080 Ti it gives the same bytes but is not faster than the torch encoder
+once the result is assembled on threads (full OPT-1.3B at 2,048 tokens: 1.74 against 1.54 s; small proofs pay its
+per-width overhead), so the torch encoder stays the default (``docs/improvements/A3_claim_encoder.md``)."""
 _FUSED_COLS = 1 << 20       # columns of a stream per launch (2**25 values; their words at most 120 MiB)
 _FLAG_COLS = 1 << 22        # flag words read per lane at a time (a piece of fewer than 2**24 positions)
 
