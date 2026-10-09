@@ -60,7 +60,7 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 ## E. Features (D1, D3; future work "KV cache")
 
 - **E1 [DONE]** A generated response proved as one prefill with the token rule (03ae13d; `bench.py --gen`, cbb8c05; [doc](docs/improvements/E1_generation.md)). 2080 Ti: GPT-2, 64-token prompt + 256 tokens: prover 0.29 s, verifier 0.59 s, 87 MB (0.34 MB per token).
-- **E2 [TODO]** Sampling with a verifier-chosen seed (temperature, top-k with an integer sampler); stop rules (EOS, length).
+- **E2 [DONE]** Sampled generation with a client-chosen seed (7c98d87; [doc](docs/improvements/E2_sampling.md)): an exact integer Gumbel-max sampler (public 16-bit table with a fixed SHA-256, temperature as an integer logit weight, top-k), the seed absorbed into the statement, the token rule checking the sampler's choices; works with v0 (all modes, streaming) and V1. Stop rules need no proof; top-p not implemented.
 - **E3 [TODO]** Verifier KV cache for multi-turn chat (reuse K/V of accepted turns only); (n+1)/2 fewer claims for n turns.
 
 ## F. Evaluation (D1, D5, D7)
