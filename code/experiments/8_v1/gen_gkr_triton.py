@@ -361,8 +361,25 @@ def prove_leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, a
 '''
 
 
+POINTERS = {"d_ptr", "w_ptr", "p_ptr", "q_ptr", "pi", "qi", "po", "qo", "ti", "to", "e", "pl", "pr", "ql", "qr", "out",
+            "eo", "plo", "pro", "qlo", "qro"}
+
+
+def no_specialize(text):
+    """Every kernel's scalar arguments unspecialised: Triton otherwise compiles a variant for each scalar equal to 1
+    or divisible by 16 (lengths change every round, and the challenges are random)."""
+    import re
+
+    def repl(m):
+        names = [a.strip() for a in m.group(2).replace("\n", " ").split(",")]
+        scalars = [a for a in names if a and a not in POINTERS and not a.startswith("BLOCK")]
+        return f"@triton.jit(do_not_specialize={scalars!r})\n    def {m.group(1)}({m.group(2)}):"
+    return re.sub(r"@triton\.jit\n    def (_\w+_kernel)\((.*?)\):", repl, text, flags=re.S)
+
+
 def main():
     text = HEADER + "\n" + indent(emul()) + "\n\n" + "\n\n".join(indent(k) for k in kernels()) + "\n" + HOST
+    text = no_specialize(text)
     OUT.write_text(text)
     print(OUT, len(text.splitlines()), "lines")
 

@@ -25,6 +25,7 @@ GKR on a fork of the transcript and the verifier re-derives every challenge from
 
 from __future__ import annotations
 
+import os
 import struct
 import time
 
@@ -44,6 +45,8 @@ from .protocol import (Challenger, Prover, Verifier, _absorb_statement, _decoded
 __all__ = ["run_cut_query", "cut_proof_bytes", "cut_plan", "pack_exceptions", "unpack_exceptions", "EXC_MAGIC"]
 
 EXC_MAGIC = b"PVX1"
+_GKR_TRITON = os.environ.get("PVI_GKR_TRITON", "1") != "0"
+"""A prover on a GPU with Triton runs the GKR there (``gkr_triton``: the same transcript); 0: the eager prover."""
 
 
 # ------------------------------------------------------------------ plans and the exceptions frame
@@ -366,15 +369,24 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     chis = ({name: chi.to(vdev) for name, chi in verifier.fold_challenges(ch, x).items()}
             if verifier.mode == "C" else {})
     ch_p = ch.fork() if p.fiat_shamir else _Recorder(ch)
+    on_gpu = False
+    if _GKR_TRITON and prover.device.type == "cuda":
+        from . import gkr_triton
+        on_gpu = gkr_triton.available(prover.device)
     with _timed(out, "prove_gkr"):
         trs = []
         for b, names in enumerate(plan.instances):
             n_row, n_col = plan.n_vars(b)
             d = torch.cat([witness[o][0] for o in names])
             w = torch.cat([witness[o][1] for o in names])
-            pq = logup.leaves(d, w, n_col, n_row + n_col, alpha)
-            trs.append(gkr.prove(*pq, ch_p, f"cut/{b}/"))
-            del pq
+            if on_gpu:
+                trs.append(gkr_triton.prove_leaves(d, w, n_col, n_row + n_col, alpha, ch_p, f"cut/{b}/",
+                                                   device=prover.device))
+            else:
+                pq = logup.leaves(d, w, n_col, n_row + n_col, alpha)
+                trs.append(gkr.prove(*pq, ch_p, f"cut/{b}/"))
+                del pq
+        _sync(prover.device)
     gkr_blobs = [tr.to_bytes() for tr in trs]
     if "gkr" in cheat:
         gkr_blobs = cheat["gkr"](gkr_blobs)

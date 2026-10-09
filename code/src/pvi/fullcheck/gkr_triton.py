@@ -106,7 +106,7 @@ if triton is not None:
         c7 = _add(_add(_add(_add(_add(_add(_add(_mm(a0, b7, P, MU), _mm(a1, b6, P, MU), P), _mm(a2, b5, P, MU), P), _mm(a3, b4, P, MU), P), _mm(a4, b3, P, MU), P), _mm(a5, b2, P, MU), P), _mm(a6, b1, P, MU), P), _mm(a7, b0, P, MU), P)
         return c0, c1, c2, c3, c4, c5, c6, c7
 
-    @triton.jit
+    @triton.jit(do_not_specialize=['al0', 'al1', 'al2', 'al3', 'al4', 'al5', 'al6', 'al7', 'rows', 'T', 'n_col', 'total', 'stride', 'P_', 'MU_', 'R2_', 'ONE_'])
     def _leaf_kernel(d_ptr, w_ptr, p_ptr, q_ptr, al0, al1, al2, al3, al4, al5, al6, al7, rows, T, n_col, total, stride, P_, MU_, R2_, ONE_,
                      BLOCK: tl.constexpr):
         P = P_.to(tl.uint32)
@@ -150,7 +150,7 @@ if triton is not None:
         tl.store(q_ptr + 6 * stride + i, q6.to(tl.int32, bitcast=True), mask=inb)
         tl.store(q_ptr + 7 * stride + i, q7.to(tl.int32, bitcast=True), mask=inb)
 
-    @triton.jit
+    @triton.jit(do_not_specialize=['m_out', 's_in', 's_out', 'P_', 'MU_', 'B11_'])
     def _combine_kernel(pi, qi, po, qo, m_out, s_in, s_out, P_, MU_, B11_, BLOCK: tl.constexpr):
         P = P_.to(tl.uint32)
         MU = MU_.to(tl.uint32)
@@ -217,7 +217,7 @@ if triton is not None:
         tl.store(qo + 6 * s_out + y, nq6.to(tl.int32, bitcast=True), mask=mask)
         tl.store(qo + 7 * s_out + y, nq7.to(tl.int32, bitcast=True), mask=mask)
 
-    @triton.jit
+    @triton.jit(do_not_specialize=['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 'm', 's_in', 's_out', 'P_', 'MU_', 'B11_'])
     def _eq_kernel(ti, to, r0, r1, r2, r3, r4, r5, r6, r7, s0, s1, s2, s3, s4, s5, s6, s7, m, s_in, s_out, P_, MU_, B11_, BLOCK: tl.constexpr):
         P = P_.to(tl.uint32)
         MU = MU_.to(tl.uint32)
@@ -267,7 +267,7 @@ if triton is not None:
         tl.store(to + 6 * s_out + y + m, hi6.to(tl.int32, bitcast=True), mask=mask)
         tl.store(to + 7 * s_out + y + m, hi7.to(tl.int32, bitcast=True), mask=mask)
 
-    @triton.jit
+    @triton.jit(do_not_specialize=['lam0', 'lam1', 'lam2', 'lam3', 'lam4', 'lam5', 'lam6', 'lam7', 'half', 's', 'P_', 'MU_', 'B11_'])
     def _round_kernel(e, pl, pr, ql, qr, out, lam0, lam1, lam2, lam3, lam4, lam5, lam6, lam7, half, s, P_, MU_, B11_, BLOCK: tl.constexpr):
         P = P_.to(tl.uint32)
         MU = MU_.to(tl.uint32)
@@ -587,7 +587,7 @@ if triton is not None:
         tl.store(out + (pid * 3 + 2) * 8 + 6, tl.sum(tl.where(mask, g_6, 0).to(tl.uint64), axis=0).to(tl.int64))
         tl.store(out + (pid * 3 + 2) * 8 + 7, tl.sum(tl.where(mask, g_7, 0).to(tl.uint64), axis=0).to(tl.int64))
 
-    @triton.jit
+    @triton.jit(do_not_specialize=['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'half', 's_in', 's_out', 'P_', 'MU_', 'B11_'])
     def _fold_kernel(e, pl, pr, ql, qr, eo, plo, pro, qlo, qro, r0, r1, r2, r3, r4, r5, r6, r7, half, s_in, s_out, P_, MU_, B11_,
                      BLOCK: tl.constexpr):
         P = P_.to(tl.uint32)
