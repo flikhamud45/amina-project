@@ -944,8 +944,9 @@ def prove_leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, a
     :func:`logup.leaves` lays them out), its leaves built on the device."""
     rows, cols = delta.shape
     total = 1 << n
-    d = (delta.to(torch.int64) % PRIME).to(torch.int32).to(device).contiguous()
-    w = (width.to(torch.int64) % PRIME).to(torch.int32).to(device).contiguous()
+    # uploaded as they are (the prover's witness is int32), reduced into the field on the device
+    d = torch.remainder(delta.to(device, non_blocking=True).to(torch.int64), PRIME).to(torch.int32).contiguous()
+    w = torch.remainder(width.to(device, non_blocking=True).to(torch.int64), PRIME).to(torch.int32).contiguous()
     p = torch.empty(8, total, dtype=torch.int32, device=device)
     q = torch.empty_like(p)
     _leaf_kernel[_grid(total)](d, w, p, q, *_to_mont(alpha), rows, cols, n_col, total, total, PRIME, MU, R2, R_MOD,

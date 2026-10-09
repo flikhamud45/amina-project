@@ -55,7 +55,7 @@ def main() -> None:
     print("accepted", out["accepted"], out["rejected_at"], "peak GPU %.2f GB" % (torch.cuda.max_memory_allocated() / 2**30))
     print({k: round(t, 3) for k, t in out["timings"].items() if t > 0.01})
     buf = io.StringIO()
-    pstats.Stats(pr, stream=buf).sort_stats("cumulative").print_stats(args.top)
+    pstats.Stats(pr, stream=buf).strip_dirs().sort_stats("cumulative").print_stats(args.top)
     print("\n".join(line[:180] for line in buf.getvalue().splitlines()))
 
 
