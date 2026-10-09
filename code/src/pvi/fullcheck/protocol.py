@@ -875,6 +875,8 @@ class Verifier:
                             return None
                     if op.name in looked and not _check_bounds(xin, 0, op.n_in - 1, pending):   # ids of the table
                         return None
+                    if op.name in cut_ops and not _check_bounds(xin, -op.max_input - 1, op.max_input + 1, pending):
+                        return None              # V1: the input of a cut op within the claim bound's (defence in depth)
                     ranged[op.name] = _stamp(z)
                     if visit is None:
                         inputs[op.name] = xin

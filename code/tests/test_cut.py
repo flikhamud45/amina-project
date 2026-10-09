@@ -237,3 +237,22 @@ def test_col_matrices_are_cut_whole(policy):
     ops[i] = dataclasses.replace(ops[i], fn=requant_fn(p), params={"requant": p})
     plan2 = cut.CutPlan.from_graph(dataclasses.replace(graph, ops=ops), None, 9, cplan)
     assert not (set(col.members) & plan2.names())
+
+
+def test_p4_from_a_verifiers_weights_and_the_int8_clamp():
+    # review fixes: a K/Kpre verifier's public graph has no weights, so P4 is evaluated from the weights it holds;
+    # a requant op whose clamp is wider than int8 is never cut (the proof's |L| < 2^29 + 2^16)
+    graph = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)
+    pub = graph.public()
+    names = cut.CutPlan.from_graph(pub, None, 9).names()
+    victim = sorted(names)[0]
+    weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
+    assert cut.CutPlan.from_graph(pub, None, 9, weights=weights).names() == names
+    op = next(o for o in graph.mat_ops if o.name == victim)
+    weights[victim] = (op.weight, torch.full((op.n_rows,), cut.CLAIM_LIMIT, dtype=torch.int64))   # |z| >= 2^29
+    assert victim not in cut.CutPlan.from_graph(pub, None, 9, weights=weights).names()
+    ops = list(graph.ops)
+    i = next(k for k, o in enumerate(ops) if isinstance(o, CheapOp) and o.params.get("requant", {}).get("kind") == "requant")
+    p = dict(ops[i].params["requant"], lo=-1000)
+    ops[i] = dataclasses.replace(ops[i], fn=requant_fn(p), params={"requant": p})
+    assert ops[i].inputs[0][:-2] not in cut.CutPlan.from_graph(dataclasses.replace(graph, ops=ops), None, 9).names()

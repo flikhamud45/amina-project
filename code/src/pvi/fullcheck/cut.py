@@ -122,11 +122,13 @@ class CutPlan:
     # -------------------------------------------------------------- construction
     @classmethod
     def from_graph(cls, graph: IntGraph, columns: list[int] | None, T: int, plan=None, *,
-                   lmax: int = LMAX) -> "CutPlan":
+                   lmax: int = LMAX, weights: dict | None = None) -> "CutPlan":
         """The cut plan of ``graph`` on a query of ``T`` tokens (``columns``: every weight op's column count, in
         op order, as ``IntGraph.claim_columns`` gives them; ``None`` takes ``T`` for every op) under the commitment
         plan ``plan``: a ``plans.CommitmentPlan``, or its col matrices as ``{name: members}`` (what a verifier's
-        publics give), or ``None`` (Kpre, or one tree per op)."""
+        publics give), or ``None`` (Kpre, or one tree per op).  ``weights`` (``{op: (W, b)}``, a K or Kpre verifier's):
+        P4 is evaluated from them when the graph is a public one (no weights in its ops); in mode C the verifier holds
+        no weights and P4 is the commitment's (``protocol.commit_graph`` refuses any op that fails it)."""
         col_of = _col_matrices(plan)
         mats = graph.mat_ops
         cols = dict(zip((op.name for op in mats), columns if columns is not None else [T] * len(mats)))
@@ -140,7 +142,10 @@ class CutPlan:
             m, sh = int(params["mult"]), int(params["shift"])
             if m <= 0 or (1 << sh) // m < 2 or -(-(1 << sh) // m) > 1 << 16:          # P3
                 continue
-            if op.weight is not None and _claim_bound(op) >= CLAIM_LIMIT:              # P4
+            if params["kind"] == "requant" and not -128 <= int(params["lo"]) <= int(params["hi"]) <= 127:
+                continue                       # int8 values: |lo(s)| <= 129 * 2^16 (the proof's |L| < 2^29 + 2^16)
+            w_b = (op.weight, op.bias) if op.weight is not None else (weights or {}).get(op.name)
+            if w_b is not None and _claim_bound(op, *w_b) >= CLAIM_LIMIT:              # P4
                 continue
             cand[op.name] = (op, c, params)
 
@@ -268,11 +273,12 @@ def _widths(params: dict) -> tuple[int, int]:
     return (1 << sh) // m, -(-(1 << sh) // m)
 
 
-def _claim_bound(op: MatOp) -> int:
-    w = op.weight.to(torch.int64)
+def _claim_bound(op: MatOp, weight: torch.Tensor, bias: torch.Tensor | None) -> int:
+    """``protocol.claim_bound`` for a linear op with these weights: the largest honest ``|z|``."""
+    w = weight.to(torch.int64)
     bound = (op.max_input + 1) * w.abs().sum(1)
-    if op.bias is not None:
-        bound = bound + op.bias.abs()
+    if bias is not None:
+        bound = bound + bias.to(torch.int64).abs()
     return int(bound.max())
 
 

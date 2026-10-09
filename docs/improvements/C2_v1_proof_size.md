@@ -150,7 +150,32 @@ Since then the split, the counts and the folds run on the prover's device, the w
 check's products are batched, and the GKR's rounds take the eq factor out (12 products per pair instead of 20);
 the timings are being re-measured.
 
-## 9. What remains
+## 9. Adversarial review (workflow `v1-soundness-review`, 15 agents)
+
+Four reviewers (the verifier's checks; the GKR and logUp algebra; Fiat-Shamir and interaction; the cut's semantics
+and ranges) read the code against the spec and tried to break it with scripts (compensating folds against the
+trace-tampering attack, tampering sweeps by +1, 2W and -W on requant and residual ops in modes C and Kpre, 1-14
+instances); every finding was then checked by an independent agent. No forgery against our models was found. The
+confirmed findings and what was done:
+
+| Finding | Severity | Fix |
+|---|---|---|
+| Kpre never evaluated P4 (honest `|A [X;1]| < 2^29`, used by the proof's step 3): the verifier's public graph has no weights and Kpre never calls `commit_graph`; a forgery was demonstrated on a model whose honest claims exceed the bound | low/medium (needs such a model) | P4 is evaluated from the K/Kpre verifier's own weights (`CutPlan.from_graph(weights=)`); both parties then derive the same plan |
+| The cut accepted a requant op with any clamp; a clamp wider than int8 breaks `|L| < 2^29 + 2^16` (forgery on a crafted graph) | medium (latent) | P1 now requires `-128 <= lo <= hi <= 127` for requant ops |
+| Cut folds (M3) accepted coefficients in `[p, 2^31)`: an alias of the same field element, so no forgery, but a second encoding of the message | low | rejected (`cut_final`), as v0 does for its `u` |
+| The spec's defence-in-depth check `|X| <= max_input + 1` on cut inputs was missing | low | added to the derive (`range_or_shape`) |
+| The exception bin (width 1) is outside P5: more than `2^29` clamped entries in one proof could not be encoded | low (completeness only; clamps occur at a rate of about `10^-5`) | documented |
+
+Not a defect: interactive mode draws the GKR's challenges when the prover's code asks for them (one process); this
+models a verifier sending each challenge after the message it follows, and Fiat-Shamir is unaffected.
+
+**What P4 means in mode C.** The mode-C verifier holds no weights, so P4 is a property of the committed model, which
+`commit_graph` enforces (it refuses any op whose honest claims can reach `2^29`). The theorem assumes an honest
+commitment, as v0's claim range check already does. With an untrusted commitment (D4) the setup proof establishes
+proximity, not entry ranges; then the claim bound has to be part of the published model (e.g. the open-weight
+registry of D6), for v0 and V1 alike.
+
+## 10. What remains
 
 * The GPU prover's speed (spec target: an instance of `2^26` leaves in at most 3 s on the 2080 Ti) and its
   integration into `run_cut_query` (today the eager prover runs on the CPU).

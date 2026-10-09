@@ -40,7 +40,7 @@ from . import logup_gkr as gkr
 from .commitment import HASH_BYTES, multiproof_size
 from .field import P, field_matmul_mod, small_matmul_mod, to_field
 from .protocol import (Challenger, Prover, Verifier, _absorb_statement, _decoded_claims, _encoded, _field_message,
-                       _open_message, _passed, _phase_done, _proof_hashes, _sync)
+                       _in_field, _open_message, _passed, _phase_done, _proof_hashes, _sync)
 
 __all__ = ["run_cut_query", "cut_proof_bytes", "cut_plan", "pack_exceptions", "unpack_exceptions", "EXC_MAGIC"]
 
@@ -50,10 +50,11 @@ _GKR_TRITON = os.environ.get("PVI_GKR_TRITON", "1") != "0"
 
 
 # ------------------------------------------------------------------ plans and the exceptions frame
-def cut_plan(graph, columns, T: int, matrices, lmax: int) -> cutmod.CutPlan:
+def cut_plan(graph, columns, T: int, matrices, lmax: int, weights: dict | None = None) -> cutmod.CutPlan:
     """The query's cut plan; ``matrices``: a ``CommitmentPlan`` (the prover's), the verifier's ``publics`` (a dict
-    of ``CommitmentPublic``: its col matrices carry ``members``), or ``None``."""
-    return cutmod.CutPlan.from_graph(graph, columns, T, _cols_of(matrices), lmax=lmax)
+    of ``CommitmentPublic``: its col matrices carry ``members``), or ``None``; ``weights``: a K or Kpre verifier's
+    (P4)."""
+    return cutmod.CutPlan.from_graph(graph, columns, T, _cols_of(matrices), lmax=lmax, weights=weights)
 
 
 def _cols_of(matrices):
@@ -206,7 +207,8 @@ def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: 
     if cols is None:
         out["rejected_at"] = "range_or_shape"
         return out
-    plan = cut_plan(verifier.graph, cols, T, verifier.publics if verifier.groups else None, p.cut_lmax)
+    plan = cut_plan(verifier.graph, cols, T, verifier.publics if verifier.groups else None, p.cut_lmax,
+                    verifier.weights or None)
     mine = cut_plan(prover.graph, prover.graph.claim_columns(x), T, getattr(prover.commitments, "plan", None),
                     p.cut_lmax)
     if mine.digest() != plan.digest():
@@ -231,7 +233,7 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
     p = verifier.params
     T = x.shape[1]
     plan = cut_plan(verifier.graph, verifier.claim_columns(x), T, verifier.publics if verifier.groups else None,
-                    p.cut_lmax)
+                    p.cut_lmax, verifier.weights or None)
     verifier._cut_plan = plan
     try:
         _, offsets = plan.table()
@@ -448,8 +450,9 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     shapes = ([(p.reps, op.row_length) for op in clear_rows] if verifier.mode == "C" else [])
     shapes += [(8, _fold_len(verifier, plan, key, members)) for key, members in items]
     got = _field_message(fold_blob, shapes, out, torch.int64)
-    if got is None:
-        return "freivalds" if verifier.mode == "C" and clear_rows else "cut_final"
+    if got is None or not all(_in_field(t) for t in got[len(order) if verifier.mode == "C" else 0:]):
+        # malformed, or a cut fold outside [0, p) (the clear ops' u are checked by freivalds): canonical encodings
+        return "freivalds" if verifier.mode == "C" and clear_rows and got is None else "cut_final"
     us = {n: u.to(vdev) for n, u in zip(order, got[:len(order)])}
     cut_folds = dict(zip((key for key, _ in items), got[len(order):]))
     if verifier.mode == "Kpre":

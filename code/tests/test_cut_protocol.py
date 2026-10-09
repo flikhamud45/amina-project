@@ -264,3 +264,19 @@ def test_v1_with_a_gpu_prover_and_verifier(mode, policy):
         z[1, 2] += 3 * o.widths[1]
         return z
     assert cp.run_cut_query(prover, v, x, forward_kwargs={"tamper": tamper})["rejected_at"] in ("cut_final", "kpre_y")
+
+
+@pytest.mark.parametrize("mode", ["C", "Kpre"])
+def test_cut_folds_must_be_canonical_field_elements(mode):
+    # review fix: c + p (< 2^31) is the same field element, but a second encoding of the fold message
+    g, prover, v = _setup("gpt", mode, None, True)
+    x = _x()
+    n_clear = 0 if mode == "Kpre" else len([op for op in v._row_ops() if op.name not in _first_cut(v, x)[0].names()])
+
+    def alias(parts):
+        parts = [t.clone() for t in parts]
+        t = parts[n_clear].reshape(-1)
+        i = int(torch.nonzero(t < (1 << 31) - P)[0])
+        t[i] += P
+        return parts
+    assert cp.run_cut_query(prover, v, x, cheat={"fold": alias})["rejected_at"] == "cut_final"
