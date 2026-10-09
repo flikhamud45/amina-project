@@ -574,6 +574,36 @@ def test_a_new_shape_set_releases_the_device_tables_of_the_last(claim_sets):
     assert cc._layout(shapes[0])._dev and not cc._layout(shapes[1])._dev
 
 
+# -- the fused device encoder (codec_kernels, Triton on a GPU) ---------------------------------------------
+
+def _int32_on_gpu(zs) -> list:
+    return [(z if torch.is_tensor(z) else torch.from_numpy(np.asarray(z))).to(torch.int32).cuda() for z in zs]
+
+
+@cuda_only
+@pytest.mark.parametrize("cols,flag_bytes,chunk", [(1 << 20, 1 << 28, 1 << 23), (1, 128, 33), (3, 384, 1 << 23),
+                                                   (7, 1 << 28, 1000)])
+def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, flag_bytes, chunk, monkeypatch):
+    # launches of one or a few columns, the flagged lanes one at a time, the plan's windows small or not
+    from pvi.fullcheck import codec_kernels
+    if not codec_kernels.available("cuda"):
+        pytest.skip("no Triton")
+    monkeypatch.setattr(cc, "_FUSED_COLS", cols)
+    monkeypatch.setattr(cc, "_FLAG_BYTES", flag_bytes)
+    monkeypatch.setattr(cc, "_CHUNK", chunk)
+    for name, zs in claim_sets.items():
+        dz = _int32_on_gpu(zs)
+        assert cc._fused_ok(dz)
+        for centre in (True, False):
+            assert cc.encode(dz, centre=centre) == ref.encode(zs, centre=centre), (name, centre, cols, chunk)
+
+
+@cuda_only
+def test_the_fused_encoder_takes_int32_gpu_claims_only():
+    z = torch.zeros(4, 4, dtype=torch.int32)
+    assert not cc._fused_ok([z]) and not cc._fused_ok([z.long().cuda()]) and not cc._fused_ok([])
+
+
 # -- the device encoder in parts (proofs of more than _ONE_PASS claim values) ------------------------------
 
 def _numel(zs) -> int:
@@ -583,6 +613,7 @@ def _numel(zs) -> int:
 def _one_pass(zs, monkeypatch, **kw) -> bytes:
     """The device encoder in one pass however many claims (the encoder of commit c8be5eb)."""
     monkeypatch.setattr(cc, "_ONE_PASS", 1 << 40)
+    monkeypatch.setattr(cc, "_FUSED", False)          # the torch encoder (the fused one has tests of its own)
     return cc.encode(zs, impl="device", **kw)
 
 
@@ -590,6 +621,7 @@ def _in_parts(zs, chunk: int, monkeypatch, **kw) -> bytes:
     """The device encoder in parts of ``chunk`` values (when there are more claims)."""
     monkeypatch.setattr(cc, "_ONE_PASS", chunk)
     monkeypatch.setattr(cc, "_CHUNK", chunk)
+    monkeypatch.setattr(cc, "_FUSED", False)
     return cc.encode(zs, impl="device", **kw)
 
 
@@ -831,6 +863,7 @@ def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(cl
                     + (i % 2) * torch.randint(-9000, 9000, (4096, 1), generator=g, device="cuda"))
           for i in range(6)]
     extra, blobs = {}, {}
+    monkeypatch.setattr(cc, "_FUSED", False)                      # the torch encoder's two ways
     for way, chunk in (("one pass", 1 << 40), ("in parts", 1 << 20)):
         monkeypatch.setattr(cc, "_ONE_PASS", chunk)
         monkeypatch.setattr(cc, "_CHUNK", chunk)
@@ -843,6 +876,20 @@ def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(cl
         extra[way] = torch.cuda.max_memory_allocated() - before
     assert blobs["one pass"] == blobs["in parts"] == cc.encode([z.cpu() for z in zs], impl="host")
     assert extra["in parts"] < 100 * 2**20 < 600 * 2**20 < extra["one pass"], extra
+    from pvi.fullcheck import codec_kernels
+    if codec_kernels.available("cuda"):                          # the fused encoder: the same bytes, less memory
+        monkeypatch.setattr(cc, "_FUSED", True)
+        monkeypatch.setattr(cc, "_ONE_PASS", 1 << 27)
+        monkeypatch.setattr(cc, "_CHUNK", 1 << 23)
+        cc._layout.cache_clear()
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        before = torch.cuda.memory_allocated()
+        assert cc.encode(zs) == blobs["one pass"]
+        torch.cuda.synchronize()
+        extra["fused"] = torch.cuda.max_memory_allocated() - before
+        print("encoder memory beyond the claims (MiB):", {k: v / 2**20 for k, v in extra.items()})
+        assert extra["fused"] < extra["one pass"] / 2, extra
 
 
 @cuda_only

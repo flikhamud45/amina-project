@@ -88,6 +88,7 @@ from __future__ import annotations
 import bisect
 import functools
 import itertools
+import os
 import struct
 import threading
 
@@ -1011,6 +1012,8 @@ def _encode_device(zts: list, centre: bool) -> bytes:
     n = lay.n_ops
     centre = bool(centre and lay.eligible.any())
     tb = lay.on(dev, centre)
+    if _fused_ok(zts):
+        return _encode_fused(zts, lay, tb, centre)
     if lay.total > _ONE_PASS:
         return _encode_chunked(zts, lay, tb, centre)
     # 1. the claims in one int32 buffer, then the statistics of every op's samples and (if centring)
@@ -1331,8 +1334,10 @@ class _Parts:
         return _nonzero_dev(high), high
 
 
-def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
-    """:func:`_encode_device` in parts of about ``_CHUNK`` claim values (its bytes; see above)."""
+def _chunked_plan(zts: list, lay: _Layout, tb: dict, centre: bool):
+    """Steps 1 and 2 of :func:`_encode_chunked` (the statistics in windows, the plan on the host): the claims'
+    reader, the header, the segments in the global order and their starts, and every row's mean (``None``
+    unless an op is centred)."""
     dev = zts[0].device
     n = lay.n_ops
     src = _Claims(zts, lay)
@@ -1429,7 +1434,14 @@ def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
     order = np.argsort(seg_t["b"], kind="stable")
     g = {k: v[order] for k, v in seg_t.items()}
     gstart = _cum0(g["size"])
-    parts = _Parts(src, lay, g, gstart, means if centred.any() else None)
+    return src, head, g, gstart, means if centred.any() else None
+
+
+def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
+    """:func:`_encode_device` in parts of about ``_CHUNK`` claim values (its bytes; see above)."""
+    dev = zts[0].device
+    src, head, g, gstart, means = _chunked_plan(zts, lay, tb, centre)
+    parts = _Parts(src, lay, g, gstart, means)
     del means
     # 3. (a) the exceptions in order: their Rice values' statistics, and the values copied back
     counts = torch.zeros(2 * _RBITS * 16, dtype=torch.int64, device=dev)
@@ -1484,6 +1496,111 @@ def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
     if n_exc:
         tail += rice.result()
     return b"".join([head, *body.views(), *tail])
+
+
+# -- a device's encoder with fused kernels (codec_kernels): the plan of _encode_chunked, then each width's slot
+# stream computed from the claims and packed by one kernel per block of its columns, which also flags its
+# exceptions; their high parts from a second kernel; their Rice vectors as in one pass.  The same bytes.
+
+_FUSED = os.environ.get("PVI_FUSED_CODEC", "1") != "0"   # 0: the torch encoders (for A/B measurements)
+_FUSED_COLS = 1 << 20       # columns of a stream per launch (2**25 values; their words at most 120 MiB)
+_FLAG_BYTES = 1 << 26       # the flag words are expanded into their lanes in blocks of about this many bytes
+
+
+def _fused_ok(zts: list) -> bool:
+    """Whether :func:`_encode_fused` encodes these claims: int32 tensors on one CUDA device with Triton."""
+    if not _FUSED or not zts:
+        return False
+    from . import codec_kernels
+    dev = zts[0].device
+    return codec_kernels.available(dev) and all(torch.is_tensor(z) and z.dtype == torch.int32 and z.device == dev
+                                                for z in zts)
+
+
+def _encode_fused(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
+    """:func:`_encode_device` with the fused kernels of :mod:`codec_kernels` (its bytes)."""
+    from . import codec_kernels as ck
+    dev = zts[0].device
+    src, head, g, gstart, means = _chunked_plan(zts, lay, tb, centre)
+    flat = [f.contiguous() for f in src.flat]
+    mr = (torch.zeros(1, dtype=torch.int32, device=dev) if means is None
+          else torch.cat([means.to(torch.int32), means.new_zeros(1, dtype=torch.int32)]))
+    del means
+    kind, op = g["kind"].tolist(), g["op"].tolist()
+    frow0, cols = lay.frow0.tolist(), lay.cols.tolist()
+    table = ck.SegmentTable(
+        gstart.tolist(),
+        [mr.data_ptr() + 4 * frow0[o] if k == 2 else flat[o].data_ptr() for k, o in zip(kind, op)],
+        [frow0[o] if k == 1 else -1 for k, o in zip(kind, op)],
+        [cols[o] if k == 1 else 1 for k, o in zip(kind, op)], g["lo"].tolist(), mr, flat, dev)
+    runs = [(b, a, z) for b, a, z in _width_runs(g["b"], gstart) if z > a]
+    sizes = [4 * b * ((z - a + 31) // 32) for b, a, z in runs if b]
+    offs = np.cumsum([0] + sizes).tolist()
+    body = _HostBytes(offs[-1], dev)
+    pos, high, w = [], [], 0
+    for b, a, z in runs:
+        n, cnt = z - a, (z - a + 31) // 32
+        s0, s1 = (int(i) for i in np.searchsorted(g["b"], [b, b + 1]))   # the segments of width b
+        flags = torch.empty(cnt, dtype=torch.int32, device=dev)
+        for g0 in range(0, cnt, _FUSED_COLS):
+            m = min(_FUSED_COLS, cnt - g0)
+            words = torch.empty((b, m), dtype=torch.int32, device=dev) if b else flags
+            ck.pack_stream(table, s0, s1, a, n, b, g0, m, words, flags)
+            if b:
+                rows = words.view(torch.uint8).view(b, 4 * m)
+                for r in range(b):                    # row r of the stream's [b, cnt] words
+                    body.put(offs[w] + 4 * (r * cnt + g0), rows[r])
+            del words
+        w += bool(b)
+        # the flagged positions (v = lane cnt + column), a block of columns at a time (its 32 lanes expanded),
+        # then in order
+        step = max(1, _FLAG_BYTES // 128)                      # 32 lanes of int32, twice
+        lanes = torch.arange(32, dtype=torch.int32, device=dev)
+        found = []
+        for c0 in range(0, cnt, step):
+            lane, col = torch.nonzero((flags[None, c0:c0 + step] >> lanes[:, None]) & 1, as_tuple=True)  # one wait
+            if lane.numel():
+                found.append(lane.to(torch.int64) * cnt + col + c0)
+        del flags
+        if found:
+            at = torch.sort(torch.cat(found)).values.add_(a)
+            pos.append(at)
+            high.append(ck.high_parts(table, s0, s1, b, at).to(torch.int64))
+        del found
+    pos = torch.cat(pos) if pos else torch.zeros(0, dtype=torch.int64, device=dev)
+    hp = torch.cat(high) if high else pos
+    del high, table, flat, mr
+    n_exc = pos.numel()
+    ks, lows, q8 = [], [], []
+    if n_exc:   # the exceptions' Rice vectors, as one pass computes them
+        rv = torch.stack([pos - torch.cat([pos.new_full((1,), -1), pos[:-1]]) - 1, ((hp << 1) ^ (hp >> 63)) - 1])
+        vmin, vmax = rv.amin(1), rv.amax(1)
+        kmin = ((vmax[:, None] >= tb["pow2"][None, :]).sum(1) - 4).clamp_(min=0)
+        q = ((rv >> kmin[:, None]).clamp_(0, 15) + torch.arange(0, 32, 16, device=dev)[:, None]).view(-1)
+        qh = torch.bincount(q, minlength=32)
+        rs = _d2h(torch.cat([vmin, vmax, kmin, qh]))
+        if rs[:2].min() < 0 or rs[2:4].max() >= 1 << (_KMAX + 4):
+            raise ValueError("Rice values must be in [0, 2**36)")
+        ks = [_rice_k_hist(n_exc, int(rs[4 + i]), rs[6 + 16 * i:22 + 16 * i]) for i in range(2)]
+        lows = [_pack_dev(rv[i] & ((1 << k) - 1), k).view(-1) for i, k in enumerate(ks) if k]
+        q8 = [torch.stack([rv[i] >> k for i, k in enumerate(ks)]).to(torch.uint8).view(-1)]
+        del rv
+    pieces = [p.view(torch.uint8) for p in lows] + q8
+    if pieces:
+        host = _d2h(torch.cat(pieces))                 # one wait: the body's copies are on the host too
+    else:
+        torch.cuda.current_stream(dev).synchronize()
+        host = np.zeros(0, dtype=np.uint8)
+    mv = memoryview(host)
+    out = [head, *body.views(), struct.pack("<I", n_exc)]
+    at = 0
+    if n_exc:
+        quot = host[host.size - 2 * n_exc:].reshape(2, n_exc)
+        for i, k in enumerate(ks):
+            size = 4 * k * ((n_exc + 31) // 32)
+            out += [bytes([k]), mv[at:at + size], _pack_levels(quot[i])]
+            at += size
+    return b"".join(out)
 
 
 def _rice_tail(ks: list, lows: list, q8: np.ndarray, workers: int) -> list[bytes]:
