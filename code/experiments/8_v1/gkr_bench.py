@@ -47,7 +47,11 @@ def main() -> None:
             torch.cuda.synchronize()
             times.append(time.perf_counter() - t0)
         best = min(times[1:])
+        if gt._PROFILE:
+            gt.PROFILE.clear()
+            gt.prove_leaves(d, w, n_col, n, alpha, ch(), "cut/0/")
         out = {"n": n, "leaves": 1 << n, "T": args.T, "s": best, "ns_per_leaf": best / (1 << n) * 1e9,
+               "profile": {k: round(v, 4) for k, v in gt.PROFILE.items()},
                "rounds": n * (n - 1) // 2, "first_s": times[0], "peak_gb": torch.cuda.max_memory_allocated() / 2**30,
                "gpu": torch.cuda.get_device_name(0)}
         if n in args.check:

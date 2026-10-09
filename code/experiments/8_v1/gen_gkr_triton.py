@@ -313,6 +313,23 @@ def _fold4_kernel(pl, pr, ql, qr, plo, pro, qlo, qro, {args('r')}, half, s_in, s
 
 HOST = '''
 
+_PROFILE = os.environ.get("PVI_GKR_PROFILE") == "1"
+PROFILE: dict[str, float] = {}
+"""With ``PVI_GKR_PROFILE=1``: seconds per phase of the last proofs (each phase synchronised; for measurements)."""
+_LAST = [0.0]
+
+
+def _tick(name: str, dev) -> None:
+    if not _PROFILE:
+        return
+    import time
+    torch.cuda.synchronize(dev)
+    now = time.perf_counter()
+    if name != "start":
+        PROFILE[name] = PROFILE.get(name, 0.0) + now - _LAST[0]
+    _LAST[0] = now
+
+
 def _grid(n: int):
     return (max(1, triton.cdiv(n, BLOCK)),)
 
@@ -435,6 +452,7 @@ def _prove_tree(layers: list, ch, label: str):
 
     n = len(layers) - 1
     p1, q1 = layers[1]
+    _tick("start", p1.device)
     top = _from_mont(torch.stack([p1[:, 0], p1[:, 1], q1[:, 0], q1[:, 1]]).cpu())
     tr = Transcript(n, top)
     _absorb(ch, label + "top", top)
@@ -447,12 +465,14 @@ def _prove_tree(layers: list, ch, label: str):
         cp, cq = layers[k + 1]
         arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
         layers[k + 1] = None                     # its halves are all this layer reads
+        _tick("halves", dev)
         lam_m, lam_l = _to_mont(lam), _li(lam)
         mu = _li(rho[0])
         claim = _fa(_fa(prev[0], _fm(mu, _fs(prev[1], prev[0]))),
                     _fm(lam_l, _fa(prev[2], _fm(mu, _fs(prev[3], prev[2])))))
         scale = one                              # prod_{i<j} eq(rho_i, r_i)
         suffixes = _suffix_tables([_to_mont(r) for r in rho], dev)
+        _tick("suffix", dev)
         rounds, rs = [], []
         for j in range(k):
             # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
@@ -464,6 +484,7 @@ def _prove_tree(layers: list, ch, label: str):
             part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
             _round2_kernel[(nb,)](suffix, *arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
             del suffix
+            _tick("round", dev)
             h0, h2 = (_li(v) for v in _from_mont(part.sum(0).cpu() % PRIME))
             rj = _li(rho[j])
             e0, e1 = _fs(one, rj), rj
@@ -484,9 +505,11 @@ def _prove_tree(layers: list, ch, label: str):
             rl = _li(r)
             claim = _flagrange(g0, _fs(claim, g0), g2, g3, rl)
             scale = _fm(scale, _fa(_fm(rj, rl), _fm(_fs(one, rj), _fs(one, rl))))
+            _tick("host", dev)
             outs = [torch.empty(8, half, dtype=torch.int32, device=dev) for _ in range(4)]
             _fold4_kernel[_grid(half)](*arrs, *outs, *_to_mont(r), half, m, half, **_consts(), BLOCK=BLOCK)
             arrs = outs
+            _tick("fold", dev)
         vals = _from_mont(torch.stack([a[:, 0] for a in arrs]).cpu())
         prev = [_li(v) for v in vals]
         _absorb(ch, label + f"v{k}", vals)
@@ -513,9 +536,11 @@ def _h_at_one(arrs, rho, j, lam_m, dev):
 
 
 def _tree(p: torch.Tensor, q: torch.Tensor) -> list:
+    _tick("start", p.device)
     layers = [(p, q)]
     while layers[-1][0].shape[1] > 1:
         layers.append(_combine(*layers[-1]))
+    _tick("tree", p.device)
     return layers[::-1]
 
 
