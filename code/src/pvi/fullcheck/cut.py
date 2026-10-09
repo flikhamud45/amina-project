@@ -37,7 +37,8 @@ from . import extfield as ef
 from . import logup
 from .graph import CheapOp, IntGraph, MatOp, _canonical
 
-__all__ = ["CutOp", "CutPlan", "lo", "windows", "shift", "requant_values", "split", "public_lw", "delta_range",
+__all__ = ["CutOp", "CutPlan", "lo", "windows", "shift", "requant_values", "split", "split_counts", "public_lw",
+           "delta_range",
            "instance_bits", "LMAX", "CLAIM_LIMIT"]
 
 LMAX = 27
@@ -57,8 +58,21 @@ def lo(v: torch.Tensor, m: int, sh: int = 30) -> torch.Tensor:
     return -((-((v.to(torch.int64) << sh) - (1 << (sh - 1)))) // m)
 
 
-def windows(s: torch.Tensor, m: int, sh: int = 30) -> tuple[torch.Tensor, torch.Tensor]:
-    """``(L, W)``: ``lo(s)`` and ``lo(s + 1) - lo(s)``, the window of the values ``s``."""
+_TABLE_SPAN = 1 << 20
+
+
+def windows(s: torch.Tensor, m: int, sh: int = 30, span: tuple[int, int] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(L, W)``: ``lo(s)`` and ``lo(s + 1) - lo(s)``, the window of the values ``s``.  Values spanning at most
+    ``2^20`` (every requant op's int8 values; most residual ops' Delta) are looked up in a table of ``lo`` over their
+    range instead of dividing per entry: the same integers.  ``span``: bounds the values are known to lie in (a
+    requant op's clamp), which saves finding them."""
+    if s.numel():
+        a, b = span if span is not None else (int(v) for v in torch.aminmax(s))
+        if b - a <= _TABLE_SPAN:
+            tab = lo(torch.arange(a, b + 2, dtype=torch.int64, device=s.device), m, sh)
+            i = s.to(torch.int64) - a
+            lower = tab[i]
+            return lower, tab[i + 1] - lower
     lower = lo(s, m, sh)
     return lower, lo(s.to(torch.int64) + 1, m, sh) - lower
 
@@ -304,9 +318,21 @@ def split(z: torch.Tensor, op: CutOp):
     return s, z - lower, width, idx, exc_z
 
 
-def public_lw(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, op: CutOp):
-    """The verifier's ``(L, W)`` from the sent values and the listed exceptions (already checked)."""
-    lower, width = windows(s, op.mult, op.sh)
+def split_counts(z: torch.Tensor, op: CutOp, offsets: dict[int, int], size: int):
+    """:func:`split` on ``z``'s device, plus the op's honest table counts ``[size]`` (int64, same device): the key of
+    an entry is ``delta`` plus the table offset of its width, one of the op's two normal widths or 1."""
+    s, delta, width, idx, exc_z = split(z, op)
+    w_lo, w_hi = op.widths
+    off = torch.where(width == 1, offsets[1], torch.where(width == w_lo, offsets[w_lo], offsets[w_hi]))
+    counts = torch.bincount((delta + off).reshape(-1), minlength=size)
+    return s, delta, width, idx, exc_z, counts
+
+
+def public_lw(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, op: CutOp, *, in_range: bool = False):
+    """The verifier's ``(L, W)`` from the sent values and the listed exceptions (already checked).  ``in_range``:
+    the values are known to be in the op's range (derive checked them), so a requant op's table spans its clamp."""
+    span = (op.lo_, op.hi) if in_range and op.kind == "requant" else None
+    lower, width = windows(s, op.mult, op.sh, span)
     if exc_idx.numel():
         lower = lower.reshape(-1).clone()
         width = width.reshape(-1).clone()

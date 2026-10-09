@@ -232,12 +232,15 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
         mult = torch.zeros(plan.table_size(), dtype=torch.int64)
         exc, values = {}, {}
         sent = {op.name for op in verifier._sent_ops()}
+        mult = mult.to(prover.device)
         for o in plan.ops:
-            s, d, w, idx, ez = cutmod.split(zs[o.name], o)
-            mult += logup.multiplicities(d.cpu(), w.cpu(), offsets, plan.table_size())
+            s, d, w, idx, ez, counts = cutmod.split_counts(zs[o.name].to(prover.device), o, offsets,
+                                                           plan.table_size())
+            mult += counts
             exc[o.name] = (idx.cpu(), ez.cpu())
             values[o.name] = s
-            del d, w
+            del d, w, counts
+        mult = mult.cpu()
         for k, z in zs.items():
             if k in sent and k not in values:
                 values[k] = z
@@ -292,16 +295,19 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     with _timed(out, "prove_forward"):
         zs = prover.claims(query, to_host=False, **forward_kwargs)
         _sync(prover.device)
-    witness, exc, mult = {}, {}, torch.zeros(plan.table_size(), dtype=torch.int64)
+    witness, exc = {}, {}
+    mult = torch.zeros(plan.table_size(), dtype=torch.int64, device=prover.device)
     with _timed(out, "prove_cut_split"):
         sent_vals = {}
-        for o in plan.ops:
-            s, d, w, idx, ez = cutmod.split(zs[o.name], o)
-            d, w = d.cpu(), w.cpu()
-            mult += logup.multiplicities(d, w, offsets, plan.table_size())
-            witness[o.name] = (d, w)
+        for o in plan.ops:                  # on the prover's device (a lean prover's host claims go up op by op)
+            s, d, w, idx, ez, counts = cutmod.split_counts(zs[o.name].to(prover.device), o, offsets,
+                                                           plan.table_size())
+            mult += counts
+            witness[o.name] = (d.to(torch.int32).cpu(), w.to(torch.int32).cpu())     # |delta|, W < 2^17
             exc[o.name] = (idx.cpu(), ez.cpu())
             sent_vals[o.name] = s
+            del d, w, counts
+        mult = mult.cpu()
         _sync(prover.device)
     sent = {op.name for op in verifier._sent_ops()}
     values = {k: (sent_vals[k] if k in cut_names else z) for k, z in zs.items() if k in sent}
@@ -419,8 +425,10 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
                 if verifier.mode == "C" and o.layout == "row":
                     chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
                     folds[o.name] = prover.fold({o.name: _planes(chi).to(prover.device)})[o.name].cpu()
-                else:                                       # y = A xbar = Z e
-                    folds[o.name] = _planes(ef.small_times(zs[o.name].to(torch.int64).cpu(), e))
+                else:                                       # y = A xbar = Z e, on the prover's device
+                    z = zs[o.name].to(prover.device, torch.int64)
+                    folds[o.name] = _planes(ef.small_times(z, e.to(prover.device))).cpu()
+                    del z
         order = [op.name for op in clear_rows] if verifier.mode == "C" else []
         items = _fold_items(verifier, plan, col_cut)
         parts = [us_clear[n] for n in order] + [torch.cat([folds[o] for o in members], 1) for _, members in items]
@@ -451,8 +459,9 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     with _timed(out, "verify_final"):
         xbars, ys = {}, {}
         mats = {op.name: op for op in verifier.graph.mat_ops}
-        for b, (_, _, rho, _, _) in enumerate(outs):
-            e, _ = _points(plan, b, rho)
+        points = [_points(plan, b, o[2]) for b, o in enumerate(outs)]      # each instance's e and eq(r_row), once
+        for b in range(len(outs)):
+            e, _ = points[b]
             for o in plan.instance_ops(b):
                 xbars[o.name] = _xbar(mats[o.name], inputs[o.name], e)
         for key, members in items:
@@ -465,7 +474,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
                     at += n
         if verifier.mode == "Kpre" and not _kpre_y_ok(verifier, plan, ys, xbars):
             return "kpre_y"
-        if not _final_ok(verifier, plan, outs, alpha, claims_v, exc_v, cut_folds, items, ys, xbars):
+        if not _final_ok(verifier, plan, outs, alpha, claims_v, exc_v, cut_folds, items, ys, xbars, points):
             return "cut_final"
     with _timed(out, "verify_logup"):
         if not logup.logup_ok([(o[0], o[1]) for o in outs], mult_v, alpha, tau):
@@ -478,8 +487,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         planes = cut_folds[key].to(vdev)
         if plan.op(members[0]).layout == "row":
             o = plan.op(members[0])
-            b = o.instance
-            _, chi_full = _points(plan, b, outs[b][2])
+            _, chi_full = points[o.instance]
             lefts[key] = _planes(chi_full[o.row_offset:o.row_offset + o.n_rows]).to(vdev)
             sources[key] = planes
         else:
@@ -534,7 +542,7 @@ def _kpre_y_ok(verifier: Verifier, plan, ys: dict, xbars: dict) -> bool:
     return True
 
 
-def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars) -> bool:
+def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points) -> bool:
     """Check F3 (``cut_final``): every instance's final claims are the leaf layer's extensions computed from the
     sent values, the exceptions and the folds."""
     us_row = {}
@@ -545,7 +553,7 @@ def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xb
     x_gen = ef.gen()
     vdev = torch.device(verifier.device)
     for b, (p0, q0, rho, p_hat, q_hat) in enumerate(outs):
-        e, chi_full = _points(plan, b, rho)
+        e, chi_full = points[b]
         # chi^T L and chi^T W ([8, T] planes) for every op of the instance: the verifier's batched exact products
         # (same-shape ops in one limb GEMM), with |L| < 2^29 + 2^16 and W <= 2^16
         pairs, chis = {}, {}
@@ -553,7 +561,7 @@ def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xb
             chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
             chis[o.name] = chi
             idx, z = exc[o.name]
-            lower, width = cutmod.public_lw(values[o.name].to(vdev), idx.to(vdev), z.to(vdev), o)
+            lower, width = cutmod.public_lw(values[o.name].to(vdev), idx.to(vdev), z.to(vdev), o, in_range=True)
             planes = _planes(chi).to(vdev)
             pairs[(o.name, "L")] = (planes, lower)
             pairs[(o.name, "W")] = (planes, width)
