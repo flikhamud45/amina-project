@@ -38,7 +38,7 @@ from . import extfield as ef
 from . import logup
 from . import logup_gkr as gkr
 from .commitment import HASH_BYTES, multiproof_size
-from .field import P, field_matmul_mod, to_field
+from .field import P, field_matmul_mod, small_matmul_mod, to_field
 from .protocol import (Challenger, Prover, Verifier, _absorb_statement, _decoded_claims, _encoded, _field_message,
                        _open_message, _passed, _phase_done, _proof_hashes, _sync)
 
@@ -161,9 +161,13 @@ def _dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 
 def _xbar(op, xin: torch.Tensor, e: torch.Tensor) -> torch.Tensor:
-    """``[X ; 1] e`` ``[K (+1), 8]`` of a linear op's input ``xin`` (its ``[M, K]`` rows) at the column point ``e``."""
+    """``[X ; 1] e`` ``[K (+1), 8]`` of a linear op's input ``xin`` (its ``[M, K]`` rows) at the column point ``e``:
+    one exact float64 product for int8-sized inputs (``small_matmul_mod``), else the limb product."""
     x = xin.reshape(-1, op.n_in).to(torch.int64).cpu()
-    out = ef.small_times(x.T.contiguous(), e)
+    if x.numel() and int(x.abs().max()) <= 256:
+        out = small_matmul_mod(x.T.contiguous(), e)
+    else:
+        out = ef.small_times(x.T.contiguous(), e)
     return torch.cat([out, (e.sum(0) % P)[None]]) if op.has_bias else out
 
 
@@ -539,18 +543,28 @@ def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xb
         if verifier.mode == "C" and o.layout == "row":
             us_row[o.name] = cut_folds[key].T.contiguous()            # [K (+1), 8]
     x_gen = ef.gen()
+    vdev = torch.device(verifier.device)
     for b, (p0, q0, rho, p_hat, q_hat) in enumerate(outs):
         e, chi_full = _points(plan, b, rho)
-        total = ef.const(0)
+        # chi^T L and chi^T W ([8, T] planes) for every op of the instance: the verifier's batched exact products
+        # (same-shape ops in one limb GEMM), with |L| < 2^29 + 2^16 and W <= 2^16
+        pairs, chis = {}, {}
         for o in plan.instance_ops(b):
             chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
-            s = values[o.name].cpu()
+            chis[o.name] = chi
             idx, z = exc[o.name]
-            lower, width = cutmod.public_lw(s, idx, z, o)
-            s_l = _dot(us_row[o.name], xbars[o.name]) if o.name in us_row else _dot(chi, ys[o.name])
-            le = _dot(chi, ef.small_times(lower, e))
-            we = _dot(chi, ef.small_times(width, e))
+            lower, width = cutmod.public_lw(values[o.name].to(vdev), idx.to(vdev), z.to(vdev), o)
+            planes = _planes(chi).to(vdev)
+            pairs[(o.name, "L")] = (planes, lower)
+            pairs[(o.name, "W")] = (planes, width)
+        prods = verifier._field_products(pairs, 1 << 30)
+        total = ef.const(0)
+        for o in plan.instance_ops(b):
+            s_l = _dot(us_row[o.name], xbars[o.name]) if o.name in us_row else _dot(chis[o.name], ys[o.name])
+            le = _dot(prods[(o.name, "L")].cpu().T.contiguous(), e)
+            we = _dot(prods[(o.name, "W")].cpu().T.contiguous(), e)
             total = ef.add(total, ef.add(ef.sub(s_l, le), ef.mul(x_gen, we)))
+        del prods, pairs
         i_b = logup.indicator(rho, plan.rows(b), plan.T, plan.n_vars(b)[1])
         want_q = ef.add(ef.sub(ef.mul(alpha, i_b), total), ef.sub(ef.const(1), i_b))
         if not (ef.equal(p_hat, i_b) and ef.equal(q_hat, want_q)):

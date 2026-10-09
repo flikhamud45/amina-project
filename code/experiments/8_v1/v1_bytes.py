@@ -40,7 +40,9 @@ def main() -> None:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--lean", action="store_true")
-    ap.add_argument("--full", action="store_true", help="also run the whole V1 query (small models)")
+    ap.add_argument("--full", action="store_true", help="also run the whole V1 query (the GKR on the GPU with Triton)")
+    ap.add_argument("--reps", type=int, default=1, help="with --full: timed queries of each protocol after a warm-up")
+    ap.add_argument("--verifier-device", default="cpu")
     ap.add_argument("--label", default="")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
@@ -73,8 +75,8 @@ def main() -> None:
         setup_s = time.perf_counter() - t0
         p0 = params_for(args.lam, n_checks, fiat_shamir=args.fs, plan=plan)
         p1 = params_for(args.lam, n_checks, fiat_shamir=args.fs, plan=plan, cut=True, cut_lmax=args.lmax)
-        v0 = Verifier(graph.public(), p0, mode, lean=args.lean, **kw)
-        v1 = Verifier(graph.public(), p1, mode, lean=args.lean, **kw)
+        v0 = Verifier(graph.public(), p0, mode, lean=args.lean, device=args.verifier_device, **kw)
+        v1 = Verifier(graph.public(), p1, mode, lean=args.lean, device=args.verifier_device, **kw)
         if mode == "Kpre":
             v0.precompute(Challenger())
             v1._pre = v0._pre                        # the same secret rows (only F2 reads them in V1)
@@ -98,6 +100,22 @@ def main() -> None:
             full = cp.run_cut_query(prover, v1, x)
             out["v1_full"] = {"accepted": full["accepted"], "rejected_at": full["rejected_at"], "bytes": full["bytes"],
                               "timings": full["timings"], "s": time.perf_counter() - t0}
+            if args.reps > 1:                              # medians of timed queries of both protocols, interleaved
+                import statistics
+                runs0, runs1 = [], []
+                for i in range(args.reps):
+                    q = torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(100 + i))
+                    runs0.append(run_query(prover, v0, q, wire=True))
+                    runs1.append(cp.run_cut_query(prover, v1, q))
+
+                def med(runs):
+                    keys = sorted({k for r in runs for k in r["timings"]})
+                    t = {k: statistics.median(r["timings"].get(k, 0.0) for r in runs) for k in keys}
+                    return {"accepted": sum(r["accepted"] for r in runs), "timings": t,
+                            "prove_s": sum(v for k, v in t.items() if k.startswith("prove_")),
+                            "verify_s": sum(v for k, v in t.items() if k.startswith("verify_")),
+                            "fs_s": t.get("fs_hash", 0.0)}
+                out["timed"] = {"queries": args.reps, "v0": med(runs0), "v1": med(runs1)}
         print(json.dumps(out), flush=True)
 
 
