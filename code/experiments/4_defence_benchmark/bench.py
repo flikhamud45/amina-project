@@ -786,7 +786,7 @@ def suite_cnn(args, env) -> None:
 # ------------------------------------------------------------------ LLM shapes
 def suite_llm(args, env) -> None:
     from pvi.fullcheck.analytic import decoder_shapes
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder, decoder_param_count
+    from pvi.fullcheck.transformer import CONFIGS, build_decoder, decoder_param_count, greedy_tokens, with_lm_positions
 
     device = torch.device(env["device"])
     cfg = CONFIGS[args.model]
@@ -830,6 +830,13 @@ def suite_llm(args, env) -> None:
             # the first ``queries`` rows are the single-prompt queries of the stored runs
             tokens = torch.randint(0, cfg.vocab, (max([args.queries, *args.batches]), seq),
                                    generator=torch.Generator().manual_seed(1))
+            generate_s = None
+            if args.gen > 1:   # each prompt and the gen - 1 tokens this build generates after it, one prefill
+                t0 = time.perf_counter()
+                tokens = torch.cat([greedy_tokens(graph, tokens[i:i + 1].to(device), args.gen - 1).cpu()
+                                    for i in range(tokens.shape[0])])
+                generate_s = (time.perf_counter() - t0) / tokens.shape[0]
+                graph = with_lm_positions(graph, args.gen)
             coms = None
             if any(m == "C" for m, _ in modes):
                 coms, commit_s = _commit(graph, RATE, device, args.policy, decoder_shapes(cfg, prune_last=prune),
@@ -863,8 +870,12 @@ def suite_llm(args, env) -> None:
                             "n_layers_full": cfg.n_layers, "params_full": decoder_param_count(cfg),
                             "params_built": graph.n_params(), "lean": args.lean,
                             "threads": torch.get_num_threads(), **({"prune_last": True} if prune else {}),
-                            **({"lookups": True} if args.lookups else {}), **_plan_config(coms, params)}
+                            **({"lookups": True} if args.lookups else {}),
+                            **({"gen": args.gen, "positions": tokens.shape[1]} if args.gen > 1 else {}),
+                            **_plan_config(coms, params)}
                     r = Recorder("llm", cfg.name, cell, conf, env)
+                    if generate_s is not None:   # untimed by the protocol: the honest generation, per query
+                        r.rec("generate", generate_s, "s")
                     if plan is not None:      # the whole model's bound, under the whole model's plan
                         whole = plan_commitment(full_shapes, args.policy, rate=RATE)
                         r.rec("soundness_bits", _plan_soundness(params_for(
@@ -1004,6 +1015,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--prune-last", action="store_true",
                     help="LLM suite: the last decoder block at the last position only "
                          "(build_decoder(prune_last=True)); every cell named with a _prune suffix")
+    ap.add_argument("--gen", type=int, default=0,
+                    help="LLM suite: a generated response of G tokens per query, proved as one prefill: the prompt "
+                         "of --seq tokens and the G - 1 tokens the build generates greedily after it, with the logits "
+                         "at the last G positions (transformer.with_lm_positions; the verifier checks the tokens); "
+                         "every cell named with a _gen<G> suffix")
     ap.add_argument("--lookups", action="store_true",
                     help="modes K and Kpre: the verifier reads the embedding rows itself and the prover sends no "
                          "claims for them (Verifier(lookups=True)); runs those cells only, named with a _lookups "
@@ -1062,17 +1078,19 @@ def main() -> None:
                          "hold non-TF32 timings (bench.sbatch: export PVI_TF32=1)")
     if "_pol" in TAG:
         raise SystemExit("--tag must not contain _pol: --policy adds it (a paper run must not take a policy's cells)")
-    for flag, sfx in (("--prune-last", "_prune"), ("--lookups", "_lookups")):
+    for flag, sfx in (("--prune-last", "_prune"), ("--lookups", "_lookups"), ("--gen", "_gen")):
         if sfx in TAG:
             raise SystemExit(f"--tag must not contain {sfx}: {flag} adds it")
-    if args.suite == "cnn" and (args.prune_last or args.lookups):
-        raise SystemExit("--prune-last and --lookups are for the decoders (the llm suite)")
+    if args.suite == "cnn" and (args.prune_last or args.lookups or args.gen):
+        raise SystemExit("--prune-last, --lookups and --gen are for the decoders (the llm suite)")
     if args.lookups and args.policy != "paper":
         raise SystemExit("--lookups runs the K and Kpre cells, --policy the mode-C ones: one at a time")
     if args.prune_last:
         TAG += "_prune"
     if args.lookups:
         TAG += "_lookups"
+    if args.gen > 1:
+        TAG += f"_gen{args.gen}"
     try:
         plan_commitment([], args.policy)
     except ValueError as exc:
