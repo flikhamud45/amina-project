@@ -53,14 +53,12 @@ def neg(a: torch.Tensor) -> torch.Tensor:
 
 def mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """``a b`` (broadcast over the leading axes): ``sum_i a_i x^i b``, where ``x^i b`` rotates ``b``'s coefficients
-    by ``i`` and multiplies the ``i`` that wrap past ``x^7`` by 11 (``x^8 = 11``)."""
+    by ``i`` and multiplies the ``i`` that wrap past ``x^7`` by 11 (``x^8 = 11``): with ``bb = [11 b, b]``,
+    ``x^i b = bb[8 - i : 16 - i]``, all eight read as one ``[8, 8]`` window view."""
     a, b = torch.broadcast_tensors(a, b)
-    wrapped = (b * BETA) % P
-    out = torch.zeros_like(b)
-    for i in range(D):
-        rot = b if i == 0 else torch.cat([wrapped[..., D - i:], b[..., :D - i]], -1)
-        out.add_((a[..., i:i + 1] * rot) % P)
-    return out % P
+    bb = torch.cat([(b * BETA) % P, b], -1)
+    rot = bb.unfold(-1, D, 1).flip(-2)[..., :D, :]                  # [..., i, k]: coefficient k of x^i b
+    return ((a[..., :, None] * rot) % P).sum(-2) % P
 
 
 def scal(a: torch.Tensor, s) -> torch.Tensor:
