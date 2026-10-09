@@ -37,7 +37,8 @@ import numpy as np
 import torch
 
 from . import attention_kernels, native_kernels
-from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, requant
+from .graph import (INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, requant, requant_fn,
+                    residual_add)
 
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
 
@@ -377,10 +378,7 @@ def greedy_tokens(graph: IntGraph, prompt: torch.Tensor, steps: int) -> torch.Te
 
 def _residual(a: torch.Tensor, b: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
     """``(a + ((b * m + 2**29) >> 30)).clamp(-RES_MAX, RES_MAX)`` in one output buffer."""
-    out = mul_add_half(b, m.to(b.device), SHIFT)
-    out >>= SHIFT
-    out += a
-    return out.clamp_(-RES_MAX, RES_MAX)
+    return residual_add(a, b, m.to(b.device), SHIFT, RES_MAX)
 
 
 class _Builder:
@@ -416,9 +414,13 @@ class _Builder:
              if bias else None)
         return self._run(MatOp(n, (inp,), n + ".z", weight=self.weight(rows, cols), bias=b, layout=layout))
 
-    def cheap(self, prefix, inputs, fn, note=""):
+    def cheap(self, prefix, inputs, fn, note="", params=None):
         n = self.name(prefix)
-        return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note))
+        return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note, params=params or {}))
+
+    def requant(self, prefix, inputs, note, **params):
+        """A requantising consumer of a weight op (:func:`graph.requant_fn`, so V1 can cut it)."""
+        return self.cheap(prefix, inputs, requant_fn(params), note, {"requant": params})
 
     def last(self, name, *, calibrate_all=False):
         """The last position of ``name``.  With ``calibrate_all`` the calibration keeps every position
@@ -435,13 +437,12 @@ class _Builder:
         return max(float(self.env[name].double().std()), 1e-6)
 
     def to_int8(self, z, target=24.0):
-        m = torch.tensor(round((1 << SHIFT) * target / self.std(z)), dtype=torch.int64)
-        return self.cheap("rq", [z], lambda a, m=m: requant(a, m.to(a.device), SHIFT, -INT8_MAX, INT8_MAX),
-                          "requant")
+        m = round((1 << SHIFT) * target / self.std(z))
+        return self.requant("rq", [z], "requant", kind="requant", mult=m, shift=SHIFT, lo=-INT8_MAX, hi=INT8_MAX)
 
     def residual(self, r, z, target=1024.0):
-        m = torch.tensor(round((1 << SHIFT) * target / self.std(z)), dtype=torch.int64)
-        return self.cheap("res", [r, z], lambda a, b, m=m: _residual(a, b, m), "residual add")
+        m = round((1 << SHIFT) * target / self.std(z))
+        return self.requant("res", [r, z], "residual add", kind="residual", mult=m, shift=SHIFT, res_max=RES_MAX)
 
     def norm(self, r, d, center):
         gain = torch.full((d,), round(32 * (1 << 16)), dtype=torch.int64)  # gamma=1 at scale 1/32

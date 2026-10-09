@@ -37,9 +37,9 @@ import math
 
 import torch
 
-from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant
+from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn
 from .transformer import (
-    CONFIGS, RES_MAX, SHIFT, _attention, _lut, _norm_int, _residual, build_decoder,
+    CONFIGS, RES_MAX, SHIFT, _attention, _lut, _norm_int, build_decoder,
 )
 
 __all__ = ["build_opt_from_hf", "matches_benchmark_graph", "real_logits"]
@@ -82,23 +82,28 @@ class _RealBuilder:
         b_int = None if b is None else (b.double() / s_z).round().to(torch.int64)
         return self._run(MatOp(n, (inp,), n + ".z", weight=w_int, bias=b_int, layout=layout), s_z)
 
-    def cheap(self, prefix, inputs, fn, scale, note=""):
+    def cheap(self, prefix, inputs, fn, scale, note="", params=None):
         n = self.name(prefix)
-        return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note), scale)
+        return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note, params=params or {}), scale)
+
+    def requant(self, prefix, inputs, scale, note, **params):
+        """A requantising consumer of a weight op (:func:`graph.requant_fn`, so V1 can cut it)."""
+        return self.cheap(prefix, inputs, requant_fn(params), scale, note, {"requant": params})
 
     def to_int8(self, z):
         real = self.env[z].double().abs() * self.scale[z]
         top = float(torch.quantile(real.flatten()[:1 << 24], self.pct / 100.0)) if self.pct < 100 \
             else float(real.max())
         s_out = max(top, 1e-12) / INT8_MAX
-        m = torch.tensor(round((1 << SHIFT) * self.scale[z] / s_out), dtype=torch.int64)
-        return self.cheap("rq", [z], lambda a, m=m: requant(a, m.to(a.device), SHIFT, -INT8_MAX, INT8_MAX),
-                          s_out, "requant")
+        m = round((1 << SHIFT) * self.scale[z] / s_out)
+        return self.requant("rq", [z], s_out, "requant", kind="requant", mult=m, shift=SHIFT, lo=-INT8_MAX,
+                            hi=INT8_MAX)
 
     def residual(self, r, z):
         """r + z, with z brought to the residual's real scale (not to a target std)."""
-        m = torch.tensor(round((1 << SHIFT) * self.scale[z] / self.scale[r]), dtype=torch.int64)
-        return self.cheap("res", [r, z], lambda a, b, m=m: _residual(a, b, m), self.scale[r], "residual add")
+        m = round((1 << SHIFT) * self.scale[z] / self.scale[r])
+        return self.requant("res", [r, z], self.scale[r], "residual add", kind="residual", mult=m, shift=SHIFT,
+                            res_max=RES_MAX)
 
     def norm(self, r, d):
         # _norm_int with gain G << 16 emits G * (normalised value), clamped to int8: real

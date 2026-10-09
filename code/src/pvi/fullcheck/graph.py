@@ -48,6 +48,8 @@ __all__ = [
     "int_scalar",
     "mul_add_half",
     "requant",
+    "requant_fn",
+    "residual_add",
     "INT8_MAX",
 ]
 
@@ -116,6 +118,38 @@ def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int,
     out = mul_add_half(z, mult, shift, out=out)
     out >>= shift
     return out.clamp_(lo, hi)
+
+
+def residual_add(a: torch.Tensor, b: torch.Tensor, mult: torch.Tensor, shift: int, res_max: int) -> torch.Tensor:
+    """``clamp(a + round(b * mult / 2**shift), -res_max, res_max)`` (round-half-up) in one output buffer."""
+    out = mul_add_half(b, mult, shift)
+    out >>= shift
+    out += a
+    return out.clamp_(-res_max, res_max)
+
+
+def requant_fn(params: dict) -> Callable[..., torch.Tensor]:
+    """The cheap op that reads a weight op's output and requantises it, built from ``params`` alone (V1's cut,
+    ``V1_SPEC.md`` Sec. 2.1, P1): ``kind`` ``"requant"`` (``clamp(round(z mult / 2**shift), lo, hi)``, one input)
+    or ``"residual"`` (``clamp(r + round(z mult / 2**shift), -res_max, res_max)``, inputs ``r, z``).  The function
+    carries ``params`` as ``_pvi_requant``, so a verifier can tell that ``params`` describe it exactly; a builder
+    sets the op's ``params = {"requant": params}``, which the graph's digest binds with the function."""
+    kind, shift, mult = params["kind"], int(params["shift"]), int(params["mult"])
+    m = torch.tensor(mult, dtype=torch.int64)
+    if kind == "requant":
+        lo, hi = int(params["lo"]), int(params["hi"])
+
+        def fn(a, m=m):
+            return requant(a, m.to(a.device), shift, lo, hi)
+    elif kind == "residual":
+        res_max = int(params["res_max"])
+
+        def fn(a, b, m=m):
+            return residual_add(a, b, m.to(b.device), shift, res_max)
+    else:
+        raise ValueError(f"unknown requantisation kind {kind!r}")
+    fn._pvi_requant = dict(params)
+    return fn
 
 
 @dataclass
@@ -279,6 +313,7 @@ def _with_tensors_on(fn, device: torch.device, copies: dict):
     new = types.FunctionType(fn.__code__, fn.__globals__, fn.__name__, defaults or None, cells or None)
     new.__kwdefaults__ = kwdefaults or None
     new.__qualname__, new.__doc__ = fn.__qualname__, fn.__doc__
+    new.__dict__.update(fn.__dict__)            # e.g. requant_fn's tag
     return new
 
 
@@ -342,6 +377,14 @@ class IntGraph:
     @property
     def mat_ops(self) -> list[MatOp]:
         return [op for op in self.ops if isinstance(op, MatOp)]
+
+    def readers(self) -> dict[str, list["Op"]]:
+        """``{tensor name: the ops that read it}``, in op order."""
+        out: dict[str, list[Op]] = {}
+        for op in self.ops:
+            for name in op.inputs:
+                out.setdefault(name, []).append(op)
+        return out
 
     def public(self) -> "IntGraph":
         return IntGraph([op.public() for op in self.ops], self.input_name,

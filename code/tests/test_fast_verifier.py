@@ -623,6 +623,8 @@ def _use_reference_code(monkeypatch):
     for name, fn in (("requant", ref.requant), ("_norm_int", ref.norm_int), ("_lut", ref.lut), ("_rope", ref.rope),
                      ("_attention", ref.attention), ("_residual", ref.residual)):
         monkeypatch.setattr(transformer, name, fn)
+    monkeypatch.setattr(graph, "requant", ref.requant)                  # requant_fn's closures
+    monkeypatch.setattr(graph, "residual_add", lambda a, b, m, shift, res_max: ref.residual(a, b, m))
     monkeypatch.setattr(graph.MatOp, "fold", ref.fold)
     monkeypatch.setattr(proto.Verifier, "check_products", ref.check_products)
     monkeypatch.setattr(proto.Verifier, "check_columns", ref.check_columns)
