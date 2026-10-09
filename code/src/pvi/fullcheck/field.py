@@ -50,6 +50,8 @@ __all__ = [
     "int8_field_matmul",
     "int8_right",
     "int8_small_matmul",
+    "int8_weight_matmul",
+    "weight_matmul_mod",
 ]
 
 P = 2013265921
@@ -464,3 +466,19 @@ def int8_small_matmul(operand: tuple[torch.Tensor, int], small: torch.Tensor) ->
     w, offsets = _byte_consts(str(small.device))
     per_c = (acc[:, :4 * rr].reshape(m, 4, rr) + offsets[:, None] * acc[:, 4 * rr, None, None]) % P
     return ((per_c * w[:, None]).sum(1) % P).T
+
+
+def int8_weight_matmul(small: torch.Tensor, field: torch.Tensor) -> torch.Tensor:
+    """``small @ field mod P`` (``[M, R]``) for int8 ``small [M, K]`` and field elements ``field
+    [K, R]``, on int8 GEMMs: :func:`int8_small_matmul` of ``field``'s ``R`` columns against
+    ``small``.  The result is the canonical residue."""
+    return int8_small_matmul(int8_right(field.T), small).T
+
+
+def weight_matmul_mod(small: torch.Tensor, field: torch.Tensor) -> torch.Tensor:
+    """:func:`small_matmul_mod` for int8 weights ``small``: on int8 GEMMs where :func:`int8_ok`
+    (the prover's folds and column openings on a GPU), else in float64.  Both return the
+    canonical residue, so the results are bit-identical."""
+    if small.dtype == torch.int8 and small.is_cuda and int8_ok(small.device):
+        return int8_weight_matmul(small, field)
+    return small_matmul_mod(small, field)

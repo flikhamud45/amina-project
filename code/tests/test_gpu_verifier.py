@@ -168,6 +168,22 @@ def test_int8_small_matmul_is_exact(rr, k, m, device):
     assert torch.equal(got, ref.field_matmul_mod(u, x.T))
 
 
+@pytest.mark.parametrize("m,k,rr", [(24, 768, 5), (4096, 64, 133), (3, 70_000, 2), (1, 7, 1), (17, 1 << 16, 3),
+                                    (5, (1 << 16) + 3, 2)])
+def test_int8_weight_matmul_is_exact(m, k, rr, device):
+    # the prover's products: an opening W @ V[:, C], and a fold chi @ W (W transposed, not contiguous)
+    g = torch.Generator().manual_seed(m + k + rr)
+    w = _rand(g, -128, 128, (m, k))
+    w[0], w[-1] = -128, 127
+    v, chi = _rand(g, 0, P, (k, rr)), _rand(g, 0, P, (rr, m))
+    v[0], chi[:, 0] = P - 1, P - 1
+    w8 = w.to(torch.int8).to(device)
+    opened, folded = ref.field_matmul_mod(v.T, w.T).T, ref.field_matmul_mod(chi, w)
+    for fn in (fld.int8_weight_matmul, fld.weight_matmul_mod):     # weight_matmul_mod: int8 where int8_ok
+        assert torch.equal(fn(w8, v.to(device)).cpu(), opened)
+        assert torch.equal(fn(w8.T, chi.T.contiguous().to(device)).T.cpu(), folded)
+
+
 def test_int8_bytes_decompose_every_int32():
     x = torch.tensor([INT32_MIN, INT32_MIN + 1, -129, -128, -1, 0, 1, 127, 128, 255, 256, P - 1, INT32_MAX])
     x = torch.cat([x, torch.randint(INT32_MIN, INT32_MAX, (1000,), generator=torch.Generator().manual_seed(1))])

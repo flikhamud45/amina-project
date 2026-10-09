@@ -42,7 +42,7 @@ import numpy as np
 import torch
 
 from .field import (_LIMB_MAX, NP_SMALL, P, exact_chunk, field_matmul_mod, np_field_matmul_mod, power_table,
-                    root_of_unity, rs_encode, small_matmul_mod, to_field)
+                    root_of_unity, rs_encode, to_field, weight_matmul_mod)
 
 __all__ = [
     "HASH_BYTES",
@@ -495,7 +495,7 @@ class WeightCommitment:
         u_w = None
         for r0 in range(0, w_all.shape[0], row_chunk):
             w = w_all[r0:r0 + row_chunk].to(device)
-            part = small_matmul_mod(w.T, chi[:, r0:r0 + row_chunk].T.contiguous()).T  # [r, K]
+            part = weight_matmul_mod(w.T, chi[:, r0:r0 + row_chunk].T.contiguous()).T  # [r, K]
             u_w = part if u_w is None else (u_w + part) % P
         if self.bias is None:
             return u_w.cpu()
@@ -509,7 +509,7 @@ class WeightCommitment:
         ``row_length`` rows; row ``j`` is the same for every matrix of this codeword length)."""
         w_all = self.weight if weight is None else weight
         k = w_all.shape[1]
-        cols = torch.cat([small_matmul_mod(w_all[r0:r0 + 16384].to(device), v[:k])
+        cols = torch.cat([weight_matmul_mod(w_all[r0:r0 + 16384].to(device), v[:k])
                           for r0 in range(0, w_all.shape[0], 16384)], 0)
         if self.bias is not None:
             cols = (cols + (to_field(self.bias.to(device))[:, None] * v[k][None, :]) % P) % P
@@ -572,7 +572,7 @@ class TransposedCommitment:
         biases' row; ``weights`` may hold device-resident copies of the ops' int8 weights, in op order."""
         cols, off = None, 0
         for w in self.weights if weights is None else weights:
-            part = small_matmul_mod(w.to(device).T, v[off:off + w.shape[0]])
+            part = weight_matmul_mod(w.to(device).T, v[off:off + w.shape[0]])
             cols = part if cols is None else (cols + part) % P
             off += w.shape[0]
         if self.biases is not None:

@@ -21,7 +21,7 @@ import pytest
 import torch
 
 from pvi.fullcheck import field as fld
-from pvi.fullcheck.commitment import WeightCommitment
+from pvi.fullcheck.commitment import GroupCommitment, TransposedCommitment, WeightCommitment
 from pvi.fullcheck.graph import exact_matmul
 from pvi.fullcheck.transformer import _attention_heads
 
@@ -157,6 +157,29 @@ def test_commitment_fold_and_open_match_cpu():
     chi = torch.randint(0, P, (4, 4096), generator=g, dtype=torch.int64)
     assert torch.equal(cpu.fold(chi, "cpu"), dev.fold(chi, DEV))
     cols = torch.tensor([0, 1, 4097, 20000, cpu.n_points - 1])
+    (c_cpu, p_cpu), (c_dev, p_dev) = cpu.open(cols, "cpu"), dev.open(cols, DEV)
+    assert torch.equal(c_cpu, c_dev) and p_cpu == p_dev
+
+
+def test_group_openings_match_cpu():
+    # a shared tree holding a row-layout matrix and a col-layout one (fused q/k/v at GPT-2's
+    # width): the device opens both with int8 GEMMs where int8_ok, the CPU in float64
+    g = torch.Generator().manual_seed(14)
+
+    def wb(n, k):
+        return (torch.randint(-127, 128, (n, k), generator=g, dtype=torch.int64).to(torch.int8),
+                torch.randint(-(1 << 25), 1 << 25, (n,), generator=g, dtype=torch.int64))
+
+    n_points = 1 << 13
+    fc, qkv = wb(3072, 768), {name: wb(768, 768) for name in ("q", "k", "v")}
+
+    def group(device):
+        return GroupCommitment.build(b"g", {"fc": WeightCommitment.member(b"fc", *fc, n_points),
+                                            "qkv": TransposedCommitment.member(b"qkv", qkv, n_points)}, device=device)
+
+    cpu, dev = group("cpu"), group(DEV)
+    assert cpu.tree.root == dev.tree.root
+    cols = torch.tensor([0, 1, 777, 4096, n_points - 1])
     (c_cpu, p_cpu), (c_dev, p_dev) = cpu.open(cols, "cpu"), dev.open(cols, DEV)
     assert torch.equal(c_cpu, c_dev) and p_cpu == p_dev
 
