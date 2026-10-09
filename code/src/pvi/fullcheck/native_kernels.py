@@ -5,7 +5,8 @@ Per (batch, head, query row), on the verifier's threads: the int32 scores agains
 position, their maximum, ``e = LUT[min(max - s, len - 1)]``, ``tot = sum e``, ``p = floor((tot + 510 e) / (2 tot))``
 and ``p v`` (int64).  Every step is integer arithmetic on the same values as ``_attention_core`` (scores below
 ``2**21``, ``tot`` and ``510 e + tot`` below ``2**31``, as ``transformer._int32_scores`` requires), so the result is
-bit-identical (tested).
+bit-identical (tested).  Query rows are taken eight at a time, so each key and value row is read once per tile of
+rows rather than once per row.
 
 The library is compiled once per host with the C++ compiler in ``$CXX`` (else ``g++``), ``-O3 -march=native
 -fopenmp``, into ``$PVI_NATIVE_DIR`` (default ``~/.cache/pvi``) and loaded with ctypes: no Python or torch headers
@@ -33,49 +34,73 @@ _SOURCE = r"""
 #include <vector>
 #include <omp.h>
 
+// Query rows are taken TR at a time (rows of one (batch, head) group): each key and value row is read once per
+// tile instead of once per query row.  Every integer is computed exactly as for one row at a time.
+static const int64_t TR = 8;
+
 extern "C" void pvi_attention(const int16_t* q, const int16_t* k, const int16_t* v, const int32_t* lut,
                               int64_t* out, int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh,
                               int64_t lut_len, int64_t threads) {
     omp_set_num_threads((int)threads);
+    const int64_t tiles = (rows + TR - 1) / TR;
     #pragma omp parallel
     {
-        std::vector<int32_t> s(t), e(t);
-        std::vector<int64_t> acc(dh);
-        #pragma omp for schedule(dynamic, 16) collapse(2)
+        std::vector<int32_t> s(TR * t), e(TR * t);
+        std::vector<int64_t> acc(TR * dh);
+        int64_t n[TR];
+        int32_t mx[TR], tot[TR];
+        #pragma omp for schedule(dynamic, 4) collapse(2)
         for (int64_t g = 0; g < bh; ++g) {
-            for (int64_t r = 0; r < rows; ++r) {
-                const int16_t* qr = q + (g * rows + r) * dh;
+            for (int64_t tile = 0; tile < tiles; ++tile) {
+                const int64_t r0 = tile * TR;
+                const int64_t tr = std::min(TR, rows - r0);
                 const int16_t* kg = k + g * t * dh;
                 const int16_t* vg = v + g * t * dh;
-                const int64_t n = t - queries + (r % queries) + 1;     // keys 0 .. the query's position
-                int32_t mx = INT32_MIN;
-                for (int64_t j = 0; j < n; ++j) {
-                    const int16_t* kj = kg + j * dh;
-                    int32_t acc32 = 0;
-                    #pragma omp simd reduction(+:acc32)
-                    for (int64_t d = 0; d < dh; ++d) acc32 += (int32_t)qr[d] * (int32_t)kj[d];
-                    s[j] = acc32;
-                    mx = std::max(mx, acc32);
+                int64_t nmax = 0;
+                for (int64_t i = 0; i < tr; ++i) {
+                    n[i] = t - queries + ((r0 + i) % queries) + 1;      // keys 0 .. the query's position
+                    nmax = std::max(nmax, n[i]);
+                    mx[i] = INT32_MIN;
                 }
-                int32_t tot = 0;
-                for (int64_t j = 0; j < n; ++j) {
-                    int64_t gap = (int64_t)mx - (int64_t)s[j];
-                    if (gap > lut_len - 1) gap = lut_len - 1;
-                    e[j] = lut[gap];
-                    tot += e[j];
+                for (int64_t j = 0; j < nmax; ++j) {
+                    const int16_t* kj = kg + j * dh;
+                    for (int64_t i = 0; i < tr; ++i) {
+                        if (j >= n[i]) continue;
+                        const int16_t* qr = q + (g * rows + r0 + i) * dh;
+                        int32_t acc32 = 0;
+                        #pragma omp simd reduction(+:acc32)
+                        for (int64_t d = 0; d < dh; ++d) acc32 += (int32_t)qr[d] * (int32_t)kj[d];
+                        s[i * t + j] = acc32;
+                        mx[i] = std::max(mx[i], acc32);
+                    }
+                }
+                for (int64_t i = 0; i < tr; ++i) {
+                    int32_t total = 0;
+                    for (int64_t j = 0; j < n[i]; ++j) {
+                        int64_t gap = (int64_t)mx[i] - (int64_t)s[i * t + j];
+                        if (gap > lut_len - 1) gap = lut_len - 1;
+                        e[i * t + j] = lut[gap];
+                        total += e[i * t + j];
+                    }
+                    tot[i] = total;
                 }
                 std::fill(acc.begin(), acc.end(), 0);
-                const int32_t two = 2 * tot;
-                for (int64_t j = 0; j < n; ++j) {
-                    const int32_t num = tot + 510 * e[j];
-                    const int32_t p = num / two;                       // both positive: floor division
-                    if (p == 0) continue;
+                for (int64_t j = 0; j < nmax; ++j) {
                     const int16_t* vj = vg + j * dh;
-                    #pragma omp simd
-                    for (int64_t d = 0; d < dh; ++d) acc[d] += (int64_t)p * (int64_t)vj[d];
+                    for (int64_t i = 0; i < tr; ++i) {
+                        if (j >= n[i]) continue;
+                        const int32_t num = tot[i] + 510 * e[i * t + j];
+                        const int32_t pj = num / (2 * tot[i]);          // both positive: floor division
+                        if (pj == 0) continue;
+                        int64_t* a = acc.data() + i * dh;
+                        #pragma omp simd
+                        for (int64_t d = 0; d < dh; ++d) a[d] += (int64_t)pj * (int64_t)vj[d];
+                    }
                 }
-                int64_t* o = out + (g * rows + r) * dh;
-                for (int64_t d = 0; d < dh; ++d) o[d] = acc[d];
+                for (int64_t i = 0; i < tr; ++i) {
+                    int64_t* o = out + (g * rows + r0 + i) * dh;
+                    for (int64_t d = 0; d < dh; ++d) o[d] = acc[i * dh + d];
+                }
             }
         }
     }
