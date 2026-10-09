@@ -38,6 +38,7 @@ from . import logup
 from .graph import CheapOp, IntGraph, MatOp, _canonical
 
 __all__ = ["CutOp", "CutPlan", "lo", "windows", "shift", "requant_values", "split", "split_counts", "public_lw",
+           "public_lw_f64",
            "delta_range",
            "instance_bits", "LMAX", "CLAIM_LIMIT"]
 
@@ -326,6 +327,27 @@ def split_counts(z: torch.Tensor, op: CutOp, offsets: dict[int, int], size: int)
     off = torch.where(width == 1, offsets[1], torch.where(width == w_lo, offsets[w_lo], offsets[w_hi]))
     counts = torch.bincount((delta + off).reshape(-1), minlength=size)
     return s, delta, width, idx, exc_z, counts
+
+
+def public_lw_f64(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, op: CutOp) -> torch.Tensor:
+    """:func:`public_lw` for range-checked values, as one float64 matrix ``[L ; W]`` ``[2N, T]`` (exact: every entry
+    below ``2^31``), gathered from the window table directly in float64 (what the final check multiplies)."""
+    if s.numel() == 0:
+        return torch.zeros(2 * s.shape[0], s.shape[1], dtype=torch.float64, device=s.device)
+    a, b = (op.lo_, op.hi) if op.kind == "requant" else (int(v) for v in torch.aminmax(s))
+    if b - a > _TABLE_SPAN:
+        lower, width = public_lw(s, exc_idx, exc_z, op)
+        return torch.cat([lower, width]).to(torch.float64)
+    tab = lo(torch.arange(a, b + 2, dtype=torch.int64, device=s.device), op.mult, op.sh)
+    ltab, wtab = tab[:-1].to(torch.float64), (tab[1:] - tab[:-1]).to(torch.float64)
+    i = s.to(torch.int64) - a
+    out = torch.cat([ltab[i], wtab[i]])
+    if exc_idx.numel():
+        n = s.numel()
+        flat = out.view(-1)
+        flat[exc_idx] = exc_z.to(torch.float64)
+        flat[n + exc_idx] = 1.0
+    return out
 
 
 def public_lw(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, op: CutOp, *, in_range: bool = False):

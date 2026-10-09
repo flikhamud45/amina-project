@@ -20,7 +20,8 @@ from .field import P
 
 __all__ = ["D", "BETA", "const", "gen", "add", "sub", "neg", "mul", "scal", "lift", "inv", "inv_fermat", "frobenius",
            "batch_inv", "power",
-           "eq_eval", "eq_table", "prefix_eq_sum", "lagrange4", "frac_sum", "small_times", "pack", "unpack", "equal"]
+           "eq_eval", "eq_table", "prefix_eq_sum", "lagrange4", "frac_sum", "small_times", "int_times", "inner", "pack",
+           "unpack", "equal"]
 
 D = 8
 BETA = 11
@@ -198,6 +199,45 @@ def frac_sum(num: torch.Tensor, den: torch.Tensor) -> tuple[torch.Tensor, torch.
             den = torch.cat([den, one[None]])
         num, den = add(mul(num[0::2], den[1::2]), mul(num[1::2], den[0::2])), mul(den[0::2], den[1::2])
     return num[0], den[0]
+
+
+def inner(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """``sum_i a_i b_i`` for ``a, b`` ``[n, 8]``: the ``8 x 8`` matrix of plane products ``A^T B`` (one exact
+    base-field product), then ``x^(u+w)`` reduced with ``x^8 = 11``."""
+    from .field import field_matmul_mod
+    if a.shape[0] == 0:
+        return const(0, a.device)
+    m = field_matmul_mod(a.T.contiguous(), b.contiguous())          # [8, 8]: m[u, w] = sum_i a_iu b_iw
+    out = torch.zeros(2 * D - 1, dtype=torch.int64, device=a.device)
+    for u in range(D):
+        out[u:u + D] += m[u]
+    out = out % P
+    return (out[:D] + torch.cat([BETA * out[D:], out.new_zeros(1)])) % P
+
+
+_LIMB = 11
+
+
+def int_times(mat: torch.Tensor, vec: torch.Tensor, bound_bits: int) -> torch.Tensor:
+    """``mat @ vec`` in ``F`` for an integer matrix ``mat`` ``[R, C]`` (any integer or float64 dtype holding integers,
+    every ``|entry| < 2^bound_bits``) and ``vec`` ``[C, 8]``: ``vec``'s coefficients in three 11-bit limbs, one float64
+    GEMM per block of ``2^(52 - bound_bits - 11)`` columns (each partial sum then below ``2^52``, exact), on
+    ``mat``'s device."""
+    dev = mat.device
+    v = vec.to(dev, torch.int64)
+    limbs = torch.cat([(v >> (_LIMB * l)) & ((1 << _LIMB) - 1) for l in range(3)], 1).to(torch.float64)   # [C, 24]
+    m = mat if mat.dtype == torch.float64 else mat.to(torch.float64)
+    step = max(1, 1 << max(0, 52 - bound_bits - _LIMB))
+    acc = None
+    for c0 in range(0, m.shape[1], step):
+        part = torch.remainder((m[:, c0:c0 + step] @ limbs[c0:c0 + step]).to(torch.int64), P)
+        acc = part if acc is None else (acc + part) % P
+    if acc is None:
+        return torch.zeros(m.shape[0], D, dtype=torch.int64, device=dev)
+    out = acc[:, :D]
+    for l in (1, 2):
+        out = (out + acc[:, l * D:(l + 1) * D] * pow(2, _LIMB * l, P)) % P
+    return out
 
 
 def small_times(mat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:

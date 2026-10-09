@@ -156,18 +156,25 @@ def _planes(v: torch.Tensor) -> torch.Tensor:
 
 
 def _dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """``sum_i a_i b_i`` in F for ``a, b`` ``[n, 8]``."""
-    return ef.mul(a, b).sum(0) % P if a.shape[0] else ef.const(0)
+    """``sum_i a_i b_i`` in F for ``a, b`` ``[n, 8]`` (one 8 x 8 exact product, ``extfield.inner``)."""
+    return ef.inner(a.cpu(), b.cpu())
 
 
-def _xbar(op, xin: torch.Tensor, e: torch.Tensor) -> torch.Tensor:
-    """``[X ; 1] e`` ``[K (+1), 8]`` of a linear op's input ``xin`` (its ``[M, K]`` rows) at the column point ``e``:
-    one exact float64 product for int8-sized inputs (``small_matmul_mod``), else the limb product."""
-    x = xin.reshape(-1, op.n_in).to(torch.int64).cpu()
-    if x.numel() and int(x.abs().max()) <= 256:
-        out = small_matmul_mod(x.T.contiguous(), e)
+def _xbar(op, xin: torch.Tensor, e: torch.Tensor, cache: dict | None = None) -> torch.Tensor:
+    """``[X ; 1] e`` ``[K (+1), 8]`` of a linear op's input ``xin`` (its ``[M, K]`` rows) at the column point ``e``
+    (``extfield.int_times`` for entries below ``2^31``, the general product otherwise);
+    ops reading the same input at the same point share it through ``cache``."""
+    key = (xin.data_ptr(), tuple(xin.shape), id(e))
+    if cache is not None and key in cache:
+        out = cache[key]
     else:
-        out = ef.small_times(x.T.contiguous(), e)
+        x = xin.reshape(-1, op.n_in).cpu()
+        if x.numel() and int(x.abs().max()) >= 1 << 31:          # not an int32-sized input: the general product
+            out = ef.small_times(x.T.contiguous().to(torch.int64), e.cpu())
+        else:
+            out = ef.int_times(x.to(torch.float64).T, e.cpu(), 31)
+        if cache is not None:
+            cache[key] = out
     return torch.cat([out, (e.sum(0) % P)[None]]) if op.has_bias else out
 
 
@@ -425,10 +432,8 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
                 if verifier.mode == "C" and o.layout == "row":
                     chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
                     folds[o.name] = prover.fold({o.name: _planes(chi).to(prover.device)})[o.name].cpu()
-                else:                                       # y = A xbar = Z e, on the prover's device
-                    z = zs[o.name].to(prover.device, torch.int64)
-                    folds[o.name] = _planes(ef.small_times(z, e.to(prover.device))).cpu()
-                    del z
+                else:                                       # y = A xbar = Z e (|Z| < 2^29), where Z is kept
+                    folds[o.name] = _planes(ef.int_times(zs[o.name], e, 30)).cpu()
         order = [op.name for op in clear_rows] if verifier.mode == "C" else []
         items = _fold_items(verifier, plan, col_cut)
         parts = [us_clear[n] for n in order] + [torch.cat([folds[o] for o in members], 1) for _, members in items]
@@ -460,10 +465,12 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         xbars, ys = {}, {}
         mats = {op.name: op for op in verifier.graph.mat_ops}
         points = [_points(plan, b, o[2]) for b, o in enumerate(outs)]      # each instance's e and eq(r_row), once
+        xcache: dict = {}
         for b in range(len(outs)):
             e, _ = points[b]
             for o in plan.instance_ops(b):
-                xbars[o.name] = _xbar(mats[o.name], inputs[o.name], e)
+                xbars[o.name] = _xbar(mats[o.name], inputs[o.name], e, xcache)
+        del xcache
         for key, members in items:
             planes = cut_folds[key]
             if not (verifier.mode == "C" and plan.op(members[0]).layout == "row"):     # y of these members
@@ -536,7 +543,7 @@ def _kpre_y_ok(verifier: Verifier, plan, ys: dict, xbars: dict) -> bool:
         chi_s, u_s = (t.cpu() for t in verifier._pre[o.name])
         y, xb = ys[o.name], xbars[o.name]
         left = field_matmul_mod(to_field(chi_s), to_field(y))
-        right = field_matmul_mod(to_field(u_s), to_field(xb))
+        right = field_matmul_mod(to_field(u_s), to_field(xb))     # small: r x (K + 1) times [K + 1, 8]
         if not torch.equal(left, right):
             return False
     return True
@@ -554,25 +561,18 @@ def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xb
     vdev = torch.device(verifier.device)
     for b, (p0, q0, rho, p_hat, q_hat) in enumerate(outs):
         e, chi_full = points[b]
-        # chi^T L and chi^T W ([8, T] planes) for every op of the instance: the verifier's batched exact products
-        # (same-shape ops in one limb GEMM), with |L| < 2^29 + 2^16 and W <= 2^16
-        pairs, chis = {}, {}
-        for o in plan.instance_ops(b):
-            chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
-            chis[o.name] = chi
-            idx, z = exc[o.name]
-            lower, width = cutmod.public_lw(values[o.name].to(vdev), idx.to(vdev), z.to(vdev), o, in_range=True)
-            planes = _planes(chi).to(vdev)
-            pairs[(o.name, "L")] = (planes, lower)
-            pairs[(o.name, "W")] = (planes, width)
-        prods = verifier._field_products(pairs, 1 << 30)
+        # L e and W e ([N, 8] each) of every op: [L ; W] gathered in float64 from the window table, one exact GEMM
+        # with e's limbs (|L| < 2^29 + 2^16 < 2^30, W <= 2^16); then chi (L e) and chi (W e) as inner products
         total = ef.const(0)
         for o in plan.instance_ops(b):
-            s_l = _dot(us_row[o.name], xbars[o.name]) if o.name in us_row else _dot(chis[o.name], ys[o.name])
-            le = _dot(prods[(o.name, "L")].cpu().T.contiguous(), e)
-            we = _dot(prods[(o.name, "W")].cpu().T.contiguous(), e)
+            chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
+            idx, z = exc[o.name]
+            lw = cutmod.public_lw_f64(values[o.name].to(vdev), idx.to(vdev), z.to(vdev), o)
+            lwe = ef.int_times(lw, e, 30).cpu()
+            del lw
+            s_l = _dot(us_row[o.name], xbars[o.name]) if o.name in us_row else _dot(chi, ys[o.name])
+            le, we = _dot(chi, lwe[:o.n_rows]), _dot(chi, lwe[o.n_rows:])
             total = ef.add(total, ef.add(ef.sub(s_l, le), ef.mul(x_gen, we)))
-        del prods, pairs
         i_b = logup.indicator(rho, plan.rows(b), plan.T, plan.n_vars(b)[1])
         want_q = ef.add(ef.sub(ef.mul(alpha, i_b), total), ef.sub(ef.const(1), i_b))
         if not (ef.equal(p_hat, i_b) and ef.equal(q_hat, want_q)):

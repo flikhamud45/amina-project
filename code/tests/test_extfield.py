@@ -124,6 +124,14 @@ def test_integer_matrix_products_and_packing():
             want = ef.add(want, ef.scal(vec[j], int(mat[i, j]) % P))
         assert torch.equal(got[i], want)
     assert torch.equal(ef.unpack(ef.pack(vec), 13), vec)
+    for bits in (8, 29, 31):                       # int_times: the limb GEMM, blocks of columns
+        m = torch.randint(-(1 << bits) + 1, 1 << bits, (7, 5000), generator=g)
+        v = _rand(g, 5000)
+        assert torch.equal(ef.int_times(m, v, bits), ef.small_times(m, v))
+        assert torch.equal(ef.int_times(m.to(torch.float64), v, bits), ef.small_times(m, v))
+    a, b = _rand(g, 300), _rand(g, 300)            # inner: one 8 x 8 product
+    assert torch.equal(ef.inner(a, b), ef.mul(a, b).sum(0) % P)
+    assert torch.equal(ef.inner(a[:0], b[:0]), ef.const(0))
 
 
 def test_extension_challenges():
