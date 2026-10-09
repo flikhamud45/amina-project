@@ -51,3 +51,29 @@ def test_defence_accepts_honest_queries_on_real_weights(tiny_opt):
     verifier = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in commitments.items()})
     for seed in range(2):
         assert run_query(prover, verifier, ids[:, :16], seed=seed)["accepted"]
+
+
+def test_smoothed_norm_gains_keep_the_graph_and_the_protocol(tiny_opt):
+    # plan F2: SmoothQuant through the norms' per-channel gains -- the same ops and shapes, scalar requant
+    # multipliers (requant_fn), an integer graph that tracks the float model, accepted by v0 and by V1
+    from pvi.fullcheck import cut_protocol as cp
+    from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for, run_query
+
+    model, base, _, ids = tiny_opt
+    graph, info = build_opt_from_hf(model, ids, norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
+    assert [type(o) for o in graph.ops] == [type(o) for o in base.ops]
+    assert all(a.weight.shape == b.weight.shape for a, b in zip(graph.mat_ops, base.mat_ops))
+    gains = [o for o in graph.ops if isinstance(o, CheapOp) and o.note == "norm"]
+    assert len({int(v) for v in gains[0].fn.__defaults__[0]}) > 1          # a gain per channel
+    assert all(isinstance(o.params["requant"]["mult"], int) for o in graph.ops
+               if isinstance(o, CheapOp) and o.params.get("requant"))
+    with torch.no_grad():
+        ref = model(ids).logits[0].double()
+    got = real_logits(graph, info, ids, all_positions=True)[0]
+    assert torch.nn.functional.cosine_similarity(got, ref, dim=-1).min() > 0.9
+    params = params_for(20, len(graph.mat_ops), cut=True)
+    commitments = commit_graph(graph, params.rate)
+    prover = Prover(graph, commitments=commitments)
+    verifier = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in commitments.items()})
+    assert run_query(prover, verifier, ids[:, :16], seed=1)["accepted"]
+    assert cp.run_cut_query(prover, verifier, ids[:, :16], seed=1)["accepted"]

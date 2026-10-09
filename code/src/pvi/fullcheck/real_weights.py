@@ -39,7 +39,7 @@ import torch
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn
 from .transformer import (
-    CONFIGS, RES_MAX, SHIFT, _attention, _lut, _norm_int, build_decoder,
+    CONFIGS, RES_MAX, SHIFT, _attention, _isqrt, _lut, _norm_int, build_decoder,
 )
 
 __all__ = ["build_opt_from_hf", "matches_benchmark_graph", "real_logits"]
@@ -50,8 +50,10 @@ _RELU = torch.tensor([max(0, x) for x in range(-128, 128)], dtype=torch.int64)
 class _RealBuilder:
     """Like ``transformer._Builder``, but every tensor carries its real scale."""
 
-    def __init__(self, tokens: torch.Tensor, pct: float, norm_gain: float) -> None:
+    def __init__(self, tokens: torch.Tensor, pct: float, norm_gain: float, smooth: float | None = None,
+                 smooth_pct: float = 99.9) -> None:
         self.norm_gain = norm_gain
+        self.smooth, self.smooth_pct = smooth, smooth_pct
         self.ops: list = []
         self.env = {"x": tokens}
         self.scale: dict[str, float] = {}
@@ -72,10 +74,17 @@ class _RealBuilder:
         self.scale[op.output] = scale
         return op.output
 
-    def mat(self, inp, w: torch.Tensor, b: torch.Tensor | None, s_in: float, layout="linear",
+    def mat(self, inp, w: torch.Tensor, b: torch.Tensor | None, s_in, layout="linear",
             s_w: float | None = None):
-        """Real ``w [rows, cols]`` -> int8; the product's real scale is ``s_w * s_in``."""
+        """Real ``w [rows, cols]`` -> int8; the product's real scale is ``s_w * s_in``.  A per-channel input scale
+        ``s_in`` (a smoothed norm's, a vector) is folded into ``w``'s columns first, then one scale per matrix."""
         n = self.name("mm")
+        if torch.is_tensor(s_in):
+            w_eff = w.double() * s_in.double()[None, :]                 # acts on the integer input
+            s_z = float(w_eff.abs().max()) / INT8_MAX
+            w_int = (w_eff / s_z).round().clamp(-INT8_MAX, INT8_MAX).to(torch.int8)
+            b_int = None if b is None else (b.double() / s_z).round().to(torch.int64)
+            return self._run(MatOp(n, (inp,), n + ".z", weight=w_int, bias=b_int, layout=layout), s_z)
         s_w = float(w.abs().max()) / INT8_MAX if s_w is None else s_w
         w_int = (w / s_w).round().clamp(-INT8_MAX, INT8_MAX).to(torch.int8)
         s_z = s_w * s_in
@@ -105,13 +114,30 @@ class _RealBuilder:
         return self.requant("res", [r, z], self.scale[r], "residual add", kind="residual", mult=m, shift=SHIFT,
                             res_max=RES_MAX)
 
-    def norm(self, r, d):
+    def norm(self, r, d, consumers=None):
         # _norm_int with gain G << 16 emits G * (normalised value), clamped to int8: real
         # scale 1/G, range +-127/G standard deviations. G is a public constant of the op,
         # so choosing it does not change any shape or cost.
-        gain = torch.full((d,), round(self.norm_gain * (1 << 16)), dtype=torch.int64)
-        return self.cheap("norm", [r], lambda a, g=gain: _norm_int(a, g, True),
-                          1.0 / self.norm_gain, "norm")
+        if self.smooth is None or consumers is None:
+            gain = torch.full((d,), round(self.norm_gain * (1 << 16)), dtype=torch.int64)
+            return self.cheap("norm", [r], lambda a, g=gain: _norm_int(a, g, True),
+                              1.0 / self.norm_gain, "norm")
+        # SmoothQuant through the gain vector (plan F2): channel j gets G_j = c / s_j, s_j = a_j^alpha / w_j^(1-alpha)
+        # (a_j: a high percentile of |normalised_j| on calibration data; w_j: the largest |W_ij| of the matrices this
+        # norm feeds), c such that the largest a_j G_j is 127; the next matrices take 1/G_j into column j (mat()).
+        x = self.env[r]
+        mean = torch.div(x.sum(-1, keepdim=True) + d // 2, d, rounding_mode="floor")
+        xc = x - mean
+        sigma = _isqrt(torch.div((xc * xc).sum(-1, keepdim=True), d, rounding_mode="floor"))
+        n = (xc.double() / sigma.double()).reshape(-1, d).abs()
+        a = (torch.quantile(n[:1 << 14], self.smooth_pct / 100.0, dim=0) if self.smooth_pct < 100
+             else n.amax(0)).clamp_min(1e-3)
+        wj = torch.stack([w.double().abs().amax(0) for w in consumers]).amax(0).clamp_min(1e-8)
+        s_ = a.pow(self.smooth) / wj.pow(1 - self.smooth)
+        g_real = ((INT8_MAX / float((a / s_).max())) / s_).clamp(1.0 / 64, float(1 << 14))
+        gain = torch.round(g_real * (1 << 16)).to(torch.int64)
+        return self.cheap("norm", [r], lambda a_, g=gain: _norm_int(a_, g, True),
+                          (1 << 16) / gain.double(), "norm")
 
 
 def _fold(w: torch.Tensor, b: torch.Tensor | None, gamma: torch.Tensor, beta: torch.Tensor):
@@ -123,7 +149,8 @@ def _fold(w: torch.Tensor, b: torch.Tensor | None, gamma: torch.Tensor, beta: to
 
 
 def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, norm_gain: float = 32,
-                      residual_headroom: float = 1.25, device=None) -> tuple[IntGraph, dict]:
+                      residual_headroom: float = 1.25, device=None, smooth: float | None = None,
+                      smooth_pct: float = 99.9, pct_att: float = 100.0) -> tuple[IntGraph, dict]:
     """An integer OPT decoder with the checkpoint's real weights.
 
     ``calib_ids`` ``[1, T]`` sets every activation scale. The three knobs are all
@@ -153,8 +180,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     res_max = max(float(h.abs().max()) for h in hs) * residual_headroom
     s_res = max(res_max / RES_MAX, float(dec.embed_tokens.weight.abs().max()) / (INT8_MAX * 8))
 
-    B = _RealBuilder(calib_ids.to(device or calib_ids.device), pct, norm_gain)
-    s_norm = 1.0 / norm_gain
+    B = _RealBuilder(calib_ids.to(device or calib_ids.device), pct, norm_gain, smooth, smooth_pct)
     # Integer multiplier c with s_embed = c * s_residual, as close as possible to giving the
     # embedding its full int8 resolution (build_decoder hard-codes c = 8).
     embed_mult = max(1, round(float(dec.embed_tokens.weight.abs().max()) / INT8_MAX / s_res))
@@ -171,18 +197,17 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     for layer in dec.layers:
         at = layer.self_attn
         ln1 = layer.self_attn_layer_norm
-        h = B.norm(r, d)
-        qkv = []
-        for proj in (at.q_proj, at.k_proj, at.v_proj):
-            wf, bf = _fold(proj.weight.float(), proj.bias, ln1.weight, ln1.bias)
-            qkv.append(B.to_int8(B.mat(h, wf.float(), bf, s_norm)))
-        q, k, v = qkv
+        folded = [_fold(proj.weight.float(), proj.bias, ln1.weight, ln1.bias)
+                  for proj in (at.q_proj, at.k_proj, at.v_proj)]
+        h = B.norm(r, d, [wf for wf, _ in folded])
+        q, k, v = (B.to_int8(B.mat(h, wf.float(), bf, B.scale[h])) for wf, bf in folded)
         # HF scales q by dh^-0.5 inside the module; here that lives in m_s, as in build_decoder.
         sq, sk, sv = B.scale[q], B.scale[k], B.scale[v]
         m_s = round((1 << SHIFT) * 16.0 * sq * sk / math.sqrt(dh))
         raw = _attention(B.env[q], B.env[k], B.env[v], m_s, None, n_heads, n_heads, dh)
         s_raw = sv / 255.0                         # 8-bit probabilities x int8 values
-        top = float(raw.double().abs().max()) * s_raw
+        rabs = raw.double().abs().flatten()
+        top = (float(torch.quantile(rabs[:1 << 24], pct_att / 100.0)) if pct_att < 100 else float(rabs.max())) * s_raw
         s_att = max(top, 1e-12) / INT8_MAX
         m_o = round((1 << SHIFT) * s_raw / s_att)
         att = B.cheap("attn", [q, k, v],
@@ -191,19 +216,20 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
         r = B.residual(r, B.mat(att, at.out_proj.weight.float(), at.out_proj.bias, s_att))
 
         ln2 = layer.final_layer_norm
-        h = B.norm(r, d)
         wf, bf = _fold(layer.fc1.weight.float(), layer.fc1.bias, ln2.weight, ln2.bias)
-        f1 = B.to_int8(B.mat(h, wf.float(), bf, s_norm))
+        h = B.norm(r, d, [wf])
+        f1 = B.to_int8(B.mat(h, wf.float(), bf, B.scale[h]))
         act = B.cheap("act", [f1], lambda a, t=_RELU: _lut(a, t), B.scale[f1], "relu")
         r = B.residual(r, B.mat(act, layer.fc2.weight.float(), layer.fc2.bias, B.scale[act]))
 
-    h = B.norm(r, d)
-    h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), s_norm, "last position")
     lnf = dec.final_layer_norm
     wf, bf = _fold(model.lm_head.weight.float(), None, lnf.weight, lnf.bias)
-    logits = B.mat(h, wf.float(), bf, s_norm)
+    h = B.norm(r, d, [wf])
+    h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), B.scale[h], "last position")
+    logits = B.mat(h, wf.float(), bf, B.scale[h])
     info = {"s_residual": s_res, "residual_real_max": res_max, "logit_scale": B.scale[logits],
-            "pct": pct, "norm_gain": norm_gain, "embed_mult": embed_mult}
+            "pct": pct, "norm_gain": norm_gain, "embed_mult": embed_mult, "smooth": smooth,
+            "smooth_pct": smooth_pct, "pct_att": pct_att}
     return IntGraph(B.ops, "x", logits), info
 
 
