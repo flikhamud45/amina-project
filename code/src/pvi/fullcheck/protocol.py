@@ -740,6 +740,23 @@ class Verifier:
             self._columns[key] = self.graph.claim_columns(x)
         return self._columns[key]
 
+    def check_tokens(self, x: torch.Tensor, claims: dict) -> bool:
+        """The token rule of a graph with its logits at ``n = meta["lm_positions"] > 1`` positions
+        (:func:`transformer.with_lm_positions`): its queries are a prompt and the ``n - 1`` tokens
+        generated after it, so each of the first ``n - 1`` columns of the claimed logits must have its
+        first largest entry at the next input token.  The claims are then checked as any others: a
+        wrong token needs wrong logits.  Claims of another shape pass here (:meth:`derive` rejects
+        them)."""
+        n = self.graph.meta.get("lm_positions", 1)
+        if n <= 1:
+            return True
+        head = next(op for op in self.graph.mat_ops if op.output == self.graph.output_name)
+        z = claims.get(head.name)
+        if not torch.is_tensor(z) or x.dim() != 2 or x.shape[1] < n or tuple(z.shape) != (head.n_rows, x.shape[0] * n):
+            return True
+        chosen = z.reshape(head.n_rows, x.shape[0], n)[:, :, :-1].argmax(0)          # [B, n - 1]
+        return torch.equal(chosen.cpu(), x[:, x.shape[1] - n + 1:].cpu().to(chosen.dtype))
+
     def derive(self, x: torch.Tensor, claims: dict[str, torch.Tensor]) -> dict[str, torch.Tensor] | None:
         """Recompute every cheap op; return each weight op's input, or ``None`` to reject.
 
@@ -1190,7 +1207,7 @@ class Verifier:
                          cols: dict | None = None, openings: dict | None = None,
                          table_proofs: dict | None = None) -> str | None:
         """``None`` to accept, else the check that rejects, with ``run_query``'s labels: the verdict
-        of :meth:`derive`, :meth:`check_lookups` (``table_proofs``: the multiproofs of a plan's lookup
+        of :meth:`check_tokens` (``"token"``), :meth:`derive`, :meth:`check_lookups` (``table_proofs``: the multiproofs of a plan's lookup
         tables), :meth:`check_products` and (with ``openings``) :meth:`check_columns` on these
         messages.  ``claims`` from :func:`pipeline.wire_claim` (a lookup table's from
         :func:`pipeline.wire_rows`), ``openings`` from :func:`pipeline.wire_openings`.  In mode C the
@@ -1198,6 +1215,8 @@ class Verifier:
         call without ``openings`` is refused rather than accepted on Freivalds' check alone."""
         if self.mode == "C" and openings is None:
             raise ValueError("mode C: verify_streaming needs the opened columns (openings)")
+        if not self.check_tokens(x, claims):
+            return "token"
         reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=True)
         if reason is _NOT_INT8:        # (the graphs here clamp every weight op's input to int8)
             reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=False)
@@ -1651,6 +1670,9 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
             return out
     else:                         # the prover's own tensors, which the checks after its fold read again
         claims_v = _passed(claims)
+    if not verifier.check_tokens(x_v, claims_v):
+        out["rejected_at"] = "token"
+        return out
     if vdev.type != "cpu":        # a GPU client: receiving the proof includes uploading it
         _sync(vdev)
         c0 = contention.begin()

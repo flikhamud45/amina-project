@@ -26,6 +26,8 @@ integers.
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 import math
 from dataclasses import dataclass
 from functools import lru_cache
@@ -35,7 +37,7 @@ import torch
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, requant
 
-__all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count"]
+__all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
 
 SHIFT = 30
 RES_MAX = (1 << 22) - 1
@@ -329,6 +331,41 @@ def _write_output(dst: torch.Tensor, raw: torch.Tensor, m_o: int | None) -> None
 def _last_position(a: torch.Tensor) -> torch.Tensor:
     """``[B, T, d] -> [B, 1, d]``: the last position."""
     return a[:, -1:, :].contiguous()
+
+
+def _last_positions(a: torch.Tensor, n: int) -> torch.Tensor:
+    """``[B, T, d] -> [B, n, d]``: the last ``n`` positions."""
+    return a[:, -n:, :].contiguous()
+
+
+def with_lm_positions(graph: IntGraph, n: int) -> IntGraph:
+    """``graph`` (a decoder of :func:`build_decoder` or ``real_weights``) with its logits at the last
+    ``n`` positions instead of the last one: every "last position" slice -- before the LM head, and in
+    a pruned last block -- takes the last ``n``.  The ops, weights and multipliers are ``graph``'s.
+
+    Every op but causal attention is per position and no constant depends on the input, so the logits
+    at position ``T - n + j`` are those that ``graph`` gives on the prefix ``x[:, :T - n + j + 1]``.  A
+    query is then a prompt followed by the ``n - 1`` tokens generated after it, proved as one prefill:
+    ``meta["lm_positions"] = n`` makes the verifier check that each of those tokens is the greedy choice
+    of the logits before it (:meth:`protocol.Verifier.check_tokens`), and the last logits give token
+    ``n``."""
+    if n < 1:
+        raise ValueError("at least one position")
+    ops = [dataclasses.replace(op, fn=functools.partial(_last_positions, n=n))
+           if isinstance(op, CheapOp) and op.note == "last position" else op for op in graph.ops]
+    return IntGraph(ops, graph.input_name, graph.output_name, {**graph.meta, "lm_positions": n})
+
+
+def greedy_tokens(graph: IntGraph, prompt: torch.Tensor, steps: int) -> torch.Tensor:
+    """``prompt [B, P]`` followed by the ``steps`` tokens ``graph`` (logits at the last position) generates
+    greedily, each the first largest logit: ``[B, P + steps]``.  One forward pass per token, without a
+    KV cache: the integers do not depend on how they are computed."""
+    x = prompt
+    for _ in range(steps):
+        env, _ = graph.forward(x, free=True)
+        nxt = env[graph.output_name][:, -1].argmax(-1, keepdim=True)
+        x = torch.cat([x, nxt.to(x.device, x.dtype)], 1)
+    return x
 
 
 def _residual(a: torch.Tensor, b: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
