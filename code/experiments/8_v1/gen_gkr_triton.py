@@ -367,6 +367,64 @@ def _suffix_tables(rho_mont: list[list[int]], device) -> list[torch.Tensor]:
     return out
 
 
+# -- single elements of F on the host, as lists of 8 Python ints (much cheaper than 8-entry tensors per round)
+_ZETA = pow(11, (PRIME - 1) // 8, PRIME)
+_ZP = [[pow(_ZETA, i * k, PRIME) for k in range(8)] for i in range(8)]
+_INV2, _INV6 = pow(2, PRIME - 2, PRIME), pow(6, PRIME - 2, PRIME)
+
+
+def _fm(a, b):
+    c = [0] * 15
+    for i, ai in enumerate(a):
+        if ai:
+            for j, bj in enumerate(b):
+                c[i + j] += ai * bj
+    return [(c[k] + 11 * c[k + 8]) % PRIME for k in range(7)] + [c[7] % PRIME]
+
+
+def _fa(a, b):
+    return [(x + y) % PRIME for x, y in zip(a, b)]
+
+
+def _fs(a, b):
+    return [(x - y) % PRIME for x, y in zip(a, b)]
+
+
+def _fk(a, k: int):
+    return [x * k % PRIME for x in a]
+
+
+def _fc(c: int):
+    return [c % PRIME] + [0] * 7
+
+
+def _finv(a):
+    """``a^-1`` through the norm (``extfield.inv``)."""
+    b = [x * z % PRIME for x, z in zip(a, _ZP[1])]
+    for i in range(2, 8):
+        b = _fm(b, [x * z % PRIME for x, z in zip(a, _ZP[i])])
+    n = _fm(a, b)[0]
+    return _fk(b, pow(n, PRIME - 2, PRIME))
+
+
+def _flagrange(g0, g1, g2, g3, r):
+    """The cubic through ``(t, g_t)``, ``t = 0..3``, at ``r`` (``extfield.lagrange4``)."""
+    r1, r2, r3 = _fs(r, _fc(1)), _fs(r, _fc(2)), _fs(r, _fc(3))
+    t12, t23 = _fm(r1, r2), _fm(r2, r3)
+    l0 = _fk(_fm(t12, r3), PRIME - _INV6)
+    l1 = _fk(_fm(r, t23), _INV2)
+    l2 = _fk(_fm(_fm(r, r1), r3), PRIME - _INV2)
+    l3 = _fk(_fm(r, t12), _INV6)
+    out = _fm(l0, g0)
+    for li, gi in ((l1, g1), (l2, g2), (l3, g3)):
+        out = _fa(out, _fm(li, gi))
+    return out
+
+
+def _li(t: torch.Tensor):
+    return [int(v) for v in t.tolist()]
+
+
 def _absorb(ch, label: str, v: torch.Tensor) -> None:
     ch.absorb(label.encode(), v.reshape(-1).to(torch.int64).contiguous().cpu().numpy().tobytes())
 
@@ -382,17 +440,17 @@ def _prove_tree(layers: list, ch, label: str):
     _absorb(ch, label + "top", top)
     rho = [ch.ext(label + "mu0")[0]]
     dev = p1.device
-    one = ef.const(1)
-    prev = top                                   # the values the layer's claim comes from
+    one = _fc(1)
+    prev = [_li(v) for v in top]                 # the values the layer's claim comes from
     for k in range(1, n):
         lam = ch.ext(label + f"lam{k}")[0]
         cp, cq = layers[k + 1]
         arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
         layers[k + 1] = None                     # its halves are all this layer reads
-        lam_m = _to_mont(lam)
-        mu = rho[0]
-        claim = ef.add(ef.add(prev[0], ef.mul(mu, ef.sub(prev[1], prev[0]))),
-                       ef.mul(lam, ef.add(prev[2], ef.mul(mu, ef.sub(prev[3], prev[2])))))
+        lam_m, lam_l = _to_mont(lam), _li(lam)
+        mu = _li(rho[0])
+        claim = _fa(_fa(prev[0], _fm(mu, _fs(prev[1], prev[0]))),
+                    _fm(lam_l, _fa(prev[2], _fm(mu, _fs(prev[3], prev[2])))))
         scale = one                              # prod_{i<j} eq(rho_i, r_i)
         suffixes = _suffix_tables([_to_mont(r) for r in rho], dev)
         rounds, rs = [], []
@@ -406,29 +464,31 @@ def _prove_tree(layers: list, ch, label: str):
             part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
             _round2_kernel[(nb,)](suffix, *arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
             del suffix
-            h0, h2 = _from_mont(part.sum(0).cpu() % PRIME)
-            rj = rho[j]
-            e0, e1 = ef.sub(one, rj), rj
-            e2, e3 = ef.sub(ef.scal(rj, 3), one), ef.sub(ef.scal(rj, 5), ef.const(2))
-            g0 = ef.mul(scale, ef.mul(e0, h0))
-            denom = ef.mul(scale, e1)
-            if not bool(denom.any()):            # probability ~ k / p^8: evaluate h(1) directly instead
-                h1 = _h_at_one(arrs, [_to_mont(r) for r in rho], j, lam_m, dev)
+            h0, h2 = (_li(v) for v in _from_mont(part.sum(0).cpu() % PRIME))
+            rj = _li(rho[j])
+            e0, e1 = _fs(one, rj), rj
+            e2, e3 = _fs(_fk(rj, 3), one), _fs(_fk(rj, 5), _fc(2))
+            g0 = _fm(scale, _fm(e0, h0))
+            denom = _fm(scale, e1)
+            if not any(denom):                   # probability ~ k / p^8: evaluate h(1) directly instead
+                h1 = _li(_h_at_one(arrs, [_to_mont(r) for r in rho], j, lam_m, dev))
             else:
-                h1 = ef.mul(ef.sub(claim, g0), ef.inv(denom))
-            h3 = ef.add(ef.sub(h0, ef.scal(h1, 3)), ef.scal(h2, 3))
-            g = torch.stack([g0, ef.mul(scale, ef.mul(e2, h2)), ef.mul(scale, ef.mul(e3, h3))])
+                h1 = _fm(_fs(claim, g0), _finv(denom))
+            h3 = _fa(_fs(h0, _fk(h1, 3)), _fk(h2, 3))
+            g2, g3 = _fm(scale, _fm(e2, h2)), _fm(scale, _fm(e3, h3))
+            g = torch.tensor([g0, g2, g3], dtype=torch.int64)
             _absorb(ch, label + f"g{k}.{j}", g)
             rounds.append(g)
             r = ch.ext(label + f"r{k}.{j}")[0]
             rs.append(r)
-            claim = ef.lagrange4(g[0], ef.sub(claim, g[0]), g[1], g[2], r)
-            scale = ef.mul(scale, ef.add(ef.mul(rj, r), ef.mul(ef.sub(one, rj), ef.sub(one, r))))
+            rl = _li(r)
+            claim = _flagrange(g0, _fs(claim, g0), g2, g3, rl)
+            scale = _fm(scale, _fa(_fm(rj, rl), _fm(_fs(one, rj), _fs(one, rl))))
             outs = [torch.empty(8, half, dtype=torch.int32, device=dev) for _ in range(4)]
             _fold4_kernel[_grid(half)](*arrs, *outs, *_to_mont(r), half, m, half, **_consts(), BLOCK=BLOCK)
             arrs = outs
         vals = _from_mont(torch.stack([a[:, 0] for a in arrs]).cpu())
-        prev = vals
+        prev = [_li(v) for v in vals]
         _absorb(ch, label + f"v{k}", vals)
         tr.rounds.append(torch.stack(rounds))
         tr.vals.append(vals)
