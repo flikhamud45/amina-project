@@ -63,11 +63,11 @@ the round polynomials, the child values) are converted to canonical form on the 
 and widths (``prove_leaves``) or uploaded (``prove``); the tree is combined layer by layer; for each layer ``k`` the
 child arrays are split into their even and odd halves.  Round ``j`` writes ``g_j(t) = s_j eq(rho_j, t) h_j(t)``,
 ``s_j = prod_{i<j} eq(rho_i, r_i)``, ``h_j(t) = sum_y eq(rho_{>j}, y) F(t, y)`` of degree 2 with
-``F = PL QR + QL (PR + lambda QR)``: one kernel (``_round2_kernel``) sums ``h_j(0)`` and ``h_j(2)`` per block in 64 bits
-over the suffix eq table (built by doubling, never folded), the host gets ``h_j(1)`` from the claim
-``g_j(0) + g_j(1)``, extrapolates ``h_j(3)`` and sends the eager prover's ``g_j(0), g_j(2), g_j(3)``; then one fold of the
-four child arrays at the round's challenge (``_fold4_kernel``).  Per pair and round: 12 products in ``F`` instead of
-the direct evaluation's 20.
+``F = PL QR + QL (PR + lambda QR)``: one kernel (``_round2_kernel``) sums ``h_j(0), h_j(1), h_j(2)`` per block in 64
+bits over the suffix eq table (built once per layer, never folded), the host extrapolates ``h_j(3)`` and sends the
+eager prover's ``g_j(0), g_j(2), g_j(3)`` (a few products per round on Python ints); then one fold of the four child
+arrays at the round's challenge (``_fold4_kernel``).  Per pair and round: 16 products in ``F`` instead of the direct
+evaluation's 20, and no claim, inverse or interpolation on the host.
 """
 
 from __future__ import annotations
@@ -271,10 +271,12 @@ def _round2_kernel(e, pl, pr, ql, qr, out, {args('lam')}, half, s, P_, MU_, B11_
         body.append(load(f"{nm}b", ptr, "2 * y + 1", "s", "mask"))
         body.append("\n".join(f"    {nm}d{k} = _sub({nm}b{k}, {nm}a{k}, P)" for k in range(D)))
     body.append("\n".join(f"    lm{k} = lam{k}.to(tl.uint32) + et0 * 0" for k in range(D)))
-    for ti, t in enumerate((0, 2)):
+    for ti, t in enumerate((0, 1, 2)):
         for nm in ("pl", "pr", "ql", "qr"):
             if t == 0:
                 body.append("\n".join(f"    {nm}t{k} = {nm}a{k}" for k in range(D)))
+            elif t == 1:
+                body.append("\n".join(f"    {nm}t{k} = {nm}b{k}" for k in range(D)))
             else:
                 body.append("\n".join(f"    {nm}t{k} = _add({nm}b{k}, {nm}d{k}, P)" for k in range(D)))
         body.append(emul_call("u_", "lm", "qrt"))                       # lambda QR
@@ -284,7 +286,7 @@ def _round2_kernel(e, pl, pr, ql, qr, out, {args('lam')}, half, s, P_, MU_, B11_
         body.append("\n".join(f"    ff{k} = _add(f1_{k}, f2_{k}, P)" for k in range(D)))
         body.append(emul_call("g_", "et", "ff"))
         body.append("\n".join(
-            f"    tl.store(out + (pid * 2 + {ti}) * 8 + {k}, tl.sum(tl.where(mask, g_{k}, 0).to(tl.uint64), axis=0).to(tl.int64))"
+            f"    tl.store(out + (pid * 3 + {ti}) * 8 + {k}, tl.sum(tl.where(mask, g_{k}, 0).to(tl.uint64), axis=0).to(tl.int64))"
             for k in range(D)))
     parts.append("\n".join(body))
     # ---- fold of the four child arrays
@@ -385,11 +387,6 @@ def _suffix_tables(rho_mont: list[list[int]], device) -> list[torch.Tensor]:
 
 
 # -- single elements of F on the host, as lists of 8 Python ints (much cheaper than 8-entry tensors per round)
-_ZETA = pow(11, (PRIME - 1) // 8, PRIME)
-_ZP = [[pow(_ZETA, i * k, PRIME) for k in range(8)] for i in range(8)]
-_INV2, _INV6 = pow(2, PRIME - 2, PRIME), pow(6, PRIME - 2, PRIME)
-
-
 def _fm(a, b):
     c = [0] * 15
     for i, ai in enumerate(a):
@@ -415,29 +412,6 @@ def _fc(c: int):
     return [c % PRIME] + [0] * 7
 
 
-def _finv(a):
-    """``a^-1`` through the norm (``extfield.inv``)."""
-    b = [x * z % PRIME for x, z in zip(a, _ZP[1])]
-    for i in range(2, 8):
-        b = _fm(b, [x * z % PRIME for x, z in zip(a, _ZP[i])])
-    n = _fm(a, b)[0]
-    return _fk(b, pow(n, PRIME - 2, PRIME))
-
-
-def _flagrange(g0, g1, g2, g3, r):
-    """The cubic through ``(t, g_t)``, ``t = 0..3``, at ``r`` (``extfield.lagrange4``)."""
-    r1, r2, r3 = _fs(r, _fc(1)), _fs(r, _fc(2)), _fs(r, _fc(3))
-    t12, t23 = _fm(r1, r2), _fm(r2, r3)
-    l0 = _fk(_fm(t12, r3), PRIME - _INV6)
-    l1 = _fk(_fm(r, t23), _INV2)
-    l2 = _fk(_fm(_fm(r, r1), r3), PRIME - _INV2)
-    l3 = _fk(_fm(r, t12), _INV6)
-    out = _fm(l0, g0)
-    for li, gi in ((l1, g1), (l2, g2), (l3, g3)):
-        out = _fa(out, _fm(li, gi))
-    return out
-
-
 def _li(t: torch.Tensor):
     return [int(v) for v in t.tolist()]
 
@@ -459,42 +433,33 @@ def _prove_tree(layers: list, ch, label: str):
     rho = [ch.ext(label + "mu0")[0]]
     dev = p1.device
     one = _fc(1)
-    prev = [_li(v) for v in top]                 # the values the layer's claim comes from
     for k in range(1, n):
         lam = ch.ext(label + f"lam{k}")[0]
         cp, cq = layers[k + 1]
         arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
         layers[k + 1] = None                     # its halves are all this layer reads
         _tick("halves", dev)
-        lam_m, lam_l = _to_mont(lam), _li(lam)
-        mu = _li(rho[0])
-        claim = _fa(_fa(prev[0], _fm(mu, _fs(prev[1], prev[0]))),
-                    _fm(lam_l, _fa(prev[2], _fm(mu, _fs(prev[3], prev[2])))))
+        lam_m = _to_mont(lam)
         scale = one                              # prod_{i<j} eq(rho_i, r_i)
         suffixes = _suffix_tables([_to_mont(r) for r in rho], dev)
         _tick("suffix", dev)
         rounds, rs = [], []
         for j in range(k):
             # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
-            # h(0), h(2); h(1) follows from g(0) + g(1) = claim; the transcript is the eager prover's g(0), g(2), g(3)
+            # h(0), h(1), h(2); the transcript is the eager prover's g(0), g(2), g(3)
             m = arrs[0].shape[1]
             half = m // 2
             nb = _grid(half)[0]
             suffix, suffixes[j] = suffixes[j], None
-            part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
+            part = torch.empty(nb, 3, 8, dtype=torch.int64, device=dev)
             _round2_kernel[(nb,)](suffix, *arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
             del suffix
             _tick("round", dev)
-            h0, h2 = (_li(v) for v in _from_mont(part.sum(0).cpu() % PRIME))
+            h0, h1, h2 = (_li(v) for v in _from_mont(part.sum(0).cpu() % PRIME))
             rj = _li(rho[j])
-            e0, e1 = _fs(one, rj), rj
+            e0 = _fs(one, rj)
             e2, e3 = _fs(_fk(rj, 3), one), _fs(_fk(rj, 5), _fc(2))
             g0 = _fm(scale, _fm(e0, h0))
-            denom = _fm(scale, e1)
-            if not any(denom):                   # probability ~ k / p^8: evaluate h(1) directly instead
-                h1 = _li(_h_at_one(arrs, [_to_mont(r) for r in rho], j, lam_m, dev))
-            else:
-                h1 = _fm(_fs(claim, g0), _finv(denom))
             h3 = _fa(_fs(h0, _fk(h1, 3)), _fk(h2, 3))
             g2, g3 = _fm(scale, _fm(e2, h2)), _fm(scale, _fm(e3, h3))
             g = torch.tensor([g0, g2, g3], dtype=torch.int64)
@@ -503,7 +468,6 @@ def _prove_tree(layers: list, ch, label: str):
             r = ch.ext(label + f"r{k}.{j}")[0]
             rs.append(r)
             rl = _li(r)
-            claim = _flagrange(g0, _fs(claim, g0), g2, g3, rl)
             scale = _fm(scale, _fa(_fm(rj, rl), _fm(_fs(one, rj), _fs(one, rl))))
             _tick("host", dev)
             outs = [torch.empty(8, half, dtype=torch.int32, device=dev) for _ in range(4)]
@@ -511,28 +475,12 @@ def _prove_tree(layers: list, ch, label: str):
             arrs = outs
             _tick("fold", dev)
         vals = _from_mont(torch.stack([a[:, 0] for a in arrs]).cpu())
-        prev = [_li(v) for v in vals]
         _absorb(ch, label + f"v{k}", vals)
         tr.rounds.append(torch.stack(rounds))
         tr.vals.append(vals)
         rho = [ch.ext(label + f"mu{k}")[0]] + rs
     tr.point = torch.stack(rho)
     return tr
-
-
-def _h_at_one(arrs, rho, j, lam_m, dev):
-    """``h(1)`` of round ``j`` directly (the kernel at ``t = 1``: the odd halves): only when the claim cannot give
-    it, i.e. ``prod_{i<j} eq(rho_i, r_i) rho_j = 0``."""
-    m = arrs[0].shape[1]
-    odd = [a[:, 1::2].contiguous() for a in arrs]
-    half = m // 2
-    nb = _grid(half)[0]
-    suffix = _eq_table(rho[j + 1:], dev)
-    part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
-    # with A' = (a[2y+1], a[2y+1]) the kernel's t = 0 point is t = 1 of the original arrays
-    dup = [torch.stack([o, o], 2).reshape(8, m) for o in odd]
-    _round2_kernel[(nb,)](suffix, *dup, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
-    return _from_mont(part.sum(0).cpu() % PRIME)[0]
 
 
 def _tree(p: torch.Tensor, q: torch.Tensor) -> list:
