@@ -190,7 +190,7 @@ def _combine_kernel(pi, qi, po, qo, m_out, s_in, s_out, P_, MU_, B11_, BLOCK: tl
         + store("nq", "qo", "y", "s_out", "mask"))
     # ---- eq doubling
     parts.append(f'''@triton.jit
-def _eq_kernel(ti, to, {args('r')}, {args('s')}, m, s_in, s_out, P_, MU_, B11_, BLOCK: tl.constexpr):
+def _eq_kernel(ti, to, {args('r')}, {args('s')}, m, s_in, s_out, inter, P_, MU_, B11_, BLOCK: tl.constexpr):
     P = P_.to(tl.uint32)
     MU = MU_.to(tl.uint32)
     B11 = B11_.to(tl.uint32)
@@ -200,7 +200,8 @@ def _eq_kernel(ti, to, {args('r')}, {args('s')}, m, s_in, s_out, P_, MU_, B11_, 
         + "\n".join(f"    rr{k} = r{k}.to(tl.uint32) + t0 * 0" for k in range(D)) + "\n"
         + "\n".join(f"    ss{k} = s{k}.to(tl.uint32) + t0 * 0" for k in range(D)) + "\n"
         + emul_call("lo", "t", "ss") + "\n" + emul_call("hi", "t", "rr") + "\n"
-        + store("lo", "to", "y", "s_out", "mask") + "\n" + store("hi", "to", "y + m", "s_out", "mask"))
+        + "    lo_at = tl.where(inter == 1, 2 * y, y)\n    hi_at = tl.where(inter == 1, 2 * y + 1, y + m)\n"
+        + store("lo", "to", "lo_at", "s_out", "mask") + "\n" + store("hi", "to", "hi_at", "s_out", "mask"))
     # ---- one round
     body = [f'''@triton.jit
 def _round_kernel(e, pl, pr, ql, qr, out, {args('lam')}, half, s, P_, MU_, B11_, BLOCK: tl.constexpr):
@@ -330,16 +331,40 @@ def _combine(p: torch.Tensor, q: torch.Tensor):
     return po, qo
 
 
-def _eq_table(rho_mont: list[list[int]], device) -> torch.Tensor:
+def _eq_step(t: torch.Tensor, r: list[int], inter: int) -> torch.Tensor:
+    """``t`` ``[8, m]`` times ``(1 - r, r)`` for a new variable: appended as the high bit (``inter = 0``: entries
+    ``y`` and ``y + m``) or prepended as the low bit (``inter = 1``: entries ``2y`` and ``2y + 1``)."""
+    m = t.shape[1]
+    s = [(R_MOD - r[0]) % PRIME] + [(PRIME - c) % PRIME for c in r[1:]]
+    out = torch.empty(8, 2 * m, dtype=torch.int32, device=t.device)
+    _eq_kernel[_grid(m)](t, out, *r, *s, m, m, 2 * m, inter, **_consts(), BLOCK=BLOCK)
+    return out
+
+
+def _one(device) -> torch.Tensor:
     t = torch.zeros(8, 1, dtype=torch.int32, device=device)
     t[0, 0] = R_MOD
-    for r in rho_mont:
-        m = t.shape[1]
-        s = [(R_MOD - r[0]) % PRIME] + [(PRIME - c) % PRIME for c in r[1:]]
-        out = torch.empty(8, 2 * m, dtype=torch.int32, device=device)
-        _eq_kernel[_grid(m)](t, out, *r, *s, m, m, 2 * m, **_consts(), BLOCK=BLOCK)
-        t = out
     return t
+
+
+def _eq_table(rho_mont: list[list[int]], device) -> torch.Tensor:
+    """``eq(rho, bits(y))`` ``[8, 2^k]``, bit ``i`` of ``y`` against ``rho[i]`` (as ``extfield.eq_table``)."""
+    t = _one(device)
+    for r in rho_mont:
+        t = _eq_step(t, r, 0)
+    return t
+
+
+def _suffix_tables(rho_mont: list[list[int]], device) -> list[torch.Tensor]:
+    """``[eq_table(rho[j+1:]) for j < k]``, built from the last one by prepending one low bit at a time."""
+    k = len(rho_mont)
+    out = [None] * k
+    t = _one(device)
+    out[k - 1] = t
+    for j in range(k - 2, -1, -1):
+        t = _eq_step(t, rho_mont[j + 1], 1)
+        out[j] = t
+    return out
 
 
 def _absorb(ch, label: str, v: torch.Tensor) -> None:
@@ -369,6 +394,7 @@ def _prove_tree(layers: list, ch, label: str):
         claim = ef.add(ef.add(prev[0], ef.mul(mu, ef.sub(prev[1], prev[0]))),
                        ef.mul(lam, ef.add(prev[2], ef.mul(mu, ef.sub(prev[3], prev[2])))))
         scale = one                              # prod_{i<j} eq(rho_i, r_i)
+        suffixes = _suffix_tables([_to_mont(r) for r in rho], dev)
         rounds, rs = [], []
         for j in range(k):
             # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
@@ -376,7 +402,7 @@ def _prove_tree(layers: list, ch, label: str):
             m = arrs[0].shape[1]
             half = m // 2
             nb = _grid(half)[0]
-            suffix = _eq_table([_to_mont(r) for r in rho[j + 1:]], dev)
+            suffix, suffixes[j] = suffixes[j], None
             part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
             _round2_kernel[(nb,)](suffix, *arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
             del suffix
@@ -387,7 +413,7 @@ def _prove_tree(layers: list, ch, label: str):
             g0 = ef.mul(scale, ef.mul(e0, h0))
             denom = ef.mul(scale, e1)
             if not bool(denom.any()):            # probability ~ k / p^8: evaluate h(1) directly instead
-                h1 = _h_at_one(arrs, rho, j, lam_m, dev)
+                h1 = _h_at_one(arrs, [_to_mont(r) for r in rho], j, lam_m, dev)
             else:
                 h1 = ef.mul(ef.sub(claim, g0), ef.inv(denom))
             h3 = ef.add(ef.sub(h0, ef.scal(h1, 3)), ef.scal(h2, 3))
@@ -418,7 +444,7 @@ def _h_at_one(arrs, rho, j, lam_m, dev):
     odd = [a[:, 1::2].contiguous() for a in arrs]
     half = m // 2
     nb = _grid(half)[0]
-    suffix = _eq_table([_to_mont(r) for r in rho[j + 1:]], dev)
+    suffix = _eq_table(rho[j + 1:], dev)
     part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
     # with A' = (a[2y+1], a[2y+1]) the kernel's t = 0 point is t = 1 of the original arrays
     dup = [torch.stack([o, o], 2).reshape(8, m) for o in odd]

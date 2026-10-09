@@ -221,8 +221,8 @@ if triton is not None:
         tl.store(qo + 6 * s_out + y, nq6.to(tl.int32, bitcast=True), mask=mask)
         tl.store(qo + 7 * s_out + y, nq7.to(tl.int32, bitcast=True), mask=mask)
 
-    @triton.jit(do_not_specialize=['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 'm', 's_in', 's_out', 'P_', 'MU_', 'B11_'])
-    def _eq_kernel(ti, to, r0, r1, r2, r3, r4, r5, r6, r7, s0, s1, s2, s3, s4, s5, s6, s7, m, s_in, s_out, P_, MU_, B11_, BLOCK: tl.constexpr):
+    @triton.jit(do_not_specialize=['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 'm', 's_in', 's_out', 'inter', 'P_', 'MU_', 'B11_'])
+    def _eq_kernel(ti, to, r0, r1, r2, r3, r4, r5, r6, r7, s0, s1, s2, s3, s4, s5, s6, s7, m, s_in, s_out, inter, P_, MU_, B11_, BLOCK: tl.constexpr):
         P = P_.to(tl.uint32)
         MU = MU_.to(tl.uint32)
         B11 = B11_.to(tl.uint32)
@@ -254,22 +254,24 @@ if triton is not None:
         ss7 = s7.to(tl.uint32) + t0 * 0
         lo0, lo1, lo2, lo3, lo4, lo5, lo6, lo7 = _emul(t0, t1, t2, t3, t4, t5, t6, t7, ss0, ss1, ss2, ss3, ss4, ss5, ss6, ss7, P, MU, B11)
         hi0, hi1, hi2, hi3, hi4, hi5, hi6, hi7 = _emul(t0, t1, t2, t3, t4, t5, t6, t7, rr0, rr1, rr2, rr3, rr4, rr5, rr6, rr7, P, MU, B11)
-        tl.store(to + 0 * s_out + y, lo0.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 1 * s_out + y, lo1.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 2 * s_out + y, lo2.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 3 * s_out + y, lo3.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 4 * s_out + y, lo4.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 5 * s_out + y, lo5.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 6 * s_out + y, lo6.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 7 * s_out + y, lo7.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 0 * s_out + y + m, hi0.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 1 * s_out + y + m, hi1.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 2 * s_out + y + m, hi2.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 3 * s_out + y + m, hi3.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 4 * s_out + y + m, hi4.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 5 * s_out + y + m, hi5.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 6 * s_out + y + m, hi6.to(tl.int32, bitcast=True), mask=mask)
-        tl.store(to + 7 * s_out + y + m, hi7.to(tl.int32, bitcast=True), mask=mask)
+        lo_at = tl.where(inter == 1, 2 * y, y)
+        hi_at = tl.where(inter == 1, 2 * y + 1, y + m)
+        tl.store(to + 0 * s_out + lo_at, lo0.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 1 * s_out + lo_at, lo1.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 2 * s_out + lo_at, lo2.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 3 * s_out + lo_at, lo3.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 4 * s_out + lo_at, lo4.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 5 * s_out + lo_at, lo5.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 6 * s_out + lo_at, lo6.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 7 * s_out + lo_at, lo7.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 0 * s_out + hi_at, hi0.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 1 * s_out + hi_at, hi1.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 2 * s_out + hi_at, hi2.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 3 * s_out + hi_at, hi3.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 4 * s_out + hi_at, hi4.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 5 * s_out + hi_at, hi5.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 6 * s_out + hi_at, hi6.to(tl.int32, bitcast=True), mask=mask)
+        tl.store(to + 7 * s_out + hi_at, hi7.to(tl.int32, bitcast=True), mask=mask)
 
     @triton.jit(do_not_specialize=['lam0', 'lam1', 'lam2', 'lam3', 'lam4', 'lam5', 'lam6', 'lam7', 'half', 's', 'P_', 'MU_', 'B11_'])
     def _round2_kernel(e, pl, pr, ql, qr, out, lam0, lam1, lam2, lam3, lam4, lam5, lam6, lam7, half, s, P_, MU_, B11_, BLOCK: tl.constexpr):
@@ -712,16 +714,40 @@ def _combine(p: torch.Tensor, q: torch.Tensor):
     return po, qo
 
 
-def _eq_table(rho_mont: list[list[int]], device) -> torch.Tensor:
+def _eq_step(t: torch.Tensor, r: list[int], inter: int) -> torch.Tensor:
+    """``t`` ``[8, m]`` times ``(1 - r, r)`` for a new variable: appended as the high bit (``inter = 0``: entries
+    ``y`` and ``y + m``) or prepended as the low bit (``inter = 1``: entries ``2y`` and ``2y + 1``)."""
+    m = t.shape[1]
+    s = [(R_MOD - r[0]) % PRIME] + [(PRIME - c) % PRIME for c in r[1:]]
+    out = torch.empty(8, 2 * m, dtype=torch.int32, device=t.device)
+    _eq_kernel[_grid(m)](t, out, *r, *s, m, m, 2 * m, inter, **_consts(), BLOCK=BLOCK)
+    return out
+
+
+def _one(device) -> torch.Tensor:
     t = torch.zeros(8, 1, dtype=torch.int32, device=device)
     t[0, 0] = R_MOD
-    for r in rho_mont:
-        m = t.shape[1]
-        s = [(R_MOD - r[0]) % PRIME] + [(PRIME - c) % PRIME for c in r[1:]]
-        out = torch.empty(8, 2 * m, dtype=torch.int32, device=device)
-        _eq_kernel[_grid(m)](t, out, *r, *s, m, m, 2 * m, **_consts(), BLOCK=BLOCK)
-        t = out
     return t
+
+
+def _eq_table(rho_mont: list[list[int]], device) -> torch.Tensor:
+    """``eq(rho, bits(y))`` ``[8, 2^k]``, bit ``i`` of ``y`` against ``rho[i]`` (as ``extfield.eq_table``)."""
+    t = _one(device)
+    for r in rho_mont:
+        t = _eq_step(t, r, 0)
+    return t
+
+
+def _suffix_tables(rho_mont: list[list[int]], device) -> list[torch.Tensor]:
+    """``[eq_table(rho[j+1:]) for j < k]``, built from the last one by prepending one low bit at a time."""
+    k = len(rho_mont)
+    out = [None] * k
+    t = _one(device)
+    out[k - 1] = t
+    for j in range(k - 2, -1, -1):
+        t = _eq_step(t, rho_mont[j + 1], 1)
+        out[j] = t
+    return out
 
 
 def _absorb(ch, label: str, v: torch.Tensor) -> None:
@@ -751,6 +777,7 @@ def _prove_tree(layers: list, ch, label: str):
         claim = ef.add(ef.add(prev[0], ef.mul(mu, ef.sub(prev[1], prev[0]))),
                        ef.mul(lam, ef.add(prev[2], ef.mul(mu, ef.sub(prev[3], prev[2])))))
         scale = one                              # prod_{i<j} eq(rho_i, r_i)
+        suffixes = _suffix_tables([_to_mont(r) for r in rho], dev)
         rounds, rs = [], []
         for j in range(k):
             # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
@@ -758,7 +785,7 @@ def _prove_tree(layers: list, ch, label: str):
             m = arrs[0].shape[1]
             half = m // 2
             nb = _grid(half)[0]
-            suffix = _eq_table([_to_mont(r) for r in rho[j + 1:]], dev)
+            suffix, suffixes[j] = suffixes[j], None
             part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
             _round2_kernel[(nb,)](suffix, *arrs, part, *lam_m, half, m, **_consts(), BLOCK=BLOCK)
             del suffix
@@ -769,7 +796,7 @@ def _prove_tree(layers: list, ch, label: str):
             g0 = ef.mul(scale, ef.mul(e0, h0))
             denom = ef.mul(scale, e1)
             if not bool(denom.any()):            # probability ~ k / p^8: evaluate h(1) directly instead
-                h1 = _h_at_one(arrs, rho, j, lam_m, dev)
+                h1 = _h_at_one(arrs, [_to_mont(r) for r in rho], j, lam_m, dev)
             else:
                 h1 = ef.mul(ef.sub(claim, g0), ef.inv(denom))
             h3 = ef.add(ef.sub(h0, ef.scal(h1, 3)), ef.scal(h2, 3))
@@ -800,7 +827,7 @@ def _h_at_one(arrs, rho, j, lam_m, dev):
     odd = [a[:, 1::2].contiguous() for a in arrs]
     half = m // 2
     nb = _grid(half)[0]
-    suffix = _eq_table([_to_mont(r) for r in rho[j + 1:]], dev)
+    suffix = _eq_table(rho[j + 1:], dev)
     part = torch.empty(nb, 2, 8, dtype=torch.int64, device=dev)
     # with A' = (a[2y+1], a[2y+1]) the kernel's t = 0 point is t = 1 of the original arrays
     dup = [torch.stack([o, o], 2).reshape(8, m) for o in odd]
