@@ -312,8 +312,8 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
             mult += counts
             witness[o.name] = (d.to(torch.int32).cpu(), w.to(torch.int32).cpu())     # |delta|, W < 2^17
             exc[o.name] = (idx.cpu(), ez.cpu())
-            sent_vals[o.name] = s
-            del d, w, counts
+            sent_vals[o.name] = s.to(zs[o.name].device)  # where the prover keeps its claims (a lean one: the host),
+            del d, w, counts                              # so the encoder sees them all on one device
         mult = mult.cpu()
         _sync(prover.device)
     sent = {op.name for op in verifier._sent_ops()}
