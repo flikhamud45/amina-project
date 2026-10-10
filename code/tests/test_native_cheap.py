@@ -245,3 +245,21 @@ def test_attention_with_the_arithmetic_exp_lookup(m_s, pattern):
     want = tr._attention_core(q, k, v, lut, tr._causal_notmask(640, 1, "cpu", 640))
     got = native_kernels.attention_core(q, k, v, lut, 640, exp_table=tr._EXP_TABLE, m_s=m_s)
     assert torch.equal(got, want)
+
+
+def test_residual_with_a_strided_base_norm_of_a_view_and_the_swiglu_product(monkeypatch):
+    """The residual stream's first base is the embedding's scaled fold (a transposed view); the norm may read a
+    view; SwiGLU's requant(a * b) is one pass."""
+    g = torch.Generator().manual_seed(23)
+    base = _claim_view(g, 768, 300, -(1 << 12), 1 << 12) * 8                # [1, 300, 768], transposed strides
+    z = _claim_view(g, 768, 300, -(1 << 29), 1 << 29)
+    m = torch.tensor(876_543_210, dtype=torch.int64)
+    got, want = _both(lambda: gr.residual_add(base, z, m, 30, (1 << 22) - 1), monkeypatch)
+    assert torch.equal(got, want) and got.is_contiguous()
+    gain = torch.randint(1, 1 << 22, (768,), generator=g, dtype=torch.int64)
+    got, want = _both(lambda: tr._norm_int(base, gain, False), monkeypatch)
+    assert torch.equal(got, want)
+    a = torch.randint(-127, 128, (1, 300, 2048), generator=g, dtype=torch.int64)
+    b = torch.randint(-127, 128, (1, 300, 2048), generator=g, dtype=torch.int64)
+    got, want = _both(lambda: gr.requant_mul(a, b, m, 30, -127, 127), monkeypatch)
+    assert torch.equal(got, want) and torch.equal(got, gr.requant(a * b, m, 30, -127, 127))

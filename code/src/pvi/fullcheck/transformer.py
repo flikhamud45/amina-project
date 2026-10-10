@@ -38,7 +38,7 @@ import torch
 
 from . import attention_kernels, native_kernels
 from .graph import (INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, requant, requant_fn,
-                    residual_add)
+                    requant_mul, residual_add)
 
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
 
@@ -545,8 +545,8 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
             up = B.to_int8(B.mat(h, cfg.d_ff, d, cfg.bias))
             act = B.cheap("silu", [gate], lambda a, t=silu: _lut(a, t), "silu")
             mm = torch.tensor(round((1 << SHIFT) * 24.0 / max(B.std(act) * B.std(up), 1e-6)), dtype=torch.int64)
-            prod = B.cheap("glu", [act, up], lambda a, b_, m=mm: requant(a * b_, m.to(a.device), SHIFT, -INT8_MAX,
-                                                                         INT8_MAX), "swiglu")
+            prod = B.cheap("glu", [act, up], lambda a, b_, m=mm: requant_mul(a, b_, m.to(a.device), SHIFT, -INT8_MAX,
+                                                                             INT8_MAX), "swiglu")
         else:
             f1 = B.to_int8(B.mat(h, cfg.d_ff, d, cfg.bias))
             prod = B.cheap("act", [f1], lambda a, t=(gelu if cfg.mlp == "gelu" else relu): _lut(a, t), cfg.mlp)

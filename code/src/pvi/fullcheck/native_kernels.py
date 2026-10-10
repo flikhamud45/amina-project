@@ -428,20 +428,22 @@ extern "C" void pvi_requant(const void* z, int64_t zbytes, const int64_t* b, int
     else requant_t((const int64_t*)z, b, out, R, C, sr, sc, mult, shift, lo, hi);
 }
 
-// clamp(a + ((z * mult + 2**(shift-1)) >> shift), -res_max, res_max), a contiguous, z int32 or int64
+// clamp(a + ((z * mult + 2**(shift-1)) >> shift), -res_max, res_max); a int64 with strides (ar, ac) (contiguous, or
+// a transposed claim view as the embedding's scaled fold), z int32 or int64
 template <class Z>
-static void residual_t(const int64_t* a, const Z* z, int64_t* out, int64_t R, int64_t C, int64_t sr, int64_t sc,
-                       int64_t mult, int64_t shift, int64_t res_max) {
+static void residual_t(const int64_t* a, int64_t ar, int64_t ac, const Z* z, int64_t* out, int64_t R, int64_t C,
+                       int64_t sr, int64_t sc, int64_t mult, int64_t shift, int64_t res_max) {
     const int64_t half = (int64_t)1 << (shift - 1);
     each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) {
-        out[i * C + j] = clamp64(a[i * C + j] + (((int64_t)z[s] * mult + half) >> shift), -res_max, res_max); });
+        out[i * C + j] = clamp64(a[i * ar + j * ac] + (((int64_t)z[s] * mult + half) >> shift), -res_max, res_max); });
 }
 
-extern "C" void pvi_residual(const int64_t* a, const void* z, int64_t zbytes, int64_t* out, int64_t R, int64_t C,
-                             int64_t sr, int64_t sc, int64_t mult, int64_t shift, int64_t res_max, int64_t threads) {
+extern "C" void pvi_residual(const int64_t* a, int64_t ar, int64_t ac, const void* z, int64_t zbytes, int64_t* out,
+                             int64_t R, int64_t C, int64_t sr, int64_t sc, int64_t mult, int64_t shift,
+                             int64_t res_max, int64_t threads) {
     omp_set_num_threads((int)threads);
-    if (zbytes == 4) residual_t(a, (const int32_t*)z, out, R, C, sr, sc, mult, shift, res_max);
-    else residual_t(a, (const int64_t*)z, out, R, C, sr, sc, mult, shift, res_max);
+    if (zbytes == 4) residual_t(a, ar, ac, (const int32_t*)z, out, R, C, sr, sc, mult, shift, res_max);
+    else residual_t(a, ar, ac, (const int64_t*)z, out, R, C, sr, sc, mult, shift, res_max);
 }
 
 // table[clamp(x, -128, 127) + 128]
@@ -715,7 +717,8 @@ def _library():
         _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 7
         _LIB.pvi_softmax_block.restype = None
         _LIB.pvi_requant.argtypes = [ctypes.c_void_p, ctypes.c_int64] + [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 9
-        _LIB.pvi_residual.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64, ctypes.c_void_p] + [ctypes.c_int64] * 8
+        _LIB.pvi_residual.argtypes = ([ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_int64,
+                                       ctypes.c_void_p] + [ctypes.c_int64] * 8)
         _LIB.pvi_lut.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 5
         _LIB.pvi_norm.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 5
         _LIB.pvi_norm.restype = ctypes.c_int64
@@ -884,12 +887,12 @@ def requant(z: torch.Tensor, mult, shift: int, lo: int, hi: int, b: torch.Tensor
 
 def residual(a: torch.Tensor, z: torch.Tensor, mult, shift: int, res_max: int):
     """``graph.residual_add(a, z, mult, shift, res_max)``."""
-    m, lay = _scalar(mult), _layout(z)
-    if m is None or lay is None or a.shape != z.shape or not a.is_contiguous():
+    m, lay, alay = _scalar(mult), _layout(z), _layout(a)
+    if m is None or lay is None or alay is None or a.shape != z.shape:
         return None
     out = torch.empty(z.shape, dtype=torch.int64)
-    _LIB.pvi_residual(a.data_ptr(), z.data_ptr(), z.element_size(), out.data_ptr(), *lay, m, shift, res_max,
-                      torch.get_num_threads())
+    _LIB.pvi_residual(a.data_ptr(), alay[2], alay[3], z.data_ptr(), z.element_size(), out.data_ptr(), *lay, m, shift,
+                      res_max, torch.get_num_threads())
     return out
 
 
@@ -906,9 +909,9 @@ def lut(x: torch.Tensor, table: torch.Tensor):
 def norm(x: torch.Tensor, gain: torch.Tensor, center: bool, k: int):
     """``transformer._norm_int(x, gain, center, k)`` over the last axis."""
     d = x.shape[-1]
-    if (not x.is_contiguous() or gain.dtype != torch.int64 or gain.device.type != "cpu" or gain.numel() != d
-            or not 1 <= k <= 32):
+    if gain.dtype != torch.int64 or gain.device.type != "cpu" or gain.numel() != d or not 1 <= k <= 32:
         return None
+    x = x.contiguous()                    # (the first block's input: the embedding's scaled fold, a transposed view)
     out = torch.empty(x.shape, dtype=torch.int64)
     ok = _LIB.pvi_norm(x.data_ptr(), gain.contiguous().data_ptr(), out.data_ptr(), x.numel() // d, d, int(center),
                        k, torch.get_num_threads())

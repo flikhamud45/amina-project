@@ -128,6 +128,15 @@ def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int,
     return out.clamp_(lo, hi)
 
 
+def requant_mul(a: torch.Tensor, b: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int) -> torch.Tensor:
+    """``requant(a * b, mult, shift, lo, hi)`` (SwiGLU's product): one native pass on a CPU verifier."""
+    if (native_kernels.cheap_enabled(a, b) and b.is_contiguous() and a.shape == b.shape):
+        got = native_kernels.requant(a, mult, shift, lo, hi, b=b)
+        if got is not None:
+            return got
+    return requant(a * b, mult, shift, lo, hi)
+
+
 def residual_add(a: torch.Tensor, b: torch.Tensor, mult: torch.Tensor, shift: int, res_max: int) -> torch.Tensor:
     """``clamp(a + round(b * mult / 2**shift), -res_max, res_max)`` (round-half-up) in one output buffer."""
     if native_kernels.cheap_enabled(a, claim=b):
