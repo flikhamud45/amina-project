@@ -1,0 +1,155 @@
+% =====================================================================================
+% sections/ext_discussion.tex: material cut from the Discussion and Limitations on 2026-10-10
+% (CUT_PLAN.md, Sec. 4). Extended version only; appendix-ready (\subsection, no \section).
+% Where each block came from (all from the pre-cut sections/discussion.tex unless noted):
+%   "Status of the Measurements"       paragraph "Measurements", unchanged in substance
+%   "Real Weights, Model Quality and V1" paragraphs "Real weights and model quality" and "V1";
+%                                      "halves the proof" reworded per CUT_PLAN.md decision 4
+%   "A Client's Options in Detail"     the long form of the body's "Options for a client"
+%                                      paragraph and Table tab:options; numbers from
+%                                      evaluation.tex (Secs. sec:eval-reexec, sec:eval-compare),
+%                                      attack.tex (Table tab:sok), defence.tex (Sec.
+%                                      sec:setup-proof), intro.tex and ext_intro.tex (gpucc,
+%                                      CommitLLM). Derived by arithmetic only: ceil(11,008/2,048)
+%                                      = 6 queries for the down projection.
+%   "Limitations in Detail"            paragraphs "Proof size and the verifier", "Weights and
+%                                      trust" and "The attack and the theorem" at full length
+% The old Conclusion only summarised the body and is not kept here.
+% Labels defined: ext:disc-status, ext:disc-real, ext:disc-options, ext:disc-limits (the body
+%   does not reference them). Labels used (defined in the body or the full appendices):
+%   tab:eval-llm, tab:eval-v1, tab:eval-reexec, tab:eval-compare, tab:options, tab:sok,
+%   sec:eval-reexec, sec:setup-proof, sec:v1, sec:gen-sampling, sec:quality, rem:scope.
+% =====================================================================================
+
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\sK}{\mathsf{K}}
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+
+\subsection{Status of the Measurements}
+\label{ext:disc-status}
+
+The base implementation was measured on an NVIDIA L40S and an AMD EPYC 9334, and each improvement
+and V1 on an RTX~2080~Ti and a Xeon Silver 4114, against the previous code on the same queries.
+The improvements change no byte of the proof, so the proof sizes stand, but the times of the
+frozen code on the L40S are not yet measured, and several cells of
+Tables~\ref{tab:eval-llm}, \ref{tab:eval-v1} and~\ref{tab:eval-compare} are empty for that reason
+\todo{L40S: final run of the frozen code; fill every \texttt{L40S} cell}. The 7B and 13B models
+were measured as one to four of their blocks on the 2080~Ti, and full-model figures for them come
+from the L40S run or from the byte model. Peak memory is not yet reported \todo{F4: peak memory}.
+
+\subsection{Real Weights, Model Quality and V1}
+\label{ext:disc-real}
+
+\para{Real weights and model quality.} The costs were measured with random int8 weights. They
+depend only on the shapes, except for the compressed size of the claims and of V1's values. On the
+smoothed OPT-125M at 512 tokens, real activations compress less well than random ones as int8
+values, and V1 shrinks the proof by 1.68$\times$ in mode $\sC$ (82.2 to 48.9\,MB) and
+1.77$\times$ in $\Kpre$, less than with random weights (1.94--2.06$\times$ for GPT-2 at 512
+tokens), also because seven of its residual operations have multipliers above $2^{29}$ and stay
+clear under (P3) \todo{real-weight cells at 2{,}048 tokens; end-to-end run of Qwen3-4B and
+OPT-6.7B (F3)}. Smoothing brings OPT-125M and OPT-1.3B within a factor of 1.03 of fp32
+(Section~\ref{sec:quality}). We have not yet run it on OPT-6.7B, whose integer model with a scalar
+gain is 33\% above fp32 (36.0 against 27.1), or on Qwen3-4B, because both need more memory than
+our 2080~Ti setup provides. Soundness holds for any committed integer model; these numbers concern
+only how well that model serves.
+
+\para{V1.} V1 is an option, not a replacement. At 2{,}048 tokens it makes the proof
+2.0--2.3$\times$ smaller with random weights, but it makes the prover about ten times slower on the
+2080~Ti and the CPU verifier 1.6--1.9$\times$ slower. Llama-2-7B in mode $\sC$ does not fit on the
+11\,GB card with the GKR, so V1 has not been timed in that configuration, and the full 7B and 13B
+models have only the byte model's prediction \todo{L40S: V1 on the full Llama-2-7B, incl.\ mode
+$\sC$, Llama-2-13B, OPT-6.7B and Qwen3-4B}. Mode $\sK$ and the streaming GPU verifier do not
+support V1 yet, and V1 assumes one requantisation multiplier per operation, which excludes the
+per-row weight scales that would bring OPT-125M to within $\times1.00$--$1.01$ of fp32.
+
+\subsection{A Client's Options in Detail}
+\label{ext:disc-options}
+
+Table~\ref{tab:options} compares the options of a client that wants one Llama-2-7B answer checked.
+We add the details behind each row.
+
+\para{Re-execution.} A client that downloads the 6.7\,GB of int8 weights once can re-run every
+query. The integer forward pass is bit-identical to the claims and so a complete check; it took
+6.8\,s at 64 tokens and 196\,s at 2{,}048 tokens on 8 threads of a Xeon Silver 4114, and 0.16 and
+2.08\,s on an RTX~2080~Ti, before the int8 forward pass that halves the GPU times
+(Table~\ref{tab:eval-reexec}). Floating-point re-execution is faster (fp32 on the CPU: 3.5 and
+86\,s; fp16 on the GPU: 0.037 and 0.57\,s) but cannot confirm an exact answer. A CPU client that
+holds the weights can instead run our $\Kpre$ verifier, which takes 1.5 and 85\,s, 2.3--4.5$\times$
+faster than re-execution at 64 tokens and 2.3$\times$ faster than integer re-execution at 2{,}048.
+On a GPU, re-execution wins: the base GPU verifier needed 4.95\,s in $\Kpre$ at 2{,}048 tokens on
+the faster L40S (Section~\ref{sec:eval-reexec}).
+
+\para{GPU confidential computing.} An H100-class GPU runs the whole model inside an attested
+enclave. A measurement study finds little overhead inside the GPU and attributes most of the
+penalty, below 7\% for most LLM queries and close to zero for larger models and longer sequences,
+to encrypted CPU--GPU transfers over PCIe~\cite{gpucc}. The client checks an attestation rather
+than a proof, and the weights stay hidden from it. The guarantee rests on the vendor's hardware,
+its attestation service and the enclave's resistance to side channels.
+
+\para{CommitLLM-style audit.} CommitLLM~\cite{commitllm2026} adds 12--14\% to serving. Its routine
+audit opens one token of 1--5\% of the responses and 10 of 80 layers at that token, so an edit
+passes with probability 87.5\% when the token is opened and about 99.4\% per one-token response at
+a 5\% audit rate (Table~\ref{tab:sok}). Its client holds secret Freivalds vectors precomputed from
+the weights, and attention is audited, not verified \todo{CommitLLM's bytes and client time per
+audited response}.
+
+\para{zkSNARKs.} zkLLM~\cite{zkllm} proves a 2{,}048-token Llama-2-7B prompt in 10.3\,min on an
+A100, with a 183\,kB proof that its verifier checks in 2.36\,s, and hides the weights. zkAgent,
+which proves a generated sequence in one pass, reports 0.30\,s per token for GPT-2~\cite{zkagent}.
+On a 2{,}048-token Llama-2-13B prompt our L40S prover is 46$\times$ faster than zkLLM, but zkLLM
+also proves the operations without weights and hides the weights (Table~\ref{tab:eval-compare}).
+
+\para{Ours.} In mode $\sC$ the client holds a 32-byte root per matrix and no weights. A 64-token
+proof is 325\,MB, about 21$\times$ smaller than the int8 weights, and is checked in 1.0\,s on the
+EPYC CPU or 431\,ms on the L40S. Of it, 124.7\,MB are opened columns, which do not shrink with
+shorter prompts. At 2{,}048 tokens the proof is 6.6\,GB (6.4\,GB in $\Kpre$), about the size of the
+weights, and takes 5.3\,s to transfer at 10\,Gb/s \todo{F7: transfer times}. A client that sends
+more than about 21 short prompts, or one long one, therefore receives more bytes than a download of
+the weights, and the protocol pays off only for a client that cannot store or run the model, or
+will not. Our base prover took 1.8\,s for a 64-token prompt on the L40S, against 0.037\,s for an
+fp16 forward pass on the 2080~Ti, on different GPUs \todo{L40S: prover against unverified fp16
+and int8 inference, same GPU}. Sending one opening and one fold for a batch of queries whose
+claims are all fixed before the challenges would amortise the opened columns over the batch; we
+have not implemented this.
+
+\subsection{Limitations in Detail}
+\label{ext:disc-limits}
+
+\para{Proof size and the verifier.} Even with V1, the proof grows with the prompt, because it
+carries one value for every output of every weight operation. For Llama-2-7B it reaches the size of
+the int8 weights at about 2{,}050 tokens without V1 and, by the byte model, at about 4{,}500 tokens
+with it. Only committing the activations and proving the operations without weights, as zkLLM
+does, would remove this growth; we leave it to future work. The verifier recomputes attention, so
+its cost grows with the square of the prompt length; at 2{,}048 tokens the operations without
+weights take 76\% of the CPU verifier's time \todo{B5: native attention kernel}. A CPU client that
+holds the weights saves time over re-execution at 64 tokens and ties with fp32 re-execution at
+2{,}048 tokens, and on a GPU re-execution is faster than our verifier. The case for the protocol is
+therefore a client that does not hold the weights or the hardware to run them, not a faster way to
+compute an answer.
+
+\para{Weights and trust.} The protocol is not zero-knowledge: the claims of about
+$\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$ (about six 2{,}048-token
+queries for Llama-2-7B's down projection, $k=11{,}008$), so mode $\sC$ targets open-weight models.
+For private weights it shares the limitation that Hollow-LLM points out for
+zkSNARKs~\cite{hollowllm}: the commitment binds the provider to one fixed model, but a client that
+sees neither the weights nor a range proof on them does not learn which model that is, and weights
+with a degenerate structure keep the declared shapes while being cheap to evaluate. With an
+untrusted commitment (Section~\ref{sec:setup-proof}), the bound (P4) of V1 and the claim range of
+v0 must be published with the model, and the time of the setup proof is not yet measured
+\todo{L40S: setup prover and verifier time}. The exact sampler (Section~\ref{sec:gen-sampling}) is
+a fixed approximation of softmax sampling whose distance to it we have not measured, the proof
+does not show that the client's seed was random, and nucleus sampling is not implemented.
+
+\para{The attack and the theorem.} The lower bound needs condition (H), which we establish for
+random ensembles with independent rows and on a constructed worst-case network, not for a trained
+network, whose rows are correlated. On trained networks we report the detection of the best attacks
+we found, which bounds each sampler's worst-case detection from above. We do not claim that the
+worst-case instance embeds in a transformer, since the LayerNorm before the MLP prevents feeding it
+the required patterns (Remark~\ref{rem:scope}). The natural ranges in our range-respecting attacks
+were computed on test queries that include the attacked ones, and the adaptive game against
+value-aware samplers with held-out ranges is not yet run \todo{G3: adaptive game, held-out
+ranges}. Our OPT-6.7B attack writes values outside the neurons' natural ranges; an in-range attack
+on an LLM is pending \todo{G3.5: in-range LLM attack}. We deliberately do not develop a method for
+steering the responses of instruction-tuned assistants.

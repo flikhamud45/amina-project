@@ -1,0 +1,174 @@
+% =====================================================================================
+% sections/ext_v1.tex: material cut from sections/v1.tex for the EXTENDED VERSION only
+% (condensation pass of 2026-10-10, CUT_PLAN.md decision 1). Appendix-ready; \subsection only.
+% Origin of each block (section numbers of the 29-page draft of v1.tex):
+%   E1 "Details of the Windowed LogUp": Secs. 5.2-5.4 (clamp rate and exception count, field
+%      choice, table size, the two counterexamples and the exhaustive test on F_49, the tree's
+%      combination rule and transcript size, the transposed layout, what V1 does not need) and
+%      Sec. 5.5 (the union-bound shares and the largest model).
+%   E2 "Implementation of V1": Sec. 5.6, complete.
+%   E3 "Hardening of the V1 Checks": the paragraph "Adversarial review" of Sec. 5.7, findings only.
+%      NOTE FOR THE AUTHORS: these findings came from an LLM-agent review workflow (C2 doc Sec. 9).
+%      Per CUT_PLAN decision 7 the process is not described here; disclose it in the HotCRP
+%      AI-use field and decide whether the extended version should name it.
+%   E4 "Proof Size and Running Time of V1": Sec. 5.7 "Cost", "Proof size", "Prover and verifier",
+%      and the disabled fallback Table tab:v1, reduced to the time part plus the GKR share (its
+%      proof-size part duplicated Table tab:eval-v1 of evaluation.tex). Sources: C2 Sec. 8, jobs
+%      1005287 (bytes) and 1005575 (times); ratios computed from those tables.
+%   E5 "Limitations of V1": Sec. 5.7 "Limitations".
+% Labels defined: tab:v1. Labels used: sec:v1, lem:v1-logup, thm:v1, sec:fs, sec:setup-proof, sec:gen,
+% sec:quality, sec:eval-v1, tab:eval-v1. New bib keys: none (montgomery1985, tillet2019triton exist).
+% =====================================================================================
+
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\sK}{\mathsf{K}}
+\providecommand{\F}{\mathbb{F}_p}
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+\providecommand{\Fext}{\mathbb{K}}
+\providecommand{\Veq}{\mathrm{eq}}
+
+% ---- E1 -------------------------------------------------------------------------------
+\subsection{Details of the Windowed LogUp}
+
+\para{Exceptions.} Clamps are rare: with real weights they occur at a rate of about $10^{-5}$, and
+our measured proofs list at most 65 exceptions. Residual operations clamp only after the addition
+and have no exceptions.
+
+\para{Field.} Under Fiat--Shamir, the 64 extra bits of Section~\ref{sec:fs} require the challenges
+of the lookup to come from an extension of BabyBear of degree at least 7. We use $\Fext =
+\F[\xi]/(\xi^8 - 11)$, a field because 11 is a quadratic non-residue modulo $p$ and $p \equiv 1
+\pmod 4$, and we use it in interactive runs as well.
+
+\para{Table.} One table serves every width with one leaf per entry. It has $0.9$--$1.5 \cdot 10^6$
+elements with random weights and about $2 \cdot 10^4$ with real ones.
+
+\para{Both integer conditions are needed.} Lemma~\ref{lem:v1-logup} needs both of its integer
+conditions. If a multiplicity may reach $p$, a prover holding $p$ copies of an off-table leaf adds
+$p$ to the multiplicity of any table element, which keeps the sum and the identity. Without the sum
+check it simply leaves those leaves out. Our tests confirm the lemma and both counterexamples by
+exhaustive search on $\mathbb F_{49} = \mathbb F_7[\xi]/(\xi^2 - 3)$.
+
+\para{The tree and its transcript.} The cut operations are packed in graph order into instances of
+at most $2^{n_{\max}}$ leaves. The leaves are $(1, \alpha - v)$ at real positions and $(0, 1)$ at
+padding, and a binary tree adds sibling fractions, $(\mathsf n, \mathsf d) \oplus (\mathsf n',
+\mathsf d') = (\mathsf n \mathsf d' + \mathsf n' \mathsf d,\, \mathsf d \mathsf d')$, so that the
+root satisfies $\mathsf n_0 / \mathsf d_0 = \sum 1/(\alpha - v)$. An instance with $n$ variables
+sends $4 + \sum_{k=1}^{n-1} (3k + 4)$ elements of $\Fext$ of 31 bytes each, 36.0\,kB for $n = 27$.
+
+\para{Transposed matrices.} For a transposed matrix the prover sends $y = A \bar x$, and the column
+check combines the opened columns with the coordinates of $\bar x$.
+
+\para{What V1 does not need.} V1 needs no new commitment, no NTT, no Merkle tree over activations
+and no proximity test.
+
+\para{Concrete security.} At $\lambda = 128$ the two new terms of Theorem~\ref{thm:v1} take two
+extra shares of the union bound, which changes neither $r$ nor the column counts. The values
+quoted in Section~\ref{sec:v1} are for Llama-2-13B at 2{,}048 tokens, the largest model we
+consider.
+
+% ---- E2 -------------------------------------------------------------------------------
+\subsection{Implementation of V1}
+
+V1 is implemented in Python and PyTorch for modes $\sC$ and $\Kpre$, interactive and under
+Fiat--Shamir. The verifier checks an instance's round chains at once (50\,ms for 20 variables) and
+computes $L_\ell e$, $W_\ell e$ and $\bar x_\ell$ as exact float64 products on 11-bit limbs. The GKR
+prover is written in Triton~\cite{tillet2019triton}: BabyBear elements in Montgomery
+form~\cite{montgomery1985} on 32-bit lanes, an unrolled product in $\Fext$, and kernels for the
+leaves, the tree, the eq tables, the round sums and the folds, with the host drawing each
+challenge. Its transcripts are byte-identical to those of a reference prover in PyTorch (12 tests
+on the GPU). Factoring the current variable's eq term out of each round polynomial saves 4 of the
+20 products in $\Fext$ per pair. In the bottom layer, when rows are full ($T =
+2^{n_{\mathrm{col}}}$), the first $n_{\mathrm{col}} - 1$ rounds bind position bits within rows whose
+numerators are all 1; a dedicated path reads only the real rows' denominators, evaluates $\mathsf
+d_L + \mathsf d_R + \eta\, \mathsf d_L \mathsf d_R$ per pair, and adds the padding rows' term $\eta
+(1 - \sum \Veq)$ in closed form. On the RTX~2080~Ti an instance of $2^{25}$ leaves then takes
+0.52\,s (15.6\,ns per leaf; 0.83\,s in the first version). The test suite with V1 (1{,}492 tests)
+passes, including honest queries in eight configurations, a tampered trace value with honestly
+recomputed later layers (rejected at the final check in $\sC$ and at the secret-vector check in
+$\Kpre$), fake or omitted exceptions, multiplicity cheats and tampered GKR and fold messages. V1
+also accepts the sampled generation of Section~\ref{sec:gen}, since the LM head stays clear.
+
+% ---- E3 -------------------------------------------------------------------------------
+\subsection{Hardening of the V1 Checks}
+
+An earlier version of the implementation lacked five of the properties stated in
+Section~\ref{sec:v1} and in the checks of the soundness proof. None of the gaps allowed a forgery
+against the models we evaluate. Two allowed forgeries on other models: the $\Kpre$ verifier never
+evaluated (P4), as its public graph has no weights (it now uses its own weights), and a clamp wider
+than int8 broke the bound on $|L|$ (now excluded by (P1)). Two concerned hygiene: folds were
+accepted with coefficients in $[p, 2^{31})$ (an alias, not a forgery), and a defence-in-depth range
+check on the inputs of cut operations was missing; both are now enforced. The fifth limits
+completeness: more than $2^{29}$ clamped entries cannot be encoded, as the exception bin is outside
+(P5). In mode $\sC$, (P4) is a property of the committed model, checked when the honest commitment
+is computed; with an untrusted commitment (Section~\ref{sec:setup-proof}) the bound must be
+published with the model, for v0 and V1 alike.
+
+% ---- E4 -------------------------------------------------------------------------------
+\subsection{Proof Size and Running Time of V1}
+
+Table~\ref{tab:eval-v1} gives the proof sizes of V1 and v0 on the same queries, and
+Table~\ref{tab:v1} adds the share of V1's prover time spent in the GKR.
+
+\begin{table}[t]
+  \caption{Time of V1 against v0 in seconds, with the GKR share of V1's prover (Fiat--Shamir,
+  $\lambda{=}128$, random int8 weights, last block pruned; RTX~2080~Ti prover, verifier on 8
+  threads of a Xeon Silver 4114, medians of 3 queries). Proof sizes are in
+  Table~\ref{tab:eval-v1}}
+  \label{tab:v1}
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{2pt}
+  \begin{tabular}{lrlrrrrr}
+    \toprule
+    & & & \multicolumn{3}{c}{prover} & \multicolumn{2}{c}{CPU verifier} \\
+    \cmidrule(lr){4-6}\cmidrule(lr){7-8}
+    Model & $T$ & & v0 & V1 & of which GKR & v0 & V1 \\
+    \midrule
+    GPT-2      &  512 & $\sC$   & 0.25 & 1.38 & 0.88 & 0.73 & 1.64 \\
+               &      & $\Kpre$ & 0.15 & 1.25 & 0.85 & 0.58 & 1.65 \\
+    OPT-125M   & 2048 & $\sC$   & 0.50 & 4.85 & 3.58 & 2.96 & 4.86 \\
+               &      & $\Kpre$ & 0.39 & 4.52 & 3.40 & 2.55 & 4.85 \\
+    Llama-2-7B & 2048 & $\sC$   & \multicolumn{5}{c}{\emph{L40S only}} \\
+               &      & $\Kpre$ & 0.32 & 3.44 & 2.17 & 2.32 & 3.67 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\para{Proof size.} At 2{,}048 tokens V1 is 2.03--2.29$\times$ smaller on every build with more than
+one block; the full OPT-1.3B proof drops from 2.07 to 0.96\,GB in mode $\sC$ and from 2.02 to
+0.91\,GB in $\Kpre$. The values shrink 2.2--2.3$\times$: an int8 value costs about 7 bits and a
+residual increment about 12, against 16--19 bits for a claim. The parts that do not grow with the
+prompt grow instead: eight folded rows instead of $r$, $y$ over $\Fext$ for transposed matrices,
+and the new multiplicities and GKR transcripts (under 1\,MB in every measured build). GPT-2 at 64
+tokens thus gains only 1.28$\times$ ($\sC$) and 1.46$\times$ ($\Kpre$), and one Llama-2-13B block,
+the pruned last block in which only keys and values span all positions, 1.81$\times$ in $\sC$.
+V1's sizes come from an exact byte accounting that equals real queries to the byte except for the
+Merkle multiproofs, whose size depends on the drawn columns; the timed full V1 queries agree with
+it within 0.3\%. The byte model predicts 2.24$\times$ (6.63 to 2.97\,GB) for the full Llama-2-7B at
+2{,}048 tokens in $\sC$ \todo{L40S: V1 on full Llama-2-7B, Llama-2-13B, OPT-6.7B, Qwen3-4B at
+2,048}, and 1.8--2.0$\times$ with the codec rates of real OPT-125M weights. On the smoothed real
+OPT-125M at 512 tokens, the measured gain is 1.68$\times$ in $\sC$ and 1.77$\times$ in $\Kpre$
+\todo{real-weight V1 bytes at 2,048, smoothed OPT}; real OPT weights also have residual multipliers
+above $2^{29}$, whose operations stay clear (P3).
+
+\para{Prover and verifier.} With the GKR on the GPU and instances of at most $2^{24}$ leaves, the
+prover pays about 22\,ns per cut claim end to end, 63--75\% of its time. At 2{,}048 tokens it takes
+3.4--4.9\,s, 9.7--11.6$\times$ the time of v0's prover, whose int8 forward pass is fast on this
+card. The CPU verifier takes 1.6--1.9$\times$ v0's time at 2{,}048 tokens and 2.2--2.8$\times$ for
+GPT-2 at 512 tokens, mostly for the final check's two exact products per claim, $L_\ell e$ and
+$W_\ell e$. Llama-2-7B in mode $\sC$ does not fit on the 11\,GB card with the GKR \todo{L40S: V1
+timings incl.\ Llama-2-7B in $\sC$, full OPT-1.3B; vs.\ zkLLM prover}. V1 thus trades prover time
+for a proof 2.0--2.3$\times$ smaller with random weights, which pays off where moving and storing
+bytes costs more than seconds of GPU time.
+
+% ---- E5 -------------------------------------------------------------------------------
+\subsection{Limitations of V1}
+
+Mode $\sK$ and the streaming GPU verifier do not support V1 yet \todo{GPU verifier with V1}. V1
+assumes one requantisation multiplier per operation, so per-row weight scales
+(Section~\ref{sec:quality}) need more widths, and CNNs that fuse ReLU into the requantisation are
+not covered. By the byte model the full Llama-2-7B proof still reaches the size of its int8 weights
+at about 4{,}500 tokens instead of about 2{,}050, and the sent values, like the claims, reveal
+information about the weights.

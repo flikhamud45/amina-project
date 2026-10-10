@@ -1,0 +1,103 @@
+% =====================================================================================
+% Section 6: Generation and Sampling. Condensed from generation_quality.tex (Sections 6.1, 6.2);
+% sources docs/improvements/E1_generation.md and E2_sampling.md. Tests, the full Table tab:gen and
+% sampler implementation details are in ext_generation.tex (extended version only).
+% Labels defined: sec:gen, sec:gen-prefill, sec:gen-sampling, tab:gen, eq:gumbel-table.
+% Labels used: sec:defence, sec:fs, thm:sound, sec:v1 (defence.tex, v1.tex).
+% =====================================================================================
+
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+
+\section{Generation and Sampling}
+\label{sec:gen}
+
+\subsection{A Generated Response as One Prefill}
+\label{sec:gen-prefill}
+
+Proving each prefix of a response as its own query repeats the prompt: with $P=512$ prompt and
+$G=512$ generated tokens, Llama-2-7B needs about 1.3\,TB of claims, against 3.3\,GB for one
+prefill.
+
+\para{Reduction.} The response $y_1,\dots,y_G$ to a prompt $x$ is the greedy decoding if each
+$y_i$ is the first largest logit at position $P+i-1$ of the model run on
+$x\,\|\,y_1\cdots y_{i-1}$. The integer model's multipliers and tables are fixed at calibration,
+and only causal attention mixes positions, so a decoder with a KV cache computes exactly the
+integers of a causal prefill of $s=x\,\|\,y_1\cdots y_{G-1}$. We prove one query on $s$, with $T=P+G-1$ positions and the LM head
+at the last $G$ positions; their number enters the graph digest (Section~\ref{sec:fs}).
+
+\para{Token rule.} Before its other checks, the verifier requires that, for each $i<G$, column $i$
+of the claimed $V\times G$ logits have its first largest entry at the next input token $y_i$. The
+last column gives $y_G$.
+
+\para{Soundness.} The soundness error is the $\varepsilon$ of Theorem~\ref{thm:sound} for this
+graph, independent of $G$. A $y_i$ that is not the greedy token passes the token rule only if the
+claimed logits at position $P+i-1$ are wrong, and the first-wrong-layer argument applies
+unchanged. Claims and tokens are fixed before the challenges. In $\Kpre$, $Q$ in the reuse
+bound counts the verdicts the prover sees.
+
+\begin{table}[t]
+  \caption{A $G$-token response as one prefill (64-token prompt, random int8 weights,
+  interactive): prover time P (RTX 2080 Ti), verifier time V (Xeon Silver 4114, 8 threads), proof
+  size.}
+  \label{tab:gen}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{@{}lrrrrrrr@{}}
+    \toprule
+    & & \multicolumn{3}{c}{$\sC$} & \multicolumn{3}{c}{$\Kpre$} \\
+    \cmidrule(lr){3-5}\cmidrule(l){6-8}
+    Model & $G$ & P (s) & V (s) & MB & P (s) & V (s) & MB \\
+    \midrule
+    GPT-2    & 1   & 0.15 & 0.21 & 14.9 & 0.06 & 0.14 & 10.9 \\
+             & 256 & 0.29 & 0.59 & 87.3 & 0.20 & 0.51 & 82.9 \\
+    OPT-1.3B & 1   & 0.61 & 0.76 & 96   & 0.15 & 0.43 & 60   \\
+             & 256 & 1.05 & 2.18 & 369  & 0.64 & 1.71 & 332  \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\para{Cost.} Each matrix is opened and folded once per response, so the proof grows only by the
+claims of the new positions (Table~\ref{tab:gen}). A 256-token GPT-2 response takes 1.1\,ms of
+proving per token; zkAgent reports 0.30\,s per token for GPT-2, on other hardware and with other
+guarantees~\cite{zkagent}. A tampered query was rejected in every cell. The prover computes
+the trace of $s$ after decoding; times exclude decoding.
+\todo{L40S: Llama-2-7B, Qwen3-4B, $P=512$, $G\in\{64,256\}$, greedy and sampled, tamper cells}
+
+\subsection{Sampled Generation}
+\label{sec:gen-sampling}
+
+A token rule that accepted any plausible sampled token would let the provider choose the output.
+Instead, the client sends a fresh 32-byte seed with each query, and the response must be the
+output of a public, exact integer sampler keyed by that seed.
+
+\para{The sampler.} It uses the Gumbel-max trick~\cite{gumbel1954,maddison2014astar}: sampling
+from $\mathrm{softmax}(l/\tau)$ is choosing $\arg\max_v(l_v/\tau+g_v)$ with independent standard
+Gumbel noise $g_v$. For claimed integer logits $z$ with real values $cz$, the temperature becomes
+the integer weight $a=\mathrm{round}(2^{16}c/\tau)$, and the noise of entry $v$ is $\Gamma[u_v]$,
+where $u_v$ is the $v$-th 16-bit word of
+$\mathrm{SHAKE256}(\texttt{pvi/sampler/v1}\,\|\,\mathit{seed}\,\|\,\mathit{position})$ and
+\begin{equation}
+  \Gamma[i] = \mathrm{round}\Big(2^{16}\cdot\big({-\ln}\big({-\ln}\tfrac{i+1/2}{2^{16}}\big)\big)\Big),
+  \qquad 0\le i<2^{16}.
+  \label{eq:gumbel-table}
+\end{equation}
+The token is the first $v$ that maximises $az_v+\Gamma[u_v]$ among the $k$ largest entries of $z$
+(all if $k=0$; ties go to the smaller index). Since $|z|<2^{29}$, $a<2^{24}$ and
+$|\Gamma[i]|<2^{20}$, scores fit in 64-bit integers and every platform chooses the same token.
+The token rule uses this choice in place of the argmax, and Fiat--Shamir absorbs $a$, $k$ and the
+seed.
+
+\para{Soundness and the seed.} The sampler adds no soundness term: the verifier recomputes each
+token from the checked logits, so a wrong token requires a wrong logit. A provider that chose the
+seed could try seeds until it obtained the response it prefers; a fresh client seed bound into the
+statement prevents this and ties each proof to one seed. Convincing a third party that the seed was random would need a jointly generated seed (out of
+scope).
+
+\para{Distribution.} The sampler approximates sampling at temperature $\tau$ with uniform
+variables quantised to steps of $2^{-16}$. Since $\Gamma[i]/2^{16}$ lies in about
+$[-2.47,11.78]$, a token whose temperature-scaled logit is more than about 14.3 below the largest
+is never drawn; exact sampling draws it with probability below $7\cdot10^{-7}$. \todo{TV distance
+to softmax sampling on real logits} Nucleus (top-$p$) sampling is not implemented.

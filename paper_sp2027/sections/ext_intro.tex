@@ -1,0 +1,156 @@
+% =====================================================================================
+% sections/ext_intro.tex: material cut from the Introduction and Related Work on 2026-10-10
+% (CUT_PLAN.md, Sec. 4). Extended version only; appendix-ready (\subsection, no \section).
+% Where each block came from (all from the pre-cut sections/intro.tex):
+%   "Motivation and Costs in Detail"  Introduction, first paragraph (motivating example) and the
+%                                     paragraph "Costs" (every cost number of the old intro, with
+%                                     its todos; the numbers are those of evaluation.tex,
+%                                     generation_quality.tex and v1.tex)
+%   "Related Work in Detail"          Related Work, all five paragraphs at full length (published
+%                                     costs of zkSNARK provers, per-scheme sampling rules, the
+%                                     folklore behind the lower bound, and the long positioning),
+%                                     reworded per CUT_PLAN.md decision 4 ("dichotomy" dropped,
+%                                     attention "recomputed by the verifier from checked values")
+% Labels defined: ext:intro-costs, ext:related (the body does not reference them).
+% Labels used (all defined in the body): thm:guess, thm:dich, tab:sok, sec:setup-proof, sec:gen,
+%   sec:v1, sec:quality, tab:eval-compare.
+% =====================================================================================
+
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+
+\subsection{Motivation and Costs in Detail}
+\label{ext:intro-costs}
+
+\para{Motivation.} A company that pays a cloud provider to serve a model to its users cannot tell
+from a response which computation produced it. The provider may serve a cheaper model, or it may
+alter the computation on chosen queries to return answers of its choice, which harms any process
+that acts on those answers, such as payment approval or fraud flagging. The company cannot re-run
+the model to find out, since it lacks the weights, the hardware or both; that is why it outsourced
+inference.
+
+\para{Costs.} Beyond the forward pass, the prover's work without V1 grows with the model but not
+with the input, and the prover is the protocol's strongest axis. Computing its column openings and
+folds with exact int8 tensor-core products instead of float64 makes it 3.7--4.3$\times$ faster on
+Llama-2 blocks on an RTX~2080~Ti, and it proves a 256-token GPT-2 response to a 64-token prompt in
+0.29\,s. On matched models it is 46--32{,}000$\times$ faster than published zkSNARK provers, partly
+because all of them but zkLLM ran on CPUs, and partly because they also prove the operations
+without weights, which our verifier recomputes, and many of them hide the weights
+(Table~\ref{tab:eval-compare}) \todo{L40S: final range;
+the current one is from the pre-improvement L40S run}. The main cost is the proof. It carries the
+results of every weight operation and so grows with the prompt: 325\,MB for a 64-token Llama-2-7B
+query and 6.6\,GB at 2{,}048 tokens \todo{L40S}, against 183\,kB for zkLLM. V1 makes it
+2.0--2.3$\times$ smaller at 2{,}048 tokens with random weights (the full OPT-1.3B: 2.07 to
+0.96\,GB) and 1.68--1.77$\times$ on the real smoothed OPT-125M at 512 tokens, at the price of a GKR
+in the prover whose work grows with the number of results (OPT-125M at 2{,}048 tokens: 0.50 to
+4.85\,s on the RTX~2080~Ti) and a CPU verifier that is 1.6--1.9$\times$ slower at that length
+\todo{L40S}. The verifier recomputes attention, so its cost grows with the square of the prompt
+length. With eight CPU threads, a client that holds the weights verifies a 64-token Llama-2-7B
+query in about 1.5\,s, against 3.5\,s for re-executing the model in fp32, but at 2{,}048 tokens the
+two take about the same time, about 85\,s \todo{L40S/EPYC: re-measure with the native attention
+kernel}. Our GPU claim decoder and fused exact attention kernel make the streaming GPU verifier
+2.7$\times$ faster on OPT-1.3B at that length \todo{L40S, full models}. The protocol is not
+zero-knowledge: the claims of $\lceil k/T\rceil$ queries of $T$ tokens reveal a weight matrix with
+rows of length $k$. Finally, the provider must serve the integer model. Moving SmoothQuant's
+per-channel scales~\cite{xiao2023smoothquant} into the gains of the integer LayerNorm brings its
+WikiText-2 perplexity within a factor of 1.03 of fp32 on OPT-125M and OPT-1.3B, from 1.17 and 1.11,
+without changing any operation that the protocol checks (Section~\ref{sec:quality})
+\todo{OPT-6.7B and Qwen3-4B with smoothing}.
+
+\subsection{Related Work in Detail}
+\label{ext:related}
+
+\para{zkSNARK proofs of inference.} A long line of work compiles neural networks into succinct
+proofs. For CNNs these include sum-check and GKR provers~\cite{gkr} such as zkCNN~\cite{zkcnn},
+zkPyTorch~\cite{zkpytorch} and VerfCNN~\cite{verfcnn}, and pairing- or Plonk-based systems such as
+vCNN~\cite{vcnn}, ZEN~\cite{zen}, ZENO~\cite{zeno}, ZKML~\cite{zkml}, EZKL~\cite{ezkl} and
+Bionetta~\cite{bionetta}; Mystique~\cite{mystique} is an interactive, VOLE-based alternative. For
+language models they include zkLLM~\cite{zkllm}, zkGPT~\cite{zkgpt}, DeepProve~\cite{deepprove},
+ZKTorch~\cite{zktorch}, Jolt Atlas~\cite{joltatlas} and the full mode of NanoZK~\cite{nanozk}. They
+give computational soundness with proofs of under a kilobyte to tens of megabytes, and many of them
+hide the weights. Their provers are far slower than inference. zkLLM takes 620\,s on an A100 for a
+2{,}048-token Llama-2-7B prompt, with a 183\,kB proof~\cite{zkllm}; ZKTorch takes 44\,min for one
+Llama-2-7B token~\cite{zktorch}; DeepProve takes 34\,s for a 64-token GPT-2 prompt on a 16-core
+CPU~\cite{deepprove}. DeepProve and zkAgent~\cite{zkagent} prove a generated sequence in one pass
+over the prompt and the output, which is also how we prove generation (Section~\ref{sec:gen}). These
+systems prove non-linear operations with lookup arguments, such as zkLLM's tlookup and the
+logUp-GKR~\cite{papini2023logupgkr} that DeepProve uses. V1 (Section~\ref{sec:v1}) borrows this
+machinery for one narrow purpose, to show that hidden results lie in their requantisation windows.
+The weight products still go through Freivalds' check against the existing commitment, and no
+activation is committed. Hollow-LLM~\cite{hollowllm} observes that a valid proof over committed
+private weights does not establish that the provider performed the computation of a model of the
+declared size, since weights with a degenerate algebraic structure keep the declared shapes but are
+cheap to evaluate. Our protocol shares this limitation for private weights; for open weights the
+commitment is recomputed from the checkpoint. Our protocol gives up the zkSNARKs' small proofs and
+weight privacy in exchange for a prover that is orders of magnitude faster.
+
+\para{Spot-checking and sampling.} Anchuri et al.~\cite{anchuri2026verifiable} spot-check random
+paths through a committed trace and prove other-model soundness through trace separation.
+SLP~\cite{slp} commits every chunk boundary and proves a random subset of chunks with a SNARK; one
+audit of its 70B configuration accepts an edited chunk with probability 98.14\%. CommitLLM's routine
+audit~\cite{commitllm2026} opens 10 of 80 layers at one token of an audited response.
+TensorCommitments~\cite{tensorcommitments} and NanoZK's audit mode~\cite{nanozk} check a subset of
+layers, SPEX~\cite{spex} re-executes with a fixed probability, and IMMACULATE~\cite{immaculate}
+audits a fraction of requests. TOPLOC~\cite{toploc} and SVIP~\cite{svip} fingerprint hidden states
+and target model, prompt or precision substitution. Verde~\cite{verde}, opML~\cite{opml} and
+TAO~\cite{tao} are optimistic: an answer stands unless a party that re-runs the model disputes it,
+so they rely on an honest party that re-runs every query. Table~\ref{tab:sok} places these designs
+under our lower bound. SLP and CommitLLM themselves describe the edit-then-recompute
+strategy~\cite{slp,commitllm2026}, and the calculation behind it is classical. It underlies proofs
+of retrievability and of data possession~\cite{juels2007por,ateniese2007pdp}, it is why
+spot-checkers certify only closeness~\cite{ergun2000spotcheckers}, and it is why PCPs of proximity
+guarantee only that their input is close to the language while holographic proofs encode their
+input~\cite{bghsv2006robust,bfls1991,chiesa2020fractal}. Theorem~\ref{thm:guess} turns this
+calculation into a bound for adaptive, value-aware verifiers that read the whole trace; its tight
+case is the optimal search for a hidden object~\cite{chew1967,kadane1971}. Proof-of-Learning~\cite{jia2021pol},
+which checks the largest weight updates of a training run, is a precedent for value-dependent
+sampling being gamed~\cite{zhang2022pol,fang2023pol}.
+
+\para{Trusted hardware.} Slalom~\cite{slalom} checks the linear layers of a GPU computation from
+inside an SGX enclave with Freivalds' algorithm, optionally with a precomputed secret challenge.
+TwinShield~\cite{twinshield} and VeriAttn~\cite{veriattn} extend enclave-based checking to
+attention, and VeriAttn accepts results within a tolerance. GPU confidential computing on
+H100-class GPUs runs the whole model inside an attested enclave on the GPU; a measurement study
+finds little overhead inside the GPU and attributes most of the penalty, below 7\% for most LLM
+queries, to encrypted transfers over PCIe~\cite{gpucc}. These designs are fast, but their guarantee
+rests on the enclave and its vendor. Our protocol needs no trusted hardware, and its exact integer
+semantics leaves no tolerance in which to hide a change.
+
+\para{Freivalds-based checks and linear-code commitments.} SafetyNets~\cite{safetynets} uses
+interactive proofs for networks with quadratic activations, and ZKML~\cite{zkml} uses Freivalds'
+check for linear layers inside a SNARK. Maverick~\cite{maverick} checks every linear layer of a
+language model with sparse Freivalds checks against a code-encoded copy of the weights that the
+client stores. Gupta et al.~\cite{gupta2026private} run Freivalds' check in the exponent of a
+group, against verification data that the model owner generates with secret randomness, for a
+client that outsources inference to two non-colluding servers. CommitLLM~\cite{commitllm2026}
+checks int8 language models with secret Freivalds vectors precomputed from the weights, at
+12--14\% serving overhead, and audits attention without verifying it. LAMP~\cite{lamp} lets a
+verifier that holds only a commitment check one matrix product, with Freivalds' check and
+Reed--Solomon proximity testing inside a Groth16 SNARK. Our column check is the evaluation phase of
+the Ligero and Brakedown commitments~\cite{ligero,brakedown}, and our setup proof
+(Section~\ref{sec:setup-proof}) is their testing phase, done once per model in the style of
+Ligero. DeepBrake~\cite{deepbrake} consolidates the proximity test and the evaluation check of a
+row-wise Reed--Solomon commitment into a single proximity test for evaluation points fixed in
+advance, without a sum-check, by fixing the row evaluations before the verifier samples the random
+fold. ReedWeave~\cite{reedweave} combines interleaving with FRI-style recursive folding to speed up
+Reed--Solomon polynomial commitments. Among zkSNARKs, DeepProve's hash-based configuration commits
+with BaseFold~\cite{basefold}. A proximity test of this kind in place of our full-column setup
+proof is the natural way to shorten that proof, which we leave to future work.
+
+\para{Where we fit.} We keep the setting of Anchuri et al., a client that holds only a commitment
+to the weights, and replace the sampled check, which needs $(1-\varepsilon)N$ paths per layer for
+soundness $1-\varepsilon$ (Theorem~\ref{thm:dich}), with a check of every weight operation. Each of
+the fully sound protocols above that avoids a SNARK needs more than a cryptographic commitment:
+Slalom an enclave, a GPU confidential-computing deployment trusted GPU hardware, Maverick an
+encoded copy of the weights, CommitLLM a secret derived from them, and Gupta et al.\ public data
+that grows with every matrix and is generated with secret randomness. zkSNARKs that verify against
+a Merkle root, such as DeepProve with BaseFold, need no trusted setup but prove far more slowly. To
+our knowledge, ours is the first Freivalds-based proof of inference that is fully sound for complete
+transformers, with attention recomputed by the verifier from checked values, whose client in
+mode~$\sC$ needs no enclave, no stored copy of the weights and no weight-derived secret. It uses no
+SNARK, only a hash function and a linear code, and with the setup proof it does not trust the party
+that computes the commitment. Its novelty lies in this combination for a weightless,
+GPU-less client, not in a new cryptographic primitive: the per-query check is the evaluation
+protocol of a linear-code polynomial commitment applied to every matrix product of the model.

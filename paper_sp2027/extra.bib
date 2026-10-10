@@ -321,3 +321,53 @@
   number      = {202},
   year        = {2015}
 }
+
+% The extended version of this paper (full proofs and the material moved out of the body), to be placed in the
+% anonymous artifact repository before the deadline; the link is added then.
+@misc{fullversion,
+  author = {{Anonymous Authors}},
+  title  = {Certified but Compromised: Breaking and Fixing Lightweight Proofs of Inference ({Extended} Version)},
+  note   = {Anonymous artifact repository (link to be added at submission)},
+  year   = {2026}
+}
+
+% Added at the condensation pass (2026-10-10).
+% [V] arXiv:2409.03992 (v1 6 Sep 2024, v4 5 Nov 2024); H100 NVL and H200 NVL; overhead below 7% for most LLM queries, attributed to encrypted CPU-GPU transfers (bounce buffers). Checked on arxiv.org 2026-10-10.
+@misc{gpucc,
+  author       = {Zhu, Jianwei and Yin, Hang and Deng, Peng and Almeida, Aline and Zhou, Shunfan},
+  title        = {Confidential Computing on {NVIDIA} {Hopper} {GPUs}: A Performance Benchmark Study},
+  year         = {2024},
+  howpublished = {arXiv:2409.03992}
+}
+
+% [V] Title, authors and number checked against IACR News item of 03 Aug 2026 (iacr.org/news/item/29151).
+% Caveat: the ePrint page eprint.iacr.org/2026/1561 now shows a revised version titled
+% "LiftWHIR: A Prover-Efficient Polynomial Commitment with Short Proofs" (same five authors).
+% The body cites the DeepBrake content (one proximity test for fixed evaluation points, no sum-check);
+% the integrator may add "version of 3 Aug 2026" or switch to the current title.
+@misc{deepbrake,
+  author       = {Zhang, Zhongliang and Zhang, Xinxuan and Wei, Yuanju and Qin, Lang and Deng, Yi},
+  title        = {{DeepBrake}: Efficient Row-Wise {Reed-Solomon} Commitments for Arbitrary Points},
+  howpublished = {Cryptology {ePrint} Archive, Paper 2026/1561},
+  year         = {2026}
+}
+
+% [V] Checked on eprint.iacr.org/2026/2147 on 2026-10-10.
+@misc{reedweave,
+  author       = {Jia, Yuhao and Li, Zhe and Xing, Chaoping and Yao, Yizhou and Yuan, Chen and Zhang, Jielong},
+  title        = {{ReedWeave}: Faster {Reed-Solomon} Polynomial Commitments from Interleaving and Folding},
+  howpublished = {Cryptology {ePrint} Archive, Paper 2026/2147},
+  year         = {2026}
+}
+
+@inproceedings{fri2018,
+  author    = {Ben-Sasson, Eli and Bentov, Iddo and Horesh, Yinon and Riabzev, Michael},
+  title     = {Fast {Reed--Solomon} Interactive Oracle Proofs of Proximity},
+  booktitle = {45th International Colloquium on Automata, Languages, and Programming (ICALP 2018)},
+  series    = {Leibniz International Proceedings in Informatics (LIPIcs)},
+  volume    = {107},
+  pages     = {14:1--14:17},
+  publisher = {Schloss Dagstuhl--Leibniz-Zentrum f{\"u}r Informatik},
+  year      = {2018},
+  doi       = {10.4230/LIPIcs.ICALP.2018.14}
+}

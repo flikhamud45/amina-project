@@ -1,6 +1,8 @@
 % =====================================================================================
 % main.tex: IEEE S&P 2027 submission draft, "Certified but Compromised" (working title).
-% Build: tectonic main.tex (from this directory).
+% Build: tectonic main.tex (the submission: body + short appendix, 18 pages) and tectonic main_ext.tex (the
+% extended version for the anonymous artifact repository: the same body, the full appendices and the material
+% moved out of the body).
 % Sections live in sections/*.tex; each one \providecommand's the macros it needs, so the
 % definitions below take precedence. Bibliography: references.bib (copied unchanged from
 % report/references.bib) and extra.bib (entries added for this draft; % [U] marks unverified ones).
@@ -56,7 +58,7 @@
 
 \begin{document}
 
-\title{Certified but Compromised: Breaking and Fixing\\ Lightweight Proofs of Inference}
+\title{Certified but Compromised: Breaking and Fixing\\ Lightweight Proofs of Inference\ifdefined\pviextended\\ (Extended Version)\fi}
 
 \author{\IEEEauthorblockN{Anonymous Authors}
 \IEEEauthorblockA{Submission under double-blind review}}
@@ -64,26 +66,14 @@
 \maketitle
 
 \begin{abstract}
-Lightweight proofs of inference avoid the cost of zkSNARKs by checking only a sample of a
-committed execution trace. We show that such sampling is not fully sound. A
-provider that overwrites one neuron and recomputes the later layers honestly leaves one
-inconsistent site. The path protocol of Anchuri et al.\ accepts it with probability $1-1/N$ per
-path for a layer of width $N$, and on OPT-6.7B one edited neuron changed the next token for all 40
-prompts tried. We prove that no sampling rule closes this gap: for any verifier that makes $q$
-queries per layer to a commitment of locality $d$, some network admits such a forgery that passes
-with probability at least $1-qd/N$, while commitments that mix all rows reach $2^{-\lambda}$ with
-$O(\lambda)$ queries. We then check every weight operation of an exact int8 model with Freivalds'
-algorithm against a Reed--Solomon and Merkle commitment, using only a hash function and a linear
-code. The protocol tolerates an untrusted commitment, proves greedy and sampled generation, and
-halves the proof at 2{,}048 tokens with a logUp-GKR. Its prover is 46 to 32{,}000 times faster than
-published zkSNARK provers. Its main cost is a proof that grows with the prompt.
+Lightweight proofs of inference check a sample of a committed execution trace. This is not fully sound. A provider that overwrites one neuron and recomputes the later layers honestly leaves one inconsistent site, which the path protocol of Anchuri et al.\ misses with probability $1-1/N$ per path in a layer of width $N$; on OPT-6.7B, one edited neuron changed the next token for 40 of 40 prompts. We prove that every verifier making $q$ queries per layer to a weight commitment of locality $d$, even an adaptive one reading the whole trace, accepts such a forgery on some network with probability at least $1-qd/N$, while commitments that mix all rows reach $2^{-\lambda}$ with $O(\lambda)$ queries. Our defence checks every matrix product of an exact int8 model with the evaluation protocol of a linear-code polynomial commitment, using only a hash function. It lets a client without weights or GPU check an untrusted provider of an open-weight model. A variant shrinks long-prompt proofs 1.7--2.3 times, but proofs still grow with the prompt.
 \end{abstract}
 
 \input{sections/intro}
 \input{sections/attack}
 \input{sections/defence}
 \input{sections/v1}
-\input{sections/generation_quality}
+\input{sections/generation}
 \input{sections/evaluation}
 \input{sections/discussion}
 
@@ -91,8 +81,24 @@ published zkSNARK provers. Its main cost is a proof that grows with the prompt.
 \bibliography{references,extra}
 
 \appendices
+\ifdefined\pviextended
 \input{sections/appendix_attack}
 \input{sections/appendix_defence}
+\input{sections/app_params}
 \input{sections/appendix_v1}
+\section{Material Moved Out of the Body}
+\label{app:ext}
+This appendix collects the derivations, measurements and tables that the submitted version leaves out for space,
+in the order of the sections they belong to.
+\input{sections/ext_intro}
+\input{sections/ext_attack}
+\input{sections/ext_defence}
+\input{sections/ext_v1}
+\input{sections/ext_generation}
+\input{sections/ext_evaluation}
+\input{sections/ext_discussion}
+\else
+\input{sections/appendix_short}
+\fi
 
 \end{document}

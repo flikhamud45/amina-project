@@ -1,0 +1,211 @@
+% =====================================================================================
+% sections/ext_evaluation.tex: material cut from sections/evaluation.tex (extended version only).
+% \input it inside an appendix \section of the extended version; it has \subsection headings only.
+% Where each block came from (all from the draft evaluation.tex of 2026-10-10, numbers unchanged):
+%   1. Setup details              Sec. 7.1 "Hardware" and "Models" (sentences dropped from the body)
+%   2. Prover and verifier        Sec. 7.3 "Prover improvements", "Verifier improvements" and
+%      improvements               Table tab:eval-improve (the body keeps a two-sentence summary)
+%   3. Memory and untrusted       Sec. 7.3 "Memory and untrusted commitments" (duplicates the key
+%      commitments                numbers of Table tab:setup, which moves to ext_defence.tex)
+%   4. Attack and detection       Sec. 7.2 (the attack numbers stay only in Sec. 3.5 of the body;
+%                                 kept here: the comparison with our proof and the setup-proof outcome)
+%   5. V1: crossover per cell     Sec. 7.4 "Cost" (last sentence) and the per-cell values behind the
+%                                 body's 0.16-0.26 Gb/s (arithmetic on Table tab:eval-v1)
+%   6. Re-execution remarks       Sec. 7.5 "Where this leaves the verifier" (sentences dropped)
+%   7. V1 against published       the V1 column and footnote e of Table tab:eval-compare, and Sec. 7.6
+%      systems                    "What this paper's changes add"
+% Improvement IDs (plan items) behind the names used in block 2: A1 int8 opening and fold; A2 int8
+%   forward; A3 threaded encoder assembly; A4 fused attention in the prover; B2 GPU claim decoder;
+%   B3 fused exact attention kernel; B5 native CPU attention; C2 = V1; D4/D5 setup proof; F1
+%   re-execution. Rounding note: A1's Llama-2-13B gain is the source's 4.3x (rounded cells give 4.4x).
+% Labels defined here: app:eval-setup, app:eval-improve, tab:eval-improve, app:eval-untrusted,
+%   app:eval-attack, app:eval-crossover, app:eval-reexec, app:eval-compare-v1, tab:eval-compare-v1.
+% Labels used (body or other appendices): sec:break, sec:setup-proof, sec:quality, sec:gen,
+%   tab:eval-llm, tab:eval-v1, tab:eval-reexec, tab:eval-compare, tab:setup.
+% =====================================================================================
+
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\sK}{\mathsf{K}}
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+
+% -------------------------------------------------------------------------------------
+\subsection{Setup Details}
+\label{app:eval-setup}
+
+The dog-versus-cat ResNet-18 stands in for the unreleased classifier of Anchuri et
+al.~\cite{anchuri2026verifiable}. Int8 quantisation changed the accuracy of the image models by at
+most 0.4 points. Real weights are used for the attack on OPT-6.7B (Section~\ref{sec:break}) and for
+model quality (Section~\ref{sec:quality}). Proof sizes do not depend on the hardware.
+
+% -------------------------------------------------------------------------------------
+\subsection{Prover and Verifier Improvements}
+\label{app:eval-improve}
+
+\begin{table}[t]
+  \caption{Each improvement against the previous code path on the same queries (RTX~2080~Ti;
+  CPU row: 8 threads of a Xeon Silver 4114), with identical claims, proofs and verdicts.
+  $T{=}2{,}048$ tokens except for the int8 opening}
+  \label{tab:eval-improve}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Build ($b/L$ blocks) & before & after & gain \\
+    \midrule
+    \multicolumn{4}{@{}l}{\emph{Opening and fold on int8 GEMMs (prover, $\sC$, $T{=}64$)}} \\
+    Llama-2-7B, 1/32 & 277\,ms & 64\,ms & 4.3$\times$ \\
+    Llama-2-7B, 4/32 & 653\,ms & 175\,ms & 3.7$\times$ \\
+    Llama-2-13B, 1/40 & 276\,ms & 63\,ms & 4.3$\times$ \\
+    GPT-2, 12/12 & 173\,ms & 154\,ms & 1.1$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Weight products on int8 GEMMs (forward pass)}} \\
+    Llama-2-7B, 2/32 & 169\,ms & 87\,ms & 1.9$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Threaded assembly of the encoded claims (encoder)}} \\
+    OPT-1.3B, 24/24 & 3.28\,s & 1.54\,s & 2.1$\times$ \\
+    Llama-2-7B, 2/32 & 0.542\,s & 0.238\,s & 2.3$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Fused exact attention in the prover (forward pass)}} \\
+    OPT-1.3B, 12/24 & 0.538\,s & 0.332\,s & 1.6$\times$ \\
+    Llama-2-7B, 2/32 & 0.163\,s & 0.140\,s & 1.2$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{GPU claim decoder and fused attention (GPU verifier, $\Kpre$)}} \\
+    OPT-1.3B, 12/24 & 1.43\,s & 0.53\,s & 2.7$\times$ \\
+    Llama-2-7B, 2/32 & 0.36\,s & 0.18\,s & 2.0$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Native exact attention (CPU verifier, $\Kpre$)}} \\
+    Llama-2-7B, 2/32 & 4.12\,s & 2.73\,s & 1.5$\times$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Each improvement was measured alone, on an RTX~2080~Ti with 8 threads of an Intel Xeon Silver 4114,
+against the previous code path on the same queries (Table~\ref{tab:eval-improve}). No improvement
+changed a claim, a proof or a verdict.
+
+\para{Prover.} Opening the committed columns took 62\% of Llama-2-7B's base prover at 64 tokens
+(1.105 of 1.78\,s), in float64. Splitting each field element into four signed bytes makes the
+opening and the fold exact int8 GEMMs with bit-identical results, and the prover 3.7--4.3$\times$
+faster on Llama-2 blocks. Int8 tensor cores also halve the forward pass's weight products on
+Llama-sized layers, and the prover reuses the verifier's fused attention kernel. The claim encoder
+turned out to be bound by a single-threaded copy of its output, so assembling the output on several
+threads gives 2.1--2.3$\times$. A fused Triton encoder with the same bytes is slower (1.74 against
+1.54\,s on OPT-1.3B), a negative result \todo{L40S: full Llama-2-7B and Llama-2-13B provers at 64
+and 2{,}048 tokens}.
+
+\para{Verifier.} The base GPU verifier spent most of its time decoding the claims on the host and
+passing about a dozen times over materialised $T\times T$ attention scores. Our GPU decoder
+validates every offset on the host before launching a kernel and rejects exactly the inputs that
+the host decoder rejects (tested on every truncation and on 400 random corruptions). Our fused
+attention kernel computes the same integers without a $T\times T$ buffer; its fp32 sums are exact
+because every partial sum is an integer below $2^{24}$. Together they make the GPU verifier
+2.0--2.7$\times$ faster at 2{,}048 tokens. Afterwards, copies take 32\% of the CUDA time of an
+OPT-1.3B query (12 blocks) and int8 GEMMs 4.4\%: data movement dominates, including the upload of
+the proof, which V1 makes smaller. On a CPU, a native exact attention kernel gains 1.5$\times$ at
+2{,}048 tokens \todo{L40S/EPYC: full-model verifiers with all improvements}.
+
+% -------------------------------------------------------------------------------------
+\subsection{Memory and Untrusted Commitments}
+\label{app:eval-untrusted}
+
+\todo{F4: peak GPU and host memory of the prover and the verifier per cell of
+Table~\ref{tab:eval-llm}}. Without the honest-commitment assumption
+(Section~\ref{sec:setup-proof}), Llama-2-7B needs a one-time setup proof of 2.8\,GB (or 11.3\,GB),
+which raises its per-query column bytes from 124.7 to 168.5\,MB (or 134.9\,MB), less than 1\% of the
+proof at 2{,}048 tokens (Table~\ref{tab:setup}).
+
+% -------------------------------------------------------------------------------------
+\subsection{The Attack Against Our Proof Size, and the Setup Proof}
+\label{app:eval-attack}
+
+Catching one edited neuron with probability $1-2^{-40}$ takes at least 305{,}193 paths of the path
+protocol for Llama-2-7B, about 13.7\,GB of openings at 64 tokens (Section~\ref{sec:break}), where our
+proof is 325\,MB at $\lambda = 128$ (Table~\ref{tab:eval-llm}). Without the setup proof
+(Section~\ref{sec:setup-proof}), a commitment that mixes two models passes about $2^{-t}$ of the
+queries; with it, the commitment is rejected at setup \todo{L40S: outcome counts with the final
+code, including V1 and the setup proof}.
+% Removed from the body under the CFP's AI-use policy (CUT_PLAN.md decision 7); restore only with
+% an accurate description of how the review was done, or drop:
+% "An adversarial review of V1 found forgeries only on two crafted models that violate conditions
+% the verifier now checks."
+
+% -------------------------------------------------------------------------------------
+\subsection{V1: Crossover per Cell}
+\label{app:eval-crossover}
+
+V1's prover takes about 10$\times$ as long as v0's at 2{,}048 tokens, but still seconds where the
+zkSNARK provers of Table~\ref{tab:eval-compare} take minutes. V1 thus suits clients whose
+bandwidth matters more than the prover's time. If proving, transfer and verification run one after
+another, V1 is faster end to end on links slower than $8\,\Delta B/\Delta t$ bits per second, where
+$\Delta B$ is the number of bytes it saves and $\Delta t$ the prover and verifier time it adds. On
+the timed cells of Table~\ref{tab:eval-v1} (MB $=10^6$ bytes) this gives 0.17\,Gb/s (GPT-2, 512
+tokens, $\sC$), 0.16\,Gb/s (GPT-2, 512 tokens, $\Kpre$), 0.23\,Gb/s (OPT-125M, 2{,}048 tokens,
+$\sC$), 0.22\,Gb/s (OPT-125M, 2{,}048 tokens, $\Kpre$) and 0.26\,Gb/s (Llama-2-7B with 2 of 32
+blocks, 2{,}048 tokens, $\Kpre$) \todo{L40S: crossover per cell of the final run}.
+
+% -------------------------------------------------------------------------------------
+\subsection{Re-Execution: Further Remarks}
+\label{app:eval-reexec}
+
+\begin{table}[h]
+  \caption{Re-executing the full model against our verifier, in seconds. GPU: RTX~2080~Ti. CPU:
+  8 threads of a Xeon Silver 4114. Full models are extrapolated linearly from 1- and 2-block
+  builds. The GPU integer times precede the int8 forward pass, which halves them}
+  \label{tab:eval-reexec}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    & $T{=}64$ & 512 & 2{,}048 \\
+    \midrule
+    \multicolumn{4}{@{}l}{\emph{GPU: integer forward pass / fp16 decoder}} \\
+    OPT-1.3B & -- & -- & 0.94 / 0.18 \\
+    OPT-6.7B & 0.17 / 0.035 & 0.41 / 0.16 & 1.94 / 0.39 \\
+    Llama-2-7B & 0.16 / 0.037 & 0.35 / 0.18 & 2.08 / 0.57 \\
+    Llama-2-13B & 0.14 / 0.08 & 0.62 / 0.34 & 3.46 / 0.82 \\
+    Qwen3-4B & 0.17 / 0.03 & 0.45 / 0.09 & 1.92 / 0.37 \\
+    \midrule
+    \multicolumn{4}{@{}l}{\emph{CPU: Llama-2-7B}} \\
+    our $\Kpre$ verifier & 1.5 & -- & 85 \\
+    \quad with native attention & \todo{B5} & -- & \todo{B5} \\
+    fp32 re-execution & 3.5 & -- & 86 \\
+    integer re-execution & 6.8 & -- & 196 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+A CPU client that holds the weights beats exact (integer) re-execution at both measured lengths
+(Table~\ref{tab:eval-reexec}). Since the claims of about $\lceil k/T\rceil$ queries of $T$ tokens
+reveal a weight matrix with rows of length $k$, mode $\sC$ suits open-weight models served by an
+untrusted provider. Our verifier improvements extrapolate to about 1.1\,s for OPT-1.3B in $\Kpre$ on
+the 2080~Ti, which approaches zkLLM's 0.90\,s on an A100; this compares an extrapolated value with
+a measured one \todo{L40S: zkLLM, and DeepProve if feasible, on our L40S}.
+
+% -------------------------------------------------------------------------------------
+\subsection{V1 Against Published Systems}
+\label{app:eval-compare-v1}
+
+\begin{table}[t]
+  \caption{Proof size of V1 against the published systems of Table~\ref{tab:eval-compare} (V1
+  with Fiat--Shamir; v0 with Fiat--Shamir sends 349.6\,MB and 2{,}073.9\,MB for the two OPT rows)}
+  \label{tab:eval-compare-v1}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}llrrr@{}}
+    \toprule
+    System & Model ($T$) & theirs & ours (v0) & V1 \\
+    \midrule
+    zkGPT & GPT-2 (64) & 101\,kB & 16.6\,MB & 13.0\,MB \\
+    DeepProve & GPT-2 (64) & 21.7\,MB & 16.6\,MB & 13.0\,MB \\
+    DeepProve & GPT-2 (512) & 25.5\,MB & 91.2\,MB & 47.1\,MB \\
+    zkLLM & OPT-125M (2{,}048) & 141\,kB & 348\,MB & 172.3\,MB \\
+    zkLLM & OPT-1.3B (2{,}048) & 147\,kB & 2.1\,GB & 960.8\,MB \\
+    zkLLM & Llama-2-7B (2{,}048) & 183\,kB & 6.6\,GB & \todo{V1} \\
+    zkLLM & Llama-2-13B (2{,}048) & 188\,kB & 10.5\,GB & \todo{V1} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The improvements leave the proof sizes unchanged and will replace our timings \todo{L40S}. V1
+shrinks the proof where it is largest (Table~\ref{tab:eval-compare-v1}). Only committing the
+activations and proving the operations without weights, as zkLLM does, would stop the proof from
+growing with the prompt. zkAgent reports about 0.30\,s per token for GPT-2
+generation~\cite{zkagent}; Section~\ref{sec:gen} gives our generation costs.
