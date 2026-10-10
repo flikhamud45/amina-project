@@ -9,6 +9,7 @@
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh quality  # F2 perplexity and V1 on real weights
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh gpuv     # the verifier on the GPU, v0 and V1
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh cpuv     # the CPU verifier against re-execution (needs CXX)
+#     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh attack   # in-range edits on OPT-6.7B (G3.5; needs HF_HOME)
 # Then strong_gpu.sh's must/should tiers with the same PVI_PLATFORM give the v0 benchmark (Table 3 and the
 # comparisons) with every prover/verifier improvement of sp2027 on.
 # Output: one JSON line per cell in logs/$PVI_PLATFORM/sp-<tier>-<cell>-<jobid>.out (grep '^{').  PVI_DRYRUN=1 prints
@@ -95,7 +96,15 @@ cpuv)
 --threads 8 --reps 3"
   done
   ;;
+attack)
+  # G3.5: edits that keep every FFN activation inside ranges calibrated on held-out text (WikiText-2 train), on the
+  # real OPT-6.7B (fp32 on the GPU, about 27 GB); both the unrestricted and the down-only attacker
+  for MV in any down; do
+    sub "a-inrange-opt67-$MV" 6 128 "HF_HOME=$HF_HOME $PY experiments/2_attack/inrange_llm.py --model facebook/opt-6.7b \
+--layers 8 16 24 31 --calib-windows 64 --cap 256 --moves $MV --device cuda"
+  done
+  ;;
 *)
-  echo "usage: sp2027.sh smoke|v1|quality|gpuv|cpuv" >&2; exit 2
+  echo "usage: sp2027.sh smoke|v1|quality|gpuv|cpuv|attack" >&2; exit 2
   ;;
 esac

@@ -184,7 +184,7 @@ the best single-neuron edits but never visits a neuron whose claimed activation 
 zeroing about 14 of the 512 neurons flips the prediction and passed 2{,}000 of 2{,}000 runs. A
 floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$, reaches 2\% at $\delta=1$. Each figure, the
 detection of the best attack we found against that sampler, bounds its worst case from above;
-2\% is the best such bound among our samplers. \todo{G3: adaptive game, held-out ranges}
+2\% is the best such bound among our samplers. \todo{G3: adaptive game}
 
 \para{Larger models.} On every CNN and test query, including the binary dog-vs-cat ResNet-18, one
 changed penultimate neuron flips the prediction and is caught by a path with probability 1/84
@@ -196,7 +196,13 @@ layers of Llama-2-7B (width 11{,}008), about 13.7\,GB of fp16 openings at 64 tok
 token for all 40 prompts. A fixed-target backdoor, constrained by the final LayerNorm, succeeds
 for ``\texttt{back}'' (40/40, clean prompts unchanged) and fails for ``\texttt{hacked}'' (0/40).
 Its values exceed the natural ranges, which the path protocol does not check, and $2^{-40}$ needs
-at least 454{,}248 paths. \todo{L40S: in-range attack (G3.5)}
+at least 454{,}248 paths. Range checks do not stop the edit. Against per-neuron ranges calibrated on
+held-out text (8{,}192 tokens of WikiText-2 train), edits that keep every value in range change the
+next token of OPT-1.3B for all 40 prompts at each of layers 6, 12, 18 and 23, with a median of 2
+neurons (at most 60), which a path opens with probability below $8\cdot 10^{-4}$. Edits that only
+lower activations, which a contribution-weighted sampler of the claimed trace never opens, succeed
+for 9, 31, 38 and 39 of the 40 prompts at those layers, with a median of 6 neurons
+\todo{L40S: OPT-6.7B, Qwen3-4B}.
 
 % -------------------------------------------------------------------------------------
 \subsection{Systematisation of Spot-Checking Schemes}

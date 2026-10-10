@@ -55,7 +55,8 @@ catches a single changed node with probability at most $1/N$ in a layer of width
 recomputes every later layer honestly with the true weights. The trace is then inconsistent at one
 site, which a random path visits with probability $1/N$ (Figure~\ref{fig:overview}). On the real
 OPT-6.7B, editing one feed-forward neuron changed the next token for 40 of 40 prompts, with values
-outside the neurons' natural ranges. On triggered inputs only, it is a backdoor that leaves the
+outside the neurons' natural ranges; on OPT-1.3B, editing a few neurons within ranges calibrated on
+held-out text does the same. On triggered inputs only, it is a backdoor that leaves the
 committed weights clean. On a dog-vs-cat ResNet-18, one changed neuron flips every test query and
 passes a path with probability $511/512$, refuting the full soundness that Anchuri et al.\ state
 for binary classifiers. More paths do not help at a useful cost: detection with probability

@@ -86,7 +86,7 @@ def _calibration_text(n_tokens: int, tok) -> torch.Tensor:
 
 def calibrate(model, tok, fc2s: dict, windows: int, seq: int) -> dict:
     """Per layer: (max, 99.9th percentile) of each fc2 input over the calibration windows, every position."""
-    ids = _calibration_text(windows * seq, tok).view(windows, seq)
+    ids = _calibration_text(windows * seq, tok).view(windows, seq).to(next(model.parameters()).device)
     hooks = {}
     for layer, fc2 in fc2s.items():
         h = Hook()
@@ -99,6 +99,7 @@ def calibrate(model, tok, fc2s: dict, windows: int, seq: int) -> dict:
     for layer, (h, handle) in hooks.items():
         handle.remove()
         a = torch.cat(h.record, 0)
+        a = a.cpu()
         out[layer] = {"max": a.max(0).values, "p999": torch.quantile(a, 0.999, dim=0), "tokens": a.shape[0]}
     return out
 
@@ -148,7 +149,7 @@ def attack(model, hook: Hook, last_ids, past, lo: torch.Tensor, hi: torch.Tensor
     hook.idx = hook.val = None
     hook.capture = False
     return {"success": cur != top, "k": len(edited), "steps": steps, "honest": top, "forged": cur,
-            "edited": edited, "values": vals[edited].tolist(), "a_tampered": vals}
+            "edited": edited, "values": vals[edited].tolist() if edited else [], "a_tampered": vals}
 
 
 def main() -> None:
@@ -160,6 +161,7 @@ def main() -> None:
     ap.add_argument("--calib-seq", type=int, default=128)
     ap.add_argument("--cap", type=int, default=256)
     ap.add_argument("--threads", type=int, default=8)
+    ap.add_argument("--device", default="cpu", help="cuda for the large models (fp32 weights on the GPU)")
     ap.add_argument("--moves", choices=["any", "down"], default="any",
                     help="down: only decrease activations (the adaptive attacker against contribution weighting)")
     args = ap.parse_args()
@@ -168,6 +170,7 @@ def main() -> None:
     sys.path.insert(0, str(ROOT / "experiments" / "9_quality"))
     from common import load_opt                    # weights_only state-dict loading (torch < 2.6)
     model, tok = load_opt(args.model)
+    model = model.to(args.device)
     layers = model.model.decoder.layers
     fc2s = {i: layers[i].fc2 for i in args.layers}
     t0 = time.perf_counter()
@@ -178,18 +181,18 @@ def main() -> None:
     for layer in args.layers:
         fc2 = fc2s[layer]
         d_ff = fc2.in_features
-        col = fc2.weight.detach().float().norm(dim=0)                  # ||W_fc2[:, j]||
+        col = fc2.weight.detach().float().norm(dim=0).cpu()            # ||W_fc2[:, j]||
         hook = Hook()
         handle = fc2.register_forward_pre_hook(hook)
         for kind in ("max", "p999"):
-            hi = ranges[layer][kind]
+            hi = ranges[layer][kind].to(args.device)
             lo = torch.zeros_like(hi)
             rows = []
             for p in PROMPTS[:args.prompts]:
-                ids = tok(p, return_tensors="pt").input_ids
+                ids = tok(p, return_tensors="pt").input_ids.to(args.device)
                 past = prefix_cache(model, ids)
                 r = attack(model, hook, ids[:, -1:], past, lo, hi, args.cap, args.moves == "down")
-                a_t = r.pop("a_tampered")
+                a_t = r.pop("a_tampered").cpu()
                 w = a_t.abs() * col
                 p_unif = r["k"] / d_ff
                 p_contrib = float(w[r["edited"]].sum() / w.sum()) if r["edited"] else 0.0

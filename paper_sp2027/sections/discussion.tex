@@ -46,8 +46,8 @@ integer OPT-6.7B and Qwen3-4B, and at long context, is unmeasured \todo{F2}.
 
 \para{The attack and the bound.} Condition (H) holds for random ensembles with independent rows
 and on the constructed worst case, not on trained networks, where we report the best attacks found.
-An in-range LLM attack against held-out range checks and the best value-aware sampler is pending
-\todo{G3, G3.5}.
+On OPT-1.3B, edits that keep every value inside ranges calibrated on held-out text still succeed, also
+against contribution weighting (Section~\ref{sec:break}); larger models are pending \todo{L40S}.
 
 \section{Conclusion}
 \label{sec:conclusion}

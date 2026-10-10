@@ -235,3 +235,46 @@ concentrated choice of neuron.
 of holographic proofs~\cite{bghsv2006robust,bfls1991} read only part of their input. Ours reads all
 of its input, the trace. Honest recomputation moves the change from the trace into the weights, so
 reading the whole trace does not help, and the model, not the trace, must be encoded.
+
+% Added 2026-10-10 (plan G3.5; experiments/2_attack/inrange_llm.py, artifacts/results/inrange_llm_opt-1.3b_*.json).
+\subsection{In-Range Edits on OPT-1.3B}
+\label{ext:attack-inrange}
+Per-neuron ranges are the minimum (0, after ReLU) and the maximum, or the 99.9th percentile, of each FFN
+activation (the input of \texttt{fc2}) over 64 windows of 128 tokens of WikiText-2 train, every position. At
+the last position of one layer, a greedy attacker moves the neurons with the largest first-order decrease of
+the margin between the top-1 and the runner-up logit to the bound of their range, until the next token changes
+or 256 neurons are edited (fp32, the 40 prompts of the OPT-6.7B experiment). Uniform detection per path is
+$k/d_{\mathrm{ff}}$ ($d_{\mathrm{ff}}=8{,}192$); a contribution-weighted sampler opens neuron $j$ with
+probability proportional to $|a_j|\,\|W_{\mathrm{fc2}}[:,j]\|$ on the claimed trace.
+
+\begin{table}[h]
+  \caption{In-range edits on OPT-1.3B: prompts whose next token changed (of 40), median and maximum number of
+  edited neurons, and median detection per draw under uniform and contribution-weighted sampling}
+  \label{tab:inrange}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}llrrrrr@{}}
+    \toprule
+    Moves & Layer & changed & $k$ med. & $k$ max & uniform & contribution \\
+    \midrule
+    any, max range & 6 & 40 & 3.5 & 17 & $4.3\cdot10^{-4}$ & 0.55 \\
+     & 12 & 40 & 3 & 40 & $3.7\cdot10^{-4}$ & 0.11 \\
+     & 18 & 40 & 2 & 13 & $2.4\cdot10^{-4}$ & 0.054 \\
+     & 23 & 40 & 1 & 4 & $1.2\cdot10^{-4}$ & 0.029 \\
+    any, 99.9\% range & 6 & 40 & 6.5 & 60 & $7.9\cdot10^{-4}$ & 0.57 \\
+     & 12 & 40 & 5 & 24 & $6.1\cdot10^{-4}$ & 0.097 \\
+     & 18 & 40 & 3.5 & 22 & $4.3\cdot10^{-4}$ & 0.053 \\
+     & 23 & 40 & 1 & 7 & $1.2\cdot10^{-4}$ & 0.022 \\
+    down only & 6 & 9 & 3 & 15 & $3.7\cdot10^{-4}$ & 0 \\
+     & 12 & 31 & 12 & 104 & $1.5\cdot10^{-3}$ & 0 \\
+     & 18 & 38 & 8 & 164 & $9.8\cdot10^{-4}$ & 0 \\
+     & 23 & 39 & 2 & 60 & $2.4\cdot10^{-4}$ & 0 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Pushing neurons to the top of their range raises their contribution, so contribution weighting catches those
+edits often; lowering activations to zero, which stays in range after ReLU, hides them from it completely, at
+the price of more neurons and fewer successes in early layers. Under uniform sampling every variant needs tens
+of thousands of paths for $1-2^{-40}$ (19{,}000--227{,}000 at the medians).
+
