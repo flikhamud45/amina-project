@@ -1,5 +1,7 @@
 # IEEE S&P 2027 plan (fallback: USENIX Security 2027, cycle 2)
 
+> **Superseded for new work by [SP2027_PLAN2.md](SP2027_PLAN2.md)** (12 Oct - 17 Nov 2026: open items, new improvements, schedule, gate G1 on 30 Oct, L40S freeze on 1 Nov). This file stays the record of what was done.
+
 Target: **S&P 2027, last cycle: abstract 10 Nov 2026, paper 17 Nov 2026** (13 pages + 5 of references and
 appendices; IEEE format; reviewed as submitted; a reject blocks S&P for a year). Fallbacks: EuroS&P 2 Dec 2026,
 **USENIX Security 26 Jan 2027**. **Gate G0, Fri 30 Oct**: go to S&P only if the defence targets marked (G0) below
