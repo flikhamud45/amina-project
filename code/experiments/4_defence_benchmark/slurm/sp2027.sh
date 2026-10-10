@@ -94,6 +94,10 @@ cpuv)
     done
     sub "c-reexec-$M" 6 256 "$PY experiments/7_reexec/reexec.py --model $M --seq 64 2048 --layers 2 32 --device cpu \
 --threads 8 --reps 3"
+    # the same with the allocator setting the CPU verifier applies to itself (native_kernels.tune_malloc), for a
+    # like-for-like comparison
+    sub "c-reexec-heap-$M" 6 256 "MALLOC_MMAP_MAX_=0 MALLOC_TRIM_THRESHOLD_=2147483647 MALLOC_TOP_PAD_=268435456 \
+$PY experiments/7_reexec/reexec.py --model $M --seq 64 2048 --layers 2 32 --device cpu --threads 8 --reps 3"
   done
   ;;
 attack)

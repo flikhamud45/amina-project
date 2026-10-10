@@ -46,7 +46,7 @@ the team before the runs (the "freeze"); until then this file lists what will be
 | `v1` | V1 against v0, timed | 13 | 20-30 |
 | `quality` | perplexity (fp32, scalar gains, smoothing) and V1 on real weights | 7 | 10-15 |
 | `gpuv` | the verifier on the GPU | 4 | 4-6 |
-| `cpuv` | the CPU verifier and re-execution, same CPU | 6 | 6-10 |
+| `cpuv` | the CPU verifier and re-execution, same CPU | 8 | 8-12 |
 | `attack` | in-range edits on OPT-6.7B (range checks, value-aware sampler) | 2 | 4-8 |
 | `strong_gpu.sh must` | the v0 benchmark with the improvements (see `STRONG_GPU_PLAN.md`, Part C) | about 20 | 30-40 |
 
