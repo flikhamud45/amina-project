@@ -26,7 +26,7 @@ from pathlib import Path
 
 import torch
 
-__all__ = ["available", "attention_core"]
+__all__ = ["available", "attention_core", "attention_core_hybrid"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -105,6 +105,37 @@ extern "C" void pvi_attention(const int16_t* q, const int16_t* k, const int16_t*
         }
     }
 }
+
+// The integer softmax of a block of rows, in place: s holds exact integer scores as float32 ([n_rows, t], row i of
+// the block is query row r0 + i of its (batch, head) group, which sees keys 0 .. t - queries + (r0 + i) % queries);
+// on return it holds p = floor((tot + 510 e) / (2 tot)) as float32 (0 for the masked keys), e = LUT[min(max - s, len - 1)].
+extern "C" void pvi_softmax_block(float* s, const int32_t* lut, int64_t groups, int64_t n_rows, int64_t r0,
+                                  int64_t queries, int64_t t, int64_t lut_len, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    #pragma omp parallel
+    {
+        std::vector<int32_t> e(t);
+        #pragma omp for schedule(static) collapse(2)
+        for (int64_t g = 0; g < groups; ++g) {
+            for (int64_t i = 0; i < n_rows; ++i) {
+                float* row = s + (g * n_rows + i) * t;
+                const int64_t n = t - queries + ((r0 + i) % queries) + 1;
+                int32_t mx = INT32_MIN;
+                for (int64_t j = 0; j < n; ++j) mx = std::max(mx, (int32_t)row[j]);
+                int32_t tot = 0;
+                for (int64_t j = 0; j < n; ++j) {
+                    int64_t gap = (int64_t)mx - (int64_t)(int32_t)row[j];
+                    if (gap > lut_len - 1) gap = lut_len - 1;
+                    e[j] = lut[gap];
+                    tot += e[j];
+                }
+                const int32_t two = 2 * tot;
+                for (int64_t j = 0; j < n; ++j) row[j] = (float)((tot + 510 * e[j]) / two);
+                for (int64_t j = n; j < t; ++j) row[j] = 0.0f;
+            }
+        }
+    }
+}
 """
 
 _LIB = None
@@ -138,6 +169,8 @@ def _library():
         _LIB = ctypes.CDLL(str(lib))
         _LIB.pvi_attention.argtypes = [ctypes.c_void_p] * 5 + [ctypes.c_int64] * 7
         _LIB.pvi_attention.restype = None
+        _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 7
+        _LIB.pvi_softmax_block.restype = None
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -160,3 +193,31 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
     lib.pvi_attention(q16.data_ptr(), k16.data_ptr(), v16.data_ptr(), lut32.data_ptr(), out.data_ptr(),
                       bsz * heads, rows, queries, t, dh, lut32.numel(), torch.get_num_threads())
     return out
+
+
+_ROWS = 32
+"""Query rows per block of :func:`attention_core_hybrid` (scores of 32 rows x 2,048 keys x the heads: a few MB)."""
+
+
+def attention_core_hybrid(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int) -> torch.Tensor:
+    """:func:`attention_core`'s integers with the two products as float32 GEMMs (torch's BLAS) and the integer
+    softmax in one native pass per block of query rows: the scores are exact in float32 (``|s| <= 2**21``) and so is
+    ``P V`` (every partial sum below ``(255 + T/2) 128 < 2**24``), as in ``transformer._attention_core``, but no
+    ``T x T`` tensor is held and the element-wise steps are one pass over a cache-resident block."""
+    lib = _library()
+    bsz, heads, rows, dh = q.shape
+    t = k.shape[2]
+    qf = q.to(torch.float32).reshape(bsz * heads, rows, dh)
+    kt = k.to(torch.float32).reshape(bsz * heads, t, dh).transpose(1, 2).contiguous()
+    vf = v.to(torch.float32).reshape(bsz * heads, t, dh)
+    lut32 = lut.to(torch.int32).contiguous()
+    out = torch.empty(bsz * heads, rows, dh, dtype=torch.int64)
+    threads = torch.get_num_threads()
+    for r0 in range(0, rows, _ROWS):
+        r1 = min(rows, r0 + _ROWS)
+        s = torch.bmm(qf[:, r0:r1], kt).contiguous()                       # [BH, rb, T], exact integers
+        lib.pvi_softmax_block(s.data_ptr(), lut32.data_ptr(), bsz * heads, r1 - r0, r0, queries, t,
+                              lut32.numel(), threads)
+        out[:, r0:r1] = torch.bmm(s, vf).to(torch.int64)                   # exact: sums < 2**24
+    return out.view(bsz, heads, rows, dh)
+

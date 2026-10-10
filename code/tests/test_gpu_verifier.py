@@ -191,6 +191,7 @@ def test_the_native_cpu_attention_gives_the_int32_cores_integers(hq, hkv, t, tq,
     lut = tr._exp_lut(m_s, "cpu")
     want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cpu", tq))
     assert torch.equal(native_kernels.attention_core(q, k, v, lut, tq), want)
+    assert torch.equal(native_kernels.attention_core_hybrid(q, k, v, lut, tq), want)   # BLAS products, native softmax
 
 
 # -- int8 GEMMs -------------------------------------------------------------------------------

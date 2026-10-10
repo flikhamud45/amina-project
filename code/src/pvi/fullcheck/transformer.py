@@ -44,6 +44,7 @@ __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "
 
 SHIFT = 30
 _FUSED_ATTN = os.environ.get("PVI_FUSED_ATTN", "1") != "0"
+_CPU_ATTN = os.environ.get("PVI_CPU_ATTN", "hybrid")    # the native CPU attention: "hybrid" (BLAS + native softmax) or "tiled"
 """On a GPU with Triton, the int32 attention runs as one fused kernel (``attention_kernels``); 0: torch."""
 RES_MAX = (1 << 22) - 1
 ATTN_BYTES = 1 << 27
@@ -289,7 +290,8 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1) -> torch.Tensor:
         if q.is_cuda and _FUSED_ATTN and attention_kernels.available(q.device):   # the same integers, no T x T tensors
             return attention_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
         if q.device.type == "cpu" and native_kernels.available():                # a CPU verifier: native, exact
-            return native_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
+            core = native_kernels.attention_core_hybrid if _CPU_ATTN == "hybrid" else native_kernels.attention_core
+            return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
         return _attention_core(q, k, v, _exp_lut(m_s, dev), _causal_notmask(t, rep, dev, q.shape[2] // rep))
     return _attention_int64(q, k, v, m_s, _causal_notmask(t, rep, dev, q.shape[2] // rep))
 
