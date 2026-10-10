@@ -117,8 +117,27 @@ static void attention_scalar(const int16_t* q, const int16_t* k, const int16_t* 
 // (255 + T/2) 128 < 2**24 for T < 2**15), widened to int64 on the way out.
 static const int64_t TQ = 16;
 
-static void attention_avx512(const int16_t* q, const int16_t* k, const int16_t* v, const int32_t* lut, int64_t* out,
-                             int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh, int64_t lut_len) {
+struct View4 {                      // an int64 [B, H, R, dh] tensor by its strides; group g = b H + h
+    const int64_t* p; int64_t s0, s1, s2, s3, heads;
+    inline const int64_t* group(int64_t g) const { return p + (g / heads) * s0 + (g % heads) * s1; }
+};
+
+static inline int32_t pair16(int64_t lo, int64_t hi) {
+    return (int32_t)((uint32_t)(uint16_t)(int16_t)lo | ((uint32_t)(uint16_t)(int16_t)hi << 16));
+}
+
+// floor(num / den) for 0 <= num < 2**31 and 0 < den < 2**31: the double product with the row's reciprocal is
+// within 2**-44 of the quotient (< 256), so its truncation is off by at most one, and one integer correction
+// each way gives the exact floor (the int32 division of pvi_attention)
+static inline int32_t floordiv_r(int32_t num, int32_t den, double rinv) {
+    int32_t q = (int32_t)((double)num * rinv);
+    q += (int64_t)(q + 1) * den <= num;
+    q -= (int64_t)q * den > num;
+    return q;
+}
+
+static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int64_t* out, int64_t bh,
+                             int64_t rows, int64_t queries, int64_t t, int64_t dh, int64_t lut_len) {
     const int64_t tp = (t + 15) & ~(int64_t)15, t2 = (t + 1) / 2, d2 = dh / 2, dv = dh / 16;
     const int64_t tiles = (rows + TQ - 1) / TQ;
     #pragma omp parallel
@@ -127,19 +146,20 @@ static void attention_avx512(const int16_t* q, const int16_t* k, const int16_t* 
         int64_t n[TQ];
         #pragma omp for schedule(dynamic, 1)
         for (int64_t g = 0; g < bh; ++g) {
-            const int16_t* kg = k + g * t * dh;
-            const int16_t* vg = v + g * t * dh;
-            for (int64_t d = 0; d < d2; ++d) {
-                int32_t* row = kt.data() + d * tp;
-                for (int64_t j = 0; j < t; ++j)
-                    row[j] = (int32_t)((uint32_t)(uint16_t)kg[j * dh + 2 * d] | ((uint32_t)(uint16_t)kg[j * dh + 2 * d + 1] << 16));
-                for (int64_t j = t; j < tp; ++j) row[j] = 0;
+            const int64_t* kg = k.group(g);
+            const int64_t* vg = v.group(g);
+            const int64_t* qg = q.group(g);
+            for (int64_t j = 0; j < t; ++j) {                    // keys: int16 pairs along dh, transposed
+                const int64_t* kj = kg + j * k.s2;
+                for (int64_t d = 0; d < d2; ++d) kt[d * tp + j] = pair16(kj[2 * d * k.s3], kj[(2 * d + 1) * k.s3]);
             }
-            for (int64_t jj = 0; jj < t2; ++jj) {
-                const int16_t* a = vg + 2 * jj * dh;
+            for (int64_t d = 0; d < d2; ++d)
+                for (int64_t j = t; j < tp; ++j) kt[d * tp + j] = 0;
+            for (int64_t jj = 0; jj < t2; ++jj) {                // values: int16 pairs of consecutive keys
+                const int64_t* a = vg + 2 * jj * v.s2;
                 const bool two = 2 * jj + 1 < t;
                 for (int64_t d = 0; d < dh; ++d)
-                    v2[jj * dh + d] = (int32_t)((uint32_t)(uint16_t)a[d] | ((uint32_t)(uint16_t)(two ? a[dh + d] : 0) << 16));
+                    v2[jj * dh + d] = pair16(a[d * v.s3], two ? a[v.s2 + d * v.s3] : 0);
             }
             for (int64_t tile = 0; tile < tiles; ++tile) {
                 const int64_t r0 = tile * TQ, tr = std::min(TQ, rows - r0);
@@ -147,9 +167,9 @@ static void attention_avx512(const int16_t* q, const int16_t* k, const int16_t* 
                 for (int64_t i = 0; i < TQ; ++i) {
                     n[i] = i < tr ? t - queries + ((r0 + i) % queries) + 1 : 0;
                     nmax = std::max(nmax, n[i]);
-                    const int16_t* qr = q + (g * rows + r0 + i) * dh;
+                    const int64_t* qr = qg + (r0 + i) * q.s2;
                     for (int64_t d = 0; d < d2; ++d)
-                        qp[i * d2 + d] = i < tr ? (int32_t)((uint32_t)(uint16_t)qr[2 * d] | ((uint32_t)(uint16_t)qr[2 * d + 1] << 16)) : 0;
+                        qp[i * d2 + d] = i < tr ? pair16(qr[2 * d * q.s3], qr[(2 * d + 1) * q.s3]) : 0;
                 }
                 for (int64_t j0 = 0; j0 < nmax; j0 += 16) {          // scores, 16 rows x 16 keys at a time
                     __m512i acc[TQ];
@@ -164,20 +184,26 @@ static void attention_avx512(const int16_t* q, const int16_t* k, const int16_t* 
                 const int64_t np2 = (nmax + 1) / 2;
                 for (int64_t i = 0; i < tr; ++i) {                    // the integer softmax of each row
                     int32_t* si = s.data() + i * tp;
+                    const int64_t ni = n[i];
                     int32_t mx = INT32_MIN;
-                    for (int64_t j = 0; j < n[i]; ++j) mx = std::max(mx, si[j]);
+                    for (int64_t j = 0; j < ni; ++j) mx = std::max(mx, si[j]);
                     int32_t tot = 0;
-                    for (int64_t j = 0; j < n[i]; ++j) {
+                    const int64_t cap = lut_len - 1;
+                    #pragma omp simd reduction(+:tot)
+                    for (int64_t j = 0; j < ni; ++j) {
                         int64_t gap = (int64_t)mx - (int64_t)si[j];
-                        if (gap > lut_len - 1) gap = lut_len - 1;
+                        gap = gap > cap ? cap : gap;
                         si[j] = lut[gap];                              // e, in place of the score
                         tot += si[j];
                     }
+                    if (ni & 1) si[ni] = 0;                            // the pair partner of the last key: p = 0
+                    const int32_t den = 2 * tot;
+                    const double rinv = 1.0 / (double)den;
                     int32_t* pi = pp.data() + i * (t2 + 1);
-                    const int64_t h = (n[i] + 1) / 2;
+                    const int64_t h = (ni + 1) / 2;
                     for (int64_t jj = 0; jj < h; ++jj) {
-                        const int32_t p0 = (tot + 510 * si[2 * jj]) / (2 * tot);
-                        const int32_t p1 = 2 * jj + 1 < n[i] ? (tot + 510 * si[2 * jj + 1]) / (2 * tot) : 0;
+                        const int32_t p0 = floordiv_r(tot + 510 * si[2 * jj], den, rinv);
+                        const int32_t p1 = 2 * jj + 1 < ni ? floordiv_r(tot + 510 * si[2 * jj + 1], den, rinv) : 0;
                         pi[jj] = (int32_t)((uint32_t)p0 | ((uint32_t)p1 << 16));
                     }
                     for (int64_t jj = h; jj < np2; ++jj) pi[jj] = 0;
@@ -218,13 +244,30 @@ extern "C" void pvi_attention(const int16_t* q, const int16_t* k, const int16_t*
                               int64_t* out, int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh,
                               int64_t lut_len, int64_t threads) {
     omp_set_num_threads((int)threads);
-#if defined(__AVX512BW__)
-    if (dh % 16 == 0 && dh <= 128 && t < ((int64_t)1 << 15)) {
-        attention_avx512(q, k, v, lut, out, bh, rows, queries, t, dh, lut_len);
-        return;
-    }
-#endif
     attention_scalar(q, k, v, lut, out, bh, rows, queries, t, dh, lut_len);
+}
+
+// 1 if pvi_attention64 runs here (AVX-512BW), for dh a multiple of 16 up to 128 and T < 2**15
+extern "C" int64_t pvi_has_avx512() {
+#if defined(__AVX512BW__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+// pvi_attention on int64 q [B, H, R, dh], k, v [B, H, T, dh] given by their strides (int8-valued: the inputs of
+// the int32 path), read as they are (no int16 copies); out [B, H, R, dh] contiguous
+extern "C" void pvi_attention64(const int64_t* q, int64_t q0, int64_t q1, int64_t q2, int64_t q3,
+                                const int64_t* k, int64_t k0, int64_t k1, int64_t k2, int64_t k3,
+                                const int64_t* v, int64_t v0, int64_t v1, int64_t v2, int64_t v3,
+                                const int32_t* lut, int64_t* out, int64_t heads, int64_t bh, int64_t rows,
+                                int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t threads) {
+    omp_set_num_threads((int)threads);
+#if defined(__AVX512BW__)
+    attention_avx512(View4{q, q0, q1, q2, q3, heads}, View4{k, k0, k1, k2, k3, heads}, View4{v, v0, v1, v2, v3, heads},
+                     lut, out, bh, rows, queries, t, dh, lut_len);
+#endif
 }
 
 // The integer softmax of a block of rows, in place: s holds exact integer scores as float32 ([n_rows, t], row i of
@@ -552,6 +595,11 @@ def _library():
         _LIB = ctypes.CDLL(str(lib))
         _LIB.pvi_attention.argtypes = [ctypes.c_void_p] * 5 + [ctypes.c_int64] * 7
         _LIB.pvi_attention.restype = None
+        _LIB.pvi_has_avx512.argtypes = []
+        _LIB.pvi_has_avx512.restype = ctypes.c_int64
+        _LIB.pvi_attention64.argtypes = ([ctypes.c_void_p] + [ctypes.c_int64] * 4) * 3 + [ctypes.c_void_p] * 2 + \
+            [ctypes.c_int64] * 8
+        _LIB.pvi_attention64.restype = None
         _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 7
         _LIB.pvi_softmax_block.restype = None
         _LIB.pvi_requant.argtypes = [ctypes.c_void_p, ctypes.c_int64] + [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 9
@@ -585,13 +633,21 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
     lib = _library()
     bsz, heads, rows, dh = q.shape
     t = k.shape[2]
-    q16, k16, v16 = (x.to(torch.int16).contiguous() for x in (q, k, v))
     lut32 = lut.to(torch.int32).contiguous()
     out = torch.empty(bsz, heads, rows, dh, dtype=torch.int64)
+    if (_AVX and lib.pvi_has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15
+            and all(x.dtype == torch.int64 for x in (q, k, v))):     # AVX-512, reading the int64 views as they are
+        lib.pvi_attention64(q.data_ptr(), *q.stride(), k.data_ptr(), *k.stride(), v.data_ptr(), *v.stride(),
+                            lut32.data_ptr(), out.data_ptr(), heads, bsz * heads, rows, queries, t, dh,
+                            lut32.numel(), torch.get_num_threads())
+        return out
+    q16, k16, v16 = (x.to(torch.int16).contiguous() for x in (q, k, v))
     lib.pvi_attention(q16.data_ptr(), k16.data_ptr(), v16.data_ptr(), lut32.data_ptr(), out.data_ptr(),
                       bsz * heads, rows, queries, t, dh, lut32.numel(), torch.get_num_threads())
     return out
 
+
+_AVX = os.environ.get("PVI_NATIVE_AVX512", "1") != "0"
 
 _ROWS = 32
 """Query rows per block of :func:`attention_core_hybrid` (scores of 32 rows x 2,048 keys x the heads: a few MB)."""

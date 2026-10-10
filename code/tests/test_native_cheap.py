@@ -181,3 +181,18 @@ def test_native_unpack_on_corrupted_proofs_matches_numpy(monkeypatch):
         assert (got is None) == (want is None)
         assert got is None or all(np.array_equal(x, y) for x, y in zip(got, want))
 
+
+
+@pytest.mark.parametrize("hkv,rep,t,tq,dh", [(32, 1, 2048, 2048, 128), (8, 4, 777, 777, 128), (4, 2, 300, 1, 64),
+                                             (6, 1, 513, 7, 80)])
+def test_native_attention_on_strided_views(hkv, rep, t, tq, dh):
+    """The attention kernels on the layouts _attention passes them: [B, T, H, dh] tensors seen as [B, H, T, dh]."""
+    g = torch.Generator().manual_seed(t + dh)
+    qb = torch.randint(-127, 128, (1, rep * tq, hkv, dh), generator=g, dtype=torch.int64)
+    kb = torch.randint(-127, 128, (1, t, hkv, dh), generator=g, dtype=torch.int64)
+    vb = torch.randint(-127, 128, (1, t, hkv, dh), generator=g, dtype=torch.int64)
+    q, k, v = (x.transpose(1, 2) for x in (qb, kb, vb))
+    lut = tr._exp_lut(1 << 20, "cpu")
+    want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cpu", tq))
+    assert torch.equal(native_kernels.attention_core(q, k, v, lut, tq), want)
+    assert torch.equal(native_kernels.attention_core(q.contiguous(), k.contiguous(), v.contiguous(), lut, tq), want)
