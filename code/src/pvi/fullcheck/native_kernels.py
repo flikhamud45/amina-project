@@ -34,6 +34,7 @@ _SOURCE = r"""
 #include <algorithm>
 #include <vector>
 #include <cmath>
+#include <cstring>
 #include <omp.h>
 
 // Query rows are taken TR at a time (rows of one (batch, head) group): each key and value row is read once per
@@ -141,15 +142,19 @@ static inline int32_t floordiv_r(int32_t num, int32_t den, double rinv) {
 
 // mo == 0: out [B*H, R, dh] holds P V; mo > 0: out [B, queries, H*rep, dh] holds requant(P V, mo) =
 // clamp((P V mo + 2**29) >> 30, -127, 127), row r of group (b, h) being query head h*rep + r / queries at position
-// r % queries (the final layout of transformer._attention)
+// r % queries (the final layout of transformer._attention).  ms > 0: e = exp256[min(255, (gap ms + 2**29) >> 30)],
+// which equals lut[min(gap, len - 1)] (the table is non-increasing and zero from _EXP_ZERO on, where lut's last
+// entry lies), without lut's cache misses; ms == 0: the lut.
 static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int64_t* out, int64_t bh,
                              int64_t rows, int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t mo,
-                             int64_t rep) {
-    const int64_t tp = (t + 15) & ~(int64_t)15, t2 = (t + 1) / 2, d2 = dh / 2, dv = dh / 16;
+                             int64_t rep, const int32_t* exp256, int64_t ms) {
+    const int64_t nc = (t + 15) / 16, tp = nc * 16, t2 = (t + 1) / 2, d2 = dh / 2, dv = dh / 16;
     const int64_t tiles = (rows + TQ - 1) / TQ;
+    const int64_t pw = 2 * (t2 + 1);                 // int16 probabilities per row, zero-padded to whole pairs
     #pragma omp parallel
     {
-        std::vector<int32_t> kt(d2 * tp), v2(t2 * dh), s(TQ * tp), pp(TQ * (t2 + 1)), qp(TQ * d2);
+        std::vector<int32_t> kt(nc * d2 * 16), v2(t2 * dh), s(TQ * tp), qp(TQ * d2);
+        std::vector<int16_t> pp(TQ * pw, 0);
         int64_t n[TQ];
         double tp_[4] = {0, 0, 0, 0}, t0 = 0;
         #pragma omp for schedule(dynamic, 1)
@@ -158,13 +163,16 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
             const int64_t* kg = k.group(g);
             const int64_t* vg = v.group(g);
             const int64_t* qg = q.group(g);
-            for (int64_t j = 0; j < t; ++j) {                    // keys: int16 pairs along dh, transposed
-                const int64_t* kj = kg + j * k.s2;
-                for (int64_t d = 0; d < d2; ++d) kt[d * tp + j] = pair16(kj[2 * d * k.s3], kj[(2 * d + 1) * k.s3]);
+            for (int64_t j = 0; j < tp; ++j) {               // keys: per chunk of 16, [d/2][16] int16 pairs
+                int32_t* kc = kt.data() + (j >> 4) * d2 * 16 + (j & 15);
+                if (j < t) {
+                    const int64_t* kj = kg + j * k.s2;
+                    for (int64_t d = 0; d < d2; ++d) kc[d * 16] = pair16(kj[2 * d * k.s3], kj[(2 * d + 1) * k.s3]);
+                } else {
+                    for (int64_t d = 0; d < d2; ++d) kc[d * 16] = 0;
+                }
             }
-            for (int64_t d = 0; d < d2; ++d)
-                for (int64_t j = t; j < tp; ++j) kt[d * tp + j] = 0;
-            for (int64_t jj = 0; jj < t2; ++jj) {                // values: int16 pairs of consecutive keys
+            for (int64_t jj = 0; jj < t2; ++jj) {            // values: int16 pairs of consecutive keys
                 const int64_t* a = vg + 2 * jj * v.s2;
                 const bool two = 2 * jj + 1 < t;
                 for (int64_t d = 0; d < dh; ++d)
@@ -181,79 +189,98 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                     for (int64_t d = 0; d < d2; ++d)
                         qp[i * d2 + d] = i < tr ? pair16(qr[2 * d * q.s3], qr[(2 * d + 1) * q.s3]) : 0;
                 }
-                for (int64_t j0 = 0; j0 < nmax; j0 += 16) {          // scores, 16 rows x 16 keys at a time
+                for (int64_t c = 0; c * 16 < nmax; ++c) {          // scores, 16 rows x 16 keys at a time
                     __m512i acc[TQ];
                     for (int64_t i = 0; i < TQ; ++i) acc[i] = _mm512_setzero_si512();
+                    const int32_t* kc = kt.data() + c * d2 * 16;
                     for (int64_t d = 0; d < d2; ++d) {
-                        const __m512i kv = _mm512_loadu_si512((const void*)(kt.data() + d * tp + j0));
+                        const __m512i kv = _mm512_loadu_si512((const void*)(kc + d * 16));
                         for (int64_t i = 0; i < TQ; ++i)
                             acc[i] = _mm512_add_epi32(acc[i], _mm512_madd_epi16(_mm512_set1_epi32(qp[i * d2 + d]), kv));
                     }
-                    for (int64_t i = 0; i < TQ; ++i) _mm512_storeu_si512((void*)(s.data() + i * tp + j0), acc[i]);
+                    for (int64_t i = 0; i < TQ; ++i) _mm512_storeu_si512((void*)(s.data() + i * tp + c * 16), acc[i]);
                 }
                 if (g_prof_on) { const double t1 = omp_get_wtime(); tp_[1] += t1 - t0; t0 = t1; }
                 const int64_t np2 = (nmax + 1) / 2;
-                for (int64_t i = 0; i < tr; ++i) {                    // the integer softmax of each row
-                    int32_t* si = s.data() + i * tp;
+                for (int64_t i = 0; i < TQ; ++i) {                    // the integer softmax of each row
+                    int16_t* pi = pp.data() + i * pw;
                     const int64_t ni = n[i];
+                    if (ni == 0) { for (int64_t j = 0; j < 2 * np2; ++j) pi[j] = 0; continue; }
+                    int32_t* si = s.data() + i * tp;
                     int32_t mx = INT32_MIN;
+                    #pragma omp simd reduction(max:mx)
                     for (int64_t j = 0; j < ni; ++j) mx = std::max(mx, si[j]);
                     int32_t tot = 0;
-                    const int64_t cap = lut_len - 1;
-                    #pragma omp simd reduction(+:tot)
-                    for (int64_t j = 0; j < ni; ++j) {
-                        int64_t gap = (int64_t)mx - (int64_t)si[j];
-                        gap = gap > cap ? cap : gap;
-                        si[j] = lut[gap];                              // e, in place of the score
-                        tot += si[j];
-                    }
-                    if (ni & 1) si[ni] = 0;                            // the pair partner of the last key: p = 0
-                    const int32_t den = 2 * tot;
-                    const double rinv = 1.0 / (double)den;
-                    int32_t* pi = pp.data() + i * (t2 + 1);
-                    const int64_t h = (ni + 1) / 2;
-                    for (int64_t jj = 0; jj < h; ++jj) {
-                        const int32_t p0 = floordiv_r(tot + 510 * si[2 * jj], den, rinv);
-                        const int32_t p1 = 2 * jj + 1 < ni ? floordiv_r(tot + 510 * si[2 * jj + 1], den, rinv) : 0;
-                        pi[jj] = (int32_t)((uint32_t)p0 | ((uint32_t)p1 << 16));
-                    }
-                    for (int64_t jj = h; jj < np2; ++jj) pi[jj] = 0;
-                }
-                if (g_prof_on) { const double t1 = omp_get_wtime(); tp_[2] += t1 - t0; t0 = t1; }
-                for (int64_t i = 0; i < tr; i += 2) {                 // P V, two rows at a time
-                    const bool two = i + 1 < tr;
-                    const int32_t* p0 = pp.data() + i * (t2 + 1);
-                    const int32_t* p1 = pp.data() + (i + 1) * (t2 + 1);
-                    const int64_t jmax = ((two ? std::max(n[i], n[i + 1]) : n[i]) + 1) / 2;
-                    __m512i a0[8], a1[8];
-                    for (int64_t d = 0; d < dv; ++d) { a0[d] = _mm512_setzero_si512(); a1[d] = _mm512_setzero_si512(); }
-                    for (int64_t jj = 0; jj < jmax; ++jj) {
-                        const __m512i b0 = _mm512_set1_epi32(p0[jj]);
-                        const __m512i b1 = _mm512_set1_epi32(two ? p1[jj] : 0);
-                        const int32_t* vr = v2.data() + jj * dh;
-                        for (int64_t d = 0; d < dv; ++d) {
-                            const __m512i vv = _mm512_loadu_si512((const void*)(vr + 16 * d));
-                            a0[d] = _mm512_add_epi32(a0[d], _mm512_madd_epi16(b0, vv));
-                            a1[d] = _mm512_add_epi32(a1[d], _mm512_madd_epi16(b1, vv));
+                    if (ms > 0) {
+                        #pragma omp simd reduction(+:tot)
+                        for (int64_t j = 0; j < ni; ++j) {
+                            int64_t idx = (((int64_t)mx - (int64_t)si[j]) * ms + ((int64_t)1 << 29)) >> 30;
+                            idx = idx > 255 ? 255 : idx;
+                            si[j] = exp256[idx];
+                            tot += si[j];
+                        }
+                    } else {
+                        const int64_t cap = lut_len - 1;
+                        #pragma omp simd reduction(+:tot)
+                        for (int64_t j = 0; j < ni; ++j) {
+                            int64_t gap = (int64_t)mx - (int64_t)si[j];
+                            gap = gap > cap ? cap : gap;
+                            si[j] = lut[gap];
+                            tot += si[j];
                         }
                     }
-                    for (int64_t rr = 0; rr < (two ? 2 : 1); ++rr) {
-                        const int64_t r = r0 + i + rr;
-                        if (mo == 0) {
-                            int64_t* o = out + (g * rows + r) * dh;
-                            for (int64_t d = 0; d < dv; ++d) {
-                                const __m512i a = rr ? a1[d] : a0[d];
-                                _mm512_storeu_si512((void*)(o + 16 * d), _mm512_cvtepi32_epi64(_mm512_castsi512_si256(a)));
-                                _mm512_storeu_si512((void*)(o + 16 * d + 8), _mm512_cvtepi32_epi64(_mm512_extracti64x4_epi64(a, 1)));
+                    const int32_t den = 2 * tot;
+                    const double rinv = 1.0 / (double)den;
+                    #pragma omp simd
+                    for (int64_t j = 0; j < ni; ++j) {
+                        const int32_t num = tot + 510 * si[j];
+                        int32_t qv = (int32_t)((double)num * rinv);
+                        qv += (int64_t)(qv + 1) * den <= num;
+                        qv -= (int64_t)qv * den > num;
+                        pi[j] = (int16_t)qv;
+                    }
+                    for (int64_t j = ni; j < 2 * np2; ++j) pi[j] = 0;
+                }
+                if (g_prof_on) { const double t1 = omp_get_wtime(); tp_[2] += t1 - t0; t0 = t1; }
+                for (int64_t ig = 0; ig < tr; ig += 8) {              // P V: 8 rows share each load of V
+                    const int64_t rg = std::min<int64_t>(8, tr - ig);
+                    int64_t nm = 0;
+                    for (int64_t r = 0; r < rg; ++r) nm = std::max(nm, n[ig + r]);
+                    const int64_t jmax = (nm + 1) / 2;
+                    for (int64_t dp = 0; dp < dv; dp += 2) {
+                        const bool second = dp + 1 < dv;
+                        __m512i a0[8], a1[8];
+                        for (int r = 0; r < 8; ++r) { a0[r] = _mm512_setzero_si512(); a1[r] = _mm512_setzero_si512(); }
+                        for (int64_t jj = 0; jj < jmax; ++jj) {
+                            const int32_t* vr = v2.data() + jj * dh + 16 * dp;
+                            const __m512i v0 = _mm512_loadu_si512((const void*)vr);
+                            const __m512i v1 = second ? _mm512_loadu_si512((const void*)(vr + 16)) : _mm512_setzero_si512();
+                            for (int r = 0; r < 8; ++r) {
+                                int32_t pr;
+                                std::memcpy(&pr, pp.data() + (ig + r) * pw + 2 * jj, 4);
+                                const __m512i b = _mm512_set1_epi32(pr);
+                                a0[r] = _mm512_add_epi32(a0[r], _mm512_madd_epi16(b, v0));
+                                a1[r] = _mm512_add_epi32(a1[r], _mm512_madd_epi16(b, v1));
                             }
-                        } else {
-                            const int64_t b = g / q.heads, h = g % q.heads;
-                            int64_t* o = out + ((b * queries + r % queries) * (q.heads * rep) + h * rep + r / queries) * dh;
-                            alignas(64) int32_t tmp[16];
-                            for (int64_t d = 0; d < dv; ++d) {
-                                _mm512_store_si512((void*)tmp, rr ? a1[d] : a0[d]);
-                                for (int l = 0; l < 16; ++l)
-                                    o[16 * d + l] = std::min<int64_t>(127, std::max<int64_t>(-127, ((int64_t)tmp[l] * mo + ((int64_t)1 << 29)) >> 30));
+                        }
+                        for (int64_t r = 0; r < rg; ++r) {
+                            const int64_t row = r0 + ig + r;
+                            int64_t* o;
+                            if (mo == 0) {
+                                o = out + (g * rows + row) * dh + 16 * dp;
+                            } else {
+                                const int64_t b = g / q.heads, h = g % q.heads;
+                                o = out + ((b * queries + row % queries) * (q.heads * rep) + h * rep + row / queries) * dh + 16 * dp;
+                            }
+                            alignas(64) int32_t tmp[32];
+                            _mm512_store_si512((void*)tmp, a0[r]);
+                            _mm512_store_si512((void*)(tmp + 16), a1[r]);
+                            const int nv = second ? 32 : 16;
+                            if (mo == 0) {
+                                for (int l = 0; l < nv; ++l) o[l] = tmp[l];
+                            } else {
+                                for (int l = 0; l < nv; ++l)
+                                    o[l] = std::min<int64_t>(127, std::max<int64_t>(-127, ((int64_t)tmp[l] * mo + ((int64_t)1 << 29)) >> 30));
                             }
                         }
                     }
@@ -297,13 +324,13 @@ extern "C" void pvi_attention64(const int64_t* q, int64_t q0, int64_t q1, int64_
                                 const int64_t* v, int64_t v0, int64_t v1, int64_t v2, int64_t v3,
                                 const int32_t* lut, int64_t* out, int64_t heads, int64_t bh, int64_t rows,
                                 int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t mo, int64_t rep,
-                                int64_t threads) {
+                                const int32_t* exp256, int64_t ms, int64_t threads) {
     omp_set_num_threads((int)threads);
 #if defined(__AVX512BW__)
     const int64_t all = INT64_MAX;            // k and v: row r is position r
     attention_avx512(View4{q, q0, q1, q2, q3, heads, qrep, qrep ? queries : all},
                      View4{k, k0, k1, k2, k3, heads, 0, all}, View4{v, v0, v1, v2, v3, heads, 0, all},
-                     lut, out, bh, rows, queries, t, dh, lut_len, mo, rep);
+                     lut, out, bh, rows, queries, t, dh, lut_len, mo, rep, exp256, ms);
 #endif
 }
 
@@ -667,7 +694,7 @@ def _library():
         _LIB.pvi_has_avx512.restype = ctypes.c_int64
         _LIB.pvi_attention64.argtypes = ([ctypes.c_void_p] + [ctypes.c_int64] * 5 + [ctypes.c_void_p] + [ctypes.c_int64] * 4
                                          + [ctypes.c_void_p] + [ctypes.c_int64] * 4 + [ctypes.c_void_p] * 2
-                                         + [ctypes.c_int64] * 10)
+                                         + [ctypes.c_int64] * 9 + [ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64])
         _LIB.pvi_attention64.restype = None
         if hasattr(_LIB, "pvi_attention_profile"):
             _LIB.pvi_attention_profile.argtypes = [ctypes.c_int64, ctypes.c_void_p]
@@ -701,7 +728,8 @@ def available() -> bool:
     return _library() is not None
 
 
-def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int) -> torch.Tensor:
+def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int, *,
+                   exp_table: torch.Tensor | None = None, m_s: int = 0) -> torch.Tensor:
     """``_attention_core(q, k, v, lut, notmask)`` (raw ``p v``, int64 ``[B, H, R, dh]``) on the CPU for int8-valued
     ``q [B, H, R, dh]`` (row ``r``: the query at position ``T - queries + r % queries``), ``k, v [B, H, T, dh]`` and
     the int32 table ``lut``."""
@@ -712,9 +740,11 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
     out = torch.empty(bsz, heads, rows, dh, dtype=torch.int64)
     if (_AVX and lib.pvi_has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15
             and all(x.dtype == torch.int64 for x in (q, k, v))):     # AVX-512, reading the int64 views as they are
+        e32, ms = _exp32(exp_table, m_s)
         lib.pvi_attention64(q.data_ptr(), *q.stride(), 0, k.data_ptr(), *k.stride(), v.data_ptr(), *v.stride(),
                             lut32.data_ptr(), out.data_ptr(), heads, bsz * heads, rows, queries, t, dh,
-                            lut32.numel(), 0, 1, torch.get_num_threads())
+                            lut32.numel(), 0, 1, e32.data_ptr() if e32 is not None else None, ms,
+                            torch.get_num_threads())
         return out
     q16, k16, v16 = (x.to(torch.int16).contiguous() for x in (q, k, v))
     lib.pvi_attention(q16.data_ptr(), k16.data_ptr(), v16.data_ptr(), lut32.data_ptr(), out.data_ptr(),
@@ -731,8 +761,16 @@ def attention_requant_ok(dh: int, t: int) -> bool:
     return bool(_AVX and lib is not None and lib.pvi_has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15)
 
 
+def _exp32(exp_table, m_s: int):
+    """The 256-entry exp table as int32 and ``m_s`` for the kernel's arithmetic look-up, or ``(None, 0)`` (the lut)."""
+    if exp_table is None or not 0 < m_s < 1 << 32 or exp_table.numel() != 256:
+        return None, 0
+    return exp_table.to(torch.int32).contiguous(), int(m_s)
+
+
 def attention_requant(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, m_o: int,
-                      n_heads: int, n_kv: int, dh: int) -> torch.Tensor:
+                      n_heads: int, n_kv: int, dh: int, *, exp_table: torch.Tensor | None = None,
+                      m_s: int = 0) -> torch.Tensor:
     """``transformer._attention``'s output, ``[B, Tq, Hq dh]`` int64: the causal attention of int8-valued ``q
     [B, Tq, Hq dh]`` against ``k, v [B, T, Hkv dh]`` (query head ``j`` reads key/value head ``j // (Hq/Hkv)``)
     with its output requantised by ``m_o``, in one AVX-512 pass that writes the final layout."""
@@ -743,11 +781,12 @@ def attention_requant(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: to
     k4, v4 = k.reshape(b, t, n_kv, dh), v.reshape(b, t, n_kv, dh)
     lut32 = lut.to(torch.int32).contiguous()
     out = torch.empty(b, tq, n_heads * dh, dtype=torch.int64)
+    e32, ms = _exp32(exp_table, m_s)
     _LIB.pvi_attention64(q5.data_ptr(), q5.stride(0), q5.stride(2), q5.stride(1), q5.stride(4), q5.stride(3),
                          k4.data_ptr(), k4.stride(0), k4.stride(2), k4.stride(1), k4.stride(3),
                          v4.data_ptr(), v4.stride(0), v4.stride(2), v4.stride(1), v4.stride(3),
                          lut32.data_ptr(), out.data_ptr(), n_kv, b * n_kv, rep * tq, tq, t, dh, lut32.numel(),
-                         int(m_o), rep, torch.get_num_threads())
+                         int(m_o), rep, e32.data_ptr() if e32 is not None else None, ms, torch.get_num_threads())
     return out
 
 _ROWS = 32

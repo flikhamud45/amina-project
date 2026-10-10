@@ -304,6 +304,8 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1) -> torch.Tensor:
             return attention_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
         if q.device.type == "cpu" and native_kernels.available():                # a CPU verifier: native, exact
             core = native_kernels.attention_core_hybrid if _CPU_ATTN == "hybrid" else native_kernels.attention_core
+            if core is native_kernels.attention_core:
+                return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, exp_table=_EXP_TABLE, m_s=m_s)
             return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
         return _attention_core(q, k, v, _exp_lut(m_s, dev), _causal_notmask(t, rep, dev, q.shape[2] // rep))
     return _attention_int64(q, k, v, m_s, _causal_notmask(t, rep, dev, q.shape[2] // rep))
@@ -326,7 +328,8 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
             and _CPU_ATTN != "hybrid" and native_kernels.available() and native_kernels.attention_requant_ok(dh, t)
             and all(x.dtype == torch.int64 for x in (q, k, v))):
         # a CPU verifier: attention and the output requantisation in one AVX-512 pass, the same integers
-        return native_kernels.attention_requant(q, k, v, _exp_lut(m_s, "cpu"), m_o, n_heads, n_kv, dh)
+        return native_kernels.attention_requant(q, k, v, _exp_lut(m_s, "cpu"), m_o, n_heads, n_kv, dh,
+                                                exp_table=_EXP_TABLE, m_s=m_s)
     q = q.reshape(b, tq, n_heads, dh).transpose(1, 2)
     k = k.reshape(b, t, n_kv, dh).transpose(1, 2)
     v = v.reshape(b, t, n_kv, dh).transpose(1, 2)

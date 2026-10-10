@@ -226,3 +226,22 @@ def test_fused_attention_and_output_requantisation(hq, hkv, t, tq, dh, monkeypat
     monkeypatch.setattr(native_kernels, "_AVX", False)
     want = tr._attention(q, k, v, m_s, m_o, hq, hkv, dh)
     assert torch.equal(got, want) and got.shape == (1, tq, hq * dh)
+
+
+@pytest.mark.parametrize("m_s", [1 << 20, 2_600_000, 123_456, (1 << 32) - 1, 7])
+@pytest.mark.parametrize("pattern", ["random", "extreme"])
+def test_attention_with_the_arithmetic_exp_lookup(m_s, pattern):
+    """The AVX-512 kernel's e = EXP[min(255, (gap m_s + 2**29) >> 30)] gives _attention_core's integers (lut)."""
+    if not tr._int32_scores(m_s, 128, 640):
+        pytest.skip("int64 path for this m_s")
+    g = torch.Generator().manual_seed(m_s % 1000)
+    q = torch.randint(-127, 128, (1, 4, 640, 128), generator=g, dtype=torch.int64)
+    k = torch.randint(-127, 128, (1, 4, 640, 128), generator=g, dtype=torch.int64)
+    v = torch.randint(-127, 128, (1, 4, 640, 128), generator=g, dtype=torch.int64)
+    if pattern == "extreme":
+        q[..., ::2, :] = 127
+        k[..., ::3, :] = -127
+    lut = tr._exp_lut(m_s, "cpu")
+    want = tr._attention_core(q, k, v, lut, tr._causal_notmask(640, 1, "cpu", 640))
+    got = native_kernels.attention_core(q, k, v, lut, 640, exp_table=tr._EXP_TABLE, m_s=m_s)
+    assert torch.equal(got, want)

@@ -59,7 +59,8 @@ def main() -> None:
     want = torch_int32()
     variants = {"torch_int32": torch_int32}
     if native_kernels.available():
-        variants["native_tiled"] = lambda: native_kernels.attention_core(q, k, v, lut, tq)
+        variants["native_tiled"] = lambda: native_kernels.attention_core(q, k, v, lut, tq, exp_table=tr._EXP_TABLE,
+                                                                         m_s=m_s)
         variants["native_hybrid"] = lambda: native_kernels.attention_core_hybrid(q, k, v, lut, tq)
         for name in ("native_tiled", "native_hybrid"):
             assert torch.equal(variants[name](), want), name
@@ -70,7 +71,7 @@ def main() -> None:
     rows = {name: _time(fn, args.reps) for name, fn in variants.items()}
     phases = None
     if native_kernels.available() and native_kernels.attention_profile(True) is not None:   # AVX-512 phases, one run
-        native_kernels.attention_core(q, k, v, lut, tq)
+        native_kernels.attention_core(q, k, v, lut, tq, exp_table=tr._EXP_TABLE, m_s=m_s)
         phases = [round(x / args.threads, 4) for x in native_kernels.attention_profile(False)]
     print(json.dumps({"heads": args.heads, "kv": args.kv, "dh": dh, "seq": t, "queries": tq, "threads": args.threads,
                       "seconds": rows, "avx512_phases_per_thread": phases, "host": platform.node(), "cpu": platform.processor(),
