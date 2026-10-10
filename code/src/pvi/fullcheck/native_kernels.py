@@ -210,25 +210,38 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                     int32_t mx = INT32_MIN;
                     #pragma omp simd reduction(max:mx)
                     for (int64_t j = 0; j < ni; ++j) mx = std::max(mx, si[j]);
-                    int32_t tot = 0;
+                    // e = exp256[min(255, (gap ms + 2**29) >> 30)] (or lut[min(gap, cap)]), 16 keys at a time: gaps in
+                    // int32 (|s| <= 2**21), the product in int64 lanes (< 2**55), 32-bit indices for the gather; the
+                    // lanes past ni are masked (loaded as 0, gathered as 0, not stored)
+                    const __m512i vmx = _mm512_set1_epi32(mx);
+                    __m512i vtot = _mm512_setzero_si512();
                     if (ms > 0) {
-                        #pragma omp simd reduction(+:tot)
-                        for (int64_t j = 0; j < ni; ++j) {
-                            int64_t idx = (((int64_t)mx - (int64_t)si[j]) * ms + ((int64_t)1 << 29)) >> 30;
-                            idx = idx > 255 ? 255 : idx;
-                            si[j] = exp256[idx];
-                            tot += si[j];
+                        const __m512i vms = _mm512_set1_epi64(ms), half = _mm512_set1_epi64((int64_t)1 << 29);
+                        const __m512i top = _mm512_set1_epi64(255);
+                        for (int64_t j = 0; j < ni; j += 16) {
+                            const __mmask16 m = ni - j >= 16 ? (__mmask16)0xFFFF : (__mmask16)((1u << (ni - j)) - 1);
+                            const __m512i gap = _mm512_sub_epi32(vmx, _mm512_maskz_loadu_epi32(m, si + j));
+                            __m512i g0 = _mm512_cvtepi32_epi64(_mm512_castsi512_si256(gap));
+                            __m512i g1 = _mm512_cvtepi32_epi64(_mm512_extracti64x4_epi64(gap, 1));
+                            g0 = _mm512_min_epi64(_mm512_srai_epi64(_mm512_add_epi64(_mm512_mullo_epi64(g0, vms), half), 30), top);
+                            g1 = _mm512_min_epi64(_mm512_srai_epi64(_mm512_add_epi64(_mm512_mullo_epi64(g1, vms), half), 30), top);
+                            const __m512i idx = _mm512_inserti64x4(_mm512_castsi256_si512(_mm512_cvtepi64_epi32(g0)),
+                                                                   _mm512_cvtepi64_epi32(g1), 1);
+                            const __m512i e = _mm512_mask_i32gather_epi32(_mm512_setzero_si512(), m, idx, exp256, 4);
+                            _mm512_mask_storeu_epi32(si + j, m, e);
+                            vtot = _mm512_add_epi32(vtot, e);
                         }
                     } else {
-                        const int64_t cap = lut_len - 1;
-                        #pragma omp simd reduction(+:tot)
-                        for (int64_t j = 0; j < ni; ++j) {
-                            int64_t gap = (int64_t)mx - (int64_t)si[j];
-                            gap = gap > cap ? cap : gap;
-                            si[j] = lut[gap];
-                            tot += si[j];
+                        const __m512i cap = _mm512_set1_epi32((int32_t)std::min<int64_t>(lut_len - 1, INT32_MAX));
+                        for (int64_t j = 0; j < ni; j += 16) {
+                            const __mmask16 m = ni - j >= 16 ? (__mmask16)0xFFFF : (__mmask16)((1u << (ni - j)) - 1);
+                            const __m512i gap = _mm512_min_epi32(_mm512_sub_epi32(vmx, _mm512_maskz_loadu_epi32(m, si + j)), cap);
+                            const __m512i e = _mm512_mask_i32gather_epi32(_mm512_setzero_si512(), m, gap, lut, 4);
+                            _mm512_mask_storeu_epi32(si + j, m, e);
+                            vtot = _mm512_add_epi32(vtot, e);
                         }
                     }
+                    const int32_t tot = _mm512_reduce_add_epi32(vtot);
                     const int32_t den = 2 * tot;
                     const double rinv = 1.0 / (double)den;
                     #pragma omp simd
