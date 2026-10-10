@@ -145,7 +145,8 @@ def test_grouped_attention_matches_the_reference_on_both_paths(hq, hkv, m_s, dev
                                             (8, 8, 513, 1, 80), (6, 2, 1000, 7, 64), (2, 1, 97, 33, 16)])
 @pytest.mark.parametrize("pattern", ["random", "peaked", "extreme"])
 @pytest.mark.parametrize("m_s", [1 << 20, 2_600_000])
-def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern, m_s):
+@pytest.mark.parametrize("pmax", [255, 2047])
+def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern, m_s, pmax):
     from pvi.fullcheck import attention_kernels
     if not attention_kernels.available("cuda"):
         pytest.skip("no Triton")
@@ -162,19 +163,20 @@ def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, t
         q.fill_(127), k.fill_(-127), v.fill_(-127)
     q, k, v = q.cuda(), k.cuda(), v.cuda()
     lut = tr._exp_lut(m_s, "cuda")
-    want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cuda", tq))
-    got = attention_kernels.attention_core(q, k, v, lut, tq)
+    want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cuda", tq), pmax)
+    got = attention_kernels.attention_core(q, k, v, lut, tq, pmax)
     assert torch.equal(got, want)
     # strided inputs, as transformer._attention passes them (a transposed [B, T, H, dh] view)
     qs = q.transpose(1, 2).contiguous().transpose(1, 2)
-    assert torch.equal(attention_kernels.attention_core(qs, k.transpose(1, 2).contiguous().transpose(1, 2), v, lut, tq),
-                       want)
+    assert torch.equal(attention_kernels.attention_core(qs, k.transpose(1, 2).contiguous().transpose(1, 2), v, lut, tq,
+                                                        pmax), want)
 
 
 @pytest.mark.parametrize("hq,hkv,t,tq,dh", [(4, 4, 64, 64, 64), (8, 2, 300, 300, 128), (4, 4, 1024, 1024, 128),
                                             (8, 8, 513, 1, 80), (6, 2, 1000, 7, 64)])
 @pytest.mark.parametrize("pattern", ["random", "peaked", "extreme"])
-def test_the_native_cpu_attention_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern):
+@pytest.mark.parametrize("pmax", [255, 2047])
+def test_the_native_cpu_attention_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern, pmax):
     from pvi.fullcheck import native_kernels
     if not native_kernels.available():
         pytest.skip("no C++ compiler (or not Linux)")
@@ -189,9 +191,12 @@ def test_the_native_cpu_attention_gives_the_int32_cores_integers(hq, hkv, t, tq,
     elif pattern == "extreme":
         q.fill_(127), k.fill_(-127), v.fill_(-127)
     lut = tr._exp_lut(m_s, "cpu")
-    want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cpu", tq))
-    assert torch.equal(native_kernels.attention_core(q, k, v, lut, tq), want)
-    assert torch.equal(native_kernels.attention_core_hybrid(q, k, v, lut, tq), want)   # BLAS products, native softmax
+    want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cpu", tq), pmax)
+    assert torch.equal(native_kernels.attention_core(q, k, v, lut, tq, pmax=pmax), want)
+    assert torch.equal(native_kernels.attention_core_hybrid(q, k, v, lut, tq, pmax), want)   # BLAS products, native softmax
+    q16 = q.to(torch.int16)                                       # the scalar kernel (int16 copies, no AVX-512)
+    assert torch.equal(native_kernels.attention_core(q16, k.to(torch.int16), v.to(torch.int16), lut, tq, pmax=pmax),
+                       want)
 
 
 # -- int8 GEMMs -------------------------------------------------------------------------------

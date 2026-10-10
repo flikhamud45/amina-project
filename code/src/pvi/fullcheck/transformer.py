@@ -300,25 +300,19 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1, pmax: int = PROB_MAX) -> t
     key/value head stacked along the rows (grouped-query attention), where every row is the same dot
     products and the same row-wise softmax as with ``k, v`` repeated.
     Runs in int32 (:func:`_attention_core`) where :func:`_int32_scores` allows, else in
-    int64; both give the integers of ``reference.attention_heads(..., m_o=None)``.  The fused GPU kernel and the
-    native CPU kernels have the default ``pmax`` built in; another ``pmax`` runs the torch paths."""
+    int64; both give the integers of ``reference.attention_heads(..., m_o=None, pmax)``."""
     t, dh = k.shape[2], k.shape[3]
     dev = str(q.device)
-    if pmax != PROB_MAX:
-        notmask = _causal_notmask(t, rep, dev, q.shape[2] // rep)
-        if _int32_scores(m_s, dh, t):
-            return _attention_core(q, k, v, _exp_lut(m_s, dev), notmask, pmax)
-        return _attention_int64(q, k, v, m_s, notmask, pmax)
     if _int32_scores(m_s, dh, t):
         if q.is_cuda and _FUSED_ATTN and attention_kernels.available(q.device):   # the same integers, no T x T tensors
-            return attention_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
+            return attention_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, pmax)
         if q.device.type == "cpu" and native_kernels.available():                # a CPU verifier: native, exact
             core = native_kernels.attention_core_hybrid if _CPU_ATTN == "hybrid" else native_kernels.attention_core
             if core is native_kernels.attention_core:
-                return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, exp_table=_EXP_TABLE, m_s=m_s)
-            return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep)
-        return _attention_core(q, k, v, _exp_lut(m_s, dev), _causal_notmask(t, rep, dev, q.shape[2] // rep))
-    return _attention_int64(q, k, v, m_s, _causal_notmask(t, rep, dev, q.shape[2] // rep))
+                return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, exp_table=_EXP_TABLE, m_s=m_s, pmax=pmax)
+            return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, pmax)
+        return _attention_core(q, k, v, _exp_lut(m_s, dev), _causal_notmask(t, rep, dev, q.shape[2] // rep), pmax)
+    return _attention_int64(q, k, v, m_s, _causal_notmask(t, rep, dev, q.shape[2] // rep), pmax)
 
 
 def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int,
@@ -335,12 +329,12 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
     """
     b, tq, _ = q.shape
     t = k.shape[1]
-    if (pmax == PROB_MAX and q.device.type == "cpu" and m_o is not None and 0 < m_o < 1 << 32 and _int32_scores(m_s, dh, t)
+    if (q.device.type == "cpu" and m_o is not None and 0 < m_o < 1 << 32 and _int32_scores(m_s, dh, t)
             and _CPU_ATTN != "hybrid" and native_kernels.available() and native_kernels.attention_requant_ok(dh, t)
             and all(x.dtype == torch.int64 for x in (q, k, v))):
         # a CPU verifier: attention and the output requantisation in one AVX-512 pass, the same integers
         return native_kernels.attention_requant(q, k, v, _exp_lut(m_s, "cpu"), m_o, n_heads, n_kv, dh,
-                                                exp_table=_EXP_TABLE, m_s=m_s)
+                                                exp_table=_EXP_TABLE, m_s=m_s, pmax=pmax)
     q = q.reshape(b, tq, n_heads, dh).transpose(1, 2)
     k = k.reshape(b, t, n_kv, dh).transpose(1, 2)
     v = v.reshape(b, t, n_kv, dh).transpose(1, 2)
@@ -497,6 +491,7 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
     multipliers of the graph without pruning, and gives the same logits (tested).  ``prob_max``: the attention
     probabilities' scale (:data:`PROB_MAX`); the output multiplier is calibrated on the raw ``P V`` at that scale.
     """
+    assert 1 <= prob_max <= 2047, prob_max         # the kernels' exactness bounds (_int32_scores, P V < 2**24)
     layers = cfg.n_layers if n_layers is None else n_layers
     g = torch.Generator().manual_seed(seed + 1)
     tokens = torch.randint(0, cfg.vocab, (1, calib_tokens), generator=g)

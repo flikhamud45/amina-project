@@ -2,9 +2,9 @@
 ``transformer._attention_core`` without its ``T x T`` tensors and their dozen element-wise passes.
 
 Per (batch, head, query row), on the verifier's threads: the int32 scores against the keys up to the query's
-position, their maximum, ``e = LUT[min(max - s, len - 1)]``, ``tot = sum e``, ``p = floor((tot + 510 e) / (2 tot))``
+position, their maximum, ``e = LUT[min(max - s, len - 1)]``, ``tot = sum e``, ``p = floor((tot + 2 pmax e) / (2 tot))``
 and ``p v`` (int64).  Every step is integer arithmetic on the same values as ``_attention_core`` (scores below
-``2**21``, ``tot`` and ``510 e + tot`` below ``2**31``, as ``transformer._int32_scores`` requires), so the result is
+``2**21``, ``tot`` and ``2 pmax e + tot`` below ``2**31``, as ``transformer._int32_scores`` requires), so the result is
 bit-identical (tested).  Query rows are taken eight at a time, so each key and value row is read once per tile of
 rows rather than once per row.
 
@@ -44,7 +44,7 @@ static const int64_t TR = 8;
 
 static void attention_scalar(const int16_t* q, const int16_t* k, const int16_t* v, const int32_t* lut,
                              int64_t* out, int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh,
-                             int64_t lut_len) {
+                             int64_t lut_len, int64_t two_p) {
     const int64_t tiles = (rows + TR - 1) / TR;
     #pragma omp parallel
     {
@@ -92,7 +92,7 @@ static void attention_scalar(const int16_t* q, const int16_t* k, const int16_t* 
                     const int16_t* vj = vg + j * dh;
                     for (int64_t i = 0; i < tr; ++i) {
                         if (j >= n[i]) continue;
-                        const int32_t num = tot[i] + 510 * e[i * t + j];
+                        const int32_t num = tot[i] + (int32_t)two_p * e[i * t + j];
                         const int32_t pj = num / (2 * tot[i]);          // both positive: floor division
                         if (pj == 0) continue;
                         int64_t* a = acc.data() + i * dh;
@@ -116,7 +116,7 @@ static void attention_scalar(const int16_t* q, const int16_t* k, const int16_t* 
 // values as int16 pairs of consecutive keys, [T/2][dh].  Query rows go in tiles of 16: the scores of 16 rows x 16
 // keys are 16 accumulators (|s| <= 2**21), the softmax runs per row as in pvi_attention, the probabilities are
 // packed as pairs of consecutive keys, and P V accumulates in int32 per row (every partial sum is below
-// (255 + T/2) 128 < 2**24 for T < 2**15), widened to int64 on the way out.
+// (pmax + T/2) 128 < 2**24 for T < 2**15 and pmax <= 2047), widened to int64 on the way out.
 static const int64_t TQ = 16;
 static int g_prof_on = 0;                  // pvi_attention_profile: seconds per phase, summed over the threads
 static double g_prof[4] = {0, 0, 0, 0};    // keys and values prepared, scores, softmax, P V
@@ -132,7 +132,7 @@ static inline int32_t pair16(int64_t lo, int64_t hi) {
 }
 
 // floor(num / den) for 0 <= num < 2**31 and 0 < den < 2**31: the double product with the row's reciprocal is
-// within 2**-44 of the quotient (< 256), so its truncation is off by at most one, and one integer correction
+// within 2**-44 of the quotient (< 2048), so its truncation is off by at most one, and one integer correction
 // each way gives the exact floor (the int32 division of pvi_attention)
 static inline int32_t floordiv_r(int32_t num, int32_t den, double rinv) {
     int32_t q = (int32_t)((double)num * rinv);
@@ -148,7 +148,7 @@ static inline int32_t floordiv_r(int32_t num, int32_t den, double rinv) {
 // entry lies), without lut's cache misses; ms == 0: the lut.
 static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int64_t* out, int64_t bh,
                              int64_t rows, int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t mo,
-                             int64_t rep, const int32_t* exp256, int64_t ms) {
+                             int64_t rep, const int32_t* exp256, int64_t ms, int64_t two_p) {
     const int64_t nc = (t + 15) / 16, tp = nc * 16, t2 = (t + 1) / 2, d2 = dh / 2, dv = dh / 16;
     const int64_t tiles = (rows + TQ - 1) / TQ;
     const int64_t pw = 2 * (t2 + 1);                 // int16 probabilities per row, zero-padded to whole pairs
@@ -247,7 +247,7 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                     const double rinv = 1.0 / (double)den;
                     #pragma omp simd
                     for (int64_t j = 0; j < ni; ++j) {
-                        const int32_t num = tot + 510 * si[j];
+                        const int32_t num = tot + (int32_t)two_p * si[j];
                         int32_t qv = (int32_t)((double)num * rinv);
                         qv += (int64_t)(qv + 1) * den <= num;
                         qv -= (int64_t)qv * den > num;
@@ -317,9 +317,9 @@ extern "C" void pvi_attention_profile(int64_t on, double* out4) {
 
 extern "C" void pvi_attention(const int16_t* q, const int16_t* k, const int16_t* v, const int32_t* lut,
                               int64_t* out, int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh,
-                              int64_t lut_len, int64_t threads) {
+                              int64_t lut_len, int64_t threads, int64_t two_p) {
     omp_set_num_threads((int)threads);
-    attention_scalar(q, k, v, lut, out, bh, rows, queries, t, dh, lut_len);
+    attention_scalar(q, k, v, lut, out, bh, rows, queries, t, dh, lut_len, two_p);
 }
 
 // 1 if pvi_attention64 runs here (AVX-512BW), for dh a multiple of 16 up to 128 and T < 2**15
@@ -338,21 +338,21 @@ extern "C" void pvi_attention64(const int64_t* q, int64_t q0, int64_t q1, int64_
                                 const int64_t* v, int64_t v0, int64_t v1, int64_t v2, int64_t v3,
                                 const int32_t* lut, int64_t* out, int64_t heads, int64_t bh, int64_t rows,
                                 int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t mo, int64_t rep,
-                                const int32_t* exp256, int64_t ms, int64_t threads) {
+                                const int32_t* exp256, int64_t ms, int64_t threads, int64_t two_p) {
     omp_set_num_threads((int)threads);
 #if defined(__AVX512BW__)
     const int64_t all = INT64_MAX;            // k and v: row r is position r
     attention_avx512(View4{q, q0, q1, q2, q3, heads, qrep, qrep ? queries : all},
                      View4{k, k0, k1, k2, k3, heads, 0, all}, View4{v, v0, v1, v2, v3, heads, 0, all},
-                     lut, out, bh, rows, queries, t, dh, lut_len, mo, rep, exp256, ms);
+                     lut, out, bh, rows, queries, t, dh, lut_len, mo, rep, exp256, ms, two_p);
 #endif
 }
 
 // The integer softmax of a block of rows, in place: s holds exact integer scores as float32 ([n_rows, t], row i of
 // the block is query row r0 + i of its (batch, head) group, which sees keys 0 .. t - queries + (r0 + i) % queries);
-// on return it holds p = floor((tot + 510 e) / (2 tot)) as float32 (0 for the masked keys), e = LUT[min(max - s, len - 1)].
+// on return it holds p = floor((tot + two_p e) / (2 tot)) as float32 (0 for the masked keys), e = LUT[min(max - s, len - 1)].
 extern "C" void pvi_softmax_block(float* s, const int32_t* lut, int64_t groups, int64_t n_rows, int64_t r0,
-                                  int64_t queries, int64_t t, int64_t lut_len, int64_t threads) {
+                                  int64_t queries, int64_t t, int64_t lut_len, int64_t threads, int64_t two_p) {
     omp_set_num_threads((int)threads);
     #pragma omp parallel
     {
@@ -372,7 +372,7 @@ extern "C" void pvi_softmax_block(float* s, const int32_t* lut, int64_t groups, 
                     tot += e[j];
                 }
                 const int32_t two = 2 * tot;
-                for (int64_t j = 0; j < n; ++j) row[j] = (float)((tot + 510 * e[j]) / two);
+                for (int64_t j = 0; j < n; ++j) row[j] = (float)((tot + (int32_t)two_p * e[j]) / two);
                 for (int64_t j = n; j < t; ++j) row[j] = 0.0f;
             }
         }
@@ -829,18 +829,18 @@ def _library():
                                check=True, capture_output=True)
                 shutil.move(str(built), str(lib))
         _LIB = ctypes.CDLL(str(lib))
-        _LIB.pvi_attention.argtypes = [ctypes.c_void_p] * 5 + [ctypes.c_int64] * 7
+        _LIB.pvi_attention.argtypes = [ctypes.c_void_p] * 5 + [ctypes.c_int64] * 8
         _LIB.pvi_attention.restype = None
         _LIB.pvi_has_avx512.argtypes = []
         _LIB.pvi_has_avx512.restype = ctypes.c_int64
         _LIB.pvi_attention64.argtypes = ([ctypes.c_void_p] + [ctypes.c_int64] * 5 + [ctypes.c_void_p] + [ctypes.c_int64] * 4
                                          + [ctypes.c_void_p] + [ctypes.c_int64] * 4 + [ctypes.c_void_p] * 2
-                                         + [ctypes.c_int64] * 9 + [ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64])
+                                         + [ctypes.c_int64] * 9 + [ctypes.c_void_p] + [ctypes.c_int64] * 3)
         _LIB.pvi_attention64.restype = None
         if hasattr(_LIB, "pvi_attention_profile"):
             _LIB.pvi_attention_profile.argtypes = [ctypes.c_int64, ctypes.c_void_p]
             _LIB.pvi_attention_profile.restype = None
-        _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 7
+        _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 8
         _LIB.pvi_softmax_block.restype = None
         _LIB.pvi_requant.argtypes = [ctypes.c_void_p, ctypes.c_int64] + [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 9
         _LIB.pvi_residual.argtypes = ([ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_int64,
@@ -876,10 +876,10 @@ def available() -> bool:
 
 
 def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int, *,
-                   exp_table: torch.Tensor | None = None, m_s: int = 0) -> torch.Tensor:
-    """``_attention_core(q, k, v, lut, notmask)`` (raw ``p v``, int64 ``[B, H, R, dh]``) on the CPU for int8-valued
-    ``q [B, H, R, dh]`` (row ``r``: the query at position ``T - queries + r % queries``), ``k, v [B, H, T, dh]`` and
-    the int32 table ``lut``."""
+                   exp_table: torch.Tensor | None = None, m_s: int = 0, pmax: int = 255) -> torch.Tensor:
+    """``_attention_core(q, k, v, lut, notmask, pmax)`` (raw ``p v``, int64 ``[B, H, R, dh]``) on the CPU for
+    int8-valued ``q [B, H, R, dh]`` (row ``r``: the query at position ``T - queries + r % queries``), ``k, v [B, H, T,
+    dh]`` and the int32 table ``lut``; probabilities 0..``pmax`` (``pmax <= 2047``)."""
     lib = _library()
     bsz, heads, rows, dh = q.shape
     t = k.shape[2]
@@ -891,11 +891,11 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
         lib.pvi_attention64(q.data_ptr(), *q.stride(), 0, k.data_ptr(), *k.stride(), v.data_ptr(), *v.stride(),
                             lut32.data_ptr(), out.data_ptr(), heads, bsz * heads, rows, queries, t, dh,
                             lut32.numel(), 0, 1, e32.data_ptr() if e32 is not None else None, ms,
-                            torch.get_num_threads())
+                            torch.get_num_threads(), 2 * pmax)
         return out
     q16, k16, v16 = (x.to(torch.int16).contiguous() for x in (q, k, v))
     lib.pvi_attention(q16.data_ptr(), k16.data_ptr(), v16.data_ptr(), lut32.data_ptr(), out.data_ptr(),
-                      bsz * heads, rows, queries, t, dh, lut32.numel(), torch.get_num_threads())
+                      bsz * heads, rows, queries, t, dh, lut32.numel(), torch.get_num_threads(), 2 * pmax)
     return out
 
 
@@ -917,7 +917,7 @@ def _exp32(exp_table, m_s: int):
 
 def attention_requant(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, m_o: int,
                       n_heads: int, n_kv: int, dh: int, *, exp_table: torch.Tensor | None = None,
-                      m_s: int = 0) -> torch.Tensor:
+                      m_s: int = 0, pmax: int = 255) -> torch.Tensor:
     """``transformer._attention``'s output, ``[B, Tq, Hq dh]`` int64: the causal attention of int8-valued ``q
     [B, Tq, Hq dh]`` against ``k, v [B, T, Hkv dh]`` (query head ``j`` reads key/value head ``j // (Hq/Hkv)``)
     with its output requantised by ``m_o``, in one AVX-512 pass that writes the final layout."""
@@ -933,17 +933,19 @@ def attention_requant(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: to
                          k4.data_ptr(), k4.stride(0), k4.stride(2), k4.stride(1), k4.stride(3),
                          v4.data_ptr(), v4.stride(0), v4.stride(2), v4.stride(1), v4.stride(3),
                          lut32.data_ptr(), out.data_ptr(), n_kv, b * n_kv, rep * tq, tq, t, dh, lut32.numel(),
-                         int(m_o), rep, e32.data_ptr() if e32 is not None else None, ms, torch.get_num_threads())
+                         int(m_o), rep, e32.data_ptr() if e32 is not None else None, ms, torch.get_num_threads(),
+                         2 * pmax)
     return out
 
 _ROWS = 32
 """Query rows per block of :func:`attention_core_hybrid` (scores of 32 rows x 2,048 keys x the heads: a few MB)."""
 
 
-def attention_core_hybrid(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int) -> torch.Tensor:
+def attention_core_hybrid(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int,
+                          pmax: int = 255) -> torch.Tensor:
     """:func:`attention_core`'s integers with the two products as float32 GEMMs (torch's BLAS) and the integer
     softmax in one native pass per block of query rows: the scores are exact in float32 (``|s| <= 2**21``) and so is
-    ``P V`` (every partial sum below ``(255 + T/2) 128 < 2**24``), as in ``transformer._attention_core``, but no
+    ``P V`` (every partial sum below ``(pmax + T/2) 128 < 2**24``), as in ``transformer._attention_core``, but no
     ``T x T`` tensor is held and the element-wise steps are one pass over a cache-resident block."""
     lib = _library()
     bsz, heads, rows, dh = q.shape
@@ -958,7 +960,7 @@ def attention_core_hybrid(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut
         r1 = min(rows, r0 + _ROWS)
         s = torch.bmm(qf[:, r0:r1], kt).contiguous()                       # [BH, rb, T], exact integers
         lib.pvi_softmax_block(s.data_ptr(), lut32.data_ptr(), bsz * heads, r1 - r0, r0, queries, t,
-                              lut32.numel(), threads)
+                              lut32.numel(), threads, 2 * pmax)
         out[:, r0:r1] = torch.bmm(s, vf).to(torch.int64)                   # exact: sums < 2**24
     return out.view(bsz, heads, rows, dh)
 
