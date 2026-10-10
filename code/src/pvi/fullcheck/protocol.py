@@ -72,7 +72,7 @@ from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm
                     int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64, min_max,
                     small_matmul_mod, to_field)
 from .cut import delta_range as cut_delta_range
-from .graph import IntGraph, MatOp
+from .graph import CheapOp, IntGraph, MatOp
 from .pipeline import ClaimUploads, wire_claim, wire_openings, wire_rows
 from .plans import CommitmentPlan, column_bits, column_error_log2, plan_commitment
 
@@ -821,7 +821,11 @@ class Verifier:
         The range checks of claims on a GPU are deferred: they come back with one copy at
         the end instead of one per weight op.  A lookup table's claims must be int8, and every op
         that looks rows up (a table, or the verifier's own rows) must look up ids of its table."""
-        out = self._derive(x, claims)
+        dtype = torch.int64
+        if x.device.type == "cpu" and native_kernels.int32_claims() and any(
+                torch.is_tensor(z) and z.dtype == torch.int32 for z in claims.values()):
+            dtype = torch.int32                                   # int32 claims, read by the native kernels
+        out = self._derive(x, claims, dtype=dtype)
         if out is None or any(_to_host(out[1])):
             return None
         self._ranged = out[2]
@@ -851,6 +855,16 @@ class Verifier:
         cut = self._cut_plan
         cut_ops = {o.name: o for o in cut.ops} if cut is not None else {}
         consumers = {o.consumer: o for o in cut.ops} if cut is not None else {}
+        # a CPU verifier's int32 claim stays int32 when only requantisations read it (as z: their first input, or a
+        # residual addition's second), which the native kernels compute in int64 from it; else it is widened
+        keep32 = (dtype == torch.int32 and x.device.type == "cpu" and visit is None and native_kernels.int32_claims())
+        readers = self.graph.readers() if keep32 else {}
+
+        def requant_only(name: str) -> bool:
+            ops = readers.get(name, ())
+            return bool(ops) and name != self.graph.output_name and all(
+                isinstance(r, CheapOp) and r.name not in consumers and getattr(r.fn, "_pvi_requant", None) is not None
+                and r.inputs.index(name) == len(r.inputs) - 1 and r.inputs.count(name) == 1 for r in ops)
         try:
             for i, op in enumerate(self.graph.ops):
                 if free and i > 0:  # free what no later op reads (weight-op inputs stay in ``inputs``)
@@ -883,7 +897,8 @@ class Verifier:
                     else:
                         visit(op, z, xin)
                     y = op.fold(z, xin)
-                    env[op.output] = y if y.dtype == torch.int64 else y.to(torch.int64)
+                    keep = keep32 and op.name not in cut_ops and op.layout != "conv" and requant_only(op.output)
+                    env[op.output] = y if y.dtype == torch.int64 or keep else y.to(torch.int64)
                 elif op.name in consumers:          # V1: the requantisation the cut op's values already are
                     if consumers[op.name].kind == "requant":
                         env[op.output] = env[op.inputs[0]]
@@ -1771,7 +1786,9 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
     vdev = torch.device(verifier.device)
     x_v, claims_v = x.cpu(), claims
     if wire:                      # a GPU client uploads int32 claims
-        claims_v = _decoded_claims(verifier, claims, rows, x, out, torch.int64 if vdev.type == "cpu" else torch.int32)
+        cpu32 = vdev.type == "cpu" and native_kernels.int32_claims()          # (the native kernels read int32 claims)
+        claims_v = _decoded_claims(verifier, claims, rows, x, out, torch.int32 if vdev.type != "cpu" or cpu32
+                                   else torch.int64)
         if claims_v is None:
             out["rejected_at"] = "range_or_shape"
             return out

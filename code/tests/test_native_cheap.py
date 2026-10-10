@@ -127,3 +127,25 @@ def test_native_unpack_decodes_like_numpy(shapes, monkeypatch):
     monkeypatch.setattr(native_kernels, "_DECODE", False)
     want = claimcodec.decode_torch(buf, rows, cols, workers=8)
     assert all(torch.equal(a, b) and torch.equal(a, c) for a, b, c in zip(got, want, claims))
+
+
+def test_int32_claims_give_the_int64_results(monkeypatch):
+    """A CPU verifier's int32 claims (and their transposed fold views) through requantisation, residual addition
+    and the field products give the integers of the same claims as int64."""
+    from pvi.fullcheck.field import P
+    g = torch.Generator().manual_seed(11)
+    z64 = torch.randint(-(1 << 29) + 1, 1 << 29, (4096, 600), generator=g, dtype=torch.int64)
+    z64[0, :4] = (1 << 29) - 1
+    z32 = z64.to(torch.int32)
+    m = torch.tensor(1_987_654_321, dtype=torch.int64)
+    for view in (lambda z: z.T.reshape(1, 600, 4096), lambda z: z):
+        want = gr.requant(view(z64), m, 30, -127, 127)
+        assert torch.equal(gr.requant(view(z32), m, 30, -127, 127), want)
+        a = torch.randint(-(1 << 22), 1 << 22, tuple(view(z64).shape), generator=g, dtype=torch.int64)
+        assert torch.equal(gr.residual_add(a, view(z32), m, 30, (1 << 22) - 1),
+                           gr.residual_add(a, view(z64), m, 30, (1 << 22) - 1))
+    chi = torch.randint(0, P, (5, 4096), generator=g, dtype=torch.int64)
+    assert torch.equal(native_kernels.field_matmul(chi, z32), native_kernels.field_matmul(chi, z64))
+    assert torch.equal(native_kernels.field_matmul(chi[:, :600], z32.T), native_kernels.field_matmul(chi[:, :600], z64.T))
+    monkeypatch.setattr(native_kernels, "_CHEAP", False)                  # the torch steps widen int32 claims
+    assert torch.equal(gr.requant(z32.T, m, 30, -127, 127), gr.requant(z64.T, m, 30, -127, 127))

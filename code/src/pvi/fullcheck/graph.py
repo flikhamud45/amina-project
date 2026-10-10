@@ -117,10 +117,12 @@ def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int,
 
     The shift and the clamp run in place on the product.  A CPU verifier's int64 operands go through one native
     pass (``native_kernels.requant``, the same integers)."""
-    if out is None and native_kernels.cheap_enabled(z):
+    if out is None and native_kernels.cheap_enabled(claim=z):
         got = native_kernels.requant(z, mult, shift, lo, hi)
         if got is not None:
             return got
+    if z.dtype == torch.int32:          # a CPU verifier's int32 claim: the int64 steps
+        z = z.to(torch.int64)
     out = mul_add_half(z, mult, shift, out=out)
     out >>= shift
     return out.clamp_(lo, hi)
@@ -128,10 +130,12 @@ def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int,
 
 def residual_add(a: torch.Tensor, b: torch.Tensor, mult: torch.Tensor, shift: int, res_max: int) -> torch.Tensor:
     """``clamp(a + round(b * mult / 2**shift), -res_max, res_max)`` (round-half-up) in one output buffer."""
-    if native_kernels.cheap_enabled(a, b):
+    if native_kernels.cheap_enabled(a, claim=b):
         got = native_kernels.residual(a, b, mult, shift, res_max)
         if got is not None:
             return got
+    if b.dtype == torch.int32:
+        b = b.to(torch.int64)
     out = mul_add_half(b, mult, shift)
     out >>= shift
     out += a

@@ -286,26 +286,42 @@ static void each2d(int64_t R, int64_t C, int64_t sr, int64_t sc, F f) {   // f(i
     }
 }
 
-// clamp((z * mult + 2**(shift-1)) >> shift, lo, hi), times b (contiguous like the output) first when b != nullptr
-extern "C" void pvi_requant(const int64_t* z, const int64_t* b, int64_t* out, int64_t R, int64_t C, int64_t sr,
-                            int64_t sc, int64_t mult, int64_t shift, int64_t lo, int64_t hi, int64_t threads) {
-    omp_set_num_threads((int)threads);
+// clamp((z * mult + 2**(shift-1)) >> shift, lo, hi), times b (contiguous like the output) first when b != nullptr;
+// z holds int32 or int64 values (zbytes), the arithmetic is int64
+template <class Z>
+static void requant_t(const Z* z, const int64_t* b, int64_t* out, int64_t R, int64_t C, int64_t sr, int64_t sc,
+                      int64_t mult, int64_t shift, int64_t lo, int64_t hi) {
     const int64_t half = (int64_t)1 << (shift - 1);
     if (b == nullptr)
         each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) {
-            out[i * C + j] = clamp64((z[s] * mult + half) >> shift, lo, hi); });
+            out[i * C + j] = clamp64(((int64_t)z[s] * mult + half) >> shift, lo, hi); });
     else
         each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) {
-            out[i * C + j] = clamp64((z[s] * b[i * C + j] * mult + half) >> shift, lo, hi); });
+            out[i * C + j] = clamp64(((int64_t)z[s] * b[i * C + j] * mult + half) >> shift, lo, hi); });
 }
 
-// clamp(a + ((z * mult + 2**(shift-1)) >> shift), -res_max, res_max), a contiguous
-extern "C" void pvi_residual(const int64_t* a, const int64_t* z, int64_t* out, int64_t R, int64_t C, int64_t sr,
-                             int64_t sc, int64_t mult, int64_t shift, int64_t res_max, int64_t threads) {
+extern "C" void pvi_requant(const void* z, int64_t zbytes, const int64_t* b, int64_t* out, int64_t R, int64_t C,
+                            int64_t sr, int64_t sc, int64_t mult, int64_t shift, int64_t lo, int64_t hi,
+                            int64_t threads) {
     omp_set_num_threads((int)threads);
+    if (zbytes == 4) requant_t((const int32_t*)z, b, out, R, C, sr, sc, mult, shift, lo, hi);
+    else requant_t((const int64_t*)z, b, out, R, C, sr, sc, mult, shift, lo, hi);
+}
+
+// clamp(a + ((z * mult + 2**(shift-1)) >> shift), -res_max, res_max), a contiguous, z int32 or int64
+template <class Z>
+static void residual_t(const int64_t* a, const Z* z, int64_t* out, int64_t R, int64_t C, int64_t sr, int64_t sc,
+                       int64_t mult, int64_t shift, int64_t res_max) {
     const int64_t half = (int64_t)1 << (shift - 1);
     each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) {
-        out[i * C + j] = clamp64(a[i * C + j] + ((z[s] * mult + half) >> shift), -res_max, res_max); });
+        out[i * C + j] = clamp64(a[i * C + j] + (((int64_t)z[s] * mult + half) >> shift), -res_max, res_max); });
+}
+
+extern "C" void pvi_residual(const int64_t* a, const void* z, int64_t zbytes, int64_t* out, int64_t R, int64_t C,
+                             int64_t sr, int64_t sc, int64_t mult, int64_t shift, int64_t res_max, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    if (zbytes == 4) residual_t(a, (const int32_t*)z, out, R, C, sr, sc, mult, shift, res_max);
+    else residual_t(a, (const int64_t*)z, out, R, C, sr, sc, mult, shift, res_max);
 }
 
 // table[clamp(x, -128, 127) + 128]
@@ -380,9 +396,9 @@ static const int64_t ZMAX = (int64_t)1 << 31;
 static const int64_t RED = (int64_t)1 << 15;
 static inline int64_t modp(int64_t v) { v %= PF; return v < 0 ? v + PF : v; }
 
-extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, const int64_t* z, int64_t m,
-                                    int64_t sr, int64_t sc, int64_t* out, int64_t threads) {
-    omp_set_num_threads((int)threads);
+template <class Z>
+static int64_t field_matmul_t(const int64_t* chi, int64_t r, int64_t n, const Z* z, int64_t m, int64_t sr,
+                              int64_t sc, int64_t* out, int64_t threads) {
     for (int64_t i = 0; i < r * n; ++i) if (chi[i] < 0 || chi[i] >= PF) return 0;
     const int64_t L = 2 * r;
     int64_t bad = 0;
@@ -402,17 +418,17 @@ extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, co
                 const int64_t w = std::min(cb, m - j0);
                 std::fill(acc.begin(), acc.end(), 0);
                 for (int64_t i = 0; i < n; ++i) {
-                    const int64_t* zi = z + i * sr + j0;
+                    const Z* zi = z + i * sr + j0;
                     int64_t over = 0;
                     #pragma omp simd reduction(|:over)
-                    for (int64_t j = 0; j < w; ++j) over |= (zi[j] >= ZMAX) | (zi[j] <= -ZMAX);
+                    for (int64_t j = 0; j < w; ++j) over |= ((int64_t)zi[j] >= ZMAX) | ((int64_t)zi[j] <= -ZMAX);
                     bad |= over;
                     const int64_t* li = lim.data() + i * L;
                     for (int64_t l = 0; l < L; ++l) {
                         const int64_t c = li[l];
                         int64_t* a = acc.data() + l * cb;
                         #pragma omp simd
-                        for (int64_t j = 0; j < w; ++j) a[j] += c * zi[j];
+                        for (int64_t j = 0; j < w; ++j) a[j] += c * (int64_t)zi[j];
                     }
                     if ((i + 1) % RED == 0)
                         for (int64_t q = 0; q < L * cb; ++q) acc[q] %= PF;
@@ -431,10 +447,10 @@ extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, co
             }
         #pragma omp parallel for schedule(static) reduction(|:bad)
         for (int64_t j = 0; j < m; ++j) {
-            const int64_t* zj = z + j * sc;
+            const Z* zj = z + j * sc;
             int64_t over = 0;
             #pragma omp simd reduction(|:over)
-            for (int64_t i = 0; i < n; ++i) over |= (zj[i] >= ZMAX) | (zj[i] <= -ZMAX);
+            for (int64_t i = 0; i < n; ++i) over |= ((int64_t)zj[i] >= ZMAX) | ((int64_t)zj[i] <= -ZMAX);
             bad |= over;
             for (int64_t l = 0; l < r; ++l) {
                 int64_t lo = 0, hi = 0;
@@ -444,7 +460,7 @@ extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, co
                     const int64_t* a0 = lim.data() + 2 * l * n;
                     const int64_t* a1 = lim.data() + (2 * l + 1) * n;
                     #pragma omp simd reduction(+:s0, s1)
-                    for (int64_t i = i0; i < i1; ++i) { s0 += a0[i] * zj[i]; s1 += a1[i] * zj[i]; }
+                    for (int64_t i = i0; i < i1; ++i) { s0 += a0[i] * (int64_t)zj[i]; s1 += a1[i] * (int64_t)zj[i]; }
                     lo = modp(lo + modp(s0));
                     hi = modp(hi + modp(s1));
                 }
@@ -455,6 +471,13 @@ extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, co
         return 0;
     }
     return bad ? 0 : 1;
+}
+
+extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, const void* z, int64_t zbytes,
+                                    int64_t m, int64_t sr, int64_t sc, int64_t* out, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    return zbytes == 4 ? field_matmul_t(chi, r, n, (const int32_t*)z, m, sr, sc, out, threads)
+                       : field_matmul_t(chi, r, n, (const int64_t*)z, m, sr, sc, out, threads);
 }
 // ---- the claim decoder's slot streams (claimcodec._unpack_lanes for all 32 lanes) ---------------------------------
 // w [k, g] uint32: lane j holds the values [j g, (j + 1) g), value c of lane j at bit (j k) of column c.  Writes the
@@ -531,8 +554,8 @@ def _library():
         _LIB.pvi_attention.restype = None
         _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 7
         _LIB.pvi_softmax_block.restype = None
-        _LIB.pvi_requant.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 9
-        _LIB.pvi_residual.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 8
+        _LIB.pvi_requant.argtypes = [ctypes.c_void_p, ctypes.c_int64] + [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 9
+        _LIB.pvi_residual.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64, ctypes.c_void_p] + [ctypes.c_int64] * 8
         _LIB.pvi_lut.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 5
         _LIB.pvi_norm.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 5
         _LIB.pvi_norm.restype = ctypes.c_int64
@@ -540,8 +563,8 @@ def _library():
         for f in (_LIB.pvi_requant, _LIB.pvi_residual, _LIB.pvi_lut, _LIB.pvi_rope):
             f.restype = None
         _LIB.pvi_field_matmul.argtypes = [ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p,
-                                          ctypes.c_int64, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p,
-                                          ctypes.c_int64]
+                                          ctypes.c_int64, ctypes.c_int64, ctypes.c_int64, ctypes.c_int64,
+                                          ctypes.c_void_p, ctypes.c_int64]
         _LIB.pvi_field_matmul.restype = ctypes.c_int64
         _LIB.pvi_unpack_stream.argtypes = [ctypes.c_void_p] + [ctypes.c_int64] * 3 + [ctypes.c_void_p] * 4 + \
             [ctypes.c_int64] * 2
@@ -602,12 +625,22 @@ def attention_core_hybrid(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut
 # caller runs the torch steps): CPU int64 tensors, a matrix operand contiguous or a transposed claim view.
 
 _CHEAP = os.environ.get("PVI_NATIVE_CHEAP", "1") != "0"
+_I32 = os.environ.get("PVI_INT32_CLAIMS", "1") != "0"
 
 
-def cheap_enabled(*ts: torch.Tensor) -> bool:
-    """Whether the native kernels apply to these operands (CPU, int64, non-empty) and the library is there."""
+def cheap_enabled(*ts: torch.Tensor, claim: torch.Tensor | None = None) -> bool:
+    """Whether the native kernels apply to these operands (CPU, int64, non-empty; ``claim`` may also be int32) and
+    the library is there."""
+    if claim is not None and not (claim.device.type == "cpu" and claim.dtype in (torch.int32, torch.int64)
+                                  and claim.numel()):
+        return False
     return (_CHEAP and all(t.device.type == "cpu" and t.dtype == torch.int64 and t.numel() for t in ts)
             and _library() is not None)
+
+
+def int32_claims() -> bool:
+    """Whether a CPU verifier keeps its claims as int32 (the native kernels read them as they are)."""
+    return _CHEAP and _I32 and _library() is not None
 
 
 def _layout(t: torch.Tensor):
@@ -635,8 +668,8 @@ def requant(z: torch.Tensor, mult, shift: int, lo: int, hi: int, b: torch.Tensor
     if m is None or lay is None or (b is not None and (b.shape != z.shape or not b.is_contiguous())):
         return None
     out = torch.empty(z.shape, dtype=torch.int64)
-    _LIB.pvi_requant(z.data_ptr(), None if b is None else b.data_ptr(), out.data_ptr(), *lay, m, shift, lo, hi,
-                     torch.get_num_threads())
+    _LIB.pvi_requant(z.data_ptr(), z.element_size(), None if b is None else b.data_ptr(), out.data_ptr(), *lay, m,
+                     shift, lo, hi, torch.get_num_threads())
     return out
 
 
@@ -646,7 +679,8 @@ def residual(a: torch.Tensor, z: torch.Tensor, mult, shift: int, res_max: int):
     if m is None or lay is None or a.shape != z.shape or not a.is_contiguous():
         return None
     out = torch.empty(z.shape, dtype=torch.int64)
-    _LIB.pvi_residual(a.data_ptr(), z.data_ptr(), out.data_ptr(), *lay, m, shift, res_max, torch.get_num_threads())
+    _LIB.pvi_residual(a.data_ptr(), z.data_ptr(), z.element_size(), out.data_ptr(), *lay, m, shift, res_max,
+                      torch.get_num_threads())
     return out
 
 
@@ -688,15 +722,15 @@ def field_matmul(chi: torch.Tensor, z: torch.Tensor):
     """``chi @ z mod P`` (int64 ``[r, m]``, canonical) for ``chi [r, n]`` in the field and an int64 matrix ``z
     [n, m]`` (contiguous rows or contiguous columns) with ``|z| < 2**31``, exactly; None when the operands are
     not of that kind or out of range (the caller's products then apply)."""
-    if not (cheap_enabled(chi, z) and chi.dim() == 2 and z.dim() == 2 and chi.shape[1] == z.shape[0]):
+    if not (cheap_enabled(chi, claim=z) and chi.dim() == 2 and z.dim() == 2 and chi.shape[1] == z.shape[0]):
         return None
     sr, sc = z.stride()
     if not (sc == 1 or sr == 1):
         return None
     chi = chi.contiguous()
     out = torch.empty(chi.shape[0], z.shape[1], dtype=torch.int64)
-    ok = _LIB.pvi_field_matmul(chi.data_ptr(), chi.shape[0], chi.shape[1], z.data_ptr(), z.shape[1], sr, sc,
-                               out.data_ptr(), torch.get_num_threads())
+    ok = _LIB.pvi_field_matmul(chi.data_ptr(), chi.shape[0], chi.shape[1], z.data_ptr(), z.element_size(),
+                               z.shape[1], sr, sc, out.data_ptr(), torch.get_num_threads())
     return out if ok else None
 
 
