@@ -1760,6 +1760,12 @@ def _patch(x: np.ndarray, gaps: np.ndarray, hz: np.ndarray, segs: list[tuple[int
     global order.
     Works in place on ``gaps`` and ``hz`` (few passes and no large temporaries: the exceptions are
     4-15% of the claims); from ``_THREADED`` exceptions in ``workers`` slices."""
+    from . import native_kernels
+    code = native_kernels.patch_exceptions(x, gaps, hz, segs, total) if gaps.size >= _SMALL else None
+    if code is not None:                         # one native pass, the same values and the same checks in order
+        if code:
+            raise ClaimCodecError("exception position out of range" if code == 1 else "exception out of range")
+        return
     pos = gaps
     pos += 1
     np.cumsum(pos, out=pos)

@@ -27,7 +27,7 @@ from pathlib import Path
 import torch
 
 __all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
-           "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max"]
+           "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max", "patch_exceptions"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -671,6 +671,48 @@ extern "C" void pvi_minmax(const void* a, int64_t bytes, int64_t n, int64_t* lo,
     if (bytes == 4) minmax_t((const int32_t*)a, n, lo, hi);
     else minmax_t((const int64_t*)a, n, lo, hi);
 }
+// ---- the claim decoder's exceptions (claimcodec._patch): positions, high parts, range checks, in one pass -------
+// gaps -> positions in place (cumsum(gaps + 1) - 1, int64 wrap-around as numpy's); x[pos] += h 2**B with
+// h = unzigzag(hz + 1), B the width of the segment holding pos (segments: starts in global order, widths, the
+// bases still pending); returns 0, 1 (a position out of range), 2 (a high part >= 2**32) or 3 (a value with
+// |x + pending| >= 2**30), checked in that order as _patch does (x is discarded on any error).
+extern "C" int64_t pvi_patch(int32_t* x, int64_t* gaps, const int64_t* hz, int64_t n, const int64_t* starts,
+                             const int64_t* widths, const int64_t* pend, int64_t nseg, int64_t total,
+                             int64_t threads) {
+    omp_set_num_threads((int)threads);
+    if (n == 0) return 0;
+    int64_t acc = 0, mn = INT64_MAX;
+    for (int64_t i = 0; i < n; ++i) { acc += gaps[i] + 1; gaps[i] = acc - 1; mn = std::min(mn, gaps[i]); }
+    if (mn < 0 || gaps[n - 1] >= total) return 1;
+    int64_t hmax = 0;
+    #pragma omp parallel for schedule(static) reduction(max:hmax)
+    for (int64_t i = 0; i < n; ++i) hmax = std::max(hmax, hz[i]);
+    if (hmax >= ((int64_t)1 << 32)) return 2;
+    const int64_t lim = (int64_t)1 << 30;
+    int64_t bad = 0;
+    const int64_t chunk = 1 << 16;
+    #pragma omp parallel for schedule(static) reduction(|:bad)
+    for (int64_t c0 = 0; c0 < n; c0 += chunk) {
+        const int64_t c1 = std::min(n, c0 + chunk);
+        int64_t lo = 0, hi = nseg;                       // the last segment starting at or before pos[c0]
+        while (hi - lo > 1) { const int64_t mid = (lo + hi) / 2; if (starts[mid] <= gaps[c0]) lo = mid; else hi = mid; }
+        int64_t s = lo;
+        for (int64_t i = c0; i < c1; ++i) {
+            const int64_t p = gaps[i];
+            while (s + 1 < nseg && starts[s + 1] <= p) ++s;
+            int64_t h = hz[i] + 1;
+            const int64_t sign = h & 1;
+            h >>= 1;
+            h ^= -sign;
+            h = (int64_t)((uint64_t)h << widths[s]);
+            h += (int64_t)x[p];
+            const int64_t v = h + pend[s];
+            bad |= (v <= -lim) | (v >= lim);
+            x[p] = (int32_t)h;
+        }
+    }
+    return bad ? 3 : 0;
+}
 """
 
 _FLAGS = ("-O3", "-march=native", "-fopenmp", "-fwrapv", "-shared", "-fPIC")
@@ -735,6 +777,9 @@ def _library():
         _LIB.pvi_minmax.argtypes = [ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
                                     ctypes.c_int64]
         _LIB.pvi_minmax.restype = None
+        _LIB.pvi_patch.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] + [ctypes.c_void_p] * 3 + \
+            [ctypes.c_int64] * 3
+        _LIB.pvi_patch.restype = ctypes.c_int64
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -990,4 +1035,21 @@ def attention_profile(on: bool = True) -> list[float] | None:
     buf = (ctypes.c_double * 4)()
     lib.pvi_attention_profile(int(on), buf)
     return list(buf)
+
+
+def patch_exceptions(x, gaps, hz, segs, total: int) -> int | None:
+    """``claimcodec._patch`` in one native pass: 0, or the error code (1 position, 2 high part, 3 range); None
+    without the library (the numpy steps then run).  ``x`` int32, ``gaps`` and ``hz`` int64 numpy arrays (``gaps``
+    becomes the positions), ``segs`` ``(start, B, pending base)`` in the global order."""
+    import numpy as np
+    if not _DECODE or _library() is None:
+        return None
+    if not (x.dtype == np.int32 and x.flags.c_contiguous and gaps.dtype == np.int64 and hz.dtype == np.int64
+            and gaps.flags.c_contiguous and hz.flags.c_contiguous and gaps.flags.writeable):
+        return None
+    st = np.asarray([a for a, _, _ in segs], dtype=np.int64)
+    wd = np.asarray([b for _, b, _ in segs], dtype=np.int64)
+    pd = np.asarray([c for _, _, c in segs], dtype=np.int64)
+    return int(_LIB.pvi_patch(x.ctypes.data, gaps.ctypes.data, hz.ctypes.data, gaps.size, st.ctypes.data,
+                              wd.ctypes.data, pd.ctypes.data, st.size, total, torch.get_num_threads()))
 
