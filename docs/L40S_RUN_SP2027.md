@@ -13,6 +13,8 @@ the team before the runs (the "freeze"); until then this file lists what will be
   SmoothQuant fix (OPT-6.7B never fitted our machines), and V1's bytes on the smoothed real-weight graphs.
 * **The verifier on the GPU** (`sp2027.sh gpuv`): v0's streaming GPU verifier and V1 with a GPU verifier at 2,048
   tokens.
+* **The CPU verifier against re-execution** (`sp2027.sh cpuv`): the full Llama-2-7B and OPT-1.3B verified on 8 CPU
+  threads with the native kernels (B5), and re-executed (integer and fp32) on the same threads.
 * **The v0 benchmark with every sp2027 improvement** (the existing `strong_gpu.sh must` and `should` tiers with a new
   `PVI_PLATFORM`): the paper's Table 3 and comparisons on this GPU.
 
@@ -42,6 +44,7 @@ the team before the runs (the "freeze"); until then this file lists what will be
 | `v1` | V1 against v0, timed | 13 | 20-30 |
 | `quality` | perplexity (fp32, scalar gains, smoothing) and V1 on real weights | 7 | 10-15 |
 | `gpuv` | the verifier on the GPU | 4 | 4-6 |
+| `cpuv` | the CPU verifier and re-execution, same CPU | 6 | 6-10 |
 | `strong_gpu.sh must` | the v0 benchmark with the improvements (see `STRONG_GPU_PLAN.md`, Part C) | about 20 | 30-40 |
 
 Each `sp2027.sh` tier submits its jobs with `--dependency=singleton`; re-running a tier after a pre-emption resubmits
