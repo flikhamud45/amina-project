@@ -167,8 +167,16 @@ each layer's suffix eq tables once, evaluate `h(0), h(1), h(2)` on the GPU and d
 on the 2080 Ti (one leaf per cut claim): at 2,048 tokens it is 10x v0's prover on this card (v0's int8 forward is
 very fast), and the CPU verifier pays about 1.7x v0's (the final check's two exact products per claim). On the
 L40S the GKR's integer arithmetic is expected to be 3-4x faster. V1 is therefore presented as an option that trades
-prover time for a 2x smaller proof (still orders of magnitude faster than a zkSNARK prover); the next GKR step is
-the bottom layer, whose numerators are the real-row indicator (about half of the GKR's work).
+prover time for a 2x smaller proof (still orders of magnitude faster than a zkSNARK prover).
+
+**The bottom layer** (1643eb4; job 1005570). With full rows (`T = 2^n_col`, the benchmark's lengths), the bottom
+layer's first `n_col - 1` rounds bind column bits inside rows, where the numerators are the row's 0/1 indicator: the
+kernel reads only the real rows' `q`, evaluates `F = QL + QR + lambda QL QR`, and the padding rows add
+`lambda (1 - sum eq)` in closed form; after those rounds one value per row is left and the generic rounds go on. Same
+transcript (12 GPU tests; the host logic also runs on the CPU against CPU stand-ins of the kernels,
+`test_gkr_triton_cpu.py`). One instance: `2^24` leaves 0.48 -> 0.36 s, `2^25` 0.56 -> 0.52 s (15.6 ns per leaf; 0.83 s in
+the first version). The host's per-round work (a device-to-host copy, the challenge, a few products: about 0.44 ms per
+round, 300 rounds) is now a quarter of an instance's time.
 
 ## 9. Adversarial review (workflow `v1-soundness-review`, 15 agents)
 
