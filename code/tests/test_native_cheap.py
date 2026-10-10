@@ -263,3 +263,26 @@ def test_residual_with_a_strided_base_norm_of_a_view_and_the_swiglu_product(monk
     b = torch.randint(-127, 128, (1, 300, 2048), generator=g, dtype=torch.int64)
     got, want = _both(lambda: gr.requant_mul(a, b, m, 30, -127, 127), monkeypatch)
     assert torch.equal(got, want) and torch.equal(got, gr.requant(a * b, m, 30, -127, 127))
+
+
+@pytest.mark.parametrize("n,m,k", [(11008, 2048, 4096), (4096, 1, 11008), (7, 3, 5), (64, 65, 129), (130, 64, 2)])
+def test_int8_matmul_is_exact(n, m, k, monkeypatch):
+    g = torch.Generator().manual_seed(n + m + k)
+    w = torch.randint(-128, 128, (n, k), generator=g, dtype=torch.int8)
+    x = torch.randint(-128, 128, (m, k), generator=g, dtype=torch.int8)
+    w[0] = -128
+    x[0] = -128
+    want = (w.to(torch.float64) @ x.to(torch.float64).T).to(torch.int64)
+    assert torch.equal(native_kernels.int8_matmul(w, x), want)
+
+
+def test_matop_compute_with_the_native_gemm_matches_the_fp32_path(monkeypatch):
+    from pvi.fullcheck.graph import MatOp
+    g = torch.Generator().manual_seed(2)
+    op = MatOp("mm", ("x",), "z", weight=torch.randint(-127, 128, (300, 1000), generator=g, dtype=torch.int8),
+               bias=torch.randint(-4096, 4096, (300,), generator=g, dtype=torch.int64))
+    x = torch.randint(-127, 128, (1, 37, 1000), generator=g, dtype=torch.int64)
+    got, want = op.compute(x), None
+    monkeypatch.setattr(native_kernels, "_GEMM", False)
+    want = op.compute(x)
+    assert torch.equal(got, want)

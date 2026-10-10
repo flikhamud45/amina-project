@@ -295,6 +295,9 @@ class MatOp(Op):
             z = None
             if x.is_cuda and self.max_input <= INT8_MAX and w.dtype == torch.int8 and int8_ok(x.device):
                 z = int8_product(w, self.unfold(x, torch.int8))     # every input is int8 (max_input)
+            elif (x.device.type == "cpu" and self.layout == "linear" and self.max_input <= INT8_MAX
+                  and w.dtype == torch.int8):                       # a CPU: the native exact int8 GEMM
+                z = native_kernels.int8_matmul(w, x.reshape(-1, self.n_in).to(torch.int8))
             if z is None:
                 z = exact_matmul(w, self.unfold(x, torch.float32), max_x=self.max_input + 1)
         if b is not None:

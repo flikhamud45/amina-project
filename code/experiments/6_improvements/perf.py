@@ -82,6 +82,7 @@ def main() -> None:
     ap.add_argument("--queries", type=int, default=10)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--lean", action="store_true")
+    ap.add_argument("--fs", action="store_true", help="Fiat-Shamir (non-interactive); each party's hashing is timed")
     ap.add_argument("--label", default="")
     ap.add_argument("--extra", default="{}", help="JSON dict of extra keyword arguments for Verifier (new options)")
     ap.add_argument("--policy", nargs="+", default=["paper"],
@@ -161,7 +162,8 @@ def main() -> None:
             weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
             for policy in (policies if mode == "C" else [None]):
                 c = coms.get((prune, policy))
-                params = params_for(args.lam, n_checks, rate=bench.RATE, plan=None if c is None else c.plan)
+                params = params_for(args.lam, n_checks, rate=bench.RATE, plan=None if c is None else c.plan,
+                                    fiat_shamir=args.fs)
                 for looked in (lookups if mode != "C" else [False]):
                     for wire in wires:
                         if mode == "C":
@@ -192,7 +194,7 @@ def main() -> None:
                    **({"group_columns": dict(v.params.group_columns)} if v.groups else {}),
                    "device": args.device, "verifier_device": args.verifier_device, "threads": args.threads,
                    "accepted": sum(bool(r["accepted"]) for r in runs), "queries": len(runs),
-                   "prove_s": prove, "verify_s": verify, "proof_bytes": sum(nbytes.values()),
+                   "fs": args.fs, "prove_s": prove, "verify_s": verify, "proof_bytes": sum(nbytes.values()),
                    "timings": timing, "bytes": nbytes, "build_s": build_s, "commit_s": commit_s.get((prune, policy)),
                    "host": platform.node(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
             if first is None:

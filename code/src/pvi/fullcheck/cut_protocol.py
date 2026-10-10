@@ -344,14 +344,14 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         if p.fiat_shamir:
             _absorb_statement(ch, verifier, x)
             ch.absorb(b"cut", plan.digest())
-            ch.absorb(b"claims/" + claimcodec.MAGIC, blob)
+            ch.absorb_large(b"claims/" + claimcodec.MAGIC, blob)
             if rows is not None:
-                ch.absorb(b"rows/I8", rows)
+                ch.absorb_large(b"rows/I8", rows)
             for name in verifier.tables:
                 hashes = _proof_hashes(proofs.get(name))
                 ch.absorb(b"lookup/" + name.encode(), struct.pack("<Q", len(hashes)) + b"".join(hashes))
-            ch.absorb(b"cut/exc", exc_blob)
-            ch.absorb(b"cut/mult", mult_blob)
+            ch.absorb_large(b"cut/exc", exc_blob)
+            ch.absorb_large(b"cut/mult", mult_blob)
 
     # ---------------------------------------------------------------- M1 (verifier)
     claims_v = _decoded_claims(verifier, blob, rows, x, out, torch.int64)
@@ -465,7 +465,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         chis = {op.name: verifier._pre[op.name][0] for op in clear_rows}
         us = {op.name: verifier._pre[op.name][1] for op in clear_rows}
         if p.fiat_shamir:
-            ch.absorb(b"u/F31", fold_blob)
+            ch.absorb_large(b"u/F31", fold_blob)
     with _timed(out, "verify_products"):
         ok = verifier.check_products(claims_v, inputs, chis, us)
         if ok and verifier.mode == "C":

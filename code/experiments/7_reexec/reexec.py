@@ -10,6 +10,11 @@ the cost depends on the shapes only), in two variants:
 * ``int``: our integer model's forward pass (``IntGraph.forward`` of ``build_decoder(...,
   prune_last=True)``), which the prover runs and which is bit-exact with the claims, so it is a
   complete check in itself;
+* ``int_fp32gemm`` (CPU): the same integer forward with its weight products as exact fp32 GEMMs over 1,024-term
+  chunks (the path before the native int8 GEMM), for comparison;
+* ``bf16`` (CPU): the floating-point decoder below in bf16 (fast on CPUs with AVX512_BF16, e.g. Zen 4);
+* ``dynint8`` (CPU): the floating-point decoder with every linear layer as torch's dynamic int8 Linear (fbgemm):
+  a standard int8 engine, NOT exact (activations quantised per call);
 * ``float``: a plain floating-point decoder of the same shapes (fp16 on a GPU, fp32 on the CPU):
   ``torch.nn.functional.linear`` and ``scaled_dot_product_attention`` with a causal mask, the norms
   and the MLP of the architecture, the LM head at the last position.  It is what a client would run
@@ -79,6 +84,9 @@ class FloatDecoder:
         self.embed = (torch.randn(cfg.vocab, d, generator=g) * 0.02).to(dtype).to(device)
         self.head = self.embed if cfg.tied else (torch.randn(cfg.vocab, d, generator=g) / d ** 0.5).to(dtype).to(device)
 
+    def _lin(self, x, wb):
+        return F.linear(x, *wb)
+
     def _norm(self, x):
         if self.cfg.norm == "rmsnorm":
             return x * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + 1e-6).to(x.dtype)
@@ -90,7 +98,7 @@ class FloatDecoder:
         x = self.embed[tokens]                                    # [B, T, d]
         bsz, t, _ = x.shape
         for blk in self.blocks:
-            qkv = F.linear(self._norm(x), *blk["qkv"])
+            qkv = self._lin(self._norm(x), blk["qkv"])
             q, k, v = qkv.split([hq * dh, hkv * dh, hkv * dh], -1)
             q = q.view(bsz, t, hq, dh).transpose(1, 2)
             k = k.view(bsz, t, hkv, dh).transpose(1, 2)
@@ -98,15 +106,37 @@ class FloatDecoder:
             if hkv != hq:
                 k, v = k.repeat_interleave(hq // hkv, 1), v.repeat_interleave(hq // hkv, 1)
             a = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-            x = x + F.linear(a.transpose(1, 2).reshape(bsz, t, hq * dh), *blk["o"])
-            h = F.linear(self._norm(x), *blk["up"])
+            x = x + self._lin(a.transpose(1, 2).reshape(bsz, t, hq * dh), blk["o"])
+            h = self._lin(self._norm(x), blk["up"])
             if cfg.mlp == "swiglu":
                 gate, up = h.chunk(2, -1)
                 h = F.silu(gate) * up
             else:
                 h = F.relu(h) if cfg.mlp == "relu" else F.gelu(h)
-            x = x + F.linear(h, *blk["down"])
+            x = x + self._lin(h, blk["down"])
         return F.linear(self._norm(x[:, -1]), self.head)          # next-token logits
+
+
+class DynInt8Decoder(FloatDecoder):
+    """:class:`FloatDecoder` (fp32) with every block's linear layer as torch's dynamic int8 Linear (fbgemm, per-call
+    activation scales): a standard int8 CPU engine, not exact."""
+
+    def __init__(self, cfg, n_layers: int, device: torch.device, seed: int = 0):
+        super().__init__(cfg, n_layers, torch.float32, device, seed)
+        self._q = {}
+        for blk in self.blocks:
+            for w, b in blk.values():
+                lin = torch.nn.Linear(w.shape[1], w.shape[0], bias=b is not None)
+                with torch.no_grad():
+                    lin.weight.copy_(w)
+                    if b is not None:
+                        lin.bias.copy_(b)
+                q = torch.ao.quantization.quantize_dynamic(torch.nn.Sequential(lin), {torch.nn.Linear},
+                                                           dtype=torch.qint8)
+                self._q[id(w)] = q
+
+    def _lin(self, x, wb):
+        return self._q[id(wb[0])](x)
 
 
 def main() -> None:
@@ -114,7 +144,8 @@ def main() -> None:
     ap.add_argument("--model", nargs="+", required=True)
     ap.add_argument("--seq", type=int, nargs="+", default=[64, 512, 2048])
     ap.add_argument("--layers", type=int, nargs="+", default=[1, 2])
-    ap.add_argument("--variants", nargs="+", default=["int", "float"], choices=["int", "float"])
+    ap.add_argument("--variants", nargs="+", default=["int", "float"],
+                    choices=["int", "int_fp32gemm", "float", "bf16", "dynint8"])
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--reps", type=int, default=5)
@@ -134,15 +165,27 @@ def main() -> None:
             for variant in args.variants:
                 measured = {}
                 for n_layers in args.layers:
-                    if variant == "int":
+                    from pvi.fullcheck import native_kernels
+                    if variant in ("int", "int_fp32gemm"):
                         graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0,
                                               prune_last=True)
 
-                        def run(graph=graph):
+                        def run(graph=graph, native=variant == "int"):
+                            saved = native_kernels._GEMM
+                            native_kernels._GEMM = native and saved
+                            try:
+                                with torch.no_grad():
+                                    graph.forward(tokens, free=True)
+                            finally:
+                                native_kernels._GEMM = saved
+                    elif variant == "dynint8":
+                        model = DynInt8Decoder(cfg, n_layers, device)
+
+                        def run(model=model):
                             with torch.no_grad():
-                                graph.forward(tokens, free=True)
+                                model(tokens)
                     else:
-                        model = FloatDecoder(cfg, n_layers, fdtype, device)
+                        model = FloatDecoder(cfg, n_layers, torch.bfloat16 if variant == "bf16" else fdtype, device)
 
                         def run(model=model):
                             with torch.no_grad():
@@ -157,7 +200,8 @@ def main() -> None:
                 fixed = measured[ls[0]] - ls[0] * per_block
                 print(json.dumps({
                     "git": sha, "model": name, "seq": seq, "variant": variant,
-                    "dtype": "int" if variant == "int" else str(fdtype).replace("torch.", ""),
+                    "dtype": {"int": "int8 GEMM", "int_fp32gemm": "int (fp32 GEMM)", "bf16": "bfloat16",
+                              "dynint8": "dynamic int8 (not exact)"}.get(variant, str(fdtype).replace("torch.", "")),
                     "device": str(device), "threads": args.threads, "reps": args.reps,
                     "measured_s": {str(k): v for k, v in measured.items()},
                     "per_block_s": per_block, "fixed_s": fixed, "n_layers": cfg.n_layers,

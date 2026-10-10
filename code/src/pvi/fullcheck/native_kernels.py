@@ -27,7 +27,8 @@ from pathlib import Path
 import torch
 
 __all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
-           "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max", "patch_exceptions", "tune_malloc"]
+           "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max", "patch_exceptions", "tune_malloc",
+           "int8_matmul"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -713,6 +714,89 @@ extern "C" int64_t pvi_patch(int32_t* x, int64_t* gaps, const int64_t* hz, int64
     }
     return bad ? 3 : 0;
 }
+// ---- exact int8 GEMM on the CPU: C [N, M] (int64) = W [N, K] (int8) . X [M, K]^T (int8) ---------------------------
+// The weight products of an integer forward pass on a CPU (MatOp.compute), so that exact re-execution runs at int8
+// speed (plan 2, RX).  W and X are packed as int16 pairs along K (vpmaddwd: pairs of int16 into int32 sums); a tile
+// of 4 rows x 64 columns keeps 16 int32 accumulators and an L2-resident strip of X.  Exact: every pair sum is at most
+// 2 * 128 * 128 = 32,768, so int32 holds the sum over K for K below 2**31 / 2**14 = 131,072 (checked by the caller).
+#if defined(__AVX512BW__)
+static void gemm_i8_avx512(const int8_t* w, const int8_t* x, int64_t* c, int64_t n, int64_t m, int64_t k) {
+    const int64_t k2 = (k + 1) / 2, mp = (m + 63) & ~(int64_t)63, np = (n + 3) & ~(int64_t)3;
+    std::vector<int32_t> xp(k2 * mp, 0), wp(np * k2, 0);
+    #pragma omp parallel for schedule(static)
+    for (int64_t j = 0; j < m; ++j) {                    // X pairs, transposed: xp[kk][j]
+        const int8_t* xj = x + j * k;
+        for (int64_t kk = 0; kk < k2; ++kk) {
+            const int16_t lo = xj[2 * kk], hi = 2 * kk + 1 < k ? xj[2 * kk + 1] : 0;
+            xp[kk * mp + j] = (int32_t)((uint32_t)(uint16_t)lo | ((uint32_t)(uint16_t)hi << 16));
+        }
+    }
+    #pragma omp parallel for schedule(static)
+    for (int64_t i = 0; i < n; ++i) {                    // W pairs: wp[i][kk]
+        const int8_t* wi = w + i * k;
+        for (int64_t kk = 0; kk < k2; ++kk) {
+            const int16_t lo = wi[2 * kk], hi = 2 * kk + 1 < k ? wi[2 * kk + 1] : 0;
+            wp[i * k2 + kk] = (int32_t)((uint32_t)(uint16_t)lo | ((uint32_t)(uint16_t)hi << 16));
+        }
+    }
+    const int64_t strips = mp / 64, nb = 256, nchunks = (np + nb - 1) / nb;
+    #pragma omp parallel for collapse(2) schedule(dynamic, 1)
+    for (int64_t s = 0; s < strips; ++s) {
+        for (int64_t ch = 0; ch < nchunks; ++ch) {
+            const int64_t j0 = s * 64, i1 = std::min(np, (ch + 1) * nb);
+            for (int64_t i0 = ch * nb; i0 < i1; i0 += 4) {
+                __m512i a[4][4];
+                for (int r = 0; r < 4; ++r) for (int v = 0; v < 4; ++v) a[r][v] = _mm512_setzero_si512();
+                const int32_t* w0 = wp.data() + i0 * k2;
+                for (int64_t kk = 0; kk < k2; ++kk) {
+                    const int32_t* xr = xp.data() + kk * mp + j0;
+                    const __m512i x0 = _mm512_loadu_si512((const void*)xr);
+                    const __m512i x1 = _mm512_loadu_si512((const void*)(xr + 16));
+                    const __m512i x2 = _mm512_loadu_si512((const void*)(xr + 32));
+                    const __m512i x3 = _mm512_loadu_si512((const void*)(xr + 48));
+                    for (int r = 0; r < 4; ++r) {
+                        const __m512i b = _mm512_set1_epi32(w0[r * k2 + kk]);
+                        a[r][0] = _mm512_add_epi32(a[r][0], _mm512_madd_epi16(b, x0));
+                        a[r][1] = _mm512_add_epi32(a[r][1], _mm512_madd_epi16(b, x1));
+                        a[r][2] = _mm512_add_epi32(a[r][2], _mm512_madd_epi16(b, x2));
+                        a[r][3] = _mm512_add_epi32(a[r][3], _mm512_madd_epi16(b, x3));
+                    }
+                }
+                alignas(64) int32_t tmp[64];
+                for (int r = 0; r < 4 && i0 + r < n; ++r) {
+                    for (int v = 0; v < 4; ++v) _mm512_store_si512((void*)(tmp + 16 * v), a[r][v]);
+                    int64_t* cr = c + (i0 + r) * m + j0;
+                    const int64_t cols = std::min<int64_t>(64, m - j0);
+                    for (int64_t l = 0; l < cols; ++l) cr[l] = tmp[l];
+                }
+            }
+        }
+    }
+}
+#endif
+
+[[maybe_unused]] static void gemm_i8_scalar(const int8_t* w, const int8_t* x, int64_t* c, int64_t n, int64_t m, int64_t k) {
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int64_t i = 0; i < n; ++i)
+        for (int64_t j = 0; j < m; ++j) {
+            const int8_t* wi = w + i * k;
+            const int8_t* xj = x + j * k;
+            int32_t acc = 0;
+            #pragma omp simd reduction(+:acc)
+            for (int64_t q = 0; q < k; ++q) acc += (int32_t)wi[q] * (int32_t)xj[q];
+            c[i * m + j] = acc;
+        }
+}
+
+extern "C" void pvi_gemm_i8(const int8_t* w, const int8_t* x, int64_t* c, int64_t n, int64_t m, int64_t k,
+                            int64_t threads) {
+    omp_set_num_threads((int)threads);
+#if defined(__AVX512BW__)
+    gemm_i8_avx512(w, x, c, n, m, k);
+#else
+    gemm_i8_scalar(w, x, c, n, m, k);
+#endif
+}
 """
 
 _FLAGS = ("-O3", "-march=native", "-fopenmp", "-fwrapv", "-shared", "-fPIC")
@@ -780,6 +864,8 @@ def _library():
         _LIB.pvi_patch.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] + [ctypes.c_void_p] * 3 + \
             [ctypes.c_int64] * 3
         _LIB.pvi_patch.restype = ctypes.c_int64
+        _LIB.pvi_gemm_i8.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 4
+        _LIB.pvi_gemm_i8.restype = None
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -1078,4 +1164,21 @@ def tune_malloc() -> bool:
     ok = libc.mallopt(m_top_pad, 1 << 28) == 1 and ok
     _MALLOC_TUNED = ok
     return ok
+
+
+_GEMM = os.environ.get("PVI_NATIVE_GEMM", "1") != "0"
+
+
+def int8_matmul(w: torch.Tensor, x: torch.Tensor):
+    """``w @ x.T`` exactly, int64 ``[N, M]``, for int8 ``w [N, K]`` and int8 ``x [M, K]`` on the CPU (one native
+    pass, int16-pair multiply-adds into int32); None when not applicable (the caller's products then run)."""
+    if not (_GEMM and w.device.type == "cpu" and x.device.type == "cpu" and w.dtype == torch.int8
+            and x.dtype == torch.int8 and w.dim() == 2 and x.dim() == 2 and w.shape[1] == x.shape[1]
+            and 0 < w.shape[1] < 1 << 17 and _library() is not None):
+        return None
+    w, x = w.contiguous(), x.contiguous()
+    out = torch.empty(w.shape[0], x.shape[0], dtype=torch.int64)
+    _LIB.pvi_gemm_i8(w.data_ptr(), x.data_ptr(), out.data_ptr(), w.shape[0], x.shape[0], w.shape[1],
+                     torch.get_num_threads())
+    return out
 

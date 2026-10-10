@@ -116,6 +116,16 @@ class SecurityParams:
         return dict(self.group_columns)[group]
 
 
+_TREE_MIN = 1 << 24
+"""Messages of at least this many bytes are absorbed as a one-level tree (:meth:`Challenger.absorb_large`)."""
+_TREE_CHUNK = 1 << 22
+
+
+def _hash_threads() -> int:
+    """Threads for the tree absorption: ``PVI_HASH_THREADS``, else torch's intra-op thread count."""
+    return max(1, int(os.environ.get("PVI_HASH_THREADS", "0")) or torch.get_num_threads())
+
+
 def params_for(lam: float, n_checks: int, *, rate: int = 4, fiat_shamir: bool = False,
                grinding_bits: int = 64, plan: CommitmentPlan | None = None, cut: bool = False,
                cut_lmax: int = 27) -> SecurityParams:
@@ -256,6 +266,33 @@ class Challenger:
         """Length-prefixed, labelled absorption (an injective transcript encoding)."""
         self._state.update(len(label).to_bytes(2, "big") + label + len(blob).to_bytes(8, "big"))
         self._state.update(blob)
+
+    def absorb_large(self, label: bytes, blob) -> None:
+        """:meth:`absorb` for a large message (claims, packed rows, folds): from ``_TREE_MIN`` bytes, a one-level
+        tree.  The message is cut into ``_TREE_CHUNK``-byte chunks; leaf ``j`` is
+        ``SHAKE-256("pvi/leaf/v1" | len(label) | label | j | chunk_j)`` (32 bytes), computed on a thread pool
+        (hashlib releases the GIL), and the transcript absorbs, under ``label + "/tree"``, the number of
+        chunks, the chunk size, the length and the leaves in order.  The encoding is injective (fixed chunking,
+        lengths and indices bound, a label of its own), so a collision of the transcript gives a collision
+        of SHAKE-256; the Fiat--Shamir bound gains the birthday term of the leaves.  Both parties call it
+        for the same messages, so their transcripts agree."""
+        n = len(blob)
+        if n < _TREE_MIN or not self.fiat_shamir:
+            self.absorb(label, blob)
+            return
+        view = memoryview(blob).cast("B")
+        chunks = [(j, view[a:a + _TREE_CHUNK]) for j, a in enumerate(range(0, n, _TREE_CHUNK))]
+        head = b"pvi/leaf/v1" + len(label).to_bytes(2, "big") + label
+
+        def leaf(item):
+            j, c = item
+            h = hashlib.shake_256(head + j.to_bytes(8, "big"))
+            h.update(c)
+            return h.digest(32)
+
+        with ThreadPoolExecutor(_hash_threads()) as pool:
+            leaves = list(pool.map(leaf, chunks))
+        self.absorb(label + b"/tree", struct.pack(">QQQ", len(chunks), _TREE_CHUNK, n) + b"".join(leaves))
 
     def _key(self, label: str) -> bytes:
         if self.fiat_shamir:
@@ -1587,12 +1624,14 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
                     "paths": HASH_BYTES * sum(len(_proof_hashes(p)) for p in proofs.values())}
     c0 = contention.begin()
     t0 = time.perf_counter()
-    if verifier.params.fiat_shamir:
+    # Kpre is one message to a designated verifier whose chi and u are its secret key: no challenge reads the
+    # transcript, so there is nothing to absorb (FS1)
+    if verifier.params.fiat_shamir and verifier.mode != "Kpre":
         _absorb_statement(ch, verifier, x)
         if wire:
-            ch.absorb(b"claims/" + claimcodec.MAGIC, claims)
+            ch.absorb_large(b"claims/" + claimcodec.MAGIC, claims)
             if rows is not None:
-                ch.absorb(b"rows/I8", rows)
+                ch.absorb_large(b"rows/I8", rows)
         else:
             for k in sorted(claims):       # int32 wire claims hash as the int64 ones
                 ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
@@ -1720,7 +1759,7 @@ def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, 
         c0 = contention.begin()
         t0 = time.perf_counter()
         if u_blob is not None:
-            ch.absorb(b"u/F31", u_blob)
+            ch.absorb_large(b"u/F31", u_blob)
         else:
             for k in sorted(us):
                 ch.absorb(b"u/" + k.encode(), _tensor_blob(us[k]))
