@@ -4,8 +4,10 @@
 % sections/defence.tex (notation). Material cut from this section is in sections/ext_v1.tex.
 % Labels defined: sec:v1, eq:v1-window, eq:v1-residue, eq:v1-logup, lem:v1-logup, eq:v1-final,
 % thm:v1. Labels used: sec:defence, sec:protocol, sec:fs, eq:freivalds, thm:sound (defence.tex);
-% sec:eval-v1, tab:eval-v1 (evaluation.tex); app:v1 (appendix_short.tex, appendix_v1.tex).
-% tab:v1 (duplicate of tab:eval-v1) moved to ext_v1.tex.
+% sec:eval-v1 (evaluation.tex); app:v1 (appendix_short.tex, appendix_v1.tex); tab:params
+% (app_params.tex, \input by both appendix_short.tex and the extended branch of main.tex).
+% tab:v1 (duplicate of tab:eval-v1) moved to ext_v1.tex. Second pass (2026-10-10): 1,700 -> 1,545
+% words; cut detail listed under E6 in ext_v1.tex.
 % =====================================================================================
 
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -31,9 +33,9 @@
 \label{sec:v1}
 
 At long prompts the proof consists mostly of claims, at 16--19 bits each after compression: about
-6.6\,GB for Llama-2-7B at 2{,}048 tokens, close to its int8 weights. In V1 the prover sends instead
-the int8 value that the next operation reads. V1 costs prover time, so it is an option next to the
-protocol of Section~\ref{sec:defence} (v0).
+6.6\,GB for Llama-2-7B at 2{,}048 tokens, close to its int8 weights. V1 sends instead the int8
+value that the next operation reads. It costs prover time, so it is an option next to the protocol
+of Section~\ref{sec:defence} (v0).
 
 \subsection{Values and Windows}
 
@@ -44,7 +46,7 @@ requantisation $a = \Vrq_\ell(Z_\ell)$, with $\Vrq_\ell(z) = \mathrm{clamp}(\Vsh
 $m_\ell$. The attention output and down projections (fc2) feed a residual addition of $\Delta =
 \Vshift_\ell(Z_\ell)$, which clamps only the sum. V1 sends $s_\ell = a_\ell$ or $\Delta_\ell$
 instead of $Z_\ell$. The verifier still recomputes every operation without weights ((S1) in
-Section~\ref{sec:protocol}), so it knows each input $X_\ell$, but must be convinced that the hidden
+Section~\ref{sec:protocol}) and so knows each input $X_\ell$; it must be convinced that the hidden
 $Z_\ell = A_\ell \hat X_\ell$, with $\hat X_\ell = [X_\ell; \mathbf 1]$, maps to $s_\ell$.
 
 Let $\Vlo_\ell(v) = \lceil (v\,2^{30} - 2^{29})/m_\ell \rceil$, the smallest $z$ with
@@ -60,7 +62,7 @@ $\Vrq_\ell(z) = a$ and gives the entry the window $[z, z+1)$.
 
 For entry $(i,j)$ of a \emph{cut} operation, one whose claims V1 replaces, let $L_{ij}$ be
 $\Vlo_\ell(s_{ij})$, or $z$ for an exception, and $W_{ij}$ its width; both are public.
-By~\eqref{eq:v1-window}, every sent value is correct if every entry of the residue
+By~\eqref{eq:v1-window}, every sent value is correct if each entry of the residue
 \begin{equation}
   \delta_\ell = A_\ell \hat X_\ell - L_\ell
   \label{eq:v1-residue}
@@ -71,19 +73,18 @@ in the committed weights, V1 reduces to a range check on a linear image of $A_\e
 \subsection{A Windowed LogUp with Integer Multiplicities}
 
 We prove all range memberships at once with a logUp lookup argument~\cite{haboeck2022logup}
-over $\Fext = \F[\xi]/(\xi^8 - 11)$, a field since 11 is a quadratic non-residue modulo $p$ and $p
-\equiv 1 \pmod 4$; Fiat--Shamir (Section~\ref{sec:fs}) needs degree at least 7. Entry $(i,j)$
-becomes the leaf $v_{ij} = \delta_{ij} + \xi\,W_{ij}$, and the table is $\Vtab = \{ t + \xi w : w
-\in \mathcal W, 0 \le t < w \}$, where $\mathcal W$ holds the width 1 and the two widths of each
-cut operation. As $1$ and $\xi$ are linearly independent over $\F$, a leaf lies in $\Vtab$ exactly
-when $\delta_{ij} \bmod p \in [0, W_{ij})$, so one table serves every width.
-The prover sends a multiplicity $\mu_\tau$ for each $\tau \in \Vtab$, and the verifier checks
+over the field $\Fext = \F[\xi]/(\xi^8 - 11)$, as Fiat--Shamir (Section~\ref{sec:fs}) needs degree
+at least 7. Entry $(i,j)$ becomes the leaf $v_{ij} = \delta_{ij} + \xi\,W_{ij}$, and the table is
+$\Vtab = \{ t + \xi w : w \in \mathcal W, 0 \le t < w \}$, where $\mathcal W$ holds the width 1 and
+the two widths of each cut operation. As $1$ and $\xi$ are linearly independent over $\F$, a leaf
+lies in $\Vtab$ exactly when $\delta_{ij} \bmod p \in [0, W_{ij})$, so one table serves every
+width. The prover sends a multiplicity $\mu_\tau$ for each $\tau \in \Vtab$, and the verifier checks
 \begin{equation}
   \sum_{i} \frac{1}{\alpha - v_i} \;=\; \sum_{\tau \in \Vtab} \frac{\mu_\tau}{\alpha - \tau}
   \label{eq:v1-logup}
 \end{equation}
 at a random $\alpha$, the left sum running over the $\Nleaf = \sum_{\ell \in \Vcut} N_\ell T$
-leaves of the cut set $\Vcut$. The usual logUp lemma assumes fewer leaves than the characteristic,
+leaves of the cut set $\Vcut$. The usual logUp lemma needs fewer leaves than the characteristic,
 but our proofs hold up to $4.3 \cdot 10^9$ leaves, more than $p \approx 2.0 \cdot 10^9$, and $p$
 equal leaves cancel. We therefore check two integer conditions.
 
@@ -94,12 +95,9 @@ equal leaves cancel. We therefore check two integer conditions.
   in $\Fext(X)$, then every $v_i$ lies in $\Vtab$.
 \end{lemma}
 
-By the uniqueness of partial fractions, the number of leaves equal to a table element agrees with
-its multiplicity modulo $p$, and the number equal to any other value is a multiple of $p$, which
-the two conditions force to zero (Appendix~\ref{app:v1}). Both are needed: if $\mu_\tau$ may reach
-$p$, a prover can offset $p$ copies of an off-table leaf by adding $p$ to some multiplicity, and
-without the sum check it can leave them out. Rule (P5) below keeps honest multiplicities below
-$2^{29}$.
+By unique partial fractions, leaf counts agree with the multiplicities modulo $p$ on the table and
+are multiples of $p$ off it; the two conditions, each necessary, force the latter to zero
+(Appendix~\ref{app:v1}). Rule (P5) below keeps honest multiplicities below $2^{29}$.
 
 \subsection{Reducing the Lookup to the Weight Commitment}
 
@@ -128,12 +126,11 @@ A_\ell)(\hat X_\ell e)$, whose first factor is a folded row as in~\eqref{eq:frei
 $\Fext$. The prover sends $u_\ell = \chi_\ell^\T A_\ell$, the verifier multiplies it by its own
 $\bar x_\ell = \hat X_\ell e$, and the existing column check tests $u_\ell$ against $C_M$ as eight
 base-field folded rows instead of $r$. That check needs only that $u_\ell$ precedes the columns,
-not that $\chi_\ell$ is uniform. For a transposed matrix the prover sends $y = A
-\bar x$. In $\Kpre$, whose secret vectors cannot anticipate $\chi_\ell$, the prover sends $y_\ell =
-A_\ell \bar x_\ell$, checked as $\chi_s^\T y_\ell = u_s \bar x_\ell$ for each secret vector
-$\chi_s$ and its folded row $u_s$. Unlike the lookups of zkLLM and
-DeepProve~\cite{zkllm,deepprove}, V1 thus adds no commitment: it looks up
-values affine in committed weights.
+not that $\chi_\ell$ is uniform. In $\Kpre$, whose secret vectors cannot anticipate $\chi_\ell$, the
+prover sends $y_\ell = A_\ell \bar x_\ell$, checked as $\chi_s^\T y_\ell = u_s \bar x_\ell$ for each
+secret vector $\chi_s$ and its folded row $u_s$. Unlike the lookups of zkLLM and
+DeepProve~\cite{zkllm,deepprove}, V1 thus adds no commitment: it looks up values affine in committed
+weights.
 
 \subsection{Protocol and Soundness}
 
@@ -178,27 +175,21 @@ the instances $\gamma$ (all checks: Appendix~\ref{app:v1}).
 % term takes thm:sound's product form, at most ((k_j - 1)/n_j)^{t_j}; V1_SPEC.md writes both
 % more loosely.
 
-\noindent\emph{Proof sketch} (Appendix~\ref{app:v1}). If every clear claim is correct and every
-residue lies in its window, induction over the graph gives $y = M(x)$, so a first operation
-$\ell^\ast$ is wrong, with an honest input. A clear $\ell^\ast$ is handled as in
-Theorem~\ref{thm:sound}. For a cut $\ell^\ast$, (P4) and the range checks give $|\delta| < 2^{30} +
-2^{16} < p$, so its leaf is not in $\Vtab$, and by Lemma~\ref{lem:v1-logup} the two sides
-of~\eqref{eq:v1-logup} differ as rational functions with poles in $\F + \xi\F$, hence at $\alpha$
-except with the first term. GKR soundness carries the wrong root to the final claims,
-whose check fails unless a fold is wrong, which the column check or the secret vectors catch.
-\qed
+\noindent\emph{Proof sketch} (Appendix~\ref{app:v1}). Let $\ell^\ast$ be the first wrong
+operation; its input is honest. A clear $\ell^\ast$ is caught as in Theorem~\ref{thm:sound}. A cut
+$\ell^\ast$ has, by (P4) and the range checks, a leaf outside $\Vtab$, so by
+Lemma~\ref{lem:v1-logup} the two sides of~\eqref{eq:v1-logup} differ at $\alpha$ except with the
+first term. GKR carries the wrong root to the final claims, whose check fails unless a fold is
+wrong, which the column check or the secret vectors catch. \qed
 
 \smallskip
 At $\lambda = 128$, for Llama-2-13B at 2{,}048 tokens, the first term is at most $2^{-215.3}$ and
-79 instances of at most $2^{26}$ leaves give GKR terms of $2^{-230.7}$; they change neither $r$ nor
-the column counts. Each new Fiat--Shamir round errs with probability at most $2^{-215.3}$, below
-the per-round error allowed in Section~\ref{sec:fs}, so the round-by-round argument carries over.
+the GKR terms are $2^{-230.7}$ (Table~\ref{tab:params}); they change neither $r$ nor the column
+counts. Each new Fiat--Shamir round errs with probability at most $2^{-215.3}$, below the per-round
+error of Section~\ref{sec:fs}.
 
-\para{Implementation and cost.} V1 is implemented for modes $\sC$ and $\Kpre$, with a GKR prover
-in Triton~\cite{tillet2019triton} whose transcripts are byte-identical to a reference prover's. Its
-1{,}492 tests pass, including tampered trace values with honestly recomputed later layers and
-tampered exceptions, multiplicities, GKR and fold messages. As measured in
-Section~\ref{sec:eval-v1} (Table~\ref{tab:eval-v1}), V1's proof is 2.0--2.3$\times$ smaller than
-v0's at 2{,}048 tokens with random weights and 1.7--1.8$\times$ on the real OPT-125M at 512 tokens,
-while its prover takes about 10$\times$ and its CPU verifier 1.6--1.9$\times$ as long \todo{L40S:
-full models}.
+\para{Implementation and cost.} V1 is implemented for modes $\sC$ and $\Kpre$, with a GKR prover in
+Triton~\cite{tillet2019triton}. Its tests reject tampered values, exceptions, multiplicities, GKR
+and fold messages. V1's proof is 2.0--2.3$\times$ smaller than v0's at 2{,}048 tokens with random
+weights and 1.7--1.8$\times$ on the real OPT-125M at 512 tokens, for about 10$\times$ the prover
+time (Section~\ref{sec:eval-v1}) \todo{L40S: full models}.

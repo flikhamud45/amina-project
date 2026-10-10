@@ -14,9 +14,11 @@
 %    LayerNorm analysis, smoothing details, per-row scales, CushionCache, SLP, the int8 remark);
 %    rows q/k/v weights and attention-output requantisation, cross-layer equalisation, the raw
 %    robustness range and the per-row top-1 agreement from docs/improvements/F2_quality.md.
-% Labels defined here (the body must not \ref them): sec:ext-gen, tab:gen-full,
+%  - Table tab:gen (compact, G in {1, 256}): moved here from the body (generation.tex) in the
+%    second trimming pass; its GPT-2 numbers stay in the body's "Cost" paragraph.
+% Labels defined here (the body must not \ref them): sec:ext-gen, tab:gen, tab:gen-full,
 % sec:ext-sampling, sec:ext-quality, tab:quality-attr.
-% Labels used (body): sec:gen, sec:gen-sampling, sec:quality, tab:gen, tab:quality,
+% Labels used (body): sec:gen, sec:gen-sampling, sec:quality, tab:quality,
 % eq:gumbel-table, sec:fs, sec:intmodel, thm:sound, sec:v1.
 % =====================================================================================
 
@@ -59,6 +61,28 @@ proof per generated token. Each cell has 3 queries, all accepted, and the tamper
 rejected in every cell. In mode $\sC$, a 256-token GPT-2 response takes 0.29\,s to prove,
 0.59\,s to verify and 87.3\,MB, against 0.15\,s, 0.21\,s and 14.9\,MB for one token. The proof per
 generated token falls to 0.34\,MB for GPT-2 and 1.44\,MB for OPT-1.3B in mode $\sC$.
+
+% Moved from generation.tex (Section 6.1, body) in the second trimming pass; unchanged.
+\begin{table}[t]
+  \caption{A $G$-token response as one prefill (64-token prompt, random int8 weights,
+  interactive): prover time P (RTX 2080 Ti), verifier time V (Xeon Silver 4114, 8 threads), proof
+  size.}
+  \label{tab:gen}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{@{}lrrrrrrr@{}}
+    \toprule
+    & & \multicolumn{3}{c}{$\sC$} & \multicolumn{3}{c}{$\Kpre$} \\
+    \cmidrule(lr){3-5}\cmidrule(l){6-8}
+    Model & $G$ & P (s) & V (s) & MB & P (s) & V (s) & MB \\
+    \midrule
+    GPT-2    & 1   & 0.15 & 0.21 & 14.9 & 0.06 & 0.14 & 10.9 \\
+             & 256 & 0.29 & 0.59 & 87.3 & 0.20 & 0.51 & 82.9 \\
+    OPT-1.3B & 1   & 0.61 & 0.76 & 96   & 0.15 & 0.43 & 60   \\
+             & 256 & 1.05 & 2.18 & 369  & 0.64 & 1.71 & 332  \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \begin{table}[t]
   \caption{A response of $G$ tokens proved as one prefill: 64-token prompt, RTX 2080 Ti prover,

@@ -1,9 +1,15 @@
 % =====================================================================================
 % sections/discussion.tex: Discussion and Limitations, and Conclusion (condensed 2026-10-10 per
-% CUT_PLAN.md Sec. 4). Every number is taken from attack.tex, defence.tex, v1.tex, evaluation.tex,
-% quality.tex or the cited papers (GPU TEE: gpucc; CommitLLM: commitllm2026; zkLLM: zkllm).
-% Removed detail: sections/ext_discussion.tex. Labels defined: sec:discussion, tab:options (new),
-% sec:conclusion. Labels used: sec:results, tab:sok, rem:scope. New key: gpucc.
+% CUT_PLAN.md Sec. 4; second trim the same day). Every number is taken from attack.tex,
+% defence.tex, v1.tex, evaluation.tex or quality.tex. Cites only hollowllm.
+% Removed detail: sections/ext_discussion.tex. Facts dropped here because evaluation.tex
+% (Secs. sec:eval-v1, sec:eval-reexec, sec:eval-compare), intro.tex, defence.tex or attack.tex
+% state them: provider overheads of a GPU TEE and CommitLLM, zkAgent's time per token, V1's
+% prover slowdown, the real-weight V1 ratios, the 76% attention share (todo B5 stays in
+% evaluation.tex), batching of opened columns, the Hollow-LLM details, the remark on
+% embedding the worst case. All of these are already in ext_discussion.tex.
+% Labels defined: sec:discussion, sec:conclusion. Labels used: tab:options, sec:eval-reexec
+% (evaluation.tex).
 % =====================================================================================
 
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
@@ -14,48 +20,34 @@
 \section{Discussion and Limitations}
 \label{sec:discussion}
 
-\para{Options for a client.} Table~\ref{tab:options} gives the client's costs. For the
-provider, a GPU TEE adds below 7\% for most LLM queries~\cite{gpucc}, CommitLLM
-12--14\%~\cite{commitllm2026}, and zkLLM needs 10.3\,min on an A100 for a 2{,}048-token
-prompt~\cite{zkllm}. Our base prover took 1.8\,s for a 64-token prompt on the L40S, against
-0.037\,s for an fp16 forward pass on the 2080~Ti; at 2{,}048 tokens V1 makes it about 10$\times$
-slower \todo{L40S: overhead over inference}. A GPU TEE is cheapest if the client trusts the vendor's
-hardware, attestation and side-channel resistance. A client with the weights and a GPU
-should re-execute. zkLLM sends a proof below 200\,kB and hides the weights, but
-proves for minutes; zkAgent, which proves generation, reports 0.30\,s per token for
-GPT-2~\cite{zkagent}. CommitLLM is cheap but statistical. Our protocol
-serves a client with neither the weights nor a GPU that will not trust hardware: in mode $\sC$ it
-holds 32 bytes per matrix and checks a 64-token proof, about 21$\times$ smaller than the weights, in
-about a second on a CPU. At 2{,}048 tokens the proof is as large as the weights, so after one long
-prompt or about 21 short ones the client has received more bytes than the weights, and gains only
-if it cannot run the model.
+\para{Options for a client.} Of the options in Table~\ref{tab:options}
+(Section~\ref{sec:eval-reexec}), a GPU TEE is cheapest if the client trusts the vendor's hardware,
+attestation and side-channel resistance. A client with the weights and a GPU should re-execute.
+zkLLM hides the weights but proves for minutes, and CommitLLM is cheap but statistical. Our
+protocol serves a client with neither the weights nor a GPU that will not trust hardware: in mode
+$\sC$ it holds 32 bytes per matrix and checks a 64-token proof, about 21$\times$ smaller than the weights, in about a second on
+a CPU. For the provider, our base prover took 1.8\,s for a 64-token prompt on the L40S, against
+0.037\,s for an fp16 forward pass on the 2080~Ti \todo{L40S: overhead over inference}.
 
-\para{Proof size and the verifier.} The proof carries every output of every weight operation, so it
-grows with the prompt: for Llama-2-7B it reaches the size of the int8 weights at about 2{,}050
-tokens without V1 and, by the byte model, at about 4{,}500 with it. Only committing the
-activations, as zkLLM does, would remove this growth. The operations without weights, mostly
-attention, whose cost is quadratic in the prompt length, take 76\% of the CPU verifier's time at
-2{,}048 tokens \todo{B5}. Batching queries under shared challenges, not yet implemented, would
-amortise the 124.7\,MB of opened columns.
+\para{Proof size.} The proof carries every weight operation's output, so it grows with the prompt.
+For Llama-2-7B it reaches the size of the int8 weights at about 2{,}050 tokens without V1 and, by
+the byte model, at about 4{,}500 with it. Without V1, a client thus receives more bytes than
+the weights after one long prompt or about 21 short ones, and gains only if it cannot run the
+model. Committing the activations, as zkLLM does, would remove this growth.
 
 \para{Weights and trust.} The protocol is not zero-knowledge: the claims of about
-$\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$. It targets open-weight
-models, for which anyone can recompute $C_M$ from the checkpoint and the public recipe. For private
-weights it shares the limitation that Hollow-LLM shows for zkSNARKs~\cite{hollowllm}: without the
-weights or a range proof, the client learns only that the provider is bound to one fixed model,
-possibly one that is cheap to evaluate. The setup proof's time is not measured \todo{L40S}.
+$\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$. It therefore targets
+open-weight models. For private weights it shares the limitation that Hollow-LLM shows for
+zkSNARKs~\cite{hollowllm}. The setup proof is untimed \todo{L40S}.
 
-\para{Scope.} We evaluate dense decoders with prompts of up to 2{,}048 tokens; mixture-of-experts
-models and longer contexts are untested. Costs use random weights; with real ones, V1 gains
-1.68--1.77$\times$ on the smoothed OPT-125M at 512 tokens, against 1.94--2.06$\times$ for GPT-2
-\todo{F3}. The quality of the integer OPT-6.7B and Qwen3-4B, and at long context, is unmeasured
-\todo{F2}.
+\para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens; mixture-of-experts
+models and longer contexts are untested. Costs use random weights \todo{F3}, and the quality of the
+integer OPT-6.7B and Qwen3-4B, and at long context, is unmeasured \todo{F2}.
 
-\para{The attack and the bound.} Condition (H) holds for random ensembles with independent rows and
-on the constructed worst case, which we do not claim embeds in a transformer
-(Remark~\ref{rem:scope}); on trained networks, whose rows are correlated, we report the best attacks we found. Our LLM attack
-writes values outside the natural ranges; an in-range LLM attack against held-out range checks and
-the best value-aware sampler is not yet run \todo{G3, G3.5}.
+\para{The attack and the bound.} Condition (H) holds for random ensembles with independent rows
+and on the constructed worst case, not on trained networks, where we report the best attacks found.
+An in-range LLM attack against held-out range checks and the best value-aware sampler is pending
+\todo{G3, G3.5}.
 
 \section{Conclusion}
 \label{sec:conclusion}
@@ -63,8 +55,8 @@ the best value-aware sampler is not yet run \todo{G3, G3.5}.
 A proof of inference that spot-checks an unencoded execution trace is not fully sound: an edit
 followed by honest recomputation becomes the honest trace of a model that differs in one row, and
 in the worst case no adaptive or value-aware sampler finds that row faster than uniform sampling.
-The model, not the trace, must therefore be encoded. Our defence checks every weight operation of
-an exact integer model with Freivalds' algorithm against a Reed--Solomon and Merkle commitment,
-using only a hash function and a linear code, and covers untrusted commitments, Fiat--Shamir and
-generation. Its cost is a proof that grows with the prompt, which V1 shrinks but does not remove, so
-it serves a client that holds neither the weights nor a GPU and will not trust hardware.
+Our defence therefore encodes the model: it checks every weight operation of an exact integer model
+with Freivalds' algorithm against a Reed--Solomon and Merkle commitment, using only a hash function
+and a linear code, and covers untrusted commitments, Fiat--Shamir and generation. Its cost, a proof
+that grows with the prompt and that V1 shrinks but does not remove, suits a client with neither the
+weights nor a GPU that will not trust hardware.

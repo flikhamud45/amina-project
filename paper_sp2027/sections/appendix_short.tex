@@ -1,23 +1,27 @@
 % =====================================================================================
 % sections/appendix_short.tex: the submission appendix (CUT_PLAN.md Sec. 4; submission only).
 % Sources: appendix_attack.tex, appendix_defence.tex, appendix_v1.tex (compressed; the extended
-%   version keeps them in full); Table tab:params from defence.tex, v1.tex, appendix_defence.tex.
+%   version keeps them in full). The concrete-security table (app:params, tab:params) is
+%   \input from sections/app_params.tex.
 % Labels defined: app:attack, def:H, thm:guess-full, lem:product, cor:surprise, prop:worst,
 %   prop:blind, prop:amp, rem:merkle, rem:pointer, rem:scope, app:defence, app:semantics,
-%   app:sound, app:untrusted, app:params, tab:params, app:v1, lem:v1-window, lem:v1-nowrap,
-%   lem:v1-gkr, lem:v1-final. Not defined: tab:aligned (the body no longer cites it).
+%   app:sound, app:untrusted, app:v1, lem:v1-window, lem:v1-nowrap, lem:v1-gkr, lem:v1-final.
+%   Not defined: tab:aligned (the body no longer cites it).
+% Trim of 2026-10-10: proofs that repeated the body's proof sketches now refer to them; the
+%   Ligero radius remark (Lemma 4.2), the caching/path detail of rem:scope (stated in attack.tex)
+%   and the split-commitment remark stay in the full appendices only.
 % Macros and theorem environments: main.tex.
 % =====================================================================================
 
 \section{Spot-Checking: Statements and Proofs}
 \label{app:attack}
 
-\para{Setting.} We use Definition~\ref{def:spot}. $\tau(\theta)$ is the honest
-trace, $\mathcal A$ the set of admissible instances and $\Sigma(\theta)$ the commitment oracle; in
-the \emph{ideal-oracle model} each answer is a function of the rows in its support. The adversary
-$A$ sees $\theta$ and outputs $(u,v)$ with $v\neq h_u$ (we condition on its not aborting), and $J$
-is the edited site. The forgery $\tau'$ is $\tau(\theta)$ with $h_u$ set to $v$ and the later layers
-recomputed with the true weights. It is \emph{explainable} if $\tau(\theta')=\tau'$ for some
+\para{Setting.} We use Definition~\ref{def:spot}, whose oracle defines the \emph{ideal-oracle
+model}; $\tau(\theta)$ is the honest trace, $\mathcal A$ the set of admissible instances and
+$\Sigma(\theta)$ the commitment oracle. The adversary $A$
+sees $\theta$ and outputs $(u,v)$ with $v\neq h_u$ (conditioned on not aborting); $J$ is the edited
+site. The forgery $\tau'$ is $\tau(\theta)$ with $h_u$ set to $v$ and later layers recomputed
+with the true weights. It is \emph{explainable} if $\tau(\theta')=\tau'$ for some
 $\theta'\in\mathcal A$ with $\theta'_{-u}=\theta_{-u}$.
 
 \begin{definition}[location-oblivious rows, (H)]
@@ -37,12 +41,10 @@ qd\cdot2^{-\tilde H_\infty(J\mid P)}$ (average min-entropy~\cite{dodis2008fuzzy}
 $2Q2^{-\kappa}+Q^22^{-\ell_H}$ under the second condition of Remark~\ref{rem:merkle}.
 \end{theorem}
 \begin{proof}[Proof sketch]
-As in the proof idea of Theorem~\ref{thm:guess}, $V$ accepts unless it touches $J$. Whether $V$
-touches $u$ is fixed by its run up to the choice of that
-query, so by (H) its probability given $(p,J=u)$ is $x_u=\Pr_{R_p}[V\text{ touches }u]$, one
-vector for all $u$, with $\sum_ux_u\le qd$. Detection is thus at most the knapsack value $G_{qd}$,
-and the second bound follows termwise. For $d=1$, the verifier that opens the $q$ most likely
-sites attains $G_q$: binding makes row $J$ contradict $v$. The full proof is in the extended
+Completing the proof idea of Theorem~\ref{thm:guess}: whether $V$ touches $u$ is fixed by its
+run up to the choice of that query, so by (H) $x_u=\Pr_{R_p}[V\text{ touches }u]$ for every $u$.
+The min-entropy bound follows termwise. For $d=1$, opening the $q$ most likely sites attains $G_q$,
+as binding makes row $J$ contradict $v$. The full proof is in the extended
 version~\cite{fullversion}.
 \end{proof}
 
@@ -59,9 +61,9 @@ $\beta_u(p)=\Pr_{h_u\sim\pi_u}[A(h_u,p_{-u})=(u,p_u)]$. Then $\Pr[J=u\mid P=p]\p
 \beta_u(p)/\pi_u(p_u)$, a point mass on $u$ if $\pi_u(p_u)=0$.
 \end{corollary}
 
-\noindent On $\{P=p,J=u\}$ the law of $\theta$ is a function of $\theta_{-u}$ times one of
-$\theta_u$; summing over $\theta$ gives $\Pr[J=u,P=p]=(\prod_j\pi_j(p_j))\beta_u(p)/\pi_u(p_u)$. The
-full proofs are in the extended version~\cite{fullversion}.
+\noindent On $\{P=p,J=u\}$ the law of $\theta$ factorises over $\theta_{-u}$ and $\theta_u$, so
+$\Pr[J=u,P=p]=(\prod_j\pi_j(p_j))\beta_u(p)/\pi_u(p_u)$. The full proofs are in the extended
+version~\cite{fullversion}.
 
 \begin{proposition}[the hard instance; Theorem~\ref{thm:dich}(a)]
 \label{prop:worst}
@@ -75,13 +77,12 @@ $V$), give each hidden row independent uniform weights on $c\ge\kappa/b$ dead in
 natural input ($b$ bits per weight); the bound becomes $1-qd/N-2Q2^{-\kappa}-Q^22^{-\ell_H}$.
 \end{proposition}
 \begin{proof}[Proof sketch]
-On a query whose zero is at $\zeta$, $g=0$, and $h_J=1$ for $J=\sigma^{-1}(\zeta)$ flips the class
-within $\{0,1\}$. The view, including each hidden neuron's marginal (zero on one of the $N+1$
-natural inputs), does not depend on $\sigma$, and row $e_j$, $j\neq\zeta$, explains the forgery.
-(H) holds with the $R_p$ that maps each newly touched row to a uniform unused element of
-$[N]\setminus\{\zeta\}$, and $J$ is uniform given the view, so Theorem~\ref{thm:guess-full} bounds
-detection by $qd/N$. In the Merkle case the dead-input weights give each leaf preimage min-entropy
-$\kappa$ (Remark~\ref{rem:merkle}). The full proof is in the extended version~\cite{fullversion}.
+The flip is as in the proof idea of Theorem~\ref{thm:dich}; row $e_j$, $j\neq\zeta$, explains
+it. (H) holds with the $R_p$ that maps each newly touched row to a uniform unused element
+of $[N]\setminus\{\zeta\}$. The view, including each hidden neuron's marginal, does not depend on
+$\sigma$, so $J$ is uniform given it and Theorem~\ref{thm:guess-full} bounds detection by $qd/N$.
+In the Merkle case the dead-input weights give each leaf preimage min-entropy $\kappa$
+(Remark~\ref{rem:merkle}). The full proof is in the extended version~\cite{fullversion}.
 \end{proof}
 
 \begin{proposition}[value-blind samplers]
@@ -91,9 +92,9 @@ On a fixed network, let disjoint site sets $B_1,\dots,B_m$ carry forgeries $\tau
 exactly on $B_j$. Then $\min_j\Pr[V\text{ rejects }\tau'_j]\le q/m$.
 \end{proposition}
 
-\noindent On a fixed network the opened rows are the true ones, so up to its first opening in $B_j$
-the run on $\tau'_j$ equals one reference run, whose at most $q$ expected openings meet the
-disjoint sets $B_j$ at most $q$ times in total.
+\noindent The opened rows are true, so until its first opening in $B_j$ the run on
+$\tau'_j$ equals one reference run, whose at most $q$ expected openings meet the disjoint $B_j$ at
+most $q$ times in total.
 
 \begin{proposition}[mixing suffices]
 \label{prop:amp}
@@ -110,9 +111,9 @@ query has support $[N]$.
 \noindent The proof is that of Theorem~\ref{thm:sound} for one matrix (Appendix~\ref{app:sound}).
 
 \begin{proof}[Proof of Theorem~\ref{thm:dich}]
-(a)~By Proposition~\ref{prop:worst}, error $\varepsilon$ requires $1-qd/N\le\varepsilon$; a path opens one row of the layer,
-so $s$ paths are $s$ queries with $d=1$. (b)~Set $\beta=\lambda+\log_2(2L)$ in
-Proposition~\ref{prop:amp} and take a union bound over the $L$ layers.
+(a)~By Proposition~\ref{prop:worst}, error $\varepsilon$ requires $1-qd/N\le\varepsilon$; a path
+opens one row of the layer, so $s$ paths are $s$ queries with $d=1$. (b)~Set
+$\beta=\lambda+\log_2(2L)$ in Proposition~\ref{prop:amp} with a union bound over the $L$ layers.
 \end{proof}
 
 \begin{remark}[commitments]
@@ -120,11 +121,10 @@ Proposition~\ref{prop:amp} and take a union bound over the $L$ layers.
 The lower bounds need a commitment that \emph{hides} unopened rows. Unsalted Merkle paths over
 low-entropy rows leak: on Proposition~\ref{prop:worst} without dead inputs, inverting sibling
 subtrees up to height $\eta$ detects the edit with probability $2^{\eta+1}/N$ instead of $1/N$.
-Theorem~\ref{thm:guess-full} holds for salted
-leaves $H(s_i\Vert\theta_i)$, and in the random-oracle model for an unsalted tree if every leaf
-preimage, under the true rows and the explanation, has min-entropy at least $\kappa$ given the view
-and the other leaves, adding $2Q2^{-\kappa}+Q^22^{-\ell_H}$. Trained weights have high-entropy
-rows, so this concerns the proof, not the attack.
+Theorem~\ref{thm:guess-full} holds for salted leaves $H(s_i\Vert\theta_i)$, and in the
+random-oracle model for an unsalted tree if every leaf preimage, under the true rows and the
+explanation, has min-entropy at least $\kappa$ given the view and the other leaves. Trained weights
+have high-entropy rows, so this concerns the proof, not the attack.
 \end{remark}
 
 \begin{remark}[correlated rows]
@@ -132,19 +132,17 @@ rows, so this concerns the proof, not the attack.
 Let row $0$ store the index $z$ of the critical site in weights on dead inputs, and sites
 $1,\dots,m$ carry bits whose only zero is at $z$, with their AND as output. The forged trace is the
 same for every $z$, so $G_2=2/m$, yet an adaptive verifier opens row $0$, reads $z$ and opens row
-$z$. Thus (H) cannot be dropped.
+$z$.
 \end{remark}
 
 \begin{remark}[scope]
 \label{rem:scope}
 (i)~Imperfect completeness $c$ adds $1-c$. (ii)~For edits explainable by the rows of the
 inconsistent set $B$ alone, replace ``touch $J$'' by ``touch $B$''. (iii)~The bound is per query,
-for a stateless verifier. Caching opened rows amounts to downloading the layer after about $N/q$
-queries; the path protocol opens values only along its path and detects $k$ tampered queries with
-probability at most $1-(1-1/N)^k$. (iv)~Proposition~\ref{prop:worst} embeds in every ReLU MLP with
-input dimension and hidden width at least $N$ and one further hidden layer. In a transformer the
-LayerNorm before the MLP blocks the 0/1 patterns, and we do not claim the embedding. (v)~Joint
-statistics are not covered.
+for a stateless verifier; caching opened rows amounts to downloading the layer after about $N/q$
+queries. (iv)~Proposition~\ref{prop:worst} embeds in every ReLU MLP with input dimension and hidden
+width at least $N$ and one further hidden layer. In a transformer the LayerNorm before the MLP
+blocks the 0/1 patterns; we do not claim the embedding. (v)~Joint statistics are not covered.
 \end{remark}
 
 % -------------------------------------------------------------------------------------
@@ -154,7 +152,7 @@ statistics are not covered.
 \subsection{Integer Semantics}
 \label{app:semantics}
 
-All constants are public and bound by the graph digest. A requantisation computes
+A requantisation computes
 $\mathrm{clamp}(\lfloor(mz+2^{29})/2^{30}\rfloor,-127,127)$; a residual addition adds
 $\lfloor(mz+2^{29})/2^{30}\rfloor$ and clamps to $[1-2^{22},2^{22}-1]$. LayerNorm subtracts the
 rounded integer mean, RMSNorm does not; both output
@@ -162,8 +160,8 @@ $\mathrm{clamp}(\lfloor(g_ix_i+2^{15}\sigma)/(2^{16}\sigma)\rfloor,-127,127)$ wi
 gains $g_i$ and the exact $\sigma=\max(1,\lfloor\sqrt{\lfloor\sum_ix_i^2/d\rfloor}\rfloor)$.
 Activations are 256-entry int8 tables. Rotary embeddings rotate pairs by
 $\mathrm{round}(2^{14}\cos t\theta_j)$ and $\mathrm{round}(2^{14}\sin t\theta_j)$, then round and
-clamp. Attention maps the gaps $g_j=\max_{j'}s_{j'}-s_j$ of the scores
-$s=qk^\T$ to $i_j=\mathrm{clamp}(\lfloor(m_sg_j+2^{29})/2^{30}\rfloor,0,255)$ and
+clamp. Attention maps the score gaps $g_j=\max_{j'}s_{j'}-s_j$, $s=qk^\T$, to
+$i_j=\mathrm{clamp}(\lfloor(m_sg_j+2^{29})/2^{30}\rfloor,0,255)$ and
 $e_j=\mathrm{round}(2^{15}e^{-i_j/16})$ ($0$ if masked); with $E=\sum_je_j$,
 $P_j=\lfloor(510e_j+E)/(2E)\rfloor\in[0,255]$, and $PV$ is requantised. Arithmetic is exact: int8
 products sum in 32-bit blocks of $2^{16}$, and attention runs in float32 below $2^{24}$ (scores at
@@ -173,35 +171,30 @@ the extended version~\cite{fullversion}.
 \subsection{Proof of Theorem~\ref{thm:sound}}
 \label{app:sound}
 
-Let $D_\ell=Z_\ell-A_\ell[\tilde X_\ell;\mathbf 1]$ over $\F$, with $\tilde X_\ell$ the input that
-the verifier derives. If $y\neq M(x)$, the first operation $\ell$ with a wrong claim has the true
+Let $D_\ell=Z_\ell-A_\ell[\tilde X_\ell;\mathbf 1]$ over $\F$, with $\tilde X_\ell$ the verifier's
+derived input. If $y\neq M(x)$, the first operation $\ell$ with a wrong claim has the true
 input, and the range checks give $D_\ell\neq0$ (Section~\ref{sec:intmodel}). Barring a collision it
 is not a lookup, so it belongs to some $j\in\mathcal J$.
 
-\para{Row layout.} With the true $u_\ell$, Freivalds' check passes with probability at most
-$p^{-r}$. Otherwise the same row of $\enc(u_\ell)$ and of $\chi_\ell^\T\hat A_\ell$ gives two
-distinct codewords. Barring a collision the opened columns are honest, and the $t_j$ columns, drawn
-after $u_\ell$, all fall on the at most $k_j-1$ agreements with probability at most the column
-term.
+\para{Row layout.} The sketch after Theorem~\ref{thm:sound} applies: barring a collision the opened
+columns are honest and drawn after $u_\ell$.
 
 \para{Transposed layout.} The verifier checks $\enc(Z\chi'_i)_c=w_i^\T\hat A'_c$ with
 $w_i=[\tilde X;\mathbf 1]\chi'_i$; honest claims pass since $w_i^\T\hat A'=\enc(Aw_i)$. If
 $D\chi'_i=0$ for all $r$ columns, a nonzero row of $D$ is orthogonal to $r$ uniform vectors
 (probability $p^{-r}$); otherwise the column term applies.
 
-\para{Modes $\sK$ and $\Kpre$.} In $\sK$ only the first case arises. In $\Kpre$, call a check
-\emph{bad} if $D_\ell\neq0$ and it passes. Until a bad check,
-every outcome, including which check fails, is a function of the prover's messages. Against a
-hybrid verifier that reports these predicted outcomes, the messages are independent of the secret
-vectors, so a bad check occurs among $Q$ queries with probability at most $Q\sum_\ell p^{-r}$, and
-the real run equals the hybrid until then.
+\para{Modes $\sK$ and $\Kpre$.} In $\sK$ only the first case arises. In $\Kpre$, against a hybrid
+verifier that reports the outcomes predicted from the prover's messages, the
+messages are independent of the secret vectors. A passing check with $D_\ell\neq0$ thus occurs
+among $Q$ queries with probability at most $Q\sum_\ell p^{-r}$, and the real run equals the hybrid
+until then.
 
 \para{Round-by-round soundness.} A partial transcript is \emph{doomed} if (i)~after the claims,
 $y\neq M(x)$; (ii)~after the vectors, some $\chi_j^\T D_j\neq0$ or $D_j\chi'_j\neq0$; (iii)~after
 the folds, a Freivalds check fails, some $u_j\neq\chi_j^\T A_j$, or some $D_j\chi'_j\neq0$. Each
-challenge leaves a doomed state with probability at most $p^{-r}$ or one column term, so the
-round-by-round error is at most $\varepsilon_{\sC}$, and the Fiat--Shamir bound
-follows~\cite{canetti2019fs,bcs16}. The full proof is in the extended version~\cite{fullversion}.
+challenge leaves a doomed state with probability at most $p^{-r}$ or one column term, which gives
+the bounds of Section~\ref{sec:fs}. The full proof is in the extended version~\cite{fullversion}.
 
 \subsection{Proof Idea for Theorem~\ref{thm:untrusted}}
 \label{app:untrusted}
@@ -210,25 +203,18 @@ follows~\cite{canetti2019fs,bcs16}. The full proof is in the extended version~\c
 leaves under every root, barring a collision ($O(Q^22^{-256})$~\cite{bcs16}). A column that cannot
 be extracted counts as corrupted.
 
-\para{Setup.} Let $E_j$ not be $e_j$-close. Correlated agreement over affine spaces in the
-unique-decoding regime~\cite[Thm.~1.7]{bciks20} \todo{verify FOCS numbering}, applied to the
-Reed--Solomon code over $\mathbb K_s$, makes $\psi^\T E_j$ $e_j$-far for a uniform
-$\psi\in\mathbb K_s^{R_j}$ except with probability $n_j/|\mathbb K_s|$: otherwise all rows would
-agree with codewords, over $\F$ by their base coordinates, on $n_j-e_j$ common columns. For $e_j$
-below a quarter of the distance, Lemma~4.2 of Ligero~\cite{ligero} gives $(e_j+1)/|\mathbb K_s|$.
-By Fact~\ref{fact:ext}, the $s$ base-field combinations form such a
-$\psi$, and the checks at a column pass exactly when the
-sent codeword agrees with $\psi^\T E_j$ there. This happens on at most $n_j-e_j-1$ columns, fixed
-before the $t^0_j$ columns are drawn; Fiat--Shamir multiplies the error by $Q$.
+\para{Setup.} If $E_j$ is not $e_j$-close, correlated agreement~\cite[Thm.~1.7]{bciks20}
+\todo{FOCS numbering} makes $\psi^\T E_j$ $e_j$-far from the code over $\mathbb K_s$ for uniform $\psi\in\mathbb K_s^{R_j}$ except
+with probability $n_j/|\mathbb K_s|$, and by Fact~\ref{fact:ext} the $s$ base-field combinations
+form such a $\psi$. The checks at a column pass exactly where the sent codeword agrees with
+$\psi^\T E_j$: on at most $n_j-e_j-1$ columns, fixed before the $t^0_j$ columns are drawn.
+Fiat--Shamir multiplies the error by $Q$.
 
-\para{Online.} Let each $E_j$ differ from $\enc(A^*_j)$ on a set $B_j$ of at most $e_j$ columns,
-fixed by $C_M$. The first claim that differs from $M^*$ has $|z|<2^{29}<p/2$, and the value of
-$M^*$ lies in $(-p/2,p/2)$, so $D_\ell\neq0$ without a bound on $A^*$. A wrong fold passes column
-$c$ only if $c\in B_j$ or $c$ is among the at most $k_j-1$ agreement positions, which gives the term
-with $k_j+e_j$, for every $w_i$ in the transposed layout; the round-by-round argument carries
-over. A split commitment is not $e_j$-close for
-$e_j<n_j/2-k_j+1$, since a codeword within distance $e_j$ would agree on more than $k_j-1$ columns
-with two distinct codewords. The full proof is in the extended version~\cite{fullversion}.
+\para{Online.} Each $E_j$ differs from $\enc(A^*_j)$ on a set $B_j$ of at most $e_j$ columns fixed
+by $C_M$. The first claim that differs from $M^*$ has $|z|<2^{29}<p/2$, and the value of $M^*$
+lies in $(-p/2,p/2)$, so $D_\ell\neq0$ without a bound on $A^*$. The column term with $k_j+e_j$
+follows as in Section~\ref{sec:setup-proof}, for every $w_i$ in the transposed layout, and the round-by-round argument
+carries over. The full proof is in the extended version~\cite{fullversion}.
 
 \input{sections/app_params}
 
@@ -276,29 +262,26 @@ The true leaf layer of instance $\gamma$ satisfies~\eqref{eq:v1-final} with
 $I(\rho)=I_{R_\gamma}(r_{\mathrm{row}})I_T(r_{\mathrm{col}})$, where $I_N(r)=\sum_{y<N}\Veq(r,y)$.
 \end{lemma}
 
-\para{Proof ideas.} For Lemma~\ref{lem:v1-logup}, let $c_v$ count the leaves equal to $v$. Unique
-partial fractions give $c_v\equiv0$ off the table and $c_\tau\equiv\mu_\tau\pmod p$ on it; as
-$0\le\mu_\tau<p$, $c_\tau\ge\mu_\tau$, and $\sum_\tau\mu_\tau=\sum_vc_v$ forces every off-table
-count to zero. Lemma~\ref{lem:v1-window} unfolds the floor. For Lemma~\ref{lem:v1-nowrap}, (P3),
-(P4), (D1) and (D4) give $|\delta_{ij}|<2^{30}+2^{16}$, and
-$p-2^{30}-2^{16}=939{,}458{,}561>2^{16}\ge W_{ij}$, so $\delta_{ij}\bmod p\notin[0,W_{ij})$. For
-Lemma~\ref{lem:v1-gkr}, the line through the sent children, the combination with $\eta_k$ and the
-degree-3 sum-check~\cite{lfkn1992} of layer $k$ let a false claim become true with probability at
-most $1/p^8$, $1/p^8$ and $3k/p^8$. For Lemma~\ref{lem:v1-final}, $\Veq$ factorises, and the leaf
-in row $o_\ell+i$ and column $j$ has weight $(\chi_\ell)_ie_j$. The full proofs are in the
-extended version~\cite{fullversion}.
+\para{Proof ideas.} For Lemma~\ref{lem:v1-logup}, unique partial fractions give leaf counts
+$c_v\equiv0$ off the table and $c_\tau\equiv\mu_\tau\pmod p$ on it; as $0\le\mu_\tau<p$,
+$c_\tau\ge\mu_\tau$, so $\sum_\tau\mu_\tau=\sum_vc_v$ forces every off-table count to zero.
+Lemma~\ref{lem:v1-window} unfolds the floor. For Lemma~\ref{lem:v1-nowrap}, (P3), (P4), (D1) and
+(D4) give $|\delta_{ij}|<2^{30}+2^{16}$, and $p-2^{30}-2^{16}=939{,}458{,}561>2^{16}\ge W_{ij}$, so
+$\delta_{ij}\bmod p\notin[0,W_{ij})$. For Lemma~\ref{lem:v1-gkr}, the line through the sent
+children, the combination with $\eta_k$ and the degree-3 sum-check~\cite{lfkn1992} of layer $k$ let
+a false claim become true with probability at most $1/p^8$, $1/p^8$ and $3k/p^8$. For
+Lemma~\ref{lem:v1-final}, $\Veq$ factorises, and the leaf in row $o_\ell+i$ and column $j$ has
+weight $(\chi_\ell)_ie_j$. The full proofs are in the extended version~\cite{fullversion}.
 
-\para{Proof of Theorem~\ref{thm:v1}.} If every clear claim is correct and every residue lies in its
-window, Lemma~\ref{lem:v1-window} and induction give the honest logits. So let $\ell^\ast$ be the
-first locally incorrect operation; its input is honest. A clear $\ell^\ast$ is caught as in
-Theorem~\ref{thm:sound}. A cut $\ell^\ast$ has an off-table leaf (Lemma~\ref{lem:v1-nowrap}), fixed
-with $\mu$ before $\alpha$. By (D5) and Lemma~\ref{lem:v1-logup},
-$\sum_i1/(X-v_i)-\sum_\tau\mu_\tau/(X-\tau)$ is nonzero with at most $\Nleaf+|\Vtab|$ poles, all in
-$S$, so it vanishes at $\alpha\in\Fext\setminus S$ with probability at most
-$(\Nleaf+|\Vtab|)/(p^8-p^2)$. Otherwise (F4) forces a wrong root, Lemma~\ref{lem:v1-gkr} carries it
-to the final claims, and (F3) fails (Lemma~\ref{lem:v1-final}) unless a fold is wrong in some
-base-field plane, which the column check catches except with the column term. In $\Kpre$ a wrong
-$y_\ell$ survives the $r$ secret vectors with probability $p^{-r}$, and the verdicts do not depend
-on them until a forgery is accepted. Under Fiat--Shamir the new rounds err with probability at most
-$1/p^8$, $3/p^8=2^{-245.7}$ and $2^{-215.3}$, below the per-round error of v0. The full proof is
-in the extended version~\cite{fullversion}.
+\para{Proof of Theorem~\ref{thm:v1}.} Completing the sketch in Section~\ref{sec:v1}: if every
+clear claim is correct and every residue lies in its window, Lemma~\ref{lem:v1-window} and induction
+give the honest logits, so $\ell^\ast$ exists. The off-table leaf of a cut $\ell^\ast$
+(Lemma~\ref{lem:v1-nowrap}) is fixed with $\mu$ before $\alpha$. By (D5) and
+Lemma~\ref{lem:v1-logup}, $\sum_i1/(X-v_i)-\sum_\tau\mu_\tau/(X-\tau)$ is nonzero with at most
+$\Nleaf+|\Vtab|$ poles, all in $S$, so it vanishes at $\alpha\in\Fext\setminus S$ with probability
+at most $(\Nleaf+|\Vtab|)/(p^8-p^2)$. Otherwise (F4), Lemma~\ref{lem:v1-gkr} and
+Lemma~\ref{lem:v1-final} make (F3) fail unless a fold is wrong in some base-field plane, which the
+column check catches except with the column term. In $\Kpre$ the secret vectors are handled as in
+Appendix~\ref{app:sound}. Under Fiat--Shamir the new rounds err with probability at most $1/p^8$,
+$3/p^8=2^{-245.7}$ and $2^{-215.3}$. The full proof is in the
+extended version~\cite{fullversion}.

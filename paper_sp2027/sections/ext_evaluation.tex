@@ -19,7 +19,8 @@
 %   B3 fused exact attention kernel; B5 native CPU attention; C2 = V1; D4/D5 setup proof; F1
 %   re-execution. Rounding note: A1's Llama-2-13B gain is the source's 4.3x (rounded cells give 4.4x).
 % Labels defined here: app:eval-setup, app:eval-improve, tab:eval-improve, app:eval-untrusted,
-%   app:eval-attack, app:eval-crossover, app:eval-reexec, app:eval-compare-v1, tab:eval-compare-v1.
+%   app:eval-attack, app:eval-crossover, app:eval-reexec, app:eval-compare-v1, tab:eval-compare-v1,
+%   app:eval-gkr-leaf (block 8, added by the second trimming pass: GKR time per leaf, from Sec. 7.3).
 % Labels used (body or other appendices): sec:break, sec:setup-proof, sec:quality, sec:gen,
 %   tab:eval-llm, tab:eval-v1, tab:eval-reexec, tab:eval-compare, tab:setup.
 % =====================================================================================
@@ -209,3 +210,13 @@ shrinks the proof where it is largest (Table~\ref{tab:eval-compare-v1}). Only co
 activations and proving the operations without weights, as zkLLM does, would stop the proof from
 growing with the prompt. zkAgent reports about 0.30\,s per token for GPT-2
 generation~\cite{zkagent}; Section~\ref{sec:gen} gives our generation costs.
+
+% -------------------------------------------------------------------------------------
+% Moved from the body, sections/evaluation.tex Sec. "V1 Against v0", paragraph "Time" (second
+% trimming pass, 2026-10-10); number unchanged.
+\subsection{V1: Prover Time per Leaf}
+\label{app:eval-gkr-leaf}
+
+V1's prover pays for the GKR, about one leaf per sent value: 15.6\,ns per leaf for a
+$2^{25}$-leaf instance on the RTX~2080~Ti, which accounts for 3.58\,s of the 4.85\,s that V1's
+prover takes for OPT-125M at 2{,}048 tokens in $\sC$ (Table~\ref{tab:eval-v1}).

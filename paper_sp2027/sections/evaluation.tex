@@ -7,6 +7,9 @@
 % Labels defined: sec:results, sec:eval-setup, sec:eval-cost, sec:eval-v1, sec:eval-reexec,
 %   sec:eval-compare, tab:eval-llm, tab:eval-v1, tab:eval-reexec, tab:eval-compare.
 % Labels used: sec:break, sec:defence, sec:v1, sec:quality (quality.tex), tab:sok; cite fullversion.
+% Second trimming pass (2026-10-10): -110 words; dropped only facts stated elsewhere (hash/field
+%   choices: defence.tex; F_{p^8}: v1.tex; image-model list: attack.tex Sec. sec:break; cell values
+%   repeated from the tables); the GKR time per leaf moved to ext_evaluation.tex (app:eval-gkr-leaf).
 % =====================================================================================
 
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -28,31 +31,29 @@ published systems (Section~\ref{sec:eval-compare}) and the quality of the certif
 \label{sec:eval-setup}
 
 \para{Implementation.} The protocol is written in Python and PyTorch, with Triton kernels for the
-GPU claim decoder, the fused exact attention and V1's GKR prover, and a C++/OpenMP attention kernel
-for CPU verifiers. Merkle trees use SHA-256, the Fiat--Shamir transcript SHAKE-256 and the field
-BabyBear; V1's logUp-GKR works over $\mathbb{F}_{p^8}$. We use $\lambda = 128$ unless stated
-otherwise, and write v0 for the protocol of Section~\ref{sec:defence} and V1 for that of
-Section~\ref{sec:v1}.
+GPU claim decoder and the fused exact attention, and a C++/OpenMP attention kernel for CPU
+verifiers. We use $\lambda = 128$ unless stated otherwise; v0 and V1 are the protocols of
+Sections~\ref{sec:defence} and~\ref{sec:v1}.
 
 \para{Platform.} The final tables will come from one platform: an NVIDIA L40S (48\,GB) as prover
 and GPU verifier and one CPU for the CPU verifier and re-execution, with full models, no
-extrapolation, and medians with their spread \todo{L40S}. The numbers shown come from earlier runs.
-The \emph{base} implementation ran on the L40S with 8 threads of an AMD EPYC 9334. Each later
-improvement, and V1, ran on an RTX~2080~Ti (11\,GB) with 8 threads of an Intel Xeon Silver 4114,
-against the previous code (or v0) on the same queries, with identical claims, proofs and verdicts.
+extrapolation, and medians with their spread \todo{L40S}. The numbers shown come from earlier runs:
+the \emph{base} implementation on the L40S with 8 threads of an AMD EPYC 9334, the later
+improvements and V1 on an RTX~2080~Ti (11\,GB) with 8 threads of an Intel Xeon Silver 4114, each
+against the previous code (or v0) on the same queries with identical claims, proofs and verdicts.
 Times are medians after a warm-up.
 
-\para{Models.} The image models are an MLP and LeNet-5 on MNIST, VGG-11, VGG-16 and ResNet-18 on
-CIFAR-10, and a 224$\times$224 dog-versus-cat ResNet-18. The language models are GPT-2,
-OPT-125M/1.3B/6.7B, Llama-2-7B/13B and Qwen3-4B. Costs use random int8 weights, since they depend
-only on the shapes, except for the compressed size of the claims \todo{F3: real weights, Qwen3-4B
-and OPT-6.7B}. A model too large for the 2080~Ti is measured as $b$ of its $L$ blocks ($b/L$), the
-last one pruned.
+\para{Models.} The image models are the six of Section~\ref{sec:break}. The language models are
+GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B and Qwen3-4B. Costs use random int8 weights, since they
+depend only on the shapes, except for the compressed size of the claims \todo{F3: real weights,
+Qwen3-4B, OPT-6.7B}. A model too large for the 2080~Ti is measured as $b$ of its $L$ blocks
+($b/L$), the last one pruned.
 
-\para{Attacks and soundness tests.} Section~\ref{sec:break} reports the attack measurements. Our base verifier accepted all 3{,}792 honest queries and rejected all
-2{,}512 attacks, from one changed value or neuron to perturbed weights, substitute models and
-forgeries that pass all checks but one. Freivalds' check rejected 1{,}601, the column check 853,
-the Merkle check 56 and the range check 2 \todo{L40S: counts with the final code}.
+\para{Attacks and soundness tests.} Section~\ref{sec:break} reports the attack measurements. Our
+base verifier accepted all 3{,}792 honest queries and rejected all 2{,}512 attacks (one changed
+value or neuron, perturbed weights, substitute models, forgeries that pass all checks but one):
+Freivalds' check rejected 1{,}601, the column check 853, the Merkle check 56 and the range check 2
+\todo{L40S: counts with the final code}.
 
 % -------------------------------------------------------------------------------------
 \subsection{Cost of the Defence}
@@ -90,21 +91,19 @@ the Merkle check 56 and the range check 2 \todo{L40S: counts with the final code
 \end{table*}
 
 \para{Base costs.} With committed weights, the image models are proved in 3.8--22.9\,ms and
-verified in 1.7--64.8\,ms, with proofs 1.3--9.3$\times$ smaller than their int8 weights. For the
-language models (Table~\ref{tab:eval-llm}), a 64-token prompt is proved in 76.1\,ms for GPT-2 and
-1.8\,s for Llama-2-7B, whose 325\,MB proof is about 21$\times$ smaller than its int8 weights. At
-2{,}048 tokens OPT-6.7B is proved in 7.7\,s, but its proof grows to 5.5\,GB and CPU verification to
-46.5\,s. The results of the weight operations grow with the prompt (98\% of Llama-2-7B's 6.57\,GB
-proof), and the verifier recomputes attention over all pairs of positions. There the GPU verifier
-is 11--15$\times$ faster than the CPU one \todo{F4: peak memory} \todo{L40S: prover against
-unverified fp16 and int8 inference, same GPU}.
+verified in 1.7--64.8\,ms, with proofs 1.3--9.3$\times$ smaller than their int8 weights.
+Llama-2-7B's 64-token proof is about 21$\times$ smaller than its int8 weights
+(Table~\ref{tab:eval-llm}). At 2{,}048 tokens the proof and the CPU verifier's time grow
+(OPT-6.7B: 5.5\,GB, 46.5\,s), since the results of the weight operations grow with the prompt (98\%
+of Llama-2-7B's 6.57\,GB proof) and the verifier recomputes attention over all pairs of positions.
+There the GPU verifier is 11--15$\times$ faster than the CPU one \todo{F4: peak memory}
+\todo{L40S: prover vs.\ unverified fp16/int8 inference, same GPU}.
 
-\para{Improvements.} Our prover and verifier improvements change how each party computes, not a
-byte that they exchange; the extended version~\cite{fullversion} measures each one against the
-previous code path. Exact int8 GEMMs for the column opening and the fold, which took 62\% of
-Llama-2-7B's base prover at 64 tokens, make the prover 3.7--4.3$\times$ faster on Llama-2 blocks,
-and a GPU claim decoder with a fused exact attention kernel makes the GPU verifier
-2.0--2.7$\times$ faster at 2{,}048 tokens.
+\para{Improvements.} Our improvements change no byte that the parties exchange; the extended
+version~\cite{fullversion} measures each against the previous code path. Exact int8 GEMMs for the
+column opening and the fold, which took 62\% of Llama-2-7B's base prover at 64 tokens, make the
+prover 3.7--4.3$\times$ faster on Llama-2 blocks, and a GPU claim decoder with a fused exact
+attention kernel makes the GPU verifier 2.0--2.7$\times$ faster at 2{,}048 tokens.
 
 % -------------------------------------------------------------------------------------
 \subsection{V1 Against v0}
@@ -143,25 +142,24 @@ and a GPU claim decoder with a fused exact attention kernel makes the GPU verifi
 \end{table}
 
 \para{Proof size.} At 2{,}048 tokens, with random weights, V1's proof is 2.0--2.3$\times$ smaller
-than v0's on every build with more than one block (Table~\ref{tab:eval-v1}); the full OPT-1.3B goes
-from 2.07 to 0.96\,GB. V1's own additions stay below 1\,MB per proof. The gain is smaller where the
-parts that V1 leaves unchanged weigh more: 1.81$\times$ for the single Llama-2-13B block in $\sC$,
-whose opened columns are a larger share, and 1.28--1.46$\times$ for GPT-2 at 64 tokens. With real
-weights a byte model predicts 1.8--2.0$\times$ at 2{,}048 tokens, and the smoothed real OPT-125M
+than v0's on every build with more than one block (Table~\ref{tab:eval-v1}). V1's own additions
+stay below 1\,MB per proof. The gain is smaller where the parts that V1 leaves unchanged weigh
+more: the single Llama-2-13B block in $\sC$ (1.81$\times$), whose opened columns are a larger
+share, and GPT-2 at 64 tokens (1.28--1.46$\times$). With real weights a byte model predicts
+1.8--2.0$\times$ at 2{,}048 tokens, and the smoothed real OPT-125M
 measures 1.68$\times$ ($\sC$) and 1.77$\times$ ($\Kpre$) at 512 tokens
 \todo{real-weight V1 bytes at 2{,}048 tokens}.
 
-\para{Time.} The prover pays for the GKR, about one leaf per sent value (15.6\,ns per leaf for a
-$2^{25}$-leaf instance on the 2080~Ti). At 2{,}048 tokens V1's prover thus takes about 10$\times$
-as long as v0's (OPT-125M in $\sC$: 0.50 to 4.85\,s, 3.58\,s of it the GKR). The CPU verifier takes
-1.6--1.9$\times$ v0's time at 2{,}048 tokens and 2.2--2.8$\times$ at 512, mostly for the two exact
-products per value of its final check \todo{L40S: V1 timings, incl.\ Llama-2-7B in $\sC$, which
-exceeds 11\,GB}.
+\para{Time.} The prover pays for the GKR, about one leaf per sent value. At 2{,}048 tokens V1's
+prover thus takes about 10$\times$ as long as v0's (OPT-125M in $\sC$: 0.50 to 4.85\,s, 3.58\,s of
+it the GKR). The CPU verifier takes 1.6--1.9$\times$ v0's time at 2{,}048 tokens and
+2.2--2.8$\times$ at 512, mostly for the two exact products per value of its final check
+\todo{L40S: V1 timings, incl.\ Llama-2-7B in $\sC$ (over 11\,GB)}.
 
-\para{Bandwidth crossover.} If proving, transfer and verification run one after another, V1 is
-faster end to end on links slower than the bytes it saves divided by the prover and verifier time
-it adds. On the timed cells of Table~\ref{tab:eval-v1} this is 0.16--0.26\,Gb/s \todo{L40S:
-crossover per cell}.
+\para{Bandwidth crossover.} With proving, transfer and verification in sequence, V1 is faster end
+to end on links slower than the bytes it saves divided by the prover and verifier time it adds.
+On the timed cells of Table~\ref{tab:eval-v1} this is 0.16--0.26\,Gb/s \todo{L40S: crossover per
+cell}.
 
 % -------------------------------------------------------------------------------------
 \subsection{Verification Against Re-Execution}
@@ -263,21 +261,21 @@ provider without holding the weights.
 \end{table*}
 
 Table~\ref{tab:eval-compare} sets our costs against published
-systems~\cite{zkcnn,bionetta,zkml,zkgpt,deepprove,zktorch,maverick,zkllm} on matched models, with
-their costs checked against the sources. Two caveats apply to every row. The hardware differs: our
+systems~\cite{zkcnn,bionetta,zkml,zkgpt,deepprove,zktorch,maverick,zkllm} on matched models
+(costs checked against the sources). Two caveats apply to every row. The hardware differs: our
 prover runs on an L40S, while all the zkSNARKs except zkLLM ran on CPUs. The guarantees differ: the
-zkSNARKs also prove the operations without weights, and many hide the weights, whereas our verifier
+zkSNARKs also prove the operations without weights, and many hide the weights; our verifier
 recomputes those operations and our protocol is not zero-knowledge.
-With these caveats, our prover is faster in every row with a measured value, by 46$\times$ (zkLLM,
-Llama-2-13B) to about 32{,}000$\times$ (ZKML, VGG-16) against the zkSNARKs, and by 3.0$\times$
-against Maverick. Our verifier is slower in two rows, against ZKML on VGG-16 (2.2$\times$) and
-zkLLM on OPT-1.3B at 2{,}048 tokens (2.9$\times$). Our proof is larger in most rows:
-3.6--180$\times$ against the other short-input proofs, 2{,}500--14{,}000$\times$ against zkLLM on
-OPT and 36{,}000--56{,}000$\times$ on Llama-2, where zkLLM's proof stays below 200\,kB. Where our
+With these caveats, our prover is faster in every measured row, by 46$\times$ (zkLLM, Llama-2-13B)
+to about 32{,}000$\times$ (ZKML, VGG-16) against the zkSNARKs and 3.0$\times$ against Maverick. Our
+verifier is slower in two rows: ZKML on VGG-16 (2.2$\times$) and zkLLM on OPT-1.3B (2.9$\times$).
+Our proof is larger in most rows: 3.6--180$\times$ against the other short-input proofs,
+2{,}500--14{,}000$\times$ against zkLLM on OPT and 36{,}000--56{,}000$\times$ on Llama-2, where
+zkLLM's proof stays below 200\,kB. Where our
 proof is smaller, we are better on all three costs. V1 narrows the gap from 3.6$\times$ to
 1.8$\times$ DeepProve's proof on GPT-2 at 512 tokens, and from about 14{,}000$\times$ to about
 6{,}500$\times$ zkLLM's on OPT-1.3B (Table~\ref{tab:eval-v1}) \todo{L40S: new timings; zkLLM on our
-L40S}. CommitLLM and the other sampling-based schemes of Table~\ref{tab:sok} do not check every
-operation of every query, so we do not compare their costs.
+L40S}. Sampling-based schemes such as CommitLLM (Table~\ref{tab:sok}) do not check every operation
+of every query, so we do not compare their costs.
 
 \input{sections/quality}

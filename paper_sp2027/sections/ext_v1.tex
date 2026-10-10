@@ -172,3 +172,16 @@ assumes one requantisation multiplier per operation, so per-row weight scales
 not covered. By the byte model the full Llama-2-7B proof still reaches the size of its int8 weights
 at about 4{,}500 tokens instead of about 2{,}050, and the sent values, like the claims, reveal
 information about the weights.
+
+% ---- E6 -------------------------------------------------------------------------------
+% Added in the second condensation pass (2026-10-10, word targets superseding CUT_PLAN Sec. 4):
+% the instance count of the concrete-security paragraph after Theorem thm:v1 in sections/v1.tex.
+% Also cut from v1.tex in that pass, already covered elsewhere in the extended version: why
+% \Fext is a field and the two counterexamples (E1 above), the transposed layout (E1), the
+% byte-identical transcripts and the 1,492 tests (E2), the CPU verifier's time ratio (E4 and
+% Section sec:eval-v1), and the detailed proof sketch (appendix_v1.tex).
+\subsection{GKR Instances for the Largest Model}
+
+For Llama-2-13B at 2{,}048 tokens and $\lambda = 128$, the cut operations form 79 GKR instances of
+at most $2^{26}$ leaves each. Their terms in Theorem~\ref{thm:v1} sum to $2^{-230.7}$, against at
+most $2^{-215.3}$ for the lookup term.

@@ -1,6 +1,9 @@
 % =====================================================================================
 % sections/attack.tex: Section 3, the attack on spot-checking proofs of inference.
 % Condensed on 2026-10-10 per CUT_PLAN.md; removed material is in sections/ext_attack.tex.
+% Second trimming pass 2026-10-10 (2,365 -> 2,233 words): wording tightened; the PCPP/holographic
+%   contrast (kept in intro.tex), the hidden-object citation and the posterior formula (kept in the
+%   Related Work and in ext_attack.tex) left the body; see the last subsection of ext_attack.tex.
 % Sources (session 4aa2c028 scratchpad): wt_sp2027/report/main.tex Sec. 3.1-3.3, 4.1-4.2 (all
 %   measured numbers); sp2027_research/attack_theory/PART1_SP.md Sec. 1-4, theorem.md,
 %   theorem_check.md, sok.md, sok_formulas_out.json, disclosure.md, experiments.md.
@@ -24,14 +27,13 @@ The model $M$ has a public architecture. The client (the verifier) may not hold 
 obtains a commitment $C_M$ to them before any query. For each query $x$ the provider (the
 prover) returns an output $y$ and a proof. We require \emph{completeness} and \emph{full soundness}
 with error $\varepsilon$: any $y\neq M(x)$ is accepted with probability at most $\varepsilon$.
-Anchuri et al.~\cite{anchuri2026verifiable} prove only \emph{other-model soundness}, against a
-provider that honestly runs a different model.
+Anchuri et al.~\cite{anchuri2026verifiable} prove only \emph{other-model soundness}, against an
+honest run of a different model.
 
 \para{Spot-checking.} The provider commits to the execution trace, and the verifier checks a few
 \emph{sites} against committed data: neurons with their incoming weights in the path protocol,
-chunks of layers in SLP~\cite{slp}, (layer, token) cells in CommitLLM's routine
-audit~\cite{commitllm2026}. The trace has no error-correcting encoding, so a changed value is
-visible at one site only.
+layer chunks in SLP~\cite{slp}, (layer, token) cells in CommitLLM~\cite{commitllm2026}. The trace
+has no error-correcting encoding, so a changed value is visible at one site only.
 
 \para{Adversary.} The provider may deviate arbitrarily but keeps the committed weights. It knows
 the sampling rule, even one that adapts to the claimed values, but not the verifier's coins, and
@@ -47,17 +49,17 @@ treats the other case).
 In the path protocol of Anchuri et al.\ (RandPathTest), the prover Merkle-commits to every
 activation~\cite{merkle1987}. The verifier walks from a random output neuron to the input through
 random parents. At each node $j$ it opens the parents' activations $a_i$ and the weights $w_{ij}$,
-and checks $a_j=\phi\big(\sum_i w_{ij}a_i\big)$ up to a floating-point tolerance. Anchuri et al.\
-note that a path catches one changed node with probability at most $1/N$ in a layer of width $N$,
-and suggest more paths, or sampling where it matters.
+and checks $a_j=\phi\big(\sum_i w_{ij}a_i\big)$ up to a floating-point tolerance. Against the
+$1/N$ chance that a path catches one changed node in a layer of width $N$, Anchuri et al.\ suggest
+more paths, or sampling where it matters.
 
 \para{The single-site edit.} Our adversary runs the correct model on $x$ and changes the
-activation of one neuron $u$ so that the output becomes wrong, or a class of its choice. It then
+activation of one neuron $u$ to make the output wrong, or a class of its choice. It then
 recomputes all later layers \emph{with the true weights}, so only $u$ fails its check, and $s$
 paths miss it with probability $(1-1/N)^s$. Applied only to triggered inputs, the edit is a
-backdoor~\cite{gu2019badnets} in the serving code: the weights stay clean, and clean queries are
-answered bit for bit as before. Repeated queries do not help: the provider tampers only with the
-$k$ queries it cares about, and is caught with probability at most $1-(1-1/N)^k\le k/N$.
+backdoor~\cite{gu2019badnets} in the serving code that leaves the weights clean and clean queries
+bit for bit unchanged. Repeated queries do not help: a provider that tampers with $k$ queries is
+caught with probability at most $1-(1-1/N)^k\le k/N$.
 
 % -------------------------------------------------------------------------------------
 \subsection{Why Sampling Cannot Fix It}
@@ -81,13 +83,12 @@ queries that meet the target layer. It \emph{touches} neuron $u$ if some query h
 \noindent Row-wise openings have $d=1$ if they hide unopened rows (Remark~\ref{rem:merkle}).
 Folded rows, the code columns of Section~\ref{sec:defence} and succinct arguments over the layer
 have support $[N]$, so SNARK-assisted verifiers fall outside every class with $d<N$. We measure $q$
-under the reference oracle $R_p$ of Definition~\ref{def:H}; it matches the real run until the
-edited neuron is touched, all that the proof uses.
+under the reference oracle $R_p$ of Definition~\ref{def:H}, which matches the real run until the
+edited neuron is touched.
 
 \para{Honest recomputation hides the edit.} The forged trace is the \emph{honest} trace of an
 admissible model that differs in row $u$ alone (for a ReLU neuron: zero weights and bias $v$, or
-$-1$ if $v=0$); such a forgery is \emph{explainable}. Without recomputation, the inconsistent
-children of $u$ would betray it.
+$-1$ if $v=0$); such a forgery is \emph{explainable}.
 
 \begin{theorem}[spot-checking is guessing the location]
 \label{thm:guess}
@@ -111,21 +112,19 @@ not depend on whether $J=u$, and $\sum_u x_u\le qd$. Detection is thus a fractio
 at most $G_{qd}$ (Appendix~\ref{app:attack}).
 \end{proof}
 
-\noindent Opening rows only confirms that they are clean, as in the search for a hidden
-object~\cite{chew1967,kadane1971}. Condition~(H) is needed: a row that stores the location of the
-critical neuron lets two adaptive queries catch the edit (Remark~\ref{rem:pointer}). Trained
-networks have correlated rows; for them we rely on the worst case of Section~\ref{sec:dichotomy}.
-With independent rows, the posterior on the edited neuron is proportional to its propensity to be
-chosen divided by the prior probability of the written value (Corollary~\ref{cor:surprise}), so
-reading values helps only against improbable values or a concentrated choice of neuron.
+\noindent Condition~(H) is needed: a row that stores the location of the
+critical neuron lets two adaptive queries catch the edit (Remark~\ref{rem:pointer}). For trained
+networks, whose rows are correlated, we rely on the worst case (Section~\ref{sec:dichotomy}).
+With independent rows, reading values helps only against improbable values or a concentrated
+choice of neuron (Corollary~\ref{cor:surprise}).
 \todo{G1e: empirical $G_q$, MNIST MLP}
 
 % -------------------------------------------------------------------------------------
 \subsection{A Lower Bound and a Matching Upper Bound}
 \label{sec:dichotomy}
 
-On a suitable network (H) holds by construction. This yields a lower bound for every
-spot-checking verifier, matched at full locality by our defence.
+On a suitable network (H) holds by construction, which gives a lower bound for every
+spot-checking verifier.
 
 \begin{theorem}[lower and upper bound]
 \label{thm:dich}
@@ -158,10 +157,8 @@ the view depends on $\sigma$, so Theorem~\ref{thm:guess} bounds detection by $qd
 on every dense network; $2^{-40}$ then takes about $27.7N$ paths per query. Tightness at
 intermediate locality $1<d<N$ is open, and we do not claim that the instance of~(a) embeds in a
 transformer (Remark~\ref{rem:scope}). The lower bound formalises a folklore calculation
-(Section~\ref{sec:related}) for adaptive, value-aware verifiers. Unlike the
-verifiers of PCPs of proximity and holographic proofs~\cite{bghsv2006robust,bfls1991}, ours reads
-all of its input, the trace; honest recomputation moves the change into the weights, so the model,
-not the trace, must be encoded.
+(Section~\ref{sec:related}) for adaptive, value-aware verifiers that read the whole trace: honest
+recomputation moves the change into the weights, so the model, not the trace, must be encoded.
 
 % -------------------------------------------------------------------------------------
 \subsection{Measured Attacks}
@@ -173,7 +170,7 @@ the unreleased model of~\cite{anchuri2026verifiable}, and the real OPT-6.7B, com
 acceptance exactly. The implementation reproduces the published behaviour~\cite{fullversion}.
 
 \para{MNIST.} The substitute models of Anchuri et al.\ corrupt hundreds of the MLP's 778 trace
-nodes and are always caught; our forgeries leave 1--14 inconsistent nodes. One tampered neuron
+nodes; our forgeries leave 1--14 inconsistent nodes. One tampered neuron
 passes with the predicted probability $1-1/N$ (99.6--99.8\%), and 250 paths 61\% of the time. A
 backdoor triggered by a $3{\times}3$ patch leaves clean queries unchanged, succeeds on every
 triggered query not already in the target class, and passed 99.96\% of 2{,}300 end-to-end runs
@@ -185,13 +182,13 @@ test queries that include the attacked ones. \todo{G3: training-split ranges}}
 sampler, which steps to parent $i$ with probability $\propto|w_{ij}a_i|$, detects 9.2\% of
 the best single-neuron edits but never visits a neuron whose claimed activation is zero:
 zeroing about 14 of the 512 neurons flips the prediction and passed 2{,}000 of 2{,}000 runs. A
-floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$, reaches 2\% at $\delta=1$. Each figure is the
-detection of the best attack we found against that sampler, an upper bound on its worst case;
-2\% is thus the best worst case among our samplers. \todo{G3: adaptive game, held-out ranges}
+floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$, reaches 2\% at $\delta=1$. Each figure, the
+detection of the best attack we found against that sampler, bounds its worst case from above;
+2\% is the best such bound among our samplers. \todo{G3: adaptive game, held-out ranges}
 
-\para{Larger models.} On every CNN and test query, one changed penultimate neuron flips the
-prediction and is caught by a path with probability 1/84 (LeNet-5) to 1/512 (VGG, ResNet), also on
-the binary dog-vs-cat ResNet-18, for which Anchuri et al.\ state full soundness. $2^{-40}$ takes
+\para{Larger models.} On every CNN and test query, including the binary dog-vs-cat ResNet-18, one
+changed penultimate neuron flips the prediction and is caught by a path with probability 1/84
+(LeNet-5) to 1/512 (VGG, ResNet). $2^{-40}$ takes
 2{,}316--14{,}182 paths, which open the whole model and trace, and at least 305{,}193 in the FFN
 layers of Llama-2-7B (width 11{,}008), about 13.7\,GB of fp16 openings at 64 tokens.
 
@@ -199,8 +196,7 @@ layers of Llama-2-7B (width 11{,}008), about 13.7\,GB of fp16 openings at 64 tok
 token for all 40 prompts. A fixed-target backdoor, constrained by the final LayerNorm, succeeds
 for ``\texttt{back}'' (40/40, clean prompts unchanged) and fails for ``\texttt{hacked}'' (0/40).
 Its values exceed the natural ranges, which the path protocol does not check, and $2^{-40}$ needs
-at least 454{,}248 paths. \todo{L40S: in-range attack (G3.5)} The extended
-version~\cite{fullversion} gives the paths for $k$ edited neurons of two instruction-tuned models.
+at least 454{,}248 paths. \todo{L40S: in-range attack (G3.5)}
 
 % -------------------------------------------------------------------------------------
 \subsection{Systematisation of Spot-Checking Schemes}
@@ -271,24 +267,23 @@ version~\cite{fullversion} gives the paths for $k$ edited neurons of two instruc
   system was tested. $^a$Our models (Section~\ref{sec:break}). $^b$The
   authors state that their analysis ``trivially extends to full soundness'' for binary-output
   models; their other-model theorem is unaffected. $^c$No theorem claims it; the gap comes from the
-  weight-only layer selection, not from the commitment. $^d$Our derivation, for $T$ steps.}
+  weight-only layer selection, not the commitment. $^d$Our derivation, for $T$ steps.}
 \end{table*}
 
-A single-site edit is caught exactly when the sample covers it (Table~\ref{tab:sok}). SLP,
-CommitLLM, NanoZK and SPEX state probabilistic guarantees, and SLP and CommitLLM describe the
-edit-then-recompute strategy themselves~\cite{slp,commitllm2026}. We do not call them broken, and
-no other value-blind sample of the same size does better against every edit placement
-(Proposition~\ref{prop:blind}). The path protocol's full soundness for binary
-classifiers fails on our dog-vs-cat ResNet-18. TensorCommitments' stated goal of negligible
-soundness is not achieved by its layer selection, which the provider can compute. Selection by
-value is evaded by edits that write common values (our zeroing attack; blindfolded
-updates~\cite{fang2023pol}). TOPLOC and SVIP claim only to detect substitution.
+A single-site edit is caught exactly when the sample covers it (Table~\ref{tab:sok}), and no
+other value-blind sample of the same size does better against every edit placement
+(Proposition~\ref{prop:blind}). SLP, CommitLLM, NanoZK and SPEX state probabilistic guarantees,
+and SLP and CommitLLM describe the edit-then-recompute strategy themselves~\cite{slp,commitllm2026};
+we do not call them broken. The path protocol's full soundness for binary classifiers fails on our
+dog-vs-cat ResNet-18. TensorCommitments' stated goal of negligible soundness is not achieved by its
+layer selection, which the provider can compute. Selection by value is evaded by edits that write
+common values (our zeroing attack; blindfolded updates~\cite{fang2023pol}).
 
 \para{Ethics and responsible disclosure.} Our attack targets verification protocols, not deployed
-services; all experiments used our own implementations and hardware, public datasets and
+services; all experiments used our own code and hardware, public datasets and
 open-weight models. Before submission we wrote to the authors of the path protocol,
-TensorCommitments, CommitLLM, NanoZK, SLP and SPEX \todo{dates sent (planned 15/19 Oct); drop SPEX
-here and in Table~\ref{tab:sok} if not notified}, describing our findings, their assumptions and
+TensorCommitments, CommitLLM, NanoZK, SLP and SPEX \todo{dates (15/19 Oct); drop SPEX here and in
+Table~\ref{tab:sok} if not notified}, describing our findings, their assumptions and
 what we do not claim, and offering our draft and code. \todo{replies; if
 none: ``No reply by 2~Nov 2026.''} We release no method for steering the responses of
 instruction-tuned assistants.

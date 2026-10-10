@@ -31,7 +31,7 @@
 %     19 Oct 2026 (CommitLLM, NanoZK, SLP, SPEX); remove SPEX from the body and Table tab:sok if
 %     its optional notice is not sent. Replies: if none, "We had received no reply by 2 Nov 2026."
 % Labels defined: ext:attack-model, ext:attack-measure, ext:attack-sok, tab:sok-derivation,
-%   ext:attack-disclosure (the body does not reference them).
+%   ext:attack-disclosure, ext:attack-bound (the body does not reference them).
 % Labels used: def:spot, thm:guess, thm:dich, sec:break, tab:sok (attack.tex); lem:product,
 %   cor:surprise, prop:worst, rem:merkle, tab:aligned (appendix_attack.tex); sec:defence,
 %   sec:related. Citations: anchuri2026verifiable, chew1967, kadane1971, fang2023pol.
@@ -209,3 +209,29 @@ we do not claim, and we offered our draft and code. Where a scheme states a prob
 guarantee, we report the acceptance probability that follows from its own formulas and do not call
 it broken. We say that a stated guarantee is not met only for the path protocol's full-soundness
 claim for binary classifiers and for the soundness goal of TensorCommitments.
+
+% -------------------------------------------------------------------------------------
+% Appended by the second trimming pass of sections/attack.tex (2026-10-10). Sources: Sec. 3.3,
+%   the sentence after Definition def:spot on the reference oracle (its last clause) and the
+%   paragraph after the proof of Theorem thm:guess (the posterior formula, shortened in the body);
+%   Sec. 3.4, paragraph "What the bounds mean" (the contrast with PCPs of proximity and holographic
+%   proofs, which the body now states only in the Introduction and Related Work). Citations used:
+%   bghsv2006robust, bfls1991 (both cited in intro.tex).
+\subsection{The Lower Bound: Further Remarks}
+\label{ext:attack-bound}
+
+\para{The reference oracle.} The expected number of queries $q$ in Definition~\ref{def:spot} is
+measured under the reference oracle $R_p$ of Definition~\ref{def:H}. That oracle matches the real
+run until the edited neuron is touched, and this is all that the proof of Theorem~\ref{thm:guess}
+uses: detection requires a touch of the edited row, and the probability of a touch is fixed by the
+run up to the choice of that query.
+
+\para{The posterior.} With independent rows, the posterior on the edited neuron is proportional to
+its propensity to be chosen divided by the prior probability of the written value
+(Corollary~\ref{cor:surprise}). Reading values therefore helps only against improbable values or a
+concentrated choice of neuron.
+
+\para{Relation to PCPs of proximity and holographic proofs.} The verifiers of PCPs of proximity and
+of holographic proofs~\cite{bghsv2006robust,bfls1991} read only part of their input. Ours reads all
+of its input, the trace. Honest recomputation moves the change from the trace into the weights, so
+reading the whole trace does not help, and the model, not the trace, must be encoded.
