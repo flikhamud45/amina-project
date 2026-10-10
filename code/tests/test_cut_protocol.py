@@ -263,7 +263,10 @@ def test_v1_with_a_gpu_prover_and_verifier(mode, policy):
         z = z.clone()
         z[1, 2] += 3 * o.widths[1]
         return z
-    assert cp.run_cut_query(prover, v, x, forward_kwargs={"tamper": tamper})["rejected_at"] in ("cut_final", "kpre_y")
+    # in mode C a row-layout matrix's folded rows (to which the final claim reduces) are tested against its
+    # committed columns, after the final check: the tamper may be caught there
+    assert cp.run_cut_query(prover, v, x, forward_kwargs={"tamper": tamper})["rejected_at"] in (
+        ("cut_final", "columns_code") if mode == "C" else ("cut_final", "kpre_y"))
 
 
 @pytest.mark.parametrize("mode", ["C", "Kpre"])
