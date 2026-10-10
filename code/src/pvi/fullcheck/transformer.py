@@ -44,7 +44,7 @@ __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "
 
 SHIFT = 30
 _FUSED_ATTN = os.environ.get("PVI_FUSED_ATTN", "1") != "0"
-_CPU_ATTN = os.environ.get("PVI_CPU_ATTN", "hybrid")    # the native CPU attention: "hybrid" (BLAS + native softmax) or "tiled"
+_CPU_ATTN = os.environ.get("PVI_CPU_ATTN", "tiled")     # the native CPU attention: "tiled", or "hybrid" (BLAS + native softmax; slower on the Xeon 4114)
 """On a GPU with Triton, the int32 attention runs as one fused kernel (``attention_kernels``); 0: torch."""
 RES_MAX = (1 << 22) - 1
 ATTN_BYTES = 1 << 27
