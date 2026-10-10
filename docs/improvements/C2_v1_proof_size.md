@@ -163,6 +163,19 @@ vector in 11-bit limbs (`extfield.int_times`), the final check runs in blocks of
 each layer's suffix eq tables once, evaluate `h(0), h(1), h(2)` on the GPU and do no claim tracking on the host
 (an instance of `2^25` leaves: 0.83 -> 0.56 s).
 
+**Final timings on the 2080 Ti** (job 1005575: all the speed-ups above and the bottom-layer path below; `lmax` 24):
+
+| Cell | Mode | Proof v0 -> V1 | Prover v0 -> V1 | CPU verifier v0 -> V1 | V1 prover's GKR |
+|---|---|---|---|---|---|
+| GPT-2, 12 blocks @512 | C | 91.2 -> 47.1 MB (1.93x) | 0.25 -> 1.38 s | 0.73 -> 1.64 s | 0.88 s |
+| GPT-2, 12 blocks @512 | Kpre | 85.5 -> 41.6 MB (2.06x) | 0.15 -> 1.25 s | 0.58 -> 1.65 s | 0.85 s |
+| OPT-125M, 12 blocks @2048 | C | 349.6 -> 172.6 MB (2.03x) | 0.50 -> 4.85 s | 2.96 -> 4.86 s | 3.58 s |
+| OPT-125M, 12 blocks @2048 | Kpre | 343.9 -> 167.0 MB (2.06x) | 0.39 -> 4.52 s | 2.55 -> 4.85 s | 3.40 s |
+| Llama-2-7B, 2 blocks @2048 | Kpre | 254.3 -> 111.4 MB (2.28x) | 0.32 -> 3.44 s | 2.32 -> 3.67 s | 2.17 s |
+
+Llama-2-7B in mode C does not fit the 11 GB card with the GKR (the commitment plan's prover already holds about
+7.3 GB at 2,048 tokens); its bytes are in the table above, its timing is for the L40S (48 GB, `lmax` 27).
+
 **Where V1 stands.** The proof is 2.0-2.3x smaller at 2,048 tokens. The prover pays the GKR, about 22 ns per leaf
 on the 2080 Ti (one leaf per cut claim): at 2,048 tokens it is 10x v0's prover on this card (v0's int8 forward is
 very fast), and the CPU verifier pays about 1.7x v0's (the final check's two exact products per claim). On the
