@@ -1,0 +1,521 @@
+{
+ "args": {
+  "model": "facebook/opt-125m",
+  "layers": [
+   3,
+   11
+  ],
+  "prompts": 4,
+  "calib_windows": 8,
+  "calib_seq": 128,
+  "cap": 64,
+  "threads": 8,
+  "moves": "down"
+ },
+ "records": [
+  {
+   "success": true,
+   "k": 13,
+   "steps": 13,
+   "honest": 5,
+   "forged": 10,
+   "edited": [
+    2023,
+    2820,
+    2032,
+    61,
+    1320,
+    2062,
+    765,
+    2163,
+    1660,
+    235,
+    3001,
+    1040,
+    685
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "The capital of France is",
+   "layer": 3,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.004231770833333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": false,
+   "k": 21,
+   "steps": 21,
+   "honest": 59,
+   "forged": 59,
+   "edited": [
+    1954,
+    64,
+    2690,
+    929,
+    2425,
+    2990,
+    2566,
+    2820,
+    1971,
+    590,
+    409,
+    2000,
+    1782,
+    1320,
+    2225,
+    762,
+    1079,
+    1470,
+    1273,
+    3042,
+    2346
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "Water boils at a temperature of",
+   "layer": 3,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0068359375,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 4,
+   "steps": 4,
+   "honest": 10,
+   "forged": 59,
+   "edited": [
+    2023,
+    64,
+    1683,
+    305
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "The largest planet in our solar system is",
+   "layer": 3,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0013020833333333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": false,
+   "k": 8,
+   "steps": 8,
+   "honest": 5,
+   "forged": 5,
+   "edited": [
+    980,
+    64,
+    299,
+    2425,
+    1165,
+    2371,
+    1824,
+    1971
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "In 1492, Christopher Columbus sailed to",
+   "layer": 3,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0026041666666666665,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 13,
+   "steps": 13,
+   "honest": 5,
+   "forged": 10,
+   "edited": [
+    2023,
+    2820,
+    2032,
+    61,
+    1320,
+    2062,
+    765,
+    2163,
+    1660,
+    235,
+    3001,
+    1040,
+    685
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "The capital of France is",
+   "layer": 3,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.004231770833333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": false,
+   "k": 21,
+   "steps": 21,
+   "honest": 59,
+   "forged": 59,
+   "edited": [
+    1954,
+    64,
+    2690,
+    929,
+    2425,
+    2990,
+    2566,
+    2820,
+    1971,
+    590,
+    409,
+    2000,
+    1782,
+    1320,
+    2225,
+    762,
+    1079,
+    1470,
+    1273,
+    3042,
+    2346
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "Water boils at a temperature of",
+   "layer": 3,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0068359375,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 4,
+   "steps": 4,
+   "honest": 10,
+   "forged": 59,
+   "edited": [
+    2023,
+    64,
+    1683,
+    305
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "The largest planet in our solar system is",
+   "layer": 3,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0013020833333333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": false,
+   "k": 8,
+   "steps": 8,
+   "honest": 5,
+   "forged": 5,
+   "edited": [
+    980,
+    64,
+    299,
+    2425,
+    1165,
+    2371,
+    1824,
+    1971
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "In 1492, Christopher Columbus sailed to",
+   "layer": 3,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0026041666666666665,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 5,
+   "forged": 10,
+   "edited": [
+    2745
+   ],
+   "values": [
+    0.0
+   ],
+   "prompt": "The capital of France is",
+   "layer": 11,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 59,
+   "forged": 111,
+   "edited": [
+    632
+   ],
+   "values": [
+    0.0
+   ],
+   "prompt": "Water boils at a temperature of",
+   "layer": 11,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 10,
+   "forged": 59,
+   "edited": [
+    2489
+   ],
+   "values": [
+    0.0
+   ],
+   "prompt": "The largest planet in our solar system is",
+   "layer": 11,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 9,
+   "steps": 9,
+   "honest": 5,
+   "forged": 1005,
+   "edited": [
+    1649,
+    287,
+    1117,
+    2065,
+    619,
+    1474,
+    1252,
+    2371,
+    721
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "In 1492, Christopher Columbus sailed to",
+   "layer": 11,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0029296875,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 5,
+   "forged": 10,
+   "edited": [
+    2745
+   ],
+   "values": [
+    0.0
+   ],
+   "prompt": "The capital of France is",
+   "layer": 11,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 59,
+   "forged": 111,
+   "edited": [
+    632
+   ],
+   "values": [
+    0.0
+   ],
+   "prompt": "Water boils at a temperature of",
+   "layer": 11,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 10,
+   "forged": 59,
+   "edited": [
+    2489
+   ],
+   "values": [
+    0.0
+   ],
+   "prompt": "The largest planet in our solar system is",
+   "layer": 11,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.0
+  },
+  {
+   "success": true,
+   "k": 9,
+   "steps": 9,
+   "honest": 5,
+   "forged": 1005,
+   "edited": [
+    1649,
+    287,
+    1117,
+    2065,
+    619,
+    1474,
+    1252,
+    2371,
+    721
+   ],
+   "values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "prompt": "In 1492, Christopher Columbus sailed to",
+   "layer": 11,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0029296875,
+   "p_contribution": 0.0
+  }
+ ]
+}

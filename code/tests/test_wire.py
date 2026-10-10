@@ -403,6 +403,9 @@ def test_fiat_shamir_absorbs_the_encoded_bytes(mode, monkeypatch):
             absorbed.clear()
             assert proto.run_query(prover, v, x, wire=True)["accepted"]
             transcripts.setdefault(name, []).append(list(absorbed))
+    if mode == "Kpre":                    # a designated-verifier one-message protocol: nothing is absorbed
+        assert all(a == [] and b == [] for a, b in transcripts.values())
+        return
     at = -2 if mode == "C" else -1        # the claims: the last message, or the one before u
     for name, (a, b) in transcripts.items():
         assert a == b                     # the streaming verifier's transcript is the batched one's

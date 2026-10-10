@@ -1,0 +1,93 @@
+{
+ "args": {
+  "model": "facebook/opt-125m",
+  "layers": [
+   11
+  ],
+  "prompts": 2,
+  "calib_windows": 4,
+  "calib_seq": 128,
+  "cap": 16,
+  "threads": 8,
+  "device": "cpu",
+  "moves": "any"
+ },
+ "records": [
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 5,
+   "forged": 10,
+   "edited": [
+    1237
+   ],
+   "values": [
+    0.7937180399894714
+   ],
+   "prompt": "The capital of France is",
+   "layer": 11,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.014703492633998394
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 59,
+   "forged": 111,
+   "edited": [
+    712
+   ],
+   "values": [
+    2.3054897785186768
+   ],
+   "prompt": "Water boils at a temperature of",
+   "layer": 11,
+   "range": "max",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.083198182284832
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 5,
+   "forged": 10,
+   "edited": [
+    1237
+   ],
+   "values": [
+    0.7925285696983337
+   ],
+   "prompt": "The capital of France is",
+   "layer": 11,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.014681780710816383
+  },
+  {
+   "success": true,
+   "k": 1,
+   "steps": 1,
+   "honest": 59,
+   "forged": 111,
+   "edited": [
+    712
+   ],
+   "values": [
+    2.305349111557007
+   ],
+   "prompt": "Water boils at a temperature of",
+   "layer": 11,
+   "range": "p999",
+   "d_ff": 3072,
+   "p_uniform": 0.0003255208333333333,
+   "p_contribution": 0.08319353312253952
+  }
+ ]
+}
