@@ -47,11 +47,12 @@ def main() -> None:
     count = collections.Counter()
 
     def timed(key, fn):
-        def run(*a, **k):
+        def run(*a, **k):          # the prover's and the verifier's graphs share their ops: split by device
+            dev = next((x.device.type for x in a if torch.is_tensor(x)), "cpu")
             t0 = time.perf_counter()
             out = fn(*a, **k)
-            spent[key] += time.perf_counter() - t0
-            count[key] += 1
+            spent[f"{key} {dev}"] += time.perf_counter() - t0
+            count[f"{key} {dev}"] += 1
             return out
         return run
 
