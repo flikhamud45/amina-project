@@ -1,0 +1,143 @@
+# F2a: integer-model quality at 2,048 tokens, and 8-bit against 11-bit attention probabilities
+
+Plan 2, item F2a (`SP2027_PLAN2.md`, Sec. 3.2). Code: `code/experiments/9_quality/ppl_2048.py` and
+`code/experiments/9_quality/opt_builder.py` (commits b244e8b and cdeb44a). Cluster jobs 1007072 (checks, legacy setting,
+OPT-125M), 1007073 (OPT-1.3B) and 1007074 (OPT-6.7B).
+
+## 1. Why
+
+* The paper's quality table (`sections/quality.tex`) scores 16 windows of 128 tokens and calibrates on the test split's
+  last window. Its costs, however, are reported at 2,048 tokens, and the published OPT perplexities (14.62 for OPT-1.3B,
+  10.86 for OPT-6.7B) are at 2,048 tokens on the whole test split. Reviewer C asks for quality at the reported length
+  (C-W5, C-Q2, C-Q3, consolidated change 7); three `\todo`s in `quality.tex` wait on it.
+* 128-token windows cannot show what 8-bit probabilities cost. The probabilities are `p = round(255 e / tot)`, so at
+  most 510 keys of a row get `p > 0`, and a diffuse row over many keys loses mass only at long context.
+* The L40S cell `q-opt67-2k` would have needed about 50 GB in the builder and again in `real_logits`, an almost certain
+  out-of-memory failure on a 48 GB card. A memory-lean path moves OPT quality to the 2080 Ti.
+
+## 2. What was built
+
+### 2.1 The evaluation path (`ppl_2048.py`)
+
+* **Text.** WikiText-2 (raw), joined with blank lines (`"\n\n".join`, the convention behind the published 2,048-token
+  numbers) and tokenised once.
+* **Windows.** Every non-overlapping `--seq`-token window of the test split (about 140 for OPT's tokenizer), each scored
+  on its own. All positions come out of one pass, which is exactly what one query per prefix would give: every op is
+  per-position except causal attention, and no constant depends on the input.
+* **Calibration.** Draw `d` is `--calib-windows` (default 4) consecutive 2,048-token windows of the *train* split,
+  starting at window `4d`. No evaluated token is seen during calibration (before, the calibration window was part of
+  the test split).
+* **Lean.** The integer forward frees each tensor after its last reader (`forward(free=True)`) and keeps no claim
+  (`send=lambda z: None`). The LM head's logits are reduced to NLL and argmax in chunks of 256 positions. The graph
+  runs on the GPU (`with_constants_on("cuda")`; weights move on first use), the calibration on the CPU.
+* **Reported per cell.** Perplexity; the ratio to fp32 with a 95% bootstrap interval over windows; top-1 agreement
+  with fp32; per-layer probability mass (below); the per-window NLL, so calibration draws can be pooled later; the
+  graph digest; build and evaluation seconds; peak host and GPU memory. One JSON line per cell, also appended to
+  `--out`.
+
+### 2.2 The graphs (`opt_builder.py`)
+
+The builder of branch `f2-quality` was ported. It builds OPT's integer graph with options that change only public
+constants of cheap ops or the offline weight quantisation, never an op, a shape or a cost:
+
+| Graph | Options |
+|---|---|
+| `scalar` | one norm gain (`--gain`; the earlier sweep's best: 4 / 3 / 2 for OPT-125M / 1.3B / 6.7B), no clipping |
+| `smooth` | SmoothQuant through the norm gains (alpha 0.55, smooth_pct 99.9), 99.99th-percentile clipping at q/k/v/fc1 and the attention output: the paper's model |
+| `rows` | `smooth` plus per-row power-of-two weight scales with 4 buckets (four multipliers per requantisation: v0 only) |
+
+Each graph is built at `prob_bits` 8 (today's probabilities, `P_MAX = 255`) and 11 (`P_MAX = 2047`). The 11-bit graph has
+its own calibrated output multiplier `m_o` (the raw `P V` scale is `s_v / P_MAX`). Its attention is
+`opt_builder.attention_var`, exact integer arithmetic in head chunks: float32 products are exact because int8 operands give
+`|s| <= 127^2 dh < 2^24`, and a row of probabilities sums to at most `P_MAX + T/2`, so `|P V| < (2047 + T/2) 128 < 2^24`
+for `T < 2^14`.
+
+Changes to the port, so that 8-bit graphs are the paper builder's (`real_weights.build_opt_from_hf`) bit for bit:
+
+* percentiles read the first `2^24` entries of a tensor, as the paper builder does (the copy drew a random subset);
+* the attention output's percentile is taken before the scale is applied, as there;
+* each layer's calibration tensors are freed once the layer is done, so 4 x 2,048 calibration tokens fit in host memory
+  for OPT-6.7B.
+
+### 2.3 Two ablations
+
+* **Ideal softmax** (`--float-softmax`): the same 8-bit graph with `255 softmax(-gap m_s / 2^30 / 16)` in float64 over the
+  same integer scores, i.e. no exp table and no rounding of the probabilities. It bounds what any probability format can
+  recover.
+* **Probability mass**: on the first `--mass-windows` windows, `attention_var` records, per layer, the mean over rows and
+  heads of `sum_j p_j / P_MAX`, the share of mass a rounded row keeps.
+
+### 2.4 Checks (`--check`, `--legacy`)
+
+`--check` (OPT-125M, one 256-token window) verifies:
+
+1. `opt_builder` at 8 bits equals `build_opt_from_hf` for the scalar and the smoothed recipe: every weight and bias, every
+   cheap op's parameters and captured constants, the logit scale, and the logits.
+2. The lean path's NLL and argmaxes equal those of `real_logits(all_positions=True)`.
+3. `attention_var` at `P_MAX = 255` gives `transformer._attention`'s integers.
+4. On a GPU, the same integers as on the CPU.
+
+The graph digests of the two builders differ, as they must: the digest names each cheap op's function by module and
+qualified name, so a copied builder cannot match it. Equal weights, constants and logits show the same function, and the
+committed model is still built by the paper builder. If 8 bits stay, the paper's digest is unchanged.
+
+`--legacy` reruns the paper's 16 x 128 setting through the new path (expected for OPT-1.3B: 32.79 fp32, 36.44 with gain 3,
+33.70 smoothed).
+
+## 3. Results
+
+### 3.1 Laptop (OPT-125M)
+
+`--check` on the laptop CPU: all equalities hold for both recipes (weights, parameters, constants, logit scale, lean
+path = `real_logits`, `attention_var` = `_attention`); the GPU check needs the cluster.
+
+| One 256-token window | perplexity | smallest per-layer mass |
+|---|---:|---:|
+| scalar, 8-bit | 55.80 | 0.969 |
+| smoothed, 8-bit | 52.91 | 0.966 |
+| smoothed, 11-bit | 51.87 | 0.997 |
+
+Grid smoke test, 2 windows of 512 tokens (1,022 predicted tokens), one calibration draw of 4 x 512 train tokens:
+
+| Graph | 8-bit | ideal softmax | 11-bit | smallest mass (8-bit / 11-bit) |
+|---|---:|---:|---:|---:|
+| fp32 | 35.47 | | | |
+| scalar (gain 4) | 42.00 (x1.184) | 41.73 (x1.177) | 40.33 (x1.137) | 0.940 / 0.994 |
+| smoothed | 38.07 (x1.073) | 37.36 (x1.053) | 37.29 (x1.051) | 0.937 / 0.994 |
+| rows | 37.12 (x1.046) | 36.50 (x1.029) | 36.48 (x1.028) | 0.938 / 0.994 |
+
+Reading (two windows only, so indicative):
+
+* Already at 512 tokens, the 8-bit probabilities cost about 2% of perplexity on the smoothed graph (x1.073 against
+  x1.051), and the rounded rows keep only about 94% of their mass in the worst layer.
+* 11 bits recover essentially all of it: the 11-bit graph is within 0.2% of the ideal softmax in every graph.
+* The plan's rule adopts 11 bits if the 8-bit cost is above 1%. If the cluster cells confirm this at 2,048 tokens, the
+  11-bit constants go into `transformer.py` (two paths), `reference.py`, `attention_kernels.py` and `native_kernels.py`,
+  with their exactness tests (plan: one extra day; decision Mon 19 Oct). Proof bytes and verifier time do not change,
+  since the probabilities are internal to a cheap op.
+
+### 3.2 Cluster (2,048 tokens, every test window, 3 calibration draws)
+
+*Pending: jobs 1007072-1007074.* To be filled in:
+
+| Model | fp32 | scalar 8-bit | smoothed 8-bit | smoothed float | smoothed 11-bit | rows 11-bit |
+|---|---:|---:|---:|---:|---:|---:|
+| OPT-125M | | | | | | |
+| OPT-1.3B (published fp 14.62) | | | | | | |
+| OPT-6.7B (published fp 10.86; alpha 0.5 / 0.55 / 0.65) | | | | | | |
+
+## 4. Limitations
+
+* OPT only; the Qwen3 and Llama builders are F2b-Q and F2b-L.
+* The ideal-softmax row keeps the 8-bit graph's output multiplier; it isolates the probabilities, not a recalibrated
+  graph.
+* The `rows` graph needs four multipliers per requantisation and is v0 only.
+
+## 5. How to run
+
+    cd code && PYTHONPATH=src python experiments/9_quality/ppl_2048.py --model facebook/opt-125m --check
+    cd code && PYTHONPATH=src python experiments/9_quality/ppl_2048.py --model facebook/opt-1.3b --legacy --graphs scalar smooth
+    cd code && PYTHONPATH=src python experiments/9_quality/ppl_2048.py --model facebook/opt-1.3b --device cuda \
+        --graphs scalar smooth rows --pbits 8 11 --float-softmax --draws 0 1 2 --out ppl2048_opt-1.3b.jsonl
+    cd code && PYTHONPATH=src python experiments/9_quality/ppl_2048.py --model facebook/opt-6.7b --device cuda \
+        --ref-device cpu --graphs smooth scalar --alphas 0.55 0.5 0.65 --pbits 8 11 --float-softmax --draws 0
