@@ -26,12 +26,14 @@ from pathlib import Path
 
 import torch
 
-__all__ = ["available", "attention_core", "attention_core_hybrid"]
+__all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
+           "lut", "norm", "rope"]
 
 _SOURCE = r"""
 #include <cstdint>
 #include <algorithm>
 #include <vector>
+#include <cmath>
 #include <omp.h>
 
 // Query rows are taken TR at a time (rows of one (batch, head) group): each key and value row is read once per
@@ -136,8 +138,122 @@ extern "C" void pvi_softmax_block(float* s, const int32_t* lut, int64_t groups, 
         }
     }
 }
+// ---- the other recomputed operations, one pass each (int64 in and out, as the torch ops) ----------------------
+// A matrix operand is [R, C] with strides (sr, sc): contiguous rows (sc == 1) or a transposed claim (sr == 1, the
+// fold's view of Z [C, R]); the output is contiguous.  A transposed operand is read in 64 x 64 tiles, so both the
+// reads and the writes stay in cache.  The library is built with -fwrapv: int64 arithmetic wraps as torch's does.
+
+static inline int64_t clamp64(int64_t v, int64_t lo, int64_t hi) { return v < lo ? lo : (v > hi ? hi : v); }
+static inline int64_t floordiv64(int64_t a, int64_t b) {           // b > 0
+    int64_t q = a / b;
+    return (a % b != 0 && a < 0) ? q - 1 : q;
+}
+static const int64_t TB = 64;
+
+template <class F>
+static void each2d(int64_t R, int64_t C, int64_t sr, int64_t sc, F f) {   // f(i, j, source offset)
+    if (sc == 1) {
+        #pragma omp parallel for schedule(static)
+        for (int64_t i = 0; i < R; ++i)
+            for (int64_t j = 0; j < C; ++j) f(i, j, i * sr + j);
+    } else {
+        #pragma omp parallel for collapse(2) schedule(static)
+        for (int64_t ib = 0; ib < R; ib += TB)
+            for (int64_t jb = 0; jb < C; jb += TB) {
+                const int64_t i1 = std::min(R, ib + TB), j1 = std::min(C, jb + TB);
+                for (int64_t j = jb; j < j1; ++j)
+                    for (int64_t i = ib; i < i1; ++i) f(i, j, i * sr + j * sc);
+            }
+    }
+}
+
+// clamp((z * mult + 2**(shift-1)) >> shift, lo, hi), times b (contiguous like the output) first when b != nullptr
+extern "C" void pvi_requant(const int64_t* z, const int64_t* b, int64_t* out, int64_t R, int64_t C, int64_t sr,
+                            int64_t sc, int64_t mult, int64_t shift, int64_t lo, int64_t hi, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    const int64_t half = (int64_t)1 << (shift - 1);
+    if (b == nullptr)
+        each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) {
+            out[i * C + j] = clamp64((z[s] * mult + half) >> shift, lo, hi); });
+    else
+        each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) {
+            out[i * C + j] = clamp64((z[s] * b[i * C + j] * mult + half) >> shift, lo, hi); });
+}
+
+// clamp(a + ((z * mult + 2**(shift-1)) >> shift), -res_max, res_max), a contiguous
+extern "C" void pvi_residual(const int64_t* a, const int64_t* z, int64_t* out, int64_t R, int64_t C, int64_t sr,
+                             int64_t sc, int64_t mult, int64_t shift, int64_t res_max, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    const int64_t half = (int64_t)1 << (shift - 1);
+    each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) {
+        out[i * C + j] = clamp64(a[i * C + j] + ((z[s] * mult + half) >> shift), -res_max, res_max); });
+}
+
+// table[clamp(x, -128, 127) + 128]
+extern "C" void pvi_lut(const int64_t* x, const int64_t* table, int64_t* out, int64_t R, int64_t C, int64_t sr,
+                        int64_t sc, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) { out[i * C + j] = table[clamp64(x[s], -128, 127) + 128]; });
+}
+
+// transformer._norm_int over rows of d (contiguous): returns 1, or 0 (nothing written) when a row's sum of squares
+// wrapped negative, where the torch path's own rules apply.
+extern "C" int64_t pvi_norm(const int64_t* x, const int64_t* gain, int64_t* out, int64_t rows, int64_t d,
+                            int64_t center, int64_t k, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    std::vector<int64_t> mean(rows, 0), sigma(rows, 1);
+    int64_t bad = 0;
+    #pragma omp parallel for schedule(static) reduction(|:bad)
+    for (int64_t i = 0; i < rows; ++i) {
+        const int64_t* xi = x + i * d;
+        int64_t m = 0;
+        if (center) {
+            int64_t s = 0;
+            for (int64_t j = 0; j < d; ++j) s += xi[j];
+            m = floordiv64(s + d / 2, d);
+        }
+        int64_t q = 0;
+        for (int64_t j = 0; j < d; ++j) { const int64_t v = xi[j] - m; q += v * v; }
+        q = floordiv64(q, d);
+        if (q < 0) { bad = 1; continue; }
+        int64_t r = (int64_t)std::floor(std::sqrt((double)q));      // _isqrt: one correction each way, at least 1
+        if ((r + 1) * (r + 1) <= q) r += 1;
+        if (r * r > q) r -= 1;
+        mean[i] = m;
+        sigma[i] = std::max<int64_t>(r, 1);
+    }
+    if (bad) return 0;
+    #pragma omp parallel for schedule(static)
+    for (int64_t i = 0; i < rows; ++i) {
+        const int64_t* xi = x + i * d;
+        int64_t* o = out + i * d;
+        const int64_t m = mean[i], sg = sigma[i], den = sg << k, add = sg * ((int64_t)1 << (k - 1));
+        for (int64_t j = 0; j < d; ++j) o[j] = clamp64(floordiv64((xi[j] - m) * gain[j] + add, den), -127, 127);
+    }
+    return 1;
+}
+
+// transformer._rope: x [rows = B*T*H, dh] contiguous, position t = (row / heads) % T; cos2, sin2 [T, dh]
+extern "C" void pvi_rope(const int64_t* x, const int64_t* cos2, const int64_t* sin2, int64_t* out, int64_t rows,
+                         int64_t t, int64_t heads, int64_t dh, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    const int64_t h = dh / 2;
+    #pragma omp parallel for schedule(static)
+    for (int64_t r = 0; r < rows; ++r) {
+        const int64_t pos = (r / heads) % t;
+        const int64_t* xr = x + r * dh;
+        const int64_t* c = cos2 + pos * dh;
+        const int64_t* s = sin2 + pos * dh;
+        int64_t* o = out + r * dh;
+        for (int64_t j = 0; j < dh; ++j) {
+            const int64_t sw = j < h ? xr[j + h] : xr[j - h];
+            o[j] = clamp64((((int64_t)1 << 13) + xr[j] * c[j] + sw * s[j]) >> 14, -127, 127);
+        }
+    }
+}
 """
 
+_FLAGS = ("-O3", "-march=native", "-fopenmp", "-fwrapv", "-shared", "-fPIC")
 _LIB = None
 _TRIED = False
 
@@ -153,7 +269,7 @@ def _library():
     cxx = os.environ.get("CXX") or shutil.which("g++")
     if not cxx:
         return None
-    key = hashlib.sha256((_SOURCE + cxx + platform.node() + platform.processor()).encode()).hexdigest()[:16]
+    key = hashlib.sha256((_SOURCE + " ".join(_FLAGS) + cxx + platform.node() + platform.processor()).encode()).hexdigest()[:16]
     where = Path(os.environ.get("PVI_NATIVE_DIR", Path.home() / ".cache" / "pvi"))
     lib = where / f"pvi_attention_{key}.so"
     try:
@@ -163,7 +279,7 @@ def _library():
                 src = Path(tmp) / "attn.cpp"
                 src.write_text(_SOURCE)
                 built = Path(tmp) / lib.name
-                subprocess.run([cxx, "-O3", "-march=native", "-fopenmp", "-shared", "-fPIC", str(src), "-o", str(built)],
+                subprocess.run([cxx, *_FLAGS, str(src), "-o", str(built)],
                                check=True, capture_output=True)
                 shutil.move(str(built), str(lib))
         _LIB = ctypes.CDLL(str(lib))
@@ -171,6 +287,14 @@ def _library():
         _LIB.pvi_attention.restype = None
         _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 7
         _LIB.pvi_softmax_block.restype = None
+        _LIB.pvi_requant.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 9
+        _LIB.pvi_residual.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 8
+        _LIB.pvi_lut.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 5
+        _LIB.pvi_norm.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 5
+        _LIB.pvi_norm.restype = ctypes.c_int64
+        _LIB.pvi_rope.argtypes = [ctypes.c_void_p] * 4 + [ctypes.c_int64] * 5
+        for f in (_LIB.pvi_requant, _LIB.pvi_residual, _LIB.pvi_lut, _LIB.pvi_rope):
+            f.restype = None
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -220,4 +344,91 @@ def attention_core_hybrid(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut
                               lut32.numel(), threads)
         out[:, r0:r1] = torch.bmm(s, vf).to(torch.int64)                   # exact: sums < 2**24
     return out.view(bsz, heads, rows, dh)
+
+
+# -- the other recomputed operations ------------------------------------------------------------------------------
+# Each returns the torch op's int64 result (contiguous), or None when its operands are not the plain case (then the
+# caller runs the torch steps): CPU int64 tensors, a matrix operand contiguous or a transposed claim view.
+
+_CHEAP = os.environ.get("PVI_NATIVE_CHEAP", "1") != "0"
+
+
+def cheap_enabled(*ts: torch.Tensor) -> bool:
+    """Whether the native kernels apply to these operands (CPU, int64, non-empty) and the library is there."""
+    return (_CHEAP and all(t.device.type == "cpu" and t.dtype == torch.int64 and t.numel() for t in ts)
+            and _library() is not None)
+
+
+def _layout(t: torch.Tensor):
+    """``(R, C, sr, sc)`` of ``t`` as a matrix over its last axis: contiguous, or the transposed view of a
+    contiguous ``[C, R]`` (a weight op's fold, with size-1 leading axes); else None."""
+    c = t.shape[-1]
+    r = t.numel() // c
+    if t.is_contiguous():
+        return r, c, c, 1
+    lead = [(n, st) for n, st in zip(t.shape[:-1], t.stride()[:-1]) if n != 1]
+    if len(lead) == 1 and lead[0][1] == 1 and t.stride(-1) == lead[0][0]:
+        return r, c, 1, t.stride(-1)
+    return None
+
+
+def _scalar(m) -> int | None:
+    if torch.is_tensor(m):
+        return int(m) if m.numel() == 1 and m.dtype == torch.int64 and m.device.type == "cpu" else None
+    return int(m) if isinstance(m, int) else None
+
+
+def requant(z: torch.Tensor, mult, shift: int, lo: int, hi: int, b: torch.Tensor | None = None):
+    """``graph.requant(z * b if b else z, mult, shift, lo, hi)``."""
+    m, lay = _scalar(mult), _layout(z)
+    if m is None or lay is None or (b is not None and (b.shape != z.shape or not b.is_contiguous())):
+        return None
+    out = torch.empty(z.shape, dtype=torch.int64)
+    _LIB.pvi_requant(z.data_ptr(), None if b is None else b.data_ptr(), out.data_ptr(), *lay, m, shift, lo, hi,
+                     torch.get_num_threads())
+    return out
+
+
+def residual(a: torch.Tensor, z: torch.Tensor, mult, shift: int, res_max: int):
+    """``graph.residual_add(a, z, mult, shift, res_max)``."""
+    m, lay = _scalar(mult), _layout(z)
+    if m is None or lay is None or a.shape != z.shape or not a.is_contiguous():
+        return None
+    out = torch.empty(z.shape, dtype=torch.int64)
+    _LIB.pvi_residual(a.data_ptr(), z.data_ptr(), out.data_ptr(), *lay, m, shift, res_max, torch.get_num_threads())
+    return out
+
+
+def lut(x: torch.Tensor, table: torch.Tensor):
+    """``transformer._lut(x, table)`` for a 256-entry table."""
+    lay = _layout(x)
+    if lay is None or table.numel() != 256 or table.dtype != torch.int64 or table.device.type != "cpu":
+        return None
+    out = torch.empty(x.shape, dtype=torch.int64)
+    _LIB.pvi_lut(x.data_ptr(), table.contiguous().data_ptr(), out.data_ptr(), *lay, torch.get_num_threads())
+    return out
+
+
+def norm(x: torch.Tensor, gain: torch.Tensor, center: bool, k: int):
+    """``transformer._norm_int(x, gain, center, k)`` over the last axis."""
+    d = x.shape[-1]
+    if (not x.is_contiguous() or gain.dtype != torch.int64 or gain.device.type != "cpu" or gain.numel() != d
+            or not 1 <= k <= 32):
+        return None
+    out = torch.empty(x.shape, dtype=torch.int64)
+    ok = _LIB.pvi_norm(x.data_ptr(), gain.contiguous().data_ptr(), out.data_ptr(), x.numel() // d, d, int(center),
+                       k, torch.get_num_threads())
+    return out if ok else None
+
+
+def rope(x: torch.Tensor, cos2: torch.Tensor, sin2: torch.Tensor):
+    """``transformer._rope``'s integers for ``x [B, T, H, dh]`` and its tables ``[1, T, 1, dh]``."""
+    if x.dim() != 4 or not x.is_contiguous() or cos2.device.type != "cpu" or cos2.dtype != torch.int64:
+        return None
+    _, t, heads, dh = x.shape
+    c, s = cos2.reshape(t, dh).contiguous(), sin2.reshape(t, dh).contiguous()
+    out = torch.empty(x.shape, dtype=torch.int64)
+    _LIB.pvi_rope(x.data_ptr(), c.data_ptr(), s.data_ptr(), out.data_ptr(), x.numel() // dh, t, heads, dh,
+                  torch.get_num_threads())
+    return out
 

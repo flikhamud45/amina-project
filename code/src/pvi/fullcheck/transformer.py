@@ -145,7 +145,12 @@ def _isqrt(s: torch.Tensor) -> torch.Tensor:
 
 
 def _norm_int(x: torch.Tensor, gain: torch.Tensor, center: bool, k: int = 16) -> torch.Tensor:
-    """Integer LayerNorm (``center=True``) or RMSNorm over the last axis -> int8."""
+    """Integer LayerNorm (``center=True``) or RMSNorm over the last axis -> int8 (on a CPU verifier: one native
+    pass per row, the same integers)."""
+    if native_kernels.cheap_enabled(x, gain):
+        got = native_kernels.norm(x, gain, center, k)
+        if got is not None:
+            return got
     d = x.shape[-1]
     if center:
         mean = torch.div(x.sum(-1, keepdim=True) + d // 2, d, rounding_mode="floor")
@@ -160,6 +165,10 @@ def _norm_int(x: torch.Tensor, gain: torch.Tensor, center: bool, k: int = 16) ->
 
 
 def _lut(x: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
+    if native_kernels.cheap_enabled(x, table):
+        got = native_kernels.lut(x, table)
+        if got is not None:
+            return got
     idx = x.clamp(-128, 127)
     idx += 128
     return torch.take(table.to(x.device), idx)          # table[idx] as one flat gather
@@ -189,6 +198,10 @@ def _rope(x: torch.Tensor, theta: float, offset: int = 0) -> torch.Tensor:
     ``[x1 cos - x2 sin | x2 cos + x1 sin] = x [cos | cos] + [x2 | x1] [-sin | sin]``."""
     t, dh = x.shape[1], x.shape[3]
     cos2, sin2 = _rope_tables_full(t, dh, theta, str(x.device), offset)
+    if native_kernels.cheap_enabled(x):
+        got = native_kernels.rope(x, cos2, sin2)
+        if got is not None:
+            return got
     h = dh // 2
     swapped = torch.cat([x[..., h:], x[..., :h]], -1)
     if x.dtype == torch.int64:
