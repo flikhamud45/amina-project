@@ -210,3 +210,19 @@ def test_min_max_and_the_norm_with_large_denominators(monkeypatch):
     gain = torch.randint(1, 1 << 23, (4,), generator=g, dtype=torch.int64)
     got, want = _both(lambda: tr._norm_int(x, gain, False), monkeypatch)
     assert torch.equal(got, want)
+
+
+@pytest.mark.parametrize("hq,hkv,t,tq,dh", [(32, 32, 2048, 2048, 128), (32, 8, 600, 600, 128), (8, 2, 300, 1, 64),
+                                            (6, 6, 513, 7, 80), (12, 4, 64, 64, 64)])
+def test_fused_attention_and_output_requantisation(hq, hkv, t, tq, dh, monkeypatch):
+    """transformer._attention on a CPU verifier (one AVX-512 pass that also requantises the output into the final
+    layout) against the per-group path (native attention core, then the torch requantisation)."""
+    g = torch.Generator().manual_seed(hq + t + tq)
+    q = torch.randint(-127, 128, (1, tq, hq * dh), generator=g, dtype=torch.int64)
+    k = torch.randint(-127, 128, (1, t, hkv * dh), generator=g, dtype=torch.int64)
+    v = torch.randint(-127, 128, (1, t, hkv * dh), generator=g, dtype=torch.int64)
+    m_s, m_o = 1 << 20, 1_234_567
+    got = tr._attention(q, k, v, m_s, m_o, hq, hkv, dh)
+    monkeypatch.setattr(native_kernels, "_AVX", False)
+    want = tr._attention(q, k, v, m_s, m_o, hq, hkv, dh)
+    assert torch.equal(got, want) and got.shape == (1, tq, hq * dh)

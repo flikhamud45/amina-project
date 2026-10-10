@@ -322,6 +322,11 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
     """
     b, tq, _ = q.shape
     t = k.shape[1]
+    if (q.device.type == "cpu" and m_o is not None and 0 < m_o < 1 << 32 and _int32_scores(m_s, dh, t)
+            and _CPU_ATTN != "hybrid" and native_kernels.available() and native_kernels.attention_requant_ok(dh, t)
+            and all(x.dtype == torch.int64 for x in (q, k, v))):
+        # a CPU verifier: attention and the output requantisation in one AVX-512 pass, the same integers
+        return native_kernels.attention_requant(q, k, v, _exp_lut(m_s, "cpu"), m_o, n_heads, n_kv, dh)
     q = q.reshape(b, tq, n_heads, dh).transpose(1, 2)
     k = k.reshape(b, t, n_kv, dh).transpose(1, 2)
     v = v.reshape(b, t, n_kv, dh).transpose(1, 2)

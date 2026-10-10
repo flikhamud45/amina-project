@@ -117,9 +117,10 @@ static void attention_scalar(const int16_t* q, const int16_t* k, const int16_t* 
 // (255 + T/2) 128 < 2**24 for T < 2**15), widened to int64 on the way out.
 static const int64_t TQ = 16;
 
-struct View4 {                      // an int64 [B, H, R, dh] tensor by its strides; group g = b H + h
-    const int64_t* p; int64_t s0, s1, s2, s3, heads;
+struct View4 {      // an int64 [B, H, R, dh] tensor by its strides; group g = b H + h; row r = (r / qn, r % qn)
+    const int64_t* p; int64_t s0, s1, s2, s3, heads, srep, qn;      // (queries stacked by repeat: stride srep)
     inline const int64_t* group(int64_t g) const { return p + (g / heads) * s0 + (g % heads) * s1; }
+    inline const int64_t* row(int64_t g, int64_t r) const { return group(g) + (r / qn) * srep + (r % qn) * s2; }
 };
 
 static inline int32_t pair16(int64_t lo, int64_t hi) {
@@ -136,8 +137,12 @@ static inline int32_t floordiv_r(int32_t num, int32_t den, double rinv) {
     return q;
 }
 
+// mo == 0: out [B*H, R, dh] holds P V; mo > 0: out [B, queries, H*rep, dh] holds requant(P V, mo) =
+// clamp((P V mo + 2**29) >> 30, -127, 127), row r of group (b, h) being query head h*rep + r / queries at position
+// r % queries (the final layout of transformer._attention)
 static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int64_t* out, int64_t bh,
-                             int64_t rows, int64_t queries, int64_t t, int64_t dh, int64_t lut_len) {
+                             int64_t rows, int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t mo,
+                             int64_t rep) {
     const int64_t tp = (t + 15) & ~(int64_t)15, t2 = (t + 1) / 2, d2 = dh / 2, dv = dh / 16;
     const int64_t tiles = (rows + TQ - 1) / TQ;
     #pragma omp parallel
@@ -167,7 +172,7 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                 for (int64_t i = 0; i < TQ; ++i) {
                     n[i] = i < tr ? t - queries + ((r0 + i) % queries) + 1 : 0;
                     nmax = std::max(nmax, n[i]);
-                    const int64_t* qr = qg + (r0 + i) * q.s2;
+                    const int64_t* qr = i < tr ? q.row(g, r0 + i) : qg;
                     for (int64_t d = 0; d < d2; ++d)
                         qp[i * d2 + d] = i < tr ? pair16(qr[2 * d * q.s3], qr[(2 * d + 1) * q.s3]) : 0;
                 }
@@ -226,11 +231,23 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                         }
                     }
                     for (int64_t rr = 0; rr < (two ? 2 : 1); ++rr) {
-                        int64_t* o = out + (g * rows + r0 + i + rr) * dh;
-                        for (int64_t d = 0; d < dv; ++d) {
-                            const __m512i a = rr ? a1[d] : a0[d];
-                            _mm512_storeu_si512((void*)(o + 16 * d), _mm512_cvtepi32_epi64(_mm512_castsi512_si256(a)));
-                            _mm512_storeu_si512((void*)(o + 16 * d + 8), _mm512_cvtepi32_epi64(_mm512_extracti64x4_epi64(a, 1)));
+                        const int64_t r = r0 + i + rr;
+                        if (mo == 0) {
+                            int64_t* o = out + (g * rows + r) * dh;
+                            for (int64_t d = 0; d < dv; ++d) {
+                                const __m512i a = rr ? a1[d] : a0[d];
+                                _mm512_storeu_si512((void*)(o + 16 * d), _mm512_cvtepi32_epi64(_mm512_castsi512_si256(a)));
+                                _mm512_storeu_si512((void*)(o + 16 * d + 8), _mm512_cvtepi32_epi64(_mm512_extracti64x4_epi64(a, 1)));
+                            }
+                        } else {
+                            const int64_t b = g / q.heads, h = g % q.heads;
+                            int64_t* o = out + ((b * queries + r % queries) * (q.heads * rep) + h * rep + r / queries) * dh;
+                            alignas(64) int32_t tmp[16];
+                            for (int64_t d = 0; d < dv; ++d) {
+                                _mm512_store_si512((void*)tmp, rr ? a1[d] : a0[d]);
+                                for (int l = 0; l < 16; ++l)
+                                    o[16 * d + l] = std::min<int64_t>(127, std::max<int64_t>(-127, ((int64_t)tmp[l] * mo + ((int64_t)1 << 29)) >> 30));
+                            }
                         }
                     }
                 }
@@ -258,15 +275,18 @@ extern "C" int64_t pvi_has_avx512() {
 
 // pvi_attention on int64 q [B, H, R, dh], k, v [B, H, T, dh] given by their strides (int8-valued: the inputs of
 // the int32 path), read as they are (no int16 copies); out [B, H, R, dh] contiguous
-extern "C" void pvi_attention64(const int64_t* q, int64_t q0, int64_t q1, int64_t q2, int64_t q3,
+extern "C" void pvi_attention64(const int64_t* q, int64_t q0, int64_t q1, int64_t q2, int64_t q3, int64_t qrep,
                                 const int64_t* k, int64_t k0, int64_t k1, int64_t k2, int64_t k3,
                                 const int64_t* v, int64_t v0, int64_t v1, int64_t v2, int64_t v3,
                                 const int32_t* lut, int64_t* out, int64_t heads, int64_t bh, int64_t rows,
-                                int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t threads) {
+                                int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t mo, int64_t rep,
+                                int64_t threads) {
     omp_set_num_threads((int)threads);
 #if defined(__AVX512BW__)
-    attention_avx512(View4{q, q0, q1, q2, q3, heads}, View4{k, k0, k1, k2, k3, heads}, View4{v, v0, v1, v2, v3, heads},
-                     lut, out, bh, rows, queries, t, dh, lut_len);
+    const int64_t all = INT64_MAX;            // k and v: row r is position r
+    attention_avx512(View4{q, q0, q1, q2, q3, heads, qrep, qrep ? queries : all},
+                     View4{k, k0, k1, k2, k3, heads, 0, all}, View4{v, v0, v1, v2, v3, heads, 0, all},
+                     lut, out, bh, rows, queries, t, dh, lut_len, mo, rep);
 #endif
 }
 
@@ -628,8 +648,9 @@ def _library():
         _LIB.pvi_attention.restype = None
         _LIB.pvi_has_avx512.argtypes = []
         _LIB.pvi_has_avx512.restype = ctypes.c_int64
-        _LIB.pvi_attention64.argtypes = ([ctypes.c_void_p] + [ctypes.c_int64] * 4) * 3 + [ctypes.c_void_p] * 2 + \
-            [ctypes.c_int64] * 8
+        _LIB.pvi_attention64.argtypes = ([ctypes.c_void_p] + [ctypes.c_int64] * 5 + [ctypes.c_void_p] + [ctypes.c_int64] * 4
+                                         + [ctypes.c_void_p] + [ctypes.c_int64] * 4 + [ctypes.c_void_p] * 2
+                                         + [ctypes.c_int64] * 10)
         _LIB.pvi_attention64.restype = None
         _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 7
         _LIB.pvi_softmax_block.restype = None
@@ -671,9 +692,9 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
     out = torch.empty(bsz, heads, rows, dh, dtype=torch.int64)
     if (_AVX and lib.pvi_has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15
             and all(x.dtype == torch.int64 for x in (q, k, v))):     # AVX-512, reading the int64 views as they are
-        lib.pvi_attention64(q.data_ptr(), *q.stride(), k.data_ptr(), *k.stride(), v.data_ptr(), *v.stride(),
+        lib.pvi_attention64(q.data_ptr(), *q.stride(), 0, k.data_ptr(), *k.stride(), v.data_ptr(), *v.stride(),
                             lut32.data_ptr(), out.data_ptr(), heads, bsz * heads, rows, queries, t, dh,
-                            lut32.numel(), torch.get_num_threads())
+                            lut32.numel(), 0, 1, torch.get_num_threads())
         return out
     q16, k16, v16 = (x.to(torch.int16).contiguous() for x in (q, k, v))
     lib.pvi_attention(q16.data_ptr(), k16.data_ptr(), v16.data_ptr(), lut32.data_ptr(), out.data_ptr(),
@@ -682,6 +703,32 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
 
 
 _AVX = os.environ.get("PVI_NATIVE_AVX512", "1") != "0"
+
+
+def attention_requant_ok(dh: int, t: int) -> bool:
+    """Whether :func:`attention_requant` runs here (the AVX-512 kernel, ``dh`` a multiple of 16 up to 128)."""
+    lib = _library()
+    return bool(_AVX and lib is not None and lib.pvi_has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15)
+
+
+def attention_requant(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, m_o: int,
+                      n_heads: int, n_kv: int, dh: int) -> torch.Tensor:
+    """``transformer._attention``'s output, ``[B, Tq, Hq dh]`` int64: the causal attention of int8-valued ``q
+    [B, Tq, Hq dh]`` against ``k, v [B, T, Hkv dh]`` (query head ``j`` reads key/value head ``j // (Hq/Hkv)``)
+    with its output requantised by ``m_o``, in one AVX-512 pass that writes the final layout."""
+    b, tq, _ = q.shape
+    t = k.shape[1]
+    rep = n_heads // n_kv
+    q5 = q.reshape(b, tq, n_kv, rep, dh)
+    k4, v4 = k.reshape(b, t, n_kv, dh), v.reshape(b, t, n_kv, dh)
+    lut32 = lut.to(torch.int32).contiguous()
+    out = torch.empty(b, tq, n_heads * dh, dtype=torch.int64)
+    _LIB.pvi_attention64(q5.data_ptr(), q5.stride(0), q5.stride(2), q5.stride(1), q5.stride(4), q5.stride(3),
+                         k4.data_ptr(), k4.stride(0), k4.stride(2), k4.stride(1), k4.stride(3),
+                         v4.data_ptr(), v4.stride(0), v4.stride(2), v4.stride(1), v4.stride(3),
+                         lut32.data_ptr(), out.data_ptr(), n_kv, b * n_kv, rep * tq, tq, t, dh, lut32.numel(),
+                         int(m_o), rep, torch.get_num_threads())
+    return out
 
 _ROWS = 32
 """Query rows per block of :func:`attention_core_hybrid` (scores of 32 rows x 2,048 keys x the heads: a few MB)."""
