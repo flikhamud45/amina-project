@@ -68,6 +68,15 @@ def main() -> None:
     print(f"== derive ops: {total:.3f} s in {sum(count.values())} calls")
     for key, s in sorted(spent.items(), key=lambda kv: -kv[1])[: args.top]:
         print(f"{s:8.3f} s {100 * s / total:5.1f}%  x{count[key]:<3d} {key}")
+    import cProfile
+    import pstats
+    pr = cProfile.Profile()                    # the Python-level split of the verifier's phases (incl. native calls)
+    pr.enable()
+    run_query(prover, v, xs[2], wire=True)
+    pr.disable()
+    print("== cProfile, by cumulative time (protocol, claim codec, native kernels)")
+    st = pstats.Stats(pr).strip_dirs()
+    st.sort_stats("cumulative").print_stats(r"protocol|claimcodec|native_kernels|field", args.top)
     with profile(activities=[ProfilerActivity.CPU]) as prof:
         run_query(prover, v, xs[2], wire=True)
     print("== torch operators by self CPU time")
