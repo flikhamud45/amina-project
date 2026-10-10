@@ -598,9 +598,13 @@ def test_attention_matches_reference(hq, hkv, t, group_heads, m_s, device, monke
     for m_o in (None, 1 << 21):
         got = tr._attention(q.to(device), k.to(device), v.to(device), m_s, m_o, hq, hkv, dh).cpu()
         assert torch.equal(got, ref.attention(q, k, v, m_s, m_o, hq, hkv, dh))
-    # heads per call: groups of group_heads query heads, else all at once (the key/value heads, stacked)
+    # heads per call: groups of group_heads query heads, else all at once (the key/value heads, stacked); a CPU
+    # verifier with the AVX-512 kernel computes the requantised call (m_o set) in one fused pass instead
+    from pvi.fullcheck import native_kernels
     want = [group_heads] * (hq // group_heads) + [hq % group_heads] if group_heads else [hkv]
-    assert heads == 2 * want
+    fused = (str(device) == "cpu" and tr._int32_scores(m_s, dh, t) and native_kernels.available()
+             and native_kernels.attention_requant_ok(dh, t))
+    assert heads == (want if fused else 2 * want)
 
 
 @pytest.mark.parametrize("layout,shape", [("linear", (2, 3, 10)), ("linear", (5, 10)), ("embed", (2, 3)),
