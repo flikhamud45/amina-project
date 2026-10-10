@@ -993,9 +993,12 @@ class Verifier:
         ``int8=False``); else a limb product, with inputs of the same shape batched."""
         out, shared = {}, {}
         use8 = int8 and bool(mats) and int8_ok(us[mats[0].name].device)
+        native = (not use8 and bool(mats) and us[mats[0].name].device.type == "cpu"
+                  and native_kernels.cheap_enabled(us[mats[0].name]))        # any input width (exact for every K)
         for op in mats:
             xin = inputs[op.name]
-            if op.layout == "linear" and (use8 or op.n_in <= _RHS_CHUNK) and us[op.name].device == xin.device:
+            if (op.layout == "linear" and (use8 or native or op.n_in <= _RHS_CHUNK)
+                    and us[op.name].device == xin.device):
                 shared.setdefault(id(xin), (xin, []))[1].append(op)
             else:
                 out[op.name] = _rhs(op, us[op.name], xin)
@@ -1012,6 +1015,11 @@ class Verifier:
             for op, part_rows in zip(ops, y.split([us[op.name].shape[0] for op in ops])):
                 out[op.name] = (part_rows + us[op.name][:, k:]) % P if op.has_bias else part_rows
             del shared[key]
+        for key, (xin, ops) in list(shared.items()):    # wider than the batched limb products allow: one by one
+            if ops[0].n_in > _RHS_CHUNK:
+                for op in ops:
+                    out[op.name] = _rhs(op, us[op.name], xin)
+                del shared[key]
         groups = {}
         for xin, ops in shared.values():
             key = (ops[0].n_in, xin.numel() // ops[0].n_in, tuple(us[op.name].shape[0] for op in ops), xin.device)
