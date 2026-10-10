@@ -27,7 +27,7 @@ from pathlib import Path
 import torch
 
 __all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
-           "lut", "norm", "rope"]
+           "lut", "norm", "rope", "field_matmul"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -251,6 +251,92 @@ extern "C" void pvi_rope(const int64_t* x, const int64_t* cos2, const int64_t* s
         }
     }
 }
+// ---- field products of the checks: out = chi @ Z mod p ------------------------------------------------------------
+// chi [r, n] in [0, p), Z an [n, m] view with strides (sr, sc) of integers |z| < 2**31.  chi = c0 + 2**16 c1 with
+// c0 < 2**16, c1 < 2**15, so every product is below 2**47 in magnitude and 2**15 of them sum below 2**62: the
+// accumulators are reduced mod p every 2**15 terms and every partial sum is exact.  Returns 1, or 0 (nothing
+// meaningful written) when an operand is out of range, where the caller's own products apply.
+static const int64_t PF = 2013265921;           // 15 * 2**27 + 1
+static const int64_t ZMAX = (int64_t)1 << 31;
+static const int64_t RED = (int64_t)1 << 15;
+static inline int64_t modp(int64_t v) { v %= PF; return v < 0 ? v + PF : v; }
+
+extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, const int64_t* z, int64_t m,
+                                    int64_t sr, int64_t sc, int64_t* out, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    for (int64_t i = 0; i < r * n; ++i) if (chi[i] < 0 || chi[i] >= PF) return 0;
+    const int64_t L = 2 * r;
+    int64_t bad = 0;
+    if (sc == 1) {                                   // rows of Z contiguous: stream them, limbs as [n][L]
+        std::vector<int64_t> lim(n * L);
+        for (int64_t l = 0; l < r; ++l)
+            for (int64_t i = 0; i < n; ++i) {
+                lim[i * L + 2 * l] = chi[l * n + i] & 0xFFFF;
+                lim[i * L + 2 * l + 1] = chi[l * n + i] >> 16;
+            }
+        const int64_t cb = std::max<int64_t>(64, std::min<int64_t>(512, (m + 2 * threads - 1) / (2 * threads)));
+        #pragma omp parallel reduction(|:bad)
+        {
+            std::vector<int64_t> acc(L * cb);
+            #pragma omp for schedule(dynamic, 1)
+            for (int64_t j0 = 0; j0 < m; j0 += cb) {
+                const int64_t w = std::min(cb, m - j0);
+                std::fill(acc.begin(), acc.end(), 0);
+                for (int64_t i = 0; i < n; ++i) {
+                    const int64_t* zi = z + i * sr + j0;
+                    int64_t over = 0;
+                    #pragma omp simd reduction(|:over)
+                    for (int64_t j = 0; j < w; ++j) over |= (zi[j] >= ZMAX) | (zi[j] <= -ZMAX);
+                    bad |= over;
+                    const int64_t* li = lim.data() + i * L;
+                    for (int64_t l = 0; l < L; ++l) {
+                        const int64_t c = li[l];
+                        int64_t* a = acc.data() + l * cb;
+                        #pragma omp simd
+                        for (int64_t j = 0; j < w; ++j) a[j] += c * zi[j];
+                    }
+                    if ((i + 1) % RED == 0)
+                        for (int64_t q = 0; q < L * cb; ++q) acc[q] %= PF;
+                }
+                for (int64_t l = 0; l < r; ++l)
+                    for (int64_t j = 0; j < w; ++j)
+                        out[l * m + j0 + j] = modp(modp(acc[2 * l * cb + j]) + modp(acc[(2 * l + 1) * cb + j]) * 65536);
+            }
+        }
+    } else if (sr == 1) {                            // columns of Z contiguous: dot products, limbs as [L][n]
+        std::vector<int64_t> lim(L * n);
+        for (int64_t l = 0; l < r; ++l)
+            for (int64_t i = 0; i < n; ++i) {
+                lim[2 * l * n + i] = chi[l * n + i] & 0xFFFF;
+                lim[(2 * l + 1) * n + i] = chi[l * n + i] >> 16;
+            }
+        #pragma omp parallel for schedule(static) reduction(|:bad)
+        for (int64_t j = 0; j < m; ++j) {
+            const int64_t* zj = z + j * sc;
+            int64_t over = 0;
+            #pragma omp simd reduction(|:over)
+            for (int64_t i = 0; i < n; ++i) over |= (zj[i] >= ZMAX) | (zj[i] <= -ZMAX);
+            bad |= over;
+            for (int64_t l = 0; l < r; ++l) {
+                int64_t lo = 0, hi = 0;
+                for (int64_t i0 = 0; i0 < n; i0 += RED) {
+                    const int64_t i1 = std::min(n, i0 + RED);
+                    int64_t s0 = 0, s1 = 0;
+                    const int64_t* a0 = lim.data() + 2 * l * n;
+                    const int64_t* a1 = lim.data() + (2 * l + 1) * n;
+                    #pragma omp simd reduction(+:s0, s1)
+                    for (int64_t i = i0; i < i1; ++i) { s0 += a0[i] * zj[i]; s1 += a1[i] * zj[i]; }
+                    lo = modp(lo + modp(s0));
+                    hi = modp(hi + modp(s1));
+                }
+                out[l * m + j] = modp(lo + hi * 65536);
+            }
+        }
+    } else {
+        return 0;
+    }
+    return bad ? 0 : 1;
+}
 """
 
 _FLAGS = ("-O3", "-march=native", "-fopenmp", "-fwrapv", "-shared", "-fPIC")
@@ -295,6 +381,10 @@ def _library():
         _LIB.pvi_rope.argtypes = [ctypes.c_void_p] * 4 + [ctypes.c_int64] * 5
         for f in (_LIB.pvi_requant, _LIB.pvi_residual, _LIB.pvi_lut, _LIB.pvi_rope):
             f.restype = None
+        _LIB.pvi_field_matmul.argtypes = [ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p,
+                                          ctypes.c_int64, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p,
+                                          ctypes.c_int64]
+        _LIB.pvi_field_matmul.restype = ctypes.c_int64
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -431,4 +521,20 @@ def rope(x: torch.Tensor, cos2: torch.Tensor, sin2: torch.Tensor):
     _LIB.pvi_rope(x.data_ptr(), c.data_ptr(), s.data_ptr(), out.data_ptr(), x.numel() // dh, t, heads, dh,
                   torch.get_num_threads())
     return out
+
+
+def field_matmul(chi: torch.Tensor, z: torch.Tensor):
+    """``chi @ z mod P`` (int64 ``[r, m]``, canonical) for ``chi [r, n]`` in the field and an int64 matrix ``z
+    [n, m]`` (contiguous rows or contiguous columns) with ``|z| < 2**31``, exactly; None when the operands are
+    not of that kind or out of range (the caller's products then apply)."""
+    if not (cheap_enabled(chi, z) and chi.dim() == 2 and z.dim() == 2 and chi.shape[1] == z.shape[0]):
+        return None
+    sr, sc = z.stride()
+    if not (sc == 1 or sr == 1):
+        return None
+    chi = chi.contiguous()
+    out = torch.empty(chi.shape[0], z.shape[1], dtype=torch.int64)
+    ok = _LIB.pvi_field_matmul(chi.data_ptr(), chi.shape[0], chi.shape[1], z.data_ptr(), z.shape[1], sr, sc,
+                               out.data_ptr(), torch.get_num_threads())
+    return out if ok else None
 

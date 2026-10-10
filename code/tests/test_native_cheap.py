@@ -92,3 +92,23 @@ def test_rope(t, heads, dh, offset, monkeypatch):
     x[0, 0, 0] = 127
     got, want = _both(lambda: tr._rope(x, 10000.0, offset), monkeypatch)
     assert torch.equal(got, want)
+
+
+@pytest.mark.parametrize("r,n,m", [(5, 4096, 2048), (7, 70_000, 3), (5, 11008, 1), (1, 1, 1), (3, (1 << 15) + 1, 65)])
+@pytest.mark.parametrize("transposed", [False, True])
+def test_field_matmul(r, n, m, transposed):
+    from pvi.fullcheck.field import P, field_matmul_mod
+    g = torch.Generator().manual_seed(r * n + m)
+    chi = torch.randint(0, P, (r, n), generator=g, dtype=torch.int64)
+    chi[0, :5] = P - 1
+    z = torch.randint(-(1 << 31) + 1, 1 << 31, (m, n) if transposed else (n, m), generator=g, dtype=torch.int64)
+    z.view(-1)[:3] = (1 << 31) - 1
+    zz = z.T if transposed else z
+    want = field_matmul_mod(chi, zz.contiguous(), right_bound=1 << 31)
+    assert torch.equal(native_kernels.field_matmul(chi, zz), want)
+    zz = zz.clone() if not transposed else zz
+    bad = zz.contiguous()
+    bad.view(-1)[-1] = 1 << 31                                            # out of range: the caller's products
+    assert native_kernels.field_matmul(chi, bad) is None
+    chi[-1, -1] = P
+    assert native_kernels.field_matmul(chi, zz) is None

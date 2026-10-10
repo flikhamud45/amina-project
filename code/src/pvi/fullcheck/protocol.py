@@ -64,7 +64,7 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
-from . import claimcodec, contention, hostmem
+from . import claimcodec, contention, hostmem, native_kernels
 from .commitment import (HASH_BYTES, CommitmentPublic, GroupCommitment, GroupPublic, TableCommitment, TablePublic,
                          TransposedCommitment, WeightCommitment, codeword_at, column_rows, group_leaf, map_threaded,
                          row_leaves, table_leaves, verify_multiproof, verify_multiproofs)
@@ -960,7 +960,12 @@ class Verifier:
         """``{name: chi @ Z mod P}`` for ``pairs[name] = (chi, Z)`` with signed claims ``|Z| < 2**29``:
         int8 GEMMs where :func:`int8_ok` (exact for every int32 claim), else limb products."""
         if not pairs or not int8_ok(next(iter(pairs.values()))[1].device):
-            return self._field_products(pairs, Z_BOUND)
+            out = {}
+            for name, (chi, z) in pairs.items():       # a CPU verifier: one native pass over each claim
+                got = native_kernels.field_matmul(chi, z)
+                if got is not None:
+                    out[name] = got
+            return {**out, **self._field_products({k: v for k, v in pairs.items() if k not in out}, Z_BOUND)}
         return {name: int8_field_matmul(self._kept_or_built(("chi8", name), [chi], lambda ts: int8_left(ts[0])), z)
                 for name, (chi, z) in pairs.items()}
 
@@ -981,6 +986,15 @@ class Verifier:
                 out[op.name] = _rhs(op, us[op.name], xin)
         if use8:
             return out, [self._rhs_int8(xin, ops, us, out) for xin, ops in shared.values()]
+        for key, (xin, ops) in list(shared.items()):    # a CPU verifier: one native pass over each input
+            k = ops[0].n_in
+            ut = torch.cat([us[op.name][:, :k] for op in ops]) if len(ops) > 1 else us[ops[0].name][:, :k]
+            y = native_kernels.field_matmul(ut, xin.reshape(-1, k).T)
+            if y is None:
+                continue
+            for op, part_rows in zip(ops, y.split([us[op.name].shape[0] for op in ops])):
+                out[op.name] = (part_rows + us[op.name][:, k:]) % P if op.has_bias else part_rows
+            del shared[key]
         groups = {}
         for xin, ops in shared.values():
             key = (ops[0].n_in, xin.numel() // ops[0].n_in, tuple(us[op.name].shape[0] for op in ops), xin.device)
