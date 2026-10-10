@@ -41,7 +41,16 @@ def load_opt(name: str):
     cfg = AutoConfig.from_pretrained(path)
     with torch.device("meta"):                     # no second copy of the weights while loading
         model = OPTForCausalLM(cfg)
-    sd = torch.load(os.path.join(path, "pytorch_model.bin"), map_location="cpu", weights_only=True)
+    index = os.path.join(path, "pytorch_model.bin.index.json")
+    if os.path.exists(index):                      # sharded checkpoints (OPT-6.7B and larger)
+        import json
+        with open(index, encoding="utf-8") as f:
+            shards = sorted(set(json.load(f)["weight_map"].values()))
+        sd = {}
+        for shard in shards:
+            sd.update(torch.load(os.path.join(path, shard), map_location="cpu", weights_only=True))
+    else:
+        sd = torch.load(os.path.join(path, "pytorch_model.bin"), map_location="cpu", weights_only=True)
     sd = {(k if k.startswith(("model.", "lm_head.")) else "model." + k): v for k, v in sd.items()}
     missing, unexpected = model.load_state_dict(sd, strict=False, assign=True)
     del sd
