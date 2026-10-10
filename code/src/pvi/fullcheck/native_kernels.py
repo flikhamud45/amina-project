@@ -40,10 +40,9 @@ _SOURCE = r"""
 // tile instead of once per query row.  Every integer is computed exactly as for one row at a time.
 static const int64_t TR = 8;
 
-extern "C" void pvi_attention(const int16_t* q, const int16_t* k, const int16_t* v, const int32_t* lut,
-                              int64_t* out, int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh,
-                              int64_t lut_len, int64_t threads) {
-    omp_set_num_threads((int)threads);
+static void attention_scalar(const int16_t* q, const int16_t* k, const int16_t* v, const int32_t* lut,
+                             int64_t* out, int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh,
+                             int64_t lut_len) {
     const int64_t tiles = (rows + TR - 1) / TR;
     #pragma omp parallel
     {
@@ -106,6 +105,126 @@ extern "C" void pvi_attention(const int16_t* q, const int16_t* k, const int16_t*
             }
         }
     }
+}
+
+#if defined(__AVX512BW__)
+#include <immintrin.h>
+// The same integers on AVX-512 (vpmaddwd: int16 pairs -> int32 sums), for dh a multiple of 16 up to 128.  Per
+// (batch, head) group: the keys as int16 pairs along dh, transposed to [dh/2][T] (16 keys per vector), and the
+// values as int16 pairs of consecutive keys, [T/2][dh].  Query rows go in tiles of 16: the scores of 16 rows x 16
+// keys are 16 accumulators (|s| <= 2**21), the softmax runs per row as in pvi_attention, the probabilities are
+// packed as pairs of consecutive keys, and P V accumulates in int32 per row (every partial sum is below
+// (255 + T/2) 128 < 2**24 for T < 2**15), widened to int64 on the way out.
+static const int64_t TQ = 16;
+
+static void attention_avx512(const int16_t* q, const int16_t* k, const int16_t* v, const int32_t* lut, int64_t* out,
+                             int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh, int64_t lut_len) {
+    const int64_t tp = (t + 15) & ~(int64_t)15, t2 = (t + 1) / 2, d2 = dh / 2, dv = dh / 16;
+    const int64_t tiles = (rows + TQ - 1) / TQ;
+    #pragma omp parallel
+    {
+        std::vector<int32_t> kt(d2 * tp), v2(t2 * dh), s(TQ * tp), pp(TQ * (t2 + 1)), qp(TQ * d2);
+        int64_t n[TQ];
+        #pragma omp for schedule(dynamic, 1)
+        for (int64_t g = 0; g < bh; ++g) {
+            const int16_t* kg = k + g * t * dh;
+            const int16_t* vg = v + g * t * dh;
+            for (int64_t d = 0; d < d2; ++d) {
+                int32_t* row = kt.data() + d * tp;
+                for (int64_t j = 0; j < t; ++j)
+                    row[j] = (int32_t)((uint32_t)(uint16_t)kg[j * dh + 2 * d] | ((uint32_t)(uint16_t)kg[j * dh + 2 * d + 1] << 16));
+                for (int64_t j = t; j < tp; ++j) row[j] = 0;
+            }
+            for (int64_t jj = 0; jj < t2; ++jj) {
+                const int16_t* a = vg + 2 * jj * dh;
+                const bool two = 2 * jj + 1 < t;
+                for (int64_t d = 0; d < dh; ++d)
+                    v2[jj * dh + d] = (int32_t)((uint32_t)(uint16_t)a[d] | ((uint32_t)(uint16_t)(two ? a[dh + d] : 0) << 16));
+            }
+            for (int64_t tile = 0; tile < tiles; ++tile) {
+                const int64_t r0 = tile * TQ, tr = std::min(TQ, rows - r0);
+                int64_t nmax = 0;
+                for (int64_t i = 0; i < TQ; ++i) {
+                    n[i] = i < tr ? t - queries + ((r0 + i) % queries) + 1 : 0;
+                    nmax = std::max(nmax, n[i]);
+                    const int16_t* qr = q + (g * rows + r0 + i) * dh;
+                    for (int64_t d = 0; d < d2; ++d)
+                        qp[i * d2 + d] = i < tr ? (int32_t)((uint32_t)(uint16_t)qr[2 * d] | ((uint32_t)(uint16_t)qr[2 * d + 1] << 16)) : 0;
+                }
+                for (int64_t j0 = 0; j0 < nmax; j0 += 16) {          // scores, 16 rows x 16 keys at a time
+                    __m512i acc[TQ];
+                    for (int64_t i = 0; i < TQ; ++i) acc[i] = _mm512_setzero_si512();
+                    for (int64_t d = 0; d < d2; ++d) {
+                        const __m512i kv = _mm512_loadu_si512((const void*)(kt.data() + d * tp + j0));
+                        for (int64_t i = 0; i < TQ; ++i)
+                            acc[i] = _mm512_add_epi32(acc[i], _mm512_madd_epi16(_mm512_set1_epi32(qp[i * d2 + d]), kv));
+                    }
+                    for (int64_t i = 0; i < TQ; ++i) _mm512_storeu_si512((void*)(s.data() + i * tp + j0), acc[i]);
+                }
+                const int64_t np2 = (nmax + 1) / 2;
+                for (int64_t i = 0; i < tr; ++i) {                    // the integer softmax of each row
+                    int32_t* si = s.data() + i * tp;
+                    int32_t mx = INT32_MIN;
+                    for (int64_t j = 0; j < n[i]; ++j) mx = std::max(mx, si[j]);
+                    int32_t tot = 0;
+                    for (int64_t j = 0; j < n[i]; ++j) {
+                        int64_t gap = (int64_t)mx - (int64_t)si[j];
+                        if (gap > lut_len - 1) gap = lut_len - 1;
+                        si[j] = lut[gap];                              // e, in place of the score
+                        tot += si[j];
+                    }
+                    int32_t* pi = pp.data() + i * (t2 + 1);
+                    const int64_t h = (n[i] + 1) / 2;
+                    for (int64_t jj = 0; jj < h; ++jj) {
+                        const int32_t p0 = (tot + 510 * si[2 * jj]) / (2 * tot);
+                        const int32_t p1 = 2 * jj + 1 < n[i] ? (tot + 510 * si[2 * jj + 1]) / (2 * tot) : 0;
+                        pi[jj] = (int32_t)((uint32_t)p0 | ((uint32_t)p1 << 16));
+                    }
+                    for (int64_t jj = h; jj < np2; ++jj) pi[jj] = 0;
+                }
+                for (int64_t i = 0; i < tr; i += 2) {                 // P V, two rows at a time
+                    const bool two = i + 1 < tr;
+                    const int32_t* p0 = pp.data() + i * (t2 + 1);
+                    const int32_t* p1 = pp.data() + (i + 1) * (t2 + 1);
+                    const int64_t jmax = ((two ? std::max(n[i], n[i + 1]) : n[i]) + 1) / 2;
+                    __m512i a0[8], a1[8];
+                    for (int64_t d = 0; d < dv; ++d) { a0[d] = _mm512_setzero_si512(); a1[d] = _mm512_setzero_si512(); }
+                    for (int64_t jj = 0; jj < jmax; ++jj) {
+                        const __m512i b0 = _mm512_set1_epi32(p0[jj]);
+                        const __m512i b1 = _mm512_set1_epi32(two ? p1[jj] : 0);
+                        const int32_t* vr = v2.data() + jj * dh;
+                        for (int64_t d = 0; d < dv; ++d) {
+                            const __m512i vv = _mm512_loadu_si512((const void*)(vr + 16 * d));
+                            a0[d] = _mm512_add_epi32(a0[d], _mm512_madd_epi16(b0, vv));
+                            a1[d] = _mm512_add_epi32(a1[d], _mm512_madd_epi16(b1, vv));
+                        }
+                    }
+                    for (int64_t rr = 0; rr < (two ? 2 : 1); ++rr) {
+                        int64_t* o = out + (g * rows + r0 + i + rr) * dh;
+                        for (int64_t d = 0; d < dv; ++d) {
+                            const __m512i a = rr ? a1[d] : a0[d];
+                            _mm512_storeu_si512((void*)(o + 16 * d), _mm512_cvtepi32_epi64(_mm512_castsi512_si256(a)));
+                            _mm512_storeu_si512((void*)(o + 16 * d + 8), _mm512_cvtepi32_epi64(_mm512_extracti64x4_epi64(a, 1)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+#endif
+
+extern "C" void pvi_attention(const int16_t* q, const int16_t* k, const int16_t* v, const int32_t* lut,
+                              int64_t* out, int64_t bh, int64_t rows, int64_t queries, int64_t t, int64_t dh,
+                              int64_t lut_len, int64_t threads) {
+    omp_set_num_threads((int)threads);
+#if defined(__AVX512BW__)
+    if (dh % 16 == 0 && dh <= 128 && t < ((int64_t)1 << 15)) {
+        attention_avx512(q, k, v, lut, out, bh, rows, queries, t, dh, lut_len);
+        return;
+    }
+#endif
+    attention_scalar(q, k, v, lut, out, bh, rows, queries, t, dh, lut_len);
 }
 
 // The integer softmax of a block of rows, in place: s holds exact integer scores as float32 ([n_rows, t], row i of
