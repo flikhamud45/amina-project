@@ -237,7 +237,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.1 Cross-cutting: Fiat-Shamir, infrastructure and the final-run package
 
-- **FS1 [TODO] must: Fiat-Shamir hashing at memory speed, counted in both parties' time.** This merges the verifier agent's V-FS and the prover agent's A8.
+- **FS1 [DONE] must: Fiat-Shamir hashing at memory speed, counted in both parties' time.** This merges the verifier agent's V-FS and the prover agent's A8.
+  - **Status (11 Oct).** Kpre absorbs nothing; tree absorption of large messages (1.37 GB/s on 8 laptop threads, 6x serial); `fs_hash` in both parties' time; `perf.py --fs`; tests. Commits 12a188f, b244e8b; write-up `docs/improvements/FS1_fiat_shamir_speed.md`. The Xeon end-to-end cells are V-LONG-a's.
   - **What.**
     1. **Kpre absorbs nothing (Mon 12 Oct, 0.25 d).**
        - Kpre v0 is already one message with a designated verifier. chi and u come from the verifier's precomputed key (`verifier._pre`), so no challenge reads the transcript.
@@ -280,7 +281,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - Part 2 changes the mode-C and V1 transcripts and lands by Thu 15 Oct.
     - No Fiat-Shamir number for the paper is produced in a mode before its change lands.
 
-- **I5 [TODO] must: storage, nodes and clean timings (Mon 12 Oct).**
+- **I5 [WIP] must: storage, nodes and clean timings (Mon 12 Oct).**
+  - **Status (11 Oct).** Quota now 16 TB (17.8 GB used, 10 Oct); checkpoints go to node-local `/tmp` (s-004: 264 GB, s-005: 335 GB free); pyarrow in `logs/validation/sp2027/pylib`. Open: the lm-eval environment.
   - **What.**
     1. Archive the engineer's own old results to the laptop, as in I3, and verify the listing before deleting anything. Only the engineer's own folders are touched.
     2. Measure the size and persistence of node-local `/tmp` and the `--mem` limit on the 2080 Ti and Xeon nodes.
@@ -354,7 +356,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.2 Quality and real weights
 
-- **F2a [TODO] must: memory-lean quality at 2,048 tokens, full WikiText-2 test, 8-bit versus 11-bit attention probabilities.**
+- **F2a [WIP] must: memory-lean quality at 2,048 tokens, full WikiText-2 test, 8-bit versus 11-bit attention probabilities.**
+  - **Status (11 Oct).** `ppl_2048.py` and the ported `opt_builder.py` (b244e8b, cdeb44a); `--check` passes on the laptop; laptop OPT-125M at 512 tokens: 8-bit probabilities cost about 2% (x1.073 against x1.051 at 11 bits, = ideal softmax). `P_MAX` is a graph parameter in the torch paths (de819fb); native and Triton kernels still 255 only. Cluster jobs 1007072-1007074 queued. Write-up `docs/improvements/F2a_quality_2048.md`.
   - **What.**
     1. **A lean evaluation path.** `real_weights.real_logits` calls `forward(free=True)`, and the LM head runs over chunks of positions, returning only the per-token NLL and the argmax. `_RealBuilder._run` drops each calibration tensor after its last use, or calibrates on the CPU.
     2. **Calibration on WikiText-2 train windows** (4-8 x 2,048 tokens). Today's calibration on the last test window would overlap the evaluated text.
@@ -389,7 +392,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - 11 bits are adopted only if the 8-bit cost is above 1%. Their exactness tests must then pass by Wed 21 Oct, before F3a's cells (from Thu 22) and the reported Qwen3-4B runs at 2,048 tokens.
     - Otherwise 8 bits stay, and the paper reports their cost.
 
-- **D6a [TODO] must: a quantisation recipe that reproduces C_M bit for bit** (Plan 1 D6 and part (b) of the paper agent's compliance item).
+- **D6a [WIP] must: a quantisation recipe that reproduces C_M bit for bit** (Plan 1 D6 and part (b) of the paper agent's compliance item).
+  - **Status (11 Oct).** Laptop: OPT-125M digests equal at 1 and 8 threads. Xeon job 1007102 (OPT-125M and OPT-1.3B, 1 and 8 threads, Merkle roots) queued; the first Xeon job failed for want of pyarrow.
   - **What.**
     1. **Test first.** Build the smoothed OPT-125M and OPT-1.3B on the laptop and on a Xeon node, with 1 and 8 threads, and compare the digests and every Merkle root.
     2. **If they differ:**
@@ -405,7 +409,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
   - **Validation.** Identical digests and roots on 2 machines x 2 thread counts for OPT-125M, OPT-1.3B and one Qwen3 model; perplexity unchanged within 0.2%.
   - **Kill.** This is the root of trust, and it changes the real-weight graphs. The recipe must therefore be fixed by **Mon 19 Oct**, before any real-weight or byte cell is produced (F3a starts on Thu 22). If exact reproduction cannot be reached by then, the published int8 checkpoint and its hash become the root of trust, and the paper says so.
 
-- **F3a [TODO] must: real-weight runs end to end, now, on the 2080 Ti** (Plan 1 F3, OPT part).
+- **F3a [WIP] must: real-weight runs end to end, now, on the 2080 Ti** (Plan 1 F3, OPT part).
+  - **Status (11 Oct).** Part 1 (`prune_last` in the real builders, cluster cells) in worktree `wt_p2_f3a`.
   - **What.**
     1. Add `prune_last` to the real builders. Today `v1_bytes.py --real` refuses `--prune-last`, so real cells cannot be compared with the pruned headline cells.
     2. Real smoothed OPT-1.3B, all 24 blocks, modes C and Kpre, at 64 and 2,048 tokens, with WikiText-2 windows as queries.
@@ -432,7 +437,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - ≥ 3 repetitions after a warm-up.
   - **Kill.** If OPT-6.7B does not fit the 2080 Ti, its correctness run uses the CPU prover on a Xeon node before the gate, and its timing moves to the L40S `real` tier, which is already in the package.
 
-- **F2b-Q [TODO] must: real-weight builder for RMSNorm/RoPE/SwiGLU/GQA models, Qwen3 first.**
+- **F2b-Q [WIP] must: real-weight builder for RMSNorm/RoPE/SwiGLU/GQA models, Qwen3 first.**
+  - **Status (11 Oct).** Builder `real_llama.py` in worktree `wt_p2_f2bq`; the ladder runs on the cluster.
   - **What.** Generalise `_RealBuilder`:
     - fold RMSNorm γ into the next matrices, and smooth through the norm's gain vector as for OPT;
     - use Qwen3's q_norm/k_norm γ as per-head gains;
@@ -496,7 +502,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
   - **Validation.** The wrapper's logits equal `real_logits` on OPT-125M. The fp16 accuracies reproduce the harness's published numbers within 0.5 point.
   - **Kill.** Must start by Mon 2 Nov. The results do not depend on the hardware, so it may run after the code freeze with the frozen builders.
 
-- **E2b [TODO] should (rank 3): exact total-variation distance of the integer sampler on real logits.**
+- **E2b [WIP] should (rank 3): exact total-variation distance of the integer sampler on real logits.**
+  - **Status (11 Oct).** In worktree `wt_p2_e2b`.
   - **What.**
     - Compute the exact output distribution of the Gumbel-max sampler. log M(t) is computed once on the integer grid (about 0.93 M points, a float64 FFT convolution) and gathered per token, with ties bracketed.
     - Cross-check it against a Monte Carlo of `TokenSampler.choose` over 10^5 seeds.
@@ -525,7 +532,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.3 Verifier
 
-- **V-LONG-a [TODO] must: the full models on the Xeon now, measured and not extrapolated.**
+- **V-LONG-a [WIP] must: the full models on the Xeon now, measured and not extrapolated.**
+  - **Status (11 Oct).** Job 1006979 (interactive and Fiat-Shamir, 64 and 2,048 tokens).
   - **What.**
     - Run `perf.py` with the native CPU verifier (B5) on 8 Xeon threads (`--exclusive`):
       - the full Llama-2-7B, Qwen3-4B and OPT-1.3B (random weights);
@@ -548,7 +556,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - The V1/v0 verifier ratio is measured with today's kernels.
   - **Kill.** None. If the full model does not fit the node's `--mem`, measure 16 blocks and say so.
 
-- **RX [TODO] must: the strongest exact re-execution baselines on the same CPU.**
+- **RX [WIP] must: the strongest exact re-execution baselines on the same CPU.**
+  - **Status (11 Oct).** Native exact int8 GEMM and the baselines (12a188f); measured in job 1006979.
   - **What.** Every baseline runs on the same 8 threads as the verifier: on the Xeon in week 1 (within V-LONG-a), and on the EPYC in the `cpuv` tier. Timing jobs use `--exclusive`.
     1. **Optimised exact integer re-execution.**
        - `IntGraph.forward` runs with B5's native non-weight kernels (attention, requantisation, recomputed operations).
@@ -648,7 +657,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.4 Prover and serving
 
-- **A7 [TODO] must: prover overhead against unverified serving on the same GPU, with batching (new `serve` tier).**
+- **A7 [WIP] must: prover overhead against unverified serving on the same GPU, with batching (new `serve` tier).**
+  - **Status (11 Oct).** Harness `serve_ab.py` in worktree `wt_p2_a7`.
   - **What.** A new script, `experiments/7_reexec/serve_ab.py`.
     - **Method.** Same token ids, shapes, GPU and host; CUDA events after a warm-up; ≥ 10 repetitions; median with a 95% bootstrap confidence interval.
     - **Baselines.**
@@ -750,7 +760,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.5 Proof size
 
-- **PS2 [TODO] must: lower-rate commitment plans for the mode-C cells, chosen under an explicit setup budget.** No protocol code.
+- **PS2 [WIP] must: lower-rate commitment plans for the mode-C cells, chosen under an explicit setup budget.** No protocol code.
+  - **Status (11 Oct).** Byte tables (9cc0bd6); measured bytes in job 1006989 (2 blocks, mode C, FS: cnn16c 23.3 MB, cnn18c 16.0 MB, R64c 13.9 MB per query at 64 tokens, v0).
   - **What.**
     1. Byte tables from `analytic.proof_bytes` for every model x {cnn16c, cnn18c, R64c} x {interactive, Fiat-Shamir}. The model reproduces the stored records within 1.2%.
     2. One measured run: `v1_bytes.py --model llama2-7b --layers 2 --seq 64 2048 --policy R64c cnn18c --fs` on the 2080 Ti node, with `setup_s` recorded.
@@ -808,7 +819,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.6 Attack
 
-- **G3.5-L [TODO] must: the OPT-6.7B in-range attack on a Xeon node, before the freeze** (Plan 1 G3.5's remainder; reviewer A's condition 3, A-Q3).
+- **G3.5-L [WIP] must: the OPT-6.7B in-range attack on a Xeon node, before the freeze** (Plan 1 G3.5's remainder; reviewer A's condition 3, A-Q3).
+  - **Status (11 Oct).** Job 1007103 (OPT-1.3B reproduction, then OPT-6.7B, moves any and down) queued.
   - **What.**
     - Run `experiments/2_attack/inrange_llm.py` on OPT-6.7B in fp32, on a Xeon node with `--mem` of at least 64 GB and HF_HOME on node-local `/tmp`.
     - Use G3.5's setup:
@@ -848,7 +860,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.7 Theory and paper
 
-- **TH [TODO] must: close the theory gaps and finish the proofs the submission cites** (absorbs Plan 1 D7).
+- **TH [WIP] must: close the theory gaps and finish the proofs the submission cites** (absorbs Plan 1 D7).
+  - **Status (11 Oct).** Drafts TH-a, TH-c, TH-d, TH-e in `paper_sp2027/drafts/` (TH-a checked); integration with H5's cut pass running; TH-e check running.
   - **What.**
     - **(a) A block-mixing proposition.** Rows are grouped in blocks of d, and each block is RS-encoded and Merkle-committed on its own.
       - Then q = (N/d)(1 + t) queries per layer reach 2^-λ, with qd = (1 + t)N.
@@ -941,7 +954,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - The crossover formulas are unit-tested.
     - After F6, a grep check finds no value that disagrees between tables.
 
-- **H4 [TODO] must: submission compliance.** Anonymous artifact and extended version, disclosure facts, HotCRP fields.
+- **H4 [WIP] must: submission compliance.** Anonymous artifact and extended version, disclosure facts, HotCRP fields.
+  - **Status (11 Oct).** `scripts/export_anonymous.py` (clean dry run: 4,107 files), `scripts/artifact_README.md`, `docs/submission/HOTCRP_FIELDS.md` (de819fb, 9c4cfe2; write-up `docs/improvements/H4_submission_compliance.md`). Open: notices [USER], host and link, D6a recipe.
   - **What.**
     - **(a) A curated anonymous snapshot without git history** (Anonymous GitHub or GitFront, [USER] choice).
       - The history has 356 commits by named authors, 3 of them with mail.tau.ac.il addresses.
@@ -960,6 +974,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - A dated log of the notices.
 
 - **H5 [WIP] must: mock reviews, review checklist, page ledger and cut list.**
+  - **Status (11 Oct).** H5a done (`paper_sp2027/REVIEW2.md`); the cut pass and defect fixes are running.
   - **H5a, Wed 14 Oct:**
     - The three lenses of REVIEW.md, plus a compliance lens on the condensed draft: the page-13 boundary, appendix marking, anonymity, and the `\todo` count (71 + 34).
     - **Review checklist.** Each of REVIEW.md's 9 "Smaller issues", and each sub-item of changes 6 (i-vi) and 11, is confirmed closed or mapped to a fix with an owner item.

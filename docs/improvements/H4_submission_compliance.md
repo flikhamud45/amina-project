@@ -31,7 +31,7 @@ result files that embed cluster home paths, and plan, review and documentation f
    identities ("research", "claude", ...) are not denied. While anything matches, the script lists every match and exits
    with status 1. It also refuses a non-empty target or one inside the repository.
 
-**Dry run** (laptop, HEAD = cdeb44a): the first runs refused, correctly, on 81 then 2 matches (a teammate's directory in
+**Dry run** (laptop, HEAD = 39a3dd6): the first runs refused, correctly, on 81 then 2 matches (a teammate's directory in
 home paths of the zkLLM timing records; a name in two `PLATFORM.json` provenance notes; one false positive on a generic
 commit identity), which led to the rules above. The final run exported 4,107 files (293 MB, 1,974 rewritten) with a clean
 scan, and the snapshot's tests run from it (`tests/test_fs_tree.py`: 5 passed).
