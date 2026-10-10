@@ -90,6 +90,20 @@ fractions `2^-j` of the unique-decoding radius to minimise `t0/amortise + t` (it
 
 At 2,048 tokens, where the claims are GBs, the per-query change is below 1%.
 
+**Where the setup proof's bytes go** (Plan 2 TH-c; the terms of `setup_bytes.py`: combined rows `4 s sum_j k_j`, opened
+columns `4 t0_g R_g`, and the multiproof bound `32 t0_g log2 n_g`; totals re-run on 11 Oct 2026 with
+`setup_bytes.py --model llama2-7b --amortise 100 1000`, which gives 2,833.5 / 11,272.7 MB as above):
+
+| Model | amortised over | combined rows | opened columns | paths (bound) |
+|---|---|---:|---:|---:|
+| Llama-2-7B | 100 queries | 45.2 MB (1.6%) | 2,784.0 MB (98.3%) | at most 4.3 MB (0.15%) |
+| Llama-2-7B | 1,000 queries | 45.2 MB (0.4%) | 11,210.2 MB (99.5%) | at most 17.3 MB (0.15%) |
+
+So the setup proof is almost entirely opened columns. TH-c's remark (`rem:forced` in
+`paper_sp2027/drafts/th_c_setup_forced.tex`, now in the extended version's appendix) argues that, for column-hash
+commitments, this number of opened columns cannot be avoided at the same soundness. The other models: non-column share 3.9% / 2.3% (GPT-2), 2.2% / 0.65% (OPT-6.7B) and 2.1% / 0.59%
+(Llama-2-13B) at 100 / 1,000 queries.
+
 **Option C (open weights).** When the weights are public (the setting C targets, since the claims reveal
 the weights anyway, see D7), anyone can recompute `C_M` from a published int8 checkpoint and its hash, and
 the honest-commitment case holds by verification; the setup proof is for commitments made by a party
