@@ -209,7 +209,8 @@ verifier checks a 2{,}048-token Llama-2-7B query in about 17\,s on 8 threads of 
 5.7$\times$ faster. At 64 tokens it takes 1.6\,s, against 3.5 and 3.6\,s. Its exact attention alone
 is faster than fp32 scaled-dot-product attention (0.12 against 0.14\,s for one block at 2{,}048
 tokens). Full models are extrapolated from 1--3 blocks, and the CPU times of
-Table~\ref{tab:eval-llm} predate the kernels \todo{L40S/EPYC: full models, one CPU}.
+Table~\ref{tab:eval-llm} predate the kernels. Runs are interactive \todo{RX: optimised exact
+baselines; FS; full models}.
 
 \para{GPU.} On a GPU, re-execution is faster. The fp16 decoder runs Llama-2-7B at 2{,}048 tokens in
 0.57\,s on the 2080~Ti, while the base GPU verifier needed 4.95\,s in $\Kpre$ on the faster L40S.

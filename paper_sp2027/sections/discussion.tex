@@ -56,6 +56,5 @@ Spot-checking an unencoded execution trace is not fully sound: an edit followed 
 recomputation is the honest trace of a model that differs in one row, which in the worst case no
 adaptive or value-aware sampler finds faster than uniform sampling. Our defence therefore encodes the
 model and checks every weight operation of an exact integer model with Freivalds' algorithm against a
-Reed--Solomon and Merkle commitment, using only a hash function and a linear code. Its cost, a proof
-that grows with the prompt, suits a client with neither the weights nor a GPU that will not trust
-hardware.
+Reed--Solomon and Merkle commitment, using only a hash function and a linear code. Its cost is a
+proof that grows with the prompt.
