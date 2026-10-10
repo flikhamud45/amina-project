@@ -18,6 +18,9 @@
 %   E5 "Limitations of V1": Sec. 5.7 "Limitations".
 % Labels defined: tab:v1. Labels used: sec:v1, lem:v1-logup, thm:v1, sec:fs, sec:setup-proof, sec:gen,
 % sec:quality, sec:eval-v1, tab:eval-v1. New bib keys: none (montgomery1985, tillet2019triton exist).
+% H5 pass (2026-10-11): N9, one source for the real-weight estimate (1.78-1.85x, C2 doc Sec. 8)
+%   in E4; TH-d Sec. 6.2(a) paragraph "Relation to deployed logUp" in E1 (new keys stwo2026,
+%   openvm2025logup, lurk2024lookups).
 % =====================================================================================
 
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -49,6 +52,22 @@ conditions. If a multiplicity may reach $p$, a prover holding $p$ copies of an o
 $p$ to the multiplicity of any table element, which keeps the sum and the identity. Without the sum
 check it simply leaves those leaves out. Our tests confirm the lemma and both counterexamples by
 exhaustive search on $\mathbb F_{49} = \mathbb F_7[\xi]/(\xi^2 - 3)$.
+
+% Added by the H5 pass from drafts/th_d_citations.md, Sec. 6.2(a) (REVIEW.md B-W6); sources and
+% bib entries (stwo2026, openvm2025logup, lurk2024lookups) as checked there.
+\para{Relation to deployed logUp.} The logUp lemma assumes a characteristic larger than the number
+of looked-up values~\cite[Lemma~5]{haboeck2022logup}, and the systems over 31-bit fields that we
+checked keep that number below $p$. S-two, over $\mathbb F_{2^{31}-1}$, lets its verifier check a
+bound on the number of lookups derived from the table heights~\cite[Remark~17]{stwo2026};
+OpenVM, over BabyBear, caps the number of interactions at $p$ and treats multiplicities as integers
+when one side sums to less than $p$~\cite{openvm2025logup}; and SP1 includes the clock in every
+query, so that repeated queries differ~\cite{lurk2024lookups}. A V1 query has up to
+$4.3\cdot10^9>p$ leaves, which such a bound would force us to split into instances with separate
+multiplicity vectors and separate checks. Lemma~\ref{lem:v1-logup} uses instead that V1 sends its
+multiplicities in the clear: the verifier checks $\mu_\tau<p$ and $\sum_\tau\mu_\tau=\Nleaf$ over
+the integers, at a cost of $|\Vtab|$ additions, and the number of leaves is not bounded. A system
+that commits to its multiplicities would need a range proof and an integer-sum proof for the
+committed column instead.
 
 \para{The tree and its transcript.} The cut operations are packed in graph order into instances of
 at most $2^{n_{\max}}$ leaves. The leaves are $(1, \alpha - v)$ at real positions and $(0, 1)$ at
@@ -148,7 +167,8 @@ V1's sizes come from an exact byte accounting that equals real queries to the by
 Merkle multiproofs, whose size depends on the drawn columns; the timed full V1 queries agree with
 it within 0.3\%. The byte model predicts 2.24$\times$ (6.63 to 2.97\,GB) for the full Llama-2-7B at
 2{,}048 tokens in $\sC$ \todo{L40S: V1 on full Llama-2-7B, Llama-2-13B, OPT-6.7B, Qwen3-4B at
-2,048}, and 1.8--2.0$\times$ with the codec rates of real OPT-125M weights. On the smoothed real
+2,048}; with real weights the estimate of our V1 specification is 1.78--1.85$\times$ at 2{,}048
+tokens \todo{F3a}. On the smoothed real
 OPT-125M at 512 tokens, the measured gain is 1.68$\times$ in $\sC$ and 1.77$\times$ in $\Kpre$
 \todo{real-weight V1 bytes at 2,048, smoothed OPT}; real OPT weights also have residual multipliers
 above $2^{29}$, whose operations stay clear (P3).

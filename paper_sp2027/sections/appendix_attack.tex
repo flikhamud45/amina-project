@@ -12,7 +12,12 @@
 % Table tab:aligned recomputed with Python on 2026-10-10 as ceil(40 ln 2 / -ln(1-k/d_ff)); it
 % matches PART1_SP.md Sec. 3.4.
 % Labels defined here: app:attack, def:H, thm:guess-full, lem:notouch, lem:product, cor:surprise,
-% prop:worst, prop:blind, prop:amp, rem:merkle, rem:pointer, rem:scope, tab:aligned.
+% prop:worst, prop:blind, prop:amp, rem:merkle, rem:pointer, rem:scope, tab:aligned, and (H5 pass,
+% TH-a) prop:block, lem:worst-int, cor:block, rem:block-count, rem:block-scope, eq:block-freivalds,
+% eq:block-columns. H5 pass (2026-10-11): prop:amp states the product form of the column term and
+% caps t at k (drafts/th_a_check.md, "The same gap exists in prop:amp and thm:dich(b)").
+% H5 review (2026-10-11): lem:worst-int counts int8 weights down to -128, so the hidden-row bound is
+%   128(1+128c) < 2^29, i.e. c < 2^15 (the draft's 128(1+127c) and c <= 33,000 assumed |w| <= 127).
 % Labels used from other sections: sec:defence, sec:setup-proof.
 % =====================================================================================
 
@@ -202,9 +207,10 @@ $\chi\in\mathbb F_p^N$ after the claims $Z$ are fixed, receives a folded row $u$
 $u=\chi^{\top}\!A$), checks $\chi^{\top}Z=u[X;\mathbf 1]$, and then opens $t$ distinct uniform columns $c$, checking
 $\chi^{\top}\hat A_c=\mathrm{Enc}(u)_c$; under Fiat--Shamir the challenges are derived in the same
 order. Each folded row and each column symbol has support $[N]$. If $Z\neq A[X;\mathbf 1]$, the
-layer passes with probability at most $p^{-r}+((k-1)/n)^t$, plus the probability of a hash
-collision. With $r=\lceil\beta/\log_2p\rceil$ and $t=\lceil\beta/\log_2(n/(k-1))\rceil$ this is at
-most $2^{1-\beta}$. For any row-wise linear code of relative distance $\delta$, the second term is
+layer passes with probability at most $p^{-r}+\prod_{i<t}\frac{k-1-i}{n-i}\le p^{-r}+((k-1)/n)^t$,
+plus the probability of a hash collision. For $k\ge2$, with $r=\lceil\beta/\log_2p\rceil$ and
+$t=\min(\lceil\beta/\log_2(n/(k-1))\rceil,k)$ this is at most $2^{1-\beta}$: for $t\ge k$ the
+product vanishes, and $t\le k\le n$ distinct columns exist. For any row-wise linear code of relative distance $\delta$, the second term is
 $(1-\delta)^t$. The verifier's work per layer is $O(r(N+k)T+rtN+r\,n\log n)$, against $O(NkT)$ for
 recomputation, and it touches every row.
 \end{proposition}
@@ -215,7 +221,7 @@ independent of $\chi_i$; it vanishes for one value of $\chi_i$ only, so all $r$ 
 probability at most $p^{-r}$. If some $u\neq\chi^{\top}\!A$, then $\mathrm{Enc}(u)$ and
 $\chi^{\top}\hat A=\mathrm{Enc}(\chi^{\top}\!A)$ are distinct codewords, which agree on at most
 $k-1$ of the $n$ positions; this set is fixed before the columns are drawn, and $t$ distinct uniform
-columns all fall in it with probability at most $((k-1)/n)^t$. Unless the prover finds a hash
+columns all fall in it with probability at most $\binom{k-1}{t}/\binom nt=\prod_{i<t}\frac{k-1-i}{n-i}\le((k-1)/n)^t$. Unless the prover finds a hash
 collision, the opened columns are the committed ones. The work bound counts the two sides of each
 check, the $t$ opened columns of $N$ entries for each fold, and one encoding per fold.
 \end{proof}
@@ -230,12 +236,278 @@ $s$ paths make $s$ queries there with $d=1$.
 (b)~Set $\beta=\lambda+\log_2(2L)$ in Proposition~\ref{prop:amp}. Each layer then passes a wrong
 claim with probability at most $2^{1-\beta}=2^{-\lambda}/L$, and a union bound over the $L$ layers,
 as in the soundness theorem of Section~\ref{sec:defence}, gives $2^{-\lambda}$. Each layer uses
-$r+t=O(\beta)=O(\lambda+\log L)$ queries of support $N$.
+$r+t=O(\beta)=O(\lambda+\log L)$ queries of support $N$, since $n\ge2(k-1)$ gives $t\le\beta+1$.
 \end{proof}
 
 \noindent Part~(a) is the one-sided randomised query complexity of $\mathrm{OR}_N$ with $d$-row
 queries, placed inside a network; equivalently, an input oracle at relative distance $1/N$ from the
 language cannot be rejected with fewer than $(1-\varepsilon)N/d$ queries~\cite{bghsv2006robust}.
+
+
+% -------------------------------------------------------------------------------------
+% TH-a (drafts/th_a_block_mixing.tex, Part C), placed by the H5 pass (2026-10-11). Every fix of the
+% adversarial check drafts/th_a_check.md is applied: the admissible set limited to integer networks
+% within the range bound (Prop. (i)); folded rows do not depend on salts (Prop. (i)); "the bound of
+% prop:amp" (Prop. (ii)); the cap t <= k (Prop. (iii), and in prop:amp above); the claim range check
+% and the exclusion of lookups (Cor. (a)); the integer hard family as Lemma lem:worst-int, the
+% ideal-oracle model and the counting-convention remark (Cor. (b)); the second byte condition, r = 7
+% under Fiat--Shamir and the salts (Rem. rem:block-count (iii)); redundant column queries in the
+% ideal-oracle model (Rem. rem:block-count (iv)); beta_0 and e_b (Rem. rem:block-scope (ii)); the
+% probability-1 attack on an unchecked block and the corrected last sentence (Rem. rem:block-scope
+% (iv)). Counting convention: one query per folded row and one per opened column, as in prop:amp,
+% so q = ceil(N/d)(r+t). The submission appendix does not carry this material (no appendix text of
+% the same size could make room); the body cites the extended version in one sentence (Sec. 3.4).
+
+\para{Block commitments.} Let a weight layer compute $Z=A[X;\mathbf 1]$ with $A\in\F^{N\times k}$ and
+$k\ge2$, where the layer's integer arithmetic embeds in $\F$ without wrap-around, as in
+Proposition~\ref{prop:amp}, and let $1\le d\le N$. Partition $[N]$ into $m=\lceil N/d\rceil$
+\emph{blocks} $\mathcal B_1,\dots,\mathcal B_m$ of at most $d$ rows, for instance consecutive ones.
+For a matrix $Y$ with $N$ rows, $Y_b$ denotes its rows in $\mathcal B_b$. The \emph{block commitment
+of locality $d$} encodes every row of $A$ with the Reed--Solomon code of Section~\ref{sec:commit}, at
+the same $n\ge k$ points, which gives the encoded blocks $\hat A_b$. For each block it builds a Merkle
+tree $T_b$ of its own over the $n$ columns $\hat A_{b,c}\in\F^{|\mathcal B_b|}$ of $\hat A_b$. When
+unopened rows must stay hidden, leaf $c$ of $T_b$ is $H(s_{b,c}\Vert\hat A_{b,c})$ with a fresh salt
+$s_{b,c}$ (Remark~\ref{rem:merkle}). $C_M$ holds the $m$ roots. For $d=N$ this is the commitment of
+Section~\ref{sec:commit}.
+
+\para{The block verifier.} $V_{\mathrm{blk}}$ knows the layer's input $X$ and receives its claims
+$Z$, and it rejects every claim with $|z|\ge2^{29}$ (Section~\ref{sec:intmodel}).
+(1)~After $Z$ is fixed, it draws a uniform $\chi\in\F^{N\times r}$.
+(2)~It receives $u_b\in\F^{r\times k}$ for every block, honestly $u_b=\chi_b^\T A_b$, so that
+$\sum_bu_b$ is the folded row $\chi^\T A$ of Section~\ref{sec:protocol}, and checks
+\begin{equation}
+  \chi^\T Z=\Big(\sum_{b\le m}u_b\Big)[X;\mathbf 1].
+  \label{eq:block-freivalds}
+\end{equation}
+(3)~It draws a uniform set $C\subseteq[n]$ of $t$ distinct positions and receives, for every block,
+the columns $\hat A_{b,c}$, $c\in C$, with a multiproof in $T_b$. It checks the multiproofs and
+\begin{equation}
+  \chi_b^\T\hat A_{b,c}=\enc(u_b)_c\qquad\text{for every }b\le m\text{ and }c\in C,
+  \label{eq:block-columns}
+\end{equation}
+where $\enc$ encodes each row of $u_b$.
+
+\noindent Under Fiat--Shamir the challenges are derived in the same order
+(Remark~\ref{rem:block-scope}). We write $u_{b,\rho}$ for row $\rho$ of $u_b$. As
+Proposition~\ref{prop:amp} does, we count one query per folded row $u_{b,\rho}$ and one per opened
+column.
+
+\begin{proposition}[block mixing]
+\label{prop:block}
+Assume that each tree $T_b$ binds the encoding $\hat A_b$ of $A_b$, for instance because $C_M$ is
+computed honestly, and let the admissible instances be the integer networks that meet the range
+bound of Section~\ref{sec:intmodel}.
+(i)~$V_{\mathrm{blk}}$ accepts the honest claims and messages of every admissible instance. Each
+folded row $u_{b,\rho}$ depends only on the rows in $\mathcal B_b$, and each opened column
+$\hat A_{b,c}$ with its authentication path in $T_b$ only on those rows and on salts. Hence
+$V_{\mathrm{blk}}\in\mathrm{Spot}_d(q)$ with $q=m(r+t)$, so $qd\le(r+t)(N+d-1)$, and $qd=(r+t)N$ if
+$d$ divides $N$.
+(ii)~Let the prover be arbitrary, and let $X$ and $Z\neq A[X;\mathbf 1]$ be fixed before $\chi$ is
+drawn. Then $V_{\mathrm{blk}}$ accepts with probability at most
+\[
+  p^{-r}+\prod_{i<t}\frac{k-1-i}{n-i}\;\le\;p^{-r}+\Big(\frac{k-1}{n}\Big)^{t},
+\]
+plus the probability that the prover finds a collision of the hash function. This is the bound of
+Proposition~\ref{prop:amp}, the case $d=N$, and it does not depend on $d$.
+(iii)~With $r=\lceil\beta/\log_2p\rceil$ and $t=\min(\lceil\beta/\log_2(n/(k-1))\rceil,k)$, the
+bound of~(ii) is at most $2^{1-\beta}$. If $n\ge2(k-1)$, then $r+t\le(1+1/\log_2p)\beta+2$.
+\end{proposition}
+
+\begin{proof}
+(i)~Let the claims and messages be honest. Then $\sum_bu_b=\chi^\T A$ and $Z=A[X;\mathbf 1]$, whose
+entries meet the range bound, so~\eqref{eq:block-freivalds} holds and no claim is rejected. Encoding
+is linear, so $\chi_b^\T\hat A_b=\enc(\chi_b^\T A_b)=\enc(u_b)$, and~\eqref{eq:block-columns} holds;
+honest multiproofs verify. The honest $u_{b,\rho}$ is a combination of the rows in $\mathcal B_b$.
+Every entry of $\hat A_{b,c}$ is the encoding of one such row at one point. A multiproof in $T_b$
+consists of hashes of other leaves of $T_b$, which are functions of columns of $\hat A_b$ and of
+salts. So every query has its support in $\mathcal B_b$, a set of at most $d$ rows, and for a prover
+message this is the support that Definition~\ref{def:spot} assigns to it. There are $mr$ folded rows
+and $mt$ opened columns, and $md=d\lceil N/d\rceil\le N+d-1$.
+
+(ii)~Let $D=Z-A[X;\mathbf 1]$; it is nonzero and fixed before $\chi$, and by the range check its
+nonzero entries stay nonzero in $\F$. Unless the prover finds a collision, every column that passes
+its multiproof is the committed one, that is, the column $\hat A_{b,c}$ of the true encoding. We
+assume this from now on. Let $W$ be the set of blocks $b$ with $u_b\neq\chi_b^\T A_b$. It is fixed
+once $\chi$ and the messages of step~(2) are, before $C$ is drawn.
+
+\emph{Case $W=\emptyset$.} Then $\sum_bu_b=\chi^\T A$, so~\eqref{eq:block-freivalds} reads
+$\chi^\T D=0$. Pick $(i,j)$ with $D_{ij}\neq0$. For each column $\chi_\rho$ of $\chi$, entry $j$ of
+$\chi_\rho^\T D$ is $\chi_{i\rho}D_{ij}+c_\rho$, where $c_\rho$ does not depend on $\chi_{i\rho}$. It
+vanishes for exactly one of the $p$ values of $\chi_{i\rho}$, and the $r$ columns are independent.
+Hence $\Pr[\text{accept},\,W=\emptyset]\le\Pr[\chi^\T D=0]\le p^{-r}$.
+
+\emph{Case $W\neq\emptyset$.} Fix $\chi$ and the messages of step~(2). Let $b$ be the least element
+of $W$, and let $\rho$ be a row with $u_{b,\rho}\neq(\chi_b^\T A_b)_\rho$. By linearity, row $\rho$ of
+$\chi_b^\T\hat A_b$ is $\enc((\chi_b^\T A_b)_\rho)$. It and $\enc(u_{b,\rho})$ evaluate two distinct
+polynomials of degree less than $k$ at $n$ distinct points. They therefore agree on a set $G$ of at
+most $k-1$ positions, which is fixed before $C$ is drawn. Equation~\eqref{eq:block-columns} for block
+$b$, row $\rho$ and position $c$ holds only if $c\in G$, so acceptance requires $C\subseteq G$. This
+has probability $\binom{|G|}{t}/\binom nt\le\prod_{i<t}\frac{k-1-i}{n-i}$, which is $0$ for $t\ge k$,
+and each factor is at most $(k-1)/n$ because $n\ge k-1$. Averaging over $\chi$ and the messages
+bounds $\Pr[\text{accept},\,W\neq\emptyset]$ by the same product.
+
+Adding the two cases proves~(ii). The argument uses only one block of $W$, which is why $m$ does not
+appear, and it holds unchanged if each tree draws its own positions. For $d=N$ it is the proof of
+Proposition~\ref{prop:amp}.
+
+(iii)~We have $r\log_2p\ge\beta$, so $p^{-r}\le2^{-\beta}$. If
+$t=\lceil\beta/\log_2(n/(k-1))\rceil\le k$, then $t\log_2(n/(k-1))\ge\beta$ and the product is at most
+$((k-1)/n)^t\le2^{-\beta}$; otherwise $t=k$ and the product vanishes. In both cases $t\le k\le n$, so
+the $t$ distinct positions exist. If $n\ge2(k-1)$, then $\log_2(n/(k-1))\ge1$, so $t\le\beta+1$, and
+$r\le\beta/\log_2p+1$.
+\end{proof}
+
+\begin{lemma}[an integer hard instance]
+\label{lem:worst-int}
+Let $2\le N<2^{29}/129$ (about $4.16\cdot10^6$) and $0\le c<2^{15}$. In the network of
+Proposition~\ref{prop:worst}, give hidden row $i$ the weight $1$ on input $\sigma(i)$, independent
+uniform int8 weights on the $c$ dead input coordinates and the bias $0$; give $g$ the weight $1$ on
+every hidden neuron and the integer bias $-(N-1)$; and replace the logits $(1/2,g)$ by $(1,2g)$, the
+first a row with zero weights and bias $1$. Let every requantisation have the multiplier $2^{30}$,
+which maps every integer $z$ to $\mathrm{clamp}(z,-127,127)$, and let the activation be the ReLU
+table. Then the network is an integer network of Section~\ref{sec:intmodel} with int8 weights and
+integer biases; it meets the range bound, since $128(1+128c)<2^{29}$ for the hidden rows and
+$128N+(N-1)<129N<2^{29}$ for $g$; on natural inputs every value lies in $\{0,1\}$ before the logits,
+so the clamps never act on them; the logits $(1,2g)$ select the same class as $(1/2,g)$; and the
+conclusion of Proposition~\ref{prop:worst} holds unchanged, with the same forgery, explanation and
+reference oracle.
+\end{lemma}
+
+\begin{proof}
+On a natural input every dead coordinate is $0$, so hidden neuron $i$ has the pre-activation
+$x_{\sigma(i)}\in\{0,1\}$ and the value $x_{\sigma(i)}$. The pre-activation of $g$ is
+$\sum_ih_i-(N-1)\in[-(N-1),1]$; after the clamp to $[-127,1]$ and the ReLU table, $g$ is the value of
+Proposition~\ref{prop:worst}. The second logit $2g\in\{0,2\}$ exceeds the first exactly when $g=1$.
+The forged value $h_J=1$ and the explaining row (weight $1$ on input $j\neq\zeta$ and fresh int8
+dead-input weights) are of the same integer form, so the forgery is explainable within the integer
+family, and the view and the oracle $R_p$ are those of the proof of Proposition~\ref{prop:worst}. The
+range bounds are arithmetic: $\sum_c|w_{ic}|\le1+128c$ (an int8 weight is at least $-128$), $|b_i|=0$ for a hidden row, and
+$\sum_c|w_{gc}|=N$, $|b_g|=N-1$ for $g$.
+\end{proof}
+
+\begin{corollary}[the threshold at every locality]
+\label{cor:block}
+Let $1\le d\le N$ and $\beta=\lambda+\log_2(2L)$. Consider an integer network without embedding
+lookups, with $L$ weight operations, that meets the range bound of Section~\ref{sec:intmodel}, and an
+honest $C_M$. Run $V_{\mathrm{blk}}$ on each operation $\ell$, with $r$ and
+$t_\ell=\min(\lceil\beta/\log_2(n_\ell/(k_\ell-1))\rceil,k_\ell)$ as in
+Proposition~\ref{prop:block}(iii) and $n_\ell\ge2(k_\ell-1)$; the verifier recomputes the operations
+without weights.
+(a)~The verifier accepts an output $y\neq M(x)$ with probability at most $2^{-\lambda}$, plus that of
+a hash collision. It makes $q_\ell=(r+t_\ell)\lceil N_\ell/d\rceil$ queries of locality $d$ at
+operation $\ell$.
+(b)~Fix a target layer of width $N$, row length $k$ and $t$ columns. In the ideal-oracle model,
+every verifier that reads this layer through a commitment of locality $d$ that reveals nothing about
+unopened rows, and has soundness error at most $\varepsilon$ on every network of the integer family
+of Lemma~\ref{lem:worst-int}, satisfies $qd\ge(1-\varepsilon)N$. On these networks the verifier
+of~(a) has error $2^{-\lambda}$ with $qd\le(r+t)(N+d-1)$. For every $d$ the two differ by less than a
+factor $2(r+t)/(1-2^{-\lambda})$, which is $O(\lambda+\log L)$, and by at most
+$(r+t)/(1-2^{-\lambda})$ if $d$ divides $N$.
+\end{corollary}
+
+\begin{proof}
+(a)~If $y\neq M(x)$, some claim is wrong, since the verifier recomputes every operation without
+weights. All claims are fixed before any $\chi$ is drawn. The first wrong weight operation has a
+correct input, which the verifier computed from $x$ and correct claims. By
+Proposition~\ref{prop:block}(ii) and~(iii), that operation passes with probability at most
+$2^{1-\beta}=2^{-\lambda}/L$. A union bound over the $L$ operations, as in Theorem~\ref{thm:sound},
+gives $2^{-\lambda}$. The union bound is not needed in the interactive protocol, where the first
+wrong operation is fixed by the claims, but we keep it, as Section~\ref{sec:fs} does. The counts are
+those of Proposition~\ref{prop:block}(i).
+
+(b)~The lower bound is Theorem~\ref{thm:dich}(a), applied through Proposition~\ref{prop:worst} to the
+integer family of Lemma~\ref{lem:worst-int}, and it covers the block commitment: in the ideal-oracle
+model that commitment reveals nothing beyond its answers. (A Merkle realisation with salted leaves
+hides the blocks it does not open, and by Proposition~\ref{prop:block}(i) its authentication paths
+stay inside their block; outside the ideal-oracle model, a term for guessing salts would have to be
+added.) By Lemma~\ref{lem:worst-int} these networks meet the range bound, so~(a) applies to them. The
+ratio is $(r+t)(N+d-1)/((1-2^{-\lambda})N)<2(r+t)/(1-2^{-\lambda})$, and
+$r+t\le(1+1/\log_2p)\beta+2=O(\lambda+\log L)$ by Proposition~\ref{prop:block}(iii).
+\end{proof}
+
+\noindent The factor $O(\lambda+\log L)$ in~(b) reflects our counting convention, one query per folded
+row and per opened column, not the problem. Opening whole blocks reaches a ratio below $(N+d-1)/N$
+(Remark~\ref{rem:block-count}(i)), and if each block's $r$ folded rows and its $t$ columns are counted
+as one query each, $V_{\mathrm{blk}}$ lies in $\mathrm{Spot}_d(2m)$ and the ratio is below
+$4/(1-2^{-\lambda})$.
+
+\begin{remark}[what the count measures]
+\label{rem:block-count}
+Definition~\ref{def:spot} bounds the support of an answer, not its size. The threshold of
+Theorem~\ref{thm:dich}(a) therefore counts touched rows.
+
+(i)~\emph{Opening.} Suppose a query on block $b$ is answered with the block's $d$ rows, from a binding
+commitment of locality $d$ such as one salted hash per block. A verifier that opens $q\le m$ distinct
+uniform blocks and recomputes their claims is complete. In the ideal-oracle model it catches every
+forgery of the layer with probability at least $q/m$, which is $qd/N$ if $d$ divides $N$. So the bound
+$1-qd/N$ of Theorem~\ref{thm:dich}(a) is attained whenever $d$ divides $N$, as Theorem~\ref{thm:guess}
+states for $d=1$. With $q=m$ the error is $0$ and $qd<N+d$ for every $d$. This is the
+$\lceil N/d\rceil$-query algorithm for $\mathrm{OR}_N$ with $d$-row queries, and it downloads the
+layer.
+
+(ii)~\emph{Bundling.} Sent as one message, the $r$ folded rows of a block are one query, and the
+block's $t$ columns, opened with one multiproof, are another. Under Definition~\ref{def:spot} as
+written, $V_{\mathrm{blk}}$ could thus be counted as making $2m$ queries. A single fold
+$\chi\in\mathbb K_s^N$ over an extension field $\mathbb K_s\supseteq\F$ of size at least $2^\beta$,
+such as that of Fact~\ref{fact:ext}, makes $m(1+t)$ queries under our convention. The proof of
+Proposition~\ref{prop:block} goes through over $\mathbb K_s$, with $|\mathbb K_s|^{-1}$ in place of
+$p^{-r}$, since $D_{ij}\neq0$ is invertible in $\mathbb K_s$ and the Reed--Solomon code over
+$\mathbb K_s$ with the same points has the same distance. The factor $r+t$ in
+Proposition~\ref{prop:block}, as in Proposition~\ref{prop:amp}, comes from counting one query per
+folded row and one per column.
+
+(iii)~\emph{Mixing changes the size of the answers.} Per layer, $V_{\mathrm{blk}}$ receives $rkm$
+field elements of folded rows, $tN$ of columns, and $m$ multiproofs of at most $t\lceil\log_2n\rceil$
+hashes each, plus $mt$ salts in the salted variant. For $d$ dividing $N$, this is $rk/d+t$ field
+elements and at most $t\lceil\log_2n\rceil/d$ hashes per touched row, against the $k$ weights of an
+opened row. Take $\varphi$-byte field elements and $\omega$-byte weights. Mixing sends fewer bytes
+than opening only when $\varphi(rk/d+t)$ is below about $\omega k$. This needs $d$ above about
+$\varphi r/\omega$: for 31-bit field elements and int8 weights about $4r$, that is about 20 rows at
+$r=5$ and about 28 at $r=7$ under Fiat--Shamir. It also needs rows longer than about $\varphi
+t/\omega$, about $4t$ entries, or about 280 at $t\approx70$. At $d=1$, mixing sends more than the rows.
+The $t$ positions are shared, so the opened entries are those of $t$ full columns of $\hat A$, as for
+$d=N$, cut into $m$ pieces. Locality $d$ adds the $(m-1)rk$ field elements of the extra folded rows
+and $m-1$ multiproofs. These estimates ignore the bias column and are not measured.
+
+(iv)~\emph{The ideal-oracle model.} There, a checked prover message is answered honestly, so the
+error of $V_{\mathrm{blk}}$ is at most $p^{-r}$, and its column queries are redundant: the $mr$
+folded rows alone, or $m$ queries with one fold over $\mathbb K_s$, already reach that error. This is
+a second reason why the factor $O(\lambda+\log L)$ reflects the counting convention. The column
+checks are what make a real prover's folded rows behave as honest answers.
+\end{remark}
+
+\begin{remark}[scope of Proposition~\ref{prop:block}]
+\label{rem:block-scope}
+(i)~\emph{Fiat--Shamir.} The two cases of the proof are the two rounds of the round-by-round argument
+of Section~\ref{sec:fs}. Call a state doomed if $Z$ is wrong; after step~(1), if $\chi^\T D\neq0$;
+and after step~(2), if $W\neq\emptyset$ or~\eqref{eq:block-freivalds} fails. Step~(1) leaves a doomed
+state with probability at most $p^{-r}$, and no message of step~(2) leaves one. Step~(3) leaves one
+with probability at most the column term. The Fiat--Shamir bound of Section~\ref{sec:fs} therefore
+applies with the error of Proposition~\ref{prop:block}(ii).
+
+(ii)~\emph{Untrusted commitments.} With a provider-supplied $C_M$, Theorem~\ref{thm:untrusted}
+applies with each tree $T_b$ as a member of $\mathcal J$. Its setup error $\varepsilon_0$ then sums
+over the $m_\ell$ trees of each operation $\ell$, so $\beta_0$ grows by
+$\log_2(\sum_\ell m_\ell/|\mathcal J|)\le\log_2\max_\ell m_\ell$. Online,
+Proposition~\ref{prop:block} holds for the matrix $A^*$ of Theorem~\ref{thm:untrusted}, with $k-1$
+replaced by $k-1+\max_be_b$ for the radius $e_b$ of block $b$, since the corrupted columns of a block
+join $G$ (Appendix~\ref{app:untrusted}). We state Corollary~\ref{cor:block} for an honest $C_M$, as
+Theorem~\ref{thm:dich} is stated. A public setup proof opens columns of every block, and we do not
+claim the lower bound in its presence.
+
+(iii)~\emph{Other codes.} For any row-wise linear code of relative distance $\delta$, the column term
+becomes $(1-\delta)^t$, as in Proposition~\ref{prop:amp}.
+
+(iv)~\emph{Spread of the queries.} Every block needs its $r$ folded rows and $t$ columns, since the
+prover chooses the blocks it lies about. If block $b$ receives $t_b$ columns, the proof gives
+$p^{-r}+\max_b\prod_{i<t_b}\frac{k-1-i}{n-i}$, which is no bound at all if some $t_b=0$: the prover
+then claims $Z=A'[X;\mathbf 1]$ for an $A'$ that differs from $A$ only in block $b$ and sends
+$u_b=\chi_b^\T A'_b$, which passes with probability~1. A block that receives no check can thus be
+lied about with probability~1, so checking a set $S$ of blocks, drawn independently of the claims,
+leaves error at least $1-|S|/m$ against a lie in a uniformly random block.
+
+(v)~\emph{Not covered.} The transposed layout of Section~\ref{sec:commit}.
+\end{remark}
 
 \begin{remark}[commitments]
 \label{rem:merkle}

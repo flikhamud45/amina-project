@@ -6,6 +6,8 @@
 % version only).
 % Labels defined: sec:gen, sec:gen-prefill, sec:gen-sampling, eq:gumbel-table.
 % Labels used: sec:defence, sec:fs, thm:sound, sec:v1 (defence.tex, v1.tex).
+% H5 pass (2026-10-11, REVIEW2.md N11): the aggregate truncation bound (V-1) e^{-14.25} added
+%   (0.021, 0.033 and 0.098 for V = 32,000, 50,272 and 151,936); E2b's measured distance stays a todo.
 % =====================================================================================
 
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -49,7 +51,7 @@ claims of the new positions. With a 64-token prompt and random int8 weights (int
 guarantees~\cite{zkagent}. Times exclude decoding, after which the prover computes the trace of
 $s$. A tampered query was always rejected. OPT-1.3B and $G=64$ are in the extended
 version~\cite{fullversion}.
-\todo{L40S: Llama-2-7B, Qwen3-4B, $P=512$, $G\in\{64,256\}$, greedy and sampled, tamper cells}
+\todo{F6: Llama-2-7B, Qwen3-4B, $P=512$, $G\in\{64,256\}$, greedy and sampled, tamper cells}
 
 \subsection{Sampled Generation}
 \label{sec:gen-sampling}
@@ -83,6 +85,9 @@ generated seed (out of scope).
 
 \para{Distribution.} The sampler approximates sampling at temperature $\tau$ with uniform
 variables quantised to steps of $2^{-16}$. Since $\Gamma[i]/2^{16}$ lies in about
-$[-2.47,11.78]$, a token whose temperature-scaled logit is more than about 14.3 below the largest
-is never drawn; exact sampling draws it with probability below $7\cdot10^{-7}$. \todo{TV distance
-to softmax sampling on real logits} Nucleus (top-$p$) sampling is not implemented.
+$[-2.47,11.78]$, a token whose temperature-scaled logit is more than about 14.25 below the largest
+is never drawn; exact sampling draws it with probability below $e^{-14.25}<6.5\cdot10^{-7}$. Over
+a vocabulary of $V$ tokens the excluded probability is thus below $(V-1)e^{-14.25}$: about 0.02 for Llama-2
+(32{,}000 tokens), 0.03 for GPT-2 and OPT (about 50{,}000) and 0.1 for Qwen3 (151{,}936)
+\todo{E2b: total-variation distance on real logits}. Nucleus (top-$p$) sampling is not
+implemented.

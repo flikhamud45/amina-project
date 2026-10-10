@@ -17,8 +17,15 @@
 %   stacking in the transposed layout -> "Commitment Plans"; rehashed/re-encoded claims covered by
 %   the factor Q -> "The Fiat--Shamir Transcript"; FRI/BaseFold and the weight leak -> "Scope".
 % Labels defined: tab:setup (moved here from defence.tex), fig:protocol. Labels used: sec:intmodel, sec:fs,
-%   eq:split, thm:untrusted (defence.tex); app:semantics, app:sound, app:untrusted
+%   (defence.tex); eq:split, thm:untrusted, rem:forced, app:semantics, app:sound, app:untrusted
 %   (appendix_defence.tex). New BibTeX key: fri2018 (also cited in defence.tex).
+% H5 pass (2026-10-11): TH-c Block 2 ("How much a different test could save") inserted after
+%   Table tab:setup; TH-c Block 5(c) replaces the last sentence of "Scope"; the Merkle--Damgard
+%   remark of the body's former paragraph "A sponge transcript" (cut C6) added to "The Fiat--Shamir
+%   Transcript".
+% H5 review (2026-10-11): Block 2's "lower the error per matrix from 2^-beta_0 to 2^-128" said the
+%   opposite of what it does (2^-128 > 2^-beta_0); now "raise". All Block 2 numbers re-derived with
+%   setup_bytes.py's formulas (code read-only) and confirmed.
 % =====================================================================================
 
 \providecommand{\F}{\mathbb{F}_p}
@@ -60,12 +67,27 @@ layouts. The five weight matrices of LeNet-5, for example, share one tree of $2^
 open 15 columns, instead of 66 in each of five trees. In the transposed layout, operations that
 read the same input, such as the query, key and value projections, are stacked into one matrix.
 
+% Moved from the body's paragraphs "Commitment plans" and "(S3): the column check" by the H5 pass
+% (cut C5 of REVIEW2.md); unchanged.
+\para{The plan and the transposed layout.} Matrices whose codewords have equal length can share a
+tree and a multiproof. A public rule picks the plan (trees and codeword lengths) that sends the
+fewest bytes per query within a cap on the setup size; the plan is part of $C_M$. A layer with many
+rows, such as GPT-2's output layer ($N=50{,}257$), encodes the rows of $A_\ell^\T$ instead (the
+\emph{transposed layout}). An embedding table without a bias is a Merkle tree over its
+rows~\cite{commitllm2026}. For a transposed matrix the verifier combines positions with
+$\chi'\in\F^{T\times r}$ and checks $\enc(Z\chi')$ against the opened columns combined by
+$[X;\mathbf 1]\chi'$ (Appendix~\ref{app:sound}). Opened rows of a lookup table are checked against
+its root.
+
 \subsection{The Fiat--Shamir Transcript}
 
 Interactively, each challenge is expanded with SHAKE-256 from a fresh 256-bit key that the
 verifier draws. Under Fiat--Shamir the keys are derived from the transcript instead. The
 transcript is a SHAKE-256 sponge with a protocol-specific domain string, and messages are absorbed
-with labels and length prefixes, so its encoding is injective. A challenge key is 32 bytes
+with labels and length prefixes, so its encoding is injective and each challenge is a random-oracle
+output on a prefix-free input, which a Merkle--Damg\aa{}rd hash would give only with a separate
+argument~\cite{coron2005md}; the Merkle trees keep SHA-256 and need only its collision resistance.
+A challenge key is 32 bytes
 squeezed from a copy of the sponge after it absorbs the challenge's label. Rejection sampling
 expands it into unbiased field elements and distinct column indices. Two models that differ in one
 requantisation multiplier have different graph digests and thus produce different challenges. A
@@ -119,14 +141,36 @@ verifier time for GPT-2 and the 7B models}
   \end{tabular}
 \end{table}
 
+% TH-c, Block 2 (drafts/th_c_setup_forced.tex), placed by the H5 pass. Sources: totals from
+% docs/improvements/D4_D5_untrusted_commitment.md, Sec. 5; breakdown and floors from the byte model of
+% code/experiments/6_improvements/setup_bytes.py, recomputed by TH-c on 2026-10-10 (see the draft's header).
+\para{How much a different test could save.} For Llama-2-7B at $\lambda=128$, with the radii behind
+Table~\ref{tab:setup}, the setup proof is 2{,}833.5\,MB at $a=100$. Of this, 2{,}784.0\,MB (98.3\%)
+are opened columns, 45.2\,MB (1.6\%) are the combined rows $\psi_jA^*_j$, and at most 4.3\,MB
+(0.15\%) are authentication paths; the byte model counts $\log_2n_j$ hashes per opened column. At
+$a=1{,}000$ it is 11{,}272.7\,MB: 11{,}210.2\,MB (99.4\%) of columns, the same 45.2\,MB (0.4\%) of
+combined rows and at most 17.3\,MB of paths. By Remark~\ref{rem:forced}, a FRI-, STIR-, WHIR- or
+BaseFold-style test on this commitment, at the same radii and error per matrix, therefore opens at
+least the same columns. It could replace the combined rows with a shorter proof that $\psi_jE_j$ is
+close to the code. That saves at most 1.6\% at $a=100$ and 0.4\% at $a=1{,}000$. Everything other
+than the columns is 1.7\% and 0.6\% of the setup proof, and at most 3.9\% and 2.3\% for the four
+models of Table~\ref{tab:setup}. Now raise the error per matrix from $2^{-\beta_0}$ to $2^{-128}$,
+the most that any test of error $2^{-128}$ can allow. The columns alone at the same radii are then
+1{,}788.7\,MB at $a=100$ and 7{,}284.7\,MB at $a=1{,}000$. These are 63.1\% and 64.6\% of our setup
+proof, and 62.0--64.6\% for the four models. Within the scope of the remark, the columns shrink
+below that only with a larger radius, which Theorem~\ref{thm:untrusted} charges to every query
+through $k_j+e_j$. For these trees, $\beta_0/{-\log_2(1-e_j/n_j)}$ exceeds $t^0_j$ by 0.9--1.7\% at
+$a=100$, and by 3.7--6.9\% at $a=1{,}000$, where $t^0_j$ reaches 12\% of $n_j$.
+
 \para{Scope.} Neither the setup proof nor mode $\sC$ hides the weights: the verifier knows $X_\ell$
 and $Z_\ell$, so the claims of about $\lceil k_\ell/T\rceil$ queries reveal $A_\ell$. Mode $\sC$
 thus suits weights that the client may see. When the int8 model can be recomputed from the public
 checkpoint and recipe, recomputing $C_M$ also settles which model is committed, and it is cheaper
 than a setup proof, which for GPT-2 is larger than the int8 weights. The setup proof serves
-clients that cannot have $C_M$ recomputed. It opens whole columns; a batched proximity proof over
-the rows in the style of FRI~\cite{fri2018} or BaseFold~\cite{basefold} could replace them, but we
-have not evaluated one.
+clients that cannot have $C_M$ recomputed. Its opened columns are forced for column-hash
+commitments (Remark~\ref{rem:forced}): a batched proximity proof over the rows in the style of
+FRI~\cite{fri2018} or BaseFold~\cite{basefold} would still open them, and could replace only the
+combined rows, 1.6\% of the setup proof for Llama-2-7B at $a=100$.
 
 % Moved from defence.tex (Sec. 4.3) for space.
 \subsection{One Query in Mode $\sC$}

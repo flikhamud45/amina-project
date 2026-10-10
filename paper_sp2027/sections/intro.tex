@@ -7,6 +7,14 @@
 % Labels used: sec:attack, sec:sampling, thm:guess, thm:dich, sec:sok, tab:sok, sec:defence,
 % sec:setup-proof, sec:gen, sec:v1, sec:results, tab:eval-compare, sec:discussion.
 % New BibTeX keys (reported to the integrator): gpucc, deepbrake, reedweave.
+% H5 pass (2026-10-11, REVIEW2.md): cut C1 (the "A lower bound" paragraph without the restated
+%   verifier model and the PCPP sentence), C2 (one clause per extension), C3 (the folklore/PCPP point
+%   once, in Related Work), P1 (extension 1 and the contributions), TH-a (Part B1 with the
+%   O(lambda + log L) fix; B2 as "tight at every locality"), N7 (intro's "Such tests could shorten
+%   our setup proof" replaced by a pointer to Sec. sec:setup-proof, which carries TH-c's remark),
+%   N13 (interactive/extrapolated label on the 4.6x); todos renamed to their items (F6, A7, RX).
+% H5 review (2026-10-11): Related Work, "Its tight case" -> "The calculation's tight case" (the
+%   inserted thm:guess sentence had made "Its" refer to the trace).
 % =====================================================================================
 
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
@@ -63,24 +71,21 @@ for binary classifiers. More paths do not help at a useful cost: detection with 
 $1-2^{-40}$ on Llama-2-7B takes about 305{,}000 paths.
 
 \para{A lower bound for spot-checking.} After honest recomputation, the forged trace is the honest
-trace of a model that differs from the committed one in one weight row. Consider a verifier that
-reads the weights through a commitment whose queried symbols each depend on at most $d$ rows,
-chooses its queries from the whole claimed trace, and treats prover messages such as folded rows as
-further queries (verifiers assisted by a succinct argument are excluded). If the other rows carry no
-information about the edit's location, a verifier with $q$ queries per layer rejects the forgery at
-most as often as it could guess the edited site in $qd$ tries (Theorem~\ref{thm:guess}). For every
-such verifier, some ReLU network with a hidden layer of width $N$ admits a single-neuron forgery,
-with every value in its natural range, that passes with probability at least $1-qd/N$. Conversely,
-symbols that mix all rows, such as Reed--Solomon columns, reach $2^{-\lambda}$ with $O(\lambda)$
-queries per layer (Theorem~\ref{thm:dich}); intermediate locality is open. This formalises a
-folklore calculation~\cite{juels2007por,ergun2000spotcheckers,bghsv2006robust} for adaptive,
-value-aware verifiers. Unlike the verifiers of PCPs of proximity and holographic proofs, ours reads
-the whole trace, which does not help: the model, not the trace, must be encoded. Of nine published
-schemes for verifying inference (Table~\ref{tab:sok}), most meet the probabilistic guarantees they state; we
-do not call them broken. Apart from the binary-classifier claim, the only gap is in
-TensorCommitments~\cite{tensorcommitments}: its stated goal of negligible soundness is not achieved
-by its layer-selection rule, which depends only on the weights. We disclosed these findings to the
-authors \todo{only once the notices of 15--19 Oct are sent; else delete}.
+trace of a model that differs from the committed one in one weight row. If the other rows carry no
+information about the edit's location, a verifier with $q$ queries per layer to a commitment whose
+symbols each depend on at most $d$ rows rejects the forgery at most as often as it could guess the
+edited site in $qd$ tries, even if it is adaptive and reads the whole trace
+(Theorem~\ref{thm:guess}). For every such verifier, some ReLU network with a hidden layer of width
+$N$ admits a single-neuron forgery, with every value in its natural range, that passes with
+probability at least $1-qd/N$. Conversely, symbols that mix all rows, such as Reed--Solomon
+columns, reach $2^{-\lambda}$ with $O(\lambda)$ queries per layer (Theorem~\ref{thm:dich}), and
+symbols that mix blocks of $d$ rows with $O(\lambda+\log L)$ queries per block for $L$ layers
+(Section~\ref{sec:dichotomy}). Of
+nine published schemes for verifying inference (Table~\ref{tab:sok}), most meet the probabilistic
+guarantees they state; we do not call them broken. Apart from the binary-classifier claim, the only
+gap is in TensorCommitments~\cite{tensorcommitments}, whose stated goal of negligible soundness is
+not achieved by its weight-only layer selection. We disclosed these findings to the authors
+\todo{only once the notices of 15--19 Oct are sent; else delete}.
 
 \para{A defence that checks everything.} Since no verifier beats uniform sampling in the worst case,
 ours checks every weight operation. The provider runs the exact int8 model, bit-identical on its GPU
@@ -93,27 +98,23 @@ Brakedown~\cite{ligero,brakedown}, applied to every matrix product of the model.
 anywhere is caught except with probability $2^{-\lambda}$, using only a hash function and a linear
 code: no SNARK, trusted hardware or trusted setup.
 
-We add four extensions. First, a committer can bind a non-codeword matrix that answers for two
-models, which is why such commitments have a testing phase. When the client cannot recompute the
-commitment, we amortise this phase into a one-time setup proof (Section~\ref{sec:setup-proof}).
-Second, the Fiat--Shamir transcript binds every constant of the computation, avoiding the weak
-Fiat--Shamir pattern~\cite{bernhard2012pitfalls,dao2023weakfs}. Third, a generated response is
-proved as one prefill, and each token is checked as the greedy choice or as that of an exact integer
-sampler keyed by the client's seed, at no extra soundness cost (Section~\ref{sec:gen}). Fourth, in
-V1 the provider sends the int8 value that the next operation reads instead of each 32-bit result,
-and a logUp-GKR~\cite{haboeck2022logup,papini2023logupgkr} shows that each hidden result lies in
-that value's requantisation window. These conditions are linear in the committed weights, so V1
-reuses the column check and adds no commitment (Section~\ref{sec:v1}).
+We add four extensions: a one-time setup proof that amortises the commitment's testing phase when
+the client cannot recompute $C_M$ (Section~\ref{sec:setup-proof}); a Fiat--Shamir transcript that
+binds every constant of the computation (Section~\ref{sec:fs}); generated responses proved as one
+prefill, each token checked as the greedy choice or that of an exact integer sampler keyed by the
+client's seed (Section~\ref{sec:gen}); and V1, which sends int8 values instead of 32-bit results
+and reuses the column check (Section~\ref{sec:v1}).
 
 \para{Costs.} Without V1, the prover's work beyond the forward pass does not grow with the prompt.
 On an L40S it proves a 2{,}048-token Llama-2-13B prompt 46$\times$ faster than zkLLM on an A100,
-although zkLLM also hides the weights and proves the operations without weights \todo{L40S: final
-factor; overhead over unverified inference}. The main cost is the proof, which carries every weight
+although zkLLM also hides the weights and proves the operations without weights \todo{F6: final
+factor; A7: overhead over unverified inference}. The main cost is the proof, which carries every weight
 operation's result: 6.6\,GB for a 2{,}048-token Llama-2-7B prompt, about the size of its int8
 weights. V1 makes it 2.0--2.3$\times$ smaller with random weights and 1.7--1.8$\times$ on the real
 OPT-125M at 512 tokens, but slows the prover. With native exact kernels, a CPU client in
 mode~$\Kpre$ verifies a 2{,}048-token Llama-2-7B prompt 4.6$\times$ faster than re-executing it in
-fp32 on the same CPU; on a GPU, re-execution is faster \todo{RX; FS; full models}. The protocol is not zero-knowledge, so it targets open-weight models, as do
+fp32 on the same CPU (interactive, extrapolated from 1--3 blocks); on a GPU, re-execution is
+faster \todo{RX, V-LONG-a: strongest exact baseline; Fiat--Shamir; full models}. The protocol is not zero-knowledge, so it targets open-weight models, as do
 CommitLLM~\cite{commitllm2026} and Gupta et al.~\cite{gupta2026private}.
 Section~\ref{sec:discussion} compares a client's options.
 
@@ -121,10 +122,10 @@ Section~\ref{sec:discussion} compares a client's options.
 \begin{itemize}
   \item An attack on spot-checking proofs of inference, a single-site edit followed by honest
   recomputation, measured on image classifiers and OPT-6.7B (Section~\ref{sec:attack}).
-  \item A lower bound for spot-checking verifiers with a matching upper bound at full locality,
-  applied to nine published schemes (Sections~\ref{sec:sampling}--\ref{sec:sok}).
+  \item A lower bound for spot-checking verifiers, tight at every locality, applied to nine
+  published schemes (Sections~\ref{sec:sampling}--\ref{sec:sok}).
   \item A fully sound Freivalds-based protocol that needs only a hash function and a linear code,
-  with untrusted commitments, binding Fiat--Shamir, generation and V1
+  with binding Fiat--Shamir, generation, V1 and a setup proof for untrusted commitments
   (Sections~\ref{sec:defence}--\ref{sec:gen}).
   \item An evaluation on language models up to 13B parameters, against re-execution and published
   systems (Section~\ref{sec:results}) \todo{L40S}.
@@ -152,7 +153,10 @@ disputes it, so they need an honest party that re-runs every query. The calculat
 edit-then-recompute attack is classical. It underlies proofs of retrievability and data
 possession~\cite{juels2007por,ateniese2007pdp}, spot-checkers~\cite{ergun2000spotcheckers} and PCPs
 of proximity, which certify only closeness, whereas holographic proofs encode their
-input~\cite{bghsv2006robust,bfls1991,chiesa2020fractal}. Its tight case is the search for a hidden
+input~\cite{bghsv2006robust,bfls1991,chiesa2020fractal}. Theorem~\ref{thm:guess} formalises this
+folklore calculation for adaptive, value-aware verifiers that, unlike those of PCPs of proximity,
+read the whole trace: honest recomputation moves the change into the weights, so the model, not
+the trace, must be encoded. The calculation's tight case is the search for a hidden
 object~\cite{chew1967,kadane1971}.
 
 \para{Trusted hardware.} Slalom~\cite{slalom} checks the linear layers of a GPU computation from an
@@ -172,8 +176,8 @@ weights, at 12--14\% serving overhead, and audits attention without verifying it
 checks a matrix product against a commitment with Freivalds' check and Reed--Solomon proximity
 testing inside a Groth16 SNARK. DeepBrake~\cite{deepbrake} merges the testing and evaluation phases
 of a row-wise Reed--Solomon commitment into one proximity test for points fixed in advance;
-ReedWeave~\cite{reedweave} and BaseFold~\cite{basefold} fold codewords for faster openings. Such
-tests could shorten our setup proof.
+ReedWeave~\cite{reedweave} and BaseFold~\cite{basefold} fold codewords for faster openings;
+Section~\ref{sec:setup-proof} bounds what such tests can save on our commitment.
 
 \para{Where we fit.} We keep the client of Anchuri et al., which holds only a weight commitment, and
 replace sampling, which needs $(1-\varepsilon)N$ paths per layer for soundness $1-\varepsilon$, with

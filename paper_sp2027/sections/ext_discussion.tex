@@ -19,6 +19,9 @@
 %   does not reference them). Labels used (defined in the body or the full appendices):
 %   tab:eval-llm, tab:eval-v1, tab:eval-reexec, tab:eval-compare, tab:options, tab:sok,
 %   sec:eval-reexec, sec:setup-proof, sec:v1, sec:gen-sampling, sec:quality, rem:scope.
+% H5 review (2026-10-11): "The attack and the theorem" no longer calls the in-range LLM attack
+%   pending (OPT-1.3B is in the body, G3_inrange_attack.md); larger models keep \todo{G3.5-L}.
+%   Also uses sec:break.
 % =====================================================================================
 
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
@@ -147,9 +150,10 @@ random ensembles with independent rows and on a constructed worst-case network, 
 network, whose rows are correlated. On trained networks we report the detection of the best attacks
 we found, which bounds each sampler's worst-case detection from above. We do not claim that the
 worst-case instance embeds in a transformer, since the LayerNorm before the MLP prevents feeding it
-the required patterns (Remark~\ref{rem:scope}). The natural ranges in our range-respecting attacks
-were computed on test queries that include the attacked ones, and the adaptive game against
+the required patterns (Remark~\ref{rem:scope}). The natural ranges in our range-respecting MNIST
+attacks were computed on test queries that include the attacked ones, and the adaptive game against
 value-aware samplers with held-out ranges is not yet run \todo{G3: adaptive game, held-out
-ranges}. Our OPT-6.7B attack writes values outside the neurons' natural ranges; an in-range attack
-on an LLM is pending \todo{G3.5: in-range LLM attack}. We deliberately do not develop a method for
+ranges}. Our OPT-6.7B attack writes values outside the neurons' natural ranges; on OPT-1.3B, edits
+that keep every value inside ranges calibrated on held-out text succeed (Section~\ref{sec:break}),
+and the in-range attack on larger models is pending \todo{G3.5-L: OPT-6.7B, Qwen3-4B}. We deliberately do not develop a method for
 steering the responses of instruction-tuned assistants.

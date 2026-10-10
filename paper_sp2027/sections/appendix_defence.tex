@@ -1,6 +1,9 @@
 % =====================================================================================
 % sections/appendix_defence.tex: integer semantics and proofs for the defence (sections/defence.tex)
-% Goes after \appendices (IEEEtran). Defines app:defence, app:semantics, app:sound, app:untrusted.
+% Goes after \appendices (IEEEtran). Defines app:defence, app:semantics, app:sound, app:untrusted,
+% and, since the H5 pass (2026-10-11, cut P1 of REVIEW2.md), eq:split, fact:ext and thm:untrusted
+% (moved from defence.tex) and rem:forced (TH-c, drafts/th_c_setup_forced.tex, Block 1). Cites
+% stir, whir, fri2018, basefold, ligero, brakedown, bcs16, bciks20 (Thm. 1.6 of the full version).
 %
 % Sources used (paths relative to session 4aa2c028's scratchpad):
 %   code/src/pvi/fullcheck/transformer.py, graph.py   every formula of the integer semantics (requant,
@@ -136,22 +139,108 @@ $D_j\chi'_j\neq0$. From (i), the vectors avoid (ii) with probability at most $p^
 matrix of the first wrong operation). From (ii), every folded row the prover can send leads to
 (iii). From (iii), either a check fails or some matrix $j$ escapes only if all its columns fall into
 an agreement set, which has probability at most its column term. A complete doomed transcript is
-rejected unless the prover finds a collision. The round-by-round error is therefore at most
-$\max(p^{-r},\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i))\le\varepsilon_{\sC}$, and the Fiat--Shamir bound
-of Section~\ref{sec:fs} follows from~\cite{canetti2019fs,bcs16}. \qed
+rejected unless the prover finds a collision. The round-by-round error is therefore
+$\varepsilon_{\mathrm{rbr}}=\max\big(p^{-r},\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i)\big)$, a maximum
+over the rounds and matrices, and a prover that makes $Q$ random-oracle queries succeeds with
+probability at most $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$~\cite{canetti2019fs,bcs16}. Since
+$\varepsilon_{\mathrm{rbr}}\le\varepsilon_{\sC}$, this implies the bound of Section~\ref{sec:fs},
+which is the one the parameters of Section~\ref{sec:fs} and Table~\ref{tab:params} meet: their
+$\beta$ keeps the $\log_2(2|\mathcal J|)$ bits of the union bound. \qed
 
-\subsection{Proof of Fact~\ref{fact:ext}}
-
-The map $(\chi_1,\dots,\chi_s)\mapsto\sum_i\xi^{i-1}\chi_i$ is a bijection from $(\F^R)^s$ to
-$\mathbb K_s^R$, so $\psi$ is uniform. Every $v\in\mathbb K_s^n$ is uniquely $\sum_i\xi^{i-1}v_i$ with
-$v_i\in\F^n$. The evaluation points lie in $\F$, so a polynomial $P=\sum_i\xi^{i-1}P_i$ over
-$\mathbb K_s$ of degree below $k$, with each $P_i$ over $\F$ of degree below $k$, has evaluations
-$\sum_i\xi^{i-1}P_i(\cdot)$; the code over $\mathbb K_s$ is thus $\{\sum_i\xi^{i-1}c_i\}$ with every $c_i$
-in the code over $\F$. Since $\psi^\T E=\sum_i\xi^{i-1}\chi_i^\T E$, it agrees with
-$\sum_i\xi^{i-1}c_i$ at a column exactly when every $\chi_i^\T E$ agrees with $c_i$ there. \qed
-
-\subsection{Proof of Theorem~\ref{thm:untrusted}}
+% H5 pass (2026-10-11): the last sentence of "Round-by-round soundness" above follows
+% drafts/th_d_citations.md, Sec. 5.2(b) (N6, B-Q6). The former subsections "Proof of Fact fact:ext"
+% and "Proof of Theorem thm:untrusted" are merged into the subsection below, which now also holds
+% the material moved out of the body by cut P1 (REVIEW2.md, Sec. 9).
+\subsection{Untrusted Commitments}
 \label{app:untrusted}
+
+This appendix gives in full the material behind the paragraph ``Untrusted commitments'' of
+Section~\ref{sec:setup-proof}: the attack that motivates the setup proof, the setup proof, its
+soundness theorem with proof, and why its opened columns cannot be avoided.
+
+% Moved from the body (defence.tex, subsection "Untrusted Commitments", paragraph "Why the column
+% check is not enough") by the H5 pass, cut P1 of REVIEW2.md; unchanged.
+\para{Why the column check is not enough.} A Merkle root can bind any matrix $E_j$, not only a
+matrix of codewords, which is why linear-code polynomial commitments pair each evaluation with a
+testing phase~\cite{ligero,brakedown}. Without one, a committer can take two models $A$ and $A'$
+that differ in matrix $j$ and bind the encoded columns of $A_j$ on a secret half of the positions of
+$j$'s tree and those of $A'_j$ on the other half. A prover that
+computes with $A'$ passes Freivalds' check with $u=\chi^\T A'_j$, and passes the column check
+whenever all $t$ opened columns fall into the half of $A'_j$:
+\begin{equation}
+  \Pr[\text{accept}] \;\ge\; \prod_{i<t}\frac{n/2-i}{n-i}\;\approx\; 2^{-t}.
+  \label{eq:split}
+\end{equation}
+This is about $2^{-35}$ per query for the smallest tree of Llama-2-7B ($t=35$). Since against a
+malformed commitment a column is worth about one bit instead of $\log_2(n_j/k_j)$, testing at every
+query would need 3.2--6.6$\times$ the column bytes. We therefore amortise the testing phase into a
+one-time setup proof.
+
+% Moved from the body (paragraph "One combination over an extension field" and Fact fact:ext);
+% unchanged. The proof of the fact was a subsection of its own here.
+\para{One combination over an extension field.} In a 31-bit field, one random combination of a
+malformed matrix's rows lands close to the code with probability up to about $n/p$, but the protocol
+checks $r$ independent vectors at the same columns.
+
+\begin{fact}
+\label{fact:ext}
+Let $\mathbb K_s=\F[\xi]/(f)$ for an irreducible $f$ of degree $s$, and let $\chi_1,\dots,\chi_s\in\F^R$
+be independent and uniform. Then $\psi=\sum_i\xi^{i-1}\chi_i$ is uniform in $\mathbb K_s^R$. For every
+$E\in\F^{R\times n}$ and set $S$ of columns, the $s$ combinations $\chi_i^\T E$ agree on $S$ with
+codewords of the Reed--Solomon code over $\F$ if and only if $\psi^\T E$ agrees on $S$ with a
+codeword of the Reed--Solomon code over $\mathbb K_s$ with the same evaluation points.
+\end{fact}
+
+\noindent\emph{Proof.} The map $(\chi_1,\dots,\chi_s)\mapsto\sum_i\xi^{i-1}\chi_i$ is a bijection from
+$(\F^R)^s$ to $\mathbb K_s^R$, so $\psi$ is uniform. Every $v\in\mathbb K_s^n$ is uniquely
+$\sum_i\xi^{i-1}v_i$ with $v_i\in\F^n$. The evaluation points lie in $\F$, so a polynomial
+$P=\sum_i\xi^{i-1}P_i$ over $\mathbb K_s$ of degree below $k$, with each $P_i$ over $\F$ of degree below
+$k$, has evaluations $\sum_i\xi^{i-1}P_i(\cdot)$; the code over $\mathbb K_s$ is thus
+$\{\sum_i\xi^{i-1}c_i\}$ with every $c_i$ in the code over $\F$. Since
+$\psi^\T E=\sum_i\xi^{i-1}\chi_i^\T E$, it agrees with $\sum_i\xi^{i-1}c_i$ at a column exactly when
+every $\chi_i^\T E$ agrees with $c_i$ there. \qed
+
+\smallskip
+\noindent Proximity errors therefore scale with $p^{-s}$ rather than $p^{-1}$. For the $r=5$ vectors
+of an interactive query at $\lambda=128$, read as one combination over $\mathbb K_5$, the
+unique-decoding error $n/p^5$ is at most $2^{-136.5}$ for $n\le2^{18}$; the non-interactive setup
+proof takes $s\ge7$. An untrusted commitment needs more columns, not more randomness.
+
+% Moved from the body (paragraph "The setup proof", Theorem thm:untrusted and the remark after its
+% proof sketch); unchanged.
+\para{The setup proof.} Once per model, the committer publishes with $C_M$ a non-interactive proof
+that every committed matrix $E_j$ is \emph{$e_j$-close} to a matrix of codewords: it differs from
+$\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns, which makes $A^*_j$ unique. With Fiat--Shamir
+challenges over the graph digest and every tree's root and shape, (1)~the verifier draws $s$ uniform
+base-field combinations $\psi_j$ of the rows of each matrix; (2)~the committer sends $\psi_jA^*_j$;
+(3)~the verifier draws $t^0_j$ distinct uniform columns of each tree, which the committer opens; and
+(4)~the verifier checks the multiproofs and $\enc(\psi_jA^*_j)_c=\psi_jE_{j,c}$. Transposed matrices
+need this proof, since their per-query combination $[X;\mathbf 1]\chi'$ is not uniform.
+
+\begin{theorem}[soundness with an untrusted commitment]
+\label{thm:untrusted}
+Model the hash functions as random oracles, and let the committer and the prover make at most $Q$
+oracle queries in total. Let $C_M$ be any string and let $\pi$ be any setup proof that the verifier
+accepts. Then, except with probability
+\[
+  \varepsilon_0\le Q\sum_{j\in\mathcal J}\Big[\frac{n_j}{p^s}+\prod_{i<t^0_j}
+  \frac{n_j-e_j-1-i}{n_j-i}\Big]+O(Q^22^{-256}),
+\]
+every matrix $E_j$ that $C_M$ binds is $e_j$-close to $\enc(A^*_j)$ for a unique $A^*_j$. Let
+$M^*$ be the model with weights $A^*$ whose weight products are computed in $\F$ and lifted to
+$(-p/2,p/2)$. For every input $x$ and every prover, the verifier of mode $\sC$ then accepts
+$y\neq M^*(x)$ with probability at most
+\[
+  \varepsilon^*_{\sC}=\sum_{j\in\mathcal J}\Big[\,p^{-r}+\prod_{i<t_j}\frac{k_j+e_j-1-i}{n_j-i}\,\Big],
+\]
+or $Q\varepsilon^*_{\sC}+O(Q^22^{-256})$ under Fiat--Shamir. If the client recomputes $C_M$, then
+$e_j=0$, no setup proof is needed, and the bound is that of Theorem~\ref{thm:sound}.
+\end{theorem}
+
+\noindent $C_M$ thus fixes $M^*$ before any query; $M^*$ is the integer model of
+Section~\ref{sec:intmodel} when $A^*$ is int8 and meets the range bound. Without the weights or a
+range proof, the client learns only that the provider is bound to one fixed model. The proof
+follows.
 
 \para{Parameters.} Let $\beta_0=\lambda+64+\log_2(2|\mathcal J|)$ and
 $s=\lceil(\beta_0+\log_2\max_jn_j)/\log_2p\rceil$, so that $n_j/p^s\le2^{-\beta_0}$. Each tree takes
@@ -168,21 +257,34 @@ probability $O(Q^22^{-256})$~\cite{bcs16}. A leaf of a shared tree binds the col
 members and thus each member's column. A column that cannot be extracted can be opened only by
 finding a preimage, so we count it as corrupted. This defines every $E_j$ before any challenge.
 
-\para{Setup.} Let $E_j$ be not $e_j$-close. Its rows lie in $\F^{n_j}\subset\mathbb K_s^{n_j}$. By the
-correlated-agreement theorem for Reed--Solomon codes in the unique-decoding
-regime~\cite[Thm.~1.7]{bciks20}, applied to the code over $\mathbb K_s$, if a uniform
-$\psi\in\mathbb K_s^{R_j}$ made $\psi^\T E_j$ $e_j$-close to that code with probability above
-$n_j/|\mathbb K_s|$, then all rows of $E_j$ would agree with codewords over $\mathbb K_s$, and hence, by
-their base coordinates, over $\F$, on a common set of $n_j-e_j$ columns, so $E_j$ would be
-$e_j$-close. For $e_j$ below a quarter of the distance, Ligero's lemma~\cite{ligero} gives the same
-with $(e_j+1)/|\mathbb K_s|\le n_j/|\mathbb K_s|$. By Fact~\ref{fact:ext} the $s$ base-field
-combinations form a uniform $\psi$, so except with probability $n_j/p^s$, $\psi^\T E_j$ is
-$e_j$-far. The committer's $s$ message rows form one message over $\mathbb K_s$, and by
+% Setup paragraph: first four sentences replaced per drafts/th_d_citations.md, Sec. 1.2(c) (N5:
+% BCIKS20 Thm. 1.6 of the full version; Ligero Lemma 4.2 for e_j < d/4); the rest unchanged, plus
+% the sentence of Sec. 5.2(c) at the end.
+\para{Setup.} Let $E_j$ be not $e_j$-close; its rows lie in $\F^{n_j}\subset\mathbb K_s^{n_j}$. We
+apply the correlated-agreement theorem for affine spaces~\cite[Thm.~1.6]{bciks20} over the field
+$\mathbb K_s$: to the code of polynomials of degree below $k_j$ over $\mathbb K_s$, evaluated at
+the $n_j$ points of $j$'s subgroup of $\F$ (rate $\rho_j=k_j/n_j$), to the $\mathbb K_s$-span
+$U_j$ of the rows of $E_j$, and to $\delta=e_j/n_j$. As $e_j<(n_j-k_j+1)/2$ is an integer,
+$\delta\le(1-\rho_j)/2$, the unique-decoding regime, in which the theorem's error is
+$n_j/|\mathbb K_s|$. Since $\psi\mapsto\psi^\T E_j$ is linear, a uniform $\psi\in\mathbb K_s^{R_j}$
+makes $\psi^\T E_j$ uniform on $U_j$. If $\psi^\T E_j$ were $e_j$-close to the code with
+probability above $n_j/|\mathbb K_s|$, the theorem would give codewords over $\mathbb K_s$ that
+agree with all rows of $E_j$ on a common set of at least $n_j-e_j$ columns. Their coordinates of
+degree~0 are codewords over $\F$ (proof of Fact~\ref{fact:ext}) that agree with the rows on that
+set, so $E_j$ would be $e_j$-close. (For $e_j=0$ the claim is elementary: the $\psi$ for which
+$\psi^\T E_j$ is a codeword form a proper $\mathbb K_s$-subspace, of density at most
+$1/|\mathbb K_s|$.) For $e_j<(n_j-k_j+1)/4$, a quarter of the minimum distance, Lemma~4.2 of
+Ligero~\cite{ligero} gives the same conclusion with error $(e_j+1)/|\mathbb K_s|\le
+n_j/|\mathbb K_s|$; this covers every radius with $f\le1/2$. By Fact~\ref{fact:ext} the $s$
+base-field combinations form a uniform $\psi$, so except with probability $n_j/p^s$, $\psi^\T E_j$
+is $e_j$-far. The committer's $s$ message rows form one message over $\mathbb K_s$, and by
 Fact~\ref{fact:ext} the check at column $c$ passes for all of them exactly when its codeword agrees
 with $\psi^\T E_j$ at $c$. That happens on at most $n_j-e_j-1$ columns, a set fixed when the message
 is sent, so the $t^0_j$ columns drawn afterwards all fall into it with probability at most
 $\prod_{i<t^0_j}(n_j-e_j-1-i)/(n_j-i)$. The setup proof is a public-coin protocol whose rounds have
-these errors, so under Fiat--Shamir the bound gains the factor $Q$~\cite{canetti2019fs,bcs16}.
+these errors, so under Fiat--Shamir the bound gains the factor $Q$~\cite{canetti2019fs,bcs16}. Its
+round-by-round error is again the largest single term; $\beta_0$ budgets the sum of all
+$2|\mathcal J|$ terms, which is conservative.
 
 \para{Online.} Let every $E_j$ be $e_j$-close, let $U_j=\enc(A^*_j)$ be the unique codeword matrix
 within distance $e_j$, and let $B_j$ be the at most $e_j$ columns on which $E_j\neq U_j$; $C_M$ fixes
@@ -209,3 +311,92 @@ $n_j/2-e_j\le k_j-1$. For $e_j<n_j/2-k_j+1$ the split commitment is therefore no
 setup proof rejects it except with probability $\varepsilon_0$. For larger radii it may be close to
 $\enc(A_j)$; then $M^*$ uses $A_j$, and the per-query term with $k_j+e_j$ bounds the acceptance of
 answers computed with $A'_j$.
+
+% TH-c, Block 1 (drafts/th_c_setup_forced.tex), placed by the H5 pass at the end of this appendix as
+% its header asks. Remark rem:forced, its proof, the Merkle/Fiat--Shamir paragraph and the scope.
+\begin{remark}[setup tests that open columns]
+\label{rem:forced}
+This remark concerns \emph{column-hash} commitments, in which a Merkle leaf binds whole columns of
+the committed matrices. Ours is one (Section~\ref{sec:commit}), and so are Ligero's and
+Brakedown's~\cite{ligero,brakedown}. We idealise each tree as an oracle that returns one leaf per
+query. This is the model of interactive oracle proofs~\cite{bcs16}, in which FRI, STIR, WHIR and
+BaseFold are analysed~\cite{fri2018,stir,whir,basefold}. A \emph{column-only} test is a verifier
+whose only access to the committed matrices is through such queries. It may run any number of
+rounds, draw its challenges from any field, receive further messages or oracles from the committer
+and choose its queries adaptively. It is \emph{complete} if it accepts every honestly computed
+$C_M$, with the honest committer, with probability~1. Let $j\in\mathcal J$ with $2e_j<n_j-k_j$, and let
+\[
+  P_j(t)=\prod_{i<t}\frac{n_j-e_j-1-i}{n_j-i}.
+\]
+(i)~For every complete column-only test that opens at most $t$ distinct leaves of $j$'s tree, some
+committer binds a matrix $E_j$ that is not $e_j$-close and passes the test with probability at least
+$P_j(t)$.
+(ii)~Hence a complete column-only test that every such committer passes with probability at most
+$2^{-\beta}$ opens at least $t^0_j(\beta)$ leaves of $j$'s tree, where $t^0_j(\beta)$ is the least $t$ with
+$P_j(t)\le2^{-\beta}$. Since
+\[
+  \Big(1-\frac{e_j+1}{n_j-t+1}\Big)^{t}\;\le\;P_j(t)\;\le\;\Big(1-\frac{e_j+1}{n_j}\Big)^{t},
+\]
+$t^0_j(\beta)$ is about $\beta/{-\log_2(1-e_j/n_j)}$ when $t^0_j(\beta)\ll n_j$.
+(iii)~In each tree, our setup proof opens the maximum of $t^0_j(\beta_0)$ over the tree's members
+(Appendix~\ref{app:untrusted}). So at its radii and at error $2^{-\beta_0}$ per matrix, no complete
+column-only test opens fewer leaves of any tree. The column term of $\varepsilon_0$ is also tight:
+the committer of~(i) passes our setup proof with probability at least $P_j(t^0_j(\beta_0))$, where
+$j$ is the member that attains the maximum.
+\end{remark}
+
+\begin{proof}
+This is the standard counting argument for testers with perfect completeness.
+(i)~Fix weights $A$, commit every matrix other than $j$ honestly, and let $U=\enc(A_j)$. The
+committer draws a uniform set $B$ of $e_j+1$ columns. It binds the matrix $E_j$ that equals $U$
+outside $B$ and differs from $U$ in every column of $B$, say in its first entry. $E_j$ is not
+$e_j$-close. It differs from $U$ on $e_j+1$ columns. A codeword matrix $U'\neq U$ differs from $U$
+in some row, hence on at least $n_j-k_j+1$ columns, and so it differs from $E_j$ on at least
+$n_j-k_j-e_j>e_j$ columns. In everything else the committer acts as the honest committer of $A$. It
+sends the same messages and oracles, and it answers queries to $j$'s tree from $E_j$. Couple this
+run with the honest run on $A$ by giving both sides the same random coins. The two runs agree until
+the verifier queries a leaf in $B$. In the honest run, the leaves of $j$'s tree that the verifier
+queries do not depend on $B$. So all of them, at most $t$ distinct ones, miss $B$ with probability
+at least $\binom{n_j-t}{e_j+1}\big/\binom{n_j}{e_j+1}=P_j(t)$. On this event the runs agree
+throughout. The verifier then accepts, since by completeness it accepts the honest run.
+(ii)~The bound on the number of leaves follows from~(i) and the minimality of $t^0_j(\beta)$. For
+$i<t$ and $b=e_j+1$, $b/n_j\le b/(n_j-i)\le b/(n_j-t+1)$, which gives the two bounds on $P_j(t)$.
+(iii)~Appendix~\ref{app:untrusted} sets each tree's $t^0$ to the least $t$ with
+$P_j(t)\le2^{-\beta_0}$ for all of its members. Our setup proof is complete and column-only, so~(i)
+applies to it.
+\end{proof}
+
+\para{Merkle trees and Fiat--Shamir.} The argument carries over to a column-only test compiled with
+Merkle trees and Fiat--Shamir in the random-oracle model, provided that its verifier uses each root
+only to check openings and to derive challenges. The committer of~(i) then builds an honest Merkle
+tree over $E_j$. Each challenge is a random-oracle output and, except with negligible probability,
+is uniform and independent of $B$. While no opened leaf lies in $B$, every check other than the
+Merkle paths is a check that the oracle-model verifier makes on the honest committer's messages for
+these challenges. That check passes by completeness. Repeating the attack with fresh commitments
+only raises the committer's success. A verifier that recomputes a root from the weights is not
+column-only. That is the case $e_j=0$ of Theorem~\ref{thm:untrusted}, which needs no setup proof.
+
+\para{Scope.} The remark is a lower bound for one kind of commitment and one guarantee.
+(1)~It covers column-hash commitments only. Some commitments bind each matrix as one long codeword
+or as one multilinear polynomial, as the polynomial commitments built on FRI, STIR, WHIR and
+BaseFold do. Their proximity proofs open small leaves, and the remark says nothing about them.
+Using one would also change the column check of Section~\ref{sec:protocol}. Nor does the remark
+cover a commitment that hashes each row separately, whose openings can be single entries.
+(2)~It assumes unique decoding, $2e_j<n_j-k_j$. This excludes only the boundary case
+$2e_j=n_j-k_j$ that Theorem~\ref{thm:untrusted} admits. For the four models of
+Table~\ref{tab:setup} at $a=100$ and $a=1{,}000$, our rule selects radii of at most a quarter of the
+unique-decoding radius $(n_j-k_j)/2$. A test of proximity beyond that radius, which FRI-style
+analyses allow, need not determine a unique $A^*_j$, which the online part of
+Theorem~\ref{thm:untrusted} needs.
+(3)~It bounds tests that certify $e_j$-closeness. Under that certificate, the online part of
+Theorem~\ref{thm:untrusted} holds for any number of later queries. The committer of~(i) changes only
+$e_j+1$ columns, so it stays bound to $A_j$ at radius $e_j+1$. The remark therefore prices the
+certificate, not the defence against one particular attack. An analysis that bounds the setup proof
+jointly with a bounded number of later queries could accept a test that certifies less. The remark
+does not cover such an analysis.
+(4)~It holds for every target $\beta$. Our $\beta_0=\lambda+64+\log_2(2|\mathcal J|)$ adds 64 bits
+for Fiat--Shamir and $\log_2(2|\mathcal J|)$ bits for a union bound. Any test, interactive or not,
+whose error is at most $2^{-\lambda}$ must meet $2^{-\lambda}$ against each committer of~(i), so it
+opens at least $t^0_j(\lambda)$ leaves. How many of the further bits a non-interactive test needs
+depends on its compilation, for example on a proof of work, and the remark does not settle it.
+

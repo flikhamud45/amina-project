@@ -4,10 +4,20 @@
 %   D1-D7; code/src/pvi/fullcheck/*). Removed detail, Table tab:setup and Fig. fig:protocol:
 %   sections/ext_defence.tex. Second trimming pass (2026-10-10): sentences already covered in
 %   ext_defence.tex (int8 sum bounds, stacking, re-encoding queries, FRI/BaseFold, weight leak) cut.
+% H5 pass (2026-10-11, REVIEW2.md cut P1): the subsection "Untrusted Commitments" is demoted to the
+%   paragraph "Untrusted commitments" at the end of Sec. 4.4, which keeps the label sec:setup-proof.
+%   Fact fact:ext and Theorem thm:untrusted (statements) moved to appendix_short.tex (submission)
+%   and appendix_defence.tex (extended version); the split-commitment display eq:split, the
+%   extension-field paragraph, the four steps of the setup proof and the proof sketch moved to
+%   appendix_defence.tex. TH-c's remark (drafts/th_c_setup_forced.tex, Block 3, variant A) is the
+%   "forced" sentence of that paragraph. Cut C6: "A sponge transcript" folded into the binding
+%   paragraph (its Merkle--Damgard remark moved to ext_defence.tex). N6: the round-by-round error is
+%   a maximum; the parameters keep the union bound (TH-d, Sec. 5.2(a), condensed).
 % Labels defined: sec:defence, sec:intmodel, sec:commit, sec:protocol, sec:fs, sec:setup-proof,
-%   eq:weightop, eq:freivalds, eq:split, thm:sound, thm:untrusted, fact:ext.
-% Labels used: thm:dich, sec:threat, sec:quality, sec:gen, sec:v1, app:defence, app:semantics,
-%   app:sound, app:untrusted. Cites fullversion and bciks20 (Thm. 1.7, ECCC TR20-083 numbering).
+%   eq:weightop, eq:freivalds, thm:sound.
+% Labels used: thm:dich, thm:untrusted, sec:threat, sec:quality, sec:gen, sec:v1, app:defence,
+%   app:semantics, app:sound, app:untrusted. Cites fullversion, ligero, brakedown, fri2018, stir,
+%   whir, basefold.
 % =====================================================================================
 
 \providecommand{\F}{\mathbb{F}_p}
@@ -80,11 +90,9 @@ $\chi^\T\hat A_\ell=\enc(\chi^\T A_\ell)$, and two distinct codewords agree on a
 positions. A SHA-256 Merkle tree~\cite{merkle1987} binds the columns of $\hat A_\ell$. $C_M$ holds
 the roots, 32 bytes per tree, and the public encoding parameters.
 
-\para{Commitment plans.} Matrices whose codewords have equal length can share a tree and a
-multiproof. A public rule picks the plan (trees and codeword lengths) that sends the fewest bytes
-per query within a cap on the setup size; the plan is part of $C_M$. A layer with many rows, such as
-GPT-2's output layer ($N=50{,}257$), encodes the rows of $A_\ell^\T$ instead (the \emph{transposed
-layout}). An embedding table without a bias is a Merkle tree over its rows~\cite{commitllm2026}.
+\para{Commitment plans.} The trees, codeword lengths and layouts (some matrices encode the rows of
+$A_\ell^\T$, the \emph{transposed layout}) form a \emph{plan}, a public function of the model that
+is part of $C_M$~\cite{fullversion}.
 
 % -------------------------------------------------------------------------------------
 \subsection{The Protocol}
@@ -121,9 +129,8 @@ $\hat A_{\ell,c}$ with a Merkle multiproof, and checks the paths and
 $\chi_\ell^\T\hat A_{\ell,c}=\enc(u_\ell)_c$. If $u_\ell\neq\chi_\ell^\T A_\ell$, some row of
 $\enc(u_\ell)$ and the same row of $\chi_\ell^\T\hat A_\ell$ are distinct codewords, so all $t$
 columns fall where they agree with probability at most $\prod_{i<t}(k_\ell-1-i)/(n-i)<(k_\ell/n)^t$.
-For a transposed matrix the verifier combines positions with $\chi'\in\F^{T\times r}$ and checks
-$\enc(Z\chi')$ against the opened columns combined by $[X;\mathbf 1]\chi'$
-(Appendix~\ref{app:sound}). Opened rows of a lookup table are checked against its root.
+Transposed matrices are checked analogously (Appendix~\ref{app:sound}), and looked-up embedding
+rows against their table's Merkle root.
 
 \para{Modes $\sK$ and $\Kpre$.} In $\sK$ the verifier draws a fresh $\chi_\ell$ for each query, so
 the proof is the claims alone. $\Kpre$ reuses its precomputed secret $\chi_\ell$; this
@@ -175,109 +182,43 @@ draws interactively and that Fiat--Shamir~\cite{fiatshamir1986} derives from a t
 \para{The statement binds the computation.} Challenges that do not depend on the whole statement
 make one transcript valid for several statements, the weak Fiat--Shamir
 pattern~\cite{bernhard2012pitfalls,dao2023weakfs}. Since our verifier recomputes the operations
-without weights, their constants belong to the statement. The transcript therefore starts with a
-\emph{graph digest}, the SHA-256 hash of a canonical graph description: every operation in
-order with its inputs, output and constants (table bytes included), and each weight operation's
-shape, layout and input bound. It then absorbs the security parameters, $C_M$, $x$ and, for sampled
-generation, the sampler's parameters and the client's seed (Section~\ref{sec:gen}).
-
-\para{A sponge transcript.} The transcript is a domain-separated SHAKE-256 sponge over labelled,
-length-prefixed messages, so each challenge is a random-oracle output on a prefix-free input, which
-a Merkle--Damg\aa{}rd hash would give only with a separate argument~\cite{coron2005md}. The Merkle
-trees keep SHA-256 and need only its collision resistance.
+without weights, their constants belong to the statement. The transcript, a domain-separated
+SHAKE-256 sponge over labelled, length-prefixed messages, therefore starts with a \emph{graph
+digest}, the SHA-256 hash of a canonical graph description: every operation in order with its
+inputs, output and constants (table bytes included), and each weight operation's shape, layout and
+input bound. It then absorbs the security parameters, $C_M$, $x$ and, for sampled generation, the
+sampler's parameters and the client's seed (Section~\ref{sec:gen}).
 
 \para{Soundness.} The interactive protocol is round-by-round sound~\cite{canetti2019fs}: once a
 wrong claim is fixed, the vectors $\chi$ rescue the prover with probability at most $p^{-r}$, and
 once a wrong folded row is fixed, the columns rescue it with probability at most its column term. A
 prover that makes $Q$ random-oracle queries therefore succeeds with probability at most
-$Q\varepsilon_{\sC}+O(Q^22^{-256})$~\cite{canetti2019fs,holmgren2019rbr,bcs16}. We add 64 bits to
-$\beta$, which keeps $Q\varepsilon_{\sC}\le2^{-\lambda}$ for $Q\le2^{64}$ and raises $r$ to 7 at
-$\lambda=128$.
+$Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$~\cite{canetti2019fs,holmgren2019rbr,bcs16}, where the
+round-by-round error $\varepsilon_{\mathrm{rbr}}$ is the largest of these probabilities, not their
+sum, and so at most $\varepsilon_{\sC}$ (Appendix~\ref{app:sound}). For simplicity our parameters
+keep the union bound: we add 64 bits to $\beta$, which keeps $Q\varepsilon_{\sC}\le2^{-\lambda}$
+for $Q\le2^{64}$ and raises $r$ to 7 at $\lambda=128$. Meeting $Q\varepsilon_{\mathrm{rbr}}\le
+2^{-\lambda}$ alone would save the $\log_2(2|\mathcal J|)$ bits of the union bound in $\beta$ and
+leave $r=7$.
 
-% -------------------------------------------------------------------------------------
-\subsection{Untrusted Commitments}
-\label{sec:setup-proof}
-
-Theorem~\ref{thm:sound} assumes an honest $C_M$. We now treat a provider-supplied $C_M$ that nobody
-the client trusts can recompute, for instance because the recipe is private.
-
-\para{Why the column check is not enough.} A Merkle root can bind any matrix $E_j$, not only a
-matrix of codewords, which is why linear-code polynomial commitments pair each evaluation with a
-testing phase~\cite{ligero,brakedown}. Without one, a committer can take two models $A$ and $A'$
-that differ in matrix $j$ and bind the encoded columns of $A_j$ on a secret half of the positions of
-$j$'s tree and those of $A'_j$ on the other half. A prover that
-computes with $A'$ passes Freivalds' check with $u=\chi^\T A'_j$, and passes the column check
-whenever all $t$ opened columns fall into the half of $A'_j$:
-\begin{equation}
-  \Pr[\text{accept}] \;\ge\; \prod_{i<t}\frac{n/2-i}{n-i}\;\approx\; 2^{-t}.
-  \label{eq:split}
-\end{equation}
-This is about $2^{-35}$ per query for the smallest tree of Llama-2-7B ($t=35$). Since against a
-malformed commitment a column is worth about one bit instead of $\log_2(n_j/k_j)$, testing at every
-query would need 3.2--6.6$\times$ the column bytes. We therefore amortise the testing phase into a
-one-time setup proof.
-
-\para{One combination over an extension field.} In a 31-bit field, one random combination of a
-malformed matrix's rows lands close to the code with probability up to about $n/p$, but the protocol
-checks $r$ independent vectors at the same columns.
-
-\begin{fact}
-\label{fact:ext}
-Let $\mathbb K_s=\F[\xi]/(f)$ for an irreducible $f$ of degree $s$, and let $\chi_1,\dots,\chi_s\in\F^R$
-be independent and uniform. Then $\psi=\sum_i\xi^{i-1}\chi_i$ is uniform in $\mathbb K_s^R$. For every
-$E\in\F^{R\times n}$ and set $S$ of columns, the $s$ combinations $\chi_i^\T E$ agree on $S$ with
-codewords of the Reed--Solomon code over $\F$ if and only if $\psi^\T E$ agrees on $S$ with a
-codeword of the Reed--Solomon code over $\mathbb K_s$ with the same evaluation points.
-\end{fact}
-
-Proximity errors therefore scale with $p^{-s}$ rather than $p^{-1}$. For the $r=5$ vectors of an
-interactive query at $\lambda=128$, read as one combination over $\mathbb K_5$, the unique-decoding
-error $n/p^5$ is at most $2^{-136.5}$ for $n\le2^{18}$; the non-interactive setup proof takes
-$s\ge7$. An untrusted commitment needs more columns, not more randomness.
-
-\para{The setup proof.} Once per model, the committer publishes with $C_M$ a non-interactive proof
-that every committed matrix $E_j$ is \emph{$e_j$-close} to a matrix of codewords: it differs from
-$\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns, which makes $A^*_j$ unique. With Fiat--Shamir
-challenges over the graph digest and every tree's root and shape, (1)~the verifier draws $s$ uniform
-base-field combinations $\psi_j$ of the rows of each matrix; (2)~the committer sends $\psi_jA^*_j$;
-(3)~the verifier draws $t^0_j$ distinct uniform columns of each tree, which the committer opens; and
-(4)~the verifier checks the multiproofs and $\enc(\psi_jA^*_j)_c=\psi_jE_{j,c}$. Transposed matrices
-need this proof, since their per-query combination $[X;\mathbf 1]\chi'$ is not uniform.
-
-\begin{theorem}[soundness with an untrusted commitment]
-\label{thm:untrusted}
-Model the hash functions as random oracles, and let the committer and the prover make at most $Q$
-oracle queries in total. Let $C_M$ be any string and let $\pi$ be any setup proof that the verifier
-accepts. Then, except with probability
-\[
-  \varepsilon_0\le Q\sum_{j\in\mathcal J}\Big[\frac{n_j}{p^s}+\prod_{i<t^0_j}
-  \frac{n_j-e_j-1-i}{n_j-i}\Big]+O(Q^22^{-256}),
-\]
-every matrix $E_j$ that $C_M$ binds is $e_j$-close to $\enc(A^*_j)$ for a unique $A^*_j$. Let
-$M^*$ be the model with weights $A^*$ whose weight products are computed in $\F$ and lifted to
-$(-p/2,p/2)$. For every input $x$ and every prover, the verifier of mode $\sC$ then accepts
-$y\neq M^*(x)$ with probability at most
-\[
-  \varepsilon^*_{\sC}=\sum_{j\in\mathcal J}\Big[\,p^{-r}+\prod_{i<t_j}\frac{k_j+e_j-1-i}{n_j-i}\,\Big],
-\]
-or $Q\varepsilon^*_{\sC}+O(Q^22^{-256})$ under Fiat--Shamir. If the client recomputes $C_M$, then
-$e_j=0$, no setup proof is needed, and the bound is that of Theorem~\ref{thm:sound}.
-\end{theorem}
-
-\noindent\emph{Proof sketch.} If an extracted $E_j$ is far, Fact~\ref{fact:ext} and correlated
-agreement over affine spaces in the unique-decoding regime~\cite[Thm.~1.7]{bciks20} \todo{FOCS
-numbering} make $\psi_j^\T E_j$ far from the code over $\mathbb K_s$ except with probability
-$n_j/p^s$. Online, a wrong folded row survives only on the at most $k_j-1+e_j$ positions where its
-codeword agrees with the true one or where $E_j$ is corrupted, a set fixed before the query
-(Appendix~\ref{app:untrusted}). \qed
-
-\noindent $C_M$ thus fixes $M^*$ before any query; $M^*$ is the integer model of
-Section~\ref{sec:intmodel} when $A^*$ is int8 and meets the range bound. Without the weights or a
-range proof, the client learns only that the provider is bound to one fixed model.
-
-\para{Cost and scope.} Each tree's radius $e_j$ trades setup columns, amortised over $a$ queries,
-against per-query columns (extended version~\cite{fullversion}). For Llama-2-7B at $\lambda=128$ the
-setup proof is 2.8\,GB ($a=100$) or 11.3\,GB ($a=1{,}000$), and the opened columns per query grow
-from 124.7 to 168.5 or 134.9\,MB, less than 1\% of the proof at 2{,}048 tokens. \todo{L40S: setup
-time} For open weights, recomputing $C_M$ is cheaper than a setup proof and also settles which model
-is committed.
+\para{Untrusted commitments.}\label{sec:setup-proof} Theorem~\ref{thm:sound} assumes an honest
+$C_M$. A Merkle root can bind any matrix $E_j$, not only a matrix of codewords, which is why
+linear-code polynomial commitments pair each evaluation with a testing phase~\cite{ligero,brakedown}:
+a committer can bind the encoded columns of two models that differ in matrix $j$ on complementary
+halves of the positions of $j$'s tree, and a prover that computes with the second passes the
+column check with probability $\prod_{i<t}(n/2-i)/(n-i)\approx2^{-t}$, about $2^{-35}$ per query
+for the smallest tree of Llama-2-7B. When nobody the client trusts can recompute $C_M$, the
+committer therefore publishes once per model a non-interactive \emph{setup proof} that each $E_j$
+differs from a codeword matrix $\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns. It opens
+$t^0_j$ columns of each tree, and the verifier then accepts only outputs of the model with weights
+$A^*$, except with the error of Theorem~\ref{thm:sound} with $k_j+e_j$ in place of $k_j$
+(Theorem~\ref{thm:untrusted}, Appendix~\ref{app:untrusted}); without the weights or a range proof,
+the client learns only that the provider is bound to this one model. For Llama-2-7B at $\lambda=128$ the
+setup proof is 2.8\,GB with radii chosen for $a=100$ amortised queries, or 11.3\,GB for
+$a=1{,}000$, and the opened columns per query grow from 124.7 to 168.5 or 134.9\,MB, less than
+1\% of the proof at 2{,}048 tokens \todo{F6: setup time}. For column-hash commitments these
+setup columns are forced: with fewer than $t^0_j$ columns of $j$'s tree, no complete test that sees
+only columns certifies radius $e_j$ at our error~\cite{fullversion}. FRI-, STIR-, WHIR- or
+BaseFold-style tests~\cite{fri2018,stir,whir,basefold} could shrink only the combined rows, 1.6\%
+of the setup proof at $a=100$ and 0.4\% at $a=1{,}000$. For open weights, recomputing $C_M$ is
+cheaper than a setup proof and also settles which model is committed.

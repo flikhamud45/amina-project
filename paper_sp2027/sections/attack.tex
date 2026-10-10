@@ -11,6 +11,16 @@
 %   sec:dichotomy, thm:dich, sec:break, sec:sok, tab:sok.
 % Labels used: app:attack, def:H, cor:surprise, prop:worst, prop:blind, prop:amp, rem:merkle,
 %   rem:pointer, rem:scope (appendix); sec:related, sec:defence, sec:setup-proof. New key: fullversion.
+% H5 pass (2026-10-11, REVIEW2.md): N1 (thm:guess with the fractional G_t of the appendix, "for
+%   integer q" in the attainment sentence); C3 (folklore sentence of Sec. 3.4 removed); TH-a (one
+%   body sentence in Sec. 3.4 citing the extended version, where Part C is in appendix_attack.tex;
+%   thm:dich(b) gains n >= 2(k-1)); C4 (MNIST: the 250-path figure, the 95th-percentile sentence
+%   and its footnote moved to ext_attack.tex); N2 (in-range detection: median per cell at most
+%   7.9e-4, maximum 7.3e-3; code/artifacts/results/inrange_llm_opt-1.3b_any.json); P2 (the
+%   Proof-of-Learning row of tab:sok moved to ext_attack.tex); TH-d Sec. 3.2(b) (tab:sok footnote on
+%   the version of Anchuri et al. and the refereed variant).
+% H5 review (2026-10-11): the G_qd display of thm:guess stacks its constraint (\substack), which
+%   removes a 31pt overfull box in both builds.
 % =====================================================================================
 
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
@@ -98,11 +108,11 @@ example, when the rows are independent and the adversary chooses $J$ from the va
 Then every $V\in\mathrm{Spot}_d(q)$ rejects an explainable single-site forgery with probability at
 most
 \[
-  G_{qd}(J\mid P) \;=\; \mathbb E_{p}\Big[\max_{|S|\le qd}\Pr[J\in S\mid P=p]\Big],
+  G_{qd}(J\mid P) \;=\; \mathbb E_{p}\Big[\max_{\substack{x\in[0,1]^N\\ \sum_ux_u\le qd}}\ \sum_ux_u\Pr[J=u\mid P=p]\Big],
 \]
-the probability of guessing $J$ in $qd$ tries from the view alone. For $d=1$ the bound is attained
-by a verifier that knows the adversary's strategy and opens the $q$ neurons most likely to have
-been edited.
+which for integer $qd$ is the probability of guessing $J$ in $qd$ tries from the view alone. For
+$d=1$ and integer $q$ the bound is attained by a verifier that knows the adversary's strategy and
+opens the $q$ neurons most likely to have been edited.
 \end{theorem}
 
 \begin{proof}[Proof idea]
@@ -139,7 +149,7 @@ that spot-checks $q$ of the $N$ sites of an unencoded trace ($d=1$) accepts with
 least $1-q/N$, whatever its sampler, and soundness error at most $\varepsilon$ on every such
 network requires $qd\ge(1-\varepsilon)N$.
 (b)~\emph{Mixing.} If each query mixes all rows ($d=N$), as the folded rows and code columns of
-Section~\ref{sec:defence} do, then under the conditions of Proposition~\ref{prop:amp},
+Section~\ref{sec:defence} do, then under the conditions of Proposition~\ref{prop:amp} and $n\ge2(k-1)$,
 $O(\lambda+\log L)$ queries per layer give soundness error $2^{-\lambda}$ for a network of $L$
 weight layers. For $L\le2^{\lambda}$ this is $O(\lambda)$, so $qd=O(\lambda)N$ suffices.
 \end{theorem}
@@ -154,11 +164,13 @@ the view depends on $\sigma$, so Theorem~\ref{thm:guess} bounds detection by $qd
 \end{proof}
 
 \para{What the bounds mean.} In the worst case nothing beats uniform sampling, which reaches $s/N$
-on every dense network; $2^{-40}$ then takes about $27.7N$ paths per query. Tightness at
-intermediate locality $1<d<N$ is open, and we do not claim that the instance of~(a) embeds in a
-transformer (Remark~\ref{rem:scope}). The lower bound formalises a folklore calculation
-(Section~\ref{sec:related}) for adaptive, value-aware verifiers that read the whole trace: honest
-recomputation moves the change into the weights, so the model, not the trace, must be encoded.
+on every dense network; $2^{-40}$ then takes about $27.7N$ paths per query. We do not claim that
+the instance of~(a) embeds in a transformer (Remark~\ref{rem:scope}). Both bounds hold at every
+locality: opening $q$ uniform blocks of $d$ rows attains the bound $1-qd/N$ of~(a) ($d\mid N$) but
+downloads the rows, while the checks of Section~\ref{sec:defence}, run on each block of $d$ rows encoded and
+committed on its own, keep the error of $d=N$ with $O(\lambda+\log L)$ queries per block, counting
+one per folded row and per opened column~\cite{fullversion}. Each answer is then a folded row or a
+block column, not $d$ rows of weights.
 
 % -------------------------------------------------------------------------------------
 \subsection{Measured Attacks}
@@ -169,14 +181,11 @@ VGG-11, VGG-16 and ResNet-18 on CIFAR-10, a 224$\times$224 dog-vs-cat ResNet-18 
 the unreleased model of~\cite{anchuri2026verifiable}, and the real OPT-6.7B, computing path
 acceptance exactly. The implementation reproduces the published behaviour~\cite{fullversion}.
 
-\para{MNIST.} The substitute models of Anchuri et al.\ corrupt hundreds of the MLP's 778 trace
-nodes; our forgeries leave 1--14 inconsistent nodes. One tampered neuron
-passes with the predicted probability $1-1/N$ (99.6--99.8\%), and 250 paths 61\% of the time. A
-backdoor triggered by a $3{\times}3$ patch leaves clean queries unchanged, succeeds on every
-triggered query not already in the target class, and passed 99.96\% of 2{,}300 end-to-end runs
-(predicted: 99.8\%). Keeping each tampered value below its neuron's 95th percentile takes about
-five neurons and passes 99\% of the time under uniform sampling.\footnote{Percentiles computed on
-test queries that include the attacked ones. \todo{G3: training-split ranges}}
+\para{MNIST.} One tampered neuron passes with the predicted probability $1-1/N$ (99.6--99.8\%);
+the substitute models of Anchuri et al.\ corrupt hundreds of the MLP's 778 trace nodes, our
+forgeries 1--14. A backdoor triggered by a $3{\times}3$ patch leaves clean queries unchanged,
+succeeds on every triggered query not already in the target class, and passed 99.96\% of 2{,}300
+end-to-end runs (predicted: 99.8\%).
 
 \para{Other samplers.} Uniform sampling detects 0.20\% of attacks. The contribution-weighted
 sampler, which steps to parent $i$ with probability $\propto|w_{ij}a_i|$, detects 9.2\% of
@@ -199,10 +208,10 @@ Its values exceed the natural ranges, which the path protocol does not check, an
 at least 454{,}248 paths. Range checks do not stop the edit. Against per-neuron ranges calibrated on
 held-out text (8{,}192 tokens of WikiText-2 train), edits that keep every value in range change the
 next token of OPT-1.3B for all 40 prompts at each of layers 6, 12, 18 and 23, with a median of 2
-neurons (at most 60), which a path opens with probability below $8\cdot 10^{-4}$. Edits that only
-lower activations, which a contribution-weighted sampler of the claimed trace never opens, succeed
-for 9, 31, 38 and 39 of the 40 prompts at those layers, with a median of 6 neurons
-\todo{L40S: OPT-6.7B, Qwen3-4B}.
+neurons (at most 60); a path opens them with median probability at most $7.9\cdot10^{-4}$ in every
+cell (at most $7.3\cdot10^{-3}$). Edits that only lower activations, which a contribution-weighted
+sampler of the claimed trace never opens, succeed for 9, 31, 38 and 39 of the 40 prompts at those
+layers, with a median of 6 neurons \todo{G3.5-L: OPT-6.7B, Qwen3-4B}.
 
 % -------------------------------------------------------------------------------------
 \subsection{Systematisation of Spot-Checking Schemes}
@@ -260,17 +269,14 @@ for 9, 31, 38 and 39 of the 40 prompts at those layers, with a median of 6 neuro
       \rr no edit needed: forged tokens with recomputed fingerprints pass (100\%; $\ge$95\%) &
       \rr model, prompt or precision substitution &
       \rr no (outside claim) \tabularnewline
-    \rr Proof-of-Learning~\cite{jia2021pol} &
-      \rr largest updates per epoch &
-      \rr 100\% for a ``blindfolded'' update~\cite{fang2023pol} &
-      \rr probabilistic &
-      \rr broken before~\cite{zhang2022pol,fang2023pol} \tabularnewline
     \bottomrule
   \end{tabular}
 
   \smallskip
   {\footnotesize Acceptance follows from each scheme's own formulas and parameters; no deployed
-  system was tested. $^a$Our models (Section~\ref{sec:break}). $^b$The
+  system was tested. Path-protocol entries follow the full version of~\cite{anchuri2026verifiable}
+  (arXiv:2603.19025v1); its two-server refereed variant is outside our model~\cite{fullversion}. $^a$Our models
+  (Section~\ref{sec:break}). $^b$The
   authors state that their analysis ``trivially extends to full soundness'' for binary-output
   models; their other-model theorem is unaffected. $^c$No theorem claims it; the gap comes from the
   weight-only layer selection, not the commitment. $^d$Our derivation, for $T$ steps.}

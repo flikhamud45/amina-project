@@ -1,0 +1,1148 @@
+% =====================================================================================
+% paper_sp2027/drafts/th_e_proofs.tex
+% TH-e (SP2027_PLAN2.md Sec. 3.7, item TH (e); Plan 1 D7): full proofs, for the extended version,
+% of the optimisations that the submission relies on but does not prove.
+%
+% Status: workflow draft, not \input anywhere. For the engineer's review (by Wed 28 Oct) and the
+% team's hand check (TH-f, Fri 30 Oct). Appendix-ready: \subsection headings only, no preamble;
+% it uses the macros and theorem environments of main.tex and re-provides the macros below, like
+% the ext_*.tex files. Suggested place: main.tex, extended branch, after \input{sections/appendix_v1}
+% (or as subsections of app:ext).
+%
+% Contents (item of the task -> subsection)
+%   conventions ............................ app:the-conv
+%   (i)   last-block pruning ............... app:prune      (lem:prune-local, lem:prune-slice, thm:prune)
+%   (iii) token rule and integer sampler ... app:gen        (lem:causal, lem:sampler, thm:gen, cor:seed)
+%   (vii) Fiat-Shamir tree absorption and
+%         Kpre absorbing nothing ........... app:fstree     (lem:tree-dec, thm:fstree, cor:fs-v0,
+%                                                            prop:kpre-fs)
+%   (ii)  the claim codec .................. app:codec      (lem:codec-dec, thm:codec)
+%   B-Q5 and B-Q6 (plan TH (e)) ............ app:rbr        (lem:col-any, rem:rbr-max)
+%   (iv)  V1 in mode Kpre .................. app:v1kpre     (lem:secret-check, thm:v1kpre, cor:v1kpre-fs)
+%   (v)   the stateful verifier of Kpre .... app:stateful   (prop:qtight, rem:stateful)
+%   (vi)  acceptance bound of the path
+%         protocol for k edited neurons .... app:paths      (prop:paths, tab:paths, tab:paths-acc)
+%
+% Labels used (defined elsewhere): sec:path, sec:break, sec:defence, sec:intmodel, sec:commit,
+%   sec:protocol, sec:fs, sec:setup-proof, sec:v1, sec:gen, sec:gen-sampling, sec:ext-sampling,
+%   def:spot, thm:dich, prop:blind, thm:sound, thm:untrusted, thm:v1, lem:v1-logup, lem:v1-window,
+%   lem:v1-nowrap, lem:v1-gkr, lem:v1-final, eq:weightop, eq:freivalds, eq:gumbel-table,
+%   eq:v1-final, app:semantics, app:sound, app:untrusted, app:v1, app:params, tab:params.
+% BibTeX keys used: existing canetti2019fs, holmgren2019rbr, bcs16, fips202, gumbel1954,
+%   maddison2014astar, anchuri2026verifiable, bernhard2012pitfalls, dao2023weakfs, lfkn1992.
+%   NEW (not in references.bib or extra.bib; add before compiling):
+%     @misc{chiesa2024snargs,
+%       author = {Chiesa, Alessandro and Yogev, Eylon},
+%       title  = {Building Cryptographic Proofs from Hash Functions},
+%       year   = {2024},
+%       note   = {Book, \url{https://snargsbook.org}; theorem numbers of the version of 25 March 2026}}
+%     @article{bertoni2014tree,
+%       author  = {Bertoni, Guido and Daemen, Joan and Peeters, Micha{\"e}l and Van Assche, Gilles},
+%       title   = {Sufficient Conditions for Sound Tree and Sequential Hashing Modes},
+%       journal = {International Journal of Information Security},
+%       volume  = {13}, number = {4}, pages = {335--353}, year = {2014}}
+%
+% Sources (paths relative to wt_sp2027/):
+%   code/src/pvi/fullcheck/transformer.py  build_decoder(prune_last), _Builder.last(calibrate_all),
+%       _attention, _attention_heads, _causal_notmask(queries), _rope(offset), with_lm_positions,
+%       greedy_tokens; code/tests/test_pruning.py, test_generation.py (the equalities proved here
+%       are also tested there).
+%   code/src/pvi/fullcheck/protocol.py  Challenger (absorb, absorb_large, _key, _stream, folding,
+%       ext, columns), _TREE_MIN = 2^24, _TREE_CHUNK = 2^22, _absorb_statement, _claims_message
+%       (Kpre absorbs nothing), _decoded_claims, _field_message, _fold_message, _open_message,
+%       Verifier.precompute, check_tokens, derive, check_products/_disagrees (field check of u),
+%       _columns_shape_ok (field check of the openings); params_for and plans.column_bits (beta).
+%   code/src/pvi/fullcheck/cut_protocol.py  _query (absorptions of V1, Kpre checks kpre_y via
+%       _kpre_y_ok with Verifier._pre), unpack_exceptions; logup_gkr.py Transcript.from_bytes,
+%       _absorb; extfield.py unpack; logup.py multiplicities_ok.
+%   code/src/pvi/fullcheck/claimcodec.py  module docstring (format PVC3, rejection rules,
+%       "Soundness"), decode, decode_torch, decode_device, pack_field/unpack_field,
+%       pack_rows/unpack_rows; code/tests/test_claimcodec.py (corruption and GPU/host tests).
+%   code/src/pvi/fullcheck/token_sampler.py  TokenSampler (digest, noise, choose), gumbel_table.
+%   code/src/pvi/fullcheck/sampling.py  RandPathTest (uniform parent of a dense layer).
+%   code/tests/test_fs_tree.py  tree absorption and Kpre under Fiat-Shamir.
+%   docs/improvements/D1_D2_fiat_shamir_binding.md, E1_generation.md, E2_sampling.md,
+%       A3_claim_encoder.md, C2_v1_proof_size.md, G3_inrange_attack.md (measured k).
+%   ../sp2027_research/attack_theory/experiments.md Sec. 2 (G4 acceptance-bound table),
+%       ../sp2027_research/idea_trust-rigor.md R5 (Kpre verdict leakage, timing).
+%   paper_sp2027/REVIEW.md reviewer B, questions 5 and 6.
+%
+% Numbers. No number in this file is a new measurement.
+%   * Measured, with source: k = 1 (OPT-6.7B, sections/attack.tex Sec. sec:break), median 2 and
+%     at most 60 in-range edited neurons and median 6 for lowering-only edits on OPT-1.3B
+%     (docs/improvements/G3_inrange_attack.md, Sec. 3; attack.tex).
+%   * Computed by us from formulas (reproducible with python, see the comments at each table):
+%     the path counts and acceptance values of tab:paths and tab:paths-acc; for Llama-2-7B the
+%     226 weight operations (analytic.decoder_shapes), beta = 136.82 / 200.82, r = 5 / 7,
+%     226 p^-5 = 2^-146.71 and 226 p^-7 = 2^-208.53 (params_for, plans.column_bits, field.LOG2_P =
+%     30.9069); the leaf count of a 6.6 GB message.
+%
+% Verification log (2026-10-10).
+%   [V] Chiesa-Yogev, "Building Cryptographic Proofs from Hash Functions", PDF of 25 March 2026
+%       (snargsbook.org, raw PDF on GitHub), read directly: Claim 31.1.3 (soundness <= sum of the
+%       per-round rbr errors), Theorem 31.2.1 (state-restoration error with t moves <=
+%       (t + k) eps_rbr, eps_rbr bounding every round), Theorem 14.3.1 (FS argument error <=
+%       state-restoration error), Theorem 15.2.1 (hash-chain variant: + t^2/2^lambda). The book's
+%       theorem numbers may change in later versions.
+%   [V] Bertoni, Daemen, Peeters, Van Assche, IJIS 13(4):335-353, 2014 (search result and
+%       Springer/keccak.team listing). We cite it only as context; no theorem of it is used.
+%   [V] d_ff from the Hugging Face configs: OPT-1.3B 8,192; OPT-6.7B 16,384; Qwen3-4B 9,728;
+%       Llama-2-7B 11,008 and Llama-2-13B 13,824 (NousResearch mirrors of the gated configs);
+%       they equal transformer.CONFIGS.
+%   [V] PyTorch docs (torch.argmax, 2.14): "If there are multiple maximal values then the
+%       indices of the first maximal value are returned."
+%   [V] FIPS 202: SHAKE256 with d output bits has collision resistance min(d/2, 256) bits.
+%   [U] The exact statements and numbering of the rbr theorems in Canetti et al. (STOC 2019) and
+%       Holmgren (ePrint 2019/1261): both servers refused the download (HTTP 403). The text
+%       therefore takes the explicit bound from Chiesa-Yogev and cites the two papers only for
+%       the notion and the equivalence with state-restoration soundness (as the body does).
+%
+% Open points (also returned to the orchestrator).
+%   1. Body, Sec. sec:fs: "Q eps_C + O(Q^2 2^-256)" should read (Q + k) eps_rbr <= (Q + k) eps_C,
+%      or Q must count the verifier's k queries (thm:fstree). Negligible numerically.
+%   2. tab:params, "Total ... plus collisions <= 2^-128": at Q = 2^64 the collision term
+%      N^2 2^-256 is itself about 2^-128 (32-byte keys and leaves, SHA-256 trees), so the
+%      Fiat-Shamir total exceeds 2^-128 unless Q <= 2^63. Either say so or budget one more bit.
+% CHECK: point 2 said "about 2^-127"; with the kept parameters (beta = 200.82) the total at
+%      Q = 2^64 is 2^-128 + 2^-136.8 = 2^-127.997 (2^-127 only with beta = lambda + 65).
+% CHECK: point 3 -- the reuse bound can be tightened from Q eps_K to Q p^-r (CHECK at thm:v1kpre),
+%      which gives Q_V <= 2^26.5 at r = 5; the Q_max question remains.
+% CHECK: new point -- the code changed during the check (transformer.py, 2026-10-11 01:12:
+%      build_decoder(prob_max=...)); lem:prune-local now names the constant 2 P_max.
+%   3. Kpre key lifetime: with the interactive parameters (r = 5) the reuse bound Q eps_K stays
+%      below 2^-128 only for Q_V <= 2^18.7 verdicts (Llama-2-7B). The paper should state a
+%      Q_max, or use the parameters with the 64-bit margin (r = 7, Q_V <= 2^80.5) for Kpre.
+%   4. Timing side channels of the Kpre verifier are outside the proof (rem:stateful (c)); we did
+%      not check whether the comparisons run in data-independent time.
+%   5. prune_last exists only in transformer.build_decoder; real_weights.py has no pruned builder
+%      yet (plan F3a). thm:prune covers the real builders once they insert the same slices.
+%   6. Under a commitment plan the pruned graph's plan differs from the unpruned one (q of the
+%      last block is committed on its own); thm:prune states the bound for the pruned plan.
+%   7. Two new BibTeX entries (above). A team member should re-check the Chiesa-Yogev theorem
+%      numbers against the version cited.
+%   8. thm:sound's sum over J is not needed even interactively (rem:rbr-max); the parameters keep
+%      it. This is a remark, not a change to the theorem.
+% =====================================================================================
+
+\providecommand{\F}{\mathbb{F}_p}
+\providecommand{\enc}{\mathrm{Enc}}
+\providecommand{\T}{\top}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\sK}{\mathsf{K}}
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+\providecommand{\Fext}{\mathbb{K}}
+\providecommand{\Vlo}{\mathrm{lo}}
+\providecommand{\Vshift}{\mathrm{shift}}
+\providecommand{\Vrq}{\mathrm{rq}}
+\providecommand{\Vtab}{\mathcal{T}}
+\providecommand{\Vcut}{\mathcal{C}}
+\providecommand{\Vclr}{\mathcal{O}}
+\providecommand{\Nleaf}{N_{\mathrm{leaf}}}
+\providecommand{\Veq}{\mathrm{eq}}
+\providecommand{\toprule}{\hline}
+\providecommand{\midrule}{\hline}
+\providecommand{\bottomrule}{\hline}
+
+% -------------------------------------------------------------------------------------
+\subsection{Conventions for the Proofs of the Optimisations}
+\label{app:the-conv}
+
+This part of the appendix proves that the optimisations of our implementation, on which
+Sections~\ref{sec:defence} to~\ref{sec:gen} rely, keep the soundness theorems: last-block pruning,
+generation as one prefill with the token rule and the integer sampler, the Fiat--Shamir transcript
+with tree absorption of large messages and its omission in mode $\Kpre$, the compact encoding of the
+proof, and mode $\Kpre$ with V1 and with secret vectors reused over many queries. It also proves the
+acceptance bound of the path protocol for edits of $k$ neurons. Each proof names the functions of
+\texttt{code/src/pvi/fullcheck} that it models.
+
+\para{Graphs.} A graph $\mathcal G$ is the ordered list of weight operations~\eqref{eq:weightop} and
+operations without weights of Section~\ref{sec:intmodel}, and $M_{\mathcal G}(x)$ is its output on
+the query $x$: the claims of its last weight operation, for a decoder the logits. Every statement
+about values is a statement about the integer semantics of Appendix~\ref{app:semantics}. That the
+optimised kernels compute these semantics (the int32 and int64 attention paths, the native CPU
+kernels, the fused GPU kernels) is a property of the implementation that our tests check and that
+we do not prove.
+
+\para{Verdicts and query counts.} After a query the prover learns its \emph{verdict}: acceptance,
+or the label of the first check that failed (\texttt{range\_or\_shape}, \texttt{token}, the lookup
+checks, \texttt{freivalds}, the column checks, and for V1 \texttt{cut\_exception},
+\texttt{cut\_multiplicities}, \texttt{cut\_gkr}, \texttt{kpre\_y}, \texttt{cut\_final},
+\texttt{cut\_logup}). We write $Q_V$ for the number of verdicts the prover obtains for one key of
+mode $\Kpre$, and $Q_H$, or $Q$ where no confusion arises, for the number of its random-oracle
+queries. Unless stated otherwise, nothing else that depends on the verifier's secrets, such as its
+running time, reaches the prover (Remark~\ref{rem:stateful}).
+
+\para{Hash functions and challenges.} We model SHAKE-256~\cite{fips202} as a random oracle $H$ with
+outputs of any length, and write $H_{256}$ for its first 32 bytes. An interactive challenge is
+expanded with $H$ from a fresh 256-bit key that the verifier draws from the operating system
+(\texttt{Challenger.\_key}). The expansion is exact: field elements come from 32-bit words below
+$2p$ reduced modulo $p$, which are uniform on $\F$ since $p$ divides $2p$
+(\texttt{Challenger.folding}, \texttt{ext}), and column sets from 64-bit words below the largest
+multiple of $n$ that does not exceed $2^{64}$, reduced modulo $n$, with repeats discarded; the
+first $t$ distinct values of an independent uniform sequence form a uniform set of $t$ distinct
+columns (\texttt{Challenger.columns}). As in Section~\ref{sec:protocol} we treat a
+challenge expanded from a key the prover has not seen as uniform. In the random-oracle model this
+costs at most $Q_H\,2^{-256}$ per key: the prover's view depends on the expansion only if one of its
+queries begins with the 256-bit key.
+
+\para{Round-by-round soundness.} A public-coin protocol is round-by-round sound with per-round
+errors $\varepsilon_1,\dots,\varepsilon_k$~\cite{canetti2019fs} if there is a set of \emph{doomed}
+partial transcripts that contains the empty transcript of every false statement, that no prover
+message leaves, whose complete members the verifier rejects, and that the $i$-th challenge leaves
+with probability at most $\varepsilon_i$. We use three consequences, in the form and numbering of
+the textbook of Chiesa and Yogev~\cite{chiesa2024snargs} (version of 25 March 2026):
+(R1)~the soundness error is at most $\sum_i\varepsilon_i$ (Claim~31.1.3);
+(R2)~with $\varepsilon_{\mathrm{rbr}}=\max_i\varepsilon_i$, a state-restoration prover with $t$
+moves wins with probability at most $(t+k)\,\varepsilon_{\mathrm{rbr}}$ (Theorem~31.2.1; Holmgren
+shows that the two notions are equivalent~\cite{holmgren2019rbr}); and
+(R3)~the Fiat--Shamir transformation with the full transcript as the hash input inherits the
+state-restoration error (Theorem~14.3.1; see also~\cite{bcs16}).
+
+% -------------------------------------------------------------------------------------
+\subsection{Last-Block Pruning}
+\label{app:prune}
+
+\para{The pruned graph.} Let $\mathcal G$ be a decoder of $L$ blocks built by
+\texttt{transformer.build\_decoder}, and $\mathcal G^{(n)}$ (\texttt{with\_lm\_positions}) its
+form whose LM head reads the last $n\ge1$ positions, so that $\mathcal G=\mathcal G^{(1)}$. For a
+tensor $X$ with positions $0,\dots,T-1$ (a column per position for the operand of a weight
+operation, a row per position for an activation) let $S_n(X)$ keep the positions $T-n,\dots,T-1$.
+Block $L$ of $\mathcal G^{(n)}$ computes at every position $h=\mathrm{norm}_1(r)$; $q$, $k$ and $v$
+from $h$ by weight operations and requantisations, an optional per-head norm, and, in models with
+rotary embeddings, RoPE of $q$ and $k$; the attention output $a=\mathrm{Att}(q,k,v)$, requantised; $r'=\mathrm{res}(r,W_o a)$; then
+$h'=\mathrm{norm}_2(r')$, the MLP and $r''=\mathrm{res}(r',W_{\mathrm{down}}g)$. The LM head then
+reads $S_n(\mathrm{norm}_f(r''))$. The pruned form $\mathcal G^{(n)}_{\mathrm{pr}}$
+(\texttt{prune\_last=True}) computes $q$ from $S_n(h)$, applies RoPE to it at the positions
+$T-n,\dots,T-1$ (\texttt{\_rope} with an offset), lets only these $n$ queries attend
+(\texttt{\_attention} with $T_q=n$ query rows and the last $n$ rows of the causal mask), forms
+$\mathrm{res}(S_n(r),W_o a_{\mathrm{pr}})$, and runs the rest of the block at these $n$ positions;
+$k$ and $v$ are still computed at every position. The builder calibrates the pruned block on every
+position (\texttt{\_Builder.last} with \texttt{calibrate\_all}), so both graphs have the same
+weights, multipliers and tables (asserted in \texttt{tests/test\_pruning.py}).
+
+\begin{definition}[position-local operations]
+An operation $f$ without weights is \emph{position-local} if there are functions $f_0,f_1,\dots$
+such that, for every $T$ and every $t<T$, position $t$ of $f(X^1,\dots,X^m)$ is
+$f_t(X^1_t,\dots,X^m_t)$; it is \emph{position-uniform} if moreover all $f_t$ are equal. For a
+weight operation, $Z_\ell=A_\ell[X_\ell;\mathbf 1]$ has column $t$ equal to $A_\ell[X_{\ell,t};1]$,
+so it is position-uniform. \emph{Causal attention} is
+$\mathrm{Att}(Q,K,V)_t=g\big(q_t,(k_j,v_j)_{j\le t}\big)$ for a function $g$ that does not depend on
+$T$, and for an offset $o$ we write $\mathrm{Att}_o(Q',K,V)_i=g\big(q'_i,(k_j,v_j)_{j\le o+i}\big)$.
+\end{definition}
+
+\begin{lemma}[locality of the decoder]
+\label{lem:prune-local}
+In the integer semantics of Appendix~\ref{app:semantics}, every operation of the decoders of
+\texttt{build\_decoder} other than attention and the slices $S_n$ is position-local. All are
+position-uniform except RoPE and the learned position ids, whose functions $f_t$ depend on $t$ only
+through the absolute position index. Attention is causal attention.
+\end{lemma}
+
+\begin{proof}
+Embedding look-ups read the row of the token at position $t$; the learned position ids are $t$
+itself. Requantisations, residual additions, the activation tables and SwiGLU act entrywise. Both
+norms, and the per-head norm of $q$ and $k$, act on the channels of one position. RoPE rotates the
+pairs of position $t$ by the angles $t\theta_j$, which depend on the absolute index $t$ only. For
+attention, row $t$ forms the scores $s_j=q_t\cdot k_j$, the gaps $\max_{j'\le t}s_{j'}-s_j$ over the
+keys $j\le t$ that the causal mask allows, $e_j$ from the public table and $e_j=0$ for $j>t$, then
+$S=\sum_je_j$ and $P_j=\lfloor(2P_{\max}e_j+S)/(2S)\rfloor$, with the public constant $P_{\max}=255$
+by default, which is $\lfloor S/(2S)\rfloor=0$ for $j>t$.
+% CHECK: "510" generalised to 2 P_max: transformer.py (modified 2026-10-11 01:12, during this check)
+% now has build_decoder(prob_max=...), PROB_MAX = 255 (510 = 2*255), e.g. 2047 for plan F2a. The
+% argument does not depend on the constant.
+The output $\sum_jP_jv_j$, requantised entrywise, therefore depends only on $q_t$ and on
+$(k_j,v_j)_{j\le t}$, through formulas that do not involve $T$. (The implementation chooses between
+an int32 and an int64 path depending on $T$; both compute these integers.)
+\end{proof}
+
+\begin{lemma}[slicing commutes]
+\label{lem:prune-slice}
+For a position-local $f$ and $o=T-n$, $S_n(f(X^1,\dots,X^m))=f^{[o]}(S_n(X^1),\dots,S_n(X^m))$,
+where $f^{[o]}$ applies $f_{o+i}$ at its position $i$; for a position-uniform $f$ this is
+$f(S_n(X^1),\dots,S_n(X^m))$. For causal attention,
+$S_n(\mathrm{Att}(Q,K,V))=\mathrm{Att}_{o}(S_n(Q),K,V)$.
+\end{lemma}
+
+\begin{proof}
+Position $o+i$ of $f(X^1,\dots,X^m)$ is $f_{o+i}(X^1_{o+i},\dots,X^m_{o+i})$, and $X^l_{o+i}$ is
+position $i$ of $S_n(X^l)$. Row $o+i$ of $\mathrm{Att}(Q,K,V)$ is
+$g(q_{o+i},(k_j,v_j)_{j\le o+i})$, and $q_{o+i}$ is row $i$ of $S_n(Q)$.
+\end{proof}
+
+\begin{theorem}[last-block pruning]
+\label{thm:prune}
+Let $n\ge1$ and let $x$ be a query with $T\ge n$ positions.
+(a)~$M_{\mathcal G^{(n)}_{\mathrm{pr}}}(x)=M_{\mathcal G^{(n)}}(x)$. Moreover, every tensor of
+$\mathcal G^{(n)}_{\mathrm{pr}}$ equals the corresponding tensor of $\mathcal G^{(n)}$ (in blocks
+$1$ to $L-1$, and $h$, $k$ and $v$ of block $L$) or its slice $S_n$ (the other tensors of block
+$L$, and the final norm); in particular the honest claims of every weight operation of $\mathcal G^{(n)}_{\mathrm{pr}}$
+% CHECK: "and the final norm" added: norm_f lies after block L and is computed at n positions in
+% the pruned graph (the proof of (a) shows it equals S_n(norm_f(r''))).
+are those of $\mathcal G^{(n)}$ or their last $n$ columns.
+(b)~Every weight operation of $\mathcal G^{(n)}_{\mathrm{pr}}$ meets the setup bound of
+Section~\ref{sec:intmodel} if and only if it does in $\mathcal G^{(n)}$.
+(c)~Theorems~\ref{thm:sound}, \ref{thm:untrusted} and~\ref{thm:v1} hold for
+$\mathcal G^{(n)}_{\mathrm{pr}}$ with its own commitment, set $\mathcal J$ and cut set. In
+particular, the verifier of $\mathcal G^{(n)}_{\mathrm{pr}}$ in mode $\sC$ accepts an output
+$y\neq M_{\mathcal G^{(n)}}(x)$ with probability at most the bound $\varepsilon_{\sC}$ computed for
+the commitment of $\mathcal G^{(n)}_{\mathrm{pr}}$. If every weight operation is committed in a
+row-layout tree of its own, the two graphs have the same $\mathcal J$, $k_j$, $n_j$ and $t_j$, and
+therefore the same bound.
+\end{theorem}
+
+\begin{proof}
+(a)~Blocks $1$ to $L-1$ and the embeddings are the same operations on the same input, and so is
+$h=\mathrm{norm}_1(r)$ of block $L$. By Lemmas~\ref{lem:prune-local} and~\ref{lem:prune-slice},
+the pruned $q$ is $\mathrm{rq}(W_q[S_n(h);\mathbf 1])=S_n(\mathrm{rq}(W_q[h;\mathbf 1]))$, its
+per-head norm commutes with $S_n$, and RoPE at the positions $o+i$, $o=T-n$, gives
+$S_n(\mathrm{RoPE}(q))$, which is $f^{[o]}$ of Lemma~\ref{lem:prune-slice}. With $\tilde q$,
+$\tilde k$, $\tilde v$ the inputs of attention in $\mathcal G^{(n)}$, the pruned attention is
+$\mathrm{Att}_o(S_n(\tilde q),\tilde k,\tilde v)=S_n(\mathrm{Att}(\tilde q,\tilde k,\tilde v))$, and
+the output requantisation and $W_o$ are position-uniform, so the pruned $W_oa$ is $S_n(W_oa)$. The
+residual addition gives $\mathrm{res}(S_n(r),S_n(W_oa))=S_n(r')$. Every remaining operation of the
+block is position-uniform, so the pruned block ends with $S_n(r'')$. The pruned graph then applies
+$\mathrm{norm}_f$ and its slice to a tensor of $n$ positions, on which $S_n$ is the identity, so the
+LM head reads $\mathrm{norm}_f(S_n(r''))=S_n(\mathrm{norm}_f(r''))$, its input in
+$\mathcal G^{(n)}$. The weights are equal, so are the logits. The statement on the claims is the
+same chain of equalities.
+(b)~The bound checked at setup (Section~\ref{sec:intmodel}; \texttt{protocol.claim\_bound})
+depends only on the weights and on the input bound of the operation, which are the same in both
+graphs.
+(c)~The proofs of the three theorems (Appendices~\ref{app:sound}, \ref{app:untrusted}
+and~\ref{app:v1}) use only that the graph consists of weight operations~\eqref{eq:weightop},
+committed as in Section~\ref{sec:commit}, and of public deterministic operations without weights
+that the verifier recomputes, together with the setup bound. The pruned graph is such a graph: the
+slices are operations without weights, and the graph digest of Section~\ref{sec:fs} describes them
+(\texttt{IntGraph.digest} hashes every operation's name, inputs, output, note, function and
+constants, and the graph's \texttt{meta}), so the statements of the two graphs differ under
+Fiat--Shamir. The theorems therefore hold for $\mathcal G^{(n)}_{\mathrm{pr}}$, and by~(a) the event
+$y\neq M_{\mathcal G^{(n)}_{\mathrm{pr}}}(x)$ is the event $y\neq M_{\mathcal G^{(n)}}(x)$. If every
+weight operation has its own row-layout tree, both graphs commit the same matrices with the same
+shapes and codeword lengths, so $\mathcal J$, $k_j$, $n_j$ and $t_j$ agree. The roots themselves
+differ: each tree is domain-separated by its operation's name, and the builder numbers operations in
+order, so the extra slices of the pruned block shift the names after them. A client therefore needs
+the commitment of the graph it verifies, which it recomputes in the same way. Under a commitment
+plan the plan may also differ: in the pruned graph $q$ of block $L$ reads $S_n(h)$ and $k$ and $v$
+read $h$, so they are not stacked into one transposed matrix (\texttt{tests/test\_pruning.py},
+\texttt{test\_a\_pruned\_block\_commits\_its\_q\_on\_its\_own}), and the bound is that of the pruned
+graph's plan.
+\end{proof}
+
+\noindent For V1, the operations of the pruned block that claim $n<T$ columns violate rule~(P2) of
+Section~\ref{sec:v1} and are clear; Theorem~\ref{thm:v1} applies with this cut set.
+% CHECK: was "the single-position operations ... violate (P2)". cut.py tests cols == T, so with
+% n = T (a one-token prompt, T = P + G - 1 = G) the pruned ops span all T positions and may be cut;
+% thm:v1 applies with whatever cut set results either way. The real-weight
+builders (\texttt{real\_weights.py}) do not yet build a pruned block; the theorem applies to them
+once they insert the same slices.
+
+% -------------------------------------------------------------------------------------
+\subsection{Generated Responses: the Token Rule and the Integer Sampler}
+\label{app:gen}
+
+\para{Responses and rules.} A prompt $x=(x_1,\dots,x_P)$ is answered by a response
+$y_1,\dots,y_G$. A \emph{response rule} maps a logit vector $z\in\mathbb Z^V$ and a position index
+$\pi$ to a token. The greedy rule is $R(z,\pi)=\min\{v:z_v=\max_wz_w\}$. The sampled rule
+$R_\sigma$, for $\sigma=(\mathit{seed},a,k)$ with a 32-byte seed, $0<a<2^{24}$ and $k\ge0$
+(\texttt{token\_sampler.TokenSampler}), takes the candidates $C$, which are all $v$ if $k=0$ or
+$k\ge V$ and otherwise the $k$ indices of largest $z_v$ with ties to the smaller index; the noise
+$\Gamma[u_v]$ of Eq.~\eqref{eq:gumbel-table}, where $u_v$ is the $v$-th little-endian 16-bit word of
+$H(\texttt{pvi/sampler/v1}\,\|\,\mathit{seed}\,\|\,\mathrm{le}_8(\pi))$ and $\mathrm{le}_8(\pi)$ is
+$\pi$ in 8 bytes, little-endian (\texttt{TokenSampler.noise}); and returns $\min\{v\in C:\ az_v+\Gamma[u_v]\text{ is maximal on
+}C\}$. The \emph{reference response} of $x$ under a rule $R$ is $y^\ast$ with
+$y^\ast_i=R(\ell_i,P+i-2)$, where $\ell_i=M_{\mathcal G}(x\,\|\,y^\ast_1\cdots y^\ast_{i-1})$ are the
+logits at the last position, whose 0-based index is $P+i-2$ (\texttt{greedy\_tokens},
+\texttt{sample\_tokens}).
+
+\para{The query.} The response is proved as one query on $s=x\,\|\,y_1\cdots y_{G-1}$, with
+$T=P+G-1$ positions, on the graph $\mathcal G^{(G)}$ (pruned or not). Column $j<G$ of the claimed
+LM-head output $\hat Z\in\mathbb Z^{V\times G}$ belongs to position $P-1+j$. The client forms $s$
+from its own prompt and the received tokens. The token rule (\texttt{Verifier.check\_tokens})
+requires $y_{j+1}=R(\hat Z_{:,j},P-1+j)$ for every $j<G-1$, and the client takes
+$y_G=R(\hat Z_{:,G-1},P+G-2)$.
+
+\begin{lemma}[causal prefixes]
+\label{lem:causal}
+For every query $s$ with $T$ positions, every $n\le T$ and every $j<n$, column $j$ of
+$M_{\mathcal G^{(n)}}(s)$ equals $M_{\mathcal G}(s_0\cdots s_{T-n+j})$, the last-position logits
+of $\mathcal G$ on the prefix of length $T-n+j+1$. The same holds for
+$\mathcal G^{(n)}_{\mathrm{pr}}$.
+\end{lemma}
+
+\begin{proof}
+By Lemma~\ref{lem:prune-local} every operation is position-local or causal attention, and none has
+a constant that depends on the input. By induction over the operations in graph order, every tensor
+at position $t$ computed on $s$ equals the same tensor at position $t$ computed on any prefix
+$s_0\cdots s_{t'}$ with $t\le t'$: a position-local operation reads position $t$ of its inputs and
+the index $t$, and row $t$ of causal attention reads rows $j\le t$ of its inputs. Column $j$ of the
+LM head of $\mathcal G^{(n)}$ is position $T-n+j$, which is the last position of the prefix of
+length $T-n+j+1$, where $\mathcal G$ applies its LM head. For the pruned graph, combine this with
+Theorem~\ref{thm:prune}(a).
+\end{proof}
+
+\begin{lemma}[the sampler is exact]
+\label{lem:sampler}
+For every $z$ with $|z_v|<2^{29}$, every $\sigma$ and every $\pi$, all scores $az_v+\Gamma[u_v]$
+are integers of magnitude below $2^{54}$, which 64-bit arithmetic computes exactly, and the
+candidates and the choice among equal scores are determined. Hence $R_\sigma(z,\pi)$ is a function
+of $(z,\sigma,\pi)$ that every platform computes identically, given the public table $\Gamma$.
+\end{lemma}
+
+\begin{proof}
+$|az_v|<2^{24}\cdot2^{29}=2^{53}$, and $\Gamma$ is non-decreasing with end values
+$\Gamma[0]=-161{,}658$ and $\Gamma[2^{16}-1]=772{,}243$ (Section~\ref{sec:ext-sampling}), so
+$|\Gamma[i]|<2^{20}$ and every score lies below $2^{53}+2^{20}<2^{54}$ in magnitude. The
+implementation gives excluded entries the score $-2^{63}$, below every candidate's, chooses the
+candidates by a stable sort of $-z$ (ties to the smaller index) and the token by
+\texttt{torch.argmax}, which returns the first maximal index. The table is fixed by its SHA-256
+digest: \texttt{gumbel\_table} checks the table computed in floating point against the digest,
+recomputes it in decimal arithmetic if they differ, and stops if the digest still does not match.
+\end{proof}
+
+\noindent The token rule runs before the range check of the claims in \texttt{run\_query}; since
+acceptance requires the range check, $|z_v|<2^{29}$ holds for the claims of every accepted query,
+and the lemma applies to them.
+
+\begin{theorem}[generated responses]
+\label{thm:gen}
+Fix a prompt $x$, a rule $R$ (greedy, or $R_\sigma$) and $G\ge1$. For every prover, the verifier
+accepts and outputs a response different from the reference response $y^\ast$ with probability at
+most $\varepsilon$, the bound of Theorem~\ref{thm:sound} (or of Theorem~\ref{thm:v1} for V1) for the
+graph $\mathcal G^{(G)}$ in the mode used. Under Fiat--Shamir the bound of Theorem~\ref{thm:fstree}
+applies to the statement $(\mathcal G^{(G)},s,\sigma)$; in mode $\Kpre$, a false response among
+$Q_V$ verdicts is accepted with probability at most $Q_V\varepsilon_{\sK}$ if all queries are v0
+queries, and at most the bound of Theorem~\ref{thm:v1kpre} in general.
+% CHECK: was "at most Q_V eps_K (Theorem thm:v1kpre)", which omits the logUp and GKR terms that
+% thm:v1kpre adds for V1 queries (V1 also runs in Kpre with the sampler, run_cut_query).
+With an untrusted commitment, $M^\ast$ of Theorem~\ref{thm:untrusted}
+replaces $M$ in the definition of $y^\ast$, and the bound is that of Theorem~\ref{thm:untrusted}.
+In v0, $\varepsilon$ does not depend on $G$: $\mathcal G^{(G)}$ has the weight operations,
+operation inputs and commitment of $\mathcal G$. The token rule and the sampler add no term.
+\end{theorem}
+
+\begin{proof}
+Suppose that the verifier accepts and that $\hat Z=M_{\mathcal G^{(G)}}(s)$. We show by induction
+that $y_i=y^\ast_i$ for every $i\le G$. Let $y_1,\dots,y_{i-1}$ equal $y^\ast_1,\dots,y^\ast_{i-1}$.
+By Lemma~\ref{lem:causal} with $n=G$ and $j=i-1$, column $i-1$ of $\hat Z$ is
+$M_{\mathcal G}(s_0\cdots s_{P+i-2})=M_{\mathcal G}(x\,\|\,y^\ast_1\cdots y^\ast_{i-1})=\ell_i$. The
+token rule for $i<G$, and the definition of $y_G$ for $i=G$, give
+$y_i=R(\hat Z_{:,i-1},P+i-2)=R(\ell_i,P+i-2)=y^\ast_i$; by Lemma~\ref{lem:sampler}, $R$ is a
+function, which is all that is used here. Hence an accepted response other than $y^\ast$ has
+$\hat Z\neq M_{\mathcal G^{(G)}}(s)$: the verifier accepted a wrong output of $\mathcal G^{(G)}$ on
+$s$. The query $s$ and the claims are fixed in the prover's first message, before any challenge,
+and Theorem~\ref{thm:sound} holds for every input, so also for an $s$ that the prover chooses; the
+same holds for Theorems~\ref{thm:untrusted} and~\ref{thm:v1}, and Lemma~\ref{lem:causal} holds for
+$M^\ast$, whose weight products are also position-uniform. Under Fiat--Shamir the prover chooses
+$s$ adaptively, which Theorem~\ref{thm:fstree} covers because the transcript absorbs the statement
+first. The bound of Theorem~\ref{thm:sound} depends on $\mathcal J$, the $k_j$, $n_j$, $t_j$ and
+$r$, which \texttt{with\_lm\_positions} leaves unchanged: it changes only the slices.
+\end{proof}
+
+\noindent In V1 the terms of Theorem~\ref{thm:v1} that grow with the number of leaves grow with
+$T=P+G-1$, as for any prompt of that length.
+
+\begin{corollary}[the client's seed]
+\label{cor:seed}
+Fix $x$, $a$ and $k$, and let the client draw the seed uniformly, independently of everything the
+provider holds before the query. For every set $W$ of responses, the probability that the verifier
+accepts a response in $W$ is at most $\Pr_{\mathit{seed}}[y^\ast(x,\sigma)\in W]+\varepsilon$.
+\end{corollary}
+
+\begin{proof}
+The event ``accepted and in $W$'' lies in the union of $\{y^\ast\in W\}$ and of ``accepted and
+different from $y^\ast$''. The reference response is a function of $M$, $x$ and $\sigma$, so the
+first event has probability $\Pr_{\mathit{seed}}[y^\ast(x,\sigma)\in W]$; the second has probability
+at most $\varepsilon$ by Theorem~\ref{thm:gen}.
+\end{proof}
+
+\noindent The corollary bounds the probability of every set of responses from above. It does not
+prevent a provider from refusing to answer after it sees the seed, which lowers the probability of
+the responses it dislikes; the distribution conditioned on acceptance can therefore differ from the
+sampler's. It also says nothing about how close $R_\sigma$ is to sampling at temperature $\tau$
+(Section~\ref{sec:ext-sampling}).
+
+\para{The seed is part of the statement.} The verifier's decision depends on $\sigma$ through the
+token rule, so $\sigma$ belongs to the statement. Under Fiat--Shamir, (R3) requires the hash input to
+contain the whole statement, and \texttt{\_absorb\_statement} absorbs
+$\texttt{pvi/sampler/v1}\,\|\,a\,\|\,k\,\|\,\mathit{seed}$ (\texttt{TokenSampler.digest}), with the
+graph digest, which includes the number $G$ of LM-head positions (\texttt{meta["lm\_positions"]}).
+Without it, one transcript would serve the statements of every seed, the weak Fiat--Shamir
+pattern~\cite{bernhard2012pitfalls,dao2023weakfs}. In mode $\Kpre$ of v0 no challenge is derived
+from a transcript (Proposition~\ref{prop:kpre-fs}); the verifier holds $\sigma$ and applies the
+token rule itself. V1 takes the sampler as well (\texttt{run\_cut\_query}), and its LM head is
+clear, so the token rule acts on clear claims; ``an output that violates the token rule'' in
+Theorem~\ref{thm:v1} is the event of Theorem~\ref{thm:gen}. Convincing a third party that the seed
+was random needs a jointly generated seed, which we do not provide.
+
+% -------------------------------------------------------------------------------------
+\subsection{The Fiat--Shamir Transcript: Tree Absorption and Mode \texorpdfstring{$\Kpre$}{Kpre}}
+\label{app:fstree}
+
+\para{The transcript.} For a label $L$ and a message $m$ let
+$\mathrm{rec}(L,m)=\langle|L|\rangle_2\,\|\,L\,\|\,\langle|m|\rangle_8\,\|\,m$, with big-endian
+lengths of 2 and 8 bytes. The transcript string starts with \texttt{pvi/fullcheck/v3}, and a
+\emph{direct} absorption of $(L,m)$ appends $\mathrm{rec}(L,m)$ (\texttt{Challenger.absorb}). A
+\emph{tree} absorption (\texttt{Challenger.absorb\_large}, under Fiat--Shamir, for
+$|m|\ge2^{24}$ bytes) cuts $m$ into the $c=\lceil|m|/2^{22}\rceil$ chunks $m_0,\dots,m_{c-1}$ of
+$2^{22}$ bytes (the last one possibly shorter), computes the leaves
+\[
+  \lambda_j=H_{256}\big(\texttt{pvi/leaf/v1}\,\|\,\langle|L|\rangle_2\,\|\,L\,\|\,\langle j\rangle_8
+  \,\|\,m_j\big),
+\]
+on a thread pool, in order, and appends
+$\mathrm{rec}\big(L\|\texttt{/tree},\ \langle c\rangle_8\|\langle2^{22}\rangle_8\|\langle|m|\rangle_8
+\|\lambda_0\|\cdots\|\lambda_{c-1}\big)$. A message shorter than $2^{24}$ bytes is absorbed directly
+under $L$. The key of a challenge with label $L_{\mathrm{ch}}$ is
+$K=H_{256}(\text{transcript string}\,\|\,\texttt{challenge/}\,\|\,L_{\mathrm{ch}})$
+(\texttt{Challenger.\_key}), and the challenge is expanded from $K$ as in
+Appendix~\ref{app:the-conv}, with inputs $K\,\|\,\cdot$. A claims message of about 6.6\,GB
+(Llama-2-7B at 2{,}048 tokens, Section~\ref{sec:v1}) has about 1{,}600 leaves, so the transcript
+absorbs about 50\,kB instead of 6.6\,GB, and the leaves are hashed in parallel.
+
+\para{Labels.} Two conditions on labels make the transcript decodable.
+(L1)~Every label, absorbed or of a challenge, is shorter than $25{,}448$ bytes, the number whose
+2-byte big-endian encoding is \texttt{ch}, the first two bytes of \texttt{challenge/}.
+(L2)~No label that is absorbed directly equals $L\|\texttt{/tree}$ for a label $L$ that is passed to
+\texttt{absorb\_large}.
+Both hold for the implementation, whose labels have a few dozen bytes at most: \texttt{absorb\_large}
+receives \texttt{claims/PVC3}, \texttt{rows/I8}, \texttt{u/F31}, \texttt{cut/exc} and
+\texttt{cut/mult}; the direct labels are \texttt{graph}, \texttt{params}, \texttt{op/}$\cdot$,
+\texttt{col/}$\cdot$, \texttt{group/}$\cdot$, \texttt{table/}$\cdot$, \texttt{lookups}, \texttt{x},
+\texttt{sampler}, \texttt{cut}, \texttt{claim/}$\cdot$, \texttt{lookup/}$\cdot$, \texttt{u/}$\cdot$
+and the GKR labels \texttt{cut/}$b$\texttt{/top}, \texttt{cut/}$b$\texttt{/g}$k.j$ and
+\texttt{cut/}$b$\texttt{/v}$k$ for integers $b,k,j$. (L2) would fail only for a weight operation
+named \texttt{F31/tree}.
+
+\begin{lemma}[decoding the transcript]
+\label{lem:tree-dec}
+Assume (L1) and (L2). (a)~A challenge input
+$w=\text{transcript string}\|\texttt{challenge/}\|L_{\mathrm{ch}}$ determines the sequence of
+records and $L_{\mathrm{ch}}$. (b)~It determines, for each message, whether it was absorbed directly
+or as a tree, and the message itself, or $(c,|m|,\lambda_0,\dots,\lambda_{c-1})$ respectively.
+(c)~If two different messages $m\neq m'$, absorbed as trees under the same label, give the same
+$(c,|m|,\lambda_0,\dots,\lambda_{c-1})$, then two different inputs of $H_{256}$ have the same
+output.
+\end{lemma}
+
+\begin{proof}
+(a)~After the 16-byte domain string, the next two bytes are either the length of a record's label,
+which by (L1) is below $25{,}448$ and so differs from \texttt{ch}, or the bytes \texttt{ch} that start
+the suffix. A record is self-delimiting through its two lengths, so reading record after record,
+and stopping at \texttt{ch}, recovers the records and then $L_{\mathrm{ch}}$.
+(b)~A record whose label is $L\|\texttt{/tree}$ for a label $L$ of \texttt{absorb\_large} is, by (L2),
+a tree record; its payload consists of three 8-byte integers and $c$ leaves of 32 bytes. Every other
+record is a direct one and contains its message.
+(c)~Equal lengths give equal chunk boundaries. Since $m\neq m'$, some chunk $m_j\neq m'_j$; the two
+leaf inputs share the prefix up to $\langle j\rangle_8$ and differ in the chunk, and their outputs
+$\lambda_j$ are equal.
+\end{proof}
+
+\begin{theorem}[Fiat--Shamir with tree absorption]
+\label{thm:fstree}
+Model SHAKE-256 as a random oracle and assume (L1) and (L2). Let $\Pi$ be a public-coin protocol of
+the implementation (v0 in mode $\sC$ or $\sK$, with or without the compact encoding, or the
+public-coin part of V1) with $k$ challenge rounds and round-by-round error
+$\varepsilon_{\mathrm{rbr}}=\max_i\varepsilon_i$, and let $\mathrm{FS}(\Pi)$ be its non-interactive
+form with the transcript above, which absorbs the statement first. For every prover that makes at
+most $Q$ oracle queries and outputs a statement and a proof, the probability that the statement is
+false and the verifier accepts is at most
+% CHECK: Q_V renamed Q_ver here: app:the-conv and cor:v1kpre-fs use Q_V for the number of verdicts
+% (proofs submitted), a different quantity.
+\[
+  (Q+k)\,\varepsilon_{\mathrm{rbr}}+N^2\,2^{-256},
+\]
+where $N=Q+Q_{\mathrm{ver}}$ and $Q_{\mathrm{ver}}$ is the number of oracle queries the verifier
+makes on the proof (leaves, keys and expansions).
+\end{theorem}
+
+\begin{proof}
+% CHECK: the components are now defined by the query's first 32 bytes, not by its role. As drafted,
+% a query K||label whose key K happens to start like a transcript is both an "expansion input" and
+% a "challenge input", and "at most one first unresolved component" (needed for Pr[E_2]) was not
+% justified. Every challenge input starts with sigma_0 (16-byte domain string, 2+5+8 bytes of
+% framing of the record "graph", first byte of the 32-byte digest: _absorb_statement absorbs
+% "graph" first in v0 and V1). E_0 costs N 2^-256; with N(N-1)/2 pairs the total stays N^2 2^-256.
+Consider all oracle queries of the prover and of the verifier, at most $N$, in the order they are
+made. Every challenge input begins with the same 32 bytes $\sigma_0$: the domain string, the framing
+of the first record, \texttt{graph}, and the first byte of the graph digest. Call a 32-byte value
+inside a query a \emph{component} if the query begins with $\sigma_0$ and the value is a leaf in a
+tree record of it, or if the query does not begin with $\sigma_0$ and the value is its first 32 bytes
+(for an expansion input, its key). Call a component \emph{resolved} at the time of the query if it is
+the 32-byte output of an earlier query.
+Let $E_0$ be the event that some output equals $\sigma_0$, $E_1$ the event that two different inputs
+have the same 32-byte output, and $E_2$ the event that, for some query, its first unresolved
+component equals the output of a later query. $\Pr[E_0]\le N\,2^{-256}$. Each of the $N(N-1)/2$ pairs
+of queries collides with probability $2^{-256}$, so $\Pr[E_1]\le N(N-1)/2^{257}$; each query has at
+most one first unresolved component, fixed when the query is made, which a later output hits with
+probability $2^{-256}$, so $\Pr[E_2]\le N(N-1)/2^{257}$. Hence $\Pr[E_0\cup E_1\cup E_2]\le
+N^2\,2^{-256}$, and we assume from now on that no such event occurs.
+Let $w$ be a challenge input that the verifier uses for the final proof, at the time the prover
+first queried it (if the prover never did, the verifier's own query is the first). Every leaf of
+$w$ is the output of the verifier's leaf query on the actual chunk. If some component of $w$ was
+unresolved at that time, the first one would be the output of a later query, which is $E_2$; so all
+were resolved, and by $\neg E_1$ the earlier query with that output is unique and equals the
+verifier's leaf input, chunk included. With Lemma~\ref{lem:tree-dec}, $w$ therefore determined at
+that time a unique partial transcript $\tau(w)$ of $\Pi$ (the statement and the messages so far)
+and the label of the challenge. Conversely $\tau(w)$ and the label determine $w$, since its leaves
+are the oracle outputs on its chunks. By $\neg E_0$, $K=H_{256}(w)$ differs from $\sigma_0$, so $K$
+is the component of every query $K\|\cdot$; by $\neg E_1$ and $\neg E_2$, no expansion input
+$K\|\cdot$ was queried before $K$ was output, so the expanded challenge is uniform and
+% CHECK: sentence above extended to use E_0 and E_1 explicitly (see the CHECK at the start of the proof).
+independent of all earlier answers; the challenges of one round, drawn under distinct labels from
+the same transcript string, are independent for the same reason.
+As in the reduction behind (R3), the prover's queries thus induce a state-restoration prover for
+$\Pi$ with at most $Q$ moves: the first query on a challenge input $w$ whose components are resolved
+makes the move $\tau(w)$, whose answer fixes all challenges of that round at once (queries for the
+other labels of the round make the same move), and the oracle's answers on $w$ and on the expansion
+inputs are sampled jointly with that challenge; the remaining queries are answered with fresh
+randomness that no accepted proof uses. The verifier's own key queries on the final proof add at
+most $k$ moves. By (R2) a false statement is then accepted with probability at most
+$(Q+k)\,\varepsilon_{\mathrm{rbr}}$, which with $\Pr[E_0\cup E_1\cup E_2]$ gives the bound.
+% CHECK: E_0 added to the last line.
+\end{proof}
+
+\begin{corollary}[v0 under Fiat--Shamir]
+\label{cor:fs-v0}
+For v0 in mode $\sC$, with the state function of Appendix~\ref{app:sound}, $k=2$ (the vectors
+$\chi,\chi'$, then the columns) and
+$\varepsilon_{\mathrm{rbr}}=\max\big(p^{-r},\max_j\prod_{i<t_j}\tfrac{k_j-1-i}{n_j-i}\big)\le
+\varepsilon_{\sC}$, so a prover with $Q$ queries succeeds with probability at most
+$(Q+2)\,\varepsilon_{\sC}+N^2\,2^{-256}$. For V1, $\varepsilon_{\mathrm{rbr}}$ is the largest of
+these terms and of the per-round errors of Appendix~\ref{app:v1}, $(\Nleaf+|\Vtab|)/(p^8-p^2)$,
+$2/p^8$ and $3/p^8$, where a round holds the challenges drawn from one transcript string: the
+implementation draws $\theta_{k-1}$ and $\eta_k$ of a GKR instance together, and $\alpha$ with the
+vectors $\chi$ of the clear operations.
+% CHECK: "1/p^8" -> "2/p^8". logup_gkr.verify draws mu{k-1} (theta) and lam{k} (eta) from the same
+% transcript state (nothing is absorbed between them), and thm:fstree's proof treats all challenges
+% of one transcript string as one round, so that round errs with <= 1/p^8 + 1/p^8. The maximum
+% (the alpha term, <= 2^-215.3) is unchanged.
+\end{corollary}
+
+\noindent The bound of Section~\ref{sec:fs}, $Q\varepsilon_{\sC}+O(Q^22^{-256})$, should be read with
+$Q+k$ in place of $Q$, or with $Q$ counting the verifier's $k$ key queries. At $Q=2^{64}$ the term
+$N^2\,2^{-256}$ is about $2^{-128}$, as large as the target, because keys and leaves have 32 bytes;
+a collision in the SHA-256 Merkle trees, which Theorems~\ref{thm:sound} and~\ref{thm:untrusted}
+exclude, has probability of the same order (Remark~\ref{rem:rbr-max}).
+
+\begin{remark}[relation to tree hashing]
+\label{rem:tree}
+The tree absorption is a one-level tree whose leaves and final node are domain-separated
+(\texttt{pvi/leaf/v1} against the transcript's \texttt{pvi/fullcheck/v3}), with the leaf index, the
+message's label, the chunk size, the leaf count and the length bound into it. This is the kind of
+mode for which Bertoni et al.\ give sufficient conditions for soundness~\cite{bertoni2014tree};
+KangarooTwelve is a deployed instance of such a mode. The proof above does not use their theorem:
+it needs only Lemma~\ref{lem:tree-dec} and the birthday bound on 32-byte outputs. The index
+$\langle j\rangle_8$ prevents the reordering of chunks, the label prevents the reuse of a leaf in
+another message, and the length fixes the boundary of the last chunk; the chunk size is a constant
+and is absorbed for versioning. \texttt{tests/test\_fs\_tree.py} checks that a flipped bit in the
+first, a middle or the last chunk, one byte more or less, another label, and direct absorption of
+the same bytes each change the challenge, and that the threaded leaves equal a serial reference.
+\end{remark}
+
+\begin{proposition}[mode $\Kpre$ of v0 absorbs nothing]
+\label{prop:kpre-fs}
+In mode $\Kpre$ of v0 the proof is one message, the claims, and no challenge is derived from a
+transcript; \texttt{\_claims\_message} absorbs nothing for $\Kpre$, and the verifier uses its
+precomputed $(\chi_\ell,u_\ell)$ (\texttt{Verifier.\_pre}). For every prover, with any number $Q_H$
+of oracle queries, the probability that some of $Q_V$ verdicts accepts a false output is at most
+$Q_V\varepsilon_{\sK}+n_{\mathrm{key}}Q_H\,2^{-256}$, where $\varepsilon_{\sK}=\sum_\ell p^{-r}$ and
+$n_{\mathrm{key}}$ is the number of secret keys (one per weight operation not looked up). There is
+no Fiat--Shamir term and no grinding term.
+\end{proposition}
+
+\begin{proof}
+The verifier's only use of the hash function is the expansion of its own secret keys into
+$\chi_\ell$ (\texttt{Verifier.precompute} with an interactive \texttt{Challenger}). Except with
+probability $n_{\mathrm{key}}Q_H\,2^{-256}$ no query of the prover begins with one of these keys, and
+then the prover's oracle answers are independent of the $\chi_\ell$, which are uniform. Every check
+of the verifier is a function of the claims, the statement, its weights and the $\chi_\ell$, so
+the prover's oracle queries give it no information on the $\chi_\ell$, and the bound of
+Theorem~\ref{thm:sound} for $\Kpre$ (proved in Appendix~\ref{app:v1kpre}, with no public coins)
+applies to its $Q_V$ verdicts.
+\end{proof}
+
+\noindent A $\Kpre$ proof is not transferable: only the holder of $\chi$ can check it, and the
+verifier knows its own statement, so no weak Fiat--Shamir issue arises. The parameters that
+\texttt{params\_for} chooses under Fiat--Shamir add 64 bits to $\beta$ although $\Kpre$ has nothing
+to grind; for $\Kpre$ they act as a margin on $Q_V$ (Appendix~\ref{app:stateful}). A V1 query in
+$\Kpre$ still derives $\alpha$ and the GKR challenges from the transcript
+(\texttt{cut\_protocol.\_query} absorbs the statement, the cut plan's digest, the first message and
+the GKR messages); Corollary~\ref{cor:v1kpre-fs} bounds it.
+
+% -------------------------------------------------------------------------------------
+\subsection{The Compact Encoding of the Proof}
+\label{app:codec}
+
+\para{The wire protocol.} With \texttt{wire=True} every prover message travels as bytes, which the
+verifier decodes before it checks anything: the claims in the format \texttt{PVC3}
+(\texttt{claimcodec.decode}, \texttt{decode\_torch}, or \texttt{decode\_device} on a GPU), the rows
+of a plan's lookup tables as int8 bytes (\texttt{unpack\_rows}), $u$, the opened columns and the
+folds of V1 at 31 bits per element (\texttt{unpack\_field} through \texttt{\_field\_message}), and in
+V1 the exceptions (\texttt{cut\_protocol.unpack\_exceptions}), the multiplicities (one \texttt{PVC3}
+row) and each GKR transcript (\texttt{logup\_gkr.Transcript.from\_bytes} with
+\texttt{extfield.unpack}). For a protocol $\Pi$ of Sections~\ref{sec:defence} and~\ref{sec:v1},
+which sends integer and field tensors, let $\Pi_{\mathrm{wire}}$ be the protocol in which the prover
+sends bytes $b_i$ in place of message $i$ and the verifier runs the verifier of $\Pi$ on the decoded
+messages, rejecting if a decoding fails. Under Fiat--Shamir the transcript of
+$\Pi_{\mathrm{wire}}$ absorbs, before the next challenge, the bytes $b_i$ of every message that it
+decodes (\texttt{claims/PVC3}, \texttt{rows/I8}, \texttt{u/F31}, \texttt{cut/exc},
+\texttt{cut/mult}), or for the GKR rounds the decoded field elements; in each case the very buffer
+that the verifier decodes (\texttt{\_claims\_message} and \texttt{\_decoded\_claims},
+\texttt{\_fold\_message} and \texttt{\_open\_message}, \texttt{cut\_protocol.\_query}).
+
+\begin{lemma}[the decoders]
+\label{lem:codec-dec}
+Each decoder is a deterministic function $\mathrm{Dec}_i(b;c)$ of the bytes $b$ and of a public
+context $c$ that is fixed before $b$ is sent: the graph, the query's shape, the parameters, the
+commitment plan and the cut plan. It returns either a message of the shapes that $c$ prescribes or
+a rejection. Decoded claims are integers with $|z|<2^{30}$, decoded field-packed values lie in
+$[0,2^{31})$, and decoded rows lie in $[-128,127]$. Moreover the codec is designed so that
+$\mathrm{Dec}_i(\mathrm{Enc}_i(m);c)=m$ for every honest message $m$ (completeness; tested, not
+proved here, and not used for soundness).
+\end{lemma}
+
+\begin{proof}
+The decoders read only $b$ and $c$ and draw no randomness. Their rejection rules are those listed
+in the documentation of \texttt{claimcodec}: a bad magic or op count, a column count other than the
+expected one (checked before anything is allocated), other flag bits, slot widths above 30, bases
+outside $(-2^{30},2^{30}-2^B]$, truncated or trailing bytes, non-zero padding, Rice parameters above
+32, exception positions out of order or out of range, exceptions reaching $|x|\ge2^{30}$; a wrong
+length for the field-packed values and the rows; coefficients of $\Fext$ outside $[0,p)$; and, for
+the exceptions frame, a bad magic, counts above the operation's entries or a wrong length. A
+rejection is reported as \texttt{ClaimCodecError}, \texttt{ValueError} or \texttt{None}, which
+\texttt{run\_query} and \texttt{run\_cut\_query} turn into the rejection labels
+\texttt{range\_or\_shape}, \texttt{freivalds}, \texttt{columns\_shape}, \texttt{cut\_exception},
+\texttt{cut\_multiplicities}, \texttt{cut\_gkr} and \texttt{cut\_final}. The value ranges follow from
+these rules. That every input is either decoded or rejected, with no other exception, is the
+documented contract of the decoders, which \texttt{tests/test\_claimcodec.py} checks with random
+corruptions, together with the round trip and with the GPU decoder rejecting exactly what the host
+decoder rejects. Soundness uses only determinism and that no query is accepted without a successful
+decoding: an unexpected exception stops the verifier without acceptance.
+\end{proof}
+
+\begin{theorem}[the compact encoding preserves soundness]
+\label{thm:codec}
+(a)~Interactively, for every prover $P_{\mathrm{wire}}$ of $\Pi_{\mathrm{wire}}$ there is a prover $P$
+of $\Pi$ such that, on every statement and for every choice of the verifier's coins,
+$\Pi_{\mathrm{wire}}$ accepts if and only if $\Pi$ accepts, and every verdict of
+$\Pi_{\mathrm{wire}}$ is a function of the decoded messages. Hence the bounds of Theorems~\ref{thm:sound},
+\ref{thm:untrusted} and~\ref{thm:v1}, including the reuse bounds of mode $\Kpre$, hold for
+$\Pi_{\mathrm{wire}}$.
+(b)~$\Pi_{\mathrm{wire}}$ has the same per-round errors as $\Pi$, so Theorem~\ref{thm:fstree} gives
+it the Fiat--Shamir bound of $\Pi$, where $Q$ counts every oracle query, including those spent on
+other encodings of the same values. Non-canonical encodings add no term.
+\end{theorem}
+
+\begin{proof}
+(a)~$P$ runs $P_{\mathrm{wire}}$ and sends $\mathrm{Dec}_i(b_i;c)$ in place of $b_i$, or, if the
+decoding rejects, a message that the verifier of $\Pi$ rejects at the same point (for example a
+claim matrix of the wrong shape). In $\Pi_{\mathrm{wire}}$ each challenge is drawn after $b_i$ has
+been received and depends on nothing the prover sends later, and the checks of
+$\Pi_{\mathrm{wire}}$ are those of $\Pi$ applied to the decoded messages. With the same coins the two
+runs therefore accept together, and a failed decoding in one run is a rejection in the other.
+Decoded values outside the field are rejected by
+$\Pi$'s own checks (the field check of $u$ in \texttt{\_disagrees}, of the openings in
+\texttt{\_columns\_shape\_ok}, of V1's folds in \texttt{cut\_protocol.\_query}), so they act as no
+alias. The reuse bound of $\Kpre$ (Theorem~\ref{thm:v1kpre}) needs only that every verdict is a
+function of the prover's messages and the public coins until the first bad check, and verdicts of
+$\Pi_{\mathrm{wire}}$ are functions of the decoded messages, hence of the bytes.
+(b)~Call a partial transcript of $\Pi_{\mathrm{wire}}$ doomed if some message in it fails to decode,
+or if the decoded transcript is doomed for $\Pi$. A failed decoding stays failed, and $\Pi$'s prover
+messages cannot leave a doomed state, so no prover message of $\Pi_{\mathrm{wire}}$ leaves one; a
+complete doomed transcript is rejected, at the failed decoding or by $\Pi$'s verifier. After bytes
+$b_1,\dots,b_i$ that decode, the next challenge is uniform and independent of $b_1,\dots,b_i$, hence
+of the decoded messages, so it leaves the doomed set with probability at most $\Pi$'s per-round
+error. Theorem~\ref{thm:fstree} applies, since the absorbed bytes (or decoded GKR values) determine
+the decoded messages. An encoding of the same values with other bytes is a different partial
+transcript, and querying its challenge is one more oracle query, counted in $Q$ exactly like any
+other change of the prover's message.
+\end{proof}
+
+\noindent The encoding is not canonical: the encoder chooses widths and centring, and other choices
+give other bytes for the same claims (\texttt{claimcodec}, ``Soundness''). Theorem~\ref{thm:codec}
+shows that soundness does not need a canonical encoding; the decoder that recomputes the encoder's
+plan, proposed as plan D3 in \texttt{docs/improvements/D1\_D2\_fiat\_shamir\_binding.md}, would only
+make proofs unique, which our soundness notion does not require. Soundness does need that the
+verifier absorbs what it decodes: a transcript that absorbed bytes other than those decoded, or only
+part of them, would let the decoded message change after the challenge.
+
+% -------------------------------------------------------------------------------------
+\subsection{Two Remarks on the Round-by-Round Argument}
+\label{app:rbr}
+
+This subsection answers two questions of a mock review about the round-by-round argument of
+Appendices~\ref{app:sound} and~\ref{app:v1}.
+
+\begin{lemma}[the column check needs only the order of messages]
+\label{lem:col-any}
+Let $B\in\F^{N\times k}$ be a matrix whose rows are committed honestly as Reed--Solomon codewords
+of length $n$, the rows of $\hat B$ ($B=A_j$ in the row layout, and $B$ the transpose of the stacked
+weights in the transposed layout), and let $w\in\F^N$ and $u\in\F^k$ with $u\neq w^\T B$ be fixed
+before the set $C$ of $t$ distinct uniform columns is drawn. Then
+$\Pr_C\big[\forall c\in C:(w^\T\hat B)_c=\enc(u)_c\big]\le\prod_{i<t}\frac{k-1-i}{n-i}$. The same
+bound holds for $w\in\Fext^N$ and $u\in\Fext^k$ with $u\neq w^\T B$ when the check is made on each
+of the eight base-field coordinate planes.
+\end{lemma}
+
+\begin{proof}
+By linearity $w^\T\hat B=\enc(w^\T B)$, and $\enc(u)$ and $\enc(w^\T B)$ are distinct codewords,
+which agree on a set of at most $k-1$ positions. This set is fixed before $C$ is drawn, and a
+uniform set of $t$ distinct columns lies inside it with probability at most
+$\binom{k-1}{t}/\binom{n}{t}=\prod_{i<t}(k-1-i)/(n-i)$. Over $\Fext$, write
+$u=\sum_{q<8}\xi^qu^{(q)}$ and $w=\sum_{q<8}\xi^qw^{(q)}$ with coordinates in $\F$; since $B$ has
+entries in $\F$, $w^\T B=\sum_q\xi^qw^{(q)\T}B$, so $u^{(q)}\neq w^{(q)\T}B$ for some $q$, and the
+base-field case applies to plane $q$.
+\end{proof}
+
+\para{Question 5: V1's column check under Fiat--Shamir.} The lemma uses no property of $w$ other than
+being fixed before the columns; in particular $w$ need not be uniform. In V1 (mode $\sC$, row
+layout), $w$ is the eq-vector of the GKR's final row point, fixed when the GKR ends, $u_\ell$ is sent
+in the fold message, and the columns are drawn after it: interactively by the verifier, and under
+Fiat--Shamir from the transcript after it absorbed the fold message's bytes
+(\texttt{\_open\_message} with \texttt{u\_blob}, called by \texttt{cut\_protocol.\_query}). In the
+round-by-round argument, the state after the folds is doomed if a check that does not read the
+columns fails (a Freivalds check of a clear operation, (F3) or (F4)), or if some committed matrix
+$B$ has, in some plane, a fold or combined claim
+% CHECK: "(F3) or (F4)" added. Without them the set is not closed under the fold message: after a
+% doomed GKR (Step 5) the prover can send only true folds, and then (F3), not a fold mismatch,
+% rejects; that state must be doomed too. A failed column-independent check is left with prob. 0.
+$u\neq w^\T B$ for its combination vector $w$: $\chi_\ell$ for a clear operation and the eq-vector
+for a cut one in the row layout, and $\bar x_\ell$ (V1) or $[X;\mathbf 1]\chi'$ (v0) in the
+transposed layout, where $u$ is the prover's $y$ (V1) or the verifier's $Z\chi'$ (v0). Only
+$\chi_\ell$ is uniform. By
+Lemma~\ref{lem:col-any} the column challenge leaves this state with probability at most
+$\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i)$. Step~6 of the proof of Theorem~\ref{thm:v1} is this round's
+analysis.
+
+\begin{remark}[Question 6: the sum and the maximum]
+\label{rem:rbr-max}
+In v0 the challenge of the vectors leaves a doomed state with probability at most $p^{-r}$, since
+only the matrix of the first wrong operation matters, and the column challenge with probability at
+most $\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i)$, since every doomed matrix must escape on its own. So
+$\varepsilon_{\mathrm{rbr}}$ is the maximum of these terms, not their sum $\varepsilon_{\sC}$, and
+the Fiat--Shamir bound is $(Q+k)\,\varepsilon_{\mathrm{rbr}}$ by (R2). Interactively, (R1) gives
+$p^{-r}+\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i)$; the sum over $\mathcal J$ in
+Theorem~\ref{thm:sound} is an upper bound, which is not needed because the first wrong operation,
+and with it the matrix $j$, is fixed before any challenge.
+The parameters do not use the maximum. \texttt{params\_for} sets
+$\beta=\lambda+\log_2(2n_{\mathrm{op}})$, plus 64 under Fiat--Shamir (\texttt{plans.column\_bits}),
+with $n_{\mathrm{op}}\ge|\mathcal J|$ the number of weight operations, and makes every term at most
+$2^{-\beta}$; this meets the sum-form bounds $\varepsilon_{\sC}\le2^{-\lambda}$ and, for
+$Q\le2^{64}$, $Q\varepsilon_{\sC}\le2^{-\lambda}$. With the maximum, $(Q+k)\,2^{-\beta}\le2^{-\lambda}$
+needs only $\beta=\lambda+65$ for $Q+k\le2^{65}$. For Llama-2-7B ($n_{\mathrm{op}}=226$) at
+$\lambda=128$ this would lower $\beta$ from $200.8$ to $193$, leave
+$r=\lceil193/\log_2p\rceil=7$ unchanged, and lower each $t_j$ by about 4\%, since $t_j$ grows about
+linearly with $\beta$. We keep the conservative parameters. Neither choice covers the collision term
+$N^2\,2^{-256}$ of Theorem~\ref{thm:fstree}, which is about $2^{-128}$ at $Q=2^{64}$; the total
+Fiat--Shamir error at that $Q$ therefore exceeds $2^{-128}$, slightly with the conservative
+parameters ($2^{-128}+2^{-136.8}$) and by a factor of 2 with $\beta=\lambda+65$, and $2^{-128}$
+holds for $Q\le2^{63}$ with either.
+% CHECK: was "therefore about 2^-127": that holds only for beta = lambda + 65. With the parameters
+% kept (beta = 200.82), (Q+k) 2^-beta = 2^-136.8 at Q = 2^64, so the total is 2^-127.997.
+% CHECK (suggestion, no text change): the same "first wrong operation is fixed before any
+% challenge" argument gives p^{-r}, not eps_K = sum_ell p^{-r}, for one query of mode K, and
+% (see the CHECK at thm:v1kpre) Q p^{-r} for Q verdicts of one Kpre key. The draft does not say so.
+\end{remark}
+
+% -------------------------------------------------------------------------------------
+\subsection{V1 in Mode \texorpdfstring{$\Kpre$}{Kpre}}
+\label{app:v1kpre}
+
+\para{Setting.} In mode $\Kpre$ the verifier holds, for every weight operation $\ell$ that is not
+looked up, a secret matrix $\chi_\ell\in\F^{N_\ell\times r}$ whose columns
+$\chi_{\ell,1},\dots,\chi_{\ell,r}$ are independent and uniform, drawn from a fresh key per
+operation (\texttt{Verifier.precompute}), and $u_\ell=\chi_\ell^\T A_\ell$ with rows $u_{\ell,s}$.
+A v0 query checks every operation by Freivalds' equation~\eqref{eq:freivalds} with
+$(\chi_\ell,u_\ell)$. A V1 query checks every clear operation the same way (check~(F1)) and every
+cut operation by (F2), $\chi_{\ell,s}^\T y_\ell=u_{\ell,s}\bar x_\ell$ for $s\le r$, with the same
+$\chi_\ell$ and $u_\ell$ (\texttt{cut\_protocol.\_kpre\_y\_ok} reads \texttt{Verifier.\_pre}), where
+$y_\ell$ is the prover's fold and $\bar x_\ell=\hat X_\ell e$. To keep $\chi$ for the secret
+vectors, we write $\omega_\ell$ for the eq-vector of Section~\ref{sec:v1} (its $\chi_\ell$), so that
+check~(F3) uses $S_\ell=\omega_\ell^\T y_\ell$. In $\Kpre$ the verifier evaluates rule~(P4) of the
+cut set from its own weights (\texttt{CutPlan.from\_graph} with \texttt{weights}).
+
+\para{Secret checks and their errors.} Call (F1), (F2) and v0's Freivalds check the \emph{secret
+checks}. The \emph{error} of a secret check $c$ of operation $\ell$ in a query is
+$E_c=Z_\ell-A_\ell[\tilde X_\ell;\mathbf 1]$ for (F1) and v0, and $E_c=y_\ell-A_\ell\bar x_\ell$ for
+(F2), with $\tilde X_\ell$ the derived input. It is a function of the statement, the prover's
+messages and the public challenges of the query, and not of $\chi_\ell$.
+
+\begin{lemma}[secret checks]
+\label{lem:secret-check}
+A secret check passes if and only if $\chi_\ell^\T E^{(q)}_c=0$ for every coordinate plane $q$ of
+$E_c$ (one plane over $\F$). Hence it passes if $E_c=0$, and if $E_c\neq0$ and $E_c$ is independent
+of $\chi_\ell$, it passes with probability at most $p^{-r}$.
+\end{lemma}
+
+\begin{proof}
+For Freivalds' check, $\chi_\ell^\T Z_\ell-u_\ell[\tilde X_\ell;\mathbf 1]
+=\chi_\ell^\T(Z_\ell-A_\ell[\tilde X_\ell;\mathbf 1])$. For (F2),
+$\chi_{\ell,s}^\T y_\ell-u_{\ell,s}\bar x_\ell=\chi_{\ell,s}^\T(y_\ell-A_\ell\bar x_\ell)$ in
+$\Fext$, and since $\chi_{\ell,s}$ and $A_\ell$ have entries in $\F$ this vanishes exactly when it
+vanishes on every coordinate plane. If $E_c\neq0$, some plane has a nonzero column $d\in\F^{N_\ell}$,
+and $\chi_{\ell,s}^\T d=0$ holds with probability $1/p$ for each of the $r$ independent uniform
+columns $\chi_{\ell,s}$, so with probability $p^{-r}$ for all of them.
+\end{proof}
+
+\begin{theorem}[$\Kpre$ with reused secret vectors, v0 and V1]
+\label{thm:v1kpre}
+Let $Q$ queries use the same secret vectors: any mix of v0 and V1 queries, generation queries
+included, chosen adaptively, with the verdict of each one revealed before the next. The probability
+that some query accepts a false statement is at most
+% CHECK: a doubled backslash before "varepsilon" (a line break, then the letters "varepsilon" in
+% math italics, or an error inside \[...\]) replaced by "\varepsilon" here and in the proof below
+% (5 places).
+% CHECK (suggestion, no text change): the sum over ell is not needed. The verifier evaluates the
+% secret checks in a fixed order and reports only the first failure, so the real run and H can
+% first differ in query i only if the FIRST evaluated secret check with E_c != 0 passes; that check
+% is a function of H's view, so this has probability <= p^{-r}, and the theorem holds with
+% Q p^{-r} in place of Q sum_ell p^{-r} (prop:qtight then matches it to second order). Authors
+% decide; see th_e_check.md, (iv) and (v).
+\[
+  \sum_{i\le Q}(\varepsilon^{\mathrm{lu}}_i+\varepsilon^{\mathrm{gkr}}_i)\;+\;Q\sum_\ell p^{-r},
+\]
+where $\varepsilon^{\mathrm{lu}}_i=(\Nleaf+|\Vtab|)/(p^8-p^2)$ and $\varepsilon^{\mathrm{gkr}}_i=\sum_\gamma\varepsilon_{\mathrm{GKR}}(n_\gamma)$
+for a V1 query, with the values of its shape, $\varepsilon^{\mathrm{lu}}_i=\varepsilon^{\mathrm{gkr}}_i=0$ for a v0 query, and $\ell$ ranges
+over the weight operations that are not looked up. For queries of one shape this is $Q$ times the
+$\Kpre$ bound of Theorem~\ref{thm:v1}, and for v0 alone it is $Q\varepsilon_{\sK}$, the reuse bound
+of Theorem~\ref{thm:sound}.
+\end{theorem}
+
+\begin{proof}
+\emph{The hybrid.} Let $\mathsf H$ be the experiment in which the verifier replaces the outcome of
+every secret check $c$ by the predicate $[E_c=0]$ and otherwise runs unchanged; it reports verdicts
+in the same way. Call a secret check \emph{bad} if it is evaluated, $E_c\neq0$, and the real check
+would pass. Run the real experiment and $\mathsf H$ with the same coins of the prover, the same public
+challenges and the same $\chi$. By Lemma~\ref{lem:secret-check}, a secret check that is not bad has
+the same outcome in both: it passes in both if $E_c=0$, and fails in both otherwise. Since the
+verifier checks in a fixed order and stops at the first failure, the two runs are identical, verdicts
+and labels included, up to the first bad check, and a bad check occurs in one run exactly when it
+occurs in the other.
+
+\emph{Bad checks.} In $\mathsf H$ the verifier never uses $\chi$, so the prover's whole view, every
+message and every public challenge is independent of $\chi$. For query $i$ and operation $\ell$
+there is at most one secret check, and its error $E_{i,\ell}$ is a function of that view;
+conditioned on the view, Lemma~\ref{lem:secret-check} bounds the probability that it is bad by
+$p^{-r}$. A union bound over $i\le Q$ and $\ell$ gives $\Pr_{\mathsf H}[\text{bad}]\le
+Q\sum_\ell p^{-r}$.
+
+\emph{False acceptance without a bad check.} In $\mathsf H$ each query is checked by a public-coin
+verifier $V_{\mathrm{pub}}$, whose secret checks are the deterministic predicates $[E_c=0]$. We show
+that, conditioned on everything before query $i$, $V_{\mathrm{pub}}$ accepts a false statement in
+query $i$ with probability at most $\varepsilon^{\mathrm{lu}}_i+\varepsilon^{\mathrm{gkr}}_i$. Follow the proof of Theorem~\ref{thm:v1}
+(Appendix~\ref{app:v1}). By its Step~1 there is a first locally incorrect operation $\ell^\ast$,
+whose derived input is honest. If $\ell^\ast$ is clear (always, in v0), its claim is wrong and, by
+the range checks, $E\neq0$, so $[E=0]$ fails. If $\ell^\ast$ is cut, Lemma~\ref{lem:v1-nowrap} gives
+a leaf outside $\Vtab$, which (with the multiplicities) is fixed before $\alpha$; by
+Lemma~\ref{lem:v1-logup} and the pole count of Step~4, the logUp identity holds at the fresh
+$\alpha$ with probability at most $\varepsilon^{\mathrm{lu}}_i$; otherwise some instance has a wrong root, which the
+GKR carries to wrong final claims except with probability at most $\varepsilon^{\mathrm{gkr}}_i$
+(Lemma~\ref{lem:v1-gkr}). Check~(F3) compares the final claims with values computed from
+$S_\ell=\omega_\ell^\T y_\ell$; if $y_\ell=A_\ell\bar x_\ell$ for every cut operation, these are the
+true values (Lemma~\ref{lem:v1-final}) and (F3) fails; otherwise some $[E_{(F2)}=0]$ fails. The
+public challenges of query $i$ are fresh, so these bounds hold conditioned on the history.
+
+\emph{Conclusion.} The probability that the real experiment accepts some false statement is at most
+the probability of a bad check plus the probability of a false acceptance without one. Both are the
+same in $\mathsf H$, by the coupling, and the two bounds above give the theorem. Throughout, a verdict
+of $\mathsf H$, and of the real run before the first bad check, is a function of the prover's
+messages and the public challenges, so revealing it, and the label of the failed check, gives the
+prover nothing about $\chi$.
+\end{proof}
+
+\begin{corollary}[V1 in $\Kpre$ under Fiat--Shamir]
+\label{cor:v1kpre-fs}
+Under Fiat--Shamir, let the prover make $Q_H$ oracle queries and submit $Q_V$ proofs, each with at
+most $k$ challenge rounds. Some false statement is accepted with probability at most
+\[
+  (Q_H+kQ_V)\,\varepsilon_{\mathrm{pub}}+Q_V\sum_\ell p^{-r}+N^2\,2^{-256}+n_{\mathrm{key}}Q_H\,2^{-256},
+\]
+where $\varepsilon_{\mathrm{pub}}=\max\big((\Nleaf+|\Vtab|)/(p^8-p^2),3/p^8\big)$ is the largest
+per-round error of the public rounds, $N$ is $Q_H$ plus the number of the verifier's oracle queries
+on all submitted proofs, and $n_{\mathrm{key}}$ is as in Proposition~\ref{prop:kpre-fs}.
+\end{corollary}
+
+\begin{proof}
+The hybrid and the bound on bad checks are as above: the oracle is independent of $\chi$ except with
+probability $n_{\mathrm{key}}Q_H2^{-256}$ (Proposition~\ref{prop:kpre-fs}). In $\mathsf H$ the prover
+interacts with $\mathrm{FS}(V_{\mathrm{pub}})$ only. $V_{\mathrm{pub}}$ has the public rounds of V1,
+whose per-round errors are those of the Fiat--Shamir paragraph of Appendix~\ref{app:v1}, and checks
+the deterministic predicates $[E_c=0]$ in place of the secret checks; a state function for it is that
+of the proof of Theorem~\ref{thm:v1}, with the predicates in place of (F1) and (F2). The proof of
+Theorem~\ref{thm:fstree}, applied with $Q_V$ final proofs, gives a state-restoration prover with at
+most $Q_H$ moves plus $k$ moves per submitted proof. (R2) is stated for one final proof; its argument
+is a union bound over the moves, each of which leaves a doomed state with probability at most
+$\varepsilon_{\mathrm{pub}}$, and an accepted proof of a false statement needs one such move, so the
+same argument bounds the success with $Q_V$ final proofs by $(Q_H+kQ_V)\,\varepsilon_{\mathrm{pub}}$.
+% CHECK: was "(R2) bounds its success by ...": (R2) as cited (Theorem 31.2.1) concerns one final
+% proof; the extension to Q_V proofs is the move-counting argument, now stated. Check against the
+% book's proof that it is indeed a union bound over moves.
+\end{proof}
+
+% -------------------------------------------------------------------------------------
+\subsection{Reusing the Secret Vectors: the Stateful Verifier of Mode \texorpdfstring{$\Kpre$}{Kpre}}
+\label{app:stateful}
+
+The $\Kpre$ verifier keeps state across queries: the secret pair $(\chi_\ell,u_\ell)$ of every
+operation and, for the bound of Theorem~\ref{thm:v1kpre} to be usable, the number of verdicts it has
+given with it. The bound grows linearly in that number, and the factor cannot be removed.
+
+\begin{proposition}[the factor $Q$ is necessary]
+\label{prop:qtight}
+Consider next-token queries (one LM-head position, so no token rule), and let the weight operation
+$\ell$ whose claims are the graph's output (for a decoder, the LM head) have $N_\ell\ge Q$ rows and be
+checked in $\Kpre$ with $r$ secret columns. There is a prover that, without looking at the verdicts,
+makes $Q$ queries with false outputs such that at least one is accepted with probability
+$1-(1-p^{-r})^Q\ge Qp^{-r}-\binom Q2p^{-2r}$. After its first accepted query, it can make every later
+next-token query accept a false output with probability~1.
+\end{proposition}
+
+\begin{proof}
+Fix distinct rows $\rho_1,\dots,\rho_Q$ of operation $\ell$. In query $i$, on any input, the prover
+computes honestly and changes the claim $z$ of $\ell$ in row $\rho_i$ (and the query's one column) by
+$\delta_i=-\mathrm{sign}(z)$, or by $+1$ if $z=0$, which keeps it inside the range check. Since $\ell$
+is the last weight operation, every derived input stays honest, every other check passes, and the
+output is wrong in row $\rho_i$. The error of $\ell$'s check is $\delta_i$ times the matrix with a
+single one in row $\rho_i$, so the check passes if and only if row $\rho_i$ of $\chi_\ell$ is zero,
+which has probability $p^{-r}$. Distinct rows of $\chi_\ell$ are independent, so the $Q$ events are
+independent, which gives the first claim; the inequality is Bonferroni's. If query $i$ is accepted,
+row $\rho_i$ of $\chi_\ell$ is zero, and every later change of the claims in row $\rho_i$ alone, of
+any size within the range, passes the check and makes the output false.
+\end{proof}
+
+\begin{remark}[using a $\Kpre$ key]
+\label{rem:stateful}
+(a)~\emph{Key lifetime.} The verifier must count the verdicts of each key and replace the key (a new
+precomputation) before $Q_V\varepsilon_{\sK}$ exceeds its target, or choose
+$r=\lceil(\lambda+\log_2Q_{\max}+\log_2n_{\mathrm{op}})/\log_2p\rceil$ for a fixed maximum
+$Q_{\max}$. For Llama-2-7B, with its 226 weight operations, the interactive parameters at
+$\lambda=128$ ($r=5$) give $\varepsilon_{\sK}=226\,p^{-5}=2^{-146.7}$, which keeps
+$Q_V\varepsilon_{\sK}\le2^{-128}$ for $Q_V\le2^{18.7}$ verdicts only, about $4\cdot10^5$. The
+parameters with the 64-bit margin ($r=7$) give $2^{-208.5}$ and $Q_V\le2^{80.5}$.
+% CHECK: numbers recomputed (log2 p = 30.9069): 226 p^-5 = 2^-146.714, Q_V <= 2^18.71 = 4.3e5;
+% 226 p^-7 = 2^-208.528, Q_V <= 2^80.53. Correct as stated.
+% CHECK (suggestion, no text change): with the tighter reuse bound Q p^{-r} (CHECK at thm:v1kpre),
+% the same targets give Q_V <= 2^26.5 (about 9.7e7) at r = 5 and 2^88.3 at r = 7; with lookups=True
+% Llama-2-7B has 225, not 226, ops in eps_K (the embedding is read by the verifier).
+(b)~\emph{Every verdict counts.} $Q_V$ counts the verdicts of every query that uses the key, accepted
+or rejected, v0 or V1, a generated response counting as one, and summed over all verifiers that
+share the key.
+(c)~\emph{What the prover may observe.} The hybrid of Theorem~\ref{thm:v1kpre} covers the verdict and
+the label of the failed check, because both are functions of the prover's messages until the first
+bad check. It does not cover anything else that depends on $\chi$, such as a running time that
+depends on the compared values. We have not checked whether the implementation's comparisons run in
+time independent of those values; a verifier whose timing the provider can observe should complete
+every comparison before it answers, or answer only accept or reject after a fixed-time check.
+(d)~\emph{The key must stay secret.} The bound gives nothing once $\chi_\ell$ leaks. For instance,
+when $N_\ell>r\log_2p$, two different subsets of rows have the same sum of rows of $\chi_\ell$
+(pigeonhole over the $2^{N_\ell}$ subsets and $p^r$ values), so there is a nonzero
+$d\in\{-1,0,1\}^{N_\ell}$ with $\chi_\ell^\T d=0$. For the LM head ($N_\ell=32{,}000$ rows for
+Llama-2-7B, far above $7\log_2p\approx216$), adding $d$ to a column of its claims, where this keeps
+them inside the range check, passes its check and makes the output false. We have not studied how
+fast such a $d$ can be found from $\chi_\ell$.
+(e)~\emph{After a false acceptance.} The bound concerns the first false acceptance. As
+Proposition~\ref{prop:qtight} shows, an accepted forgery can reveal enough of $\chi$ to make later
+forgeries certain, and the verifier cannot detect this. A key under which a forgery may have been
+accepted gives no guarantee for its later queries.
+(f)~\emph{Designated verifier.} Proofs of $\Kpre$ convince only the holder of $\chi$.
+\end{remark}
+
+% -------------------------------------------------------------------------------------
+\subsection{Acceptance of Edits of \texorpdfstring{$k$}{k} Neurons by the Path Protocol}
+\label{app:paths}
+
+% CHECK: "opens" replaced by "checks" in this subsection (intro, statement, proof). In RandPathTest
+% (sampling.py) checking a node opens its parents' rows too -- for a dense layer the whole layer --
+% but only the visited node is checked, so every site of the layer is opened by such a path, and
+% "opens each site with probability at most 1/N" was false as worded; "checks" is what is meant.
+The path protocol (Section~\ref{sec:path}) catches an edit only if a path checks one of the sites it
+made inconsistent. This gives an acceptance bound that depends only on the number of such sites,
+not on what the edit does to the output.
+
+\begin{proposition}[acceptance of a $k$-site edit]
+\label{prop:paths}
+Let a forged trace have a set $B$ of at most $k$ sites whose local check fails, all in one layer of
+width $N$, every other site passing its check, and let the verifier run $s$ independent paths, each of
+which checks each site of that layer with probability at most $1/N$ (a path checks the sites it visits;
+the values it opens to check them are not checked). Then the verifier accepts with
+probability at least $(1-k/N)^s$. Rejection with probability at least $1-2^{-\lambda}$ therefore needs
+\[
+  s\;\ge\;s_\lambda(k,N)=\Big\lceil\frac{\lambda\ln2}{-\ln(1-k/N)}\Big\rceil,\qquad
+  \Big(\frac Nk-1\Big)\lambda\ln2\;\le\;s_\lambda(k,N)\;\le\;\Big\lceil\frac Nk\,\lambda\ln2\Big\rceil.
+\]
+RandPathTest~\cite{anchuri2026verifiable} with uniform parents meets the hypothesis for a layer whose
+consumer is fully connected, such as the hidden layer of an MLP or FFN: a path that reaches the
+consumer moves to a uniform site of the layer, and a path visits a layer at most once. If every path
+reaches the consumer and $|B|=k$, the acceptance probability is exactly $(1-k/N)^s$.
+\end{proposition}
+
+\begin{proof}
+The prover opens the values of its committed trace, so a path that checks no site of $B$ passes all
+its checks, and a path that checks a site of $B$ fails there. Path $i$ therefore rejects with
+probability at most $\sum_{b\in B}\Pr[\text{path $i$ checks $b$}]\le k/N$, and since the paths use
+independent coins the verifier accepts with probability
+$\prod_{i\le s}(1-\Pr[\text{path $i$ rejects}])\ge(1-k/N)^s$. If the rejection probability is at least
+$1-2^{-\lambda}$, then $(1-k/N)^s\le2^{-\lambda}$, which gives $s\ge s_\lambda(k,N)$. The bounds on
+$s_\lambda$ follow from $x\le-\ln(1-x)\le x/(1-x)$ for $0\le x<1$. In a fully connected consumer each
+neuron's parents are all $N$ sites, so a uniform parent is uniform on the layer whatever the path's
+history; a path moves towards the input at every step, so it visits a layer at most once, and when
+every path reaches the consumer each checks one uniform site, which gives equality.
+\end{proof}
+
+\noindent For $k=1$ and $\lambda=40$ this is the $27.7N$ of Section~\ref{sec:dichotomy}, and it
+reproduces the counts of Section~\ref{sec:break}: 305{,}193 paths for Llama-2-7B and 454{,}248 for
+OPT-6.7B. The bound holds for uniform paths. A sampler that weights parents by the claimed values
+behaves differently, better against edits that raise values and not at all against edits to zero
+(\texttt{docs/improvements/G3\_inrange\_attack.md}); Proposition~\ref{prop:blind} and
+Theorem~\ref{thm:dich}(a) treat samplers in general.
+
+\begin{table}[t]
+  \caption{Uniform paths needed to catch an edit of $k$ neurons in one FFN layer of width $N$ with
+  probability $1-2^{-40}$: $s_{40}(k,N)$ of Proposition~\ref{prop:paths}. Computed from the formula;
+  $k=1$ is the edit measured on OPT-6.7B, and $k=2$, $6$ and $60$ are the median in-range edit, the
+  median lowering-only edit and the largest in-range edit (moves in either direction) measured on
+  OPT-1.3B (Section~\ref{sec:break}); $k=16$, and every $k$ for the other models, is illustrative.}
+  % CHECK: caption made precise. k = 16 was unattributed. "Largest in-range edit" = 60 is the max of
+  % the "any" rows of G3_inrange_attack.md Sec. 3; the lowering-only edits, also in range, reach
+  % 104 (layer 12) and 164 (layer 18). The pooled lowering-only median 6 is not in the doc's table
+  % (per-layer medians 3, 12, 8, 2): authors confirm it from the raw results.
+  \label{tab:paths}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  % python: math.ceil(40*math.log(2)/(-math.log1p(-k/N)))
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    Model & $N$ & $k=1$ & $k=2$ & $k=6$ & $k=16$ & $k=60$ \\
+    \midrule
+    OPT-1.3B    &  8{,}192 & 227{,}117 & 113{,}552 & 37{,}842 & 14{,}182 & 3{,}772 \\
+    Qwen3-4B    &  9{,}728 & 269{,}704 & 134{,}845 & 44{,}940 & 16{,}844 & 4{,}482 \\
+    Llama-2-7B  & 11{,}008 & 305{,}193 & 152{,}590 & 50{,}854 & 19{,}062 & 5{,}073 \\
+    Llama-2-13B & 13{,}824 & 383{,}269 & 191{,}628 & 63{,}867 & 23{,}942 & 6{,}375 \\
+    OPT-6.7B    & 16{,}384 & 454{,}248 & 227{,}117 & 75{,}697 & 28{,}378 & 7{,}558 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \caption{Probability $(1-k/N)^s$ that $s$ uniform paths accept an edit of $k$ neurons in one FFN
+  layer (computed from Proposition~\ref{prop:paths}).}
+  \label{tab:paths-acc}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  % python: (1-k/N)**s
+  \begin{tabular}{@{}llrrrrr@{}}
+    \toprule
+    Model & $s$ & $k=1$ & $k=2$ & $k=6$ & $k=16$ & $k=60$ \\
+    \midrule
+    Llama-2-7B & $10^3$ & 0.913 & 0.834 & 0.580 & 0.234 & $4.2\cdot10^{-3}$ \\
+               & $10^4$ & 0.403 & 0.163 & $4.3\cdot10^{-3}$ & $4.8\cdot10^{-7}$ & $1.8\cdot10^{-24}$ \\
+               & $10^5$ & $1.1\cdot10^{-4}$ & $1.3\cdot10^{-8}$ & $2.1\cdot10^{-24}$ & $6.8\cdot10^{-64}$ & $<10^{-200}$ \\
+    \midrule
+    OPT-6.7B   & $10^3$ & 0.941 & 0.885 & 0.693 & 0.376 & 0.026 \\
+               & $10^4$ & 0.543 & 0.295 & 0.026 & $5.7\cdot10^{-5}$ & $1.2\cdot10^{-16}$ \\
+               & $10^5$ & $2.2\cdot10^{-3}$ & $5.0\cdot10^{-6}$ & $1.2\cdot10^{-16}$ & $3.7\cdot10^{-43}$ & $<10^{-150}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}

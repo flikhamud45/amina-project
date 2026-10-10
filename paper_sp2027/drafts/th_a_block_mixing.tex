@@ -1,0 +1,502 @@
+% =====================================================================================
+% paper_sp2027/drafts/th_a_block_mixing.tex
+% TH-a (SP2027_PLAN2.md Sec. 3.7, item TH (a)): block mixing at intermediate locality.
+% Answers REVIEW.md, reviewer B, Weakness 5 ("Intermediate locality (1 < d < N) is not shown to
+% be tight") and Question 4 ("Is the bound tight for intermediate locality d, for example
+% block-wise mixing over groups of d rows?").
+%
+% Status: workflow draft, not \input anywhere. For the engineer's review (by Tue 3 Nov) and the
+% team's hand check (TH-f, Fri 30 Oct). The file compiles on its own (tectonic); references to
+% labels of the paper show as ?? here.
+%
+% Contents
+%   Part A  body paragraph for sections/attack.tex (replaces "Tightness at intermediate locality
+%           $1<d<N$ is open").
+%   Part B  the other sentences to change (intro.tex twice; optional: abstract, thm:dich(b),
+%           ext_attack.tex).
+%   Part C  full definitions, statements and proofs for sections/appendix_attack.tex (extended
+%           version).
+%   Part D  compressed version for sections/appendix_short.tex (submission appendix).
+%   Open points (comment at the end of the file).
+%
+% VERDICT. The statement holds cleanly, with one correction to the count and one caveat.
+%   * Holds. Put each block of d rows through its own Reed-Solomon encoding and its own Merkle
+%     tree, and run the checks of Sec. 4 block by block. A wrong claim is then accepted with
+%     probability at most p^-r + prod_{i<t}(k-1-i)/(n-i), the bound of prop:amp, for EVERY d
+%     (the number of blocks does not enter). Every query has support in one block, so the
+%     verifier is in Spot_d(q) with q = ceil(N/d)(r+t) and qd <= (r+t)(N+d-1). With
+%     beta = lambda + log2(2L) this gives 2^-lambda, within a factor
+%     2(r+t)/(1-2^-lambda) = O(lambda + log L) of thm:dich(a)'s qd >= (1-eps)N, at every d.
+%     These are Proposition prop:block and Corollary cor:block below.
+%   * Count. The plan's q = (N/d)(1+t) holds only in two cases: the r folded rows of a block are
+%     counted as ONE query (one message), or a single fold is drawn over an extension field of
+%     size >= 2^beta. Under the convention of prop:amp (one query per folded row and one per
+%     column, "r + t queries of support N"), the count is ceil(N/d)(r+t). The draft uses
+%     prop:amp's convention.
+%   * Caveat (it matters for the wording). Definition def:spot bounds the SUPPORT of an answer,
+%     not its size. Opening every block whole therefore already meets thm:dich(a)'s threshold at
+%     every d: q = ceil(N/d) gives zero error in the ideal-oracle model. Opening q random blocks
+%     attains 1 - qd/N exactly (for d | N). Tightness of the query count at intermediate d is
+%     thus immediate. What block mixing adds is SMALL ANSWERS: a folded row of k field elements,
+%     or a block column of d. That lowers the price per touched row to about rk/d + t field
+%     elements plus a 1/d share of the block's Merkle paths, against k weights. Mixing beats
+%     opening in bytes only for d > ~4r, about 20 rows at r = 5. Remark rem:block-count states
+%     this. A careful reviewer would raise it, so the body paragraph says it in one clause.
+% CONDITIONS. All are stated in the proposition or in Remark rem:block-scope.
+%   - C_M is honest. With a setup proof instead, k-1 becomes k-1+e for each block, and the setup
+%     error sums over the block trees.
+%   - No wrap-around (the range checks of Sec. 4.1).
+%   - k >= 2 and n >= k, and n >= 2(k-1) for t <= beta+1. The code uses n = 4 next_pow2(k)
+%     (code/src/pvi/fullcheck/commitment.py).
+%   - chi is uniform and drawn after the claims.
+%   - EVERY block receives the r folds and the t columns. The prover chooses which block to lie
+%     about, so with t_b columns in block b the bound is p^-r + max_b (column term at t_b).
+%   - One Merkle tree per block, so that an authentication path depends on its own block only.
+%   - Salted leaves if the commitment must hide unopened blocks, which thm:dich(a) needs.
+%   - Row layout only.
+% WORDING. With this result the picture is one threshold at every locality (qd ~ N touched
+%   rows), not two regimes. I recommend "lower and upper bound at every locality" over
+%   "dichotomy" (REVIEW.md change 6(i); the plan's kill rule for TH (a)). Part B lists the
+%   sentences to change.
+%
+% CHECKS DONE.
+%   * Every step of the proof is elementary: Freivalds over F_p, the distance of Reed-Solomon
+%     codes, sampling without replacement, and collision resistance. No external theorem is
+%     used, so there was no theorem number or paper version to check on the web. Nothing below
+%     cites a source outside the paper's .bib.
+%   * An exhaustive computation (Python, run inline on 10 Oct 2026, not saved) found the OPTIMAL
+%     cheating prover's acceptance for r = 1 on 7 toy instances:
+%       - p = 13, n = 4, k = 2, t = 1, N = 2-3, with blocks {1},{2} / {1,2} / {1},{2},{3} /
+%         {1,2},{3};
+%       - p = 17, n = 8, k = 3, t = 1-2, N = 2, with d = 1 and d = 2.
+%     The wrong claims were in the first row, the last row or every row, with shared positions.
+%     The optimum never exceeds p^-1 + prod_{i<t}(k-1-i)/(n-i) (for example 0.3077 <= 0.3269
+%     and 0.0924 <= 0.0945), and it is the same for every partition into blocks, as the proof
+%     predicts.
+%   * Numbers used:
+%       - r = 5 / 7 at lambda = 128 (sections/defence.tex, "Parameters"; tab:params);
+%       - 4-byte field elements in the default proof format and 31-bit ones in the compact wire
+%         format (code/src/pvi/fullcheck/analytic.py, proof_bytes; claimcodec.py, field_size).
+%     No measured number is used. "About 20 rows" is derived from
+%     d > (bytes per field element / bytes per weight) * r.
+% NOT VERIFIED / OPEN: see the "Open points" comment at the end of this file.
+%
+% Labels defined in Part C (extended version): prop:block, cor:block, rem:block-count,
+%   rem:block-scope, eq:block-freivalds, eq:block-columns. Part D (submission appendix) defines
+%   prop:block and cor:block only. The two parts go into different builds (the \ifdefined
+%   switch in main.tex), so the labels do not clash.
+% Labels used: def:spot, thm:dich, thm:guess, prop:amp, prop:worst, rem:merkle, rem:scope,
+%   thm:sound, thm:untrusted, fact:ext, sec:defence, sec:commit, sec:intmodel, sec:protocol,
+%   sec:fs, sec:related, app:untrusted. Key cited: fullversion.
+% =====================================================================================
+
+\documentclass[conference,compsoc]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{xcolor}
+\usepackage{cite}
+\usepackage[hidelinks]{hyperref}
+\setlength{\emergencystretch}{1.5em}
+
+% ---- the paper's macros (main.tex), repeated so that this draft compiles on its own ----
+\newcommand{\todo}[1]{{\color{red}\textbf{[TODO: #1]}}}
+\newcommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\newcommand{\T}{\top}
+\newcommand{\F}{\mathbb{F}_p}
+\newcommand{\enc}{\mathrm{Enc}}
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{corollary}{Corollary}
+\newtheorem{proposition}{Proposition}
+\newtheorem{fact}{Fact}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+\begin{document}
+
+\title{TH-a Draft: Block Mixing at Every Locality}
+\author{\IEEEauthorblockN{Workflow draft for review}}
+\maketitle
+
+% =====================================================================================
+\section*{Part A. Body paragraph (sections/attack.tex)}
+% In Sec. 3.4, paragraph "What the bounds mean": delete "Tightness at intermediate locality
+% $1<d<N$ is open, and" and capitalise the rest of that sentence. The paragraph then reads as
+% below, and the new paragraph "Every locality" follows it. Measured in a two-column IEEEtran
+% build of this file: 8 printed lines, so net about +6 lines against the deleted clause. If
+% Option B3 (generalising thm:dich(b)) is taken, the second sentence can cite
+% Theorem~\ref{thm:dich}(b) instead of the proposition.
+
+\para{What the bounds mean.} In the worst case nothing beats uniform sampling, which reaches $s/N$
+on every dense network; $2^{-40}$ then takes about $27.7N$ paths per query. We do not claim that the
+instance of~(a) embeds in a transformer (Remark~\ref{rem:scope}). The lower bound formalises a
+folklore calculation (Section~\ref{sec:related}) for adaptive, value-aware verifiers that read the
+whole trace: honest recomputation moves the change into the weights, so the model, not the trace,
+must be encoded.
+
+\para{Every locality.} Part~(a) is tight at every $d$: opening $q$ random blocks of $d$ rows catches
+a forgery with probability at least $qd/N$ ($d\mid N$), but downloads rows. Running the checks of
+Section~\ref{sec:defence} block by block, each encoded and committed on its own, keeps the error of
+$d=N$ with $qd=O(\lambda+\log L)N$ (Proposition~\ref{prop:block}). A touched row costs one field
+element per opened column plus a $1/d$ share of its block's folded rows, so mixing pays only for large
+blocks.
+
+% Longer alternative (about 12 printed lines), if the page ledger allows:
+% \para{Every locality.} Part~(a) is tight at every $d$: opening $q$ random blocks of $d$ rows
+% catches a forgery with probability at least $qd/N$ ($d\mid N$), but only by downloading rows.
+% Mixing also works at every $d$. With each block Reed--Solomon-encoded and Merkle-committed on its
+% own, the checks of Section~\ref{sec:defence}, run block by block, keep the error bound of $d=N$,
+% since a lie about a block must pass that block's own columns (Proposition~\ref{prop:block}). So
+% $2^{-\lambda}$ costs $qd=O(\lambda+\log L)N$, and a touched row costs one field element per
+% opened column plus a $1/d$ share of its block's folded rows, not a row of weights; mixing pays
+% only for large blocks.
+
+% =====================================================================================
+\section*{Part B. Other sentences to change}
+
+\para{B1 (intro.tex, ll.~73--75).} Replace ``Conversely, symbols that mix all rows, such as
+Reed--Solomon columns, reach $2^{-\lambda}$ with $O(\lambda)$ queries per layer
+(Theorem~\ref{thm:dich}); intermediate locality is open.'' by:
+
+\smallskip
+\noindent Conversely, symbols that mix all rows, such as Reed--Solomon columns, reach $2^{-\lambda}$
+with $O(\lambda)$ queries per layer (Theorem~\ref{thm:dich}), and symbols that mix blocks of $d$ rows
+reach it with $O(\lambda)$ queries per block, so mixing matches the bound up to a factor $O(\lambda)$
+at every locality (Proposition~\ref{prop:block}).
+\smallskip
+
+\para{B2 (intro.tex, l.~124, contributions).} Replace ``A lower bound for spot-checking verifiers
+with a matching upper bound at full locality,'' by ``A lower bound for spot-checking verifiers,
+matched up to $O(\lambda)$ at every locality,''.
+
+\para{B3 (optional; attack.tex, Theorem~\ref{thm:dich}(b)).} Generalising part~(b) makes the
+block result part of the theorem:
+
+\smallskip
+\noindent (b)~\emph{Mixing.} If each query mixes all rows of one block of $d$ rows, as the folded
+rows and code columns of Section~\ref{sec:defence} do for $d=N$, then under the conditions of
+Proposition~\ref{prop:block}, $O(\lambda+\log L)$ queries per block give soundness error
+$2^{-\lambda}$ for a network of $L$ weight layers. For $L\le2^{\lambda}$ this is $O(\lambda)$, so
+$qd=O(\lambda)N$ suffices at every $d$.
+\smallskip
+
+\noindent The proof idea then ends ``Part~(b) is our defence's soundness argument for one layer, run
+block by block (Propositions~\ref{prop:amp} and~\ref{prop:block}).'' In both appendices, the proof
+of Theorem~\ref{thm:dich}(b) sets $\beta=\lambda+\log_2(2L)$ in Proposition~\ref{prop:block}, which
+is Proposition~\ref{prop:amp} for $d=N$, and uses $qd\le(r+t)(N+d-1)<2(r+t)N$.
+
+\para{B4 (optional; abstract, frozen on Mon 9 Nov).} ``while commitments that mix all rows reach
+$2^{-\lambda}$ with $O(\lambda)$ queries'' may become ``while commitments that mix blocks of $d$ rows
+reach $2^{-\lambda}$ with $O(\lambda)$ queries per block''.
+
+\para{B5 (optional; ext\_attack.tex, ``The two regimes'').} Replace ``The two regimes of
+Theorem~\ref{thm:dich} differ by a factor $O(\lambda)$ in $qd$, and in both the verifier touches every
+row. Mixing lowers the cost of each touched row from a full row of weights to $O(\lambda)$ field
+elements.'' by:
+
+\smallskip
+\noindent At every locality the two bounds differ by a factor $O(\lambda+\log L)$ in $qd$, and the
+verifier touches every row (Corollary~\ref{cor:block}). Mixing a block of $d$ rows lowers the cost of
+each touched row from a full row of weights to one field element per opened column plus a $1/d$ share
+of the block's folded rows, which is $O(\lambda)$ field elements at $d=N$ when $k\le N$.
+\smallskip
+
+% =====================================================================================
+\section*{Part C. Extended version (sections/appendix\_attack.tex)}
+% Insert after the paragraph "Part~(a) is the one-sided randomised query complexity of
+% $\mathrm{OR}_N$ ..." that follows the proof of Theorem thm:dich, before Remark rem:merkle.
+% Add to the file header: "Labels defined here: ... prop:block, cor:block, rem:block-count,
+% rem:block-scope, eq:block-freivalds, eq:block-columns".
+
+\para{Block commitments.} Let a weight layer compute $Z=A[X;\mathbf 1]$ with $A\in\F^{N\times k}$ and
+$k\ge2$, where the layer's integer arithmetic embeds in $\F$ without wrap-around, as in
+Proposition~\ref{prop:amp}, and let $1\le d\le N$. Partition $[N]$ into $m=\lceil N/d\rceil$
+\emph{blocks} $\mathcal B_1,\dots,\mathcal B_m$ of at most $d$ rows, for instance consecutive ones.
+For a matrix $Y$ with $N$ rows, $Y_b$ denotes its rows in $\mathcal B_b$. The \emph{block commitment
+of locality $d$} encodes every row of $A$ with the Reed--Solomon code of Section~\ref{sec:commit}, at
+the same $n\ge k$ points, which gives the encoded blocks $\hat A_b$. For each block it builds a Merkle
+tree $T_b$ of its own over the $n$ columns $\hat A_{b,c}\in\F^{|\mathcal B_b|}$ of $\hat A_b$. When
+unopened rows must stay hidden, leaf $c$ of $T_b$ is $H(s_{b,c}\Vert\hat A_{b,c})$ with a fresh salt
+$s_{b,c}$ (Remark~\ref{rem:merkle}). $C_M$ holds the $m$ roots. For $d=N$ this is the commitment of
+Section~\ref{sec:commit}.
+
+\para{The block verifier.} $V_{\mathrm{blk}}$ knows the layer's input $X$ and receives its claims
+$Z$.
+(1)~After $Z$ is fixed, it draws a uniform $\chi\in\F^{N\times r}$.
+(2)~It receives $u_b\in\F^{r\times k}$ for every block, honestly $u_b=\chi_b^\T A_b$, so that
+$\sum_bu_b$ is the folded row $\chi^\T A$ of Section~\ref{sec:protocol}, and checks
+\begin{equation}
+  \chi^\T Z=\Big(\sum_{b\le m}u_b\Big)[X;\mathbf 1].
+  \label{eq:block-freivalds}
+\end{equation}
+(3)~It draws a uniform set $C\subseteq[n]$ of $t$ distinct positions and receives, for every block,
+the columns $\hat A_{b,c}$, $c\in C$, with a multiproof in $T_b$. It checks the multiproofs and
+\begin{equation}
+  \chi_b^\T\hat A_{b,c}=\enc(u_b)_c\qquad\text{for every }b\le m\text{ and }c\in C,
+  \label{eq:block-columns}
+\end{equation}
+where $\enc$ encodes each row of $u_b$.
+
+\noindent Under Fiat--Shamir the challenges are derived in the same order
+(Remark~\ref{rem:block-scope}). We write $u_{b,\rho}$ for row $\rho$ of $u_b$. As
+Proposition~\ref{prop:amp} does, we count one query per folded row $u_{b,\rho}$ and one per opened
+column.
+
+\begin{proposition}[block mixing]
+\label{prop:block}
+Assume that each tree $T_b$ binds the encoding $\hat A_b$ of $A_b$, for instance because $C_M$ is
+computed honestly.
+(i)~$V_{\mathrm{blk}}$ accepts the honest claims and messages. Each folded row $u_{b,\rho}$, and each
+opened column $\hat A_{b,c}$ with its authentication path in $T_b$, depends only on the rows in
+$\mathcal B_b$ and on salts. Hence $V_{\mathrm{blk}}\in\mathrm{Spot}_d(q)$ with $q=m(r+t)$, so
+$qd\le(r+t)(N+d-1)$, and $qd=(r+t)N$ if $d$ divides $N$.
+(ii)~Let the prover be arbitrary, and let $X$ and $Z\neq A[X;\mathbf 1]$ be fixed before $\chi$ is
+drawn. Then $V_{\mathrm{blk}}$ accepts with probability at most
+\[
+  p^{-r}+\prod_{i<t}\frac{k-1-i}{n-i}\;\le\;p^{-r}+\Big(\frac{k-1}{n}\Big)^{t},
+\]
+plus the probability that the prover finds a collision of the hash function. This is the bound of
+Proposition~\ref{prop:amp}, the case $d=N$, and it does not depend on $d$.
+(iii)~With $r=\lceil\beta/\log_2p\rceil$ and $t=\lceil\beta/\log_2(n/(k-1))\rceil$, the bound
+of~(ii) is at most $2^{1-\beta}$. If $n\ge2(k-1)$, then $r+t\le(1+1/\log_2p)\beta+2$.
+\end{proposition}
+
+\begin{proof}
+(i)~Let the claims and messages be honest. Then $\sum_bu_b=\chi^\T A$ and $Z=A[X;\mathbf 1]$,
+so~\eqref{eq:block-freivalds} holds. Encoding is linear, so
+$\chi_b^\T\hat A_b=\enc(\chi_b^\T A_b)=\enc(u_b)$, and~\eqref{eq:block-columns} holds; honest
+multiproofs verify. The honest $u_{b,\rho}$ is a combination of the rows in $\mathcal B_b$. Every
+entry of $\hat A_{b,c}$ is the encoding of one such row at one point. A multiproof in $T_b$ consists
+of hashes of other leaves of $T_b$, which are functions of columns of $\hat A_b$ and of salts. So every
+query has its support in $\mathcal B_b$, a set of at most $d$ rows, and for a prover message this is
+the support that Definition~\ref{def:spot} assigns to it. There are $mr$ folded rows and $mt$ opened
+columns, and $md=d\lceil N/d\rceil\le N+d-1$.
+
+(ii)~Let $D=Z-A[X;\mathbf 1]$; it is nonzero and fixed before $\chi$. Unless the prover finds a
+collision, every column that passes its multiproof is the committed one, that is, the column
+$\hat A_{b,c}$ of the true encoding. We assume this from now on. Let $W$ be the set of blocks $b$ with
+$u_b\neq\chi_b^\T A_b$. It is fixed once $\chi$ and the messages of step~(2) are, before $C$ is drawn.
+
+\emph{Case $W=\emptyset$.} Then $\sum_bu_b=\chi^\T A$, so~\eqref{eq:block-freivalds} reads
+$\chi^\T D=0$. Pick $(i,j)$ with $D_{ij}\neq0$. For each column $\chi_\rho$ of $\chi$, entry $j$ of
+$\chi_\rho^\T D$ is $\chi_{i\rho}D_{ij}+c_\rho$, where $c_\rho$ does not depend on $\chi_{i\rho}$. It
+vanishes for exactly one of the $p$ values of $\chi_{i\rho}$, and the $r$ columns are independent.
+Hence $\Pr[\text{accept},\,W=\emptyset]\le\Pr[\chi^\T D=0]\le p^{-r}$.
+
+\emph{Case $W\neq\emptyset$.} Fix $\chi$ and the messages of step~(2). Let $b$ be the least element
+of $W$, and let $\rho$ be a row with $u_{b,\rho}\neq(\chi_b^\T A_b)_\rho$. By linearity, row $\rho$ of
+$\chi_b^\T\hat A_b$ is $\enc((\chi_b^\T A_b)_\rho)$. It and $\enc(u_{b,\rho})$ evaluate two distinct
+polynomials of degree less than $k$ at $n$ distinct points. They therefore agree on a set $G$ of at
+most $k-1$ positions, which is fixed before $C$ is drawn. Equation~\eqref{eq:block-columns} for block
+$b$, row $\rho$ and position $c$ holds only if $c\in G$, so acceptance requires $C\subseteq G$. This
+has probability $\binom{|G|}{t}/\binom nt\le\prod_{i<t}\frac{k-1-i}{n-i}$, and each factor is at
+most $(k-1)/n$ because $n\ge k-1$. Averaging over $\chi$ and the messages bounds
+$\Pr[\text{accept},\,W\neq\emptyset]$ by the same product.
+
+Adding the two cases proves~(ii). The argument uses only one block of $W$, which is why $m$ does not
+appear, and it holds unchanged if each tree draws its own positions. For $d=N$ it is the proof of
+Proposition~\ref{prop:amp}.
+
+(iii)~We have $r\log_2p\ge\beta$ and $t\log_2(n/(k-1))\ge\beta$, so each term is at most
+$2^{-\beta}$. If $n\ge2(k-1)$, then $\log_2(n/(k-1))\ge1$, so $t\le\beta+1$, and
+$r\le\beta/\log_2p+1$.
+\end{proof}
+
+\begin{corollary}[the threshold at every locality]
+\label{cor:block}
+Let $1\le d\le N$ and $\beta=\lambda+\log_2(2L)$. Consider a network with $L$ weight operations whose
+arithmetic embeds without wrap-around, and an honest $C_M$. Run $V_{\mathrm{blk}}$ on each operation
+$\ell$, with $r$ and $t_\ell$ as in Proposition~\ref{prop:block}(iii) and $n_\ell\ge2(k_\ell-1)$; the
+verifier recomputes the operations without weights.
+(a)~The verifier accepts an output $y\neq M(x)$ with probability at most $2^{-\lambda}$, plus that of
+a hash collision. It makes $q_\ell=(r+t_\ell)\lceil N_\ell/d\rceil$ queries of locality $d$ at
+operation $\ell$.
+(b)~Fix a target layer of width $N$, row length $k$ and $t$ columns. Every verifier that reads this
+layer through a commitment of locality $d$ that reveals nothing about unopened rows, and has
+soundness error at most $\varepsilon$ on every ReLU network with a hidden layer of width $N$,
+satisfies $qd\ge(1-\varepsilon)N$ (Theorem~\ref{thm:dich}(a)). The verifier of~(a) has error $2^{-\lambda}$
+with $qd\le(r+t)(N+d-1)$. For every $d$ the two differ by less than a factor
+$2(r+t)/(1-2^{-\lambda})$, which is $O(\lambda+\log L)$, and by at most $(r+t)/(1-2^{-\lambda})$ if
+$d$ divides $N$.
+\end{corollary}
+
+\begin{proof}
+(a)~If $y\neq M(x)$, some claim is wrong, since the verifier recomputes every operation without
+weights. All claims are fixed before any $\chi$ is drawn. The first wrong weight operation has a
+correct input, which the verifier computed from $x$ and correct claims. By
+Proposition~\ref{prop:block}(ii) and~(iii), that operation passes with probability at most
+$2^{1-\beta}=2^{-\lambda}/L$. A union bound over the $L$ operations, as in Theorem~\ref{thm:sound},
+gives $2^{-\lambda}$. The counts are those of Proposition~\ref{prop:block}(i).
+
+(b)~The lower bound is Theorem~\ref{thm:dich}(a), and it covers the block commitment. In the
+ideal-oracle model that commitment reveals nothing beyond its answers. A Merkle realisation with
+salted leaves hides the blocks it does not open (Remark~\ref{rem:merkle}), and by
+Proposition~\ref{prop:block}(i) its authentication paths stay inside their block. The instance of
+Proposition~\ref{prop:worst} can be made an integer network that satisfies the range bound of
+Section~\ref{sec:intmodel}: take integer weights of at most 7 bits, and the logits $(1,2g)$ in place
+of $(1/2,g)$, which select the same class. So the two bounds hold on the same networks. The ratio is
+$(r+t)(N+d-1)/((1-2^{-\lambda})N)<2(r+t)/(1-2^{-\lambda})$, and
+$r+t\le(1+1/\log_2p)\beta+2=O(\lambda+\log L)$ by Proposition~\ref{prop:block}(iii).
+\end{proof}
+
+\begin{remark}[what the count measures]
+\label{rem:block-count}
+Definition~\ref{def:spot} bounds the support of an answer, not its size. The threshold of
+Theorem~\ref{thm:dich}(a) therefore counts touched rows.
+
+(i)~\emph{Opening.} Suppose a query on block $b$ is answered with the block's $d$ rows, from a binding
+commitment of locality $d$ such as one salted hash per block. A verifier that opens $q\le m$ distinct
+uniform blocks and recomputes their claims is complete. In the ideal-oracle model it catches every
+forgery of the layer with probability at least $q/m$, which is $qd/N$ if $d$ divides $N$. So the bound
+$1-qd/N$ of Theorem~\ref{thm:dich}(a) is attained whenever $d$ divides $N$, as Theorem~\ref{thm:guess}
+states for $d=1$. With $q=m$ the error is $0$ and $qd<N+d$ for every $d$. This is the $\lceil N/d\rceil$-query algorithm for
+$\mathrm{OR}_N$ with $d$-row queries, and it downloads the layer.
+
+(ii)~\emph{Bundling.} Sent as one message, the $r$ folded rows of a block are one query, and the
+block's $t$ columns, opened with one multiproof, are another. $V_{\mathrm{blk}}$ could thus be counted
+as making $2m$ queries. A single fold $\chi\in\mathbb K_s^N$ over an extension field
+$\mathbb K_s\supseteq\F$ of size at least $2^\beta$, such as that of Fact~\ref{fact:ext}, makes
+$m(1+t)$ queries under our convention. The proof of Proposition~\ref{prop:block} goes through over
+$\mathbb K_s$, with $|\mathbb K_s|^{-1}$ in place of $p^{-r}$, since $D_{ij}\neq0$ is invertible in
+$\mathbb K_s$ and the Reed--Solomon code over $\mathbb K_s$ with the same points has the same
+distance. The
+factor $r+t$ in Proposition~\ref{prop:block}, as in Proposition~\ref{prop:amp}, comes from counting
+one query per folded row and one per column.
+
+(iii)~\emph{Mixing changes the size of the answers.} Per layer, $V_{\mathrm{blk}}$ receives $rkm$
+field elements of folded rows, $tN$ of columns, and $m$ multiproofs of at most $t\lceil\log_2n\rceil$
+hashes each. For $d$ dividing $N$, this is $rk/d+t$ field elements and at most
+$t\lceil\log_2n\rceil/d$ hashes per touched row, against the $k$ weights of an opened row. Take
+$\varphi$-byte field elements and $\omega$-byte weights. Mixing sends fewer bytes than opening only
+when $\varphi(rk/d+t)$ is below about $\omega k$, which needs $d$ above about $\varphi r/\omega$. For
+31-bit field elements and int8 weights this is about $4r$, or about 20 rows at $r=5$. At $d=1$,
+mixing sends more than the rows. The $t$ positions are shared, so the opened entries are those of $t$
+full columns of $\hat A$, as for $d=N$, cut into $m$ pieces. Locality $d$ adds the $(m-1)rk$ field
+elements of the extra folded rows and $m-1$ multiproofs.
+
+(iv)~\emph{The ideal-oracle model.} There, a checked prover message is answered honestly, so the
+error of $V_{\mathrm{blk}}$ is at most $p^{-r}$. The column checks are what make a real prover's
+folded rows behave as honest answers.
+\end{remark}
+
+\begin{remark}[scope of Proposition~\ref{prop:block}]
+\label{rem:block-scope}
+(i)~\emph{Fiat--Shamir.} The two cases of the proof are the two rounds of the round-by-round argument
+of Section~\ref{sec:fs}. Call a state doomed if $Z$ is wrong; after step~(1), if $\chi^\T D\neq0$;
+and after step~(2), if $W\neq\emptyset$ or~\eqref{eq:block-freivalds} fails. Step~(1) leaves a doomed
+state with probability at most $p^{-r}$, and no message of step~(2) leaves one. Step~(3) leaves one
+with probability at most the column term. The Fiat--Shamir bound of Section~\ref{sec:fs} therefore
+applies with the error of Proposition~\ref{prop:block}(ii).
+
+(ii)~\emph{Untrusted commitments.} With a provider-supplied $C_M$, Theorem~\ref{thm:untrusted}
+applies with each tree $T_b$ as a member of $\mathcal J$. Its setup error $\varepsilon_0$ then sums
+over the $m$ trees of each matrix, so $\beta_0$ grows by $\log_2m$. Online,
+Proposition~\ref{prop:block} holds for the matrix $A^*$ of Theorem~\ref{thm:untrusted}, with $k-1$
+replaced by $k-1+e$ for the largest radius $e$ of the blocks, since the corrupted columns of block $b$
+join $G$ (Appendix~\ref{app:untrusted}). We state Corollary~\ref{cor:block} for an honest $C_M$, as
+Theorem~\ref{thm:dich} is stated. A public setup proof opens columns of every block, and we do not
+claim the lower bound in its presence.
+
+(iii)~\emph{Other codes.} For any row-wise linear code of relative distance $\delta$, the column term
+becomes $(1-\delta)^t$, as in Proposition~\ref{prop:amp}.
+
+(iv)~\emph{Spread of the queries.} Every block needs its $r$ folded rows and $t$ columns, since the
+prover chooses the blocks it lies about. If block $b$ receives $t_b$ columns, the proof gives
+$p^{-r}+\max_b\prod_{i<t_b}\frac{k-1-i}{n-i}$, which is no bound at all if some $t_b=0$. Sampling
+blocks does not help either: by Theorem~\ref{thm:dich}(a), error $\varepsilon$ needs
+$qd\ge(1-\varepsilon)N$.
+
+(v)~\emph{Not covered.} The transposed layout of Section~\ref{sec:commit}.
+\end{remark}
+
+% =====================================================================================
+\section*{Part D. Submission appendix (sections/appendix\_short.tex)}
+% Insert after Proposition prop:amp and its one-line proof note, before the proof of Theorem
+% thm:dich. Add prop:block and cor:block to the "Labels defined" line of the file header. If B3
+% is taken, change the proof of thm:dich(b) there to "Set beta = lambda + log2(2L) in
+% Proposition~\ref{prop:block} (Proposition~\ref{prop:amp} for d = N) with a union bound over the
+% L layers."
+
+\begin{proposition}[block mixing]
+\label{prop:block}
+In Proposition~\ref{prop:amp}, split the rows of $A$ into $m=\lceil N/d\rceil$ blocks $\mathcal B_b$
+of at most $d$ rows. Reed--Solomon-encode every row at the same $n$ points, and commit the columns of
+each encoded block $\hat A_b$ in a Merkle tree of its own. After $Z$, the verifier draws a uniform
+$\chi\in\F^{N\times r}$ and receives $u_b$ (honestly $\chi_b^\T A_b$, where $\chi_b$ holds the rows of
+$\chi$ in $\mathcal B_b$). It checks $\chi^\T Z=(\sum_bu_b)[X;\mathbf 1]$, opens the same $t$
+distinct uniform positions $c$ in every tree, and checks $\chi_b^\T\hat A_{b,c}=\enc(u_b)_c$. Every
+folded row and column has its support in one block, so the verifier lies in
+$\mathrm{Spot}_d(m(r+t))$. With an honest $C_M$ it accepts a wrong $Z$ with probability at most
+$p^{-r}+\prod_{i<t}\frac{k-1-i}{n-i}$, plus that of a hash collision, for every $d$.
+\end{proposition}
+\begin{proof}[Proof sketch]
+Let $D=Z-A[X;\mathbf 1]\neq0$. If every $u_b$ is honest, the check reads $\chi^\T D=0$, which has
+probability at most $p^{-r}$. Otherwise, take the first block with a wrong $u_b$. There, a wrong row of
+$u_b$ and the same row of $\chi_b^\T\hat A_b$ are distinct codewords. They agree on at most $k-1$
+positions, fixed before the positions are drawn. The full proof is in the extended
+version~\cite{fullversion}.
+\end{proof}
+
+\begin{corollary}[every locality]
+\label{cor:block}
+Let $\beta=\lambda+\log_2(2L)$, let $r$ and $t$ be as in Proposition~\ref{prop:amp}, and let
+$n\ge2(k-1)$. Then Proposition~\ref{prop:block}, with a union bound over the $L$ layers, gives error
+$2^{-\lambda}$ with $qd\le(r+t)(N+d-1)$ at every $d$. This is within a factor
+$2(r+t)/(1-2^{-\lambda})=O(\lambda+\log L)$ of the $(1-2^{-\lambda})N$ that
+Theorem~\ref{thm:dich}(a) requires for error $2^{-\lambda}$. Opening $q$ uniform blocks whole attains
+$1-qd/N$ ($d\mid N$), but each answer then holds $dk$ weights; with mixing, each answer is one folded
+row or one block column.
+\end{corollary}
+
+% =====================================================================================
+% OPEN POINTS (for the engineer's review and TH-f; none of them blocks the statement)
+%
+% 1. Counting convention. Definition def:spot does not say how a multi-vector prover message or a
+%    multi-column opening is counted, and it does not bound the size of an answer. The draft
+%    meets this head-on (Remark rem:block-count; one clause in the body). An alternative is one
+%    sentence in def:spot: "we count one query per folded row and per opened column". The
+%    lower bound does not depend on that choice.
+%
+% 2. Wording. After this result, "dichotomy" describes the picture less well than before. There
+%    is one threshold (about N touched rows) at every locality, and locality changes only the
+%    price per touched row. I recommend dropping the word (REVIEW.md change 6(i)), and keeping
+%    "Theorem [lower and upper bound]" and "tight at every locality". The label sec:dichotomy can
+%    stay.
+%
+% 3. Sum or max (REVIEW.md B-Q6; TH-e, not this item). In interactive mode C, all claims are sent
+%    before any challenge, and the first wrong weight operation is fixed by them. The proof of
+%    Corollary cor:block(a) therefore gives max_l (per-operation error), not the sum. The draft
+%    keeps the paper's union bound, which is a correct but looser statement. The same
+%    observation applies to Theorem thm:sound; TH-e should check it before using it.
+%
+% 4. Page budget. Part A adds about 6 printed lines net to Sec. 3.4, and B1 adds about 1 line to
+%    the introduction. The page ledger in SP2027_PLAN2.md has no row for TH-a.
+%
+% 5. Integer hard instance. The proof of Corollary cor:block(b) changes the instance of
+%    prop:worst (logits (1, 2g), weights of at most 7 bits) so that the defence's integer model
+%    covers it. The authors may prefer to state prop:worst that way directly.
+%
+% 6. Untrusted commitments. Online soundness and the setup proof carry over (Remark
+%    rem:block-scope(ii)). The LOWER bound in the presence of a public setup proof is not
+%    claimed: the setup proof's opened columns are public information about every block, and
+%    condition (H) has not been checked for it.
+%
+% 7. Not covered: the transposed layout.
+%
+% 8. Not addressed: a lower bound on answer SIZE. Whether a locality-d verifier needs about
+%    lambda field elements per touched row (or whether the O(lambda) factor in bytes is
+%    necessary) is open. The draft claims nothing about it.
+%
+% 9. "About 20 rows at r = 5" depends on the byte sizes and ignores the bias column, the salts
+%    and the hashes. It appears only in the extended version, as an estimate.
+%
+% 10. TH-f: the proof of Proposition prop:block(ii) is the part to hand-check, in particular the
+%     claim that W and G are fixed before C is drawn, and the use of a single block of W.
+% =====================================================================================
+
+\end{document}

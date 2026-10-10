@@ -35,6 +35,9 @@
 % Labels used: def:spot, thm:guess, thm:dich, sec:break, tab:sok (attack.tex); lem:product,
 %   cor:surprise, prop:worst, rem:merkle, tab:aligned (appendix_attack.tex); sec:defence,
 %   sec:related. Citations: anchuri2026verifiable, chew1967, kadane1971, fang2023pol.
+% H5 pass (2026-10-11): cut C4 (paragraph "MNIST, further results"), cut P2 (the Proof-of-Learning
+%   entry) and TH-d Sec. 3.2(c) (the refereed variant of Anchuri et al.; key anchuri2026full) in
+%   "Systematisation"; TH-a Part B5 (with the fixes of th_a_check.md) in "The two regimes".
 % =====================================================================================
 
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
@@ -86,9 +89,11 @@ a neuron whose claimed activation is zero (Section~\ref{sec:break}).
 \para{The two regimes.} Opening $s$ distinct neurons uniformly reaches $s/N$ on every dense
 network, so in the worst case nothing beats uniform sampling. Reaching $2^{-40}$ then takes about
 $27.7N$ paths per query ($40\ln2\approx27.7$), which is the cost the path protocol was designed to
-avoid. The two regimes of Theorem~\ref{thm:dich} differ by a factor $O(\lambda)$ in $qd$, and in
-both the verifier touches every row. Mixing lowers the cost of each touched row from a full row of
-weights to $O(\lambda)$ field elements. Part~(a) is the one-sided randomised query complexity of
+avoid. At every locality the two bounds differ by a factor $O(\lambda+\log L)$ in $qd$, and the
+verifier touches every row (Proposition~\ref{prop:block}(i) and Corollary~\ref{cor:block}). Mixing a
+block of $d$ rows lowers the cost of each touched row from a full row of weights to one field element
+per opened column plus a $1/d$ share of the block's folded rows, which is $O(\lambda+\log L)$ field
+elements at $d=N$ when $k\le N$ (Remark~\ref{rem:block-count}). Part~(a) is the one-sided randomised query complexity of
 $\mathrm{OR}_N$ placed inside a network, and the spot-check calculation behind it is folklore
 (Section~\ref{sec:related}). Because the trace is free to read, the object that must be encoded or
 folded is the model, not the trace. Our defence encodes only the model, which is why its proof
@@ -116,6 +121,13 @@ with $M$ on all 150 evaluated queries. Without the $10^{-4}$ tolerance, an hones
 differently. The forgeries that Anchuri et al.\ consider are their substitute models (Appendices~E
 and~F and Section~7.2 of~\cite{anchuri2026verifiable}); on the MLP they corrupt hundreds of its 778
 trace nodes.
+
+% Moved from the body's paragraph "MNIST" by the H5 pass (cut C4 of REVIEW2.md); unchanged.
+\para{MNIST, further results.} One tampered neuron passes 250 paths 61\% of the time. Keeping each
+tampered value below its neuron's 95th percentile takes about five neurons and passes 99\% of the
+time under uniform sampling; the percentiles were computed on test queries that include the
+attacked ones \todo{G3: training-split ranges}. The in-range edits on OPT-1.3B, against ranges
+calibrated on held-out text (Section~\ref{ext:attack-inrange}), do not have this limitation.
 
 \para{Other samplers on MNIST.} Against an adversary who knows the rule, a static importance score
 (outgoing weight magnitude) detects 0.11\% of attacks and gradient saliency 0.016\%, against 0.20\%
@@ -155,6 +167,20 @@ solver''. For TOPLOC and SVIP, token choice is out of scope. TensorCommitments s
 $\mathrm{negl}(\lambda)$ against any PPT prover as the goal of the problem, and no theorem claims
 it; the gap comes from the predictable, weight-only layer selection, not from the commitment. The
 IMMACULATE entry is our derivation from its flagging rule, for a response of $T$ steps.
+Proof-of-Learning~\cite{jia2021pol}, a training scheme that checks the largest updates per epoch,
+accepts a ``blindfolded'' update with probability 100\%~\cite{fang2023pol} and was broken
+before~\cite{zhang2022pol,fang2023pol}; the body's table lists only the nine inference schemes.
+The full version of~\cite{anchuri2026verifiable} (Appendix~D of arXiv:2603.19025v1~\cite{anchuri2026full}) adds a
+protocol in the refereed model: two servers commit to hash-chained traces, at least one of them is
+assumed honest, and the referee bisects to the first position where the two commitments disagree
+and checks that node against its committed weights. Its queries are positions that the second
+server's answers determine, and these answers depend on the true trace and hence on the edited
+site, whereas a verifier in $\mathrm{Spot}_d(q)$ chooses its queries from the view $P$, its coins
+and the oracle's answers alone; each compared entry also hashes all earlier activations, so its
+support is not bounded by any $d<N$. The variant thus lies outside Definition~\ref{def:spot}, and
+against our single-site edit the bisection ends at the edited neuron, which fails its check. Its
+guarantee rests on one honest server out of two, an assumption that our threat model, with a
+single provider, does not make.
 
 \para{What the table shows.} We say that a claim exceeds the sampling only where a stated guarantee
 is stronger than what the scheme's own sampling gives. An edit followed by honest recomputation is

@@ -15,6 +15,12 @@
 %   edit-then-recompute credit to SLP/CommitLLM, Proof-of-Learning, the Ligero/Brakedown phase
 %   mapping and the cause of the GPU-CC overhead; all of these are already in "Related Work in
 %   Detail" below, so nothing was appended.
+% H5 pass (2026-10-11): the last sentence of "Freivalds-based checks and linear-code commitments"
+%   replaced per drafts/th_c_setup_forced.tex, Block 5(b) (N7). The introduction's restated verifier
+%   model and PCPP sentence (cut C1) and the details of the four extensions (cut C2) are covered by
+%   Definition def:spot, the Related Work and Sections 4-6 of the body, so nothing was appended here.
+% H5 review (2026-10-11): "needs a smaller error budget" -> "needs a larger error per matrix" (fewer
+%   setup columns need a looser per-matrix error, not a tighter one).
 % Labels defined: ext:intro-costs, ext:related (the body does not reference them).
 % Labels used (all defined in the body): thm:guess, thm:dich, tab:sok, sec:setup-proof, sec:gen,
 %   sec:v1, sec:quality, tab:eval-compare.
@@ -140,8 +146,11 @@ row-wise Reed--Solomon commitment into a single proximity test for evaluation po
 advance, without a sum-check, by fixing the row evaluations before the verifier samples the random
 fold. ReedWeave~\cite{reedweave} combines interleaving with FRI-style recursive folding to speed up
 Reed--Solomon polynomial commitments. Among zkSNARKs, DeepProve's hash-based configuration commits
-with BaseFold~\cite{basefold}. A proximity test of this kind in place of our full-column setup
-proof is the natural way to shorten that proof, which we leave to future work.
+with BaseFold~\cite{basefold}. On our column-hash commitment, a proximity test of this kind would
+still open as many whole columns as our setup proof and could replace only its combined rows, 1.6\%
+of it for Llama-2-7B at $a=100$ (Remark~\ref{rem:forced}). A substantially smaller setup proof
+needs a larger error per matrix, a larger radius (which costs every query), a weaker certificate or a
+different commitment, which we leave to future work.
 
 \para{Where we fit.} We keep the setting of Anchuri et al., a client that holds only a commitment
 to the weights, and replace the sampled check, which needs $(1-\varepsilon)N$ paths per layer for

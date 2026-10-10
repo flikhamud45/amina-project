@@ -8,6 +8,11 @@
 % (app_params.tex, \input by both appendix_short.tex and the extended branch of main.tex).
 % tab:v1 (duplicate of tab:eval-v1) moved to ext_v1.tex. Second pass (2026-10-10): 1,700 -> 1,545
 % words; cut detail listed under E6 in ext_v1.tex.
+% H5 pass (2026-10-11, REVIEW2.md cut C8): (a) the Llama-2-13B error terms left the body
+%   (tab:params, footnote b, and ext_v1.tex E6 keep them); (b) "Implementation and cost" is one
+%   sentence pointing to Sec. sec:eval-v1; (c) the GKR packing description shortened (details in
+%   ext_v1.tex E1); (d) the lemma's explanation deleted (appendix_short.tex "Proof ideas" has it);
+%   (e) the opening cut to one sentence.
 % =====================================================================================
 
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -32,10 +37,8 @@
 \section{V1: Sending Int8 Values Instead of Claims}
 \label{sec:v1}
 
-At long prompts the proof consists mostly of claims, at 16--19 bits each after compression: about
-6.6\,GB for Llama-2-7B at 2{,}048 tokens, close to its int8 weights. V1 sends instead the int8
-value that the next operation reads. It costs prover time, so it is an option next to the protocol
-of Section~\ref{sec:defence} (v0).
+At long prompts the proof consists mostly of claims, so V1, an option next to the protocol of
+Section~\ref{sec:defence} (v0), sends instead the int8 value that the next operation reads.
 
 \subsection{Values and Windows}
 
@@ -95,19 +98,13 @@ equal leaves cancel. We therefore check two integer conditions.
   in $\Fext(X)$, then every $v_i$ lies in $\Vtab$.
 \end{lemma}
 
-By unique partial fractions, leaf counts agree with the multiplicities modulo $p$ on the table and
-are multiples of $p$ off it; the two conditions, each necessary, force the latter to zero
-(Appendix~\ref{app:v1}). Rule (P5) below keeps honest multiplicities below $2^{29}$.
-
 \subsection{Reducing the Lookup to the Weight Commitment}
 
-A fractional-sum GKR protocol~\cite{gkr,papini2023logupgkr} reduces the left side
-of~\eqref{eq:v1-logup} to one evaluation. The cut operations are packed into instances: matrices
-of their stacked rows by the $T$ positions, padded to powers of two. A binary tree adds the
-fractions $1/(\alpha - v)$ at real positions and $0/1$ at padding up to a root $\mathsf n_0 /
-\mathsf d_0$, and each layer is reduced to the next by a sum-check~\cite{lfkn1992} of degree 3,
-ending at a random point $\rho = (r_{\mathrm{col}}, r_{\mathrm{row}})$ with claims $\hat{\mathsf
-n}, \hat{\mathsf d}$ on the leaf layer's multilinear extensions.
+A fractional-sum GKR protocol~\cite{gkr,papini2023logupgkr} over instances of stacked rows by the
+$T$ positions, padded to powers of two, reduces the left side of~\eqref{eq:v1-logup} to a root
+$\mathsf n_0/\mathsf d_0$ and, by degree-3 sum-checks~\cite{lfkn1992}, to claims $\hat{\mathsf n},
+\hat{\mathsf d}$ on the leaf layer's multilinear extensions at a random point $\rho =
+(r_{\mathrm{col}}, r_{\mathrm{row}})$.
 
 Let $e \in \Fext^{T}$ hold $\Veq(r_{\mathrm{col}}, j)$ for $j < T$, let $\chi_\ell \in
 \Fext^{N_\ell}$ hold $\Veq(r_{\mathrm{row}}, o_\ell + i)$ for the rows $i$ of operation $\ell$ at
@@ -183,13 +180,6 @@ first term. GKR carries the wrong root to the final claims, whose check fails un
 wrong, which the column check or the secret vectors catch. \qed
 
 \smallskip
-At $\lambda = 128$, for Llama-2-13B at 2{,}048 tokens, the first term is at most $2^{-215.3}$ and
-the GKR terms are $2^{-230.7}$ (Table~\ref{tab:params}); they change neither $r$ nor the column
-counts. Each new Fiat--Shamir round errs with probability at most $2^{-215.3}$, below the per-round
-error of Section~\ref{sec:fs}.
-
-\para{Implementation and cost.} V1 is implemented for modes $\sC$ and $\Kpre$, with a GKR prover in
-Triton~\cite{tillet2019triton}. Its tests reject tampered values, exceptions, multiplicities, GKR
-and fold messages. V1's proof is 2.0--2.3$\times$ smaller than v0's at 2{,}048 tokens with random
-weights and 1.7--1.8$\times$ on the real OPT-125M at 512 tokens, for about 10$\times$ the prover
-time (Section~\ref{sec:eval-v1}) \todo{L40S: full models}.
+\noindent At $\lambda=128$ the new terms change neither $r$ nor the column counts
+(Table~\ref{tab:params}). V1 is implemented for modes $\sC$ and $\Kpre$, with a GKR prover in
+Triton~\cite{tillet2019triton}; Section~\ref{sec:eval-v1} gives its costs.
