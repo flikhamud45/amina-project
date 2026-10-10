@@ -1152,6 +1152,8 @@ def _prove_tree(layers: list, ch, label: str, bottom: tuple[int, int] | None = N
     from .logup_gkr import Transcript
 
     n = len(layers) - 1
+    if bottom is not None and bottom[1] >= 2 and n >= 2:
+        layers[n] = (None, layers[n][1])         # the bottom path reads the leaves' q only: free their p now
     p1, q1 = layers[1]
     _tick("start", p1.device)
     top = _from_mont(torch.stack([p1[:, 0], p1[:, 1], q1[:, 0], q1[:, 1]]).cpu())
