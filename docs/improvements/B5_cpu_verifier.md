@@ -3,9 +3,10 @@
 Plan item B5 (reviewer objection D1: "is verification cheaper than re-running the model?" on a CPU client; mock
 review, Reviewer C, weakness 4: "the verifier does not realise its asymptotic advantage"). Commits e501882 and
 7606e8a (native attention), c36cfa8 and 1f85d21 (hybrid attention, a negative result; the CPU profiler), 1e88df8
-(the recomputed operations), b7ef9a9 (the field products), 11d227f (the claim decoder), 4719b71 (AVX-512
-attention). Prerequisite I4 (a C++ compiler on the compute nodes, `I_server_setup.md` Sec. 4). Status: in progress;
-Sec. 6 has the numbers so far and what is still to measure.
+(the recomputed operations), b7ef9a9 and df11e5d (the field products), 11d227f (the claim decoder), d473455 (int32
+claims), 4719b71, 33dc0f8, 4ab532f and 6f9a8c8 (AVX-512 attention, fused with the output requantisation), 63732b1
+(parallel min/max, the norm's division). Prerequisite I4 (a C++ compiler on the compute nodes,
+`I_server_setup.md` Sec. 4). Status: in progress; Sec. 6 has the numbers so far and what is still to measure.
 
 ## 1. The problem
 
@@ -60,12 +61,21 @@ the keys up to each row's position, the row maximum, `e = LUT[min(max - s, len -
 at every shape measured (Table in Sec. 6), because the GEMMs work on blocks too small to amortise their packing.
 It stays selectable (`PVI_CPU_ATTN=hybrid`) for CPUs with faster BLAS.
 
-**Attention, AVX-512 (4719b71).** On CPUs with AVX-512BW and `dh` a multiple of 16 up to 128: per head, the keys as
-int16 pairs along `dh`, transposed to `[dh/2][T]`, and the values as int16 pairs of consecutive keys, `[T/2][dh]`.
-Scores of 16 rows by 16 keys are 16 `vpmaddwd` accumulators (int16 pairs into int32; `|s| <= 2^21`). The softmax
-runs per row as before. The probabilities (at most 255) are packed in pairs of consecutive keys, and `P V`
-accumulates in int32 (every partial sum is below `(255 + T/2) 128 < 2^24` for `T < 2^15`, the bound
-`_int32_scores` already enforces) before it is widened to int64. Other CPUs and shapes use the scalar kernel.
+**Attention, AVX-512 (4719b71, 33dc0f8, 4ab532f, 6f9a8c8).** On CPUs with AVX-512BW and `dh` a multiple of 16 up
+to 128 (`pvi_attention64`): per head, the keys as int16 pairs along `dh`, stored per chunk of 16 keys, and the values
+as int16 pairs of consecutive keys, `[T/2][dh]`, both read straight from the int64 `[B, T, H, dh]` tensors by their
+strides (no copies). Scores of 16 rows by 16 keys are 16 `vpmaddwd` accumulators (int16 pairs into int32;
+`|s| <= 2^21`). The softmax is three vectorisable passes per row: the maximum; `e = EXP[min(255, (gap m_s + 2^29)
+>> 30)]` from the 256-entry table, which equals `LUT[min(gap, len - 1)]` because the table is non-increasing and
+zero from index 178 on, where the LUT's last entry lies (checked for every gap at four multipliers, and by tests),
+without the LUT's cache misses; and `p = floor((tot + 510 e) / (2 tot))` as the truncated double product with
+`1/(2 tot)` (within `2^-44` of the quotient, which is below 256) corrected by one integer step each way, i.e. the
+exact floor. The probabilities are stored as int16, which `P V` reads as int32 pairs of consecutive keys; `P V`
+lets 8 rows share each load of `V` and accumulates in int32 (every partial sum is below `(255 + T/2) 128 < 2^24`
+for `T < 2^15`, the bound `_int32_scores` already enforces). On a CPU verifier, `transformer._attention` calls the
+fused form (`attention_requant`): it also requantises the output by `m_o`, as `requant()` does, and writes the int8
+values in the final `[B, Tq, Hq dh]` layout, with grouped-query heads read through a (kv head, repeat, position)
+view. Other CPUs and shapes use the scalar kernel (`PVI_NATIVE_AVX512=0` forces it).
 
 **Recomputed operations (1e88df8).** One pass each, int64 in and out: requantisation
 `clamp((z m + 2^29) >> 30, lo, hi)`, the residual addition, the table look-ups (SiLU, GELU, ReLU), the integer norm
@@ -82,6 +92,12 @@ accumulators are reduced mod `p` every `2^15` terms. Rows of `Z` are streamed (t
 dotted (the inputs, `u^T X`, with `X` the `[M, K]` activations). The verifier's `_signed_lhs` and `_rhs_all` use it
 on the CPU; any operand out of range (for example a prover's `u` outside the field in mode C) returns `None` and the
 limb GEMMs decide as before.
+
+**Claims as int32 (d473455) and their range checks (63732b1).** A CPU verifier with the native kernels decodes
+the claims as int32 (no widening pass); the requantisation, residual addition and field products read int32 or
+int64 claims and compute in int64; a weight op's fold stays int32 only when every reader is such a requantisation
+(else it is widened as before). The range check of every claim is one parallel min/max pass instead of numpy's two
+single-threaded ones. The norm's floor division uses the row's reciprocal with one exact correction each way.
 
 **Claim decoder (11d227f).** `claimcodec._stream_jobs` hands each large slot stream to one native pass over all 32
 lanes: the `k`-bit values, each segment's base added with uint32 wrap-around, and the padding check (a non-zero
@@ -103,8 +119,12 @@ the transcript. Tests (on the node; on Windows the native paths are skipped and 
   scores) for the scalar, hybrid and (where the CPU has it) AVX-512 attention against `_attention_core`.
 * The CPU verifier suites with every kernel active (`test_fast_verifier`, `test_fullcheck`, `test_protocol`,
   `test_pruning`, `test_lean_and_verifier_device`, `test_generation`, `test_real_weights`, `test_cut_protocol`,
-  `test_architecture`; job 1005765): 402 passed, 1 failed (`test_v1_with_a_gpu_prover_and_verifier[C-cnn16c]`, a GPU
-  prover and GPU verifier test; job 1005791 checks it with the kernels off) \[to update].
+  `test_architecture`, `test_claimcodec`, `test_wire`): 614 passed (job 1005827). Three failures on the way were
+  tests of implementation details, not verdicts, and failed identically with the kernels off where applicable: a V1
+  GPU test expected a mode-C tamper to be caught at the final check, but it is caught at the column check (the final
+  claim reduces to the folded rows; 3ede5fc), a test expected Kpre's stacked `u` to be cached (now cached on the
+  native path too, df11e5d), and the split-decoder test counts calls of the numpy lanes (it now switches the native
+  unpack off, and a new test compares both decoders on 400 corrupted proofs).
 
 ## 5. Usage
 
@@ -134,9 +154,20 @@ The verifier by number of blocks (seconds; every query accepted):
 |---|---:|---:|---:|---:|
 | torch (job 1005733) | 0.428 | 3.371 | 6.639 | 3.27 |
 | tiled attention (job 1005733) | 0.484 | 2.393 | 4.627 | 2.23 |
-| + recomputed operations (job 1005765) | 0.368 | \[pending] | \[pending] | \[pending] |
-| + field products and decoder (job 1005787) | \[pending] | | | |
-| + AVX-512 attention (job 1005788) | \[pending] | | | |
+| + recomputed operations (job 1005765) | 0.368 | 2.018 | 3.711 | 1.69 |
+| + field products and decoder (job 1005787) | 0.400 | 1.952 | 3.335 | 1.38 |
+| + AVX-512 attention, first form (job 1005788) | 0.361 | 1.713 | 2.989 | 1.28 |
+| + int32 claims, min/max, norm, attention without copies (job 1005827) | 0.313 | 1.480 | 2.617 | 1.14 |
+| + attention fused with its requantisation (job 1005854) | -- | 1.530 | 2.596 | 1.07 |
+| + softmax and P V rewritten (job 1006647) | \[pending] | | | |
+
+Per full block at the last complete step (job 1005827): decode 0.19 s, derive 0.76 s, products 0.19 s. The full
+model extrapolates to about 0.31 + 31 x 1.14 = 36 s, against 86 s for fp32 and 196 s for integer re-execution on the
+same CPU (F1).
+
+The AVX-512 attention by phase (job 1005854, per thread, 32 heads, T = 2,048): preparing keys and values 4 ms,
+scores 54 ms, softmax 87 ms, `P V` 46 ms. The softmax's LUT gather (up to 1 MB) and scalar division, and `P V`'s
+re-reading of `V` for every two rows, motivated the rewrite of 6f9a8c8.
 
 ## 7. What remains
 
