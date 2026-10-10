@@ -109,7 +109,7 @@ def attention_var(q, k, v, m_s: int, m_o: int | None, n_heads: int, dh: int, pma
     if MASS is not None:
         MASS.append(float(sum(mass)) / n_heads)
     if m_o is not None:
-        out = requant(out, torch.tensor(m_o, dtype=torch.int64), SHIFT, -INT8_MAX, INT8_MAX)
+        out = requant(out, torch.tensor(m_o, dtype=torch.int64, device=out.device), SHIFT, -INT8_MAX, INT8_MAX)
     return out.transpose(1, 2).reshape(b, tq, n_heads * dh)
 
 
