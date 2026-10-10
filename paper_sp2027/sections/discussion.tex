@@ -52,11 +52,10 @@ against contribution weighting (Section~\ref{sec:break}); larger models are pend
 \section{Conclusion}
 \label{sec:conclusion}
 
-A proof of inference that spot-checks an unencoded execution trace is not fully sound: an edit
-followed by honest recomputation becomes the honest trace of a model that differs in one row, and
-in the worst case no adaptive or value-aware sampler finds that row faster than uniform sampling.
-Our defence therefore encodes the model: it checks every weight operation of an exact integer model
-with Freivalds' algorithm against a Reed--Solomon and Merkle commitment, using only a hash function
-and a linear code, and covers untrusted commitments, Fiat--Shamir and generation. Its cost, a proof
-that grows with the prompt and that V1 shrinks but does not remove, suits a client with neither the
-weights nor a GPU that will not trust hardware.
+Spot-checking an unencoded execution trace is not fully sound: an edit followed by honest
+recomputation is the honest trace of a model that differs in one row, which in the worst case no
+adaptive or value-aware sampler finds faster than uniform sampling. Our defence therefore encodes the
+model and checks every weight operation of an exact integer model with Freivalds' algorithm against a
+Reed--Solomon and Merkle commitment, using only a hash function and a linear code. Its cost, a proof
+that grows with the prompt, suits a client with neither the weights nor a GPU that will not trust
+hardware.

@@ -111,9 +111,9 @@ although zkLLM also hides the weights and proves the operations without weights 
 factor; overhead over unverified inference}. The main cost is the proof, which carries every weight
 operation's result: 6.6\,GB for a 2{,}048-token Llama-2-7B prompt, about the size of its int8
 weights. V1 makes it 2.0--2.3$\times$ smaller with random weights and 1.7--1.8$\times$ on the real
-OPT-125M at 512 tokens, but slows the prover. Because the verifier recomputes attention, which is
-quadratic in the prompt length, a CPU client in mode~$\Kpre$ beats fp32 re-execution at short
-prompts but only matches it at 2{,}048 tokens; on a GPU, re-execution is faster \todo{L40S/EPYC}. The protocol is not zero-knowledge, so it targets open-weight models, as do
+OPT-125M at 512 tokens, but slows the prover. With native exact kernels, a CPU client in
+mode~$\Kpre$ verifies a 2{,}048-token Llama-2-7B prompt 4.6$\times$ faster than re-executing it in
+fp32 on the same CPU; on a GPU, re-execution is faster \todo{L40S/EPYC: full models}. The protocol is not zero-knowledge, so it targets open-weight models, as do
 CommitLLM~\cite{commitllm2026} and Gupta et al.~\cite{gupta2026private}.
 Section~\ref{sec:discussion} compares a client's options.
 

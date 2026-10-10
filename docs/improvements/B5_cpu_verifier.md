@@ -5,8 +5,11 @@ review, Reviewer C, weakness 4: "the verifier does not realise its asymptotic ad
 7606e8a (native attention), c36cfa8 and 1f85d21 (hybrid attention, a negative result; the CPU profiler), 1e88df8
 (the recomputed operations), b7ef9a9 and df11e5d (the field products), 11d227f (the claim decoder), d473455 (int32
 claims), 4719b71, 33dc0f8, 4ab532f and 6f9a8c8 (AVX-512 attention, fused with the output requantisation), 63732b1
-(parallel min/max, the norm's division). Prerequisite I4 (a C++ compiler on the compute nodes,
-`I_server_setup.md` Sec. 4). Status: in progress; Sec. 6 has the numbers so far and what is still to measure.
+(parallel min/max, the norm's division), 4ce69b1 (vectorised softmax look-up), ab5fdce (native residual stream,
+SwiGLU product), 6c9689c (native products for every input width), 26e9be2 (the decoder's exceptions), 0b0fc86
+(the allocator setting). Prerequisite I4 (a C++ compiler on the compute nodes, `I_server_setup.md` Sec. 4).
+Status: done on the Xeon node (target met: the full Llama-2-7B at 2,048 tokens in about 17 s, from about 85 s);
+the full-model run on the friend's EPYC node is the `cpuv` tier of `sp2027.sh` (F6).
 
 ## 1. The problem
 
@@ -99,10 +102,22 @@ int64 claims and compute in int64; a weight op's fold stays int32 only when ever
 (else it is widened as before). The range check of every claim is one parallel min/max pass instead of numpy's two
 single-threaded ones. The norm's floor division uses the row's reciprocal with one exact correction each way.
 
-**Claim decoder (11d227f).** `claimcodec._stream_jobs` hands each large slot stream to one native pass over all 32
-lanes: the `k`-bit values, each segment's base added with uint32 wrap-around, and the padding check (a non-zero
-padding slot raises the same `ClaimCodecError`). The Rice-coded exceptions, their patching and the row means are
-unchanged.
+**Claim decoder (11d227f, 26e9be2).** `claimcodec._stream_jobs` hands each large slot stream to one native pass
+over all 32 lanes: the `k`-bit values, each segment's base added with uint32 wrap-around, and the padding check (a
+non-zero padding slot raises the same `ClaimCodecError`). The exceptions (positions from the Rice-coded gaps, the
+unzigzagged high parts shifted by the segment's width and added, the range checks) are one native pass too, with
+the same checks in the same order; the row means are unchanged.
+
+**The residual stream and SwiGLU (ab5fdce).** The first block's residual base is the embedding's scaled fold, a
+transposed view; the native residual addition first required a contiguous base, so every later residual and norm
+fell back to torch and the stream stayed transposed. It now reads the base by its strides, the norm copies a
+view first, and SwiGLU's `requant(a * b)` is one pass (`graph.requant_mul`).
+
+**The allocator (0b0fc86).** A CPU verifier allocates and frees tensors of hundreds of MB per block. With glibc's
+defaults each is mapped afresh and its pages are zeroed by the kernel on first touch. `native_kernels.tune_malloc()`
+(called once from `Verifier.derive` on a CPU verifier) sets `M_MMAP_MAX = 0` and a 2 GiB trim threshold, so freed
+memory is reused; it is process-wide and `PVI_MALLOC_TUNE=0` keeps the defaults. The re-execution baselines are
+measured both with and without the same setting.
 
 ## 4. Exactness
 
@@ -159,11 +174,27 @@ The verifier by number of blocks (seconds; every query accepted):
 | + AVX-512 attention, first form (job 1005788) | 0.361 | 1.713 | 2.989 | 1.28 |
 | + int32 claims, min/max, norm, attention without copies (job 1005827) | 0.313 | 1.480 | 2.617 | 1.14 |
 | + attention fused with its requantisation (job 1005854) | -- | 1.530 | 2.596 | 1.07 |
-| + softmax and P V rewritten (job 1006647) | \[pending] | | | |
+| + softmax and P V rewritten (job 1006647) | 0.352 | 1.354 | 2.423 | 1.07 |
+| + residual stream, SwiGLU (job 1006677) | 0.332 | 1.243 | 2.050 | 0.81 |
+| + products for every width; heap allocator by environment (job 1006790) | -- | 0.831 | 1.460 | 0.63 |
+| + decoder exceptions; allocator set in-process (job 1006792) | **0.188** | **0.739** | **1.289** | **0.55** |
 
-Per full block at the last complete step (job 1005827): decode 0.19 s, derive 0.76 s, products 0.19 s. The full
-model extrapolates to about 0.31 + 31 x 1.14 = 36 s, against 86 s for fp32 and 196 s for integer re-execution on the
-same CPU (F1).
+Per full block at the last step (job 1006792): decode 0.094 s, derive 0.381 s, products 0.075 s. The full model
+extrapolates to 0.19 + 31 x 0.55 = **17.2 s** at 2,048 tokens (target: at most 20 s), and to 0.018 + 31 x 0.051 =
+**1.6 s** at 64 tokens. Re-execution on the same node and threads (job 1006792, `reexec.py`, extrapolated the same
+way):
+
+| | 64 tokens | 2,048 tokens |
+|---|---:|---:|
+| our Kpre verifier (native kernels) | 1.6 s | 17.2 s |
+| fp32 re-execution, glibc defaults / heap allocator | 3.5 s / 6.0 s | 87.2 s / 78.8 s |
+| integer re-execution, glibc defaults / heap allocator | 6.4 s / 3.6 s | 149 s / 98.3 s |
+
+Against the faster of each pair, the verifier is 2.2x faster than either re-execution at 64 tokens and 4.6x (fp32)
+and 5.7x (integer) faster at 2,048 tokens. The 64-token re-execution times vary by up to 1.7x between runs of the
+same node, and the integer 2,048-token slope is noisy (its two-point fits give negative intercepts); the `cpuv`
+tier measures full models directly. Every query was accepted, and the full suites pass with every kernel active:
+971 passed, 3 skipped (job 1006792).
 
 The AVX-512 attention by phase (job 1005854, per thread, 32 heads, T = 2,048): preparing keys and values 4 ms,
 scores 54 ms, softmax 87 ms, `P V` 46 ms. The softmax's LUT gather (up to 1 MB) and scalar division, and `P V`'s
@@ -171,6 +202,6 @@ re-reading of `V` for every two rows, motivated the rewrite of 6f9a8c8.
 
 ## 7. What remains
 
-* The full model (32 blocks) against fp32 re-execution on the same CPU (F1), and the same on the EPYC node.
-* Claims as int32 end to end on the CPU (no widening pass in the decoder, half the memory traffic of the products
-  and requantisations).
+* The full models (32 blocks, no extrapolation) against both re-executions on the EPYC node (`sp2027.sh cpuv`).
+* Requantised values held as int32 or int8 between native ops (half or an eighth of the writes of the largest
+  remaining pass), and fusing the requantisation into its consumers (RoPE, the SiLU table).

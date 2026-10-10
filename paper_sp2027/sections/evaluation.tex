@@ -168,8 +168,9 @@ cell}.
 \begin{table}[t]
   \caption{A client's options for one Llama-2-7B prompt of $T$ tokens, from this
   section and the cited papers, on different hardware (--: none or not reported;
-  CPU: Xeon Silver 4114, ours in $\sC$ EPYC 9334; GPU: RTX~2080~Ti) \todo{L40S: $\sC$ at 2{,}048;
-  CommitLLM bytes, time}}
+  CPU: 8 threads of a Xeon Silver 4114, ours in $\Kpre$ with the native kernels, re-execution the faster of
+  two allocator settings, full models extrapolated from 1--3 blocks; ours in $\sC$: EPYC 9334; GPU:
+  RTX~2080~Ti) \todo{L40S: $\sC$ at 2{,}048; CommitLLM bytes, time}}
   \label{tab:options}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.2pt}
@@ -179,20 +180,20 @@ cell}.
     \cmidrule(lr){3-4}\cmidrule(lr){5-6}
     Option & Holds & $T{=}64$ & 2{,}048 & $T{=}64$ & 2{,}048 & Guarantee \\
     \midrule
-    Re-exec., CPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 6.8\,s & 196\,s & exact \\
+    Re-exec., CPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 3.6\,s & 98\,s & exact \\
     Re-exec., GPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 0.16\,s & 2.08\,s & exact \\
     GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\
     CommitLLM & key & -- & -- & -- & -- & sampled$^b$ \\
     zkLLM & comm. & -- & 183\,kB & -- & 2.36\,s & full, ZK \\
     Ours, $\sC$ & roots & 325\,MB & 6.6\,GB & 1.0\,s & -- & full \\
-    Ours, $\Kpre$ & key & 196\,MB & 6.4\,GB & 1.5\,s & 85\,s & full$^c$ \\
+    Ours, $\Kpre$ & key & 196\,MB & 6.4\,GB & 1.6\,s & 17\,s & full$^c$ \\
     \quad with V1 & & \multicolumn{2}{c}{$\div$1.8--2.3$^d$} & & $\times$1.6--1.9 & full \\
     \bottomrule
   \end{tabular}
 
   \smallskip
   \parbox{\columnwidth}{\footnotesize $^a$Integer forward pass, an exact check; fp32 and fp16 take
-  3.5/86\,s and 0.037/0.57\,s. $^b$An edit passes a one-token response with probability about
+  3.5/79\,s and 0.037/0.57\,s. $^b$An edit passes a one-token response with probability about
   99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$At 2{,}048 tokens,
   measured with random weights (2.0--2.3$\times$) or predicted with real ones (1.8--2.0$\times$).}
 \end{table}
@@ -201,12 +202,14 @@ In mode $\sC$ the client holds only the commitment and cannot re-run the model; 
 $\Kpre$ it could. Table~\ref{tab:options} sets our verifier against exact re-execution (the integer
 forward pass, bit-identical to the claims) and against the other options a client has.
 
-\para{CPU.} Our $\Kpre$ verifier checks a 64-token Llama-2-7B query in about 1.5\,s, against
-3.5\,s for fp32 and 6.8\,s for integer re-execution. At 2{,}048 tokens it ties fp32 re-execution
-(85 against 86\,s) and is 2.3$\times$ faster than integer re-execution; recomputing the operations
-without weights, mostly attention, takes 76\% of its time \todo{B5: native kernels}.
-Table~\ref{tab:eval-llm} gives 698\,ms and 58.2\,s for this verifier on the EPYC; the final run
-uses one CPU \todo{L40S/EPYC: same-CPU rerun}.
+\para{CPU.} With native exact kernels for every phase (an AVX-512 integer attention fused with its
+requantisation, one-pass recomputed operations, field products and claim decoding), our $\Kpre$
+verifier checks a 2{,}048-token Llama-2-7B query in about 17\,s on 8 threads of the Xeon, against
+79\,s for fp32 and 98\,s for integer re-execution on the same threads: 4.6$\times$ and
+5.7$\times$ faster. At 64 tokens it takes 1.6\,s, against 3.5 and 3.6\,s. Its exact attention alone
+is faster than fp32 scaled-dot-product attention (0.12 against 0.14\,s for one block at 2{,}048
+tokens). Full models are extrapolated from 1--3 blocks, and the CPU times of
+Table~\ref{tab:eval-llm} predate the kernels \todo{L40S/EPYC: full models, one CPU}.
 
 \para{GPU.} On a GPU, re-execution is faster. The fp16 decoder runs Llama-2-7B at 2{,}048 tokens in
 0.57\,s on the 2080~Ti, while the base GPU verifier needed 4.95\,s in $\Kpre$ on the faster L40S.
