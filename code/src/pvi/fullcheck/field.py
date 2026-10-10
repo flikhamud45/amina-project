@@ -71,6 +71,10 @@ def min_max(a: torch.Tensor) -> tuple[int, int]:
     """Exact ``(min, max)`` of a non-empty integer tensor: numpy's reductions on the CPU
     (about 2x torch's there), ``aminmax`` elsewhere (one device-to-host copy)."""
     if a.device.type == "cpu":
+        from . import native_kernels                  # one parallel pass where the native library is built
+        got = native_kernels.min_max(a)
+        if got is not None:
+            return got
         n = a.numpy()
         return int(n.min()), int(n.max())
     lo, hi = torch.stack(torch.aminmax(a)).tolist()

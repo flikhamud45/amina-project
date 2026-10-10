@@ -27,7 +27,7 @@ from pathlib import Path
 import torch
 
 __all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
-           "lut", "norm", "rope", "field_matmul", "unpack_stream"]
+           "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -406,7 +406,23 @@ extern "C" int64_t pvi_norm(const int64_t* x, const int64_t* gain, int64_t* out,
         const int64_t* xi = x + i * d;
         int64_t* o = out + i * d;
         const int64_t m = mean[i], sg = sigma[i], den = sg << k, add = sg * ((int64_t)1 << (k - 1));
-        for (int64_t j = 0; j < d; ++j) o[j] = clamp64(floordiv64((xi[j] - m) * gain[j] + add, den), -127, 127);
+        const double rinv = 1.0 / (double)den;
+        // floor(num / den) clamped to int8: the double estimate (relative error ~2**-52), bounded to +-2**20 (beyond
+        // the clamp either way), then one exact int64 correction each way (|q den| < 2**61 for den < 2**40)
+        if (den < ((int64_t)1 << 40)) {
+            #pragma omp simd
+            for (int64_t j = 0; j < d; ++j) {
+                const int64_t num = (xi[j] - m) * gain[j] + add;
+                double e = std::floor((double)num * rinv);
+                e = e > 1048576.0 ? 1048576.0 : (e < -1048576.0 ? -1048576.0 : e);
+                int64_t q = (int64_t)e;
+                q += (q + 1) * den <= num;
+                q -= q * den > num;
+                o[j] = clamp64(q, -127, 127);
+            }
+        } else {
+            for (int64_t j = 0; j < d; ++j) o[j] = clamp64(floordiv64((xi[j] - m) * gain[j] + add, den), -127, 127);
+        }
     }
     return 1;
 }
@@ -561,6 +577,21 @@ extern "C" int64_t pvi_unpack_stream(const uint32_t* w, int64_t k, int64_t g, in
     }
     return bad ? 0 : 1;
 }
+// ---- (min, max) of a contiguous int32 or int64 array in one parallel pass (the claims' range checks) ----------------
+template <class Z>
+static void minmax_t(const Z* a, int64_t n, int64_t* lo, int64_t* hi) {
+    Z mn = a[0], mx = a[0];
+    #pragma omp parallel for schedule(static) reduction(min:mn) reduction(max:mx)
+    for (int64_t i = 0; i < n; ++i) { mn = a[i] < mn ? a[i] : mn; mx = a[i] > mx ? a[i] : mx; }
+    *lo = (int64_t)mn;
+    *hi = (int64_t)mx;
+}
+
+extern "C" void pvi_minmax(const void* a, int64_t bytes, int64_t n, int64_t* lo, int64_t* hi, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    if (bytes == 4) minmax_t((const int32_t*)a, n, lo, hi);
+    else minmax_t((const int64_t*)a, n, lo, hi);
+}
 """
 
 _FLAGS = ("-O3", "-march=native", "-fopenmp", "-fwrapv", "-shared", "-fPIC")
@@ -617,6 +648,9 @@ def _library():
         _LIB.pvi_unpack_stream.argtypes = [ctypes.c_void_p] + [ctypes.c_int64] * 3 + [ctypes.c_void_p] * 4 + \
             [ctypes.c_int64] * 2
         _LIB.pvi_unpack_stream.restype = ctypes.c_int64
+        _LIB.pvi_minmax.argtypes = [ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p,
+                                    ctypes.c_int64]
+        _LIB.pvi_minmax.restype = None
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -811,4 +845,16 @@ def unpack_stream(w, k: int, n: int, out, bases) -> bool | None:
     ok = _LIB.pvi_unpack_stream(w.ctypes.data, k, w.shape[1], n, out.ctypes.data, starts.ctypes.data,
                                 ends.ctypes.data, los.ctypes.data, starts.size, torch.get_num_threads())
     return bool(ok)
+
+
+def min_max(a: torch.Tensor):
+    """``(min, max)`` of a contiguous CPU int32 or int64 tensor in one parallel pass, or None (the caller's
+    reductions then run)."""
+    if not (_CHEAP and a.device.type == "cpu" and a.dtype in (torch.int32, torch.int64) and a.is_contiguous()
+            and a.numel() >= 1 << 16 and _library() is not None):
+        return None
+    lo, hi = ctypes.c_int64(), ctypes.c_int64()
+    _LIB.pvi_minmax(a.data_ptr(), a.element_size(), a.numel(), ctypes.byref(lo), ctypes.byref(hi),
+                    torch.get_num_threads())
+    return lo.value, hi.value
 

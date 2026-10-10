@@ -196,3 +196,17 @@ def test_native_attention_on_strided_views(hkv, rep, t, tq, dh):
     want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cpu", tq))
     assert torch.equal(native_kernels.attention_core(q, k, v, lut, tq), want)
     assert torch.equal(native_kernels.attention_core(q.contiguous(), k.contiguous(), v.contiguous(), lut, tq), want)
+
+
+def test_min_max_and_the_norm_with_large_denominators(monkeypatch):
+    from pvi.fullcheck.field import min_max
+    g = torch.Generator().manual_seed(17)
+    for dtype in (torch.int32, torch.int64):
+        a = torch.randint(-(1 << 30), 1 << 30, (300_001,), generator=g).to(dtype)
+        a[123] = torch.iinfo(dtype).min
+        a[-1] = torch.iinfo(dtype).max
+        assert native_kernels.min_max(a) == (int(a.min()), int(a.max())) == min_max(a)
+    x = torch.randint(-(1 << 30), 1 << 30, (1, 3, 4), generator=g, dtype=torch.int64)   # sigma << 16 >= 2**40
+    gain = torch.randint(1, 1 << 23, (4,), generator=g, dtype=torch.int64)
+    got, want = _both(lambda: tr._norm_int(x, gain, False), monkeypatch)
+    assert torch.equal(got, want)
