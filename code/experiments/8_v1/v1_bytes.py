@@ -44,6 +44,10 @@ def main() -> None:
     ap.add_argument("--reps", type=int, default=1, help="with --full: timed queries of each protocol after a warm-up")
     ap.add_argument("--verifier-device", default="cpu")
     ap.add_argument("--label", default="")
+    ap.add_argument("--real", default="", help="a Hugging Face OPT checkpoint (e.g. facebook/opt-125m): its real "
+                    "weights (real_weights.build_opt_from_hf), calibrated and queried on WikiText-2 windows")
+    ap.add_argument("--smooth", type=float, default=None, help="with --real: SmoothQuant strength through the norm gains "
+                    "(F2; 0.55 with smooth_pct 99.9, pct 99.99, pct_att 99.99)")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     from pvi.fullcheck import cut_protocol as cp
@@ -54,11 +58,30 @@ def main() -> None:
     cfg = CONFIGS[args.model]
     n_layers = args.layers or cfg.n_layers
     t0 = time.perf_counter()
-    graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, 32), seed=0, prune_last=args.prune_last)
-    model_ops = decoder_shapes(cfg, prune_last=args.prune_last)
+    if args.real:                     # the checkpoint's weights; queries are WikiText-2 windows
+        sys.path.insert(0, str(CODE / "experiments" / "9_quality"))
+        from common import load_opt, load_windows
+        from pvi.fullcheck.real_weights import build_opt_from_hf
+        model, tok = load_opt(args.real)
+        wins, calib = load_windows(tok, seq=args.seq, windows=max(2, args.reps + 1), calib_windows=1)
+        kw = dict(norm_gain=4) if args.smooth is None else dict(norm_gain=4, smooth=args.smooth, smooth_pct=99.9,
+                                                                pct=99.99, pct_att=99.99)
+        graph, _ = build_opt_from_hf(model, calib[0], **kw)
+        del model
+        if args.prune_last:
+            raise SystemExit("--real builds the checkpoint's graph as it is (no pruning)")
+        n_layers = len([op for op in graph.ops if getattr(op, "note", "") == "attention"])
+        x = wins[0]
+        real_queries = wins[1:]
+    else:
+        graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, 32), seed=0,
+                              prune_last=args.prune_last)
+        x = torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(1))
+        real_queries = None
+    # a real checkpoint's graph (e.g. OPT's LM head has a bias) is planned from its own ops
+    model_ops = None if args.real else decoder_shapes(cfg, prune_last=args.prune_last)
     build_s = time.perf_counter() - t0
-    x = torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(1))
-    n_checks = len(model_ops)
+    n_checks = len(model_ops) if model_ops is not None else len(graph.mat_ops)
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
     variants = [("C", pol) for pol in args.policy if "C" in args.modes] + ([("Kpre", None)] if "Kpre" in args.modes else [])
@@ -88,7 +111,8 @@ def main() -> None:
         v1_s = time.perf_counter() - t0
         stats = {k: b1.pop(k) for k in ("n_leaves", "n_instances", "table", "n_exceptions")}
         total0, total1 = sum(ref["bytes"].values()), sum(b1.values())
-        out = {"label": args.label, "git": sha, "model": args.model, "layers": n_layers, "seq": args.seq, "mode": mode,
+        out = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None, "smooth": args.smooth,
+               "layers": n_layers, "seq": args.seq, "mode": mode,
                "policy": policy, "chosen": None if plan is None else plan.policy, "fs": args.fs,
                "prune_last": args.prune_last, "lmax": args.lmax, "v0_accepted": ref["accepted"],
                "v0_bytes": ref["bytes"], "v1_bytes": b1, "v0_total": total0, "v1_total": total1,
@@ -104,7 +128,8 @@ def main() -> None:
                 import statistics
                 runs0, runs1 = [], []
                 for i in range(args.reps):
-                    q = torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(100 + i))
+                    q = (real_queries[i] if real_queries is not None else
+                         torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(100 + i)))
                     runs0.append(run_query(prover, v0, q, wire=True))
                     runs1.append(cp.run_cut_query(prover, v1, q))
 

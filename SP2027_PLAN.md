@@ -70,7 +70,7 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 - **F3 [TODO] (G0)** A real-weight end-to-end defence run (Qwen3-4B and OPT-6.7B real weights): prover, verifier, proof bytes (claims' entropy differs from random weights), generation.
 - **F4 [TODO]** Memory accounting: prover and verifier peak GPU/host memory per cell (bench records `gpu_peak_memory`, `host_peak_rss` already).
 - **F5 [TODO]** Same-hardware baseline: zkLLM (and DeepProve or EZKL if feasible) on the friend's L40S [USER: the friend's machine].
-- **F6 [TODO]** Final L40S run package (all cells with A-E on), as before: scripts, expected hours, a checklist for the friend [USER: run].
+- **F6 [WIP]** Final L40S run package: draft `docs/L40S_RUN_SP2027.md` and `slurm/sp2027.sh` (tiers smoke, v1, quality, gpuv; with `strong_gpu.sh must/should` for v0 with the improvements). To freeze the commit and hand over once V1/F2 are final [USER: run on the friend's machine].
 - **F7 [TODO]** Tables: verify/re-exec, proof/weights, transfer time at 1/10/100 Gb/s, per-token costs for generation, comparison with zkAgent / zkLLM / DeepProve / ZKTorch / Maverick / CommitLLM.
 - **F8 [TODO]** Modern shapes: add Llama-3-8B (GQA, 128k vocabulary) and Mistral-7B configs to the benchmark.
 
