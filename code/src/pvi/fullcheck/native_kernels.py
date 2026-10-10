@@ -27,7 +27,7 @@ from pathlib import Path
 import torch
 
 __all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
-           "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max", "patch_exceptions"]
+           "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max", "patch_exceptions", "tune_malloc"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -1052,4 +1052,30 @@ def patch_exceptions(x, gaps, hz, segs, total: int) -> int | None:
     pd = np.asarray([c for _, _, c in segs], dtype=np.int64)
     return int(_LIB.pvi_patch(x.ctypes.data, gaps.ctypes.data, hz.ctypes.data, gaps.size, st.ctypes.data,
                               wd.ctypes.data, pd.ctypes.data, st.size, total, torch.get_num_threads()))
+
+
+_MALLOC_TUNED = False
+
+
+def tune_malloc() -> bool:
+    """Keep freed memory in the process (glibc: no mmap for large blocks, trim only above 2 GiB free), once per
+    process; True if applied.  A CPU verifier allocates and frees tensors of hundreds of MB per block; by default
+    glibc maps each one afresh and the kernel zeroes its pages on first touch, which cost about a fifth of the
+    verifier's time on Llama-2-7B at 2,048 tokens.  Process-wide (the resident size stays at its peak);
+    ``PVI_MALLOC_TUNE=0`` leaves glibc's defaults."""
+    global _MALLOC_TUNED
+    if _MALLOC_TUNED:
+        return True
+    if os.environ.get("PVI_MALLOC_TUNE", "1") == "0" or platform.system() != "Linux":
+        return False
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+    except OSError:
+        return False
+    m_trim_threshold, m_top_pad, m_mmap_max = -1, -2, -4          # mallopt parameters (malloc.h)
+    ok = libc.mallopt(m_mmap_max, 0) == 1
+    ok = libc.mallopt(m_trim_threshold, (1 << 31) - 1) == 1 and ok
+    ok = libc.mallopt(m_top_pad, 1 << 28) == 1 and ok
+    _MALLOC_TUNED = ok
+    return ok
 

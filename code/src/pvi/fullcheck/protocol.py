@@ -822,6 +822,8 @@ class Verifier:
         the end instead of one per weight op.  A lookup table's claims must be int8, and every op
         that looks rows up (a table, or the verifier's own rows) must look up ids of its table."""
         dtype = torch.int64
+        if x.device.type == "cpu" and native_kernels.cheap_enabled(x):
+            native_kernels.tune_malloc()                          # (once per process; see its docstring)
         if x.device.type == "cpu" and native_kernels.int32_claims() and any(
                 torch.is_tensor(z) and z.dtype == torch.int32 for z in claims.values()):
             dtype = torch.int32                                   # int32 claims, read by the native kernels
