@@ -149,3 +149,35 @@ def test_int32_claims_give_the_int64_results(monkeypatch):
     assert torch.equal(native_kernels.field_matmul(chi[:, :600], z32.T), native_kernels.field_matmul(chi[:, :600], z64.T))
     monkeypatch.setattr(native_kernels, "_CHEAP", False)                  # the torch steps widen int32 claims
     assert torch.equal(gr.requant(z32.T, m, 30, -127, 127), gr.requant(z64.T, m, 30, -127, 127))
+
+
+def test_native_unpack_on_corrupted_proofs_matches_numpy(monkeypatch):
+    """Random bit flips: the native unpack gives the numpy decoder's claims or its rejection, never another
+    exception."""
+    import numpy as np
+    from pvi.fullcheck import claimcodec
+    g = torch.Generator().manual_seed(21)
+    shapes = [(300, 700), (64, 2000), (5, 1)]
+    claims = [(torch.randn(n, m, generator=g) * 3000).round().to(torch.int64) for n, m in shapes]
+    blob = claimcodec.encode(claims)
+    rows, cols = [n for n, _ in shapes], [m for _, m in shapes]
+    rng = np.random.default_rng(5)
+
+    def run(b):
+        try:
+            return claimcodec.decode(b, rows, cols, workers=4)
+        except claimcodec.ClaimCodecError:
+            return None
+
+    for _ in range(400):
+        b = bytearray(blob)
+        for _ in range(int(rng.integers(1, 4))):
+            b[int(rng.integers(0, len(b)))] ^= 1 << int(rng.integers(0, 8))
+        b = bytes(b)
+        got = run(b)
+        monkeypatch.setattr(native_kernels, "_DECODE", False)
+        want = run(b)
+        monkeypatch.setattr(native_kernels, "_DECODE", True)
+        assert (got is None) == (want is None)
+        assert got is None or all(np.array_equal(x, y) for x, y in zip(got, want))
+

@@ -1003,7 +1003,9 @@ class Verifier:
             return out, [self._rhs_int8(xin, ops, us, out) for xin, ops in shared.values()]
         for key, (xin, ops) in list(shared.items()):    # a CPU verifier: one native pass over each input
             k = ops[0].n_in
-            ut = torch.cat([us[op.name][:, :k] for op in ops]) if len(ops) > 1 else us[ops[0].name][:, :k]
+            names = tuple(op.name for op in ops)
+            ut = self._kept_or_built(("u64",) + names, [us[n] for n in names],
+                                     lambda ts, k=k: torch.cat([t[:, :k] for t in ts]))
             y = native_kernels.field_matmul(ut, xin.reshape(-1, k).T)
             if y is None:
                 continue

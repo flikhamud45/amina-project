@@ -1059,7 +1059,10 @@ def test_claims_decoded_into_pinned_memory_are_the_claims():
 def test_random_corruptions_never_crash_the_split_decoder(sample, monkeypatch):
     # the two Rice vectors located by counting their levels' bits and decoded as parallel jobs, on corrupted
     # inputs: the same claims or the same rejection as the one-thread decoder (default sizes), never another
-    # exception; every job of the split decoder on the pool's threads (lanes, Rice vectors, patches, means)
+    # exception; every job of the split decoder on the pool's threads (lanes, Rice vectors, patches, means).
+    # This tests the numpy decoder's lanes; the native unpack (test_native_cheap.py) is switched off.
+    from pvi.fullcheck import native_kernels
+    monkeypatch.setattr(native_kernels, "_DECODE", False)
     zs, blob, rows, cols = sample
     rng = np.random.default_rng(13)
     bad = []
