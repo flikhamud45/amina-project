@@ -68,8 +68,12 @@ def main() -> None:
     vf = v.float().repeat_interleave(rep, 1) / 64
     variants["fp32_sdpa"] = lambda: F.scaled_dot_product_attention(qf, kf, vf, is_causal=tq == t)
     rows = {name: _time(fn, args.reps) for name, fn in variants.items()}
+    phases = None
+    if native_kernels.available() and native_kernels.attention_profile(True) is not None:   # AVX-512 phases, one run
+        native_kernels.attention_core(q, k, v, lut, tq)
+        phases = [round(x / args.threads, 4) for x in native_kernels.attention_profile(False)]
     print(json.dumps({"heads": args.heads, "kv": args.kv, "dh": dh, "seq": t, "queries": tq, "threads": args.threads,
-                      "seconds": rows, "host": platform.node(), "cpu": platform.processor(),
+                      "seconds": rows, "avx512_phases_per_thread": phases, "host": platform.node(), "cpu": platform.processor(),
                       "torch": torch.__version__}), flush=True)
 
 

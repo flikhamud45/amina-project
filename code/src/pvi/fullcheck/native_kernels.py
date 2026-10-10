@@ -116,6 +116,8 @@ static void attention_scalar(const int16_t* q, const int16_t* k, const int16_t* 
 // packed as pairs of consecutive keys, and P V accumulates in int32 per row (every partial sum is below
 // (255 + T/2) 128 < 2**24 for T < 2**15), widened to int64 on the way out.
 static const int64_t TQ = 16;
+static int g_prof_on = 0;                  // pvi_attention_profile: seconds per phase, summed over the threads
+static double g_prof[4] = {0, 0, 0, 0};    // keys and values prepared, scores, softmax, P V
 
 struct View4 {      // an int64 [B, H, R, dh] tensor by its strides; group g = b H + h; row r = (r / qn, r % qn)
     const int64_t* p; int64_t s0, s1, s2, s3, heads, srep, qn;      // (queries stacked by repeat: stride srep)
@@ -149,8 +151,10 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
     {
         std::vector<int32_t> kt(d2 * tp), v2(t2 * dh), s(TQ * tp), pp(TQ * (t2 + 1)), qp(TQ * d2);
         int64_t n[TQ];
+        double tp_[4] = {0, 0, 0, 0}, t0 = 0;
         #pragma omp for schedule(dynamic, 1)
         for (int64_t g = 0; g < bh; ++g) {
+            if (g_prof_on) t0 = omp_get_wtime();
             const int64_t* kg = k.group(g);
             const int64_t* vg = v.group(g);
             const int64_t* qg = q.group(g);
@@ -166,6 +170,7 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                 for (int64_t d = 0; d < dh; ++d)
                     v2[jj * dh + d] = pair16(a[d * v.s3], two ? a[v.s2 + d * v.s3] : 0);
             }
+            if (g_prof_on) { const double t1 = omp_get_wtime(); tp_[0] += t1 - t0; t0 = t1; }
             for (int64_t tile = 0; tile < tiles; ++tile) {
                 const int64_t r0 = tile * TQ, tr = std::min(TQ, rows - r0);
                 int64_t nmax = 0;
@@ -186,6 +191,7 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                     }
                     for (int64_t i = 0; i < TQ; ++i) _mm512_storeu_si512((void*)(s.data() + i * tp + j0), acc[i]);
                 }
+                if (g_prof_on) { const double t1 = omp_get_wtime(); tp_[1] += t1 - t0; t0 = t1; }
                 const int64_t np2 = (nmax + 1) / 2;
                 for (int64_t i = 0; i < tr; ++i) {                    // the integer softmax of each row
                     int32_t* si = s.data() + i * tp;
@@ -213,6 +219,7 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                     }
                     for (int64_t jj = h; jj < np2; ++jj) pi[jj] = 0;
                 }
+                if (g_prof_on) { const double t1 = omp_get_wtime(); tp_[2] += t1 - t0; t0 = t1; }
                 for (int64_t i = 0; i < tr; i += 2) {                 // P V, two rows at a time
                     const bool two = i + 1 < tr;
                     const int32_t* p0 = pp.data() + i * (t2 + 1);
@@ -251,9 +258,19 @@ static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int6
                         }
                     }
                 }
+                if (g_prof_on) { const double t1 = omp_get_wtime(); tp_[3] += t1 - t0; t0 = t1; }
             }
         }
+        if (g_prof_on) {
+            #pragma omp critical
+            for (int q4 = 0; q4 < 4; ++q4) g_prof[q4] += tp_[q4];
+        }
     }
+}
+
+extern "C" void pvi_attention_profile(int64_t on, double* out4) {
+    for (int q4 = 0; q4 < 4; ++q4) { out4[q4] = g_prof[q4]; g_prof[q4] = 0; }
+    g_prof_on = (int)on;
 }
 #endif
 
@@ -652,6 +669,9 @@ def _library():
                                          + [ctypes.c_void_p] + [ctypes.c_int64] * 4 + [ctypes.c_void_p] * 2
                                          + [ctypes.c_int64] * 10)
         _LIB.pvi_attention64.restype = None
+        if hasattr(_LIB, "pvi_attention_profile"):
+            _LIB.pvi_attention_profile.argtypes = [ctypes.c_int64, ctypes.c_void_p]
+            _LIB.pvi_attention_profile.restype = None
         _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 7
         _LIB.pvi_softmax_block.restype = None
         _LIB.pvi_requant.argtypes = [ctypes.c_void_p, ctypes.c_int64] + [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 9
@@ -904,4 +924,15 @@ def min_max(a: torch.Tensor):
     _LIB.pvi_minmax(a.data_ptr(), a.element_size(), a.numel(), ctypes.byref(lo), ctypes.byref(hi),
                     torch.get_num_threads())
     return lo.value, hi.value
+
+
+def attention_profile(on: bool = True) -> list[float] | None:
+    """The AVX-512 attention's seconds per phase (keys/values prepared, scores, softmax, P V), summed over the
+    threads since the last call, and profiling switched ``on`` or off; None without the AVX-512 kernel."""
+    lib = _library()
+    if lib is None or not hasattr(lib, "pvi_attention_profile"):
+        return None
+    buf = (ctypes.c_double * 4)()
+    lib.pvi_attention_profile(int(on), buf)
+    return list(buf)
 
