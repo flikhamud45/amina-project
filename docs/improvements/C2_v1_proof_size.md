@@ -140,6 +140,19 @@ what keeps short prompts at 1.3-1.5x. The spec's byte model predicted 2.24x (C) 
 Llama-2-7B at 2,048 tokens and 1.21x / 1.34x for GPT-2 @64; the measurements agree or are better. Exceptions (clamped
 entries listed with their exact claim) are a few dozen per proof.
 
+**Real weights** (`v1_bytes.py --real facebook/opt-125m --smooth 0.55`, laptop CPU, exact accounting; the smoothed
+integer OPT of F2, WikiText-2 queries of 512 tokens, Fiat-Shamir):
+
+| Cell | Mode | v0 (MB) | V1 (MB) | Ratio | Claims, v0 -> V1 (MB) | Exceptions |
+|---|---|---:|---:|---:|---:|---:|
+| OPT-125M (real), 12 blocks @512 | C (cnn18c) | 82.2 | 48.9 | 1.68x | 76.7 -> 40.9 | 3,598 |
+| OPT-125M (real), 12 blocks @512 | Kpre | 76.4 | 43.2 | 1.77x | 76.4 -> 40.6 | 3,598 |
+
+Real activations compress less well than random ones as int8 values, clamps are more frequent (9 per 100,000
+entries), and seven of OPT-125M's residual adds have multipliers above `2^29` (P3), so those ops stay clear: 40.5 M of
+the 42.5 M claims are cut. The spec's real-weight estimate (1.78-1.85x at 2,048 tokens) is of the same order; the
+2,048-token real-weight cells for OPT-1.3B and OPT-6.7B are in the L40S run package (`sp2027.sh quality`).
+
 **GPU prover** (job 1005308): the Triton GKR gives the eager transcript byte for byte (12 tests); one instance of
 `2^25` leaves takes 0.83 s on the 2080 Ti (24.6 ns per leaf, 5.8 GB peak), `2^20` 0.16 s against 15.2 s for the eager
 prover on the CPU.
