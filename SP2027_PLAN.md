@@ -91,11 +91,11 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## H. The paper
 
-- **H1 [TODO]** Port to the IEEE S&P template (13 pages + appendices); new structure: (1) the attack and the dichotomy, (2) the defence and its theorem with an untrusted commitment, (3) generation, (4) evaluation incl. re-execution, real weights, quality, memory, (5) systematisation and related work (2026 crowd: zkAgent, Maverick, CommitLLM, LAMP, SLP, DeepProve, zkLLM, ZKTorch).
+- **H1 [WIP]** First full S&P draft in `paper_sp2027/` (IEEEtran compsoc, anonymous; workflow `sp2027-paper-draft`): all sections written from the docs and research notes, builds with tectonic, 29 pages (body ~19.4: must be cut to 13), 73 `	odo` markers (most for the L40S run). Mock review `paper_sp2027/REVIEW.md` (scores 2/3/2) with a ranked list of changes; next: cut to length, quantitative deployment case, reposition the novelty, then the numbers from F6.
 - **H2 [TODO]** Novelty statement (D2): the first Freivalds-based inference check whose client needs no enclave, no stored encoded weights and no weight-derived secret, fully sound including attention, with a provider 2-3 orders of magnitude faster than any zkSNARK prover; positioned as a different trade-off from zkLLM (not "worse ZK").
 - **H3 [TODO]** Number pipeline (paper_assets / text_numbers) extended to the new tables and the new raw roots.
 - **H4 [TODO]** Artifact appendix and README (S&P strongly encourages artifacts).
-- **H5 [TODO]** Internal mock review of the S&P draft (workflow, three reviewer lenses) and fixes, a week before the deadline.
+- **H5 [WIP]** Internal mock review of the S&P draft (workflow, three reviewer lenses) and fixes, a week before the deadline. A first mock review of the first draft is `paper_sp2027/REVIEW.md`.
 - **H6 [USER]** Register the abstract by 10 Nov; submit by 17 Nov.
 
 ## I. Infrastructure
@@ -109,6 +109,7 @@ results_2026-10-09.md, raw records, server logs), S = session 4aa2c028's scratch
 
 ## Log
 
+- 2026-10-10 (morning): first S&P draft (paper_sp2027/, 29 pages, builds) and mock review; F6 run package drafted; V1 real-weight bytes (OPT-125M smoothed: 1.68x / 1.77x).
 - 2026-10-10 (night): V1 adversarial review fixed; V1 timings final on the 2080 Ti (prover 18.4 -> 4.9 s, verifier 8.5 -> 4.9 s at OPT-125M @2048); GKR bottom-layer path; F2 attribution and smoothing (OPT-125M x1.17 -> x1.03, OPT-1.3B x1.11 -> x1.03); E2 sampling; A4, B1 done.
 - 2026-10-10 (later): V1 end to end (modes C, Kpre; T4, T5, T7), Triton GKR prover validated on the 2080 Ti, V1 bytes measured at 2,048 tokens (2.0-2.3x); B5 native attention tiled and documented; F2 workflow started; local venv: transformers, pyarrow installed.
 - 2026-10-10: A3 done (threaded assembly 2.1-2.3x; fused encoder a negative result); B2, B3 validated and done; B5 native attention measured (1.51x); I4 done; C1 done; C2 days 1-4 (F_{p^8}, GKR, logUp with K1 passed, cut plan and windows). Pushed `sp2027`.

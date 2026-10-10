@@ -1,0 +1,262 @@
+% =====================================================================================
+% Section: Generation and model quality (plan items E1, E2, F2)
+%
+% Sources used (every number below comes from one of these):
+%  - wt_sp2027/docs/improvements/E1_generation.md  (statement, token rule, soundness argument,
+%    tests, Table tab:gen: RTX 2080 Ti prover, Xeon Silver 4114 verifier with 8 threads,
+%    64-token prompt; the 1.3 TB vs 3.3 GB per-prefix comparison; zkAgent 0.30 s/token)
+%  - wt_sp2027/docs/improvements/E2_sampling.md    (sampler definition, integer bounds, table
+%    and its SHA-256 check, soundness, seed binding, tests incl. 380-620 of 4,000; stop rules, top-p)
+%  - wt_sp2027/docs/improvements/F2_quality.md     (integer model description, attribution table,
+%    smoothing formula, Table tab:quality, robustness x1.03-1.05, per-row scales x1.00-1.01,
+%    literature targets, OPT-6.7B 36.0 vs 27.1). Rows of the attribution table left out for
+%    space: q/k/v weights 74.8 / 65.0, attention output requantisation 75.7 / 64.8; cross-layer
+%    equalisation (67.8 against 66.6, no help) also left out.
+%  - wt_sp2027/docs/improvements/D1_D2_fiat_shamir_binding.md (the graph digest binds every
+%    cheap-op constant, hence the norm gains, and the generation graph's lm_positions)
+%  - wt_sp2027/SP2027_PLAN.md (status of E1, E2, F2; what remains)
+%  - sp2027_research/f2_quality/literature.json (SmoothQuant-O3 x1.016 / x1.008, ZeroQuant-V2
+%    x1.01 / x1.04 with per-token A8 and W16, CushionCache's table: static W8A8 x1.054 and SQ-O3
+%    x1.00 on OPT-6.7B with group-wise weights, zkLLM/zkGPT under 1% at 16 bits, SLP TinyLlama
+%    +8.5% and 84.8% top-1, published sequences of 2,048 tokens)
+%  - sp2027_research/literature.md (zkAgent row; venue bar)
+%  - report/main.tex (course paper: best scalar LayerNorm gains 4, 3, 2; range bound; settings
+%    C and Kpre; Theorem thm:sound and its first-wrong-layer proof)
+%  - zkAgent title/authors checked on eprint.iacr.org/2026/199; SmoothQuant on PMLR v202;
+%    CushionCache, ZeroQuant-V2, OPT, WikiText and A* sampling on arXiv (see extra.bib).
+%
+% Assumes from the main preamble: booktabs, amsmath. Labels used from other sections (all
+% defined in defence.tex or v1.tex): sec:defence, sec:intmodel, sec:fs, thm:sound, sec:v1.
+% Labels defined here: sec:gen (the alias sec:generation was removed at assembly), sec:gen-prefill,
+% sec:gen-sampling, sec:quality, tab:gen, tab:quality, eq:gumbel-table.
+% No \todo is placed inside a float or caption (todonotes cannot place margin notes there).
+% =====================================================================================
+
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+
+\section{Generation and Model Quality}
+\label{sec:gen}
+
+This section extends the protocol of Section~\ref{sec:defence} from one forward pass to a whole
+response, greedy or sampled, and measures the quality of the integer model that it certifies.
+
+\subsection{A Generated Response as One Prefill}
+\label{sec:gen-prefill}
+
+Proving a response of $G$ tokens as one query per prefix would repeat the prompt in every query.
+For Llama-2-7B with a prompt of $P=512$ tokens and $G=512$, this is about 1.3\,TB of claims,
+against about 3.3\,GB for the single prefill described here.
+
+\para{Reduction.} The response $y_1,\dots,y_G$ to a prompt $x$ is the greedy decoding if each
+$y_i$ is the first largest logit at position $P+i-1$ of the model run on
+$x\,\|\,y_1\cdots y_{i-1}$. In the integer model every multiplier and lookup table is fixed at
+calibration, and every operation except causal attention acts on each position separately. A
+decoder with a KV cache therefore computes at each position exactly the integers of a causal
+prefill of $s=x\,\|\,y_1\cdots y_{G-1}$. We prove one query on $s$, with $T=P+G-1$ positions, and
+apply the LM head at the last $G$ positions instead of the last one. Operations, weights and
+multipliers are unchanged, and the number of LM-head positions enters the graph digest that
+Fiat--Shamir absorbs (Section~\ref{sec:fs}).
+
+\para{Token rule.} Before its other checks, the verifier requires that, for each $i<G$, column $i$
+of the claimed $V\times G$ logits have its first largest entry at the next input token $y_i$; the
+last column is the output, from which the client reads $y_G$. The rule costs one argmax over
+$V\times G$ values. The rest of the query is that of one prefill, with a single column opening
+per response in mode $\sC$.
+
+\para{Soundness.} The soundness error is the $\varepsilon$ of Theorem~\ref{thm:sound} for this
+graph: one term per matrix, independent of $G$. If some $y_i$ is not the greedy token, the token
+rule passes only if the claimed logits at position $P+i-1$ differ from the model's. Some claim is
+then wrong, and the first-wrong-layer argument applies unchanged. Claims and tokens are fixed
+before the challenges are drawn, so the prover cannot adapt the response to them. In $\Kpre$ the
+rule can run online as claims arrive, and the reuse bound of Theorem~\ref{thm:sound} holds with
+$Q$ counting the verdicts the prover sees.
+
+\begin{table}[t]
+  \caption{A response of $G$ tokens proved as one prefill: 64-token prompt, RTX 2080 Ti prover,
+  Xeon Silver 4114 verifier with 8 threads, interactive, compact encoding, random int8 weights,
+  3 queries per cell. MB/token is the proof divided by $G$.}
+  \label{tab:gen}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    Model, mode & $G$ & Prover (s) & Verifier (s) & Proof (MB) & MB/token \\
+    \midrule
+    GPT-2, $\sC$       & 1   & 0.15 & 0.21 & 14.9 & 14.9 \\
+                       & 64  & 0.16 & 0.30 & 32.7 & 0.51 \\
+                       & 256 & 0.29 & 0.59 & 87.3 & 0.34 \\
+    GPT-2, $\Kpre$     & 1   & 0.06 & 0.14 & 10.9 & 10.9 \\
+                       & 64  & 0.10 & 0.23 & 28.6 & 0.45 \\
+                       & 256 & 0.20 & 0.51 & 82.9 & 0.32 \\
+    \midrule
+    OPT-1.3B, $\sC$    & 1   & 0.61 & 0.76 & 96   & 96   \\
+                       & 64  & 0.73 & 1.01 & 164  & 2.6  \\
+                       & 256 & 1.05 & 2.18 & 369  & 1.44 \\
+    OPT-1.3B, $\Kpre$  & 1   & 0.15 & 0.43 & 60   & 60   \\
+                       & 64  & 0.21 & 0.72 & 128  & 2.0  \\
+                       & 256 & 0.64 & 1.71 & 332  & 1.30 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\para{Tests and cost.} Tests on four small decoders (GPT-, Llama-, OPT- and Qwen-style) confirm
+that the logits at the last $G$ positions equal those of the separate prefix queries, and that a
+wrong token, or logits forged to select it, is rejected by the token rule or by the LM head's
+check. Table~\ref{tab:gen} gives the costs; the tampered query was rejected in every cell. In
+mode $\sC$, a 256-token GPT-2 response takes 0.29\,s to prove (1.1\,ms per generated token),
+0.59\,s to verify and 87.3\,MB, against 0.15\,s, 0.21\,s and 14.9\,MB for one token. The opening
+and the folding of each matrix are paid once per response, and the proof grows only by the claims
+of the new positions. zkAgent, which also proves a whole
+transcript in one pass, reports 0.30\,s per token for GPT-2, on other hardware and with different
+guarantees~\cite{zkagent}. \todo{L40S: Llama-2-7B and Qwen3-4B with $P=512$, $G\in\{64,256\}$,
+modes $\sC$ and $\Kpre$, with the two tamper cells; replace Table~\ref{tab:gen} with the L40S
+numbers}
+
+\subsection{Sampled Generation}
+\label{sec:gen-sampling}
+
+Deployed models usually sample. A sampled response is not a function of the logits, so the greedy
+rule rejects it, and a rule that accepted any plausible token would let the provider choose the
+output. We fix the randomness instead: the client sends a fresh 32-byte seed with each query, and
+the response must be the output of a public, exact integer sampler keyed by that seed.
+
+\para{The sampler.} It uses the Gumbel-max trick~\cite{gumbel1954,maddison2014astar}: sampling
+from $\mathrm{softmax}(l/\tau)$ is equivalent to choosing $\arg\max_v(l_v/\tau+g_v)$ with
+independent standard Gumbel noise $g_v$. For claimed integer logits $z$ with real values $cz$, the
+temperature becomes the integer weight $a=\mathrm{round}(2^{16}c/\tau)$, and the noise of entry
+$v$ is $\Gamma[u_v]$, where $u_v$ is the $v$-th 16-bit word of
+$\mathrm{SHAKE256}(\texttt{pvi/sampler/v1}\,\|\,\mathit{seed}\,\|\,\mathit{position})$ and
+\begin{equation}
+  \Gamma[i] = \mathrm{round}\Big(2^{16}\cdot\big({-\ln}\big({-\ln}\tfrac{i+1/2}{2^{16}}\big)\big)\Big),
+  \qquad 0\le i<2^{16}.
+  \label{eq:gumbel-table}
+\end{equation}
+The token is the first $v$ that maximises $az_v+\Gamma[u_v]$ among the $k$ largest entries of $z$
+(all entries if $k=0$; ties in this selection go to the smaller index). Since $|z|<2^{29}$,
+$a<2^{24}$ and $|\Gamma[i]|<2^{20}$, every score fits in a 64-bit integer, and every platform
+chooses the same token. The table is a public constant whose SHA-256 digest is fixed in the code;
+a platform whose logarithm rounds an entry differently recomputes it in exact decimal arithmetic.
+The token rule uses the sampler's choice in place of the argmax, and Fiat--Shamir absorbs $a$,
+$k$ and the seed into the statement.
+
+\para{Soundness, and why the seed comes from the client.} The sampler adds no soundness term: the
+verifier recomputes each token from the claimed logits, which are checked like every other claim,
+so a token that is not the sampler's choice on the true logits requires a wrong logit. The
+provider's remaining lever is the seed. If it chose the seed, every seed would yield a validly
+proved response, and it could try seeds until the sampler returned the response it prefers. A
+fresh seed from the client, bound into the statement, makes the response a draw on the client's
+own randomness and prevents a proof for one seed from serving for another.
+The proof does not show that the seed was random; a third party that must also trust the
+randomness would need a jointly generated seed, which we leave out of scope.
+
+\para{Distribution and tests.} The sampler is a fixed, public approximation of sampling at
+temperature $\tau$, with the uniform variables quantised to steps of $2^{-16}$. \todo{measure the
+distance between this sampler's output distribution and exact softmax sampling on real logits at
+typical temperatures} Tests confirm that $k=1$ or a very low temperature gives greedy decoding,
+that flat logits give near-uniform choices (each of 8 tokens chosen 380 to 620 times in 4{,}000
+positions), that sampled responses are accepted in modes $\sC$ and $\Kpre$ and with V1
+(Section~\ref{sec:v1}), and that the same tokens are rejected under another seed unless it
+happens to choose them. Stop rules, such as an end-of-sequence token or a length limit, need no
+proof beyond the token rule. Nucleus
+(top-$p$) sampling is not implemented. \todo{L40S: prover and verifier cost of a sampled
+response, next to the greedy cells of Table~\ref{tab:gen}}
+
+\subsection{Quality of the Certified Model}
+\label{sec:quality}
+
+The provider must serve the exact integer model that the protocol certifies
+(Section~\ref{sec:intmodel}): int8 weights with
+one scale per matrix, int8 activations with static scales, an integer LayerNorm whose int8 output
+is a gain times the normalised value, an exponential table with 8-bit probabilities, and a 23-bit
+residual stream. We load the real OPT checkpoints~\cite{zhang2022opt} into this graph and measure
+perplexity on WikiText-2~\cite{merity2017wikitext} in 16 windows of 128 tokens. Published results
+use 2{,}048-token sequences, so we compare ratios to fp32 on the same windows. With a scalar
+LayerNorm gain, perplexity is 17\% above fp32 for OPT-125M and 11\% above for OPT-1.3B
+(Table~\ref{tab:quality}); in our earlier evaluation it was 33\% above for OPT-6.7B (36.0 against
+27.1).
+
+\para{Where the perplexity goes.} We re-implemented the graph in floating point with each
+component switchable between its exact integer form and float. With every component integer it
+reproduces the integer graph's logits exactly, and with every component float it matches the
+checkpoint's to within $4\cdot10^{-5}$. Table~\ref{tab:quality} (top) gives the leave-one-out and
+add-one perplexities of OPT-125M. The LayerNorm outputs dominate: making them float removes more
+than half of the gap (75.5 to 69.4, against 64.8 in fp32). The weight matrices and the requantisation before fc1 follow, while the
+8-bit softmax, the residual stream and the ReLU table each cost at most 0.1. The LayerNorm loss
+comes from rounding, not clipping. A few outlier channels of OPT's residual stream, and a large
+channel at the beginning-of-sequence token, inflate the standard deviation, so a scalar gain that
+keeps them within int8 leaves the other channels few levels. The best scalar gains fall with the
+width (4, 3 and 2 for OPT-125M, OPT-1.3B and OPT-6.7B), which is consistent with the larger loss
+of the largest model.
+
+\begin{table}[t]
+  \caption{Integer OPT models on WikiText-2 (16 windows of 128 tokens). Top: perplexity of
+  OPT-125M with one component in float (leave-one-out) or only that component integer (add-one),
+  for selected components; the integer graph has 75.5 and fp32 has 64.8. Bottom: perplexity with the best scalar norm gain
+  and with smoothed per-channel gains ($\alpha=0.55$), ratio to fp32, and top-1 agreement with
+  fp32 before and after smoothing.}
+  \label{tab:quality}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Component of OPT-125M & Leave-one-out & Add-one \\
+    \midrule
+    LayerNorm outputs (all)            & 69.4 & 70.3 \\
+    \quad before attention             & 71.0 & 68.7 \\
+    \quad before the MLP               & 74.9 & 65.9 \\
+    All weight matrices                & 72.5 & 66.6 \\
+    fc1 requantisation                 & 72.7 & 66.3 \\
+    Softmax (exp table, 8-bit prob.)   & 75.9 & 64.9 \\
+    Residual stream                    & 75.9 & 64.8 \\
+    ReLU table                         & 75.5 & 64.8 \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{6pt}
+  \begin{tabular}{@{}lrrrc@{}}
+    \toprule
+    Model & fp32 & Scalar gain & Smoothed & Top-1 agr. \\
+    \midrule
+    OPT-125M & 64.76 & 75.52 ($\times$1.17) & 66.62 ($\times$1.03) & 0.72$\to$0.82 \\
+    OPT-1.3B & 32.79 & 36.44 ($\times$1.11) & 33.70 ($\times$1.03) & 0.82$\to$0.90 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\para{SmoothQuant through the norm's gains.} The integer LayerNorm already multiplies the
+normalised value by a vector of public per-channel gains, so it can absorb SmoothQuant's
+scaling~\cite{xiao2023smoothquant}. Channel $j$ gets the gain $\gamma_j=\kappa/s_j$ with
+$s_j=\rho_j^{\alpha}/\omega_j^{1-\alpha}$, where $\rho_j$ is the 99.9th percentile of the channel's
+normalised magnitude on the calibration window, $\omega_j$ is the largest magnitude in column $j$
+of the matrices that the norm feeds, and $\kappa$ maps the largest $\rho_j\gamma_j$ to 127. The
+inverse $1/\gamma_j$ is folded into column $j$ of those matrices before their per-matrix
+quantisation. This is SmoothQuant's setting with per-tensor weights and static per-tensor
+activations (O3), inside the integer graph. Every requantisation multiplier stays a scalar and no
+operation or shape changes, so the protocol's costs, the verifier and V1 are unaffected, and the
+gains are bound by the graph digest like every other constant; both proof formats accept a
+smoothed graph in our tests. With $\alpha=0.55$, and clipping at the 99.99th percentile when
+calibrating the q/k/v, fc1 and attention-output requantisations, both models reach $\times1.03$,
+and top-1 agreement with fp32 rises from 0.72 to 0.82 (OPT-125M) and from 0.82 to 0.90
+(OPT-1.3B). Over 32 evaluation windows and three different calibration windows, smoothing alone
+keeps OPT-125M within $\times1.03$--$1.05$. Per-row power-of-two weight scales (four per matrix)
+reach $\times1.00$--$1.01$ on OPT-125M, but they give a requantisation four multipliers, which V1
+cannot yet handle, so we do not adopt them.
+
+\para{Comparison with published quantisation.} SmoothQuant-O3, the published setting closest to
+ours, raises perplexity by 1.6\% on OPT-175B and by 0.8\% on
+OPT-IML-30B~\cite{xiao2023smoothquant}. ZeroQuant-V2, with 8-bit per-token dynamic activations
+and 16-bit weights, reports about 1\% on OPT-125M and 4\% on OPT-1.3B~\cite{yao2023zeroquantv2}.
+In the evaluation of CushionCache, with group-wise weight scales, static W8A8 costs OPT-6.7B
+5.4\% and SmoothQuant-O3 nothing measurable~\cite{son2024cushioncache}. Proof systems that keep
+16-bit values stay under 1\%~\cite{zkllm,zkgpt}, whereas our range bound on the claims and the
+prover's exact float32 products assume int8 activations (Section~\ref{sec:intmodel}). SLP's fixed-point TinyLlama is 8.5\%
+above its float model and agrees with it on 84.8\% of top-1 tokens~\cite{slp}. From these results
+we set targets of $\times1.06$, $\times1.04$ and $\times1.05$ for OPT-125M, OPT-1.3B and
+OPT-6.7B; the two smaller models meet theirs. Smoothed runs of OPT-6.7B and Qwen3-4B need more
+memory and disk than our 2080 Ti setup provides. \todo{smoothed perplexity and top-1 agreement of
+OPT-6.7B and Qwen3-4B, as rows of Table~\ref{tab:quality}} \todo{real-weight end-to-end run with
+the smoothed graphs: prover, verifier and proof bytes, including V1, since real claims compress
+differently from random ones}

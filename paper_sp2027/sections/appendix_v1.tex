@@ -1,0 +1,302 @@
+% =====================================================================================
+% sections/appendix_v1.tex: full proof of Theorem thm:v1 (V1 soundness), IEEEtran compsoc
+%
+% Sources used (paths relative to session 4aa2c028's scratchpad):
+%   sp2027_research/v1_design/V1_SPEC.md  Sec. 2 (notation, windows, cut rules, leaves, table,
+%     instance layout, the fractional-sum GKR of Sec. 2.4.1, the checks of Sec. 2.5) and Sec. 3
+%     (Theorem 1, Lemma 0, Lemma 1, proof steps 1-7, the remarks)
+%   wt_sp2027/docs/improvements/C2_v1_proof_size.md  Secs. 3-4 and 9 (checks as implemented,
+%     the soundness steps, the review's fixes: P1 clamp within int8, P4 in Kpre, fold aliases,
+%     the input range check, the exception bin outside P5; P4 in mode C)
+%   sections/defence.tex  (Theorem thm:sound, its notation J, k_j, n_j, t_j and the product form
+%     of the column term; the Kpre reuse bound; the Fiat-Shamir argument of sec:fs)
+% Labels referenced: thm:v1, lem:v1-logup, sec:v1 (sections/v1.tex); thm:sound, sec:fs,
+% sec:setup-proof (sections/defence.tex).
+% Labels defined here: app:v1, lem:v1-window, lem:v1-nowrap, lem:v1-gkr, lem:v1-final.
+% Uses the macros of sections/v1.tex (re-provided below so that this file also compiles alone).
+% =====================================================================================
+
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\T}{\top}
+\providecommand{\F}{\mathbb{F}_p}
+\providecommand{\enc}{\mathrm{Enc}}
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\qed}{\hfill$\square$}
+\providecommand{\Fext}{\mathbb{K}}
+\providecommand{\Vlo}{\mathrm{lo}}
+\providecommand{\Vshift}{\mathrm{shift}}
+\providecommand{\Vrq}{\mathrm{rq}}
+\providecommand{\Vtab}{\mathcal{T}}
+\providecommand{\Vcut}{\mathcal{C}}
+\providecommand{\Vclr}{\mathcal{O}}
+\providecommand{\Nleaf}{N_{\mathrm{leaf}}}
+\providecommand{\Veq}{\mathrm{eq}}
+\ifcsname lemma\endcsname\else\newtheorem{lemma}{Lemma}\fi
+
+\section{Soundness of V1}
+\label{app:v1}
+
+This appendix proves Theorem~\ref{thm:v1}. It fixes the notation, states the verifier's checks
+and the GKR protocol precisely, proves four lemmas, and then proves the theorem.
+
+\para{Notation.} $p = 15 \cdot 2^{27} + 1$, $\Fext = \F[\xi]/(\xi^8 - 11)$, and $S = \F + \xi\F$ is
+the set of elements of $\Fext$ whose coordinates of degree 2 to 7 vanish, so $|S| = p^2$. Integers
+are mapped to $\F$ modulo $p$. For a weight operation $\ell$, $A_\ell$ is an integer matrix with
+$N_\ell$ rows and $\hat X_\ell = [X_\ell; \mathbf 1]$ is the input that the verifier derives. For
+an entry $(i,j)$ of a cut operation, with $i < N_\ell$ and $j < T$, $s_{ij}$ is the sent value,
+$L_{ij}$ and $W_{ij}$ are the start and width of its window ($\Vlo_\ell(s_{ij})$ and
+$W_\ell(s_{ij})$ for a normal entry, $z$ and 1 for an exception with value $z$), $\delta_{ij} =
+(A_\ell \hat X_\ell)_{ij} - L_{ij} \in \mathbb Z$ is its residue and $v_{ij} = \delta_{ij} +
+\xi\,W_{ij} \in \Fext$ its leaf. The table is $\Vtab = \{t + \xi w : w \in \mathcal W, 0 \le t < w\}$
+and $\mu$ holds the multiplicities. An instance $\gamma$ stacks the rows of its operations,
+operation $\ell$ at row offset $o_\ell$, in $R_\gamma$ rows; it has $n_\gamma = n_{\mathrm{row}} +
+n_{\mathrm{col}}$ variables with $n_{\mathrm{row}} = \lceil \log_2 R_\gamma \rceil$ and
+$n_{\mathrm{col}} = \lceil \log_2 T \rceil$. Leaf index $\iota = \mathit{row} \cdot
+2^{n_{\mathrm{col}}} + \mathit{col}$ is \emph{real} if $\mathit{row} < R_\gamma$ and $\mathit{col}
+< T$. Bit vectors are indexed from the least significant bit, $\Veq(a, b) = \prod_i (a_i b_i +
+(1 - a_i)(1 - b_i))$, and the multilinear extension of a function $g$ on $\{0,1\}^n$ is
+$\tilde g(\rho) = \sum_{y} \Veq(\rho, y)\, g(y)$. For an integer $N$, $I_N(r) = \sum_{y < N}
+\Veq(r, y)$, which the verifier computes from the binary digits of $N$ in $O(\log N)$ operations.
+
+\para{The verifier's checks.} The verifier rejects at the first failed check.
+(D1)~Ranges: $a \in [-127, 127]$, $\Delta \in R_\Delta = [\Vshift_\ell(1 - 2^{29}),
+\Vshift_\ell(2^{29} - 1)]$, $|z| < 2^{29}$ for clear claims, and a bound on the inputs of cut
+operations (defence in depth only).
+(D2)~Derivation: every operation without weights is recomputed; the consumer of a cut operation
+reads $s_\ell$.
+(D3)~The token rule on the claims of the LM head.
+(D4)~Exceptions: each listed entry belongs to a cut requantisation, the indices increase strictly
+within an operation, $|z| < 2^{29}$ and $\Vrq_\ell(z) = a_{ij}$.
+(D5)~Multiplicities: $|\Vtab|$ entries, $\mu_\tau < p$ for each, and $\sum_\tau \mu_\tau =
+\Nleaf$ in the integers.
+(G)~Every round check of every instance's GKR protocol, and $\mathsf d_0^\gamma \neq 0$.
+(F1)~Freivalds' equation for the clear operations.
+(F2)~In $\Kpre$: $\chi_s^\T y_\ell = u_s \bar x_\ell$ for every cut operation and secret vector.
+(F3)~For every instance, $\hat{\mathsf n} = I_\gamma$ and $\hat{\mathsf d} = \alpha I_\gamma + 1 -
+I_\gamma - \tilde V_\gamma$, where $I_\gamma = I_{R_\gamma}(r_{\mathrm{row}})\,
+I_T(r_{\mathrm{col}})$, $\tilde V_\gamma = \sum_{\ell \in \gamma} \big(S_\ell - \chi_\ell^\T
+L_\ell e + \xi\, \chi_\ell^\T W_\ell e\big)$, and $S_\ell$ is $u_\ell \bar x_\ell$ for a cut
+operation in the row layout and $\chi_\ell^\T y_\ell$ for one in the transposed layout or in
+$\Kpre$.
+(F4)~$\sum_\gamma \mathsf n_0^\gamma / \mathsf d_0^\gamma = \sum_\tau \mu_\tau / (\alpha -
+\tau)$, compared by cross-multiplication.
+(C)~The column check of every committed matrix, with the eight coordinate planes of $\chi_\ell$
+and $u_\ell$ (cut, row layout), of $\bar x$ and $y$ (cut, transposed layout), or the operands of
+v0 (clear).
+
+\para{The GKR protocol of one instance.} Layer $n = n_\gamma$ holds the leaves, $(\mathsf
+n_\iota, \mathsf d_\iota) = (1, \alpha - v_\iota)$ for real $\iota$ and $(0, 1)$ otherwise. Node
+$y$ of layer $k < n$ combines the children $2y$ and $2y+1$:
+\[
+  \begin{aligned}
+    \mathsf n_k(y) &= \mathsf n_{k+1}(2y)\,\mathsf d_{k+1}(2y{+}1) + \mathsf n_{k+1}(2y{+}1)\,
+      \mathsf d_{k+1}(2y), \\
+    \mathsf d_k(y) &= \mathsf d_{k+1}(2y)\,\mathsf d_{k+1}(2y{+}1).
+  \end{aligned}
+\]
+(i)~The prover sends $\mathsf n_1(0), \mathsf n_1(1), \mathsf d_1(0), \mathsf d_1(1)$. The
+verifier computes the root $(\mathsf n_0, \mathsf d_0)$ by the same rule, draws $\theta_0$, and
+sets the claims $\bar{\mathsf n} = \mathsf n_1(0) + \theta_0(\mathsf n_1(1) - \mathsf n_1(0))$
+and $\bar{\mathsf d}$ likewise, at the point $\rho = (\theta_0)$.
+(ii)~For $k = 1, \dots, n-1$ the verifier draws $\eta_k$. The claim $c = \bar{\mathsf n} +
+\eta_k \bar{\mathsf d}$ should equal $\sum_{y \in \{0,1\}^k} \Veq(\rho, y)\, F_k(y)$, where
+$F_k(y) = \mathsf n_{k+1}(2y)\mathsf d_{k+1}(2y{+}1) + \mathsf n_{k+1}(2y{+}1)\mathsf d_{k+1}(2y)
++ \eta_k \mathsf d_{k+1}(2y)\mathsf d_{k+1}(2y{+}1)$. A sum-check over the $k$ bits of $y$
+follows. In round $j$ the prover sends $g_j(0), g_j(2), g_j(3)$ of a polynomial of degree at most
+3; the verifier sets $g_j(1) = c - g_j(0)$, draws $r_{k,j}$, and replaces $c$ by $g_j(r_{k,j})$.
+With $r' = (r_{k,0}, \dots, r_{k,k-1})$, the prover then sends $\tilde{\mathsf n}_{k+1}(b, r')$
+and $\tilde{\mathsf d}_{k+1}(b, r')$ for $b \in \{0, 1\}$, where $b$ is the lowest bit, and the
+verifier checks $\Veq(\rho, r') \big[\tilde{\mathsf n}_{k+1}(0,r')\tilde{\mathsf d}_{k+1}(1,r') +
+\tilde{\mathsf n}_{k+1}(1,r')\tilde{\mathsf d}_{k+1}(0,r') + \eta_k \tilde{\mathsf
+d}_{k+1}(0,r')\tilde{\mathsf d}_{k+1}(1,r')\big] = c$. It draws $\theta_k$, sets $\bar{\mathsf
+n} = \tilde{\mathsf n}_{k+1}(0,r') + \theta_k\big(\tilde{\mathsf n}_{k+1}(1,r') - \tilde{\mathsf
+n}_{k+1}(0,r')\big)$ and $\bar{\mathsf d}$ likewise, and moves to the point $\rho \leftarrow
+(\theta_k, r')$.
+(iii)~The output is the root, the point $\rho = (r_{\mathrm{col}}, r_{\mathrm{row}})$, whose
+$n_{\mathrm{col}}$ lowest coordinates form $r_{\mathrm{col}}$, and the final claims $\hat{\mathsf
+n} = \bar{\mathsf n}$, $\hat{\mathsf d} = \bar{\mathsf d}$. The transcript has $4 + \sum_{k=1}^{n-1}
+(3k+4)$ elements of $\Fext$.
+
+\para{Proof of Lemma~\ref{lem:v1-logup}.} Let $c_v$ be the number of indices $i$ with $v_i = v$,
+so that $\sum_i 1/(X - v_i) = \sum_v c_v/(X - v)$, where $c_v$ is read in $\F$. The functions $1/(X
+- v)$ for distinct $v$ are linearly independent over $\Fext$ (partial fractions are unique), so the
+identity gives $c_v \equiv 0 \pmod p$ for $v \notin \Vtab$ and $c_\tau \equiv \mu_\tau \pmod p$ for
+$\tau \in \Vtab$. Since $c_\tau \ge 0$ and $0 \le \mu_\tau < p$, the second congruence gives $c_\tau
+\ge \mu_\tau$. Hence $\sum_{\tau \in \Vtab} c_\tau \ge \sum_\tau \mu_\tau = N = \sum_v c_v$, and
+$c_v = 0$ for every $v \notin \Vtab$. \qed
+
+\begin{lemma}[windows]
+  \label{lem:v1-window}
+  For an integer $m_\ell > 0$, $\Vshift_\ell(z) = v$ if and only if $\Vlo_\ell(v) \le z <
+  \Vlo_\ell(v+1)$, and $W_\ell(v) \in \{\lfloor 2^{30}/m_\ell \rfloor, \lceil 2^{30}/m_\ell
+  \rceil\}$. If (D1) and (D4) pass and every residue of a cut operation $\ell$ lies in $[0,
+  W_{ij})$, then $s_\ell$ equals $\Vrq_\ell(A_\ell \hat X_\ell)$ for a requantisation and
+  $\Vshift_\ell(A_\ell \hat X_\ell)$ for a residual operation.
+\end{lemma}
+
+\noindent\emph{Proof.} $\Vshift_\ell(z) = v$ means $v\,2^{30} \le m_\ell z + 2^{29} < (v+1)\,
+2^{30}$, that is, $(v\,2^{30} - 2^{29})/m_\ell \le z < ((v+1)\,2^{30} - 2^{29})/m_\ell$. For an
+integer $z$ this is $\Vlo_\ell(v) \le z < \Vlo_\ell(v+1)$. The two bounds differ by
+$2^{30}/m_\ell$, so their ceilings differ by $\lfloor 2^{30}/m_\ell \rfloor$ or $\lceil
+2^{30}/m_\ell \rceil$. Let $Z = (A_\ell \hat X_\ell)_{ij}$. For a normal entry, $\delta_{ij} \in
+[0, W_{ij})$ gives $\Vshift_\ell(Z) = s_{ij}$; for a residual operation this is the claim, and for
+a requantisation $|s_{ij}| \le 127$ by (D1), so $\Vrq_\ell(Z) = s_{ij}$. For an exception,
+$W_{ij} = 1$ and $\delta_{ij} = 0$ give $Z = z$, and (D4) checked $\Vrq_\ell(z) = a_{ij}$. \qed
+
+\begin{lemma}[no wrap-around]
+  \label{lem:v1-nowrap}
+  Let $\ell \in \Vcut$ have the honest input, and let (D1) and (D4) pass. If $\delta_{ij} \notin
+  [0, W_{ij})$, then $v_{ij} \notin \Vtab$.
+\end{lemma}
+
+\noindent\emph{Proof.} By (P4), $|(A_\ell \hat X_\ell)_{ij}| < 2^{29}$. We show $|L_{ij}| < 2^{29}
++ 2^{16}$. For a normal entry of a requantisation, $|s_{ij}| \le 127$ (by (D1), consistent with the
+clamp that (P1) requires) and $2^{30}/m_\ell \le 2^{16}$ by (P3), so $|\Vlo_\ell(s_{ij})| \le
+127.5 \cdot 2^{16} + 1 < 2^{23}$. For a residual operation, $\Vlo_\ell$ is non-decreasing and
+$\Vlo_\ell(\Vshift_\ell(z)) \le z < \Vlo_\ell(\Vshift_\ell(z)) + W_\ell(\Vshift_\ell(z))$ by
+Lemma~\ref{lem:v1-window}, so $s_{ij} \in R_\Delta$ gives $1 - 2^{29} - 2^{16} <
+\Vlo_\ell(s_{ij}) \le 2^{29} - 1$. For an exception, $|z| < 2^{29}$ by (D4). Hence $|\delta_{ij}|
+< 2^{30} + 2^{16}$. If $\delta_{ij} < 0$, then $\delta_{ij} \bmod p = p + \delta_{ij} > p - 2^{30}
+- 2^{16} = 939{,}458{,}561 > 2^{16} \ge W_{ij}$. If $\delta_{ij} \ge W_{ij}$, then $\delta_{ij} <
+2^{30} + 2^{16} < p$, so $\delta_{ij} \bmod p = \delta_{ij} \ge W_{ij}$. In both cases
+$\delta_{ij} \bmod p \notin [0, W_{ij})$. Since $1$ and $\xi$ are linearly independent over $\F$, an
+element $t + xw$ of $\Vtab$ equals $v_{ij}$ only if $w = W_{ij}$ and $t = \delta_{ij} \bmod p$,
+which would require $\delta_{ij} \bmod p < W_{ij}$. \qed
+
+\begin{lemma}[fractional-sum GKR]
+  \label{lem:v1-gkr}
+  Fix $\alpha$ and the true leaves of instance $\gamma$, and let $\mathsf n^\ast_k, \mathsf
+  d^\ast_k$ be the true layers. If the root $(\mathsf n_0, \mathsf d_0)$ computed in step~(i)
+  differs from $(\mathsf n^\ast_0, \mathsf d^\ast_0)$, then, except with probability
+  $\varepsilon_{\mathrm{GKR}}(n_\gamma) = \big(1 + \sum_{k=1}^{n_\gamma - 1} (3k + 2)\big)/p^8$
+  over the verifier's challenges, either a check (G) fails or $(\hat{\mathsf n}, \hat{\mathsf d})
+  \neq (\tilde{\mathsf n}^\ast_{n_\gamma}(\rho), \tilde{\mathsf d}^\ast_{n_\gamma}(\rho))$.
+\end{lemma}
+
+\noindent\emph{Proof.} We show that each step keeps a false claim false except with the stated
+probability. In step~(i) the root is a function of the four sent values, so at least one of them
+differs from its true value. The sent and the true values define lines in $\theta_0$, one pair for
+the numerators and one for the denominators, and at least one pair is distinct; two distinct lines
+meet at most once, so the claims at $\theta_0$ are false except with probability $1/p^8$. In layer
+$k$, if $(\bar{\mathsf n}, \bar{\mathsf d}) \ne (\tilde{\mathsf n}^\ast_k(\rho), \tilde{\mathsf
+d}^\ast_k(\rho))$, then $c$ differs from $\tilde{\mathsf n}^\ast_k(\rho) + \eta_k
+\tilde{\mathsf d}^\ast_k(\rho)$ except with probability $1/p^8$, since a nonzero affine function
+of $\eta_k$ has at most one root. This true value equals $\sum_y \Veq(\rho, y) F^\ast_k(y)$ by
+the definition of the tree and of the multilinear extension. The summand, written with
+$\tilde{\mathsf n}^\ast_{k+1}(0, y)$, $\tilde{\mathsf n}^\ast_{k+1}(1, y)$ and the corresponding
+denominators, has degree at most 3 in each variable, so by the soundness of the
+sum-check~\cite{lfkn1992}, except with probability $3k/p^8$ either a round fails or the final $c$
+differs from $\Veq(\rho, r')\, F^\ast_k(r')$, the value of the summand at $r'$ with the true
+children. If the four sent child values were the true ones, the verifier's check would compare $c$
+with exactly this value and fail; so at least one is false, and as in step~(i) the new claims at
+$(\theta_k, r')$ are false except with probability $1/p^8$. Each layer $k$ thus adds $(3k +
+2)/p^8$ and step~(i) adds $1/p^8$. After layer $n_\gamma - 1$ the claims refer to the leaf layer,
+which gives the statement. \qed
+
+\begin{lemma}[final values]
+  \label{lem:v1-final}
+  With $e$ and $\chi_\ell$ as in Section~\ref{sec:v1}, the true leaf layer of instance $\gamma$
+  satisfies $\tilde{\mathsf n}^\ast(\rho) = I_\gamma$ and $\tilde{\mathsf d}^\ast(\rho) = \alpha
+  I_\gamma + 1 - I_\gamma - \sum_{\ell \in \gamma} \chi_\ell^\T (A_\ell \hat X_\ell - L_\ell +
+  \xi\, W_\ell)\, e$, where $I_\gamma = I_{R_\gamma}(r_{\mathrm{row}})\, I_T(r_{\mathrm{col}})$.
+\end{lemma}
+
+\noindent\emph{Proof.} The numerators are 1 on real leaves and 0 elsewhere, so $\tilde{\mathsf
+n}^\ast(\rho) = \sum_{\iota \text{ real}} \Veq(\rho, \iota)$. Since $\Veq$ factorises over the
+column and row bits and the real leaves form the product of the first $T$ columns and the first
+$R_\gamma$ rows, this sum is $I_T(r_{\mathrm{col}})\, I_{R_\gamma}(r_{\mathrm{row}})$. The
+denominators are $\alpha - v_\iota$ on real leaves and 1 elsewhere, and $\sum_\iota \Veq(\rho,
+\iota) = 1$, so $\tilde{\mathsf d}^\ast(\rho) = \alpha I_\gamma - \sum_{\iota \text{ real}}
+\Veq(\rho, \iota)\, v_\iota + (1 - I_\gamma)$. The real leaf in row $o_\ell + i$ and column $j$ is
+$v_{ij} = (A_\ell \hat X_\ell - L_\ell + \xi W_\ell)_{ij}$ in $\Fext$, and its weight is
+$\Veq(r_{\mathrm{row}}, o_\ell + i)\, \Veq(r_{\mathrm{col}}, j) = (\chi_\ell)_i\, e_j$, which
+gives the sum. \qed
+
+\para{Proof of Theorem~\ref{thm:v1}.} We bound the probability that every check passes, so we may
+assume that the deterministic checks (D1) to (D5) pass. We follow the order of the checks.
+
+\emph{Step 1: the first wrong operation.} Call a clear operation locally correct if its claims
+equal $A_\ell \hat X_\ell$, and a cut operation locally correct if every residue lies in its
+window, where $\hat X_\ell$ is the input that the verifier derives. If every operation is locally
+correct, then by Lemma~\ref{lem:v1-window} each consumer of a cut operation reads exactly the value
+of the honest computation on the same input, and by induction over the graph in topological order
+every derived tensor equals the honest one. The LM head is clear, so its claims are the honest
+logits, $y = M(x)$, and the token rule holds for them. Hence some operation is locally incorrect.
+Let $\ell^\ast$ be the first in graph order; its derived input is the honest input.
+
+\emph{Step 2: a clear $\ell^\ast$.} The argument of Theorem~\ref{thm:sound} applies to its
+committed matrix $j \in \mathcal J_{\Vclr}$. The range check keeps the wrong claim distinct from
+the true value modulo $p$. With the true folded rows, Freivalds' check fails except with
+probability $p^{-r}$; with others, the column check fails except with probability
+$\prod_{i<t_j}(k_j - 1 - i)/(n_j - i)$, unless the prover finds a hash collision. In $\Kpre$ the
+bound is $p^{-r}$.
+
+\emph{Step 3: a cut $\ell^\ast$ gives an off-table leaf.} Some residue of $\ell^\ast$ lies outside
+its window, so by Lemma~\ref{lem:v1-nowrap} its leaf is not in $\Vtab$. The multiset of true leaves
+of all cut operations is determined by $C_M$, $x$ and the first message, which fixes the derived
+inputs, the sent values and the exceptions. The first message also fixes $\mu$. Both are fixed
+before $\alpha$ is drawn.
+
+\emph{Step 4: the logUp identity fails at $\alpha$.} Since (D5) passed, Lemma~\ref{lem:v1-logup}
+shows that $\Phi(X) = \sum_i 1/(X - v_i) - \sum_\tau \mu_\tau/(X - \tau)$ is a nonzero rational
+function. Every leaf and every table element has zero coordinates of degree 2 to 7, so the poles
+of $\Phi$ form a set $P \subseteq S$ with $|P| \le \Nleaf + |\Vtab|$, and $\Phi(X) \prod_{w \in P}
+(X - w)$ is a nonzero polynomial of degree below $|P|$. The challenge $\alpha$ is uniform on
+$\Fext \setminus S$, which has $p^8 - p^2$ elements and contains no pole, so $\Phi(\alpha) = 0$
+with probability at most $(\Nleaf + |\Vtab|)/(p^8 - p^2)$. Otherwise $\sum_\gamma \mathsf
+n^{\ast\gamma}_0 / \mathsf d^{\ast\gamma}_0 = \sum_i 1/(\alpha - v_i) \ne \sum_\tau \mu_\tau /
+(\alpha - \tau)$, where every true root denominator is a product of nonzero factors $\alpha - v_i$.
+If (F4) passes, with $\mathsf d_0^\gamma \ne 0$ by (G), some instance $\gamma$ has $\mathsf
+n_0^\gamma / \mathsf d_0^\gamma \ne \mathsf n^{\ast\gamma}_0 / \mathsf d^{\ast\gamma}_0$, so its
+root is not the true root.
+
+\emph{Step 5: the error reaches the final claims.} By Lemma~\ref{lem:v1-gkr}, except with
+probability $\varepsilon_{\mathrm{GKR}}(n_\gamma)$, either (G) fails or the final claims of
+$\gamma$ differ from the true values at $\rho$.
+
+\emph{Step 6: the final check.} By Lemma~\ref{lem:v1-final}, if $S_\ell = \chi_\ell^\T A_\ell \hat
+X_\ell e$ for every $\ell \in \gamma$, the right-hand sides of (F3) are the true values, and (F3)
+rejects. Otherwise some $S_\ell$ is wrong, so $u_\ell \ne \chi_\ell^\T A_\ell$ (row layout) or $y
+\ne A \bar x$ (transposed layout, or $\Kpre$). In mode $\sC$ with the row layout, write $\chi_\ell
+= \sum_{q < 8} \xi^q \chi^{(q)}$ and $u_\ell = \sum_{q<8} \xi^q u^{(q)}$, where $\chi^{(q)}$ and
+$u^{(q)}$ have entries in $\F$; then $u^{(q)} \ne \chi^{(q)\T} A_\ell$ for some $q$. Because $C_M$
+is honest, every row of the encoded matrix $\hat A$ is a codeword, so $\chi^{(q)\T} \hat A =
+\enc(\chi^{(q)\T} A_\ell)$ and $\enc(u^{(q)})$ are distinct codewords that agree on at most $k_j -
+1$ of the $n_j$ positions. The $t_j$ distinct columns are drawn after $u_\ell$ is sent, so they all
+fall on agreeing positions with probability at most $\prod_{i<t_j}(k_j - 1 - i)/(n_j - i)$;
+otherwise (C) fails, unless the prover finds a hash collision. The transposed layout is symmetric:
+$\bar x^{(q)\T} \hat A' = \enc(A \bar x^{(q)})$ differs from $\enc(y^{(q)})$ for some $q$. In
+$\Kpre$, $y_\ell - A_\ell \bar x_\ell$ has a nonzero coordinate plane $d \in \F^{N_\ell}$, and
+$\chi_s^\T (y_\ell - A_\ell \bar x_\ell) = 0$ requires $\chi_s^\T d = 0$, which holds with
+probability $1/p$ for a uniform secret vector $\chi_s$ that the prover has not seen; over the $r$
+independent secret vectors this is $p^{-r}$.
+
+\emph{Step 7: union bound.} Adding the probabilities of steps 2 and 4 to 6 over the operations,
+the instances and the committed matrices gives the bound of Theorem~\ref{thm:v1}. \qed
+
+\para{Reuse in $\Kpre$.} As in v0, the prover learns each verdict and could repeat an accepted
+forgery. Until one is accepted, the verdicts do not depend on the secret vectors, since $y_\ell$,
+the GKR transcripts and $\alpha$ do not involve them. A false acceptance among $Q$ queries that
+reuse the vectors therefore occurs with probability at most $Q$ times the bound.
+
+\para{Fiat--Shamir.} The interactive protocol is round-by-round sound, as in
+Section~\ref{sec:fs}: once a message makes the statement doomed, only the next challenge can rescue
+it. For the new rounds this probability is at most $1/p^8$ for $\theta_k$ and $\eta_k$, $3/p^8 =
+2^{-245.7}$ for a sum-check round, and $(\Nleaf + |\Vtab|)/(p^8 - p^2) \le 2^{-215.3}$ for
+$\alpha$. All are below the per-round error that the Fiat--Shamir parameters of v0 allow at
+$\lambda = 128$, so its state-restoration bound for $Q$ oracle queries carries over unchanged.
+
+\para{Remarks.} (i)~\emph{Saturated entries.} If the prover omits an exception, the entry keeps its
+normal window, which the true pre-activation misses; if it lists a false value $z$, the residue is
+nonzero in a window of width 1. Either way Step~3 applies. (ii)~\emph{Residual operations.}
+$\Delta$ is unclamped, so its windows are those of $\Vshift_\ell$; the verifier applies the clamp
+of the sum itself in (D2). (iii)~\emph{Input bounds.} The proof does not use the input range check
+of (D1), because Step~1 works with the honest input of $\ell^\ast$; the check is defence in depth.
+(iv)~\emph{The claim bound (P4).} In $\Kpre$ the verifier evaluates (P4) from its own weights. In
+mode $\sC$ it holds no weights, and (P4) is a property of the committed model, checked when the
+honest commitment is computed, as is v0's claim range. With an untrusted commitment
+(Section~\ref{sec:setup-proof}) the bound must be published with the model. (v)~\emph{Completeness.}
+Honest multiplicities are below $2^{29} < p$ by (P5). The exception bin of width 1 is not covered
+by (P5), so a proof with more than $2^{29}$ clamped entries cannot be encoded; this affects
+completeness only.

@@ -1,0 +1,211 @@
+% =====================================================================================
+% sections/appendix_defence.tex: integer semantics and proofs for the defence (sections/defence.tex)
+% Goes after \appendices (IEEEtran). Defines app:defence, app:semantics, app:sound, app:untrusted.
+%
+% Sources used (paths relative to session 4aa2c028's scratchpad):
+%   code/src/pvi/fullcheck/transformer.py, graph.py   every formula of the integer semantics (requant,
+%                                        residual_add, _norm_int, _isqrt, _lut, _rope, _exp_lut,
+%                                        _attention_core and its exactness bounds), MatOp.max_input
+%   wt_sp2027/docs/improvements/A1_int8_column_opening.md, A2_int8_forward.md   int8 GEMM exactness
+%                                        and the int8_ok self-check with automatic fallback
+%   wt_sp2027/report/main.tex            course paper: proof of Theorem 3.2, transposed layout, Kpre reuse
+%   wt_sp2027/docs/improvements/D4_D5_untrusted_commitment.md, code/.../setup_proof.py   setup
+%                                        parameters (beta_0, s, radii as fractions 2^0..2^-10 of the
+%                                        unique-decoding radius, t0, per-query t), soundness argument
+%   sp2027_research/idea_trust-rigor.md  Secs. 1.3-1.4: Fact 1 and its proof, extraction, the online
+%                                        argument with the corrupted set D_j, field semantics of M*
+%   sp2027_research/literature.md        BCIKS20 (unique-decoding error n/q)
+% Our own additions, checked only by us: the hybrid argument for Kpre with per-check verdicts, the
+%   round-by-round states, and the condition e_j < n_j/2 - k_j + 1 under which the split commitment
+%   is not e_j-close.
+% =====================================================================================
+
+\providecommand{\F}{\mathbb{F}_p}
+\providecommand{\enc}{\mathrm{Enc}}
+\providecommand{\T}{\top}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\sK}{\mathsf{K}}
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\qed}{\hfill$\square$}
+\makeatletter
+\@ifundefined{proof}{\newenvironment{proof}[1][Proof]{\par\noindent\emph{#1.}\ }{\qed\par}}{}
+\makeatother
+
+\section{The Defence: Integer Semantics and Proofs}
+\label{app:defence}
+
+\subsection{Integer Semantics}
+\label{app:semantics}
+
+All values are integers, and every multiplier, gain and table below is a public constant of the
+architecture, bound by the graph digest of Section~\ref{sec:fs}.
+
+\para{Requantisation and residuals.} With a public multiplier $m$, a requantisation computes
+$\mathrm{clamp}(\lfloor(mz+2^{29})/2^{30}\rfloor,-127,127)$, which rounds to the nearest integer with
+ties upwards. A residual addition computes
+$\mathrm{clamp}(a+\lfloor(mz+2^{29})/2^{30}\rfloor,\,1-2^{22},\,2^{22}-1)$, so the residual stream
+holds 23-bit integers.
+
+\para{Norms.} Over the $d$ channels of one position, LayerNorm first subtracts the integer mean
+$\lfloor(\sum_ix_i+\lfloor d/2\rfloor)/d\rfloor$; RMSNorm does not. Both compute
+$\sigma=\max(1,\lfloor\sqrt{\lfloor\sum_ix_i^2/d\rfloor}\rfloor)$, evaluated in floating point and
+corrected by one integer step in each direction, which makes it exact, and output
+$\mathrm{clamp}(\lfloor(g_ix_i+2^{15}\sigma)/(2^{16}\sigma)\rfloor,-127,127)$ for a public integer
+gain $g_i$ per channel.
+
+\para{Activations.} ReLU, GELU and SiLU look up an int8 value, clamped to $[-128,127]$, in a public
+table of 256 entries. SwiGLU multiplies the SiLU output by the up projection and requantises the
+product.
+
+\para{Rotary embeddings.} At position $t$, with angles $t\theta_j$ that follow from the public base,
+let $C=\mathrm{round}(2^{14}\cos t\theta_j)$ and $S=\mathrm{round}(2^{14}\sin t\theta_j)$. A pair
+$(x_1,x_2)$ becomes $\lfloor(x_1C-x_2S+2^{13})/2^{14}\rfloor$ and
+$\lfloor(x_2C+x_1S+2^{13})/2^{14}\rfloor$, each clamped to $[-127,127]$.
+
+\para{Attention.} The scores are $s=qk^\T$ for int8 $q$ and $k$. In each query row the verifier forms
+the gaps $g_j=\max_{j'}s_{j'}-s_j$ over the keys that the causal mask allows, the indices
+$i_j=\mathrm{clamp}(\lfloor(m_sg_j+2^{29})/2^{30}\rfloor,0,255)$ for a public $m_s$, and
+$e_j=E[i_j]$ with $E[i]=\mathrm{round}(2^{15}e^{-i/16})$; masked keys get $e_j=0$. With
+$S=\sum_je_j\ge2^{15}$, the probabilities are $P_j=\lfloor(510e_j+S)/(2S)\rfloor\in[0,255]$, that is,
+$255e_j/S$ rounded, and the output $PV$ is requantised. Grouped-query attention shares each key and
+value head among its query heads.
+
+\para{Exact hardware arithmetic.} Weight products run on int8 tensor cores with 32-bit accumulation
+over blocks of $2^{16}$ products, each at most $2^{14}$ in magnitude, so every block sum is at most
+$2^{30}$ and exact in any order; blocks are added in 64-bit integers. The attention products run in
+float32, which is exact on integers up to $2^{24}$. With head dimension at most 128, every score is
+at most $128\cdot128^2=2^{21}$ in magnitude. A row of $P$ sums to at most $255+T/2$, so every partial
+sum of $PV$ is below $(255+T/2)\cdot128<2^{24}$ for $T<2^{15}$; longer rows use 64-bit integers.
+Before using its int8 units, the prover multiplies random and extreme operands (every entry $-128$,
+and sums at the $2^{30}$ bound) and compares the results with an exact reference; on a mismatch it
+falls back to an exact float64 path.
+
+\subsection{Proof of Theorem~\ref{thm:sound}}
+\label{app:sound}
+
+Fix $x$ and the prover's first message. Let $\tilde X_\ell$ be the input of operation $\ell$ that the
+verifier derives from $x$ and the claims, and $D_\ell=Z_\ell-A_\ell[\tilde X_\ell;\mathbf 1]$ over
+$\F$.
+
+\para{The first wrong operation.} If every claim equals the value of $M$, then $y=M(x)$. Otherwise
+let $\ell$ be the first operation, in graph order, whose claim differs from the value of $M$. All
+earlier claims are correct and $\tilde X_\ell$ is computed from them by public operations, so
+$\tilde X_\ell$ is the true input. The wrong claim passed the range check, $|z|<2^{29}$, and the true
+value meets the bound checked at setup, so the two integers differ by less than $2^{30}<p$ and
+$D_\ell\neq0$. A lookup cannot be the first wrong operation, since a different row would need a
+collision; so $\ell$ belongs to a matrix $j\in\mathcal J$, which the first message determines.
+
+\para{Row layout.} If $u_\ell=\chi_\ell^\T A_\ell$, the check of Eq.~\eqref{eq:freivalds} passes only
+if $\chi_\ell^\T D_\ell=0$, which has probability at most $p^{-r}$, as shown in
+Section~\ref{sec:protocol}; $\chi_\ell$ is drawn after the claims. Otherwise some row $\rho$ of
+$u_\ell$ differs from row $\rho$ of $\chi_\ell^\T A_\ell$. Unless the prover finds a collision, every
+opened column that passes the Merkle check is the honest column $\hat A_{\ell,c}$, and the check at
+$c$ compares $\enc(u_{\ell,\rho})_c$ with $\enc((\chi_\ell^\T A_\ell)_\rho)_c$. These are distinct
+codewords, and two distinct polynomials of degree below $k_j$ agree on at most $k_j-1$ of the $n_j$
+points. The $t_j$ distinct uniform columns are drawn after $u_\ell$, so they all fall into this set
+with probability at most $\prod_{i<t_j}(k_j-1-i)/(n_j-i)$. In a shared tree each member's check uses
+its own projection of the opened leaves, and the same count applies.
+
+\para{Transposed layout.} Let $j$ stack the operations that read $\tilde X=\tilde X_\ell$, with stacked
+weights $A$ ($k_j$ rows), claims $Z$ and error $D\neq0$. The committed matrix $\hat A'$ holds the
+encodings of the columns of $A$. For each column $\chi'_i$ of $\chi'$ the verifier computes
+$z_i=Z\chi'_i$ and $w_i=[\tilde X;\mathbf 1]\chi'_i$ and checks $\enc(z_i)_c=w_i^\T\hat A'_{c}$ on the
+opened columns. Since $w_i^\T\hat A'=\enc(Aw_i)$ and $Aw_i=A[\tilde X;\mathbf 1]\chi'_i$, correct claims
+pass. If $D\chi'_i=0$ for every $i$, then $\chi'$ is not the identity, and a nonzero row $d$ of $D$
+satisfies $d^\T\chi'_i=0$ for $r$ independent uniform vectors, which has probability at most
+$p^{-r}$. Otherwise $\enc(z_i)$ and $\enc(Aw_i)$ are distinct codewords of message length $k_j$ for
+some $i$, and the column term applies as above.
+
+\para{Modes $\sK$ and $\Kpre$.} In $\sK$ the verifier computes $u_\ell$ with a fresh $\chi_\ell$, so
+only the first case arises, with probability at most $p^{-r}$. In $\Kpre$ the vectors are fixed and
+secret. Call a check of operation $\ell$ in some query \emph{bad} if $D_\ell\neq0$ and the check
+passes. Without a bad check, a check passes exactly when $D_\ell=0$, so every outcome, and whichever
+check the verifier reports as failed, is a function of the prover's messages. Consider a hybrid
+verifier that reports these predicted outcomes and never reads the vectors. Against it, the
+prover's messages are independent of the vectors, so a given check with $D_\ell\neq0$ is bad with
+probability at most $p^{-r}$, and some check among the at most $Q$ queries is bad with probability
+at most $Q\sum_\ell p^{-r}$. The real and hybrid runs agree until the first bad check, and an
+accepted $y\neq M(x)$ requires a bad check of its first wrong operation.
+
+\para{Round-by-round soundness.} Call a partial transcript \emph{doomed} if (i)~after the claims,
+$y\neq M(x)$; (ii)~after the vectors, some row-layout matrix has $\chi_j^\T D_j\neq0$ or some
+transposed matrix has $D_j\chi'_j\neq0$; (iii)~after the folded rows, Freivalds' check fails for some
+operation, or some row-layout matrix has $u_j\neq\chi_j^\T A_j$, or some transposed matrix has
+$D_j\chi'_j\neq0$. From (i), the vectors avoid (ii) with probability at most $p^{-r}$ (consider the
+matrix of the first wrong operation). From (ii), every folded row the prover can send leads to
+(iii). From (iii), either a check fails or some matrix $j$ escapes only if all its columns fall into
+an agreement set, which has probability at most its column term. A complete doomed transcript is
+rejected unless the prover finds a collision. The round-by-round error is therefore at most
+$\max(p^{-r},\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i))\le\varepsilon_{\sC}$, and the Fiat--Shamir bound
+of Section~\ref{sec:fs} follows from~\cite{canetti2019fs,bcs16}. \qed
+
+\subsection{Proof of Fact~\ref{fact:ext}}
+
+The map $(\chi_1,\dots,\chi_s)\mapsto\sum_i\xi^{i-1}\chi_i$ is a bijection from $(\F^R)^s$ to
+$\mathbb K_s^R$, so $\psi$ is uniform. Every $v\in\mathbb K_s^n$ is uniquely $\sum_i\xi^{i-1}v_i$ with
+$v_i\in\F^n$. The evaluation points lie in $\F$, so a polynomial $P=\sum_i\xi^{i-1}P_i$ over
+$\mathbb K_s$ of degree below $k$, with each $P_i$ over $\F$ of degree below $k$, has evaluations
+$\sum_i\xi^{i-1}P_i(\cdot)$; the code over $\mathbb K_s$ is thus $\{\sum_i\xi^{i-1}c_i\}$ with every $c_i$
+in the code over $\F$. Since $\psi^\T E=\sum_i\xi^{i-1}\chi_i^\T E$, it agrees with
+$\sum_i\xi^{i-1}c_i$ at a column exactly when every $\chi_i^\T E$ agrees with $c_i$ there. \qed
+
+\subsection{Proof of Theorem~\ref{thm:untrusted}}
+\label{app:untrusted}
+
+\para{Parameters.} Let $\beta_0=\lambda+64+\log_2(2|\mathcal J|)$ and
+$s=\lceil(\beta_0+\log_2\max_jn_j)/\log_2p\rceil$, so that $n_j/p^s\le2^{-\beta_0}$. Each tree takes
+the radius $e_j=\lfloor f(n_j-k_j)/2\rfloor$ for all its members, with $f\in\{2^0,\dots,2^{-10}\}$
+chosen to minimise $t^0/a+t$; $t^0$ is the least integer with
+$\prod_{i<t^0}(n_j-e_j-1-i)/(n_j-i)\le2^{-\beta_0}$, and the per-query $t$ the least with
+$\prod_{i<t}(k_j+e_j-1-i)/(n_j-i)\le2^{-\beta}$, both for every member. Then
+$\varepsilon_0\le Q\cdot2|\mathcal J|\cdot2^{-\beta_0}+O(Q^22^{-256})\le2^{-\lambda}+O(Q^22^{-256})$ for
+$Q\le2^{64}$.
+
+\para{Extraction.} In the random-oracle model, the oracle queries made before $C_M$ is output
+determine, for every root, the leaves it was built from, unless they contain a collision, which has
+probability $O(Q^22^{-256})$~\cite{bcs16}. A leaf of a shared tree binds the column digests of its
+members and thus each member's column. A column that cannot be extracted can be opened only by
+finding a preimage, so we count it as corrupted. This defines every $E_j$ before any challenge.
+
+\para{Setup.} Let $E_j$ be not $e_j$-close. Its rows lie in $\F^{n_j}\subset\mathbb K_s^{n_j}$. By the
+correlated-agreement theorem for Reed--Solomon codes in the unique-decoding
+regime~\cite[Thm.~1.6]{bciks20}, applied to the code over $\mathbb K_s$, if a uniform
+$\psi\in\mathbb K_s^{R_j}$ made $\psi^\T E_j$ $e_j$-close to that code with probability above
+$n_j/|\mathbb K_s|$, then all rows of $E_j$ would agree with codewords over $\mathbb K_s$, and hence, by
+their base coordinates, over $\F$, on a common set of $n_j-e_j$ columns, so $E_j$ would be
+$e_j$-close. For $e_j$ below a quarter of the distance, Ligero's lemma~\cite{ligero} gives the same
+with $(e_j+1)/|\mathbb K_s|\le n_j/|\mathbb K_s|$. By Fact~\ref{fact:ext} the $s$ base-field
+combinations form a uniform $\psi$, so except with probability $n_j/p^s$, $\psi^\T E_j$ is
+$e_j$-far. The committer's $s$ message rows form one message over $\mathbb K_s$, and by
+Fact~\ref{fact:ext} the check at column $c$ passes for all of them exactly when its codeword agrees
+with $\psi^\T E_j$ at $c$. That happens on at most $n_j-e_j-1$ columns, a set fixed when the message
+is sent, so the $t^0_j$ columns drawn afterwards all fall into it with probability at most
+$\prod_{i<t^0_j}(n_j-e_j-1-i)/(n_j-i)$. The setup proof is a public-coin protocol whose rounds have
+these errors, so under Fiat--Shamir the bound gains the factor $Q$~\cite{canetti2019fs,bcs16}.
+
+\para{Online.} Let every $E_j$ be $e_j$-close, let $U_j=\enc(A^*_j)$ be the unique codeword matrix
+within distance $e_j$, and let $B_j$ be the at most $e_j$ columns on which $E_j\neq U_j$; $C_M$ fixes
+$B_j$. The model $M^*$ computes each weight product $A^*_\ell[X;\mathbf 1]$ in $\F$, lifts it to
+$(-p/2,p/2)$, and applies the operations of Appendix~\ref{app:semantics} to these integers. Let $\ell$
+be the first operation whose claim differs from the value of $M^*$; as before, $\tilde X_\ell$ is the
+input of $M^*$. The claim is an integer with $|z|<2^{29}<p/2$ and the value of $M^*$ an integer in
+$(-p/2,p/2)$, so they differ in $\F$ and $D_\ell=Z_\ell-A^*_\ell[\tilde X_\ell;\mathbf 1]\neq0$; no bound
+on $A^*$ is needed. In the row layout, if $u_\ell=\chi_\ell^\T A^*_\ell$, Freivalds' check fails except
+with probability $p^{-r}$. Otherwise, for a row $\rho$ where they differ, a passing column $c$
+satisfies $\enc(u_{\ell,\rho})_c=(\chi_\ell^\T E_j)_{\rho,c}$; outside $B_j$ the right side equals
+$\enc((\chi_\ell^\T A^*_\ell)_\rho)_c$, so $c$ lies in $B_j$ or in the at most $k_j-1$ positions where
+the two codewords agree. The columns are drawn after $u_\ell$, which gives the stated term. In the
+transposed layout the same holds for every $w_i$, uniform or not, because $w_i^\T E'_j$ agrees with
+$w_i^\T U'_j=\enc(A^*w_i)$ outside $B_j$. A lookup table is the set of rows its root binds, and $M^*$
+uses those rows. The round-by-round argument of Appendix~\ref{app:sound} carries over with $k_j$
+replaced by $k_j+e_j$. \qed
+
+\para{The split commitment.} Let row $\rho$ of $E_j$ equal $\enc(A_{j,\rho})$ on a half $H$ of the
+columns and $\enc(A'_{j,\rho})\neq\enc(A_{j,\rho})$ on the other half. A codeword within distance
+$e_j$ of this row agrees with $\enc(A_{j,\rho})$ on at least $n_j/2-e_j$ columns of $H$, and with
+$\enc(A'_{j,\rho})$ on at least $n_j/2-e_j$ columns outside $H$; it differs from one of the two, so
+$n_j/2-e_j\le k_j-1$. For $e_j<n_j/2-k_j+1$ the split commitment is therefore not $e_j$-close and the
+setup proof rejects it except with probability $\varepsilon_0$. For larger radii it may be close to
+$\enc(A_j)$; then $M^*$ uses $A_j$, and the per-query term with $k_j+e_j$ bounds the acceptance of
+answers computed with $A'_j$.

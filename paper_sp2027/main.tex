@@ -1,0 +1,98 @@
+% =====================================================================================
+% main.tex: IEEE S&P 2027 submission draft, "Certified but Compromised" (working title).
+% Build: tectonic main.tex (from this directory).
+% Sections live in sections/*.tex; each one \providecommand's the macros it needs, so the
+% definitions below take precedence. Bibliography: references.bib (copied unchanged from
+% report/references.bib) and extra.bib (entries added for this draft; % [U] marks unverified ones).
+% =====================================================================================
+\documentclass[conference,compsoc]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[caption=false,font=footnotesize]{subfig}
+\usepackage{xcolor}
+\usepackage{cite}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\setlength{\emergencystretch}{1.5em}
+
+% ---- visible marker for open items -------------------------------------------------
+\newcommand{\todo}[1]{{\color{red}\textbf{[TODO: #1]}}}
+
+% ---- shared notation (one name per concept) ----------------------------------------
+\newcommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\newcommand{\T}{\top}
+\newcommand{\F}{\mathbb{F}_p}
+\newcommand{\enc}{\mathrm{Enc}}
+\newcommand{\sC}{\mathsf{C}}
+\newcommand{\sK}{\mathsf{K}}
+\newcommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+% V1 (sections/v1.tex, sections/appendix_v1.tex)
+\newcommand{\Fext}{\mathbb{K}}
+\newcommand{\Vlo}{\mathrm{lo}}
+\newcommand{\Vshift}{\mathrm{shift}}
+\newcommand{\Vrq}{\mathrm{rq}}
+\newcommand{\Vtab}{\mathcal{T}}
+\newcommand{\Vcut}{\mathcal{C}}
+\newcommand{\Vclr}{\mathcal{O}}
+\newcommand{\Nleaf}{N_{\mathrm{leaf}}}
+\newcommand{\Veq}{\mathrm{eq}}
+
+% ---- theorem-like environments ------------------------------------------------------
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{corollary}{Corollary}
+\newtheorem{proposition}{Proposition}
+\newtheorem{fact}{Fact}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+\begin{document}
+
+\title{Certified but Compromised: Breaking and Fixing\\ Lightweight Proofs of Inference}
+
+\author{\IEEEauthorblockN{Anonymous Authors}
+\IEEEauthorblockA{Submission under double-blind review}}
+
+\maketitle
+
+\begin{abstract}
+Lightweight proofs of inference avoid the cost of zkSNARKs by checking only a sample of a
+committed execution trace. We show that such sampling is not fully sound. A
+provider that overwrites one neuron and recomputes the later layers honestly leaves one
+inconsistent site. The path protocol of Anchuri et al.\ accepts it with probability $1-1/N$ per
+path for a layer of width $N$, and on OPT-6.7B one edited neuron changed the next token for all 40
+prompts tried. We prove that no sampling rule closes this gap: for any verifier that makes $q$
+queries per layer to a commitment of locality $d$, some network admits such a forgery that passes
+with probability at least $1-qd/N$, while commitments that mix all rows reach $2^{-\lambda}$ with
+$O(\lambda)$ queries. We then check every weight operation of an exact int8 model with Freivalds'
+algorithm against a Reed--Solomon and Merkle commitment, using only a hash function and a linear
+code. The protocol tolerates an untrusted commitment, proves greedy and sampled generation, and
+halves the proof at 2{,}048 tokens with a logUp-GKR. Its prover is 46 to 32{,}000 times faster than
+published zkSNARK provers. Its main cost is a proof that grows with the prompt.
+\end{abstract}
+
+\input{sections/intro}
+\input{sections/attack}
+\input{sections/defence}
+\input{sections/v1}
+\input{sections/generation_quality}
+\input{sections/evaluation}
+\input{sections/discussion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references,extra}
+
+\appendices
+\input{sections/appendix_attack}
+\input{sections/appendix_defence}
+\input{sections/appendix_v1}
+
+\end{document}

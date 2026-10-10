@@ -1,0 +1,319 @@
+% =====================================================================================
+% sections/appendix_attack.tex: full statements and proofs for Section sec:attack
+% (input after \appendix; uses the environments and macros set up in sections/attack.tex).
+%
+% Sources used (paths relative to session 4aa2c028's scratchpad):
+%   sp2027_research/attack_theory/PART1_SP.md Sec. 1.2 (appendix LaTeX, with every fix of
+%     theorem_check.md), Sec. 3.4 (instruction-tuned models; shapes from experiments.md)
+%   attack_theory/theorem.md, theorem_check.md, check_guessing_out.json (12 exact toy instances),
+%     check_merkle_leak_out.json (N=16: 0.0625 ideal; 0.125, 0.25, 0.5 for L=0,1,2)
+%   wt_sp2027/report/main.tex Sec. 3.3-3.5 (Freivalds and column checks, parameters)
+%   wt_sp2027/docs/improvements/D4_D5_untrusted_commitment.md (setup proof: k-1 becomes k-1+e)
+% Table tab:aligned recomputed with Python on 2026-10-10 as ceil(40 ln 2 / -ln(1-k/d_ff)); it
+% matches PART1_SP.md Sec. 3.4.
+% Labels defined here: app:attack, def:H, thm:guess-full, lem:notouch, lem:product, cor:surprise,
+% prop:worst, prop:blind, prop:amp, rem:merkle, rem:pointer, rem:scope, tab:aligned.
+% Labels used from other sections: sec:defence, sec:setup-proof.
+% =====================================================================================
+
+\section{Spot-Checking: Full Statements and Proofs}
+\label{app:attack}
+
+\para{Setting.} Fix a target layer with rows $\theta=(\theta_1,\dots,\theta_N)$, all sets finite, as
+with int8 or fp16 values. Site $i$ has value $h_i=f_i(\theta_i)$, for example
+$f_i(\theta_i)=\phi(w_i\cdot a+b_i)$ with $a$ the layer's input on $x$. The honest trace is
+$\tau(\theta)$. The view is $P=(x,Z,\tau')$, and $\mathcal A$ is the set of admissible instances,
+those consistent with $Z$. A verifier $V\in\mathrm{Spot}_d(q)$ makes queries to a commitment oracle
+$\Sigma(\theta)$ of locality $d$, chosen adaptively. It accepts $(\tau(\theta),\Sigma(\theta))$ for
+every $\theta\in\mathcal A$ and every coin string (completeness), and the expected number of its
+queries that meet the target layer is at most $q$ (under each reference oracle $R_p$ below). The
+adversary is a randomised rule $A$ that sees $\theta$ and outputs a pair $(u,v)$ with $v\neq h_u$,
+or $\bot$. Its forgery is $\tau'=\tau$ with $h_u$ replaced by $v$ and every later layer recomputed
+with the true weights. We write $J$ for the random edited site, and we condition throughout on
+$A\neq\bot$.
+
+\begin{definition}[explainable forgery]
+A forgery $(u,v)$ on $\theta$ is \emph{explainable} if there is $\theta'\in\mathcal A$ with
+$\theta'_{-u}=\theta_{-u}$ and $\tau(\theta')=\tau'$.
+\end{definition}
+
+\noindent For $f_u=\mathrm{ReLU}(w_u\cdot a+b_u)$, the row $\theta'_u=(\mathbf 0,v)$ for $v>0$, or
+$(\mathbf 0,-1)$ for $v=0$, explains every edit. If $V$ range-checks the trace against published
+intervals and $\mathcal A$ is the set of instances whose honest trace lies in range, then every
+edit whose forged values all lie in range is explainable by the same row. If $Z$ fixes each
+neuron's full natural distribution, explainability can fail, and Proposition~\ref{prop:worst} then
+constructs an instance where it holds. For SiLU or GELU, $v$ must lie in the image of the
+activation, up to rounding. If the trace stores pre-activations, edit $z_u$ instead.
+
+\begin{lemma}[no touch, no rejection]
+\label{lem:notouch}
+In the ideal-oracle model, if a forgery at $u$ is explainable, then every $V\in\mathrm{Spot}_d(q)$
+that does not touch $u$ accepts it.
+\end{lemma}
+\begin{proof}
+Fix the coins. While no query touches $u$, the answers $\gamma_\sigma(\theta_{S_\sigma})$ and
+$\gamma_\sigma(\theta'_{S_\sigma})$ coincide. By induction on the queries, the run on
+$(P,\Sigma(\theta))$ therefore equals the run on $(P,\Sigma(\theta'))$. The latter is an honest run
+of $\theta'\in\mathcal A$, which $V$ accepts by completeness.
+\end{proof}
+
+\begin{definition}[location-oblivious rows, (H)]
+\label{def:H}
+The pair (prior, $A$) satisfies (H) if for every view $p$ there is an oracle $R_p$, which may be
+sampled lazily, with the following property. For every $u$ with $\Pr[J=u\mid P=p]>0$ and every
+verifier, the run of $V$ under $\Sigma(\theta)\mid(P=p,J=u)$, up to and including the
+\emph{choice} of its first query that touches $u$ (but not that query's answer), has the same law
+as under $R_p$.
+\end{definition}
+
+\noindent For $t\ge0$ let $G_t(J\mid P)=\mathbb E_p\max\{\sum_u x_u\Pr[J=u\mid P=p] :
+x\in[0,1]^N,\ \sum_u x_u\le t\}$. For integer $t$ this is the expected total of the $t$ largest
+posteriors.
+
+\begin{theorem}[full form of Theorem~\ref{thm:guess}]
+\label{thm:guess-full}
+Assume (H) and that every forgery in the support of $A$ is explainable. In the ideal-oracle model,
+every $V\in\mathrm{Spot}_d(q)$ satisfies
+\[
+  \Pr[V\text{ rejects}] \;\le\; G_{qd}(J\mid P)\;\le\; qd\cdot 2^{-\tilde H_\infty(J\mid P)} ,
+\]
+where $\tilde H_\infty$ is average min-entropy~\cite{dodis2008fuzzy}. Under the second commitment
+condition of Remark~\ref{rem:merkle}, add $2Q2^{-\kappa}+Q^22^{-\ell_H}$. For $d=1$ and integer $q$,
+a verifier that knows the prior and $A$, and has a binding commitment, attains the bound with
+equality.
+\end{theorem}
+\begin{proof}
+By Lemma~\ref{lem:notouch},
+$\Pr[\text{reject}]\le\sum_p\Pr[p]\sum_u\Pr[u\mid p]\Pr[V\text{ touches }u\mid p,u]$. Whether $V$
+touches $u$ is determined by its run up to the choice of the first query that touches $u$. By (H),
+$\Pr[V\text{ touches }u\mid p,u]=\Pr_{R_p}[V\text{ touches }u]=:x_u$, and $x$ does not depend on
+$u$. Under $R_p$, $V$ touches at most $d$ sites per query that meets the layer, so
+$\sum_u x_u\le qd$ and $x\in[0,1]^N$. Hence $\sum_u\Pr[u\mid p]x_u$ is at most the value of the
+fractional knapsack $\max\{\sum_u x_u\Pr[u\mid p]:\sum_u x_u\le qd\}$, which averages to
+$G_{qd}(J\mid P)$. The second inequality bounds each of the $qd$ terms by the largest posterior,
+and $\mathbb E_p\max_u\Pr[u\mid p]=2^{-\tilde H_\infty(J\mid P)}$. For tightness, the verifier that
+opens the $q$ sites with the largest posteriors accepts honest traces. On a forgery it rejects
+exactly when $J$ is among them, because binding makes the opened row $\theta_J$ show
+$f_J(\theta_J)=h_J\neq v$, while every other opened row is consistent. This is the optimal policy
+for finding a hidden object within $q$ looks, given that a clean opened row is an empty
+box~\cite{chew1967,kadane1971}.
+\end{proof}
+
+\begin{lemma}[independent rows give (H)]
+\label{lem:product}
+Suppose the prior on $\theta$ given $Z$ is a product $\bigotimes_j\mu_j$, and $A$ depends on the
+target rows only through their values: the law of $A(\theta)$ is a function of $h(\theta)$. Then
+(H) holds with $R_p=\bigotimes_j\mu_j(\,\cdot\mid f_j(\theta_j)=p_j)$.
+\end{lemma}
+\begin{proof}
+Write $\alpha(h,u,v)=\Pr[A(h)=(u,v)]$. On the event $\{P=p,J=u\}$ we have $h_j=p_j$ for all
+$j\neq u$, so
+$\Pr[\theta,J=u,P=p]=\prod_{j\neq u}\mu_j(\theta_j)\mathbf 1[f_j(\theta_j)=p_j]\cdot
+\mu_u(\theta_u)\,\alpha((f_u(\theta_u),p_{-u}),u,p_u)$. This is a function of $\theta_{-u}$ times a
+function of $\theta_u$. Hence, given $(P=p,J=u)$, $\theta_{-u}\sim\bigotimes_{j\neq u}
+\mu_j(\cdot\mid f_j=p_j)$, which is $R_p$ restricted to the rows other than $u$. A run that has not
+yet touched $u$ reads only $\theta_{-u}$.
+\end{proof}
+
+\noindent Lemma~\ref{lem:product} concerns a \emph{random ensemble} of networks. Averaging over it
+shows that every architecture has a bad network. It says nothing about a particular trained
+network, whose rows are correlated. The single-site attack satisfies the hypothesis on $A$: it
+ranks neurons by the margin gradient with respect to $h$, which uses only the later weights, and
+bisects by recomputing the later layers.
+
+\begin{corollary}[the posterior on the edited site]
+\label{cor:surprise}
+Under Lemma~\ref{lem:product}, let $\pi_u$ be the law of $f_u(\theta_u)$ when
+$\theta_u\sim\mu_u$, and let $\beta_u(p)=\Pr_{h_u\sim\pi_u}[A(h_u,p_{-u})=(u,p_u)]$. Then
+$\Pr[J=u\mid P=p]\propto\beta_u(p)/\pi_u(p_u)$. If $\pi_u(p_u)=0$, the posterior is a point mass
+on $u$.
+\end{corollary}
+\begin{proof}
+Summing the factorisation above over $\theta$ gives
+$\Pr[J=u,P=p]=\big(\prod_j\pi_j(p_j)\big)\beta_u(p)/\pi_u(p_u)$. If $\pi_u(p_u)=0$, then
+$\Pr[J=u',P=p]=0$ for every $u'\neq u$, since that would require $h_u=p_u$.
+\end{proof}
+
+\noindent The formula has two factors. Writing a common value makes $1/\pi_u$ small, but it hides
+the site only if the \emph{choice} of site, $\beta$, is also spread out. A published,
+deterministic attack rule can concentrate $\beta$ on one site even when every value it writes is
+common. Moreover, $\pi_u$ is a law over \emph{rows} at a fixed query, not the distribution of
+activations over \emph{inputs} that our measurements report (65\% zeros). The corollary is
+therefore a design rule, and the measured numbers are consistent with it rather than predicted by
+it. In exact computations on 12 random independent-row instances ($N=4$, $q\in\{1,2\}$), the
+posterior matched Corollary~\ref{cor:surprise} and the optimal adaptive verifier matched $G_q$ in
+every case.
+
+\begin{proposition}[the hard instance; Theorem~\ref{thm:dich}(a) in full]
+\label{prop:worst}
+Let $N\ge2$, $b$ bits per weight, $c\ge\kappa/b$ dead input coordinates (equal to $0$ on every
+natural input), and $\sigma$ a uniform permutation of $[N]$. Hidden neuron $i$ has the row
+$e_{\sigma(i)}+\sum_{l\le c}r_{i,l}e_{\mathrm{dead},l}$ with bias $0$, where the $r_{i,l}$ are
+uniform and independent. Let $g=\mathrm{ReLU}(\sum_ih_i-(N-1))$ and let the logits be $(1/2,g)$.
+Natural inputs are uniform over $\mathbf 1$ and the $N$ vectors with one zero, with every dead
+coordinate $0$. Then for every $V\in\mathrm{Spot}_d(q)$ that knows the later weights, all natural
+ranges and the natural distribution of every hidden neuron,
+$\mathbb E_{\sigma,r}\Pr[V\text{ accepts}]\ge1-qd/N$ in the ideal-oracle model, and
+$\ge1-qd/N-2Q2^{-\kappa}-Q^22^{-\ell_H}$ for an unsalted Merkle tree with $\ell_H$-bit hashes and $Q$
+hash evaluations by $V$. In particular some $(\sigma,r)$ achieves the bound, and a single random
+draw defeats every verifier simultaneously.
+\end{proposition}
+\begin{proof}
+On the input $\mathbf 1$ we have $g=1$. On a query whose zero is at $\zeta$, $g=0$, and setting
+$h_J=1$ with $J=\sigma^{-1}(\zeta)$ gives $g=1$, which flips the class. Every forged value lies in
+$\{0,1\}$, the natural range. The forged trace, the later weights, the ranges and each hidden
+neuron's marginal (zero on exactly one of the $N+1$ natural inputs) do not depend on $(\sigma,r)$.
+Replacing row $J$ by $e_j+\sum_l r'_le_{\mathrm{dead},l}$, for some $j\neq\zeta$ and fresh $r'$, gives
+an admissible instance whose honest trace is $\tau'$, so the forgery is explainable. For (H), let
+$R_p$ give each newly touched row a uniform unused element of $[N]\setminus\{\zeta\}$ and fresh $r$.
+Given $J=u$, the other rows form a uniform bijection onto $[N]\setminus\{\zeta\}$ with independent
+$r$, so revealing them one at a time has the law of $R_p$, as long as fewer than $N$ rows have been
+touched, which holds whenever $qd<N$ (otherwise the claim is trivial). $J$ is uniform given the
+view, so Theorem~\ref{thm:guess-full} gives detection at most $qd/N$. For the Merkle tree, apply
+Remark~\ref{rem:merkle}: each leaf preimage, under the true rows and under the explanation, has
+min-entropy at least $\kappa$ given the view and the other leaves.
+\end{proof}
+
+\begin{proposition}[value-blind samplers on every fixed network]
+\label{prop:blind}
+Let $V$ reject only on a failed local check, and let its choice of rows ignore the claimed values
+(it may depend on the rows already opened). On a fixed network, let $B_1,\dots,B_m$ be disjoint
+sets of sites with forgeries $\tau'_j$ whose inconsistent sites are exactly $B_j$. Then
+$\min_j\Pr[V\text{ rejects }\tau'_j]\le q/m$. If the choice is deterministic, every forgery whose
+set $B_j$ avoids the chosen rows is accepted with probability $1$.
+\end{proposition}
+\begin{proof}
+On a fixed network the opened rows are the true ones whatever the forgery, and the choice ignores
+the claimed values. So, up to the first opening inside $B_j$, the run on $\tau'_j$ equals one
+reference run whose opened set $I$ has $\mathbb E|I|\le q$. Then
+$\Pr[\text{reject }\tau'_j]\le\Pr[I\cap B_j\neq\emptyset]\le\mathbb E|I\cap B_j|$, and these sum
+over $j$ to at most $q$, by disjointness.
+\end{proof}
+
+\begin{proposition}[mixing suffices]
+\label{prop:amp}
+Let a weight layer compute $Z=A[X;\mathbf 1]$ with $A\in\mathbb F_p^{N\times k}$, where the layer's
+integer arithmetic embeds in $\mathbb F_p$ without wrap-around (the range checks of
+Section~\ref{sec:defence}). Let each row of $A$ be Reed--Solomon encoded to length $n$ and committed
+column by column, and assume the committed matrix is the encoding of $A$, either because $C_M$ is
+computed honestly or because the setup proof of Section~\ref{sec:setup-proof} has been checked (then
+replace $k-1$ by $k-1+e$ below, where $e$ is that proof's radius). The verifier draws $r$ vectors
+$\chi\in\mathbb F_p^N$ after the claims $Z$ are fixed, receives a folded row $u$ for each (honestly,
+$u=\chi^{\top}\!A$), checks $\chi^{\top}Z=u[X;\mathbf 1]$, and then opens $t$ distinct uniform columns $c$, checking
+$\chi^{\top}\hat A_c=\mathrm{Enc}(u)_c$; under Fiat--Shamir the challenges are derived in the same
+order. Each folded row and each column symbol has support $[N]$. If $Z\neq A[X;\mathbf 1]$, the
+layer passes with probability at most $p^{-r}+((k-1)/n)^t$, plus the probability of a hash
+collision. With $r=\lceil\beta/\log_2p\rceil$ and $t=\lceil\beta/\log_2(n/(k-1))\rceil$ this is at
+most $2^{1-\beta}$. For any row-wise linear code of relative distance $\delta$, the second term is
+$(1-\delta)^t$. The verifier's work per layer is $O(r(N+k)T+rtN+r\,n\log n)$, against $O(NkT)$ for
+recomputation, and it touches every row.
+\end{proposition}
+\begin{proof}
+Let $D=Z-A[X;\mathbf 1]\neq0$, with $D_{ij}\neq0$. If every received $u$ equals $\chi^{\top}\!A$,
+the two sides of each check differ by $\chi^{\top}D$, whose entry $j$ is $\chi_iD_{ij}+c$ with $c$
+independent of $\chi_i$; it vanishes for one value of $\chi_i$ only, so all $r$ checks pass with
+probability at most $p^{-r}$. If some $u\neq\chi^{\top}\!A$, then $\mathrm{Enc}(u)$ and
+$\chi^{\top}\hat A=\mathrm{Enc}(\chi^{\top}\!A)$ are distinct codewords, which agree on at most
+$k-1$ of the $n$ positions; this set is fixed before the columns are drawn, and $t$ distinct uniform
+columns all fall in it with probability at most $((k-1)/n)^t$. Unless the prover finds a hash
+collision, the opened columns are the committed ones. The work bound counts the two sides of each
+check, the $t$ opened columns of $N$ entries for each fold, and one encoding per fold.
+\end{proof}
+
+\begin{proof}[Proof of Theorem~\ref{thm:dich}]
+(a)~Proposition~\ref{prop:worst} gives acceptance at least $1-qd/N$ for a commitment that hides
+unopened rows. For an unsalted Merkle tree it gives $1-qd/N-2Q2^{-\kappa}-Q^22^{-\ell_H}$, where the
+term in $\kappa$ can be made as small as desired. If the soundness
+error is at most $\varepsilon$ on every such network, then $1-qd/N\le\varepsilon$, that is,
+$qd\ge(1-\varepsilon)N$. A path visits one node of the target layer and opens that node's row, so
+$s$ paths make $s$ queries there with $d=1$.
+(b)~Set $\beta=\lambda+\log_2(2L)$ in Proposition~\ref{prop:amp}. Each layer then passes a wrong
+claim with probability at most $2^{1-\beta}=2^{-\lambda}/L$, and a union bound over the $L$ layers,
+as in the soundness theorem of Section~\ref{sec:defence}, gives $2^{-\lambda}$. Each layer uses
+$r+t=O(\beta)=O(\lambda+\log L)$ queries of support $N$.
+\end{proof}
+
+\noindent Part~(a) is the one-sided randomised query complexity of $\mathrm{OR}_N$ with $d$-row
+queries, placed inside a network; equivalently, an input oracle at relative distance $1/N$ from the
+language cannot be rejected with fewer than $(1-\varepsilon)N/d$ queries~\cite{bghsv2006robust}.
+
+\begin{remark}[commitments]
+\label{rem:merkle}
+The lower bounds need the commitment to \emph{hide} unopened rows. Binding is used only for
+tightness and for Proposition~\ref{prop:amp}. A Merkle opening includes an authentication path whose
+sibling hashes depend on other rows, so with unsalted leaves and low-entropy rows a verifier can
+brute-force sibling subtrees. On the instance of Proposition~\ref{prop:worst} without the random
+weights, opening one row and inverting the hashes of the sibling subtrees up to height $\eta$ detects
+the edit with probability $2^{\eta+1}/N$ instead of $1/N$ (exact computation for $N=16$: $0.125$,
+$0.25$ and $0.5$ for $\eta=0,1,2$, against $0.0625$). Lemma~\ref{lem:notouch} and
+Theorem~\ref{thm:guess-full} therefore hold in either of two cases. The first is a hiding vector
+commitment, for example Merkle leaves $H(s_i\Vert\theta_i)$ with fresh salts. The second is the
+random-oracle model with an unsalted tree, provided every leaf preimage (under the true rows and
+under the explanation) has min-entropy at least $\kappa$ given the view and the other leaves. In the
+second case add $2Q2^{-\kappa}+Q^22^{-\ell_H}$: the coupling of the two runs fails only if a hash
+query hits one of the two preimages of leaf $u$, or if two hash queries collide. Trained weights
+have high-entropy rows, so this concerns the proof, not the attack or the measurements.
+\end{remark}
+
+\begin{remark}[when adaptivity helps: correlated rows]
+\label{rem:pointer}
+Take $m+1$ sites. Row $0$ stores the index $z$ of the critical site in weights on dead inputs, so
+its value $h_0=0$ reveals nothing. Sites $1,\dots,m$ carry bits with the only zero at $z$, and the
+output is their AND. The forged trace (all ones) is the same for every $z$, so $G_2=2/m$. An
+adaptive verifier opens row $0$, reads $z$, opens row $z$ and catches the edit with certainty.
+Correlated rows thus act as a crude encoding, and (H) cannot be dropped from
+Theorem~\ref{thm:guess-full}. This example is analytic. In exact toy computations, simple copy
+correlation ($\theta_1=\theta_0$) produced no gap in 12 instances.
+\end{remark}
+
+\begin{remark}[scope]
+\label{rem:scope}
+(i)~\emph{Imperfect completeness} $c$ adds $1-c$.
+(ii)~\emph{Multi-site edits}: if the inconsistent set $B$ is explainable by changing the rows of $B$
+alone, replace ``touch $J$'' by ``touch $B$''. Proposition~\ref{prop:blind} is the value-blind case.
+(iii)~\emph{Sites need not be neurons}: any partition into units with unit-local evidence fits, such
+as proof chunks~\cite{slp} or (layer, token) cells~\cite{commitllm2026}.
+(iv)~\emph{Repeated queries}: the bound is per query and assumes a \emph{stateless} verifier. A
+verifier that sees whole traces and caches opened rows checks them for free on later queries, and
+after about $N/q$ queries it has in effect downloaded the layer, which amounts to holding the
+weights. The path protocol opens trace values only along its path, so caching rows does not let it
+check unvisited nodes, and $1-(1-1/N)^k$ stays the bound for $k$ chosen tampered queries.
+(v)~\emph{Transformers}: padding embeds the instance of Proposition~\ref{prop:worst} in every ReLU
+MLP with input dimension and a hidden width of at least $N$ and one further hidden layer. In a
+transformer, the LayerNorm before the MLP prevents feeding the 0/1 patterns directly. We do not
+claim the embedding there.
+(vi)~\emph{Side information}: Proposition~\ref{prop:worst} allows the later weights, the ranges and
+the target layer's marginals. It does not cover joint statistics, or the full marginals of later
+neurons.
+\end{remark}
+
+\para{Instruction-tuned models.} Under the path protocol, detection depends only on how many sites
+are edited, not on what the edit does. A path visits at most one neuron of a given FFN layer, and
+when it enters that layer it picks the neuron uniformly among the $d_{\mathrm{ff}}$ neurons. So $k$
+edited neurons in that layer are detected with probability at most $k/d_{\mathrm{ff}}$ per path, and the edit passes $s$ paths with
+probability at least $(1-k/d_{\mathrm{ff}})^s$. Table~\ref{tab:aligned} gives the resulting number of
+paths needed for detection probability $1-2^{-40}$ on two instruction-tuned models. It follows from
+the formula and the models' shapes, and needs no attack search. We measured $k=1$ for next-token
+changes on OPT-6.7B (Section~\ref{sec:break}). We deliberately do not develop or release a method
+for steering whole responses of aligned assistants: the integrity failure is already characterised
+by the acceptance bound, and such a method would mainly help a dishonest provider.
+
+\begin{table}[t]
+  \caption{Paths the path protocol needs to catch $k$ edited neurons of one FFN layer with
+  probability $1-2^{-40}$ (lower bounds, from $(1-k/d_{\mathrm{ff}})^s\le2^{-40}$)}
+  \label{tab:aligned}
+  \footnotesize
+  \centering
+  \begin{tabular}{@{}rrr@{}}
+    \toprule
+    $k$ & Qwen3-4B-Instruct-2507 & Qwen2.5-7B-Instruct \\
+        & ($d_{\mathrm{ff}}=9{,}728$) & ($d_{\mathrm{ff}}=18{,}944$) \\
+    \midrule
+    1  & 269{,}704 & 525{,}226 \\
+    2  & 134{,}845 & 262{,}606 \\
+    4  & 67{,}416  & 131{,}296 \\
+    8  & 33{,}701  & 65{,}642  \\
+    16 & 16{,}844  & 32{,}814  \\
+    \bottomrule
+  \end{tabular}
+\end{table}

@@ -1,0 +1,415 @@
+% =====================================================================================
+% sections/defence.tex: the defence (IEEE S&P 2027 submission, IEEEtran compsoc conference)
+% The exact integer model, the weight commitment (Reed--Solomon codewords, Merkle trees,
+% commitment plans), the protocol (Freivalds per weight operation, the column check, modes C, K,
+% Kpre), the soundness theorem, Fiat--Shamir with the graph digest and the SHAKE-256 transcript
+% (plan items D1, D2), and untrusted commitments (D4: the setup proximity proof, Fact 1, the
+% per-query bound; D5: the split-commitment attack). Proofs and the full integer semantics:
+% sections/appendix_defence.tex.
+%
+% Sources used (paths relative to session 4aa2c028's scratchpad):
+%   wt_sp2027/report/main.tex            course paper, Secs. 3.1 and 3.4--3.6: exact integers, range
+%                                        bound, three statements (S1)-(S3), Freivalds, column check,
+%                                        Theorem 3.2 and its proof, parameters, Fiat--Shamir, holding
+%                                        the weights (K, Kpre), costs, planning rule (LeNet-5: one tree
+%                                        of 2^18, 15 columns instead of 66 in five trees), transposed
+%                                        layout (GPT-2 N = 50,257), decoders, compact encoding
+%   wt_sp2027/report/figures/protocol.pdf  copied unchanged to paper_sp2027/figures/protocol.pdf
+%   wt_sp2027/SP2027_PLAN.md             items A1, A2, D1-D5, D7 (weight leak ceil(k/T)), Fact 1
+%                                        (n/p^r at r = 5)
+%   wt_sp2027/docs/improvements/D1_D2_fiat_shamir_binding.md   graph digest, SHAKE-256 transcript,
+%                                        non-canonical codec covered by the grinding bits (D3)
+%   wt_sp2027/docs/improvements/D4_D5_untrusted_commitment.md  split commitment (2^-35 at t = 35,
+%                                        300-query test), setup proof, its soundness and parameters,
+%                                        per-query bound, Table tab:setup (setup_bytes.py, lambda = 128)
+%   wt_sp2027/docs/improvements/A1_int8_column_opening.md, A2_int8_forward.md   exact int8 GEMMs
+%                                        (2^14 per product, blocks of 2^16, int32), int8_ok self-check
+%   wt_sp2027/docs/improvements/E2_sampling.md   the sampler's seed is part of the statement
+%   wt_sp2027/docs/improvements/C2_v1_proof_size.md, sp2027_research/v1_design/V1_SPEC.md Secs. 2-3
+%                                        requantisation formula; r = 5 interactive and 7 under
+%                                        Fiat--Shamir at lambda = 128; how V1 reuses the fold and column
+%                                        check
+%   sp2027_research/roadmap.md           Fact 1: 2^-136.6 at r = 5, n = 2^18; per-query proximity
+%                                        (Option A) costs 3.2-6.6x the column bytes
+%   sp2027_research/literature.md        BCIKS20 unique-decoding error n/q; refuted capacity conjectures
+%   sp2027_research/attack_theory/PART1_SP.md   labels thm:dich, prop:amp (they cite sec:defence,
+%                                        thm:sound); the "second regime" of the dichotomy
+%   sp2027_research/idea_trust-rigor.md  Secs. 1.2-1.4 and 3 (R1-R5, R10-R12): the analysis the D4/D5
+%                                        write-up rests on (Fact 1 and its proof, theorem statement,
+%                                        field semantics of the committed model, Kpre reuse)
+%   code/src/pvi/fullcheck/transformer.py, graph.py   exact integer semantics (requant, residual
+%                                        clamp 2^22-1, integer norm with k = 16, 256-entry tables,
+%                                        RoPE tables at 2^14, exp table round(2^15 e^{-i/16}),
+%                                        probabilities floor((510e+S)/(2S)), int32 attention bounds)
+%   code/src/pvi/fullcheck/protocol.py, plans.py, setup_proof.py, commitment.py   transcript
+%                                        (labelled, length-prefixed SHAKE-256; rejection sampling),
+%                                        beta = lam + log2(2 n_checks) (+64 under Fiat--Shamir), the
+%                                        setup parameters s, e_j, t0, Merkle domain separation
+%
+% Labels defined here: sec:defence, sec:intmodel, sec:commit, sec:protocol, sec:fs,
+%   sec:setup-proof (the intro cites it), eq:weightop, eq:freivalds, eq:split, thm:sound,
+%   thm:untrusted, fact:ext, tab:setup, fig:protocol (figure restored at assembly). The alias
+%   sec:untrusted was removed at assembly (one label per section; sec:setup-proof is kept).
+% Length: about 3.2 IEEEtran pages including Table tab:setup (compiled in a stub with a Times-metric
+%   font); the appendix is about 1.6 pages. Restoring the protocol figure adds about 1/6 page.
+% Labels used from other sections: thm:dich (attack theory), sec:quality and sec:gen
+%   (generation_quality.tex), sec:v1 (V1 section), app:defence, app:semantics, app:sound,
+%   app:untrusted (appendix_defence.tex). All of them resolved in a cross-check of sections/*.tex
+%   (generation_quality.tex defines sec:gen; its alias sec:generation was removed at assembly).
+% New BibTeX entries (paper_sp2027/extra.bib): bciks20, coron2005md, fips202. Existing keys from
+%   extra.bib: bernhard2012pitfalls, dao2023weakfs.
+% Assumes from the main preamble: amsmath, amssymb, graphicx, booktabs (fallbacks below).
+% =====================================================================================
+
+\providecommand{\F}{\mathbb{F}_p}
+\providecommand{\enc}{\mathrm{Enc}}
+\providecommand{\T}{\top}
+\providecommand{\sC}{\mathsf{C}}
+\providecommand{\sK}{\mathsf{K}}
+\providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
+\providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
+\providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+\providecommand{\qed}{\hfill$\square$}
+\providecommand{\toprule}{\hline}
+\providecommand{\midrule}{\hline}
+\providecommand{\bottomrule}{\hline}
+\makeatletter
+\@ifundefined{theorem}{\newtheorem{theorem}{Theorem}}{}
+\@ifundefined{fact}{\newtheorem{fact}{Fact}}{}
+\makeatother
+
+\section{The Defence: Checking Every Weight Operation}
+\label{sec:defence}
+
+Theorem~\ref{thm:dich} leaves one way to reach soundness $2^{-\lambda}$ well below the cost of
+re-execution: the verifier must touch every row of every weight matrix, through checks that each
+mix many rows. Our defence tests random linear combinations of all the neurons of every weight
+operation with Freivalds' algorithm~\cite{freivalds1977}; a client without the weights checks each
+combination against a Reed--Solomon-encoded, Merkle-committed copy of them, as in Ligero and
+Brakedown~\cite{ligero,brakedown}. The
+provider (the prover) answers each query $x$ with an output $y$ and a proof and may deviate
+arbitrarily; full soundness requires that every $y\neq M(x)$ be rejected except with probability
+$\varepsilon$. In mode $\sC$ the client (the verifier) holds only a commitment $C_M$ to the
+weights, as in the path protocol~\cite{anchuri2026verifiable}. In mode $\sK$ it holds the weights,
+and in mode $\Kpre$ also secret Freivalds vectors and their folded rows, precomputed once per model
+as in Slalom~\cite{slalom} and CommitLLM~\cite{commitllm2026}. Appendix~\ref{app:defence} contains
+the proofs.
+
+% -------------------------------------------------------------------------------------
+\subsection{The Exact Integer Model}
+\label{sec:intmodel}
+
+The checks compare exact values. Floating-point results depend on the device and the summation
+order, and a tolerance would leave a cheating prover room to hide small changes. We therefore
+commit and check an integer network obtained by integer-only quantisation~\cite{jacob2018quant},
+as proof systems and enclave-based checks for inference also do~\cite{safetynets,slalom,zkcnn,zkml,zkllm}.
+Soundness refers to this integer model, not to the floating-point checkpoint;
+Section~\ref{sec:quality} measures the gap between the two.
+
+\para{Weight operations.} A \emph{weight operation} $\ell$ of the public graph computes
+\begin{equation}
+  Z_\ell = A_\ell\,[X_\ell;\mathbf 1], \qquad A_\ell=[W_\ell\,|\,b_\ell],
+  \label{eq:weightop}
+\end{equation}
+where $W_\ell$ is an int8 matrix with $N_\ell$ rows, $b_\ell$ an integer bias, and $X_\ell$ an int8
+matrix with one column for each of its $T_\ell$ positions (pixels or tokens). We write $k_\ell$ for
+the row length of $A_\ell$. Convolutions become products through im2col, BatchNorm is folded into
+$W_\ell$ and $b_\ell$, and the scales of the weights are absorbed into the integer multiplier of the
+next requantisation. Embedding tables are looked up.
+
+\para{Operations without weights.} The other operations map integers to integers with public
+constants fixed at calibration. A requantisation with multiplier $m$ computes
+$\mathrm{clamp}(\lfloor(mz+2^{29})/2^{30}\rfloor,-127,127)$. The residual stream holds 23-bit
+integers, norms use an integer square root, activation functions and the exponential in softmax
+are tables of 256 entries, and softmax outputs 8-bit probabilities (Appendix~\ref{app:semantics}).
+The output $y$ is the claim of the last weight operation. For a language model these are the
+next-token logits, which depend only on the last position, so the last block is computed there
+alone, except for the keys and values that attention reads. Section~\ref{sec:gen} extends the
+statement to generated responses.
+
+\para{Exact execution.} Integer results do not depend on the order of summation, so prover and
+verifier obtain the same integers on any hardware as long as nothing is rounded. Every weight
+operation's input is int8 (it comes from a clamped requantisation, table or norm), so the prover
+runs $W_\ell X_\ell$ on int8 tensor cores: products are at most $2^{14}$ in magnitude, and blocks
+of $2^{16}$ of them sum exactly in 32-bit integers. Attention runs in float32 within its exact range
+(Appendix~\ref{app:semantics}). A hardware error can only make an honest proof fail.
+
+\para{Embedding in a field.} The checks run in the BabyBear field $\F$, $p=15\cdot2^{27}+1\approx
+2^{31}$. The verifier rejects every claim with $|z|\ge2^{29}$, and setup checks that every honest
+claim is smaller: $128\sum_c|w_{ic}|+|b_i|<2^{29}$ for every row $i$ of a product, and
+$\max_c|w_{ic}|+|b_i|<2^{29}$ for an embedding. A wrong claim and the correct value then differ by
+less than $2^{30}<p$, so they remain distinct in $\F$.
+
+% -------------------------------------------------------------------------------------
+\subsection{Committing to the Weights}
+\label{sec:commit}
+
+At setup, every row of $A_\ell$, a message of length $k_\ell$, is Reed--Solomon
+encoded~\cite{reedsolomon1960}: the polynomial whose coefficients are the row is evaluated at the
+$n\ge k_\ell$ points of a multiplicative subgroup of $\F$, with $n$ a power of two. The codewords form the
+rows of $\hat A_\ell$. Encoding is linear, so $\chi^\T\hat A_\ell=\enc(\chi^\T A_\ell)$, and two
+distinct codewords agree on at most $k_\ell-1$ positions. A Merkle tree~\cite{merkle1987} binds the
+columns of $\hat A_\ell$; we use SHA-256 with separate domain prefixes for leaves and inner nodes.
+$C_M$ consists of the roots and the public parameters of the encoding, 32 bytes per tree. It uses
+no secret randomness, and anyone who holds the weights can recompute it.
+
+\para{Commitment plans.} Long codewords need fewer opened columns, and matrices whose codewords
+have equal length can share one tree and one Merkle multiproof. A public planning rule picks,
+among six candidate plans of codeword lengths and layouts, the one that sends the fewest bytes per
+query besides the claims, within a cap on the size of the setup; the plan is part of $C_M$. The
+five weight matrices of LeNet-5, for example, share one tree of $2^{18}$ positions and open 15
+columns, instead of 66 in each of five trees. For a layer with many rows, such as GPT-2's output
+layer ($N=50{,}257$), the rows of $A_\ell^\T$ are encoded instead (the \emph{transposed layout}),
+and operations that read the same input, such as the query, key and value projections, are
+stacked into one such matrix. An embedding table without a bias is committed as a Merkle tree over
+its rows, as in CommitLLM~\cite{commitllm2026}.
+
+% -------------------------------------------------------------------------------------
+\subsection{The Protocol}
+\label{sec:protocol}
+
+% The course paper's message diagram (figures/protocol.pdf), restored at assembly.
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{figures/protocol.pdf}
+  \caption{One query in mode $\sC$, with an honestly computed commitment. Each value is fixed
+  before the randomness that tests it}
+  \label{fig:protocol}
+\end{figure}
+With $y$, the prover sends the \emph{claims} $Z_\ell$ of every weight operation; $y$ is itself a
+claim. All claims are correct if and only if three statements hold for every weight operation
+$\ell$: (S1)~$X_\ell$ follows from $x$ and the earlier claims through the operations without
+weights; (S2)~$Z_\ell=A_\ell[X_\ell;\mathbf 1]$; and (S3)~$A_\ell$ is the committed matrix. In mode
+$\sC$ a query has three rounds (Figure~\ref{fig:protocol}): the claims, then the vectors $\chi$ and the folded rows, then the
+column positions and the opened columns. Each value is fixed before the randomness that tests it.
+
+\para{(S1): recomputation.} The verifier computes every operation without weights itself, so each
+$X_\ell$ is its own value and the checks are chained: a prover cannot pass one operation's check
+with one value and feed another into the next. Non-linear operations, softmax and the attention
+products need no proof.
+
+\para{(S2): Freivalds' check.} After all claims are fixed, the verifier draws a uniform
+$\chi_\ell\in\F^{N_\ell\times r}$ and checks
+\begin{equation}
+  \chi_\ell^\T Z_\ell \;=\; u_\ell\,[X_\ell;\mathbf 1], \qquad u_\ell=\chi_\ell^\T A_\ell,
+  \label{eq:freivalds}
+\end{equation}
+where we call $u_\ell$ the \emph{folded rows}. The two sides differ by $\chi_\ell^\T D$, where
+$D=Z_\ell-A_\ell[X_\ell;\mathbf 1]$. If $D_{ij}\neq0$, then for each column $\chi$ of $\chi_\ell$,
+entry $j$ of $\chi^\T D$ is $\chi_iD_{ij}+c$, where $c$ does not involve $\chi_i$, and it vanishes
+for one of the $p$ values of $\chi_i$. A wrong operation thus passes with probability at most
+$p^{-r}$, however many of its values are wrong: one tampered neuron is caught as reliably as a
+wrong layer. Given $u_\ell$, the check costs $O(r(N_\ell+k_\ell)T_\ell)$, against
+$O(N_\ell k_\ell T_\ell)$ for recomputing the operation.
+
+\para{(S3): the column check.} In modes $\sK$ and $\Kpre$ the verifier computes $u_\ell$ itself. In
+mode $\sC$ the prover sends $u_\ell$. Opening a few of its entries would miss a single wrong one, as
+a path misses a single neuron, so the verifier tests $u_\ell$ through the code: it draws $t$
+distinct uniform positions $c$, receives the columns $\hat A_{\ell,c}$ with a Merkle multiproof, and
+checks the paths and $\chi_\ell^\T\hat A_{\ell,c}=\enc(u_\ell)_c$. If $u_\ell\neq\chi_\ell^\T A_\ell$, some row of
+$\enc(u_\ell)$ and the same row of $\chi_\ell^\T\hat A_\ell$ are distinct codewords, so all $t$
+columns fall where they agree with probability at most $\prod_{i<t}(k_\ell-1-i)/(n-i)<(k_\ell/n)^t$. A
+transposed matrix needs no folded row: the verifier combines positions instead of neurons, with
+$\chi'\in\F^{T\times r}$, and checks the encoding of $Z\chi'$ against the opened columns combined by
+$[X;\mathbf 1]\chi'$ (Appendix~\ref{app:sound}). The opened rows of a lookup table are checked
+against its root.
+
+\para{Modes $\sK$ and $\Kpre$.} In $\sK$ the verifier draws a fresh $\chi_\ell$ for each query and
+computes $u_\ell$ itself, so the proof is the claims alone. In $\Kpre$ it computes the secret
+$\chi_\ell$ and $u_\ell$ once per model. This is a designated-verifier mode: nobody else can check
+its proofs, and soundness is lost if $\chi_\ell$ leaks.
+
+\para{Costs.} The prover's extra work, $O((r+t)\sum_\ell N_\ell k_\ell)$, does not depend on the
+number of positions, and no term of the verifier's work grows with $N_\ell k_\ell T_\ell$. The
+proof holds the claims, which grow with $T$, and in mode $\sC$ the folded rows, opened columns and
+Merkle paths, which do not. Section~\ref{sec:v1} replaces most claims by the int8 values that their
+consumers read, reusing the folds and the column check.
+
+\para{Soundness.} Let $\mathcal J$ be the set of committed matrices: one for each weight operation
+in the row layout and one for each transposed matrix. Matrix $j$ has message length $k_j$ and
+codeword length $n_j$, and its tree opens $t_j$ columns.
+
+\begin{theorem}[soundness]
+\label{thm:sound}
+Suppose that $C_M$ is computed honestly from the weights of $M$ and that the prover finds no hash
+collision. For every input $x$, which the prover may choose, and every prover, the verifier of mode
+$\sC$ accepts an output $y\neq M(x)$ with probability at most
+\[
+  \varepsilon_{\sC}=\sum_{j\in\mathcal J}\Big[\,p^{-r}+\prod_{i<t_j}\frac{k_j-1-i}{n_j-i}\,\Big].
+\]
+In mode $\sK$ the bound is $\varepsilon_{\sK}=\sum_\ell p^{-r}$, over the weight operations that
+are not looked up. In mode $\Kpre$, over $Q$ queries that reuse the secret vectors, the verifier
+accepts some $y\neq M(x)$ with probability at most $Q\,\varepsilon_{\sK}$, even if the prover learns
+which check failed in every rejected query.
+\end{theorem}
+
+\noindent\emph{Proof sketch.} The first wrong weight operation has a correct input, which the
+verifier computed from correct claims. With the true $u_\ell$ Freivalds' check fails except with
+probability $p^{-r}$, and with another $u_\ell$ the column check fails except with the column term.
+In $\Kpre$, until a wrong claim passes, every outcome is a function of the prover's messages, so
+its view does not depend on $\chi_\ell$ (Appendix~\ref{app:sound}). \qed
+
+\para{Parameters.} We set $\beta=\lambda+\log_2(2|\mathcal J|)$ and $r=\lceil\beta/\log_2p\rceil$,
+and each tree opens the least $t$ that keeps the column term of every member below $2^{-\beta}$.
+Then $\varepsilon_{\sC}\le2^{-\lambda}$; at $\lambda=128$, $r=5$. Each folded row and each column
+mixes all rows of its matrix, so the
+protocol is in the second regime of Theorem~\ref{thm:dich}: it touches every row, at a cost of
+$O(\lambda)$ field elements per row instead of $k_\ell$ weights.
+
+% -------------------------------------------------------------------------------------
+\subsection{Non-Interactive Proofs}
+\label{sec:fs}
+
+Interactively, each challenge is expanded with SHAKE-256~\cite{fips202} from a fresh 256-bit key
+that the verifier draws. Under Fiat--Shamir~\cite{fiatshamir1986} the keys are derived from the
+transcript instead, and two details of this derivation matter for soundness.
+
+\para{The statement binds the computation.} Challenges that do not depend on the whole statement
+make one transcript valid for several statements, the weak Fiat--Shamir pattern that has broken
+deployed proof systems~\cite{bernhard2012pitfalls,dao2023weakfs}. Our verifier recomputes the
+operations without weights, so their constants belong to the statement. The transcript therefore
+starts with a \emph{graph digest}, the SHA-256 hash of a canonical description of the graph: every
+operation in order with its inputs and output, the shape, layout and input bound of each weight
+operation, and the function of each other operation with every constant it uses, table bytes
+included. It then absorbs the security parameters, the commitment, the input $x$ and, for sampled
+generation, the sampler's parameters and the client's seed (Section~\ref{sec:gen}). Two models
+that differ in one requantisation multiplier thus produce different challenges.
+
+\para{A sponge transcript.} The transcript is a SHAKE-256 sponge with a protocol-specific domain
+string, and messages are absorbed with labels and length prefixes, so its encoding is injective.
+A challenge key is 32 bytes squeezed from a copy of the sponge after it absorbs the challenge's
+label; rejection sampling expands it into unbiased field elements and distinct column indices. The
+challenges are thus random-oracle outputs on prefix-free inputs, which a Merkle--Damg\aa{}rd hash
+such as SHA-256 would give only with a separate argument~\cite{coron2005md}. The Merkle trees keep
+SHA-256, from which they need only collision resistance.
+
+\para{Soundness.} The interactive protocol is round-by-round sound~\cite{canetti2019fs}: once a
+wrong claim is fixed, the vectors $\chi$ rescue the prover with probability at most $p^{-r}$, and
+once a wrong folded row is fixed, the columns rescue it with probability at most its column term.
+It follows~\cite{canetti2019fs,holmgren2019rbr,bcs16} that a prover making $Q$ random-oracle
+queries, for example to rehash altered claims in search of favourable challenges, succeeds with
+probability at most $Q\varepsilon_{\sC}+O(Q^22^{-256})$. We add 64 bits to $\beta$, which keeps
+$Q\varepsilon_{\sC}\le2^{-\lambda}$ for $Q\le2^{64}$ and raises $r$ to 7 at $\lambda=128$. The
+encoding of the claims is not canonical, but each re-encoding of the same claims costs one oracle
+query, which the bound already counts.
+
+% -------------------------------------------------------------------------------------
+\subsection{Untrusted Commitments}
+\label{sec:setup-proof}
+
+Theorem~\ref{thm:sound} assumes that $C_M$ is honest, as the path protocol
+does~\cite{anchuri2026verifiable}. This holds by verification when the client can recompute $C_M$,
+for instance from the published int8 checkpoint of an open-weight model. When the provider
+commits, the per-query column check does not enforce it.
+
+\para{The split-commitment attack.} A committer can bind any matrix $E_j$ under a root, not only a
+matrix of codewords. Let $A$ and $A'$ be two models that differ in matrix $j$, for example by a
+backdoor. The committer binds the encoded columns of $A_j$ on a secret half of the positions of
+$j$'s tree and those of $A'_j$ on the other half. A prover that computes with $A'$ sends
+$u=\chi^\T A'_j$, passes Freivalds' check, and passes the column check whenever all $t$ opened
+columns fall into the half of $A'_j$:
+\begin{equation}
+  \Pr[\text{accept}] \;\ge\; \prod_{i<t}\frac{n/2-i}{n-i}\;\approx\; 2^{-t}.
+  \label{eq:split}
+\end{equation}
+For the smallest tree of Llama-2-7B ($t=35$) this is about $2^{-35}$ per query, not $2^{-128}$. On a
+small decoder with one weight row changed in one operation, the acceptance rate over 300 queries
+with a small $t$ matched Eq.~\eqref{eq:split}. Against a malformed commitment a column is worth
+about one bit instead of $\log_2(n_j/k_j)$, so per-query checks alone would need 3.2--6.6$\times$ the
+column bytes on the models of Table~\ref{tab:setup}.
+
+\para{One combination over an extension field.} In a 31-bit field, a random combination of the
+rows of a malformed matrix lands close to the code with probability up to about $n/p$. The
+protocol, however, checks $r$ independent vectors at the same columns.
+
+\begin{fact}
+\label{fact:ext}
+Let $\mathbb K_s=\F[\xi]/(f)$ for an irreducible $f$ of degree $s$, and let $\chi_1,\dots,\chi_s\in\F^R$
+be independent and uniform. Then $\psi=\sum_i\xi^{i-1}\chi_i$ is uniform in $\mathbb K_s^R$. For every
+$E\in\F^{R\times n}$ and set $S$ of columns, the $s$ combinations $\chi_i^\T E$ agree on $S$ with
+codewords of the Reed--Solomon code over $\F$ if and only if $\psi^\T E$ agrees on $S$ with a
+codeword of the Reed--Solomon code over $\mathbb K_s$ with the same evaluation points.
+\end{fact}
+
+Proximity errors therefore scale with $p^{-s}$ rather than $p^{-1}$. For the per-query vectors
+($s=r=5$ at $\lambda=128$), the unique-decoding error $n/p^r$ is at most $2^{-136.6}$ for
+$n\le2^{18}$. An untrusted commitment needs more columns, not more randomness.
+
+\para{A one-time setup proof.} Once per model, the committer publishes with $C_M$ a
+non-interactive proof that every committed matrix $E_j$ is \emph{$e_j$-close} to a matrix of
+codewords: it differs from $\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns, which makes
+$A^*_j$ unique. With Fiat--Shamir challenges over the graph digest and every tree's root and
+shape, (1)~the verifier draws $s$ uniform base-field combinations $\psi_j$ of the rows of each
+matrix; (2)~the committer sends $\psi_jA^*_j$; (3)~the verifier draws $t^0_j$ distinct uniform
+columns of each tree, which the committer opens with a multiproof; and (4)~the verifier checks the
+multiproofs and $\enc(\psi_jA^*_j)_c=\psi_jE_{j,c}$ (parameters in Appendix~\ref{app:untrusted}).
+Transposed matrices need this proof: their per-query combination $[X;\mathbf 1]\chi'$ lies in the
+span of the activations and is not uniform, so it cannot establish closeness.
+
+\begin{theorem}[soundness with an untrusted commitment]
+\label{thm:untrusted}
+Model the hash functions as random oracles, and let the committer and the prover make at most $Q$
+oracle queries in total. Let $C_M$ be any string and let $\pi$ be any setup proof that the verifier
+accepts. Then, except with probability
+\[
+  \varepsilon_0\le Q\sum_{j\in\mathcal J}\Big[\frac{n_j}{p^s}+\prod_{i<t^0_j}
+  \frac{n_j-e_j-1-i}{n_j-i}\Big]+O(Q^22^{-256}),
+\]
+every matrix $E_j$ that $C_M$ binds is $e_j$-close to $\enc(A^*_j)$ for a unique $A^*_j$. Let
+$M^*$ be the model with weights $A^*$ whose weight products are computed in $\F$ and lifted to
+$(-p/2,p/2)$. For every input $x$ and every prover, the verifier of mode $\sC$ then accepts
+$y\neq M^*(x)$ with probability at most
+\[
+  \varepsilon^*_{\sC}=\sum_{j\in\mathcal J}\Big[\,p^{-r}+\prod_{i<t_j}\frac{k_j+e_j-1-i}{n_j-i}\,\Big],
+\]
+or $Q\varepsilon^*_{\sC}+O(Q^22^{-256})$ under Fiat--Shamir. If the client recomputes $C_M$, then
+$e_j=0$, no setup proof is needed, and the bound is that of Theorem~\ref{thm:sound}.
+\end{theorem}
+
+\noindent\emph{Proof sketch.} If an extracted $E_j$ is far, Fact~\ref{fact:ext} and correlated
+agreement for Reed--Solomon codes in the unique-decoding regime~\cite{bciks20} make
+$\psi_j^\T E_j$ far from the code over $\mathbb K_s$ except with probability $n_j/p^s$. Online, a wrong
+folded row survives only on the at most $k_j-1+e_j$ positions where its codeword agrees with the
+true one or where $E_j$ is corrupted, a set fixed before the query
+(Appendix~\ref{app:untrusted}). \qed
+
+\noindent $C_M$ thus fixes $M^*$ before any query, and $M^*$ is the integer model of
+Section~\ref{sec:intmodel} when $A^*$ is int8 and meets the range bound. A client that sees neither
+the weights nor a range proof on them learns that the provider is bound to one fixed model, but not
+which one.
+
+\begin{table}[t]
+  \caption{Untrusted commitments at $\lambda=128$: the one-time setup proof and the opened columns
+  per query, with setup parameters amortised over $a=100$ or $1{,}000$ queries (interactive
+  queries, 4 bytes per field element)}
+  \label{tab:setup}
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3.5pt}
+  \begin{tabular}{lrrrr}
+    \toprule
+    & \multicolumn{2}{c}{setup proof} & \multicolumn{2}{c}{columns per query (MB)} \\
+    Model & $a{=}100$ & $a{=}1{,}000$ & honest & untrusted, $a{=}100$ / $1{,}000$ \\
+    \midrule
+    GPT-2       & 213\,MB & 686\,MB  & 3.22  & 6.84 / 4.63 \\
+    Llama-2-7B  & 2.8\,GB & 11.3\,GB & 124.7 & 168.5 / 134.9 \\
+    OPT-6.7B    & 2.5\,GB & 10.2\,GB & 85.9  & 130.7 / 97.1 \\
+    Llama-2-13B & 4.0\,GB & 16.4\,GB & 149.3 & 217.4 / 165.9 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\para{The trade-off.} A larger radius $e_j$ shortens the setup proof, since each setup column then
+catches a far matrix with probability about $e_j/n_j$, and lengthens every query, whose bound has
+$k_j+e_j$ in place of $k_j$. Each tree takes the radius, among the fractions $2^0,\dots,2^{-10}$ of
+the unique-decoding radius, that minimises $t^0_j/a+t_j$ over $a$ amortised queries
+(Table~\ref{tab:setup}). At $a=1{,}000$, Llama-2-7B pays 11.3\,GB once and 8\% more column bytes per
+query; at 2{,}048 tokens the change per query is below 1\%. Our implementation covers commitment
+plans, including shared trees and transposed matrices, and rejects the setup proof of the split
+commitment. \todo{L40S: setup prover and verifier time for GPT-2 and the 7B models.}
+
+\para{Scope.} Neither the setup proof nor mode $\sC$ hides the weights: the verifier knows $X_\ell$
+and $Z_\ell$, so the claims of about $\lceil k_\ell/T\rceil$ queries reveal $A_\ell$. Mode $\sC$ thus
+suits weights that the client may see. When the int8 checkpoint is public, recomputing $C_M$ also
+settles which model is committed, and it is cheaper than a setup proof, which for GPT-2 is larger
+than the int8 weights. The setup proof serves clients that cannot recompute $C_M$.
