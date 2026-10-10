@@ -112,3 +112,18 @@ def test_field_matmul(r, n, m, transposed):
     assert native_kernels.field_matmul(chi, bad) is None
     chi[-1, -1] = P
     assert native_kernels.field_matmul(chi, zz) is None
+
+
+@pytest.mark.parametrize("shapes", [[(4096, 2048), (11008, 2048)], [(5, 70_000), (300, 1)], [(768, 3000)]])
+def test_native_unpack_decodes_like_numpy(shapes, monkeypatch):
+    from pvi.fullcheck import claimcodec
+    g = torch.Generator().manual_seed(len(shapes))
+    claims = [(torch.randn(n, m, generator=g) * 40_000).round().to(torch.int64)
+              + torch.randint(-3000, 3000, (n, 1), generator=g) for n, m in shapes]
+    claims[0][0, :5] = (1 << 29) - 1
+    buf = claimcodec.encode(claims)
+    rows, cols = [n for n, _ in shapes], [m for _, m in shapes]
+    got = claimcodec.decode_torch(buf, rows, cols, workers=8)
+    monkeypatch.setattr(native_kernels, "_DECODE", False)
+    want = claimcodec.decode_torch(buf, rows, cols, workers=8)
+    assert all(torch.equal(a, b) and torch.equal(a, c) for a, b, c in zip(got, want, claims))

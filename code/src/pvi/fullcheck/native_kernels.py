@@ -27,7 +27,7 @@ from pathlib import Path
 import torch
 
 __all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
-           "lut", "norm", "rope", "field_matmul"]
+           "lut", "norm", "rope", "field_matmul", "unpack_stream"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -337,6 +337,45 @@ extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, co
     }
     return bad ? 0 : 1;
 }
+// ---- the claim decoder's slot streams (claimcodec._unpack_lanes for all 32 lanes) ---------------------------------
+// w [k, g] uint32: lane j holds the values [j g, (j + 1) g), value c of lane j at bit (j k) of column c.  Writes the
+// n values to out (uint32), each plus the base of its segment (segments [starts[s], ends[s]) in order, bases los[s];
+// uint32 arithmetic wraps); returns 1, or 0 when a padding slot (index >= n) is not zero.
+extern "C" int64_t pvi_unpack_stream(const uint32_t* w, int64_t k, int64_t g, int64_t n, uint32_t* out,
+                                     const int64_t* starts, const int64_t* ends, const uint32_t* los, int64_t nseg,
+                                     int64_t threads) {
+    omp_set_num_threads((int)threads);
+    const uint32_t mask = (uint32_t)(((uint64_t)1 << k) - 1);
+    const int64_t cb = 1 << 14;
+    const int64_t blocks = (g + cb - 1) / cb;
+    int64_t bad = 0;
+    #pragma omp parallel for collapse(2) schedule(static) reduction(|:bad)
+    for (int64_t j = 0; j < 32; ++j) {
+        for (int64_t b = 0; b < blocks; ++b) {
+            const int64_t wi = (j * k) >> 5, sh = (j * k) & 31;
+            const uint32_t* r0 = w + wi * g;
+            const uint32_t* r1 = (sh && sh + k > 32) ? w + (wi + 1) * g : nullptr;
+            const int64_t c0 = b * cb, c1 = std::min(g, c0 + cb);
+            const int64_t a = j * g;
+            int64_t s = 0;                                   // the segment of index a + c0
+            if (nseg) {
+                int64_t lo = 0, hi = nseg;
+                while (lo < hi) { const int64_t mid = (lo + hi) / 2; if (ends[mid] <= a + c0) lo = mid + 1; else hi = mid; }
+                s = lo;
+            }
+            for (int64_t c = c0; c < c1; ++c) {
+                uint32_t v = r0[c] >> sh;
+                if (r1) v |= r1[c] << (32 - sh);
+                v &= mask;
+                const int64_t idx = a + c;
+                if (idx >= n) { bad |= (v != 0); continue; }
+                while (s < nseg && ends[s] <= idx) ++s;
+                out[idx] = (s < nseg && starts[s] <= idx) ? v + los[s] : v;
+            }
+        }
+    }
+    return bad ? 0 : 1;
+}
 """
 
 _FLAGS = ("-O3", "-march=native", "-fopenmp", "-fwrapv", "-shared", "-fPIC")
@@ -385,6 +424,9 @@ def _library():
                                           ctypes.c_int64, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p,
                                           ctypes.c_int64]
         _LIB.pvi_field_matmul.restype = ctypes.c_int64
+        _LIB.pvi_unpack_stream.argtypes = [ctypes.c_void_p] + [ctypes.c_int64] * 3 + [ctypes.c_void_p] * 4 + \
+            [ctypes.c_int64] * 2
+        _LIB.pvi_unpack_stream.restype = ctypes.c_int64
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -537,4 +579,27 @@ def field_matmul(chi: torch.Tensor, z: torch.Tensor):
     ok = _LIB.pvi_field_matmul(chi.data_ptr(), chi.shape[0], chi.shape[1], z.data_ptr(), z.shape[1], sr, sc,
                                out.data_ptr(), torch.get_num_threads())
     return out if ok else None
+
+
+_DECODE = os.environ.get("PVI_NATIVE_DECODE", "1") != "0"
+
+
+def unpack_stream(w, k: int, n: int, out, bases) -> bool | None:
+    """``claimcodec._unpack_lanes`` over all 32 lanes of the slot stream ``w`` (numpy uint32 ``[k, g]``) into
+    ``out[:n]`` (numpy uint32) with the segments' ``bases`` added: True, False when a padding slot is not zero,
+    None when the native library is not there (the numpy steps then run)."""
+    import numpy as np
+    if not _DECODE or _library() is None:
+        return None
+    if bases is None:
+        starts = ends = np.zeros(0, dtype=np.int64)
+        los = np.zeros(0, dtype=np.uint32)
+    else:
+        starts = np.asarray(bases[0], dtype=np.int64)
+        ends = np.asarray(bases[1], dtype=np.int64)
+        los = np.asarray([int(b) & 0xFFFFFFFF for b in bases[2]], dtype=np.uint32)
+    w = np.ascontiguousarray(w)
+    ok = _LIB.pvi_unpack_stream(w.ctypes.data, k, w.shape[1], n, out.ctypes.data, starts.ctypes.data,
+                                ends.ctypes.data, los.ctypes.data, starts.size, torch.get_num_threads())
+    return bool(ok)
 

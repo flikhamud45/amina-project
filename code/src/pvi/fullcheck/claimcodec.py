@@ -430,10 +430,20 @@ def _stream_jobs(buf, offset: int, n: int, k: int, out: np.ndarray, workers: int
     if n <= _SMALL:
         return [functools.partial(_unpack_small, w, k, n, out, bases=bases)], offset + nbytes
     parts = min(workers, 32) if n >= _THREADED else 1
+    from . import native_kernels
+    if native_kernels.available() and native_kernels._DECODE and out.flags.c_contiguous:
+        return [functools.partial(_unpack_native, w, k, n, out, bases)], offset + nbytes
     if n < _THREADED:               # one job, the bases in one pass after it (a lane's call costs ~7 us)
         return [functools.partial(_unpack_stream, w, k, n, out, bases)], offset + nbytes
     return [functools.partial(_unpack_lanes, w, k, n, out, range(i, 32, parts), bases=bases)
             for i in range(parts)], offset + nbytes
+
+
+def _unpack_native(w: np.ndarray, k: int, n: int, out: np.ndarray, bases) -> None:
+    """:func:`_unpack_stream` in one native pass (``native_kernels.unpack_stream``, the same values and checks)."""
+    from . import native_kernels
+    if not native_kernels.unpack_stream(w, k, n, out, bases):
+        raise ClaimCodecError("non-zero padding in a slot stream")
 
 
 def _unpack_stream(w: np.ndarray, k: int, n: int, out: np.ndarray, bases) -> None:
