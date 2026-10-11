@@ -5,7 +5,8 @@ C-Q2, consolidated change 7). Code: `code/experiments/9_quality/zeroshot.py`, te
 (commit 6b31e45). Status: harness done and tested; on the cluster (job 1011383) the check passed and OPT-125M's fp16 accuracies
 reproduce the published harness numbers within 0.2 point (OPT-125M) and 0.1 point (OPT-1.3B); with F2a's round-1
 recipe the integer models lose 1.0 (OPT-125M) and 0.7 (OPT-1.3B) point on average, OPT-1.3B significantly only on
-LAMBADA (-3.0). The paper builder's OPT-1.3B is running (Sec. 5).
+LAMBADA (-3.0). The paper builder's current recipe loses 2.8 points (LAMBADA -11.3), which supports F2a's switch to
+channel maxima (Sec. 5).
 
 ## 1. Why
 
@@ -127,8 +128,27 @@ within rounding (0.028 nats, greedy flags all equal), and the integer logits equ
   next-token probabilities. On the five multiple-choice tasks every interval contains 0 (ARC-c's acc_norm at its
   edge), and the integer model picks the same answer as fp16 on 89-98% of the documents.
 
-**OPT-1.3B, the paper builder** (smooth 0.55, percentiles; the recipe the paper uses today): [CLUSTER] (same job,
-running).
+**OPT-1.3B, the paper builder** (`real_weights.build_opt_from_hf`, norm gain 4, SmoothQuant alpha 0.55 with the
+99.9th-percentile channel statistic and 99.99th-percentile clipping: the recipe of the paper and of D6a today;
+calibrated here on F2a's four 2,048-token train windows; digest `d69f1be5...`):
+
+| Task | integer acc / acc_norm | difference acc (95% CI) | difference acc_norm (95% CI) | same |
+|---|---|---|---|---:|
+| LAMBADA | 46.57 (ppl 11.75) | **-11.27 [-12.25, -10.34]** | | 0.861 |
+| HellaSwag (2,000) | 39.35 / 51.75 | -0.40 [-1.10, +0.35] | -0.80 [-1.75, +0.20] | 0.958 |
+| PIQA | 71.00 / 71.44 | -0.82 [-1.85, +0.16] | -0.98 [-1.96, +0.05] | 0.953 |
+| ARC-e | 55.26 / 48.86 | -1.85 [-3.03, -0.67] | -2.15 [-3.16, -1.18] | 0.878 |
+| ARC-c | 23.21 / 28.50 | -0.17 [-1.54, +1.19] | -1.02 [-2.30, +0.17] | 0.880 |
+| WinoGrande | 57.62 | -2.13 [-4.03, -0.39] | | 0.889 |
+
+(fp16 as in the table above.) **The paper builder's recipe loses 2.8 points on average, against 0.7 for F2a's
+round-1 recipe** (smoothing with channel maxima and no clipping), and 11.3 points on LAMBADA (continuation perplexity
+6.64 -> 11.75, against 7.80). This is F2a's finding in downstream terms: the percentile statistics, estimated on
+train text, transfer badly to test text (F2a Sec. 3.3: x1.04-1.28 in perplexity, depending on the calibration draw,
+against x1.029 for channel maxima). It supports switching the certified recipe (the paper builder's default and
+D6a's digests) to channel maxima without clipping, which F2a's round 2 (alpha 0.6 / 0.7, OPT-6.7B; job 1011066)
+completes. Note the calibration here is F2a's (train windows), not D6a's (one 128-token test window); the paper's
+own model must be rerun once the recipe is fixed.
 
 ## 6. Limitations
 

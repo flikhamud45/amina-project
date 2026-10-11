@@ -492,7 +492,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - the Llama-2 rows are labelled "quality not measured".
 
 - **F2c [WIP] should (rank 2): zero-shot accuracy of the certified integer models.**
-  - **Status (11 Oct).** Harness `experiments/9_quality/zeroshot.py` (lm-eval 0.4's six tasks re-implemented; exact right padding; paired bootstrap) and `tests/test_zeroshot.py` (9 passed) merged (6b31e45); job 1011383 runs OPT-125M (check) and OPT-125M / OPT-1.3B with F2a's round-1 recipe and the paper builder. Write-up `docs/improvements/F2c_zero_shot.md`.
+  - **Status (11 Oct).** Harness `experiments/9_quality/zeroshot.py` (lm-eval 0.4's six tasks re-implemented; exact right padding; paired bootstrap) and `tests/test_zeroshot.py` (9 passed) merged (6b31e45); job 1011383: check passed; fp16 reproduces the reported harness numbers (within 0.2 / 0.1 point); with F2a's round-1 recipe (channel maxima, alpha 0.5, 11 bits) the integer OPT-125M / OPT-1.3B lose 1.0 / 0.7 point on average (OPT-1.3B significant only on LAMBADA, -3.0); the paper builder's current recipe (percentiles, alpha 0.55) loses 2.8 (LAMBADA -11.3), supporting the switch to channel maxima. Open: OPT-6.7B and the final recipe's rerun. Write-up `docs/improvements/F2c_zero_shot.md`.
   - **What.**
     - An lm-eval-harness LM class over F2a's lean integer forward. It is batched and right-padded, which is exact for a causal model.
     - Tasks: LAMBADA, HellaSwag (fixed 2,000-example subset), PIQA, ARC-e, ARC-c, WinoGrande.
