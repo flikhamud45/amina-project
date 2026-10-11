@@ -276,6 +276,11 @@ def xbar(x: torch.Tensor, e: torch.Tensor, method: str | None = None) -> torch.T
             idx = xt[k0:k0 + step].to(torch.int64).contiguous() - a
             out[k0:k0 + step] = bucket_times(bucket_sums(idx, b - a + 1, e.to(dev)), vals)[:, 0]
         return out.cpu()
+    if dev.type == "cpu":
+        from . import native_kernels
+        got = native_kernels.xbar(x, e)                                             # [K, 8], or None
+        if got is not None:
+            return got
     ef64 = e.to(dev, torch.float64)
     step = _chunk(max(abs(a), abs(b)))
     acc = torch.zeros(D, k, dtype=torch.int64, device=dev)

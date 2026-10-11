@@ -28,7 +28,7 @@ import torch
 
 __all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
            "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max", "patch_exceptions", "tune_malloc",
-           "int8_matmul", "lw_affine"]
+           "int8_matmul", "lw_affine", "xbar"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -665,6 +665,47 @@ extern "C" int64_t pvi_lw_affine(const void* s, int64_t sbytes, int64_t n, int64
     }
 }
 
+// ---- V1's X^T e by value (buckets.xbar, V-V1N): out[k] = sum_t x[t][k] e[t] mod p ([K, 8] canonical) for an integer
+// input x [T, K] (contiguous rows) with |x| < 2^16 and e [T, 8] canonical.  A term is below 2^47 in absolute value and
+// the accumulators are reduced every 2^15 rows, so int64 never overflows.  Threads own disjoint column blocks.
+template <typename X>
+static void xbar_t(const X* x, int64_t t, int64_t k, const int64_t* e, int64_t* out) {
+    const int64_t KB = 256, RED = 1 << 15;
+    const int64_t blocks = (k + KB - 1) / KB;
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (int64_t bl = 0; bl < blocks; ++bl) {
+        const int64_t k0 = bl * KB, k1 = std::min(k, k0 + KB), w = k1 - k0;
+        std::vector<int64_t> acc(8 * w, 0);
+        for (int64_t r = 0; r < t; ++r) {
+            const X* xr = x + r * k + k0;
+            const int64_t* er = e + 8 * r;
+            for (int64_t j = 0; j < w; ++j) {
+                const int64_t v = (int64_t)xr[j];
+                int64_t* a = acc.data() + 8 * j;
+                #pragma omp simd
+                for (int c = 0; c < 8; ++c) a[c] += v * er[c];
+            }
+            if ((r + 1) % RED == 0)
+                for (int64_t q = 0; q < 8 * w; ++q) acc[q] %= PF;
+        }
+        for (int64_t j = 0; j < w; ++j)
+            for (int c = 0; c < 8; ++c) out[(k0 + j) * 8 + c] = modp(acc[8 * j + c]);
+    }
+}
+
+extern "C" int64_t pvi_xbar(const void* x, int64_t xbytes, int64_t t, int64_t k, const int64_t* e, int64_t* out,
+                            int64_t threads) {
+    omp_set_num_threads((int)threads);
+    for (int64_t i = 0; i < 8 * t; ++i) if (e[i] < 0 || e[i] >= PF) return 0;
+    switch (xbytes) {
+        case 1: xbar_t((const int8_t*)x, t, k, e, out); return 1;
+        case 2: xbar_t((const int16_t*)x, t, k, e, out); return 1;
+        case 4: xbar_t((const int32_t*)x, t, k, e, out); return 1;
+        case 8: xbar_t((const int64_t*)x, t, k, e, out); return 1;
+        default: return 0;
+    }
+}
+
 // ---- the claim decoder's slot streams (claimcodec._unpack_lanes for all 32 lanes) ---------------------------------
 // w [k, g] uint32: lane j holds the values [j g, (j + 1) g), value c of lane j at bit (j k) of column c.  Writes the
 // n values to out (uint32), each plus the base of its segment (segments [starts[s], ends[s]) in order, bases los[s];
@@ -916,6 +957,8 @@ def _library():
         _LIB.pvi_lw_affine.argtypes = [ctypes.c_void_p] + [ctypes.c_int64] * 5 + [ctypes.c_void_p] * 3 + \
             [ctypes.c_int64]
         _LIB.pvi_lw_affine.restype = ctypes.c_int64
+        _LIB.pvi_xbar.argtypes = [ctypes.c_void_p] + [ctypes.c_int64] * 3 + [ctypes.c_void_p] * 2 + [ctypes.c_int64]
+        _LIB.pvi_xbar.restype = ctypes.c_int64
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -1258,4 +1301,24 @@ def lw_affine(s: torch.Tensor, a: int, cd: torch.Tensor, e: torch.Tensor):
     out = torch.empty(n, 3, 8, dtype=torch.int64)
     ok = _LIB.pvi_lw_affine(s.data_ptr(), s.element_size(), n, t, int(a), cd.shape[0], e.data_ptr(), cd.data_ptr(),
                             out.data_ptr(), torch.get_num_threads())
+    return out if ok else None
+
+
+def xbar(x: torch.Tensor, e: torch.Tensor):
+    """``X^T e`` ``[K, 8]`` (canonical) of an integer input ``x`` ``[T, K]`` (int8/16/32/64, on the CPU, entries below
+    ``2^16`` in absolute value, which the caller checks) at the column point ``e`` ``[T, 8]``: the integers of
+    ``buckets.xbar``'s float64 product (V-V1N's native kernel, switch ``PVI_V1_NATIVE``).  None when the library is not
+    there or the operands are not of that kind (the caller's torch path then runs)."""
+    if not _LW or _library() is None or not hasattr(_LIB, "pvi_xbar"):
+        return None
+    if not (x.device.type == "cpu" and x.dim() == 2 and x.dtype in (torch.int8, torch.int16, torch.int32, torch.int64)
+            and x.numel()):
+        return None
+    t, k = x.shape
+    x = x.contiguous()
+    e = e.to("cpu", torch.int64).contiguous()
+    if e.shape != (t, 8):
+        return None
+    out = torch.empty(k, 8, dtype=torch.int64)
+    ok = _LIB.pvi_xbar(x.data_ptr(), x.element_size(), t, k, e.data_ptr(), out.data_ptr(), torch.get_num_threads())
     return out if ok else None

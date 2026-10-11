@@ -178,6 +178,31 @@ def test_native_lw_equals_the_torch_table_products(dtype, monkeypatch):
     assert nk.lw_affine(ok, -128, cd, e_bad) is None
 
 
+@pytest.mark.skipif(not __import__("pvi.fullcheck.native_kernels", fromlist=["available"]).available(),
+                    reason="the native library needs a C++ compiler (Linux)")
+@pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
+def test_native_xbar_equals_int_times(dtype, monkeypatch):
+    """V-V1N's native ``X^T e`` (``native_kernels.xbar``, used by ``buckets.xbar`` on a CPU) is
+    ``extfield.int_times``'s product, at the int extremes and across column blocks."""
+    from pvi.fullcheck import native_kernels as nk
+    monkeypatch.setattr(nk, "_LW", True)
+    monkeypatch.delenv(buckets.ENV, raising=False)
+    g = torch.Generator().manual_seed(7)
+    hi = {torch.int8: 127, torch.int16: (1 << 15) - 1}.get(dtype, (1 << 16) - 1)
+    for t, k in ((1, 1), (5, 300), (2048, 600)):
+        x = torch.randint(-hi, hi + 1, (t, k), generator=g)
+        x[0, :] = hi
+        if t > 1:
+            x[1, :] = -hi
+        e = _rand_ext(g, t)
+        e[0] = P - 1
+        want = ef.int_times(x.to(torch.float64).T, e, 31)
+        got = buckets.xbar(x.to(dtype), e, "1")
+        assert torch.equal(got, want), (dtype, t, k)
+        assert torch.equal(nk.xbar(x.to(dtype), e), want)
+    assert nk.xbar(torch.zeros(3, 2, dtype=torch.int64), _rand_ext(g, 2)) is None        # e of the wrong length
+
+
 @pytest.mark.parametrize("method", ["1", "scatter"])
 def test_xbar_equals_int_times(method, monkeypatch):
     g = torch.Generator().manual_seed(3)
