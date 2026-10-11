@@ -56,6 +56,37 @@ a one-time cost per model and per plan, and the final timed cells run on the L40
   a full-model setup takes hours.
 * Kpre is unaffected (it opens no columns).
 
+### 4.1 Plan item 4: the package does not reuse setups (checked 12 Oct, git 207b798)
+
+Every script of the final package that runs a mode-C cell builds the weight commitment itself
+(`bench.py`'s `_commit`, called once per invocation and timed as `commit_total`; likewise `perf.py`, `gen_bench.py`,
+`serve_ab.py` and `v1_bytes.py` through `protocol.commit_graph`). Nothing is cached on disk, so each sbatch job of
+a full model pays one setup. The commitment itself is small (Merkle trees and per-member column digests; the
+prover recomputes opened columns from the int8 weights), so a cache would be possible, but it does not exist.
+
+The dry run (`F6_dryrun.txt`) has these full-model mode-C invocations, all with `PVI_C_POLICY=auto`:
+
+| Model | invocations | `auto` chooses | encoded entries per setup, `auto` | cnn18c |
+|---|---:|---|---:|---:|
+| Llama-2-7B | 11 (serve, c/cg at 64 and 2,048, c at 1, g-v0, gen, three batch cells) | cnn16c | 34.9 G | 139.6 G |
+| Llama-2-13B | 5 | cnn17c | 108.7 G | 217.4 G |
+| Qwen3-4B | 4 | cnn17c | 50.0 G | 98.7 G |
+| OPT-6.7B | 3 | cnn17c | 69.8 G | 139.6 G |
+| total | 23 | | 1,337 G | 3,436 G |
+
+(`auto` takes the candidate of fewest non-claim bytes within `max(2 x the paper plan's entries, 2^34)`; GPT-2 and
+OPT-125M get cnn18c, OPT-1.3B cnn16c.) At the 2-block run's effective rate (cnn18c for the full Llama-2-7B in about
+62 min on the 2080 Ti node, Sec. 3), the package's setups take about 10 h of 2080 Ti-class encoding under `auto`
+and about 25 h under cnn18c everywhere: 2,099 G more entries, about 15 h, which the L40S shortens by its encoder's
+speed-up but which would still be a large share of the run window.
+
+**Consequence (the plan's own rule).** Since setups are not reused, the timed mode-C cells keep `auto` (cnn16c for
+Llama-2-7B, cnn17c for the larger models), and cnn18c and R64c appear as byte rows (2-block measurements and the
+byte model, within 1.2%). The paper states which plan each table uses. Two ways to time cnn18c instead, for the
+decision on Wed 21 Oct [team]: (i) set `PVI_C_POLICY=cnn18c` and accept the longer setups; (ii) add a setup cache
+(the trees and member digests, keyed by the graph's digest, the plan and the rate, on node-local disk; about 0.5 d,
+with a test that a cached commitment gives byte-identical proofs). Neither is needed for the submission's numbers.
+
 Open: regenerate TH-b's concrete-security table and D4's setup-proof parameters for the chosen plan.
 
 ## 5. How to run

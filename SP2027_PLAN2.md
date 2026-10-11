@@ -772,6 +772,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 - **PS2 [WIP] must: lower-rate commitment plans for the mode-C cells, chosen under an explicit setup budget.** No protocol code.
   - **Status (11 Oct).** Byte tables (9cc0bd6); measured bytes in job 1006989 (2 blocks, mode C, FS: cnn16c 23.3 MB, cnn18c 16.0 MB, R64c 13.9 MB per query at 64 tokens, v0).
+  - **Item 4 (12 Oct).** The package does not reuse setups: each of the 23 full-model mode-C invocations builds its own commitment (1,337 G encoded entries under `auto`, 3,436 G under cnn18c everywhere, about 15 h more at the 2080 Ti's rate). By the rule below, the timed cells keep `auto` (cnn16c for Llama-2-7B, cnn17c for the larger models) and cnn18c / R64c are byte rows. Options for Wed 21 [team]: `PVI_C_POLICY=cnn18c`, or a setup cache (about 0.5 d). PS2 doc Sec. 4.1.
   - **What.**
     1. Byte tables from `analytic.proof_bytes` for every model x {cnn16c, cnn18c, R64c} x {interactive, Fiat-Shamir}. The model reproduces the stored records within 1.2%.
     2. One measured run: `v1_bytes.py --model llama2-7b --layers 2 --seq 64 2048 --policy R64c cnn18c --fs` on the 2080 Ti node, with `setup_s` recorded.
