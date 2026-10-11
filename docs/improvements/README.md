@@ -17,6 +17,7 @@ of every item is `SP2027_PLAN.md` at the repository root; an item is tagged [DON
 | F2 | [F2_quality.md](F2_quality.md) | measured, adopted (opt-in) | where the integer model's perplexity goes; SmoothQuant through the norm gains: x1.17 -> x1.03 (OPT-125M), x1.11 -> x1.03 (OPT-1.3B) |
 | F2b-Q, F2b-L (laptop part) | [F2b_Q_real_llama.md](F2b_Q_real_llama.md) | implemented, laptop-validated; real-checkpoint runs on the cluster | real-weight integer Qwen3 / Llama graphs with the benchmark graph's exact structure (empty diff); quality ladder script |
 | E2 | [E2_sampling.md](E2_sampling.md) | done | sampled generation: an exact integer Gumbel-max sampler keyed by the client's seed |
+| E2b | [E2b_sampler_tv.md](E2b_sampler_tv.md) | measured on OPT-125M (laptop); OPT-1.3B on the cluster | the sampler's exact output law (ties included) and its TV distance to softmax sampling on real logits |
 | D1, D2 | [D1_D2_fiat_shamir_binding.md](D1_D2_fiat_shamir_binding.md) | done | Fiat-Shamir binds the graph and its constants; SHAKE-256 transcript |
 | D4, D5 | [D4_D5_untrusted_commitment.md](D4_D5_untrusted_commitment.md) | done | a one-time setup proof removes the honest-commitment assumption; the split-commitment attack it stops |
 | F1 | [F1_reexecution_baseline.md](F1_reexecution_baseline.md) | measured on the 2080 Ti | the cost of re-running the model, against our verifier |
