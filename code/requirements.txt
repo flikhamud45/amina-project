@@ -11,4 +11,5 @@ torch==2.5.1
 torchvision==0.20.1
 numpy==2.5.2
 matplotlib==3.11.2
+scipy>=1.13          # the LP mixture of the adaptive game (G3-min)
 pytest==9.1.1
