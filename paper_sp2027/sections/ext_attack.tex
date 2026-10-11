@@ -125,9 +125,11 @@ trace nodes.
 % Moved from the body's paragraph "MNIST" by the H5 pass (cut C4 of REVIEW2.md); unchanged.
 \para{MNIST, further results.} One tampered neuron passes 250 paths 61\% of the time. Keeping each
 tampered value below its neuron's 95th percentile takes about five neurons and passes 99\% of the
-time under uniform sampling; the percentiles were computed on test queries that include the
-attacked ones \todo{G3: training-split ranges}. The in-range edits on OPT-1.3B, against ranges
-calibrated on held-out text (Section~\ref{ext:attack-inrange}), do not have this limitation.
+time under uniform sampling. With percentiles from 5{,}000 training images and 40 disjoint test
+queries, the edit changes 5.1 neurons on average, passes 99.0\% of paths, keeps every edited value in
+range, and exceeds a neuron's natural maximum no more often than the honest trace (5\% of queries in
+both cases); the in-range edits on OPT-1.3B and OPT-6.7B (Section~\ref{ext:attack-inrange}) use
+held-out ranges as well.
 
 \para{Other samplers on MNIST.} Against an adversary who knows the rule, a static importance score
 (outgoing weight magnitude) detects 0.11\% of attacks and gradient saliency 0.016\%, against 0.20\%
@@ -193,7 +195,7 @@ both by our zeroing attack and by the blindfolded updates against
 Proof-of-Learning~\cite{fang2023pol}. TOPLOC and SVIP target model substitution, and a forged
 answer with honestly recomputed fingerprints lies outside what they claim.
 
-\begin{table}[t]
+\begin{table*}[t]
   \caption{Derivation of the acceptance probabilities in Table~\ref{tab:sok}, from each scheme's
   own formulas and parameters}
   \label{tab:sok-derivation}
@@ -220,7 +222,7 @@ answer with honestly recomputed fingerprints lies outside what they claim.
     IMMACULATE, $T$ steps & flagged fraction $+1/T$ & -- \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{table*}
 
 \noindent For Llama-2-7B and OPT-6.7B the path counts are lower bounds. A path visits at most one
 neuron of a given FFN layer and picks it uniformly, so it detects the edit with probability at most
@@ -273,34 +275,50 @@ or 256 neurons are edited (fp32, the 40 prompts of the OPT-6.7B experiment). Uni
 $k/d_{\mathrm{ff}}$ ($d_{\mathrm{ff}}=8{,}192$); a contribution-weighted sampler opens neuron $j$ with
 probability proportional to $|a_j|\,\|W_{\mathrm{fc2}}[:,j]\|$ on the claimed trace.
 
-\begin{table}[h]
-  \caption{In-range edits on OPT-1.3B: prompts whose next token changed (of 40), median and maximum number of
-  edited neurons, and median detection per draw under uniform and contribution-weighted sampling}
+\begin{table*}[t]
+  \caption{In-range edits on OPT-1.3B (layers 6/12/18/23 of 24) and OPT-6.7B (8/16/24/31 of 32): prompts whose next
+  token changed (of 40), median and maximum number of edited neurons, and median detection per draw under uniform
+  and contribution-weighted sampling. Ranges from 8{,}192 WikiText-2 train tokens; fp32.}
   \label{tab:inrange}
   \centering\footnotesize
-  \setlength{\tabcolsep}{3pt}
-  \begin{tabular}{@{}llrrrrr@{}}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}lllrrrrr@{}}
     \toprule
-    Moves & Layer & changed & $k$ med. & $k$ max & uniform & contribution \\
+    Model & Moves & Layer & changed & $k$ med. & $k$ max & uniform & contribution \\
     \midrule
-    any, max range & 6 & 40 & 3.5 & 17 & $4.3\cdot10^{-4}$ & 0.55 \\
-     & 12 & 40 & 3 & 40 & $3.7\cdot10^{-4}$ & 0.11 \\
-     & 18 & 40 & 2 & 13 & $2.4\cdot10^{-4}$ & 0.054 \\
-     & 23 & 40 & 1 & 4 & $1.2\cdot10^{-4}$ & 0.029 \\
-    any, 99.9\% range & 6 & 40 & 6.5 & 60 & $7.9\cdot10^{-4}$ & 0.57 \\
-     & 12 & 40 & 5 & 24 & $6.1\cdot10^{-4}$ & 0.097 \\
-     & 18 & 40 & 3.5 & 22 & $4.3\cdot10^{-4}$ & 0.053 \\
-     & 23 & 40 & 1 & 7 & $1.2\cdot10^{-4}$ & 0.022 \\
-    down only & 6 & 9 & 3 & 15 & $3.7\cdot10^{-4}$ & 0 \\
-     & 12 & 31 & 12 & 104 & $1.5\cdot10^{-3}$ & 0 \\
-     & 18 & 38 & 8 & 164 & $9.8\cdot10^{-4}$ & 0 \\
-     & 23 & 39 & 2 & 60 & $2.4\cdot10^{-4}$ & 0 \\
+    OPT-1.3B & any, max range & 6 & 40 & 3.5 & 17 & $4.3\cdot10^{-4}$ & 0.55 \\
+     &  & 12 & 40 & 3 & 40 & $3.7\cdot10^{-4}$ & 0.11 \\
+     &  & 18 & 40 & 2 & 13 & $2.4\cdot10^{-4}$ & 0.054 \\
+     &  & 23 & 40 & 1 & 4 & $1.2\cdot10^{-4}$ & 0.029 \\
+     & any, 99.9\% range & 6 & 40 & 6.5 & 60 & $7.9\cdot10^{-4}$ & 0.57 \\
+     &  & 12 & 40 & 5 & 24 & $6.1\cdot10^{-4}$ & 0.097 \\
+     &  & 18 & 40 & 3.5 & 22 & $4.3\cdot10^{-4}$ & 0.053 \\
+     &  & 23 & 40 & 1 & 7 & $1.2\cdot10^{-4}$ & 0.022 \\
+     & down only & 6 & 9 & 3 & 15 & $3.7\cdot10^{-4}$ & 0 \\
+     &  & 12 & 31 & 12 & 104 & $1.5\cdot10^{-3}$ & 0 \\
+     &  & 18 & 38 & 8 & 164 & $9.8\cdot10^{-4}$ & 0 \\
+     &  & 23 & 39 & 2 & 60 & $2.4\cdot10^{-4}$ & 0 \\
+    \midrule
+    OPT-6.7B & any, max range & 8 & 40 & 10.5 & 44 & $6.4\cdot10^{-4}$ & 0.76 \\
+     &  & 16 & 40 & 6 & 25 & $3.7\cdot10^{-4}$ & 0.15 \\
+     &  & 24 & 40 & 5 & 14 & $3.1\cdot10^{-4}$ & 0.067 \\
+     &  & 31 & 40 & 1 & 17 & $6.1\cdot10^{-5}$ & 0.028 \\
+     & any, 99.9\% range & 8 & 40 & 22 & 104 & $1.3\cdot10^{-3}$ & 0.74 \\
+     &  & 16 & 40 & 12 & 48 & $7.3\cdot10^{-4}$ & 0.15 \\
+     &  & 24 & 40 & 7 & 36 & $4.3\cdot10^{-4}$ & 0.071 \\
+     &  & 31 & 40 & 1 & 16 & $6.1\cdot10^{-5}$ & 0.021 \\
+     & down only & 8 & 4 & 3 & 23 & $1.8\cdot10^{-4}$ & 0 \\
+     &  & 16 & 23 & 25 & 164 & $1.5\cdot10^{-3}$ & 0 \\
+     &  & 24 & 37 & 36 & 176 & $2.2\cdot10^{-3}$ & 0 \\
+     &  & 31 & 40 & 3 & 112 & $1.8\cdot10^{-4}$ & 0 \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{table*}
 
 Pushing neurons to the top of their range raises their contribution, so contribution weighting catches those
 edits often; lowering activations to zero, which stays in range after ReLU, hides them from it completely, at
 the price of more neurons and fewer successes in early layers. Under uniform sampling every variant needs tens
-of thousands of paths for $1-2^{-40}$ (19{,}000--227{,}000 at the medians).
+of thousands of paths for $1-2^{-40}$ (19{,}000--227{,}000 at the medians on OPT-1.3B, 20{,}000--454{,}000 on
+OPT-6.7B). The OPT-6.7B rows show the same picture at 7B scale: every in-range edit of the \emph{any} kind changes
+the next token for all 40 prompts at every depth, with a median of 1--22 edited neurons.
 
