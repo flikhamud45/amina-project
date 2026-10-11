@@ -161,6 +161,37 @@ and 21.3\,s to verify, with a 5.41\,GB v0 proof and V1 2.23$\times$ smaller: rea
 15\% smaller in v0 and 10\% larger in V1.
 
 % -------------------------------------------------------------------------------------
+% Added 2026-10-11 (plan V-LONG-b; job 1011426; docs/improvements/V_LONG_b_long_prompts.md).
+\subsection{Long Prompts}
+\label{app:eval-long}
+
+Llama-2-7B's shapes with 2 and 3 blocks at 2{,}048 to 16{,}384 tokens ($\Kpre$, Fiat--Shamir, the native CPU verifier
+on 8 Xeon threads, every query accepted), extrapolated to the full model as the 2-block cell plus 30 blocks, against
+fp32 re-execution on the same threads, the fastest exact one at every length
+(Table~\ref{tab:eval-long}). A block's verifier time follows $aT+bT^2$ within 3\% from 2{,}048 to 8{,}192 tokens and
+grows somewhat faster at 16{,}384 tokens, where the 3-block cell did not fit the 11\,GB card (hence a range). The
+proof grows linearly, by 0.83\,GB per block at 8{,}192 tokens. 32{,}768 tokens are beyond today's kernels
+\todo{L40S: the 16{,}384-token cells on the larger card}.
+
+\begin{table}[t]
+  \caption{Long prompts, full Llama-2-7B (extrapolated from 2--3 blocks): CPU verifier ($\Kpre$, Fiat--Shamir)
+  against fp32 re-execution on the same 8 threads, and the proof}
+  \label{tab:eval-long}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}rrrrr@{}}
+    \toprule
+    $T$ & verifier (s) & re-execution (s) & ratio & proof (GB) \\
+    \midrule
+    2{,}048 & 17.6 & 90.4 & 5.1$\times$ & 6.4 \\
+    4{,}096 & 45.2 & 188.5 & 4.2$\times$ & 12.9 \\
+    8{,}192 & 124 & 398.5 & 3.2$\times$ & 25.8 \\
+    16{,}384 & 390--470 & 930.4 & 2.0--2.4$\times$ & ${\approx}$51 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% -------------------------------------------------------------------------------------
 \subsection{The Attack Against Our Proof Size, and the Setup Proof}
 \label{app:eval-attack}
 

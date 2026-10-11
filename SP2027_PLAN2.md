@@ -621,8 +621,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - V1's verifier is reported as measured;
     - V1 is presented as a bytes-only option in EV and in the abstract.
 
-- **V-LONG-b [WIP] should (rank 5): long prompts from 2k to 16k tokens, measurement only.**
-  - **Status (11 Oct).** Job 1011426 (2080 Ti / Xeon) runs the long tier's cells: Llama-2-7B shapes at 2k, 4k, 8k and 16k tokens, 2 and 3 blocks, the native CPU verifier in Kpre (Fiat-Shamir) and the RX baselines (int, int_fp32gemm, fp32, dynint8).
+- **V-LONG-b [DONE] should (rank 5): long prompts from 2k to 16k tokens, measurement only.**
+  - **Status (11 Oct).** Job 1011426: full Llama-2-7B (2-3 blocks extrapolated) verifier 17.6 / 45.2 / 124 / 390-470 s at 2k / 4k / 8k / 16k tokens against fp32 re-execution 90 / 189 / 399 / 930 s: 5.1x / 4.2x / 3.2x / 2.0-2.4x; proofs 6.4 / 12.9 / 25.8 / ~51 GB; fit t = aT + bT^2 within 3% at 4k; the 16k 3-block cell ran out of GPU memory (L40S `long` tier). 32k modelled only. Write-up `docs/improvements/V_LONG_b_long_prompts.md`.
   - **What.**
     1. Cells at 2k, 4k, 8k and 16k tokens, 2-3 blocks each, for Llama-2-7B shapes (`max_pos` raised) and Qwen3-4B, in Kpre.
        - Each cell measures the CPU verifier, the fp32, integer and RX baselines on the same threads, and the exact bytes.

@@ -44,8 +44,10 @@ $\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$. It th
 open-weight models. For private weights it shares the limitation that Hollow-LLM shows for
 zkSNARKs~\cite{hollowllm}. The setup proof is untimed \todo{F6}.
 
-\para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens; mixture-of-experts
-models and longer contexts are untested. Costs use random weights, which real OPT weights match
+\para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens, and Llama-2-7B's shapes
+up to 16{,}384, where the CPU verifier is still about 2$\times$ faster than exact re-execution (5.1$\times$
+at 2{,}048) and the proof reaches about 51\,GB~\cite{fullversion}; mixture-of-experts models are
+untested. Costs use random weights, which real OPT weights match
 (Section~\ref{sec:eval-setup}), and the quality of the
 integer OPT-6.7B and Qwen3-4B, and at long context, is unmeasured \todo{F2a, F2b}.
 
