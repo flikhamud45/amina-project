@@ -708,8 +708,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
   - **Effort.** 1 d. It is not possible on the 2080 Ti (quota).
   - **Kill.** If the venv is not approved by Fri 30 Oct, report U1 + U2 plus the HF fallback.
 
-- **A6 [WIP] should (rank 8): Kpre precompute on exact int8 GEMMs (GPU) or B5's native field product (CPU).**
-  - **Status (11 Oct).** Implemented (bd0f95d): `_fold_local` uses `native_kernels.field_matmul` on a CPU and int8 GEMMs on a GPU, the float64 path as fallback; `tests/test_fold_fast.py` (laptop: 2 passed, 2 skipped); job 1011448 tests and times it on Llama-2-7B. Write-up `docs/improvements/A6_kpre_precompute.md`.
+- **A6 [DONE] should (rank 8): Kpre precompute on exact int8 GEMMs (GPU) or B5's native field product (CPU).**
+  - **Status (11 Oct).** Implemented (bd0f95d): `_fold_local` uses `native_kernels.field_matmul` on a CPU and int8 GEMMs on a GPU, the float64 path as fallback; `tests/test_fold_fast.py` (4 passed on the cluster); job 1011448: full Llama-2-7B precompute (Fiat-Shamir) 106.9 -> 12.7 s on 8 Xeon threads, 4.3 -> 2.2 s on the 2080 Ti, `u` identical. Write-up `docs/improvements/A6_kpre_precompute.md`.
   - **What.** `Verifier._fold_local` computes u = chi^T·A with `field.weight_matmul_mod` (GPU) or the native `field_matmul` over row blocks of the int8 matrix (CPU). This removes the transposed int64 copy and the float64 GEMMs.
   - **Why.** The Kpre client's one-time setup belongs in the client-options table (A-W1, chg 3). The stored base record shows 96.5 s for Llama-2-13B. That is already small next to a 6.7 GB weight download, which is why A6 ranks eighth.
   - **Gain.** CPU: about 6 s for 13B (16x) and about 3 s for 7B. GPU: about 0.1 s. Times 1.4 under Fiat-Shamir (r = 7).

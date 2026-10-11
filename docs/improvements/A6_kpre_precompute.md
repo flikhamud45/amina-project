@@ -2,9 +2,9 @@
 
 Plan 2 item A6 (`SP2027_PLAN2.md` Sec. 3.4, should, rank 8; reviewer point A-W1, consolidated change 3). Code:
 `Verifier._fold_local` in `code/src/pvi/fullcheck/protocol.py`, test `code/tests/test_fold_fast.py`, harness
-`code/experiments/6_improvements/fold_ab.py` (commit bd0f95d). Status: implemented and tested on the laptop (the
-float64 fallback and the unchanged Kpre verdicts); the native and GPU cases and the timing run on the cluster (job
-1011448; Sec. 4).
+`code/experiments/6_improvements/fold_ab.py` (commit bd0f95d). Status: done: exact on CPU and GPU (tests on the cluster), and the full
+Llama-2-7B precompute takes 12.7 s instead of 106.9 s on 8 Xeon threads and 2.2 s instead of 4.3 s on the 2080 Ti
+(Sec. 4).
 
 ## 1. Why
 
@@ -43,12 +43,21 @@ the bias column is computed as before.
 Laptop: 2 passed, 2 skipped (no compiler, no GPU). `fold_ab.py` on one GPT-2 block (laptop, float64 on both paths):
 both paths give identical `u`.
 
-## 4. Results
+## 4. Results (job 1011448, s-005, git d9b5748)
 
-[CLUSTER] job 1011448: the tests on the Xeon/2080 Ti node, then `fold_ab.py --model llama2-7b --layers 0 --devices
-cpu cuda --reps 3 --fs` (the full model, Fiat-Shamir's 7 repetitions): the median precompute time of each path on
-each device, and whether every `u` equals the float64 path's. The plan expects about 3 s on 8 CPU threads for the
-7B model and about 0.1 s on the GPU.
+Tests on the node: 4 passed (the native and GPU cases included). `fold_ab.py --model llama2-7b --layers 0 --devices
+cpu cuda --reps 3 --fs --threads 8`: the full Llama-2-7B (226 weight matrices, 6.74 G int8 weights), Fiat-Shamir's
+7 repetitions, medians of 3 runs after a warm-up, the same challenges on both paths:
+
+| Device | float64 path | A6 path | speed-up | `u` equal |
+|---|---:|---:|---:|---|
+| CPU, 8 threads of the Xeon Silver 4114 (native field product) | 106.9 s | **12.7 s** | 8.4x | yes |
+| RTX 2080 Ti (int8 GEMMs; the weights' upload included) | 4.34 s | **2.22 s** | 2.0x | yes |
+
+The plan's estimates (about 3 s on the CPU, 0.1 s on the GPU, times 1.4 under Fiat-Shamir) were optimistic: the
+CPU product does 7 x 2 limb multiply-adds per weight (94 G for the model) at about 7 G per second on 8 threads, and on
+the GPU most of the 2.2 s is moving 6.7 GB of weights to the card. A Kpre client's one-time setup for Llama-2-7B is
+thus 12.7 s on a CPU, small next to downloading the 6.7 GB of weights it needs anyway.
 
 ## 5. Limitations
 
