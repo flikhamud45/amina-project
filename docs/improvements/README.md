@@ -26,6 +26,7 @@ of every item is `SP2027_PLAN.md` at the repository root; an item is tagged [DON
 | V-V1N (parts 1-4) | [V_V1N_fast_v1_verifier.md](V_V1N_fast_v1_verifier.md) | implemented, exact; Xeon: 2.49 -> 2.13 s per Llama-2-7B block; native kernels not done | V1's final check and xbar by value (affine-plus-step window tables, one-limb products; the bucket kernel as the native reference), batched GKR chains, batch-inverted logUp, int8 values: bit-identical, `PVI_V1_BUCKETS` |
 | G3-min | [G3_min_adaptive_game.md](G3_min_adaptive_game.md) | done (MNIST, OPT-1.3B) | adaptive game, held-out ranges: the best implementable mixture detects at most 3.1% / 9.7% per path on the MNIST MLP (below 27.7/N); on OPT-1.3B, against the two fixed edits, contribution weighting crosses 27.7/d_ff at layers 6-18 |
 | F2c | [F2c_zero_shot.md](F2c_zero_shot.md) | harness done and tested; first cluster job submitted | zero-shot accuracy (LAMBADA, HellaSwag, PIQA, ARC-e/c, WinoGrande) of the integer OPT against fp16, lm-eval 0.4's formats re-implemented, paired intervals |
+| A6 | [A6_kpre_precompute.md](A6_kpre_precompute.md) | implemented; cluster test and timing submitted | the Kpre client's precompute `u = chi A` on the native field product (CPU) and int8 GEMMs (GPU), no transposed int64 copy; identical `u` |
 
 Measurement harnesses (all compare against the previous code path on the same queries and check identical
 outputs): `experiments/6_improvements/open_ab.py` (A1), `forward_ab.py` (A2), `encode_prof.py` (A3),
