@@ -58,18 +58,23 @@ Costs depend only on the shapes of the weight operations, so the benchmarks use 
 ## The certified model and its commitment
 
 The integer model is a deterministic function of the public checkpoint, the calibration tokens and the recipe
-(`build_opt_from_hf`: norm gain 4, SmoothQuant alpha 0.55 through the norm gains, smooth_pct 99.9, 99.99th-percentile
-clipping). Anyone can rebuild it and recompute `C_M`; `digest_check.py` prints the graph digest, a hash of every weight
-matrix and the commitment's Merkle roots.
+(`real_weights.CERTIFIED_RECIPE`: `build_opt_from_hf` with norm gain 4, SmoothQuant alpha 0.6 through the norm gains,
+each channel's maximum as its statistic and no clipping, 11-bit attention probabilities). Anyone can rebuild it and
+recompute `C_M`; `digest_check.py` prints the graph digest, a hash of every weight matrix and the commitment's Merkle
+roots.
 
-Calibration tokens: the last 128-token window of the WikiText-2 (raw) test split, with the checkpoint's tokenizer.
+Calibration tokens (`common.certified_calib`): the first four 2,048-token windows of the first 4,000,000 characters of
+the WikiText-2 (raw) train split (lines joined with blank lines), with the checkpoint's tokenizer.
 Graph digests (SHA-256) and the hash over every Merkle root, reproduced on two Linux nodes (1 and 8 threads, CPU or GPU
-encoding) and, for the digest, on Windows with another torch version:
+encoding):
 
 | Model | graph digest | roots |
 |---|---|---|
-| OPT-125M | `46d23c80874752fc625cd55a9afb552fcbfd458ff880b0bc30a60efb8318a439` | `480463ab9be46f4d...` |
-| OPT-1.3B | `01354c3dd18bf790...` | `ff005dca59e6b579...` |
+| OPT-125M | [pending: jobs 1012438-9] | |
+| OPT-1.3B | [pending: jobs 1012438-9] | |
+
+(The earlier recipe, alpha 0.55 with percentile statistics calibrated on the last 128-token test window, is
+`digest_check.py --recipe legacy`; its digests were `46d23c80...` and `01354c3d...`.)
 
 ## Hardware used for the paper
 

@@ -40,14 +40,24 @@ Every value agrees: across two Xeon nodes, two thread counts, Windows against Li
 commitment encoded on the GPU against one on the CPU. The F2a cluster check also found the integer graph's outputs
 equal on GPU and CPU, and its perplexities equal to the laptop's to every printed digit.
 
+## 3a. The certified recipe changed (F2a decision, 11 Oct)
+
+F2a's round 2 fixed the certified OPT recipe as smooth-max alpha 0.6 calibrated on four 2,048-token windows of the
+train split (`real_weights.CERTIFIED_RECIPE`, `common.certified_calib`). The digests above are those of the earlier
+recipe (`digest_check.py --recipe legacy`). The same check with the certified recipe runs as jobs 1012438 (s-004)
+and 1012439 (s-005): [pending]. Nothing in the builder changed, only its parameters and the calibration tokens, so
+the determinism shown above carries over; the jobs confirm it on the new graph.
+
 ## 4. The recipe, as published in the artifact
 
 * Checkpoint: the Hugging Face repository (`facebook/opt-125m`, `facebook/opt-1.3b`, ...), `pytorch_model.bin` loaded
   with `weights_only=True`, converted to fp32.
-* Calibration tokens: the last 128-token window of the WikiText-2 (raw) test split, tokenised with the checkpoint's
-  tokenizer (`common.load_windows`).
-* Builder: `real_weights.build_opt_from_hf(model, calib, norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99,
-  pct_att=99.99)` (`prob_max` = 2047 by default).
+* Calibration tokens (certified recipe): the first four 2,048-token windows of the WikiText-2 (raw) train split's first
+  4,000,000 characters, tokenised with the checkpoint's tokenizer (`common.certified_calib`). Earlier recipe: the last
+  128-token window of the test split (`common.load_windows`).
+* Builder (certified): `real_weights.build_opt_from_hf(model, calib, **CERTIFIED_RECIPE)`, i.e. `norm_gain=4,
+  smooth=0.6, smooth_pct=100, pct=100, pct_att=100` (`prob_max` = 2047 by default). Earlier: `smooth=0.55,
+  smooth_pct=99.9, pct=99.99, pct_att=99.99`.
 * Commitment: `protocol.commit_graph(graph, 4, policy="auto")`.
 
 No change to the recipe was needed (the plan's fallback, float64 compensated sums and snapped scales, is not used).
