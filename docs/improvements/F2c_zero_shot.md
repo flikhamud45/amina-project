@@ -2,8 +2,9 @@
 
 Plan 2 item F2c (`SP2027_PLAN2.md` Sec. 3.2, should, rank 2; reviewer points C-W5 "there are no downstream tasks",
 C-Q2, consolidated change 7). Code: `code/experiments/9_quality/zeroshot.py`, test `code/tests/test_zeroshot.py`
-(commit 6b31e45). Status: harness done and tested on the laptop; the first cluster job (OPT-125M check, OPT-125M and
-OPT-1.3B with both builders) is job 1011383; results go in Sec. 5.
+(commit 6b31e45). Status: harness done and tested; on the cluster (job 1011383) the check passed and OPT-125M's fp16 accuracies
+reproduce the published harness numbers within 0.2 point; the integer OPT-125M loses 1.0 point on average (Sec. 5).
+OPT-1.3B is running.
 
 ## 1. Why
 
@@ -79,7 +80,31 @@ every position.
 
 ## 5. Results
 
-[CLUSTER] job 1011383.
+Job 1011383 (s-004, RTX 2080 Ti, git 6b31e45). Tests: 9 passed. `--check` on OPT-125M: the integer model's padded
+rows equal the requests run alone exactly (24 HellaSwag and PIQA requests, max |difference| 0), the fp16 model's
+within rounding (0.028 nats, greedy flags all equal), and the integer logits equal `real_logits`.
+
+**OPT-125M, F2a's round-1 recipe** (smoothing with channel maxima, alpha 0.5, 11-bit probabilities; digest
+`d6889a56...`). Accuracy in percent; the difference is integer minus fp16 with its 95% paired bootstrap interval;
+"same" is the share of documents on which both pick the same answer:
+
+| Task | n | fp16 acc / acc_norm | integer acc / acc_norm | difference acc (95% CI) | same | published fp16 (harness) |
+|---|---:|---|---|---|---:|---|
+| LAMBADA | 5,153 | 37.86 (ppl 26.0) | 36.89 (ppl 28.9) | -0.97 [-1.84, -0.12] | 0.901 | 37.9 |
+| HellaSwag (2,000) | 2,000 | 28.90 / 29.40 | 29.00 / 29.65 | +0.10 [-0.65, +0.85] | 0.935 | 29.2 / 31.3 (all 10,042) |
+| PIQA | 1,838 | 63.06 / 62.08 | 60.72 / 60.83 | -2.34 [-3.59, -1.14] | 0.928 | 63.0 / 62.0 |
+| ARC-e | 2,376 | 43.52 / 39.94 | 41.58 / 37.08 | -1.94 [-3.16, -0.72] | 0.865 | 43.5 / 39.9 |
+| ARC-c | 1,172 | 18.94 / 22.78 | 19.45 / 23.21 | +0.51 [-0.68, +1.79] | 0.881 | 19.0 / 22.9 |
+| WinoGrande | 1,267 | 50.12 | 48.86 | -1.26 [-4.03, +1.50] | 0.755 | 50.3 |
+
+* **Validation.** The fp16 accuracies reproduce the harness's published OPT-125M numbers within 0.2 point on every
+  task scored in full (the plan's criterion is 0.5); HellaSwag is the fixed 2,000-document subset, whose accuracy is
+  within its sampling error of the full set's.
+* **The integer model** loses 1.0 point on average over the six tasks (acc), at most 2.3 (PIQA); three of the six
+  differences are significant at 95%. With this recipe OPT-125M's perplexity ratio at 2,048 tokens is x1.10 (F2a
+  Sec. 3.3).
+
+**OPT-1.3B** (F2a's recipe and the paper builder's): [CLUSTER] (same job, running).
 
 ## 6. Limitations
 
