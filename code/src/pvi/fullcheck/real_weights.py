@@ -44,7 +44,8 @@ import torch
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn
 from .transformer import (
-    CONFIGS, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int, build_decoder,
+    CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int,
+    build_decoder,
 )
 
 __all__ = ["build_opt_from_hf", "is_pruned", "matches_benchmark_graph", "real_logits"]
@@ -173,7 +174,7 @@ def _fold(w: torch.Tensor, b: torch.Tensor | None, gamma: torch.Tensor, beta: to
 def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, norm_gain: float = 32,
                       residual_headroom: float = 1.25, device=None, smooth: float | None = None,
                       smooth_pct: float = 99.9, pct_att: float = 100.0,
-                      prune_last: bool = False) -> tuple[IntGraph, dict]:
+                      prune_last: bool = False, prob_max: int = PROB_MAX) -> tuple[IntGraph, dict]:
     """An integer OPT decoder with the checkpoint's real weights.
 
     ``calib_ids`` ``[1, T]`` sets every activation scale. The three knobs are all
@@ -238,14 +239,17 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
         # HF scales q by dh^-0.5 inside the module; here that lives in m_s, as in build_decoder.
         sq, sk, sv = B.scale[q], B.scale[k], B.scale[v]
         m_s = round((1 << SHIFT) * 16.0 * sq * sk / math.sqrt(dh))
-        raw = _attention(B.env[q], B.env[k], B.env[v], m_s, None, n_heads, n_heads, dh)
-        s_raw = sv / 255.0                         # 8-bit probabilities x int8 values
+        raw = _attention(B.env[q], B.env[k], B.env[v], m_s, None, n_heads, n_heads, dh, prob_max)
+        s_raw = sv / float(prob_max)               # probabilities 0..prob_max x int8 values (8 bits: 255)
         rabs = raw.double().abs().flatten()
         top = (float(torch.quantile(rabs[:1 << 24], pct_att / 100.0)) if pct_att < 100 else float(rabs.max())) * s_raw
         s_att = max(top, 1e-12) / INT8_MAX
         m_o = round((1 << SHIFT) * s_raw / s_att)
         att = B.cheap("attn", [q, k, v],
-                      lambda a, b_, c, ms=m_s, mo=m_o: _attention(a, b_, c, ms, mo, n_heads, n_heads, dh),
+                      (lambda a, b_, c, ms=m_s, mo=m_o: _attention(a, b_, c, ms, mo, n_heads, n_heads, dh))
+                      if prob_max == PROB_MAX else      # today's op (digest unchanged); else the scale is bound
+                      (lambda a, b_, c, ms=m_s, mo=m_o, P=prob_max: _attention(a, b_, c, ms, mo, n_heads, n_heads,
+                                                                                 dh, P)),
                       s_att, "attention")
         # (pruned) the residual stream's last position takes the attention branch (its last position only)
         r = B.residual(B.last(r) if prune else r, B.mat(att, at.out_proj.weight.float(), at.out_proj.bias, s_att))

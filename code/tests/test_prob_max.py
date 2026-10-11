@@ -108,3 +108,36 @@ def test_an_11_bit_decoder_is_proved_and_tampering_rejected(kind, mode):
         return z
 
     assert not proto.run_query(prover, verifier, x, seed=2, forward_kwargs={"tamper": tamper})["accepted"]
+
+
+@pytest.mark.parametrize("family", ["opt", "llama", "qwen"])
+def test_the_real_builders_take_the_scale(family):
+    """``build_opt_from_hf`` and ``build_llama_from_hf`` with ``prob_max``: 255 is today's graph (digest, logits); 2047
+    is another graph (bound by the digest) whose output multipliers are calibrated at that scale, and it runs."""
+    transformers = pytest.importorskip("transformers")
+    from pvi.fullcheck import real_llama as rl
+    from pvi.fullcheck import real_weights as rw
+    torch.manual_seed(0)
+    if family == "opt":
+        cfg = transformers.OPTConfig(vocab_size=97, hidden_size=32, num_hidden_layers=2, ffn_dim=64, num_attention_heads=4,
+                                     max_position_embeddings=64, word_embed_proj_dim=32, do_layer_norm_before=True)
+        model, build = transformers.OPTForCausalLM(cfg).eval(), rw.build_opt_from_hf
+    elif family == "llama":
+        cfg = transformers.LlamaConfig(vocab_size=97, hidden_size=64, intermediate_size=160, num_hidden_layers=2,
+                                       num_attention_heads=4, num_key_value_heads=2, max_position_embeddings=64,
+                                       tie_word_embeddings=False, initializer_range=0.15)
+        model, build = transformers.LlamaForCausalLM(cfg).eval(), rl.build_llama_from_hf
+    else:
+        cfg = transformers.Qwen3Config(vocab_size=97, hidden_size=64, intermediate_size=160, num_hidden_layers=2,
+                                       num_attention_heads=8, num_key_value_heads=2, head_dim=16,
+                                       max_position_embeddings=64, tie_word_embeddings=True, initializer_range=0.15)
+        model, build = transformers.Qwen3ForCausalLM(cfg).eval(), rl.build_llama_from_hf
+    calib = torch.randint(3, 97, (1, 24), generator=torch.Generator().manual_seed(1))
+    x = torch.randint(3, 97, (1, 20), generator=torch.Generator().manual_seed(2))
+    with torch.no_grad():
+        today, _ = build(model, calib, norm_gain=4)
+        same, _ = build(model, calib, norm_gain=4, prob_max=255)
+        other, _ = build(model, calib, norm_gain=4, prob_max=2047)
+    assert today.digest() == same.digest() and other.digest() != today.digest()
+    assert torch.equal(today.forward(x)[0][today.output_name], same.forward(x)[0][same.output_name])
+    assert other.forward(x)[0][other.output_name].shape == today.forward(x)[0][today.output_name].shape

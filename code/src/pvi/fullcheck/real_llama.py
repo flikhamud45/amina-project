@@ -60,7 +60,7 @@ import torch
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn, requant_mul
 from .transformer import (
-    CONFIGS, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int, _rope,
+    CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int, _rope,
     build_decoder,
 )
 
@@ -133,6 +133,8 @@ class _Builder:
     """Like ``transformer._Builder``, but every tensor carries its real scale (``real_weights._RealBuilder``'s
     arithmetic for the weight ops, requantisations and residual adds, extended to RMSNorm, q/k norm, RoPE and
     SwiGLU)."""
+
+    prob_max = PROB_MAX     # the attention probabilities' scale (build_llama_from_hf(prob_max=...))
 
     def __init__(self, tokens: torch.Tensor, *, pct: float, norm_gain: float, smooth: float | None,
                  smooth_pct: float, pct_att: float, pct_glu: float, glu_exp: int = 0) -> None:
@@ -266,14 +268,19 @@ class _Builder:
         ``pct_att`` percentile of the raw ``P V`` to 127."""
         sq, sk, sv = self.scale[q], self.scale[k], self.scale[v]
         m_s = round((1 << SHIFT) * 16.0 * sq * sk / math.sqrt(dh))
-        raw = _attention(self.env[q], self.env[k], self.env[v], m_s, None, hq, hkv, dh)
-        s_raw = sv / 255.0       # 8-bit probabilities x int8 values (transformer._attention's P = 255; F2a's P_MAX)
+        P = self.prob_max
+        raw = _attention(self.env[q], self.env[k], self.env[v], m_s, None, hq, hkv, dh, P)
+        s_raw = sv / float(P)    # probabilities 0..P x int8 values (transformer.PROB_MAX = 255; F2a's P_MAX)
         top = _top(raw.abs().reshape(-1, raw.shape[-1]).double(), self.pct_att) * s_raw
         del raw
         s_att = max(top, 1e-12) / INT8_MAX
         m_o = round((1 << SHIFT) * s_raw / s_att)
-        return self.cheap("attn", [q, k, v], lambda a, b_, c, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh: _attention(
-            a, b_, c, ms, mo, H, Hkv, dh), s_att, "attention")
+        if P == PROB_MAX:        # the default scale: no extra constant, so the digest is today's
+            fn = lambda a, b_, c, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh: _attention(a, b_, c, ms, mo, H, Hkv, dh)  # noqa: E731
+        else:
+            fn = lambda a, b_, c, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh, P=P: _attention(  # noqa: E731
+                a, b_, c, ms, mo, H, Hkv, dh, P)
+        return self.cheap("attn", [q, k, v], fn, s_att, "attention")
 
     def swiglu(self, gate, up):
         """``silu(gate) * up``: the SiLU table from the gate's real scale, then the product requantised from real
@@ -379,7 +386,7 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
                         smooth: float | None = None, smooth_pct: float = 99.9, pct_att: float = 100.0,
                         prune_last: bool = False, device=None, pct_glu: float | None = None, head_eq: bool = True,
                         residual_headroom: float = 1.25, n_layers: int | None = None, glu_exp: int = 0,
-                        free_calib: bool = True) -> tuple[IntGraph, dict]:
+                        free_calib: bool = True, prob_max: int = PROB_MAX) -> tuple[IntGraph, dict]:
     """An integer Llama / Qwen3 decoder with the checkpoint's real weights.
 
     ``calib_ids [B, T]`` (``B`` calibration windows) sets every activation scale. The knobs are public constants
@@ -429,6 +436,8 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
 
     B = _Builder(calib_ids.to(device or calib_ids.device), pct=pct, norm_gain=norm_gain, smooth=smooth,
                  smooth_pct=smooth_pct, pct_att=pct_att, pct_glu=pct_glu, glu_exp=glu_exp)
+    assert 1 <= prob_max <= 2047, prob_max
+    B.prob_max = prob_max
     embed_mult = max(1, round(float(emb.abs().max()) / INT8_MAX / s_res))
     # build_opt_from_hf's rounding: c rounds max|E| / (127 s_res) to the nearest integer, so for a ratio in
     # (k, k + 1/2), k >= 1, the largest entries clip at 127; ``embed_clip`` (> 1 then) records by how much
