@@ -678,6 +678,9 @@ def test_glu_smooth_is_exact_in_real_numbers_and_keeps_the_structure(kind):
     g = info["glu_smooth_g"]
     assert len(g) == 2 and all(t is not None and t.min() >= 1 / 256 and t.max() <= 256 for t in g)
     assert not all(torch.allclose(t, torch.ones_like(t)) for t in g)
+    for layer, gl in zip(model.model.layers, g):              # the box: the down projection's largest weight stays
+        down = layer.mlp.down_proj.weight.double()
+        assert float((down.abs().amax(0) * gl).max()) <= float(down.abs().max()) * (1 + 1e-9)
     shape = rl.config_of(model.config, "tiny")
     assert rl.matches_benchmark_graph(graph, shape) == []
     # the rescaling itself is exact in real numbers: apply it to a float copy and compare logits
@@ -695,3 +698,25 @@ def test_glu_smooth_is_exact_in_real_numbers_and_keeps_the_structure(kind):
     assert run_query(Prover(graph), v, x[:1, :16], seed=0)["accepted"]
     off, _ = rl.build_llama_from_hf(model, calib, **SMOOTH)
     assert off.digest() == base.digest() != graph.digest()           # off by default: the old graph
+
+
+def test_glu_smooth_box_keeps_both_weight_scales():
+    """``_glu_smooth``'s box on a dead channel (gate about 0, so its product is about 0 and the plain balance gives it
+    a factor near 0): up's largest row as quantised (input scale folded) and the down
+    projection's largest column do not grow, so no row takes over up's int8 scale (job 1012500's overflow)."""
+    gen = torch.Generator().manual_seed(5)
+    d, ff = 16, 24
+    h = torch.randint(-127, 128, (64, d), generator=gen).to(torch.int64)
+    s_in = torch.rand(d, generator=gen, dtype=torch.float64) * 1e-2 + 1e-3
+    wg = torch.randn(ff, d, generator=gen) * 0.1
+    wu = torch.randn(ff, d, generator=gen) * 0.1
+    wd = torch.randn(d, ff, generator=gen) * 0.1
+    wg[3] *= 1e-6                                          # channel 3: gate ~ 0, so silu(gate) up ~ 0
+    wg[7] *= 30                                            # channel 7: a large product
+    g = rl._glu_smooth(h, s_in, wg, wu, wd, 0.5)
+    u = (wu.double() * s_in[None, :]).abs().amax(1)
+    dc = wd.double().abs().amax(0)
+    assert float((u / g).max()) <= float(u.max()) * (1 + 1e-9)
+    assert float((dc * g).max()) <= float(dc.max()) * (1 + 1e-9)
+    assert abs(float(g[3]) - float(u[3] / u.max())) < 1e-12  # the box binds the dead channel...
+    assert float(g[7]) > 1                                 # ...and the balance still shrinks the large product

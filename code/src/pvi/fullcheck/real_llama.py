@@ -405,7 +405,11 @@ class _Builder:
         prod = (self.env[act] * self.env[up]).abs().reshape(-1, self.env[up].shape[-1]).double()
         if self.glu_exp:
             return self._swiglu_exp(act, up, prod, s_a, s_u)
-        s_p = max(_top(prod, self.pct_glu) * s_a * s_u, 1e-12) / INT8_MAX
+        top = _top(prod, self.pct_glu)
+        if top == 0:
+            raise ValueError(f"the SwiGLU product is 0 at its {self.pct_glu} percentile on the calibration rows "
+                             f"(the up projection's int8 rows vanish?); no requantisation multiplier exists")
+        s_p = max(top * s_a * s_u, 1e-12) / INT8_MAX
         del prod
         mm = torch.tensor(round((1 << SHIFT) * s_a * s_u / s_p), dtype=torch.int64)
         return self.cheap("glu", [act, up], lambda a, b_, m=mm: requant_mul(a, b_, m.to(a.device), SHIFT, -INT8_MAX,
@@ -457,20 +461,27 @@ def _glu_smooth(h_int: torch.Tensor, s_in, wg: torch.Tensor, wu: torch.Tensor, w
     through the up projection (the product ``silu(gate) up`` is linear in ``up``). With ``A_j`` the largest
     ``|silu(gate) up|`` of channel ``j`` on the calibration rows (from the norm's integer output ``h_int`` and its scale
     ``s_in``, a scalar or a per-channel vector) and ``W_j`` the largest ``|w_down[:, j]|``,
-    ``g_j = A_j^alpha / W_j^(1-alpha)``, divided by their geometric mean and clamped to ``[2^-8, 2^8]``. Dividing up's
-    row ``j`` by ``g_j`` and multiplying the down projection's column ``j`` by ``g_j`` leaves every real output unchanged;
-    the product's one int8 scale is then no longer set by its few largest channels."""
+    ``g_j = A_j^alpha / W_j^(1-alpha)``, divided by their geometric mean, then kept in ``[U_j / U_max, D_max / D_j]``
+    (``U_j`` the largest ``|up row j|`` as the integer input sees it, ``D_j = W_j``) and in ``[2^-8, 2^8]``. Dividing
+    up's row ``j`` by ``g_j`` and multiplying the down projection's column ``j`` by ``g_j`` leaves every real output
+    unchanged; the product's one int8 scale is then no longer set by its few largest channels. The box keeps both
+    weight matrices' per-tensor int8 scales from growing: without it one up row (a channel with a tiny product, so a
+    small ``g_j``) can grow up to 256 times, set up's scale and round the other rows to zero, and the product's
+    calibration percentile then is 0 (job 1012500's overflow)."""
     x = _rows(h_int.reshape(-1, h_int.shape[-1]), _ROWS_NORM).double().cpu()
     s = s_in.double().cpu()[None, :] if torch.is_tensor(s_in) else float(s_in)
     a = torch.nn.functional.silu(x @ (wg.double() * s).T) * (x @ (wu.double() * s).T)
     amax = a.abs().amax(0)
     del x, a
     wmax = w_down.double().abs().amax(0)
-    ok = (amax > 0) & (wmax > 0)
+    umax = (wu.double() * s).abs().amax(1)                  # up's rows as mat() quantises them (input scale folded)
+    ok = (amax > 0) & (wmax > 0) & (umax > 0)
     g = torch.ones_like(amax)
     g[ok] = amax[ok] ** alpha / wmax[ok] ** (1 - alpha)
     g = g / torch.exp(torch.log(g[ok]).mean()) if bool(ok.any()) else g
-    return g.clamp(1.0 / 256, 256.0)
+    lo = torch.where(ok, umax / umax.max(), torch.ones_like(g))           # <= 1: up's largest row stays the largest
+    hi = torch.where(ok, wmax.max() / wmax.clamp_min(1e-300), torch.ones_like(g))   # >= 1: likewise down's column
+    return torch.minimum(torch.maximum(g, lo), hi).clamp(1.0 / 256, 256.0)
 
 
 def _with_prefix(ids: torch.Tensor, prefix: torch.Tensor | None) -> torch.Tensor:
