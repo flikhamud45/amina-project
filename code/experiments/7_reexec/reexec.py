@@ -60,12 +60,22 @@ def _timed(fn, device: torch.device, reps: int) -> float:
 
 
 class FloatDecoder:
-    """A floating-point decoder with the shapes of ``cfg`` and ``n_layers`` blocks (random weights)."""
+    """A floating-point decoder with the shapes of ``cfg`` and ``n_layers`` blocks (random weights).
 
-    def __init__(self, cfg, n_layers: int, dtype: torch.dtype, device: torch.device, seed: int = 0):
+    Tokens ``[B, T]`` are one batched prefill (``B`` prompts of ``T`` tokens, no padding).  ``prune_last``
+    (opt-in, as ``build_decoder(..., prune_last=True)``): the last block computes k and v at every position
+    and q, the attention, its projection, the residuals and the MLP at the last position only, whose one
+    query attends to every key (no causal mask); only that position reaches the logits.  Its q and k/v
+    projections are ``F.linear`` on row slices of the fused weight, so a subclass that replaces ``_lin``
+    (:class:`DynInt8Decoder`) does not prune."""
+
+    def __init__(self, cfg, n_layers: int, dtype: torch.dtype, device: torch.device, seed: int = 0,
+                 prune_last: bool = False):
+        if prune_last and type(self)._lin is not FloatDecoder._lin:
+            raise ValueError("prune_last slices the fused q/k/v weight, which a replaced _lin would not see")
         g = torch.Generator().manual_seed(seed)
         d, f, dh, hq, hkv = cfg.d_model, cfg.d_ff, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads
-        self.cfg, self.dtype, self.device = cfg, dtype, device
+        self.cfg, self.dtype, self.device, self.prune_last = cfg, dtype, device, prune_last
 
         def w(n, k):
             return (torch.randn(n, k, generator=g) / k ** 0.5).to(dtype).to(device)
@@ -97,16 +107,23 @@ class FloatDecoder:
         dh, hq, hkv = cfg.head_dim, cfg.n_heads, cfg.n_kv_heads
         x = self.embed[tokens]                                    # [B, T, d]
         bsz, t, _ = x.shape
-        for blk in self.blocks:
-            qkv = self._lin(self._norm(x), blk["qkv"])
-            q, k, v = qkv.split([hq * dh, hkv * dh, hkv * dh], -1)
-            q = q.view(bsz, t, hq, dh).transpose(1, 2)
+        for i, blk in enumerate(self.blocks):
+            h = self._norm(x)
+            if self.prune_last and i == len(self.blocks) - 1:     # q at the last position, k and v at every one
+                w, b = blk["qkv"]
+                q = F.linear(h[:, -1:], w[:hq * dh], None if b is None else b[:hq * dh])
+                k, v = F.linear(h, w[hq * dh:], None if b is None else b[hq * dh:]).split([hkv * dh, hkv * dh], -1)
+                x, tq, causal = x[:, -1:], 1, False
+            else:
+                q, k, v = self._lin(h, blk["qkv"]).split([hq * dh, hkv * dh, hkv * dh], -1)
+                tq, causal = t, True
+            q = q.view(bsz, tq, hq, dh).transpose(1, 2)
             k = k.view(bsz, t, hkv, dh).transpose(1, 2)
             v = v.view(bsz, t, hkv, dh).transpose(1, 2)
             if hkv != hq:
                 k, v = k.repeat_interleave(hq // hkv, 1), v.repeat_interleave(hq // hkv, 1)
-            a = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-            x = x + self._lin(a.transpose(1, 2).reshape(bsz, t, hq * dh), blk["o"])
+            a = F.scaled_dot_product_attention(q, k, v, is_causal=causal)
+            x = x + self._lin(a.transpose(1, 2).reshape(bsz, tq, hq * dh), blk["o"])
             h = self._lin(self._norm(x), blk["up"])
             if cfg.mlp == "swiglu":
                 gate, up = h.chunk(2, -1)
