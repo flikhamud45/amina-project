@@ -649,12 +649,26 @@ mean cosine), best cell of each kind; "no prefix" is Section 9's:
 | TinyLlama_v1.1, 16 x 128 | bos | x3.19 [2.52, 4.20] (gain 4) | x4.97 [2.91, 8.79] (0.55) | x3.21 [2.06, 5.21] (0.45) |
 | Qwen3-1.7B-Base, 16 x 128 | auto = bos | x13.3 [10.4, 16.5] (gain 8) | x1.72 [1.60, 1.84], 0.612 (0.45) | x1.44 [1.35, 1.54], 0.642 (0.45) |
 | Qwen3-0.6B-Base, 2,048 (146 windows) | auto | x95.9 [90.4, 101.9] (gain 8) | x2.78 [2.72, 2.84], 0.557 (0.65) | x2.70 [2.64, 2.77], 0.561 (0.65) |
-| Qwen3-0.6B-Base, 2,048 | bos | as auto | x2.92 [2.86, 2.99] (0.45; 0.65 not reached) | (not reached) |
+| Qwen3-0.6B-Base, 2,048 | bos | as auto | as auto | as auto |
+| TinyLlama_v1.1, 2,048 | auto | x1.74 [1.71, 1.77] (gain 8) | **x1.56 [1.51, 1.62], 0.723 (0.65)** | x2.11 [2.02, 2.21], 0.642 (0.45) |
+| TinyLlama_v1.1, 2,048 | bos | x2.50 [2.46, 2.55] (gain 4) | x34.9 [33.0, 36.9] (0.65) | x10.9 [10.0, 12.0] (0.45) |
+| Qwen3-1.7B-Base, 2,048 | auto = bos | x26.5 [24.9, 28.4] (gain 4) | x1.72 [1.70, 1.74], 0.668 (0.55) | **x1.45 [1.44, 1.46], 0.708 (0.45)** |
 
 The fp32 references with the prefix: Qwen3-0.6B-Base 29.24 (16 x 128) and 12.71 (2,048); Qwen3-1.7B-Base 20.64;
 TinyLlama 13.78 with `auto` and 169.2 with `bos` alone. The last is not plausible for a 1.1B model on WikiText-2
 and is not explained yet (the same code gives 13.78 with `[\n, <s>]`); the `bos` row of TinyLlama is therefore not
-used. Job 1009797 was still running TinyLlama and Qwen3-1.7B at 2,048 tokens when these were read.
+used. At 2,048 tokens: Qwen3-1.7B-Base 9.42, TinyLlama 7.70 (`auto`) and 9.22 (`bos`). Job 1009797 completed every
+cell except Qwen3-1.7B's `bos` repeat at 2,048 tokens, which was cancelled (12 Oct): Qwen3's `bos` prefix is its
+`auto` prefix (the same token), and the 0.6B rows show the two runs give identical numbers. In the 2,048-token rows
+the third number is the top-1 agreement, as in the others.
+
+**At 2,048 tokens TinyLlama is much worse than at 128** (x1.56 against x1.15, smoothed, alpha 0.65), and two trends
+differ from the short windows: the ratio falls steadily with alpha (x1.87 / x1.78 / x1.56 at 0.45 / 0.55 / 0.65), so
+the best alpha may lie above the ladder, and the per-token exponent makes it worse (x2.11-2.46), which the 128-token
+rows did not show (x1.18). Qwen3-1.7B-Base (before `qk_balance`) is the same at both lengths (x1.45 against x1.44
+with the exponent). For F2b-L the TinyLlama target (x1.15) is met at 16 x 128 and missed at 2,048 tokens; the
+plan's kill rule (Sun 25 Oct) does not name the length; the proposal is to decide on the 2,048-token number, the
+protocol of every OPT row (F2a) [team decision].
 
 Reading. The prefix turns Qwen3 from collapse (x72) into a damaged model (x2.1, and x1.44 for Qwen3-1.7B with the
 per-token exponent), and brings TinyLlama to x1.15, the plan's TinyLlama target, with the smoothed graph and no

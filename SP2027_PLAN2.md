@@ -476,7 +476,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - lead quality with OPT;
     - label the Qwen cost rows "shape only".
 
-- **F2b-L [TODO] should (rank 6): Llama on F2b-Q's builder.** The per-token exponent (the draft's part 1) is now inside F2b-Q.
+- **F2b-L [WIP] should (rank 6): Llama on F2b-Q's builder.** The per-token exponent (the draft's part 1) is now inside F2b-Q.
+  - **Status (12 Oct).** TinyLlama_v1.1 with the prefix (`auto` = `\n <s>`; job 1009797): x1.15 [1.10, 1.24] at 16 x 128 (target met) but x1.56 [1.51, 1.62] at 2,048 tokens (smoothed, alpha 0.65; the ratio still falls with alpha; the per-token exponent hurts, x2.11). Next: alpha 0.75 / 0.85 and `glu_smooth` on TinyLlama at 2,048 (after the glu_smooth fix, job 1012656's traceback). Llama-2-7B still needs the licence [USER]. F2b-Q doc Sec. 12.6.
   - **What.**
     1. TinyLlama-1.1B runs in week 1 beside Qwen3-0.6B (F2b-Q's ladder), so its signal arrives by Sun 18.
     2. Llama-2-7B on the full test set at 2,048 tokens on the 2080 Ti (6.7 GB).
