@@ -1097,7 +1097,27 @@ large-product channel still gets `g > 1`) and the down-column bound in the exact
 `glu_exp` 8, at 16 x 128 with the prefix on Qwen3-0.6B, Qwen3-1.7B (smoothing alpha 0.45) and TinyLlama (0.65);
 `tl2k`: TinyLlama at 2,048 tokens, smoothing alpha 0.65 / 0.75 / 0.85, with and without `glu_smooth` 0.3 / 0.5;
 `q17k`: Qwen3-1.7B at 2,048 tokens with `qk_balance` (Sec. 12.6's 2,048-token rows predate it): smooth, smooth-exp8
-and `glu_smooth` 0.5 at alpha 0.45. [CLUSTER]
+and `glu_smooth` 0.5 at alpha 0.45.
+
+**Qwen3-1.7B-Base at 2,048 tokens, with the prefix and `qk_balance` (job 1012677, s-004, git 207b798;** full WikiText-2
+test set, reference 9.418, smoothing alpha 0.45; ratio to the fp32 reference with its 95% bootstrap interval, top-1
+agreement):
+
+| Cell | ratio | top-1 | before `qk_balance` (Sec. 12.6) |
+|---|---|---:|---|
+| smooth | x1.455 [1.442, 1.468] | 0.701 | x1.727 |
+| smooth-exp8 (per-token exponent at the SwiGLU product) | x1.243 [1.237, 1.250] | 0.754 | x1.449 |
+| smooth-glus0.5 | x1.456 [1.435, 1.477] | 0.712 | |
+| **smooth-glus0.5-exp8** | **x1.206 [1.200, 1.211]** | **0.773** | |
+
+* The balance pays at 2,048 tokens as at 128 (x1.73 -> x1.46 smoothed; x1.45 -> x1.24 with the exponent).
+* `glu_smooth` alone changes nothing (x1.455 -> x1.456), but on top of the per-token exponent it removes another
+  quarter of the excess (x1.243 -> x1.206). A plausible reading, not tested: with the exponent each token's product already has its own scale, and
+  balancing the channels then spends those levels better. Without the exponent the product's static scale is set
+  by the few tokens with massive values, and rebalancing the channels does not change that.
+* Best Qwen3-1.7B so far: **x1.206 at 2,048 tokens**, against the plan's x1.10 for Qwen3-4B (kill Fri 23 Oct). The
+  same recipe on Qwen3-4B-Base at 2,048 tokens runs as job 1013018; the `glus2` ladder (job 1012675) gives the
+  alpha of `glu_smooth` at 128 tokens.
 
 ### 13.8 Limitations and open issues
 

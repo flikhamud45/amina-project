@@ -477,6 +477,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - label the Qwen cost rows "shape only".
 
 - (F2b-Q, 12 Oct) `glu_smooth`'s first run (job 1012500) overflowed in `swiglu` on both Qwen3 models: up's int8 rows vanished after one dead channel's row grew 256x. Fixed in 207b798 (a box that keeps both weight matrices' scales; an explicit error for a zero product percentile); rerun with TinyLlama and the 2,048-token cells: jobs 1012675-7. F2b-Q doc Sec. 13.7a.
+- (F2b-Q, 12 Oct) **Qwen3-1.7B at 2,048 tokens with prefix + balance (job 1012677):** smooth x1.455, smooth-exp8 x1.243, glus0.5 alone x1.456, **glus0.5 + exp8 x1.206 [1.200, 1.211]** (top-1 0.77); before the balance x1.73 / x1.45. Qwen3-4B with this recipe: job 1013018.
 - **F2b-L [WIP] should (rank 6): Llama on F2b-Q's builder.** The per-token exponent (the draft's part 1) is now inside F2b-Q.
   - **Status (12 Oct).** TinyLlama_v1.1 with the prefix (`auto` = `\n <s>`; job 1009797): x1.15 [1.10, 1.24] at 16 x 128 (target met) but x1.56 [1.51, 1.62] at 2,048 tokens (smoothed, alpha 0.65; the ratio still falls with alpha; the per-token exponent hurts, x2.11). Next: alpha 0.75 / 0.85 and `glu_smooth` on TinyLlama at 2,048 (after the glu_smooth fix, job 1012656's traceback). Llama-2-7B still needs the licence [USER]. F2b-Q doc Sec. 12.6.
   - **What.**
