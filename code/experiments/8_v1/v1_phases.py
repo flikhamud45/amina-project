@@ -12,7 +12,10 @@ CPU, in mode Kpre or C (``--policy``), Fiat--Shamir with ``--fs``.  After one wa
 queries (``torch.randint`` prompts, seeds 100 ..) each run once under every ``PVI_V1_BUCKETS`` value of ``--paths``
 (``0`` today's code, ``1`` the table products, ``scatter`` the buckets), interleaved, so every path sees the same
 queries and the same machine state.  Within ``verify_final`` the script also times its parts (``final_xbar``:
-``_xbar``; ``final_kpre_y``; ``final_check``: ``_final_ok``) by wrapping the module's functions.  One JSON line per
+``_xbar``, of which ``final_xbar_new`` in ``buckets.xbar``; ``final_points``: the eq tables; ``final_kpre_y``;
+``final_check``: ``_final_ok``, of which ``final_lw_new`` in ``buckets.lw_times``, ``final_lw_old`` in today's
+``_lw_e_old`` and ``final_dot`` in the inner products) and counts the ops that fall back from ``buckets.lw_times``
+(``n_lw_new_fallback``) and that run ``_lw_e_old`` (``n_lw_old``), by wrapping the modules' functions.  One JSON line per
 path: the median of every phase, the verifier's total (the ``verify_*`` phases) and the accepted count; then a
 table.  Every query must be accepted (else the exit status is 1).
 
@@ -51,6 +54,18 @@ def _wrap(module, name: str, key: str, acc: dict) -> None:
         finally:
             acc[key] = acc.get(key, 0.0) + time.perf_counter() - t0
     setattr(module, name, timed)
+
+
+def _count(module, name: str, key: str, acc: dict, pred) -> None:
+    """Count the calls of ``module.name`` whose result satisfies ``pred`` into ``acc[key]``."""
+    fn = getattr(module, name)
+
+    def counted(*args, **kw):
+        out = fn(*args, **kw)
+        if pred(out):
+            acc[key] = acc.get(key, 0) + 1
+        return out
+    setattr(module, name, counted)
 
 
 LLAMA7_REQUANT, LLAMA7_RESIDUAL, LLAMA7_XBAR = 3 * 4096 + 2 * 11008, 2 * 4096, 4096 * 3 + 11008
@@ -179,6 +194,14 @@ def main() -> int:
     _wrap(cp, "_xbar", "final_xbar", parts)
     _wrap(cp, "_kpre_y_ok", "final_kpre_y", parts)
     _wrap(cp, "_final_ok", "final_check", parts)
+    # finer: inside _xbar and _final_ok (V-V1N's per-op profile)
+    _wrap(cp, "_points", "final_points", parts)
+    _wrap(buckets, "xbar", "final_xbar_new", parts)
+    _wrap(buckets, "lw_times", "final_lw_new", parts)
+    _wrap(cp, "_lw_e_old", "final_lw_old", parts)
+    _wrap(cp, "_dot", "final_dot", parts)
+    _count(buckets, "lw_times", "n_lw_new_fallback", parts, lambda r: r is None)
+    _count(cp, "_lw_e_old", "n_lw_old", parts, lambda r: True)
     saved = os.environ.get(buckets.ENV)
 
     def query(path: str, x: torch.Tensor) -> dict:
@@ -218,7 +241,9 @@ def main() -> int:
                           "queries": len(rs), "accepted": accepted, "cut": rs[0]["cut"], "timings": med,
                           "verify_s": verify}), flush=True)
     names = ["verify_decode", "verify_derive", "verify_cut_m1", "verify_gkr", "verify_products", "verify_final",
-             "final_xbar", "final_kpre_y", "final_check", "verify_logup", "verify_columns", "verify_total"]
+             "final_xbar", "final_xbar_new", "final_points", "final_kpre_y", "final_check", "final_lw_new",
+             "final_lw_old", "final_dot", "n_lw_new_fallback", "n_lw_old", "verify_logup", "verify_columns",
+             "verify_total"]
     print(f"\n{'phase (s, median)':22s}" + "".join(f"{'path ' + p:>14s}" for p in args.paths))
     for k in names:
         if any(k in r for r in rows.values()):
