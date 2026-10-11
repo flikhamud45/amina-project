@@ -1044,6 +1044,19 @@ and the Qwen cost rows labelled "shape only"): the best Qwen3 graphs are x1.33 (
 (prefix and balance) are needed; what remains is spread over the SwiGLU products of every block. Qwen3-4B has not
 been run with the balance.
 
+### 13.7a The next lever: the SwiGLU product's balance (`glu_smooth`, commit f45debd)
+
+The attribution puts the largest remaining own error at the SwiGLU product in most blocks, and the per-token
+exponent (`glu_exp`) helped Qwen3-1.7B (x1.51 -> x1.33) but hardly Qwen3-0.6B (x1.59 -> x1.55). The product has one
+static int8 scale, set by its few largest channels. `glu_smooth` (opt-in, an alpha) applies SmoothQuant's balance to
+the down projection's input and folds it through the up projection, since `silu(gate) up` is linear in `up`: up's
+row `j` is divided by `g_j = A_j^alpha / W_j^(1-alpha)` and the down projection's column `j` multiplied by it, with
+`A_j` the largest `|silu(gate) up|` of channel `j` on the calibration rows (from the norm's integer output) and `W_j`
+the largest `|w_down[:, j]|` (normalised to geometric mean 1, clamped to `[2^-8, 2^8]`). Every real output is
+unchanged; constants only; the structure diff stays empty; off by default (no digest changes). Tests: the rescaled
+float model gives the checkpoint's logits, the graph tracks it and v0 accepts it. Job 1012500 measures alpha 0.3,
+0.5 and 0.7 (with and without `glu_exp` 8) on Qwen3-0.6B and Qwen3-1.7B with the prefix at 16 x 128: [CLUSTER].
+
 ### 13.8 Limitations and open issues
 
 * **The reproduction uses random weights.** The real gains are real, the q/k projections are not: real raw q/k
