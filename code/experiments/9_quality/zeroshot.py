@@ -209,6 +209,56 @@ def paired_ci(a: list[int], b: list[int], reps: int = 2000) -> list[float]:
 
 # ------------------------------------------------------------------ models
 
+def split_opt(model, devices: list[str]):
+    """An OPT checkpoint spread over several devices in order (embeddings on the first, the blocks in equal runs,
+    the final norm and the LM head on the last), for a reference that one GPU cannot hold (OPT-6.7B in fp16 on two
+    11 GB cards). Forward pre-hooks move every tensor argument to the module's device; the LM head gets its own copy
+    of the tied embedding. The arithmetic is the one-device model's (each op runs on one device)."""
+    import math
+    dec = model.model.decoder
+    head = model.lm_head
+    head.weight = torch.nn.Parameter(head.weight.detach().clone())          # untie: the head moves to another device
+
+    def mover(dev):
+        def hook(mod, args, kwargs):
+            return (tuple(a.to(dev) if torch.is_tensor(a) else a for a in args),
+                    {k: (v.to(dev) if torch.is_tensor(v) else v) for k, v in kwargs.items()})
+        return hook
+    first, last = devices[0], devices[-1]
+    for part in (dec.embed_tokens, dec.embed_positions, getattr(dec, "project_in", None)):
+        if part is not None:
+            part.to(first)
+    per = math.ceil(len(dec.layers) / len(devices))
+    for i, layer in enumerate(dec.layers):
+        dev = devices[min(i // per, len(devices) - 1)]
+        layer.to(dev)
+        layer.register_forward_pre_hook(mover(dev), with_kwargs=True)
+    for part in (getattr(dec, "final_layer_norm", None), getattr(dec, "project_out", None), head):
+        if part is not None:
+            part.to(last)
+            part.register_forward_pre_hook(mover(last), with_kwargs=True)
+    return model
+
+
+def pair(ref_path: str, int_path: str) -> None:
+    """Paired differences between a reference-only run (``--no-int``) and an integer-only run (``--no-ref``) on the
+    same documents: one JSON line per task, as the integer rows of a joint run."""
+    refs = {r["task"]: r for r in map(json.loads, open(ref_path, encoding="utf-8")) if r["variant"] == "ref"}
+    for got in map(json.loads, open(int_path, encoding="utf-8")):
+        if got["variant"] != "int" or got["task"] not in refs:
+            continue
+        ref = refs[got["task"]]
+        assert ref["n"] == got["n"], got["task"]
+        row = {"task": got["task"], "n": got["n"], "acc_ref": ref["acc"], "acc_int": got["acc"],
+               "diff_acc": got["acc"] - ref["acc"], "diff_acc_ci95": paired_ci(got["correct"], ref["correct"]),
+               "same_pick": sum(int(a == b) for a, b in zip(got["pick"], ref["pick"])) / got["n"]}
+        if "acc_norm" in got:
+            row.update(acc_norm_ref=ref["acc_norm"], acc_norm_int=got["acc_norm"],
+                       diff_acc_norm=got["acc_norm"] - ref["acc_norm"],
+                       diff_acc_norm_ci95=paired_ci(got["correct_norm"], ref["correct_norm"]))
+        print(json.dumps(row), flush=True)
+
+
 def float_logits_fn(model, device: str):
     def fn(ids):
         with torch.no_grad():
@@ -296,7 +346,12 @@ def main() -> None:
     ap.add_argument("--tag", default="")
     ap.add_argument("--out", default=None)
     ap.add_argument("--check", action="store_true", help="padding exactness and the integer logits, then stop")
+    ap.add_argument("--ref-gpus", type=int, default=1, help="spread the reference over this many GPUs (split_opt)")
+    ap.add_argument("--pair", nargs=2, metavar=("REF_JSONL", "INT_JSONL"), default=None,
+                    help="paired differences of a --no-int run and a --no-ref run, then stop")
     args = ap.parse_args()
+    if args.pair:
+        return pair(*args.pair)
     args.ref_device = args.ref_device or args.device
     assert not (args.no_int and args.no_ref), "--no-int and --no-ref leave nothing to run"
     assert not (args.check and (args.no_int or args.no_ref)), "--check needs both models"
@@ -328,7 +383,11 @@ def main() -> None:
     if not args.no_ref:                        # after the build, which reads the fp32 model
         dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[
             args.ref_dtype or ("fp16" if args.ref_device.startswith("cuda") else "fp32")]
-        logits_ref = float_logits_fn(model.to(dtype=dtype, device=args.ref_device), args.ref_device)
+        if args.ref_gpus > 1:
+            devs = [f"cuda:{i}" for i in range(args.ref_gpus)]
+            logits_ref = float_logits_fn(split_opt(model.to(dtype=dtype), devs), devs[0])
+        else:
+            logits_ref = float_logits_fn(model.to(dtype=dtype, device=args.ref_device), args.ref_device)
         head["ref_dtype"] = str(dtype).replace("torch.", "")
     else:
         del model

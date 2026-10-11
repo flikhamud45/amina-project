@@ -139,3 +139,28 @@ def test_right_padding_is_exact_on_the_integer_graph(builder):
     with torch.no_grad():
         ref = zs.score(enc, zs.float_logits_fn(model, "cpu"), budget=128, pad_id=1)
     assert all(abs(a[0] - b[0]) < 2.0 for a, b in zip(batched, ref))     # the integer model tracks the float one
+
+
+def test_split_opt_gives_the_one_device_logits():
+    """``split_opt`` over two devices (here both the CPU) gives the unsplit model's logits; the head is untied."""
+    import copy
+    model = _tiny_opt()
+    ids = torch.randint(3, 97, (2, 12), generator=torch.Generator().manual_seed(2))
+    with torch.no_grad():
+        want = model(ids).logits
+        split = zs.split_opt(copy.deepcopy(model), ["cpu", "cpu"])
+        got = split(ids).logits
+    assert torch.equal(got, want)
+    assert split.lm_head.weight.data_ptr() != split.model.decoder.embed_tokens.weight.data_ptr()
+
+
+def test_pair_matches_a_joint_run(tmp_path, capsys):
+    rows_ref = {"task": "piqa", "variant": "ref", "n": 3, "acc": 2 / 3, "correct": [1, 1, 0], "pick": [0, 1, 1],
+                "acc_norm": 1 / 3, "correct_norm": [1, 0, 0]}
+    rows_int = {"task": "piqa", "variant": "int", "n": 3, "acc": 1 / 3, "correct": [1, 0, 0], "pick": [0, 0, 1],
+                "acc_norm": 1 / 3, "correct_norm": [1, 0, 0]}
+    (tmp_path / "r.jsonl").write_text(__import__("json").dumps(rows_ref) + "\n")
+    (tmp_path / "i.jsonl").write_text(__import__("json").dumps(rows_int) + "\n")
+    zs.pair(str(tmp_path / "r.jsonl"), str(tmp_path / "i.jsonl"))
+    row = __import__("json").loads(capsys.readouterr().out.strip())
+    assert abs(row["diff_acc"] + 1 / 3) < 1e-12 and row["same_pick"] == 2 / 3 and row["diff_acc_norm"] == 0
