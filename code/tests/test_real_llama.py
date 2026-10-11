@@ -21,11 +21,20 @@ Hence: mean logit cosine >= 0.98, minimum >= 0.9, top-1 >= 0.75 and every block'
 smoothed graph; the scalar-gain graph (gain 4, no clipping) measured 0.960 - 0.970 mean, so it is held to a mean
 >= 0.94. A Qwen3 q/k-norm gain moved to the other half of its RoPE pair measured a mean of 0.684 - 0.867 and top-1
 0.344 - 0.492 (the same two seeds), below the same thresholds.
+
+The opt-in fixed prefix (``prefix_tokens``) is held to the same thresholds against HF on ``[prefix | x]`` (measured,
+smoothed, two seeds per family, prefixes (5,) and (5, 17): mean 0.992 - 0.996, minimum 0.907 - 0.986, top-1 0.828 -
+0.961, block minimum 0.935 - 0.986; scalar mean 0.960 - 0.974), and to an exact equality: the prefixed graph on x is,
+integer for integer, the same ops on [prefix | x] with RoPE at the joint positions and the prefix's keys and values
+replaced by the graph's constants (``_glued``).
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
+import inspect
+import types
 
 import pytest
 import torch
@@ -33,10 +42,12 @@ import torch
 transformers = pytest.importorskip("transformers")
 
 from pvi.fullcheck import real_llama as rl                                 # noqa: E402
-from pvi.fullcheck.graph import CheapOp, MatOp                              # noqa: E402
-from pvi.fullcheck.transformer import CONFIGS, _rope, decoder_param_count   # noqa: E402
+from pvi.fullcheck import transformer as tr                                 # noqa: E402
+from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp                    # noqa: E402
+from pvi.fullcheck.transformer import CONFIGS, _attention, _rope, decoder_param_count   # noqa: E402
 
 SMOOTH = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
+PREFIX = (5, 17)
 _CACHE: dict = {}
 
 
@@ -60,22 +71,26 @@ def _tiny(kind: str, seed: int = 0):
     return model.eval()
 
 
-def _setup(kind: str, recipe: str = "smooth", prune: bool = False):
-    key = (kind, recipe, prune)
+def _setup(kind: str, recipe: str = "smooth", prune: bool = False, prefix: tuple | None = None):
+    key = (kind, recipe, prune, prefix)
     if key not in _CACHE:
         model = _CACHE.setdefault(kind, _tiny(kind))
         g = torch.Generator().manual_seed(1)
         calib = torch.randint(0, 97, (2, 32), generator=g)
         x = torch.randint(0, 97, (4, 32), generator=g)
         kw = SMOOTH if recipe == "smooth" else dict(norm_gain=4.0)
-        graph, info = rl.build_llama_from_hf(model, calib, prune_last=prune, **kw)
+        graph, info = rl.build_llama_from_hf(model, calib, prune_last=prune, prefix_tokens=prefix, **kw)
         _CACHE[key] = model, graph, info, calib, x
     return _CACHE[key]
 
 
-def _scores(graph, info, model, x):
+def _scores(graph, info, model, x, prefix: tuple | None = None):
+    """Logit cosine (mean, min over positions) and top-1 agreement of the graph against the HF model, which runs on
+    ``[prefix | x]`` (the prefix's positions dropped) when the graph was built with that prefix."""
+    n = len(prefix or ())
     with torch.no_grad():
-        ref = model(x).logits.double()
+        ref = model(torch.cat([torch.tensor([prefix or ()], dtype=torch.int64).expand(x.shape[0], -1), x], 1)
+                    ).logits[:, n:].double()
     got = rl.real_logits(graph, info, x, all_positions=True)
     cos = torch.nn.functional.cosine_similarity(got, ref, dim=-1)
     top1 = float((got.argmax(-1) == ref.argmax(-1)).double().mean())
@@ -371,3 +386,280 @@ def test_v1_accepts_a_real_graph_and_rejects_a_tamper(kind):
                 z.view(-1)[0] -= 3
             return z
         assert not cp.run_cut_query(prover, v, x[:1, :16], seed=1, forward_kwargs={"tamper": tamper})["accepted"]
+
+
+# ------------------------------------------------------------------ the opt-in fixed prefix (prefix_tokens)
+
+def _defaults(fn) -> dict:
+    """The default arguments of a cheap op's function by name: its public constants."""
+    return {n: p.default for n, p in inspect.signature(fn).parameters.items() if p.default is not p.empty}
+
+
+def _attention_ops(graph) -> list:
+    return [o for o in graph.ops if isinstance(o, CheapOp) and o.note == "attention"]
+
+
+def _glued(graph: IntGraph) -> IntGraph:
+    """A prefixed graph's ops, weights and constants as a graph of ``[prefix | query]``: RoPE at the positions of
+    the joint sequence (no offset), and plain causal attention over the joint sequence (``transformer._attention``)
+    whose first ``P`` keys and values are replaced by the prefix's int8 constants. The prefix positions' other values
+    are computed from the prefix tokens and only feed the keys and values that are replaced."""
+    n = graph.meta["prefix_len"]
+    ops = []
+    for op in graph.ops:
+        if isinstance(op, CheapOp) and op.note == "rope":
+            d = _defaults(op.fn)
+            assert d["n"] == n
+            if len(op.inputs) == 2:          # a pruned q: the last positions of the joint sequence
+                fn = lambda a, x, H=d["H"], dh=d["dh"], th=d["th"]: _rope(               # noqa: E731
+                    a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1]).reshape(a.shape)
+            else:
+                fn = lambda a, H=d["H"], dh=d["dh"], th=d["th"]: _rope(                   # noqa: E731
+                    a.reshape(*a.shape[:-1], H, dh), th).reshape(a.shape)
+            op = dataclasses.replace(op, fn=fn)
+        elif isinstance(op, CheapOp) and op.note == "attention":
+            def fn(q, k, v, d=_defaults(op.fn)):
+                kp, vp = (c.to(torch.int64).expand(k.shape[0], -1, -1) for c in (d["kp"], d["vp"]))
+                return _attention(q, torch.cat([kp, k[:, n:]], 1), torch.cat([vp, v[:, n:]], 1), d["ms"], d["mo"],
+                                  d["H"], d["Hkv"], d["dh"], d["P"])
+            op = dataclasses.replace(op, fn=fn)
+        ops.append(op)
+    return IntGraph(ops, graph.input_name, graph.output_name)
+
+
+def _joint(prefix, x: torch.Tensor) -> torch.Tensor:
+    return torch.cat([torch.tensor([prefix], dtype=torch.int64).expand(x.shape[0], -1), x], 1)
+
+
+def _with_constant(graph: IntGraph, layer: int, name: str, fix) -> IntGraph:
+    """``graph`` with the constant ``name`` (a default argument) of its ``layer``-th attention op replaced by
+    ``fix(constant)``: the same code, name and other constants."""
+    ops, seen = [], 0
+    for op in graph.ops:
+        if isinstance(op, CheapOp) and op.note == "attention":
+            if seen == layer:
+                f = op.fn
+                names = list(inspect.signature(f).parameters)
+                defaults = list(f.__defaults__)
+                i = names.index(name) - (len(names) - len(defaults))
+                defaults[i] = fix(defaults[i])
+                new = types.FunctionType(f.__code__, f.__globals__, f.__name__, tuple(defaults), f.__closure__)
+                new.__qualname__ = f.__qualname__
+                op = dataclasses.replace(op, fn=new)
+            seen += 1
+        ops.append(op)
+    return IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta))
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+@pytest.mark.parametrize("prune", [False, True])
+def test_a_prefixed_graph_is_the_benchmark_graph_of_its_shape(kind, prune):
+    model, graph, info, _, x = _setup(kind, prune=prune, prefix=PREFIX)
+    _, plain, _, _, _ = _setup(kind, prune=prune)
+    assert graph.meta == {"prefix_len": 2, "prefix_tokens": [5, 17]} and plain.meta == {}
+    assert info["prefix_tokens"] == [5, 17] and info["prefix_len"] == 2
+    assert rl.matches_benchmark_graph(graph, rl.config_of(model.config, "tiny"), prune_last=prune) == []
+    # the prefix adds no claim: the weight ops and their claim columns are the graph's without a prefix
+    assert [(o.name, o.n_rows, o.n_in, o.layout) for o in graph.mat_ops] == \
+        [(o.name, o.n_rows, o.n_in, o.layout) for o in plain.mat_ops]
+    for t in (1, 9, x.shape[1]):
+        assert graph.claim_columns(x[:, :t]) == plain.claim_columns(x[:, :t])
+    # per layer, two int8 constants [1, P, Hkv head_dim], the default arguments of the attention op
+    hkv_dh = model.config.num_key_value_heads * 16
+    for op, (kp, vp) in zip(_attention_ops(graph), info["prefix_kv"]):
+        d = _defaults(op.fn)
+        assert d["kp"] is kp and d["vp"] is vp and kp.dtype == vp.dtype == torch.int8
+        assert kp.shape == vp.shape == (1, 2, hkv_dh)
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+@pytest.mark.parametrize("prefix", [(5,), PREFIX])
+def test_the_prefixed_forward_is_the_graph_on_prefix_and_query_with_constant_keys_and_values(kind, prefix):
+    # The exact equality: for a query x [B, T], the prefixed graph's integers on x -- every weight op's claims, the
+    # residual stream at every block boundary and the logits at every position -- equal those of _glued(graph) on
+    # [prefix | x] at x's positions P .. P+T-1: the same ops and constants on the joint sequence, RoPE at its own
+    # positions, plain causal attention whose first P keys and values are the graph's int8 constants.
+    _, graph, info, _, x = _setup(kind, prefix=prefix)
+    n, b = len(prefix), x.shape[0]
+    joint = _joint(prefix, x)
+    glued = _glued(graph)
+    _, claims = graph.forward(x)
+    _, claims_j = glued.forward(joint)
+    for op in graph.mat_ops:                     # columns (window, position); the LM head's: the last position
+        mine = claims[op.name].reshape(op.n_rows, b, -1)
+        assert torch.equal(mine, claims_j[op.name].reshape(op.n_rows, b, -1)[:, :, -mine.shape[2]:]), op.name
+    ours, theirs = rl.residual_states(graph, info, x), rl.residual_states(glued, info, joint)
+    assert len(ours) == 3 and all(torch.equal(a, c[:, n:]) for a, c in zip(ours, theirs))
+    flat = torch.cat([z for _, z in rl.lean_logits(graph, x)], 1)
+    assert torch.equal(flat, torch.cat([z for _, z in rl.lean_logits(glued, joint)], 1)[:, n:])
+    # the check can fail: the query's RoPE at the positions 0 .. T-1 (no offset) gives other integers
+    shifted = IntGraph([g if isinstance(o, CheapOp) and o.note == "rope" else o for o, g in zip(graph.ops, glued.ops)],
+                       graph.input_name, graph.output_name)
+    assert not torch.equal(flat, torch.cat([z for _, z in rl.lean_logits(shifted, x)], 1))
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+def test_prune_last_with_a_prefix_gives_the_unpruned_last_position_logits(kind):
+    _, graph, _, _, x = _setup(kind, prefix=PREFIX)
+    _, pruned, _, _, _ = _setup(kind, prune=True, prefix=PREFIX)
+    for t in (x.shape[1], 9):
+        a, _ = graph.forward(x[:, :t])
+        b, claims = pruned.forward(x[:, :t])
+        assert torch.equal(a[graph.output_name], b[pruned.output_name])
+    assert min(c.shape[1] for c in claims.values()) == x.shape[0]
+    # and they are the glued graph's on [prefix | x] (the pruned q's RoPE at the last joint position)
+    j, _ = _glued(pruned).forward(_joint(PREFIX, x))
+    assert torch.equal(pruned.forward(x)[0][pruned.output_name], j[pruned.output_name])
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+def test_a_prefixed_graph_is_deterministic_and_independent_of_the_attention_path(kind, monkeypatch):
+    model, graph, info, calib, x = _setup(kind, prefix=PREFIX)
+    env1, claims1 = graph.forward(x)
+    env2, claims2 = graph.forward(x)
+    assert torch.equal(env1[graph.output_name], env2[graph.output_name])
+    assert all(torch.equal(claims1[k], claims2[k]) for k in claims1)
+    again, info2 = rl.build_llama_from_hf(model, calib, prefix_tokens=PREFIX, **SMOOTH)
+    assert again.digest() == graph.digest() and again.meta == graph.meta
+    assert all(torch.equal(a, c) for p, q in zip(info["prefix_kv"], info2["prefix_kv"]) for a, c in zip(p, q))
+    # the integer int64 attention path (int64 scores and gaps, last-rows causal mask) gives the same integers as the
+    # default int32 path; the GPU's integers are compared with the CPU's by ppl_llama.py --check --prefix
+    monkeypatch.setattr(tr, "_int32_scores", lambda *a: False)
+    env3, claims3 = graph.forward(x)
+    assert torch.equal(env3[graph.output_name], env1[graph.output_name])
+    assert all(torch.equal(claims3[k], claims1[k]) for k in claims1)
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+def test_the_prefix_constants_are_the_checkpoints_keys_and_values_on_the_layers_scales(kind):
+    # the constants are HF's KV cache of the prefix alone (keys after the k norm and RoPE at the positions 0..P-1)
+    # rounded on (s_k, s_v); and (s_k, s_v) are the real scales of the k and v the graph computes for the query:
+    # dequantised, those match HF's keys and values of [prefix | x] at the query's positions in size (norm ratio
+    # 0.990 - 1.017 measured, two seeds per family) and direction (relative error 0.018 - 0.094)
+    model, graph, info, _, x = _setup(kind, prefix=PREFIX)
+    with torch.no_grad():
+        alone = model(torch.tensor([PREFIX]), use_cache=True).past_key_values
+        joint = model(_joint(PREFIX, x), use_cache=True).past_key_values
+    env, _ = graph.forward(x)
+    for i, (op, (kp, vp), (sk, sv)) in enumerate(zip(_attention_ops(graph), info["prefix_kv"], info["prefix_scales"])):
+        for c, real, s in ((kp, alone[i][0], sk), (vp, alone[i][1], sv)):
+            real = real.transpose(1, 2).reshape(c.shape).double()
+            assert torch.equal(c.to(torch.int64), (real / s).round().clamp(-127, 127).to(torch.int64))
+        for got, s, ref in ((env[op.inputs[1]], sk, joint[i][0]), (env[op.inputs[2]], sv, joint[i][1])):
+            ref = ref[:, :, len(PREFIX):].transpose(1, 2).reshape(got.shape).double()
+            real = got.double() * s
+            ratio, err = float(real.norm() / ref.norm()), float((real - ref).norm() / ref.norm())
+            assert 0.95 <= ratio <= 1.05 and err <= 0.15, (i, ratio, err)
+    assert all(max(c) < 1.2 for c in info["prefix_clip"])           # (a random model's prefix barely clips)
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+def test_prefixed_logits_and_blocks_track_the_float_model_on_prefix_and_query(kind):
+    # the thresholds of test_the_logits_and_every_block_track_the_float_model, against HF on [prefix | x]
+    model, graph, info, _, x = _setup(kind, prefix=PREFIX)
+    mean, low, top1 = _scores(graph, info, model, x, PREFIX)
+    assert mean >= 0.98 and low >= 0.9 and top1 >= 0.75, (mean, low, top1)
+    blocks = rl.block_cosines(rl.residual_states(graph, info, x), rl.hf_residual_states(model, x, prefix=PREFIX))
+    assert len(blocks) == 3 and min(b["min"] for b in blocks) >= 0.9, blocks
+    _, scalar, s_info, _, _ = _setup(kind, "scalar", prefix=PREFIX)
+    assert _scores(scalar, s_info, model, x, PREFIX)[0] >= 0.94
+
+
+def test_the_residual_scale_ignores_the_prefix_positions():
+    # a prefix token whose embedding is 40x larger (the windows lack it): the fp residual maximum behind s_res is the
+    # windows' own positions' (after the prefix), not the larger one at the prefix's position
+    model = copy.deepcopy(_setup("llama")[0])
+    calib = _setup("llama")[3]
+    tok = min(set(range(97)) - set(calib.reshape(-1).tolist()))
+    with torch.no_grad():
+        model.model.embed_tokens.weight[tok] *= 40
+    top, pre = rl._hidden_max(model, calib, torch.tensor([[tok]]))
+    states = [s for i in range(calib.shape[0]) for s in rl.hf_residual_states(model, calib[i:i + 1], prefix=(tok,))]
+    assert top == max(float(s.abs().max()) for s in states) and pre > 1.5 * top
+    _, info = rl.build_llama_from_hf(model, calib, prefix_tokens=(tok,), **SMOOTH)
+    assert info["residual_real_max"] == top * 1.25 and info["prefix_hidden_max"] == pre
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+def test_the_digest_binds_the_prefix_and_v0_rejects_a_prover_with_other_constants(kind):
+    from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for, run_query
+
+    model, graph, _, calib, x = _setup(kind, prefix=PREFIX)
+    _, plain, _, _, _ = _setup(kind)
+    other, _ = rl.build_llama_from_hf(model, calib, prefix_tokens=(5, 18), **SMOOTH)
+    swapped, _ = rl.build_llama_from_hf(model, calib, prefix_tokens=PREFIX[::-1], **SMOOTH)
+    assert len({graph.digest(), plain.digest(), other.digest(), swapped.digest()}) == 4
+    # the digest changes with one constant alone: layer 0's prefix keys (values) negated, the same function otherwise
+    assert _with_constant(graph, 0, "kp", lambda c: c).digest() == graph.digest()
+    params = params_for(20, len(graph.mat_ops))
+    coms = commit_graph(graph, params.rate)
+    v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+    assert run_query(Prover(graph, commitments=coms), v, x[:1, :16], seed=1)["accepted"]
+    for name in ("kp", "vp"):
+        tampered = _with_constant(graph, 0, name, lambda c: -c)
+        assert tampered.digest() != graph.digest()
+        # a prover that computes with other prefix constants (same weights, same commitments) is rejected: the
+        # verifier recomputes the attention with the graph's
+        assert not run_query(Prover(tampered, commitments=coms), v, x[:1, :16], seed=1)["accepted"]
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+@pytest.mark.parametrize("prune", [False, True])
+def test_v0_and_v1_accept_prefixed_real_graphs_and_reject_a_tamper(kind, prune):
+    from pvi.fullcheck import cut_protocol as cp
+    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+
+    _, graph, _, _, x = _setup(kind, prune=prune, prefix=PREFIX)
+    ids = x[:1, :16]
+    targets = (graph.mat_ops[1].name, graph.mat_ops[len(graph.mat_ops) // 2].name, graph.mat_ops[-1].name)
+
+    def tampers():
+        for target in targets:
+            def tamper(op, z, target=target):
+                if op.name == target:
+                    z = z.clone()
+                    z.view(-1)[0] -= 3
+                return z
+            yield {"tamper": tamper}
+
+    params = params_for(20, len(graph.mat_ops))
+    coms = commit_graph(graph, params.rate)
+    prover = Prover(graph, commitments=coms)
+    kpre = Verifier(graph.public(), params, "Kpre", weights={o.name: (o.weight, o.bias) for o in graph.mat_ops})
+    kpre.precompute(Challenger(seed=11))
+    for v in (Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()}), kpre):
+        assert all(run_query(prover, v, ids, seed=s)["accepted"] for s in range(2))
+        assert not any(run_query(prover, v, ids, seed=1, forward_kwargs=f)["accepted"] for f in tampers())
+    params = params_for(20, len(graph.mat_ops), cut=True)
+    coms = commit_graph(graph, params.rate)
+    prover = Prover(graph, commitments=coms)
+    v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+    out = cp.run_cut_query(prover, v, ids, seed=1)
+    assert out["accepted"], out["rejected_at"]
+    assert not any(cp.run_cut_query(prover, v, ids, seed=1, forward_kwargs=f)["accepted"] for f in tampers())
+
+
+def test_prefixquant_selects_the_frequent_outlier_tokens_then_the_bos():
+    # windows of 10 tokens, 3 blocks: the initial token is an outlier in every window from block 1 on, token 7 at
+    # its first occurrence (three windows), the BOS (1) once (never counted: it ends the prefix anyway), token 9 in
+    # one window of the last block. Outliers per window: block 0: 0, block 1: 2.0, block 2: 2.25 -> o = 3
+    g = torch.Generator().manual_seed(5)
+    ids = torch.randint(10, 50, (4, 10), generator=g)
+    ids[:3, 3], ids[0, 5], ids[1, 6] = 7, 9, 1
+    maxes = [torch.rand(4, 10, generator=g) + 1 for _ in range(3)]
+    for m in maxes[1:]:
+        m[:, 0], m[:3, 3], m[1, 6] = 1000.0, 500.0, 400.0
+    maxes[2][0, 5] = 200.0
+    prefix, stats = rl._prefixquant_select(maxes, ids, 1, 64.0)
+    assert prefix == [7, 9, 1] and stats["o"] == 3 and stats["outliers_per_block"] == [0.0, 2.0, 2.25]
+    assert stats["outlier_tokens"] == [(7, 6), (9, 1)]
+    maxes[2][0, 5] = 50.0                         # R ~ 33 < eta: not an outlier; o = 2
+    assert rl._prefixquant_select(maxes, ids, 1, 64.0)[0] == [7, 1]
+    # a random model has no massive activations: the prefix is the BOS alone (the configuration's, or given)
+    model, _, _, calib, _ = _setup("llama")
+    prefix, stats = rl.prefixquant_tokens(model, calib)
+    assert prefix == [model.config.bos_token_id] == [1] and stats["o"] <= 1
+    qwen = _setup("qwen3")[0]
+    with pytest.raises(ValueError):
+        rl.prefixquant_tokens(qwen, calib)        # Qwen3Config's default has no bos_token_id (the checkpoint's has)
+    assert rl.prefixquant_tokens(qwen, calib, bos=96)[0] == [96]

@@ -6,7 +6,9 @@ Status: **implemented; validated on the laptop on tiny randomly initialised Hugg
 runs (Qwen3-0.6B/1.7B/4B-Base, TinyLlama-1.1B) are cluster commands whose numbers are placeholders in Section 9.**
 The opt-in per-token exponent at the SwiGLU product (the plan's outlier handling, task item 5) is implemented and
 tested for exactness and the protocol, off by default, and not yet measured on a real model. The PrefixQuant-style
-prefix (the plan's cheaper alternative) is not implemented.
+fixed prefix (the plan's cheaper alternative; `prefix_tokens=`, `--prefix`) is implemented and tested for exactness
+and the protocol, off by default, with its cluster numbers as placeholders (Section 12); it answers the cluster
+diagnosis of job 1009531 (TinyLlama's zero BOS row, Qwen3's massive activation at the first token).
 
 ## 1. The problem
 
@@ -26,8 +28,10 @@ activations: perplexity 9,250).
 |---|---|
 | `code/src/pvi/fullcheck/real_llama.py` (new) | `build_llama_from_hf(model, calib_ids, *, pct, norm_gain, smooth, smooth_pct, pct_att, prune_last=False, device=None, pct_glu=None, head_eq=True, residual_headroom=1.25, n_layers=None, glu_exp=0)` -> `(IntGraph, info)` for HF `LlamaForCausalLM` and `Qwen3ForCausalLM`; the lean evaluation `lean_logits` (chunked LM head) and `real_logits`; `residual_states` / `hf_residual_states` / `block_cosines` (per-block cosine against the checkpoint); `config_of` / `same_shape`; `matches_benchmark_graph`; the opt-in `swiglu_exp` / `residual_exp` ops (`glu_exp=E`) |
 | `code/src/pvi/fullcheck/transformer.py` | `CONFIGS` gains `qwen3-0.6b`, `qwen3-1.7b`, `tinyllama-1.1b` (the checkpoints' `config.json` shapes); no existing entry changed |
-| `code/tests/test_real_llama.py` (new) | 28 tests on tiny random Llama and Qwen3 models, no download (Section 7) |
-| `code/experiments/9_quality/ppl_llama.py` (new) | perplexity at 16 x 128 and at 2,048 tokens, fp32 reference, scalar and smoothed graphs, top-1, per-block cosine, `--check`, `--protocol`, `--smoke` |
+| `code/tests/test_real_llama.py` (new) | 28 tests on tiny random Llama and Qwen3 models, no download (Section 7); 24 more for the fixed prefix (Section 12.5) |
+| `code/experiments/9_quality/ppl_llama.py` (new) | perplexity at 16 x 128 and at 2,048 tokens, fp32 reference, scalar and smoothed graphs, top-1, per-block cosine, `--check`, `--protocol`, `--smoke`; `--prefix` (Section 12) |
+| `code/experiments/9_quality/llama_diag.py` | the per-block, per-position diagnosis of job 1009531; `--prefix` (Section 12) |
+| `real_llama.py`, the fixed prefix | `build_llama_from_hf(..., prefix_tokens=)`, `prefix_attention`, `prefix_kv`, `prefixquant_tokens`; `hf_residual_states(..., prefix=)` (Section 12) |
 
 `real_weights.py` is not touched (another item owns it); `real_llama.py` has its own builder class with
 `_RealBuilder`'s arithmetic for the weight ops, requantisations and residual adds.
@@ -338,9 +342,9 @@ reference of Qwen3-4B-Base at 2,048 near the published 7.90.
 
 * **Static per-tensor int8 activations.** The graph proves what it proves: one scale per activation tensor. If the
   massive activations at the down projection's input break the smoothed graph (as the literature reports for
-  Llama-2-7B), `pct_glu` (clipping) or the opt-in `glu_exp` (Section 3.5, a structural change of two ops per block
-  and a clear down projection under V1) are the measured remedies; the PrefixQuant-style fixed prefix is not
-  implemented.
+  Llama-2-7B), `pct_glu` (clipping), the opt-in `glu_exp` (Section 3.5, a structural change of two ops per block
+  and a clear down projection under V1) and the opt-in fixed prefix (Section 12, no structural change) are the
+  remedies the cluster rows measure.
 * **8-bit attention probabilities at 2,048 tokens** (Section 7): `s_raw = s_v / 255` follows
   `transformer._attention`'s `P = 255`; if F2a adopts `P_MAX = 2047`, this builder inherits the new attention op but
   its `s_raw` must use the new `P` (one line, marked in the code).
@@ -427,4 +431,288 @@ PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-4B-B
 ```
 
 Each JSON line of `--out` is one cell; `jq -c '{cell, alpha, gain, ppl, ratio, ratio_ci95, top1, block_cos_mean_min,
-structure_diff}' results/f2bq/*.jsonl` gives the table of Section 9.
+structure_diff}' results/f2bq/*.jsonl` gives the table of Section 9. The prefix's commands are in Section 12.7.
+
+## 12. Opt-in: a fixed public prefix (PrefixQuant-style, `prefix_tokens`)
+
+The plan's cheaper alternative to the per-token exponent: "a PrefixQuant-style fixed prefix whose K/V become public
+constants in the graph digest. It needs no new op kind and leaves V1 unaffected." Status: **implemented, tested on
+the laptop (tiny random models), off by default; the real-checkpoint numbers are cluster placeholders (12.6).**
+
+### 12.1 Why: the cluster diagnosis (job 1009531, `docs/diag_1009531.out`)
+
+The integer graphs pass every exactness and protocol check on the real checkpoints, but quality collapses
+(Qwen3-0.6B-Base at 16 x 128: x28 with the scalar gain, x72-77 smoothed, x6-9 with the per-token exponent).
+`llama_diag.py` on the first 128-token test window (calibration: 4 x 128 train windows) shows two causes:
+
+* **TinyLlama_v1.1: the BOS row is zero.** The integer residual at position 0 (`<s>`) has cosine 0.000 in every
+  block, with both recipes: it is exactly zero. `s_res = 1.41e-4` is set by the embedding (`max|E| / (127 x 8)`,
+  `max|E| = 0.143`; the fp residual maximum, 214, would allow 5.1e-5), the embedding multiplier is 8, so the int8
+  embedding's step is `8 s_res = 1.13e-3`, and every entry of `<s>`'s row lies below half a step. A zero row stays
+  zero through every block (RMSNorm of 0 is 0, so q = k = v = 0; the attention output and SiLU(0) are 0; no biases):
+  the sink every head attends to has key 0 (score 0 instead of the row's maximum), so the attention sink never
+  forms, and the other positions degrade block by block (mean cosine over positions 1..: 0.999 after the embedding,
+  0.864 after block 1, 0.52-0.66 after blocks 12-22 with the scalar gain; 0.976, then down to 0.31, smoothed). The
+  fp stream also carries a massive activation at position 2 (97-104, channel 1619, from block 1 on): the window's
+  first `\n` (`<s> ▁ \n \n = Robert ...`), the delimiter outlier PrefixQuant reports for Llama-2-7B.
+* **Qwen3-0.6B-Base: a massive activation at the first token.** From block 3 on, the fp stream holds about 6,800 at
+  position 0 (channel 35; the window's first token is `\n\n`, Qwen's tokenizer adds no BOS). It sets `s_res` (fp
+  maximum 6,987 x 1.25 / `RES_MAX` = 2.08e-3), and every static scale is calibrated on windows whose position 0
+  carries it. The first block already loses ordinary tokens (mean cosine 0.865, minimum 0.45 with the scalar gain;
+  0.889 smoothed) while position 0 itself is reproduced (0.98-1.00 through block 27 with the scalar gain): the known
+  failure of
+  static per-tensor W8A8 on Llama-family models. The smallest per-block mean cosine is 0.625 (scalar) and 0.544
+  (smoothed).
+
+Both failures sit at positions a fixed prefix takes over: the initial token (the attention sink, where Qwen's massive
+activation forms), the BOS (TinyLlama's zero row), and the first occurrences of a few delimiters (TinyLlama's `\n`).
+PrefixQuant (M. Chen, Y. Liu, J. Wang, Y. Bin, W. Shao, P. Luo, "PrefixQuant: Eliminating Outliers by Prefixed Tokens
+for Large Language Models Quantization", arXiv:2410.05265, 2024) finds these outlier tokens few and predictable,
+computes the KV cache of a fixed prefix holding them once ("the prefixed tokens in the KV cache remain in full
+precision"), and then calibrates static per-tensor scales that no longer see them.
+
+### 12.2 What and how
+
+`build_llama_from_hf(model, calib_ids, ..., prefix_tokens=None)`, `prefix_tokens` = `P` token ids (`real_llama.py`):
+
+1. **The prefix's keys and values come from the checkpoint** (`prefix_kv`): one fp forward pass over the prefix alone
+   with `use_cache=True`; per layer, Hugging Face's cached keys (after the k norm for Qwen3, and after RoPE at the
+   positions `0 .. P-1`) and values, `[1, P, Hkv head_dim]`. Causal attention makes them independent of the query.
+2. **Every scale is calibrated on the query positions only.** The calibration windows run after the prefix:
+   `_hidden_max` runs the fp checkpoint on `[prefix | window]` and takes the residual maximum behind `s_res` over the
+   window's positions (the prefix positions' maximum is recorded as `prefix_hidden_max` and sets nothing); the integer
+   calibration pass runs the prefixed graph on the windows, whose tensors hold the query positions only, so no
+   percentile (q/k/v/gate/up, the q/k norms, the attention output, the SwiGLU product), no SmoothQuant statistic and
+   no head equalisation sees a prefix position. `m_o` is calibrated with the prefix in the attention.
+3. **The constants are int8 on the layer's own scales.** Once a layer's k and v are calibrated (q/k norm and RoPE
+   included), the prefix's keys and values become `clamp(round(real / s), +-127)` int8 with `s = s_k`, `s_v`: the real
+   scales of that layer's computed k and v. `info["prefix_clip"]` records `max |real| / (127 s)` per layer (above 1
+   the prefix's largest entries clip).
+4. **The attention op.** `prefix_attention(q, k, v, kp, vp, m_s, m_o, H, Hkv, dh, pmax)` puts `kp, vp` in front of
+   `k, v` and calls `transformer._attention`, whose `Tq` query rows are the queries of the *last* `Tq` of the `P + T`
+   positions: every query attends to the whole prefix, and causally to the query's own positions. It is the
+   convention `prune_last` already relies on (one query against every key); the fused GPU kernel, the native CPU
+   kernel and both torch paths implement it. `kp, vp` are default arguments of the op's function, next to `m_s` and
+   `m_o`: `IntGraph.digest()` hashes them (dtype, shape and bytes), `with_constants_on(device)` copies them once, and
+   the verifier recomputes the op with them.
+5. **RoPE.** The query's q and k are rotated at the positions `P, P+1, ...` (`_rope(x, theta, offset=P)`; a pruned q
+   at `T - Tq + P`, `prune_last`'s offset shifted by `P`); the prefix's keys were rotated at `0 .. P-1` offline.
+6. **Recorded in the graph.** `graph.meta = {"prefix_len": P, "prefix_tokens": [...]}`, which the digest also binds;
+   `info` adds `prefix_kv` (the int8 constants), `prefix_scales`, `prefix_clip` and `prefix_hidden_max`.
+
+Unchanged: the op kinds, names, wiring and notes, the weight ops and their shapes and biases, and the claim columns,
+so `matches_benchmark_graph` is empty, the costs are the benchmark graph's and V1 is unaffected (the attention stays
+a cheap op; the prefix adds no claim). With `prefix_tokens=None` the graph is today's byte for byte: the digests of
+the ten tiny test graphs (both families; scalar and smoothed, pruned and unpruned; `glu_exp = 8`) were recorded
+before the change and are identical after it.
+
+**Who computes the constants.** Anyone with the checkpoint and the public calibration recipe recomputes them, as
+every other constant of the graph; they come from a float forward pass, so D6a's root-of-trust note applies to them
+as to `s_res`. **The BOS.** The prefix takes the BOS's place: with `--prefix` the scripts tokenise the text without
+the tokenizer's special tokens, so no window holds a BOS and no query token needs its embedding row; a deployment
+does the same (the public prefix starts every sequence, the client's prompt follows it).
+
+### 12.3 Choosing the prefix: two mechanisms
+
+`prefixquant_tokens(model, calib_ids, eta=64)` is PrefixQuant's rule (Sec. 4 of the paper): at each down
+projection's input, token `t` is an outlier token when its largest `|value|` over channels is more than
+`eta_1 = 64` times the median, over the window, of that statistic; `o` is the ceiling of the largest, over blocks,
+mean number of outlier tokens per window; the prefix is the `o - 1` token ids most often found among the outlier
+tokens (a window's first position, the initial-token outlier every window has, is not counted), then the BOS
+("we also include [BOS] as the last prefixed token for all models"). The BOS is the configuration's
+`bos_token_id`: `<s>` (1) for TinyLlama, `<|endoftext|>` (151643) for Qwen3, the token Qwen's pretraining puts
+between documents. PrefixQuant's own prefixes: Llama-2-7B `. \n [BOS]`, Llama-3-8B `[BOS]`, Qwen-2-7B `[BOS]`,
+Mistral-7B-v0.3 `\n . to [BOS]`.
+
+The scripts' `--prefix SPEC` picks one of two mechanisms (or explicit ids `a,b,...`):
+
+* **`--prefix bos`, the smaller fix: the BOS alone (`P = 1`).** For TinyLlama it removes the zero BOS row: the sink
+  is `<s>`'s keys and values computed in float, and no query token needs `<s>`'s embedding. For Qwen3 it moves the
+  initial-token position out of the windows (a window's first token is now at position 1), so the massive activation
+  is expected to form at the prefix, outside every scale. A lighter fix for the zero row alone does not exist within
+  the structure: a representable `<s>` row needs a per-row embedding scale (a cheap op reading the token ids, a wiring
+  change against the benchmark graph) or a finer embedding scale that clips the largest entries. It is therefore the
+  prefix mechanism with `P = 1`, no separate code path.
+* **`--prefix` (= `auto`), PrefixQuant's rule:** also prefixes the frequent delimiter outliers, which `bos` leaves in
+  the windows (expected for TinyLlama: `\n`, id 13, the position-2 outlier of the diagnosed window). On a model whose
+  only outlier is the initial token it gives `[bos]`, the same as `bos`.
+
+Expectation, to be settled by the cluster rows (12.6): TinyLlama needs at least `bos` (the zero sink) and probably
+`auto` (the `\n` outlier); Qwen3 needs the initial-token prefix (`bos`, PrefixQuant's Qwen-2-7B choice), `auto`
+adding tokens only where delimiters spike at the down projection's input. Which mechanism each model needs is read
+off rows 12.6 (a) and (b): `bos` and `auto` against no prefix.
+
+### 12.4 Evaluation with a prefix (`ppl_llama.py`, `llama_diag.py`)
+
+* **Scored tokens.** With `--prefix`, the perplexity is scored on the windows' own tokens only, the same targets as
+  a run without a prefix (positions `0 .. T-2` predicting tokens `1 .. T-1` of each window): the prefix is not part
+  of the evaluated text, and its positions have no logits in the integer graph.
+* **Fair reference.** The fp32 reference runs on the same `[prefix | window]` (its prefix positions dropped); the
+  per-block cosines compare against `hf_residual_states(model, w, prefix=...)`, the same.
+* **Records.** Every JSON line holds `prefix_tokens`, `prefix_len`, `prefix_choice` (rule; for `auto` `o`, the
+  outliers per block, the outlier tokens with counts; the decoded text), `prefix_scoring` (the sentence above),
+  `joint_len` and `max_pos`; each cell adds `prefix_clip`, `prefix_hidden_max` and `residual_real_max`.
+* **One prefix per run**, chosen on the first draw's calibration windows before the reference; `--ref-cache` keys
+  include it. `--check` and `--protocol` honour `--prefix` (exactness, GPU = CPU, structure, v0 and V1 with the
+  prefix).
+* **Windows.** Tokenised without the special tokens, TinyLlama's windows start one token later than without a prefix
+  (Qwen's are unchanged); each ratio is against its own reference.
+* `llama_diag.py --prefix [SPEC]`: positions are the window's own; it adds the prefix's tokens and choice, the fp
+  stream's largest `|value|` at the prefix positions per block (where the massive activation should now sit), the
+  prefix's reach `max |real| / (127 s)` per layer, and the integer stream's entries at `+-RES_MAX` (which its
+  docstring promised and the earlier version did not compute).
+
+### 12.5 Validation on the laptop (tiny random models, no download of weights)
+
+`tests/test_real_llama.py`: **52 passed in 53.8 s** (the 28 of Section 7 and 24 for the prefix; laptop, 2 threads,
+transformers 4.57.6); `tests/test_prob_max.py`, which builds real-weight graphs too: **28 passed**. The prefix tests
+use `PREFIX = (5, 17)` (`P = 2`) unless stated:
+
+| Test | Checks |
+|---|---|
+| `test_a_prefixed_graph_is_the_benchmark_graph_of_its_shape` (x4) | empty structural diff, pruned and unpruned, both families; the same weight ops and claim columns as without a prefix at 1, 9 and 32 tokens; `meta`; per layer two int8 constants `[1, P, Hkv head_dim]`, the attention op's default arguments |
+| `test_the_prefixed_forward_is_the_graph_on_prefix_and_query_with_constant_keys_and_values` (x4: `P` = 1, 2) | **the exact equality** below; and the check can fail: the query's RoPE without the offset gives other integers |
+| `test_prune_last_with_a_prefix_gives_the_unpruned_last_position_logits` (x2) | integer equality at 32 and 9 tokens; one-column claims; equal to the glued graph's last logits on `[prefix | x]` |
+| `test_a_prefixed_graph_is_deterministic_and_independent_of_the_attention_path` (x2) | two forwards equal; a rebuild gives the same digest, meta and constants; the int64 attention path (int64 scores and gaps, last-rows mask) gives the int32 path's claims and logits |
+| `test_the_prefix_constants_are_the_checkpoints_keys_and_values_on_the_layers_scales` (x2) | the constants are `clamp(round(HF cache / s))`; `s_k`, `s_v` are the scales of the query's computed k and v (dequantised against HF's keys and values of `[prefix | x]`: norm ratio within 0.95-1.05, relative error <= 0.15; measured 0.990-1.017 and 0.018-0.094, two seeds per family) |
+| `test_prefixed_logits_and_blocks_track_the_float_model_on_prefix_and_query` (x2) | Section 7's thresholds against HF on `[prefix | x]`: smoothed logit cosine mean >= 0.98, min >= 0.9, top-1 >= 0.75, every block's min >= 0.9; scalar mean >= 0.94 |
+| `test_the_residual_scale_ignores_the_prefix_positions` | a prefix token whose embedding is 40x larger: `_hidden_max` returns the windows' own maximum (equal to the HF states' maximum over the window positions), the prefix's is larger and is only recorded; the build's `residual_real_max` is the windows' x 1.25 |
+| `test_the_digest_binds_the_prefix_and_v0_rejects_a_prover_with_other_constants` (x2) | four digests differ (no prefix, (5, 17), (5, 18), (17, 5)); the same function with layer 0's prefix keys (values) negated: another digest, and v0 (mode C) rejects a prover that computes with them under the honest graph's commitments (it accepts the honest prover) |
+| `test_v0_and_v1_accept_prefixed_real_graphs_and_reject_a_tamper` (x4) | v0 (C, Kpre, lambda = 20) and V1, pruned and unpruned: honest queries accepted; a tampered claim of the first q projection, the middle weight op and the LM head rejected |
+| `test_prefixquant_selects_the_frequent_outlier_tokens_then_the_bos` | the rule on synthetic maxima (`o = 3` -> `[7, 9, bos]`; one outlier below `eta` -> `o = 2`, `[7, bos]`; the BOS and the first position not counted); a random model has no outliers: `[bos]`; Qwen3Config's default has no `bos_token_id` (an error; the checkpoints have 151643) |
+
+**The exact equality.** For a query `x [B, T]`, the prefixed graph's integers on `x` -- every weight op's claims,
+the residual stream at every block boundary and the logits at every position -- equal, integer for integer, those of
+the *glued* graph on `[prefix | x]` at `x`'s positions `P .. P+T-1`. The glued graph has the same ops, weights and
+constants, but RoPE at the joint sequence's own positions (no offset) and plain causal attention
+(`transformer._attention`) over the joint sequence whose first `P` keys and values are replaced by the int8
+constants (the prefix positions' other values are computed from the prefix tokens and feed only the replaced keys and
+values). So the prefixed graph is the benchmark graph run on prefix + prompt with the prefix's K/V fixed: the RoPE
+positions, the causal mask and the GQA grouping line up.
+
+Fidelity on the tiny models (smoothed; two seeds per family; prefixes `(5,)` and `(5, 17)`; against HF on
+`[prefix | x]`): logit cosine mean 0.992-0.996, minimum 0.907-0.986, top-1 0.828-0.961, block minimum 0.935-0.986;
+scalar gain 4: mean 0.960-0.974 (without a prefix, Section 7: 0.992-0.995, 0.949-0.981, 0.852-0.883, 0.946-0.981;
+0.960-0.970). Random models have no massive activations, so this shows only that the prefix costs no fidelity; the
+gain is the real checkpoints' question.
+
+Script smoke runs (`--smoke`: 2-block random models with the real tokenizers and vocabularies; offline):
+`llama_diag.py --prefix` (TinyLlama vocabulary; `auto` gives `[1]`, `o = 0`: a random model has no outliers) and
+`--prefix bos` (Qwen vocabulary: `[151643]`, `<|endoftext|>`); `ppl_llama.py --prefix` at 4 x 128 (Qwen vocabulary:
+the reference, scalar, smooth and smooth-exp8 cells, structural diff `[]`, every prefix field in the records) and
+`--prefix bos` at 2 x 2,048 (TinyLlama vocabulary); `--check --prefix` (Qwen vocabulary): `CHECK PASSED` (chunked =
+whole, last = forward, pruned = unpruned for smooth and smooth-exp8; structural diffs `[]`); `--protocol --prefix`
+(TinyLlama vocabulary): `PROTOCOL PASSED` (C, Kpre and V1, unpruned and pruned, two honest queries accepted, three
+tampers rejected; 17 s per graph). A run without `--prefix` gives the records of before, plus `prefix_tokens: null`,
+`prefix_len: 0` and each cell's `residual_real_max` (`llama_diag.py`: plus `int_clip` per block).
+
+### 12.6 Results on the real checkpoints (cluster; placeholders)
+
+(a) The diagnosis (`llama_diag.py`, first 128-token test window): the smallest per-block mean cosine / the last
+block's mean cosine / the smallest mean over positions 1.. (the "none" column is job 1009531):
+
+| Model, recipe | no prefix | `--prefix` (auto) | `--prefix bos` |
+|---|---|---|---|
+| Qwen3-0.6B-Base, scalar 4 | 0.625 / 0.706 / 0.622 | [CLUSTER] | [CLUSTER] |
+| Qwen3-0.6B-Base, smooth 0.55 | 0.544 / 0.735 / 0.545 | [CLUSTER] | [CLUSTER] |
+| TinyLlama_v1.1, scalar 4 | 0.513 / 0.658 / 0.517 (position 0: 0.000) | [CLUSTER] | [CLUSTER] |
+| TinyLlama_v1.1, smooth 0.55 | 0.309 / 0.578 / 0.311 (position 0: 0.000) | [CLUSTER] | [CLUSTER] |
+| prefix chosen (`auto`: `o`, tokens) | | Qwen3: [CLUSTER]; TinyLlama: [CLUSTER] | `<|endoftext|>`; `<s>` |
+| fp max at the prefix / in the window (last blocks) | 6,795 at position 0 (Qwen3) | [CLUSTER] | [CLUSTER] |
+| `s_res`; prefix `k_clip` / `v_clip` (max over layers) | 2.08e-3 (Qwen3), 1.41e-4 (TinyLlama) | [CLUSTER] | [CLUSTER] |
+
+(b) Perplexity ratio to the fp32 reference with the same prefix (95% bootstrap interval; top-1; smallest per-block
+mean cosine), best cell of each kind; "no prefix" is Section 9's:
+
+| Model, setting | prefix | scalar (best of 2/4/8) | smooth (best of 0.45/0.55/0.65) | smooth-exp8 (best alpha) |
+|---|---|---|---|---|
+| Qwen3-0.6B-Base, 16 x 128 | none | x28 | x72-77 | x6-9 |
+| Qwen3-0.6B-Base, 16 x 128 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| Qwen3-0.6B-Base, 16 x 128 | bos | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| TinyLlama_v1.1, 16 x 128 | none | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| TinyLlama_v1.1, 16 x 128 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| TinyLlama_v1.1, 16 x 128 | bos | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| Qwen3-1.7B-Base, 16 x 128 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| Qwen3-0.6B-Base, 2,048 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| TinyLlama_v1.1, 2,048 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| Qwen3-1.7B-Base, 2,048 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+
+The fp32 reference perplexities with the prefix: [CLUSTER] (they differ from Section 9's: another context, and for
+TinyLlama windows shifted by one token). `--check --prefix` and `--protocol --prefix` on Qwen3-0.6B-Base and
+TinyLlama: [CLUSTER] (expected `CHECK PASSED` with `gpu_equals_cpu: true`, `PROTOCOL PASSED`). Which mechanism each
+model needs (12.3): Qwen3 [CLUSTER]; TinyLlama [CLUSTER]. The plan's rule: the cheaper of the per-token exponent and
+the prefix that reaches the target is taken; the prefix costs nothing in the proof, the exponent a clear down
+projection under V1.
+
+### 12.7 Cluster commands (2080 Ti node; bash, from `code/`, `HF_HOME` on node-local `/tmp`)
+
+Memory as Section 11 (64 GB for these three models). `--glu-exps 8` adds the `smooth-exp8` cells to the `smooth`
+cells of the same run, so each line below is "with and without the per-token exponent" at once.
+
+```bash
+mkdir -p results/f2bq_prefix /tmp/$USER/f2bq
+# 0. the tests on the node (CPU): expect "52 passed"
+PYTHONPATH=src python -m pytest -q -o addopts= -p no:cacheprovider tests/test_real_llama.py
+# 1. exactness and the protocol with the prefix on the real weights: expect "CHECK PASSED" (in the JSON
+#    "gpu_equals_cpu": true in both entries, "structure_diff": [] and "pruned_structure_diff": [] in "smooth") and
+#    "PROTOCOL PASSED"
+PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-0.6B-Base --check --threads 8 --prefix
+PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model TinyLlama/TinyLlama_v1.1 --check --threads 8 --prefix
+PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-0.6B-Base --protocol --threads 8 --prefix
+PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model TinyLlama/TinyLlama_v1.1 --protocol --threads 8 --prefix
+# 2. the diagnosis without a prefix, with PrefixQuant's prefix, and with the BOS alone (JSON on stdout, the per-block
+#    lines on stderr)
+for M in Qwen/Qwen3-0.6B-Base TinyLlama/TinyLlama_v1.1; do S=$(basename $M)
+  PYTHONPATH=src python experiments/9_quality/llama_diag.py --model $M --seq 128 --threads 8 \
+    > results/f2bq_prefix/diag_${S}_none.jsonl 2> results/f2bq_prefix/diag_${S}_none.txt
+  PYTHONPATH=src python experiments/9_quality/llama_diag.py --model $M --seq 128 --threads 8 --prefix \
+    > results/f2bq_prefix/diag_${S}_auto.jsonl 2> results/f2bq_prefix/diag_${S}_auto.txt
+  PYTHONPATH=src python experiments/9_quality/llama_diag.py --model $M --seq 128 --threads 8 --prefix bos \
+    > results/f2bq_prefix/diag_${S}_bos.jsonl 2> results/f2bq_prefix/diag_${S}_bos.txt
+done
+# 3. 16 x 128 with PrefixQuant's prefix: scalar gains 2 4 8, smoothed alpha 0.45 0.55 0.65, with and without the
+#    per-token exponent
+for M in Qwen/Qwen3-0.6B-Base TinyLlama/TinyLlama_v1.1 Qwen/Qwen3-1.7B-Base; do S=$(basename $M)
+  PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model $M --seq 128 --windows 16 --calib-windows 4 \
+    --device cuda --threads 8 --gains 2 4 8 --alphas 0.45 0.55 0.65 --glu-exps 8 --structure --cos-windows 4 \
+    --prefix --ref-cache /tmp/$USER/f2bq/ref_${S}_128_auto.pt --out results/f2bq_prefix/${S}_128_auto.jsonl
+done
+# 3b. the smaller fix (the BOS alone) on the two week-1 models, same cells: which mechanism each model needs
+for M in Qwen/Qwen3-0.6B-Base TinyLlama/TinyLlama_v1.1; do S=$(basename $M)
+  PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model $M --seq 128 --windows 16 --calib-windows 4 \
+    --device cuda --threads 8 --gains 2 4 8 --alphas 0.45 0.55 0.65 --glu-exps 8 --cos-windows 4 \
+    --prefix bos --ref-cache /tmp/$USER/f2bq/ref_${S}_128_bos.pt --out results/f2bq_prefix/${S}_128_bos.jsonl
+done
+# 4. 2,048 tokens, every test window, with PrefixQuant's prefix (calibration on the CPU): 9 cells per model
+for M in Qwen/Qwen3-0.6B-Base TinyLlama/TinyLlama_v1.1 Qwen/Qwen3-1.7B-Base; do S=$(basename $M)
+  PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model $M --seq 2048 --calib-windows 4 --device cuda \
+    --threads 8 --gains 2 4 8 --alphas 0.45 0.55 0.65 --glu-exps 8 --cos-windows 1 \
+    --prefix --ref-cache /tmp/$USER/f2bq/ref_${S}_2048_auto.pt --out results/f2bq_prefix/${S}_2048_auto.jsonl
+done
+```
+
+`jq -c '{cell, prefix_tokens, alpha, gain, ppl, ref_ppl, ratio, ratio_ci95, top1, block_cos_mean_min,
+structure_diff}' results/f2bq_prefix/*_auto.jsonl results/f2bq_prefix/*_bos.jsonl` gives table 12.6 (b);
+`grep -h "block\|prefix\|s_res" results/f2bq_prefix/diag_*.txt` table (a).
+
+### 12.8 Limitations and open issues
+
+* **The prefix's keys are clipped on the query's scales if they reach beyond them.** By design the k and v scales come
+  from the query positions; an attention sink whose key is far larger than any query-position key would clip at 127
+  (`prefix_clip` > 1) and weaken the sink. The tiny models stay below 1.08; the real ones are reported per cell. If it
+  bites, the remedy is one line: include the prefix's pair norms in the k scale's statistic (the prefix's values,
+  near zero for a sink, are not expected to clip).
+* **PrefixQuant's premise is unverified on these models**: that once the outlier tokens sit in the prefix, their later
+  occurrences in the window no longer spike. The diagnosis with `--prefix` shows it directly (the fp maximum over the
+  window positions and its position, per block).
+* **The `auto` prefix depends on the calibration windows** (4 x 128 or 4 x 2,048), so the 128- and 2,048-token runs
+  may choose different prefixes; each record states its prefix and the statistics behind it.
+* **Context length.** At 2,048 tokens the joint sequence has `2,048 + P` positions, `P` past TinyLlama's trained
+  context (`max_position_embeddings = 2,048`); the integer graph and the reference see the same positions
+  (`joint_len`, `max_pos` in the records). Qwen3's context is 32,768.
+* **Root of trust (D6a).** The prefix's keys and values come from a float forward pass of the checkpoint, rounded to
+  int8: a different BLAS could, rarely, round an entry differently, changing the digest; D6a's recipe applies as to
+  `s_res`.
+* **Generation.** Every query of a prefixed graph has the prefix in front; generated tokens follow the prompt as before
+  (`with_lm_positions`, `greedy_tokens` are unchanged); the prefix is part of the statement through the digest, so a
+  client must know it (it is public, like the rest of the graph).

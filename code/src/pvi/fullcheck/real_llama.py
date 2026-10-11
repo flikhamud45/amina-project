@@ -49,10 +49,22 @@ down projection's input; whether static per-tensor scales survive them is what `
 ppl_llama.py`` measures (``pct_glu`` is the product's clipping percentile). The opt-in ``glu_exp`` (plan F2b-Q's
 outlier handling) gives each token of that product its own power-of-two exponent instead, with the matching shift in
 the next residual add; it is the one option that changes the graph's structure (two ops per block).
+
+The opt-in fixed prefix (``prefix_tokens``, plan F2b-Q's cheaper alternative, after PrefixQuant, Chen et al. 2024,
+arXiv:2410.05265) keeps the structure: the massive activations of these models sit at the initial token (the
+attention sink) and at the first occurrences of a few delimiter tokens. A fixed public prefix of ``P`` tokens is run
+once through the fp checkpoint; its keys and values per layer (Hugging Face's KV cache: after the k norm and RoPE at
+the positions ``0 .. P-1``) become int8 constants on the scales of that layer's computed k and v, default arguments
+of the attention op (:func:`prefix_attention` prepends them; every query attends to the whole prefix), so the graph
+digest binds them. The query's RoPE positions start at ``P``. Every scale is calibrated on the query positions only
+(the fp residual maximum behind ``s_res`` too), so the prefix's outliers never set one. The weight ops, their shapes
+and claim columns are the benchmark graph's (the structural diff stays empty); the prefix adds no claim.
+:func:`prefixquant_tokens` is PrefixQuant's rule for choosing the prefix.
 """
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import math
 
@@ -65,7 +77,8 @@ from .transformer import (
 )
 
 __all__ = ["build_llama_from_hf", "config_of", "same_shape", "matches_benchmark_graph", "lean_logits",
-           "real_logits", "residual_states", "hf_residual_states", "block_cosines", "swiglu_exp", "residual_exp"]
+           "real_logits", "residual_states", "hf_residual_states", "block_cosines", "swiglu_exp", "residual_exp",
+           "prefix_attention", "prefix_kv", "prefixquant_tokens"]
 
 _ROWS_NORM = 1 << 14
 """Calibration rows read by the smoothing statistics (evenly spaced over all windows)."""
@@ -122,6 +135,24 @@ def residual_exp(r: torch.Tensor, z: torch.Tensor, a: torch.Tensor, b: torch.Ten
     return out.add_(r).clamp_(-RES_MAX, RES_MAX)
 
 
+def prefix_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, kp: torch.Tensor, vp: torch.Tensor, m_s: int,
+                     m_o: int | None, n_heads: int, n_kv: int, dh: int, pmax: int = PROB_MAX) -> torch.Tensor:
+    """``transformer._attention`` with a fixed prefix: the public int8 keys and values ``kp, vp [1, P, Hkv dh]`` of
+    the positions ``0 .. P-1`` in front of the query's ``k, v [B, T, Hkv dh]`` (positions ``P .. P+T-1``).
+    ``_attention`` takes ``q``'s ``Tq`` rows as the queries of the last ``Tq`` of the ``P + T`` positions, so every
+    query attends to the whole prefix and causally to the query's own positions. Exact integers on any device (the
+    constants are copied to ``k``'s device and type)."""
+    b = k.shape[0]
+    k = torch.cat([kp.to(device=k.device, dtype=k.dtype).expand(b, -1, -1), k], 1)
+    v = torch.cat([vp.to(device=v.device, dtype=v.dtype).expand(b, -1, -1), v], 1)
+    return _attention(q, k, v, m_s, m_o, n_heads, n_kv, dh, pmax)
+
+
+def _to_int8(real: torch.Tensor, scale: float) -> torch.Tensor:
+    """``clamp(round(real / scale), +-127)`` as int8 (a prefix's keys or values on their layer's scale)."""
+    return (real.double() / scale).round().clamp(-INT8_MAX, INT8_MAX).to(torch.int8)
+
+
 def _pair_norms(real: torch.Tensor, dh: int) -> torch.Tensor:
     """``[..., H*dh]`` -> ``[rows, dh/2]``: the norm of each RoPE pair ``(x_i, x_{i+dh/2})`` of each head, the
     largest magnitude either value reaches under any rotation."""
@@ -135,6 +166,7 @@ class _Builder:
     SwiGLU)."""
 
     prob_max = PROB_MAX     # the attention probabilities' scale (build_llama_from_hf(prob_max=...))
+    prefix_len = 0          # P of a fixed prefix (build_llama_from_hf(prefix_tokens=...)): the query starts at P
 
     def __init__(self, tokens: torch.Tensor, *, pct: float, norm_gain: float, smooth: float | None,
                  smooth_pct: float, pct_att: float, pct_glu: float, glu_exp: int = 0) -> None:
@@ -144,6 +176,7 @@ class _Builder:
         self.env = {"x": tokens}
         self.scale: dict[str, float | torch.Tensor] = {}
         self.exp_of: dict[str, tuple] = {}         # a glu_exp product -> (act, up, multiplier, emax)
+        self.prefix_consts: list[dict] = []        # per layer with a prefix: its int8 k, v, their scales and clipping
         self._n = 0
 
     def name(self, p):
@@ -254,28 +287,50 @@ class _Builder:
 
     def rope(self, z, heads: int, dh: int, theta: float, *, pruned: bool = False):
         """The benchmark's RoPE op (the scale is kept: a rotation); ``pruned``: ``z`` holds the last positions,
-        whose angles come from the query's length."""
+        whose angles come from the query's length. With a prefix of ``P`` tokens the query's positions start at
+        ``P`` (the prefix's keys were rotated at ``0 .. P-1`` offline)."""
+        n = self.prefix_len
+        if pruned and n:
+            return self.cheap("rope", [z, "x"], lambda a, x, H=heads, dh=dh, th=theta, n=n: _rope(
+                a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1] + n).reshape(a.shape), self.scale[z],
+                "rope")
         if pruned:
             return self.cheap("rope", [z, "x"], lambda a, x, H=heads, dh=dh, th=theta: _rope(
                 a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1]).reshape(a.shape), self.scale[z],
                 "rope")
+        if n:
+            return self.cheap("rope", [z], lambda a, H=heads, dh=dh, th=theta, n=n: _rope(
+                a.reshape(*a.shape[:-1], H, dh), th, n).reshape(a.shape), self.scale[z], "rope")
         return self.cheap("rope", [z], lambda a, H=heads, dh=dh, th=theta: _rope(
             a.reshape(*a.shape[:-1], H, dh), th).reshape(a.shape), self.scale[z], "rope")
 
-    def attention(self, q, k, v, hq: int, hkv: int, dh: int):
+    def attention(self, q, k, v, hq: int, hkv: int, dh: int, prefix: tuple | None = None):
         """``build_opt_from_hf``'s attention, with grouped-query heads: the scores' multiplier is
         ``2^30 16 s_q s_k / sqrt(dh)`` (Hugging Face's ``head_dim^-0.5`` in units of 1/16 nat), the output's maps the
-        ``pct_att`` percentile of the raw ``P V`` to 127."""
+        ``pct_att`` percentile of the raw ``P V`` to 127. ``prefix``: the fixed prefix's real keys and values
+        ``[1, P, Hkv dh]`` (:func:`prefix_kv`), quantised on ``s_k`` and ``s_v`` -- the scales of this layer's computed
+        k and v, calibrated on the query positions alone -- and prepended by :func:`prefix_attention` (default
+        arguments of the op's function, so the digest binds them); ``m_o`` is calibrated with them in place."""
         sq, sk, sv = self.scale[q], self.scale[k], self.scale[v]
         m_s = round((1 << SHIFT) * 16.0 * sq * sk / math.sqrt(dh))
         P = self.prob_max
-        raw = _attention(self.env[q], self.env[k], self.env[v], m_s, None, hq, hkv, dh, P)
+        if prefix is not None:
+            kp, vp = _to_int8(prefix[0], sk), _to_int8(prefix[1], sv)
+            self.prefix_consts.append({"k": kp, "v": vp, "s_k": sk, "s_v": sv,
+                                       "k_clip": float(prefix[0].abs().max()) / (INT8_MAX * sk),
+                                       "v_clip": float(prefix[1].abs().max()) / (INT8_MAX * sv)})
+            raw = prefix_attention(self.env[q], self.env[k], self.env[v], kp, vp, m_s, None, hq, hkv, dh, P)
+        else:
+            raw = _attention(self.env[q], self.env[k], self.env[v], m_s, None, hq, hkv, dh, P)
         s_raw = sv / float(P)    # probabilities 0..P x int8 values (transformer.PROB_MAX = 255; F2a's P_MAX)
         top = _top(raw.abs().reshape(-1, raw.shape[-1]).double(), self.pct_att) * s_raw
         del raw
         s_att = max(top, 1e-12) / INT8_MAX
         m_o = round((1 << SHIFT) * s_raw / s_att)
-        if P == PROB_MAX:        # the default scale: no extra constant, so the digest is today's
+        if prefix is not None:   # the prefix's constants are default arguments: bound by the digest
+            fn = lambda a, b_, c, kp=kp, vp=vp, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh, P=P: (  # noqa: E731
+                prefix_attention(a, b_, c, kp, vp, ms, mo, H, Hkv, dh, P))
+        elif P == PROB_MAX:      # the default scale: no extra constant, so the digest is today's
             fn = lambda a, b_, c, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh: _attention(a, b_, c, ms, mo, H, Hkv, dh)  # noqa: E731
         else:
             fn = lambda a, b_, c, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh, P=P: _attention(  # noqa: E731
@@ -340,14 +395,26 @@ def _head_eq(h_int: torch.Tensor, s_in, w: torch.Tensor, b: torch.Tensor | None,
     return (w.double() * beta[:, None]).float(), (None if b is None else b.double() * beta)
 
 
-def _hidden_max(model, calib_ids: torch.Tensor) -> float:
+def _with_prefix(ids: torch.Tensor, prefix: torch.Tensor | None) -> torch.Tensor:
+    """``[prefix | ids]`` per row of ``ids [B, T]`` (``ids`` itself without a prefix)."""
+    if prefix is None:
+        return ids
+    return torch.cat([prefix.to(ids.device).reshape(1, -1).expand(ids.shape[0], -1), ids], 1)
+
+
+def _hidden_max(model, calib_ids: torch.Tensor, prefix: torch.Tensor | None = None) -> tuple[float, float]:
     """Largest ``|value|`` of the fp checkpoint's residual stream (the embedding output and every block's output)
-    on the calibration windows, one window at a time, through forward hooks (no hidden state is kept)."""
-    top = [0.0]
+    on the calibration windows, one window at a time, through forward hooks (no hidden state is kept): over the
+    windows' positions, and (0.0 without one) over the positions of the fixed ``prefix [1, P]`` run in front of each
+    window -- which sets no scale."""
+    top = [0.0, 0.0]
+    n = 0 if prefix is None else prefix.shape[1]
 
     def hook(mod, inp, out):
-        out = out[0] if isinstance(out, tuple) else out
-        top[0] = max(top[0], float(out.detach().abs().max()))
+        out = (out[0] if isinstance(out, tuple) else out).detach().abs()
+        top[0] = max(top[0], float(out[:, n:].max()))
+        if n:
+            top[1] = max(top[1], float(out[:, :n].max()))
 
     inner = model.model
     hooks = [inner.embed_tokens.register_forward_hook(hook)] + [layer.register_forward_hook(hook)
@@ -355,11 +422,77 @@ def _hidden_max(model, calib_ids: torch.Tensor) -> float:
     try:
         with torch.no_grad():
             for i in range(calib_ids.shape[0]):
-                inner(calib_ids[i:i + 1].to(model.device))
+                inner(_with_prefix(calib_ids[i:i + 1], prefix).to(model.device))
     finally:
         for h in hooks:
             h.remove()
-    return top[0]
+    return top[0], top[1]
+
+
+def prefix_kv(model, prefix_ids, n_layers: int | None = None) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """The fp checkpoint's keys and values of the fixed prefix ``prefix_ids`` (``P`` token ids), per layer (the
+    first ``n_layers``), as float64 ``[1, P, Hkv head_dim]`` on the CPU: Hugging Face's KV cache after one forward
+    pass over the prefix alone -- the keys after the k norm (Qwen3) and RoPE at the positions ``0 .. P-1``, the
+    values as projected. Causal attention makes them independent of the query that follows."""
+    ids = torch.as_tensor(prefix_ids, dtype=torch.int64).reshape(1, -1)
+    with torch.no_grad():
+        cache = model.model(ids.to(model.device), use_cache=True).past_key_values
+    out = []
+    for i in range(len(list(model.model.layers)[:n_layers])):
+        k, v = cache[i]                                        # [1, Hkv, P, head_dim]
+        out.append(tuple(t.detach().transpose(1, 2).reshape(1, ids.shape[1], -1).to("cpu", torch.float64)
+                         for t in (k, v)))
+    return out
+
+
+def _prefixquant_select(maxes: list[torch.Tensor], ids: torch.Tensor, bos: int, eta: float) -> tuple[list[int], dict]:
+    """PrefixQuant's choice from the token-wise maxima ``maxes`` (per block, ``[W, T]``: ``max_j |x_tj|`` at the
+    down projection's input of token ``t`` of window ``w``) of the windows ``ids [W, T]``: token ``t`` is an outlier
+    token of its block when ``R_t = max_t / median_t' max_t' > eta`` (the median over its window); ``o`` is the
+    ceiling of the largest, over blocks, mean number of outlier tokens per window; the prefix is the ``o - 1`` token
+    ids found most often among the outlier tokens -- not counting a window's first position, the initial-token
+    outlier every window has, nor ``bos`` -- by decreasing count (ties: smaller id first), then ``bos``."""
+    per_block, freq = [], collections.Counter()
+    for m in maxes:
+        out = m / m.median(-1, keepdim=True).values.clamp_min(1e-30) > eta
+        per_block.append(float(out.sum(-1).double().mean()))
+        for w, t in out.nonzero().tolist():
+            if t > 0 and int(ids[w, t]) != bos:
+                freq[int(ids[w, t])] += 1
+    o = math.ceil(max(per_block, default=0.0))
+    extra = [tok for tok, _ in sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))][:max(0, o - 1)]
+    return extra + [bos], {"rule": "prefixquant", "eta": eta, "o": o, "outliers_per_block": per_block,
+                           "outlier_tokens": sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))[:16]}
+
+
+def prefixquant_tokens(model, calib_ids: torch.Tensor, *, eta: float = 64.0,
+                       bos: int | None = None) -> tuple[list[int], dict]:
+    """The fixed prefix PrefixQuant prescribes (Chen et al. 2024, arXiv:2410.05265, Sec. 4; their ``eta_1 = 64``),
+    from the fp checkpoint's down-projection inputs on the calibration windows ``calib_ids [W, T]``
+    (:func:`_prefixquant_select`): the high-frequency outlier tokens, then the BOS token (their "[BOS] last, for
+    consistency"; ``bos`` defaults to the configuration's ``bos_token_id``: ``<s>`` for Llama, ``<|endoftext|>``
+    for Qwen3). A model whose only outlier is the initial token gets ``[bos]`` (their Llama-3-8B and Qwen-2-7B
+    prefix); Llama-2-7B got ``. \\n [BOS]``. Returns the token ids and the statistics behind them."""
+    bos = model.config.bos_token_id if bos is None else bos
+    if bos is None:
+        raise ValueError("the model has no bos_token_id: give the prefix's token ids")
+    layers = list(model.model.layers)
+    maxes: list[list[torch.Tensor]] = [[] for _ in layers]
+
+    def pre_hook(i):
+        def hook(mod, args):
+            maxes[i].append(args[0].detach().abs().amax(-1).to("cpu", torch.float64))
+        return hook
+
+    hooks = [layer.mlp.down_proj.register_forward_pre_hook(pre_hook(i)) for i, layer in enumerate(layers)]
+    try:
+        with torch.no_grad():
+            for w in range(calib_ids.shape[0]):
+                model.model(calib_ids[w:w + 1].to(model.device))
+    finally:
+        for h in hooks:
+            h.remove()
+    return _prefixquant_select([torch.cat(m) for m in maxes], calib_ids.cpu(), int(bos), eta)
 
 
 def config_of(hf_config, name: str | None = None) -> DecoderConfig:
@@ -386,7 +519,8 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
                         smooth: float | None = None, smooth_pct: float = 99.9, pct_att: float = 100.0,
                         prune_last: bool = False, device=None, pct_glu: float | None = None, head_eq: bool = True,
                         residual_headroom: float = 1.25, n_layers: int | None = None, glu_exp: int = 0,
-                        free_calib: bool = True, prob_max: int = CERTIFIED_PROB_MAX) -> tuple[IntGraph, dict]:
+                        free_calib: bool = True, prob_max: int = CERTIFIED_PROB_MAX,
+                        prefix_tokens=None) -> tuple[IntGraph, dict]:
     """An integer Llama / Qwen3 decoder with the checkpoint's real weights.
 
     ``calib_ids [B, T]`` (``B`` calibration windows) sets every activation scale. The knobs are public constants
@@ -406,10 +540,19 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
       massive activations at the down projection's input. Both are cheap ops the verifier recomputes; the graph
       then differs from the benchmark's in exactly these two ops per block (their notes, and the residual add also
       reads the product's two inputs), and V1 leaves the down projection clear (its reader is no ``requant_fn``).
+    * ``prefix_tokens`` (opt-in, default None = off): a fixed public prefix of ``P`` token ids (e.g. the BOS alone,
+      or :func:`prefixquant_tokens`) in front of every query. Its keys and values per layer (:func:`prefix_kv`, the
+      fp checkpoint's) become int8 constants of the attention op on that layer's k and v scales, the query's RoPE
+      positions start at ``P``, and every scale -- ``s_res`` from the fp residual maximum included -- is calibrated
+      on the query positions only (the calibration windows run after the prefix). The structure, the weight ops and
+      the claim columns are the benchmark graph's; ``graph.meta`` records ``prefix_len`` and ``prefix_tokens``.
 
     ``device`` is where the integer calibration pass runs (the fp model stays where it is). Returns the graph and
     ``info``: the real scales (``logit_scale``, ``s_residual``), the knobs, the residual tensors at the block
-    boundaries (``embed``, ``blocks``) and the ``DecoderConfig`` of the model's shape (``config``).
+    boundaries (``embed``, ``blocks``) and the ``DecoderConfig`` of the model's shape (``config``); with a prefix also
+    ``prefix_tokens``, ``prefix_kv`` (per layer the int8 ``(k, v)``, the graph's constants), ``prefix_scales``
+    (``(s_k, s_v)``), ``prefix_clip`` (``max |real| / (127 s)`` of the prefix's keys and values: above 1 they clip)
+    and ``prefix_hidden_max`` (the fp residual stream's largest ``|value|`` at the prefix positions).
     """
     cfg = model.config
     arch = cfg.model_type
@@ -427,17 +570,26 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
     inner = model.model
     layers = list(inner.layers)[:n_layers]
     pct_glu = pct if pct_glu is None else pct_glu
+    pre = None
+    if prefix_tokens is not None and len(prefix_tokens):
+        pre = torch.as_tensor(prefix_tokens, dtype=torch.int64).reshape(1, -1)
+        if int(pre.min()) < 0 or int(pre.max()) >= cfg.vocab_size:
+            raise ValueError(f"prefix token ids {pre[0].tolist()} outside the vocabulary")
+    kv = None if pre is None else prefix_kv(model, pre, len(layers))
 
     # The residual stream's real scale: the fp checkpoint's hidden states never clip at RES_MAX on the calibration
-    # windows; the embedding's int8 scale is c x s_residual, c the graph's "embed to residual" multiplier.
+    # windows (their own positions: a prefix runs in front of each and sets no scale); the embedding's int8 scale
+    # is c x s_residual, c the graph's "embed to residual" multiplier.
     emb = inner.embed_tokens.weight
-    res_max = _hidden_max(model, calib_ids) * residual_headroom
+    res_max, pre_max = _hidden_max(model, calib_ids, pre)
+    res_max *= residual_headroom
     s_res = max(res_max / RES_MAX, float(emb.abs().max()) / (INT8_MAX * 8))
 
     B = _Builder(calib_ids.to(device or calib_ids.device), pct=pct, norm_gain=norm_gain, smooth=smooth,
                  smooth_pct=smooth_pct, pct_att=pct_att, pct_glu=pct_glu, glu_exp=glu_exp)
     assert 1 <= prob_max <= 2047, prob_max
     B.prob_max = prob_max
+    B.prefix_len = 0 if pre is None else pre.shape[1]
     embed_mult = max(1, round(float(emb.abs().max()) / INT8_MAX / s_res))
     # build_opt_from_hf's rounding: c rounds max|E| / (127 s_res) to the nearest integer, so for a ratio in
     # (k, k + 1/2), k >= 1, the largest entries clip at 127; ``embed_clip`` (> 1 then) records by how much
@@ -470,7 +622,7 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
             k = B.head_norm(k, hkv, dh, at.k_norm.weight.detach(), "kn", "k norm")
         q = B.rope(q, hq, dh, theta, pruned=prune)
         k = B.rope(k, hkv, dh, theta)
-        att = B.attention(q, k, v, hq, hkv, dh)
+        att = B.attention(q, k, v, hq, hkv, dh, prefix=None if kv is None else kv[i])
         r = B.residual(B.last(r, calibrate_all=True) if prune else r,
                        B.mat(att, at.o_proj.weight.detach().float(), bias(at.o_proj), B.scale[att]))
 
@@ -499,8 +651,14 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
             "smooth": smooth, "smooth_pct": smooth_pct, "pct_att": pct_att, "pct_glu": pct_glu,
             "head_eq": head_eq and arch == "qwen3", "prune_last": prune_last,
             "residual_headroom": residual_headroom, "glu_exp": glu_exp,
-            "glu_emax": [e for *_, e in B.exp_of.values()]}
-    return IntGraph(B.ops, "x", logits), info
+            "glu_emax": [e for *_, e in B.exp_of.values()], "prefix_tokens": None, "prefix_len": 0}
+    meta = {}
+    if pre is not None:
+        meta = {"prefix_len": pre.shape[1], "prefix_tokens": pre[0].tolist()}
+        info.update(meta, prefix_kv=[(c["k"], c["v"]) for c in B.prefix_consts],
+                    prefix_scales=[(c["s_k"], c["s_v"]) for c in B.prefix_consts],
+                    prefix_clip=[(c["k_clip"], c["v_clip"]) for c in B.prefix_consts], prefix_hidden_max=pre_max)
+    return IntGraph(B.ops, "x", logits, meta), info
 
 
 # ------------------------------------------------------------------ evaluation
@@ -567,21 +725,25 @@ def residual_states(graph: IntGraph, info: dict, ids: torch.Tensor) -> list[torc
     return [got[n] for n in names]
 
 
-def hf_residual_states(model, ids: torch.Tensor, n_layers: int | None = None) -> list[torch.Tensor]:
+def hf_residual_states(model, ids: torch.Tensor, n_layers: int | None = None, prefix=None) -> list[torch.Tensor]:
     """The fp checkpoint's residual stream at the same boundaries (the embedding's output, then each decoder
-    layer's), float64 on the CPU, through forward hooks; ``n_layers``: the first blocks only."""
+    layer's), float64 on the CPU, through forward hooks; ``n_layers``: the first blocks only. ``prefix`` (token
+    ids): the checkpoint runs on ``[prefix | ids]`` and the states of ``ids``' positions are returned, the
+    reference of a graph built with ``prefix_tokens=prefix``."""
     out: list[torch.Tensor] = []
+    pre = None if prefix is None or not len(prefix) else torch.as_tensor(prefix, dtype=torch.int64).reshape(-1)
+    n = 0 if pre is None else pre.numel()
 
     def hook(mod, inp, o):
         o = o[0] if isinstance(o, tuple) else o
-        out.append(o.detach().to("cpu", torch.float64))
+        out.append(o.detach()[:, n:].to("cpu", torch.float64))
 
     inner = model.model
     hooks = [inner.embed_tokens.register_forward_hook(hook)] + [
         layer.register_forward_hook(hook) for layer in list(inner.layers)[:n_layers]]
     try:
         with torch.no_grad():
-            inner(ids.to(model.device))
+            inner(_with_prefix(ids, pre).to(model.device))
     finally:
         for h in hooks:
             h.remove()

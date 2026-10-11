@@ -7,6 +7,8 @@
     cd code && PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-0.6B-Base --check
     cd code && PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-0.6B-Base --smoke \\
         --seq 128 --windows 2 --calib-windows 1 --device cpu --threads 2 --chunk 64     # a tiny random model
+    cd code && PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model TinyLlama/TinyLlama_v1.1 \\
+        --seq 128 --windows 16 --device cuda --prefix --out tl_128_prefix.jsonl          # PrefixQuant's prefix
 
 * Text and windows are ``ppl_2048.py``'s: WikiText-2 (raw) joined with blank lines, tokenised once; every
   non-overlapping ``--seq``-token window of the test split (``--windows`` keeps the first ones: 16 x 128 is the
@@ -35,6 +37,15 @@
   empty.
 * ``--protocol``: the checkpoint's first 2 blocks as a real graph (unpruned and pruned) on a 64-token window: the
   2-block benchmark structure, v0 in modes C and Kpre and V1 accept honest queries and reject tampered claims.
+* ``--prefix [SPEC]`` (opt-in; every mode above): a fixed public prefix in front of every window
+  (``build_llama_from_hf(prefix_tokens=)``): ``auto`` (the default of a bare ``--prefix``) is PrefixQuant's rule
+  (``real_llama.prefixquant_tokens``: the high-frequency outlier tokens of the down projections' inputs, then the
+  BOS) on the first draw's calibration windows; ``bos`` the configuration's BOS token alone (``<s>``,
+  ``<|endoftext|>``); or comma-separated token ids. The text is then tokenised without the tokenizer's special
+  tokens (the prefix takes the BOS's place, so no window holds it). The perplexity is scored on the windows' own
+  tokens only, exactly the targets of a run without a prefix (the prefix is not evaluated text), and the fp32
+  reference runs on the same ``[prefix | window]`` (its prefix positions dropped), so the ratio compares like with
+  like; every record says so (``prefix_tokens``, ``prefix_scoring``).
 """
 from __future__ import annotations
 
@@ -60,6 +71,41 @@ from pvi.fullcheck.transformer import CONFIGS              # noqa: E402
 
 CONFIG_OF = {"Qwen3-0.6B-Base": "qwen3-0.6b", "Qwen3-1.7B-Base": "qwen3-1.7b", "Qwen3-4B-Base": "qwen3-4b",
              "TinyLlama_v1.1": "tinyllama-1.1b"}
+PREFIX_SCORING = ("the windows' own tokens only (the targets of a run without a prefix); the fp32 reference runs on "
+                  "the same [prefix | window]; the text is tokenised without the tokenizer's special tokens")
+
+
+# ------------------------------------------------------------------ the fixed prefix
+
+def token_ids(tok, text: str, prefix_spec) -> torch.Tensor:
+    """``text`` tokenised as one sequence; with a prefix, without the tokenizer's special tokens (the prefix takes
+    the place of its BOS, so no window holds one)."""
+    return tok(text, return_tensors="pt", add_special_tokens=not prefix_spec).input_ids[0]
+
+
+def prefix_of(spec, model, calib: torch.Tensor, tok=None) -> tuple[list[int] | None, dict]:
+    """The prefix's token ids for ``--prefix spec`` and a record of the choice: None (no prefix), ``auto``
+    (``real_llama.prefixquant_tokens`` on the calibration windows ``calib``), ``bos`` (the configuration's BOS
+    alone) or comma-separated ids."""
+    if not spec:
+        return None, {}
+    if spec == "auto":
+        ids, stats = rl.prefixquant_tokens(model, calib)
+        stats["outlier_tokens"] = [list(t) for t in stats["outlier_tokens"]]
+    elif spec == "bos":
+        if model.config.bos_token_id is None:
+            raise ValueError("the configuration has no bos_token_id: give --prefix ids")
+        ids, stats = [int(model.config.bos_token_id)], {"rule": "bos"}
+    else:
+        ids, stats = [int(s) for s in spec.split(",")], {"rule": "ids"}
+    stats["spec"] = spec
+    if tok is not None:
+        stats["text"] = [tok.decode([i]) for i in ids]
+    return ids, stats
+
+
+def _joint(w: torch.Tensor, prefix) -> torch.Tensor:
+    return w if not prefix else torch.cat([torch.tensor([prefix], dtype=w.dtype), w], 1)
 
 
 # ------------------------------------------------------------------ models
@@ -152,9 +198,11 @@ def int_eval(graph, scale: float, w: torch.Tensor, device: str, chunk: int):
     return nll, torch.cat(am)
 
 
-def fp_eval(model, w: torch.Tensor, chunk: int):
-    """The same for the checkpoint: its final hidden states, then its LM head on ``chunk`` positions at a time."""
-    hs = model.model(w.to(model.device)).last_hidden_state
+def fp_eval(model, w: torch.Tensor, chunk: int, prefix=None):
+    """The same for the checkpoint: its final hidden states, then its LM head on ``chunk`` positions at a time. With
+    a ``prefix`` (token ids) the checkpoint runs on ``[prefix | w]`` and only ``w``'s positions are scored, against
+    the same targets."""
+    hs = model.model(_joint(w, prefix).to(model.device)).last_hidden_state[:, len(prefix or ()):]
     nll, am = 0.0, []
     for a in range(0, hs.shape[1], chunk):
         x, m = _nll_argmax_chunk(model.lm_head(hs[:, a:a + chunk]).float(), w, a)
@@ -163,10 +211,13 @@ def fp_eval(model, w: torch.Tensor, chunk: int):
     return nll, torch.cat(am)
 
 
-def reference(args, model, wins) -> dict:
-    """The reference's NLL and argmaxes per window (cached in ``--ref-cache`` with its key)."""
+def reference(args, model, wins, prefix=None) -> dict:
+    """The reference's NLL and argmaxes per window (cached in ``--ref-cache`` with its key), on ``[prefix | window]``
+    with a prefix."""
     key = {"model": args.model, "seq": args.seq, "windows": len(wins), "dtype": args.ref_dtype,
            "smoke": args.smoke}
+    if prefix:                      # (the key of a run without a prefix is unchanged, so its cache stays valid)
+        key["prefix"] = list(prefix)
     cache = Path(args.ref_cache) if args.ref_cache else None
     if cache is not None and cache.exists():
         ref = torch.load(cache, weights_only=True)
@@ -183,7 +234,7 @@ def reference(args, model, wins) -> dict:
     nll, am = [], []
     with torch.no_grad():
         for w in wins:
-            x, a = fp_eval(m, w, args.chunk)
+            x, a = fp_eval(m, w, args.chunk, prefix)
             nll.append(x)
             am.append(a)
     if m is model:
@@ -197,7 +248,7 @@ def reference(args, model, wins) -> dict:
     return ref
 
 
-def cells(args) -> list[dict]:
+def cells(args, prefix=None) -> list[dict]:
     head_eq = not args.no_head_eq
     out = [{"graph": "scalar", "gain": g, "alpha": None,
             "kw": dict(norm_gain=g, head_eq=head_eq)} for g in (args.gains if "scalar" in args.graphs else [])]
@@ -205,6 +256,9 @@ def cells(args) -> list[dict]:
              "kw": dict(smooth=a, smooth_pct=args.smooth_pct, pct=args.pct, pct_att=args.pct_att,
                         pct_glu=args.pct_glu, head_eq=head_eq, glu_exp=e)}
             for e in ([0] if "smooth" in args.graphs else []) + list(args.glu_exps) for a in args.alphas]
+    if prefix:
+        for c in out:
+            c["kw"]["prefix_tokens"] = list(prefix)
     return out
 
 
@@ -212,8 +266,8 @@ def emit(args, row: dict) -> None:
     line = json.dumps(row)
     print(line, flush=True)
     short = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in row.items()
-             if k in ("cell", "draw", "gain", "alpha", "ppl", "ratio", "ratio_ci95", "top1", "block_cos_min",
-                      "structure_diff", "seconds")}
+             if k in ("cell", "draw", "gain", "alpha", "prefix_tokens", "ppl", "ratio", "ratio_ci95", "top1",
+                      "block_cos_min", "structure_diff", "seconds")}
     print(json.dumps(short), file=sys.stderr, flush=True)
     if args.out:
         with open(args.out, "a", encoding="utf-8") as f:
@@ -254,6 +308,8 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true", help="a 2-block random model with the checkpoint's vocabulary")
     ap.add_argument("--check", action="store_true", help="exactness checks on one 128-token window")
     ap.add_argument("--protocol", action="store_true", help="2-block real graphs through v0 (C, Kpre) and V1")
+    ap.add_argument("--prefix", nargs="?", const="auto", default=None,
+                    help="a fixed public prefix: auto (PrefixQuant's rule; a bare --prefix), bos, or ids 'a,b,..'")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     model, tok = smoke_model(args.model) if args.smoke else load_llama(args.model)
@@ -264,33 +320,45 @@ def main() -> None:
     if args.protocol:
         return protocol(args, model, tok)
 
-    test = tok(p2._text("test"), return_tensors="pt").input_ids[0]
+    test = token_ids(tok, p2._text("test"), args.prefix)
     wins = p2._windows(test, args.seq, args.windows)
-    train = tok(p2._text("train")[:args.train_chars], return_tensors="pt").input_ids[0]
+    train = token_ids(tok, p2._text("train")[:args.train_chars], args.prefix)
     counts = [w.shape[1] - 1 for w in wins]
-    ref = reference(args, model, wins)
+    cs = args.calib_seq or args.seq
+    calibs = {draw: torch.cat(p2._windows(train, cs, args.calib_windows, start=draw * args.calib_windows))
+              for draw in args.draws}
+    # one prefix for every draw and the reference: chosen on the first draw's calibration windows
+    with torch.no_grad():
+        prefix, prefix_info = prefix_of(args.prefix, model, calibs[args.draws[0]], tok)
+    ref = reference(args, model, wins, prefix)
     fp = math.exp(sum(ref["nll"]) / sum(counts))
     head = {"model": args.model, "smoke": args.smoke, "config": name, "seq": args.seq, "windows": len(wins),
             "tokens": sum(counts), "dataset": "wikitext-2-raw-v1 test, '\\n\\n'.join", "host": platform.node(),
             "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, "device": args.device,
-            "calib_windows": args.calib_windows, "calib_seq": args.calib_seq or args.seq, "ref_dtype": args.ref_dtype,
-            "shape_vs_config": (rl.same_shape(shape, CONFIGS[name]) if name in CONFIGS else None)}
+            "calib_windows": args.calib_windows, "calib_seq": cs, "ref_dtype": args.ref_dtype,
+            "shape_vs_config": (rl.same_shape(shape, CONFIGS[name]) if name in CONFIGS else None),
+            "prefix_tokens": prefix, "prefix_len": len(prefix or ())}
+    if prefix:       # (joint_len above max_pos: the last positions lie past the trained context, for both models)
+        head.update(prefix_choice=prefix_info, prefix_scoring=PREFIX_SCORING, joint_len=args.seq + len(prefix),
+                    max_pos=getattr(model.config, "max_position_embeddings", None))
     emit(args, dict(head, cell="reference", ppl=fp, nll=ref["nll"], seconds=ref["seconds"]))
-    todo = cells(args)
+    todo = cells(args, prefix)
     if not todo:
         return
     with torch.no_grad():
-        hf_states = [rl.hf_residual_states(model, w) for w in wins[:args.cos_windows]]
+        hf_states = [rl.hf_residual_states(model, w, prefix=prefix) for w in wins[:args.cos_windows]]
     structure_done = False
     for draw in args.draws:
-        cs = args.calib_seq or args.seq
-        calib = torch.cat(p2._windows(train, cs, args.calib_windows, start=draw * args.calib_windows))
+        calib = calibs[draw]
         for cell in todo:
             t0 = time.perf_counter()
             with torch.no_grad():
                 graph, info = rl.build_llama_from_hf(model, calib, device=args.calib_device, **cell["kw"])
             build_s = time.perf_counter() - t0
-            extra = {"digest": graph.digest().hex(), "report": ob.graph_report(graph)}
+            extra = {"digest": graph.digest().hex(), "report": ob.graph_report(graph),
+                     "residual_real_max": info["residual_real_max"]}
+            if prefix:       # per layer max |real| / (127 s) of the prefix's keys and values (above 1: clipped)
+                extra.update(prefix_clip=info["prefix_clip"], prefix_hidden_max=info["prefix_hidden_max"])
             if args.structure and not structure_done:
                 # against the named benchmark configuration when the checkpoint has its shape (a smoke model
                 # does not: then against a benchmark graph of the model's own shape)
@@ -317,7 +385,8 @@ def main() -> None:
                           "min": min(b[i]["min"] for b in blocks)} for i in range(len(blocks[0]))] if blocks else []
             ppl = math.exp(sum(nll) / sum(counts))
             emit(args, dict(head, cell=f"{cell['graph']}", gain=cell["gain"], alpha=cell["alpha"], draw=draw,
-                            opts={k: v for k, v in cell["kw"].items()}, ppl=ppl, ref_ppl=fp, ratio=ppl / fp,
+                            opts={k: v for k, v in cell["kw"].items() if k != "prefix_tokens"}, ppl=ppl, ref_ppl=fp,
+                            ratio=ppl / fp,
                             ratio_ci95=p2._bootstrap(nll, ref["nll"], counts), top1=agree / sum(counts),
                             block_cos=per_block, block_cos_min=min((b["min"] for b in per_block), default=None),
                             block_cos_mean_min=min((b["mean"] for b in per_block), default=None),
@@ -337,22 +406,26 @@ def check(args, model, tok, name: str | None) -> None:
     equal one pass, the last position equals the plain forward, the pruned graph's logits equal the unpruned graph's
     and, on a GPU, the GPU's integers equal the CPU's. The ``smooth`` graphs' structural diffs are taken against
     ``build_decoder(CONFIGS[name])`` when the checkpoint has that shape (``shape_vs_config == []``), else against a
-    benchmark graph of the model's own shape (a smoke model)."""
+    benchmark graph of the model's own shape (a smoke model). With ``--prefix``, every graph is built with the
+    prefix (chosen on the calibration window) and the reference runs on ``[prefix | window]``."""
     seq = 128
-    test = tok(p2._text("test"), return_tensors="pt").input_ids[0]
+    test = token_ids(tok, p2._text("test"), args.prefix)
     w = p2._windows(test, seq, 1)[0]
-    calib = p2._windows(tok(p2._text("train")[:200_000], return_tensors="pt").input_ids[0], seq, 1)[0]
+    calib = p2._windows(token_ids(tok, p2._text("train")[:200_000], args.prefix), seq, 1)[0]
     shape = rl.config_of(model.config)
     vs_config = rl.same_shape(shape, CONFIGS[name]) if name in CONFIGS else None
     against = name if vs_config == [] else shape
+    with torch.no_grad():
+        prefix, prefix_info = prefix_of(args.prefix, model, calib, tok)
     report = {"model": args.model, "smoke": args.smoke, "seq": seq, "shape_vs_config": vs_config,
-              "structure_against": name if vs_config == [] else "own shape"}
+              "structure_against": name if vs_config == [] else "own shape", "prefix_tokens": prefix,
+              "prefix_choice": prefix_info}
     ok = args.smoke or vs_config == []              # a real checkpoint must have its CONFIGS entry's shape
     for label, extra in (("smooth", {}), ("smooth-exp8", {"glu_exp": 8})):
         kw = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, head_eq=not args.no_head_eq, **extra)
         with torch.no_grad():
-            graph, info = rl.build_llama_from_hf(model, calib, **kw)
-            pruned, _ = rl.build_llama_from_hf(model, calib, prune_last=True, **kw)
+            graph, info = rl.build_llama_from_hf(model, calib, prefix_tokens=prefix, **kw)
+            pruned, _ = rl.build_llama_from_hf(model, calib, prune_last=True, prefix_tokens=prefix, **kw)
             chunks = torch.cat([z for _, z in rl.lean_logits(graph, w, chunk=args.chunk)], 1)
             whole = torch.cat([z for _, z in rl.lean_logits(graph, w, chunk=1 << 30)], 1)
             env, _ = graph.forward(w)
@@ -360,7 +433,9 @@ def check(args, model, tok, name: str | None) -> None:
             cell = {"chunked_equals_whole": bool(torch.equal(chunks, whole)),
                     "last_equals_forward": bool(torch.equal(whole[:, -1], env[graph.output_name][:, -1])),
                     "pruned_equals_unpruned": bool(torch.equal(env_p[pruned.output_name], env[graph.output_name])),
-                    "gpu_equals_cpu": None, "glu_emax": info["glu_emax"]}
+                    "gpu_equals_cpu": None, "glu_emax": info["glu_emax"], "meta": graph.meta}
+            if prefix:
+                cell["prefix_clip"] = info["prefix_clip"]
             del env, env_p, chunks
             if not extra:
                 cell["structure_diff"] = rl.matches_benchmark_graph(graph, against)
@@ -381,7 +456,7 @@ def check(args, model, tok, name: str | None) -> None:
                         and v is not None)
         ok = ok and cell.get("structure_diff", []) == [] and cell.get("pruned_structure_diff", []) == []
     with torch.no_grad():
-        report["ref_ppl"] = math.exp(fp_eval(model, w, args.chunk)[0] / (seq - 1))
+        report["ref_ppl"] = math.exp(fp_eval(model, w, args.chunk, prefix)[0] / (seq - 1))
     print(json.dumps(report, indent=1), flush=True)
     print("CHECK", "PASSED" if ok else "FAILED", flush=True)
 
@@ -391,21 +466,25 @@ def protocol(args, model, tok) -> None:
     smoothed recipe calibrated on one 64-token train window), unpruned and pruned, on a 64-token test window: the
     structure is the 2-block benchmark graph's, v0 accepts in modes C and Kpre (lambda = 40) and rejects a tampered
     claim (the first q projection, the middle weight op, the LM head), and V1 (mode C) accepts and rejects the same
-    tampers."""
+    tampers. With ``--prefix``, the graphs carry the prefix (chosen on the calibration window)."""
     from pvi.fullcheck import cut_protocol as cp
     from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
     seq = 64
-    test = tok(p2._text("test"), return_tensors="pt").input_ids[0]
+    test = token_ids(tok, p2._text("test"), args.prefix)
     w = p2._windows(test, seq, 1)[0]
-    calib = p2._windows(tok(p2._text("train")[:200_000], return_tensors="pt").input_ids[0], seq, 1)[0]
-    kw = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, head_eq=not args.no_head_eq)
-    report, ok = {"model": args.model, "smoke": args.smoke, "seq": seq}, True
+    calib = p2._windows(token_ids(tok, p2._text("train")[:200_000], args.prefix), seq, 1)[0]
+    with torch.no_grad():
+        prefix, prefix_info = prefix_of(args.prefix, model, calib, tok)
+    kw = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, head_eq=not args.no_head_eq,
+              prefix_tokens=prefix)
+    report, ok = {"model": args.model, "smoke": args.smoke, "seq": seq, "prefix_tokens": prefix,
+                  "prefix_choice": prefix_info}, True
     for prune in (False, True):
         t0 = time.perf_counter()
         with torch.no_grad():
             graph, _ = rl.build_llama_from_hf(model, calib, n_layers=2, prune_last=prune, **kw)
         cell = {"structure_diff": rl.matches_benchmark_graph(graph, rl.config_of(model.config), n_layers=2,
-                                                             prune_last=prune)}
+                                                             prune_last=prune), "meta": graph.meta}
         targets = [graph.mat_ops[1].name, graph.mat_ops[len(graph.mat_ops) // 2].name, graph.mat_ops[-1].name]
 
         def tampers():
