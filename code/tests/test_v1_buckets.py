@@ -197,9 +197,10 @@ def test_native_xbar_equals_int_times(dtype, monkeypatch):
         e = _rand_ext(g, t)
         e[0] = P - 1
         want = ef.int_times(x.to(torch.float64).T, e, 31)
-        got = buckets.xbar(x.to(dtype), e, "1")
-        assert torch.equal(got, want), (dtype, t, k)
-        assert torch.equal(nk.xbar(x.to(dtype), e), want)
+        assert torch.equal(nk.xbar(x.to(dtype), e), want), (dtype, t, k)        # the kernel at the extremes
+        xs = x.clamp(-(buckets.SPAN // 2) + 1, buckets.SPAN // 2 - 1)            # buckets.xbar takes spans <= SPAN
+        got = buckets.xbar(xs.to(dtype), e, "1")
+        assert torch.equal(got, ef.int_times(xs.to(torch.float64).T, e, 31)), (dtype, t, k)
     assert nk.xbar(torch.zeros(3, 2, dtype=torch.int64), _rand_ext(g, 2)) is None        # e of the wrong length
 
 
