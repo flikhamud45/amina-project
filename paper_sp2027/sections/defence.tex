@@ -49,7 +49,8 @@ $\sC$ the client (verifier) holds only a commitment $C_M$ to the weights, as in 
 protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights, and in mode $\Kpre$ only
 secret Freivalds vectors and their folded rows, precomputed once per model from the
 weights~\cite{slalom,commitllm2026}. For open weights anyone can recompute $C_M$
-(Section~\ref{sec:threat}) \todo{D6: check $C_M$ is reproducible}.
+(Section~\ref{sec:threat}); the integer OPT models and their commitments are reproduced bit for bit
+across machines, thread counts, operating systems and torch versions, and on CPU or GPU.
 
 % -------------------------------------------------------------------------------------
 \subsection{The Exact Integer Model}
