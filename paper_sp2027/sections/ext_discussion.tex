@@ -137,9 +137,10 @@ the int8 weights at about 2{,}050 tokens without V1 and, by the byte model, at a
 with it. Only committing the activations and proving the operations without weights, as zkLLM
 does, would remove this growth; we leave it to future work. The verifier recomputes attention, so
 its cost grows with the square of the prompt length; at 2{,}048 tokens the operations without
-weights take 76\% of the CPU verifier's time \todo{B5: native attention kernel}. A CPU client that
-holds the weights saves time over re-execution at 64 tokens and ties with fp32 re-execution at
-2{,}048 tokens, and on a GPU re-execution is faster than our verifier. The case for the protocol is
+weights take about 70\% of the CPU verifier's time even with the native kernels (0.38 of 0.55\,s
+per Llama-2-7B block). A CPU client that holds the weights still saves time over exact
+re-execution (4.0$\times$ at 64 tokens and 5.0$\times$ at 2{,}048, Section~\ref{sec:eval-reexec}),
+but on a GPU re-execution is faster than our verifier. The case for the protocol is
 therefore a client that does not hold the weights or the hardware to run them, not a faster way to
 compute an answer.
 

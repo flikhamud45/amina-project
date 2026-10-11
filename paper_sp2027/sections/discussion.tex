@@ -48,8 +48,8 @@ zkSNARKs~\cite{hollowllm}. The setup proof is untimed \todo{F6}.
 up to 16{,}384, where the CPU verifier is still about 2$\times$ faster than exact re-execution (5.1$\times$
 at 2{,}048) and the proof reaches about 51\,GB~\cite{fullversion}; mixture-of-experts models are
 untested. Costs use random weights, which real OPT weights match
-(Section~\ref{sec:eval-setup}), and the quality of the
-integer OPT-6.7B and Qwen3-4B, and at long context, is unmeasured \todo{F2a, F2b}.
+(Section~\ref{sec:eval-setup}). The certified OPT models stay close to fp16 at 2{,}048 tokens
+(Section~\ref{sec:quality}), but our integer Qwen3 and Llama models do not yet \todo{F2b}.
 
 \para{The attack and the bound.} Condition (H) holds for random ensembles with independent rows
 and on the constructed worst case, not on trained networks, where we report the best attacks found.
