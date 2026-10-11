@@ -133,7 +133,7 @@ Ratio to fp32 (draw 0 with its 95% bootstrap interval over windows; for 3 draws,
 | OPT-6.7B | smoothed, alpha 0.5 | x1.039 [1.037, 1.042] | x1.018 | **x1.017** [1.016, 1.018] | 0.561 / 0.976 |
 | OPT-6.7B | smoothed, alpha 0.55 | x1.041 [1.039, 1.044] | x1.022 | x1.017 [1.016, 1.018] | 0.561 / 0.975 |
 | OPT-6.7B | smoothed, alpha 0.65 | x1.045 | x1.025 | x1.017 | 0.561 / 0.976 |
-| OPT-6.7B | scalar (gain 2) | x1.651 [1.592, 1.714] | x1.835 | (job running) | 0.563 / |
+| OPT-6.7B | scalar (gain 2) | x1.651 [1.592, 1.714] | x1.835 | x1.696 [1.616, 1.800] | 0.563 / 0.978 |
 | OPT-1.3B | scalar (gain 3) | x1.151-1.156 | x1.097-1.101 | **x1.095-1.097** | 0.594 / 0.976 |
 | OPT-1.3B | smoothed, alpha 0.55 | x1.184-1.366 | x1.138-1.294 | x1.144-1.254 | 0.594 / 0.977 |
 | OPT-1.3B | rows | x1.176-1.257 | x1.133-1.200 | x1.158-1.235 | 0.593 / 0.977 |
@@ -166,6 +166,8 @@ Top-1 agreement with fp32 on OPT-6.7B: 0.875 (8-bit) and 0.922 (11-bit), smoothe
   the smoothing gains, both estimated on 8,192 train positions. A recipe search at 11 bits is running (job 1008668:
   scalar gains 2/3/4; smoothing with alpha 0.3/0.4/0.5 without clipping, and with channel maxima; two draws).
 * **Per-row power-of-two scales** (`rows`) do not help at 2,048 tokens either (OPT-1.3B x1.158-1.235 at 11 bits).
+* **OPT-6.7B needs the smoothing:** with one scalar gain it stays at x1.65-1.70 at both probability widths (the
+  outlier channels), while the smoothed graph reaches x1.017.
 
 ## 4. Limitations
 

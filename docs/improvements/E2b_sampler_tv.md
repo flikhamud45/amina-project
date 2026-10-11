@@ -198,21 +198,28 @@ Laptop cost: 58 min in all, of which 30 min for the 576 laws (means per setting:
 2.8-4.1 s per `16:20` law, 4.1-8.5 s per 20-bit law) and 28 min for the six Monte Carlo runs (1.4-1.9 ms per draw
 on the full vocabulary, 5.1-5.3 ms with top-k, which sorts 50,272 logits per draw); 2 threads, peak 0.56 GB.
 
-### OPT-1.3B, 512 positions (cluster) [PENDING]
+### OPT-1.3B, 512 positions (cluster job 1008675, s-006; the certified 11-bit graph)
 
 Same recipe, four 128-token windows (all 512 positions), from `artifacts/results/sampler_tv_opt-1.3b.json`.
 
 | tau | top-k | table | `a` | `tv_sampler` mean | median | max | `tv_table` | `tv_temp` | `tv_model` |
 |---:|---:|---|---:|---:|---:|---:|---:|---:|---:|
-| 0.7 | 0 | 16 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] |
-| 1.0 | 0 | 16 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] |
-| 1.3 | 0 | 16 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] |
-| 0.7 | 50 | 16 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] |
-| 1.0 | 50 | 16 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] |
-| 1.3 | 50 | 16 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] |
-| 1.0 | 0 | 16:20 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | |
-| 1.0 | 0 | 20 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | |
-| 1.0 | 50 | 20 | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | [PENDING] | |
+| 0.7 | 0 | 16 | [52] | 0.0036 | 0.0030 | 0.0187 | 0.0023 | 0.0029 | 0.0932 |
+| 1.0 | 0 | 16 | [37] | 0.0205 | 0.0204 | 0.0537 | 0.0134 | 0.0103 | 0.0991 |
+| 1.3 | 0 | 16 | [28] | 0.0353 | 0.0367 | 0.0531 | 0.0381 | 0.0069 | 0.1149 |
+| 0.7 | 50 | 16 | [52] | 0.0023 | 0.0024 | 0.0052 | 0.0000 | 0.0023 | 0.0940 |
+| 1.0 | 50 | 16 | [37] | 0.0060 | 0.0063 | 0.0109 | 0.0000 | 0.0060 | 0.0970 |
+| 1.3 | 50 | 16 | [28] | 0.0030 | 0.0030 | 0.0052 | 0.0000 | 0.0030 | 0.1015 |
+| 1.0 | 0 | 16:20 | [585] | 0.0140 | 0.0130 | 0.0439 | 0.0142 | 0.0008 |  |
+| 1.0 | 0 | 20 | [585] | 0.0021 | 0.0022 | 0.0036 | 0.0021 | 0.0008 |  |
+| 1.0 | 50 | 20 | [585] | 0.0005 | 0.0005 | 0.0008 | 0.0000 | 0.0005 |  |
+
+Reading (OPT-1.3B). The 16-bit sampler's distance to `softmax(cz/tau)` is 0.0036 (tau 0.7), 0.0205 (tau 1) and 0.0353
+(tau 1.3) on average without top-k, and 0.002-0.006 with top-k 50; the integer model's own distance to the fp32 softmax
+is 0.093-0.115. So the sampler adds 5-26x less than the model already differs from fp32 (3x at tau 1.3 without top-k):
+the plan's "at least 10x below" holds at tau 0.7 and with top-k 50, not at tau >= 1 without top-k. A 20-bit table
+brings the sampler to about 0.002 in every setting (the remedy of Section 6, a protocol change). Peak memory 10.8 GB,
+2,563 s on 16 workers.
 
 Logit scale `c` = [PENDING]; Monte Carlo (positions 64 and 511, `tau:top_k` = 1:0, 1:50, 1.3:0): [PENDING]; checks
 `sum_err_max`, `fft_err_max`, `dropped_bound_max` = [PENDING]. Qwen3-1.7B: not run (no Qwen3 real-weight builder yet).
