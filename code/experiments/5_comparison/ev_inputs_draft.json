@@ -1,0 +1,23 @@
+{
+  "_about": "EV draft inputs (Plan 2 EV(f)): Llama-2-7B, 2080 Ti / Xeon Silver 4114 measurements and the byte model; replaced by the L40S/EPYC records after F6. Every value names its source.",
+  "model": "llama2-7b",
+  "weights_int8_GB": {"value": 6.74, "source": "6.74e9 int8 weights of Llama-2-7B (CONFIGS shapes); one download"},
+  "claims_wire_MB": {
+    "64": {"value": 196.43, "source": "job 1006979, perf.py Kpre --wire on --lookups on --prune-last on, bytes.claims"},
+    "2048": {"value": 6433.74, "source": "job 1007816, perf.py Kpre at 2,048 tokens, bytes.claims"}
+  },
+  "mode_c_policies": ["cnn16c", "cnn18c", "R64c"],
+  "v1_ratio_2048": {"value": 2.3, "source": "jobs 1006979/1007816, v1_bytes.py Kpre at 2,048 tokens: 2.28 (2 blocks) and 2.32 (3 blocks)"},
+  "verifier_s": {
+    "64": {"int": 1.01, "fs": 1.40, "source": "job 1006979, native CPU verifier, Kpre, 8 Xeon threads"},
+    "2048": {"int": 18.52, "fs": 19.64, "source": "job 1007816, native CPU verifier, Kpre, 8 Xeon threads"}
+  },
+  "v1_verifier_s_2048": {
+    "measured_torch": {"value": 77.0, "source": "C2 doc Sec. 8.x: 3.0 s at 2 blocks + 2.47 s per extra block (job 1007816), extended to 32 blocks"},
+    "v1n_torch_projected": {"value": 52.5, "source": "V_V1N doc: laptop ratios applied to the Xeon (a model, not a measurement)"}
+  },
+  "reexec_s": {
+    "64": {"strongest_exact": 4.08, "variant": "int_fp32gemm", "fp32": 4.53, "dynint8_not_exact": 1.91, "source": "job 1006979, reexec.py, 8 Xeon threads"},
+    "2048": {"strongest_exact": 93.2, "variant": "float (fp32)", "fp32": 93.2, "dynint8_not_exact": 56.0, "source": "job 1006979, reexec.py, 8 Xeon threads"}
+  }
+}
