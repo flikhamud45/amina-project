@@ -333,6 +333,32 @@ and V1's verifier from about 2.1 to about 1.4 s per block (full model about 43 s
   1.2x of v0, about 24 s) needs the native kernel and the per-op fixed work removed. Under the plan's kill rule (no
   native kernel merged and rehearsed by Wed 28 Oct), the paper reports V1 as a bytes option with this verifier time.
 
+### 5.5 The native products (`native_kernels.lw_affine`, commit e4eb170)
+
+The profile makes `lw_times` the one target. The native kernel does not use the buckets of Sec. 2.2 but the table
+products' own decomposition (Sec. 2.3), because it needs no per-row table of `V` buckets and so serves the residual
+ops (`V` up to 7,001 on the random-weight decoders) as well as the requant ops (`V` = 256):
+
+* per row `i` of the values `s` `[n, t]` (int8, int16, int32 or int64, read as they arrive), with `v = s_ij - a`,
+  three accumulators of 8 int64 lanes: `A1 += v e_j`, `A2 += C[v] e_j`, `A3 += D[v] e_j` (one `#pragma omp simd`
+  loop over the 8 coefficients of `e_j`); rows in parallel (OpenMP);
+* every term is below `2^15 2^31 = 2^46` (`V <= 2^15`, `C < V`, `D in {0, 1}`, `e` canonical), and a row is reduced
+  every `2^16` entries, so no accumulator overflows int64;
+* `buckets.lw_times` then forms `L e = lo(a) (1 . e) + w0 A1 + A2` and `W e = w0 (1 . e) + A3` exactly as it does
+  from the torch table products, and adds the exceptions as before.
+
+The integers are the torch table products' (and so today's GEMM's). The kernel checks its operands (`e` canonical,
+the tables in range, `V <= 2^15`) and returns nothing if a value lies outside `[a, a + V)`; the torch path then runs,
+so its behaviour on malformed input is unchanged. It is used on a CPU under `PVI_V1_BUCKETS=1` when the library is
+built; `PVI_V1_NATIVE=0` switches it off. Work per block: one pass over 87 M values with 24 int64 multiply-adds each
+(three 8-lane vectors), about 0.05-0.1 s on 8 Xeon threads by the count, against 0.82 s now.
+
+Tests: `test_native_lw_equals_the_torch_table_products` (four dtypes; requant ops with exceptions at 37 x 2,048 and a
+power-of-two multiplier; residual ops of `V` = 7,001 and 81; the native result against the torch table products and
+today's GEMM; an out-of-range value, a short `e` and a non-canonical coefficient declined). It is skipped where the
+library cannot be built (the Windows laptop). Job 1011440 builds it on the Xeon node, runs the V1 suites with the
+native kernel on and off, the micro-benchmark and the Llama-2-7B profile: [CLUSTER].
+
 ## 6. Cluster commands
 
 Run as job 1009430 (Sec. 5.4). From the repository root of a lean clone of this branch on the TAU
