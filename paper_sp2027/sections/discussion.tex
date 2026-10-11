@@ -28,7 +28,8 @@ attestation and side-channel resistance. A client with the weights and a GPU sho
 zkLLM hides the weights but proves for minutes, and CommitLLM is cheap but statistical. Our
 protocol serves a client with neither the weights nor a GPU that will not trust hardware: in mode
 $\sC$ it holds 32 bytes per matrix and checks a 64-token proof, about 21$\times$ smaller than the weights, in about a second on
-a CPU. For the provider, proving costs 4.1--8.6$\times$ our exact forward pass without proofs and
+a CPU; a $\Kpre$ client holds the weights and computes its key once (12.7\,s for Llama-2-7B on 8 CPU
+threads). For the provider, proving costs 4.1--8.6$\times$ our exact forward pass without proofs and
 19--40$\times$ an fp16 one on the same GPU (OPT-1.3B, 2{,}048 tokens; Section~\ref{sec:eval-cost}).
 A provider may also serve with the exact model and prove later, on request, with the same proof.
 
