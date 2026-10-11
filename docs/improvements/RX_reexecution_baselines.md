@@ -51,17 +51,21 @@ The native CPU verifier in Kpre (V-LONG-a, the same job and threads, full Llama-
 |---|---:|---:|---:|---:|
 | 64 tokens, interactive | 1.01 s | 4.08 s | 4.0x | 1.9x |
 | 64 tokens, Fiat-Shamir (7 repetitions instead of 5) | 1.40 s | 4.08 s | 2.9x | 1.4x |
-| 2,048 tokens | *pending (job 1007816; the first run's prover ran out of GPU memory)* | 93.2 s | | |
+| 2,048 tokens, interactive | 18.5 s | 93.2 s | 5.0x | 3.0x |
+| 2,048 tokens, Fiat-Shamir (7 repetitions) | 19.6 s | 93.2 s | 4.7x | 2.9x |
 
-B5's extrapolated 17.2 s at 2,048 tokens would give about 5.4x against fp32 re-execution; the measured cell replaces
-it. Under Fiat-Shamir, Kpre absorbs nothing (FS1), but its Freivalds repetitions go from 5 to 7, which costs about 1.4x
+The 2,048-token cells are job 1007816 (the prover on the CPU, since the first run's GPU prover ran out of memory on
+the 11 GB card): 6.43 GB of claims, 3/3 queries accepted in both settings; the verifier's phases are decode 2.7 s,
+derive 11.2 s and products 4.6 s (interactive). B5 had extrapolated 17.2 s. Against the exact integer re-execution
+with fp32 GEMMs (141.6 s) the ratios are 7.6x and 7.2x. Under Fiat-Shamir, Kpre absorbs nothing (FS1), but its Freivalds repetitions go from 5 to 7, which costs about 1.4x
 in the products step.
 
 ## 5. What this means for the paper
 
 * The abstract's "4.6 times" was against fp32 only, interactive and extrapolated. Following the plan's rule, it becomes
   "at least N times", with N the smaller of the measured ratios on the Xeon and on the EPYC, against the strongest exact
-  baseline, non-interactive. On the Xeon so far: 2.9x at 64 tokens; the 2,048-token cell is pending.
+  baseline, non-interactive. On the Xeon: 2.9x at 64 tokens and 4.7x at 2,048 tokens; the EPYC cells come from the
+  `cpuv` tier.
 * The `dynint8` row is reported beside, labelled: even this inexact engine is 1.4-1.9x slower than our verifier at
   64 tokens, and it computes a different (non-certified) model.
 

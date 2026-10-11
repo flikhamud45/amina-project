@@ -53,6 +53,34 @@ what decides how often a sampled path opens one of them?
 (Detection columns: medians over the successful prompts. The down-only rows are identical for both ranges, as they
 must be: a down move goes to 0 whatever the top of the range.)
 
+## 3b. OPT-6.7B (Plan 2 G3.5-L, job 1007804: Xeon node s-006, fp32, 16 threads, 40 prompts per cell)
+
+The same job first reran the OPT-1.3B cells. Every discrete result equals the table above in all 320 records (success,
+number of edited neurons, which neurons, uniform detection); only the stored float values differ, by about 1e-6
+(fp32 on the Xeon against the laptop). OPT-6.7B, layers 8, 16, 24 and 31 of 32 (the same relative depths), ranges
+calibrated on 8,192 WikiText-2 train tokens:
+
+| Moves | Range | Layer | next token changed | edited neurons, median (max) | uniform per path | contribution-weighted |
+|---|---|---:|---:|---:|---:|---:|
+| any | max | 8 | 40 | 10.5 (44) | 6.4e-4 | 0.76 |
+| any | 99.9% | 8 | 40 | 22 (104) | 1.3e-3 | 0.74 |
+| any | max | 16 | 40 | 6 (25) | 3.7e-4 | 0.15 |
+| any | 99.9% | 16 | 40 | 12 (48) | 7.3e-4 | 0.15 |
+| any | max | 24 | 40 | 5 (14) | 3.1e-4 | 0.067 |
+| any | 99.9% | 24 | 40 | 7 (36) | 4.3e-4 | 0.071 |
+| any | max | 31 | 40 | 1 (17) | 6.1e-5 | 0.028 |
+| any | 99.9% | 31 | 40 | 1 (16) | 6.1e-5 | 0.021 |
+| down | (either) | 8 | 4 | 3 (23) | 1.8e-4 | 0 |
+| down | (either) | 16 | 23 | 25 (164) | 1.5e-3 | 0 |
+| down | (either) | 24 | 37 | 36 (176) | 2.2e-3 | 0 |
+| down | (either) | 31 | 40 | 3 (112) | 1.8e-4 | 0 |
+
+The reading of Section 4 holds at 7B scale. In-range edits change the next token on 40/40 prompts at every layer
+and range; one uniform path catches them with probability at most 1.3e-3 at the medians (so `1 - 2^-40` needs about
+20,000-450,000 paths); contribution weighting catches the `any` edits often at the first layer (0.74-0.76 per draw)
+and rarely at the last (0.02-0.03), and never catches the `down` edits, which succeed on 4-40 of 40 prompts.
+Results: `code/artifacts/results/inrange_llm_opt-6.7b_{any,down}.json`.
+
 ## 4. Reading
 
 * **Range checks do not stop the attack.** Edits that keep every value inside ranges calibrated on held-out text
@@ -65,7 +93,7 @@ must be: a down move goes to 0 whatever the top of the range.)
   never opens them (detection exactly 0), and the attack still succeeds for 9/40 (layer 6) to 39/40 (layer 23)
   prompts, with uniform detection at most 1.5e-3 per path. This matches Theorem `thm:guess`: a sampler that reads
   the claimed values can be steered by them.
-* **Limitations.** One model (OPT-1.3B; OPT-6.7B and Qwen3-4B are in the L40S package), untargeted changes only, one
+* **Limitations.** Two models (OPT-1.3B and OPT-6.7B, Section 3b; Qwen3-4B only if the team asks), untargeted changes only, one
   layer at a time, greedy first-order moves (an upper bound on the neurons needed), and ranges from 8,192 tokens.
 
 ## 5. Usage

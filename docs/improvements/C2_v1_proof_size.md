@@ -204,6 +204,28 @@ transcript (12 GPU tests; the host logic also runs on the CPU against CPU stand-
 the first version). The host's per-round work (a device-to-host copy, the challenge, a few products: about 0.44 ms per
 round, 300 rounds) is now a quarter of an instance's time.
 
+### 8.x Plan 2 re-time with the B5 kernels (job 1007816, Xeon s-004, 8 threads, git 12a188f)
+
+`v1_bytes.py --model llama2-7b --layers 2|3 --seq 2048 --modes Kpre --policy auto --prune-last --fs --lean --full
+--reps 3 --lmax 24`: both queries accepted; V1 is 2.28x / 2.32x smaller than v0 (111.4 against 254.3 MB at 2 blocks,
+199.5 against 462.1 MB at 3).
+
+| Phase (s) | 2 blocks | 3 blocks | per extra block |
+|---|---:|---:|---:|
+| verify_decode | 0.24 | 0.36 | 0.13 |
+| verify_derive | 0.68 | 1.22 | 0.54 |
+| verify_gkr | 0.27 | 0.66 | 0.39 |
+| verify_final (the final check's products) | 1.57 | 2.99 | **1.42** |
+| verify_logup, products, cut, Fiat-Shamir | 0.25 | 0.24 | ~0 |
+| **verifier total** | **3.0** | **5.5** | **2.5** |
+| prove_gkr (CPU) | 6.15 | 4.31 | |
+
+Extrapolated to the full model (32 blocks), the V1 CPU verifier takes about 75-80 s, against 19.6 s for v0 Kpre under
+Fiat-Shamir (V-LONG-a, measured). The final check's products dominate (about 1.4 s per block, 57%), then the derive
+(0.54 s). So the re-time confirms the gap, and V-V1N (the native V1 verifier: the final check's products on B5's
+field-product kernel, the derive on the native cheap ops) goes ahead; until it lands, V1 is reported as a bytes option
+(2.3x fewer bytes) with this verifier time stated.
+
 ## 9. Adversarial review (workflow `v1-soundness-review`, 15 agents)
 
 Four reviewers (the verifier's checks; the GKR and logUp algebra; Fiat-Shamir and interaction; the cut's semantics

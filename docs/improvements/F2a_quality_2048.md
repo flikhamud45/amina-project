@@ -111,20 +111,61 @@ Reading (two windows only, so indicative):
 * Already at 512 tokens, the 8-bit probabilities cost about 2% of perplexity on the smoothed graph (x1.073 against
   x1.051), and the rounded rows keep only about 94% of their mass in the worst layer.
 * 11 bits recover essentially all of it: the 11-bit graph is within 0.2% of the ideal softmax in every graph.
-* The plan's rule adopts 11 bits if the 8-bit cost is above 1%. If the cluster cells confirm this at 2,048 tokens, the
+* The plan's rule adopts 11 bits if the 8-bit cost is above 1%. The cluster cells confirmed it (Section 3.2), and the
   11-bit constants go into `transformer.py` (two paths), `reference.py`, `attention_kernels.py` and `native_kernels.py`,
   with their exactness tests (plan: one extra day; decision Mon 19 Oct). Proof bytes and verifier time do not change,
   since the probabilities are internal to a cheap op.
 
-### 3.2 Cluster (2,048 tokens, every test window, 3 calibration draws)
+### 3.2 Cluster (2,048 tokens, all 140 test windows, 286,580 predicted tokens)
 
-*Pending: jobs 1007072-1007074.* To be filled in:
+Jobs 1007844 (OPT-125M), 1007845 (OPT-1.3B) and 1007846 (OPT-6.7B) on the RTX 2080 Ti nodes, git cdeb44a plus the
+device fix of 74812c9; the integer forward on the GPU, calibration on the CPU (4 x 2,048 train tokens per draw), fp32
+reference on the GPU (CPU for OPT-6.7B). Records: `code/artifacts/results/9_quality/ppl2048_opt-*.jsonl`.
 
-| Model | fp32 | scalar 8-bit | smoothed 8-bit | smoothed float | smoothed 11-bit | rows 11-bit |
-|---|---:|---:|---:|---:|---:|---:|
-| OPT-125M | | | | | | |
-| OPT-1.3B (published fp 14.62) | | | | | | |
-| OPT-6.7B (published fp 10.86; alpha 0.5 / 0.55 / 0.65) | | | | | | |
+**The fp32 references reproduce the published 2,048-token values:** 27.656 (OPT-125M; published 27.65), 14.624
+(OPT-1.3B; 14.62), 10.860 (OPT-6.7B; 10.86). `--check` passed on the cluster as well (GPU = CPU), and `--legacy`
+reproduced the paper's 16 x 128 numbers exactly (32.79 fp32, 36.44 scalar gain 3, 33.70 smoothed).
+
+Ratio to fp32 (draw 0 with its 95% bootstrap interval over windows; for 3 draws, the range over the draws):
+
+| Model | graph | 8-bit | ideal float softmax | 11-bit | smallest per-layer mass, 8-bit / 11-bit |
+|---|---|---:|---:|---:|---:|
+| OPT-6.7B | smoothed, alpha 0.5 | x1.039 [1.037, 1.042] | x1.018 | **x1.017** [1.016, 1.018] | 0.561 / 0.976 |
+| OPT-6.7B | smoothed, alpha 0.55 | x1.041 [1.039, 1.044] | x1.022 | x1.017 [1.016, 1.018] | 0.561 / 0.975 |
+| OPT-6.7B | smoothed, alpha 0.65 | x1.045 | x1.025 | x1.017 | 0.561 / 0.976 |
+| OPT-6.7B | scalar (gain 2) | x1.651 [1.592, 1.714] | x1.835 | (job running) | 0.563 / |
+| OPT-1.3B | scalar (gain 3) | x1.151-1.156 | x1.097-1.101 | **x1.095-1.097** | 0.594 / 0.976 |
+| OPT-1.3B | smoothed, alpha 0.55 | x1.184-1.366 | x1.138-1.294 | x1.144-1.254 | 0.594 / 0.977 |
+| OPT-1.3B | rows | x1.176-1.257 | x1.133-1.200 | x1.158-1.235 | 0.593 / 0.977 |
+| OPT-125M | scalar (gain 4) | x1.434-1.436 | x1.163-1.168 | x1.161-1.166 | 0.719 / 0.976 |
+| OPT-125M | smoothed, alpha 0.55 | x2.12-2.19 | x2.01-2.06 | x1.93-1.97 | 0.718 / 0.974 |
+| OPT-125M | rows | x2.14-2.16 | x1.89-1.91 | x1.83-1.85 | 0.719 / 0.974 |
+
+Top-1 agreement with fp32 on OPT-6.7B: 0.875 (8-bit) and 0.922 (11-bit), smoothed alpha 0.55.
+
+**Reading.**
+
+* **8-bit probabilities cost 2-23% of perplexity at 2,048 tokens** (OPT-6.7B x1.041 -> x1.017; OPT-1.3B scalar x1.156 ->
+  x1.096; OPT-125M scalar x1.435 -> x1.166). In the worst layer a rounded row keeps only 56-72% of its probability
+  mass. 11 bits keep 97.5-97.7%. In the scalar-gain cells and on OPT-6.7B they match or beat the ideal float softmax
+  (within 0.3%; the float row keeps the 8-bit graph's output multiplier, while the 11-bit graph has its own); in the
+  unstable smoothed cells of the small models the comparison varies with the draw (OPT-1.3B draw 2: x1.235 against
+  x1.147).
+* **Decision (the plan's rule: adopt 11 bits if the 8-bit cost exceeds 1%).** The certified models use 11-bit
+  probabilities: `transformer.CERTIFIED_PROB_MAX = 2047`, the default of `build_opt_from_hf` and
+  `build_llama_from_hf` (commit e5d377c). The native CPU and fused GPU kernels take the scale and passed their
+  exactness tests at 255 and 2047 on the cluster (job 1007805: 668 passed). Proof bytes and verifier time do not
+  change. The random-weight benchmark graphs keep 255 (same shapes, same costs), so the stored benchmark records
+  stay valid.
+* **OPT-6.7B, the 7B-class model, reaches x1.017** at 2,048 tokens on the full test set (smoothed, 11 bits), within
+  the plan's target (x1.05) and close to SmoothQuant-O3's reported 1-2%.
+* **The smoothed recipe does not transfer to the small models.** It was chosen at 16 x 128 with calibration on the
+  test split. At 2,048 tokens with train-split calibration it is worse than the scalar gain on OPT-1.3B, and it varies
+  with the calibration draw (draw 1: x1.25-1.37); on OPT-125M it roughly doubles perplexity. The suspects are the
+  99.99th-percentile clipping at q/k/v/fc1 and the attention output, and the 99.9th-percentile channel statistics of
+  the smoothing gains, both estimated on 8,192 train positions. A recipe search at 11 bits is running (job 1008668:
+  scalar gains 2/3/4; smoothing with alpha 0.3/0.4/0.5 without clipping, and with channel maxima; two draws).
+* **Per-row power-of-two scales** (`rows`) do not help at 2,048 tokens either (OPT-1.3B x1.158-1.235 at 11 bits).
 
 ## 4. Limitations
 

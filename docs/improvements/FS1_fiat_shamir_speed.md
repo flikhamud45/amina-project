@@ -106,9 +106,11 @@ other jobs running):
 So 8 threads hash 6.0 times as fast as one serial stream. At this rate Llama-2-7B's 6.6 GB of claims at 2,048 tokens
 cost about 4.8 s per party in modes C and K (the plan's estimate was 3-5 s), and 0 s in Kpre.
 
-**Xeon, full Llama-2-7B** (job 1006979, V-LONG-a: `perf.py --modes Kpre --fs` at 64 and 2,048 tokens on 8 threads):
-*pending; the job was running when this was written.* Expected: `fs_hash` = 0 in Kpre, and the Kpre verifier time
-equal to the interactive one.
+**Xeon, full Llama-2-7B** (V-LONG-a, jobs 1006979 and 1007816, `perf.py --modes Kpre` with and without `--fs`,
+8 threads): `fs_hash` = 0 in Kpre, as designed. The verifier takes 1.01 s / 1.40 s at 64 tokens and 18.5 s / 19.6 s at
+2,048 tokens (interactive / Fiat-Shamir); almost all of the difference is the Freivalds repetitions (5 against 7 for the
+same soundness), in the products step (4.6 s against 5.4 s at 2,048 tokens). Without FS1 the Fiat-Shamir verifier
+would have hashed the 6.43 GB of claims serially, about 21 s more.
 
 ## 4. Limitations
 

@@ -357,7 +357,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 ### 3.2 Quality and real weights
 
 - **F2a [WIP] must: memory-lean quality at 2,048 tokens, full WikiText-2 test, 8-bit versus 11-bit attention probabilities.**
-  - **Status (11 Oct).** `ppl_2048.py` and the ported `opt_builder.py` (b244e8b, cdeb44a); `--check` passes on the laptop; laptop OPT-125M at 512 tokens: 8-bit probabilities cost about 2% (x1.073 against x1.051 at 11 bits, = ideal softmax). `P_MAX` is a graph parameter in the torch paths (de819fb); native and Triton kernels still 255 only. Cluster jobs 1007072-1007074 queued. Write-up `docs/improvements/F2a_quality_2048.md`.
+  - **Status (11 Oct).** Cluster results in (jobs 1007844-1007846): fp32 references match the published values; 8-bit probabilities cost 2-23% at 2,048 tokens, 11 bits reach the ideal softmax -> **P_MAX = 2047 adopted** for the certified models (e5d377c; kernels validated, job 1007805). OPT-6.7B smoothed 11-bit x1.017. OPT-1.3B: the smoothed recipe is worse than a scalar gain at 2,048 (x1.14-1.25 against x1.096) and draw-dependent: recipe search running (job 1008668). Write-up F2a_quality_2048.md.
   - **What.**
     1. **A lean evaluation path.** `real_weights.real_logits` calls `forward(free=True)`, and the LM head runs over chunks of positions, returning only the per-token NLL and the argmax. `_RealBuilder._run` drops each calibration tensor after its last use, or calibrates on the CPU.
     2. **Calibration on WikiText-2 train windows** (4-8 x 2,048 tokens). Today's calibration on the last test window would overlap the evaluated text.
@@ -393,7 +393,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - Otherwise 8 bits stay, and the paper reports their cost.
 
 - **D6a [WIP] must: a quantisation recipe that reproduces C_M bit for bit** (Plan 1 D6 and part (b) of the paper agent's compliance item).
-  - **Status (11 Oct).** Laptop: OPT-125M digests equal at 1 and 8 threads. Xeon job 1007102 (OPT-125M and OPT-1.3B, 1 and 8 threads, Merkle roots) queued; the first Xeon job failed for want of pyarrow.
+  - **Status (11 Oct).** Laptop and Xeon (s-005) give the same OPT-125M graph digest and weight hash at 1 and 8 threads; the first roots hash was empty (grouped plan: fixed in e5d377c); jobs 1008669/1008670 compare s-004 and s-005 with every Merkle root, OPT-125M and OPT-1.3B.
   - **What.**
     1. **Test first.** Build the smoothed OPT-125M and OPT-1.3B on the laptop and on a Xeon node, with 1 and 8 threads, and compare the digests and every Merkle root.
     2. **If they differ:**
@@ -532,8 +532,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.3 Verifier
 
-- **V-LONG-a [WIP] must: the full models on the Xeon now, measured and not extrapolated.**
-  - **Status (11 Oct).** Job 1006979 (interactive and Fiat-Shamir, 64 and 2,048 tokens).
+- **V-LONG-a [DONE] must: the full models on the Xeon now, measured and not extrapolated.**
+  - **Status (11 Oct).** Measured (jobs 1006979, 1007816): full Llama-2-7B, Kpre, native CPU verifier on 8 Xeon threads: 1.01 / 1.40 s at 64 tokens and 18.5 / 19.6 s at 2,048 tokens (interactive / Fiat-Shamir), 3/3 accepted; the prover ran on the CPU at 2,048 (the 2080 Ti ran out of memory). Write-ups RX and FS1.
   - **What.**
     - Run `perf.py` with the native CPU verifier (B5) on 8 Xeon threads (`--exclusive`):
       - the full Llama-2-7B, Qwen3-4B and OPT-1.3B (random weights);
@@ -556,8 +556,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - The V1/v0 verifier ratio is measured with today's kernels.
   - **Kill.** None. If the full model does not fit the node's `--mem`, measure 16 blocks and say so.
 
-- **RX [WIP] must: the strongest exact re-execution baselines on the same CPU.**
-  - **Status (11 Oct).** Native exact int8 GEMM and the baselines (12a188f); measured in job 1006979.
+- **RX [DONE] must: the strongest exact re-execution baselines on the same CPU.**
+  - **Status (11 Oct).** Xeon done (jobs 1006979): strongest exact baseline 4.08 s (64 tokens, integer with fp32 GEMMs) and 93.2 s (2,048, fp32); verifier ratios 2.9-4.0x (64) and 4.7-5.0x (2,048); the native int8 GEMM is slower than MKL fp32 on Skylake (no VNNI). The EPYC rows come from F6 `cpuv`. Write-up `docs/improvements/RX_reexecution_baselines.md`.
   - **What.** Every baseline runs on the same 8 threads as the verifier: on the Xeon in week 1 (within V-LONG-a), and on the EPYC in the `cpuv` tier. Timing jobs use `--exclusive`.
     1. **Optimised exact integer re-execution.**
        - `IntGraph.forward` runs with B5's native non-weight kernels (attention, requantisation, recomputed operations).
@@ -585,6 +585,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - the paper labels the row as modelled.
 
 - **V-V1N [TODO] should (rank 1): native V1 verifier.**
+  - **Status (11 Oct).** The re-time (job 1007816) confirms the gap: V1's CPU verifier is about 2.5 s per block (1.4 s in the final check's products), about 75-80 s for the full Llama-2-7B against v0's 19.6 s, so V-V1N goes ahead (C2 doc Sec. 8.x).
   - **Decision rule.** The V1 re-time of Mon 12 (V-LONG-a) decides.
     - If V1's verifier takes more than 1.2x v0's time (the model says about 3.5x), parts 1-4 become the first should item and start Mon 19.
     - Otherwise V-V1N is not started, and V1 is reported as measured.
@@ -819,8 +820,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.6 Attack
 
-- **G3.5-L [WIP] must: the OPT-6.7B in-range attack on a Xeon node, before the freeze** (Plan 1 G3.5's remainder; reviewer A's condition 3, A-Q3).
-  - **Status (11 Oct).** Job 1007103 (OPT-1.3B reproduction, then OPT-6.7B, moves any and down) queued.
+- **G3.5-L [DONE] must: the OPT-6.7B in-range attack on a Xeon node, before the freeze** (Plan 1 G3.5's remainder; reviewer A's condition 3, A-Q3).
+  - **Status (11 Oct).** Job 1007804: OPT-1.3B reproduced exactly (every discrete result of the 320 records); OPT-6.7B in fp32: in-range edits change the next token on 40/40 prompts at layers 8/16/24/31, uniform detection at most 1.3e-3 per path, contribution weighting 0.02-0.76 (`any`) and 0 (`down`). Write-up G3_inrange_attack.md Sec. 3b.
   - **What.**
     - Run `experiments/2_attack/inrange_llm.py` on OPT-6.7B in fp32, on a Xeon node with `--mem` of at least 64 GB and HF_HOME on node-local `/tmp`.
     - Use G3.5's setup:
