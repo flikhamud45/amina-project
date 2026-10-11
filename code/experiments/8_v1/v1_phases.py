@@ -12,7 +12,7 @@ CPU, in mode Kpre or C (``--policy``), Fiat--Shamir with ``--fs``.  After one wa
 queries (``torch.randint`` prompts, seeds 100 ..) each run once under every ``PVI_V1_BUCKETS`` value of ``--paths``
 (``0`` today's code, ``1`` the table products, ``scatter`` the buckets), interleaved, so every path sees the same
 queries and the same machine state.  Within ``verify_final`` the script also times its parts (``final_xbar``:
-``_xbar``, of which ``final_xbar_new`` in ``buckets.xbar``; ``final_points``: the eq tables; ``final_kpre_y``;
+``_xbar``, of which ``final_xbar_new`` in ``buckets.xbar``; ``final_points``: the eq tables, the prover's calls in ``prove_fold`` included; ``final_kpre_y``;
 ``final_check``: ``_final_ok``, of which ``final_lw_new`` in ``buckets.lw_times``, ``final_lw_old`` in today's
 ``_lw_e_old`` and ``final_dot`` in the inner products) and counts the ops that fall back from ``buckets.lw_times``
 (``n_lw_new_fallback``) and that run ``_lw_e_old`` (``n_lw_old``), by wrapping the modules' functions.  One JSON line per

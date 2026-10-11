@@ -302,7 +302,7 @@ Full Llama-2-7B (one pruned block plus 31 full ones): V1 `0` about 0.48 + 31 x 2
 
 | Part of `verify_final` | 2 blocks: `0` / `1` | 3 blocks: `0` / `1` | per block: `0` / `1` |
 |---|---:|---:|---:|
-| `final_points` (eq tables of every instance) | 0.586 / 0.582 | 1.075 / 1.003 | 0.489 / 0.421 |
+| `final_points` (eq tables; the prover's calls in `prove_fold` included, see below) | 0.586 / 0.582 | 1.075 / 1.003 | 0.489 / 0.421 |
 | `final_xbar` (`_xbar`; `buckets.xbar` on `1`) | 0.246 / 0.131 | 0.382 / 0.252 | 0.137 / 0.122 |
 | `final_kpre_y` | 0.053 / 0.056 | 0.091 / 0.090 | 0.039 / 0.034 |
 | `final_lw` (`_lw_e_old` on `0`, `buckets.lw_times` on `1`) | 1.181 / 1.058 | 2.041 / 1.874 | **0.860 / 0.816** |
@@ -318,14 +318,17 @@ No op fell back from `buckets.lw_times` (`n_lw_new_fallback` 0; `_lw_e_old` ran 
   (the micro uses one 4,096-row op with a fixed range) and the dtype in which the decoded values arrive (the micro
   passes int8 to the table products and int64 to today's path). Either way the torch table products are not the
   lever on this CPU; the native bucket kernel of Sec. 7 is, at its estimated 0.03-0.05 s per block.
-* **The eq tables cost 0.42-0.49 s per block** (a third of `verify_final`), the same on both paths: `_points`
-  builds `eq(r_row)` and `eq(r_col)` per GKR instance with field multiplications in torch. They are independent of
-  the values and could be batched over instances or built natively; that is the second target.
-* `_xbar`, the Kpre check and the inner products together cost about 0.2 s per block.
+* **`final_points` is not the verifier's alone.** The prover calls the same `_points` in `prove_fold` (once per
+  GKR instance, on its device), and the wrapper adds both, so the 0.42-0.49 s per block are mostly the prover's.
+  The verifier's own eq tables are small: `extfield.eq_table` takes 7 ms for `n_col` = 11 and 9 ms for `n_row` = 13
+  on the laptop (2 threads), about 16 ms per instance, so about 0.08 s per block (5 instances per block at `lmax`
+  24). They are not a target.
+* `_xbar`, the Kpre check and the inner products together cost about 0.2 s per block; the rest of `verify_final`
+  (about 0.2 s per block) is the verifier's eq tables and the bookkeeping of the folds.
 
-With both targets met (products about 0.05 s, eq tables about 0.05 s per block), `verify_final` would drop from
-1.24 to about 0.3 s per block, and V1's verifier from about 2.1 to about 1.2 s per block (full model about 38 s,
-1.9x v0's 19.6 s): still above the plan's 1.2x, so the derive's int32 path (Sec. 7) is needed as well.
+With the native products at about 0.05 s per block, `verify_final` would drop from 1.24 to about 0.47 s per block,
+and V1's verifier from about 2.1 to about 1.4 s per block (full model about 43 s, 2.2x v0's 19.6 s): above the plan's
+1.2x, so the derive's int32 path (Sec. 7) is needed as well.
 * The model of Sec. 5.3 (50-55 s) was optimistic; the measured torch path gives 67 s. The plan's target (V1 within
   1.2x of v0, about 24 s) needs the native kernel and the per-op fixed work removed. Under the plan's kill rule (no
   native kernel merged and rehearsed by Wed 28 Oct), the paper reports V1 as a bytes option with this verifier time.
