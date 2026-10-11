@@ -295,9 +295,37 @@ Full Llama-2-7B (one pruned block plus 31 full ones): V1 `0` about 0.48 + 31 x 2
   with Sec. 5.1's per-block shapes (34,304 requant rows, 8,192 residual rows, 23,296 `_xbar` columns at 2,048
   tokens) the products alone would take about 1.46 s on path `0` and 0.65 s on path `1`, yet the whole of
   `verify_final` is 1.38 s and 1.28 s. So either the micro-benchmark (one op of 4,096 rows) runs slower than the
-  real ops, or the real ops do not take the routes it measures. This is not yet understood; a per-op profile of
-  `verify_final` on the Xeon must come before the native kernel is written. The per-op fixed work of Sec. 7 (eq
-  tables, the three small inner products per op) and the int64 handling of the clear claims are the other candidates.
+  real ops, or the real ops do not take the routes it measures. The profile below (job 1011404) answers it.
+
+**Where `verify_final` goes** (job 1011404, s-005, git 74136a5; `v1_phases.py --model llama2-7b --layers 2|3 --seq
+2048 --mode Kpre --fs --lean --lmax 24 --reps 3 --paths 0 1`, medians; per block = 3 blocks minus 2):
+
+| Part of `verify_final` | 2 blocks: `0` / `1` | 3 blocks: `0` / `1` | per block: `0` / `1` |
+|---|---:|---:|---:|
+| `final_points` (eq tables of every instance) | 0.586 / 0.582 | 1.075 / 1.003 | 0.489 / 0.421 |
+| `final_xbar` (`_xbar`; `buckets.xbar` on `1`) | 0.246 / 0.131 | 0.382 / 0.252 | 0.137 / 0.122 |
+| `final_kpre_y` | 0.053 / 0.056 | 0.091 / 0.090 | 0.039 / 0.034 |
+| `final_lw` (`_lw_e_old` on `0`, `buckets.lw_times` on `1`) | 1.181 / 1.058 | 2.041 / 1.874 | **0.860 / 0.816** |
+| `final_dot` (the inner products) | 0.062 / 0.063 | 0.113 / 0.104 | 0.051 / 0.041 |
+| `verify_final` | 1.856 / 1.643 | 3.243 / 2.878 | 1.388 / 1.236 |
+
+No op fell back from `buckets.lw_times` (`n_lw_new_fallback` 0; `_lw_e_old` ran for 9 and 16 ops on path `0`). So:
+
+* **The products by value give almost nothing in place: 0.86 -> 0.82 s per block.** Per entry (87 M values per
+  block: 34,304 requant and 8,192 residual rows at 2,048 tokens) that is 9.9 ns on path `0` and 9.4 ns on path `1`,
+  against the micro-benchmark's 13.9 and 5.9 ns (weighted): today's path is faster in place than in the micro, and
+  the table products slower. Why is not measured yet; the candidates are the real ops' shapes and value ranges
+  (the micro uses one 4,096-row op with a fixed range) and the dtype in which the decoded values arrive (the micro
+  passes int8 to the table products and int64 to today's path). Either way the torch table products are not the
+  lever on this CPU; the native bucket kernel of Sec. 7 is, at its estimated 0.03-0.05 s per block.
+* **The eq tables cost 0.42-0.49 s per block** (a third of `verify_final`), the same on both paths: `_points`
+  builds `eq(r_row)` and `eq(r_col)` per GKR instance with field multiplications in torch. They are independent of
+  the values and could be batched over instances or built natively; that is the second target.
+* `_xbar`, the Kpre check and the inner products together cost about 0.2 s per block.
+
+With both targets met (products about 0.05 s, eq tables about 0.05 s per block), `verify_final` would drop from
+1.24 to about 0.3 s per block, and V1's verifier from about 2.1 to about 1.2 s per block (full model about 38 s,
+1.9x v0's 19.6 s): still above the plan's 1.2x, so the derive's int32 path (Sec. 7) is needed as well.
 * The model of Sec. 5.3 (50-55 s) was optimistic; the measured torch path gives 67 s. The plan's target (V1 within
   1.2x of v0, about 24 s) needs the native kernel and the per-op fixed work removed. Under the plan's kill rule (no
   native kernel merged and rehearsed by Wed 28 Oct), the paper reports V1 as a bytes option with this verifier time.
