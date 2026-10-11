@@ -150,6 +150,19 @@ D6a's digests) to channel maxima without clipping, which F2a's round 2 (alpha 0.
 completes. Note the calibration here is F2a's (train windows), not D6a's (one 128-token test window); the paper's
 own model must be rerun once the recipe is fixed.
 
+### 5.1 The certified recipe (smooth-max alpha 0.6; job 1012440, s-005, git 1801809)
+
+After F2a's decision the paper builder's default is `real_weights.CERTIFIED_RECIPE` (calibration: F2a's four
+2,048-token train windows, as above).
+
+**OPT-125M** (digest `16de86ea...`): difference to fp16, accuracy (95% CI): LAMBADA -3.12 [-3.92, -2.33] (ppl 26.0 ->
+33.3); HellaSwag -0.95 [-1.70, -0.25]; PIQA -1.74 [-2.94, -0.54]; ARC-e -1.43 [-2.61, -0.21]; ARC-c -0.17 [-1.54, +1.19];
+WinoGrande +1.26 [-1.34, +3.87]. **Mean -1.03 points**, as with alpha 0.5 (-0.97); individual tasks move by up to
+2 points between the two (within their intervals, except LAMBADA, -1.0 at 0.5 and -3.1 at 0.6).
+
+**OPT-1.3B** and **OPT-6.7B** (integer model only; its fp16 copy and integer graph do not fit one 11 GB card): [CLUSTER],
+same job.
+
 ## 6. Limitations
 
 * **A re-implementation**, not the harness itself: the formats follow its task files, and the fp16 numbers against the
