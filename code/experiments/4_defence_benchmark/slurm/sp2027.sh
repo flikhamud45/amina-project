@@ -6,6 +6,7 @@
 #     export PVI_PLATFORM=l40s_sp2027                                   # logs/$PVI_PLATFORM/, raw_$PVI_PLATFORM/
 #     export SBATCH_PARTITION=<gpu partition> SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]
 #     export HF_HOME=<node-local folder with ~40 GB free>                 # real and quality tiers only
+#     export PVI_EXTRA_PYTHONPATH=<folder>   # optional: packages outside the venv (the TAU nodes: transformers, pyarrow)
 #     export CXX=<g++>                                                  # the native CPU kernels (B5, RX)
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh all     # every must tier, one job after another
 # or one tier at a time, in this order (the run order of the plan, Sec. 4):
@@ -66,7 +67,7 @@ DEP="${PVI_DEP:-}"           # the next job's dependency (afterok:<id> / afteran
 # the jobs' environment; TRITON_CACHE_DIR, the native kernels' folder and the allocator setting are exported too, so
 # strong_gpu.sh's bench.sbatch jobs (which inherit the submitting shell's environment) get them as well
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$ROOT/$LOGS/.triton}" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-ENVS="cd $ROOT/code && export PYTHONPATH=$ROOT/code/src OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 NVIDIA_TF32_OVERRIDE=0 \
+ENVS="cd $ROOT/code && export PYTHONPATH=$ROOT/code/src${PVI_EXTRA_PYTHONPATH:+:$PVI_EXTRA_PYTHONPATH} OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 NVIDIA_TF32_OVERRIDE=0 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
 # ${PVI_PY_INCLUDE:+...}: hosts without the Python headers need a copy for Triton's launcher (docs/improvements/I_server_setup.md)
 [ -n "${PVI_PY_INCLUDE:-}" ] && ENVS="$ENVS PVI_PY_INCLUDE=$PVI_PY_INCLUDE"
