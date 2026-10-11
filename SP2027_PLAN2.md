@@ -990,6 +990,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 - **H5 [WIP] must: mock reviews, review checklist, page ledger and cut list.**
   - **Status (11 Oct).** H5a done (`paper_sp2027/REVIEW2.md`); the cut pass and defect fixes are running.
+  - **Consistency audit (12 Oct).** A read-only workflow (six agents, one per section group) checked every number and "not yet" statement against the write-ups and the plan's latest statuses: 44 findings, each verified by hand against its source, all fixed (080b737; D6a doc 8e9b74c). Main build 18 pages, body ends p. 13, no undefined references; extended 51 pages, no overfull boxes. Worth repeating before H5-mid and H5b, since results keep landing.
   - **H5a, Wed 14 Oct:**
     - The three lenses of REVIEW.md, plus a compliance lens on the condensed draft: the page-13 boundary, appendix marking, anonymity, and the `\todo` count (71 + 34).
     - **Review checklist.** Each of REVIEW.md's 9 "Smaller issues", and each sub-item of changes 6 (i-vi) and 11, is confirmed closed or mapped to a fix with an owner item.
