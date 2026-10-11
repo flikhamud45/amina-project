@@ -14,6 +14,7 @@ of every item is `SP2027_PLAN.md` at the repository root; an item is tagged [DON
 | C1, C2 | [C2_v1_proof_size.md](C2_v1_proof_size.md) | implemented, measuring | V1: send the int8 values, prove their windows with a logUp-GKR over F_{p^8}; no new commitment |
 | E1 | [E1_generation.md](E1_generation.md) | done | a whole generated response proved as one prefill with a token rule: GPT-2, 256 tokens in 0.29 s, 0.34 MB per token |
 | F2 | [F2_quality.md](F2_quality.md) | measured, adopted (opt-in) | where the integer model's perplexity goes; SmoothQuant through the norm gains: x1.17 -> x1.03 (OPT-125M), x1.11 -> x1.03 (OPT-1.3B) |
+| F2b-Q, F2b-L (laptop part) | [F2b_Q_real_llama.md](F2b_Q_real_llama.md) | implemented, laptop-validated; real-checkpoint runs on the cluster | real-weight integer Qwen3 / Llama graphs with the benchmark graph's exact structure (empty diff); quality ladder script |
 | E2 | [E2_sampling.md](E2_sampling.md) | done | sampled generation: an exact integer Gumbel-max sampler keyed by the client's seed |
 | D1, D2 | [D1_D2_fiat_shamir_binding.md](D1_D2_fiat_shamir_binding.md) | done | Fiat-Shamir binds the graph and its constants; SHAKE-256 transcript |
 | D4, D5 | [D4_D5_untrusted_commitment.md](D4_D5_untrusted_commitment.md) | done | a one-time setup proof removes the honest-commitment assumption; the split-commitment attack it stops |
