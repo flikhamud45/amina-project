@@ -584,8 +584,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - the gate and the abstract use the smaller of the measured and modelled ratios;
     - the paper labels the row as modelled.
 
-- **V-V1N [TODO] should (rank 1): native V1 verifier.**
-  - **Status (11 Oct).** The re-time (job 1007816) confirms the gap: V1's CPU verifier is about 2.5 s per block (1.4 s in the final check's products), about 75-80 s for the full Llama-2-7B against v0's 19.6 s, so V-V1N goes ahead (C2 doc Sec. 8.x).
+- **V-V1N [WIP] should (rank 1): native V1 verifier.**
+  - **Status (11 Oct).** Parts 1-4 in torch merged (89e08a0, PVI_V1_BUCKETS): exact (26 new tests; V1 suites 231 and v0 regression 456 passed), final-check products about 2x and the GKR check about 2x faster on the laptop; projected full Llama-2-7B V1 verifier about 50-55 s (from 75-80). The plan's target (<= 1.2x v0) needs the native kernel (designed in `docs/improvements/V_V1N_fast_v1_verifier.md`), and the adversarial re-review is still to run.
   - **Decision rule.** The V1 re-time of Mon 12 (V-LONG-a) decides.
     - If V1's verifier takes more than 1.2x v0's time (the model says about 3.5x), parts 1-4 become the first should item and start Mon 19.
     - Otherwise V-V1N is not started, and V1 is reported as measured.
