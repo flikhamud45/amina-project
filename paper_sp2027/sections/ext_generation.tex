@@ -188,10 +188,17 @@ OPT-6.7B), which is consistent with the larger loss of the largest model.
 \para{Smoothing, in detail.} In the gain $\gamma_j=\kappa/s_j$ of Section~\ref{sec:quality}, the
 constant $\kappa$ maps the largest $\rho_j\gamma_j$ to 127, and $1/\gamma_j$ is folded into column $j$
 of the matrices that the norm feeds before their per-matrix quantisation. Every requantisation
-multiplier stays a scalar, and both proof formats accept a smoothed graph in our tests. Over 32
-evaluation windows and three different calibration windows, smoothing alone gives OPT-125M a
-perplexity of 66.7 to 67.6 against 64.7 in fp32 ($\times1.03$--$1.05$). Cross-layer equalisation
-did not help on top of smoothing (67.8 against 66.6).
+multiplier stays a scalar, and both proof formats accept a smoothed graph in our tests. Our first
+recipe took $\rho_j$ as the 99.9th percentile of the channel's normalised magnitude, clipped the
+q/k/v, fc1 and attention-output requantisations at the 99.99th percentile, and used $\alpha=0.55$; on
+128-token windows calibrated on the test split it gave $\times1.03$--$1.05$ on OPT-125M. At 2{,}048
+tokens with train-split calibration these statistics transferred badly ($\times1.14$--$1.25$ on
+OPT-1.3B depending on the calibration windows, about $\times2$ on OPT-125M), and the zero-shot loss of
+OPT-1.3B was 2.8 points instead of 0.7. Each channel's maximum without clipping (``smooth-max'') is
+stable across calibration windows (OPT-1.3B $\times1.026$ for two draws); over $\alpha\in\{0.3,\dots,0.7\}$,
+$\alpha=0.6$ is best on OPT-125M and OPT-1.3B and costs OPT-6.7B 0.002 against $\alpha=0.5$, so it is
+the certified recipe. Cross-layer equalisation did not help on top of smoothing (67.8 against 66.6
+at 128 tokens).
 
 \para{Per-row weight scales.} Per-row power-of-two weight scales (four per matrix) on top of
 smoothing reach $\times1.00$--$1.01$ on OPT-125M, with top-1 agreement 0.87 to 0.88. They give a

@@ -357,7 +357,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 ### 3.2 Quality and real weights
 
-- **F2a [WIP] must: memory-lean quality at 2,048 tokens, full WikiText-2 test, 8-bit versus 11-bit attention probabilities.**
+- **F2a [DONE] must: memory-lean quality at 2,048 tokens, full WikiText-2 test, 8-bit versus 11-bit attention probabilities.**
+  - **Decision (11 Oct, round 2, job 1011066).** Certified recipe = smooth-max alpha 0.6 (`real_weights.CERTIFIED_RECIPE`, train calibration `common.certified_calib`): x1.076 / x1.026 / x1.008 for OPT-125M / 1.3B / 6.7B at 2,048 tokens (full test set, 11-bit probabilities), draw-stable; the paper builder gives the same graph (`tests/test_recipe_equivalence.py`). Applied in 1801809 (digest_check, perf/v1_bytes `--recipe certified`, the F6 real tier, zeroshot). The paper's quality section is rewritten for 2,048 tokens. Follow-ups: D6a's re-digest (jobs 1012438-9) and F2c with the certified recipe (job 1012440).
   - **Status (11 Oct).** Cluster results in (jobs 1007844-1007846): fp32 references match the published values; 8-bit probabilities cost 2-23% at 2,048 tokens, 11 bits reach the ideal softmax -> **P_MAX = 2047 adopted** for the certified models (e5d377c; kernels validated, job 1007805). OPT-6.7B smoothed 11-bit x1.017. OPT-1.3B: the smoothed recipe is worse than a scalar gain at 2,048 (x1.14-1.25 against x1.096) and draw-dependent: recipe search running (job 1008668). Write-up F2a_quality_2048.md.
   - **What.**
     1. **A lean evaluation path.** `real_weights.real_logits` calls `forward(free=True)`, and the LM head runs over chunks of positions, returning only the per-token NLL and the argmax. `_RealBuilder._run` drops each calibration tensor after its last use, or calibrates on the CPU.
@@ -394,6 +395,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - Otherwise 8 bits stay, and the paper reports their cost.
 
 - **D6a [DONE] must: a quantisation recipe that reproduces C_M bit for bit** (Plan 1 D6 and part (b) of the paper agent's compliance item).
+  - **Re-digest (11 Oct).** The certified recipe changed (F2a decision); jobs 1012438 (s-004) and 1012439 (s-005) recompute the digests, weights and roots of OPT-125M and OPT-1.3B with it (1 and 8 threads).
   - **Status (11 Oct).** Identical graph digest, weight hash and all 6 Merkle roots for OPT-125M and OPT-1.3B on s-004 and s-005 at 1 and 8 threads (jobs 1008669/1008670; the OPT-1.3B commitment encoded on the GPU), and the same OPT-125M digest and weights on the laptop (Windows, torch 2.2.2). No recipe change needed. Write-up `docs/improvements/D6a_reproducible_commitment.md`.
   - **What.**
     1. **Test first.** Build the smoothed OPT-125M and OPT-1.3B on the laptop and on a Xeon node, with 1 and 8 threads, and compare the digests and every Merkle root.

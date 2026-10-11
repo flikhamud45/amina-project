@@ -66,9 +66,9 @@ on the same threads, and a 2{,}048-token query in 18.5\,s, against 93.2\,s (inte
 zero-knowledge: the claims of $\lceil k/T\rceil$ queries of $T$ tokens reveal a weight matrix with
 rows of length $k$. Finally, the provider must serve the integer model. Moving SmoothQuant's
 per-channel scales~\cite{xiao2023smoothquant} into the gains of the integer LayerNorm brings its
-WikiText-2 perplexity within a factor of 1.03 of fp32 on OPT-125M and OPT-1.3B, from 1.17 and 1.11,
-without changing any operation that the protocol checks (Section~\ref{sec:quality})
-\todo{OPT-6.7B and Qwen3-4B with smoothing}.
+WikiText-2 perplexity at 2{,}048 tokens within factors of 1.076, 1.026 and 1.008 of fp32 on OPT-125M,
+OPT-1.3B and OPT-6.7B, from 1.17, 1.10 and 1.70 with one scalar gain, without changing any operation
+that the protocol checks (Section~\ref{sec:quality}) \todo{F2b: Qwen3-4B}.
 
 \subsection{Related Work in Detail}
 \label{ext:related}

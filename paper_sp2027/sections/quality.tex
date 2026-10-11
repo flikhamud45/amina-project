@@ -7,6 +7,9 @@
 % Labels used: sec:intmodel (defence.tex).
 % H5 pass (2026-10-11, REVIEW2.md N10): the calibration window is labelled as a test-split window
 %   disjoint from the scored ones; F2a recalibrates on the train split (todos named by item).
+% 2026-10-11 (F2a decision): rewritten for the 2,048-token full test set and the certified recipe
+%   (real_weights.CERTIFIED_RECIPE, docs/improvements/F2a_quality_2048.md Sec. 3.2-3.3); the 16 x 128 table and
+%   the alpha-0.55 recipe moved out.
 % =====================================================================================
 
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
@@ -17,56 +20,57 @@
 
 The provider must serve the certified integer model (Section~\ref{sec:intmodel}), with one scale
 per weight matrix and static activation scales. We quantise the real OPT
-checkpoints~\cite{zhang2022opt} and measure perplexity on the first 16 non-overlapping 128-token
-windows of the WikiText-2 (raw) test split~\cite{merity2017wikitext}, each scored on its own
-(2{,}032 predicted tokens), calibrating on the last 128-token window of the same test split, which
-no scored window includes \todo{F2a: train-split calibration}. Published results
-use 2{,}048-token sequences, so we compare ratios to fp32 on the same windows.
-
-\para{Where the perplexity goes.} The integer LayerNorm outputs a gain times the normalised value.
-With the best scalar gain, perplexity is 17\% above fp32 for OPT-125M, 11\% for OPT-1.3B
-(Table~\ref{tab:quality}) and, in a separate run, 33\% for OPT-6.7B (36.0 against 27.1).
-Switching each component of a floating-point copy of the graph between integer and float locates
-OPT-125M's loss: float LayerNorm outputs remove more than half of the gap (75.5 to 69.4, against
-64.8 in fp32), while the 8-bit softmax, the residual stream and the ReLU table each cost at most
-0.1 (extended version~\cite{fullversion}). The loss comes from rounding, not clipping: a few
-outlier channels of OPT's residual stream inflate the standard deviation, so a scalar gain that
-keeps them within int8 leaves the other channels few levels.
+checkpoints~\cite{zhang2022opt} and measure perplexity on the whole WikiText-2 (raw) test
+split~\cite{merity2017wikitext} in non-overlapping 2{,}048-token windows (140 windows, 286{,}580
+predicted tokens), the setting of published results, calibrating on four 2{,}048-token windows of
+the train split. Our fp32 references reproduce the published values (27.66, 14.62, 10.86).
 
 \begin{table}[t]
-  \caption{Integer OPT models on WikiText-2 (16 windows of 128 tokens): perplexity (ratio to fp32)
-  with the best scalar norm gain and with smoothed gains ($\alpha=0.55$), and top-1 agreement with
-  fp32 before and after smoothing.}
+  \caption{Integer OPT models on WikiText-2 (test split, 2{,}048-token windows): perplexity ratio to
+  fp32 with the best scalar norm gain, and perplexity (ratio) of the certified model (smoothed gains,
+  $\alpha=0.6$), with its top-1 agreement with fp32. Both with 11-bit attention probabilities.}
   \label{tab:quality}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
   \begin{tabular}{@{}lrrrc@{}}
     \toprule
-    Model & fp32 & Scalar gain & Smoothed & Top-1 agr. \\
+    Model & fp32 & Scalar gain & Certified & Top-1 agr. \\
     \midrule
-    OPT-125M & 64.76 & 75.52 ($\times$1.17) & 66.62 ($\times$1.03) & 0.72$\to$0.82 \\
-    OPT-1.3B & 32.79 & 36.44 ($\times$1.11) & 33.70 ($\times$1.03) & 0.82$\to$0.90 \\
+    OPT-125M & 27.66 & $\times$1.166 & 29.75 ($\times$1.076) & 0.82 \\
+    OPT-1.3B & 14.62 & $\times$1.096 & 15.01 ($\times$1.026) & 0.90 \\
+    OPT-6.7B & 10.86 & $\times$1.696 & 10.94 ($\times$1.008) & 0.93 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
+\para{Where the perplexity goes.} The integer LayerNorm outputs a gain times the normalised value.
+With the best scalar gain, perplexity is 17\%, 10\% and 70\% above fp32 for OPT-125M, OPT-1.3B and
+OPT-6.7B (Table~\ref{tab:quality}). Switching each component of a floating-point copy of the graph
+between integer and float locates the loss in the norm's outputs (on OPT-125M at 128 tokens, float
+outputs remove more than half of the gap; extended version~\cite{fullversion}). The loss comes from
+rounding, not clipping: a few outlier channels of OPT's residual stream inflate the standard
+deviation, so a scalar gain that keeps them within int8 leaves the other channels few levels. At
+2{,}048 tokens 8-bit attention probabilities cost another 2--23\%, since a rounded row keeps as
+little as 56\% of its mass; the certified models use 11-bit probabilities (97.5\% of the mass), which
+change neither the proof's size nor its cost.
+
 \para{SmoothQuant through the norm's gains.} Per-channel gains absorb SmoothQuant's
 scaling~\cite{xiao2023smoothquant}: channel $j$ gets the gain $\gamma_j=\kappa/s_j$ with
-$s_j=\rho_j^{\alpha}/\omega_j^{1-\alpha}$, where $\rho_j$ is the 99.9th percentile of the channel's
-normalised magnitude on the calibration window and $\omega_j$ the largest magnitude in column $j$
-of the matrices that the norm feeds, into which $1/\gamma_j$ is folded. This is SmoothQuant-O3
-(per-tensor weights, static per-tensor activations) inside the integer graph. Multipliers stay
-scalars and no operation or shape changes, so the costs, the verifier and V1 are unaffected; the
-graph digest binds the gains. With $\alpha=0.55$ and 99.99th-percentile clipping at the q/k/v,
-fc1 and attention-output requantisations, both models reach $\times1.03$; over 32 windows and
-three calibration windows, OPT-125M stays within $\times1.03$--$1.05$. Per-row power-of-two weight
-scales reach $\times1.00$--$1.01$ on OPT-125M but need four multipliers per requantisation, which
-V1 does not support yet.
+$s_j=\rho_j^{\alpha}/\omega_j^{1-\alpha}$, where $\rho_j$ is the channel's largest normalised
+magnitude on the calibration windows and $\omega_j$ the largest magnitude in column $j$ of the
+matrices that the norm feeds, into which $1/\gamma_j$ is folded. This is SmoothQuant-O3 (per-tensor
+weights, static per-tensor activations) inside the integer graph. Multipliers stay scalars and no
+operation or shape changes, so the costs, the verifier and V1 are unaffected; the graph digest binds
+the gains. Percentile statistics and clipping, tuned on short windows, transferred badly from train to
+test text (OPT-1.3B $\times$1.14--1.25, depending on the calibration windows); channel maxima without
+clipping are stable across calibration windows to $\pm$0.003, and $\alpha=0.6$ gives the certified
+models of Table~\ref{tab:quality}. On six zero-shot tasks (LAMBADA, HellaSwag, PIQA, ARC-e, ARC-c,
+WinoGrande), the integer OPT-1.3B stays within 0.7 points of fp16 on average; only LAMBADA's loss
+(3.0 points) is significant \todo{F2c: the certified recipe ($\alpha=0.6$); these are $\alpha=0.5$}.
 
 \para{Comparison.} SmoothQuant-O3 raises perplexity by 1.6\% on OPT-175B and 0.8\% on
 OPT-IML-30B~\cite{xiao2023smoothquant}; ZeroQuant-V2, with per-token activations and 16-bit
 weights, by about 1\% on OPT-125M and 4\% on OPT-1.3B~\cite{yao2023zeroquantv2}. Proof systems
-that keep 16-bit values stay under 1\%~\cite{zkllm,zkgpt}. We set targets of $\times1.06$,
-$\times1.04$ and $\times1.05$ for OPT-125M, OPT-1.3B and OPT-6.7B; the two smaller models meet
-theirs. \todo{F2a, F2b: smoothed OPT-6.7B, Qwen3-4B} \todo{F2a: full test set at 2{,}048 tokens,
-incl.\ 8-bit attention probabilities}
+that keep 16-bit values stay under 1\%~\cite{zkllm,zkgpt}. Against our targets of $\times1.06$,
+$\times1.04$ and $\times1.05$ for OPT-125M, OPT-1.3B and OPT-6.7B, the two larger models are well
+inside and OPT-125M misses by 0.016 \todo{F2b: Qwen3 and Llama}.

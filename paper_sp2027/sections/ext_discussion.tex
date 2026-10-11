@@ -55,11 +55,13 @@ clear under (P3). On OPT-1.3B, by contrast, real claims compress better than ran
 proof is 9--17\% smaller (1.66 against 2.01\,GB in $\Kpre$ at 2{,}048 tokens), V1's about the same,
 and the prover's and the verifier's times are within 9\% and 6\%
 (Appendix~\ref{app:eval-real}). The full real OPT-6.7B runs end to end in $\Kpre$ at 2{,}048
-tokens \todo{F3b: Qwen3-4B}. Smoothing brings OPT-125M and OPT-1.3B within a factor of 1.03 of fp32
-(Section~\ref{sec:quality}). We have not yet run it on OPT-6.7B, whose integer model with a scalar
-gain is 33\% above fp32 (36.0 against 27.1), or on Qwen3-4B, because both need more memory than
-our 2080~Ti setup provides. Soundness holds for any committed integer model; these numbers concern
-only how well that model serves.
+tokens \todo{F3b: Qwen3-4B}. With smoothing through the norm's gains, the certified OPT-125M,
+OPT-1.3B and OPT-6.7B are within factors of 1.076, 1.026 and 1.008 of fp32 at 2{,}048 tokens
+(Section~\ref{sec:quality}); with one scalar gain OPT-6.7B is 70\% above. The integer Qwen3 models are
+not yet usable: with a fixed prefix and a per-pair balance of the q/k norms' gains they reach
+$\times$1.33 (Qwen3-1.7B) and $\times$1.55 (Qwen3-0.6B) at 128 tokens, the remaining loss in the
+SwiGLU products \todo{F2b: Qwen3-4B, Llama}. Soundness holds for any committed integer model; these
+numbers concern only how well that model serves.
 
 \para{V1.} V1 is an option, not a replacement. At 2{,}048 tokens it makes the proof
 2.0--2.3$\times$ smaller with random weights, but it makes the prover about ten times slower on the
