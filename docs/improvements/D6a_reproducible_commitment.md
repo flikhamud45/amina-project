@@ -36,8 +36,12 @@ the WikiText-2 window of `common.load_windows`), then prints:
 Before F2a (8-bit probabilities) the laptop and s-005 had already agreed on OPT-125M at 1 and 8 threads (digest
 acf09bcd..., weights d406f9e6...).
 
-Every value agrees: across two Xeon nodes, two thread counts, Windows against Linux, torch 2.2 against 2.5, and a
-commitment encoded on the GPU against one on the CPU. The F2a cluster check also found the integer graph's outputs
+Every value agrees: the digests and weight hashes across two Xeon nodes, two thread counts, Windows against Linux
+and torch 2.2 against 2.5; the commitment roots across the two Xeon nodes and two thread counts. (An earlier version
+of this sentence also claimed a GPU-encoded against a CPU-encoded commitment. The table does not show that: each
+model's commitment was encoded on one device only, OPT-125M's on the CPU and OPT-1.3B's on the GPU, and the laptop
+did not compute roots. The certified recipe's re-check compares OPT-1.3B's roots encoded on the GPU (jobs 1012438-9)
+with the same roots encoded on the CPU (jobs 1012744-5, CPU nodes s-002 and s-006); Sec. 3a.) The F2a cluster check also found the integer graph's outputs
 equal on GPU and CPU, and its perplexities equal to the laptop's to every printed digit.
 
 ## 3a. The certified recipe changed (F2a decision, 11 Oct)
@@ -45,7 +49,10 @@ equal on GPU and CPU, and its perplexities equal to the laptop's to every printe
 F2a's round 2 fixed the certified OPT recipe as smooth-max alpha 0.6 calibrated on four 2,048-token windows of the
 train split (`real_weights.CERTIFIED_RECIPE`, `common.certified_calib`). The digests above are those of the earlier
 recipe (`digest_check.py --recipe legacy`). The same check with the certified recipe runs as jobs 1012438 (s-004)
-and 1012439 (s-005): [pending]. Nothing in the builder changed, only its parameters and the calibration tokens, so
+and 1012439 (s-005): [pending]. With the certified calibration (four 2,048-token windows instead of one 128-token
+window) the single-threaded CPU build is far slower; OPT-125M at 1 thread had not finished after 2 h, so OPT-1.3B also
+runs as CPU-only jobs with 8 and 4 threads and the commitment encoded on the CPU (1012744 on s-002, 1012745 on s-006,
+24 h limit): [pending]. Nothing in the builder changed, only its parameters and the calibration tokens, so
 the determinism shown above carries over; the jobs confirm it on the new graph.
 
 ## 4. The recipe, as published in the artifact
