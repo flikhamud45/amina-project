@@ -970,27 +970,65 @@ largest own error and the largest score step; `grep "pattern\|path" ...` the sco
 `--no-qk-balance` baseline of run 5's first line); run 5's perplexities go to table 12.6 (b) (its earlier rows are
 without the balance).
 
-### 13.7 Results on the real checkpoints (cluster; placeholders)
+### 13.7 Results on the real checkpoints (job 1011410, CPU node s-006, git f85ad55)
 
-(a) The first decoder layer (block 0), teacher-forced: the block output's mean cosine, the first flagged op, the largest
-score step (op, nats), the k-norm and q-norm steps:
+Tests on the node: 96 passed. One 128-token WikiText-2 test window; calibration on 4 x 128 train windows.
 
-| Model, recipe, prefix | block output | first flag | largest step | k norm / q norm step | without the balance (Qwen3) |
+(a) The first decoder layer (block 0), teacher-forced: the block output's mean cosine (minimum over positions), the
+first flagged op, and the attention-score error the q and k norms add (nats; the k path's cumulative error after
+the k norm in parentheses):
+
+| Model, recipe, prefix | block output | first flag | k-norm step (cumulative) | q-norm step | without the balance |
 |---|---|---|---|---|---|
-| Qwen3-0.6B-Base, scalar4, none | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| Qwen3-0.6B-Base, smooth55, none | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| Qwen3-0.6B-Base, scalar4, auto | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | |
-| Qwen3-0.6B-Base, smooth55, auto | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| TinyLlama_v1.1, scalar4, none / auto | [CLUSTER] | [CLUSTER] | [CLUSTER] | n/a | n/a |
-| TinyLlama_v1.1, smooth55, none / auto | [CLUSTER] | [CLUSTER] | [CLUSTER] | n/a | n/a |
+| Qwen3-0.6B-Base, scalar4, none | 0.986 (0.957) | q_proj | 0.221 (0.552) | 0.097 | 0.865 (0.452); k norm 1.378 (1.709) |
+| Qwen3-0.6B-Base, smooth55, none | 0.991 (0.956) | q_norm | 0.296 (0.450) | 0.119 | 0.889 (0.499); k norm 1.387 (1.541) |
+| Qwen3-0.6B-Base, scalar4, auto | 0.987 (0.945) | attn_norm | 0.188 (0.508) | 0.091 | |
+| Qwen3-0.6B-Base, smooth55, auto | 0.991 (0.955) | q_norm | 0.253 (0.400) | 0.125 | |
+| Qwen3-0.6B-Base, smooth55, none, no head equalisation | 0.989 (0.937) | q_norm | 0.324 (0.475) | 0.246 | |
+| TinyLlama_v1.1, scalar4, none / auto | 0.858 (-0.028) / 0.871 (-0.009) | attn_norm | n/a | n/a | n/a |
+| TinyLlama_v1.1, smooth55, none / auto | 0.969 (0.000) / 0.978 (0.594) | attn_norm | n/a | n/a | n/a |
 
-(b) Every block, smooth55 with the prefix: per block the teacher-forced output cosine and the first flagged op
-(Qwen3 with and without the balance; TinyLlama with `auto` and `bos`): [CLUSTER]. Accumulated block outputs against
-job 1009796's `llama_diag.py` rows: [CLUSTER] (expected equal for `--no-qk-balance`).
+**The laptop diagnosis holds on the real checkpoint.** Without the balance the k norm alone adds 1.38-1.39 nats to
+the first block's attention scores and the block output falls to 0.865-0.889 (job 1009531's 0.865 / 0.889 to the
+digit); with it the k norm adds 0.19-0.30 nats and the block output is 0.986-0.991. Head equalisation is worth a
+little on top (0.989 -> 0.991; the q norm's step halves). TinyLlama's first block has no q/k norm; its smoothed
+block output is 0.969-0.978, and the scalar recipe's 0.86 is SiLU's and the input norm's (the scalar gain).
 
-(c) The balance's effect: `llama_diag.py --prefix` per-block mean cosines (Qwen3, smooth55: job 1009796 0.896 / 0.884 /
-0.864 / 0.865 in blocks 1-4, 0.923 at block 28): [CLUSTER]; 16 x 128 perplexity ratios with the balance (scalar best
-of 2/4/8, smooth best of 0.45/0.55/0.65, smooth-exp8), with and without the prefix: [CLUSTER].
+(b) Every block, the accumulated stream (each block reads the graph's own residual) and teacher-forced (each block
+reads the checkpoint's residual): smallest per-block mean cosine (its block), the last block's, the mean over
+blocks, and which op adds the largest own error in most blocks:
+
+| Model, recipe, prefix | accumulated: min / last / mean | teacher-forced: min / last / mean | largest own error |
+|---|---|---|---|
+| Qwen3-0.6B-Base, smooth55, none | 0.584 (block 21) / 0.748 / 0.737 | 0.882 (13) / 0.993 / 0.986 | glu in 20-23 of 28 |
+| Qwen3-0.6B-Base, smooth55, auto | **0.929 (19) / 0.945 / 0.962** | 0.978 (13) / 0.996 / 0.994 | glu in 21-25 of 28 |
+| Qwen3-0.6B-Base, smooth55, auto, no balance | 0.864 (2) / 0.923 / 0.899 | 0.899 (0) / 0.996 / 0.991 | glu |
+| Qwen3-0.6B-Base, scalar4, none / auto | 0.726 / 0.762 (last) | 0.869 / 0.823 (last) | glu |
+| TinyLlama_v1.1, smooth55, none | 0.309 (11) / 0.578 / 0.511 | 0.969 (0) / 0.987 / 0.989 | glu |
+| TinyLlama_v1.1, smooth55, auto | 0.830 (5) / 0.916 / 0.876 | 0.978 (0) / 0.995 / 0.995 | glu in 20 of 22 |
+| TinyLlama_v1.1, smooth55, bos | 0.063 (14) / 0.437 / 0.374 | 0.977 (0) / 0.987 / 0.991 | glu |
+| TinyLlama_v1.1, scalar4, none / auto | 0.513 / 0.731 (min) | 0.858 / 0.871 (min) | glu, silu |
+
+The accumulated rows of the no-balance Qwen3 graph with the prefix equal job 1009796's `llama_diag.py` row (0.864 at
+block 2, 0.923 at the last), as expected. `llama_diag.py --prefix` with the balance (the job's last step) gives the
+same picture for Qwen3: smooth55 0.991 / 0.987 / 0.984 / 0.982 in blocks 1-4 and 0.954 at block 28 (before: 0.896 /
+0.884 / 0.864 / 0.865 and 0.923). The prefix's values still clip in layer 2 (`v_clip` 4.6 with smooth55).
+
+Reading:
+
+* **Qwen3: the balance and the prefix together** keep the smoothed stream at 0.93-0.99 through all 28 blocks. Each
+  alone is not enough: without the prefix the massive activation that forms in block 3 breaks the stream from there
+  on (0.98 -> 0.91 -> 0.58); without the balance the first block already loses 11%.
+* **TinyLlama:** every block is good when it reads the checkpoint's residual (teacher-forced 0.98-0.995), but the
+  accumulated stream drops at block 1 (0.977 -> 0.894 with the prefix), where the error carried from block 0's
+  output turns into 1.4 nats of score error. `bos` alone collapses (0.06), consistent with Section 12.6: TinyLlama's
+  `\n` outlier must sit in the prefix.
+* **The next target in both families is the SwiGLU product** (`glu`): it adds the largest own error in about 20 of
+  every 22-28 blocks (relative error 0.1-0.3). The per-token exponent (`glu_exp`, Section 3.5) acts there; the
+  16 x 128 ladder with the balance (job 1011411, with `smooth-exp8`) measures what it buys in perplexity.
+
+(c) 16 x 128 perplexity ratios with the balance (scalar best of 2/4/8, smooth best of 0.45/0.55/0.65, smooth-exp8),
+with and without the prefix: [CLUSTER] job 1011411.
 
 ### 13.8 Limitations and open issues
 
