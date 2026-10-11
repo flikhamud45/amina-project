@@ -1068,8 +1068,36 @@ row `j` is divided by `g_j = A_j^alpha / W_j^(1-alpha)` and the down projection'
 `A_j` the largest `|silu(gate) up|` of channel `j` on the calibration rows (from the norm's integer output) and `W_j`
 the largest `|w_down[:, j]|` (normalised to geometric mean 1, clamped to `[2^-8, 2^8]`). Every real output is
 unchanged; constants only; the structure diff stays empty; off by default (no digest changes). Tests: the rescaled
-float model gives the checkpoint's logits, the graph tracks it and v0 accepts it. Job 1012500 measures alpha 0.3,
-0.5 and 0.7 (with and without `glu_exp` 8) on Qwen3-0.6B and Qwen3-1.7B with the prefix at 16 x 128: [CLUSTER].
+float model gives the checkpoint's logits, the graph tracks it and v0 accepts it.
+
+**First run: an overflow (job 1012500, git f45debd).** On both Qwen3 models the first `glu_smooth` cell (alpha 0.3)
+stopped in `swiglu` with `RuntimeError: Overflow when unpacking long` (the full traceback from job 1012656:
+`mm = torch.tensor(round((1 << SHIFT) * s_a * s_u / s_p))`). The plain smoothed cells before it reproduced job
+1011411 to the digit (Qwen3-0.6B x1.60 / x1.57, Qwen3-1.7B x1.51 / x1.33). The cause: the multiplier is
+`2^30 s_a s_u / s_p`, and `s_p` is the product's `pct_glu` percentile on the calibration rows, clamped at
+`1e-12 / 127`; it overflows int64 only if that percentile is exactly 0. That happens when up's int8 rows vanish. The
+balance gives a channel whose product is tiny (gate near 0, a "dead" channel) a factor `g_j` far below 1 (down to
+the clamp `2^-8`), so up's row `j` is multiplied by up to 256. Up is quantised with one scale per matrix, so that
+row then sets the scale and the other rows round to 0 or to a few levels; with almost every product 0, the
+percentile is 0. Plain SmoothQuant does not meet this because its factor moves into the previous op's output
+scale (a free per-channel vector); here it moves into up's rows, which share one int8 scale.
+
+**The fix (207b798): a box that keeps both weight scales.** After the geometric-mean normalisation, each factor is
+kept in `[U_j / U_max, D_max / D_j]`, with `U_j` the largest `|up row j|` as `mat()` quantises it (the norm's
+per-channel input scale folded in) and `D_j` the largest `|down column j|`. Then no up row grows beyond up's
+current largest row and no down column beyond down's largest column, so neither matrix's per-tensor int8 scale
+grows; only the product's channels are rebalanced. The box always contains 1 (`U_j <= U_max`, `D_j <= D_max`), so
+the identity is feasible. Also, `swiglu` now raises a `ValueError` naming the cause if the product's percentile is
+0, instead of the int64 overflow (no graph that built before changes; the digests of the other cells are the same).
+Tests: `test_glu_smooth_box_keeps_both_weight_scales` (a dead channel: the box binds it, `g = U_3 / U_max`, and a
+large-product channel still gets `g > 1`) and the down-column bound in the exactness test; `tests/test_real_llama.py`
+55 passed.
+
+**Second run (jobs 1012675-7, git 207b798, clone s13):** `glus2`: alpha 0.3 / 0.5 / 0.7, with and without
+`glu_exp` 8, at 16 x 128 with the prefix on Qwen3-0.6B, Qwen3-1.7B (smoothing alpha 0.45) and TinyLlama (0.65);
+`tl2k`: TinyLlama at 2,048 tokens, smoothing alpha 0.65 / 0.75 / 0.85, with and without `glu_smooth` 0.3 / 0.5;
+`q17k`: Qwen3-1.7B at 2,048 tokens with `qk_balance` (Sec. 12.6's 2,048-token rows predate it): smooth, smooth-exp8
+and `glu_smooth` 0.5 at alpha 0.45. [CLUSTER]
 
 ### 13.8 Limitations and open issues
 
