@@ -169,6 +169,23 @@ Top-1 agreement with fp32 on OPT-6.7B: 0.875 (8-bit) and 0.922 (11-bit), smoothe
 * **OPT-6.7B needs the smoothing:** with one scalar gain it stays at x1.65-1.70 at both probability widths (the
   outlier channels), while the smoothed graph reaches x1.017.
 
+### 3.3 Recipe search at 11 bits (job 1008668; `ppl2048_search_round1.jsonl`)
+
+All 140 windows, two calibration draws each (ratio to fp32, draw 0 / draw 1):
+
+| Recipe | OPT-1.3B | OPT-125M |
+|---|---:|---:|
+| scalar gain 2 / 3 / 4 (no clipping) | x1.284 / **x1.096** / x1.245 | gain 3 / 4 / 6: x1.185 / **x1.166** / x1.244 |
+| smoothed, 99.9th-percentile channel statistic, no clipping, alpha 0.3 / 0.4 / 0.5 | x1.04-1.28 (draw-dependent) | x1.29-1.80 |
+| **smoothed, channel maxima, no clipping ("smooth-max"), alpha 0.3 / 0.4 / 0.5** | x1.060 / x1.036 / **x1.029** (both draws within 0.001) | x1.126 / x1.118 / **x1.100** |
+
+Reading: the instability of the smoothed recipe came from its percentile statistics (the 99.9th percentile of each
+channel's normalised magnitude, and 99.99th-percentile clipping), estimated on train text and transferred badly to the
+test windows. Taking each channel's maximum and clipping nothing makes the result stable across draws and gives
+OPT-1.3B x1.029 at 2,048 tokens, within the plan's target. Round 2 (job 1011066) tries alpha 0.6 and 0.7 and checks
+the same recipe on OPT-6.7B, so that one recipe serves every certified OPT model; the paper builder's recipe (and with
+it D6a's digests) changes only once that is decided.
+
 ## 4. Limitations
 
 * OPT only; the Qwen3 and Llama builders are F2b-Q and F2b-L.
