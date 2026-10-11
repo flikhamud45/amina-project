@@ -51,8 +51,11 @@ smoothed OPT-125M at 512 tokens, real activations compress less well than random
 values, and V1 shrinks the proof by 1.68$\times$ in mode $\sC$ (82.2 to 48.9\,MB) and
 1.77$\times$ in $\Kpre$, less than with random weights (1.94--2.06$\times$ for GPT-2 at 512
 tokens), also because seven of its residual operations have multipliers above $2^{29}$ and stay
-clear under (P3) \todo{real-weight cells at 2{,}048 tokens; end-to-end run of Qwen3-4B and
-OPT-6.7B (F3)}. Smoothing brings OPT-125M and OPT-1.3B within a factor of 1.03 of fp32
+clear under (P3). On OPT-1.3B, by contrast, real claims compress better than random ones: v0's
+proof is 9--17\% smaller (1.66 against 2.01\,GB in $\Kpre$ at 2{,}048 tokens), V1's about the same,
+and the prover's and the verifier's times are within 9\% and 6\%
+(Appendix~\ref{app:eval-real}). The full real OPT-6.7B runs end to end in $\Kpre$ at 2{,}048
+tokens \todo{F3b: Qwen3-4B}. Smoothing brings OPT-125M and OPT-1.3B within a factor of 1.03 of fp32
 (Section~\ref{sec:quality}). We have not yet run it on OPT-6.7B, whose integer model with a scalar
 gain is 33\% above fp32 (36.0 against 27.1), or on Qwen3-4B, because both need more memory than
 our 2080~Ti setup provides. Soundness holds for any committed integer model; these numbers concern

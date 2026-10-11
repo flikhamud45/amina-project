@@ -117,6 +117,48 @@ which raises its per-query column bytes from 124.7 to 168.5\,MB (or 134.9\,MB), 
 proof at 2{,}048 tokens (Table~\ref{tab:setup}).
 
 % -------------------------------------------------------------------------------------
+% Added 2026-10-11 (plan F3a; jobs 1008673, 1009431; docs/improvements/F3a_real_weight_runs.md).
+\subsection{Real Weights}
+\label{app:eval-real}
+
+The real graphs are the smoothed integer OPT models of Section~\ref{sec:quality} (calibrated on one
+2{,}048-token window), with the last block pruned; each cell has a random-weight twin of the same
+shape, and every cell uses Fiat--Shamir, three timed queries after a warm-up, the prover on the
+2080~Ti and the native CPU verifier (Table~\ref{tab:eval-real}). Every honest query was accepted, and
+every tampered one (a changed claim, output logit or last hidden state) rejected.
+
+\begin{table}[t]
+  \caption{Real against random weights, OPT-1.3B (full model, last block pruned; Fiat--Shamir;
+  RTX~2080~Ti prover, CPU verifier on 8 threads of a Xeon Silver 4114). Real / random}
+  \label{tab:eval-real}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    Mode & $T$ & v0 (MB) & V1 (MB) & prove (s) & verify (s) \\
+    \midrule
+    $\sC$ & 64 & 101.6 / 111.9 & 90.4 / 90.2 & 0.75 / 0.82 & 0.98 / 0.95 \\
+    $\sC$ & 2{,}048 & 1{,}722 / 2{,}071 & -- & 3.44 / 3.76 & 8.22 / 8.65 \\
+    $\Kpre$ & 64 & 50.1 / 60.4 & 39.1 / 39.7 & 0.20 / 0.22 & 0.51 / 0.54 \\
+    $\Kpre$ & 2{,}048 & 1{,}662 / 2{,}011 & -- & 2.04 / 2.10 & 7.72 / 7.41 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The prover's time is within 9\% of the random twin's and the verifier's within 6\%. v0's proof is
+9--17\% smaller with real weights, because a calibrated model's claims are more concentrated than
+a random one's, while V1's values take about the same space; V1's gain is therefore smaller (at 64
+tokens 1.12$\times$ in $\sC$ and 1.28$\times$ in $\Kpre$, against 1.24$\times$ and 1.53$\times$).
+Real weights cause 2{,}379 V1 exceptions at 64 tokens (random: 1), which cost 0.02\,MB. V1 with the
+GKR at 2{,}048 tokens does not fit the 11\,GB card \todo{L40S: real tier}.
+
+The full real OPT-6.7B (32 blocks) runs end to end in $\Kpre$ at 2{,}048 tokens with the prover on
+the CPU, since it does not fit the 11\,GB card: 3 of 3 queries accepted and 9 of 9 tampers rejected
+(by Freivalds' check), with a 4.61\,GB proof, 270\,s to prove and 20.2\,s to verify (decoding 2.7\,s,
+recomputation 11.4\,s, products 6.1\,s) on 8 threads of the Xeon. Its V1 proof is 2.68\,GB against
+4.65\,GB (1.73$\times$), with 224{,}670 exceptions (1.8\,MB) \todo{F3a: OPT-6.7B random twin}.
+
+% -------------------------------------------------------------------------------------
 \subsection{The Attack Against Our Proof Size, and the Setup Proof}
 \label{app:eval-attack}
 

@@ -6,8 +6,10 @@ Sections 0 and 1, and `paper_final/value_aware/value_aware_bound.md`. Scripts in
 `adaptive_game_llm.sbatch` (OPT-1.3B, cluster), `adaptive_game_plots.py` (figures and table); test
 `code/tests/test_adaptive_game.py`; two new samplers in `code/src/pvi/defences/sampling.py`
 (`TailFirstSampler`, `ZeroFirstSampler`). Results: `code/artifacts/results/adaptive_game_mlp_mnist.json`,
-`figure_g3a.pdf`, `figure_g3b.pdf`, `table_g3.tex`. Status: MNIST MLP done (laptop, 40 queries); OPT-1.3B
-smoke-tested on OPT-125M, full run pending on the cluster.
+`figure_g3a.pdf`, `figure_g3b.pdf`, `table_g3.tex`, `adaptive_game_opt-1.3b.json`. Status: MNIST MLP done
+(laptop, 40 queries); OPT-1.3B done (job 1008671, s-005, 13 min; Section 7). On OPT-1.3B, against the two fixed
+in-range edits, the mixture crosses 27.7/d_ff at layers 6, 12 and 18 (K-G3a in its literal form), and the paper now
+says that value-aware sampling helps against those edits there (Section 7).
 
 ## 1. The question
 
@@ -276,6 +278,59 @@ cd code && PYTHONPATH=src OMP_NUM_THREADS=8 python experiments/3_sampling_fixes/
   the replies of Section 2. Read an OPT mixture that leans on them as a loose upper bound, not as K-G3a
   evidence, unless it is re-checked with a near-zero `down` variant. That variant was left out on purpose
   (scope rule K9: no new offensive search on the real model).
+
+### Results (job 1008671, git e5d377c, 40 prompts, 8,192 calibration tokens)
+
+`d_ff` = 8,192, so 27.7/d_ff = 0.338% (the level at which `2^-40` needs fewer than `d_ff` paths). Detection is
+one FFN step, given that the path enters the edited FFN at the last position. Each value is the mean, over the
+prompts with an in-range edit at that cap, of the detection of the better (for the adversary) of the two edits.
+
+| Layer | cap | prompts with an edit | uniform | best single sampler | LP mixture | mixture s_40 | of 27.7/d_ff |
+|---:|---:|---:|---:|---|---:|---:|---:|
+| 6 | 90 | 11 | 0.063% | contribution 3.12% | 3.12% (contribution 1.0) | 875 | 9.2 |
+| 6 | 95 | 17 | 0.189% | contribution 22.9% | 22.9% | 107 | 68 |
+| 6 | 99 | 29 | 0.182% | contribution 38.4% | 38.4% | 58 | 114 |
+| 6 | 100 | 40 | 0.060% | contribution 47.6% | 47.6% | 43 | 141 |
+| 12 | 90 | 27 | 0.160% | contribution 0.229% | 0.229% | 12,090 | 0.68 |
+| 12 | 95 | 30 | 0.194% | contribution 1.21% | 1.21% | 2,286 | 3.6 |
+| 12 | 99 | 38 | 0.187% | contribution 5.39% | 5.39% | 501 | 16 |
+| 12 | 100 | 40 | 0.058% | contribution 6.76% | 6.76% | 396 | 20 |
+| 18 | 90 | 35 | 0.176% | contribution 0.497% | 0.497% | 5,566 | 1.5 |
+| 18 | 95 | 38 | 0.177% | contribution 1.16% | 1.16% | 2,385 | 3.4 |
+| 18 | 99 | 39 | 0.105% | contribution 1.63% | 1.63% | 1,692 | 4.8 |
+| 18 | 100 | 40 | 0.037% | contribution 2.19% | 2.19% | 1,255 | 6.5 |
+| 23 | 90 | 40 | 0.075% | floor-1 0.077% | 0.092% (contribution 0.11, zero-first 0.89) | 30,126 | 0.27 |
+| 23 | 95 | 40 | 0.066% | floor-1 0.074% | 0.091% | 30,300 | 0.27 |
+| 23 | 99 | 40 | 0.045% | floor-1 0.066% | 0.079% | 35,264 | 0.23 |
+| 23 | 100 | 40 | 0.019% | floor-1 0.064% | 0.079% | 35,264 | 0.23 |
+
+Reading:
+
+* **K-G3a triggers in its literal form at layers 6, 12 (from p = 95) and 18.** The mixture is the contribution
+  sampler there. The `down` edit (exact zeros, which contribution weighting never opens) succeeds for only 9, 31
+  and 38 of the 40 prompts at layers 6, 12 and 18 (Table `tab:inrange`); on the other prompts the adversary has
+  only the `any` edit, which raises its neurons to their ceilings and so raises their contributions. At layer 23,
+  where `down` succeeds for 39 of 40 prompts, the mixture stays at 0.08-0.09%, below the level (s_40 above 30,000).
+* **Why the values rise with the cap.** The mean is over the prompts with an in-range edit, which grow from 11 to 40
+  at layer 6; the prompts that become attackable at looser caps are the ones that need the `any` edit. Per prompt,
+  carrying the edits forward keeps detection non-increasing in the cap, as in the MNIST game.
+* **What this does and does not show.** This adversary is the restricted one of the caveat above: no lowering to a
+  small non-zero value (MNIST's A3b), no greedy against the sampler's own detection (A4) and no double oracle. On
+  the MNIST MLP those replies drove contribution weighting to 0 and kept the mixture below 27.7/N. The OPT numbers
+  are therefore *not* upper bounds on what value-aware sampling achieves against an adaptive adversary on OPT-1.3B.
+  They do show that the fixed in-range edits of G3.5 are caught by contribution weighting wherever zeroing does not
+  suffice. Under scope rule K9 the adaptive search is not run on the real model, so the paper states the result as
+  "helps against these edits" and leaves the adaptive case open.
+* **Paper.** The body (`attack.tex`, paragraph "A real LLM") now says: "Where they fail, value-aware sampling helps
+  against these edits, which are not adapted to the sampler: with the natural maximum as the range, the best
+  per-path mixture of our samplers catches the better of the two edits on 48%, 6.8% and 2.2% of the paths that
+  enter the FFN of layers 6, 12 and 18 (mean over prompts), above 27.7/N (0.34%), and on 0.08% at layer 23
+  (uniform: 0.02-0.06%). Whether an edit adapted to the sampler evades it, as on the MLP, we leave open." The
+  `\todo{G3-min: OPT-1.3B}` is removed from the "Other samplers" paragraph. The extended version
+  (`ext_attack.tex`, "The sampler game on OPT-1.3B") gives every cap and layer and the caveat in full.
+* **Open, if the team wants it (not planned, K9).** A near-zero `down` variant (lower to `min(1e-3, ceiling)`)
+  does not help against contribution weighting on the prompts where zeroing fails to flip the token; an adapted
+  edit would have to flip with neurons whose contributions stay small, which needs the A4 greedy on the real model.
 
 ## 8. Limitations and open issues
 

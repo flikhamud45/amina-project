@@ -168,9 +168,11 @@ Merkle multiproofs, whose size depends on the drawn columns; the timed full V1 q
 it within 0.3\%. The byte model predicts 2.24$\times$ (6.63 to 2.97\,GB) for the full Llama-2-7B at
 2{,}048 tokens in $\sC$ \todo{L40S: V1 on full Llama-2-7B, Llama-2-13B, OPT-6.7B, Qwen3-4B at
 2,048}; with real weights the estimate of our V1 specification is 1.78--1.85$\times$ at 2{,}048
-tokens \todo{F3a}. On the smoothed real
-OPT-125M at 512 tokens, the measured gain is 1.68$\times$ in $\sC$ and 1.77$\times$ in $\Kpre$
-\todo{real-weight V1 bytes at 2,048, smoothed OPT}; real OPT weights also have residual multipliers
+tokens, and the real OPT-6.7B measures 1.73$\times$ in $\Kpre$ (4.65 to 2.68\,GB, with 224{,}670
+exceptions). On the smoothed real OPT-125M at 512 tokens, the measured gain is 1.68$\times$ in
+$\sC$ and 1.77$\times$ in $\Kpre$, and on OPT-1.3B at 64 tokens 1.12$\times$ and 1.28$\times$
+(random weights: 1.24$\times$ and 1.53$\times$), because real weights shrink v0's claims more than
+V1's values; real OPT weights also have residual multipliers
 above $2^{29}$, whose operations stay clear (P3).
 
 \para{Prover and verifier.} With the GKR on the GPU and instances of at most $2^{24}$ leaves, the

@@ -108,13 +108,14 @@ and reuses the column check (Section~\ref{sec:v1}).
 \para{Costs.} Without V1, the prover's work beyond the forward pass does not grow with the prompt.
 On an L40S it proves a 2{,}048-token Llama-2-13B prompt 46$\times$ faster than zkLLM on an A100,
 although zkLLM also hides the weights and proves the operations without weights \todo{F6: final
-factor; A7: overhead over unverified inference}. The main cost is the proof, which carries every weight
+factor}. On one GPU, proving a 2{,}048-token OPT-1.3B prompt costs 4.1--8.6$\times$ our exact integer
+forward pass and 19--40$\times$ an fp16 one. The main cost is the proof, which carries every weight
 operation's result: 6.6\,GB for a 2{,}048-token Llama-2-7B prompt, about the size of its int8
-weights. V1 makes it 2.0--2.3$\times$ smaller with random weights and 1.7--1.8$\times$ on the real
-OPT-125M at 512 tokens, but slows the prover. With native exact kernels, a CPU client in
-mode~$\Kpre$ verifies a 2{,}048-token Llama-2-7B prompt 4.6$\times$ faster than re-executing it in
-fp32 on the same CPU (interactive, extrapolated from 1--3 blocks); on a GPU, re-execution is
-faster \todo{RX, V-LONG-a: strongest exact baseline; Fiat--Shamir; full models}. The protocol is not zero-knowledge, so it targets open-weight models, as do
+weights. V1 makes it 2.0--2.3$\times$ smaller with random weights and 1.7$\times$ on the real
+OPT-6.7B at 2{,}048 tokens, but slows the prover. With native exact kernels, a CPU client in
+mode~$\Kpre$ verifies a 2{,}048-token Llama-2-7B prompt 4.7$\times$ faster than the fastest exact
+re-execution on the same CPU (fp32; non-interactive, full model); on a GPU, re-execution is
+faster \todo{EPYC: the same ratio on the final CPU}. The protocol is not zero-knowledge, so it targets open-weight models, as do
 CommitLLM~\cite{commitllm2026} and Gupta et al.~\cite{gupta2026private}.
 Section~\ref{sec:discussion} compares a client's options.
 

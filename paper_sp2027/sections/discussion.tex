@@ -28,9 +28,9 @@ attestation and side-channel resistance. A client with the weights and a GPU sho
 zkLLM hides the weights but proves for minutes, and CommitLLM is cheap but statistical. Our
 protocol serves a client with neither the weights nor a GPU that will not trust hardware: in mode
 $\sC$ it holds 32 bytes per matrix and checks a 64-token proof, about 21$\times$ smaller than the weights, in about a second on
-a CPU. For the provider, our base prover took 1.8\,s for a 64-token prompt on the L40S; an fp16
-forward pass took 0.037\,s on a different GPU, the 2080~Ti, so the two give no overhead ratio
-\todo{A7: prover against unverified inference on the same GPU}.
+a CPU. For the provider, proving costs 4.1--8.6$\times$ our exact forward pass without proofs and
+19--40$\times$ an fp16 one on the same GPU (OPT-1.3B, 2{,}048 tokens; Section~\ref{sec:eval-cost}).
+A provider may also serve with the exact model and prove later, on request, with the same proof.
 
 \para{Proof size.} The proof carries every weight operation's output, so it grows with the prompt.
 For Llama-2-7B it reaches the size of the int8 weights at about 2{,}050 tokens without V1 and, by
@@ -44,7 +44,8 @@ open-weight models. For private weights it shares the limitation that Hollow-LLM
 zkSNARKs~\cite{hollowllm}. The setup proof is untimed \todo{F6}.
 
 \para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens; mixture-of-experts
-models and longer contexts are untested. Costs use random weights \todo{F3a}, and the quality of the
+models and longer contexts are untested. Costs use random weights, which real OPT weights match
+(Section~\ref{sec:eval-setup}), and the quality of the
 integer OPT-6.7B and Qwen3-4B, and at long context, is unmeasured \todo{F2a, F2b}.
 
 \para{The attack and the bound.} Condition (H) holds for random ensembles with independent rows

@@ -7,7 +7,9 @@ behind `PVI_V1_BUCKETS` (default on), exact (bit-identical field results, tested
 switch on, on its bucket variant and off; measured on the laptop only: the final check's products and `_xbar` 1.8x
 faster at Llama-2-7B's 2,048 tokens, the GKR check 2x, whole small-model V1 verifiers 1.3-1.6x (Sec. 5). The torch
 path does not reach the plan's target by itself (Sec. 5.3); the native kernel it specifies is not written (Sec. 7).
-The Xeon cells are ready (Sec. 6).
+Measured on the Xeon (job 1009430, Sec. 5.4): a Llama-2-7B block's V1 verifier takes 2.13 s instead of 2.49 s
+(1.17x), so the full model about 67 s instead of 78 s, against v0's 19.6 s (3.4x); the V1 suites pass with the switch
+in each position on the GPU node.
 
 ## 1. The problem
 
@@ -252,9 +254,57 @@ against v0's 19.6 s. The torch path therefore closes part of the gap; the plan's
 at most 0.1 s per block, V1 within 1.2x of v0) needs the native kernel of Sec. 7 and the derive's int32 path. The
 Xeon cells of Sec. 6 measure what the torch path actually gives there.
 
+### 5.4 Xeon measurements (job 1009430, s-005, git ebf6f4e)
+
+Xeon Silver 4114, 8 threads, the native kernels built; GPU prover (2080 Ti); Llama-2-7B blocks at 2,048 tokens,
+Kpre, Fiat-Shamir, 3 timed queries after a warm-up on each path, every query accepted, byte accounting exact.
+
+**Suites.** `PVI_V1_BUCKETS=1`, `scatter` and `0`: 246 passed, 1 skipped each (6 min each), GPU tests included.
+
+**The products alone** (`v1_phases.py --micro 4096 2048 --reps 5 --threads 8`), ns per entry:
+
+| Product | today (`0`) | table products (`1`) | buckets (`scatter`) |
+|---|---:|---:|---:|
+| final check, requant op | 15.6 | **5.23** | 9.05 |
+| final check, residual op | **6.63** | 8.62 | 8.58 |
+| `_xbar` | 5.33 | **2.79** | 14.5 |
+
+On the Xeon the table products win on the requant ops (3.0x) and `_xbar` (1.9x) but lose on the residual ops (1.3x
+slower), unlike the laptop (where they won on all three); `buckets._method` should therefore route residual ops to
+today's limb GEMM on this CPU (not changed yet).
+
+**Whole V1 queries**, verifier seconds (medians), and the per-block slope from the 2- and 3-block cells:
+
+| Phase | 1 block: `0` / `1` | 2 blocks: `0` / `1` | 3 blocks: `0` / `1` | per block: `0` / `1` |
+|---|---:|---:|---:|---:|
+| `verify_decode` | 0.052 / 0.050 | 0.251 / 0.161 | 0.414 / 0.276 | 0.163 / 0.115 |
+| `verify_derive` | 0.115 / 0.137 | 0.648 / 0.725 | 1.241 / 1.253 | 0.593 / 0.528 |
+| `verify_gkr` | 0.075 / 0.064 | 0.406 / 0.249 | 0.748 / 0.437 | 0.342 / **0.188** |
+| `verify_final` | 0.183 / 0.147 | 1.626 / 1.473 | 3.007 / 2.751 | 1.381 / 1.278 |
+| `verify_logup` | 0.034 / 0.037 | 0.099 / 0.122 | 0.112 / 0.146 | 0.013 / 0.024 |
+| **verifier total** | 0.480 / 0.455 | 3.063 / 2.762 | 5.555 / 4.897 | **2.49 / 2.13** |
+| v0 verifier (same queries) | 0.183 | 0.799 | 1.558 | 0.76 |
+
+Full Llama-2-7B (one pruned block plus 31 full ones): V1 `0` about 0.48 + 31 x 2.49 = 77.7 s, V1 `1` about
+0.46 + 31 x 2.13 = 66.6 s. V-LONG-a's measured v0 is 19.6 s (Fiat-Shamir), so V1 is 3.4x v0 with the new path
+(4.0x before).
+
+**Reading.**
+* The GKR check gains 1.8x per block (batched chains and the one-challenge path), as on the laptop.
+* The final check gains only 7% per block, against 1.8x on the laptop and against what the micro rates predict:
+  with Sec. 5.1's per-block shapes (34,304 requant rows, 8,192 residual rows, 23,296 `_xbar` columns at 2,048
+  tokens) the products alone would take about 1.46 s on path `0` and 0.65 s on path `1`, yet the whole of
+  `verify_final` is 1.38 s and 1.28 s. So either the micro-benchmark (one op of 4,096 rows) runs slower than the
+  real ops, or the real ops do not take the routes it measures. This is not yet understood; a per-op profile of
+  `verify_final` on the Xeon must come before the native kernel is written. The per-op fixed work of Sec. 7 (eq
+  tables, the three small inner products per op) and the int64 handling of the clear claims are the other candidates.
+* The model of Sec. 5.3 (50-55 s) was optimistic; the measured torch path gives 67 s. The plan's target (V1 within
+  1.2x of v0, about 24 s) needs the native kernel and the per-op fixed work removed. Under the plan's kill rule (no
+  native kernel merged and rehearsed by Wed 28 Oct), the paper reports V1 as a bytes option with this verifier time.
+
 ## 6. Cluster commands
 
-Not run (no cluster access from this work). From the repository root of a lean clone of this branch on the TAU
+Run as job 1009430 (Sec. 5.4). From the repository root of a lean clone of this branch on the TAU
 cluster, as the C2 Sec. 8.x re-time (Xeon 4114 node of `studentbatch`, 8 threads, the native kernels built with
 `CXX`, Triton for the GPU prover as in `I_server_setup.md`); `$ROOT` the clone, `$PY` its venv's python:
 

@@ -221,8 +221,26 @@ the plan's "at least 10x below" holds at tau 0.7 and with top-k 50, not at tau >
 brings the sampler to about 0.002 in every setting (the remedy of Section 6, a protocol change). Peak memory 10.8 GB,
 2,563 s on 16 workers.
 
-Logit scale `c` = [PENDING]; Monte Carlo (positions 64 and 511, `tau:top_k` = 1:0, 1:50, 1.3:0): [PENDING]; checks
-`sum_err_max`, `fft_err_max`, `dropped_bound_max` = [PENDING]. Qwen3-1.7B: not run (no Qwen3 real-weight builder yet).
+Logit scale `c` = 5.58e-4 (OPT-125M: 2.7e-4), so `a` = 37 at `tau = 1` and the temperature is known to 2.4%.
+Medians at `tau = 1`: `tv_sampler` 0.0063 (k = 50) and 0.0204 (k = 0); `tv_model` 0.087 (k = 0); table `20`, k = 0:
+0.0022. Checks over every law: `sum_err_max` 1.8e-11, `fft_err_max` 7.8e-11, `dropped_bound_max` 4.4e-22.
+
+Monte Carlo (10^5 SHAKE-keyed draws per cell; z-scores per tested token against the exact law and against softmax):
+
+| Position | tau | k | tokens tested | max abs z (law) | family-wise 1% bound | beyond 3 sigma (expected) | chi^2 / dof | TV law-MC | TV softmax-MC |
+|---:|---:|---:|---:|---:|---:|---|---|---:|---:|
+| 64 | 1.0 | 0 | 697 | 3.92 | 4.34 | 3 (1.9) | 726 / 697 | 0.041 | 0.055 |
+| 64 | 1.0 | 50 | 50 | 2.32 | 3.72 | 0 (0.14) | 37 / 50 | 0.007 | 0.011 |
+| 64 | 1.3 | 0 | 1,372 | 3.46 | 4.49 | 7 (3.7) | 1,451 / 1,372 | 0.088 | 0.105 |
+| 511 | 1.0 | 0 | 202 | 2.79 | 4.06 | 0 (0.55) | 198 / 202 | 0.018 | 0.036 |
+| 511 | 1.0 | 50 | 50 | 2.35 | 3.72 | 0 (0.14) | 55 / 50 | 0.006 | 0.009 |
+| 511 | 1.3 | 0 | 618 | 3.15 | 4.31 | 3 (1.7) | 593 / 618 | 0.083 | 0.107 |
+
+Every max |z| against the exact law is below its family-wise 1% bound and every chi^2 is within its degrees of
+freedom's range, so the draws agree with the computed law; the TV columns are empirical distances of 10^5 draws
+(dominated by the sampling noise of the many rare tokens), so only their order (the law closer to the draws than
+softmax is) is informative. Qwen3-1.7B: not run (the Qwen3 real-weight builder exists since F2b-Q, but its integer
+model's quality is not yet usable).
 
 ## 6. What the numbers say
 

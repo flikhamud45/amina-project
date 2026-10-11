@@ -202,7 +202,7 @@ detection of the best attack we found against that sampler, bounds its worst cas
 every edited value within held-out ranges and adapts its edit, the best per-path mixture of the
 implementable samplers, found by linear programming with a double oracle, detects at most 3.1\% and
 9.7\% per path in the two hidden layers, below the $27.7/N$ (5.4\% and 10.8\%) at which $2^{-40}$
-needs fewer than $N$ paths \todo{G3-min: OPT-1.3B}.
+needs fewer than $N$ paths.
 
 \para{Larger models.} On every CNN and test query, including the binary dog-vs-cat ResNet-18, one
 changed penultimate neuron flips the prediction and is caught by a path with probability 1/84
@@ -220,7 +220,13 @@ next token of OPT-1.3B for all 40 prompts at each of layers 6, 12, 18 and 23, wi
 neurons (at most 60); a path opens them with median probability at most $7.9\cdot10^{-4}$ in every
 cell (at most $7.3\cdot10^{-3}$). Edits that only lower activations, which a contribution-weighted
 sampler of the claimed trace never opens, succeed for 9, 31, 38 and 39 of the 40 prompts at those
-layers, with a median of 6 neurons. On OPT-6.7B (layers 8, 16, 24 and 31), in-range edits change the next
+layers, with a median of 6 neurons. Where they fail, value-aware sampling helps against these
+edits, which are not adapted to the sampler: with the natural maximum as the range, the best
+per-path mixture of our samplers catches the better of the two edits on 48\%, 6.8\% and 2.2\% of
+the paths that enter the FFN of layers 6, 12 and 18 (mean over prompts), above $27.7/N$ (0.34\%),
+and on 0.08\% at layer 23 (uniform: 0.02--0.06\%).
+Whether an edit adapted to the sampler evades it, as on the MLP, we leave open. On OPT-6.7B
+(layers 8, 16, 24 and 31), in-range edits change the next
 token for all 40 prompts at every layer, and a path opens them with median probability at most
 $1.3\cdot10^{-3}$.
 

@@ -4,8 +4,8 @@ Plan 2 item A7 (must; reviewers C-W2, C-Q1 and A-Q2, consolidated change 3). Fil
 `code/experiments/7_reexec/serve_ab.py` (new), `code/experiments/7_reexec/reexec.py` (`FloatDecoder(prune_last=True)`,
 opt-in), `code/tests/test_serve_ab.py` (new), the `serve` tier and the smoke list in
 `code/experiments/4_defence_benchmark/slurm/sp2027.sh`, and `docs/L40S_RUN_SP2027.md`. Status: the harness, the tier
-and the tests are done and validated on the laptop CPU with small graphs. The 2080 Ti pilot and the L40S `serve` tier
-have not been run yet; their numbers are placeholders below (**[CLUSTER]**).
+and the tests are done and validated on the laptop CPU with small graphs. The 2080 Ti pilot ran (job 1008674, s-004,
+git e5d377c; Sec. 7.1); the L40S `serve` tier has not run yet (**[CLUSTER]** below).
 
 ## 1. Why it matters
 
@@ -274,23 +274,84 @@ The structure is as expected:
 
 A negative `forward_extra` is noise between two medians.
 
-## 7. Cluster runs [CLUSTER]
+## 7. Cluster runs
 
-### 7.1 2080 Ti pilot (full OPT-1.3B; Llama-2-7B, 1 and 2 blocks)
+### 7.1 2080 Ti pilot (job 1008674: full OPT-1.3B; Llama-2-7B, 1 and 2 blocks)
 
-Commands and pass criteria are in Sec. 9. Results go here:
+Random weights, 10 repetitions after a warm-up, medians (95% bootstrap intervals in the logs,
+`artifacts/results/9_quality/a7_pilot/*.jsonl` on the server clone s3). Tests: 18 passed; every job exit 0; every line
+`ok`, every `prove` line `phases_ok` (residual 0.02-3.9%: the largest in mode C at B = 1, the smallest graphs, as on the
+laptop); the only skips are the two `joint` cells of OPT-1.3B at T = 2,048, B = 4 (out of memory, as expected).
 
-| Model | T | B | Mode, batch proof | Prover s | U1 s | U2 fp16 s | Prover/U1 | Prover/U2 | MB per token | Egress cap (tok/s per 100 Gb/s) |
-|---|---|---|---|---|---|---|---|---|---|---|
-| OPT-1.3B | 64 / 512 / 2,048 | 1 | C / Kpre | [CLUSTER] | | | | | | |
-| OPT-1.3B | 64 | 4 / 16 / 64 | C / Kpre, seq / joint | [CLUSTER] | | | | | | |
-| OPT-1.3B | 2,048 | 4 | C / Kpre, seq (joint: out of memory expected) | [CLUSTER] | | | | | | |
-| Llama-2-7B, 1 and 2 blocks | as above | | | [CLUSTER] | | | | | | |
+**OPT-1.3B, full model, B = 1.**
 
-U2 check against F1 (within 10%):
+| T | Mode | Prover s | U1 s | U2 fp16 s | Prover/U1 | Prover/U2 | U1/U2 | MB per token | Egress cap (tok/s per 100 Gb/s) |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 64 | C | 1.70 | 0.081 | 0.0084 | 20.9 | 203 | 9.7 | 4.25 | 2,944 |
+| 64 | Kpre | 0.151 | 0.081 | 0.0084 | 1.87 | 18.1 | 9.7 | 0.94 | 13,260 |
+| 512 | C | 2.01 | 0.122 | 0.032 | 16.4 | 62 | 3.8 | 1.35 | 9,271 |
+| 512 | Kpre | 0.505 | 0.122 | 0.032 | 4.12 | 15.6 | 3.8 | 0.93 | 13,420 |
+| 2,048 | C | 4.37 | 0.512 | 0.108 | 8.55 | 40.3 | 4.7 | 1.09 | 11,460 |
+| 2,048 | Kpre | 2.08 | 0.512 | 0.108 | 4.07 | 19.2 | 4.7 | 0.98 | 12,710 |
 
-* OPT-1.3B at T = 2,048, B = 1: F1 0.18 s, measured [CLUSTER].
-* Llama-2-7B at T = 2,048, B = 1, extrapolated from 1 and 2 blocks: F1 0.57 s, extrapolated [CLUSTER].
+**OPT-1.3B, batches** (B prompts; `seq` proves them one after another, `joint` as one batch proof).
+
+| T | B | Mode | seq: Prover/U1, /U2 | joint: Prover s, /U1, /U2 | joint MB per token |
+|---:|---:|---|---|---|---:|
+| 64 | 4 | C | 59.3, 387 | 1.57, 17.1, 111 | 1.77 |
+| 64 | 4 | Kpre | 6.54, 42.7 | 0.312, 3.41, 22.2 | 0.94 |
+| 64 | 16 | C | 110, 421 | 2.44, 12.9, 49.5 | 1.15 |
+| 64 | 16 | Kpre | 12.3, 47.2 | 0.876, 4.62, 17.7 | 0.94 |
+| 64 | 64 | C | 122, 452 | 6.38, 8.96, 33.3 | 1.00 |
+| 64 | 64 | Kpre | 13.6, 50.5 | 3.39, 4.76, 17.7 | 0.94 |
+| 2,048 | 4 | C | 8.21, 39.6 | out of memory | |
+| 2,048 | 4 | Kpre | 4.05, 19.5 | out of memory | |
+
+**Llama-2-7B, 32 blocks, extrapolated** from the 1- and 2-block cells as `t = t1 + 31 (t2 - t1)` (one pruned block
+plus 31 full ones; prover, U1 and U2 alike).
+
+| T | B | Mode, how | Prover s | U1 s | U2 fp16 s | Prover/U1 | Prover/U2 |
+|---:|---:|---|---:|---:|---:|---:|---:|
+| 64 | 1 | C | 5.25 | 0.145 | 0.034 | 36.1 | 154 |
+| 64 | 1 | Kpre | 0.333 | 0.145 | 0.034 | 2.29 | 9.8 |
+| 512 | 1 | C | 5.57 | 0.398 | 0.173 | 14.0 | 32.2 |
+| 512 | 1 | Kpre | 1.84 | 0.398 | 0.173 | 4.62 | 10.6 |
+| 2,048 | 1 | C | 12.1 | 1.65 | 0.642 | 7.35 | 18.9 |
+| 2,048 | 1 | Kpre | 6.27 | 1.65 | 0.642 | 3.80 | 9.8 |
+| 64 | 64 | C joint | 20.5 | 2.65 | 1.01 | 7.74 | 20.3 |
+| 64 | 64 | Kpre joint | 12.2 | 2.65 | 1.01 | 4.62 | 12.1 |
+| 2,048 | 4 | C joint | 39.4 | 7.26 | 2.16 | 5.42 | 18.3 |
+| 2,048 | 4 | Kpre joint | 24.3 | 7.26 | 2.16 | 3.34 | 11.3 |
+
+**U2 check against F1 (the pilot's 10% criterion): not met, in both directions.**
+
+* OPT-1.3B at T = 2,048, B = 1: U2 fp16 108 ms measured on the full model, against F1's 0.18 s (40% lower).
+* Llama-2-7B at T = 2,048, B = 1: 642 ms extrapolated, against F1's 0.57 s (13% higher).
+
+F1's figures are two-point extrapolations from 1- and 2-block builds (F1 Sec. 2), on another node, so a full-model
+measurement can differ by more than 10%; the A7 extrapolation for Llama-2-7B uses the same two-point method and has the
+same weakness. The OPT-1.3B figure is a direct measurement and is the one quoted. A faster U2 makes prover/U2 larger,
+so the OPT ratios are, if anything, unfavourable to us; for Llama-2-7B, prover/U2 may be up to about 13% too low.
+The L40S tier measures the 7B models in full.
+
+**Reading.**
+
+* **The integer engine's floor (U1/U2) is 4-10x** on OPT-1.3B (9.7x at 64 tokens, 4.7x at 2,048), above the plan's
+  model (1.8-2.6x for Llama-2-7B), and 2.3-4.3x on Llama-2-7B (extrapolated). It is paid on every query if the provider
+  serves the integer model; it is the cost of exactness, not of the proof.
+* **The proof's own cost (Prover/U1)** at B = 1 is 1.9-4.1x in Kpre and 8.6-21x in mode C on OPT-1.3B; 2.3-4.6x
+  and 7.4-36x on Llama-2-7B. Mode C at short prompts is dominated by the column opening of every weight matrix, a
+  per-query constant.
+* **Against fp16 eager (Prover/U2)** at B = 1: 16-19x in Kpre and 40-203x in mode C on OPT-1.3B; about 10x in Kpre
+  and 19-154x in mode C on Llama-2-7B. The plan's model was 9-40x at B = 1.
+* **Batching.** One joint proof for a batch removes most of mode C's constant: at T = 64 and B = 64, mode C falls
+  from 122x U1 (sequential) to 9.0x (joint) on OPT-1.3B and Kpre to 4.8x; against fp16, 33x and 18x. The plan's
+  3-8x at B >= 8 holds against U1 (Kpre 4.6-4.8x, mode C 9.0-13x on OPT-1.3B) but not against fp16.
+* **Proof bytes per token** are about 1 MB on OPT-1.3B (0.94 in Kpre) and about 3.1 MB on Llama-2-7B (extrapolated),
+  so 100 Gb/s of egress carries about 13,000 and 4,000 proved tokens per second.
+* **For the paper** (body, filled 11 Oct): OPT-1.3B at 2,048 tokens, B = 1, the same GPU: the prover costs 4.1x (Kpre)
+  and 8.6x (C) our exact forward pass, and 19x and 40x an fp16 one; 64 prompts of 64 tokens in one Kpre proof, 4.8x and
+  18x. These replace the cross-GPU comparison; the L40S `serve` tier replaces them in turn.
 
 ### 7.2 L40S `serve` tier
 

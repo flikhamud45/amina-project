@@ -1,11 +1,10 @@
 # F3a. Real weights end to end: `prune_last` in the real builder, and the OPT-1.3B / OPT-6.7B cells
 
-Plan 2 item F3a, part 1 (`SP2027_PLAN2.md`, F3a; Plan 1 F3, OPT part). Branch `p2-f3a`, uncommitted. Status: the
-builder change, the script flags and their tests are done and validated on the laptop (a tiny and a mini random-init
-OPT through the real builder); the real-weight cells are ready to run on the cluster, and their numbers are
-**[CLUSTER]** placeholders below. Reviewed: v0's claims are no longer reported as an accounting check (they held by
-construction), the OPT-6.7B cells ask for 128 GB, and every cluster command line was re-run on a mini OPT
-(Section 5, "Review re-run").
+Plan 2 item F3a, part 1 (`SP2027_PLAN2.md`, F3a; Plan 1 F3, OPT part). Merged in 2245f22. Status: the builder
+change, the script flags and their tests are done; the OPT-1.3B cells (C and Kpre, 64 and 2,048 tokens, with their
+random-weight twins) and the OPT-6.7B real-weight cells (Kpre, 2,048 tokens) have run on the cluster (Section 6,
+Results). The OPT-6.7B random twins are running; V1 with the GKR at 2,048 tokens did not fit the 11 GB card and moves
+to the L40S `real` tier (Section 7).
 
 ## 1. Why
 
@@ -272,19 +271,53 @@ Fallbacks:
 
 The plan expects times within 5% of random weights, v0 bytes within about 10%, and V1 1.7-1.9x on real weights.
 
-### Results [CLUSTER]
+### Results (jobs 1008673 and 1009431, s-005, 2080 Ti; git ebf6f4e)
 
-| Cell | Mode | T | v0 (MB) real / random | V1 (MB) real / random | V1 ratio real / random | Prove (s) real / random | CPU verify (s) real / random | GPU verify (s) real / random | Peak host / GPU (GB) | Tampers | Exceptions |
-|---|---|---:|---|---|---|---|---|---|---|---|---:|
-| OPT-1.3B | C | 64 | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| OPT-1.3B | C | 2,048 | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| OPT-1.3B | Kpre | 64 | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| OPT-1.3B | Kpre | 2,048 | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| OPT-6.7B | Kpre | 64 | [CLUSTER] | - | - | [CLUSTER] | [CLUSTER] | - | [CLUSTER] | [CLUSTER] | - |
-| OPT-6.7B | Kpre | 2,048 | [CLUSTER] | [CLUSTER] (B3) | [CLUSTER] | [CLUSTER] | [CLUSTER] | - | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+All lines: Fiat-Shamir, last block pruned, 3 timed queries after a warm-up, the smoothed graph of F2
+(`--smooth 0.55`, calibrated on one 2,048-token window). OPT-1.3B real digest `182e6a71...`, random `266c008f...`;
+OPT-6.7B real `94793ed9...`.
 
-OPT-6.7B codec-only profile at 2,048 tokens (B2), per block and total, real / random: [CLUSTER]. T7 on real weights
-(A1 `accounting`, all exact; `paths_ratio`): [CLUSTER].
+**OPT-1.3B, prover on the GPU, native CPU verifier (A2), and V1 at 64 tokens (A1).**
+
+| Mode | T | v0 (MB) real / random | V1 (MB) real / random | V1 ratio real / random | Prove (s) real / random | CPU verify (s) real / random | Peak host / GPU (GB), real | Tampers | V1 exceptions real / random |
+|---|---:|---|---|---|---|---|---|---|---:|
+| C | 64 | 101.6 / 111.9 | 90.4 / 90.2 | 1.12 / 1.24 | 0.75 / 0.82 | 0.98 / 0.95 | 4.2 / 2.6 | 9/9 v0, 6/6 V1 | 2,379 / 1 |
+| C | 2,048 | 1,721.9 / 2,070.8 | (OOM, L40S) | - | 3.44 / 3.76 | 8.22 / 8.65 | 21.9 / 5.6 | 9/9 v0 | - |
+| Kpre | 64 | 50.1 / 60.4 | 39.1 / 39.7 | 1.28 / 1.53 | 0.20 / 0.22 | 0.51 / 0.54 | 4.7 / 2.6 | 9/9 v0, 6/6 V1 | 2,379 / 1 |
+| Kpre | 2,048 | 1,662.1 / 2,011.0 | (OOM, L40S) | - | 2.04 / 2.10 | 7.72 / 7.41 | 21.1 / 5.5 | 9/9 v0 | - |
+
+V1 at 64 tokens (A1, GPU prover, CPU verifier): prove 1.93 / 2.13 s (Kpre), 2.36 / 2.55 s (C), real / random;
+verify 4.82 / 5.69 s (Kpre), 4.74 / 5.54 s (C). T7 on real weights: every key of `accounting.v1` and
+`accounting.v0` exact; `paths_ratio` 1.0007 (v0, C) and 0.9936 (V1, C). `shapes` `{"problems": [], "claim_columns":
+true}` on every line. The peak host memory of A2 at 2,048 tokens (21-22 GB) is the CPU verifier's decoded claims.
+
+**OPT-6.7B, full model, Kpre, 2,048 tokens (B1-B3), real weights.** The GPU prover runs out of memory on the 11 GB
+card (as planned), so B1 used the fallback, the CPU prover on the Xeon node.
+
+| Line | Result |
+|---|---|
+| B1 v0, CPU prover and CPU verifier | 3/3 accepted; prove 270.0 s (forward 252.2 s, encode 17.8 s); verify 20.2 s (decode 2.7, derive 11.4, products 6.1); 4,611.6 MB of claims; tampers 9/9 rejected (`freivalds`); peak host 70.9 GB (build 44.6 GB) |
+| B2 codec-only profile | 34 blocks; 2.374 G claims; v0 claims 4,309.7 MB, V1 values 2,328.2 MB (1.85x); 224,670 exceptions (1.80 MB framed); per block 1.76-1.96x (the last kept block 2.31x) |
+| B3 real V1 bytes | v0 4,649.9 MB (accepted), V1 2,680.5 MB (claims 2,645.8, `u` 32.1, cut 2.5): **1.73x**; 16 GKR instances, table 64,305; `accounting_ok`; same digest as B2 |
+
+The random-weight twins of B1-B3 are still running (job 1009431); their numbers are added here when it ends.
+
+**Reading.**
+* **Cost does not depend on the weights.** On OPT-1.3B the prover's time is within 3-9% of the random twin's and
+  the native CPU verifier's within 6%, in both modes and at both lengths. The prover is faster on real weights in
+  every cell (its claims are smaller to encode); the verifier is faster in two cells and slower in two.
+* **v0 bytes are smaller on real weights** (by 9-17%): the claims of a calibrated model are more concentrated than a
+  random model's, and `PVC3`'s size follows their entropy. The paper's random-weight byte figures are therefore upper
+  bounds for these models.
+* **V1 is about the same size on both** (39.1 / 39.7 MB in Kpre at 64 tokens), so its ratio to v0 is lower on real
+  weights (1.28x instead of 1.53x at 64 tokens; 1.73x on OPT-6.7B at 2,048 tokens, where the plan expected 1.7-1.9x).
+  Real weights cause about 2,400 exceptions on OPT-1.3B at 64 tokens and 225,000 on OPT-6.7B at 2,048 tokens, against
+  1 on random weights; they cost 0.02 MB and 1.8 MB.
+* **Tampers.** Every tamper is rejected, by the check expected for its mode (`kpre_y` and `freivalds` in Kpre,
+  `columns_code` in C).
+* **What did not fit the 2080 Ti.** A1 at 2,048 tokens (V1 with the GKR, both modes, real and random alike: the
+  GKR's tables need more than 11 GB) and B1's GPU prover. Both move to the L40S `real` tier (Section 7), as the
+  fallback rule says; V1's T7 at 2,048 tokens is covered on OPT-6.7B by B3 (bytes, no GKR).
 
 ## 7. Draft of the L40S `real` tier (for `slurm/sp2027.sh`, not applied here)
 

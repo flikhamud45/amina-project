@@ -322,3 +322,22 @@ of thousands of paths for $1-2^{-40}$ (19{,}000--227{,}000 at the medians on OPT
 OPT-6.7B). The OPT-6.7B rows show the same picture at 7B scale: every in-range edit of the \emph{any} kind changes
 the next token for all 40 prompts at every depth, with a median of 1--22 edited neurons.
 
+\para{The sampler game on OPT-1.3B.} For each prompt the adversary takes, of the \emph{any} edit (built at the
+cap's ceilings and carried to looser caps) and the \emph{down} edit, the one that a given sampler detects least;
+the defender chooses the per-path mixture of the implementable samplers of the MNIST game (uniform, static
+importance, contribution, the floors $\delta\in\{0.01,\dots,100\}$, tail-first and zero-first) that maximises the
+mean over prompts, by linear programming. Detection is one FFN step, given that the path enters the edited FFN at
+the last position, and so bounds unconditional detection from above. With caps at the 90th, 95th, 99th and 100th
+percentile, the mixture detects 3.1\%, 23\%, 38\% and 48\% at layer~6; 0.23\%, 1.2\%, 5.4\% and 6.8\% at layer~12;
+0.50\%, 1.2\%, 1.6\% and 2.2\% at layer~18; and 0.09\%, 0.09\%, 0.08\% and 0.08\% at layer~23, against $27.7/d_{\mathrm{ff}}
+=0.34\%$ and 0.02--0.19\% for uniform sampling. The mixture is the contribution-weighted sampler at layers 6--18,
+where the \emph{down} edit fails on many prompts and the remaining \emph{any} edits raise their neurons'
+contributions; at layer~23, where \emph{down} succeeds for 39 of the 40 prompts, contribution weighting sees
+nothing and the mixture leans on zero-first. The means are over the prompts with an in-range edit at that cap
+(11 to 40 of the 40 at layer~6, 27 to 40 at layer~12, 35 to 40 at layer~18 and all 40 at layer~23), which is why
+they can rise with the cap. Neither edit is adapted to the sampler: there is no lowering to a small non-zero value and no greedy
+against the sampler's own detection, the two replies that brought the MNIST mixture below $27.7/N$. These figures
+are therefore not upper bounds on what a value-aware sampler achieves against an adaptive adversary on this
+model; they show that the fixed edits of Table~\ref{tab:inrange} are caught by contribution weighting wherever
+zeroing does not suffice.
+

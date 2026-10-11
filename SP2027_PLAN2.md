@@ -411,7 +411,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
   - **Kill.** This is the root of trust, and it changes the real-weight graphs. The recipe must therefore be fixed by **Mon 19 Oct**, before any real-weight or byte cell is produced (F3a starts on Thu 22). If exact reproduction cannot be reached by then, the published int8 checkpoint and its hash become the root of trust, and the paper says so.
 
 - **F3a [WIP] must: real-weight runs end to end, now, on the 2080 Ti** (Plan 1 F3, OPT part).
-  - **Status (11 Oct).** Part 1 merged (2245f22): `prune_last` in `build_opt_from_hf` (exact; unpruned graph unchanged), `v1_bytes.py --real --prune-last` with a non-vacuous accounting check; cluster cells in `docs/improvements/F3a_real_weight_runs.md`. Part 2 (the real-weight runs) is cluster work.
+  - **Status (11 Oct).** Part 1 merged (2245f22): `prune_last` in `build_opt_from_hf` (exact; unpruned graph unchanged), `v1_bytes.py --real --prune-last` with a non-vacuous accounting check; cluster cells in `docs/improvements/F3a_real_weight_runs.md`. Part 2 ran (jobs 1008673, 1009431): OPT-1.3B real/random in C and Kpre at 64 and 2,048 tokens, prover within 3-9% and CPU verifier within 6% of random; v0 bytes 9-17% smaller on real weights; V1 1.28x at 64 tokens; all tampers rejected. OPT-6.7B real, full model, Kpre at 2,048 tokens: accepted 3/3 with the CPU prover (270 s; verify 20.2 s), tampers 9/9, V1 bytes 1.73x. Open: OPT-6.7B random twins (running); V1 with the GKR at 2,048 tokens (11 GB OOM) and the GPU prover of OPT-6.7B move to the L40S `real` tier.
   - **What.**
     1. Add `prune_last` to the real builders. Today `v1_bytes.py --real` refuses `--prune-last`, so real cells cannot be compared with the pruned headline cells.
     2. Real smoothed OPT-1.3B, all 24 blocks, modes C and Kpre, at 64 and 2,048 tokens, with WikiText-2 windows as queries.
@@ -504,7 +504,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
   - **Kill.** Must start by Mon 2 Nov. The results do not depend on the hardware, so it may run after the code freeze with the frozen builders.
 
 - **E2b [WIP] should (rank 3): exact total-variation distance of the integer sampler on real logits.**
-  - **Status (11 Oct).** Merged (6edd8d8): exact law of the sampler, Monte Carlo and toy checks. **Finding:** on OPT-125M the 16-bit sampler's TV to softmax is about 2.6e-2 at tau = 1 (7.7e-3 with top-k 50), not 1e-4 to 1e-3; a table with 4 more fractional bits is measured as a remedy (a protocol change: team decision). OPT-1.3B on the cluster. Write-up `docs/improvements/E2b_sampler_tv.md`.
+  - **Status (11 Oct).** Merged (6edd8d8): exact law of the sampler, Monte Carlo and toy checks. **Finding:** on OPT-125M the 16-bit sampler's TV to softmax is about 2.6e-2 at tau = 1 (7.7e-3 with top-k 50), not 1e-4 to 1e-3; a table with 4 more fractional bits is measured as a remedy (a protocol change: team decision). OPT-1.3B done (job 1008675): at tau = 1 the TV median is 0.0063 (k = 50) and 0.020 (k = 0), against 0.087 between the integer and fp32 model; a 2^20 table gives 0.0022. The paper's `\todo` is filled with these numbers and a `\todo{E2b: adopt it?}` for the team's decision. Write-up `docs/improvements/E2b_sampler_tv.md`.
   - **What.**
     - Compute the exact output distribution of the Gumbel-max sampler. log M(t) is computed once on the integer grid (about 0.93 M points, a float64 FFT convolution) and gathered per token, with ties bracketed.
     - Cross-check it against a Monte Carlo of `TokenSampler.choose` over 10^5 seeds.
@@ -586,7 +586,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - the paper labels the row as modelled.
 
 - **V-V1N [WIP] should (rank 1): native V1 verifier.**
-  - **Status (11 Oct).** Parts 1-4 in torch merged (89e08a0, PVI_V1_BUCKETS): exact (26 new tests; V1 suites 231 and v0 regression 456 passed), final-check products about 2x and the GKR check about 2x faster on the laptop; projected full Llama-2-7B V1 verifier about 50-55 s (from 75-80). The plan's target (<= 1.2x v0) needs the native kernel (designed in `docs/improvements/V_V1N_fast_v1_verifier.md`), and the adversarial re-review is still to run.
+  - **Status (11 Oct).** Parts 1-4 in torch merged (89e08a0, PVI_V1_BUCKETS): exact (26 new tests; V1 suites 231 and v0 regression 456 passed), final-check products about 2x and the GKR check about 2x faster on the laptop; projected full Llama-2-7B V1 verifier about 50-55 s (from 75-80). The plan's target (<= 1.2x v0) needs the native kernel (designed in `docs/improvements/V_V1N_fast_v1_verifier.md`), and the adversarial re-review is still to run. Xeon measured (job 1009430): per Llama-2-7B block 2.49 -> 2.13 s (GKR 1.8x, final check only 7%: not understood, profile first), full model about 67 s against v0's 19.6 s (3.4x); suites pass in every switch position. On the Xeon the table products lose on the residual ops (route them to the limb GEMM).
   - **Decision rule.** The V1 re-time of Mon 12 (V-LONG-a) decides.
     - If V1's verifier takes more than 1.2x v0's time (the model says about 3.5x), parts 1-4 become the first should item and start Mon 19.
     - Otherwise V-V1N is not started, and V1 is reported as measured.
@@ -660,7 +660,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 ### 3.4 Prover and serving
 
 - **A7 [WIP] must: prover overhead against unverified serving on the same GPU, with batching (new `serve` tier).**
-  - **Status (11 Oct).** Harness `serve_ab.py` and the `serve` tier merged (eef4d1a); laptop checks on tiny graphs (U1 = claimed logits, byte-identical proofs on request); the 2080 Ti pilot is next. Write-up `docs/improvements/A7_serving_overhead.md`.
+  - **Status (11 Oct).** Harness `serve_ab.py` and the `serve` tier merged (eef4d1a); laptop checks on tiny graphs (U1 = claimed logits, byte-identical proofs on request). 2080 Ti pilot done (job 1008674): OPT-1.3B at 2,048 tokens, B = 1, prover 2.08 s (Kpre) / 4.37 s (C) = 4.1x / 8.6x U1 and 19x / 40x fp16; B = 64 at 64 tokens, joint Kpre proof 4.8x / 18x; Llama-2-7B extrapolated from 1-2 blocks 3.8x / 9.8x (Kpre, 2,048). The U2-against-F1 check missed its 10% band (OPT-1.3B 40% faster than F1's extrapolation; Llama-2-7B 13% slower), explained in the write-up. Paper `\todo`s (intro, evaluation, discussion) filled from the pilot; the L40S `serve` tier replaces them. Write-up `docs/improvements/A7_serving_overhead.md`.
   - **What.** A new script, `experiments/7_reexec/serve_ab.py`.
     - **Method.** Same token ids, shapes, GPU and host; CUDA events after a warm-up; ≥ 10 repetitions; median with a 95% bootstrap confidence interval.
     - **Baselines.**
@@ -841,8 +841,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - The results go into the same table format.
   - **Kill.** The results do not depend on the platform, so the run may finish after the freeze. Without results by Mon 9 Nov, the paper reports OPT-1.3B only and states the limitation.
 
-- **G3-min [WIP] should (rank 4): the adaptive game against value-aware samplers, minimal version.** The design is in `attack_theory/experiments.md` §1 and stays within scope rule K9.
-  - **Status (11 Oct).** MNIST MLP done and merged (8663fe1): K-G3c passes (8.3e-14); at the 95th-percentile cap the best implementable sampler reaches 2.44% / 5.99% per path and the LP mixture 2.45% / 7.06% (threshold 5.41% / 10.82%), so K-G3a does not trigger for implementable samplers (gradient saliency does cross it); K-G3b does not trigger. OPT-1.3B job ready. Write-up `docs/improvements/G3_min_adaptive_game.md`.
+- **G3-min [DONE] should (rank 4): the adaptive game against value-aware samplers, minimal version.** The design is in `attack_theory/experiments.md` §1 and stays within scope rule K9.
+  - **Status (11 Oct).** MNIST MLP done and merged (8663fe1): K-G3c passes (8.3e-14); at the 95th-percentile cap the best implementable sampler reaches 2.44% / 5.99% per path and the LP mixture 2.45% / 7.06% (threshold 5.41% / 10.82%), so K-G3a does not trigger for implementable samplers (gradient saliency does cross it); K-G3b does not trigger. OPT-1.3B done (job 1008671): against the two fixed in-range edits the mixture (contribution weighting) crosses 27.7/d_ff = 0.34% at layers 6, 12 and 18 (up to 48% at layer 6, natural maximum) and stays at 0.08-0.09% at layer 23, where zeroing suffices; per K-G3a the paper now says value-aware sampling helps against these edits on OPT-1.3B, and leaves the adaptive case open (K9). The three attack `\todo`s are filled. Write-up `docs/improvements/G3_min_adaptive_game.md`.
   - **What.**
     1. `fast_acceptance`, with an exactness test against `acceptance_probability` (K-G3c), on the MNIST MLP.
     2. The game on the MNIST MLP, both layers.
