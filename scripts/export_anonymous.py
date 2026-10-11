@@ -28,6 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 INCLUDE = ["code/src", "code/tests", "code/experiments", "code/artifacts/results", "code/artifacts/comparison",
+           "code/artifacts/models",          # the small trained MNIST/digits models that the quick tests load
            "code/pyproject.toml", "code/requirements.txt", "code/requirements-llm.txt"]
 """Repository paths exported (directories recursively)."""
 
@@ -155,6 +156,33 @@ def export(ref: str, out: Path, pdf: Path | None) -> int:
     return n_files
 
 
+def _npz_text(data: bytes) -> str:
+    """What a NumPy ``.npz`` archive can carry besides numbers: its zip comment, member names, each member's dtype
+    and shape, and the contents of every member that is not a numeric array (strings and bytes decoded, structured
+    arrays as values, object arrays and non-arrays as raw bytes). Numeric array data is not scanned as text: random
+    bytes there match short names by chance (two of the trained models did), and numbers cannot identify anyone. An
+    archive that does not open is scanned as bytes."""
+    import zipfile
+    import numpy as np
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return data.decode("latin-1")
+    parts = [zf.comment.decode("latin-1")]
+    for info in zf.infolist():
+        parts.append(info.filename)
+        raw = zf.read(info)
+        try:
+            arr = np.load(io.BytesIO(raw), allow_pickle=False)
+        except Exception:                   # object arrays (pickles) and anything else: scan the bytes
+            parts.append(raw.decode("latin-1"))
+            continue
+        parts.append(f"{arr.dtype} {arr.shape}")
+        if arr.dtype.kind not in "biufc?":   # strings, bytes, structured or other: their values as text
+            parts.append(repr(arr.tolist()))
+    return "\n".join(parts)
+
+
 def scan(out: Path) -> list[str]:
     pats = deny_patterns()
     hits: list[str] = []
@@ -169,6 +197,8 @@ def scan(out: Path) -> list[str]:
             doc = pymupdf.open(path)
             texts = [str(doc.metadata)] + [page.get_text() for page in doc]
             text = "\n".join(texts)
+        elif path.suffix.lower() == ".npz":
+            text = _npz_text(data)
         elif _is_text(path, data):
             text = data.decode("utf-8")
         else:

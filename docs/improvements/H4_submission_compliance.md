@@ -49,4 +49,22 @@ drafted in `sp2027_research/attack_theory/disclosure.md`.
 * An anonymous host for the snapshot (Anonymous GitHub or GitFront: the team's choice) and its link in the `fullversion`
   entry; the extended version with 0 `\todo`s.
 * D6a's recipe and digests in the README once fixed (Mon 19 Oct).
-* A dry run of the README's quick tests on a clean machine from the snapshot.
+* ~~A dry run of the README's quick tests on a clean machine from the snapshot.~~ Done on 12 Oct (Sec. 4.1).
+
+### 4.1 The snapshot's quick tests (12 Oct)
+
+The snapshot was exported into an empty folder outside the repository and the README's quick tests were run there
+with the laptop's Python (Windows, torch 2.2.2, 2 threads), not in the working copy:
+
+* **First run: one failure.** `test_wire.py::test_the_parameters_meet_lambda_on_every_model` loads
+  `code/artifacts/models/mlp_mnist_full.npz`, which the export left out (`INCLUDE` had no `code/artifacts/models`).
+  The 15 tracked model files (about 11 MB: the MNIST/digits MLPs and CNNs, their JSON descriptions and
+  `MODELS.sha256`) are now exported.
+* **The scan then refused two of them:** a short author name matched random bytes inside the compressed weights of
+  `mlp_digits_01234.npz` and `mlp_mnist_halfA.npz`. An `.npz` file is now scanned as what it can carry besides
+  numbers (`_npz_text`): the zip comment, the member names, every member's dtype and shape, and the values of every
+  member that is not numeric (strings and bytes decoded, structured arrays as values, object arrays and non-array
+  members as raw bytes). A check with four planted names (a Unicode string array, a bytes array, an object array and
+  a structured array) catches all four; the byte-level scan had missed the Unicode one (UTF-32 storage).
+* **Second run:** export of 4,177 files, "OK: no identifying string found"; the quick tests pass from the snapshot
+  (exit code 0; a few tests skipped, e.g. three in `test_wire.py`).

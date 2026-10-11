@@ -970,6 +970,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 - **H4 [WIP] must: submission compliance.** Anonymous artifact and extended version, disclosure facts, HotCRP fields.
   - **Status (11 Oct).** `scripts/export_anonymous.py` (clean dry run: 4,107 files; again clean on 11 Oct at f45debd: 4,162 files), `scripts/artifact_README.md`, `docs/submission/HOTCRP_FIELDS.md` (de819fb, 9c4cfe2; write-up `docs/improvements/H4_submission_compliance.md`). Open: notices [USER], host and link, D6a digests of the certified recipe (jobs 1012438-9).
+  - **Snapshot dry run (12 Oct).** The README's quick tests run from an exported snapshot on the laptop: the first run failed on a missing model file (the export left out `code/artifacts/models`); fixed, plus an `.npz`-aware scan (random bytes in compressed weights had matched a short name; planted names in string/object/structured members are caught). Second run: 4,177 files, no identifying string, quick tests pass. H4 doc Sec. 4.1.
   - **What.**
     - **(a) A curated anonymous snapshot without git history** (Anonymous GitHub or GitFront, [USER] choice).
       - The history has 356 commits by named authors, 3 of them with mail.tau.ac.il addresses.
