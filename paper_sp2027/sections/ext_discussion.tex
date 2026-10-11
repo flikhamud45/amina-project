@@ -63,7 +63,8 @@ only how well that model serves.
 
 \para{V1.} V1 is an option, not a replacement. At 2{,}048 tokens it makes the proof
 2.0--2.3$\times$ smaller with random weights, but it makes the prover about ten times slower on the
-2080~Ti and the CPU verifier 1.6--1.9$\times$ slower. Llama-2-7B in mode $\sC$ does not fit on the
+2080~Ti and the CPU verifier 3.4$\times$ slower than v0's final verifier on the full Llama-2-7B at
+2{,}048 tokens (1.6--1.9$\times$ against the earlier one). Llama-2-7B in mode $\sC$ does not fit on the
 11\,GB card with the GKR, so V1 has not been timed in that configuration, and the full 7B and 13B
 models have only the byte model's prediction \todo{L40S: V1 on the full Llama-2-7B, incl.\ mode
 $\sC$, Llama-2-13B, OPT-6.7B and Qwen3-4B}. Mode $\sK$ and the streaming GPU verifier do not

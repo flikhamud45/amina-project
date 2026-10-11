@@ -170,13 +170,16 @@ the ratio is 1.28$\times$, against 1.53$\times$ with random weights.
 prover thus takes about 10$\times$ as long as v0's (OPT-125M in $\sC$: 0.50 to 4.85\,s, 3.58\,s of
 it the GKR). The CPU verifier takes 1.6--1.9$\times$ v0's time at 2{,}048 tokens and
 2.2--2.8$\times$ at 512, mostly for the two exact products per value of its final check; these
-ratios use the earlier v0 verifier \todo{V-LONG-a: re-time against the final kernels; F6: V1
-timings, incl.\ Llama-2-7B in $\sC$ (over 11\,GB)}.
+ratios use the earlier v0 verifier. Against the final v0 kernels the gap is wider: for the full
+Llama-2-7B in $\Kpre$ at 2{,}048 tokens (Fiat--Shamir, V1 extrapolated from 1--3 blocks), V1's
+verifier takes 66.6\,s and v0's 19.6\,s, 3.4$\times$ \todo{F6: V1 timings, incl.\ Llama-2-7B in
+$\sC$ (over 11\,GB)}.
 
 \para{Bandwidth crossover.} With proving, transfer and verification in sequence, V1 is faster end
 to end on links slower than the bytes it saves divided by the prover and verifier time it adds.
 On the timed cells of Table~\ref{tab:eval-v1}, with the earlier v0 verifier, this is
-0.16--0.26\,Gb/s \todo{V-LONG-a, EV: crossover per cell}.
+0.16--0.26\,Gb/s, and about 0.2\,Gb/s for the full Llama-2-7B above \todo{EV: crossover per cell
+of the L40S run}.
 
 % -------------------------------------------------------------------------------------
 \subsection{Verification Against Re-Execution}
@@ -185,7 +188,7 @@ On the timed cells of Table~\ref{tab:eval-v1}, with the earlier v0 verifier, thi
 \begin{table}[t]
   \caption{A client's options for one Llama-2-7B prompt of $T$ tokens, from this
   section and the cited papers, on different hardware (--: none or not reported;
-  ours interactive, the V1 row from the Fiat--Shamir runs of Table~\ref{tab:eval-v1};
+  ours interactive, the V1 row under Fiat--Shamir, against v0's final verifier;
   CPU: 8 threads of a Xeon Silver 4114, full models, ours in $\Kpre$ with the native kernels,
   re-execution the fastest exact one; ours in $\sC$: EPYC 9334; GPU:
   RTX~2080~Ti) \todo{F6: $\sC$ at 2{,}048; EV: CommitLLM bytes, time}}
@@ -205,7 +208,7 @@ On the timed cells of Table~\ref{tab:eval-v1}, with the earlier v0 verifier, thi
     zkLLM & comm. & -- & 183\,kB & -- & 2.36\,s & full, ZK \\
     Ours, $\sC$ & roots & 325\,MB & 6.6\,GB & 1.0\,s & -- & full \\
     Ours, $\Kpre$ & key & 196\,MB & 6.4\,GB & 1.0\,s & 18.5\,s & full$^c$ \\
-    \quad with V1 & & \multicolumn{2}{c}{$\div$1.7--2.3$^d$} & & $\times$1.6--1.9 & full \\
+    \quad with V1 & & \multicolumn{2}{c}{$\div$1.7--2.3$^d$} & & $\times$3.4 & full \\
     \bottomrule
   \end{tabular}
 

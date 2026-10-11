@@ -225,21 +225,21 @@
   },
   {
    "seq": 2048,
-   "protocol": "V1 Kpre (today)",
+   "protocol": "V1 Kpre (before V-V1N)",
    "fs": true,
    "proof_bytes": 2797278260.8695655,
-   "verify_s": 77.0,
+   "verify_s": 77.7,
    "reexec_s": 93.2,
-   "L_star_gbps": 1.3813719806763285
+   "L_star_gbps": 1.4437565217391306
   },
   {
    "seq": 2048,
-   "protocol": "V1 Kpre (V-V1N, projected)",
+   "protocol": "V1 Kpre (V-V1N parts 1-4)",
    "fs": true,
    "proof_bytes": 2797278260.8695655,
-   "verify_s": 52.5,
+   "verify_s": 66.6,
    "reexec_s": 93.2,
-   "L_star_gbps": 0.5498335647900865
+   "L_star_gbps": 0.8412866949983653
   }
  ]
 }

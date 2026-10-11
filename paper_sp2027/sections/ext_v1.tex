@@ -178,9 +178,12 @@ above $2^{29}$, whose operations stay clear (P3).
 \para{Prover and verifier.} With the GKR on the GPU and instances of at most $2^{24}$ leaves, the
 prover pays about 22\,ns per cut claim end to end, 63--75\% of its time. At 2{,}048 tokens it takes
 3.4--4.9\,s, 9.7--11.6$\times$ the time of v0's prover, whose int8 forward pass is fast on this
-card. The CPU verifier takes 1.6--1.9$\times$ v0's time at 2{,}048 tokens and 2.2--2.8$\times$ for
-GPT-2 at 512 tokens, mostly for the final check's two exact products per claim, $L_\ell e$ and
-$W_\ell e$. Llama-2-7B in mode $\sC$ does not fit on the 11\,GB card with the GKR \todo{L40S: V1
+card. The CPU verifier takes 1.6--1.9$\times$ the earlier v0 verifier's time at 2{,}048 tokens and
+2.2--2.8$\times$ for GPT-2 at 512 tokens, mostly for the final check's two exact products per claim,
+$L_\ell e$ and $W_\ell e$. Against v0's final native verifier, on Llama-2-7B in $\Kpre$ at 2{,}048
+tokens (8 Xeon threads, Fiat--Shamir), V1 takes 2.13\,s per block (2.49\,s before the batched GKR
+check and the table products of the final check), so about 66.6\,s for the full model against
+v0's 19.6\,s. Llama-2-7B in mode $\sC$ does not fit on the 11\,GB card with the GKR \todo{L40S: V1
 timings incl.\ Llama-2-7B in $\sC$, full OPT-1.3B; vs.\ zkLLM prover}. V1 thus trades prover time
 for a proof 2.0--2.3$\times$ smaller with random weights, which pays off where moving and storing
 bytes costs more than seconds of GPU time.
