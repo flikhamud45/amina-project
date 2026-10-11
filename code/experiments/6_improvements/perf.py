@@ -14,8 +14,9 @@
 Builds the model exactly as bench.py does (trained CNN weights, random-weight decoders with seed 0;
 ``--random-init``: random CNN weights too, as ``ab_verifier.py`` builds them), commits it, runs one
 warm-up and ``--queries`` honest queries with ``run_query`` and prints one JSON line per (model,
-mode): the median of every timing part and every byte part, the acceptance count, and the git
-commit, so results of two checkouts can be compared line by line.
+mode): the median of every timing part and every byte part, the ``[min, max]`` of each query's prover
+and verifier totals (``prove_s_range``, ``verify_s_range``: the paper's median [min-max]), the
+acceptance count, and the git commit, so results of two checkouts can be compared line by line.
 
 ``--policy`` names the commitment plans (``pvi.fullcheck.plans``) of mode C: each is committed (its
 ``commit_s`` is the setup time).  ``--wire`` sends the proof in the compact encoding
@@ -145,6 +146,16 @@ def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
                                                 "prove_encode", "fs_hash"))
     verify = sum(v_ for k, v_ in timing.items() if k.startswith("verify_") or k == "fs_hash")
     return timing, nbytes, prove, verify
+
+
+def _spread(runs: list[dict]) -> dict:
+    """``[min, max]`` over ``runs`` of each query's own prover and verifier totals (the parts of :func:`_medians`),
+    for the paper's median [min-max] (F6)."""
+    prove = [sum(r["timings"].get(k, 0.0) for k in ("prove_forward", "prove_lookups", "prove_fold", "prove_open",
+                                                     "prove_encode", "fs_hash")) for r in runs]
+    verify = [sum(v_ for k, v_ in r["timings"].items() if k.startswith("verify_") or k == "fs_hash") for r in runs]
+    return {"prove_s_range": [min(prove), max(prove)] if runs else None,
+            "verify_s_range": [min(verify), max(verify)] if runs else None}
 
 
 def main() -> int:
@@ -303,7 +314,8 @@ def main() -> int:
                    **({"group_columns": dict(v.params.group_columns)} if v.groups else {}),
                    "device": args.device, "verifier_device": args.verifier_device, "threads": args.threads,
                    "accepted": sum(bool(r["accepted"]) for r in runs), "queries": len(runs),
-                   "fs": args.fs, "prove_s": prove, "verify_s": verify, "proof_bytes": sum(nbytes.values()),
+                   "fs": args.fs, "prove_s": prove, "verify_s": verify, **_spread(runs),
+                   "proof_bytes": sum(nbytes.values()),
                    "timings": timing, "bytes": nbytes, "build_s": build_s, "commit_s": commit_s.get((prune, policy)),
                    **({"tampers": tampered[prune, policy, looked, wire]} if tampered else {}),
                    "peak": peak, "build_peak": build_peak,

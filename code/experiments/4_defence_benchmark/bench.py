@@ -899,8 +899,9 @@ def suite_llm(args, env) -> None:
                     for i in range(args.queries):
                         _record_query(r, _query(prover, v, tokens[i:i + 1]), i)
                     _record_peaks(r, device)
-                    # batch amortisation: B prompts against one set of u and openings (as the CNN suite)
-                    if chal == "int" and mode in ("C", "Kpre"):
+                    # batch amortisation: B prompts against one set of u and openings (as the CNN suite);
+                    # interactive or Fiat-Shamir (F6/C4a: the S&P package's batch cells run under Fiat-Shamir)
+                    if mode in ("C", "Kpre"):
                         for bsz in args.batches:
                             _reset_peaks(device)
                             for tr in range(args.batch_trials):
@@ -1036,7 +1037,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--cnn-batches", type=int, nargs="+", default=[8, 32],
                     help="CNN suite: batch sizes timed in the defence_C_int cells (default 8 32, as stored)")
     ap.add_argument("--batches", type=int, nargs="*", default=[],
-                    help="LLM suite: also time B prompts in one interaction (C:int and Kpre:int cells)")
+                    help="LLM suite: also time B prompts in one interaction (the C and Kpre cells, :int or :fs)")
     ap.add_argument("--batch-trials", type=int, default=1, help="repetitions per batch size (both suites)")
     ap.add_argument("--verifier-device", default="cpu", choices=["cpu", "cuda"],
                     help="cpu (the report's headline) or cuda: run the client's checks on the prover's GPU "

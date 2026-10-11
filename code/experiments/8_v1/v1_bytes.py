@@ -406,9 +406,13 @@ def main() -> int:
                 def med(runs):
                     keys = sorted({k for r in runs for k in r["timings"]})
                     t = {k: statistics.median(r["timings"].get(k, 0.0) for r in runs) for k in keys}
+                    # each query's own totals, for the paper's median [min-max] (F6)
+                    pq = [sum(v for k, v in r["timings"].items() if k.startswith("prove_")) for r in runs]
+                    vq = [sum(v for k, v in r["timings"].items() if k.startswith("verify_")) for r in runs]
                     return {"accepted": sum(r["accepted"] for r in runs), "timings": t,
                             "prove_s": sum(v for k, v in t.items() if k.startswith("prove_")),
                             "verify_s": sum(v for k, v in t.items() if k.startswith("verify_")),
+                            "prove_s_range": [min(pq), max(pq)], "verify_s_range": [min(vq), max(vq)],
                             "fs_s": t.get("fs_hash", 0.0)}
                 main_path = paths[-1] if "1" not in paths else "1"
                 out["timed"] = {"queries": args.reps, "v0": med(runs0), "v1": med(runs1[main_path])}

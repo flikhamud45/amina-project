@@ -23,11 +23,17 @@ the cost depends on the shapes only), in two variants:
 
 Each variant is timed on ``--layers`` blocks (default 1 and 2); with ``t(L) = a + L b`` the script
 extrapolates to the full model's ``n_layers`` and prints one JSON line per (model, T, variant), with
-the measured medians and ``full_s``.  Large models fit a small GPU this way.
+the measured medians and ``full_s``.  Large models fit a small GPU this way; a ``--layers`` list that
+includes ``n_layers`` measures the full model, whose ``full_s`` is then that measurement (F6: no
+extrapolation).  Each line also has the ``[min, max]`` of every measured block count (``range_s``) and the
+variant's peak host (VmHWM, Linux) and GPU memory over its builds and runs (``peak``, ``bench.py``'s names).
+``--max-pos N`` raises a rotary-position model's context to ``N`` tokens (the shapes and weights do not depend
+on it; V-LONG-b's long prompts); a model with learned positions is refused, since its position table would change.
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import platform
 import statistics
@@ -47,7 +53,8 @@ def _sync(device: torch.device) -> None:
         torch.cuda.synchronize(device)
 
 
-def _timed(fn, device: torch.device, reps: int) -> float:
+def _timed(fn, device: torch.device, reps: int) -> list[float]:
+    """The seconds of ``reps`` calls of ``fn`` after one untimed call."""
     fn()                                         # warm-up
     times = []
     for _ in range(reps):
@@ -56,7 +63,33 @@ def _timed(fn, device: torch.device, reps: int) -> float:
         fn()
         _sync(device)
         times.append(time.perf_counter() - t0)
-    return statistics.median(times)
+    return times
+
+
+def _reset_peaks(device: torch.device) -> None:
+    """A new peak window: the GPU allocator's statistics and the host's VmHWM (Linux)."""
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+    try:
+        with open("/proc/self/clear_refs", "w") as fh:
+            fh.write("5")
+    except OSError:
+        pass
+
+
+def _peaks(device: torch.device) -> dict:
+    """Bytes since :func:`_reset_peaks`, named as ``bench.py`` records them (``host_peak_rss`` is ``None`` where
+    ``/proc`` has none)."""
+    out = {"host_peak_rss": None}
+    try:
+        with open("/proc/self/status") as fh:
+            out["host_peak_rss"] = 1024 * next(int(line.split()[1]) for line in fh if line.startswith("VmHWM:"))
+    except (OSError, StopIteration):
+        pass
+    if device.type == "cuda":
+        out["gpu_peak_memory"] = torch.cuda.max_memory_allocated(device)
+        out["gpu_peak_reserved"] = torch.cuda.max_memory_reserved(device)
+    return out
 
 
 class FloatDecoder:
@@ -166,6 +199,7 @@ def main() -> None:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument("--max-pos", type=int, default=0, help="rotary-position models: a longer context (V-LONG-b)")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     from pvi.fullcheck.transformer import CONFIGS, build_decoder
@@ -175,12 +209,17 @@ def main() -> None:
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
     for name in args.model:
         cfg = CONFIGS[name]
+        if args.max_pos > cfg.max_pos:
+            if cfg.pos != "rope":
+                raise SystemExit(f"--max-pos: {name} has learned positions (a longer context is another model)")
+            cfg = dataclasses.replace(cfg, max_pos=args.max_pos)
         for seq in args.seq:
             if seq > cfg.max_pos:                     # e.g. GPT-2's 1,024 learned positions
                 continue
             tokens =torch.randint(0, cfg.vocab, (1, seq), generator=torch.Generator().manual_seed(1)).to(device)
             for variant in args.variants:
-                measured = {}
+                measured, spread = {}, {}
+                _reset_peaks(device)
                 for n_layers in args.layers:
                     from pvi.fullcheck import native_kernels
                     if variant in ("int", "int_fp32gemm"):
@@ -207,7 +246,9 @@ def main() -> None:
                         def run(model=model):
                             with torch.no_grad():
                                 model(tokens)
-                    measured[n_layers] = _timed(run, device, args.reps)
+                    times = _timed(run, device, args.reps)
+                    measured[n_layers] = statistics.median(times)
+                    spread[n_layers] = [min(times), max(times)]
                     del run
                     if device.type == "cuda":
                         torch.cuda.empty_cache()
@@ -221,6 +262,8 @@ def main() -> None:
                               "dynint8": "dynamic int8 (not exact)"}.get(variant, str(fdtype).replace("torch.", "")),
                     "device": str(device), "threads": args.threads, "reps": args.reps,
                     "measured_s": {str(k): v for k, v in measured.items()},
+                    "range_s": {str(k): v for k, v in spread.items()}, "peak": _peaks(device),
+                    "max_pos": cfg.max_pos,
                     "per_block_s": per_block, "fixed_s": fixed, "n_layers": cfg.n_layers,
                     "full_s": fixed + cfg.n_layers * per_block,
                     "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
