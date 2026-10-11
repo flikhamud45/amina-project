@@ -1027,8 +1027,13 @@ Reading:
   every 22-28 blocks (relative error 0.1-0.3). The per-token exponent (`glu_exp`, Section 3.5) acts there; the
   16 x 128 ladder with the balance (job 1011411, with `smooth-exp8`) measures what it buys in perplexity.
 
-(c) 16 x 128 perplexity ratios with the balance (scalar best of 2/4/8, smooth best of 0.45/0.55/0.65, smooth-exp8),
-with and without the prefix: [CLUSTER] job 1011411.
+(c) 16 x 128 perplexity ratios with the balance (job 1011411), Qwen3-0.6B-Base with the prefix (reference 29.24):
+scalar x10.7 / x6.53 / **x5.58** (gains 2 / 4 / 8); smooth x1.60 [1.52, 1.69] / **x1.59** [1.53, 1.67] / x1.63
+(alpha 0.45 / 0.55 / 0.65; top-1 0.61-0.62); smooth-exp8 x1.57 / x1.56 / **x1.55** [1.47, 1.64] (top-1 0.61-0.63).
+Before the balance (Section 12.6): x23.2, x2.11, x2.05. So the balance takes Qwen3-0.6B from x2.1 to x1.55-1.59 with
+the prefix; it is still far from x1.05, and the per-token exponent adds little, although the attribution names the
+SwiGLU product as the largest remaining own error. Without the prefix and Qwen3-1.7B: [CLUSTER] (same job,
+running).
 
 ### 13.8 Limitations and open issues
 

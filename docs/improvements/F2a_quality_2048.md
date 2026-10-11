@@ -186,6 +186,20 @@ OPT-1.3B x1.029 at 2,048 tokens, within the plan's target. Round 2 (job 1011066)
 the same recipe on OPT-6.7B, so that one recipe serves every certified OPT model; the paper builder's recipe (and with
 it D6a's digests) changes only once that is decided.
 
+**Round 2 (job 1011066, s-005; `ppl2048_search2_*.jsonl`), smooth-max at 11 bits, ratio to fp32 (draw 0 / draw 1):**
+
+| alpha | OPT-1.3B | OPT-125M |
+|---:|---:|---:|
+| 0.5 (round 1) | x1.029 / x1.029 | x1.100 |
+| **0.6** | **x1.026 / x1.026** | **x1.076 / x1.073** |
+| 0.7 | x1.028 / x1.023 | x1.082 / x1.088 |
+
+Alpha 0.6 is the best and draw-stable on both models (OPT-125M gains most: x1.100 -> x1.07); 0.7 is no better and
+less stable. OPT-6.7B at alpha 0.5 and 0.6 is still running. If it agrees, the certified recipe becomes smooth-max
+alpha 0.6: `build_opt_from_hf(model, calib, norm_gain=4, smooth=0.6, smooth_pct=100, pct=100, pct_att=100)` (the
+same graph as this search's builder, `tests/test_recipe_equivalence.py`), and D6a's digests and the paper's quality
+table are redone with it.
+
 ## 4. Limitations
 
 * OPT only; the Qwen3 and Llama builders are F2b-Q and F2b-L.
