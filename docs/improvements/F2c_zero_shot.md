@@ -177,12 +177,26 @@ reads the exact next-token probabilities, in line with its lower perplexity rati
 x1.026). LAMBADA's loss is again the only significant one; on the five multiple-choice tasks every interval contains
 0 and the integer model picks the fp16 answer on 90-98% of the documents (89-98% at alpha 0.5).
 
-**OPT-6.7B, the integer model** (digest `0b757108...`; build 1,783 s): LAMBADA 67.16 (ppl 4.33); HellaSwag (2,000)
-48.65 / 66.30; PIQA 76.33 / 76.61; ARC-e 65.74 / 60.65; ARC-c 31.06 / 34.39; WinoGrande 65.82. The fp16 copy and the
-integer graph do not fit one 11 GB card together, so the paired reference runs separately, split over two cards
-(`--no-int --ref-gpus 2`, `zeroshot.split_opt`; job 1012655), and `--pair` gives the paired differences on the same
-documents. Until then the integer model's numbers stand alone: they are within about one point of the values
-commonly reported for the fp16 checkpoint, which per the caveat above are not yet a citable comparison.
+**OPT-6.7B** (digest `0b757108...`; build 1,783 s). The fp16 copy and the integer graph do not fit one 11 GB card
+together, so the integer model ran alone in job 1012440 and the fp16 reference separately, split over two 2080 Ti
+(`--no-int --ref-gpus 2`, `zeroshot.split_opt`; job 1012655, s-004, git eefc100, 11 tests passed, 11 min for the six
+tasks); `--pair` gives the paired differences on the same documents:
+
+| Task | fp16 acc / acc_norm | integer acc / acc_norm | difference acc (95% CI) | difference acc_norm (95% CI) | same | published fp16 (harness) |
+|---|---|---|---|---|---:|---|
+| LAMBADA | 67.69 (ppl 4.25) | 67.16 (ppl 4.33) | -0.52 [-1.03, -0.04] | | 0.965 | 67.7 (ppl 4.25) |
+| HellaSwag (2,000) | 48.85 / 66.55 | 48.65 / 66.30 | -0.20 [-0.65, +0.30] | -0.25 [-0.85, +0.35] | 0.984 | 50.5 / 67.2 (all 10,042) |
+| PIQA | 76.39 / 76.55 | 76.33 / 76.61 | -0.05 [-0.60, +0.49] | +0.05 [-0.65, +0.76] | 0.987 | 76.3 / 76.5 |
+| ARC-e | 65.61 / 60.06 | 65.74 / 60.65 | +0.13 [-0.59, +0.80] | +0.59 [-0.04, +1.22] | 0.963 | 65.6 / 60.1 |
+| ARC-c | 30.55 / 34.81 | 31.06 / 34.39 | +0.51 [-0.60, +1.62] | -0.43 [-1.45, +0.51] | 0.939 | 30.5 / 34.6 |
+| WinoGrande | 65.35 | 65.82 | +0.47 [-0.87, +1.89] | | 0.935 | 65.3 |
+
+**Mean +0.06 points**: the certified OPT-6.7B is at fp16's accuracy. LAMBADA's -0.5 is the only interval that
+excludes 0, and only just; the integer model picks fp16's answer on 94-99% of the documents. With the other two
+models, the loss falls with size: mean -1.03 / -0.82 / +0.06 and LAMBADA -3.1 / -2.0 / -0.5 for OPT-125M / 1.3B /
+6.7B, in line with the perplexity ratios at 2,048 tokens (x1.076 / x1.026 / x1.008). The fp16 numbers agree with the
+commonly reported harness values within 0.2 point on the tasks scored in full (the same caveat on that column as
+above).
 
 ## 6. Limitations
 
