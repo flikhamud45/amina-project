@@ -69,8 +69,8 @@ from .commitment import (HASH_BYTES, CommitmentPublic, GroupCommitment, GroupPub
                          TransposedCommitment, WeightCommitment, codeword_at, column_rows, group_leaf, map_threaded,
                          row_leaves, table_leaves, verify_multiproof, verify_multiproofs)
 from .field import (_LIMB_MAX, LOG2_P, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
-                    int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, limbs_f64, min_max,
-                    small_matmul_mod, to_field)
+                    int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, int8_weight_matmul, limbs_f64,
+                    min_max, small_matmul_mod, to_field)
 from .cut import delta_range as cut_delta_range
 from .graph import CheapOp, IntGraph, MatOp
 from .pipeline import ClaimUploads, wire_claim, wire_openings, wire_rows
@@ -787,8 +787,19 @@ class Verifier:
         return w, b
 
     def _fold_local(self, op: MatOp, chi: torch.Tensor) -> torch.Tensor:
+        """``u = chi A`` (``[r, K]``, canonical) of op's int8 weights (A6, ``PVI_FOLD_FAST=0`` for the float64 path
+        alone): on a CPU the native exact field product (``native_kernels.field_matmul``, the weights read as int32,
+        no transposed int64 copy), on a GPU int8 GEMMs (``weight_matmul_mod``), else the float64 limb products; all
+        give the canonical residue of the same integers."""
         w, b = self._weights_on(op, chi.device)
-        u = small_matmul_mod(w.T.to(torch.int64).contiguous(), chi.T.contiguous()).T
+        u = None
+        if os.environ.get("PVI_FOLD_FAST", "1") != "0" and w.dtype == torch.int8:
+            if chi.device.type == "cpu":
+                u = native_kernels.field_matmul(chi.to(torch.int64).contiguous(), w.to(torch.int32))
+            elif chi.is_cuda and int8_ok(chi.device):
+                u = int8_weight_matmul(w.T.contiguous(), chi.T.contiguous()).T
+        if u is None:
+            u = small_matmul_mod(w.T.to(torch.int64).contiguous(), chi.T.contiguous()).T
         if b is not None:
             u = torch.cat([u, field_matmul_mod(chi, to_field(b)[:, None])], 1)
         return u
