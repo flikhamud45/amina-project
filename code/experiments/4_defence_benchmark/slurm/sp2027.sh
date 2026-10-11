@@ -97,9 +97,7 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
   else
     # the job script goes in on stdin with a bash shebang: --wrap runs /bin/sh, which is dash on some clusters (no
     # pipefail), and the commands use bash
-    jid="$(printf '#!/bin/bash
-%s
-' "$wrap" | sbatch --parsable "${args[@]}")"; jid="${jid%%;*}"
+    jid="$(printf '#!/bin/bash\n%s\n' "$wrap" | sbatch --parsable "${args[@]}")"; jid="${jid%%;*}"
     echo "submitted $name: job $jid"
   fi
   QUEUED+=$'\n'"$name"
