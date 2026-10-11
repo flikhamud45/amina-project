@@ -156,7 +156,9 @@ The full real OPT-6.7B (32 blocks) runs end to end in $\Kpre$ at 2{,}048 tokens 
 the CPU, since it does not fit the 11\,GB card: 3 of 3 queries accepted and 9 of 9 tampers rejected
 (by Freivalds' check), with a 4.61\,GB proof, 270\,s to prove and 20.2\,s to verify (decoding 2.7\,s,
 recomputation 11.4\,s, products 6.1\,s) on 8 threads of the Xeon. Its V1 proof is 2.68\,GB against
-4.65\,GB (1.73$\times$), with 224{,}670 exceptions (1.8\,MB) \todo{F3a: OPT-6.7B random twin}.
+4.65\,GB (1.73$\times$), with 224{,}670 exceptions (1.8\,MB). Its random-weight twin takes 288\,s to prove
+and 21.3\,s to verify, with a 5.41\,GB v0 proof and V1 2.23$\times$ smaller: real weights are within 6\% in time,
+15\% smaller in v0 and 10\% larger in V1.
 
 % -------------------------------------------------------------------------------------
 \subsection{The Attack Against Our Proof Size, and the Setup Proof}

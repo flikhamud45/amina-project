@@ -3,8 +3,8 @@
 Plan 2 item F3a, part 1 (`SP2027_PLAN2.md`, F3a; Plan 1 F3, OPT part). Merged in 2245f22. Status: the builder
 change, the script flags and their tests are done; the OPT-1.3B cells (C and Kpre, 64 and 2,048 tokens, with their
 random-weight twins) and the OPT-6.7B real-weight cells (Kpre, 2,048 tokens) have run on the cluster (Section 6,
-Results). The OPT-6.7B random twins are running; V1 with the GKR at 2,048 tokens did not fit the 11 GB card and moves
-to the L40S `real` tier (Section 7).
+Results), with random-weight twins for both models. V1 with the GKR at 2,048 tokens did not fit the 11 GB card and
+moves to the L40S `real` tier (Section 7).
 
 ## 1. Why
 
@@ -300,7 +300,22 @@ card (as planned), so B1 used the fallback, the CPU prover on the Xeon node.
 | B2 codec-only profile | 34 blocks; 2.374 G claims; v0 claims 4,309.7 MB, V1 values 2,328.2 MB (1.85x); 224,670 exceptions (1.80 MB framed); per block 1.76-1.96x (the last kept block 2.31x) |
 | B3 real V1 bytes | v0 4,649.9 MB (accepted), V1 2,680.5 MB (claims 2,645.8, `u` 32.1, cut 2.5): **1.73x**; 16 GKR instances, table 64,305; `accounting_ok`; same digest as B2 |
 
-The random-weight twins of B1-B3 are still running (job 1009431); their numbers are added here when it ends.
+**OPT-6.7B, real against random weights** (the random twins of B1-B3, same job, same node):
+
+| Line | Real | Random | Real / random |
+|---|---:|---:|---:|
+| B1 prove (CPU prover), s | 270.0 | 288.1 | 0.94 |
+| B1 verify (native CPU verifier), s | 20.21 | 21.27 | 0.95 |
+| B1 v0 proof (claims), MB | 4,611.6 | 5,407.0 | 0.85 |
+| B1 tampers rejected | 9 / 9 | 9 / 9 | |
+| B2 codec-only: v0 claims / V1 values, MB | 4,309.7 / 2,328.2 (1.85x) | 5,366.2 / 2,273.9 (2.36x) | |
+| B3 v0 / V1 bytes, MB | 4,649.9 / 2,680.5 (**1.73x**) | 5,426.7 / 2,432.8 (2.23x) | |
+| B3 V1 exceptions | 224,670 (1.80 MB) | 149 | |
+| build time, s; peak host memory, GB | 741; 70.9 | 233; 65.3 | |
+
+As on OPT-1.3B: the times are within 6% (real weights faster), v0's proof is 15% smaller on real weights, and V1's
+is 10% larger (its values carry more entropy and 1.8 MB of exceptions), so V1's gain is 1.73x on real weights
+against 2.23x on random ones. Both accept and reject alike.
 
 **Reading.**
 * **Cost does not depend on the weights.** On OPT-1.3B the prover's time is within 3-9% of the random twin's and
