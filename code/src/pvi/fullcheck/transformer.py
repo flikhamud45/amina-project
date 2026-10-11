@@ -56,6 +56,12 @@ PROB_MAX = 255
 """The attention probabilities' scale: ``p = round(PROB_MAX e / tot)``, 0..PROB_MAX (8 bits).  A graph may use another
 ``pmax`` (Plan 2 F2a: 2047, 11 bits, which keeps a long row's probability mass; ``build_decoder(prob_max=...)``); it is a
 public constant of the attention op, bound by the graph digest whenever it differs from this default."""
+CERTIFIED_PROB_MAX = 2047
+"""The scale of the certified models built from real checkpoints (``real_weights.build_opt_from_hf``,
+``real_llama.build_llama_from_hf``): 11-bit probabilities, adopted by Plan 2 F2a's rule (the 8-bit cost at 2,048
+tokens on the full WikiText-2 test set was 2.4% on OPT-6.7B and 5.5% on OPT-1.3B, above the 1% threshold; 11 bits
+reach the ideal softmax).  The random-weight benchmark graphs keep :data:`PROB_MAX` (same shapes, same costs), so
+the stored benchmark records stay valid."""
 """``_EXP_TABLE[i] == 0`` exactly for ``i >= _EXP_ZERO``."""
 assert int(_EXP_TABLE[_EXP_ZERO - 1]) > 0 and not bool(_EXP_TABLE[_EXP_ZERO:].any())
 _MASKED = -(1 << 30)

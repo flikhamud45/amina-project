@@ -112,8 +112,9 @@ def test_an_11_bit_decoder_is_proved_and_tampering_rejected(kind, mode):
 
 @pytest.mark.parametrize("family", ["opt", "llama", "qwen"])
 def test_the_real_builders_take_the_scale(family):
-    """``build_opt_from_hf`` and ``build_llama_from_hf`` with ``prob_max``: 255 is today's graph (digest, logits); 2047
-    is another graph (bound by the digest) whose output multipliers are calibrated at that scale, and it runs."""
+    """``build_opt_from_hf`` and ``build_llama_from_hf`` with ``prob_max``: 255 is the graph of before F2a (digest,
+    logits); 2047, the certified models' default, is another graph (bound by the digest) whose output multipliers are
+    calibrated at that scale, and it runs."""
     transformers = pytest.importorskip("transformers")
     from pvi.fullcheck import real_llama as rl
     from pvi.fullcheck import real_weights as rw
@@ -135,9 +136,11 @@ def test_the_real_builders_take_the_scale(family):
     calib = torch.randint(3, 97, (1, 24), generator=torch.Generator().manual_seed(1))
     x = torch.randint(3, 97, (1, 20), generator=torch.Generator().manual_seed(2))
     with torch.no_grad():
-        today, _ = build(model, calib, norm_gain=4)
-        same, _ = build(model, calib, norm_gain=4, prob_max=255)
+        today, _ = build(model, calib, norm_gain=4, prob_max=255)            # the 8-bit graph of before F2a
+        same, _ = build(model, calib, norm_gain=4, prob_max=tr.PROB_MAX)
         other, _ = build(model, calib, norm_gain=4, prob_max=2047)
+        certified, _ = build(model, calib, norm_gain=4)                      # the default: 11 bits
     assert today.digest() == same.digest() and other.digest() != today.digest()
+    assert certified.digest() == other.digest() and tr.CERTIFIED_PROB_MAX == 2047
     assert torch.equal(today.forward(x)[0][today.output_name], same.forward(x)[0][same.output_name])
     assert other.forward(x)[0][other.output_name].shape == today.forward(x)[0][today.output_name].shape

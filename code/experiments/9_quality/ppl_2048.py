@@ -194,16 +194,19 @@ def _reference(model, wins, device: str, cache: Path | None):
 def _cells(args) -> list[dict]:
     short = args.model.split("/")[-1]
     out = []
+    gains = args.gains or [args.gain or BEST_GAIN.get(short, 4.0)]
     for g in args.graphs:
-        alphas = [None] if g == "scalar" else args.alphas
-        for alpha in alphas:
+        variants = [("gain", x) for x in gains] if g == "scalar" else [("alpha", a) for a in args.alphas]
+        for what, value in variants:
             for pb in args.pbits:
-                kw = ({"norm_gain": args.gain or BEST_GAIN.get(short, 4.0)} if g == "scalar"
-                      else dict(SMOOTH, alpha=alpha))
+                if g == "scalar":
+                    kw = dict({"norm_gain": value}, **json.loads(args.scalar_opts))
+                else:
+                    kw = dict(SMOOTH, alpha=value, **json.loads(args.smooth_opts))
                 if g == "rows":
                     kw.update(weight_scale="row_pow2", row_buckets=4)
                 kw["prob_bits"] = pb
-                out.append({"graph": g, "alpha": alpha, "pbits": pb, "kw": kw})
+                out.append({"graph": g, "alpha": value if what == "alpha" else None, "pbits": pb, "kw": kw})
     return out
 
 
@@ -216,6 +219,11 @@ def main() -> None:
     ap.add_argument("--draws", type=int, nargs="+", default=[0])
     ap.add_argument("--graphs", nargs="+", default=["scalar", "smooth", "rows"])
     ap.add_argument("--gain", type=float, default=None, help="the scalar graph's gain (default: the model's best)")
+    ap.add_argument("--gains", type=float, nargs="+", default=None, help="several scalar gains (a recipe search)")
+    ap.add_argument("--smooth-opts", default="{}", help="JSON overrides of the smoothed recipe (e.g. pct, pct_att, "
+                    "smooth_pct, smooth_target), applied to the smooth and rows graphs")
+    ap.add_argument("--scalar-opts", default="{}", help="JSON options added to the scalar graphs (e.g. pct)")
+    ap.add_argument("--tag", default="", help="a label written into every record of this run")
     ap.add_argument("--alphas", type=float, nargs="+", default=[0.55])
     ap.add_argument("--pbits", type=int, nargs="+", default=[8, 11])
     ap.add_argument("--float-softmax", action="store_true")
@@ -242,7 +250,7 @@ def main() -> None:
     counts = [w.shape[1] - 1 for w in wins]
     ref = _reference(model, wins, args.ref_device or args.device, Path(args.ref_cache) if args.ref_cache else None)
     fp32 = math.exp(sum(ref["nll"]) / sum(counts))
-    head = {"model": args.model, "seq": args.seq, "windows": len(wins), "tokens": sum(counts),
+    head = {"model": args.model, "tag": args.tag, "seq": args.seq, "windows": len(wins), "tokens": sum(counts),
             "dataset": "wikitext-2-raw-v1 test, '\\n\\n'.join", "host": platform.node(),
             "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, "device": args.device,
             "calib_windows": args.calib_windows}
@@ -329,8 +337,8 @@ def _check(model, tok, args) -> None:
     calib = torch.cat(_windows(tok(_text("train")[:200_000], return_tensors="pt").input_ids[0], seq, 2))
     report = {"model": args.model, "seq": seq}
     for name, kw_rw, kw_ob in (
-            ("scalar", dict(norm_gain=4.0), dict(norm_gain=4.0)),
-            ("smooth", dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99),
+            ("scalar", dict(norm_gain=4.0, prob_max=255), dict(norm_gain=4.0)),
+            ("smooth", dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, prob_max=255),
              dict(SMOOTH, alpha=0.55))):
         with torch.no_grad():
             g_rw, i_rw = rw.build_opt_from_hf(model, calib, device="cpu", **kw_rw)

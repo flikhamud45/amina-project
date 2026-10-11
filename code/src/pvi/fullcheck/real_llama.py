@@ -60,7 +60,7 @@ import torch
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn, requant_mul
 from .transformer import (
-    CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int, _rope,
+    CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int, _rope,
     build_decoder,
 )
 
@@ -386,7 +386,7 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
                         smooth: float | None = None, smooth_pct: float = 99.9, pct_att: float = 100.0,
                         prune_last: bool = False, device=None, pct_glu: float | None = None, head_eq: bool = True,
                         residual_headroom: float = 1.25, n_layers: int | None = None, glu_exp: int = 0,
-                        free_calib: bool = True, prob_max: int = PROB_MAX) -> tuple[IntGraph, dict]:
+                        free_calib: bool = True, prob_max: int = CERTIFIED_PROB_MAX) -> tuple[IntGraph, dict]:
     """An integer Llama / Qwen3 decoder with the checkpoint's real weights.
 
     ``calib_ids [B, T]`` (``B`` calibration windows) sets every activation scale. The knobs are public constants

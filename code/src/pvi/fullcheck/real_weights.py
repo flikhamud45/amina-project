@@ -44,7 +44,7 @@ import torch
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn
 from .transformer import (
-    CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int,
+    CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int,
     build_decoder,
 )
 
@@ -174,7 +174,7 @@ def _fold(w: torch.Tensor, b: torch.Tensor | None, gamma: torch.Tensor, beta: to
 def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, norm_gain: float = 32,
                       residual_headroom: float = 1.25, device=None, smooth: float | None = None,
                       smooth_pct: float = 99.9, pct_att: float = 100.0,
-                      prune_last: bool = False, prob_max: int = PROB_MAX) -> tuple[IntGraph, dict]:
+                      prune_last: bool = False, prob_max: int = CERTIFIED_PROB_MAX) -> tuple[IntGraph, dict]:
     """An integer OPT decoder with the checkpoint's real weights.
 
     ``calib_ids`` ``[1, T]`` sets every activation scale. The three knobs are all
