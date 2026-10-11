@@ -56,7 +56,7 @@ cpu cuda --reps 3 --fs --threads 8`: the full Llama-2-7B (226 weight matrices, 6
 
 The plan's estimates (about 3 s on the CPU, 0.1 s on the GPU, times 1.4 under Fiat-Shamir) were optimistic: the
 CPU product does 7 x 2 limb multiply-adds per weight (94 G for the model) at about 7 G per second on 8 threads, and on
-the GPU most of the 2.2 s is moving 6.7 GB of weights to the card. A Kpre client's one-time setup for Llama-2-7B is
+the GPU the 2.2 s include moving 6.7 GB of weights to the card (about 1 s at PCIe 3 speed; not timed separately). A Kpre client's one-time setup for Llama-2-7B is
 thus 12.7 s on a CPU, small next to downloading the 6.7 GB of weights it needs anyway.
 
 ## 5. Limitations
