@@ -299,6 +299,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
   - **Kill.** None. If `/tmp` does not persist between jobs, each model-heavy job downloads its checkpoint into `/tmp` and deletes it at the end (R4).
 
 - **F6 [WIP] must: final-run package v2, rehearsal, number pipeline (absorbs F4 and H3).**
+  - **Status (11 Oct).** Package v2 merged (914bdad, a1f7d2d): tiers smoke/cpuv/v1/serve/bench/gpuv/gen/batch/real/setup (+ quality, long), Fiat-Shamir by default, >= 5 timed queries for the headline cells, memory in every record, chained jobs, PVI_DRYRUN/PVI_REHEARSAL/PVI_C_POLICY/PVI_LOCAL; must total 114 jobs, estimate 40-60 h; H3 pipeline `sp2027_numbers.py` regenerates the existing tables from the stored records (63/63 and 30/30 cells identical). The 2080 Ti rehearsal (22 jobs) was submitted on 11 Oct. Open: F3b/real Llama cells (the real flags read OPT only), PS2's policy, the friend's smoke.
   - **What.**
     1. **Fiat-Shamir by default.** `perf.py --fs`. The headline v0 cells in `strong_gpu.sh` switch from `C:int` to Fiat-Shamir; Kpre is unchanged after FS1. Every interactive cell that remains is labelled.
     2. **≥ 5 timed queries** after a warm-up for the headline cells (the v1 Llama-2-7B and OPT-1.3B cells, all of `cpuv`, `serve`), reported as median [min-max]. Other cells use 3.
@@ -863,7 +864,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 ### 3.7 Theory and paper
 
 - **TH [WIP] must: close the theory gaps and finish the proofs the submission cites** (absorbs Plan 1 D7).
-  - **Status (11 Oct).** Drafts TH-a, TH-c, TH-d, TH-e in `paper_sp2027/drafts/` (TH-a checked); integration with H5's cut pass running; TH-e check running.
+  - **Status (11 Oct).** TH-a, TH-c, TH-d integrated (0f843c8); TH-b filled by `params_table.py` (761b8a7); TH(g) sentence added; TH-e in the extended version as sections/ext_proofs.tex (45d592f). Open: the team's hand check (TH-f, [USER]) and the decisions listed in drafts/th_e_check.md.
   - **What.**
     - **(a) A block-mixing proposition.** Rows are grouped in blocks of d, and each block is RS-encoded and Merkle-committed on its own.
       - Then q = (N/d)(1 + t) queries per layer reach 2^-λ, with qd = (1 + t)N.
@@ -919,7 +920,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - If (a) does not hold cleanly, keep "tight at the extremes" and drop the word "dichotomy" (chg 6(i)).
     - If writing (e) exposes a code bug, it is fixed before Sun 1 Nov, or the optimisation is switched off in the freeze.
 
-- **EV [TODO] must: the deployment case, consistent platforms, non-interactive by default, statistics with spread.** It absorbs Plan 1 F7, the roofline of V-GPUFLOOR and the crossover of A11.
+- **EV [WIP] must: the deployment case, consistent platforms, non-interactive by default, statistics with spread.** It absorbs Plan 1 F7, the roofline of V-GPUFLOOR and the crossover of A11.
+  - **Status (11 Oct).** Draft done (464a5fd): `ev_breakeven.py`, inputs with sources, formula tests, figure. Q* at 64 tokens 17.3 (FS, cnn16c), 22.3 (cnn18c); Kpre break-even link 0.59-0.70 Gb/s; V1 1.38 Gb/s today, 0.55 with V-V1N (projected). Open: tab:options literature cells and A7 column, the target-client paragraph, the final numbers from F6.
   - **What.**
     - **(a) A two-panel break-even figure from the pipeline.**
       1. **Client bytes against the number of queries Q:** downloading the int8 weights once (6.7 GB), against mode C.
