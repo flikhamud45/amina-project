@@ -176,6 +176,14 @@ or `CHECK FAILED` line (exit status 0).
    and `L40S_RUN_SP2027.md` Sec. 2 lists them. On the rehearsal clone the models were linked from the project
    checkout and the cell was resubmitted (job 1011334).
 
+After these, all 22 jobs completed (exit 0), and the check passed: `aggregate.py` turned 821 raw bench records into
+488 summary rows; `sp2027_numbers.py --rehearsal --check` read 54 records from 16 files, found records of every tier
+(cpuv, v1, serve, gpuv, gen, real, setup, smoke, quality, long; the bench and batch tiers through their tables), filled
+the tables that 2-block cells can fill (tab_eval_v1, tab_serve, tab_gen, tab_batch, tab_setup_time, tab_quality,
+tab_h2d, tab_spread, tab_counts; the full-model tables stay empty by design), reported no `PARSE` or `CHECK FAILED`
+line, and found "0 jobs without results" against `F6_dryrun_rehearsal.txt` (exit status 0). The full rehearsal of
+Wed-Thu 28-29 Oct repeats this on the freeze candidate.
+
 ### 4.3 No SLURM
 
 `PVI_LOCAL=1` runs every job here in the foreground, one after another, each within its time limit and logged under
