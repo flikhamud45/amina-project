@@ -3,8 +3,9 @@
 Plan 2 item F2c (`SP2027_PLAN2.md` Sec. 3.2, should, rank 2; reviewer points C-W5 "there are no downstream tasks",
 C-Q2, consolidated change 7). Code: `code/experiments/9_quality/zeroshot.py`, test `code/tests/test_zeroshot.py`
 (commit 6b31e45). Status: harness done and tested; on the cluster (job 1011383) the check passed and OPT-125M's fp16 accuracies
-reproduce the published harness numbers within 0.2 point; the integer OPT-125M loses 1.0 point on average (Sec. 5).
-OPT-1.3B is running.
+reproduce the published harness numbers within 0.2 point (OPT-125M) and 0.1 point (OPT-1.3B); with F2a's round-1
+recipe the integer models lose 1.0 (OPT-125M) and 0.7 (OPT-1.3B) point on average, OPT-1.3B significantly only on
+LAMBADA (-3.0). The paper builder's OPT-1.3B is running (Sec. 5).
 
 ## 1. Why
 
@@ -104,7 +105,30 @@ within rounding (0.028 nats, greedy flags all equal), and the integer logits equ
   differences are significant at 95%. With this recipe OPT-125M's perplexity ratio at 2,048 tokens is x1.10 (F2a
   Sec. 3.3).
 
-**OPT-1.3B** (F2a's recipe and the paper builder's): [CLUSTER] (same job, running).
+**OPT-1.3B, F2a's round-1 recipe** (as above):
+
+| Task | n | fp16 acc / acc_norm | integer acc / acc_norm | difference acc (95% CI) | difference acc_norm (95% CI) | same | published fp16 (harness) |
+|---|---:|---|---|---|---|---:|---|
+| LAMBADA | 5,153 | 57.85 (ppl 6.64) | 54.82 (ppl 7.80) | -3.03 [-3.78, -2.29] | | 0.927 | 57.9 |
+| HellaSwag (2,000) | 2,000 | 39.75 / 52.55 | 40.05 / 52.60 | +0.30 [-0.20, +0.85] | +0.05 [-0.80, +0.90] | 0.977 | 41.5 / 53.7 (all 10,042) |
+| PIQA | 1,838 | 71.82 / 72.42 | 71.22 / 72.20 | -0.60 [-1.52, +0.27] | -0.22 [-1.09, +0.71] | 0.960 | 71.7 / 72.3 |
+| ARC-e | 2,376 | 57.11 / 51.01 | 56.57 / 50.67 | -0.55 [-1.56, +0.42] | -0.34 [-1.18, +0.42] | 0.918 | 57.0 / 51.0 |
+| ARC-c | 1,172 | 23.38 / 29.52 | 23.81 / 28.33 | +0.43 [-0.94, +1.79] | -1.19 [-2.39, +0.00] | 0.908 | 23.4 / 29.6 |
+| WinoGrande | 1,267 | 59.75 | 58.96 | -0.79 [-2.60, +1.03] | | 0.885 | 59.7 |
+
+* The fp16 accuracies again reproduce the published numbers within 0.1 point on every task scored in full.
+* **Caveat on the "published" column (both models):** the values are the commonly reported lm-evaluation-harness
+  zero-shot results for these checkpoints, written down from the literature without a single cited table; before
+  the paper quotes the agreement, they must be checked against a citable source (or the harness itself run once on
+  fp16, which needs its environment).
+* The integer OPT-1.3B loses 0.7 point of accuracy on average over the six tasks (the plan expected at most 1 point
+  for a model within x1.03-1.05 in perplexity; this recipe gives x1.029 at 2,048 tokens). Only LAMBADA's loss is
+  significant: 3.0 points (its continuation perplexity 6.64 -> 7.80), the task that reads the most exact
+  next-token probabilities. On the five multiple-choice tasks every interval contains 0 (ARC-c's acc_norm at its
+  edge), and the integer model picks the same answer as fp16 on 89-98% of the documents.
+
+**OPT-1.3B, the paper builder** (smooth 0.55, percentiles; the recipe the paper uses today): [CLUSTER] (same job,
+running).
 
 ## 6. Limitations
 
