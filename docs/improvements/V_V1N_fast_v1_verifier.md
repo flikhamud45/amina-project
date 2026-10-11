@@ -377,7 +377,15 @@ with the native kernel, every dtype).
 | full Llama-2-7B, V1 verifier (2 blocks + 30 x the per-block slope) | 78.9 s | **45.4 s** |
 
 The per-block numbers are the 3-block cell minus the 2-block cell (medians of 3 queries, Kpre, Fiat-Shamir, 2,048
-tokens). Against v0's measured 19.6 s, V1's verifier is now 2.3x v0 (3.4x with the torch parts, 4.0x before
+tokens).
+
+**A native `_xbar` too** (`native_kernels.xbar`, commit 374dbab; test fixed in 114a792): `X^T e` with int64
+accumulators per column (|x| < 2^16, terms below 2^47, reduced every 2^15 rows), threads on column blocks; exact
+against `extfield.int_times` at the 16-bit extremes in four dtypes (25 native tests pass on the login node). Micro
+(job 1011477): 5.38 -> 0.70 ns per entry. In place the whole-query timings of that job are not usable: F2a's round 2
+ran on the same node with 16 threads (the derive alone took 20% longer than in job 1011440), and `final_xbar` showed
+no clear gain (0.08-0.09 s per block either way); it is re-timed with the next quiet run. It is at most 0.1 s per
+block, so the 45.4 s above stands. Against v0's measured 19.6 s, V1's verifier is now 2.3x v0 (3.4x with the torch parts, 4.0x before
 V-V1N). The remaining per-block time is the derive (0.55 s), the final check's other parts (0.42 s: `_xbar` 0.08,
 the verifier's eq tables and bookkeeping), the GKR check (0.19 s) and the decode (0.11 s). The plan's 1.2x would need
 the derive's int32 path and a native `_xbar` as well; under the plan's rule (merged and rehearsed by Wed 28 Oct) the
