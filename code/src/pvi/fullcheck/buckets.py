@@ -234,7 +234,7 @@ def lw_times(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, op, e:
             for r0 in range(0, n, step):
                 idx = s[r0:r0 + step].to(torch.int32)
                 if a:
-                    idx -= a
+                    idx = idx - a                       # out of place: int32 values would be shifted in the caller's tensor
                 g = table_times(idx, tab, e_dev)                                        # [R, 3, 8]
                 le[r0:r0 + step] = ((lo_a * je) % P + (w0 * g[:, 0]) % P + g[:, 1]) % P
                 we[r0:r0 + step] = ((w0 * je) % P + g[:, 2]) % P

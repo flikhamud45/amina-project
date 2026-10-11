@@ -113,7 +113,7 @@ def test_lw_times_equals_the_float64_gemm_at_every_tested_width(method):
 
 
 @pytest.mark.parametrize("method", ["1", "scatter"])
-@pytest.mark.parametrize("dtype", [torch.int64, torch.int16, torch.int8])
+@pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
 def test_lw_times_across_blocks_chunks_kinds_and_dtypes(method, dtype, monkeypatch):
     g = torch.Generator().manual_seed(2)
     monkeypatch.setattr(buckets, "_BLOCK_BYTES", 1 << 12)            # many row blocks
@@ -129,8 +129,11 @@ def test_lw_times_across_blocks_chunks_kinds_and_dtypes(method, dtype, monkeypat
             idx, z = E0, E0                                            # (residual ops list no exceptions)
         e = _rand_ext(g, t)
         want = cp._lw_e_old(s, idx, z, op, e, t)
-        got = buckets.lw_times(s.to(dtype), idx, z, op, e, method)
+        sv = s.to(dtype)
+        before = sv.clone()
+        got = buckets.lw_times(sv, idx, z, op, e, method)
         assert torch.equal(got[0], want[0]) and torch.equal(got[1], want[1]), (kind, m)
+        assert torch.equal(sv, before), "lw_times changed its input"
     wide = torch.tensor([[0, buckets.SPAN]])                           # a residual span past SPAN: today's code
     assert buckets.lw_times(wide, E0, E0, _op("residual", 70_001, n_rows=1), _rand_ext(g, 2), method) is None
 
