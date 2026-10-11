@@ -663,3 +663,35 @@ def test_prefixquant_selects_the_frequent_outlier_tokens_then_the_bos():
     with pytest.raises(ValueError):
         rl.prefixquant_tokens(qwen, calib)        # Qwen3Config's default has no bos_token_id (the checkpoint's has)
     assert rl.prefixquant_tokens(qwen, calib, bos=96)[0] == [96]
+
+
+# ------------------------------------------------------------------ the opt-in SwiGLU balance (glu_smooth)
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+def test_glu_smooth_is_exact_in_real_numbers_and_keeps_the_structure(kind):
+    """``glu_smooth`` moves a per-channel factor from the product (through the up projection's rows) into the down
+    projection's columns: the float model with the same rescaling gives the checkpoint's logits, the graph keeps the
+    benchmark structure, tracks the float model at least as well as the plain smoothed graph, and v0 accepts it."""
+    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, params_for, run_query
+    model, base, b_info, calib, x = _setup(kind)
+    graph, info = rl.build_llama_from_hf(model, calib, glu_smooth=0.5, **SMOOTH)
+    g = info["glu_smooth_g"]
+    assert len(g) == 2 and all(t is not None and t.min() >= 1 / 256 and t.max() <= 256 for t in g)
+    assert not all(torch.allclose(t, torch.ones_like(t)) for t in g)
+    shape = rl.config_of(model.config, "tiny")
+    assert rl.matches_benchmark_graph(graph, shape) == []
+    # the rescaling itself is exact in real numbers: apply it to a float copy and compare logits
+    other = copy.deepcopy(model)
+    with torch.no_grad():
+        for layer, gl in zip(other.model.layers, g):
+            layer.mlp.up_proj.weight.div_(gl.float()[:, None])
+            layer.mlp.down_proj.weight.mul_(gl.float()[None, :])
+        a, b = model(x).logits, other(x).logits
+    assert torch.allclose(a, b, atol=1e-3, rtol=1e-3)
+    assert _scores(graph, info, model, x)[0] >= 0.98
+    params = params_for(20, len(graph.mat_ops))
+    v = Verifier(graph.public(), params, "Kpre", weights={op.name: (op.weight, op.bias) for op in graph.mat_ops})
+    v.precompute(Challenger(seed=3))
+    assert run_query(Prover(graph), v, x[:1, :16], seed=0)["accepted"]
+    off, _ = rl.build_llama_from_hf(model, calib, **SMOOTH)
+    assert off.digest() == base.digest() != graph.digest()           # off by default: the old graph

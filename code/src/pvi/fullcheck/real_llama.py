@@ -451,6 +451,28 @@ def _head_eq(h_int: torch.Tensor, s_in, w: torch.Tensor, b: torch.Tensor | None,
     return (w.double() * beta[:, None]).float(), (None if b is None else b.double() * beta), beta
 
 
+def _glu_smooth(h_int: torch.Tensor, s_in, wg: torch.Tensor, wu: torch.Tensor, w_down: torch.Tensor,
+                alpha: float) -> torch.Tensor:
+    """``glu_smooth``'s factors ``g [ff]`` (float64): SmoothQuant's balance for the down projection's input, folded
+    through the up projection (the product ``silu(gate) up`` is linear in ``up``). With ``A_j`` the largest
+    ``|silu(gate) up|`` of channel ``j`` on the calibration rows (from the norm's integer output ``h_int`` and its scale
+    ``s_in``, a scalar or a per-channel vector) and ``W_j`` the largest ``|w_down[:, j]|``,
+    ``g_j = A_j^alpha / W_j^(1-alpha)``, divided by their geometric mean and clamped to ``[2^-8, 2^8]``. Dividing up's
+    row ``j`` by ``g_j`` and multiplying the down projection's column ``j`` by ``g_j`` leaves every real output unchanged;
+    the product's one int8 scale is then no longer set by its few largest channels."""
+    x = _rows(h_int.reshape(-1, h_int.shape[-1]), _ROWS_NORM).double().cpu()
+    s = s_in.double().cpu()[None, :] if torch.is_tensor(s_in) else float(s_in)
+    a = torch.nn.functional.silu(x @ (wg.double() * s).T) * (x @ (wu.double() * s).T)
+    amax = a.abs().amax(0)
+    del x, a
+    wmax = w_down.double().abs().amax(0)
+    ok = (amax > 0) & (wmax > 0)
+    g = torch.ones_like(amax)
+    g[ok] = amax[ok] ** alpha / wmax[ok] ** (1 - alpha)
+    g = g / torch.exp(torch.log(g[ok]).mean()) if bool(ok.any()) else g
+    return g.clamp(1.0 / 256, 256.0)
+
+
 def _with_prefix(ids: torch.Tensor, prefix: torch.Tensor | None) -> torch.Tensor:
     """``[prefix | ids]`` per row of ``ids [B, T]`` (``ids`` itself without a prefix)."""
     if prefix is None:
@@ -576,7 +598,8 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
                         prune_last: bool = False, device=None, pct_glu: float | None = None, head_eq: bool = True,
                         residual_headroom: float = 1.25, n_layers: int | None = None, glu_exp: int = 0,
                         free_calib: bool = True, prob_max: int = CERTIFIED_PROB_MAX,
-                        prefix_tokens=None, qk_balance: bool = True) -> tuple[IntGraph, dict]:
+                        prefix_tokens=None, qk_balance: bool = True,
+                        glu_smooth: float | None = None) -> tuple[IntGraph, dict]:
     """An integer Llama / Qwen3 decoder with the checkpoint's real weights.
 
     ``calib_ids [B, T]`` (``B`` calibration windows) sets every activation scale. The knobs are public constants
@@ -602,6 +625,9 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
       positions start at ``P``, and every scale -- ``s_res`` from the fp residual maximum included -- is calibrated
       on the query positions only (the calibration windows run after the prefix). The structure, the weight ops and
       the claim columns are the benchmark graph's; ``graph.meta`` records ``prefix_len`` and ``prefix_tokens``.
+    * ``glu_smooth`` (opt-in, an alpha such as 0.5): SmoothQuant's balance for the down projection's input, folded
+      through the up projection (:func:`_glu_smooth`): up's row ``j`` / ``g_j``, the down projection's column ``j``
+      * ``g_j``. Constants only (the structure is the benchmark graph's); ``info["glu_smooth_g"]`` keeps the factors.
     * ``qk_balance`` (default on; Qwen3 only, no effect on Llama): per RoPE pair, a factor ``c_p`` into the q norm's
       gains and ``1/c_p`` into the k norm's (:meth:`_Builder.qk_balance`), so a channel whose k gain is large and
       whose q gain is near zero no longer sets k's whole int8 range; the scores are unchanged in real numbers.
@@ -668,7 +694,7 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
     def bias(lin):
         return None if lin.bias is None else lin.bias.detach()
 
-    roles, head_beta, balance = [], [], []
+    roles, head_beta, balance, glu_g = [], [], [], []
     for i, layer in enumerate(layers):
         prune = prune_last and i == len(layers) - 1
         at, mlp = layer.self_attn, layer.mlp
@@ -710,17 +736,25 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
         g2 = layer.post_attention_layernorm.weight.detach()
         wg, wu = (p.weight.detach().float() * g2.float()[None, :] for p in (mlp.gate_proj, mlp.up_proj))
         h = role["mlp_norm"] = B.norm(r, d, [wg, wu])
+        w_down, b_up = mlp.down_proj.weight.detach().float(), bias(mlp.up_proj)
+        g = None
+        if glu_smooth is not None:                  # the product's channel j / g_j, the down projection's column j * g_j
+            g = _glu_smooth(B.env[h], B.scale[h], wg, wu, w_down, glu_smooth)
+            wu = (wu.double() / g[:, None]).float()
+            w_down = (w_down.double() * g[None, :]).float()
+            b_up = None if b_up is None else b_up.double() / g
+        glu_g.append(g)
         zg = role["gate_proj"] = B.mat(h, wg, bias(mlp.gate_proj), B.scale[h])
         gate = role["gate"] = B.to_int8(zg)
-        zu = role["up_proj"] = B.mat(h, wu, bias(mlp.up_proj), B.scale[h])
+        zu = role["up_proj"] = B.mat(h, wu, b_up, B.scale[h])
         up = role["up"] = B.to_int8(zu)
         del wg, wu
         prod = role["glu"] = B.swiglu(gate, up)
         role["silu"] = B.ops[-1].inputs[0]          # the SiLU table's output, the product's first input
         if glu_exp and mlp.down_proj.bias is not None:
             raise ValueError("glu_exp scales the down projection's claims per token, which a bias would not follow")
-        z = role["down_proj"] = B.mat(prod, mlp.down_proj.weight.detach().float(), bias(mlp.down_proj),
-                                      B.scale[prod])
+        z = role["down_proj"] = B.mat(prod, w_down, bias(mlp.down_proj), B.scale[prod])
+        del w_down
         r = role["res_mlp"] = B.residual_exp(r, z, prod) if glu_exp else B.residual(r, z)
         blocks.append(r)
         roles.append(role)
@@ -739,7 +773,7 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
             "residual_headroom": residual_headroom, "glu_exp": glu_exp,
             "glu_emax": [e for *_, e in B.exp_of.values()], "prefix_tokens": None, "prefix_len": 0,
             "qk_balance": qk_balance and arch == "qwen3", "roles": roles, "head_beta": head_beta,
-            "qk_balance_c": balance, "prob_max": prob_max,
+            "qk_balance_c": balance, "glu_smooth_g": glu_g, "prob_max": prob_max,
             "scales": {n: (s * B.chan[n] if n in B.chan else s) for n, s in B.scale.items()}}
     meta = {}
     if pre is not None:

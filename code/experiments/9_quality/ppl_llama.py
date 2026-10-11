@@ -259,6 +259,10 @@ def cells(args, prefix=None) -> list[dict]:
              "kw": dict(smooth=a, smooth_pct=args.smooth_pct, pct=args.pct, pct_att=args.pct_att,
                         pct_glu=args.pct_glu, head_eq=head_eq, qk_balance=qk_balance, glu_exp=e)}
             for e in ([0] if "smooth" in args.graphs else []) + list(args.glu_exps) for a in args.alphas]
+    out += [{"graph": f"smooth-glus{gs}" + (f"-exp{e}" if e else ""), "gain": None, "alpha": a,
+             "kw": dict(smooth=a, smooth_pct=args.smooth_pct, pct=args.pct, pct_att=args.pct_att,
+                        pct_glu=args.pct_glu, head_eq=head_eq, qk_balance=qk_balance, glu_exp=e, glu_smooth=gs)}
+            for gs in args.glu_smooths for e in [0] + list(args.glu_exps) for a in args.alphas]
     if prefix:
         for c in out:
             c["kw"]["prefix_tokens"] = list(prefix)
@@ -298,6 +302,9 @@ def main() -> None:
     ap.add_argument("--no-qk-balance", action="store_true", help="Qwen3: no q/k balance per RoPE pair (the old graph)")
     ap.add_argument("--glu-exps", type=int, nargs="*", default=[],
                     help="also the smoothed graph with a per-token exponent 0..E at the SwiGLU product, per E")
+    ap.add_argument("--glu-smooths", type=float, nargs="*", default=[],
+                    help="also the smoothed graph with the SwiGLU product's balance (real_llama glu_smooth) at each "
+                         "alpha, with and without each --glu-exps exponent")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu",
                     help="where the integer forward runs")
     ap.add_argument("--calib-device", default="cpu", help="where the integer calibration pass runs")
