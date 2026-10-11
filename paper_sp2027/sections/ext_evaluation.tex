@@ -121,8 +121,10 @@ proof at 2{,}048 tokens (Table~\ref{tab:setup}).
 \subsection{Real Weights}
 \label{app:eval-real}
 
-The real graphs are the smoothed integer OPT models of Section~\ref{sec:quality} (calibrated on one
-2{,}048-token window), with the last block pruned; each cell has a random-weight twin of the same
+The real graphs are smoothed integer OPT models of our earlier recipe ($\alpha=0.55$ with percentile
+statistics, calibrated on one 2{,}048-token window of the test split; the certified recipe of
+Section~\ref{sec:quality} came later, and costs do not depend on the recipe, bytes only through the
+claims' entropy), with the last block pruned; each cell has a random-weight twin of the same
 shape, and every cell uses Fiat--Shamir, three timed queries after a warm-up, the prover on the
 2080~Ti and the native CPU verifier (Table~\ref{tab:eval-real}). Every honest query was accepted, and
 every tampered one (a changed claim, output logit or last hidden state) rejected.
