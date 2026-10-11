@@ -50,7 +50,9 @@ the sampling rule, even one that adapts to the claimed values, but not the verif
 chooses which queries to tamper with. As in~\cite{anchuri2026verifiable}, $C_M$ is computed
 honestly; for our defence, anyone can recompute it from the public fp16 checkpoint with a
 deterministic, public quantisation recipe and fixed calibration data (Section~\ref{sec:setup-proof}
-treats the other case).
+treats the other case). The statement binds token ids: the client tokenises its text with the model's
+public tokenizer, and a system prompt that the provider prepends is part of $x$, which the client
+receives and the proof covers; a hidden system prompt is beyond what any verifier can certify.
 
 % -------------------------------------------------------------------------------------
 \subsection{The Path Protocol and the Single-Site Edit}
