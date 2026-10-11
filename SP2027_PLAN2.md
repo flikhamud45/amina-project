@@ -438,7 +438,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
   - **Kill.** If OPT-6.7B does not fit the 2080 Ti, its correctness run uses the CPU prover on a Xeon node before the gate, and its timing moves to the L40S `real` tier, which is already in the package.
 
 - **F2b-Q [WIP] must: real-weight builder for RMSNorm/RoPE/SwiGLU/GQA models, Qwen3 first.**
-  - **Status (11 Oct).** Builder `real_llama.py` merged (89ddb1e): Llama/Qwen3 with RMSNorm, RoPE, SwiGLU, GQA, q/k norm, prune_last, chunked head, opt-in per-token exponent; empty structural diff; 28 tests; reviewed. `ppl_llama.py` ready; the ladder (Qwen3-0.6B/1.7B/4B, TinyLlama) runs on the cluster. Write-up `docs/improvements/F2b_Q_real_llama.md`.
+  - **Status (11 Oct).** Builder merged (89ddb1e); on the real checkpoints every exactness and protocol check passes (job 1008672: structure diff [], GPU = CPU, PROTOCOL PASSED), but quality collapses: Qwen3-0.6B-Base at 16 x 128 x28 (scalar), x72-77 (smoothed), x6-9 (per-token exponent). Diagnosis (job 1009531, `code/artifacts/results/9_quality/llama_diag_1009531.txt`): TinyLlama's BOS embedding row quantises to zero, so position 0 stays zero and the attention sink never forms; Qwen3 has a massive activation (6,800 at position 0) and loses accuracy from block 1, the known static per-tensor W8A8 failure. The fixed public prefix (PrefixQuant-style, the plan's alternative) is being implemented (worktree wt_p2_prefix). Kill date Fri 23 Oct.
   - **What.** Generalise `_RealBuilder`:
     - fold RMSNorm γ into the next matrices, and smooth through the norm's gain vector as for OPT;
     - use Qwen3's q_norm/k_norm γ as per-head gains;
