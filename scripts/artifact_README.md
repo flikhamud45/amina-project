@@ -62,7 +62,14 @@ The integer model is a deterministic function of the public checkpoint, the cali
 clipping). Anyone can rebuild it and recompute `C_M`; `digest_check.py` prints the graph digest, a hash of every weight
 matrix and the commitment's Merkle roots.
 
-<!-- H4: fill in the recipe's calibration tokens and the digests/roots of the released models once D6a is final. -->
+Calibration tokens: the last 128-token window of the WikiText-2 (raw) test split, with the checkpoint's tokenizer.
+Graph digests (SHA-256) and the hash over every Merkle root, reproduced on two Linux nodes (1 and 8 threads, CPU or GPU
+encoding) and, for the digest, on Windows with another torch version:
+
+| Model | graph digest | roots |
+|---|---|---|
+| OPT-125M | `46d23c80874752fc625cd55a9afb552fcbfd458ff880b0bc30a60efb8318a439` | `480463ab9be46f4d...` |
+| OPT-1.3B | `01354c3dd18bf790...` | `ff005dca59e6b579...` |
 
 ## Hardware used for the paper
 

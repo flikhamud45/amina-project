@@ -392,8 +392,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - 11 bits are adopted only if the 8-bit cost is above 1%. Their exactness tests must then pass by Wed 21 Oct, before F3a's cells (from Thu 22) and the reported Qwen3-4B runs at 2,048 tokens.
     - Otherwise 8 bits stay, and the paper reports their cost.
 
-- **D6a [WIP] must: a quantisation recipe that reproduces C_M bit for bit** (Plan 1 D6 and part (b) of the paper agent's compliance item).
-  - **Status (11 Oct).** Laptop and Xeon (s-005) give the same OPT-125M graph digest and weight hash at 1 and 8 threads; the first roots hash was empty (grouped plan: fixed in e5d377c); jobs 1008669/1008670 compare s-004 and s-005 with every Merkle root, OPT-125M and OPT-1.3B.
+- **D6a [DONE] must: a quantisation recipe that reproduces C_M bit for bit** (Plan 1 D6 and part (b) of the paper agent's compliance item).
+  - **Status (11 Oct).** Identical graph digest, weight hash and all 6 Merkle roots for OPT-125M and OPT-1.3B on s-004 and s-005 at 1 and 8 threads (jobs 1008669/1008670; the OPT-1.3B commitment encoded on the GPU), and the same OPT-125M digest and weights on the laptop (Windows, torch 2.2.2). No recipe change needed. Write-up `docs/improvements/D6a_reproducible_commitment.md`.
   - **What.**
     1. **Test first.** Build the smoothed OPT-125M and OPT-1.3B on the laptop and on a Xeon node, with 1 and 8 threads, and compare the digests and every Merkle root.
     2. **If they differ:**
