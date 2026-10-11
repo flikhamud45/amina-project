@@ -32,13 +32,13 @@ import time
 import numpy as np
 import torch
 
-from . import claimcodec, contention
+from . import buckets, claimcodec, contention
 from . import cut as cutmod
 from . import extfield as ef
 from . import logup
 from . import logup_gkr as gkr
 from .commitment import HASH_BYTES, multiproof_size
-from .field import P, field_matmul_mod, small_matmul_mod, to_field
+from .field import P, field_matmul_mod, min_max, small_matmul_mod, to_field
 from .protocol import (Challenger, Prover, Verifier, _absorb_statement, _decoded_claims, _encoded, _field_message,
                        _in_field, _open_message, _passed, _phase_done, _proof_hashes, _sync)
 
@@ -164,18 +164,21 @@ def _dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 
 def _xbar(op, xin: torch.Tensor, e: torch.Tensor, cache: dict | None = None) -> torch.Tensor:
-    """``[X ; 1] e`` ``[K (+1), 8]`` of a linear op's input ``xin`` (its ``[M, K]`` rows) at the column point ``e``
-    (``extfield.int_times`` for entries below ``2^31``, the general product otherwise);
-    ops reading the same input at the same point share it through ``cache``."""
+    """``[X ; 1] e`` ``[K (+1), 8]`` of a linear op's input ``xin`` (its ``[M, K]`` rows) at the column point ``e``:
+    V-V1N's product by value (:func:`buckets.xbar`, the same integers) unless ``PVI_V1_BUCKETS=0`` or the input is
+    not small, else ``extfield.int_times`` for entries below ``2^31`` and the general product otherwise; ops reading
+    the same input at the same point (q, k, v; gate, up) share it through ``cache``."""
     key = (xin.data_ptr(), tuple(xin.shape), id(e))
     if cache is not None and key in cache:
         out = cache[key]
     else:
-        x = xin.reshape(-1, op.n_in).cpu()
-        if x.numel() and int(x.abs().max()) >= 1 << 31:          # not an int32-sized input: the general product
-            out = ef.small_times(x.T.contiguous().to(torch.int64), e.cpu())
-        else:
-            out = ef.int_times(x.to(torch.float64).T, e.cpu(), 31)
+        out = buckets.xbar(xin.reshape(-1, op.n_in), e) if buckets.enabled() else None
+        if out is None:
+            x = xin.reshape(-1, op.n_in).cpu()
+            if x.numel() and int(x.abs().max()) >= 1 << 31:          # not an int32-sized input: the general product
+                out = ef.small_times(x.T.contiguous().to(torch.int64), e.cpu())
+            else:
+                out = ef.int_times(x.to(torch.float64).T, e.cpu(), 31)
         if cache is not None:
             cache[key] = out
     return torch.cat([out, (e.sum(0) % P)[None]]) if op.has_bias else out
@@ -354,9 +357,13 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
             ch.absorb_large(b"cut/mult", mult_blob)
 
     # ---------------------------------------------------------------- M1 (verifier)
-    claims_v = _decoded_claims(verifier, blob, rows, x, out, torch.int64)
+    narrow = buckets.enabled()               # V-V1N part 4: the cut ops' values kept as int8 (int16) once in range
+    claims_v = _decoded_claims(verifier, blob, rows, x, out, torch.int32 if narrow else torch.int64)
     if claims_v is None:
         return "range_or_shape"
+    if narrow:
+        with _timed(out, "verify_decode"):
+            claims_v = _narrowed(plan, claims_v)
     x_v = x.cpu()
     if not verifier.check_tokens(x_v, claims_v):
         return "token"
@@ -518,6 +525,30 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     return reason
 
 
+def _narrowed(plan, claims: dict) -> dict:
+    """V-V1N part 4: the decoded claims (int32) as the verifier keeps them: a cut op's sent values, when every one is
+    in the op's public range (a requant op's clamp, a residual op's ``R_Delta``; one exact min/max), in the narrowest
+    of int8 and int16 that holds them (a requant op's always fit int8); every other claim widened to int64 as the
+    decoder does.  A cut op with a value out of range, or one needing more than 16 bits, stays int64, so derive's
+    range check rejects it with the same label at the same point.  Derive then reads the narrow values, range-checks
+    them again and widens only the tensor their readers take; the exceptions and the final check read them as
+    they are."""
+    cut = {o.name: o for o in plan.ops}
+    out = {}
+    for name, z in claims.items():
+        o = cut.get(name)
+        if o is not None and z.numel():
+            lo, hi = (o.lo_, o.hi) if o.kind == "requant" else cutmod.delta_range(o.mult, o.sh)
+            amin, amax = min_max(z)
+            nd = next((d for d in (torch.int8, torch.int16)
+                       if torch.iinfo(d).min <= amin and amax <= torch.iinfo(d).max), None)
+            if lo <= amin and amax <= hi and nd is not None:
+                out[name] = z.to(nd)
+                continue
+        out[name] = z.to(torch.int64)
+    return out
+
+
 def _cut_col_matrices(verifier: Verifier, plan) -> dict:
     """Mode C: the cut col matrices ``{name: members}``, in plan order."""
     out = {}
@@ -560,9 +591,31 @@ def _kpre_y_ok(verifier: Verifier, plan, ys: dict, xbars: dict) -> bool:
     return True
 
 
-def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points) -> bool:
-    """Check F3 (``cut_final``): every instance's final claims are the leaf layer's extensions computed from the
-    sent values, the exceptions and the folds."""
+def _lw_e_old(vals: torch.Tensor, idx: torch.Tensor, z: torch.Tensor, o, e: torch.Tensor, T: int):
+    """Today's ``(L e, W e)`` ``[N, 8]`` of a cut op (``PVI_V1_BUCKETS=0``, and spans past ``buckets.SPAN``):
+    ``[L ; W]`` gathered in float64 from the window table, one exact GEMM with ``e``'s limbs (``|L| < 2^29 + 2^16 <
+    2^30``, ``W <= 2^16``), in row blocks of :data:`_FINAL_ROWS`."""
+    le_parts, we_parts = [], []
+    for r0 in range(0, o.n_rows, _FINAL_ROWS):      # row blocks: the window matrix stays in cache
+        r1 = min(o.n_rows, r0 + _FINAL_ROWS)
+        sel = (idx >= r0 * T) & (idx < r1 * T)
+        lw = cutmod.public_lw_f64(vals[r0:r1], (idx[sel] - r0 * T).to(vals.device), z[sel].to(vals.device), o)
+        lwe = ef.int_times(lw, e, 30).cpu()
+        le_parts.append(lwe[:r1 - r0])
+        we_parts.append(lwe[r1 - r0:])
+        del lw
+    if not le_parts:
+        return torch.zeros(0, ef.D, dtype=torch.int64), torch.zeros(0, ef.D, dtype=torch.int64)
+    return torch.cat(le_parts), torch.cat(we_parts)
+
+
+def _final_claims(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points):
+    """Per instance, in order (a generator): ``(I(rho), q)``, the leaf layer's extensions at the GKR's final point
+    computed from the sent values, the exceptions and the folds, which check F3 compares with ``(P_hat, Q_hat)``:
+    ``q = alpha I - sum_l (S_l - chi (L e) + x chi (W e)) + (1 - I)``.  ``L e`` and ``W e`` ``[N, 8]`` are V-V1N's
+    products by value (:func:`buckets.lw_times`, the same integers) unless ``PVI_V1_BUCKETS=0`` or a residual op's
+    values span past ``buckets.SPAN`` (today's :func:`_lw_e_old`); then ``chi (L e)`` and ``chi (W e)`` are inner
+    products."""
     us_row = {}
     for key, members in items:
         o = plan.op(members[0])
@@ -570,29 +623,29 @@ def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xb
             us_row[o.name] = cut_folds[key].T.contiguous()            # [K (+1), 8]
     x_gen = ef.gen()
     vdev = torch.device(verifier.device)
+    new = buckets.enabled()
     for b, (p0, q0, rho, p_hat, q_hat) in enumerate(outs):
         e, chi_full = points[b]
-        # L e and W e ([N, 8] each) of every op: [L ; W] gathered in float64 from the window table, one exact GEMM
-        # with e's limbs (|L| < 2^29 + 2^16 < 2^30, W <= 2^16); then chi (L e) and chi (W e) as inner products
         total = ef.const(0)
         for o in plan.instance_ops(b):
             chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
             idx, z = exc[o.name]
             vals = values[o.name].to(vdev)
-            le_parts, we_parts = [], []
-            for r0 in range(0, o.n_rows, _FINAL_ROWS):      # row blocks: the window matrix stays in cache
-                r1 = min(o.n_rows, r0 + _FINAL_ROWS)
-                sel = (idx >= r0 * plan.T) & (idx < r1 * plan.T)
-                lw = cutmod.public_lw_f64(vals[r0:r1], (idx[sel] - r0 * plan.T).to(vdev), z[sel].to(vdev), o)
-                lwe = ef.int_times(lw, e, 30).cpu()
-                le_parts.append(lwe[:r1 - r0])
-                we_parts.append(lwe[r1 - r0:])
-                del lw
+            got = buckets.lw_times(vals, idx, z, o, e) if new else None
+            le_vec, we_vec = got if got is not None else _lw_e_old(vals, idx, z, o, e, plan.T)
             s_l = _dot(us_row[o.name], xbars[o.name]) if o.name in us_row else _dot(chi, ys[o.name])
-            le, we = _dot(chi, torch.cat(le_parts)), _dot(chi, torch.cat(we_parts))
+            le, we = _dot(chi, le_vec), _dot(chi, we_vec)
             total = ef.add(total, ef.add(ef.sub(s_l, le), ef.mul(x_gen, we)))
         i_b = logup.indicator(rho, plan.rows(b), plan.T, plan.n_vars(b)[1])
-        want_q = ef.add(ef.sub(ef.mul(alpha, i_b), total), ef.sub(ef.const(1), i_b))
+        yield i_b, ef.add(ef.sub(ef.mul(alpha, i_b), total), ef.sub(ef.const(1), i_b))
+
+
+def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points) -> bool:
+    """Check F3 (``cut_final``): every instance's final claims are the leaf layer's extensions computed from the
+    sent values, the exceptions and the folds (:func:`_final_claims`), instance by instance up to the first that
+    is not."""
+    claims = _final_claims(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points)
+    for (i_b, want_q), (_, _, _, p_hat, q_hat) in zip(claims, outs):
         if not (ef.equal(p_hat, i_b) and ef.equal(q_hat, want_q)):
             return False
     return True
