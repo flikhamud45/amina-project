@@ -95,7 +95,11 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
     echo "$(date '+%F %T') running $name (limit ${hours} h): $LOGS/$name-$jid.out"
     timeout "${hours}h" bash -c "$wrap" > "$LOGS/$name-$jid.out" 2>&1 || echo "$name: exit status $?" >&2
   else
-    jid="$(sbatch --parsable "${args[@]}" --wrap "$wrap")"; jid="${jid%%;*}"
+    # the job script goes in on stdin with a bash shebang: --wrap runs /bin/sh, which is dash on some clusters (no
+    # pipefail), and the commands use bash
+    jid="$(printf '#!/bin/bash
+%s
+' "$wrap" | sbatch --parsable "${args[@]}")"; jid="${jid%%;*}"
     echo "submitted $name: job $jid"
   fi
   QUEUED+=$'\n'"$name"
