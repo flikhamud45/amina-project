@@ -33,13 +33,15 @@ the measured native CPU verifier `t_v` and RX's strongest exact re-execution `t_
 | v0, 2,048 tokens, interactive / FS | 6.43 GB | 18.5 / 19.6 s | 93.2 s | 0.69 / 0.70 Gb/s |
 | V1, 2,048 tokens, FS, verifier before V-V1N | 2.80 GB | 77.7 s (1-3 blocks, job 1009430) | 93.2 s | 1.44 Gb/s |
 | V1, 2,048 tokens, FS, V-V1N parts 1-4 (torch) | 2.80 GB | 66.6 s (1-3 blocks, job 1009430) | 93.2 s | 0.84 Gb/s |
+| V1, 2,048 tokens, FS, V-V1N with the native products | 2.80 GB | 45.4 s (2-3 blocks, job 1011440) | 93.2 s | **0.47 Gb/s** |
 
 Reading: a CPU client with a link of about 1 Gb/s or faster verifies a Llama-2-7B prompt faster than it can re-execute
 it, at every prompt length measured; below about 0.6-0.7 Gb/s re-executing is faster (if the client holds the
-weights). V1 halves the bytes, but its CPU verifier is slow enough that its break-even link is worse than v0's, even
-with V-V1N's torch parts (0.84 against 0.70 Gb/s; the earlier projection of 52.5 s, which gave 0.55 Gb/s, did not
-hold on the Xeon). V1 becomes the better option on slow links only if its verifier falls below about 60 s
-(L* = v0's 0.70 Gb/s at t_v = 93.2 - 22.4/0.70 = 61 s), which needs the native kernel of V-V1N.
+weights). V1 halves the bytes; with V-V1N's native products kernel its verifier takes 45.4 s (2.3x v0's), and its
+break-even link against re-execution falls to 0.47 Gb/s, below v0's 0.70 (with the torch parts alone it was 0.84
+Gb/s at 66.6 s; the line is crossed at about 61 s of verifier time, t_v = 93.2 - 22.4/0.70). Between the two proofs,
+for the client alone (transfer plus verification, the prover's time not counted), V1 is faster on links slower than
+8 (6.43 - 2.80) GB / (45.4 - 19.6) s = 1.1 Gb/s.
 
 ## 3. Validation
 

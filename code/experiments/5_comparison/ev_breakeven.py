@@ -86,7 +86,8 @@ def main() -> None:
             for key, t_v in cfg["v1_verifier_s_2048"].items():
                 if key.startswith("_"):
                     continue
-                label = {"measured_torch": "V1 Kpre (before V-V1N)", "v1n_torch": "V1 Kpre (V-V1N parts 1-4)"}.get(key, key)
+                label = {"measured_torch": "V1 Kpre (before V-V1N)", "v1n_torch": "V1 Kpre (V-V1N parts 1-4)",
+                         "v1n_native": "V1 Kpre (V-V1N, native products)"}.get(key, key)
                 out["panel2"].append({"seq": seq, "protocol": label, "fs": True,
                                       "proof_bytes": claims / cfg["v1_ratio_2048"]["value"], "verify_s": t_v["value"],
                                       "reexec_s": t_r, "L_star_gbps": breakeven_link_gbps(

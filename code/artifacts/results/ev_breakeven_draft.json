@@ -240,6 +240,15 @@
    "verify_s": 66.6,
    "reexec_s": 93.2,
    "L_star_gbps": 0.8412866949983653
+  },
+  {
+   "seq": 2048,
+   "protocol": "V1 Kpre (V-V1N, native products)",
+   "fs": true,
+   "proof_bytes": 2797278260.8695655,
+   "verify_s": 45.4,
+   "reexec_s": 93.2,
+   "L_star_gbps": 0.46816372566854647
   }
  ]
 }

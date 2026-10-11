@@ -7,9 +7,9 @@ behind `PVI_V1_BUCKETS` (default on), exact (bit-identical field results, tested
 switch on, on its bucket variant and off; measured on the laptop only: the final check's products and `_xbar` 1.8x
 faster at Llama-2-7B's 2,048 tokens, the GKR check 2x, whole small-model V1 verifiers 1.3-1.6x (Sec. 5). The torch
 path does not reach the plan's target by itself (Sec. 5.3); the native kernel it specifies is not written (Sec. 7).
-Measured on the Xeon (job 1009430, Sec. 5.4): a Llama-2-7B block's V1 verifier takes 2.13 s instead of 2.49 s
-(1.17x), so the full model about 67 s instead of 78 s, against v0's 19.6 s (3.4x); the V1 suites pass with the switch
-in each position on the GPU node.
+Measured on the Xeon: with the torch parts a Llama-2-7B block's V1 verifier takes 2.13 s instead of 2.49 s (job
+1009430); with the native products kernel (Sec. 5.5, job 1011440) 1.44 s, so the full model about 45 s instead of
+79 s, against v0's 19.6 s (2.3x).
 
 ## 1. The problem
 
@@ -356,8 +356,32 @@ built; `PVI_V1_NATIVE=0` switches it off. Work per block: one pass over 87 M val
 Tests: `test_native_lw_equals_the_torch_table_products` (four dtypes; requant ops with exceptions at 37 x 2,048 and a
 power-of-two multiplier; residual ops of `V` = 7,001 and 81; the native result against the torch table products and
 today's GEMM; an out-of-range value, a short `e` and a non-canonical coefficient declined). It is skipped where the
-library cannot be built (the Windows laptop). Job 1011440 builds it on the Xeon node, runs the V1 suites with the
-native kernel on and off, the micro-benchmark and the Llama-2-7B profile: [CLUSTER].
+library cannot be built (the Windows laptop).
+
+**Measured (job 1011440, s-005, git bd0f95d; the int32 case rerun after d9b5748).** The library builds on the Xeon
+node. The V1 suites pass with the native kernel (224 passed, 1 skipped) except the new test's int32 case, which
+exposed a bug in the *torch* table path: for int32 values `s.to(torch.int32)` is the caller's tensor, and `idx -= a`
+shifted it in place, so the exceptions were then looked up at shifted values (an IndexError, or with smaller shifts
+wrong corrections). The verifier's decoded values are int8, int16 or int64, so no verdict was affected; d9b5748 makes
+the shift out of place and the tests check that `lw_times` leaves its input unchanged (21 passed on the login node
+with the native kernel, every dtype).
+
+| | path `0` (today) | path `1` with the native kernel |
+|---|---:|---:|
+| micro: final check, requant op (ns per entry) | 15.95 | **1.44** |
+| micro: final check, residual op (ns per entry) | 16.04 | **1.67** |
+| micro: `_xbar` (ns per entry) | 4.98 | 2.64 |
+| Llama-2-7B block, `final_lw` in place (s) | 0.86 | **0.16** |
+| Llama-2-7B block, `verify_final` (s) | 1.27 | 0.58 |
+| Llama-2-7B block, V1 verifier (s) | 2.52 | **1.44** |
+| full Llama-2-7B, V1 verifier (2 blocks + 30 x the per-block slope) | 78.9 s | **45.4 s** |
+
+The per-block numbers are the 3-block cell minus the 2-block cell (medians of 3 queries, Kpre, Fiat-Shamir, 2,048
+tokens). Against v0's measured 19.6 s, V1's verifier is now 2.3x v0 (3.4x with the torch parts, 4.0x before
+V-V1N). The remaining per-block time is the derive (0.55 s), the final check's other parts (0.42 s: `_xbar` 0.08,
+the verifier's eq tables and bookkeeping), the GKR check (0.19 s) and the decode (0.11 s). The plan's 1.2x would need
+the derive's int32 path and a native `_xbar` as well; under the plan's rule (merged and rehearsed by Wed 28 Oct) the
+native products are in, and V1 is reported at 2.3x.
 
 ## 6. Cluster commands
 

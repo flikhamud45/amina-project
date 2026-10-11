@@ -56,7 +56,7 @@ query and 6.6\,GB at 2{,}048 tokens \todo{L40S}, against 183\,kB for zkLLM. V1 m
 0.96\,GB), 1.68--1.77$\times$ on the real smoothed OPT-125M at 512 tokens and 1.73$\times$ on the
 real OPT-6.7B at 2{,}048 tokens, at the price of a GKR in the prover whose work grows with the
 number of results (OPT-125M at 2{,}048 tokens: 0.50 to 4.85\,s on the RTX~2080~Ti) and a slower CPU
-verifier: 3.4$\times$ v0's on the full Llama-2-7B at 2{,}048 tokens (66.6 against 19.6\,s)
+verifier: 2.3$\times$ v0's on the full Llama-2-7B at 2{,}048 tokens (45.4 against 19.6\,s)
 \todo{L40S}. The verifier recomputes attention, so its cost grows with the square of the prompt
 length. With eight CPU threads and native exact kernels, a client that holds the weights verifies a
 64-token query of the full Llama-2-7B in 1.0\,s, against 4.1\,s for the fastest exact re-execution
