@@ -65,8 +65,9 @@ the gains. Percentile statistics and clipping, tuned on short windows, transferr
 test text (OPT-1.3B $\times$1.14--1.25, depending on the calibration windows); channel maxima without
 clipping are stable across calibration windows to $\pm$0.003, and $\alpha=0.6$ gives the certified
 models of Table~\ref{tab:quality}. On six zero-shot tasks (LAMBADA, HellaSwag, PIQA, ARC-e, ARC-c,
-WinoGrande), the integer OPT-1.3B stays within 0.7 points of fp16 on average; only LAMBADA's loss
-(3.0 points) is significant \todo{F2c: the certified recipe ($\alpha=0.6$); these are $\alpha=0.5$}.
+WinoGrande), the certified OPT-1.3B stays within 0.8 points of fp16 on average, and only its
+LAMBADA loss (2.0 points, 95\% CI 1.4--2.7) is significant; OPT-125M loses 1.0 point on average
+\todo{F2c: OPT-6.7B against fp16}.
 
 \para{Comparison.} SmoothQuant-O3 raises perplexity by 1.6\% on OPT-175B and 0.8\% on
 OPT-IML-30B~\cite{xiao2023smoothquant}; ZeroQuant-V2, with per-token activations and 16-bit

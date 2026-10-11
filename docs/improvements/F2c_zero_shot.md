@@ -160,8 +160,29 @@ After F2a's decision the paper builder's default is `real_weights.CERTIFIED_RECI
 WinoGrande +1.26 [-1.34, +3.87]. **Mean -1.03 points**, as with alpha 0.5 (-0.97); individual tasks move by up to
 2 points between the two (within their intervals, except LAMBADA, -1.0 at 0.5 and -3.1 at 0.6).
 
-**OPT-1.3B** and **OPT-6.7B** (integer model only; its fp16 copy and integer graph do not fit one 11 GB card): [CLUSTER],
-same job.
+**OPT-1.3B** (digest `d9daa017...`; fp16 as in the tables above):
+
+| Task | integer acc / acc_norm | difference acc (95% CI) | difference acc_norm (95% CI) | same |
+|---|---|---|---|---:|
+| LAMBADA | 55.81 (ppl 7.56) | **-2.04 [-2.74, -1.40]** | | 0.937 |
+| HellaSwag (2,000) | 39.25 / 52.25 | -0.50 [-1.10, +0.05] | -0.30 [-1.10, +0.55] | 0.975 |
+| PIQA | 71.00 / 72.03 | -0.82 [-1.69, +0.05] | -0.38 [-1.25, +0.49] | 0.965 |
+| ARC-e | 56.99 / 50.67 | -0.13 [-1.01, +0.76] | -0.34 [-1.10, +0.42] | 0.933 |
+| ARC-c | 23.21 / 28.75 | -0.17 [-1.37, +1.02] | -0.77 [-2.05, +0.43] | 0.923 |
+| WinoGrande | 58.48 | -1.26 [-3.08, +0.47] | | 0.896 |
+
+**Mean -0.82 points** (alpha 0.5: -0.73). The certified recipe trades a little on the multiple-choice tasks for a
+third less loss on LAMBADA (-2.0 against -3.0; continuation perplexity 6.64 -> 7.56, against 7.80), the task that
+reads the exact next-token probabilities, in line with its lower perplexity ratio at 2,048 tokens (F2a round 2:
+x1.026). LAMBADA's loss is again the only significant one; on the five multiple-choice tasks every interval contains
+0 and the integer model picks the fp16 answer on 90-98% of the documents (89-98% at alpha 0.5).
+
+**OPT-6.7B, the integer model** (digest `0b757108...`; build 1,783 s): LAMBADA 67.16 (ppl 4.33); HellaSwag (2,000)
+48.65 / 66.30; PIQA 76.33 / 76.61; ARC-e 65.74 / 60.65; ARC-c 31.06 / 34.39; WinoGrande 65.82. The fp16 copy and the
+integer graph do not fit one 11 GB card together, so the paired reference runs separately, split over two cards
+(`--no-int --ref-gpus 2`, `zeroshot.split_opt`; job 1012655), and `--pair` gives the paired differences on the same
+documents. Until then the integer model's numbers stand alone: they are within about one point of the values
+commonly reported for the fp16 checkpoint, which per the caveat above are not yet a citable comparison.
 
 ## 6. Limitations
 
@@ -170,5 +191,9 @@ same job.
   are documented above.
 * **OPT only** for now. Qwen3 and Llama join once F2b-Q's builder gives a usable integer model (the harness needs only
   a logits function; the Llama builder's `lean_logits` provides one).
-* **The recipe** is F2a's round-1 best, or the paper builder's current one; the certified recipe is fixed after F2a's
-  round 2 and D6a's re-digest, and the final rows use it.
+* **The recipe.** Sec. 5 has F2a's round-1 recipe and the earlier paper builder; Sec. 5.1 is the certified recipe
+  (F2a's decision), whose rows are the ones the paper quotes.
+* **Two GPUs for OPT-6.7B.** `split_opt` places whole modules on each device and moves only activations, so each
+  operation runs as on one device (the test compares the split and unsplit logits exactly on the CPU); on two GPUs
+  the fp16 results may still differ from a one-device run in the last bits of the kernels' rounding, as fp16 runs on
+  different cards do.
