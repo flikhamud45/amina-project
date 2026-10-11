@@ -165,6 +165,17 @@ python experiments/5_comparison/sp2027_numbers.py --logs ../logs/rehearsal_2080t
 It passes when every job of the listing has results, every tier has records of its kinds, and there is no `PARSE`
 or `CHECK FAILED` line (exit status 0).
 
+**First partial rehearsal (11 Oct, server clone s7 at eaa969d2; jobs 1011163-1011184).** Two package bugs so far:
+
+1. `sbatch --wrap` runs its command with `/bin/sh` (dash on the TAU nodes), so the smoke failed on
+   `set -o pipefail`; jobs are now submitted as a bash script on stdin (df3cd16, eaa969d2). After the fix the smoke
+   ended in SMOKE OK and the cpuv, v1, serve, gpuv, gen and batch cells completed.
+2. The bench tier's LeNet-5 cell failed: a clone has no trained image models (`code/artifacts/fullcheck/models` is
+   ignored by git), and the run documentation said that every model is built with random weights. `sp2027.sh all`
+   and `bench` now check for the five model files, CIFAR-10 and the dogs-vs-cats data before submitting anything,
+   and `L40S_RUN_SP2027.md` Sec. 2 lists them. On the rehearsal clone the models were linked from the project
+   checkout and the cell was resubmitted (job 1011334).
+
 ### 4.3 No SLURM
 
 `PVI_LOCAL=1` runs every job here in the foreground, one after another, each within its time limit and logged under

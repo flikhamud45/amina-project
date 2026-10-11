@@ -384,6 +384,22 @@ tier_long() {
   return 0
 }
 
+need_images() {   # the bench tier's image cells load trained weights and datasets that a clone does not carry
+  [ -n "$DRY" ] && return 0
+  local m miss="" models="lenet5"
+  [ -n "$REH" ] || models="lenet5 vgg11 vgg16 resnet18_cifar resnet18_224"
+  for m in $models; do [ -f "code/artifacts/fullcheck/models/$m.pt" ] || miss="$miss $m.pt"; done
+  if [ -z "$REH" ]; then
+    [ -d "${PVI_CIFAR_ROOT:-code/data/cifar10}/cifar-10-batches-py" ] || miss="$miss CIFAR-10"
+    [ -f "${PVI_CACHE:-code/artifacts/fullcheck/cache}/dogs_cats.pt" ] || [ -d "${PVI_IMAGENET_ROOT:-code/data/imagenet}" ] \
+      || miss="$miss ImageNet(dogs_cats)"
+  fi
+  if [ -n "$miss" ]; then
+    echo "the bench tier's image cells need:$miss (docs/L40S_RUN_SP2027.md, Sec. 2); nothing submitted" >&2
+    exit 2
+  fi
+}
+
 run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
   local n0=$NJOBS h0=$HOURS
   case "$1" in
@@ -396,6 +412,7 @@ run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
 }
 
 MUST="smoke cpuv v1 serve bench gpuv gen batch real setup"
+case "${1:-}" in all|bench) need_images ;; esac
 case "${1:-}" in
 all)
   for tier in $MUST ${PVI_OPTIONAL:+quality long}; do

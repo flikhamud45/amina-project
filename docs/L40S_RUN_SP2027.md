@@ -23,12 +23,14 @@ the paper's tables and text numbers. Nothing has to be computed or copied by han
 | The Python headers for Triton's launcher | Triton compiles a small launcher with `Python.h` on first use | `python -c "import os, sysconfig; print(os.path.exists(os.path.join(sysconfig.get_paths()['include'], 'Python.h')))"`; if `False`, copy the headers into a folder and `export PVI_PY_INCLUDE=<that folder>` (`I_server_setup.md` Sec. 3) |
 | A Triton cache the jobs can write | Triton's compiled kernels | set by the script to `logs/$PVI_PLATFORM/.triton`; `export TRITON_CACHE_DIR=<dir>` to put it elsewhere (e.g. a node-local disk) |
 | `HF_HOME` on a node-local disk with 40 GB free | the `real` tier downloads facebook/opt-1.3b and facebook/opt-6.7b (about 16 GB) and the WikiText-2 test parquet; the optional `quality` tier Llama-2-13B (26 GB) | `df -h $HF_HOME` |
+| The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats) load trained weights | the five files `code/artifacts/fullcheck/models/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224}.pt` from the earlier L40S run's checkout (or `experiments/4_defence_benchmark/train.py --model <m>`, seed 0); CIFAR-10 in `cifar-10-batches-py` layout under `$PVI_CIFAR_ROOT`; the dogs-vs-cats cache `dogs_cats.pt` under `$PVI_CACHE` (default `code/artifacts/fullcheck/cache`) or ImageNet under `$PVI_IMAGENET_ROOT`. `sp2027.sh all` and `bench` stop before submitting anything if one is missing |
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `export PVI_LOCAL=1` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
 | Exclusive use, 24/7 | the timings | every job asks for `--exclusive`; please keep other GPU- or CPU-heavy work off the node for the whole run (about 2-3 days, Sec. 5) |
 
-Every model is built with random weights (the costs depend only on the shapes), so nothing is downloaded except in
-the `real` tier (OPT, public) and the optional `quality` tier, which needs a Llama-2 licence on **your own** Hugging
-Face account (`export PVI_LLAMA_LICENCE=1` once you have it). Never use another person's token.
+Every language model is built with random weights (the costs depend only on the shapes), so nothing is downloaded
+except in the `real` tier (OPT, public) and the optional `quality` tier, which needs a Llama-2 licence on **your own**
+Hugging Face account (`export PVI_LLAMA_LICENCE=1` once you have it). Never use another person's token. The image
+models are the trained ones of the earlier run (the row above); MNIST is downloaded on first use.
 
 ## 3. Setup, once
 
