@@ -26,3 +26,14 @@ of the attacker's two attacks (`samplers.<name>.adversary_best`). The best floor
 fall below uniform (0.9x). At `eps=0` it is plain contribution weighting, with detection 0. The paper
 reports these with the floor written δ (the script's `eps`): "δ = 1 raises detection to 2% (10x uniform);
 other floors give 0.9–6x".
+
+**`adaptive_game.py`** → `artifacts/results/adaptive_game_mlp_mnist.json` (plan G3-min; 40 queries, both
+hidden layers, about 21 min on 2 threads): the adaptive game with ranges held out on the training split.
+Eleven samplers, including tail-first and zero-first, face in-range adversaries at caps
+p = 50, 75, 90, 95, 99, 100 and unconstrained. Every number is the detection of the best attack found,
+so it is an upper bound on that sampler's worst case. The script also gives the deployable LP mixture
+with a double oracle, R1/R2 against honest baselines, support limits, and the empirical `G_q` (G1e).
+`fast_acceptance` is checked against `acceptance_probability` to 1e-9 by `tests/test_adaptive_game.py`.
+`adaptive_game_plots.py` writes `figure_g3a.pdf`, `figure_g3b.pdf` and `table_g3.tex`.
+`adaptive_game_llm.py`, with `adaptive_game_llm.sbatch`, is the OPT-1.3B counterpart for the cluster.
+Method, numbers and kill criteria: `docs/improvements/G3_min_adaptive_game.md`.

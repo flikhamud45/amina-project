@@ -4,7 +4,9 @@ from pvi.defences.sampling import (
     GradientSaliencySampler,
     LocalContributionSampler,
     StaticImportanceSampler,
+    TailFirstSampler,
     ZeroAwareContributionSampler,
+    ZeroFirstSampler,
     weight_magnitude_importance,
 )
 
@@ -12,6 +14,8 @@ __all__ = [
     "GradientSaliencySampler",
     "LocalContributionSampler",
     "StaticImportanceSampler",
+    "TailFirstSampler",
     "ZeroAwareContributionSampler",
+    "ZeroFirstSampler",
     "weight_magnitude_importance",
 ]

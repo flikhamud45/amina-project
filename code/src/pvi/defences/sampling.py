@@ -53,7 +53,9 @@ __all__ = [
     "GradientSaliencySampler",
     "LocalContributionSampler",
     "StaticImportanceSampler",
+    "TailFirstSampler",
     "ZeroAwareContributionSampler",
+    "ZeroFirstSampler",
     "weight_magnitude_importance",
 ]
 
@@ -297,3 +299,86 @@ class GradientSaliencySampler(PathSampler):
         scores = self._saliency(trace, layer_index - 1)[parent_indices]
         total = scores.sum()
         return np.full(size, 1.0 / size) if total <= 0 else scores / total
+
+
+class TailFirstSampler(PathSampler):
+    """Step uniformly among parents whose claimed value lies in the upper tail of its natural range.
+
+    ``thresholds[l]`` holds, per neuron of layer ``l``, a percentile of that neuron's activation on
+    held-out natural inputs.  A step into layer ``l`` picks uniformly among the parents ``i`` with
+    ``a~_i >= thresholds[l][i]`` and ``a~_i > 0``, and uniformly among all parents when there is
+    none; layers without thresholds (the input, which is anchored to the query) are stepped into
+    uniformly, and the walk starts uniformly.  The condition ``a~_i > 0`` keeps a claimed zero of a
+    neuron whose threshold is zero (a dead neuron) out of the tail, where it would only dilute it.
+
+    The rule targets an edit that pushes values to the top of their range (the stealthy planner of
+    :mod:`pvi.attacks.tamper`); an edit that lowers values towards their mode is invisible to it.
+    The choice depends only on the claimed values of the layer below, not on the source node.
+    """
+
+    transition_depends_on_source = False
+
+    def __init__(self, thresholds: dict[int, np.ndarray]) -> None:
+        self._thresholds = {
+            layer: np.asarray(values, dtype=np.float64) for layer, values in thresholds.items()
+        }
+
+    def start_distribution(
+        self, architecture: Architecture, trace: Trace | None
+    ) -> np.ndarray:
+        n = architecture.output_layer.n_neurons
+        return np.full(n, 1.0 / n)
+
+    def transition_distribution(
+        self,
+        architecture: Architecture,
+        layer_index: int,
+        neuron: int,
+        parent_indices: np.ndarray,
+        trace: Trace | None,
+    ) -> np.ndarray:
+        size = len(parent_indices)
+        threshold = self._thresholds.get(layer_index - 1)
+        if trace is None or threshold is None:
+            return np.full(size, 1.0 / size)
+        values = trace[layer_index - 1][parent_indices].astype(np.float64)
+        tail = (values >= threshold[parent_indices]) & (values > 0.0)
+        count = int(tail.sum())
+        return np.full(size, 1.0 / size) if count == 0 else tail / count
+
+
+class ZeroFirstSampler(PathSampler):
+    """Step uniformly among parents whose claimed value is exactly zero.
+
+    The counterpart of :class:`TailFirstSampler` for the edit that lowers activations to their
+    mode, the generic reply to contribution weighting (a zeroed neuron has contribution weight
+    zero).  A step into one of ``layers`` picks uniformly among the parents with ``a~_i == 0``, and
+    uniformly among all parents when there is none; other layers are stepped into uniformly, and
+    the walk starts uniformly.  It never opens a non-zero edit preferentially.
+    """
+
+    transition_depends_on_source = False
+
+    def __init__(self, layers: set[int] | frozenset[int]) -> None:
+        self._layers = frozenset(int(layer) for layer in layers)
+
+    def start_distribution(
+        self, architecture: Architecture, trace: Trace | None
+    ) -> np.ndarray:
+        n = architecture.output_layer.n_neurons
+        return np.full(n, 1.0 / n)
+
+    def transition_distribution(
+        self,
+        architecture: Architecture,
+        layer_index: int,
+        neuron: int,
+        parent_indices: np.ndarray,
+        trace: Trace | None,
+    ) -> np.ndarray:
+        size = len(parent_indices)
+        if trace is None or (layer_index - 1) not in self._layers:
+            return np.full(size, 1.0 / size)
+        zeros = trace[layer_index - 1][parent_indices] == 0.0
+        count = int(zeros.sum())
+        return np.full(size, 1.0 / size) if count == 0 else zeros / count

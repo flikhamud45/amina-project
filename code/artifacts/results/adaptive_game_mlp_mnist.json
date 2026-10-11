@@ -1,0 +1,3590 @@
+{
+  "config": {
+    "model": "mlp_mnist",
+    "layers": [
+      1,
+      2
+    ],
+    "queries": 40,
+    "calib": "train",
+    "calib_size": 5000,
+    "caps": [
+      50.0,
+      75.0,
+      90.0,
+      95.0,
+      99.0,
+      100.0,
+      "inf"
+    ],
+    "pool": 96,
+    "double_oracle_rounds": 10,
+    "tail_percentile": 95.0,
+    "threads": 2
+  },
+  "note": "Detection is the exact single-path 1 - acceptance (fast_acceptance, validated to 1e-9 against acceptance_probability). The per-sampler value is the adversary's best (minimum) over A1-A4; an UPPER BOUND on the sampler's true worst-case detection -- a stronger adversary can only lower it.",
+  "27.7_over_N": {
+    "512": 0.0541015625,
+    "256": 0.108203125
+  },
+  "layers": {
+    "1": {
+      "width": 512,
+      "caps": {
+        "50": {
+          "cap_percentile": 50.0,
+          "width": 512,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 11.5,
+          "mean_magnitude_sigma": 4.655556283213184,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.0,
+          "R2_honest_baseline": 0.0,
+          "R2_max_pass_rate": 0.95,
+          "R2_max_honest_baseline": 0.95,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.022460937499999813,
+              "median": 0.022460937499999833,
+              "s_40": 1221
+            },
+            "static-importance": {
+              "detection_per_path": 0.03041091986912455,
+              "median": 0.02978379602710457,
+              "s_40": 898
+            },
+            "contribution": {
+              "detection_per_path": -9.159339953157541e-17,
+              "median": 0.0,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0016203659625567079,
+              "median": 0.0014416667668187277,
+              "s_40": 17098
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.01096138810531946,
+              "median": 0.009831074944292417,
+              "s_40": 2516
+            },
+            "floor-1": {
+              "detection_per_path": 0.026081768411752894,
+              "median": 0.02527951829435099,
+              "s_40": 1050
+            },
+            "floor-10": {
+              "detection_per_path": 0.0301133544332376,
+              "median": 0.02939473509315521,
+              "s_40": 907
+            },
+            "floor-100": {
+              "detection_per_path": 0.030565255889922212,
+              "median": 0.0298575926530793,
+              "s_40": 894
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.059096785667988,
+              "median": 0.0567783676555908,
+              "s_40": 456
+            },
+            "tail-first": {
+              "detection_per_path": -4.551914400963141e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            },
+            "zero-first": {
+              "detection_per_path": 0.027069144717946726,
+              "median": 0.026052330482957575,
+              "s_40": 1011
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.1,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.00437162612163311,
+                "contribution": -1.1102230246251565e-16,
+                "floor-0.01": 0.0002818578422911222,
+                "floor-0.1": 0.0018374535348771037,
+                "floor-1": 0.004000106978076651,
+                "floor-10": 0.0044170909613339415,
+                "floor-100": 0.004453471442355195,
+                "gradient-saliency*": 0.007008484732027698,
+                "tail-first": -3.3306690738754696e-16,
+                "zero-first": 0.002199796687340355
+              }
+            },
+            "2": {
+              "success_rate": 0.15,
+              "detection_per_path": {
+                "uniform": 0.0026041666666664818,
+                "static-importance": 0.006163366302684066,
+                "contribution": -1.1102230246251565e-16,
+                "floor-0.01": 0.0003614929485848591,
+                "floor-0.1": 0.002431403153098366,
+                "floor-1": 0.005568832390241881,
+                "floor-10": 0.006216173025474485,
+                "floor-100": 0.0062735633922015865,
+                "gradient-saliency*": 0.012213488755875338,
+                "tail-first": -3.3306690738754696e-16,
+                "zero-first": 0.0036346043951939002
+              }
+            },
+            "4": {
+              "success_rate": 0.25,
+              "detection_per_path": {
+                "uniform": 0.004296874999999778,
+                "static-importance": 0.009108437314367678,
+                "contribution": -1.1102230246251565e-16,
+                "floor-0.01": 0.00047992424517284693,
+                "floor-0.1": 0.0032918681068066944,
+                "floor-1": 0.007926441918899685,
+                "floor-10": 0.009114795837566525,
+                "floor-100": 0.009240721971106947,
+                "gradient-saliency*": 0.02056709368666737,
+                "tail-first": -2.6645352591003756e-16,
+                "zero-first": 0.006800724904367383
+              }
+            },
+            "8": {
+              "success_rate": 0.45,
+              "detection_per_path": {
+                "uniform": 0.00792100694444426,
+                "static-importance": 0.013415930228799278,
+                "contribution": -9.868649107779169e-17,
+                "floor-0.01": 0.0006981143380403824,
+                "floor-0.1": 0.004765770310655695,
+                "floor-1": 0.01153647563356035,
+                "floor-10": 0.013350297173294827,
+                "floor-100": 0.013544846697291581,
+                "gradient-saliency*": 0.032182932008473546,
+                "tail-first": -4.070817756958907e-16,
+                "zero-first": 0.011718631490237238
+              }
+            },
+            "16": {
+              "success_rate": 0.775,
+              "detection_per_path": {
+                "uniform": 0.015246975806451426,
+                "static-importance": 0.02224385622045651,
+                "contribution": -8.953411488912552e-17,
+                "floor-0.01": 0.00114420480873719,
+                "floor-0.1": 0.007837532375814889,
+                "floor-1": 0.019001578322823207,
+                "floor-10": 0.02204181674994226,
+                "floor-100": 0.02238324335522908,
+                "gradient-saliency*": 0.048679912099753135,
+                "tail-first": -4.2976375146780254e-16,
+                "zero-first": 0.020786758341919183
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.022460937499999813,
+                "static-importance": 0.03041091986912455,
+                "contribution": -9.159339953157541e-17,
+                "floor-0.01": 0.0016203659625567079,
+                "floor-0.1": 0.01096138810531946,
+                "floor-1": 0.026081768411752894,
+                "floor-10": 0.0301133544332376,
+                "floor-100": 0.030565255889922212,
+                "gradient-saliency*": 0.059096785667988,
+                "tail-first": -4.551914400963141e-16,
+                "zero-first": 0.027069144717946726
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.022460937499999813,
+                "static-importance": 0.03041091986912455,
+                "contribution": -9.159339953157541e-17,
+                "floor-0.01": 0.0016203659625567079,
+                "floor-0.1": 0.01096138810531946,
+                "floor-1": 0.026081768411752894,
+                "floor-10": 0.0301133544332376,
+                "floor-100": 0.030565255889922212,
+                "gradient-saliency*": 0.059096785667988,
+                "tail-first": -4.551914400963141e-16,
+                "zero-first": 0.027069144717946726
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-100",
+          "mixture": {
+            "weights": {
+              "floor-100": 0.9999941373525287,
+              "zero-first": 5.862647471266413e-06
+            },
+            "detection_per_path": 0.030565271772861797,
+            "s_40": 894,
+            "double_oracle_values": [
+              0.030565271772861797
+            ],
+            "rounds": 0,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "gradient-saliency*": 1.0
+            },
+            "detection_per_path": 0.05909678566798801,
+            "s_40": 456,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 0,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": null,
+                "2": null,
+                "4": null,
+                "8": null,
+                "16": null,
+                "32": null,
+                "64": null
+              }
+            },
+            "randomised": {
+              "n_queries": 0,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": null,
+                "2": null,
+                "4": null,
+                "8": null,
+                "16": null,
+                "32": null,
+                "64": null
+              }
+            }
+          }
+        },
+        "75": {
+          "cap_percentile": 75.0,
+          "width": 512,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 10.65,
+          "mean_magnitude_sigma": 4.569019053146304,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.0,
+          "R2_honest_baseline": 0.0,
+          "R2_max_pass_rate": 0.95,
+          "R2_max_honest_baseline": 0.95,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.020800781249999827,
+              "median": 0.02050781249999989,
+              "s_40": 1320
+            },
+            "static-importance": {
+              "detection_per_path": 0.02855999295434213,
+              "median": 0.027785100433951992,
+              "s_40": 957
+            },
+            "contribution": {
+              "detection_per_path": -1.4155343563970745e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0016176750496249114,
+              "median": 0.0014416667668187277,
+              "s_40": 17126
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.01094298373788824,
+              "median": 0.009831074944292417,
+              "s_40": 2520
+            },
+            "floor-1": {
+              "detection_per_path": 0.0255494791146191,
+              "median": 0.02524973855745194,
+              "s_40": 1072
+            },
+            "floor-10": {
+              "detection_per_path": 0.028464596003538435,
+              "median": 0.027897211216397544,
+              "s_40": 961
+            },
+            "floor-100": {
+              "detection_per_path": 0.028718830728919564,
+              "median": 0.027834609828615797,
+              "s_40": 952
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.057657128699725745,
+              "median": 0.054902674173415156,
+              "s_40": 467
+            },
+            "tail-first": {
+              "detection_per_path": -5.551115123125783e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            },
+            "zero-first": {
+              "detection_per_path": 0.009074246128019456,
+              "median": 0.008379953652769723,
+              "s_40": 3042
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.1,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.004271851689698597,
+                "contribution": -1.1102230246251565e-16,
+                "floor-0.01": 0.0002818578422911222,
+                "floor-0.1": 0.0018374535348771037,
+                "floor-1": 0.004000106978076651,
+                "floor-10": 0.004401431653043686,
+                "floor-100": 0.0043593251357694485,
+                "gradient-saliency*": 0.0067601920693382556,
+                "tail-first": -3.3306690738754696e-16,
+                "zero-first": -6.661338147750939e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.15,
+              "detection_per_path": {
+                "uniform": 0.0026041666666664818,
+                "static-importance": 0.006096850014727724,
+                "contribution": -1.1102230246251565e-16,
+                "floor-0.01": 0.0003614929485848591,
+                "floor-0.1": 0.002431403153098366,
+                "floor-1": 0.005568832390241881,
+                "floor-10": 0.006205733486614314,
+                "floor-100": 0.006210799187811089,
+                "gradient-saliency*": 0.012047960314082376,
+                "tail-first": -3.3306690738754696e-16,
+                "zero-first": -4.440892098500626e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.25,
+              "detection_per_path": {
+                "uniform": 0.004296874999999778,
+                "static-importance": 0.008896161761653342,
+                "contribution": -1.3322676295501878e-16,
+                "floor-0.01": 0.00047992424517284693,
+                "floor-0.1": 0.0032918681068066944,
+                "floor-1": 0.007926441918899685,
+                "floor-10": 0.008976720324271747,
+                "floor-100": 0.009031945169975342,
+                "gradient-saliency*": 0.020463231334771327,
+                "tail-first": -2.6645352591003756e-16,
+                "zero-first": 0.002699046821443929
+              }
+            },
+            "8": {
+              "success_rate": 0.45,
+              "detection_per_path": {
+                "uniform": 0.007703993055555376,
+                "static-importance": 0.012982083490296578,
+                "contribution": -1.1102230246251565e-16,
+                "floor-0.01": 0.0006981143380403824,
+                "floor-0.1": 0.004765770310655695,
+                "floor-1": 0.01146019954736802,
+                "floor-10": 0.013016351455320886,
+                "floor-100": 0.01311469611633844,
+                "gradient-saliency*": 0.03181152661984024,
+                "tail-first": -4.810966440042345e-16,
+                "zero-first": 0.004083987514365432
+              }
+            },
+            "16": {
+              "success_rate": 0.775,
+              "detection_per_path": {
+                "uniform": 0.01436491935483853,
+                "static-importance": 0.021329528348836196,
+                "contribution": -1.181850316536457e-16,
+                "floor-0.01": 0.001140732663018743,
+                "floor-0.1": 0.007813784804935893,
+                "floor-1": 0.01882385071044896,
+                "floor-10": 0.021276394356591694,
+                "floor-100": 0.021476457364545783,
+                "gradient-saliency*": 0.04774435111265982,
+                "tail-first": -4.727401266145828e-16,
+                "zero-first": 0.007743734077892353
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.020800781249999827,
+                "static-importance": 0.02855999295434213,
+                "contribution": -1.3600232051658169e-16,
+                "floor-0.01": 0.0016176750496249114,
+                "floor-0.1": 0.01094298373788824,
+                "floor-1": 0.0255494791146191,
+                "floor-10": 0.028464596003538435,
+                "floor-100": 0.028718830728919564,
+                "gradient-saliency*": 0.057657128699725745,
+                "tail-first": -5.218048215738236e-16,
+                "zero-first": 0.009074246128019456
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.020800781249999827,
+                "static-importance": 0.02855999295434213,
+                "contribution": -1.4155343563970745e-16,
+                "floor-0.01": 0.0016176750496249114,
+                "floor-0.1": 0.01094298373788824,
+                "floor-1": 0.0255494791146191,
+                "floor-10": 0.028464596003538435,
+                "floor-100": 0.028718830728919564,
+                "gradient-saliency*": 0.057657128699725745,
+                "tail-first": -5.551115123125783e-16,
+                "zero-first": 0.009074246128019456
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-100",
+          "mixture": {
+            "weights": {
+              "floor-100": 1.0
+            },
+            "detection_per_path": 0.028718838424938473,
+            "s_40": 952,
+            "double_oracle_values": [
+              0.028943356995950416,
+              0.028718838424938473
+            ],
+            "rounds": 1,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "gradient-saliency*": 1.0
+            },
+            "detection_per_path": 0.05765712869972579,
+            "s_40": 467,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 1,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.0,
+                "32": 0.0,
+                "64": 0.0
+              }
+            },
+            "randomised": {
+              "n_queries": 1,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.0,
+                "32": 0.0,
+                "64": 0.0
+              }
+            }
+          }
+        },
+        "90": {
+          "cap_percentile": 90.0,
+          "width": 512,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 6.45,
+          "mean_magnitude_sigma": 4.108279894107348,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.0,
+          "R2_honest_baseline": 0.0,
+          "R2_max_pass_rate": 0.95,
+          "R2_max_honest_baseline": 0.95,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.012597656249999836,
+              "median": 0.010742187499999889,
+              "s_40": 2187
+            },
+            "static-importance": {
+              "detection_per_path": 0.02069911372200263,
+              "median": 0.020734723760560514,
+              "s_40": 1326
+            },
+            "contribution": {
+              "detection_per_path": -1.5265566588595902e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.00161487921074637,
+              "median": 0.0014416667668187277,
+              "s_40": 17156
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.010925046604784276,
+              "median": 0.009831074944292417,
+              "s_40": 2524
+            },
+            "floor-1": {
+              "detection_per_path": 0.024882516725749423,
+              "median": 0.02524973855745194,
+              "s_40": 1101
+            },
+            "floor-10": {
+              "detection_per_path": 0.022273198033994225,
+              "median": 0.022027363042615544,
+              "s_40": 1231
+            },
+            "floor-100": {
+              "detection_per_path": 0.021043361860864033,
+              "median": 0.021040194284215774,
+              "s_40": 1304
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.04800595236502512,
+              "median": 0.042825785875133415,
+              "s_40": 564
+            },
+            "tail-first": {
+              "detection_per_path": -6.217248937900876e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            },
+            "zero-first": {
+              "detection_per_path": 0.0002373604460819828,
+              "median": -6.661338147750939e-16,
+              "s_40": 116796
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.1,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.00425341947795807,
+                "contribution": -1.1102230246251565e-16,
+                "floor-0.01": 0.0002818578422911222,
+                "floor-0.1": 0.0018374535348771037,
+                "floor-1": 0.004000106978076651,
+                "floor-10": 0.004359443107327554,
+                "floor-100": 0.004341924250619578,
+                "gradient-saliency*": 0.0067601920693381445,
+                "tail-first": -3.3306690738754696e-16,
+                "zero-first": -6.661338147750939e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.175,
+              "detection_per_path": {
+                "uniform": 0.002790178571428397,
+                "static-importance": 0.005913316005644741,
+                "contribution": 0.006559808735888953,
+                "floor-0.01": 0.006675263958566499,
+                "floor-0.1": 0.007170433828398215,
+                "floor-1": 0.007026972946794076,
+                "floor-10": 0.006333945388613823,
+                "floor-100": 0.00605242215797381,
+                "gradient-saliency*": 0.012690156720188441,
+                "tail-first": -2.854859206178974e-16,
+                "zero-first": -4.758098676964956e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.35,
+              "detection_per_path": {
+                "uniform": 0.004743303571428341,
+                "static-importance": 0.009055284287091039,
+                "contribution": 0.019132818325548678,
+                "floor-0.01": 0.018762688020256428,
+                "floor-0.1": 0.016440756936972167,
+                "floor-1": 0.011805779543486177,
+                "floor-10": 0.00973468917631874,
+                "floor-100": 0.009245513208448726,
+                "gradient-saliency*": 0.023424774649560005,
+                "tail-first": -4.758098676964956e-16,
+                "zero-first": 0.0006709350406823776
+              }
+            },
+            "8": {
+              "success_rate": 0.675,
+              "detection_per_path": {
+                "uniform": 0.008318865740740564,
+                "static-importance": 0.014675962043661785,
+                "contribution": 0.03019181831638633,
+                "floor-0.01": 0.02972173221696525,
+                "floor-0.1": 0.026613571043125433,
+                "floor-1": 0.019580923848635353,
+                "floor-10": 0.015802209808993557,
+                "floor-100": 0.01493493262103212,
+                "gradient-saliency*": 0.0360817526525755,
+                "tail-first": -5.427757009278544e-16,
+                "zero-first": 0.0018986218699002255
+              }
+            },
+            "16": {
+              "success_rate": 0.975,
+              "detection_per_path": {
+                "uniform": 0.01201923076923061,
+                "static-importance": 0.019946437200338535,
+                "contribution": 0.02041691470222422,
+                "floor-0.01": 0.02085470209023763,
+                "floor-0.1": 0.023140413809120332,
+                "floor-1": 0.025362365592511347,
+                "floor-10": 0.021521886648202513,
+                "floor-100": 0.020286009428953755,
+                "gradient-saliency*": 0.046696803803516276,
+                "tail-first": -5.978123978750843e-16,
+                "zero-first": 0.0007576500726709434
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.012597656249999836,
+                "static-importance": 0.02069911372200263,
+                "contribution": -1.4155343563970745e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.024882516725749423,
+                "floor-10": 0.022273198033994225,
+                "floor-100": 0.021043361860864033,
+                "gradient-saliency*": 0.04800595236502512,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": 0.0002373604460819828
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.012597656249999836,
+                "static-importance": 0.02069911372200263,
+                "contribution": -1.5265566588595902e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.024882516725749423,
+                "floor-10": 0.022273198033994225,
+                "floor-100": 0.021043361860864033,
+                "gradient-saliency*": 0.04800595236502512,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": 0.0002373604460819828
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-1": 0.7728584037009572,
+              "floor-10": 0.22714159629904285
+            },
+            "detection_per_path": 0.025328665650706735,
+            "s_40": 1081,
+            "double_oracle_values": [
+              0.025502386938224136,
+              0.025328665650706735
+            ],
+            "rounds": 1,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.0805228951335489,
+              "gradient-saliency*": 0.9194771048664511
+            },
+            "detection_per_path": 0.049041456313482924,
+            "s_40": 552,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 1,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.0,
+                "32": 0.0,
+                "64": 0.0
+              }
+            },
+            "randomised": {
+              "n_queries": 1,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.0,
+                "32": 0.0,
+                "64": 0.0
+              }
+            }
+          }
+        },
+        "95": {
+          "cap_percentile": 95.0,
+          "width": 512,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 5.075,
+          "mean_magnitude_sigma": 3.8951760269258564,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.0,
+          "R2_honest_baseline": 0.0,
+          "R2_max_pass_rate": 0.95,
+          "R2_max_honest_baseline": 0.95,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.009912109374999797,
+              "median": 0.007812499999999778,
+              "s_40": 2784
+            },
+            "static-importance": {
+              "detection_per_path": 0.016809784489038603,
+              "median": 0.015366002285262637,
+              "s_40": 1636
+            },
+            "contribution": {
+              "detection_per_path": -1.5265566588595902e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.00161487921074637,
+              "median": 0.0014416667668187277,
+              "s_40": 17156
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.010925046604784276,
+              "median": 0.009831074944292417,
+              "s_40": 2524
+            },
+            "floor-1": {
+              "detection_per_path": 0.024433320163911292,
+              "median": 0.02524973855745194,
+              "s_40": 1121
+            },
+            "floor-10": {
+              "detection_per_path": 0.01904118091253249,
+              "median": 0.017796758394543477,
+              "s_40": 1443
+            },
+            "floor-100": {
+              "detection_per_path": 0.017207163864397582,
+              "median": 0.015726391422765162,
+              "s_40": 1598
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.03904966809764028,
+              "median": 0.03539331309004945,
+              "s_40": 697
+            },
+            "tail-first": {
+              "detection_per_path": -6.217248937900876e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            },
+            "zero-first": {
+              "detection_per_path": -7.882583474838611e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.125,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.004212510931896207,
+                "contribution": 0.011896474686249815,
+                "floor-0.01": 0.01174459554570666,
+                "floor-0.1": 0.010478918145470506,
+                "floor-1": 0.006476846839665251,
+                "floor-10": 0.004660425907231036,
+                "floor-100": 0.004327544791726745,
+                "gradient-saliency*": 0.006607191162241177,
+                "tail-first": -2.6645352591003756e-16,
+                "zero-first": -7.549516567451064e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.225,
+              "detection_per_path": {
+                "uniform": 0.002821180555555383,
+                "static-importance": 0.006304945869384608,
+                "contribution": 0.022050481594762788,
+                "floor-0.01": 0.021418656639683207,
+                "floor-0.1": 0.017510052603472763,
+                "floor-1": 0.009948148140177847,
+                "floor-10": 0.007118897490213266,
+                "floor-100": 0.006486208435488762,
+                "gradient-saliency*": 0.015298335419381847,
+                "tail-first": -3.7007434154171886e-16,
+                "zero-first": -5.674473236973022e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.525,
+              "detection_per_path": {
+                "uniform": 0.005301339285714064,
+                "static-importance": 0.00990601937146213,
+                "contribution": 0.04823967827616581,
+                "floor-0.01": 0.04676197343801922,
+                "floor-0.1": 0.037421960652910514,
+                "floor-1": 0.018495980984976654,
+                "floor-10": 0.011423149349547171,
+                "floor-100": 0.01017719510970173,
+                "gradient-saliency*": 0.02471606128000429,
+                "tail-first": 0.002506265664159838,
+                "zero-first": 0.0011079978377696138
+              }
+            },
+            "8": {
+              "success_rate": 0.875,
+              "detection_per_path": {
+                "uniform": 0.008426339285714086,
+                "static-importance": 0.014444713056183417,
+                "contribution": 0.05182230669220535,
+                "floor-0.01": 0.05072163951912975,
+                "floor-0.1": 0.04327640317507601,
+                "floor-1": 0.02536537377384597,
+                "floor-10": 0.016515213253688533,
+                "floor-100": 0.014810912543486479,
+                "gradient-saliency*": 0.03518933741817111,
+                "tail-first": 0.00889812188254589,
+                "zero-first": 0.0014060907185357082
+              }
+            },
+            "16": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.009912109374999797,
+                "static-importance": 0.016809784489038603,
+                "contribution": 0.02297843821614811,
+                "floor-0.01": 0.02332914567751089,
+                "floor-0.1": 0.02502489054120035,
+                "floor-1": 0.025619871621336422,
+                "floor-10": 0.01904118091253249,
+                "floor-100": 0.017207163864397582,
+                "gradient-saliency*": 0.03904966809764028,
+                "tail-first": 0.004166666666666058,
+                "zero-first": -7.688294445529209e-16
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.009912109374999797,
+                "static-importance": 0.016809784489038603,
+                "contribution": -1.4155343563970745e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.024433320163911292,
+                "floor-10": 0.01904118091253249,
+                "floor-100": 0.017207163864397582,
+                "gradient-saliency*": 0.03904966809764028,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": -7.882583474838611e-16
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.009912109374999797,
+                "static-importance": 0.016809784489038603,
+                "contribution": -1.5265566588595902e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.024433320163911292,
+                "floor-10": 0.01904118091253249,
+                "floor-100": 0.017207163864397582,
+                "gradient-saliency*": 0.03904966809764028,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": -7.882583474838611e-16
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-1": 0.8819367450093781,
+              "floor-10": 0.11806325499062187
+            },
+            "detection_per_path": 0.024519304505800917,
+            "s_40": 1117,
+            "double_oracle_values": [
+              0.0245525890890578,
+              0.024519304505800917
+            ],
+            "rounds": 1,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.16359251611956513,
+              "gradient-saliency*": 0.8364074838804348
+            },
+            "detection_per_path": 0.04584101472849808,
+            "s_40": 591,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 3,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.3333333333333333,
+                "32": 0.6666666666666666,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 3,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.3333333333333333,
+                "32": 0.6666666666666666,
+                "64": 0.6666666666666666
+              }
+            }
+          }
+        },
+        "99": {
+          "cap_percentile": 99.0,
+          "width": 512,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 3.525,
+          "mean_magnitude_sigma": 4.474500288403311,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.125,
+          "R2_honest_baseline": 0.175,
+          "R2_max_pass_rate": 0.925,
+          "R2_max_honest_baseline": 0.95,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.006884765624999831,
+              "median": 0.005859374999999667,
+              "s_40": 4014
+            },
+            "static-importance": {
+              "detection_per_path": 0.012013264286265733,
+              "median": 0.010960146869870568,
+              "s_40": 2295
+            },
+            "contribution": {
+              "detection_per_path": -1.5265566588595902e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.00161487921074637,
+              "median": 0.0014416667668187277,
+              "s_40": 17156
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.010925046604784276,
+              "median": 0.009831074944292417,
+              "s_40": 2524
+            },
+            "floor-1": {
+              "detection_per_path": 0.023832417049226964,
+              "median": 0.024182404902341748,
+              "s_40": 1150
+            },
+            "floor-10": {
+              "detection_per_path": 0.014999525051201492,
+              "median": 0.013564032829529338,
+              "s_40": 1835
+            },
+            "floor-100": {
+              "detection_per_path": 0.012452632851491988,
+              "median": 0.011500084451639692,
+              "s_40": 2213
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.027935181380624573,
+              "median": 0.025791881200961986,
+              "s_40": 979
+            },
+            "tail-first": {
+              "detection_per_path": -6.217248937900876e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            },
+            "zero-first": {
+              "detection_per_path": -8.215650382226159e-16,
+              "median": -8.881784197001252e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.175,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.00442424892156168,
+                "contribution": 0.023293413463651134,
+                "floor-0.01": 0.022569216485422712,
+                "floor-0.1": 0.017971947990695174,
+                "floor-1": 0.008490813779957576,
+                "floor-10": 0.005128495861023057,
+                "floor-100": 0.004573600760860584,
+                "gradient-saliency*": 0.007757943847124043,
+                "tail-first": 0.014652014652014298,
+                "zero-first": -7.2957513046796e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.375,
+              "detection_per_path": {
+                "uniform": 0.002994791666666504,
+                "static-importance": 0.006269058342957568,
+                "contribution": 0.052493241071584956,
+                "floor-0.01": 0.050704453164994036,
+                "floor-0.1": 0.03933619807337059,
+                "floor-1": 0.016095709628062747,
+                "floor-10": 0.007850506398993503,
+                "floor-100": 0.006523376460848744,
+                "gradient-saliency*": 0.014176056982969502,
+                "tail-first": 0.052656309208032916,
+                "zero-first": -6.217248937900876e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.65,
+              "detection_per_path": {
+                "uniform": 0.004582331730769018,
+                "static-importance": 0.008239915537660382,
+                "contribution": 0.057571202379283634,
+                "floor-0.01": 0.055830322132221236,
+                "floor-0.1": 0.04461718285219907,
+                "floor-1": 0.02042378472816801,
+                "floor-10": 0.010478687130558849,
+                "floor-100": 0.008573123533365078,
+                "gradient-saliency*": 0.019311915299112265,
+                "tail-first": 0.022929698760089743,
+                "zero-first": -7.429954087876048e-16
+              }
+            },
+            "8": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.006884765624999831,
+                "static-importance": 0.012013264286265733,
+                "contribution": 0.06124917341949493,
+                "floor-0.01": 0.05986196587899149,
+                "floor-0.1": 0.05042391099045159,
+                "floor-1": 0.027141699995019475,
+                "floor-10": 0.014999525051201492,
+                "floor-100": 0.012452632851491988,
+                "gradient-saliency*": 0.028250292296514618,
+                "tail-first": 0.02907519639817322,
+                "zero-first": -8.049116928532385e-16
+              }
+            },
+            "16": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.006884765624999831,
+                "static-importance": 0.012013264286265733,
+                "contribution": 0.022580752746535513,
+                "floor-0.01": 0.022937480022084823,
+                "floor-0.1": 0.024672537447813104,
+                "floor-1": 0.024606262871727194,
+                "floor-10": 0.014999525051201492,
+                "floor-100": 0.012452632851491988,
+                "gradient-saliency*": 0.027935181380624573,
+                "tail-first": 0.0040322580645155235,
+                "zero-first": -8.215650382226159e-16
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.006884765624999831,
+                "static-importance": 0.012013264286265733,
+                "contribution": -1.4155343563970745e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.023832417049226964,
+                "floor-10": 0.014999525051201492,
+                "floor-100": 0.012452632851491988,
+                "gradient-saliency*": 0.027935181380624573,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": -8.215650382226159e-16
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.006884765624999831,
+                "static-importance": 0.012013264286265733,
+                "contribution": -1.5265566588595902e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.023832417049226964,
+                "floor-10": 0.014999525051201492,
+                "floor-100": 0.012452632851491988,
+                "gradient-saliency*": 0.027935181380624573,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": -8.215650382226159e-16
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-1": 0.9897423224314496,
+              "floor-10": 0.006337917781265959,
+              "tail-first": 0.003919759787284589
+            },
+            "detection_per_path": 0.023852566945228516,
+            "s_40": 1149,
+            "double_oracle_values": [
+              0.023852566945228516
+            ],
+            "rounds": 0,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.20421829784258952,
+              "gradient-saliency*": 0.79479253740825,
+              "tail-first": 0.00098916474916051
+            },
+            "detection_per_path": 0.04285387259430897,
+            "s_40": 634,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 5,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.2,
+                "8": 0.6,
+                "16": 0.8,
+                "32": 0.8,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 5,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.2,
+                "8": 0.4,
+                "16": 0.6,
+                "32": 0.8,
+                "64": 0.8
+              }
+            }
+          }
+        },
+        "100": {
+          "cap_percentile": 100.0,
+          "width": 512,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 2.3,
+          "mean_magnitude_sigma": 7.353279262550517,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.925,
+          "R2_honest_baseline": 0.95,
+          "R2_max_pass_rate": 0.925,
+          "R2_max_honest_baseline": 0.95,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.0044921874999998,
+              "median": 0.003906249999999889,
+              "s_40": 6159
+            },
+            "static-importance": {
+              "detection_per_path": 0.007618947257253058,
+              "median": 0.007710652622741843,
+              "s_40": 3626
+            },
+            "contribution": {
+              "detection_per_path": -1.5265566588595902e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.00161487921074637,
+              "median": 0.0014416667668187277,
+              "s_40": 17156
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.010925046604784276,
+              "median": 0.009831074944292417,
+              "s_40": 2524
+            },
+            "floor-1": {
+              "detection_per_path": 0.02326229429992775,
+              "median": 0.02319452417409451,
+              "s_40": 1178
+            },
+            "floor-10": {
+              "detection_per_path": 0.010933715381703814,
+              "median": 0.011196519791557225,
+              "s_40": 2522
+            },
+            "floor-100": {
+              "detection_per_path": 0.008062728284556184,
+              "median": 0.008084194145069945,
+              "s_40": 3425
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.01667671583531653,
+              "median": 0.015245697596258267,
+              "s_40": 1649
+            },
+            "tail-first": {
+              "detection_per_path": -6.217248937900876e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            },
+            "zero-first": {
+              "detection_per_path": -8.326672684688674e-16,
+              "median": -8.881784197001252e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.25,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.0038568007906928494,
+                "contribution": 0.04700969194381559,
+                "floor-0.01": 0.04540730708048048,
+                "floor-0.1": 0.035149357141177895,
+                "floor-1": 0.013520379363400826,
+                "floor-10": 0.005257000971590209,
+                "floor-100": 0.004052504287116376,
+                "gradient-saliency*": 0.00532472714123684,
+                "tail-first": 0.025434098065676626,
+                "zero-first": -7.327471962526033e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.625,
+              "detection_per_path": {
+                "uniform": 0.0031249999999998445,
+                "static-importance": 0.0057025720745394,
+                "contribution": 0.08337095120513133,
+                "floor-0.01": 0.08071084432281626,
+                "floor-0.1": 0.06323213441849061,
+                "floor-1": 0.023730251314512864,
+                "floor-10": 0.008383586994154455,
+                "floor-100": 0.006064746596917962,
+                "gradient-saliency*": 0.01130187408930103,
+                "tail-first": 0.05037417866628985,
+                "zero-first": -6.572520305780927e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.975,
+              "detection_per_path": {
+                "uniform": 0.004356971153845949,
+                "static-importance": 0.007495237420580234,
+                "contribution": 0.0882063152436129,
+                "floor-0.01": 0.0856787794456711,
+                "floor-0.1": 0.06878779998181411,
+                "floor-1": 0.028481360483375944,
+                "floor-10": 0.010809408336522707,
+                "floor-100": 0.00792819985912823,
+                "gradient-saliency*": 0.016680917666111992,
+                "tail-first": 0.05267287727769475,
+                "zero-first": 0.00016335999035869216
+              }
+            },
+            "8": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.0044921874999998,
+                "static-importance": 0.007618947257253058,
+                "contribution": 0.058971896183709294,
+                "floor-0.01": 0.05761825591152699,
+                "floor-0.1": 0.04839462262031973,
+                "floor-1": 0.025408097422040577,
+                "floor-10": 0.010933715381703814,
+                "floor-100": 0.008062728284556184,
+                "gradient-saliency*": 0.01667671583531653,
+                "tail-first": 0.0223725802537065,
+                "zero-first": -8.215650382226159e-16
+              }
+            },
+            "16": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.0044921874999998,
+                "static-importance": 0.007618947257253058,
+                "contribution": 0.022580752746535513,
+                "floor-0.01": 0.022937480022084823,
+                "floor-0.1": 0.024664136673804658,
+                "floor-1": 0.02385001194553849,
+                "floor-10": 0.010933715381703814,
+                "floor-100": 0.008062728284556184,
+                "gradient-saliency*": 0.01667671583531653,
+                "tail-first": 0.003124999999999392,
+                "zero-first": -8.326672684688674e-16
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.0044921874999998,
+                "static-importance": 0.007618947257253058,
+                "contribution": -1.4155343563970745e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.02326229429992775,
+                "floor-10": 0.010933715381703814,
+                "floor-100": 0.008062728284556184,
+                "gradient-saliency*": 0.01667671583531653,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": -8.326672684688674e-16
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.0044921874999998,
+                "static-importance": 0.007618947257253058,
+                "contribution": -1.5265566588595902e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.02326229429992775,
+                "floor-10": 0.010933715381703814,
+                "floor-100": 0.008062728284556184,
+                "gradient-saliency*": 0.01667671583531653,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": -8.326672684688674e-16
+              }
+            }
+          },
+          "best_single_sampler": "floor-1",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-0.1": 0.029546115527068994,
+              "floor-1": 0.9661552423727702,
+              "tail-first": 0.004298642100160849
+            },
+            "detection_per_path": 0.02335063745620929,
+            "s_40": 1174,
+            "double_oracle_values": [
+              0.02335063745620929
+            ],
+            "rounds": 0,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.27273668440791354,
+              "gradient-saliency*": 0.7272633155920865
+            },
+            "detection_per_path": 0.0389448268619686,
+            "s_40": 698,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 9,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.1111111111111111,
+                "2": 0.3333333333333333,
+                "4": 0.4444444444444444,
+                "8": 0.6666666666666666,
+                "16": 0.8888888888888888,
+                "32": 0.8888888888888888,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 9,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.3333333333333333,
+                "2": 0.5555555555555556,
+                "4": 0.5555555555555556,
+                "8": 0.8888888888888888,
+                "16": 1.0,
+                "32": 1.0,
+                "64": 1.0
+              }
+            }
+          }
+        },
+        "inf": {
+          "cap_percentile": "inf",
+          "width": 512,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 1.0,
+          "mean_magnitude_sigma": 161.39619170811307,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 1.0,
+          "R2_honest_baseline": 1.0,
+          "R2_max_pass_rate": 0.225,
+          "R2_max_honest_baseline": 0.95,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.001953124999999778,
+              "median": 0.001953124999999778,
+              "s_40": 14182
+            },
+            "static-importance": {
+              "detection_per_path": 0.0010246095443350283,
+              "median": 0.0009996690110327666,
+              "s_40": 27047
+            },
+            "contribution": {
+              "detection_per_path": -1.637578961322106e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.00161487921074637,
+              "median": 0.0014416667668187277,
+              "s_40": 17156
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.010925046604784276,
+              "median": 0.009831074944292417,
+              "s_40": 2524
+            },
+            "floor-1": {
+              "detection_per_path": 0.01978030620338506,
+              "median": 0.01960640400873276,
+              "s_40": 1388
+            },
+            "floor-10": {
+              "detection_per_path": 0.004540533341274045,
+              "median": 0.004407183095409994,
+              "s_40": 6093
+            },
+            "floor-100": {
+              "detection_per_path": 0.0018345845259751387,
+              "median": 0.0017706092871042634,
+              "s_40": 15100
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 8.68743352000989e-05,
+              "median": 5.6652506609855546e-05,
+              "s_40": 319136
+            },
+            "tail-first": {
+              "detection_per_path": -6.217248937900876e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            },
+            "zero-first": {
+              "detection_per_path": -8.992806499463768e-16,
+              "median": -8.881784197001252e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.0010246095443350283,
+                "contribution": 0.08593621467949615,
+                "floor-0.01": 0.0831114470633457,
+                "floor-0.1": 0.06443537584760581,
+                "floor-1": 0.02141512362214253,
+                "floor-10": 0.004540533341274045,
+                "floor-100": 0.0018345845259751387,
+                "gradient-saliency*": 8.68743352000989e-05,
+                "tail-first": 0.04938046245059472,
+                "zero-first": -8.770761894538737e-16
+              }
+            },
+            "2": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.0010246095443350283,
+                "contribution": 0.08115549706757672,
+                "floor-0.01": 0.07854216242570375,
+                "floor-0.1": 0.0612309975967182,
+                "floor-1": 0.020970846167274345,
+                "floor-10": 0.004540533341274045,
+                "floor-100": 0.0018345845259751387,
+                "gradient-saliency*": 8.68743352000989e-05,
+                "tail-first": 0.04389328296341527,
+                "zero-first": -8.770761894538737e-16
+              }
+            },
+            "4": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.0010246095443350283,
+                "contribution": 0.071324206158769,
+                "floor-0.01": 0.06917607355564799,
+                "floor-0.1": 0.05489801362176172,
+                "floor-1": 0.020669501275141538,
+                "floor-10": 0.004540533341274045,
+                "floor-100": 0.0018345845259751387,
+                "gradient-saliency*": 8.68743352000989e-05,
+                "tail-first": 0.022838621039188142,
+                "zero-first": -8.881784197001252e-16
+              }
+            },
+            "8": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.0010246095443350283,
+                "contribution": 0.05254196859580116,
+                "floor-0.01": 0.05128598103338753,
+                "floor-0.1": 0.042725664542468664,
+                "floor-1": 0.019938736456663476,
+                "floor-10": 0.004540533341274045,
+                "floor-100": 0.0018345845259751387,
+                "gradient-saliency*": 8.68743352000989e-05,
+                "tail-first": 0.007645323843453991,
+                "zero-first": -8.93729534823251e-16
+              }
+            },
+            "16": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.0010246095443350283,
+                "contribution": 0.02119061069520788,
+                "floor-0.01": 0.0215385999360009,
+                "floor-0.1": 0.023154735290742225,
+                "floor-1": 0.01978030620338506,
+                "floor-10": 0.004540533341274045,
+                "floor-100": 0.0018345845259751387,
+                "gradient-saliency*": 8.68743352000989e-05,
+                "tail-first": 0.0008620689655166241,
+                "zero-first": -8.992806499463768e-16
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.0010246095443350283,
+                "contribution": -1.4710455076283324e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.01978030620338506,
+                "floor-10": 0.004540533341274045,
+                "floor-100": 0.0018345845259751387,
+                "gradient-saliency*": 8.68743352000989e-05,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": -8.992806499463768e-16
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.001953124999999778,
+                "static-importance": 0.0010246095443350283,
+                "contribution": -1.637578961322106e-16,
+                "floor-0.01": 0.00161487921074637,
+                "floor-0.1": 0.010925046604784276,
+                "floor-1": 0.01978030620338506,
+                "floor-10": 0.004540533341274045,
+                "floor-100": 0.0018345845259751387,
+                "gradient-saliency*": 8.68743352000989e-05,
+                "tail-first": -6.217248937900876e-16,
+                "zero-first": -8.992806499463768e-16
+              }
+            }
+          },
+          "best_single_sampler": "floor-1",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-0.1": 0.12800167548328986,
+              "floor-1": 0.8719983245167101
+            },
+            "detection_per_path": 0.021499021557409563,
+            "s_40": 1276,
+            "double_oracle_values": [
+              0.021499021557409563
+            ],
+            "rounds": 0,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.38957524900367635,
+              "gradient-saliency*": 0.6104247509963237
+            },
+            "detection_per_path": 0.032616863035109564,
+            "s_40": 837,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 40,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.75,
+                "2": 0.85,
+                "4": 0.875,
+                "8": 0.925,
+                "16": 0.975,
+                "32": 0.975,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 40,
+              "q_over_N": {
+                "1": 0.001953125,
+                "2": 0.00390625,
+                "4": 0.0078125,
+                "8": 0.015625,
+                "16": 0.03125,
+                "32": 0.0625,
+                "64": 0.125
+              },
+              "top_q_hit_rate": {
+                "1": 0.975,
+                "2": 1.0,
+                "4": 1.0,
+                "8": 1.0,
+                "16": 1.0,
+                "32": 1.0,
+                "64": 1.0
+              }
+            }
+          }
+        }
+      }
+    },
+    "2": {
+      "width": 256,
+      "caps": {
+        "50": {
+          "cap_percentile": 50.0,
+          "width": 256,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 21.675,
+          "mean_magnitude_sigma": 3.02117668928504,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.0,
+          "R2_honest_baseline": 0.0,
+          "R2_max_pass_rate": 0.975,
+          "R2_max_honest_baseline": 0.975,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.08466796874999975,
+              "median": 0.08203124999999989,
+              "s_40": 314
+            },
+            "static-importance": {
+              "detection_per_path": 0.09667807182157717,
+              "median": 0.09684972314761692,
+              "s_40": 273
+            },
+            "contribution": {
+              "detection_per_path": -9.159339953157541e-17,
+              "median": 0.0,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0014075777668210194,
+              "median": 0.0014726337215745233,
+              "s_40": 19684
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.012505289665575958,
+              "median": 0.013135462446691282,
+              "s_40": 2204
+            },
+            "floor-1": {
+              "detection_per_path": 0.0599051971855765,
+              "median": 0.06328792427081392,
+              "s_40": 449
+            },
+            "floor-10": {
+              "detection_per_path": 0.09166255476292323,
+              "median": 0.09335896551048584,
+              "s_40": 289
+            },
+            "floor-100": {
+              "detection_per_path": 0.09613070517049402,
+              "median": 0.09624241545686829,
+              "s_40": 275
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.17116891677663765,
+              "median": 0.17123723759738413,
+              "s_40": 148
+            },
+            "tail-first": {
+              "detection_per_path": 0.014941406249999406,
+              "median": -6.661338147750939e-16,
+              "s_40": 1842
+            },
+            "zero-first": {
+              "detection_per_path": 0.04365219377849872,
+              "median": 0.04069407147283571,
+              "s_40": 622
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.0,
+              "detection_per_path": {
+                "uniform": null,
+                "static-importance": null,
+                "contribution": null,
+                "floor-0.01": null,
+                "floor-0.1": null,
+                "floor-1": null,
+                "floor-10": null,
+                "floor-100": null,
+                "gradient-saliency*": null,
+                "tail-first": null,
+                "zero-first": null
+              }
+            },
+            "2": {
+              "success_rate": 0.025,
+              "detection_per_path": {
+                "uniform": 0.007812499999999778,
+                "static-importance": 0.00854765189776241,
+                "contribution": -2.220446049250313e-16,
+                "floor-0.01": 7.685551880598496e-05,
+                "floor-0.1": 0.00070608855258536,
+                "floor-1": 0.003923702362750969,
+                "floor-10": 0.0074968352550096595,
+                "floor-100": 0.008410666909424158,
+                "gradient-saliency*": 0.01193494025569708,
+                "tail-first": -6.661338147750939e-16,
+                "zero-first": -6.661338147750939e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.025,
+              "detection_per_path": {
+                "uniform": 0.007812499999999778,
+                "static-importance": 0.00854765189776241,
+                "contribution": -2.220446049250313e-16,
+                "floor-0.01": 7.685551880598496e-05,
+                "floor-0.1": 0.00070608855258536,
+                "floor-1": 0.003923702362750969,
+                "floor-10": 0.0074968352550096595,
+                "floor-100": 0.008410666909424158,
+                "gradient-saliency*": 0.01193494025569708,
+                "tail-first": -6.661338147750939e-16,
+                "zero-first": -6.661338147750939e-16
+              }
+            },
+            "8": {
+              "success_rate": 0.075,
+              "detection_per_path": {
+                "uniform": 0.023437499999999705,
+                "static-importance": 0.027200116400980006,
+                "contribution": -2.220446049250313e-16,
+                "floor-0.01": 0.00034099479347264133,
+                "floor-0.1": 0.0030401180277092785,
+                "floor-1": 0.014934619131890203,
+                "floor-10": 0.02521385407406085,
+                "floor-100": 0.027069909079503424,
+                "gradient-saliency*": 0.04454258598775396,
+                "tail-first": 0.010416666666666111,
+                "zero-first": 0.016417206040992022
+              }
+            },
+            "16": {
+              "success_rate": 0.15,
+              "detection_per_path": {
+                "uniform": 0.03710937499999976,
+                "static-importance": 0.04457470381276041,
+                "contribution": -2.220446049250313e-16,
+                "floor-0.01": 0.0005183326052485652,
+                "floor-0.1": 0.004687631498834666,
+                "floor-1": 0.024262504178770645,
+                "floor-10": 0.04163482464905079,
+                "floor-100": 0.04437220015467445,
+                "gradient-saliency*": 0.08483190630517999,
+                "tail-first": 0.005208333333332722,
+                "zero-first": 0.03423116205705631
+              }
+            },
+            "32": {
+              "success_rate": 0.925,
+              "detection_per_path": {
+                "uniform": 0.08002533783783759,
+                "static-importance": 0.0920176959617751,
+                "contribution": 0.0014348010846835626,
+                "floor-0.01": 0.0027438666508582277,
+                "floor-0.1": 0.013073710488677144,
+                "floor-1": 0.05741089261199394,
+                "floor-10": 0.08730239676815198,
+                "floor-100": 0.09152012720512084,
+                "gradient-saliency*": 0.16574000775759745,
+                "tail-first": 0.016152871621621035,
+                "zero-first": 0.046694641064869924
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.08466796874999975,
+                "static-importance": 0.09667807182157717,
+                "contribution": -9.159339953157541e-17,
+                "floor-0.01": 0.0014075777668210194,
+                "floor-0.1": 0.012505289665575958,
+                "floor-1": 0.0599051971855765,
+                "floor-10": 0.09166255476292323,
+                "floor-100": 0.09613070517049402,
+                "gradient-saliency*": 0.17116891677663765,
+                "tail-first": 0.014941406249999406,
+                "zero-first": 0.04365219377849872
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "static-importance",
+          "mixture": {
+            "weights": {
+              "static-importance": 1.0
+            },
+            "detection_per_path": 0.09667807182157719,
+            "s_40": 273,
+            "double_oracle_values": [
+              0.09670567199971453,
+              0.09667807182157719
+            ],
+            "rounds": 1,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "gradient-saliency*": 1.0
+            },
+            "detection_per_path": 0.17116891677663773,
+            "s_40": 148,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 0,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": null,
+                "2": null,
+                "4": null,
+                "8": null,
+                "16": null,
+                "32": null,
+                "64": null
+              }
+            },
+            "randomised": {
+              "n_queries": 0,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": null,
+                "2": null,
+                "4": null,
+                "8": null,
+                "16": null,
+                "32": null,
+                "64": null
+              }
+            }
+          }
+        },
+        "75": {
+          "cap_percentile": 75.0,
+          "width": 256,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 16.95,
+          "mean_magnitude_sigma": 2.9174596529267047,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.0,
+          "R2_honest_baseline": 0.0,
+          "R2_max_pass_rate": 0.975,
+          "R2_max_honest_baseline": 0.975,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.06621093749999975,
+              "median": 0.06249999999999989,
+              "s_40": 405
+            },
+            "static-importance": {
+              "detection_per_path": 0.07571556524940651,
+              "median": 0.07147414443513361,
+              "s_40": 353
+            },
+            "contribution": {
+              "detection_per_path": -9.71445146547012e-17,
+              "median": 0.0,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0014075777668210194,
+              "median": 0.0014726337215745233,
+              "s_40": 19684
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.012505289665575958,
+              "median": 0.013135462446691282,
+              "s_40": 2204
+            },
+            "floor-1": {
+              "detection_per_path": 0.0599051971855765,
+              "median": 0.06328792427081392,
+              "s_40": 449
+            },
+            "floor-10": {
+              "detection_per_path": 0.07717029827302793,
+              "median": 0.07347096714708451,
+              "s_40": 346
+            },
+            "floor-100": {
+              "detection_per_path": 0.07583447062034321,
+              "median": 0.07171045462350911,
+              "s_40": 352
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.15417621591140707,
+              "median": 0.15141619034044967,
+              "s_40": 166
+            },
+            "tail-first": {
+              "detection_per_path": 0.008496093749999396,
+              "median": -6.661338147750939e-16,
+              "s_40": 3250
+            },
+            "zero-first": {
+              "detection_per_path": 0.0012748309505922928,
+              "median": -6.661338147750939e-16,
+              "s_40": 21735
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.0,
+              "detection_per_path": {
+                "uniform": null,
+                "static-importance": null,
+                "contribution": null,
+                "floor-0.01": null,
+                "floor-0.1": null,
+                "floor-1": null,
+                "floor-10": null,
+                "floor-100": null,
+                "gradient-saliency*": null,
+                "tail-first": null,
+                "zero-first": null
+              }
+            },
+            "2": {
+              "success_rate": 0.025,
+              "detection_per_path": {
+                "uniform": 0.007812499999999778,
+                "static-importance": 0.008217716626124694,
+                "contribution": -2.220446049250313e-16,
+                "floor-0.01": 7.685551880598496e-05,
+                "floor-0.1": 0.00070608855258536,
+                "floor-1": 0.003923702362750969,
+                "floor-10": 0.0074968352550096595,
+                "floor-100": 0.008155080681267468,
+                "gradient-saliency*": 0.01193494025569708,
+                "tail-first": -6.661338147750939e-16,
+                "zero-first": -6.661338147750939e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.05,
+              "detection_per_path": {
+                "uniform": 0.009765624999999722,
+                "static-importance": 0.012181967066562216,
+                "contribution": 0.02767922553935015,
+                "floor-0.01": 0.02743919712170556,
+                "floor-0.1": 0.02556621669155762,
+                "floor-1": 0.01812776614407291,
+                "floor-10": 0.013226508221287125,
+                "floor-100": 0.012431700764713616,
+                "gradient-saliency*": 0.02791338033380636,
+                "tail-first": -6.661338147750939e-16,
+                "zero-first": -3.3306690738754696e-16
+              }
+            },
+            "8": {
+              "success_rate": 0.075,
+              "detection_per_path": {
+                "uniform": 0.015624999999999742,
+                "static-importance": 0.018616445593149084,
+                "contribution": -2.220446049250313e-16,
+                "floor-0.01": 0.00034099479347264133,
+                "floor-0.1": 0.0030401180277092785,
+                "floor-1": 0.014934619131890203,
+                "floor-10": 0.019528878293840164,
+                "floor-100": 0.01883906536781958,
+                "gradient-saliency*": 0.03841839057302995,
+                "tail-first": 0.009114583333332815,
+                "zero-first": -1.8503717077085943e-16
+              }
+            },
+            "16": {
+              "success_rate": 0.55,
+              "detection_per_path": {
+                "uniform": 0.049005681818181594,
+                "static-importance": 0.055765487333854245,
+                "contribution": 0.06994230112276391,
+                "floor-0.01": 0.06985044793718895,
+                "floor-0.1": 0.06910723012440796,
+                "floor-1": 0.0656053788645522,
+                "floor-10": 0.05903533489371877,
+                "floor-100": 0.05601812935881865,
+                "gradient-saliency*": 0.11992162615705167,
+                "tail-first": 0.015447443181817627,
+                "zero-first": 0.020489816963312122
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.06621093749999975,
+                "static-importance": 0.07571556524940651,
+                "contribution": 0.009182106588165614,
+                "floor-0.01": 0.010407151192451622,
+                "floor-0.1": 0.02007838870477521,
+                "floor-1": 0.061680529918982596,
+                "floor-10": 0.07717029827302793,
+                "floor-100": 0.07583447062034321,
+                "gradient-saliency*": 0.15446605751496123,
+                "tail-first": 0.008496093749999396,
+                "zero-first": 0.01051417030534946
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.06621093749999975,
+                "static-importance": 0.07571556524940651,
+                "contribution": -9.71445146547012e-17,
+                "floor-0.01": 0.0014075777668210194,
+                "floor-0.1": 0.012505289665575958,
+                "floor-1": 0.0599051971855765,
+                "floor-10": 0.07717029827302793,
+                "floor-100": 0.07583447062034321,
+                "gradient-saliency*": 0.15417621591140707,
+                "tail-first": 0.008496093749999396,
+                "zero-first": 0.0012748309505922928
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-10",
+          "mixture": {
+            "weights": {
+              "contribution": 0.04543705553273891,
+              "floor-10": 0.9544579473820792,
+              "zero-first": 0.00010499708518186479
+            },
+            "detection_per_path": 0.07734419833323547,
+            "s_40": 345,
+            "double_oracle_values": [
+              0.07790274657694223,
+              0.07734419833323547
+            ],
+            "rounds": 1,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "gradient-saliency*": 1.0
+            },
+            "detection_per_path": 0.15417621591140712,
+            "s_40": 166,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 0,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": null,
+                "2": null,
+                "4": null,
+                "8": null,
+                "16": null,
+                "32": null,
+                "64": null
+              }
+            },
+            "randomised": {
+              "n_queries": 0,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": null,
+                "2": null,
+                "4": null,
+                "8": null,
+                "16": null,
+                "32": null,
+                "64": null
+              }
+            }
+          }
+        },
+        "90": {
+          "cap_percentile": 90.0,
+          "width": 256,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 12.35,
+          "mean_magnitude_sigma": 2.9424610565832205,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.05,
+          "R2_honest_baseline": 0.025,
+          "R2_max_pass_rate": 0.975,
+          "R2_max_honest_baseline": 0.975,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.048242187499999756,
+              "median": 0.04687499999999978,
+              "s_40": 561
+            },
+            "static-importance": {
+              "detection_per_path": 0.056075990917703974,
+              "median": 0.05170536559390465,
+              "s_40": 481
+            },
+            "contribution": {
+              "detection_per_path": -1.0269562977782698e-16,
+              "median": -1.1102230246251565e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0014075777668210194,
+              "median": 0.0014726337215745233,
+              "s_40": 19684
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.012505289665575958,
+              "median": 0.013135462446691282,
+              "s_40": 2204
+            },
+            "floor-1": {
+              "detection_per_path": 0.0599051971855765,
+              "median": 0.06328792427081392,
+              "s_40": 449
+            },
+            "floor-10": {
+              "detection_per_path": 0.06363597543621251,
+              "median": 0.060347090334314124,
+              "s_40": 422
+            },
+            "floor-100": {
+              "detection_per_path": 0.056886604023977216,
+              "median": 0.05288393725802393,
+              "s_40": 474
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.11974685251237685,
+              "median": 0.11083605991364753,
+              "s_40": 218
+            },
+            "tail-first": {
+              "detection_per_path": 0.005957031249999386,
+              "median": -6.661338147750939e-16,
+              "s_40": 4641
+            },
+            "zero-first": {
+              "detection_per_path": -6.439293542825908e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.025,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.003977219910423102,
+                "contribution": 0.010987116029668842,
+                "floor-0.01": 0.010914672780371393,
+                "floor-0.1": 0.010322382946855835,
+                "floor-1": 0.007346047193258598,
+                "floor-10": 0.004450003375799816,
+                "floor-100": 0.003923808476036683,
+                "gradient-saliency*": 0.003906249999999667,
+                "tail-first": -6.661338147750939e-16,
+                "zero-first": -6.661338147750939e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.05,
+              "detection_per_path": {
+                "uniform": 0.0058593749999998335,
+                "static-importance": 0.00766198513499089,
+                "contribution": 0.03182730865707617,
+                "floor-0.01": 0.03150135494597461,
+                "floor-0.1": 0.028945561588670732,
+                "floor-1": 0.01853142220244991,
+                "floor-10": 0.009737664439586902,
+                "floor-100": 0.00793584313442286,
+                "gradient-saliency*": 0.017137183142428458,
+                "tail-first": -6.661338147750939e-16,
+                "zero-first": -3.3306690738754696e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.075,
+              "detection_per_path": {
+                "uniform": 0.009114583333333074,
+                "static-importance": 0.011899454768712903,
+                "contribution": 0.03704383974544797,
+                "floor-0.01": 0.036795082705036654,
+                "floor-0.1": 0.03480451697165069,
+                "floor-1": 0.025440365230106326,
+                "floor-10": 0.014719615727850707,
+                "floor-100": 0.012278238167206338,
+                "gradient-saliency*": 0.02649888241696045,
+                "tail-first": 0.0052083333333327415,
+                "zero-first": -4.440892098500626e-16
+              }
+            },
+            "8": {
+              "success_rate": 0.2,
+              "detection_per_path": {
+                "uniform": 0.021972656249999722,
+                "static-importance": 0.02613625022898379,
+                "contribution": 0.078406476998484,
+                "floor-0.01": 0.07795236763630431,
+                "floor-0.1": 0.0742324823844464,
+                "floor-1": 0.05532220549457559,
+                "floor-10": 0.03227732799394413,
+                "floor-100": 0.026780762643034,
+                "gradient-saliency*": 0.05615269329972082,
+                "tail-first": 0.013671874999999487,
+                "zero-first": -5.134781488891349e-16
+              }
+            },
+            "16": {
+              "success_rate": 0.8,
+              "detection_per_path": {
+                "uniform": 0.04113769531249976,
+                "static-importance": 0.04756683500396478,
+                "contribution": 0.08716089671958119,
+                "floor-0.01": 0.08694714331330382,
+                "floor-0.1": 0.08518387396612265,
+                "floor-1": 0.07507811011853711,
+                "floor-10": 0.05542652910926733,
+                "floor-100": 0.04836022303084094,
+                "gradient-saliency*": 0.10026306555659154,
+                "tail-first": 0.007446289062499421,
+                "zero-first": 0.005944510993470823
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.048242187499999756,
+                "static-importance": 0.056075990917703974,
+                "contribution": 0.009182106588165614,
+                "floor-0.01": 0.010407151192451622,
+                "floor-0.1": 0.02007838870477521,
+                "floor-1": 0.061680529918982596,
+                "floor-10": 0.06363597543621251,
+                "floor-100": 0.056886604023977216,
+                "gradient-saliency*": 0.11974685251237685,
+                "tail-first": 0.005957031249999386,
+                "zero-first": 0.0014048470691284925
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.048242187499999756,
+                "static-importance": 0.056075990917703974,
+                "contribution": -1.0269562977782698e-16,
+                "floor-0.01": 0.0014075777668210194,
+                "floor-0.1": 0.012505289665575958,
+                "floor-1": 0.0599051971855765,
+                "floor-10": 0.06363597543621251,
+                "floor-100": 0.056886604023977216,
+                "gradient-saliency*": 0.11974685251237685,
+                "tail-first": 0.005957031249999386,
+                "zero-first": -6.439293542825908e-16
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-10",
+          "mixture": {
+            "weights": {
+              "floor-1": 0.44539522656237984,
+              "floor-10": 0.5544360877146582,
+              "zero-first": 0.00016868572296203094
+            },
+            "detection_per_path": 0.07157205824613011,
+            "s_40": 374,
+            "double_oracle_values": [
+              0.07185137048378193,
+              0.07157205824613011
+            ],
+            "rounds": 1,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.11051177309953987,
+              "gradient-saliency*": 0.8894882269004601
+            },
+            "detection_per_path": 0.12159772988537121,
+            "s_40": 214,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 1,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.0,
+                "32": 1.0,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 1,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.0,
+                "32": 0.0,
+                "64": 0.0
+              }
+            }
+          }
+        },
+        "95": {
+          "cap_percentile": 95.0,
+          "width": 256,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 10.325,
+          "mean_magnitude_sigma": 3.1011636771220084,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.175,
+          "R2_honest_baseline": 0.175,
+          "R2_max_pass_rate": 0.975,
+          "R2_max_honest_baseline": 0.975,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.04033203124999977,
+              "median": 0.03906249999999989,
+              "s_40": 674
+            },
+            "static-importance": {
+              "detection_per_path": 0.04670022223524822,
+              "median": 0.043103903705181745,
+              "s_40": 580
+            },
+            "contribution": {
+              "detection_per_path": -1.0824674490095276e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0014075777668210194,
+              "median": 0.0014726337215745233,
+              "s_40": 19684
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.012505289665575958,
+              "median": 0.013135462446691282,
+              "s_40": 2204
+            },
+            "floor-1": {
+              "detection_per_path": 0.0599051971855765,
+              "median": 0.06328792427081392,
+              "s_40": 449
+            },
+            "floor-10": {
+              "detection_per_path": 0.0566704657911695,
+              "median": 0.05500011053777876,
+              "s_40": 476
+            },
+            "floor-100": {
+              "detection_per_path": 0.04775683792124204,
+              "median": 0.04432575965827834,
+              "s_40": 567
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.10005236358481209,
+              "median": 0.09374013863696112,
+              "s_40": 264
+            },
+            "tail-first": {
+              "detection_per_path": 0.005859374999999389,
+              "median": -6.661338147750939e-16,
+              "s_40": 4719
+            },
+            "zero-first": {
+              "detection_per_path": -6.938893903907228e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.025,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.0034471830048847796,
+                "contribution": 0.010987116029668842,
+                "floor-0.01": 0.010914672780371393,
+                "floor-0.1": 0.010322382946855835,
+                "floor-1": 0.007346047193258598,
+                "floor-10": 0.0041397030071581575,
+                "floor-100": 0.003456041684805733,
+                "gradient-saliency*": 0.003906249999999667,
+                "tail-first": -6.661338147750939e-16,
+                "zero-first": -6.661338147750939e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.05,
+              "detection_per_path": {
+                "uniform": 0.0058593749999998335,
+                "static-importance": 0.006783185171394868,
+                "contribution": 0.03125799834756671,
+                "floor-0.01": 0.030928258660748997,
+                "floor-0.1": 0.028344581527719792,
+                "floor-1": 0.01785239426452867,
+                "floor-10": 0.008890638079502133,
+                "floor-100": 0.007013471090865864,
+                "gradient-saliency*": 0.013683736849266437,
+                "tail-first": -6.661338147750939e-16,
+                "zero-first": -3.3306690738754696e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.075,
+              "detection_per_path": {
+                "uniform": 0.007812499999999778,
+                "static-importance": 0.009477566799900305,
+                "contribution": 0.03527879258083936,
+                "floor-0.01": 0.03502807758684878,
+                "floor-0.1": 0.03302157189695898,
+                "floor-1": 0.023565784811468687,
+                "floor-10": 0.012272969525892444,
+                "floor-100": 0.009837458475175623,
+                "gradient-saliency*": 0.021123737109379908,
+                "tail-first": 0.0052083333333327415,
+                "zero-first": -4.440892098500626e-16
+              }
+            },
+            "8": {
+              "success_rate": 0.3,
+              "detection_per_path": {
+                "uniform": 0.02180989583333312,
+                "static-importance": 0.02475223045216925,
+                "contribution": 0.08963711484299057,
+                "floor-0.01": 0.08909102271923457,
+                "floor-0.1": 0.08459787176881901,
+                "floor-1": 0.06118632986234679,
+                "floor-10": 0.032345258660889636,
+                "floor-100": 0.025535633405606533,
+                "gradient-saliency*": 0.05493316249109529,
+                "tail-first": 0.19390811011904716,
+                "zero-first": -5.828670879282072e-16
+              }
+            },
+            "16": {
+              "success_rate": 0.9,
+              "detection_per_path": {
+                "uniform": 0.037000868055555344,
+                "static-importance": 0.042502196051969116,
+                "contribution": 0.09562610708834379,
+                "floor-0.01": 0.09535819887704414,
+                "floor-0.1": 0.0931376920950697,
+                "floor-1": 0.07996323317747914,
+                "floor-10": 0.05237392053056471,
+                "floor-100": 0.04352183344146564,
+                "gradient-saliency*": 0.09194975248890191,
+                "tail-first": 0.05886433544215354,
+                "zero-first": 0.0027461714961708183
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.04033203124999977,
+                "static-importance": 0.04670022223524822,
+                "contribution": 0.009182106588165614,
+                "floor-0.01": 0.010407151192451622,
+                "floor-0.1": 0.02007838870477521,
+                "floor-1": 0.061680529918982596,
+                "floor-10": 0.0566704657911695,
+                "floor-100": 0.04775683792124204,
+                "gradient-saliency*": 0.10005236358481209,
+                "tail-first": 0.005859374999999389,
+                "zero-first": -6.938893903907228e-16
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.04033203124999977,
+                "static-importance": 0.04670022223524822,
+                "contribution": -1.0824674490095276e-16,
+                "floor-0.01": 0.0014075777668210194,
+                "floor-0.1": 0.012505289665575958,
+                "floor-1": 0.0599051971855765,
+                "floor-10": 0.0566704657911695,
+                "floor-100": 0.04775683792124204,
+                "gradient-saliency*": 0.10005236358481209,
+                "tail-first": 0.005859374999999389,
+                "zero-first": -6.938893903907228e-16
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-1": 0.5006957583237596,
+              "floor-10": 0.4908289351843025,
+              "tail-first": 0.00829256496683534,
+              "zero-first": 0.00018274152510261074
+            },
+            "detection_per_path": 0.0706401109699006,
+            "s_40": 379,
+            "double_oracle_values": [
+              0.07065526431536608,
+              0.0706401109699006
+            ],
+            "rounds": 1,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.20402060667658645,
+              "gradient-saliency*": 0.7738207060543512,
+              "tail-first": 0.02215868726906244
+            },
+            "detection_per_path": 0.1138726867188641,
+            "s_40": 230,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 1,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 0.0,
+                "32": 1.0,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 1,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.0,
+                "4": 0.0,
+                "8": 0.0,
+                "16": 1.0,
+                "32": 1.0,
+                "64": 1.0
+              }
+            }
+          }
+        },
+        "99": {
+          "cap_percentile": 99.0,
+          "width": 256,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 7.8,
+          "mean_magnitude_sigma": 4.023313242869225,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.75,
+          "R2_honest_baseline": 0.75,
+          "R2_max_pass_rate": 0.975,
+          "R2_max_honest_baseline": 0.975,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.030468749999999756,
+              "median": 0.031249999999999667,
+              "s_40": 897
+            },
+            "static-importance": {
+              "detection_per_path": 0.035362216741582284,
+              "median": 0.03336259260458024,
+              "s_40": 771
+            },
+            "contribution": {
+              "detection_per_path": -1.1934897514720432e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0014075777668210194,
+              "median": 0.0014726337215745233,
+              "s_40": 19684
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.012505289665575958,
+              "median": 0.013135462446691282,
+              "s_40": 2204
+            },
+            "floor-1": {
+              "detection_per_path": 0.05985068429301561,
+              "median": 0.06328792427081392,
+              "s_40": 450
+            },
+            "floor-10": {
+              "detection_per_path": 0.047798061513721,
+              "median": 0.04721316209565052,
+              "s_40": 567
+            },
+            "floor-100": {
+              "detection_per_path": 0.036750783505381614,
+              "median": 0.03471886526373619,
+              "s_40": 741
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.07755872271750702,
+              "median": 0.07505814790106113,
+              "s_40": 344
+            },
+            "tail-first": {
+              "detection_per_path": 0.005859374999999389,
+              "median": -6.661338147750939e-16,
+              "s_40": 4719
+            },
+            "zero-first": {
+              "detection_per_path": -7.049916206369744e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.05,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.00462647764539631,
+                "contribution": 0.026819285506045676,
+                "floor-0.01": 0.02652102988678734,
+                "floor-0.1": 0.024165108830668747,
+                "floor-1": 0.01412341829535807,
+                "floor-10": 0.006250326302540632,
+                "floor-100": 0.004869297811879836,
+                "gradient-saliency*": 0.011025970837976462,
+                "tail-first": 0.2499999999999995,
+                "zero-first": -3.3306690738754696e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.075,
+              "detection_per_path": {
+                "uniform": 0.005208333333333186,
+                "static-importance": 0.00621260288955483,
+                "contribution": 0.028656185823963898,
+                "floor-0.01": 0.028420643232646814,
+                "floor-0.1": 0.026535892865640804,
+                "floor-1": 0.017839060911336618,
+                "floor-10": 0.00864422439636466,
+                "floor-100": 0.006576433404206106,
+                "gradient-saliency*": 0.01560354675962757,
+                "tail-first": 0.33333333333333287,
+                "zero-first": -2.220446049250313e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.125,
+              "detection_per_path": {
+                "uniform": 0.009374999999999734,
+                "static-importance": 0.011972489450564306,
+                "contribution": 0.054381739045160374,
+                "floor-0.01": 0.05401277665974056,
+                "floor-0.1": 0.050984570664517406,
+                "floor-1": 0.03511698252954394,
+                "floor-10": 0.01671262843122594,
+                "floor-100": 0.012582847428334288,
+                "gradient-saliency*": 0.027511750199243547,
+                "tail-first": 0.23585227272727227,
+                "zero-first": -5.329070518200751e-16
+              }
+            },
+            "8": {
+              "success_rate": 0.65,
+              "detection_per_path": {
+                "uniform": 0.023587740384615148,
+                "static-importance": 0.026912554576772836,
+                "contribution": 0.11953318207720551,
+                "floor-0.01": 0.11878721743021253,
+                "floor-0.1": 0.11260973428154027,
+                "floor-1": 0.07901441252201233,
+                "floor-10": 0.03772552766551087,
+                "floor-100": 0.028034956648452493,
+                "gradient-saliency*": 0.059555410207347496,
+                "tail-first": 0.4213707739337672,
+                "zero-first": -6.191628406563373e-16
+              }
+            },
+            "16": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.030468749999999756,
+                "static-importance": 0.035362216741582284,
+                "contribution": 0.10238846025477007,
+                "floor-0.01": 0.10208818649957245,
+                "floor-0.1": 0.09958890286211101,
+                "floor-1": 0.08379745424235889,
+                "floor-10": 0.047798061513721,
+                "floor-100": 0.036750783505381614,
+                "gradient-saliency*": 0.07755872271750702,
+                "tail-first": 0.09722469924320748,
+                "zero-first": -6.994405055138486e-16
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.030468749999999756,
+                "static-importance": 0.035362216741582284,
+                "contribution": 0.009182106588165614,
+                "floor-0.01": 0.010407151192451622,
+                "floor-0.1": 0.02007838870477521,
+                "floor-1": 0.06162601702642172,
+                "floor-10": 0.047798061513721,
+                "floor-100": 0.036750783505381614,
+                "gradient-saliency*": 0.07755872271750702,
+                "tail-first": 0.005859374999999389,
+                "zero-first": -7.049916206369744e-16
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.030468749999999756,
+                "static-importance": 0.035362216741582284,
+                "contribution": -1.1934897514720432e-16,
+                "floor-0.01": 0.0014075777668210194,
+                "floor-0.1": 0.012505289665575958,
+                "floor-1": 0.05985068429301561,
+                "floor-10": 0.047798061513721,
+                "floor-100": 0.036750783505381614,
+                "gradient-saliency*": 0.07755872271750702,
+                "tail-first": 0.005859374999999389,
+                "zero-first": -7.049916206369744e-16
+              }
+            }
+          },
+          "best_single_sampler": "gradient-saliency*",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-1": 0.5011238941717368,
+              "floor-10": 0.4829434909064517,
+              "tail-first": 0.01575014907481594,
+              "zero-first": 0.0001824658469956829
+            },
+            "detection_per_path": 0.07011956455278957,
+            "s_40": 382,
+            "double_oracle_values": [
+              0.0702842645848831,
+              0.07011956455278957
+            ],
+            "rounds": 1,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.2258621946550871,
+              "gradient-saliency*": 0.7206864459566099,
+              "tail-first": 0.053451359388303005
+            },
+            "detection_per_path": 0.1100070299720603,
+            "s_40": 238,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 2,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.5,
+                "4": 0.5,
+                "8": 0.5,
+                "16": 0.5,
+                "32": 1.0,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 2,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.5,
+                "4": 0.5,
+                "8": 1.0,
+                "16": 1.0,
+                "32": 1.0,
+                "64": 1.0
+              }
+            }
+          }
+        },
+        "100": {
+          "cap_percentile": 100.0,
+          "width": 256,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 5.275,
+          "mean_magnitude_sigma": 6.351370200981762,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 0.975,
+          "R2_honest_baseline": 0.975,
+          "R2_max_pass_rate": 0.975,
+          "R2_max_honest_baseline": 0.975,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.020605468749999793,
+              "median": 0.01953124999999989,
+              "s_40": 1332
+            },
+            "static-importance": {
+              "detection_per_path": 0.023899742039783674,
+              "median": 0.02325953687658,
+              "s_40": 1147
+            },
+            "contribution": {
+              "detection_per_path": -1.1934897514720432e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0014075777668210194,
+              "median": 0.0014726337215745233,
+              "s_40": 19684
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.012505289665575958,
+              "median": 0.013135462446691282,
+              "s_40": 2204
+            },
+            "floor-1": {
+              "detection_per_path": 0.05917041646594645,
+              "median": 0.060260580251785156,
+              "s_40": 455
+            },
+            "floor-10": {
+              "detection_per_path": 0.03849093115677873,
+              "median": 0.03764418317148244,
+              "s_40": 707
+            },
+            "floor-100": {
+              "detection_per_path": 0.025554129872562587,
+              "median": 0.02504496423919156,
+              "s_40": 1072
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.05275846657855767,
+              "median": 0.05237226089304464,
+              "s_40": 512
+            },
+            "tail-first": {
+              "detection_per_path": 0.005859374999999389,
+              "median": -6.661338147750939e-16,
+              "s_40": 4719
+            },
+            "zero-first": {
+              "detection_per_path": -7.105427357601002e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 0.05,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.004126461909006007,
+                "contribution": 0.026819285506045676,
+                "floor-0.01": 0.02652102988678734,
+                "floor-0.1": 0.024165108830668747,
+                "floor-1": 0.01412341829535807,
+                "floor-10": 0.006250326302540632,
+                "floor-100": 0.004396966595206719,
+                "gradient-saliency*": 0.007613401735884706,
+                "tail-first": 0.2499999999999995,
+                "zero-first": -3.3306690738754696e-16
+              }
+            },
+            "2": {
+              "success_rate": 0.125,
+              "detection_per_path": {
+                "uniform": 0.0062499999999998225,
+                "static-importance": 0.007752772245013073,
+                "contribution": 0.05160620813024082,
+                "floor-0.01": 0.051233000890391976,
+                "floor-0.1": 0.04816782058263989,
+                "floor-1": 0.03202485086656119,
+                "floor-10": 0.012980406254676025,
+                "floor-100": 0.008386119479495436,
+                "gradient-saliency*": 0.017356845191040728,
+                "tail-first": 0.37777777777777743,
+                "zero-first": -3.9968028886505636e-16
+              }
+            },
+            "4": {
+              "success_rate": 0.3,
+              "detection_per_path": {
+                "uniform": 0.011067708333333018,
+                "static-importance": 0.013071344000778048,
+                "contribution": 0.08953520792379221,
+                "floor-0.01": 0.08884050765313302,
+                "floor-0.1": 0.08315019304585854,
+                "floor-1": 0.0537580333015458,
+                "floor-10": 0.021328046113624117,
+                "floor-100": 0.014010714189655549,
+                "gradient-saliency*": 0.030904704689281675,
+                "tail-first": 0.47304099257224214,
+                "zero-first": -5.736152293896642e-16
+              }
+            },
+            "8": {
+              "success_rate": 0.9,
+              "detection_per_path": {
+                "uniform": 0.018771701388888687,
+                "static-importance": 0.02181449122255695,
+                "contribution": 0.12734253964138512,
+                "floor-0.01": 0.12656173094357143,
+                "floor-0.1": 0.12005990995942122,
+                "floor-1": 0.08334833232929317,
+                "floor-10": 0.03517416416396235,
+                "floor-100": 0.023348049089768355,
+                "gradient-saliency*": 0.04815824736984202,
+                "tail-first": 0.41014702403165065,
+                "zero-first": -6.5379800339037e-16
+              }
+            },
+            "16": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.020605468749999793,
+                "static-importance": 0.023899742039783674,
+                "contribution": 0.10213124697351741,
+                "floor-0.01": 0.10180073693723127,
+                "floor-0.1": 0.09905225726398216,
+                "floor-1": 0.080659455986371,
+                "floor-10": 0.03849093115677873,
+                "floor-100": 0.025554129872562587,
+                "gradient-saliency*": 0.05275846657855767,
+                "tail-first": 0.09159114434770806,
+                "zero-first": -7.105427357601002e-16
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.020605468749999793,
+                "static-importance": 0.023899742039783674,
+                "contribution": 0.009182106588165614,
+                "floor-0.01": 0.010407151192451622,
+                "floor-0.1": 0.02007838870477521,
+                "floor-1": 0.060793790322115904,
+                "floor-10": 0.03849093115677873,
+                "floor-100": 0.025554129872562587,
+                "gradient-saliency*": 0.05275846657855767,
+                "tail-first": 0.005859374999999389,
+                "zero-first": -7.105427357601002e-16
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.020605468749999793,
+                "static-importance": 0.023899742039783674,
+                "contribution": -1.1934897514720432e-16,
+                "floor-0.01": 0.0014075777668210194,
+                "floor-0.1": 0.012505289665575958,
+                "floor-1": 0.05917041646594645,
+                "floor-10": 0.03849093115677873,
+                "floor-100": 0.025554129872562587,
+                "gradient-saliency*": 0.05275846657855767,
+                "tail-first": 0.005859374999999389,
+                "zero-first": -7.105427357601002e-16
+              }
+            }
+          },
+          "best_single_sampler": "floor-1",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-1": 0.5514998400569822,
+              "floor-10": 0.4142985940838349,
+              "tail-first": 0.03399936685468485,
+              "zero-first": 0.00020219900449816445
+            },
+            "detection_per_path": 0.06845111802016572,
+            "s_40": 392,
+            "double_oracle_values": [
+              0.06845111802016572
+            ],
+            "rounds": 0,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "contribution": 0.2509914749828481,
+              "gradient-saliency*": 0.6548412291618678,
+              "tail-first": 0.09416729585528422
+            },
+            "detection_per_path": 0.10260177247471013,
+            "s_40": 257,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 2,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.5,
+                "4": 0.5,
+                "8": 0.5,
+                "16": 0.5,
+                "32": 1.0,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 2,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.0,
+                "2": 0.5,
+                "4": 0.5,
+                "8": 1.0,
+                "16": 1.0,
+                "32": 1.0,
+                "64": 1.0
+              }
+            }
+          }
+        },
+        "inf": {
+          "cap_percentile": "inf",
+          "width": 256,
+          "n_queries": 40,
+          "success_rate": 1.0,
+          "mean_support": 1.0,
+          "mean_magnitude_sigma": 238.477033927754,
+          "R1_pass_rate": 1.0,
+          "R2_pass_rate": 1.0,
+          "R2_honest_baseline": 1.0,
+          "R2_max_pass_rate": 0.025,
+          "R2_max_honest_baseline": 0.975,
+          "samplers": {
+            "uniform": {
+              "detection_per_path": 0.003906249999999889,
+              "median": 0.003906249999999889,
+              "s_40": 7084
+            },
+            "static-importance": {
+              "detection_per_path": 0.0012800545523013406,
+              "median": 0.0012770799788635046,
+              "s_40": 21647
+            },
+            "contribution": {
+              "detection_per_path": -1.304512053934559e-16,
+              "median": -2.220446049250313e-16,
+              "s_40": null
+            },
+            "floor-0.01": {
+              "detection_per_path": 0.0014075777668210194,
+              "median": 0.0014726337215745233,
+              "s_40": 19684
+            },
+            "floor-0.1": {
+              "detection_per_path": 0.012505289665575958,
+              "median": 0.013135462446691282,
+              "s_40": 2204
+            },
+            "floor-1": {
+              "detection_per_path": 0.05251499217486153,
+              "median": 0.05192640908485108,
+              "s_40": 514
+            },
+            "floor-10": {
+              "detection_per_path": 0.0150375694110878,
+              "median": 0.014430894957922324,
+              "s_40": 1830
+            },
+            "floor-100": {
+              "detection_per_path": 0.004107388276502477,
+              "median": 0.004093874325116764,
+              "s_40": 6737
+            },
+            "gradient-saliency*": {
+              "detection_per_path": 0.00030469347654020484,
+              "median": 0.00023206909800477238,
+              "s_40": 90983
+            },
+            "tail-first": {
+              "detection_per_path": 0.005859374999999389,
+              "median": -6.661338147750939e-16,
+              "s_40": 4719
+            },
+            "zero-first": {
+              "detection_per_path": -7.16093850883226e-16,
+              "median": -6.661338147750939e-16,
+              "s_40": null
+            }
+          },
+          "support_limit": {
+            "1": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.0012800545523013406,
+                "contribution": 0.09964515962398976,
+                "floor-0.01": 0.09891543104962755,
+                "floor-0.1": 0.09284263429929071,
+                "floor-1": 0.05846230692884748,
+                "floor-10": 0.0150375694110878,
+                "floor-100": 0.004107388276502477,
+                "gradient-saliency*": 0.00030469347654020484,
+                "tail-first": 0.3271256145170615,
+                "zero-first": -6.716849298982197e-16
+              }
+            },
+            "2": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.0012800545523013406,
+                "contribution": 0.09937184553541986,
+                "floor-0.01": 0.09864587287900917,
+                "floor-0.1": 0.09260384957598156,
+                "floor-1": 0.058380898759121294,
+                "floor-10": 0.0150375694110878,
+                "floor-100": 0.004107388276502477,
+                "gradient-saliency*": 0.00030469347654020484,
+                "tail-first": 0.3146256145170615,
+                "zero-first": -6.7723604502134545e-16
+              }
+            },
+            "4": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.0012800545523013406,
+                "contribution": 0.09937184553541986,
+                "floor-0.01": 0.09864587287900917,
+                "floor-0.1": 0.09260384957598156,
+                "floor-1": 0.058380898759121294,
+                "floor-10": 0.0150375694110878,
+                "floor-100": 0.004107388276502477,
+                "gradient-saliency*": 0.00030469347654020484,
+                "tail-first": 0.2900162395170615,
+                "zero-first": -6.883382752675971e-16
+              }
+            },
+            "8": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.0012800545523013406,
+                "contribution": 0.097534174204061,
+                "floor-0.01": 0.09685010485209383,
+                "floor-0.1": 0.09114065255789232,
+                "floor-1": 0.058342397550693495,
+                "floor-10": 0.0150375694110878,
+                "floor-100": 0.004107388276502477,
+                "gradient-saliency*": 0.00030469347654020484,
+                "tail-first": 0.20163733326706149,
+                "zero-first": -7.105427357601002e-16
+              }
+            },
+            "16": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.0012800545523013406,
+                "contribution": 0.08706238460485043,
+                "floor-0.01": 0.0866269660788868,
+                "floor-0.1": 0.08281824085395065,
+                "floor-1": 0.0572478994711766,
+                "floor-10": 0.0150375694110878,
+                "floor-100": 0.004107388276502477,
+                "gradient-saliency*": 0.00030469347654020484,
+                "tail-first": 0.029763144841269303,
+                "zero-first": -7.16093850883226e-16
+              }
+            },
+            "32": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.0012800545523013406,
+                "contribution": 0.009182106588165614,
+                "floor-0.01": 0.010407151192451622,
+                "floor-0.1": 0.01990231828621601,
+                "floor-1": 0.05251499217486153,
+                "floor-10": 0.0150375694110878,
+                "floor-100": 0.004107388276502477,
+                "gradient-saliency*": 0.00030469347654020484,
+                "tail-first": 0.005859374999999389,
+                "zero-first": -7.16093850883226e-16
+              }
+            },
+            "48": {
+              "success_rate": 1.0,
+              "detection_per_path": {
+                "uniform": 0.003906249999999889,
+                "static-importance": 0.0012800545523013406,
+                "contribution": -1.304512053934559e-16,
+                "floor-0.01": 0.0014075777668210194,
+                "floor-0.1": 0.012505289665575958,
+                "floor-1": 0.05251499217486153,
+                "floor-10": 0.0150375694110878,
+                "floor-100": 0.004107388276502477,
+                "gradient-saliency*": 0.00030469347654020484,
+                "tail-first": 0.005859374999999389,
+                "zero-first": -7.16093850883226e-16
+              }
+            }
+          },
+          "best_single_sampler": "floor-1",
+          "best_single_implementable": "floor-1",
+          "mixture": {
+            "weights": {
+              "floor-1": 0.7445693854454606,
+              "floor-10": 0.17771322692233174,
+              "tail-first": 0.07744954885678375,
+              "zero-first": 0.0002678387754238582
+            },
+            "detection_per_path": 0.05822344427727909,
+            "s_40": 463,
+            "double_oracle_values": [
+              0.05822344427727909
+            ],
+            "rounds": 0,
+            "implementable_only": true
+          },
+          "mixture_upper_bound_with_saliency": {
+            "weights": {
+              "floor-0.01": 0.34752168481458184,
+              "gradient-saliency*": 0.4633723279412718,
+              "tail-first": 0.1891059872441463
+            },
+            "detection_per_path": 0.06972666745410364,
+            "s_40": 384,
+            "note": "upper bound: includes the non-implementable gradient-saliency sampler"
+          },
+          "G1e": {
+            "greedy": {
+              "n_queries": 40,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.95,
+                "2": 0.975,
+                "4": 0.975,
+                "8": 0.975,
+                "16": 0.975,
+                "32": 1.0,
+                "64": 1.0
+              }
+            },
+            "randomised": {
+              "n_queries": 40,
+              "q_over_N": {
+                "1": 0.00390625,
+                "2": 0.0078125,
+                "4": 0.015625,
+                "8": 0.03125,
+                "16": 0.0625,
+                "32": 0.125,
+                "64": 0.25
+              },
+              "top_q_hit_rate": {
+                "1": 0.975,
+                "2": 1.0,
+                "4": 1.0,
+                "8": 1.0,
+                "16": 1.0,
+                "32": 1.0,
+                "64": 1.0
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "seconds": 1253.7832291000523
+}
