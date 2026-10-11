@@ -192,6 +192,9 @@ def main() -> int:
     ap.add_argument("--smooth", type=float, default=None, help="with --real: SmoothQuant strength through the norm "
                     "gains (F2; 0.55 with smooth_pct 99.9, pct 99.99, pct_att 99.99)")
     ap.add_argument("--calib-seq", type=int, default=0, help="with --real: the calibration window's tokens (0: --seq)")
+    ap.add_argument("--recipe", choices=["legacy", "certified"], default="legacy",
+                    help="with --real: certified = real_weights.CERTIFIED_RECIPE (F2a's smooth-max alpha 0.6) calibrated "
+                         "on common.certified_calib (four 2,048-token train windows; --smooth and --calib-seq unused)")
     ap.add_argument("--tampers", type=int, default=0, help="decoders, per variant after the timed queries: attempts of "
                     "each of bench.py's LLM attacks, each of which must be rejected")
     ap.add_argument("--random-init", action="store_true",
@@ -230,9 +233,9 @@ def main() -> int:
         if args.layers:
             raise SystemExit("--real builds every block of the checkpoint")
         v1b = _load("v1_bytes", "experiments/8_v1/v1_bytes.py")
-        model, queries, calib = v1b.load_real(args.real, args.seq, args.queries + 1, args.calib_seq)
+        model, queries, calib = v1b.load_real(args.real, args.seq, args.queries + 1, args.calib_seq, args.recipe)
         for prune in prunes:
-            graphs[prune], _ = v1b.real_graph(model, calib, args.smooth, prune)
+            graphs[prune], _ = v1b.real_graph(model, calib, args.smooth, prune, args.recipe)
             model_ops[prune] = None    # planned from its own weight ops (OPT's LM head has a bias column)
         del model
         n_checks = len(graphs[prunes[0]].mat_ops)
@@ -304,6 +307,7 @@ def main() -> int:
             timing, nbytes, prove, verify = _medians(runs)
             out = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None,
                    "smooth": args.smooth if args.real else None,
+                   "recipe": args.recipe if args.real else None,
                    "calib_seq": (args.calib_seq or args.seq) if args.real else None,
                    "seq": seq, "layers": args.layers or None,
                    "mode": mode, "policy": policy, "wire": wire,

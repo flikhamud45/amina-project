@@ -1,8 +1,9 @@
 """Plan 2, D6a: is the certified integer model reproducible bit for bit from the public checkpoint?
 
-Builds the smoothed integer OPT graph from a Hugging Face checkpoint (the recipe of ``ppl_smooth.py``: norm gain 4,
-SmoothQuant alpha 0.55 through the norm gains, smooth_pct 99.9, pct 99.99, pct_att 99.99; calibration on the
-WikiText-2 window of ``common.load_windows``) on the CPU with ``--threads`` threads, and prints the graph digest
+Builds the certified integer OPT graph from a Hugging Face checkpoint (``--recipe certified``, the default:
+``real_weights.CERTIFIED_RECIPE`` with ``common.certified_calib``, F2a's smooth-max alpha 0.6 on four 2,048-token
+train windows; ``--recipe legacy``: the earlier recipe, alpha 0.55 with percentile statistics, calibrated on the last
+128-token window of the test split) on the CPU with ``--threads`` threads, and prints the graph digest
 (every op, weight and constant), a SHA-256 of every weight matrix and bias, and the commitment's Merkle roots.
 Run it on two machines and with two thread counts; equal lines mean the same C_M.
 
@@ -20,9 +21,9 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import load_opt, load_windows          # noqa: E402
+from common import certified_calib, load_opt, load_windows          # noqa: E402
 
-from pvi.fullcheck.real_weights import build_opt_from_hf   # noqa: E402
+from pvi.fullcheck.real_weights import CERTIFIED_RECIPE, build_opt_from_hf   # noqa: E402
 
 
 def main() -> None:
@@ -33,20 +34,25 @@ def main() -> None:
     ap.add_argument("--commit-device", default="cpu", help="where the commitment is encoded (the same roots anywhere)")
     ap.add_argument("--prob-max", type=int, default=None, help="the attention probabilities' scale (default: the "
                     "certified models' CERTIFIED_PROB_MAX)")
+    ap.add_argument("--recipe", choices=["certified", "legacy"], default="certified")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     model, tok = load_opt(args.model)
-    _, calib = load_windows(tok, seq=128, windows=1, calib_windows=1)
     kw = {} if args.prob_max is None else {"prob_max": args.prob_max}
+    if args.recipe == "certified":
+        calib, recipe = certified_calib(tok), dict(CERTIFIED_RECIPE)
+    else:
+        calib = load_windows(tok, seq=128, windows=1, calib_windows=1)[1][0]
+        recipe = dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
     with torch.no_grad():
-        graph, _ = build_opt_from_hf(model, calib[0], device="cpu", norm_gain=4, smooth=0.55, smooth_pct=99.9,
-                                     pct=99.99, pct_att=99.99, **kw)
+        graph, _ = build_opt_from_hf(model, calib, device="cpu", **recipe, **kw)
     weights = hashlib.sha256()
     for op in graph.mat_ops:
         weights.update(op.name.encode() + op.weight.contiguous().numpy().tobytes())
         if op.bias is not None:
             weights.update(op.bias.contiguous().numpy().tobytes())
-    out = {"model": args.model, "threads": args.threads, "host": platform.node(), "cpu": platform.processor(),
+    out = {"model": args.model, "recipe": args.recipe, "threads": args.threads, "host": platform.node(),
+           "cpu": platform.processor(),
            "torch": torch.__version__, "digest": graph.digest().hex(), "weights_sha256": weights.hexdigest()}
     if args.commit:
         from pvi.fullcheck.analytic import decoder_shapes   # noqa: F401  (shapes come from the graph itself)

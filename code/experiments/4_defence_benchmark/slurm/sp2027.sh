@@ -296,10 +296,10 @@ tier_real() {
   # final-platform timings.  F3b (Qwen3-4B real weights) and a real Llama-2-7B in mode C join only once perf.py and
   # v1_bytes.py read Llama/Qwen checkpoints (--real reads OPT checkpoints today).
   : "${HF_HOME:?export HF_HOME=<node-local folder with ~40 GB free> (the real tier downloads OPT checkpoints)}"
-  local r13="--model opt-1.3b --real facebook/opt-1.3b --smooth 0.55 --calib-seq 2048"
-  local r67="--model opt-6.7b --real facebook/opt-6.7b --smooth 0.55 --calib-seq 2048"
+  local r13="--model opt-1.3b --real facebook/opt-1.3b --recipe certified"
+  local r67="--model opt-6.7b --real facebook/opt-6.7b --recipe certified"
   if [ -n "$REH" ]; then
-    local r125="--model opt-125m --real facebook/opt-125m --smooth 0.55 --calib-seq 128"
+    local r125="--model opt-125m --real facebook/opt-125m --recipe certified"
     sub r-opt125-v0 1 64 "HF_HOME=$HF_HOME $PERF $r125 --seq 64 --modes Kpre C --policy $POL --queries $Q \
 --verifier-device cpu --tampers 1 --label real"
     sub r-opt125-v1 1 64 "HF_HOME=$HF_HOME $V1 $r125 --seq 64 --modes Kpre --reps $Q --tampers 1 --lmax 20 --label real"

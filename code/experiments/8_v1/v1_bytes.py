@@ -55,7 +55,7 @@ clipping; ``norm_gain`` 4 either way."""
 
 
 # ------------------------------------------------------------------ real checkpoints
-def load_real(name: str, seq: int, n_queries: int, calib_seq: int = 0):
+def load_real(name: str, seq: int, n_queries: int, calib_seq: int = 0, recipe: str = "legacy"):
     """``(model, queries, calib)``: the fp32 checkpoint ``name`` (``9_quality/common.load_opt``), ``n_queries``
     WikiText-2 windows of ``seq`` tokens from the start of the test split and one calibration window of
     ``calib_seq`` tokens (default ``seq``) from its end (``common.load_windows``).  The second call asks for as many
@@ -67,13 +67,18 @@ def load_real(name: str, seq: int, n_queries: int, calib_seq: int = 0):
     cs = calib_seq or seq
     queries, _ = load_windows(tok, seq=seq, windows=n_queries, calib_windows=0)
     _, calib = load_windows(tok, seq=cs, windows=-(-n_queries * seq // cs), calib_windows=1)
+    if recipe == "certified":                       # the certified calibration (train split), not the test window
+        from common import certified_calib
+        calib = [certified_calib(tok)]
     return model, queries, calib[0]
 
 
-def real_graph(model, calib: torch.Tensor, smooth: float | None, prune_last: bool):
+def real_graph(model, calib: torch.Tensor, smooth: float | None, prune_last: bool, recipe: str = "legacy"):
     """The integer OPT of ``model``, calibrated on ``calib`` on the CPU: ``build_opt_from_hf`` with norm gain 4,
-    and with ``smooth`` the paper's smoothing (:data:`SMOOTH`)."""
-    from pvi.fullcheck.real_weights import build_opt_from_hf
+    and with ``smooth`` the earlier smoothing (:data:`SMOOTH`); ``recipe="certified"``: ``CERTIFIED_RECIPE``."""
+    from pvi.fullcheck.real_weights import CERTIFIED_RECIPE, build_opt_from_hf
+    if recipe == "certified":
+        return build_opt_from_hf(model, calib, prune_last=prune_last, **CERTIFIED_RECIPE)
     kw = dict(norm_gain=4) if smooth is None else dict(norm_gain=4, smooth=smooth, **SMOOTH)
     return build_opt_from_hf(model, calib, prune_last=prune_last, **kw)
 
@@ -277,6 +282,9 @@ def main() -> int:
     ap.add_argument("--smooth", type=float, default=None, help="with --real: SmoothQuant strength through the norm gains "
                     "(F2; 0.55 with smooth_pct 99.9, pct 99.99, pct_att 99.99)")
     ap.add_argument("--calib-seq", type=int, default=0, help="with --real: the calibration window's tokens (0: --seq)")
+    ap.add_argument("--recipe", choices=["legacy", "certified"], default="legacy",
+                    help="with --real: certified = real_weights.CERTIFIED_RECIPE (F2a's smooth-max alpha 0.6) calibrated "
+                         "on common.certified_calib (four 2,048-token train windows; --smooth and --calib-seq unused)")
     ap.add_argument("--tampers", type=int, default=0, help="with --full: trace-tampering and single-value V1 queries "
                     "per variant, each of which must be rejected")
     ap.add_argument("--codec-only", action="store_true", help="no commitment and no proof: the claims of one forward "
@@ -303,8 +311,8 @@ def main() -> int:
     if args.real:                     # the checkpoint's weights; queries are WikiText-2 windows
         if args.layers:
             raise SystemExit("--real builds every block of the checkpoint")
-        model, wins, calib = load_real(args.real, args.seq, max(2, args.reps + 1), args.calib_seq)
-        graph, _ = real_graph(model, calib, args.smooth, args.prune_last)
+        model, wins, calib = load_real(args.real, args.seq, max(2, args.reps + 1), args.calib_seq, args.recipe)
+        graph, _ = real_graph(model, calib, args.smooth, args.prune_last, args.recipe)
         del model
         n_layers = len([op for op in graph.ops if getattr(op, "note", "") == "attention"])
         x = wins[0]
@@ -316,6 +324,7 @@ def main() -> int:
         real_queries = None
     build_s = time.perf_counter() - t0
     head = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None, "smooth": args.smooth,
+            "recipe": args.recipe if args.real else None,
             "calib_seq": (args.calib_seq or args.seq) if args.real else None, "layers": n_layers, "seq": args.seq,
             "prune_last": args.prune_last, "lmax": args.lmax, "graph_digest": graph.digest().hex(),
             "shapes": shape_check(graph, cfg, n_layers, args.prune_last, bool(args.real), x), "build_s": build_s,

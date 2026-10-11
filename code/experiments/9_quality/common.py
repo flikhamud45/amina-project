@@ -31,6 +31,24 @@ def find_parquet(path: str | None = None) -> str:
     return hits[0]
 
 
+def train_text() -> str:
+    """The WikiText-2 (raw) train split joined with blank lines (``ppl_2048._text("train")``)."""
+    from huggingface_hub import hf_hub_download
+    path = hf_hub_download(repo_id="Salesforce/wikitext", filename="wikitext-2-raw-v1/train-00000-of-00001.parquet",
+                           repo_type="dataset")
+    return "\n\n".join(pq.read_table(path).column("text").to_pylist())
+
+
+def certified_calib(tok, windows: int = 4, seq: int = 2048, draw: int = 0) -> torch.Tensor:
+    """The certified models' calibration ``[windows, seq]`` (``real_weights.CERTIFIED_RECIPE``): windows ``draw *
+    windows ..`` of ``seq`` tokens of the first 4,000,000 characters of the train split, tokenised once (exactly F2a's
+    draw ``draw``, ``ppl_2048.py``); no test token is seen."""
+    ids = tok(train_text()[:4_000_000], return_tensors="pt").input_ids[0]
+    start = draw * windows
+    assert (start + windows) * seq <= ids.numel()
+    return torch.stack([ids[(start + i) * seq:(start + i + 1) * seq] for i in range(windows)])
+
+
 def load_opt(name: str):
     """OPT in fp32, eval mode.  transformers >= 4.5x refuses ``torch.load`` under torch < 2.6, and the
     official OPT repos ship ``pytorch_model.bin`` only, so the state dict is loaded here with

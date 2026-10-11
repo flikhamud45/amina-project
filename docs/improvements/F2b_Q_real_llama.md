@@ -1032,8 +1032,17 @@ scalar x10.7 / x6.53 / **x5.58** (gains 2 / 4 / 8); smooth x1.60 [1.52, 1.69] / 
 (alpha 0.45 / 0.55 / 0.65; top-1 0.61-0.62); smooth-exp8 x1.57 / x1.56 / **x1.55** [1.47, 1.64] (top-1 0.61-0.63).
 Before the balance (Section 12.6): x23.2, x2.11, x2.05. So the balance takes Qwen3-0.6B from x2.1 to x1.55-1.59 with
 the prefix; it is still far from x1.05, and the per-token exponent adds little, although the attribution names the
-SwiGLU product as the largest remaining own error. Without the prefix and Qwen3-1.7B: [CLUSTER] (same job,
-running).
+SwiGLU product as the largest remaining own error.
+
+Without the prefix (same job), the balance alone does not save Qwen3-0.6B: scalar x10.0-14.0, smooth x43-50,
+smooth-exp8 x9.3-10.3 (the massive activation of block 3 stays in the window). Qwen3-1.7B-Base with the prefix
+(reference 20.64): scalar x6.46-8.51; smooth **x1.51** [1.46, 1.57] / x1.55 / x1.57 (alpha 0.45 / 0.55 / 0.65);
+smooth-exp8 **x1.33** [1.29, 1.38] / x1.35 / x1.35 (top-1 0.66-0.68). Before the balance (12.6): x1.72 and x1.44.
+
+Status against the kill rule (Fri 23 Oct; plan: Qwen3 within x1.10, else the measured number with its attribution
+and the Qwen cost rows labelled "shape only"): the best Qwen3 graphs are x1.33 (1.7B) and x1.55 (0.6B). Both fixes
+(prefix and balance) are needed; what remains is spread over the SwiGLU products of every block. Qwen3-4B has not
+been run with the balance.
 
 ### 13.8 Limitations and open issues
 

@@ -188,17 +188,20 @@ it D6a's digests) changes only once that is decided.
 
 **Round 2 (job 1011066, s-005; `ppl2048_search2_*.jsonl`), smooth-max at 11 bits, ratio to fp32 (draw 0 / draw 1):**
 
-| alpha | OPT-1.3B | OPT-125M |
-|---:|---:|---:|
-| 0.5 (round 1) | x1.029 / x1.029 | x1.100 |
-| **0.6** | **x1.026 / x1.026** | **x1.076 / x1.073** |
-| 0.7 | x1.028 / x1.023 | x1.082 / x1.088 |
+| alpha | OPT-125M | OPT-1.3B | OPT-6.7B (draw 0) |
+|---:|---:|---:|---:|
+| 0.5 (round 1; 6.7B round 2) | x1.100 | x1.029 / x1.029 | x1.0054 [1.0046, 1.0064] |
+| **0.6** | **x1.076 / x1.073** | **x1.026 / x1.026** | **x1.0075** [1.0066, 1.0084] |
+| 0.7 | x1.082 / x1.088 | x1.028 / x1.023 | |
 
-Alpha 0.6 is the best and draw-stable on both models (OPT-125M gains most: x1.100 -> x1.07); 0.7 is no better and
-less stable. OPT-6.7B at alpha 0.5 and 0.6 is still running. If it agrees, the certified recipe becomes smooth-max
-alpha 0.6: `build_opt_from_hf(model, calib, norm_gain=4, smooth=0.6, smooth_pct=100, pct=100, pct_att=100)` (the
-same graph as this search's builder, `tests/test_recipe_equivalence.py`), and D6a's digests and the paper's quality
-table are redone with it.
+(fp32: 27.656, 14.624, 10.860; top-1 agreement with fp32 at alpha 0.6: 0.82, 0.90, 0.93.)
+
+**Decision: the certified recipe is smooth-max at alpha 0.6** (`real_weights.CERTIFIED_RECIPE`: `norm_gain=4,
+smooth=0.6, smooth_pct=100, pct=100, pct_att=100`, 11-bit probabilities). It is the best single setting: it helps
+the smallest model most (OPT-125M x1.100 -> x1.075), is draw-stable, and costs OPT-6.7B 0.002 against alpha 0.5.
+Against the plan's targets (x1.06 / x1.04 / x1.05) OPT-1.3B and OPT-6.7B are well inside; OPT-125M misses by 0.015.
+The paper builder gives the same graph (`tests/test_recipe_equivalence.py`). D6a's digests, the paper's quality
+table and F2c's zero-shot runs are redone with it.
 
 ## 4. Limitations
 

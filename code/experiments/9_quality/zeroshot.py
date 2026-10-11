@@ -33,7 +33,8 @@ log-softmax in float32.
 
 The integer model is ``opt_builder.build_opt`` (``--builder f2a``, F2a's recipe search; default: the smoothed graph
 with channel maxima, no clipping, alpha 0.5 and 11-bit probabilities, F2a round 1's best) or the paper builder
-``real_weights.build_opt_from_hf`` (``--builder paper``); ``--opts`` (JSON) replaces the recipe. Calibration: draw
+``real_weights.build_opt_from_hf`` (``--builder paper``, default ``real_weights.CERTIFIED_RECIPE``); ``--opts`` (JSON)
+replaces the recipe. Calibration: draw
 ``--draw`` of ``--calib-windows`` windows of ``--calib-seq`` tokens of the WikiText-2 *train* split (as F2a).
 
 Output: one JSON line per task and model (stdout, and appended to ``--out``): accuracy, ``acc_norm``, the number of
@@ -305,9 +306,8 @@ def main() -> None:
     from common import load_opt
     model, tok = load_opt(args.model)
     pad = tok.pad_token_id if tok.pad_token_id is not None else 0
-    opts = json.loads(args.opts) if args.opts else (dict(F2A_BEST) if args.builder == "f2a" else
-                                                   dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99,
-                                                        pct_att=99.99))
+    from pvi.fullcheck.real_weights import CERTIFIED_RECIPE
+    opts = json.loads(args.opts) if args.opts else (dict(F2A_BEST) if args.builder == "f2a" else dict(CERTIFIED_RECIPE))
     head = {"model": args.model, "tag": args.tag, "host": platform.node(), "device": args.device,
             "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
 

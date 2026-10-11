@@ -171,6 +171,14 @@ def _fold(w: torch.Tensor, b: torch.Tensor | None, gamma: torch.Tensor, beta: to
     return wf, bf
 
 
+CERTIFIED_RECIPE = dict(norm_gain=4, smooth=0.6, smooth_pct=100.0, pct=100.0, pct_att=100.0)
+"""The certified OPT models' recipe (plan 2 F2a, ``docs/improvements/F2a_quality_2048.md`` Sec. 3.3): SmoothQuant with
+alpha 0.6 through the norm gains, each channel's maximum as its statistic and no clipping ("smooth-max"), norm gain 4,
+and ``prob_max`` = :data:`CERTIFIED_PROB_MAX` (the default).  Calibration: the first four 2,048-token windows of the
+WikiText-2 (raw) *train* split (``experiments/9_quality/common.certified_calib``).  WikiText-2 perplexity at 2,048
+tokens: x1.076 (OPT-125M), x1.026 (OPT-1.3B), x1.008 (OPT-6.7B) of fp32."""
+
+
 def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, norm_gain: float = 32,
                       residual_headroom: float = 1.25, device=None, smooth: float | None = None,
                       smooth_pct: float = 99.9, pct_att: float = 100.0,
