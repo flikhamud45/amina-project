@@ -135,6 +135,46 @@ def test_lw_times_across_blocks_chunks_kinds_and_dtypes(method, dtype, monkeypat
     assert buckets.lw_times(wide, E0, E0, _op("residual", 70_001, n_rows=1), _rand_ext(g, 2), method) is None
 
 
+@pytest.mark.skipif(not __import__("pvi.fullcheck.native_kernels", fromlist=["available"]).available(),
+                    reason="the native library needs a C++ compiler (Linux)")
+@pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
+def test_native_lw_equals_the_torch_table_products(dtype, monkeypatch):
+    """V-V1N's native kernel (``native_kernels.lw_affine``, used by ``lw_times`` on a CPU) gives the torch table
+    products' integers, and declines out-of-range values and malformed operands."""
+    from pvi.fullcheck import native_kernels as nk
+    g = torch.Generator().manual_seed(5)
+    cases = [("requant", 3_000_017, -128, 127, 37, 2048, 40), ("requant", 1 << 16, -7, 9, 33, 50, 25),
+             ("residual", 70_001, -3000, 4000, 6, 1500, 0), ("residual", 1 << 20, -40, 40, 5, 300, 0)]
+    for kind, m, a, b, n, t, n_exc in cases:
+        if dtype == torch.int8 and kind == "residual" and b > 127:
+            continue
+        op = _op(kind, m, a if kind == "requant" else -128, b if kind == "requant" else 127, n)
+        s, idx, z = _case(g, op, n, t, a, b, n_exc)
+        if kind == "residual":
+            idx, z = E0, E0
+        e = _rand_ext(g, t)
+        monkeypatch.setattr(nk, "_LW", True)
+        got = buckets.lw_times(s.to(dtype), idx, z, op, e, "1")
+        monkeypatch.setattr(nk, "_LW", False)
+        want = buckets.lw_times(s.to(dtype), idx, z, op, e, "1")
+        old = cp._lw_e_old(s, idx, z, op, e, t)
+        for x, y, w in zip(got, want, old):
+            assert torch.equal(x, y) and torch.equal(x, w), (kind, m, dtype)
+    monkeypatch.setattr(nk, "_LW", True)
+    lo_a, w0, tab, lo_v, w_v = buckets._affine(_op("requant", 3_000_017), -128, 127)
+    cd = tab[:, 1:3].to(torch.int64)
+    e = _rand_ext(g, 4)
+    ok = torch.tensor([[-128, 0, 5, 127]], dtype=dtype)
+    assert nk.lw_affine(ok, -128, cd, e) is not None
+    if dtype != torch.int8:
+        bad = torch.tensor([[-128, 0, 5, 128]], dtype=dtype)                        # past the table
+        assert nk.lw_affine(bad, -128, cd, e) is None
+    assert nk.lw_affine(ok, -128, cd, e[:3]) is None                                 # e of the wrong length
+    e_bad = e.clone()
+    e_bad[0, 0] = P                                                                  # a non-canonical coefficient
+    assert nk.lw_affine(ok, -128, cd, e_bad) is None
+
+
 @pytest.mark.parametrize("method", ["1", "scatter"])
 def test_xbar_equals_int_times(method, monkeypatch):
     g = torch.Generator().manual_seed(3)

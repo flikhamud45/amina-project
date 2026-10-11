@@ -42,7 +42,9 @@ reduced values (products below ``2^62``).
 
 The switch ``PVI_V1_BUCKETS``, read at each call: ``1`` (default) the table products; ``scatter`` the buckets;
 ``0`` today's code everywhere in V1's verifier (parts 1-4 of V-V1N: these products, the batched GKR check and the
-batch-inverted logUp identity, the int8 values; ``cut_protocol``).
+batch-inverted logUp identity, the int8 values; ``cut_protocol``).  Under ``1``, on a CPU with the native library, the
+table products' three sums come from ``native_kernels.lw_affine`` (one pass over the values with int64 accumulators
+over the 8 coefficients, the same integers; ``PVI_V1_NATIVE=0`` keeps the torch products).
 """
 
 from __future__ import annotations
@@ -167,6 +169,17 @@ def bucket_times(b: torch.Tensor, tabs: torch.Tensor) -> torch.Tensor:
     return out.view(d, rows, k).permute(1, 2, 0).contiguous()
 
 
+def _native_lw(s: torch.Tensor, a: int, tab: torch.Tensor, e: torch.Tensor) -> torch.Tensor | None:
+    """The table products' three sums ``[N, 3, 8]`` from the native kernel (``native_kernels.lw_affine``: one pass over
+    the values, int64 accumulators over the 8 coefficients, the same integers), or None (no library, a GPU tensor,
+    ``PVI_V1_NATIVE=0``): the torch path then runs."""
+    try:
+        from . import native_kernels
+    except ImportError:                                                             # (pragma: no cover)
+        return None
+    return native_kernels.lw_affine(s, a, tab[:, 1:3].to(torch.int64), e)
+
+
 def _method(n_values: int, t: int) -> str:
     """The products' method under :func:`mode` for ``n_values`` values on rows of ``t`` entries: the buckets only
     where they are not larger than the rows."""
@@ -211,15 +224,20 @@ def lw_times(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, op, e:
             got = bucket_times(bucket_sums(idx, b - a + 1, e_dev), tabs)               # [R, 2, 8]
             le[r0:r0 + step], we[r0:r0 + step] = got[:, 0], got[:, 1]
     else:
-        step = _rows_per_block(t, 3)
         lo_a, w0 = lo_a % P, w0 % P
-        for r0 in range(0, n, step):
-            idx = s[r0:r0 + step].to(torch.int32)
-            if a:
-                idx -= a
-            g = table_times(idx, tab, e_dev)                                            # [R, 3, 8]
-            le[r0:r0 + step] = ((lo_a * je) % P + (w0 * g[:, 0]) % P + g[:, 1]) % P
-            we[r0:r0 + step] = ((w0 * je) % P + g[:, 2]) % P
+        g = _native_lw(s, a, tab, e) if dev.type == "cpu" else None                 # [N, 3, 8], or None
+        if g is not None:
+            le = ((lo_a * je) % P + (w0 * g[:, 0]) % P + g[:, 1]) % P
+            we = ((w0 * je) % P + g[:, 2]) % P
+        else:
+            step = _rows_per_block(t, 3)
+            for r0 in range(0, n, step):
+                idx = s[r0:r0 + step].to(torch.int32)
+                if a:
+                    idx -= a
+                g = table_times(idx, tab, e_dev)                                        # [R, 3, 8]
+                le[r0:r0 + step] = ((lo_a * je) % P + (w0 * g[:, 0]) % P + g[:, 1]) % P
+                we[r0:r0 + step] = ((w0 * je) % P + g[:, 2]) % P
     le, we = le.cpu(), we.cpu()
     if exc_idx.numel():
         idx = exc_idx.to(torch.int64).cpu()

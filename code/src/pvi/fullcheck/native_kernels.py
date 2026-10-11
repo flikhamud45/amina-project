@@ -28,7 +28,7 @@ import torch
 
 __all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
            "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max", "patch_exceptions", "tune_malloc",
-           "int8_matmul"]
+           "int8_matmul", "lw_affine"]
 
 _SOURCE = r"""
 #include <cstdint>
@@ -618,6 +618,53 @@ extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, co
     return zbytes == 4 ? field_matmul_t(chi, r, n, (const int32_t*)z, m, sr, sc, out, threads)
                        : field_matmul_t(chi, r, n, (const int64_t*)z, m, sr, sc, out, threads);
 }
+// ---- V1's final check by value (buckets.lw_times, V-V1N): per row i of the values s [n, t] (offset by a, in [0, V))
+// at the column point e [t, 8] (canonical), out[i] = (sum_j (s_ij - a) e_j, sum_j C[v] e_j, sum_j D[v] e_j) with
+// v = s_ij - a and the tables cd [V, 2] = (C, D), each reduced mod p ([n, 3, 8] canonical).  A term is below
+// 2^15 * 2^31 (V <= 2^15, C < V, D in {0, 1}) and a row adds at most 2^16 of them before reducing, so int64 never
+// overflows; the integers are those of the torch table products.  Returns 0 if a value lies outside [a, a + V).
+template <typename S>
+static int64_t lw_affine_t(const S* s, int64_t n, int64_t t, int64_t a, int64_t V, const int64_t* e,
+                           const int64_t* cd, int64_t* out) {
+    int64_t bad = 0;
+    const int64_t RED = 1 << 16;
+    #pragma omp parallel for schedule(static) reduction(|:bad)
+    for (int64_t i = 0; i < n; ++i) {
+        int64_t a1[8] = {0, 0, 0, 0, 0, 0, 0, 0}, a2[8] = {0, 0, 0, 0, 0, 0, 0, 0}, a3[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        const S* si = s + i * t;
+        int64_t rowbad = 0;
+        for (int64_t j = 0; j < t; ++j) {
+            const int64_t v = (int64_t)si[j] - a;
+            if (v < 0 || v >= V) { rowbad = 1; break; }
+            const int64_t c = cd[2 * v], d = cd[2 * v + 1];
+            const int64_t* ej = e + 8 * j;
+            #pragma omp simd
+            for (int k = 0; k < 8; ++k) { a1[k] += v * ej[k]; a2[k] += c * ej[k]; a3[k] += d * ej[k]; }
+            if ((j + 1) % RED == 0)
+                for (int k = 0; k < 8; ++k) { a1[k] %= PF; a2[k] %= PF; a3[k] %= PF; }
+        }
+        bad |= rowbad;
+        int64_t* o = out + 24 * i;
+        for (int k = 0; k < 8; ++k) { o[k] = a1[k] % PF; o[8 + k] = a2[k] % PF; o[16 + k] = a3[k] % PF; }
+    }
+    return bad ? 0 : 1;
+}
+
+extern "C" int64_t pvi_lw_affine(const void* s, int64_t sbytes, int64_t n, int64_t t, int64_t a, int64_t V,
+                                 const int64_t* e, const int64_t* cd, int64_t* out, int64_t threads) {
+    omp_set_num_threads((int)threads);
+    for (int64_t i = 0; i < 8 * t; ++i) if (e[i] < 0 || e[i] >= PF) return 0;
+    for (int64_t v = 0; v < V; ++v) if (cd[2 * v] < 0 || cd[2 * v] >= V || cd[2 * v + 1] < 0 || cd[2 * v + 1] > 1) return 0;
+    if (V > (1 << 15)) return 0;
+    switch (sbytes) {
+        case 1: return lw_affine_t((const int8_t*)s, n, t, a, V, e, cd, out);
+        case 2: return lw_affine_t((const int16_t*)s, n, t, a, V, e, cd, out);
+        case 4: return lw_affine_t((const int32_t*)s, n, t, a, V, e, cd, out);
+        case 8: return lw_affine_t((const int64_t*)s, n, t, a, V, e, cd, out);
+        default: return 0;
+    }
+}
+
 // ---- the claim decoder's slot streams (claimcodec._unpack_lanes for all 32 lanes) ---------------------------------
 // w [k, g] uint32: lane j holds the values [j g, (j + 1) g), value c of lane j at bit (j k) of column c.  Writes the
 // n values to out (uint32), each plus the base of its segment (segments [starts[s], ends[s]) in order, bases los[s];
@@ -866,6 +913,9 @@ def _library():
         _LIB.pvi_patch.restype = ctypes.c_int64
         _LIB.pvi_gemm_i8.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64] * 4
         _LIB.pvi_gemm_i8.restype = None
+        _LIB.pvi_lw_affine.argtypes = [ctypes.c_void_p] + [ctypes.c_int64] * 5 + [ctypes.c_void_p] * 3 + \
+            [ctypes.c_int64]
+        _LIB.pvi_lw_affine.restype = ctypes.c_int64
     except (OSError, subprocess.CalledProcessError):
         _LIB = None
     return _LIB
@@ -1184,3 +1234,28 @@ def int8_matmul(w: torch.Tensor, x: torch.Tensor):
                      torch.get_num_threads())
     return out
 
+
+_LW = os.environ.get("PVI_V1_NATIVE", "1") != "0"
+
+
+def lw_affine(s: torch.Tensor, a: int, cd: torch.Tensor, e: torch.Tensor):
+    """``[n, 3, 8]`` (canonical): per row of the values ``s`` ``[n, t]`` (int8/16/32/64, on the CPU) the sums
+    ``sum_j (s_ij - a) e_j``, ``sum_j C(s_ij - a) e_j`` and ``sum_j D(s_ij - a) e_j`` at the column point ``e``
+    ``[t, 8]`` with the tables ``cd`` ``[V, 2]`` (``buckets._affine``'s columns ``C`` and ``D``): the integers of
+    ``buckets.table_times`` (V-V1N's native kernel, switch ``PVI_V1_NATIVE``).  None when the library is not there,
+    the operands are not of that kind, or a value lies outside ``[a, a + V)`` (the caller's torch path then runs)."""
+    if not _LW or _library() is None or not hasattr(_LIB, "pvi_lw_affine"):
+        return None
+    if not (s.device.type == "cpu" and s.dim() == 2 and s.dtype in (torch.int8, torch.int16, torch.int32, torch.int64)
+            and s.numel()):
+        return None
+    n, t = s.shape
+    s = s.contiguous()
+    e = e.to("cpu", torch.int64).contiguous()
+    cd = cd.to("cpu", torch.int64).contiguous()
+    if e.shape != (t, 8) or cd.dim() != 2 or cd.shape[1] != 2:
+        return None
+    out = torch.empty(n, 3, 8, dtype=torch.int64)
+    ok = _LIB.pvi_lw_affine(s.data_ptr(), s.element_size(), n, t, int(a), cd.shape[0], e.data_ptr(), cd.data_ptr(),
+                            out.data_ptr(), torch.get_num_threads())
+    return out if ok else None
