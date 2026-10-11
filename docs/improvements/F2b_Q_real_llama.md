@@ -1119,6 +1119,24 @@ agreement):
   same recipe on Qwen3-4B-Base at 2,048 tokens runs as job 1013018; the `glus2` ladder (job 1012675) gives the
   alpha of `glu_smooth` at 128 tokens.
 
+**TinyLlama_v1.1 at 2,048 tokens, prefix `auto` (job 1012676, s-005, git 207b798;** reference 7.697; ratio to fp32
+with its 95% bootstrap interval / top-1):
+
+| smoothing alpha | smooth | + `glu_smooth` 0.3 | + `glu_smooth` 0.5 |
+|---:|---|---|---|
+| 0.65 | x1.561 [1.513, 1.618] / 0.723 | x1.444 [1.415, 1.476] / 0.750 | x2.685 / 0.586 |
+| 0.75 | x1.227 [1.212, 1.248] / 0.798 | **x1.147 [1.138, 1.157] / 0.826** | x1.577 / 0.718 |
+| 0.85 | x1.406 [1.364, 1.460] / 0.741 | x1.370 [1.329, 1.420] / 0.752 | x1.697 / 0.689 |
+
+* The alpha 0.65 cell equals job 1009797's to every digit (the same graph).
+* **TinyLlama meets the F2b-L target (x1.15) at 2,048 tokens:** x1.147 with smoothing alpha 0.75 and `glu_smooth` 0.3
+  (the interval's upper end 1.157 is just above it). Section 12.6's x1.56 was alpha 0.65, the ladder's upper end; the
+  optimum lies between 0.65 and 0.85 and is narrow.
+* `glu_smooth` helps at 0.3 at every alpha and hurts at 0.5: for TinyLlama the product balance must lean towards the
+  down projection's weights. With Qwen3-1.7B, 0.5 helped only with the per-token exponent. The alpha of `glu_smooth`
+  is therefore a per-family parameter, like the smoothing alpha.
+* A finer grid (smoothing 0.70 / 0.75 / 0.80 x `glu_smooth` 0.2 / 0.3 / 0.4) runs as job 1013124.
+
 ### 13.8 Limitations and open issues
 
 * **The reproduction uses random weights.** The real gains are real, the q/k projections are not: real raw q/k
