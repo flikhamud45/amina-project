@@ -191,7 +191,7 @@ of the L40S run}.
   ours interactive, the V1 row under Fiat--Shamir, against v0's final verifier;
   CPU: 8 threads of a Xeon Silver 4114, full models, ours in $\Kpre$ with the native kernels,
   re-execution the fastest exact one; ours in $\sC$: EPYC 9334; GPU:
-  RTX~2080~Ti) \todo{F6: $\sC$ at 2{,}048; EV: CommitLLM bytes, time}}
+  RTX~2080~Ti) \todo{F6: $\sC$ at 2{,}048}}
   \label{tab:options}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.2pt}
@@ -204,7 +204,7 @@ of the L40S run}.
     Re-exec., CPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 4.1\,s & 93\,s & exact \\
     Re-exec., GPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 0.16\,s & 2.08\,s & exact \\
     GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\
-    CommitLLM & key & -- & -- & -- & -- & sampled$^b$ \\
+    CommitLLM$^e$ & key & \multicolumn{2}{c}{144\,kB per token} & \multicolumn{2}{c}{0.66\,ms per token} & sampled$^b$ \\
     zkLLM & comm. & -- & 183\,kB & -- & 2.36\,s & full, ZK \\
     Ours, $\sC$ & roots & 325\,MB & 6.6\,GB & 1.0\,s & -- & full \\
     Ours, $\Kpre$ & key & 196\,MB & 6.4\,GB & 1.0\,s & 18.5\,s & full$^c$ \\
@@ -218,7 +218,11 @@ of the L40S run}.
   pass before the int8 forward pass, which halves it on Llama-sized layers; fp16 takes
   0.037/0.57\,s. $^b$An edit passes a one-token response with probability about
   99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$At 2{,}048 tokens,
-  measured with random weights (2.0--2.3$\times$) and on the real OPT-6.7B (1.73$\times$).}
+  measured with random weights (2.0--2.3$\times$) and on the real OPT-6.7B (1.73$\times$).
+  $^e$Llama-3.1-8B (32 layers of width 4{,}096, as Llama-2-7B), per audited token, as
+  reported~\cite{commitllm2026}: the trace state it retains per token, which an audit opens (Merkle
+  paths not counted), and the routine 10-layer check on an Apple M4; unaudited responses cost the
+  client nothing, and serving costs the provider 12--14\% more.}
 \end{table}
 
 In mode $\sC$ the client holds only the commitment and cannot re-run the model; in $\sK$ and

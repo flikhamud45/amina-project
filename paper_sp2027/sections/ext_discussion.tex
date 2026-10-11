@@ -99,8 +99,11 @@ its attestation service and the enclave's resistance to side channels.
 audit opens one token of 1--5\% of the responses and 10 of 80 layers at that token, so an edit
 passes with probability 87.5\% when the token is opened and about 99.4\% per one-token response at
 a 5\% audit rate (Table~\ref{tab:sok}). Its client holds secret Freivalds vectors precomputed from
-the weights, and attention is audited, not verified \todo{CommitLLM's bytes and client time per
-audited response}.
+the weights, and attention is audited, not verified. For Llama-3.1-8B, whose 32 layers of width
+4{,}096 match Llama-2-7B's, it reports 144\,kB of retained trace state per token and a client check
+of 0.66\,ms per audited token for the routine 10 layers (1.98\,ms for all 32) on an Apple M4, plus
+about 0.5\,MiB per audited token when the sampler's logits are opened; for Llama-70B the client's
+key is about 48\,MB.
 
 \para{zkSNARKs.} zkLLM~\cite{zkllm} proves a 2{,}048-token Llama-2-7B prompt in 10.3\,min on an
 A100, with a 183\,kB proof that its verifier checks in 2.36\,s, and hides the weights. zkAgent,
