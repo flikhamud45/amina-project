@@ -19,7 +19,10 @@ change (``matches_benchmark_graph`` checks it; the diff is empty, see below):
   The norm is invariant to scaling a head's input, so each head's rows of ``W_q`` (``W_k``) are first multiplied by
   ``beta_h`` (``head_eq``), which brings every head's int8 values to the same range: the integer square root's error
   ``1/rms`` is then small for every head (a head of int8 RMS 10 would otherwise see its scores scaled by up to 10%).
-  The float function is unchanged (up to RMSNorm's epsilon).
+  The float function is unchanged (up to RMSNorm's epsilon). The real gains are far from 1 and unlike between q and
+  k (Qwen3-0.6B's layer-0 k norm: 96.5 on a channel where q's is 0.003), so ``qk_balance`` (default) gives each RoPE
+  pair a factor ``c_p`` in q's gains and ``1/c_p`` in k's (:meth:`_Builder.qk_balance`): the scores are unchanged in
+  real numbers, and k's int8 range is no longer set by a channel q ignores.
 * **RoPE** uses the graph's Q14 tables (``transformer._rope``). Hugging Face's ``rotate_half`` gives
   ``[x1 cos - x2 sin | x2 cos + x1 sin]`` with the frequencies ``theta^(-2i/head_dim)`` -- the convention of
   ``_rope`` (``x [cos | cos] + [x2 | x1] [-sin | sin]``; tested on random values). The rotation preserves each
@@ -78,12 +81,22 @@ from .transformer import (
 
 __all__ = ["build_llama_from_hf", "config_of", "same_shape", "matches_benchmark_graph", "lean_logits",
            "real_logits", "residual_states", "hf_residual_states", "block_cosines", "swiglu_exp", "residual_exp",
-           "prefix_attention", "prefix_kv", "prefixquant_tokens"]
+           "prefix_attention", "prefix_kv", "prefixquant_tokens", "ROLES"]
 
 _ROWS_NORM = 1 << 14
 """Calibration rows read by the smoothing statistics (evenly spaced over all windows)."""
 _ENTRIES = 1 << 24
 """Entries a percentile reads (``torch.quantile``'s limit): whole rows, evenly spaced over all windows."""
+ROLES = (("attn_norm", "norm", "int8"), ("q_proj", None, "claim"), ("q", "requant", "int8"),
+         ("k_proj", None, "claim"), ("k", "requant", "int8"), ("v_proj", None, "claim"), ("v", "requant", "int8"),
+         ("q_norm", "q norm", "int8"), ("k_norm", "k norm", "int8"), ("q_rope", "rope", "int8"),
+         ("k_rope", "rope", "int8"), ("attn", "attention", "int8"), ("o_proj", None, "claim"),
+         ("res_attn", "residual add", "residual"), ("mlp_norm", "norm", "int8"), ("gate_proj", None, "claim"),
+         ("gate", "requant", "int8"), ("up_proj", None, "claim"), ("up", "requant", "int8"), ("silu", "silu", "int8"),
+         ("glu", "swiglu", "int8"), ("down_proj", None, "claim"), ("res_mlp", "residual add", "residual"))
+"""A block's tensors in op order (``info["roles"]``): role, the note of the cheap op that computes it (None: a weight
+op's claims), and what it holds (int8 values, int64 claims, the int32 residual stream). Llama has no ``q_norm`` /
+``k_norm``; with ``glu_exp`` the notes of ``glu`` and ``res_mlp`` carry the per-token suffix."""
 
 
 def _rows(t: torch.Tensor, cap: int) -> torch.Tensor:
@@ -175,6 +188,7 @@ class _Builder:
         self.ops: list = []
         self.env = {"x": tokens}
         self.scale: dict[str, float | torch.Tensor] = {}
+        self.chan: dict[str, torch.Tensor] = {}    # a balanced q/k (qk_balance): real scale = scale x chan per channel
         self.exp_of: dict[str, tuple] = {}         # a glu_exp product -> (act, up, multiplier, emax)
         self.prefix_consts: list[dict] = []        # per layer with a prefix: its int8 k, v, their scales and clipping
         self._n = 0
@@ -272,37 +286,74 @@ class _Builder:
         return self.cheap("norm", [r], lambda a_, g=gain: _norm_int(a_, g, False), (1 << 16) / gain.double(),
                           "norm")
 
-    def head_norm(self, z, heads: int, dh: int, gamma: torch.Tensor, prefix: str, note: str):
-        """Qwen3's q/k norm: the benchmark's per-head integer RMSNorm with the gain ``round(G gamma_j 2^16)``;
-        ``G`` maps the ``pct`` percentile of the RoPE pairs' norms of ``gamma_j x_j / rms`` to 127 (real scale
-        ``1/G``). The input's scale does not matter: the norm divides it out."""
+    def _head_normed(self, z, dh: int, gamma: torch.Tensor) -> torch.Tensor:
+        """``gamma_j x_j / rms`` per head of the int8 ``z`` (float64 ``[rows, dh]``, the integer norm's ``rms``)."""
         x = self.env[z].reshape(-1, dh)
         sigma = _isqrt(torch.div((x * x).sum(-1, keepdim=True), dh, rounding_mode="floor"))
-        normed = x.double() / sigma.double() * gamma.double().to(x.device)[None, :]
+        return x.double() / sigma.double() * gamma.double().to(x.device)[None, :]
+
+    def head_norm(self, z, heads: int, dh: int, gamma: torch.Tensor, prefix: str, note: str,
+                  c: torch.Tensor | None = None):
+        """Qwen3's q/k norm: the benchmark's per-head integer RMSNorm with the gain ``round(G gamma_j c_j 2^16)``
+        (``c = 1`` but with ``qk_balance``: :meth:`qk_balance`); ``G`` maps the ``pct`` percentile of the RoPE pairs'
+        norms of ``gamma_j c_j x_j / rms`` to 127, so the real scale of channel ``j`` is ``1 / (G c_j)``: ``1/G``
+        in ``self.scale`` and ``1/c_j`` (per head) in ``self.chan``. The input's scale does not matter: the norm
+        divides it out."""
+        normed = self._head_normed(z, dh, gamma)
+        if c is not None:
+            normed *= c.to(normed.device)[None, :]
         G = INT8_MAX / max(_top(_pair_norms(normed, dh), self.pct), 1e-12)
         del normed
-        gain = torch.round(G * gamma.double().cpu() * (1 << 16)).to(torch.int64)
-        return self.cheap(prefix, [z], lambda a, g=gain, H=heads, dh=dh: _norm_int(
+        g_real = gamma.double().cpu() * (1.0 if c is None else c.double().cpu())
+        gain = torch.round(G * g_real * (1 << 16)).to(torch.int64)
+        out = self.cheap(prefix, [z], lambda a, g=gain, H=heads, dh=dh: _norm_int(
             a.reshape(*a.shape[:-1], H, dh), g, False).reshape(a.shape), 1.0 / G, note)
+        if c is not None:
+            self.chan[out] = (1.0 / c.double().cpu()).repeat(heads)
+        return out
+
+    def qk_balance(self, q, k, dh: int, gamma_q: torch.Tensor, gamma_k: torch.Tensor) -> torch.Tensor:
+        """The per-RoPE-pair factor ``c [dh]`` (``c_j = c_{j + dh/2}``) of ``qk_balance``: q's channel ``j`` takes
+        ``c_j`` into its norm's gain and k's channel ``j`` takes ``1/c_j``, with ``c_p = sqrt(A_k,p / A_q,p)``,
+        ``A_p`` the ``pct`` percentile of pair ``p``'s norm of ``gamma_j x_j / rms`` over the calibration rows (all
+        heads), clamped to ``[2^-8, 2^8]``. RoPE rotates each pair as a whole, so the factor commutes with it, and
+        every score ``sum_j q_j k_j`` is unchanged in real numbers (the product of the two scales is ``1 / (G_q
+        G_k)`` in every channel, which ``m_s`` uses). Both then span ``sqrt(A_q,p A_k,p)`` per pair, instead of k's
+        int8 range being set by a channel whose q gain is near zero (Qwen3-0.6B's layer-0 k norm has gains 96.5,
+        38.3 and 26.3 against a median of 2.3, on channels where q's gain is 0.00-0.18)."""
+        stat = []
+        for z, gamma in ((q, gamma_q), (k, gamma_k)):
+            pn = _rows(_pair_norms(self._head_normed(z, dh, gamma), dh), max(1, _ENTRIES // (dh // 2)))
+            stat.append(pn.amax(0) if self.pct >= 100 else torch.quantile(pn, self.pct / 100.0, dim=0))
+            del pn
+        a_q, a_k = (s.double().cpu() for s in stat)
+        half = torch.where((a_q > 0) & (a_k > 0), (a_k / a_q.clamp_min(1e-30)).sqrt(), torch.ones_like(a_q))
+        half = half.clamp(1.0 / 256, 256.0)
+        return torch.cat([half, half])
 
     def rope(self, z, heads: int, dh: int, theta: float, *, pruned: bool = False):
         """The benchmark's RoPE op (the scale is kept: a rotation); ``pruned``: ``z`` holds the last positions,
         whose angles come from the query's length. With a prefix of ``P`` tokens the query's positions start at
-        ``P`` (the prefix's keys were rotated at ``0 .. P-1`` offline)."""
+        ``P`` (the prefix's keys were rotated at ``0 .. P-1`` offline). A per-channel factor (``self.chan``, the
+        same for both channels of a pair) is kept too."""
         n = self.prefix_len
         if pruned and n:
-            return self.cheap("rope", [z, "x"], lambda a, x, H=heads, dh=dh, th=theta, n=n: _rope(
+            out = self.cheap("rope", [z, "x"], lambda a, x, H=heads, dh=dh, th=theta, n=n: _rope(
                 a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1] + n).reshape(a.shape), self.scale[z],
                 "rope")
-        if pruned:
-            return self.cheap("rope", [z, "x"], lambda a, x, H=heads, dh=dh, th=theta: _rope(
+        elif pruned:
+            out = self.cheap("rope", [z, "x"], lambda a, x, H=heads, dh=dh, th=theta: _rope(
                 a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1]).reshape(a.shape), self.scale[z],
                 "rope")
-        if n:
-            return self.cheap("rope", [z], lambda a, H=heads, dh=dh, th=theta, n=n: _rope(
+        elif n:
+            out = self.cheap("rope", [z], lambda a, H=heads, dh=dh, th=theta, n=n: _rope(
                 a.reshape(*a.shape[:-1], H, dh), th, n).reshape(a.shape), self.scale[z], "rope")
-        return self.cheap("rope", [z], lambda a, H=heads, dh=dh, th=theta: _rope(
-            a.reshape(*a.shape[:-1], H, dh), th).reshape(a.shape), self.scale[z], "rope")
+        else:
+            out = self.cheap("rope", [z], lambda a, H=heads, dh=dh, th=theta: _rope(
+                a.reshape(*a.shape[:-1], H, dh), th).reshape(a.shape), self.scale[z], "rope")
+        if z in self.chan:
+            self.chan[out] = self.chan[z]
+        return out
 
     def attention(self, q, k, v, hq: int, hkv: int, dh: int, prefix: tuple | None = None):
         """``build_opt_from_hf``'s attention, with grouped-query heads: the scores' multiplier is
@@ -310,15 +361,20 @@ class _Builder:
         ``pct_att`` percentile of the raw ``P V`` to 127. ``prefix``: the fixed prefix's real keys and values
         ``[1, P, Hkv dh]`` (:func:`prefix_kv`), quantised on ``s_k`` and ``s_v`` -- the scales of this layer's computed
         k and v, calibrated on the query positions alone -- and prepended by :func:`prefix_attention` (default
-        arguments of the op's function, so the digest binds them); ``m_o`` is calibrated with them in place."""
+        arguments of the op's function, so the digest binds them); ``m_o`` is calibrated with them in place. With
+        ``qk_balance`` q's and k's channels carry the factors ``self.chan`` (k's: ``c_j``, q's: ``1/c_j``), whose
+        product is 1, so ``m_s`` is the same formula; the prefix's keys are quantised on ``s_k c_j``."""
         sq, sk, sv = self.scale[q], self.scale[k], self.scale[v]
         m_s = round((1 << SHIFT) * 16.0 * sq * sk / math.sqrt(dh))
         P = self.prob_max
         if prefix is not None:
-            kp, vp = _to_int8(prefix[0], sk), _to_int8(prefix[1], sv)
-            self.prefix_consts.append({"k": kp, "v": vp, "s_k": sk, "s_v": sv,
-                                       "k_clip": float(prefix[0].abs().max()) / (INT8_MAX * sk),
+            k_real = prefix[0] if k not in self.chan else prefix[0] / self.chan[k].to(prefix[0].dtype)
+            kp, vp = _to_int8(k_real, sk), _to_int8(prefix[1], sv)
+            self.prefix_consts.append({"k": kp, "v": vp, "s_k": sk if k not in self.chan else sk * self.chan[k],
+                                       "s_v": sv,
+                                       "k_clip": float(k_real.abs().max()) / (INT8_MAX * sk),
                                        "v_clip": float(prefix[1].abs().max()) / (INT8_MAX * sv)})
+            del k_real
             raw = prefix_attention(self.env[q], self.env[k], self.env[v], kp, vp, m_s, None, hq, hkv, dh, P)
         else:
             raw = _attention(self.env[q], self.env[k], self.env[v], m_s, None, hq, hkv, dh, P)
@@ -383,16 +439,16 @@ class _Builder:
 
 
 def _head_eq(h_int: torch.Tensor, s_in, w: torch.Tensor, b: torch.Tensor | None, heads: int, dh: int, pct: float):
-    """``(diag(beta) w, beta b)``: each head's rows times ``beta_h = max_h' a_h' / a_h`` (at most ``2^8``), ``a_h``
-    the ``pct`` percentile of ``|w h|`` over head ``h``'s outputs on the calibration rows. An RMSNorm over the head
-    follows, which ``beta_h`` does not change."""
+    """``(diag(beta) w, beta b, beta)``: each head's rows times ``beta_h = max_h' a_h' / a_h`` (at most ``2^8``),
+    ``a_h`` the ``pct`` percentile of ``|w h|`` over head ``h``'s outputs on the calibration rows (``beta`` per row,
+    float64 ``[heads dh]``). An RMSNorm over the head follows, which ``beta_h`` does not change."""
     x = _rows(h_int.reshape(-1, h_int.shape[-1]), _ROWS_NORM).double().cpu()
     w_eff = w.double() * (s_in.double().cpu()[None, :] if torch.is_tensor(s_in) else s_in)
     z = (x @ w_eff.T).abs().reshape(-1, heads, dh)
     del x, w_eff
     a = torch.tensor([max(_top(z[:, i], pct), 1e-30) for i in range(heads)], dtype=torch.float64)
     beta = (a.max() / a).clamp(1.0, 256.0).repeat_interleave(dh)
-    return (w.double() * beta[:, None]).float(), (None if b is None else b.double() * beta)
+    return (w.double() * beta[:, None]).float(), (None if b is None else b.double() * beta), beta
 
 
 def _with_prefix(ids: torch.Tensor, prefix: torch.Tensor | None) -> torch.Tensor:
@@ -520,7 +576,7 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
                         prune_last: bool = False, device=None, pct_glu: float | None = None, head_eq: bool = True,
                         residual_headroom: float = 1.25, n_layers: int | None = None, glu_exp: int = 0,
                         free_calib: bool = True, prob_max: int = CERTIFIED_PROB_MAX,
-                        prefix_tokens=None) -> tuple[IntGraph, dict]:
+                        prefix_tokens=None, qk_balance: bool = True) -> tuple[IntGraph, dict]:
     """An integer Llama / Qwen3 decoder with the checkpoint's real weights.
 
     ``calib_ids [B, T]`` (``B`` calibration windows) sets every activation scale. The knobs are public constants
@@ -546,13 +602,24 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
       positions start at ``P``, and every scale -- ``s_res`` from the fp residual maximum included -- is calibrated
       on the query positions only (the calibration windows run after the prefix). The structure, the weight ops and
       the claim columns are the benchmark graph's; ``graph.meta`` records ``prefix_len`` and ``prefix_tokens``.
+    * ``qk_balance`` (default on; Qwen3 only, no effect on Llama): per RoPE pair, a factor ``c_p`` into the q norm's
+      gains and ``1/c_p`` into the k norm's (:meth:`_Builder.qk_balance`), so a channel whose k gain is large and
+      whose q gain is near zero no longer sets k's whole int8 range; the scores are unchanged in real numbers.
+      Constants only: the structure is the benchmark graph's. ``False`` gives the graph of before (the attribution
+      of ``experiments/9_quality/llama_attrib.py`` on a tiny Qwen3 with Qwen3-0.6B's layer-0 q/k-norm gains: the
+      k norm alone added 0.90 nats to the attention scores' error without it, about 0.11 with it).
 
     ``device`` is where the integer calibration pass runs (the fp model stays where it is). Returns the graph and
     ``info``: the real scales (``logit_scale``, ``s_residual``), the knobs, the residual tensors at the block
-    boundaries (``embed``, ``blocks``) and the ``DecoderConfig`` of the model's shape (``config``); with a prefix also
-    ``prefix_tokens``, ``prefix_kv`` (per layer the int8 ``(k, v)``, the graph's constants), ``prefix_scales``
-    (``(s_k, s_v)``), ``prefix_clip`` (``max |real| / (127 s)`` of the prefix's keys and values: above 1 they clip)
-    and ``prefix_hidden_max`` (the fp residual stream's largest ``|value|`` at the prefix positions).
+    boundaries (``embed``, ``blocks``) and the ``DecoderConfig`` of the model's shape (``config``); for the
+    op-level attribution (``experiments/9_quality/llama_attrib.py``) ``roles`` (per block ``{role: tensor name}``,
+    the roles of ``ROLES`` and ``in``, the block's input), ``scales`` (every tensor's real scale: a float, or a
+    per-channel vector for a smoothed norm and a balanced q/k), ``head_beta`` (per block the head-equalisation
+    factors ``(beta_q, beta_k)`` per output row, or None) and ``qk_balance_c`` (per block ``c [head_dim]`` or None);
+    with a prefix also ``prefix_tokens``, ``prefix_kv`` (per layer the int8 ``(k, v)``, the graph's constants),
+    ``prefix_scales`` (``(s_k, s_v)``; ``s_k`` per channel with ``qk_balance``), ``prefix_clip`` (``max |real| /
+    (127 s)`` of the prefix's keys and values: above 1 they clip) and ``prefix_hidden_max`` (the fp residual
+    stream's largest ``|value|`` at the prefix positions).
     """
     cfg = model.config
     arch = cfg.model_type
@@ -601,43 +668,62 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
     def bias(lin):
         return None if lin.bias is None else lin.bias.detach()
 
+    roles, head_beta, balance = [], [], []
     for i, layer in enumerate(layers):
         prune = prune_last and i == len(layers) - 1
         at, mlp = layer.self_attn, layer.mlp
+        role = {"in": r}                            # the block's tensors by role (ROLES; the attribution's map)
         g1 = layer.input_layernorm.weight.detach()
         wq, wk, wv = (p.weight.detach().float() * g1.float()[None, :] for p in (at.q_proj, at.k_proj, at.v_proj))
         bq, bk, bv = bias(at.q_proj), bias(at.k_proj), bias(at.v_proj)
-        h = B.norm(r, d, [wq, wk, wv])
+        h = role["attn_norm"] = B.norm(r, d, [wq, wk, wv])
         qk_norm = hasattr(at, "q_norm")
+        betas = None
         if qk_norm and head_eq:
-            wq, bq = _head_eq(B.env[h], B.scale[h], wq, bq, hq, dh, pct)
-            wk, bk = _head_eq(B.env[h], B.scale[h], wk, bk, hkv, dh, pct)
+            wq, bq, beta_q = _head_eq(B.env[h], B.scale[h], wq, bq, hq, dh, pct)
+            wk, bk, beta_k = _head_eq(B.env[h], B.scale[h], wk, bk, hkv, dh, pct)
+            betas = (beta_q, beta_k)
+        head_beta.append(betas)
         rope_pairs = None if qk_norm else dh       # without q/k norm, RoPE reads the requantised values
-        q = B.to_int8(B.mat(B.last(h, calibrate_all=True) if prune else h, wq, bq, B.scale[h]), pairs=rope_pairs)
-        k = B.to_int8(B.mat(h, wk, bk, B.scale[h]), pairs=rope_pairs)
-        v = B.to_int8(B.mat(h, wv, bv, B.scale[h]))
+        zq = role["q_proj"] = B.mat(B.last(h, calibrate_all=True) if prune else h, wq, bq, B.scale[h])
+        q = role["q"] = B.to_int8(zq, pairs=rope_pairs)
+        zk = role["k_proj"] = B.mat(h, wk, bk, B.scale[h])
+        k = role["k"] = B.to_int8(zk, pairs=rope_pairs)
+        zv = role["v_proj"] = B.mat(h, wv, bv, B.scale[h])
+        v = role["v"] = B.to_int8(zv)
         del wq, wk, wv
+        c = None
         if qk_norm:
-            q = B.head_norm(q, hq, dh, at.q_norm.weight.detach(), "qn", "q norm")
-            k = B.head_norm(k, hkv, dh, at.k_norm.weight.detach(), "kn", "k norm")
-        q = B.rope(q, hq, dh, theta, pruned=prune)
-        k = B.rope(k, hkv, dh, theta)
-        att = B.attention(q, k, v, hq, hkv, dh, prefix=None if kv is None else kv[i])
-        r = B.residual(B.last(r, calibrate_all=True) if prune else r,
-                       B.mat(att, at.o_proj.weight.detach().float(), bias(at.o_proj), B.scale[att]))
+            gq, gk = at.q_norm.weight.detach(), at.k_norm.weight.detach()
+            if qk_balance:
+                c = B.qk_balance(q, k, dh, gq, gk)
+            q = role["q_norm"] = B.head_norm(q, hq, dh, gq, "qn", "q norm", c=c)
+            k = role["k_norm"] = B.head_norm(k, hkv, dh, gk, "kn", "k norm", c=None if c is None else 1.0 / c)
+        balance.append(c)
+        q = role["q_rope"] = B.rope(q, hq, dh, theta, pruned=prune)
+        k = role["k_rope"] = B.rope(k, hkv, dh, theta)
+        att = role["attn"] = B.attention(q, k, v, hq, hkv, dh, prefix=None if kv is None else kv[i])
+        r_in = B.last(r, calibrate_all=True) if prune else r
+        zo = role["o_proj"] = B.mat(att, at.o_proj.weight.detach().float(), bias(at.o_proj), B.scale[att])
+        r = role["res_attn"] = B.residual(r_in, zo)
 
         g2 = layer.post_attention_layernorm.weight.detach()
         wg, wu = (p.weight.detach().float() * g2.float()[None, :] for p in (mlp.gate_proj, mlp.up_proj))
-        h = B.norm(r, d, [wg, wu])
-        gate = B.to_int8(B.mat(h, wg, bias(mlp.gate_proj), B.scale[h]))
-        up = B.to_int8(B.mat(h, wu, bias(mlp.up_proj), B.scale[h]))
+        h = role["mlp_norm"] = B.norm(r, d, [wg, wu])
+        zg = role["gate_proj"] = B.mat(h, wg, bias(mlp.gate_proj), B.scale[h])
+        gate = role["gate"] = B.to_int8(zg)
+        zu = role["up_proj"] = B.mat(h, wu, bias(mlp.up_proj), B.scale[h])
+        up = role["up"] = B.to_int8(zu)
         del wg, wu
-        prod = B.swiglu(gate, up)
+        prod = role["glu"] = B.swiglu(gate, up)
+        role["silu"] = B.ops[-1].inputs[0]          # the SiLU table's output, the product's first input
         if glu_exp and mlp.down_proj.bias is not None:
             raise ValueError("glu_exp scales the down projection's claims per token, which a bias would not follow")
-        z = B.mat(prod, mlp.down_proj.weight.detach().float(), bias(mlp.down_proj), B.scale[prod])
-        r = B.residual_exp(r, z, prod) if glu_exp else B.residual(r, z)
+        z = role["down_proj"] = B.mat(prod, mlp.down_proj.weight.detach().float(), bias(mlp.down_proj),
+                                      B.scale[prod])
+        r = role["res_mlp"] = B.residual_exp(r, z, prod) if glu_exp else B.residual(r, z)
         blocks.append(r)
+        roles.append(role)
         if free_calib:
             B.release({"x", r})
 
@@ -651,7 +737,10 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
             "smooth": smooth, "smooth_pct": smooth_pct, "pct_att": pct_att, "pct_glu": pct_glu,
             "head_eq": head_eq and arch == "qwen3", "prune_last": prune_last,
             "residual_headroom": residual_headroom, "glu_exp": glu_exp,
-            "glu_emax": [e for *_, e in B.exp_of.values()], "prefix_tokens": None, "prefix_len": 0}
+            "glu_emax": [e for *_, e in B.exp_of.values()], "prefix_tokens": None, "prefix_len": 0,
+            "qk_balance": qk_balance and arch == "qwen3", "roles": roles, "head_beta": head_beta,
+            "qk_balance_c": balance, "prob_max": prob_max,
+            "scales": {n: (s * B.chan[n] if n in B.chan else s) for n, s in B.scale.items()}}
     meta = {}
     if pre is not None:
         meta = {"prefix_len": pre.shape[1], "prefix_tokens": pre[0].tolist()}

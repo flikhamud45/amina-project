@@ -17,6 +17,9 @@ RoPE position ``P``); the output adds the prefix's tokens and how they were chos
 block and their counts), the fp32 stream's largest |value| at the prefix positions per block (where the massive
 activation should now sit), and per layer how far the prefix's keys and values reach on their layer's scales
 (``max |real| / (127 s)``; above 1 they clip).
+
+``--no-qk-balance``: Qwen3's graphs without the q/k balance per RoPE pair (``real_llama``'s ``qk_balance``, on by
+default; the lines are tagged ``-nobal``), the graphs of job 1009531. The op-level attribution is ``llama_attrib.py``.
 """
 from __future__ import annotations
 
@@ -44,6 +47,7 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true", help="a tiny random model of the family (laptop check)")
     ap.add_argument("--prefix", nargs="?", const="auto", default=None,
                     help="a fixed public prefix: auto (PrefixQuant's rule; a bare --prefix), bos, or ids 'a,b,..'")
+    ap.add_argument("--no-qk-balance", action="store_true", help="Qwen3: no q/k balance per RoPE pair (the old graph)")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     model, tok = pl.smoke_model(args.model) if args.smoke else pl.load_llama(args.model)
@@ -69,7 +73,8 @@ def main() -> None:
                                                                      pct_att=99.99)}
     for name in args.recipes:
         with torch.no_grad():
-            graph, info = rl.build_llama_from_hf(model, calib, prefix_tokens=prefix, **recipes[name])
+            graph, info = rl.build_llama_from_hf(model, calib, prefix_tokens=prefix,
+                                                 qk_balance=not args.no_qk_balance, **recipes[name])
             ours = rl.residual_states(graph, info, w)
         rows = []
         for i, (a, b) in enumerate(zip(ours, ref)):
@@ -81,13 +86,14 @@ def main() -> None:
                          "fp_max": round(mx[i][0], 1), "fp_max_pos": mx[i][1], "fp_max_ch": mx[i][2],
                          "int_clip": int((a.abs() >= RES_MAX * info["s_residual"] * (1 - 1e-9)).sum()),
                          "fp_prefix_max": None if pre_max[i] is None else round(pre_max[i], 1)})
-        rec = {"model": args.model, "recipe": name, "prefix_tokens": prefix, "s_residual": info.get("s_residual"),
+        rec = {"model": args.model, "recipe": name, "prefix_tokens": prefix, "qk_balance": info["qk_balance"],
+               "s_residual": info.get("s_residual"),
                "res_max_real": info.get("residual_real_max"), "RES_MAX": RES_MAX, "blocks": rows}
         if prefix:
             rec.update(prefix_hidden_max=info["prefix_hidden_max"],
                        prefix_clip=[[round(k, 3), round(v, 3)] for k, v in info["prefix_clip"]])
         print(json.dumps(rec), flush=True)
-        tag = name + ("+prefix" if prefix else "")
+        tag = name + ("+prefix" if prefix else "") + ("" if info["qk_balance"] or info["arch"] != "qwen3" else "-nobal")
         for r in rows:
             print(f"  {tag} block {r['block']:2d}: cos mean {r['cos_mean']:+.3f} min {r['cos_min']:+.3f} "
                   f"pos0 {r['cos_pos0']:+.3f} rest {r['cos_rest_mean']:+.3f} | fp max {r['fp_max']:.1f} at "

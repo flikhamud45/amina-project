@@ -8,7 +8,10 @@ The opt-in per-token exponent at the SwiGLU product (the plan's outlier handling
 tested for exactness and the protocol, off by default, and not yet measured on a real model. The PrefixQuant-style
 fixed prefix (the plan's cheaper alternative; `prefix_tokens=`, `--prefix`) is implemented and tested for exactness
 and the protocol, off by default, with its cluster numbers as placeholders (Section 12); it answers the cluster
-diagnosis of job 1009531 (TinyLlama's zero BOS row, Qwen3's massive activation at the first token).
+diagnosis of job 1009531 (TinyLlama's zero BOS row, Qwen3's massive activation at the first token). The op-level
+attribution (`llama_attrib.py`, Section 13) found the remaining first-block loss of Qwen3 on the laptop: the k norm's
+int8 range is set by gains of 96.5 on channels whose q gain is about 0; the q/k balance per RoPE pair
+(`qk_balance`, on by default for Qwen3, constants only) removes it; its cluster numbers are placeholders (13.7).
 
 ## 1. The problem
 
@@ -32,6 +35,9 @@ activations: perplexity 9,250).
 | `code/experiments/9_quality/ppl_llama.py` (new) | perplexity at 16 x 128 and at 2,048 tokens, fp32 reference, scalar and smoothed graphs, top-1, per-block cosine, `--check`, `--protocol`, `--smoke`; `--prefix` (Section 12) |
 | `code/experiments/9_quality/llama_diag.py` | the per-block, per-position diagnosis of job 1009531; `--prefix` (Section 12) |
 | `real_llama.py`, the fixed prefix | `build_llama_from_hf(..., prefix_tokens=)`, `prefix_attention`, `prefix_kv`, `prefixquant_tokens`; `hf_residual_states(..., prefix=)` (Section 12) |
+| `code/experiments/9_quality/llama_attrib.py` (new) | the op-level attribution: every tensor of a block against the checkpoint's activation, teacher-forced or accumulated (Section 13) |
+| `real_llama.py`, the attribution's map and the q/k balance | `ROLES`; `info["roles"]`, `info["scales"]`, `info["head_beta"]`, `info["qk_balance_c"]`; `build_llama_from_hf(..., qk_balance=True)` (Section 13.4) |
+| `code/tests/test_llama_attrib.py` (new) | 44 tests: the map, the runner, fidelity op by op, broken builders caught at their op, Qwen3-0.6B's real q/k-norm gains and the balance (Section 13.3) |
 
 `real_weights.py` is not touched (another item owns it); `real_llama.py` has its own builder class with
 `_RealBuilder`'s arithmetic for the weight ops, requantisations and residual adds.
@@ -200,7 +206,8 @@ cos = rl.block_cosines(rl.residual_states(graph, info, ids), rl.hf_residual_stat
 
 `info` holds `logit_scale`, `s_residual`, `residual_real_max`, `embed_mult`, `embed_clip`, the knobs, the residual
 tensors at the block boundaries (`embed`, `blocks`), `config` (the `DecoderConfig` of the model's shape) and
-`glu_emax`.
+`glu_emax`; for the attribution (Section 13) also `roles` (per block `{role: tensor name}`), `scales` (every
+tensor's real scale), `head_beta` and `qk_balance_c`.
 
 ## 6. The quality script
 
@@ -439,7 +446,7 @@ The plan's cheaper alternative to the per-token exponent: "a PrefixQuant-style f
 constants in the graph digest. It needs no new op kind and leaves V1 unaffected." Status: **implemented, tested on
 the laptop (tiny random models), off by default; the real-checkpoint numbers are cluster placeholders (12.6).**
 
-### 12.1 Why: the cluster diagnosis (job 1009531, `docs/diag_1009531.out`)
+### 12.1 Why: the cluster diagnosis (job 1009531, `docs/diag_1009531.txt`)
 
 The integer graphs pass every exactness and protocol check on the real checkpoints, but quality collapses
 (Qwen3-0.6B-Base at 16 x 128: x28 with the scalar gain, x72-77 smoothed, x6-9 with the per-token exponent).
@@ -716,3 +723,277 @@ structure_diff}' results/f2bq_prefix/*_auto.jsonl results/f2bq_prefix/*_bos.json
 * **Generation.** Every query of a prefixed graph has the prefix in front; generated tokens follow the prompt as before
   (`with_lm_positions`, `greedy_tokens` are unchanged); the prefix is part of the statement through the digest, so a
   client must know it (it is public, like the rest of the graph).
+
+## 13. Op-level attribution (`llama_attrib.py`) and the q/k balance
+
+Status: **the tool is implemented and validated on the laptop (tiny random models, no download of weights); it found,
+on the laptop, a cause of Qwen3's first-block loss in the builder -- the k norm's int8 range -- which the q/k balance
+per RoPE pair (`qk_balance`, default on for Qwen3) removes; the real-checkpoint runs are cluster commands (13.6) with
+placeholders (13.7).**
+
+### 13.1 Why
+
+`llama_diag.py` (jobs 1009531, 1009796; Section 12.1) says *after which block* the integer residual stream leaves the
+checkpoint's. Two findings remained after the prefix: Qwen3-0.6B-Base's first decoder layer already gives a mean
+cosine of 0.87-0.90 for ordinary tokens, with or without the prefix, scalar or smoothed (the prefix moved the 6,800
+massive activation, and with it the residual maximum behind `s_res`, out of the window, and the first block did not
+move), while OPT's builder reaches above 0.99 per block; and TinyLlama, whose first block is fine with the automatic prefix (0.977
+smoothed), decays block by block to about 0.85 (with the BOS-only prefix the smoothed graph falls to 0.06). Neither
+says *which op*.
+
+### 13.2 The tool
+
+`experiments/9_quality/llama_attrib.py --model M --recipe {scalar4,smooth55} --blocks {0,...,all} --mode
+{accumulated,teacher,both} [--prefix [SPEC]] [--no-qk-balance] [--no-head-eq]`, on one WikiText-2 test window
+(`--seq 128`, `--window 0`) with `llama_diag.py`'s calibration (4 train windows) and recipes. Blocks are HF's decoder
+layers, 0-based (layer `i`'s output is `llama_diag.py`'s block `i + 1`).
+
+**The map** (`real_llama.ROLES`, recorded by the builder per block as `info["roles"]`; `HF_SOURCE`, `FLOAT_OP` in the
+tool). Every tensor is dequantised with its real scale (`info["scales"]`: a float, or a per-channel vector for a
+smoothed norm and a balanced q/k) and brought to the checkpoint's units:
+
+| role | graph op (note) | to the checkpoint's units | checkpoint activation | exact op on the graph's inputs |
+|---|---|---|---|---|
+| `attn_norm` | "norm" | x real scale x `input_layernorm` gamma (the builder folds gamma into W) | `input_layernorm` output | RMSNorm(`in`), gamma and epsilon |
+| `q_proj`, `k_proj`, `v_proj` | weight op | x scale, / head-equalisation `beta` (q, k) | `q_proj` / `k_proj` / `v_proj` output | the HF linear on `attn_norm` |
+| `q`, `k`, `v` | "requant" | as above | the same | identity (the requantisation's own error) |
+| `q_norm`, `k_norm` (Qwen3) | "q norm", "k norm" | x per-channel scale `1 / (G c_j)` | `q_norm` / `k_norm` output | per-head RMSNorm, gamma, epsilon |
+| `q_rope`, `k_rope` | "rope" | the same scale | HF's `apply_rotary_pos_emb` of the hooked q/k with the hooked cos, sin | the same function |
+| `attn_raw` | (inside "attention") | raw `P V` recomputed with the op's constants, x `s_v / P` | `o_proj` input | float64 softmax attention, causal, grouped, with the prefix's constants |
+| `attn` | "attention" | x scale | `o_proj` input | identity |
+| `o_proj` | weight op | x scale | `o_proj` output | the HF linear |
+| `res_attn` | "residual add" | x `s_res` | `post_attention_layernorm` input | `in + o_proj` |
+| `mlp_norm` | "norm" | x scale x gamma | `post_attention_layernorm` output | RMSNorm |
+| `gate_proj`, `gate`, `up_proj`, `up` | weight op, "requant" | x scale | `gate_proj` / `up_proj` output | linear / identity |
+| `silu` | "silu" | x `s_a` | `act_fn` output | SiLU |
+| `glu` | "swiglu" | x `s_p` (x `2^e_t` with `glu_exp`) | `down_proj` input | `silu x up` |
+| `down_proj` | weight op | x scale (x `2^e_t`) | `down_proj` output | the HF linear |
+| `res_mlp` | "residual add" | x `s_res` | the layer's output | `res_attn + down_proj` |
+
+**Three comparisons per tensor**: `vs_hf` (the graph against the checkpoint: the error accumulated up to it),
+`local` (the graph against the exact float64 op on the graph's *own* dequantised inputs: the error this op adds),
+`carried` (that exact op against the checkpoint: the error its inputs bring). Each: cosine over channels per
+position (mean, minimum and its position, mean over positions 1..), relative L2 error (which also sees a wrong scale),
+the worst head's cosine for q/k/v/attention tensors; per tensor also the int8 entries at +-127 and at 0, residual
+entries at RES_MAX, a claim's largest |value| and honest bound (log2), the real scale.
+
+**The attention pattern.** A cosine of q or k is dominated by its largest channels, which need not be the ones the
+scores weigh (13.4: Qwen3's k norm has a 96.5 gain on a channel whose q gain is 0.003). So the tool compares the
+scores `q k / sqrt(head_dim)` of the graph's q and k with the checkpoint's -- RMS of the row-centred difference in nats
+against the reference's spread, total variation of the softmax rows -- and, per stage of the q path (`in`,
+`attn_norm`, `q_proj`, `q`, `q_norm`, `q_rope`) and of the k path, carries the stage's tensor to RoPE's output with
+the exact ops and scores it against the checkpoint's other side: the increase from one stage to the next is the score
+error that op adds (`score_steps`; `in`: what the block's input brings).
+
+**Modes.** `accumulated`: the graph on the window as is. `teacher`: each block's ops on the checkpoint's residual at
+its input, `clamp(round(h / s_res), +-RES_MAX)`, so each block is measured alone. `both`: the two from one build.
+`--blocks i` builds `i + 1` blocks only, whose blocks are the full graph's integer for integer (tested). Per block the
+output names the first op whose own error exceeds `--flag-rel 0.1` or whose mean cosine is below `--flag-cos 0.99`, or
+which adds more than `--flag-nats 0.1` to the scores (`first_flag`), and the ops of the largest own error and the
+largest score step (`worst`). Self-checks: the map (`check_roles`: each role is the output of an op of the expected kind
+and note, in op order; a block's ops read nothing from outside it but its input and the token ids) and, per block,
+the recomputed raw attention requantises to the op's output integer for integer. Output: one JSON line per (mode,
+block) on stdout and in `--out`, the table on stderr.
+
+### 13.3 Validation on the laptop
+
+`tests/test_llama_attrib.py`: **44 passed in 14.8 s** (laptop, 2 threads, transformers 4.57.6); with
+`tests/test_real_llama.py` and `tests/test_prob_max.py`: **124 passed in 70.5 s**.
+
+| Test | Checks |
+|---|---|
+| `test_the_role_map_names_every_tensor_of_every_block` (x8: both families; plain, pruned, prefix, `glu_exp`) | `check_roles` empty; every role has a scale; the blocks' op ranges tile the graph; the check fails on two swapped roles and on a role at an op of another kind |
+| `test_every_role_has_a_checkpoint_source_and_an_exact_op` | `HF_SOURCE`, `FLOAT_OP`, `ROLES` cover the same roles |
+| `test_the_exact_ops_on_the_checkpoints_inputs_give_its_outputs` (x4: both families, with and without prefix) | every exact op applied to the *checkpoint's* own inputs gives its hooked output (relative error < 1e-5), the attention (`float_attention` on the reconstructed RoPE outputs, grouped, causal, with the prefix's keys and values) included; the reconstructed post-RoPE keys are HF's KV cache |
+| `test_the_runner_and_teacher_forcing_give_the_graphs_own_integers` (x6) | the tool's run gives the plain forward's integers; teacher forcing with the graph's own residual reproduces the accumulated block exactly |
+| `test_a_one_block_build_has_the_full_builds_first_block` (x2) | `--blocks 0`'s 1-block build: the same roles, scales and integers |
+| `test_every_tensor_of_the_smoothed_graph_tracks_the_checkpoint` (x16) | every tensor: `vs_hf` mean cosine >= 0.98 (accumulated) / 0.99 (teacher), `local` mean cosine >= 0.999 and relative error <= 0.08; no op adds more than 0.08 nats; score error <= 0.25 / 0.1 nats; nothing flagged; the accumulated block outputs equal `real_llama.block_cosines` (`llama_diag.py`'s) to 1e-9 |
+| `test_a_wrong_q_or_k_norm_gain_is_caught_at_that_norm` (x2) | a builder with the q (k) norm's gain on the wrong channels (monkeypatched): `first_flag` is that norm, in both modes |
+| `test_a_swiglu_product_off_by_two_is_caught_at_the_product` (x2) | a SwiGLU product multiplier doubled (monkeypatched): `first_flag` is `glu`, local relative error 0.8-1.1 at a cosine > 0.99 (a scale error the cosine alone misses) |
+| `test_qwen3_06b_k_norm_gains_cost_the_scores_and_the_balance_restores_them` (x2 modes) | 13.4's realistic model, the numbers below |
+| `test_the_balance_leaves_llama_graphs_and_the_structure_alone` | Llama: the same digest with and without; Qwen3: another digest, both with an empty structural diff |
+
+Measured on the smoothed recipe (tiny models of Section 7, seeds 0 / 1, the four variants, blocks 0 and 1): `vs_hf`
+mean cosine at least 0.987 / 0.981 accumulated and 0.996 / 0.995 teacher-forced, `local` mean cosine at least 0.9994
+/ 0.9968, `local` relative error at most 0.049 / 0.134 (seed 1's 0.13: the pruned Llama block's SwiGLU product, four
+positions using few int8 levels), the largest score step 0.033 / 0.048 nats. The scalar recipe flags the input norm
+(gain 4: about 0.11 nats on the tiny models), as expected. Smoke runs of the script (`--smoke`: a 2-block random model
+with the real tokenizer and WikiText-2): Qwen3 vocabulary, `--blocks all --mode both`; TinyLlama vocabulary,
+`--recipe scalar4 --prefix --blocks 1 --mode teacher`; Qwen3 `--no-qk-balance --prefix bos`: all run end to end, the
+JSON lines and the table as described.
+
+### 13.4 What it found on the laptop: Qwen3's q/k-norm gains set the k norm's int8 range
+
+**The real gains.** Qwen3-0.6B-Base's norm weights were read from the checkpoint's `model.safetensors` on the Hub
+with HTTP range requests (the header and the 113 norm tensors, 0.3 MB; no weight matrix). Layer 0's `k_norm` has gains
+**96.5, 38.3 and 26.3** on channels 50, 115 and 88 against a median of 2.28, and `q_norm` has 0.003, 0.18 and 0.02 on
+the same channels; mirror-wise q's largest gain, 11.8 (channel 32), meets k's 0.16. The RoPE partners of the large k
+channels are ordinary (channel 114: k 1.21, q 1.30). Every layer has such k gains: the largest is 44.5, 44.0, 23.0,
+41.8, 34.0 in layers 1-5, 4.9-25 in layers 8-27 (q's largest: 2.8-11.8). The tiny test models draw every gain from
+[0.5, 1.5], so they never see this.
+
+**The mechanism.** The k norm is one cheap op with one public output scale `1/G_k`, and `G_k` maps the largest RoPE
+pair norm of `gamma_j x_j / rms` (the 96.5 channel) to 127. Every ordinary channel (gain 2.3) then gets 1-3 int8
+levels: 31% of k's int8 outputs are 0. The scores weigh exactly those channels (q's gain on the large ones is about
+0), so the attention pattern breaks while k's cosine against the checkpoint still reads 0.998 (the large channels
+dominate the vector's norm). In the tool: `k_norm` vs_hf cosine 0.998, `attn_raw` vs_hf 0.917 with its own (local)
+error 0.004, and the k path's score error jumps at `k_norm`.
+
+**A laptop reproduction.** A tiny Qwen3 with the real layer-0 q/k gains (head_dim 128, 1 block, d = 128, 4 / 2 heads,
+random weights of std 0.15, the other gains in [0.5, 1.5]; calibration 4 x 64, evaluation 2 x 64; teacher-forced,
+seeds 0 / 1):
+
+| quantity | smoothed, without the balance | smoothed, with it | scalar 4, without | scalar 4, with |
+|---|---|---|---|---|
+| block output, mean cosine (minimum) | 0.872 (0.54) / 0.783 (0.21) | **0.987 (0.90) / 0.983 (0.90)** | 0.827 (0.28) / 0.737 (0.26) | 0.955 (0.79) / 0.939 (0.71) |
+| attention score error, nats (reference spread 4.4) | 1.18 / 1.40 | 0.31 / 0.34 | 1.42 / 1.55 | 0.57 / 0.59 |
+| softmax total variation, mean | 0.21 / 0.28 | 0.057 / 0.064 | 0.25 / 0.31 | 0.11 / 0.12 |
+| score error added by the k norm / q norm, nats | **0.90 / 1.10**, 0.24 / 0.27 | 0.11 / 0.14, 0.11 / 0.12 | 0.83 / 0.98, 0.15 / 0.14 | 0.06 / 0.06, 0.05 / 0.06 |
+| largest score step of any other op, nats | 0.12 / 0.15 | 0.03 / 0.03 | 0.31 (the input norm) | 0.31 (the input norm) |
+| k norm's int8 outputs at 0 | 31% / 35% | 6% / 7% | 33% / 37% | 6% / 7% |
+
+Without the balance the first block falls to 0.78-0.87 (the real Qwen3-0.6B-Base: 0.889 smoothed, 0.865 scalar, job
+1009531), and the attribution puts it on the k norm (and, less, the q norm). A 28-block version (every layer's real
+q/k gains, weights of std 0.05, seed 0, accumulated, smoothed) gives per-block mean cosines 0.892, 0.831, 0.793, 0.779
+... 0.891 without the balance -- the shape of the real model's first blocks (0.889, 0.874, 0.852, 0.789) -- and 0.990,
+0.980, 0.970, 0.964 ... 0.975 with it (scalar 4: 0.851, 0.785, 0.744, 0.730 ... 0.836 against 0.969, 0.933, 0.902,
+0.885 ... 0.915); teacher-forced, the k norm adds 1.08, 0.37, 0.43, 0.15, 0.29 nats in layers 0-4 without the balance
+and at most 0.13 with it. (Random weights: the proxy shows the mechanism, not the real model's numbers.)
+
+**The fix: `qk_balance` (default on; Qwen3 only).** Per RoPE pair `p` (channels `j`, `j + head_dim/2`), q's norm takes
+the factor `c_p` into its gain and k's norm `1/c_p`, `c_p = sqrt(A_k,p / A_q,p)` with `A_p` the `pct` percentile of
+the pair's norm of `gamma_j x_j / rms` over the calibration rows (all heads; clamped to [2^-8, 2^8]); then `G_q` and
+`G_k` are set as before from the scaled values. Why it is exact: RoPE rotates each pair as a whole, so a factor shared
+by the pair commutes with it, and every score `sum_j q_j k_j` is unchanged in real numbers -- channel `j`'s real
+scales are `1 / (G_q c_j)` for q and `c_j / G_k` for k, whose product `1 / (G_q G_k)` is the same in every channel and
+is what `m_s` already uses (`m_s`'s formula is unchanged). Each pair then spans `sqrt(A_q,p A_k,p)` on both sides
+instead of k's range being set by a channel q ignores. What changes: only constants -- the q/k norms' gain vectors
+(`[head_dim]`, shared by the heads, as before) and, with a prefix, the prefix's int8 keys, now quantised on `s_k c_j`
+(`info["prefix_scales"]` holds that vector; `test_the_prefix_constants_...` checks the constants against HF's cache on
+it). The structure, the claims and the protocol are the benchmark graph's (all of `test_real_llama.py`'s 52 tests pass
+with the balance on, v0, V1 and the prefix's exact equality included). Llama graphs are byte-identical (no q/k norm;
+tested by digest), OPT's builder is not touched, and Qwen3's digests change (other gains). `qk_balance=False` (the
+scripts' `--no-qk-balance`) builds the graphs of jobs 1009531 / 1009796: before the change, the digests of the 64 tiny
+test graphs (both families, both recipes, pruned or not, with or without prefix and `glu_exp`, with or without head
+equalisation) were recorded; with `qk_balance=False` they are identical. On the uniform-gain tiny models the balance
+is neutral (smoothed logit cosine 0.9942 / 0.9950 with it against 0.9942 / 0.9952 without, seeds 0 / 1).
+
+What remains in the proxy with the balance: the q and k norms' own rounding (0.11-0.14 nats each, smoothed) and, for
+the scalar recipe, the input norm's gain-4 resolution (0.31 nats), which the smoothed recipe removes (0.03).
+
+### 13.5 Other candidates, checked on the laptop
+
+* **Head equalisation (`head_eq`).** No effect in the proxy (block output 0.8758 with, 0.8663 without, seed 0
+  unbalanced; the random heads are alike). On real heads it scales a small head's rows up, which coarsens the other
+  heads' weights in the matrix's one scale: the tool's per-head `local` cosine of `q_proj` / `k_proj` and the
+  `--no-head-eq` line of 13.6 measure it.
+* **RoPE's pair-norm scale.** The scale covers every rotation (no clip by construction); RoPE's own score step is
+  <= 0.03 nats on the tiny models and in the proxy with the balance (0.07 / 0.12 for q / k without it: its rounding on
+  k's coarse grid).
+* **The score multiplier `m_s` with head_dim 128.** The exp table's 1/16-nat steps and `m_s`'s rounding are the raw
+  attention's `local` error: relative 0.004-0.009 (proxy and tiny models). `m_s >= 2^32` would only switch to the exact
+  int64 path.
+* **The SiLU table.** `local` relative error 0.013-0.014 on the tiny models; real gates (massive values) are the
+  tool's `silu` row on the cluster.
+* **The int32 claim bound and the residual scale.** Reported per op (claim bounds 2^18-2^21 on the tiny models;
+  residual adds' own error 0.000). The prefix took the 6,800 activation out of the residual maximum behind Qwen3's
+  `s_res` without moving the first block (job 1009796): not its cause (the cluster rows give `res_attn`'s own error).
+* **The attention's head-group path.** When the heads do not fit one score budget (TinyLlama's 32 heads at 2,048
+  tokens) `_attention` repeats k and v per group instead of stacking the grouped queries; forced on the tiny models
+  (both families, with and without prefix) it gives the same integers.
+* **RMSNorm's epsilon** (not in the integer norm): the tool's `attn_norm` exact op includes it, so layer 0's
+  teacher-forced `attn_norm` `local` error measures it on the real embeddings (TinyLlama's epsilon is 1e-5; its
+  embedding rows are small).
+* **TinyLlama.** No q/k norm, so the balance does not apply; its first block is fine with the prefix. The BOS-only
+  collapse of the smoothed graph is consistent with the `\n` token's massive activation staying in the window and the
+  99.99 percentiles of gate, up and the product (`pct`, `pct_glu`) clipping it (the scalar recipe, `pct` 100, falls
+  only to 0.73): the tool's `glu` / `gate` / `up` clip fractions and the minimum cosine's position in layer 1 decide it.
+  The block-by-block decay with the automatic prefix has no laptop reproduction; the teacher-forced rows of every
+  block attribute it.
+
+### 13.6 Cluster commands (bash, from `code/`, `HF_HOME` on node-local `/tmp`; CPU is enough; 64 GB)
+
+The attribution runs on the CPU (calibration and both forwards; a 128-token window). `--mode both` gives the
+teacher-forced and the accumulated rows from one build; the per-block tables go to `.txt` (stderr), the JSON lines to
+`--out`.
+
+```bash
+mkdir -p results/f2bq_attrib /tmp/$USER/f2bq
+# 0. the tests on the node (CPU): expect "96 passed"
+PYTHONPATH=src python -m pytest -q -o addopts= -p no:cacheprovider tests/test_real_llama.py tests/test_llama_attrib.py
+# 1. Qwen3-0.6B-Base: the first decoder layer (a 1-block build) and every block; scalar4 and smooth55; without and
+#    with PrefixQuant's prefix; teacher-forced and accumulated
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe scalar4 --blocks 0 --mode both --out results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_b0.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_b0.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe smooth55 --blocks 0 --mode both --out results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_b0.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_b0.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe scalar4 --blocks 0 --mode both --prefix --out results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_b0_auto.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_b0_auto.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe smooth55 --blocks 0 --mode both --prefix --out results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_b0_auto.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_b0_auto.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe scalar4 --blocks all --mode both --out results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_all.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_all.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe smooth55 --blocks all --mode both --out results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_all.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_all.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe scalar4 --blocks all --mode both --prefix --out results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_all_auto.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_all_auto.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe smooth55 --blocks all --mode both --prefix --out results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_all_auto.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_all_auto.txt
+# 2. TinyLlama_v1.1: the same eight runs
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe scalar4 --blocks 0 --mode both --out results/f2bq_attrib/TinyLlama_v1.1_scalar4_b0.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_scalar4_b0.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe smooth55 --blocks 0 --mode both --out results/f2bq_attrib/TinyLlama_v1.1_smooth55_b0.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_smooth55_b0.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe scalar4 --blocks 0 --mode both --prefix --out results/f2bq_attrib/TinyLlama_v1.1_scalar4_b0_auto.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_scalar4_b0_auto.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe smooth55 --blocks 0 --mode both --prefix --out results/f2bq_attrib/TinyLlama_v1.1_smooth55_b0_auto.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_smooth55_b0_auto.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe scalar4 --blocks all --mode both --out results/f2bq_attrib/TinyLlama_v1.1_scalar4_all.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_scalar4_all.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe smooth55 --blocks all --mode both --out results/f2bq_attrib/TinyLlama_v1.1_smooth55_all.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_smooth55_all.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe scalar4 --blocks all --mode both --prefix --out results/f2bq_attrib/TinyLlama_v1.1_scalar4_all_auto.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_scalar4_all_auto.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe smooth55 --blocks all --mode both --prefix --out results/f2bq_attrib/TinyLlama_v1.1_smooth55_all_auto.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_smooth55_all_auto.txt
+# 3. TinyLlama's BOS-only collapse (smoothed): which op clips the "\n" activation
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model TinyLlama/TinyLlama_v1.1 --seq 128 --threads 8 --recipe smooth55 --blocks all --mode both --prefix bos --out results/f2bq_attrib/TinyLlama_v1.1_smooth55_all_bos.jsonl > /dev/null 2> results/f2bq_attrib/TinyLlama_v1.1_smooth55_all_bos.txt
+# 4. Qwen3: the balance on the real weights -- the old graphs (no balance), and head equalisation off
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe smooth55 --blocks all --mode both --prefix --no-qk-balance --out results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_all_auto_nobal.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_all_auto_nobal.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe scalar4 --blocks 0 --mode both --no-qk-balance --out results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_b0_nobal.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_scalar4_b0_nobal.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe smooth55 --blocks 0 --mode both --no-qk-balance --out results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_b0_nobal.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_b0_nobal.txt
+PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --recipe smooth55 --blocks 0 --mode both --no-head-eq --out results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_b0_noheadeq.jsonl > /dev/null 2> results/f2bq_attrib/Qwen3-0.6B-Base_smooth55_b0_noheadeq.txt
+# 5. Qwen3: the balance's effect on the diagnosis and on the perplexity (16 x 128, PrefixQuant's prefix; GPU node)
+PYTHONPATH=src python experiments/9_quality/llama_diag.py --model Qwen/Qwen3-0.6B-Base --seq 128 --threads 8 --prefix > results/f2bq_attrib/diag_Qwen3-0.6B-Base_auto.jsonl 2> results/f2bq_attrib/diag_Qwen3-0.6B-Base_auto.txt
+PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-0.6B-Base --seq 128 --windows 16 --calib-windows 4 --device cuda --threads 8 --gains 2 4 8 --alphas 0.45 0.55 0.65 --glu-exps 8 --cos-windows 4 --prefix --ref-cache /tmp/$USER/f2bq/ref_Qwen3-0.6B-Base_128_auto.pt --out results/f2bq_attrib/Qwen3-0.6B-Base_128_auto_qkbal.jsonl
+PYTHONPATH=src python experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-0.6B-Base --seq 128 --windows 16 --calib-windows 4 --device cuda --threads 8 --gains 2 4 8 --alphas 0.45 0.55 0.65 --glu-exps 8 --cos-windows 4 --ref-cache /tmp/$USER/f2bq/ref_Qwen3-0.6B-Base_128.pt --out results/f2bq_attrib/Qwen3-0.6B-Base_128_qkbal.jsonl
+```
+
+`grep "=>" results/f2bq_attrib/*.txt` gives per block the output's cosine, the first flagged op, and the ops of the
+largest own error and the largest score step; `grep "pattern\|path" ...` the score errors along the q and k paths. Run
+4's `_nobal` files against run 1's are the balance on the real weights (the diagnosis of job 1009796 is the
+`--no-qk-balance` baseline of run 5's first line); run 5's perplexities go to table 12.6 (b) (its earlier rows are
+without the balance).
+
+### 13.7 Results on the real checkpoints (cluster; placeholders)
+
+(a) The first decoder layer (block 0), teacher-forced: the block output's mean cosine, the first flagged op, the largest
+score step (op, nats), the k-norm and q-norm steps:
+
+| Model, recipe, prefix | block output | first flag | largest step | k norm / q norm step | without the balance (Qwen3) |
+|---|---|---|---|---|---|
+| Qwen3-0.6B-Base, scalar4, none | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| Qwen3-0.6B-Base, smooth55, none | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| Qwen3-0.6B-Base, scalar4, auto | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | |
+| Qwen3-0.6B-Base, smooth55, auto | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| TinyLlama_v1.1, scalar4, none / auto | [CLUSTER] | [CLUSTER] | [CLUSTER] | n/a | n/a |
+| TinyLlama_v1.1, smooth55, none / auto | [CLUSTER] | [CLUSTER] | [CLUSTER] | n/a | n/a |
+
+(b) Every block, smooth55 with the prefix: per block the teacher-forced output cosine and the first flagged op
+(Qwen3 with and without the balance; TinyLlama with `auto` and `bos`): [CLUSTER]. Accumulated block outputs against
+job 1009796's `llama_diag.py` rows: [CLUSTER] (expected equal for `--no-qk-balance`).
+
+(c) The balance's effect: `llama_diag.py --prefix` per-block mean cosines (Qwen3, smooth55: job 1009796 0.896 / 0.884 /
+0.864 / 0.865 in blocks 1-4, 0.923 at block 28): [CLUSTER]; 16 x 128 perplexity ratios with the balance (scalar best
+of 2/4/8, smooth best of 0.45/0.55/0.65, smooth-exp8), with and without the prefix: [CLUSTER].
+
+### 13.8 Limitations and open issues
+
+* **The reproduction uses random weights.** The real gains are real, the q/k projections are not: real raw q/k
+  channels can be uneven before the norm, and the int8 requantisation in front of the norm then loses the small channels
+  the norm's large gains amplify. The tool shows it as a score step at `k` (`q`) rather than at `k_norm`; the balance
+  cannot remove it (the norm is not invariant to per-channel scaling of its input, only per head), so it would be the
+  next item if the cluster rows show it.
+* **The balance is one choice of `c_p`** (equal per-pair ranges for q and k); the remaining 0.11-0.14 nats per norm in
+  the proxy are the int8 rounding of q and k at that allocation. The q/k norms' outputs must stay int8 (the attention's
+  int32 scores need `|q|, |k| <= 128`).
+* **TinyLlama's decay** is not explained on the laptop (no q/k norm; nothing else in the builder showed on the tiny or
+  realistic models); 13.6's runs 2 and 3 attribute it.
+* **Flag thresholds** (0.1 relative, 0.99 cosine, 0.1 nats) come from the tiny models; the JSON lines keep every number,
+  so other thresholds need no rerun.
+* **The real gains in the test** are layer 0's q/k-norm weights of Qwen/Qwen3-0.6B-Base (256 bf16 values, exact), a
+  public checkpoint's constants; the test needs no download.

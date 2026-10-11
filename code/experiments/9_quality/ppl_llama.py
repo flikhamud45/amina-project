@@ -20,7 +20,9 @@
 * Graphs (``real_llama.build_llama_from_hf``): ``scalar`` (one norm gain per ``--gains`` value, no clipping) and
   ``smooth`` (SmoothQuant through the norm gains, alpha per ``--alphas``, ``--smooth-pct`` 99.9, ``--pct`` 99.99 at
   q/k/v/gate/up and the q/k norms, ``--pct-att`` 99.99 at the attention output, ``--pct-glu`` (default ``--pct``) at
-  the SwiGLU product). ``--no-head-eq`` turns off the head equalisation in front of Qwen3's q/k norms.
+  the SwiGLU product). ``--no-head-eq`` turns off the head equalisation in front of Qwen3's q/k norms,
+  ``--no-qk-balance`` the q/k balance per RoPE pair in their gains (``real_llama``'s ``qk_balance``; the graphs of
+  before it).
   ``--glu-exps E ...`` adds ``smooth-expE`` cells: the smoothed graph with the opt-in per-token exponent ``0 .. E``
   at the SwiGLU product (``real_llama.glu_exp``; ``--pct-glu`` then picks the token maximum that takes exponent E).
 * Lean evaluation (``real_llama.lean_logits``): the integer forward frees each tensor after its last reader and keeps
@@ -249,12 +251,13 @@ def reference(args, model, wins, prefix=None) -> dict:
 
 
 def cells(args, prefix=None) -> list[dict]:
-    head_eq = not args.no_head_eq
+    head_eq, qk_balance = not args.no_head_eq, not args.no_qk_balance
     out = [{"graph": "scalar", "gain": g, "alpha": None,
-            "kw": dict(norm_gain=g, head_eq=head_eq)} for g in (args.gains if "scalar" in args.graphs else [])]
+            "kw": dict(norm_gain=g, head_eq=head_eq, qk_balance=qk_balance)}
+           for g in (args.gains if "scalar" in args.graphs else [])]
     out += [{"graph": "smooth" if not e else f"smooth-exp{e}", "gain": None, "alpha": a,
              "kw": dict(smooth=a, smooth_pct=args.smooth_pct, pct=args.pct, pct_att=args.pct_att,
-                        pct_glu=args.pct_glu, head_eq=head_eq, glu_exp=e)}
+                        pct_glu=args.pct_glu, head_eq=head_eq, qk_balance=qk_balance, glu_exp=e)}
             for e in ([0] if "smooth" in args.graphs else []) + list(args.glu_exps) for a in args.alphas]
     if prefix:
         for c in out:
@@ -292,6 +295,7 @@ def main() -> None:
     ap.add_argument("--pct-glu", type=float, default=None)
     ap.add_argument("--smooth-pct", type=float, default=99.9)
     ap.add_argument("--no-head-eq", action="store_true")
+    ap.add_argument("--no-qk-balance", action="store_true", help="Qwen3: no q/k balance per RoPE pair (the old graph)")
     ap.add_argument("--glu-exps", type=int, nargs="*", default=[],
                     help="also the smoothed graph with a per-token exponent 0..E at the SwiGLU product, per E")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu",
@@ -422,7 +426,8 @@ def check(args, model, tok, name: str | None) -> None:
               "prefix_choice": prefix_info}
     ok = args.smoke or vs_config == []              # a real checkpoint must have its CONFIGS entry's shape
     for label, extra in (("smooth", {}), ("smooth-exp8", {"glu_exp": 8})):
-        kw = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, head_eq=not args.no_head_eq, **extra)
+        kw = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, head_eq=not args.no_head_eq,
+                  qk_balance=not args.no_qk_balance, **extra)
         with torch.no_grad():
             graph, info = rl.build_llama_from_hf(model, calib, prefix_tokens=prefix, **kw)
             pruned, _ = rl.build_llama_from_hf(model, calib, prune_last=True, prefix_tokens=prefix, **kw)
@@ -476,7 +481,7 @@ def protocol(args, model, tok) -> None:
     with torch.no_grad():
         prefix, prefix_info = prefix_of(args.prefix, model, calib, tok)
     kw = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, head_eq=not args.no_head_eq,
-              prefix_tokens=prefix)
+              qk_balance=not args.no_qk_balance, prefix_tokens=prefix)
     report, ok = {"model": args.model, "smoke": args.smoke, "seq": seq, "prefix_tokens": prefix,
                   "prefix_choice": prefix_info}, True
     for prune in (False, True):
