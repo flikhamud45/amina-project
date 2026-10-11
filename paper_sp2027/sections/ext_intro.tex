@@ -41,8 +41,8 @@ that acts on those answers, such as payment approval or fraud flagging. The comp
 the model to find out, since it lacks the weights, the hardware or both; that is why it outsourced
 inference.
 
-\para{Costs.} Beyond the forward pass, the prover's work without V1 grows with the model but not
-with the input, and the prover is the protocol's strongest axis. Computing its column openings and
+\para{Costs.} Without V1, the prover's folds and openings grow with the model but not with the
+input, and the prover is the protocol's strongest axis. Computing its column openings and
 folds with exact int8 tensor-core products instead of float64 makes it 3.7--4.3$\times$ faster on
 Llama-2 blocks on an RTX~2080~Ti, and it proves a 256-token GPT-2 response to a 64-token prompt in
 0.29\,s. On matched models it is 46--32{,}000$\times$ faster than published zkSNARK provers, partly

@@ -39,7 +39,7 @@ published systems (Section~\ref{sec:eval-compare}) and the quality of the certif
 \label{sec:eval-setup}
 
 \para{Implementation.} The protocol is written in Python and PyTorch, with Triton kernels for the
-GPU claim decoder and the fused exact attention, and a C++/OpenMP attention kernel for CPU
+GPU claim decoder and the fused exact attention, and C++/OpenMP kernels for CPU
 verifiers. We use $\lambda = 128$ unless stated otherwise; v0 and V1 are the protocols of
 Sections~\ref{sec:defence} and~\ref{sec:v1}.
 
@@ -115,7 +115,7 @@ fp16 one. Proving 64 prompts of 64 tokens together in $\Kpre$ takes 3.4\,s (4.8 
 
 \para{Improvements.} Our improvements change no byte that the parties exchange; the extended
 version~\cite{fullversion} measures each against the previous code path. Exact int8 GEMMs for the
-column opening and the fold, which took 62\% of Llama-2-7B's base prover at 64 tokens, make the
+column opening, which took 62\% of Llama-2-7B's base prover at 64 tokens, and the fold make the
 prover 3.7--4.3$\times$ faster on Llama-2 blocks, and a GPU claim decoder with a fused exact
 attention kernel makes the GPU verifier 2.0--2.7$\times$ faster at 2{,}048 tokens.
 
@@ -202,7 +202,7 @@ of the L40S run}.
     Option & Holds & $T{=}64$ & 2{,}048 & $T{=}64$ & 2{,}048 & Guarantee \\
     \midrule
     Re-exec., CPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 4.1\,s & 93\,s & exact \\
-    Re-exec., GPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 0.16\,s & 2.08\,s & exact \\
+    Re-exec., GPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 0.15\,s & 1.65\,s & exact \\
     GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\
     CommitLLM$^e$ & key & \multicolumn{2}{c}{144\,kB per token} & \multicolumn{2}{c}{0.66\,ms per token} & sampled$^b$ \\
     zkLLM & comm. & -- & 183\,kB & -- & 2.36\,s & full, ZK \\
@@ -215,8 +215,7 @@ of the L40S run}.
   \smallskip
   \parbox{\columnwidth}{\footnotesize $^a$Exact. CPU: the faster of the integer forward pass (64
   tokens) and fp32 (2{,}048); a non-exact int8 engine takes 1.9/56\,s. GPU: the integer forward
-  pass before the int8 forward pass, which halves it on Llama-sized layers; fp16 takes
-  0.037/0.57\,s. $^b$An edit passes a one-token response with probability about
+  pass on int8 tensor cores (extrapolated from 1--2 blocks); fp16 takes 0.037/0.57\,s. $^b$An edit passes a one-token response with probability about
   99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$At 2{,}048 tokens,
   measured with random weights (2.0--2.3$\times$) and on the real OPT-6.7B (1.73$\times$).
   $^e$Llama-3.1-8B (32 layers of width 4{,}096, as Llama-2-7B), per audited token, as
@@ -241,7 +240,7 @@ CPU times of Table~\ref{tab:eval-llm} predate the kernels \todo{EPYC: the same c
 \para{GPU.} On a GPU, re-execution is faster. The fp16 decoder runs Llama-2-7B at 2{,}048 tokens in
 0.57\,s on the 2080~Ti, while the base GPU verifier needed 4.95\,s in $\Kpre$ on the faster L40S.
 With our verifier improvements, OPT-1.3B in $\Kpre$ extrapolates to about 1.1\,s on the 2080~Ti,
-against 0.18\,s for its fp16 re-execution \todo{L40S: both on one GPU}. We do not claim that
+against 0.11\,s for its fp16 re-execution \todo{L40S: both on one GPU}. We do not claim that
 verification beats re-execution on a GPU; the GPU verifier suits an auditor or gateway that checks a
 provider without holding the weights.
 

@@ -18,8 +18,8 @@ and~\ref{thm:v1}.
     \midrule
     \multicolumn{2}{@{}l}{\emph{Per query, v0 (Theorem~\ref{thm:sound}, Section~\ref{sec:fs})}} \\
     Field $\F$, $p=15\cdot2^{27}+1$ & $\log_2p\approx30.9$ \\
-    Checked weight operations $|\mathcal J|$ & 226 \\
-    Target $\beta=\lambda+\log_2(2|\mathcal J|)$, plus 64 under Fiat--Shamir & 136.8 / 200.8 \\
+    Weight operations $n_{\mathrm{op}}\ge|\mathcal J|$ & 226 \\
+    Target $\beta=\lambda+\log_2(2n_{\mathrm{op}})$, plus 64 under Fiat--Shamir & 136.8 / 200.8 \\
     Freivalds vectors $r=\lceil\beta/\log_2p\rceil$ & 5 / 7 \\
     Freivalds term $p^{-r}$ per matrix & $2^{-154.5}$ / $2^{-216.3}$ \\
     Columns $t_j$: least $t$ with $\prod_{i<t}\frac{k_j-1-i}{n_j-i}\le2^{-\beta}$ &

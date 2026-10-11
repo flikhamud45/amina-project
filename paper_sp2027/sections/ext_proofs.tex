@@ -129,8 +129,9 @@ norms, and the per-head norm of $q$ and $k$, act on the channels of one position
 pairs of position $t$ by the angles $t\theta_j$, which depend on the absolute index $t$ only. For
 attention, row $t$ forms the scores $s_j=q_t\cdot k_j$, the gaps $\max_{j'\le t}s_{j'}-s_j$ over the
 keys $j\le t$ that the causal mask allows, $e_j$ from the public table and $e_j=0$ for $j>t$, then
-$S=\sum_je_j$ and $P_j=\lfloor(2P_{\max}e_j+S)/(2S)\rfloor$, with the public constant $P_{\max}=255$
-by default, which is $\lfloor S/(2S)\rfloor=0$ for $j>t$.
+$S=\sum_je_j$ and $P_j=\lfloor(2P_{\max}e_j+S)/(2S)\rfloor$, with the public constant $P_{\max}$
+(255 in the cost benchmarks, 2{,}047 in the certified models), which is $\lfloor S/(2S)\rfloor=0$ for
+$j>t$.
 % CHECK: "510" generalised to 2 P_max: transformer.py (modified 2026-10-11 01:12, during this check)
 % now has build_decoder(prob_max=...), PROB_MAX = 255 (510 = 2*255), e.g. 2047 for plan F2a. The
 % argument does not depend on the constant.

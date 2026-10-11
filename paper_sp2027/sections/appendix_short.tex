@@ -167,9 +167,10 @@ $\mathrm{round}(2^{14}\cos t\theta_j)$ and $\mathrm{round}(2^{14}\sin t\theta_j)
 clamp. Attention maps the score gaps $g_j=\max_{j'}s_{j'}-s_j$, $s=qk^\T$, to
 $i_j=\mathrm{clamp}(\lfloor(m_sg_j+2^{29})/2^{30}\rfloor,0,255)$ and
 $e_j=\mathrm{round}(2^{15}e^{-i_j/16})$ ($0$ if masked); with $E=\sum_je_j$,
-$P_j=\lfloor(510e_j+E)/(2E)\rfloor\in[0,255]$, and $PV$ is requantised. Arithmetic is exact: int8
+$P_j=\lfloor(2P_{\max}e_j+E)/(2E)\rfloor\in[0,P_{\max}]$ for a public $P_{\max}$ (255 or 2{,}047), and
+$PV$ is requantised. Arithmetic is exact: int8
 products sum in 32-bit blocks of $2^{16}$, and attention runs in float32 below $2^{24}$ (scores at
-most $2^{21}$, partial sums of $PV$ below $(255+T/2)\cdot128$ for $T<2^{15}$).
+most $2^{21}$, partial sums of $PV$ below $(P_{\max}+T/2)\cdot128$ for $T<2^{15}$).
 
 \subsection{Proof of Theorem~\ref{thm:sound}}
 \label{app:sound}

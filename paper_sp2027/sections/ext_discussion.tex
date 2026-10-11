@@ -39,8 +39,9 @@ The improvements change no byte of the proof, so the proof sizes stand, but the 
 frozen code on the L40S are not yet measured, and several cells of
 Tables~\ref{tab:eval-llm}, \ref{tab:eval-v1} and~\ref{tab:eval-compare} are empty for that reason
 \todo{L40S: final run of the frozen code; fill every \texttt{L40S} cell}. The 7B and 13B models
-were measured as one to four of their blocks on the 2080~Ti, and full-model figures for them come
-from the L40S run or from the byte model. Peak memory is not yet reported \todo{F4: peak memory}.
+were measured as one to four of their blocks on the 2080~Ti, except the full Llama-2-7B's CPU
+verifier and the full real OPT-6.7B in $\Kpre$ on the Xeon; other full-model figures come from the
+L40S run or from the byte model. Peak memory is not yet reported \todo{F4: peak memory}.
 
 \subsection{Real Weights, Model Quality and V1}
 \label{ext:disc-real}
@@ -58,8 +59,8 @@ and the prover's and the verifier's times are within 9\% and 6\%
 tokens \todo{F3b: Qwen3-4B}. With smoothing through the norm's gains, the certified OPT-125M,
 OPT-1.3B and OPT-6.7B are within factors of 1.076, 1.026 and 1.008 of fp32 at 2{,}048 tokens
 (Section~\ref{sec:quality}); with one scalar gain OPT-6.7B is 70\% above. The integer Qwen3 models are
-not yet usable: with a fixed prefix and a per-pair balance of the q/k norms' gains they reach
-$\times$1.33 (Qwen3-1.7B) and $\times$1.55 (Qwen3-0.6B) at 128 tokens, the remaining loss in the
+not yet usable: with a fixed prefix, a per-pair balance of the q/k norms' gains and a per-token
+exponent at the SwiGLU product they reach $\times$1.33 (Qwen3-1.7B) and $\times$1.55 (Qwen3-0.6B) at 128 tokens, the remaining loss in the
 SwiGLU products \todo{F2b: Qwen3-4B, Llama}. Soundness holds for any committed integer model; these
 numbers concern only how well that model serves.
 
@@ -69,11 +70,11 @@ numbers concern only how well that model serves.
 2{,}048 tokens (1.6--1.9$\times$ against the earlier one). For the client alone (transfer plus
 verification), V1 is nevertheless faster than v0 on links slower than about 1.1\,Gb/s, and it beats
 re-execution down to 0.47\,Gb/s, against 0.70\,Gb/s for v0. Llama-2-7B in mode $\sC$ does not fit on the
-11\,GB card with the GKR, so V1 has not been timed in that configuration, and the full 7B and 13B
-models have only the byte model's prediction \todo{L40S: V1 on the full Llama-2-7B, incl.\ mode
+11\,GB card with the GKR, so V1 has not been timed in that configuration, and of the full 7B and 13B
+models only the real OPT-6.7B's V1 bytes are measured (1.73$\times$) \todo{L40S: V1 on the full Llama-2-7B, incl.\ mode
 $\sC$, Llama-2-13B, OPT-6.7B and Qwen3-4B}. Mode $\sK$ and the streaming GPU verifier do not
-support V1 yet, and V1 assumes one requantisation multiplier per operation, which excludes the
-per-row weight scales that would bring OPT-125M to within $\times1.00$--$1.01$ of fp32.
+support V1 yet, and V1 assumes one requantisation multiplier per operation, which excludes
+per-row weight scales ($\times1.00$--$1.01$ on OPT-125M at 128 tokens, no gain at 2{,}048).
 
 \subsection{A Client's Options in Detail}
 \label{ext:disc-options}
@@ -83,12 +84,12 @@ We add the details behind each row.
 
 \para{Re-execution.} A client that downloads the 6.7\,GB of int8 weights once can re-run every
 query. The integer forward pass is bit-identical to the claims and so a complete check; it took
-6.8\,s at 64 tokens and 196\,s at 2{,}048 tokens on 8 threads of a Xeon Silver 4114, and 0.16 and
-2.08\,s on an RTX~2080~Ti, before the int8 forward pass that halves the GPU times
-(Table~\ref{tab:eval-reexec}). Floating-point re-execution is faster (fp32 on the CPU: 3.5 and
-86\,s; fp16 on the GPU: 0.037 and 0.57\,s) but cannot confirm an exact answer. A CPU client that
-holds the weights can instead run our $\Kpre$ verifier, which takes 1.5 and 85\,s, 2.3--4.5$\times$
-faster than re-execution at 64 tokens and 2.3$\times$ faster than integer re-execution at 2{,}048.
+4.1\,s at 64 tokens and 142\,s at 2{,}048 tokens on 8 threads of a Xeon Silver 4114, and 0.15 and
+1.65\,s on an RTX~2080~Ti with int8 tensor cores (Table~\ref{tab:options}). Floating-point
+re-execution is faster on a GPU and for long prompts (fp32 on the CPU: 4.5 and 93\,s; fp16 on the
+GPU: 0.037 and 0.57\,s) but cannot confirm an exact answer. A CPU client that holds the weights can
+instead run our $\Kpre$ verifier, which takes 1.0 and 18.5\,s, 4.0$\times$ and 5.0$\times$ faster
+than the fastest exact re-execution.
 On a GPU, re-execution wins: the base GPU verifier needed 4.95\,s in $\Kpre$ at 2{,}048 tokens on
 the faster L40S (Section~\ref{sec:eval-reexec}).
 
@@ -115,18 +116,19 @@ which proves a generated sequence in one pass, reports 0.30\,s per token for GPT
 On a 2{,}048-token Llama-2-13B prompt our L40S prover is 46$\times$ faster than zkLLM, but zkLLM
 also proves the operations without weights and hides the weights (Table~\ref{tab:eval-compare}).
 
-\para{Ours.} In mode $\sC$ the client holds a 32-byte root per matrix and no weights. A 64-token
+\para{Ours.} In mode $\sC$ the client holds the 32-byte Merkle roots of the weights and no weights. A 64-token
 proof is 325\,MB, about 21$\times$ smaller than the int8 weights, and is checked in 1.0\,s on the
 EPYC CPU or 431\,ms on the L40S. Of it, 124.7\,MB are opened columns, which do not shrink with
 shorter prompts. At 2{,}048 tokens the proof is 6.6\,GB (6.4\,GB in $\Kpre$), about the size of the
 weights, and takes 5.3\,s to transfer at 10\,Gb/s \todo{F7: transfer times}. A client that sends
 more than about 21 short prompts, or one long one, therefore receives more bytes than a download of
 the weights, and the protocol pays off only for a client that cannot store or run the model, or
-will not. Our base prover took 1.8\,s for a 64-token prompt on the L40S, against 0.037\,s for an
-fp16 forward pass on the 2080~Ti, on different GPUs \todo{L40S: prover against unverified fp16
-and int8 inference, same GPU}. Sending one opening and one fold for a batch of queries whose
-claims are all fixed before the challenges would amortise the opened columns over the batch; we
-have not implemented this.
+will not. On one RTX~2080~Ti, proving a 2{,}048-token OPT-1.3B prompt costs
+4.1--8.6$\times$ our exact forward pass and 19--40$\times$ an fp16 one \todo{L40S: prover against
+unverified fp16 and int8 inference, same GPU}. Sending one opening and one fold for a batch of
+queries whose claims are all fixed before the challenges amortises the opened columns over the
+batch: on OPT-1.3B at 64 tokens, 64 prompts in one mode-$\sC$ proof take 1.00\,MB per token
+against 4.25\,MB for one prompt.
 
 \subsection{Limitations in Detail}
 \label{ext:disc-limits}
@@ -154,7 +156,8 @@ with a degenerate structure keep the declared shapes while being cheap to evalua
 untrusted commitment (Section~\ref{sec:setup-proof}), the bound (P4) of V1 and the claim range of
 v0 must be published with the model, and the time of the setup proof is not yet measured
 \todo{L40S: setup prover and verifier time}. The exact sampler (Section~\ref{sec:gen-sampling}) is
-a fixed approximation of softmax sampling whose distance to it we have not measured, the proof
+a fixed approximation of softmax sampling (total-variation distance with median 0.0063 on OPT-1.3B at
+$\tau=1$, $k=50$), the proof
 does not show that the client's seed was random, and nucleus sampling is not implemented.
 
 \para{The attack and the theorem.} The lower bound needs condition (H), which we establish for

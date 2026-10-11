@@ -35,8 +35,9 @@
 % ---- E1 -------------------------------------------------------------------------------
 \subsection{Details of the Windowed LogUp}
 
-\para{Exceptions.} Clamps are rare: with real weights they occur at a rate of about $10^{-5}$, and
-our measured proofs list at most 65 exceptions. Residual operations clamp only after the addition
+\para{Exceptions.} Clamps are rare: with real weights they occur at a rate of about $10^{-4}$ (the
+2{,}048-token proof of the real OPT-6.7B lists 224{,}670, 1.8\,MB), and with random weights our
+measured proofs list at most 65. Residual operations clamp only after the addition
 and have no exceptions.
 
 \para{Field.} Under Fiat--Shamir, the 64 extra bits of Section~\ref{sec:fs} require the challenges
@@ -44,8 +45,9 @@ of the lookup to come from an extension of BabyBear of degree at least 7. We use
 \F[\xi]/(\xi^8 - 11)$, a field because 11 is a quadratic non-residue modulo $p$ and $p \equiv 1
 \pmod 4$, and we use it in interactive runs as well.
 
-\para{Table.} One table serves every width with one leaf per entry. It has $0.9$--$1.5 \cdot 10^6$
-elements with random weights and about $2 \cdot 10^4$ with real ones.
+\para{Table.} One table serves every width with one leaf per entry. It has at most
+$5.6\cdot10^5$ elements for the full Llama-2-7B with random weights (Table~\ref{tab:params}) and
+$6.4\cdot10^4$ for the real OPT-6.7B.
 
 \para{Both integer conditions are needed.} Lemma~\ref{lem:v1-logup} needs both of its integer
 conditions. If a multiplicity may reach $p$, a prover holding $p$ copies of an off-table leaf adds
@@ -92,7 +94,8 @@ consider.
 
 V1 is implemented in Python and PyTorch for modes $\sC$ and $\Kpre$, interactive and under
 Fiat--Shamir. The verifier checks an instance's round chains at once (50\,ms for 20 variables) and
-computes $L_\ell e$, $W_\ell e$ and $\bar x_\ell$ as exact float64 products on 11-bit limbs. The GKR
+computes $L_\ell e$, $W_\ell e$ and $\bar x_\ell$ exactly from per-window tables (each window is
+affine plus a step), with native int64 kernels on a CPU. The GKR
 prover is written in Triton~\cite{tillet2019triton}: BabyBear elements in Montgomery
 form~\cite{montgomery1985} on 32-bit lanes, an unrolled product in $\Fext$, and kernels for the
 leaves, the tree, the eq tables, the round sums and the folds, with the host drawing each

@@ -27,8 +27,8 @@
 
 Open-weight language models are often served by a provider the client does not control. The provider
 may serve a cheaper model, or alter the computation on chosen queries to return answers of its
-choice. We target a client that has no GPU, does not store the weights, and holds only a 32-byte
-root per weight matrix (mode~$\sC$) or a small secret key precomputed once from the weights
+choice. We target a client that has no GPU, does not store the weights, and holds only the 32-byte
+Merkle roots of the weights (mode~$\sC$) or a small secret key precomputed once from the weights
 (mode~$\Kpre$). In a \emph{proof of inference}, the provider sends a proof with each answer, and
 the client's check fails with high probability unless the agreed model computed the answer on this
 input. The agreed model is an exact int8 network derived from the public
@@ -63,8 +63,8 @@ catches a single changed node with probability at most $1/N$ in a layer of width
 recomputes every later layer honestly with the true weights. The trace is then inconsistent at one
 site, which a random path visits with probability $1/N$ (Figure~\ref{fig:overview}). On the real
 OPT-6.7B, editing one feed-forward neuron changed the next token for 40 of 40 prompts, with values
-outside the neurons' natural ranges; on OPT-1.3B, editing a few neurons within ranges calibrated on
-held-out text does the same. On triggered inputs only, it is a backdoor that leaves the
+outside the neurons' natural ranges; on OPT-1.3B and OPT-6.7B, editing a few neurons within ranges
+calibrated on held-out text does the same. On triggered inputs only, it is a backdoor that leaves the
 committed weights clean. On a dog-vs-cat ResNet-18, one changed neuron flips every test query and
 passes a path with probability $511/512$, refuting the full soundness that Anchuri et al.\ state
 for binary classifiers. More paths do not help at a useful cost: detection with probability
@@ -105,7 +105,7 @@ prefill, each token checked as the greedy choice or that of an exact integer sam
 client's seed (Section~\ref{sec:gen}); and V1, which sends int8 values instead of 32-bit results
 and reuses the column check (Section~\ref{sec:v1}).
 
-\para{Costs.} Without V1, the prover's work beyond the forward pass does not grow with the prompt.
+\para{Costs.} Without V1, the prover's folds and openings do not grow with the prompt.
 On an L40S it proves a 2{,}048-token Llama-2-13B prompt 46$\times$ faster than zkLLM on an A100,
 although zkLLM also hides the weights and proves the operations without weights \todo{F6: final
 factor}. On one GPU, proving a 2{,}048-token OPT-1.3B prompt costs 4.1--8.6$\times$ our exact integer

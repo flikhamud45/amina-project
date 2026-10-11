@@ -129,7 +129,7 @@ chosen if $a(z_{\max}-z_v)>933{,}901$, that is, if its temperature-scaled logit 
 $14.25$ below the largest. Under exact softmax sampling at temperature $\tau$, such a token has
 probability at most $e^{-14.25}<6.5\cdot10^{-7}$. The total-variation distance to exact sampling on
 real logits, which also reflects the quantisation of the uniform variables to steps of $2^{-16}$,
-is still to be measured (Section~\ref{sec:gen-sampling}).
+is measured in Section~\ref{sec:gen-sampling}.
 
 \para{Tests.} Tests confirm that $k=1$ or a very low temperature gives greedy decoding, that flat
 logits give near-uniform choices (each of 8 tokens chosen 380 to 620 times in 4{,}000 positions),
@@ -149,7 +149,7 @@ component switchable between its exact integer form and float. With every compon
 reproduces the integer graph's logits exactly, and with every component float it matches the
 checkpoint's to within $4\cdot10^{-5}$. Table~\ref{tab:quality-attr} gives the leave-one-out
 perplexity (that component in float, the rest integer) and the add-one perplexity (only that
-component integer) of OPT-125M on the windows of Section~\ref{sec:quality}.
+component integer) of OPT-125M on 16 WikiText-2 windows of 128 tokens.
 
 \begin{table}[t]
   \caption{Attribution of OPT-125M's perplexity on WikiText-2 (16 windows of 128 tokens): one
@@ -196,8 +196,8 @@ tokens with train-split calibration these statistics transferred badly ($\times1
 OPT-1.3B depending on the calibration windows, about $\times2$ on OPT-125M), and the mean zero-shot
 loss of OPT-1.3B was 2.8 points (0.8 with the certified recipe below). Each channel's maximum without clipping (``smooth-max'') is
 stable across calibration windows (OPT-1.3B $\times1.026$ for two draws); over $\alpha\in\{0.3,\dots,0.7\}$,
-$\alpha=0.6$ is best on OPT-125M and OPT-1.3B and costs OPT-6.7B 0.002 against $\alpha=0.5$, so it is
-the certified recipe. Cross-layer equalisation did not help on top of smoothing (67.8 against 66.6
+$\alpha=0.6$ is best on OPT-125M, ties $\alpha=0.7$ on OPT-1.3B and costs OPT-6.7B 0.002 against
+$\alpha=0.5$, so it is the certified recipe. Cross-layer equalisation did not help on top of smoothing (67.8 against 66.6
 at 128 tokens).
 
 \para{Zero-shot accuracy.} Table~\ref{tab:zeroshot} scores the certified models on six tasks of the
@@ -236,7 +236,8 @@ documents.
 \end{table*}
 
 \para{Per-row weight scales.} Per-row power-of-two weight scales (four per matrix) on top of
-smoothing reach $\times1.00$--$1.01$ on OPT-125M, with top-1 agreement 0.87 to 0.88. They give a
+smoothing reach $\times1.00$--$1.01$ on OPT-125M at 128 tokens, with top-1 agreement 0.87 to 0.88,
+but do not help at 2{,}048 tokens. They give a
 requantisation four multipliers. v0 handles these as any other operation without weights,
 but V1's windows assume one multiplier per operation, so we do not adopt them; supporting a few
 multipliers per operation in V1 would remove this restriction.
@@ -247,5 +248,5 @@ weight scales, static W8A8 costs OPT-6.7B 5.4\% and SmoothQuant-O3 nothing
 measurable~\cite{son2024cushioncache}. Proof systems that keep 16-bit values stay under
 1\%~\cite{zkllm,zkgpt}, whereas our range bound on the claims and the prover's exact float32
 products assume int8 activations (Section~\ref{sec:intmodel}). SLP's fixed-point TinyLlama is 8.5\%
-above its float model and agrees with it on 84.8\% of top-1 tokens~\cite{slp}. Smoothed runs of
-OPT-6.7B and Qwen3-4B need more memory and disk than our RTX 2080 Ti setup provides.
+above its float model and agrees with it on 84.8\% of top-1 tokens~\cite{slp}. Qwen3-4B is not
+yet measured.

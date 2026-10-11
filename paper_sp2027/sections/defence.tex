@@ -49,8 +49,9 @@ $\sC$ the client (verifier) holds only a commitment $C_M$ to the weights, as in 
 protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights, and in mode $\Kpre$ only
 secret Freivalds vectors and their folded rows, precomputed once per model from the
 weights~\cite{slalom,commitllm2026}. For open weights anyone can recompute $C_M$
-(Section~\ref{sec:threat}); the integer OPT models and their commitments are reproduced bit for bit
-across machines, thread counts, operating systems and torch versions, and on CPU or GPU.
+(Section~\ref{sec:threat}); the integer OPT models are reproduced bit for bit across machines,
+thread counts, operating systems and torch versions, and their commitments across machines and
+thread counts.
 
 % -------------------------------------------------------------------------------------
 \subsection{The Exact Integer Model}
@@ -68,8 +69,8 @@ Soundness refers to this model; Section~\ref{sec:quality} measures its gap to th
 where $W_\ell$ is an int8 matrix with $N_\ell$ rows, $b_\ell$ an integer bias, $X_\ell$ an int8
 matrix with one column for each of its $T_\ell$ positions, and $k_\ell$ the row length of $A_\ell$.
 Embeddings are looked up. Every other operation (requantisation, residual addition on 23-bit
-integers, integer norms, 256-entry tables for activations and the softmax exponential, 8-bit
-attention probabilities) maps integers to integers with public constants
+integers, integer norms, 256-entry tables for activations and the softmax exponential, 8- or
+11-bit attention probabilities) maps integers to integers with public constants
 (Appendix~\ref{app:semantics}). The output $y$ is the claim of the last weight operation, for a
 language model the next-token logits; Section~\ref{sec:gen} covers generated responses. Integer sums
 do not depend on their order, so prover and verifier agree on any hardware: int8 products sum

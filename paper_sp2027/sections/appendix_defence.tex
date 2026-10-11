@@ -70,16 +70,17 @@ $\lfloor(x_2C+x_1S+2^{13})/2^{14}\rfloor$, each clamped to $[-127,127]$.
 the gaps $g_j=\max_{j'}s_{j'}-s_j$ over the keys that the causal mask allows, the indices
 $i_j=\mathrm{clamp}(\lfloor(m_sg_j+2^{29})/2^{30}\rfloor,0,255)$ for a public $m_s$, and
 $e_j=E[i_j]$ with $E[i]=\mathrm{round}(2^{15}e^{-i/16})$; masked keys get $e_j=0$. With
-$S=\sum_je_j\ge2^{15}$, the probabilities are $P_j=\lfloor(510e_j+S)/(2S)\rfloor\in[0,255]$, that is,
-$255e_j/S$ rounded, and the output $PV$ is requantised. Grouped-query attention shares each key and
+$S=\sum_je_j\ge2^{15}$, the probabilities are $P_j=\lfloor(2P_{\max}e_j+S)/(2S)\rfloor\in[0,P_{\max}]$,
+that is, $P_{\max}e_j/S$ rounded, for a public $P_{\max}$ (255 in the cost benchmarks, 2{,}047 in
+the certified models), and the output $PV$ is requantised. Grouped-query attention shares each key and
 value head among its query heads.
 
 \para{Exact hardware arithmetic.} Weight products run on int8 tensor cores with 32-bit accumulation
 over blocks of $2^{16}$ products, each at most $2^{14}$ in magnitude, so every block sum is at most
 $2^{30}$ and exact in any order; blocks are added in 64-bit integers. The attention products run in
 float32, which is exact on integers up to $2^{24}$. With head dimension at most 128, every score is
-at most $128\cdot128^2=2^{21}$ in magnitude. A row of $P$ sums to at most $255+T/2$, so every partial
-sum of $PV$ is below $(255+T/2)\cdot128<2^{24}$ for $T<2^{15}$; longer rows use 64-bit integers.
+at most $128\cdot128^2=2^{21}$ in magnitude. A row of $P$ sums to at most $P_{\max}+T/2$, so every
+partial sum of $PV$ is below $(P_{\max}+T/2)\cdot128<2^{24}$ for $P_{\max}\le2{,}047$ and $T<2^{15}$; longer rows use 64-bit integers.
 Before using its int8 units, the prover multiplies random and extreme operands (every entry $-128$,
 and sums at the $2^{30}$ bound) and compares the results with an exact reference; on a mismatch it
 falls back to an exact float64 path.

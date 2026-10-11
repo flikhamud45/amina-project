@@ -75,8 +75,8 @@ model quality (Section~\ref{sec:quality}). Proof sizes do not depend on the hard
     \multicolumn{4}{@{}l}{\emph{GPU claim decoder and fused attention (GPU verifier, $\Kpre$)}} \\
     OPT-1.3B, 12/24 & 1.43\,s & 0.53\,s & 2.7$\times$ \\
     Llama-2-7B, 2/32 & 0.36\,s & 0.18\,s & 2.0$\times$ \\
-    \multicolumn{4}{@{}l}{\emph{Native exact attention (CPU verifier, $\Kpre$)}} \\
-    Llama-2-7B, 2/32 & 4.12\,s & 2.73\,s & 1.5$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Native exact kernels for every phase (CPU verifier, $\Kpre$)}} \\
+    Llama-2-7B, 2/32 & 3.37\,s & 0.74\,s & 4.6$\times$ \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -103,7 +103,7 @@ attention kernel computes the same integers without a $T\times T$ buffer; its fp
 because every partial sum is an integer below $2^{24}$. Together they make the GPU verifier
 2.0--2.7$\times$ faster at 2{,}048 tokens. Afterwards, copies take 32\% of the CUDA time of an
 OPT-1.3B query (12 blocks) and int8 GEMMs 4.4\%: data movement dominates, including the upload of
-the proof, which V1 makes smaller. On a CPU, a native exact attention kernel gains 1.5$\times$ at
+the proof, which V1 makes smaller. On a CPU, native exact kernels for every phase gain 4.6$\times$ at
 2{,}048 tokens \todo{L40S/EPYC: full-model verifiers with all improvements}.
 
 % -------------------------------------------------------------------------------------
@@ -156,9 +156,9 @@ GKR at 2{,}048 tokens does not fit the 11\,GB card \todo{L40S: real tier}.
 
 The full real OPT-6.7B (32 blocks) runs end to end in $\Kpre$ at 2{,}048 tokens with the prover on
 the CPU, since it does not fit the 11\,GB card: 3 of 3 queries accepted and 9 of 9 tampers rejected
-(by Freivalds' check), with a 4.61\,GB proof, 270\,s to prove and 20.2\,s to verify (decoding 2.7\,s,
-recomputation 11.4\,s, products 6.1\,s) on 8 threads of the Xeon. Its V1 proof is 2.68\,GB against
-4.65\,GB (1.73$\times$), with 224{,}670 exceptions (1.8\,MB). Its random-weight twin takes 288\,s to prove
+(by Freivalds' check), with a 4.61\,GB proof (with embedding lookups), 270\,s to prove and 20.2\,s to verify (decoding 2.7\,s,
+recomputation 11.4\,s, products 6.1\,s) on 8 threads of the Xeon. Without lookups, its V1 proof is 2.68\,GB against
+4.65\,GB for v0 (1.73$\times$), with 224{,}670 exceptions (1.8\,MB). Its random-weight twin takes 288\,s to prove
 and 21.3\,s to verify, with a 5.41\,GB v0 proof and V1 2.23$\times$ smaller: real weights are within 6\% in time,
 15\% smaller in v0 and 10\% larger in V1.
 
@@ -227,11 +227,11 @@ blocks, 2{,}048 tokens, $\Kpre$) \todo{L40S: crossover per cell of the final run
 \label{app:eval-reexec}
 
 \begin{table}[h]
-  \caption{Re-executing the full model against our verifier, in seconds. GPU: RTX~2080~Ti. CPU:
-  8 threads of a Xeon Silver 4114. Full models are extrapolated linearly from 1- and 2-block
-  builds. The GPU integer times precede the int8 forward pass, which halves them. The row with the
-  native kernels is a later run, extrapolated from 1--3 blocks, in which re-execution took 3.5 and
-  78.8\,s (fp32) and 3.6 and 98.3\,s (integer), the faster of two allocator settings
+  \caption{Re-executing the full model against our verifier, in seconds. GPU: RTX~2080~Ti, full
+  models extrapolated linearly from 1- and 2-block builds, except OPT-1.3B's fp16 time, measured on
+  the full model; the integer times precede the int8 forward pass, which takes 0.8--0.9 of them
+  (Llama-2-7B: 0.15 and 1.65\,s). CPU: the full Llama-2-7B measured on 8 threads of a Xeon Silver
+  4114, our verifier with the native kernels, the fastest exact re-execution of each kind
   (Table~\ref{tab:options})}
   \label{tab:eval-reexec}
   \centering\footnotesize
@@ -241,17 +241,16 @@ blocks, 2{,}048 tokens, $\Kpre$) \todo{L40S: crossover per cell of the final run
     & $T{=}64$ & 512 & 2{,}048 \\
     \midrule
     \multicolumn{4}{@{}l}{\emph{GPU: integer forward pass / fp16 decoder}} \\
-    OPT-1.3B & -- & -- & 0.94 / 0.18 \\
+    OPT-1.3B & -- & -- & 0.94 / 0.11 \\
     OPT-6.7B & 0.17 / 0.035 & 0.41 / 0.16 & 1.94 / 0.39 \\
     Llama-2-7B & 0.16 / 0.037 & 0.35 / 0.18 & 2.08 / 0.57 \\
     Llama-2-13B & 0.14 / 0.08 & 0.62 / 0.34 & 3.46 / 0.82 \\
     Qwen3-4B & 0.17 / 0.03 & 0.45 / 0.09 & 1.92 / 0.37 \\
     \midrule
     \multicolumn{4}{@{}l}{\emph{CPU: Llama-2-7B}} \\
-    our $\Kpre$ verifier & 1.5 & -- & 85 \\
-    \quad with the native kernels & 1.6 & -- & 17.2 \\
-    fp32 re-execution & 3.5 & -- & 86 \\
-    integer re-execution & 6.8 & -- & 196 \\
+    our $\Kpre$ verifier & 1.0 & -- & 18.5 \\
+    fp32 re-execution & 4.5 & -- & 93.2 \\
+    integer re-execution & 4.1 & -- & 141.6 \\
     \bottomrule
   \end{tabular}
 \end{table}
