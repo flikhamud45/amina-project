@@ -9,12 +9,13 @@
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh quality  # F2 perplexity and V1 on real weights
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh gpuv     # the verifier on the GPU, v0 and V1
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh cpuv     # the CPU verifier against re-execution (needs CXX)
+#     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh serve    # the prover against unverified serving (A7)
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh attack   # in-range edits on OPT-6.7B (G3.5; needs HF_HOME)
 # Then strong_gpu.sh's must/should tiers with the same PVI_PLATFORM give the v0 benchmark (Table 3 and the
 # comparisons) with every prover/verifier improvement of sp2027 on.
 # Output: one JSON line per cell in logs/$PVI_PLATFORM/sp-<tier>-<cell>-<jobid>.out (grep '^{').  PVI_DRYRUN=1 prints
 # the sbatch lines.  Jobs are named sp-<tier>-<cell> with --dependency=singleton: re-running a tier resubmits only
-# what is not queued.
+# what is not queued.  PVI_REHEARSAL=1 submits only a tier's smallest cell (the tiers that support it: serve).
 set -euo pipefail
 : "${PVI_PLATFORM:?export PVI_PLATFORM=<new name>}"
 [ -f code/experiments/4_defence_benchmark/slurm/sp2027.sh ] || { echo "run this from the repository root" >&2; exit 2; }
@@ -45,7 +46,7 @@ smoke)
   # prover and verifier, sampling; then one small V1 query end to end
   sub smoke 2 64 "$PY -m pytest -o addopts= -q -p no:cacheprovider tests/test_gkr_triton.py tests/test_gkr_triton_cpu.py \
 tests/test_gpu_verifier.py tests/test_cut_protocol.py tests/test_token_sampler.py tests/test_extfield.py tests/test_logup.py \
-tests/test_cut.py 2>&1 | tail -3 && $V1 --model gpt2 --seq 64 --modes C Kpre --policy auto --prune-last --lmax 27 \
+tests/test_cut.py tests/test_serve_ab.py 2>&1 | tail -3 && $V1 --model gpt2 --seq 64 --modes C Kpre --policy auto --prune-last --lmax 27 \
 | grep '^{' && echo SMOKE OK"
   ;;
 v1)
@@ -100,6 +101,29 @@ cpuv)
 $PY experiments/7_reexec/reexec.py --model $M --seq 64 2048 --layers 2 32 --device cpu --threads 8 --reps 3"
   done
   ;;
+serve)
+  # A7: the prover against unverified serving on this GPU, on the same token ids and shapes (serve_ab.py): U1, our
+  # integer model with every claim dropped; U2, eager fp16 and bf16 decoders with SDPA (one batched prefill); the
+  # prover in modes C and Kpre under Fiat-Shamir (wire, lean, pruned; Kpre with lookups).  Workloads (a) T = 64, 512,
+  # 2,048 at B = 1 and (b) T = 64 with B = 1, 4, 16, 64 and T = 2,048 with B = 1, 4; a batch proved as B queries one
+  # after another (seq) and as one statement (joint).  10 repetitions after a warm-up, CUDA events; every cell checks
+  # U1's logits against the proof's, a byte-identical second proof and acceptance.  A variant that does not fit the
+  # GPU is recorded as skipped (e.g. joint at T = 2,048, B = 4 on the 7B+ models).  Mode C's plan: PVI_SERVE_POLICY
+  # (default paper; the plan PS2 chooses, F6 part 8).  Random weights: no downloads.  Host memory: Qwen3-4B's joint
+  # proof of 4 x 2,048 tokens fits the GPU (about 36 GB of int32 claims), and its CPU acceptance check then holds the
+  # decoded claims and every op's input (about 120 GB in int64), hence 256 GB for it too.
+  SERVE="$PY experiments/7_reexec/serve_ab.py --workload a b --modes C Kpre --batch-proof seq joint --reps 10 \
+--device cuda --threads 8 --u2-dtype fp16 bf16 --policy ${PVI_SERVE_POLICY:-paper} --label serve"
+  if [ -n "${PVI_REHEARSAL:-}" ]; then
+    sub serve-rehearsal 1 64 "$SERVE --model opt-125m --layers 2 --cells 64x1 64x4 --reps 3"
+  else
+    sub serve-opt13   3 128 "$SERVE --model opt-1.3b"
+    sub serve-qwen4   4 256 "$SERVE --model qwen3-4b"
+    sub serve-llama7  5 256 "$SERVE --model llama2-7b"
+    sub serve-opt67   5 256 "$SERVE --model opt-6.7b"
+    sub serve-llama13 8 256 "$SERVE --model llama2-13b"
+  fi
+  ;;
 attack)
   # G3.5: edits that keep every FFN activation inside ranges calibrated on held-out text (WikiText-2 train), on the
   # real OPT-6.7B (fp32 on the GPU, about 27 GB); both the unrestricted and the down-only attacker
@@ -109,6 +133,6 @@ attack)
   done
   ;;
 *)
-  echo "usage: sp2027.sh smoke|v1|quality|gpuv|cpuv|attack" >&2; exit 2
+  echo "usage: sp2027.sh smoke|v1|quality|gpuv|cpuv|serve|attack" >&2; exit 2
   ;;
 esac

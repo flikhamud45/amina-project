@@ -17,6 +17,11 @@ the team before the runs (the "freeze"); until then this file lists what will be
   range calibrated on held-out text, to change the next token (the OPT-1.3B result is in the paper).
 * **The CPU verifier against re-execution** (`sp2027.sh cpuv`): the full Llama-2-7B and OPT-1.3B verified on 8 CPU
   threads with the native kernels (B5), and re-executed (integer and fp32) on the same threads.
+* **The prover against unverified serving** (`sp2027.sh serve`, plan item A7): on this GPU and the same prompts, the
+  prover (modes C and Kpre, Fiat-Shamir) against our integer model served without proofs (U1) and against eager
+  fp16 and bf16 decoders (U2), for the full OPT-1.3B, Qwen3-4B, Llama-2-7B, OPT-6.7B and Llama-2-13B: prompts of 64,
+  512 and 2,048 tokens, and batches of 1-64 prompts. Random weights, so nothing is downloaded. Every cell also checks
+  that the served logits are the proved ones and that a second proof of the same prompts has the same bytes.
 * **The v0 benchmark with every sp2027 improvement** (the existing `strong_gpu.sh must` and `should` tiers with a new
   `PVI_PLATFORM`): the paper's Table 3 and comparisons on this GPU.
 
@@ -42,16 +47,26 @@ the team before the runs (the "freeze"); until then this file lists what will be
 
 | Tier | What | Jobs | Hours (rough) |
 |---|---|---|---|
-| `smoke` | GPU tests, one V1 query | 1 | 0.5 |
+| `smoke` | GPU tests and the serving harness's test, one V1 query | 1 | 0.5 |
 | `v1` | V1 against v0, timed | 13 | 20-30 |
 | `quality` | perplexity (fp32, scalar gains, smoothing) and V1 on real weights | 7 | 10-15 |
 | `gpuv` | the verifier on the GPU | 4 | 4-6 |
 | `cpuv` | the CPU verifier and re-execution, same CPU | 8 | 8-12 |
+| `serve` | the prover against unverified serving on the same GPU, with batches (A7) | 5 | 8-10 (the job limits add up to 25) |
 | `attack` | in-range edits on OPT-6.7B (range checks, value-aware sampler) | 2 | 4-8 |
 | `strong_gpu.sh must` | the v0 benchmark with the improvements (see `STRONG_GPU_PLAN.md`, Part C) | about 20 | 30-40 |
 
 Each `sp2027.sh` tier submits its jobs with `--dependency=singleton`; re-running a tier after a pre-emption resubmits
 only what is not queued. `PVI_DRYRUN=1` prints the `sbatch` lines without submitting.
+
+The `serve` tier needs the GPU to itself (other jobs on the GPU or heavy load on the CPU change the ratios it
+measures), so please run it with exclusive use of the node. Each job prints one line per measured cell to its log
+(`logs/l40s_sp2027/sp-serve-<model>-<jobid>.out`, lines starting with `{`). A cell that does not fit the GPU is
+written as `"skipped": "out of memory"` and the job goes on; this is expected for the largest batches of the 7B and
+13B models (for example one joint proof of 4 prompts of 2,048 tokens). A job that ends with
+`A CORRECTNESS CHECK FAILED` has found a real problem: please send its log as it is. `PVI_REHEARSAL=1` submits one
+small cell instead (OPT-125M, 2 blocks), for a quick check of the setup. If the team has fixed mode C's commitment
+plan by then, it is passed as `PVI_SERVE_POLICY=<plan>`; otherwise the default (`paper`) is used.
 
 ## What to send back
 
