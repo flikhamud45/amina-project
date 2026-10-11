@@ -93,12 +93,27 @@ def table_fraction(m: torch.Tensor, alpha: torch.Tensor, tau: torch.Tensor) -> t
     return ef.frac_sum(ef.lift(m[nz]), ef.sub(alpha, tau[nz]))
 
 
-def logup_ok(roots, m: torch.Tensor, alpha: torch.Tensor, tau: torch.Tensor) -> bool:
-    """Check F4: ``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)`` by cross-multiplication (every ``q0`` is
-    non-zero, which :func:`verify_instances` has checked)."""
+def logup_ok(roots, m: torch.Tensor, alpha: torch.Tensor, tau: torch.Tensor, *, batched: bool | None = None) -> bool:
+    """Check F4: ``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)`` (every ``q0`` is non-zero, which
+    :func:`verify_instances` has checked; every ``alpha - tau_t`` is, since ``alpha`` is outside ``F_p + x F_p``).
+    ``batched`` (default: unless ``PVI_V1_BUCKETS=0``; V-V1N part 3): both sums with batch inversion
+    (:func:`extfield.inv_many`) and compared; else by cross-multiplication of the two fraction trees.  With every
+    denominator non-zero the two are the same test (``a/b = c/d`` iff ``a d = c b``); a zero denominator, which the
+    callers exclude, takes the cross-multiplication."""
     if not roots:
         return not bool(m.any())
-    num, den = ef.frac_sum(torch.stack([r[0] for r in roots]), torch.stack([r[1] for r in roots]))
+    if batched is None:
+        from . import buckets
+        batched = buckets.enabled()
+    p0, q0 = torch.stack([r[0] for r in roots]), torch.stack([r[1] for r in roots])
+    if batched:
+        nz = torch.nonzero(m).reshape(-1)
+        dens = ef.sub(alpha, tau[nz])
+        if bool(q0.any(-1).all()) and bool(dens.any(-1).all()):
+            lhs = ef.mul(p0, ef.inv_many(q0)).sum(0) % P
+            rhs = ef.scal(ef.inv_many(dens), m[nz]).sum(0) % P
+            return ef.equal(lhs, rhs)
+    num, den = ef.frac_sum(p0, q0)
     tn, td = table_fraction(m, alpha, tau)
     return ef.equal(ef.mul(num, td), ef.mul(tn, den))
 
@@ -108,11 +123,23 @@ def prove_instances(instances, ch, prefix: str = "cut/") -> list:
     return [gkr.prove(p, q, ch, f"{prefix}{b}/") for b, (p, q) in enumerate(instances)]
 
 
-def verify_instances(trs, ns, ch, prefix: str = "cut/"):
+def verify_instances(trs, ns, ch, prefix: str = "cut/", *, batched: bool | None = None):
     """The outputs of :func:`logup_gkr.verify` for every instance (``ns``: their variable counts), or ``None`` if
-    one fails, has another size, or has a zero root denominator (check ``cut_gkr``)."""
+    one fails, has another size, or has a zero root denominator (check ``cut_gkr``).  ``batched`` (default: unless
+    ``PVI_V1_BUCKETS=0``): every instance's round chains in one pass (:func:`logup_gkr.verify_batch`, the same
+    challenges, outputs and verdict); else instance by instance."""
     if len(trs) != len(ns):
         return None
+    if batched is None:
+        from . import buckets
+        batched = buckets.enabled()
+    if batched:
+        if any(tr.n != n for tr, n in zip(trs, ns)):
+            return None
+        outs = gkr.verify_batch(list(trs), ch, [f"{prefix}{b}/" for b in range(len(trs))])
+        if outs is None or not all(bool(out[1].any()) for out in outs):
+            return None
+        return outs
     outs = []
     for b, (tr, n) in enumerate(zip(trs, ns)):
         if tr.n != n:

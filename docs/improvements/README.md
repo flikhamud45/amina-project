@@ -23,9 +23,10 @@ of every item is `SP2027_PLAN.md` at the repository root; an item is tagged [DON
 | F1 | [F1_reexecution_baseline.md](F1_reexecution_baseline.md) | measured on the 2080 Ti | the cost of re-running the model, against our verifier |
 | F3a | [F3a_real_weight_runs.md](F3a_real_weight_runs.md) | implemented; cluster cells ready | `prune_last` in the real OPT builder (the unpruned graph's constants and logits); byte accounting, tampers and peak memory in `v1_bytes.py`/`perf.py --real`; OPT-6.7B codec-only profile |
 | I1, I2, I4 | [I_server_setup.md](I_server_setup.md) | done | lean clones under the quota; Triton and torch.compile on the GPU nodes; a C++ compiler for CPU kernels |
+| V-V1N (parts 1-4) | [V_V1N_fast_v1_verifier.md](V_V1N_fast_v1_verifier.md) | implemented, exact, laptop-measured; Xeon cells ready; native kernels not done | V1's final check and xbar by value (affine-plus-step window tables, one-limb products; the bucket kernel as the native reference), batched GKR chains, batch-inverted logUp, int8 values: bit-identical, `PVI_V1_BUCKETS` |
 | G3-min | [G3_min_adaptive_game.md](G3_min_adaptive_game.md) | MNIST done; OPT-1.3B on the cluster | adaptive game, held-out ranges: the best implementable mixture detects at most 3.1% / 9.7% per path on the MNIST MLP's layers, below 27.7/N (K-G3a not triggered) |
 
 Measurement harnesses (all compare against the previous code path on the same queries and check identical
 outputs): `experiments/6_improvements/open_ab.py` (A1), `forward_ab.py` (A2), `encode_prof.py` (A3),
-`derive_ab.py` (B5), `setup_bytes.py` (D4); `experiments/7_reexec/reexec.py` (F1), `serve_ab.py` (A7);
+`derive_ab.py` (B5), `setup_bytes.py` (D4), `experiments/8_v1/v1_phases.py` (V-V1N); `experiments/7_reexec/reexec.py` (F1), `serve_ab.py` (A7);
 `experiments/4_defence_benchmark/bench.py --gen` (E1).

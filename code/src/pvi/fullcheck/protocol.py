@@ -94,6 +94,8 @@ Z_BOUND = 1 << 29
 """Claims must satisfy ``-2**29 < z < 2**29``.  Because ``2 * 2**29 < p``, two
 in-range integers with the same residue mod ``p`` are equal, so checking
 ``Z = A X`` mod ``p`` pins down the integer claim the verifier then uses."""
+_CUT_NARROW = (torch.int8, torch.int16)
+"""The dtypes besides derive's own in which a V1 query's cut ops may hold their sent values (``cut_protocol``)."""
 
 
 @dataclass(frozen=True)
@@ -333,8 +335,30 @@ class Challenger:
     def ext(self, name: str, count: int = 1, *, nonbase: bool = False) -> torch.Tensor:
         """``count`` uniform elements of ``F_{p^8}`` (``extfield``) ``[count, 8]``, by the rejection sampling of
         :meth:`folding`; with ``nonbase``, an element in ``F_p + x F_p`` (its coefficients 2..7 all zero, probability
-        ``p^-6``) is drawn again."""
+        ``p^-6``) is drawn again.  One element (V1's GKR rounds) is drawn by :meth:`_ext_one` unless
+        ``PVI_V1_BUCKETS=0``: the same bytes, words and choice, without numpy (V-V1N part 3)."""
         key = self._key("ext/" + name)
+        if count == 1:
+            from . import buckets
+            if buckets.enabled():
+                return self._ext_one(key, name, nonbase)
+        return self._ext_draw(key, name, count, nonbase)
+
+    def _ext_one(self, key: bytes, name: str, nonbase: bool) -> torch.Tensor:
+        """:meth:`_ext_draw` for ``count = 1``: per block the same 192-byte stream (48 little-endian words), the
+        accepted words (below ``2p``, reduced) in groups of 8, the first group taken unless ``nonbase`` rejects it."""
+        block = 0
+        while True:
+            words = [w % P for w in struct.unpack("<48I", self._stream(key, f"ext/{name}/{block}", 192)) if w < 2 * P]
+            for i in range(0, len(words) - 7, 8):
+                v = words[i:i + 8]
+                if nonbase and not any(v[2:]):
+                    continue
+                return torch.tensor([v], dtype=torch.int64)
+            block += 1
+
+    def _ext_draw(self, key: bytes, name: str, count: int, nonbase: bool) -> torch.Tensor:
+        """:meth:`ext`'s rejection sampling from ``key`` (today's code; every ``count``)."""
         out, block = [], 0
         while len(out) < count:
             words = np.frombuffer(self._stream(key, f"ext/{name}/{block}", 4 * 8 * (count - len(out) + 2) * 2),
@@ -917,7 +941,10 @@ class Verifier:
                         z = None if m is None else self._own_claim(op, xin, dtype)
                     else:
                         z = claims.get(op.name)
-                    if z is None or m is None or z.dtype != dtype or tuple(z.shape) != (op.n_rows, m):
+                    # V1 (V-V1N part 4): a cut op's sent values may also be int8 or int16 (cut_protocol keeps them
+                    # so once they are in range); they are range-checked below and widened for their readers
+                    if z is None or m is None or tuple(z.shape) != (op.n_rows, m) or (
+                            z.dtype != dtype and not (op.name in cut_ops and z.dtype in _CUT_NARROW)):
                         return None
                     if op.name not in own:          # a table's rows of int8 weights, else the range check
                         lo, hi = (-128, 127) if op.name in self.tables else (1 - Z_BOUND, Z_BOUND - 1)

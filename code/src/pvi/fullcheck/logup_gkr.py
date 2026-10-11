@@ -210,6 +210,119 @@ def verify(tr: Transcript, ch, label: str):
     return p0, q0, torch.cat([mu[-1:], r[-1, :L]]), p_hat, q_hat
 
 
+def _well_formed(tr: Transcript) -> bool:
+    """The shapes :func:`verify` requires of a transcript."""
+    n = tr.n
+    if n < 1 or tuple(tr.top.shape) != (4, ef.D) or len(tr.rounds) != n - 1 or len(tr.vals) != n - 1:
+        return False
+    return all(tuple(tr.rounds[k - 1].shape) == (k, 3, ef.D) and tuple(tr.vals[k - 1].shape) == (4, ef.D)
+               for k in range(1, n))
+
+
+def _draw(tr: Transcript, ch, label: str):
+    """:func:`verify`'s absorptions and challenges for ``tr``, in its order, with each message's bytes sliced from
+    one copy of the transcript (the bytes ``_absorb`` gives): ``(mu [n, 8], lambda [n - 1, 8], r [n(n-1)/2, 8])``."""
+    n = tr.n
+    flat = tr.flat().to(torch.int64).contiguous().cpu().numpy().reshape(-1)
+    d = ef.D
+
+    def blob(at: int, count: int) -> bytes:
+        return flat[at * d:(at + count) * d].tobytes()
+
+    ch.absorb((label + "top").encode(), blob(0, 4))
+    mus, lams, rs, at = [ch.ext(label + "mu0")[0]], [], [], 4
+    for k in range(1, n):
+        lams.append(ch.ext(label + f"lam{k}")[0])
+        for j in range(k):
+            ch.absorb((label + f"g{k}.{j}").encode(), blob(at, 3))
+            at += 3
+            rs.append(ch.ext(label + f"r{k}.{j}")[0])
+        ch.absorb((label + f"v{k}").encode(), blob(at, 4))
+        at += 4
+        mus.append(ch.ext(label + f"mu{k}")[0])
+    empty = torch.zeros(0, d, dtype=torch.int64)
+    return (torch.stack(mus), torch.stack(lams) if lams else empty, torch.stack(rs) if rs else empty)
+
+
+def verify_batch(trs: list, ch, labels: list):
+    """:func:`verify` of several instances (V-V1N part 3): ``[(p0, q0, rho, P_hat, Q_hat)]``, the same field elements
+    as :func:`verify` gives instance by instance, or ``None`` if any instance is malformed or fails a round.
+
+    Every instance's absorptions and challenges come first, in transcript order (instance by instance, each as
+    :func:`verify` draws them; ``ch`` may be a Fiat--Shamir challenger or ``cut_protocol``'s recorders).  Then the
+    affine round chains of **every layer of every instance** run as one batch: the layers are stacked as rows of
+    width ``W = max (n - 1)``, a layer's columns past its rounds being identities (``a = 1, b = 0``, eq factor 1),
+    exactly as :func:`verify` pads its own ``[L, L]`` grid, so each row computes the integers of :func:`verify`; ``W``
+    steps of batched products replace ``sum (n - 1)``.  With one instance or many, the verdict is :func:`verify`'s:
+    all instances pass or ``None``."""
+    if len(trs) != len(labels) or not all(_well_formed(tr) for tr in trs):
+        return None
+    drawn = [_draw(tr, ch, label) for tr, label in zip(trs, labels)]
+    one = ef.const(1)
+    d = ef.D
+    tops = torch.stack([tr.top for tr in trs]).to(torch.int64)                       # [B, 4, 8]
+    p10, p11, q10, q11 = tops.unbind(1)
+    p0s, q0s = ef.add(ef.mul(p10, q11), ef.mul(p11, q10)), ef.mul(q10, q11)
+    mu_last = torch.stack([mu[-1] for mu, _, _ in drawn])
+    lasts = torch.stack([tr.vals[-1] if tr.n > 1 else tr.top for tr in trs]).to(torch.int64)       # [B, 4, 8]
+    p_hats = ef.add(lasts[:, 0], ef.mul(mu_last, ef.sub(lasts[:, 1], lasts[:, 0])))
+    q_hats = ef.add(lasts[:, 2], ef.mul(mu_last, ef.sub(lasts[:, 3], lasts[:, 2])))
+    deep = [b for b, tr in enumerate(trs) if tr.n > 1]
+    width = max((trs[b].n - 1 for b in deep), default=0)
+    r_last = {}
+    if deep:
+        claims, parts_r, parts_g, parts_rho, parts_live, parts_vals, parts_lam = [], [], [], [], [], [], []
+        for b in deep:
+            tr, (mu, lam, rs) = trs[b], drawn[b]
+            L = tr.n - 1
+            rows, cols = torch.tril_indices(L, L)                                    # layer k = row + 1: rounds 0 .. k - 1
+            r = one.repeat(L, width, 1)
+            r[rows, cols] = rs
+            g = torch.zeros(L, width, 3, d, dtype=torch.int64)
+            g[rows, cols] = torch.cat([x.to(torch.int64) for x in tr.rounds])
+            live = torch.zeros(L, width, dtype=torch.bool)
+            live[rows, cols] = True
+            rho = one.repeat(L, width, 1)                                            # rho_k = (mu_{k-1}, r_{k-1, 0 .. k-2})
+            rho[:, 0] = mu[:L]
+            if L > 1:
+                rho[1:, 1:width] = r[:-1, :width - 1]
+            vals = torch.stack(tr.vals).to(torch.int64)                              # [L, 4, 8]
+            parents = torch.cat([tr.top[None].to(torch.int64), vals[:-1]])
+            pc = ef.add(parents[:, 0], ef.mul(mu[:-1], ef.sub(parents[:, 1], parents[:, 0])))
+            qc = ef.add(parents[:, 2], ef.mul(mu[:-1], ef.sub(parents[:, 3], parents[:, 2])))
+            claims.append(ef.add(pc, ef.mul(lam, qc)))
+            parts_r.append(r)
+            parts_g.append(g)
+            parts_rho.append(rho)
+            parts_live.append(live)
+            parts_vals.append(vals)
+            parts_lam.append(lam)
+            r_last[b] = r[-1, :L]
+        claim = torch.cat(claims)
+        r, g, rho, live = torch.cat(parts_r), torch.cat(parts_g), torch.cat(parts_rho), torch.cat(parts_live)
+        vals, lam = torch.cat(parts_vals), torch.cat(parts_lam)
+        l0, l1, l2, l3 = _lagrange_basis(r)
+        a = torch.where(live[..., None], l1, one)
+        bb = ef.add(ef.add(ef.mul(ef.sub(l0, l1), g[:, :, 0]), ef.mul(l2, g[:, :, 1])), ef.mul(l3, g[:, :, 2]))
+        bb = torch.where(live[..., None], bb, torch.zeros_like(bb))
+        term = ef.add(ef.mul(rho, r), ef.mul(ef.sub(one, rho), ef.sub(one, r)))
+        term = torch.where(live[..., None], term, one.expand_as(term))
+        ev = one.repeat(claim.shape[0], 1)
+        for j in range(width):
+            claim = ef.add(ef.mul(a[:, j], claim), bb[:, j])
+            ev = ef.mul(ev, term[:, j])
+        pl, pr, ql, qr = vals.unbind(1)
+        lhs = ef.mul(ev, ef.add(ef.add(ef.mul(pl, qr), ef.mul(pr, ql)), ef.mul(lam, ef.mul(ql, qr))))
+        if not ef.equal(lhs, claim):
+            return None
+    out = []
+    for b, tr in enumerate(trs):
+        mu = drawn[b][0]
+        rho_b = mu if tr.n == 1 else torch.cat([mu[-1:], r_last[b]])
+        out.append((p0s[b], q0s[b], rho_b, p_hats[b], q_hats[b]))
+    return out
+
+
 def verify_rounds(tr: Transcript, ch, label: str):
     """:func:`verify` round by round, exactly as ``spec_toy.gkr_verify`` (the reference the tests compare it with)."""
     n = tr.n

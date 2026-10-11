@@ -28,7 +28,9 @@ window of ``--calib-seq`` tokens from the end of the test split, default ``--seq
 the 2,048-token graph), queried on WikiText-2 windows from the start of the split.  ``--prune-last`` builds either
 graph with its last block at the last position.  ``--tampers n`` (with ``--full``): per variant, n trace-tampering
 queries (a cut op's claim moved by whole windows, the rest recomputed honestly) and n single-value ones (any
-weight op, any entry, +-1..999), each of which must be rejected (else the exit status is 1).  ``--codec-only``: no
+weight op, any entry, +-1..999), each of which must be rejected (else the exit status is 1).  ``--v1-paths 0 1``
+(with ``--full --reps n``): V1's timed queries under each ``PVI_V1_BUCKETS`` value (today's verifier, V-V1N's), one
+warm-up each, interleaved on the same queries (``timed.v1_paths``; ``timed.v1`` is the ``1`` path's).  ``--codec-only``: no
 commitment and no proof -- one forward pass (``--device``) whose claims are encoded op by op as they are produced
 (v0: ``PVC3`` of the claims; V1: of the cut ops' requantised values and the clear ops' claims, and the exceptions
 frame), summed per block: the byte profile of a model whose prover the machine cannot hold.  Peak host memory
@@ -279,9 +281,14 @@ def main() -> int:
                     "per variant, each of which must be rejected")
     ap.add_argument("--codec-only", action="store_true", help="no commitment and no proof: the claims of one forward "
                     "pass encoded op by op (v0 and V1), per block")
+    ap.add_argument("--v1-paths", nargs="+", default=None, help="with --full --reps n: V1's timed queries under each "
+                    "PVI_V1_BUCKETS value given (0: today's verifier, 1: V-V1N's, scatter: its bucket kernel), one "
+                    "warm-up each, interleaved on the same queries; timed.v1_paths has each one's medians")
     args = ap.parse_args()
     if args.tampers and not args.full:
         raise SystemExit("--tampers runs V1 queries: it goes with --full")
+    if args.v1_paths and not (args.full and args.reps > 1):
+        raise SystemExit("--v1-paths times V1 queries: it goes with --full --reps n (n > 1)")
     torch.set_num_threads(args.threads)
     from pvi.fullcheck import cut_protocol as cp
     from pvi.fullcheck.analytic import decoder_shapes
@@ -369,13 +376,32 @@ def main() -> int:
             accounting["v1"] = v1_accounting(b1, full)
             good = good and full["accepted"] and all(accounting["v1"][k] for k in V1_EXACT)
             if args.reps > 1:                              # medians of timed queries of both protocols, interleaved
+                import os
                 import statistics
-                runs0, runs1 = [], []
+                from pvi.fullcheck import buckets
+                paths = args.v1_paths or [None]            # None: V1 as the environment has it
+                saved = os.environ.get(buckets.ENV)
+
+                def v1_query(path, q):
+                    if path is not None:
+                        os.environ[buckets.ENV] = path
+                    try:
+                        return cp.run_cut_query(prover, v1, q)
+                    finally:
+                        if saved is None:
+                            os.environ.pop(buckets.ENV, None)
+                        else:
+                            os.environ[buckets.ENV] = saved
+                if args.v1_paths:                          # one warm-up per path (the first query above ran the default)
+                    for path in paths:
+                        good = good and v1_query(path, x)["accepted"]
+                runs0, runs1 = [], {path: [] for path in paths}
                 for i in range(args.reps):
                     q = (real_queries[i] if real_queries is not None else
                          torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(100 + i)))
                     runs0.append(run_query(prover, v0, q, wire=True))
-                    runs1.append(cp.run_cut_query(prover, v1, q))
+                    for path in paths:
+                        runs1[path].append(v1_query(path, q))
 
                 def med(runs):
                     keys = sorted({k for r in runs for k in r["timings"]})
@@ -384,8 +410,13 @@ def main() -> int:
                             "prove_s": sum(v for k, v in t.items() if k.startswith("prove_")),
                             "verify_s": sum(v for k, v in t.items() if k.startswith("verify_")),
                             "fs_s": t.get("fs_hash", 0.0)}
-                out["timed"] = {"queries": args.reps, "v0": med(runs0), "v1": med(runs1)}
-                good = good and out["timed"]["v0"]["accepted"] == out["timed"]["v1"]["accepted"] == args.reps
+                main_path = paths[-1] if "1" not in paths else "1"
+                out["timed"] = {"queries": args.reps, "v0": med(runs0), "v1": med(runs1[main_path])}
+                good = good and out["timed"]["v0"]["accepted"] == args.reps
+                if args.v1_paths:
+                    out["timed"]["v1_paths"] = {path: med(rs) for path, rs in runs1.items()}
+                    out["timed"]["v1_path"] = main_path
+                good = good and all(sum(r["accepted"] for r in rs) == args.reps for rs in runs1.values())
             if args.tampers:
                 out["tampers"] = v1_tampers(prover, v1, x, args.tampers)
                 good = good and all(t["rejected"] == t["attempts"] for t in out["tampers"].values())

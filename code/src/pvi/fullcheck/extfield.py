@@ -19,7 +19,7 @@ import torch
 from .field import P
 
 __all__ = ["D", "BETA", "const", "gen", "add", "sub", "neg", "mul", "scal", "lift", "inv", "inv_fermat", "frobenius",
-           "batch_inv", "power",
+           "batch_inv", "inv_many", "power",
            "eq_eval", "eq_table", "prefix_eq_sum", "lagrange4", "frac_sum", "small_times", "int_times", "inner", "pack",
            "unpack", "equal"]
 
@@ -134,6 +134,31 @@ def batch_inv(a: torch.Tensor) -> torch.Tensor:
         acc = mul(acc, a[i])
     out[0] = acc
     return torch.stack(out)
+
+
+def inv_many(a: torch.Tensor) -> torch.Tensor:
+    """:func:`batch_inv` vectorised (V-V1N part 3): the inverses of the rows of ``a`` ``[n, 8]`` (all non-zero) with
+    one :func:`inv`, by Montgomery's trick on a product tree: ``n - 1`` products up (odd levels padded with 1), the
+    root's inverse, then each node's inverse times its sibling gives its children's (``2 (n - 1)`` products), in
+    ``log2 n`` batched steps each way."""
+    n = a.shape[0]
+    if n == 0:
+        return a.clone()
+    one = const(1, a.device)
+    levels, x = [], a
+    while x.shape[0] > 1:
+        if x.shape[0] % 2:
+            x = torch.cat([x, one[None]])
+        levels.append(x)
+        x = mul(x[0::2], x[1::2])
+    out = inv(x)
+    for lv in reversed(levels):
+        h = lv.shape[0] // 2
+        up = out[:h]
+        out = torch.empty_like(lv)
+        out[0::2] = mul(up, lv[1::2])
+        out[1::2] = mul(up, lv[0::2])
+    return out[:n]
 
 
 def equal(a: torch.Tensor, b: torch.Tensor) -> bool:
