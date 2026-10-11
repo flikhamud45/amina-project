@@ -18,13 +18,13 @@ and~\ref{thm:v1}.
     \midrule
     \multicolumn{2}{@{}l}{\emph{Per query, v0 (Theorem~\ref{thm:sound}, Section~\ref{sec:fs})}} \\
     Field $\F$, $p=15\cdot2^{27}+1$ & $\log_2p\approx30.9$ \\
-    Committed matrices $|\mathcal J|$ & \todo{count} \\
-    Target $\beta=\lambda+\log_2(2|\mathcal J|)$, plus 64 under Fiat--Shamir & \todo{value} \\
+    Checked weight operations $|\mathcal J|$ & 226 \\
+    Target $\beta=\lambda+\log_2(2|\mathcal J|)$, plus 64 under Fiat--Shamir & 136.8 / 200.8 \\
     Freivalds vectors $r=\lceil\beta/\log_2p\rceil$ & 5 / 7 \\
     Freivalds term $p^{-r}$ per matrix & $2^{-154.5}$ / $2^{-216.3}$ \\
     Columns $t_j$: least $t$ with $\prod_{i<t}\frac{k_j-1-i}{n_j-i}\le2^{-\beta}$ &
-      35$^a$ / \todo{value} \\
-    Opened columns per query & 124.7\,MB / \todo{value} \\
+      35 / 51$^a$ \\
+    Opened columns per query & 124.7 / 182.5\,MB \\
     Random-oracle queries $Q$ (64 bits added to $\beta$ and $\beta_0$) & -- / $\le2^{64}$ \\
     SHA-256 Merkle trees, 32-byte roots; SHAKE-256 transcript, 256-bit keys &
       $O(Q^22^{-256})$ \\
@@ -33,17 +33,17 @@ and~\ref{thm:v1}.
     \multicolumn{2}{@{}l}{\emph{V1 (Theorem~\ref{thm:v1})}} \\
     Extension $\Fext=\F[\xi]/(\xi^8-11)$; Fiat--Shamir needs degree $\ge7$ &
       $|\Fext|\approx2^{247.3}$ \\
-    Lookup term $(\Nleaf+|\Vtab|)/(p^8-p^2)$ & $\le2^{-215.3}{}^b$ \\
-    GKR terms $\sum_\gamma\varepsilon_{\mathrm{GKR}}(n_\gamma)$ & $2^{-230.7}{}^b$ \\
+    Lookup term $(\Nleaf+|\Vtab|)/(p^8-p^2)$ & $\le2^{-215.9}{}^b$ \\
+    GKR terms $\sum_\gamma\varepsilon_{\mathrm{GKR}}(n_\gamma)$ & $\le2^{-230.1}{}^b$ \\
     Folds: 8 base-field rows per cut operation & $t_j$ unchanged \\
     \midrule
     \multicolumn{2}{@{}l}{\emph{Setup proof (Theorem~\ref{thm:untrusted})}} \\
-    Target $\beta_0=\lambda+64+\log_2(2|\mathcal J|)$ & \todo{value} \\
-    Combinations $s=\lceil(\beta_0+\log_2\max_jn_j)/\log_2p\rceil$ & $\ge7$ \todo{value} \\
+    Target $\beta_0=\lambda+64+\log_2(2|\mathcal J_0|)$, $|\mathcal J_0|=130$ coded & 200.0 \\
+    Combinations $s=\lceil(\beta_0+\log_2\max_jn_j)/\log_2p\rceil$ & 7 \\
     Radius $e_j=\lfloor f(n_j-k_j)/2\rfloor$, $f\in\{2^0,\dots,2^{-10}\}$ minimising
-      $t^0_j/a+t_j$ & \todo{per tree} \\
+      $t^0_j/a+t_j$ & $f=2^{-2}$ / $2^{-4}$$^c$ \\
     Setup columns $t^0_j$: least with $\prod_{i<t^0_j}\frac{n_j-e_j-1-i}{n_j-i}\le2^{-\beta_0}$ &
-      \todo{per tree} \\
+      1{,}103--2{,}063 / 4{,}497--8{,}049$^c$ \\
     Opened columns per query ($t_j$ with $k_j+e_j$ for $k_j$) & 168.5 / 134.9\,MB$^c$ \\
     Setup proof & 2.8 / 11.3\,GB$^c$ \\
     Total $\varepsilon_0$ & $\le2^{-128}+O(Q^22^{-256})$ \\
@@ -51,8 +51,9 @@ and~\ref{thm:v1}.
   \end{tabular}
 
   \smallskip
-  {\footnotesize $^a$Smallest tree. $^b$Llama-2-13B, 2{,}048 tokens (Section~\ref{sec:v1}).
-  \todo{7B} $^c$Amortised over $a=100$ / $1{,}000$ queries; interactive queries.}
+  {\footnotesize $^a$Smallest of the 6 trees. $^b$2{,}048 tokens: $\Nleaf=2.7\cdot10^9$ in 162 instances
+  of ${\le}2^{24}$ leaves, $|\Vtab|\le5.6\cdot10^5$. $^c$Amortised over $a=100$ / $1{,}000$ queries;
+  interactive queries; the six trees. All values: \texttt{params\_table.py}.}
 \end{table}
 
 % -------------------------------------------------------------------------------------
