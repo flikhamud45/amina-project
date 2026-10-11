@@ -613,20 +613,30 @@ whole, last = forward, pruned = unpruned for smooth and smooth-exp8; structural 
 tampers rejected; 17 s per graph). A run without `--prefix` gives the records of before, plus `prefix_tokens: null`,
 `prefix_len: 0` and each cell's `residual_real_max` (`llama_diag.py`: plus `int_clip` per block).
 
-### 12.6 Results on the real checkpoints (cluster; placeholders)
+### 12.6 Results on the real checkpoints (jobs 1009796 and 1009797; graphs before `qk_balance`)
 
-(a) The diagnosis (`llama_diag.py`, first 128-token test window): the smallest per-block mean cosine / the last
-block's mean cosine / the smallest mean over positions 1.. (the "none" column is job 1009531):
+These graphs predate Section 13's `qk_balance` (they are what `--no-qk-balance` builds). Qwen3's tokenizer adds no
+BOS, so PrefixQuant's rule (`auto`) and `bos` choose the same prefix there (`<|endoftext|>`, one token), and the two
+columns coincide.
+
+(a) The diagnosis (`llama_diag.py`, first 128-token test window, job 1009796 for the prefixes; "none" is job 1009531):
+the smallest per-block mean cosine / the last block's mean cosine / the smallest mean over positions 1..:
 
 | Model, recipe | no prefix | `--prefix` (auto) | `--prefix bos` |
 |---|---|---|---|
-| Qwen3-0.6B-Base, scalar 4 | 0.625 / 0.706 / 0.622 | [CLUSTER] | [CLUSTER] |
-| Qwen3-0.6B-Base, smooth 0.55 | 0.544 / 0.735 / 0.545 | [CLUSTER] | [CLUSTER] |
-| TinyLlama_v1.1, scalar 4 | 0.513 / 0.658 / 0.517 (position 0: 0.000) | [CLUSTER] | [CLUSTER] |
-| TinyLlama_v1.1, smooth 0.55 | 0.309 / 0.578 / 0.311 (position 0: 0.000) | [CLUSTER] | [CLUSTER] |
-| prefix chosen (`auto`: `o`, tokens) | | Qwen3: [CLUSTER]; TinyLlama: [CLUSTER] | `<|endoftext|>`; `<s>` |
-| fp max at the prefix / in the window (last blocks) | 6,795 at position 0 (Qwen3) | [CLUSTER] | [CLUSTER] |
-| `s_res`; prefix `k_clip` / `v_clip` (max over layers) | 2.08e-3 (Qwen3), 1.41e-4 (TinyLlama) | [CLUSTER] | [CLUSTER] |
+| Qwen3-0.6B-Base, scalar 4 | 0.625 / 0.706 / 0.622 | 0.685 / 0.685 / 0.691 | as auto |
+| Qwen3-0.6B-Base, smooth 0.55 | 0.544 / 0.735 / 0.545 | 0.864 / 0.923 / 0.866 | as auto |
+| TinyLlama_v1.1, scalar 4 | 0.513 / 0.658 / 0.517 (position 0: 0.000) | 0.731 / 0.839 / 0.731 | 0.712 / 0.827 / 0.716 |
+| TinyLlama_v1.1, smooth 0.55 | 0.309 / 0.578 / 0.311 (position 0: 0.000) | 0.830 / 0.916 / 0.829 | 0.063 / 0.437 / 0.056 |
+| prefix chosen (`auto`: `o`, tokens) | | Qwen3: `o` = 1, `<|endoftext|>`; TinyLlama: `o` = 2, `\n`, `<s>` (outlier tokens `\n` 7x, `.` 2x) | `<|endoftext|>`; `<s>` |
+| fp max at the prefix / in the window (last 4 blocks) | 6,810 in the window (Qwen3) | Qwen3 6,843 / 457; TinyLlama 86 / 46 | TinyLlama 5 / 103 |
+| `s_res`; prefix `k_clip` / `v_clip` (max over layers) | 2.08e-3 (Qwen3), 1.41e-4 (TinyLlama) | Qwen3 3.21e-4, 0.94 / 1.24 (scalar), 1.92 / 2.98 (smooth); TinyLlama 1.41e-4, 0.79 / 0.92 | TinyLlama 0.80 / 1.18 |
+
+The prefix does what PrefixQuant says on the fp side: Qwen3's massive activation moves to the prefix (6,843 there,
+457 in the window), `s_res` falls 6.5x, and the smoothed stream's smallest per-block cosine rises from 0.544 to
+0.864. TinyLlama needs both tokens: `\n` takes its delimiter outlier (window maximum 103 -> 46), and `<s>` alone
+leaves the `\n` outlier in the window, where the smoothed graph collapses (0.063). The prefix keys of Qwen3's
+smoothed graph clip (up to 1.92 / 2.98 of their layer's range).
 
 (b) Perplexity ratio to the fp32 reference with the same prefix (95% bootstrap interval; top-1; smallest per-block
 mean cosine), best cell of each kind; "no prefix" is Section 9's:
@@ -634,22 +644,23 @@ mean cosine), best cell of each kind; "no prefix" is Section 9's:
 | Model, setting | prefix | scalar (best of 2/4/8) | smooth (best of 0.45/0.55/0.65) | smooth-exp8 (best alpha) |
 |---|---|---|---|---|
 | Qwen3-0.6B-Base, 16 x 128 | none | x28 | x72-77 | x6-9 |
-| Qwen3-0.6B-Base, 16 x 128 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| Qwen3-0.6B-Base, 16 x 128 | bos | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| TinyLlama_v1.1, 16 x 128 | none | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| TinyLlama_v1.1, 16 x 128 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| TinyLlama_v1.1, 16 x 128 | bos | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| Qwen3-1.7B-Base, 16 x 128 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| Qwen3-0.6B-Base, 2,048 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| TinyLlama_v1.1, 2,048 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
-| Qwen3-1.7B-Base, 2,048 | auto | [CLUSTER] | [CLUSTER] | [CLUSTER] |
+| Qwen3-0.6B-Base, 16 x 128 | auto = bos | x23.2 [17.1, 31.7] (gain 4) | x2.11 [1.94, 2.30], 0.538 (0.45) | x2.05 [1.89, 2.23], 0.534 (0.45) |
+| TinyLlama_v1.1, 16 x 128 | auto | x1.83 [1.65, 2.06] (gain 8) | **x1.15 [1.10, 1.24], 0.789 (0.65)** | x1.18 [1.10, 1.30], 0.814 (0.45) |
+| TinyLlama_v1.1, 16 x 128 | bos | x3.19 [2.52, 4.20] (gain 4) | x4.97 [2.91, 8.79] (0.55) | x3.21 [2.06, 5.21] (0.45) |
+| Qwen3-1.7B-Base, 16 x 128 | auto = bos | x13.3 [10.4, 16.5] (gain 8) | x1.72 [1.60, 1.84], 0.612 (0.45) | x1.44 [1.35, 1.54], 0.642 (0.45) |
+| Qwen3-0.6B-Base, 2,048 (146 windows) | auto | x95.9 [90.4, 101.9] (gain 8) | x2.78 [2.72, 2.84], 0.557 (0.65) | x2.70 [2.64, 2.77], 0.561 (0.65) |
+| Qwen3-0.6B-Base, 2,048 | bos | as auto | x2.92 [2.86, 2.99] (0.45; 0.65 not reached) | (not reached) |
 
-The fp32 reference perplexities with the prefix: [CLUSTER] (they differ from Section 9's: another context, and for
-TinyLlama windows shifted by one token). `--check --prefix` and `--protocol --prefix` on Qwen3-0.6B-Base and
-TinyLlama: [CLUSTER] (expected `CHECK PASSED` with `gpu_equals_cpu: true`, `PROTOCOL PASSED`). Which mechanism each
-model needs (12.3): Qwen3 [CLUSTER]; TinyLlama [CLUSTER]. The plan's rule: the cheaper of the per-token exponent and
-the prefix that reaches the target is taken; the prefix costs nothing in the proof, the exponent a clear down
-projection under V1.
+The fp32 references with the prefix: Qwen3-0.6B-Base 29.24 (16 x 128) and 12.71 (2,048); Qwen3-1.7B-Base 20.64;
+TinyLlama 13.78 with `auto` and 169.2 with `bos` alone. The last is not plausible for a 1.1B model on WikiText-2
+and is not explained yet (the same code gives 13.78 with `[\n, <s>]`); the `bos` row of TinyLlama is therefore not
+used. Job 1009797 was still running TinyLlama and Qwen3-1.7B at 2,048 tokens when these were read.
+
+Reading. The prefix turns Qwen3 from collapse (x72) into a damaged model (x2.1, and x1.44 for Qwen3-1.7B with the
+per-token exponent), and brings TinyLlama to x1.15, the plan's TinyLlama target, with the smoothed graph and no
+exponent. Neither Qwen3 model is near x1.05. The remaining Qwen3 loss starts in the first block (Section 13: the k
+norm), which the prefix does not touch; Section 13's `qk_balance` is the next step, and the commands of 13.6 rerun
+these cells with it.
 
 ### 12.7 Cluster commands (2080 Ti node; bash, from `code/`, `HF_HOME` on node-local `/tmp`)
 
