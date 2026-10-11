@@ -29,6 +29,11 @@ op matches ``build_decoder`` one for one; ``matches_benchmark_graph`` checks it.
 Activations stay per-tensor int8, as proved. The norm's gain G is a public constant:
 the benchmark's G = 32 clips OPT's outlier features (perplexity in the hundreds to tens
 of thousands); G = 2-4 does not, at the same cost.
+
+``prune_last`` (opt-in, as ``build_decoder(..., prune_last=True)``) builds the last block at the
+last position only, but for its keys and values; the pruned block is calibrated on every position,
+so the graph has the weights, gains and multipliers of the graph without pruning and gives the same
+next-token logits (tested).
 """
 
 from __future__ import annotations
@@ -39,10 +44,10 @@ import torch
 
 from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn
 from .transformer import (
-    CONFIGS, RES_MAX, SHIFT, _attention, _isqrt, _lut, _norm_int, build_decoder,
+    CONFIGS, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int, build_decoder,
 )
 
-__all__ = ["build_opt_from_hf", "matches_benchmark_graph", "real_logits"]
+__all__ = ["build_opt_from_hf", "is_pruned", "matches_benchmark_graph", "real_logits"]
 
 _RELU = torch.tensor([max(0, x) for x in range(-128, 128)], dtype=torch.int64)
 
@@ -99,6 +104,23 @@ class _RealBuilder:
         """A requantising consumer of a weight op (:func:`graph.requant_fn`, so V1 can cut it)."""
         return self.cheap(prefix, inputs, requant_fn(params), scale, note, {"requant": params})
 
+    def last(self, name):
+        """The last position of ``name``, calibrated on every position (``transformer._Builder.last(...,
+        calibrate_all=True)``): the op takes the last position, while the calibration keeps every position and
+        ``name``'s real scale, so the ops after it get the percentiles, gains and multipliers of the graph
+        without it."""
+        n = self.name("last")
+        self.ops.append(CheapOp(n, (name,), n + ".y", fn=_last_position, note="last position"))
+        self.env[n + ".y"] = self.env[name]
+        self.scale[n + ".y"] = self.scale[name]
+        return n + ".y"
+
+    def release(self, keep) -> None:
+        """Drop every calibration tensor but the tokens and ``keep`` (the residual stream between blocks): no
+        later op reads them, so no constant changes, and a 2,048-token calibration of OPT-6.7B holds one block's
+        tensors (25 int64 tensors of ``T x d``: 1.7 GB) instead of all 32 blocks' (54 GB)."""
+        self.env = {k: self.env[k] for k in ("x", *keep)}
+
     def to_int8(self, z):
         real = self.env[z].double().abs() * self.scale[z]
         top = float(torch.quantile(real.flatten()[:1 << 24], self.pct / 100.0)) if self.pct < 100 \
@@ -150,7 +172,8 @@ def _fold(w: torch.Tensor, b: torch.Tensor | None, gamma: torch.Tensor, beta: to
 
 def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, norm_gain: float = 32,
                       residual_headroom: float = 1.25, device=None, smooth: float | None = None,
-                      smooth_pct: float = 99.9, pct_att: float = 100.0) -> tuple[IntGraph, dict]:
+                      smooth_pct: float = 99.9, pct_att: float = 100.0,
+                      prune_last: bool = False) -> tuple[IntGraph, dict]:
     """An integer OPT decoder with the checkpoint's real weights.
 
     ``calib_ids`` ``[1, T]`` sets every activation scale. The three knobs are all
@@ -164,6 +187,13 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
       resolution (``build_decoder`` uses 8).
 
     ``device`` is where the integer calibration pass runs (the fp model stays where it is).
+
+    ``prune_last`` (opt-in): the last block's q, attention output, out-projection, residuals and MLP
+    read the last position only, its k and v every position (the ops and order of
+    ``build_decoder(..., prune_last=True)``: a "last position" op before q and one before the first
+    residual add).  The calibration still sees every position wherever the graph without pruning does
+    (:meth:`_RealBuilder.last`), so every weight, norm gain and multiplier is that graph's, and the
+    next-token logits are its integers (tested).
     """
     cfg = model.config
     assert cfg.do_layer_norm_before, "post-LN OPT-350M is not handled"
@@ -178,6 +208,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     with torch.no_grad():
         hs = model(calib_ids.to(model.device), output_hidden_states=True).hidden_states
     res_max = max(float(h.abs().max()) for h in hs) * residual_headroom
+    del hs
     s_res = max(res_max / RES_MAX, float(dec.embed_tokens.weight.abs().max()) / (INT8_MAX * 8))
 
     B = _RealBuilder(calib_ids.to(device or calib_ids.device), pct, norm_gain, smooth, smooth_pct)
@@ -194,13 +225,16 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     pos = B.mat(pos_ids, pos_table, None, 1.0, layout="embed")
     r = B.residual(B.cheap("scale", [tok], lambda a, c=embed_mult: a * c, s_res, "embed to residual"), pos)
 
-    for layer in dec.layers:
+    for i, layer in enumerate(dec.layers):
+        prune = prune_last and i == len(dec.layers) - 1
         at = layer.self_attn
         ln1 = layer.self_attn_layer_norm
         folded = [_fold(proj.weight.float(), proj.bias, ln1.weight, ln1.bias)
                   for proj in (at.q_proj, at.k_proj, at.v_proj)]
         h = B.norm(r, d, [wf for wf, _ in folded])
-        q, k, v = (B.to_int8(B.mat(h, wf.float(), bf, B.scale[h])) for wf, bf in folded)
+        # (pruned) q reads the last position; k and v every position, which its one query row attends to
+        q, k, v = (B.to_int8(B.mat(B.last(h) if prune and j == 0 else h, wf.float(), bf, B.scale[h]))
+                   for j, (wf, bf) in enumerate(folded))
         # HF scales q by dh^-0.5 inside the module; here that lives in m_s, as in build_decoder.
         sq, sk, sv = B.scale[q], B.scale[k], B.scale[v]
         m_s = round((1 << SHIFT) * 16.0 * sq * sk / math.sqrt(dh))
@@ -213,7 +247,8 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
         att = B.cheap("attn", [q, k, v],
                       lambda a, b_, c, ms=m_s, mo=m_o: _attention(a, b_, c, ms, mo, n_heads, n_heads, dh),
                       s_att, "attention")
-        r = B.residual(r, B.mat(att, at.out_proj.weight.float(), at.out_proj.bias, s_att))
+        # (pruned) the residual stream's last position takes the attention branch (its last position only)
+        r = B.residual(B.last(r) if prune else r, B.mat(att, at.out_proj.weight.float(), at.out_proj.bias, s_att))
 
         ln2 = layer.final_layer_norm
         wf, bf = _fold(layer.fc1.weight.float(), layer.fc1.bias, ln2.weight, ln2.bias)
@@ -221,16 +256,24 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
         f1 = B.to_int8(B.mat(h, wf.float(), bf, B.scale[h]))
         act = B.cheap("act", [f1], lambda a, t=_RELU: _lut(a, t), B.scale[f1], "relu")
         r = B.residual(r, B.mat(act, layer.fc2.weight.float(), layer.fc2.bias, B.scale[act]))
+        B.release([r])
 
     lnf = dec.final_layer_norm
     wf, bf = _fold(model.lm_head.weight.float(), None, lnf.weight, lnf.bias)
     h = B.norm(r, d, [wf])
+    # (in a pruned graph the one position of its last block; calibrated, as the head, on the last position)
     h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), B.scale[h], "last position")
     logits = B.mat(h, wf.float(), bf, B.scale[h])
     info = {"s_residual": s_res, "residual_real_max": res_max, "logit_scale": B.scale[logits],
             "pct": pct, "norm_gain": norm_gain, "embed_mult": embed_mult, "smooth": smooth,
-            "smooth_pct": smooth_pct, "pct_att": pct_att}
+            "smooth_pct": smooth_pct, "pct_att": pct_att, "prune_last": prune_last}
     return IntGraph(B.ops, "x", logits), info
+
+
+def is_pruned(graph: IntGraph) -> bool:
+    """Whether ``graph`` (of ``build_opt_from_hf`` or ``build_decoder``) has its last block pruned: its last block
+    adds two "last position" ops to the one before the LM head."""
+    return sum(isinstance(o, CheapOp) and o.note == "last position" for o in graph.ops) > 1
 
 
 def real_logits(graph: IntGraph, info: dict, ids: torch.Tensor, *, all_positions: bool = False):
@@ -240,6 +283,12 @@ def real_logits(graph: IntGraph, info: dict, ids: torch.Tensor, *, all_positions
     position in one pass. That is exactly what one query per prefix would produce:
     every op is per-position except causal attention, and no constant depends on the
     input, so position t's integers depend only on tokens 0..t.
+
+    A graph with its last block pruned (``prune_last``) gives every position too: the two
+    slices of its last block are skipped as well, so in that block position t's query row
+    attends to the keys 0..t and its residual add reads position t -- the integers the pruned
+    graph gives on the prefix 0..t, as one query per prefix would.  The result is that of the
+    graph without pruning, whose constants the pruned graph shares (tested).
     """
     if all_positions:
         ops = [CheapOp(o.name, o.inputs, o.output, fn=(lambda a: a), note=o.note)
@@ -249,12 +298,16 @@ def real_logits(graph: IntGraph, info: dict, ids: torch.Tensor, *, all_positions
     return env[graph.output_name].double() * info["logit_scale"]
 
 
-def matches_benchmark_graph(graph: IntGraph, config_name: str) -> list[str]:
-    """Differences from ``build_decoder``'s graph (op kinds, order, matrix shapes).
+def matches_benchmark_graph(graph: IntGraph, config_name: str | DecoderConfig, *,
+                            prune_last: bool | None = None) -> list[str]:
+    """Differences from ``build_decoder``'s graph (op kinds, order, matrix shapes, cheap ops' notes) for the
+    config ``config_name`` (a name of ``CONFIGS``, or a ``DecoderConfig``), built with ``prune_last`` (default:
+    as ``graph`` is, :func:`is_pruned`).
 
     Returns the list of mismatches; the only one expected is the LM head's bias.
     """
-    ref = build_decoder(CONFIGS[config_name])
+    cfg = CONFIGS[config_name] if isinstance(config_name, str) else config_name
+    ref = build_decoder(cfg, prune_last=is_pruned(graph) if prune_last is None else prune_last)
     problems = []
     if len(ref.ops) != len(graph.ops):
         return [f"op count {len(graph.ops)} vs benchmark {len(ref.ops)}"]

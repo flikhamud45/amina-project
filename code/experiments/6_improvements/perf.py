@@ -7,6 +7,9 @@
     cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model lenet5 --modes C --policy paper cnn16 --wire off on
     cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model gpt2 --modes C Kpre --policy R16 R16c \\
         --prune-last off on --lookups off on
+    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model opt-1.3b --real facebook/opt-1.3b \\
+        --smooth 0.55 --calib-seq 2048 --seq 2048 --modes C Kpre --policy auto --queries 3 --lean --wire on \\
+        --prune-last on --tampers 3
 
 Builds the model exactly as bench.py does (trained CNN weights, random-weight decoders with seed 0;
 ``--random-init``: random CNN weights too, as ``ab_verifier.py`` builds them), commits it, runs one
@@ -25,6 +28,18 @@ last block at the last position (``build_decoder(..., prune_last=True)``; ``--pr
 both graphs, each variant on each); ``--lookups`` (``off on``: both) gives the K and Kpre verifiers
 the embedding rows to read themselves (``Verifier(lookups=True)``; in mode C a ``c`` policy's lookup
 tables do that).
+
+``--real`` (OPT checkpoints): the checkpoint's integer graph instead of the random-weight one
+(``real_weights.build_opt_from_hf``; ``--smooth``: the paper's SmoothQuant through the norm gains), calibrated
+on the CPU on one WikiText-2 window of ``--calib-seq`` tokens from the end of the test split and queried on
+``--queries`` + 1 windows of ``--seq`` tokens from its start (``experiments/8_v1/v1_bytes.py``'s ``load_real``
+and ``real_graph``; ``--model`` names its shapes).  Every block is built, and mode C's commitment plans are made
+from the graph's own weight ops.  ``--tampers n`` (decoders): after the timed queries, every variant runs ``n``
+of each of ``bench.py``'s LLM attacks on the first query (a random claim entry +-1..999, the top logit forged,
+the last hidden coordinate set to ``Z_BOUND // 4``), each of which must be rejected (``tampers``).  ``peak``: the
+host's peak resident set (Linux VmHWM) and the GPU's peak memory over a mode's warm-ups, queries and tampers
+(all its variants); ``build_peak``: the same over the build and the commitments.  The exit status is 1 if an
+honest query was rejected or a tampered one accepted.
 """
 from __future__ import annotations
 
@@ -57,6 +72,69 @@ def _chosen(policy: str, plan) -> str:
     return policy if plan is None else plan.policy
 
 
+def _peaks(device) -> dict:
+    """Bytes since ``bench._reset_peaks``, named as ``bench.py`` records them: the host's peak resident set
+    (``None`` where ``/proc`` has none) and on a GPU its peak allocated and reserved memory."""
+    out = {"host_peak_rss": None}
+    try:
+        with open("/proc/self/status") as fh:
+            out["host_peak_rss"] = 1024 * next(int(line.split()[1]) for line in fh if line.startswith("VmHWM:"))
+    except (OSError, StopIteration):
+        pass
+    if device.type == "cuda":
+        out["gpu_peak_memory"] = torch.cuda.max_memory_allocated(device)
+        out["gpu_peak_reserved"] = torch.cuda.max_memory_reserved(device)
+    return out
+
+
+def _tampers(prover, v, x, n: int, wire: bool, seed: int = 123) -> dict:
+    """``n`` attempts of each of ``bench.py``'s LLM attacks on the query ``x`` (its ``tamper_C_int_lam40`` cell):
+    ``single_value``, a random entry of a random weight op's claim +-1..999; ``output_logit``, the smallest logit
+    raised 1000 above the largest; ``last_hidden``, a random coordinate of the op feeding the LM head (the last
+    block's down projection) at the last position set to ``Z_BOUND // 4``.  ``{kind: {attempts, rejected,
+    labels}}``."""
+    from pvi.fullcheck.protocol import Z_BOUND, run_query
+    mats = prover.graph.mat_ops
+    g = torch.Generator().manual_seed(seed)
+    out = {k: {"attempts": 0, "rejected": 0, "labels": {}} for k in ("single_value", "output_logit", "last_hidden")}
+
+    def attempt(kind, tamper):
+        res = run_query(prover, v, x, wire=wire, forward_kwargs={"tamper": tamper})
+        rec, label = out[kind], str(res["rejected_at"])
+        rec["attempts"] += 1
+        rec["rejected"] += int(not res["accepted"])
+        rec["labels"][label] = rec["labels"].get(label, 0) + 1
+
+    def t_logit(o, z):
+        if o.name == mats[-1].name:
+            z = z.clone()
+            z[int(z[:, -1].argmin()), -1] = int(z[:, -1].max()) + 1000
+        return z
+
+    for i in range(n):
+        op = mats[int(torch.randint(len(mats), (1,), generator=g))]
+        pos = int(torch.randint(10 ** 9, (1,), generator=g))
+        delta = int(torch.randint(1, 1000, (1,), generator=g)) * (1 if i % 2 else -1)
+        j = int(torch.randint(mats[-2].n_rows, (1,), generator=g))
+
+        def t_single(o, z, op=op, pos=pos, delta=delta):
+            if o.name == op.name:
+                z = z.clone()
+                z.view(-1)[pos % z.numel()] += delta
+            return z
+
+        def t_last(o, z, j=j):
+            if o.name == mats[-2].name:
+                z = z.clone()
+                z[j, -1] = Z_BOUND // 4
+            return z
+
+        attempt("single_value", t_single)
+        attempt("output_logit", t_logit)
+        attempt("last_hidden", t_last)
+    return out
+
+
 def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
     """``(timings, bytes, prove_s, verify_s)``: the medians over ``runs`` of ``run_query``."""
     timing = {k: statistics.median(r["timings"].get(k, 0.0) for r in runs)
@@ -69,7 +147,7 @@ def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
     return timing, nbytes, prove, verify
 
 
-def main() -> None:
+def main() -> int:
     ab = _load("ab_verifier", "experiments/6_improvements/ab_verifier.py")
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -97,6 +175,14 @@ def main() -> None:
     ap.add_argument("--lookups", nargs="*", choices=["off", "on"], default=["off"],
                     help="modes K and Kpre: the verifier reads the embedding rows itself (Verifier(lookups=True)); "
                          "'--lookups off on': both, timed interleaved")
+    ap.add_argument("--real", default="", help="decoders: a Hugging Face OPT checkpoint (e.g. facebook/opt-1.3b), "
+                    "its integer graph (real_weights.build_opt_from_hf) queried on WikiText-2 windows; --model names "
+                    "its shapes")
+    ap.add_argument("--smooth", type=float, default=None, help="with --real: SmoothQuant strength through the norm "
+                    "gains (F2; 0.55 with smooth_pct 99.9, pct 99.99, pct_att 99.99)")
+    ap.add_argument("--calib-seq", type=int, default=0, help="with --real: the calibration window's tokens (0: --seq)")
+    ap.add_argument("--tampers", type=int, default=0, help="decoders, per variant after the timed queries: attempts of "
+                    "each of bench.py's LLM attacks, each of which must be rejected")
     ap.add_argument("--random-init", action="store_true",
                     help="CNNs (" + ", ".join(ab.CNNS) + "): random weights and random queries, as ab_verifier.py "
                          "builds them (the costs depend on the shapes only)")
@@ -109,11 +195,14 @@ def main() -> None:
     device = torch.device(args.device)
     prunes = [w == "on" for w in args.prune_last or ["on"]]      # a bare flag: on
     lookups = [w == "on" for w in args.lookups or ["on"]]
+    bench._reset_peaks(device)
     t0 = time.perf_counter()
     graphs, model_ops = {}, {}
     if args.model in ab.CNNS:
         if prunes != [False]:
             raise SystemExit("--prune-last is for the decoders")
+        if args.real or args.tampers:
+            raise SystemExit("--real and --tampers are for the decoders")
         if args.random_init:
             graph, x, _ = ab.build(fullcheck, ab.Case(args.model, "C", args.lam))
             queries = ab.random_queries(fullcheck, graph, x, args.queries + 1)
@@ -126,6 +215,17 @@ def main() -> None:
         graphs[False], model_ops[False] = graph, None
         n_checks = len(graph.mat_ops)
         seq = None
+    elif args.real:                 # the checkpoint's integer graph, every block; WikiText-2 windows as queries
+        if args.layers:
+            raise SystemExit("--real builds every block of the checkpoint")
+        v1b = _load("v1_bytes", "experiments/8_v1/v1_bytes.py")
+        model, queries, calib = v1b.load_real(args.real, args.seq, args.queries + 1, args.calib_seq)
+        for prune in prunes:
+            graphs[prune], _ = v1b.real_graph(model, calib, args.smooth, prune)
+            model_ops[prune] = None    # planned from its own weight ops (OPT's LM head has a bias column)
+        del model
+        n_checks = len(graphs[prunes[0]].mat_ops)
+        seq = args.seq
     else:
         from pvi.fullcheck.analytic import decoder_shapes
         from pvi.fullcheck.transformer import CONFIGS, build_decoder
@@ -153,10 +253,13 @@ def main() -> None:
             if device.type == "cuda":
                 torch.cuda.synchronize()
             commit_s[prune, policy] = time.perf_counter() - t0
+    build_peak = _peaks(device)
     lean = args.lean and seq is not None
     extra = json.loads(args.extra)
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    ok = True
     for mode in args.modes:
+        bench._reset_peaks(device)
         pairs = {}
         for prune, graph in graphs.items():
             weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
@@ -182,10 +285,16 @@ def main() -> None:
             for key in order[i % len(order):] + order[:i % len(order)]:
                 prover, v, runs = pairs[key]
                 runs.append(run_query(prover, v, q, wire=key[3]))
+        tampered = {key: _tampers(prover, v, queries[0], args.tampers, key[3])
+                    for key, (prover, v, _) in pairs.items()} if args.tampers else {}
+        peak = _peaks(device)
         first = None
         for (prune, policy, looked, wire), (_, v, runs) in pairs.items():
             timing, nbytes, prove, verify = _medians(runs)
-            out = {"label": args.label, "git": sha, "model": args.model, "seq": seq, "layers": args.layers or None,
+            out = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None,
+                   "smooth": args.smooth if args.real else None,
+                   "calib_seq": (args.calib_seq or args.seq) if args.real else None,
+                   "seq": seq, "layers": args.layers or None,
                    "mode": mode, "policy": policy, "wire": wire,
                    **({"chosen": _chosen(policy, coms[prune, policy].plan)} if mode == "C" else {}),
                    "lam": args.lam, "rate": bench.RATE,
@@ -196,6 +305,8 @@ def main() -> None:
                    "accepted": sum(bool(r["accepted"]) for r in runs), "queries": len(runs),
                    "fs": args.fs, "prove_s": prove, "verify_s": verify, "proof_bytes": sum(nbytes.values()),
                    "timings": timing, "bytes": nbytes, "build_s": build_s, "commit_s": commit_s.get((prune, policy)),
+                   **({"tampers": tampered[prune, policy, looked, wire]} if tampered else {}),
+                   "peak": peak, "build_peak": build_peak,
                    "host": platform.node(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
             if first is None:
                 first = out
@@ -204,7 +315,12 @@ def main() -> None:
                                    if first[k]}
                 out["vs_first"].update({k: t / first["timings"][k] for k, t in timing.items()
                                         if first["timings"].get(k)})
+            ok = ok and out["accepted"] == out["queries"] and all(
+                t["rejected"] == t["attempts"] for t in out.get("tampers", {}).values())
             print(json.dumps(out), flush=True)
+    if not ok:
+        print("FAILED: an honest query was rejected or a tampered one accepted", file=sys.stderr, flush=True)
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ of every item is `SP2027_PLAN.md` at the repository root; an item is tagged [DON
 | D1, D2 | [D1_D2_fiat_shamir_binding.md](D1_D2_fiat_shamir_binding.md) | done | Fiat-Shamir binds the graph and its constants; SHAKE-256 transcript |
 | D4, D5 | [D4_D5_untrusted_commitment.md](D4_D5_untrusted_commitment.md) | done | a one-time setup proof removes the honest-commitment assumption; the split-commitment attack it stops |
 | F1 | [F1_reexecution_baseline.md](F1_reexecution_baseline.md) | measured on the 2080 Ti | the cost of re-running the model, against our verifier |
+| F3a | [F3a_real_weight_runs.md](F3a_real_weight_runs.md) | implemented; cluster cells ready | `prune_last` in the real OPT builder (the unpruned graph's constants and logits); byte accounting, tampers and peak memory in `v1_bytes.py`/`perf.py --real`; OPT-6.7B codec-only profile |
 | I1, I2, I4 | [I_server_setup.md](I_server_setup.md) | done | lean clones under the quota; Triton and torch.compile on the GPU nodes; a C++ compiler for CPU kernels |
 
 Measurement harnesses (all compare against the previous code path on the same queries and check identical
