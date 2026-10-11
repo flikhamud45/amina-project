@@ -99,6 +99,15 @@ CONFIGS = {
     "qwen3-4b": DecoderConfig("qwen3-4b", 2560, 36, 32, 8, 128, 9728, 151936, norm="rmsnorm",
                               mlp="swiglu", pos="rope", rope_theta=1e6, bias=False, tied=True,
                               qk_norm=True, max_pos=40960),
+    # the real-weight quality ladder (plan 2, F2b-Q/F2b-L; real_llama.py): Qwen3-0.6B/1.7B-Base and TinyLlama_v1.1
+    "qwen3-0.6b": DecoderConfig("qwen3-0.6b", 1024, 28, 16, 8, 128, 3072, 151936, norm="rmsnorm",
+                                mlp="swiglu", pos="rope", rope_theta=1e6, bias=False, tied=True,
+                                qk_norm=True, max_pos=32768),
+    "qwen3-1.7b": DecoderConfig("qwen3-1.7b", 2048, 28, 16, 8, 128, 6144, 151936, norm="rmsnorm",
+                                mlp="swiglu", pos="rope", rope_theta=1e6, bias=False, tied=True,
+                                qk_norm=True, max_pos=32768),
+    "tinyllama-1.1b": DecoderConfig("tinyllama-1.1b", 2048, 22, 32, 4, 64, 5632, 32000, norm="rmsnorm",
+                                    mlp="swiglu", pos="rope", bias=False, tied=False, max_pos=2048),
     # the largest shapes of the sampled/zk literature (the report builds them with 1 and 2 blocks only)
     "opt-30b": DecoderConfig("opt-30b", 7168, 48, 56, 56, 128, 28672, 50272, mlp="relu"),
     "opt-66b": DecoderConfig("opt-66b", 9216, 64, 72, 72, 128, 36864, 50272, mlp="relu"),
