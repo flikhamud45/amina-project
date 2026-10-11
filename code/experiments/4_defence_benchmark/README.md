@@ -68,8 +68,9 @@ python experiments/4_defence_benchmark/bench.py llm --model llama2-7b --seq 64 -
     --lams 128 --modes C:int,Kpre:int --llm-tampers 30 --lean
 ```
 
-These are the settings of the paper's basic run; the `must`, `should` and `nice` tiers of
-[`slurm/strong_gpu.sh`](slurm/strong_gpu.sh) list every job. `--builds 1,2,full` builds the decoder
+These are the settings of the paper's basic run; the `report-must` (before Plan 2 F6: `must`), `should` and
+`nice` tiers of [`slurm/strong_gpu.sh`](slurm/strong_gpu.sh) list every job (its `must` and `batch` tiers are now
+the S&P 2027 run's cells, `docs/L40S_RUN_SP2027.md`). `--builds 1,2,full` builds the decoder
 with 1 and 2 blocks and at full depth (the default builds decoders above 12 blocks only with 1 and 2
 blocks). `--lean` streams the claims to host memory and frees dead tensors: the same integers and
 proof, far less GPU memory. The CNN suite runs every mode at λ = 40, 80 and 128; the LLM suite the
@@ -169,7 +170,7 @@ sbatch -o logs/%x-%j.out code/experiments/4_defence_benchmark/slurm/train.sbatch
 # when it has finished (squeue -u $USER):
 export PVI_PLATFORM=<new name> SBATCH_PARTITION=killable SBATCH_GRES=gpu:l40s:1
 bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh smoke   # once per GPU type: wait for SMOKE OK in its log
-bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh must    # then should, then nice: the basic protocol
+bash code/experiments/4_defence_benchmark/slurm/strong_gpu.sh report-must   # then should, then nice: the basic protocol
 # a single job:
 mkdir -p logs/$PVI_PLATFORM
 sbatch -o logs/$PVI_PLATFORM/%x-%j.out code/experiments/4_defence_benchmark/slurm/bench.sbatch cnn --model vgg16
@@ -186,7 +187,7 @@ node, e.g. with an `sbatch` wrapper on `PATH` that adds `--exclude=t-806`. `PVI_
 `sbatch` lines instead of submitting them; the header of `strong_gpu.sh` shows how to run them on a
 machine without SLURM.
 
-**The basic protocol (`raw_l40s/`)** is every job of the `must`, `should` and `nice` tiers, run with
+**The basic protocol (`raw_l40s/`)** is every job of the `must` (now `report-must`), `should` and `nice` tiers, run with
 `PVI_PLATFORM=l40s` on `killable` with `SBATCH_GRES=gpu:l40s:1`, at commit `9401431`.
 
 **The optimised protocol, first batch (`raw_l40s_improved/`)** is the following list, run with the

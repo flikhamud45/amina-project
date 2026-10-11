@@ -48,7 +48,7 @@ a new platform name (`export PVI_PLATFORM=<name>`), so it never mixes with the s
 
 ### `raw_l40s/`: the basic protocol
 
-Every job of the `must`, `should` and `nice` tiers of
+Every job of the `must` (since Plan 2 F6: `report-must`), `should` and `nice` tiers of
 [`strong_gpu.sh`](../../experiments/4_defence_benchmark/slurm/strong_gpu.sh) on TAU's `killable`
 partition, with `PVI_PLATFORM=l40s`: 61 SLURM jobs with records (946078–947808; jobs pre-empted by
 the partition were resubmitted by re-running their tier). The one L40S node with a different CPU
