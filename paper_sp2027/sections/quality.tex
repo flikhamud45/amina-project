@@ -75,10 +75,13 @@ OPT-IML-30B~\cite{xiao2023smoothquant}; ZeroQuant-V2, with per-token activations
 weights, by about 1\% on OPT-125M and 4\% on OPT-1.3B~\cite{yao2023zeroquantv2}. Proof systems
 that keep 16-bit values stay under 1\%~\cite{zkllm,zkgpt}. Against our targets of $\times1.06$,
 $\times1.04$ and $\times1.05$ for OPT-125M, OPT-1.3B and OPT-6.7B, the two larger models are well
-inside and OPT-125M misses by 0.016. Llama- and Qwen3-style models need two more sets of
-constants: a fixed public prefix, whose int8 keys and values enter each attention operation and take
-the first token's massive activation, and a per-channel balance of the SwiGLU product folded into its
-weights. With them, OpenLLaMA-7B, whose integer graph has exactly the structure of our Llama-2-7B
-benchmark, is within $\times$1.073 of fp32 at 2{,}048 tokens and TinyLlama within $\times$1.12;
-Qwen3-1.7B reaches $\times$1.20 only with a per-token exponent at that product, and Qwen3-4B, which
-forms a second massive activation that no prefix takes, stays at $\times$3.0~\cite{fullversion}.
+inside and OPT-125M misses by 0.016. Llama- and Qwen3-style models need more constants, each a
+published equivalent transformation that changes no operation and no cost: a fixed public prefix
+whose int8 keys and values enter each attention operation and take the first token's massive
+activation~\cite{chen2024prefixquant,son2024cushioncache}, a per-channel balance of the SwiGLU
+product folded into the up and down projections~\cite{xiao2023smoothquant,lin2024awq}, and for
+Qwen3 a balance of the q and k norms' gains~\cite{shao2024omniquant}. With them, OpenLLaMA-7B, whose
+integer graph has exactly the structure of our Llama-2-7B benchmark, is within $\times$1.073 of
+fp32 at 2{,}048 tokens, TinyLlama within $\times$1.12 and Qwen3-1.7B within $\times$1.40, while
+Qwen3-4B, which forms a second massive activation that no prefix takes, stays at
+$\times$5.3~\cite{fullversion}.

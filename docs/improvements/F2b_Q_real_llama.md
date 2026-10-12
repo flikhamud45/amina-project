@@ -1241,6 +1241,23 @@ every digit): `glu_smooth` 0.3 / 0.4 / 0.6 alone x1.399 / x1.430 / x1.497 (smoot
 **x1.202 [1.197, 1.207]** / x1.220 (0.5: x1.206). The optimum is flat between 0.4 and 0.5; **best Qwen3-1.7B: x1.202**
 (top-1 0.775).
 
+### 13.9 Which changes count as the main algorithm (team rule, 12 Oct)
+
+A change to the model made for int8 is either part of the main algorithm (the graphs whose costs are reported and
+compared with other systems) or a published, common technique that the paper cites; anything else is a possible
+improvement, reported apart and never in the comparison against other systems.
+
+| Change | Status | Citation | Effect on the graph |
+|---|---|---|---|
+| Smoothing through the norm's gains | main algorithm | SmoothQuant | constants only |
+| Fixed public prefix (`prefix_tokens`) | main algorithm | PrefixQuant (arXiv:2410.05265), CushionCache (EMNLP 2024) | int8 key/value constants in each attention op; structure unchanged (OpenLLaMA-7B's diff against `llama2-7b`: empty) |
+| SwiGLU product balance (`glu_smooth`) | main algorithm | SmoothQuant's balance; AWQ (MLSys 2024) scales the same up/down pair in its implementation | constants only |
+| q/k norm balance (`qk_balance`, Qwen3) | main algorithm | OmniQuant (ICLR 2024), Eq. (5): Q / s, K * s | constants only |
+| Per-token exponent (`glu_exp`) | possible improvement | (per-token scales are common, but this changes two ops per block and V1's cut) | not in the benchmark graphs |
+
+Main-algorithm numbers at 2,048 tokens: OpenLLaMA-7B x1.073, TinyLlama x1.122, Qwen3-1.7B x1.40 (smooth 0.45 +
+`glu_smooth` 0.3), Qwen3-4B x5.3 (`glu_smooth` 0.5); with the per-token exponent, Qwen3-1.7B x1.20 and Qwen3-4B x3.0.
+
 ### 13.8 Limitations and open issues
 
 * **The reproduction uses random weights.** The real gains are real, the q/k projections are not: real raw q/k

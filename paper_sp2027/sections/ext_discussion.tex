@@ -60,10 +60,12 @@ tokens \todo{F3b: Qwen3-4B}. With smoothing through the norm's gains, the certif
 OPT-1.3B and OPT-6.7B are within factors of 1.076, 1.026 and 1.008 of fp32 at 2{,}048 tokens
 (Section~\ref{sec:quality}); with one scalar gain OPT-6.7B is 70\% above. With a fixed public prefix and a balance of
 the SwiGLU product, OpenLLaMA-7B (Llama-2-7B's exact benchmark structure) is within $\times$1.073 and
-TinyLlama within $\times$1.12 at 2{,}048 tokens. Qwen3 also needs a per-pair balance of the q/k
-norms' gains and a per-token exponent at the SwiGLU product, which keeps v0's costs but leaves the
-down projection outside V1's cut (about 0.3\,GB at 2{,}048 tokens on Llama-2-7B): Qwen3-1.7B then
-reaches $\times$1.20, but Qwen3-4B stays at $\times$3.0. It forms a second massive activation, at the
+TinyLlama within $\times$1.12 at 2{,}048 tokens; with a per-pair balance of the q/k norms' gains as
+well, Qwen3-1.7B is within $\times$1.40 and Qwen3-4B at $\times$5.3. These graphs are the ones whose
+costs we report. A per-token exponent at the SwiGLU product would bring Qwen3-1.7B to $\times$1.20
+and Qwen3-4B to $\times$3.0, but it changes two operations per block and leaves the down projection
+outside V1's cut (about 0.3\,GB at 2{,}048 tokens on Llama-2-7B), so we count it only as a possible
+improvement and none of our cost tables uses it. Qwen3-4B forms a second massive activation, at the
 first token after the prefix, that no public prefix we tried takes, and one static int8 scale per
 residual stream cannot hold it; a per-token residual scale would change the graph and V1. Soundness holds for any committed integer model; these
 numbers concern only how well that model serves.
