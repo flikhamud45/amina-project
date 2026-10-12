@@ -22,7 +22,7 @@ the paper's tables and text numbers. Nothing has to be computed or copied by han
 | A C++ compiler: `CXX` | the native CPU kernels (`-march=native`: AVX-512, VNNI and AVX512_BF16 on Zen 4) of the CPU verifier and of the exact int8 re-execution | `$CXX --version` (g++ 9 or later). Without root: conda-forge's `gxx` through micromamba in a folder of one's own (`docs/improvements/I_server_setup.md` Sec. 4) |
 | The Python headers for Triton's launcher | Triton compiles a small launcher with `Python.h` on first use | `python -c "import os, sysconfig; print(os.path.exists(os.path.join(sysconfig.get_paths()['include'], 'Python.h')))"`; if `False`, copy the headers into a folder and `export PVI_PY_INCLUDE=<that folder>` (`I_server_setup.md` Sec. 3) |
 | A Triton cache the jobs can write | Triton's compiled kernels | set by the script to `logs/$PVI_PLATFORM/.triton`; `export TRITON_CACHE_DIR=<dir>` to put it elsewhere (e.g. a node-local disk) |
-| `HF_HOME` on a node-local disk with 40 GB free | the `real` tier downloads facebook/opt-1.3b and facebook/opt-6.7b (about 16 GB) and the WikiText-2 test parquet; the `quality` tier Llama-2-7B and Llama-2-13B (about 13 + 26 GB) | `df -h $HF_HOME` |
+| `HF_HOME` on a node-local disk with 60 GB free | the `real` tier downloads facebook/opt-1.3b and facebook/opt-6.7b (about 16 GB) and the WikiText-2 parquets; with `PVI_LLAMA_LICENCE=1` the `real` and `quality` tiers share Llama-2-7B (about 13 GB) and the `quality` tier adds Llama-2-13B (about 26 GB) | `df -h $HF_HOME` |
 | About 0.5 GB for the setup cache | every mode-C job of a model reuses the first job's commitment (`logs/$PVI_PLATFORM/.setup_cache`, 15-70 MB per model and plan); the setup tier always measures the setup itself | set by the script; `export PVI_SETUP_CACHE=<dir>` to move it, `PVI_SETUP_CACHE=` (empty) to disable it |
 | The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats) load trained weights | the five files `code/artifacts/fullcheck/models/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224}.pt` from the earlier L40S run's checkout (or `experiments/4_defence_benchmark/train.py --model <m>`, seed 0); CIFAR-10 in `cifar-10-batches-py` layout under `$PVI_CIFAR_ROOT`; the dogs-vs-cats cache `dogs_cats.pt` under `$PVI_CACHE` (default `code/artifacts/fullcheck/cache`) or ImageNet under `$PVI_IMAGENET_ROOT`. `sp2027.sh all` and `bench` stop before submitting anything if one is missing |
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `export PVI_LOCAL=1` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
@@ -49,8 +49,8 @@ export PVI_PY_INCLUDE=<headers folder>              # only if the check of Sec. 
 export PVI_C_POLICY=<plan>                          # only if the team says so (default cnn18c, with the setup cache)
 ```
 
-`PVI_DRYRUN=1 bash code/experiments/4_defence_benchmark/slurm/sp2027.sh all` prints every job it would submit (127
-lines with the optional tiers; the listing of the freeze is `docs/improvements/F6_dryrun.txt`) and each tier's job
+`PVI_DRYRUN=1 bash code/experiments/4_defence_benchmark/slurm/sp2027.sh all` prints every job it would submit (137
+lines with the optional tiers and `PVI_LLAMA_LICENCE=1`; the listing of the freeze is `docs/improvements/F6_dryrun.txt`) and each tier's job
 count, job-limit sum and estimate, without submitting anything.
 
 ## 4. The smoke (at most 2 hours)

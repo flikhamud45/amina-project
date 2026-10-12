@@ -7,7 +7,8 @@
 % Labels defined: sec:gen, sec:gen-prefill, sec:gen-sampling, eq:gumbel-table.
 % Labels used: sec:defence, sec:fs, thm:sound, sec:v1 (defence.tex, v1.tex).
 % H5 pass (2026-10-11, REVIEW2.md N11): the aggregate truncation bound (V-1) e^{-14.25} added
-%   (0.021, 0.033 and 0.098 for V = 32,000, 50,272 and 151,936); E2b's measured distance stays a todo.
+%   (0.021, 0.033 and 0.098 for V = 32,000, 50,272 and 151,936); E2b's measured distance is in the text;
+%   the 2^20 table is not adopted (12 Oct: kept as the stated alternative, SP2027_PLAN2.md E2b).
 % =====================================================================================
 
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -94,4 +95,4 @@ total-variation distance to $\mathrm{softmax}(cz/\tau)$ at $\tau=1$ has median 0
 $k=50$ and 0.020 with $k=0$, against 0.087 between the integer and the fp32 model's next-token
 distributions. It comes from the rounding of $a$ and, with $k=0$, from the bounded upper tail of
 $\Gamma$, which under-samples tokens 8 to 12 nats below a crowded top; a table of $2^{20}$ entries
-would lower it to 0.0022 \todo{E2b: adopt it?}. Nucleus (top-$p$) sampling is not implemented.
+would lower it to 0.0022. Nucleus (top-$p$) sampling is not implemented.

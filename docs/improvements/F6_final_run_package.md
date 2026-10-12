@@ -97,10 +97,10 @@ is the budget.
 | 6 | gpuv | 12 | 4-6 | 19 | streaming GPU verifier x 2 models x 2 modes, V1 GPU verifier x 2, re-execution x 5 models, bandwidth |
 | 7 | gen | 2 | 2-3 | 6 | Llama-2-7B, Qwen3-4B |
 | 8 | batch | 7 | 2-3 | 6 | C4a |
-| 9 | real | 16 | 4-6 | 22 | F3a |
+| 9 | real | 25 | 8-12 | 44 | F3a; with `PVI_LLAMA_LICENCE=1` the real Llama-2-7B end to end (F3b: v0 Kpre at 64 and 2,048 tokens and C at 64 with random twins, V1 bytes at 64 and 2,048, generated responses) |
 | 10 | setup | 2 | 1-2 | 4 | Llama-2-7B (a = 100), GPT-2 |
-| | **must total** | **114** | **40-60** | **159** | at most about 113 h: met with margin |
-| 11 | quality (optional) | 1 | 2-3 | 8 | Llama-2-13B |
+| | **must total** | **123** | **44-66** | **181** | about 2-2.5 days of the 7-day window (the job limits are caps) |
+| 11 | quality (requested; `PVI_LLAMA_LICENCE=1`) | 2 | 4-7 | 14 | Llama-2-7B and Llama-2-13B at 2,048 tokens, the main algorithm's integer recipe |
 | 12 | long (optional) | 12 | 4-7 | 28 | V-LONG-b |
 
 ## 3. Where the estimates come from
@@ -138,8 +138,8 @@ and the v1 tier at 22-32 h; the audited bench tier and the per-query times above
 `PVI_DRYRUN=1 PVI_PLATFORM=l40s_sp2027 [PVI_OPTIONAL=1] bash code/experiments/4_defence_benchmark/slurm/sp2027.sh
 all` prints every `sbatch` line (strong_gpu.sh's bench jobs included, in the same chain, with placeholder job ids
 `DRY<n>`), each tier's job count, job-limit sum and estimate, and the totals; it submits nothing and creates no
-folder. The run's listing is `docs/improvements/F6_dryrun.txt` (127 `sbatch` lines with the optional tiers; 143
-lines with the comments), the rehearsal's `F6_dryrun_rehearsal.txt` (22 `sbatch` lines). H3 uses a listing as the
+folder. The run's listing is `docs/improvements/F6_dryrun.txt` (137 `sbatch` lines with the optional tiers and
+`PVI_LLAMA_LICENCE=1`; 152 lines with the comments), the rehearsal's `F6_dryrun_rehearsal.txt` (22 `sbatch` lines). H3 uses a listing as the
 expected jobs (`--expect`).
 
 ### 4.2 Rehearsal (part 13; Fri 23 Oct partial, Wed-Thu 28-29 Oct full)
@@ -221,7 +221,8 @@ laptop perf records, and the course report's optimised L40S tables read both as 
 ## 6. Validation (laptop, 11 Oct)
 
 * `bash -n` on `sp2027.sh`, `strong_gpu.sh`, `bench.sbatch`, `smoke.sbatch`, `train.sbatch`: no error.
-* The dry run: 127 `sbatch` lines for the run with the optional tiers (114 must jobs), 22 for the rehearsal; every
+* The dry run: 137 `sbatch` lines for the run with the optional tiers (123 must jobs; regenerated 12 Oct for the
+  real Llama-2-7B cells and the two-job quality tier), 22 for the rehearsal; every
   line chained, `--exclusive`, within the caps.
 * `PVI_LOCAL=1` with a stub interpreter (`PVI_PYTHON=echo`): `all` stops after a smoke without `SMOKE OK`; the
   bench tier runs bench.sbatch with the job's arguments, and the Maverick job with `PVI_THREADS=1`.

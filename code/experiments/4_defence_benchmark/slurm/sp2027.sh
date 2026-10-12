@@ -124,7 +124,7 @@ est() {   # the tier's expected hours (estimates from measured times: docs/impro
   if [ -n "$REH" ]; then echo "<0.3"; return; fi
   case "$1" in
     smoke) echo 1 ;; cpuv) echo 6-9 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
-    gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; quality) echo 2-3 ;; long) echo 4-7 ;;
+    gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; quality) echo 4-7 ;; long) echo 4-7 ;;
   esac
 }
 
