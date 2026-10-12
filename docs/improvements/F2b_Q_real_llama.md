@@ -1223,9 +1223,10 @@ The first run's smoothed cells are reproduced exactly (x1.602 / x1.568, x1.513 /
 helps only with the per-token exponent and only at 0.3 (Qwen3-1.7B x1.334 -> x1.304), and it slightly hurts TinyLlama,
 whereas at 2,048 tokens it is the lever that brings TinyLlama to x1.147 and Qwen3-1.7B to x1.206 (with 0.5). The best
 settings therefore depend on the window length, and the decisions are taken at 2,048 tokens (the protocol of every
-reported row): a 2,048-token grid of `glu_smooth` 0.3 / 0.4 / 0.6 on Qwen3-1.7B runs as job 1013482, and Qwen3-4B
-(job 1013332, resubmitted with the fp32 reference on the CPU after job 1013018 ran out of GPU memory loading it) uses
-0.5 for now.
+reported row). The 2,048-token grid on Qwen3-1.7B (job 1013482; the smooth and exp8 cells repeat job 1012677's to
+every digit): `glu_smooth` 0.3 / 0.4 / 0.6 alone x1.399 / x1.430 / x1.497 (smooth x1.455); with the exponent x1.212 /
+**x1.202 [1.197, 1.207]** / x1.220 (0.5: x1.206). The optimum is flat between 0.4 and 0.5; **best Qwen3-1.7B: x1.202**
+(top-1 0.775).
 
 ### 13.8 Limitations and open issues
 
