@@ -87,7 +87,13 @@ decision on Wed 21 Oct [team]: (i) set `PVI_C_POLICY=cnn18c` and accept the long
 (the trees and member digests, keyed by the graph's digest, the plan and the rate, on node-local disk; about 0.5 d,
 with a test that a cached commitment gives byte-identical proofs). Neither is needed for the submission's numbers.
 
-Open: regenerate TH-b's concrete-security table and D4's setup-proof parameters for the chosen plan.
+### 4.2 Decision (team, 12 Oct): option (c)
+
+A setup cache (`docs/improvements/PS2c_setup_cache.md`) and cnn18c for every timed mode-C cell: the package's default
+`PVI_C_POLICY` is now cnn18c, and each model's setup is paid once per machine. R64c stays a byte row (2-block
+measurements and the byte model).
+
+Open: regenerate TH-b's concrete-security table and D4's setup-proof parameters for the chosen plan (cnn18c).
 
 ## 5. How to run
 
