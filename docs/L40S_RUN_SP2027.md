@@ -43,7 +43,7 @@ python3.12 -m venv .venv && .venv/bin/pip install torch==2.5.1 torchvision==0.20
     && .venv/bin/pip install -r code/requirements.txt -r code/requirements-llm.txt
 export PVI_PLATFORM=l40s_sp2027                     # the run's name: logs/l40s_sp2027/, raw_l40s_sp2027/
 export SBATCH_PARTITION=<L40S partition> SBATCH_GRES=gpu:<type>:1        # or: export PVI_LOCAL=1
-export HF_HOME=<node-local folder with 40 GB free>
+export HF_HOME=<node-local folder with 60 GB free>
 export CXX=<path to g++>
 export PVI_PY_INCLUDE=<headers folder>              # only if the check of Sec. 2 printed False
 export PVI_C_POLICY=<plan>                          # only if the team says so (default cnn18c, with the setup cache)

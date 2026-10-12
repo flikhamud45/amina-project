@@ -28,6 +28,9 @@
 \providecommand{\bottomrule}{\hline}
 
 % -------------------------------------------------------------------------------------
+\section{Proofs of the Optimisations}
+\label{app:opt}
+
 \subsection{Conventions for the Proofs of the Optimisations}
 \label{app:the-conv}
 
@@ -217,9 +220,13 @@ graph's plan.
 Section~\ref{sec:v1} and are clear; Theorem~\ref{thm:v1} applies with this cut set.
 % CHECK: was "the single-position operations ... violate (P2)". cut.py tests cols == T, so with
 % n = T (a one-token prompt, T = P + G - 1 = G) the pruned ops span all T positions and may be cut;
-% thm:v1 applies with whatever cut set results either way. The real-weight
-builders (\texttt{real\_weights.py}) do not yet build a pruned block; the theorem applies to them
-once they insert the same slices.
+% thm:v1 applies with whatever cut set results either way.
+The real-weight builders (\texttt{real\_weights.build\_opt\_from\_hf} and
+\texttt{real\_llama.build\_llama\_from\_hf}) insert the same slices with \texttt{prune\_last}; their
+graphs have the operations and order of \texttt{build\_decoder}'s (\texttt{matches\_benchmark\_graph}),
+and their next-token logits with and without pruning are tested to be equal, so the theorem applies to
+them. A fixed public prefix (\texttt{prefix\_tokens}) enters only as constants of the attention
+operation.
 
 % -------------------------------------------------------------------------------------
 \subsection{Generated Responses: the Token Rule and the Integer Sampler}
@@ -503,7 +510,7 @@ vectors $\chi$ of the clear operations.
 % (the alpha term, <= 2^-215.3) is unchanged.
 \end{corollary}
 
-\noindent The bound of Section~\ref{sec:fs}, $Q\varepsilon_{\sC}+O(Q^22^{-256})$, should be read with
+\noindent The bound of Section~\ref{sec:fs}, $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$, should be read with
 $Q+k$ in place of $Q$, or with $Q$ counting the verifier's $k$ key queries. At $Q=2^{64}$ the term
 $N^2\,2^{-256}$ is about $2^{-128}$, as large as the target, because keys and leaves have 32 bytes;
 a collision in the SHA-256 Merkle trees, which Theorems~\ref{thm:sound} and~\ref{thm:untrusted}
@@ -655,7 +662,7 @@ part of them, would let the decoded message change after the challenge.
 \subsection{Two Remarks on the Round-by-Round Argument}
 \label{app:rbr}
 
-This subsection answers two questions of a mock review about the round-by-round argument of
+This subsection makes two points about the round-by-round argument of
 Appendices~\ref{app:sound} and~\ref{app:v1}.
 
 \begin{lemma}[the column check needs only the order of messages]
@@ -679,7 +686,7 @@ entries in $\F$, $w^\T B=\sum_q\xi^qw^{(q)\T}B$, so $u^{(q)}\neq w^{(q)\T}B$ for
 base-field case applies to plane $q$.
 \end{proof}
 
-\para{Question 5: V1's column check under Fiat--Shamir.} The lemma uses no property of $w$ other than
+\para{V1's column check under Fiat--Shamir.} The lemma uses no property of $w$ other than
 being fixed before the columns; in particular $w$ need not be uniform. In V1 (mode $\sC$, row
 layout), $w$ is the eq-vector of the GKR's final row point, fixed when the GKR ends, $u_\ell$ is sent
 in the fold message, and the columns are drawn after it: interactively by the verifier, and under
@@ -699,7 +706,7 @@ Lemma~\ref{lem:col-any} the column challenge leaves this state with probability 
 $\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i)$. Step~6 of the proof of Theorem~\ref{thm:v1} is this round's
 analysis.
 
-\begin{remark}[Question 6: the sum and the maximum]
+\begin{remark}[the sum and the maximum]
 \label{rem:rbr-max}
 In v0 the challenge of the vectors leaves a doomed state with probability at most $p^{-r}$, since
 only the matrix of the first wrong operation matters, and the column challenge with probability at
@@ -915,9 +922,14 @@ share the key.
 (c)~\emph{What the prover may observe.} The hybrid of Theorem~\ref{thm:v1kpre} covers the verdict and
 the label of the failed check, because both are functions of the prover's messages until the first
 bad check. It does not cover anything else that depends on $\chi$, such as a running time that
-depends on the compared values. We have not checked whether the implementation's comparisons run in
-time independent of those values; a verifier whose timing the provider can observe should complete
-every comparison before it answers, or answer only accept or reject after a fixed-time check.
+depends on the compared values. The CPU verifier does not run in constant time: it compares the two
+sides of Freivalds' check operation by operation with \texttt{torch.equal} and stops at the first
+failing operation (\texttt{protocol.\_disagrees}), and check~(F2) returns at the first mismatch
+(\texttt{cut\_protocol.\_kpre\_y\_ok}). Which operation fails first is a function of the prover's
+messages until the first bad check, so the hybrid covers it; the time of one comparison can depend on
+where its two sides first differ, and so on $\chi$, which the proof does not cover. A verifier whose
+timing the provider can observe should complete every comparison before it answers, or answer only
+accept or reject after a fixed-time check.
 (d)~\emph{The key must stay secret.} The bound gives nothing once $\chi_\ell$ leaks. For instance,
 when $N_\ell>r\log_2p$, two different subsets of rows have the same sum of rows of $\chi_\ell$
 (pigeonhole over the $2^{N_\ell}$ subsets and $p^r$ values), so there is a nonzero
@@ -989,10 +1001,9 @@ Theorem~\ref{thm:dich}(a) treat samplers in general.
   $k=1$ is the edit measured on OPT-6.7B, and $k=2$, $6$ and $60$ are the median in-range edit, the
   median lowering-only edit and the largest in-range edit (moves in either direction) measured on
   OPT-1.3B (Section~\ref{sec:break}); $k=16$, and every $k$ for the other models, is illustrative.}
-  % CHECK: caption made precise. k = 16 was unattributed. "Largest in-range edit" = 60 is the max of
-  % the "any" rows of G3_inrange_attack.md Sec. 3; the lowering-only edits, also in range, reach
-  % 104 (layer 12) and 164 (layer 18). The pooled lowering-only median 6 is not in the doc's table
-  % (per-layer medians 3, 12, 8, 2): authors confirm it from the raw results.
+  % "Largest in-range edit" = 60 is the max of the "any" rows of G3_inrange_attack.md Sec. 3; the
+  % lowering-only edits, also in range, reach 164. The pooled lowering-only median 6 is confirmed from
+  % artifacts/results/inrange_llm_opt-1.3b_down.json (117 successful records per range; 12 Oct).
   \label{tab:paths}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}

@@ -5,7 +5,7 @@
 # repository root of a checkout of the freeze tag:
 #     export PVI_PLATFORM=l40s_sp2027                                   # logs/$PVI_PLATFORM/, raw_$PVI_PLATFORM/
 #     export SBATCH_PARTITION=<gpu partition> SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]
-#     export HF_HOME=<node-local folder with ~40 GB free>                 # real and quality tiers only
+#     export HF_HOME=<node-local folder with ~60 GB free>                 # real and quality tiers only
 #     export PVI_EXTRA_PYTHONPATH=<folder>   # optional: packages outside the venv (the TAU nodes: transformers, pyarrow)
 #     export CXX=<g++>                                                  # the native CPU kernels (B5, RX)
 #     bash code/experiments/4_defence_benchmark/slurm/sp2027.sh all     # every must tier, one job after another
@@ -18,7 +18,8 @@
 #     gpuv   the GPU verifier, fp16/bf16/int8 re-execution on the same GPU, the host-to-device bandwidth
 #     gen    a generated response as one prefill, greedy and sampled, P = 512, G in {64, 256} (chg 12)
 #     batch  strong_gpu.sh batch: B prompts against one opening (C4a)
-#     real   real-weight OPT end to end next to random-weight twins (F3a; needs HF_HOME)
+#     real   real-weight OPT end to end next to random-weight twins (F3a; needs HF_HOME); with PVI_LLAMA_LICENCE=1
+#            also the real Llama-2-7B end to end (F3b)
 #     setup  the setup proof of an untrusted commitment, prover and verifier time (D4)
 #     quality  [optional] Llama-2-7B and Llama-2-13B quality with the main-algorithm recipe (needs the runner's own
 #              Llama-2 licence, PVI_LLAMA_LICENCE=1, and the runner's own Hugging Face login; never another person's token)
@@ -306,7 +307,7 @@ tier_real() {
   # and 2,048 tokens and in mode C at 64, V1 bytes in Kpre, and generated responses (P = 512, G = 64, greedy and
   # sampled at temperature 1 from the LM head's real logit scale, both tamper cells), each v0 cell next to its
   # random-weight twin.
-  : "${HF_HOME:?export HF_HOME=<node-local folder with ~40 GB free> (the real tier downloads OPT checkpoints)}"
+  : "${HF_HOME:?export HF_HOME=<node-local folder with ~60 GB free> (the real tier downloads OPT and, with PVI_LLAMA_LICENCE, Llama-2-7B checkpoints)}"
   local r13="--model opt-1.3b --real facebook/opt-1.3b --recipe certified"
   local r67="--model opt-6.7b --real facebook/opt-6.7b --recipe certified"
   if [ -n "$REH" ]; then
@@ -371,12 +372,13 @@ tier_quality() {
   # algorithm's integer recipe (F2b-Q doc Sec. 13.9: the fixed public prefix, smoothing through the norms' gains and the
   # SwiGLU product balance, all constants; no per-token exponent), the setting that gave OpenLLaMA-7B (Llama-2-7B's
   # exact shapes) x1.073 on the 2080 Ti: smoothing 0.55 / 0.65 (7B) and 0.6 (13B), each with and without glu_smooth 0.2.
-  # --structure checks the graph against the benchmark's (the cost tables' graph).  Llama-2-7B's reference is fp32 on
+  # The paper's Llama-2-7B row is alpha 0.55 with glu_smooth 0.2 (real_llama.MAIN_RECIPE, the recipe of the real tier's
+  # timed graph); 0.65 is a sensitivity row.  --structure checks the graph against the benchmark's (the cost tables' graph).  Llama-2-7B's reference is fp32 on
   # the GPU (27 GB); Llama-2-13B's is fp16 (an fp32 copy does not fit 48 GB with the integer graph), recorded as such.
   # Calibration on the CPU from four train-split windows.  Only with the runner's own Llama-2 licence and Hugging Face
   # login (meta-llama/Llama-2-7b-hf, -13b-hf), never another person's token.  The rehearsal runs ppl_llama.py's tiny
   # random model with Qwen3's (ungated) vocabulary instead.
-  : "${HF_HOME:?export HF_HOME=<node-local folder with ~40 GB free> (the quality tier downloads a checkpoint)}"
+  : "${HF_HOME:?export HF_HOME=<node-local folder with ~60 GB free> (the quality tier downloads a checkpoint)}"
   if [ -n "$REH" ]; then
     sub q-smoke 1 64 "HF_HOME=$HF_HOME $PY experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-0.6B-Base --smoke \
 --seq 128 --windows 2 --calib-windows 1 --device cuda --threads 8 --chunk 64"

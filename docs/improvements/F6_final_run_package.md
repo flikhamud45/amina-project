@@ -52,7 +52,9 @@ Files:
 6. **gpuv**: the streaming GPU verifier (one process per mode), V1 with the GPU verifier, the integer forward pass
    with int8 GEMMs (`torch._int_mm`), fp16 and bf16 re-execution of five models at 64, 512 and 2,048 tokens on the
    same GPU (full models measured), and `h2d_bandwidth.py`; peak memory in every line.
-7. **quality** shrinks to Llama-2-13B (optional; runs only with `PVI_LLAMA_LICENCE=1`, the runner's own licence).
+7. **quality**: Llama-2-7B and Llama-2-13B at 2,048 tokens with the main algorithm's integer recipe (requested
+   by the team, 12 Oct; runs only with `PVI_LLAMA_LICENCE=1`, the runner's own licence). The paper's row is the
+   recipe of the timed graph (alpha 0.55, `real_llama.MAIN_RECIPE`); Llama-2-7B's alpha 0.65 is a sensitivity row.
    The `attack` tier is removed (G3.5-L ran on a Xeon node).
 8. **One policy variable.** Every mode-C cell (cpuv, v1, serve, bench, gpuv, gen, batch, real, setup, smoke) takes
    `PVI_C_POLICY` (default `auto`). PS2's decision of Wed 21 Oct is one `export`. H3 reads it as `--policy`.
@@ -245,8 +247,10 @@ laptop perf records, and the course report's optimised L40S tables read both as 
   GPU, setup_timing.py's GPU combinations, h2d_bandwidth.py), the native kernels with `CXX`, the actual `sbatch`
   submission and the `afterok`/`afterany` + `singleton` dependency strings, the memory requests against real
   peaks, the downloads, and the job times. The 2080 Ti rehearsal (Sec. 4.2) and the friend's smoke cover these.
-* **F3b** (real Qwen3-4B, real generation) and a real Llama-2-7B in mode C: perf.py and v1_bytes.py `--real` read
-  OPT checkpoints only; the real tier prints a note and has no such cells until they do.
+* **F3b** (12 Oct, d637f3e): perf.py, v1_bytes.py and gen_bench.py `--real` read Llama-family checkpoints with
+  `real_llama.MAIN_RECIPE` and its fixed public prefix; with `PVI_LLAMA_LICENCE=1` the real tier adds the real
+  Llama-2-7B end to end (nine cells). The same paths run on OpenLLaMA-7B (Llama-2-7B's shapes, not gated) on the
+  2080 Ti before the freeze (F3b jobs 1015750-1015754, 1015853), so the L40S is not their first run.
 * **A7-vLLM**: no harness yet; the run document describes the optional venv.
 * **PS2**: if the plan becomes cnn18c, `export PVI_C_POLICY=cnn18c` for the run and `--policy cnn18c` for H3.
   `count_outcomes.py --definition` (the course report's definition) would then not match the cells' `polcnn18c`

@@ -29,7 +29,7 @@ and~\ref{thm:v1}.
     Random-oracle queries $Q$ (64 bits added to $\beta$ and $\beta_0$) & -- / $\le2^{64}$ \\
     SHA-256 Merkle trees, 32-byte roots; SHAKE-256 transcript, 256-bit keys &
       $O(Q^22^{-256})$ \\
-    Total: $\varepsilon_{\sC}$ / $Q\varepsilon_{\sC}$, plus collisions & $\le2^{-128}$ \\
+    Total: $\varepsilon_{\sC}$ / $Q\varepsilon_{\sC}$, plus collisions for $Q\le2^{63}$ & $\le2^{-128}$ \\
     \midrule
     \multicolumn{2}{@{}l}{\emph{V1 (Theorem~\ref{thm:v1})}} \\
     Extension $\Fext=\F[\xi]/(\xi^8-11)$; Fiat--Shamir needs degree $\ge7$ &

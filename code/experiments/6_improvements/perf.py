@@ -30,8 +30,9 @@ both graphs, each variant on each); ``--lookups`` (``off on``: both) gives the K
 the embedding rows to read themselves (``Verifier(lookups=True)``; in mode C a ``c`` policy's lookup
 tables do that).
 
-``--real`` (OPT checkpoints): the checkpoint's integer graph instead of the random-weight one
-(``real_weights.build_opt_from_hf``; ``--smooth``: the paper's SmoothQuant through the norm gains), calibrated
+``--real`` (a Hugging Face checkpoint): the checkpoint's integer graph instead of the random-weight one; for
+Llama-family checkpoints ``real_llama.build_llama_from_hf`` with ``MAIN_RECIPE`` and its fixed public prefix
+(``v1_bytes.load_real_llama``), for OPT (``real_weights.build_opt_from_hf``; ``--smooth``: the paper's SmoothQuant through the norm gains), calibrated
 on the CPU on one WikiText-2 window of ``--calib-seq`` tokens from the end of the test split and queried on
 ``--queries`` + 1 windows of ``--seq`` tokens from its start (``experiments/8_v1/v1_bytes.py``'s ``load_real``
 and ``real_graph``; ``--model`` names its shapes).  Every block is built, and mode C's commitment plans are made

@@ -309,7 +309,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
        - `serve` (A7);
        - `gen`: Llama-2-7B and Qwen3-4B, P = 512, G ∈ {64, 256}, greedy and sampled, plus the two tamper cells (chg 12);
        - `batch` (C4a): Llama-2-7B at 64 tokens with B ∈ {1, 4, 16, 64}; OPT-1.3B at 512 with B ∈ {1, 4, 16}; Llama-2-7B at 2,048 with B ∈ {1, 2, 4}. It uses the existing `bench.py --batches` code, moved from `strong_gpu.sh nice`.
-       - `real`: the F3a/F3b cells that do not fit the 2080 Ti (OPT-6.7B timing if needed). Llama-2-7B in mode C runs only if F2b-L succeeds and the friend holds the Llama-2 licence on their own account; otherwise that cell is dropped or uses random weights.
+       - `real`: the F3a/F3b cells that do not fit the 2080 Ti (OPT-6.7B timing if needed). Llama-2-7B in mode C runs only if F2b-L succeeds and the friend holds the Llama-2 licence on their own account; otherwise that cell is dropped or uses random weights. (12 Oct: the friend holds it [USER]; F2b-L passed on OpenLLaMA-7B, x1.073; the real tier gates the real Llama-2-7B cells on `PVI_LLAMA_LICENCE=1` only.)
        - one setup-proof timing cell (Llama-2-7B, a = 100);
        - `long`: V-LONG-b's cells, only if V-LONG-b is done.
     5. **`cpuv`:**
@@ -322,7 +322,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
        - peak memory of the verifier against re-execution.
     7. **`quality` shrinks.**
        - OPT, Qwen3 and Llama-2-7B quality move to the 2080 Ti (F2a/F2b).
-       - The L40S keeps only Llama-2-13B quality, and only if F2b-L succeeds and the friend holds the licence.
+       - The L40S keeps only Llama-2-13B quality, and only if F2b-L succeeds and the friend holds the licence. (12 Oct: the team asks for Llama-2-7B too; the quality tier is two jobs under the friend's own licence.)
        - OPT-6.7B's real V1 bytes move to a Xeon node (F3a). The OPT-6.7B in-range attack moves to G3.5-L. The `attack` tier leaves the package.
     8. Mode-C cells use the plan policy that PS2 chooses on 21 Oct.
     9. **Audit `strong_gpu.sh must` against the S&P tables.** The course-report controls (`nofix-*`, `ab-*`) are removed unless a table cites them. Target: ≤ 30 h.
@@ -885,6 +885,7 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
 
 - **TH [WIP] must: close the theory gaps and finish the proofs the submission cites** (absorbs Plan 1 D7).
   - **Status (11 Oct).** TH-a, TH-c, TH-d integrated (0f843c8); TH-b filled by `params_table.py` (761b8a7); TH(g) sentence added; TH-e in the extended version as sections/ext_proofs.tex (45d592f). Open: the team's hand check (TH-f, [USER]) and the decisions listed in drafts/th_e_check.md.
+  - **Status (12 Oct).** drafts/th_e_check.md resolved against the code (`drafts/th_f_checklist.md`): applied the safe items (appendix heading `app:opt`, the stale real-builder sentence that a comment line had cut, the body bound quoted as Q eps_rbr, no review wording, the timing remark from `protocol._disagrees` / `cut_protocol._kpre_y_ok`, the pooled median 6 confirmed from the raw results, the collision total for Q <= 2^63); main 18 pages, extended 52, no undefined references. Left for TH-f: the tighter Kpre bound Q p^-r (a remark, not in the body), the Chiesa-Yogev numbers (fallback text ready), adaptive statements, beta + 1.
   - **What.**
     - **(a) A block-mixing proposition.** Rows are grouped in blocks of d, and each block is RS-encoded and Merkle-committed on its own.
       - Then q = (N/d)(1 + t) queries per layer reach 2^-λ, with qd = (1 + t)N.
@@ -1211,7 +1212,7 @@ The `attack` tier (4-8 h) and OPT-6.7B's real V1 bytes moved to a Xeon node befo
 | Mon 19 Oct | Send notices, batch 2: CommitLLM, NanoZK, SLP, SPEX | team | G5; CFP (by Tue 16 Feb 2027) |
 | Mon 19 Oct | Ask the friend for a smoke of at most 2 h on the L40S/EPYC between 19 and 27 Oct (`smoke` plus `PVI_REHEARSAL=1` per tier; not the run itself) | team with the friend | F6 part 14, R15 |
 | **Fri 23 Oct** | Book the friend's L40S + EPYC for **Mon 2 - Sun 8 Nov** (re-runs until Tue 10), plus a backup window. Ask for: exclusive use during the timing tiers (no co-tenant jobs on the GPU or the EPYC); 24/7 operation; the EPYC's core count and RAM (8k cells); about 40 GB for HF_HOME, readable by the compute nodes; and approval for a separate vLLM venv (about 5 GB, dummy weights). | team with the friend | F6, A7-vLLM, gate G1 criterion 4 |
-| Fri 23 Oct | Ask whether the friend accepts the Llama-2 licence on their own Hugging Face account for the L40S Llama-2 cells (`quality` Llama-2-13B, `real` Llama-2-7B mode C). Otherwise those cells are dropped or run with random weights. | team with the friend | F6, F2b-L |
+| Fri 23 Oct | ~~Ask whether the friend accepts the Llama-2 licence~~ Done 12 Oct: the friend holds it on their own account [USER]; they export `PVI_LLAMA_LICENCE=1` before `all`. | team with the friend | F6, F2b-L |
 | Fri 23 Oct | Anonymisation decisions (author block, the "Final Report" subtitle, the Contributions section) and the artifact host (Anonymous GitHub or GitFront) | team | H4 |
 | Mon 26 Oct | Send the disclosure reminders | team | G5 |
 | **Fri 30 Oct** | **Gate G1** go/no-go meeting (Sec. 5.1). If the L40S window has slipped, choose (i) the 2080 Ti/Xeon single platform or (ii) EuroS&P with a shift of at most about 1.5 weeks. | team and engineer | everything after it |
