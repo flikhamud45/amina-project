@@ -1207,9 +1207,18 @@ query projection wider than the residual stream (32 heads of 128 = 4,096 against
   | `<|endoftext|>` + newline | x5.99 [5.00, 7.28] | x3.54 [3.02, 4.22] |
 
   So the second outlier is not a second sink position that a longer prefix absorbs: it forms on the first content
-  token (or on that window's first token itself). Prefixes with PrefixQuant's candidate outlier tokens (newline, `.`,
-  ` =`, and four `<|endoftext|>`) run as job 1014112; if none helps, Qwen3-4B is reported as measured with this
-  diagnosis, and the Qwen rows of the cost tables are labelled "shape only" (the plan's kill rule, Fri 23 Oct).
+  token (or on that window's first token itself).
+* *Prefixes with PrefixQuant's candidate outlier tokens do not help either (job 1014112;* newline = 198, `.` = 13,
+  ` =` = 284): with the per-token exponent `<|endoftext|>` + newline + `.` x4.14, `<|endoftext|>` + ` =` x4.12, all four
+  x4.29, four `<|endoftext|>` x3.57 (smooth alone x5.7-7.3), against x3.81 with the one-token prefix.
+
+**Conclusion for Qwen3-4B.** The second massive activation cannot be moved into a public prefix, and the residual
+stream's one static int8 scale cannot hold it next to the ordinary values; the per-token exponent at the SwiGLU product
+removes part of the early-block error (x5.5 -> x3.0 at 2,048 tokens) but not this. A per-token scale on the residual
+stream would be the next lever, and it changes the integer graph's structure and V1's single-multiplier windows, so it
+is out of scope before the freeze. Qwen3-4B is reported as measured (x2.97 at 2,048 tokens) with this diagnosis; the
+plan's rule for Fri 23 Oct (Qwen3-4B not within x1.10) applies: OPT and the Llama-shaped OpenLLaMA-7B carry the
+quality claim, and the Qwen rows of the cost tables are labelled "shape only" [team decision on the date].
 
 **The 128-token ladder with the box (job 1012675, `glus2`; 16 x 128, prefix, `qk_balance`):** ratio to fp32 (95% CI)
 
