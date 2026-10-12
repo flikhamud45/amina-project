@@ -1147,6 +1147,30 @@ with its 95% bootstrap interval / top-1):
   interval. Smoothing 0.75 is the optimum in both directions; `glu_smooth` improves monotonically from 0.4 to 0.2, so
   0.05 / 0.1 / 0.15 run as job 1013574.
 
+**OpenLLaMA-7B v2, a stand-in for Llama-2-7B (job 1013162, s-004, git 207b798).** `openlm-research/open_llama_7b_v2`
+(Apache 2.0, not gated) has exactly Llama-2-7B's shapes; with `--config llama2-7b --structure` the integer graph's
+structure diff against the benchmark Llama-2-7B graph is **empty**, so it is the graph whose costs the paper reports,
+with real weights. Full WikiText-2 test set at 2,048 tokens (160 windows, 327,520 scored tokens); the prefix `auto`
+chose six tokens; the fp32 reference ran on the CPU (14,612 s; perplexity 6.478) and is cached on the shared disk
+(`f2bq_glus/ref_open_llama_7b_v2_2048_auto.pt`).
+
+| Cell | ratio to fp32 (95% CI) | top-1 |
+|---|---|---:|
+| smooth, alpha 0.65 | x1.107 [1.104, 1.110] | 0.848 |
+| smooth, alpha 0.75 | x1.133 [1.129, 1.136] | 0.830 |
+| **smooth 0.65 + `glu_smooth` 0.3** | **x1.077 [1.074, 1.080]** | **0.869** |
+| smooth 0.75 + `glu_smooth` 0.3 | x1.092 [1.089, 1.095] | 0.852 |
+
+* **A Llama model of the benchmark's exact shape is within x1.08 of fp32** with static per-tensor int8 activations,
+  the plan's expectation for Llama-2-7B (x1.04-1.10) and below the x1.10 bar of F2b-Q. Plain static per-tensor W8A8
+  is reported to collapse on Llama-2-7B (perplexity 9,250 in the literature); with the prefix, the smoothing and the
+  product balance the same kind of graph stays within x1.08 on a model of the same shape (OpenLLaMA's weights, not
+  Llama-2's).
+* Unlike TinyLlama (best at 0.75), this model prefers less smoothing (0.65 < 0.75); 0.55 / 0.6 with `glu_smooth` 0.2 /
+  0.3 run as job 1013787 on the cached reference.
+* The six prefix tokens push each scored window to positions 6-2,053, just past OpenLLaMA's 2,048-token training
+  length, for the reference and the integer model alike.
+
 **The 128-token ladder with the box (job 1012675, `glus2`; 16 x 128, prefix, `qk_balance`):** ratio to fp32 (95% CI)
 
 | Model (smoothing alpha) | smooth | + exp8 | glus 0.3 | glus 0.3 + exp8 | glus 0.5 | glus 0.5 + exp8 | glus 0.7 | glus 0.7 + exp8 |
