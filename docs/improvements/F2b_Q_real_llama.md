@@ -1196,9 +1196,20 @@ query projection wider than the residual stream (32 heads of 128 = 4,096 against
   0.926 / 0.609 / 0.699 / 0.384 (Qwen3-0.6B: 0.1-0.3). In those blocks the residual's largest value (58-78, channel
   0) sits at window position 32, a token-specific outlier forming in the MLPs before the sink outlier of block 7.
   The per-token exponent acts on these products, consistent with its x5.5 -> x3.0 at 2,048 tokens.
-* Next (job 1013947): two-token prefixes (`<|endoftext|>` twice, and `<|endoftext|>` + newline) against the one-token
-  prefix at 16 x 128, and the diagnosis with the two-token prefix, to see whether the window's sink outlier moves into
-  the prefix.
+* *Two-token prefixes do not move it (job 1013947).* With `<|endoftext|>` twice the diagnosis still shows the massive
+  activation at the first window position (about 3,030 in channel 4 from block 7, against 3,540 with one token), and the
+  16 x 128 perplexity is unchanged (reference about 17.4 with every prefix):
+
+  | prefix | smooth | smooth-exp8 |
+  |---|---|---|
+  | `<|endoftext|>` (auto) | x5.67 [4.67, 6.98] | x3.81 [3.17, 4.65] |
+  | `<|endoftext|>` x2 | x5.91 [4.93, 7.13] | x3.87 [3.26, 4.66] |
+  | `<|endoftext|>` + newline | x5.99 [5.00, 7.28] | x3.54 [3.02, 4.22] |
+
+  So the second outlier is not a second sink position that a longer prefix absorbs: it forms on the first content
+  token (or on that window's first token itself). Prefixes with PrefixQuant's candidate outlier tokens (newline, `.`,
+  ` =`, and four `<|endoftext|>`) run as job 1014112; if none helps, Qwen3-4B is reported as measured with this
+  diagnosis, and the Qwen rows of the cost tables are labelled "shape only" (the plan's kill rule, Fri 23 Oct).
 
 **The 128-token ladder with the box (job 1012675, `glus2`; 16 x 128, prefix, `qk_balance`):** ratio to fp32 (95% CI)
 
