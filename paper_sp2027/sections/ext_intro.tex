@@ -68,7 +68,8 @@ rows of length $k$. Finally, the provider must serve the integer model. Moving S
 per-channel scales~\cite{xiao2023smoothquant} into the gains of the integer LayerNorm brings its
 WikiText-2 perplexity at 2{,}048 tokens within factors of 1.076, 1.026 and 1.008 of fp32 on OPT-125M,
 OPT-1.3B and OPT-6.7B, from 1.17, 1.10 and 1.70 with one scalar gain, without changing any operation
-that the protocol checks (Section~\ref{sec:quality}) \todo{F2b: Qwen3-4B}.
+that the protocol checks (Section~\ref{sec:quality}); with a fixed public prefix the same holds for a
+Llama of Llama-2-7B's shape ($\times$1.073), but not yet for Qwen3-4B.
 
 \subsection{Related Work in Detail}
 \label{ext:related}

@@ -1166,8 +1166,12 @@ chose six tokens; the fp32 reference ran on the CPU (14,612 s; perplexity 6.478)
   is reported to collapse on Llama-2-7B (perplexity 9,250 in the literature); with the prefix, the smoothing and the
   product balance the same kind of graph stays within x1.08 on a model of the same shape (OpenLLaMA's weights, not
   Llama-2's).
-* Unlike TinyLlama (best at 0.75), this model prefers less smoothing (0.65 < 0.75); 0.55 / 0.6 with `glu_smooth` 0.2 /
-  0.3 run as job 1013787 on the cached reference.
+* Unlike TinyLlama (best at 0.75), this model prefers less smoothing (0.65 < 0.75). Job 1013787 (the cached
+  reference; five of its six cells finished before its 5 h limit, each 7B cell taking about 47 min, mostly the
+  calibration build on the CPU): smooth 0.55 / 0.6 x1.104 / x1.104; **smooth 0.55 + `glu_smooth` 0.2 x1.073
+  [1.070, 1.075]** (top-1 0.876), 0.6 + 0.2 x1.074, 0.55 + 0.3 x1.074 (0.6 + 0.3 not reached). The optimum is flat over
+  smoothing 0.55-0.65 and `glu_smooth` 0.2-0.3: **best OpenLLaMA-7B x1.073**, without the per-token exponent, i.e. on
+  exactly the benchmark graph's structure.
 * The six prefix tokens push each scored window to positions 6-2,053, just past OpenLLaMA's 2,048-token training
   length, for the reference and the integer model alike.
 

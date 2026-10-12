@@ -49,7 +49,8 @@ up to 16{,}384, where the CPU verifier is still about 2$\times$ faster than exac
 at 2{,}048) and the proof reaches about 51\,GB~\cite{fullversion}; mixture-of-experts models are
 untested. Costs use random weights, which real OPT weights match
 (Section~\ref{sec:eval-setup}). The certified OPT models stay close to the floating-point model at 2{,}048 tokens
-(Section~\ref{sec:quality}), but our integer Qwen3 and Llama models do not yet \todo{F2b}.
+(Section~\ref{sec:quality}), and so does a Llama of Llama-2-7B's shape ($\times$1.073), but our
+integer Qwen3-4B does not ($\times$3.0).
 
 \para{The attack and the bound.} Condition (H) holds for random ensembles with independent rows
 and on the constructed worst case, not on trained networks, where we report the best attacks found.
