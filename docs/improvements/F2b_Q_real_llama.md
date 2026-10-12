@@ -1190,7 +1190,7 @@ query projection wider than the residual stream (32 heads of 128 = 4,096 against
   (`o = 1`), so the second outlier stays in the window and sets the residual's one int8 scale (`s_res` 1.13e-3 for
   values up to 3,805). The smoothed stream's mean cosine falls exactly there: 0.914 -> 0.912 -> 0.857 -> 0.816 (blocks
   6-9), 0.74-0.86 to the last block; the first window position itself drops to 0.35-0.59 (the scalar recipe keeps it
-  at 1.000 because there the outlier dominates its own scale).
+  at 1.000, presumably because there the outlier dominates its own scale).
 * *The SwiGLU products of the early blocks.* `llama_attrib.py --blocks all` names the SwiGLU product (`glu`) as the
   largest own error in 34 of 36 blocks (block 16: `up`, block 19: `down_proj`), as on the smaller models, but far larger in blocks 1-4: relative error
   0.926 / 0.609 / 0.699 / 0.384 (Qwen3-0.6B: 0.1-0.3). In those blocks the residual's largest value (58-78, channel
