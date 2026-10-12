@@ -77,8 +77,10 @@ Full values: OPT-125M digest `16de86ead0bc063b575d68fc16c6273c6934123e4d09ead1aa
 * Time on one thread of the Xeon: about 2-3 h for OPT-125M's build alone (four 2,048-token calibration windows); OPT-1.3B
   at 1 thread finished within the 6 h limit on both GPU nodes. With 8 threads OPT-1.3B builds and commits in about 55
   min on a CPU node.
-* Windows / torch 2.2 (the laptop) is checked with the certified recipe for OPT-125M's digest and weights (no
-  commitment: memory): [running].
+* Windows / torch 2.2 (the laptop) was not checked with the certified recipe: the run (OPT-125M, digest only, 2
+  threads) was stopped when the laptop ran low on memory (the four 2,048-token calibration windows need far more
+  than the earlier recipe's one 128-token window). The cross-OS and cross-torch agreement above (Sec. 3) is the
+  earlier recipe's; the builder's code is the same, only its parameters and calibration tokens changed.
 
 ## 4. The recipe, as published in the artifact
 
