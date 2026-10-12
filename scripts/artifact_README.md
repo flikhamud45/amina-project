@@ -65,13 +65,13 @@ roots.
 
 Calibration tokens (`common.certified_calib`): the first four 2,048-token windows of the first 4,000,000 characters of
 the WikiText-2 (raw) train split (lines joined with blank lines), with the checkpoint's tokenizer.
-Graph digests (SHA-256) and the hash over every Merkle root, reproduced on two Linux nodes (1 and 8 threads, CPU or GPU
-encoding):
+Graph digests (SHA-256), the hash over every weight matrix and the hash over every Merkle root of `C_M` (6 trees,
+plan `auto`), reproduced on four Linux nodes with 1, 4 and 8 threads, the commitment encoded on the CPU or on a GPU:
 
-| Model | graph digest | roots |
-|---|---|---|
-| OPT-125M | [pending: jobs 1012438-9] | |
-| OPT-1.3B | [pending: jobs 1012438-9] | |
+| Model | graph digest | weights | roots |
+|---|---|---|---|
+| OPT-125M | `16de86ead0bc063b575d68fc16c6273c6934123e4d09ead1aaa3317f07893e2e` | `811aeae0113f305d5ba07783243201f7f4e23d9a77e541909e95cce38675a60b` | `f880c6853322f58ead3f8a50d044c338e683e4e1bb2a5541b2e0481f1f6b4815` |
+| OPT-1.3B | `d9daa01778a8ec3cfdb6f92816fea04c20a17c5d02454056788c9efa17cc24e8` | `be812feeaf1894eb18f529c1d12748b9f1f75c1c0f32296c152d54b872f52fd4` | `a5f5433f315efa041ef75ec35b58d73dd79a43207c587c43cb8fd7c7909eba8c` |
 
 (The earlier recipe, alpha 0.55 with percentile statistics calibrated on the last 128-token test window, is
 `digest_check.py --recipe legacy`; its digests were `46d23c80...` and `01354c3d...`.)
