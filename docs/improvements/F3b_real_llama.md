@@ -67,7 +67,23 @@ x5.3 (F2b-Q), so the plan's default moved to OpenLLaMA-7B (12 Oct).
 
 ### 4.2 v0 in Kpre and C at 64 tokens, Kpre at 2,048 tokens, random twins (jobs 1015750, 1015751, 1015752)
 
-[pending]
+**Full OpenLLaMA-7B, 2,048 tokens, Kpre, Fiat-Shamir (job 1015751, s-004).** The GPU prover runs out of memory on the
+11 GB card at 2,048 tokens (as for random Llama-2-7B weights), so the job's fallback proved on the CPU; the verifier is
+the native CPU verifier on 8 Xeon threads. Three WikiText-2 test windows:
+
+| | accepted | tampers rejected | proof | prover (CPU) | verifier (CPU, 8 threads) |
+|---|---|---|---:|---:|---:|
+| OpenLLaMA-7B, main recipe | 3 / 3 | 9 / 9 (single value, output logit, last hidden; all at Freivalds) | 5,350.8 MB | 242.6 s [229.2, 251.2] | 21.0 s [20.4, 21.1] |
+| random weights (EV inputs, job 1007816) | | | 6,433.7 MB (claims) | | 19.6 s |
+
+The verifier's phases: decode 3.0 s, derive 11.4 s, products 6.6 s. The real-weight verifier is 7% slower than the
+random-weight one, and its proof 17% smaller. Peak host memory 81 GB (build 43 GB, 48 min).
+The record's `git` field reads 9ab8033 although the process ran 26089bb's code: `perf.py` read the commit after the
+48-minute build, during which the clone was updated (the two commits differ only in the shape check and the recipe
+field, neither used here); `perf.py` now reads the commit first (6cdd0e9). Its `recipe` field says "legacy" for the
+same reason (the main recipe was used).
+
+[64-token cells and the random twin pending]
 
 ### 4.3 Generated responses (job 1015754)
 
