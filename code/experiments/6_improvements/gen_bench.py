@@ -47,7 +47,6 @@ import importlib.util
 import json
 import platform
 import statistics
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -190,8 +189,8 @@ def main() -> int:
     n_layers = args.layers or cfg.n_layers
     if args.prompt + max(args.gen) - 1 > cfg.max_pos and cfg.pos == "learned":
         raise SystemExit(f"{args.model}: {args.prompt} + {max(args.gen)} - 1 positions > its {cfg.max_pos}")
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
-                         cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     reset_peaks(device)
     t0 = time.perf_counter()
     real_info, real_prompts = None, None

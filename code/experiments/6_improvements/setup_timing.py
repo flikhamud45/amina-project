@@ -27,7 +27,6 @@ import importlib.util
 import json
 import platform
 import statistics
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -70,8 +69,8 @@ def main() -> int:
     device = torch.device(args.device)
     cfg = gb.config(args.model)
     n_layers = args.layers or cfg.n_layers
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
-                         cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     gb.reset_peaks(device)
     t0 = time.perf_counter()
     graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=32, seed=0, prune_last=True)

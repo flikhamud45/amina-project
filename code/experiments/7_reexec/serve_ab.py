@@ -90,7 +90,6 @@ import hashlib
 import importlib.util
 import json
 import platform
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -893,8 +892,8 @@ def main() -> int:
         torch.cuda.set_device(device)
     args.u2_dtype = args.u2_dtype or (["fp16"] if device.type == "cuda" else ["fp32"])
     cells = _cells(args)
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
-                         cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     base = {"label": args.label, "git": sha, "device": str(device), "verifier_device": args.verifier_device,
             "threads": args.threads, "reps": args.reps, "warmup": 1, "lam": args.lam, "rate": RATE, "fs": True,
             "wire": True, "lean": True, "prune_last": True,

@@ -15,7 +15,6 @@ import argparse
 import json
 import platform
 import statistics
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -38,7 +37,8 @@ def main() -> None:
 
     device = torch.device("cuda")
     cfg = CONFIGS[args.model]
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     variants = {"float32": lambda d: False, "int8": field.int8_ok}
     for n_layers in args.layers:
         graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=32, seed=0, prune_last=True)

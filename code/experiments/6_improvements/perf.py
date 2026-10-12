@@ -49,7 +49,6 @@ import importlib.util
 import json
 import platform
 import statistics
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -270,7 +269,8 @@ def main() -> int:
     build_peak = _peaks(device)
     lean = args.lean and seq is not None
     extra = json.loads(args.extra)
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     ok = True
     for mode in args.modes:
         bench._reset_peaks(device)

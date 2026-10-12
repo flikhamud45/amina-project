@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import statistics
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -36,7 +35,8 @@ def main() -> None:
     from pvi.fullcheck.transformer import CONFIGS, build_decoder
 
     src = Path(cc.__file__).resolve().parents[2]
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=src).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(src)
     cfg = CONFIGS[args.model]
     graph = build_decoder(cfg, n_layers=args.layers, calib_tokens=min(32, args.seq), seed=0)
     v = proto.Verifier(graph.public(), proto.params_for(40, 1), "Kpre",

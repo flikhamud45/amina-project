@@ -45,7 +45,6 @@ import inspect
 import json
 import platform
 import statistics
-import subprocess
 import sys
 import time
 import types
@@ -257,11 +256,11 @@ def main() -> None:
     args.threads = [int(t) for t in args.threads.split(",")]
     torch.set_num_threads(args.threads[-1])
     base = ab.load_base(args.base.resolve()) if args.base else None
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     base_sha = None
     if args.base:
-        base_sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
-                                  cwd=args.base.resolve()).stdout.strip() or None
+        base_sha = git_sha(args.base.resolve()) or None
     results = []
     for spec in args.specs:
         r = run(spec, args, base)

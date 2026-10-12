@@ -21,7 +21,6 @@ import importlib.util
 import json
 import platform
 import statistics
-import subprocess
 import sys
 from pathlib import Path
 
@@ -75,7 +74,8 @@ def main() -> None:
     device = torch.device(args.device)
     cfg = CONFIGS[args.model]
     model_ops = decoder_shapes(cfg, prune_last=True)
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     tokens = torch.randint(0, cfg.vocab, (args.queries + 1, args.seq), generator=torch.Generator().manual_seed(1))
     for n_layers in args.layers:
         graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=min(args.seq, 32), seed=0,

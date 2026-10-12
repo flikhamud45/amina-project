@@ -41,7 +41,6 @@ from __future__ import annotations
 import argparse
 import json
 import platform
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -337,7 +336,8 @@ def main() -> int:
 
     cfg = CONFIGS[args.model]
     n_layers = args.layers or cfg.n_layers
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     reset_peaks(args.device)
     t0 = time.perf_counter()
     if args.real:                     # the checkpoint's weights; queries are WikiText-2 windows

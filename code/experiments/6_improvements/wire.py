@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -271,7 +270,8 @@ def main() -> None:
     if args.summary:
         print(summary(results))
         return
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     for spec in args.specs:
         t0 = time.perf_counter()
         results[spec] = dict(run(spec, args), git=sha, seconds=time.perf_counter() - t0)

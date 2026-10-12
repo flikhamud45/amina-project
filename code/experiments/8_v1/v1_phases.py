@@ -33,7 +33,6 @@ import argparse
 import json
 import os
 import statistics
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -226,7 +225,8 @@ def main() -> int:
         x = prompt(100 + i)
         for p in args.paths:
             runs[p].append(query(p, x))
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     ok = all(w["accepted"] for w in warm.values())
     rows = {}
     for p, rs in runs.items():

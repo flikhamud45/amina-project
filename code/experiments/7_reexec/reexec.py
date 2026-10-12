@@ -37,7 +37,6 @@ import dataclasses
 import json
 import platform
 import statistics
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -206,7 +205,8 @@ def main() -> None:
 
     device = torch.device(args.device)
     fdtype = torch.float16 if device.type == "cuda" else torch.float32
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=CODE).stdout.strip()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)
     for name in args.model:
         cfg = CONFIGS[name]
         if args.max_pos > cfg.max_pos:

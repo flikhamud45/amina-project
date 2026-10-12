@@ -116,8 +116,8 @@ def _run(src: Path, out: Path, cases: list[str]) -> list[dict]:
 
 
 def _git(path: Path) -> str | None:
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=path)
-    return sha.stdout.strip() or None
+    from pvi.results import git_sha
+    return git_sha(path) or None
 
 
 def main() -> None:
