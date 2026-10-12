@@ -55,12 +55,38 @@ clipping; ``norm_gain`` 4 either way."""
 
 
 # ------------------------------------------------------------------ real checkpoints
+def _is_opt(name: str) -> bool:
+    from transformers import AutoConfig
+    return AutoConfig.from_pretrained(name).model_type == "opt"
+
+
+def load_real_llama(name: str, seq: int, n_queries: int):
+    """``(model, queries, calib)`` for a Llama-family checkpoint (Llama, Qwen3; ``9_quality/ppl_llama.load_llama``,
+    fp32): ``n_queries`` WikiText-2 test windows of ``seq`` tokens from the start of the split, and as ``calib`` a
+    namespace with the main recipe's calibration (``ids``: four 2,048-token windows of the train split's first
+    4,000,000 characters) and its fixed public prefix (``prefix``: PrefixQuant's rule on those windows). The text is
+    tokenised without special tokens (the prefix takes the BOS's place), as ``ppl_llama.py --prefix`` does."""
+    from types import SimpleNamespace
+    sys.path.insert(0, str(CODE / "experiments" / "9_quality"))
+    import ppl_llama as pl
+    model, tok = pl.load_llama(name)
+    test = pl.token_ids(tok, pl.p2._text("test"), "auto")
+    queries = [w for w in pl.p2._windows(test, seq, n_queries)][:n_queries]
+    train = pl.token_ids(tok, pl.p2._text("train")[:4_000_000], "auto")
+    calib = torch.cat(pl.p2._windows(train, 2048, 4, start=0))
+    with torch.no_grad():
+        prefix, info = pl.prefix_of("auto", model, calib, tok)
+    return model, queries, SimpleNamespace(ids=calib, prefix=prefix, prefix_info=info)
+
+
 def load_real(name: str, seq: int, n_queries: int, calib_seq: int = 0, recipe: str = "legacy"):
     """``(model, queries, calib)``: the fp32 checkpoint ``name`` (``9_quality/common.load_opt``), ``n_queries``
     WikiText-2 windows of ``seq`` tokens from the start of the test split and one calibration window of
     ``calib_seq`` tokens (default ``seq``) from its end (``common.load_windows``).  The second call asks for as many
     ``calib_seq`` windows as cover the queries, so its own check that they and the calibration window fit the split
     keeps the calibration window disjoint from every query."""
+    if not _is_opt(name):                           # Llama, Qwen3: the main recipe (load_real_llama)
+        return load_real_llama(name, seq, n_queries)
     sys.path.insert(0, str(CODE / "experiments" / "9_quality"))
     from common import load_opt, load_windows
     model, tok = load_opt(name)
@@ -75,7 +101,13 @@ def load_real(name: str, seq: int, n_queries: int, calib_seq: int = 0, recipe: s
 
 def real_graph(model, calib: torch.Tensor, smooth: float | None, prune_last: bool, recipe: str = "legacy"):
     """The integer OPT of ``model``, calibrated on ``calib`` on the CPU: ``build_opt_from_hf`` with norm gain 4,
-    and with ``smooth`` the earlier smoothing (:data:`SMOOTH`); ``recipe="certified"``: ``CERTIFIED_RECIPE``."""
+    and with ``smooth`` the earlier smoothing (:data:`SMOOTH`); ``recipe="certified"``: ``CERTIFIED_RECIPE``. For a
+    Llama-family checkpoint (``calib`` from :func:`load_real_llama`): ``build_llama_from_hf`` with
+    ``real_llama.MAIN_RECIPE`` and the calibration's prefix (``smooth`` and ``recipe`` do not apply)."""
+    if hasattr(calib, "prefix"):
+        from pvi.fullcheck import real_llama as rl
+        return rl.build_llama_from_hf(model, calib.ids, prune_last=prune_last, prefix_tokens=calib.prefix,
+                                      **rl.MAIN_RECIPE)
     from pvi.fullcheck.real_weights import CERTIFIED_RECIPE, build_opt_from_hf
     if recipe == "certified":
         return build_opt_from_hf(model, calib, prune_last=prune_last, **CERTIFIED_RECIPE)

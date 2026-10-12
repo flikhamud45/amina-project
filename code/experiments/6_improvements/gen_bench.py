@@ -26,6 +26,13 @@ in mode C, commits it once under ``--policy``: the commitment binds the weight o
   raised so that the rule chooses the wrong token; expected ``freivalds``, or ``columns_code`` for a plan whose LM
   head has the col layout).
 
+``--real <checkpoint>`` (F3b): the checkpoint's integer graph instead (``v1_bytes.load_real`` / ``real_graph``: OPT
+with the certified recipe, Llama/Qwen3 with ``real_llama.MAIN_RECIPE`` and its fixed public prefix; ``--model`` names
+the benchmark shape it has), every block, the last block pruned; the prompts are the first WikiText-2 test windows of
+``--prompt`` tokens, mode C commits the graph's own weight ops, and the sampler's weight is ``a = round(c 2^16 / tau)``
+for the LM head's real logit scale ``c`` (``TokenSampler.for_temperature``, ``--temperature``), so sampled responses
+are draws of the integer model at that temperature.
+
 One JSON line per (``G``, rule, mode), ``"kind": "gen"``: medians and ``[min, max]`` of ``prove_s`` and ``verify_s``
 over the timed queries, every timing and byte part (medians), ``proof_mb_per_token`` (the proof over ``G``), the
 tamper verdicts and labels, peak host (VmHWM, Linux) and GPU memory over the build and the commitment
@@ -167,6 +174,8 @@ def main() -> int:
     ap.add_argument("--verifier-device", default="cpu")
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--label", default="")
+    ap.add_argument("--real", default="", help="a Hugging Face checkpoint: its integer graph (F3b)")
+    ap.add_argument("--temperature", type=float, default=1.0, help="with --real: the sampler's temperature")
     args = ap.parse_args()
     if min(args.gen) < 2:
         raise SystemExit("--gen: a response of at least 2 tokens (G = 1 is the plain prefill of perf.py)")
@@ -185,11 +194,23 @@ def main() -> int:
                          cwd=CODE).stdout.strip()
     reset_peaks(device)
     t0 = time.perf_counter()
-    graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.prompt, CALIB_TOKENS), seed=0,
-                          prune_last=True)
+    real_info, real_prompts = None, None
+    if args.real:                                # the checkpoint's integer graph (F3b)
+        if args.layers:
+            raise SystemExit("--real builds every block of the checkpoint")
+        v1b = _load("v1_bytes", "experiments/8_v1/v1_bytes.py")
+        model, wins, calib = v1b.load_real(args.real, args.prompt, args.queries + 1, 0, "certified")
+        graph, real_info = v1b.real_graph(model, calib, None, True, "certified")
+        del model
+        real_prompts = torch.cat(wins[:args.queries + 1])
+        shapes = None                            # mode C plans the graph's own weight ops
+        n_checks = len(graph.mat_ops)
+    else:
+        graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.prompt, CALIB_TOKENS), seed=0,
+                              prune_last=True)
+        shapes = decoder_shapes(cfg, prune_last=True)
+        n_checks = len(shapes)                   # (r, t) for the full model's op count, as perf.py and bench.py
     build_s = time.perf_counter() - t0
-    shapes = decoder_shapes(cfg, prune_last=True)
-    n_checks = len(shapes)                       # (r, t) for the full model's op count, as perf.py and bench.py
     coms, commit_s = None, None
     if "C" in args.modes:
         t0 = time.perf_counter()
@@ -199,19 +220,25 @@ def main() -> int:
         commit_s = time.perf_counter() - t0
     build_peak = peaks(device)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
-    prompts = torch.randint(0, cfg.vocab, (args.queries + 1, args.prompt), generator=torch.Generator().manual_seed(1))
+    prompts = (real_prompts if real_prompts is not None else
+               torch.randint(0, cfg.vocab, (args.queries + 1, args.prompt), generator=torch.Generator().manual_seed(1)))
     head = {"kind": "gen", "label": args.label, "git": sha, "model": args.model, "layers": args.layers or None,
             "n_layers": n_layers, "prompt": args.prompt, "lam": args.lam, "rate": RATE, "fs": args.fs,
             "wire": True, "lean": True, "prune_last": True, "device": args.device,
             "verifier_device": args.verifier_device, "threads": args.threads, "build_s": build_s,
             "commit_s": commit_s, "setup_cache": None if coms is None else coms.setup_cache,
+            "real": args.real or None, "temperature": args.temperature if args.real else None,
+            "logit_scale": None if real_info is None else float(real_info["logit_scale"]),
             "build_peak": build_peak, "host": platform.node(),
             "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
     ok = True
     for g in args.gen:
         gen = with_lm_positions(graph, g)
         for rule in args.decode:
-            samplers = [TokenSampler(seed_of(i), args.sampler_a, args.top_k) if rule == "sample" else None
+            samplers = [None if rule != "sample" else
+                        TokenSampler.for_temperature(seed_of(i), args.temperature, float(real_info["logit_scale"]),
+                                                     args.top_k) if real_info is not None else
+                        TokenSampler(seed_of(i), args.sampler_a, args.top_k)
                         for i in range(args.queries + 1)]
             t0 = time.perf_counter()
             xs = [generate(graph, prompts[i:i + 1], g - 1, rule, samplers[i], device) for i in range(len(samplers))]

@@ -76,9 +76,11 @@ most 2 hours.
 
 ```bash
 export PVI_PLATFORM=l40s_sp2027
+export PVI_LLAMA_LICENCE=1     # you hold the Llama-2 licence and are logged in to Hugging Face with your own account:
+                               # adds the real Llama-2-7B cells to the real tier (never use another person's token)
 bash code/experiments/4_defence_benchmark/slurm/sp2027.sh all          # the must tiers, in this order
-# then the Llama-2 quality tier, with your own licence and login (the team asks for it):
-PVI_LLAMA_LICENCE=1 bash code/experiments/4_defence_benchmark/slurm/sp2027.sh quality
+# then the Llama-2 quality tier (the team asks for it):
+bash code/experiments/4_defence_benchmark/slurm/sp2027.sh quality
 # optional, only if the team asks: PVI_OPTIONAL=1 (adds quality and long at the end of 'all')
 ```
 
@@ -92,9 +94,9 @@ PVI_LLAMA_LICENCE=1 bash code/experiments/4_defence_benchmark/slurm/sp2027.sh qu
 | 6 | `gpuv` | 12 | 4-6 | 19 | the streaming GPU verifier, int8/fp16/bf16 re-execution on this GPU, the PCIe copy bandwidth, peak memory |
 | 7 | `gen` | 2 | 2-3 | 6 | generated responses (Llama-2-7B, Qwen3-4B; 512-token prompt, 64 and 256 tokens; greedy and sampled) with two tamper cells |
 | 8 | `batch` | 7 | 2-3 | 6 | many prompts against one opening (C4a) |
-| 9 | `real` | 16 | 4-6 | 22 | real-weight OPT-1.3B and OPT-6.7B next to random weights (F3a) |
+| 9 | `real` | 25 | 8-12 | 44 | real-weight OPT-1.3B and OPT-6.7B next to random weights (F3a); with your own Llama-2 licence (`PVI_LLAMA_LICENCE=1`) also the real Llama-2-7B end to end (prover, verifier, V1 bytes, tampers, generated responses) |
 | 10 | `setup` | 2 | 1-2 | 4 | the setup proof of an untrusted commitment (Llama-2-7B), prover and verifier time |
-| | **must total** | **114** | **40-60** | **159** | about 2-2.5 days of the 7-day window; the job limits are caps (a job ends when its work is done) |
+| | **must total** | **123** | **44-66** | **181** | about 2-2.5 days of the 7-day window; the job limits are caps (a job ends when its work is done) |
 | 11 | `quality` (requested) | 2 | 4-7 | 14 | Llama-2-7B and Llama-2-13B quality at 2,048 tokens with the main algorithm's integer recipe; only with your own Llama-2 licence (`PVI_LLAMA_LICENCE=1`) |
 | 12 | `long` (optional) | 12 | 4-7 | 28 | long prompts (2k-16k tokens, Llama-2-7B shapes, 2-3 blocks) |
 

@@ -124,7 +124,7 @@ est() {   # the tier's expected hours (estimates from measured times: docs/impro
   if [ -n "$REH" ]; then echo "<0.3"; return; fi
   case "$1" in
     smoke) echo 1 ;; cpuv) echo 6-9 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
-    gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 4-6 ;; setup) echo 1-2 ;; quality) echo 2-3 ;; long) echo 4-7 ;;
+    gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; quality) echo 2-3 ;; long) echo 4-7 ;;
   esac
 }
 
@@ -300,8 +300,12 @@ tier_real() {
   # OPT (F2) calibrated on one 2,048-token window, last block pruned; Fiat-Shamir, Q queries after a warm-up, 3 of
   # each tamper per variant.  The 2080 Ti / Xeon cells of F3a (OPT-1.3B v0 on both verifiers, OPT-6.7B's codec
   # profile and V1 bytes) are measured before the freeze; these are the cells that do not fit there and the
-  # final-platform timings.  F3b (Qwen3-4B real weights) and a real Llama-2-7B in mode C join only once perf.py and
-  # v1_bytes.py read Llama/Qwen checkpoints (--real reads OPT checkpoints today).
+  # final-platform timings.  With the runner's own Llama-2 licence (PVI_LLAMA_LICENCE=1) the tier adds the real
+  # Llama-2-7B end to end (F3b on the final platform): the main algorithm's integer recipe (real_llama.MAIN_RECIPE,
+  # its fixed public prefix, four 2,048-token train windows; the graph keeps the benchmark structure), v0 in Kpre at 64
+  # and 2,048 tokens and in mode C at 64, V1 bytes in Kpre, and generated responses (P = 512, G = 64, greedy and
+  # sampled at temperature 1 from the LM head's real logit scale, both tamper cells), each v0 cell next to its
+  # random-weight twin.
   : "${HF_HOME:?export HF_HOME=<node-local folder with ~40 GB free> (the real tier downloads OPT checkpoints)}"
   local r13="--model opt-1.3b --real facebook/opt-1.3b --recipe certified"
   local r67="--model opt-6.7b --real facebook/opt-6.7b --recipe certified"
@@ -327,7 +331,24 @@ tier_real() {
 --tampers 3 --label real-random"
     done
   done
-  echo "note: tier real has no F3b (Qwen3-4B) or real Llama-2-7B cells: perf.py/v1_bytes.py --real read OPT checkpoints" >&2
+  if [ -z "${PVI_LLAMA_LICENCE:-}" ]; then
+    echo "tier real: no real Llama-2-7B cells (they need the runner's own Llama-2 licence: export PVI_LLAMA_LICENCE=1)" >&2
+    return 0
+  fi
+  local l7="--model llama2-7b --real meta-llama/Llama-2-7b-hf"
+  for t in 64 2048; do
+    sub "r-llama7-v0-$t" 3 256 "HF_HOME=$HF_HOME $PERF $l7 --seq $t --modes Kpre --queries $Q --verifier-device cpu \
+--tampers 3 --label real"
+    sub "r-llama7rnd-v0-$t" 1 192 "$PERF --model llama2-7b --seq $t --modes Kpre --queries $Q --verifier-device cpu \
+--tampers 3 --label real-random"
+    sub "r-llama7-v1-$t" 3 256 "HF_HOME=$HF_HOME $V1 $l7 --seq $t --modes Kpre --reps $Q --tampers 3 --label real"
+  done
+  sub r-llama7-v0C-64 3 256 "HF_HOME=$HF_HOME $PERF $l7 --seq 64 --modes C --policy $POL --queries $Q \
+--verifier-device cpu --tampers 3 --label real"
+  sub r-llama7rnd-v0C-64 1 192 "$PERF --model llama2-7b --seq 64 --modes C --policy $POL --queries $Q \
+--verifier-device cpu --tampers 3 --label real-random"
+  sub r-llama7-gen 4 256 "HF_HOME=$HF_HOME $PY experiments/6_improvements/gen_bench.py $l7 --prompt 512 --gen 64 \
+--decode greedy sample --modes C Kpre --policy $POL --fs --queries $Q --threads 8 --verifier-device cpu --label real"
 }
 
 tier_setup() {

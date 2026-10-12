@@ -455,6 +455,15 @@ def _head_eq(h_int: torch.Tensor, s_in, w: torch.Tensor, b: torch.Tensor | None,
     return (w.double() * beta[:, None]).float(), (None if b is None else b.double() * beta), beta
 
 
+MAIN_RECIPE = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, glu_smooth=0.2)
+"""The main algorithm's integer recipe for Llama-family checkpoints (F2b-Q doc Sec. 13.9; F2b-L): smoothing through
+the norms' gains at alpha 0.55 with the 99.9th-percentile channel statistic, requantisation at the 99.99th
+percentile, the SwiGLU product balance at 0.2; with ``prefix_tokens`` from PrefixQuant's rule on the calibration
+windows (``ppl_llama.prefix_of("auto", ...)``) and four 2,048-token train windows as calibration. All constants: the
+graph keeps the benchmark's structure. It gave OpenLLaMA-7B x1.073 and TinyLlama (at alpha 0.75) x1.122 at 2,048
+tokens; ``qk_balance`` (default on) adds Qwen3's q/k balance. The per-token exponent (``glu_exp``) is not part of it."""
+
+
 def _glu_smooth(h_int: torch.Tensor, s_in, wg: torch.Tensor, wu: torch.Tensor, w_down: torch.Tensor,
                 alpha: float) -> torch.Tensor:
     """``glu_smooth``'s factors ``g [ff]`` (float64): SmoothQuant's balance for the down projection's input, folded
