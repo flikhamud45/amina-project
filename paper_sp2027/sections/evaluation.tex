@@ -56,8 +56,8 @@ GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B and Qwen3-4B. Costs use random int8 we
 depend only on the shapes, except for the compressed size of the claims. Real weights confirm
 this: on the smoothed OPT-1.3B (both modes, 64 and 2{,}048 tokens) the prover's and the CPU
 verifier's times are within 9\% and 6\% of random weights', and v0's proof is 9--17\% smaller;
-the full real OPT-6.7B in $\Kpre$ at 2{,}048 tokens is accepted, and every tamper
-rejected~\cite{fullversion} \todo{F3b: Qwen3-4B}. A model too large for the 2080~Ti is measured
+the full real OPT-6.7B and OpenLLaMA-7B (Llama-2-7B's shapes) in $\Kpre$ at 2{,}048 tokens are
+accepted, and every tamper rejected~\cite{fullversion}. A model too large for the 2080~Ti is measured
 as $b$ of its $L$ blocks ($b/L$), the last one pruned.
 
 \para{Attacks and soundness tests.} Section~\ref{sec:break} reports the attack measurements. Our

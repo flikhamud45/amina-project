@@ -56,7 +56,9 @@ clear under (P3). On OPT-1.3B, by contrast, real claims compress better than ran
 proof is 9--17\% smaller (1.66 against 2.01\,GB in $\Kpre$ at 2{,}048 tokens), V1's about the same,
 and the prover's and the verifier's times are within 9\% and 6\%
 (Appendix~\ref{app:eval-real}). The full real OPT-6.7B runs end to end in $\Kpre$ at 2{,}048
-tokens \todo{F3b: Qwen3-4B}. With smoothing through the norm's gains, the certified OPT-125M,
+tokens, and so does the full real OpenLLaMA-7B, which has Llama-2-7B's shapes, with the main recipe of
+Section~\ref{sec:quality}: three queries accepted, nine tampers rejected, a 5.35\,GB proof (17\% smaller
+than with random weights) checked in 21.0\,s on 8 Xeon threads (19.6\,s with random weights). With smoothing through the norm's gains, the certified OPT-125M,
 OPT-1.3B and OPT-6.7B are within factors of 1.076, 1.026 and 1.008 of fp32 at 2{,}048 tokens
 (Section~\ref{sec:quality}); with one scalar gain OPT-6.7B is 70\% above. With a fixed public prefix and a balance of
 the SwiGLU product, OpenLLaMA-7B (Llama-2-7B's exact benchmark structure) is within $\times$1.073 and
