@@ -1135,7 +1135,17 @@ with its 95% bootstrap interval / top-1):
 * `glu_smooth` helps at 0.3 at every alpha and hurts at 0.5: for TinyLlama the product balance must lean towards the
   down projection's weights. With Qwen3-1.7B, 0.5 helped only with the per-token exponent. The alpha of `glu_smooth`
   is therefore a per-family parameter, like the smoothing alpha.
-* A finer grid (smoothing 0.70 / 0.75 / 0.80 x `glu_smooth` 0.2 / 0.3 / 0.4) runs as job 1013124.
+* The finer grid (job 1013124), ratio to fp32 (95% CI):
+
+  | smoothing alpha | smooth | glus 0.2 | glus 0.3 | glus 0.4 |
+  |---:|---|---|---|---|
+  | 0.70 | x1.317 [1.297, 1.340] | x1.147 [1.140, 1.155] | x1.209 [1.196, 1.223] | x1.557 [1.521, 1.595] |
+  | 0.75 | x1.227 [1.212, 1.248] | **x1.122 [1.117, 1.129]** (top-1 0.834) | x1.147 [1.138, 1.157] | x1.229 [1.212, 1.250] |
+  | 0.80 | x1.323 [1.295, 1.359] | x1.168 [1.160, 1.178] | x1.255 [1.231, 1.286] | x1.315 [1.277, 1.363] |
+
+  **Best TinyLlama: x1.122 at 2,048 tokens** (smoothing 0.75, `glu_smooth` 0.2), inside the x1.15 target with its whole
+  interval. Smoothing 0.75 is the optimum in both directions; `glu_smooth` improves monotonically from 0.4 to 0.2, so
+  0.05 / 0.1 / 0.15 run as job 1013574.
 
 **The 128-token ladder with the box (job 1012675, `glus2`; 16 x 128, prefix, `qk_balance`):** ratio to fp32 (95% CI)
 
