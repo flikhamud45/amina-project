@@ -17,7 +17,8 @@ Nothing here runs a model.  The inputs are the two outputs of ``slurm/sp2027.sh`
 * ``--platform`` (default ``l40s_sp2027``): bench.py's records of strong_gpu.sh's must and batch tiers, through the
   tables ``aggregate.py --platform <name>`` writes (``artifacts/comparison/tables_<name>/``), read with
   ``paper_assets``'s own selection code (``llm_cost``, ``Measured``) for the cells of ``paper_assets.OPTIMISED``
-  (mode C's plan tag ``pol<--policy>``, default ``$PVI_C_POLICY`` or auto), under ``--challenges`` (default fs).
+  (mode C's plan tag ``pol<--policy>``, default ``$PVI_C_POLICY`` or cnn18c, the package's default since PS2's
+  decision), under ``--challenges`` (default fs).
   ``--base`` (default the course report's optimised runs l40s_improved,l40s_improved2,l40s_improved3) gives
   tab:eval-llm's and tab:eval-compare's base columns, interactive, exactly as the paper prints them today.
 
@@ -1079,7 +1080,7 @@ def main() -> int:
     ap.add_argument("--logs", default=str(REPO / "logs" / "l40s_sp2027"), help="the run's log folder")
     ap.add_argument("--platform", default="l40s_sp2027", help="bench tables of the run (comma-separated runs)")
     ap.add_argument("--base", default=REPORT_RUNS, help="bench tables of tab:eval-llm's base columns ('' for none)")
-    ap.add_argument("--policy", default=os.environ.get("PVI_C_POLICY") or "auto", help="mode C's plan of the run")
+    ap.add_argument("--policy", default=os.environ.get("PVI_C_POLICY") or "cnn18c", help="mode C's plan of the run")
     ap.add_argument("--challenges", default="fs", choices=["fs", "int"], help="the run's v0 cells (default fs)")
     ap.add_argument("--out", default=str(REPO / "paper_sp2027" / "generated"))
     ap.add_argument("--paper", default=str(REPO / "paper_sp2027" / "sections"))
