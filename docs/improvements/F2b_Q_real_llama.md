@@ -1137,6 +1137,22 @@ with its 95% bootstrap interval / top-1):
   is therefore a per-family parameter, like the smoothing alpha.
 * A finer grid (smoothing 0.70 / 0.75 / 0.80 x `glu_smooth` 0.2 / 0.3 / 0.4) runs as job 1013124.
 
+**The 128-token ladder with the box (job 1012675, `glus2`; 16 x 128, prefix, `qk_balance`):** ratio to fp32 (95% CI)
+
+| Model (smoothing alpha) | smooth | + exp8 | glus 0.3 | glus 0.3 + exp8 | glus 0.5 | glus 0.5 + exp8 | glus 0.7 | glus 0.7 + exp8 |
+|---|---|---|---|---|---|---|---|---|
+| Qwen3-0.6B (0.45) | x1.602 | x1.568 | x1.690 | **x1.553** | x2.028 | x1.638 | x2.274 | x1.824 |
+| Qwen3-1.7B (0.45) | x1.513 | x1.334 | x1.676 | **x1.304** [1.255, 1.359] | x2.005 | x1.395 | x2.570 | x1.471 |
+| TinyLlama (0.65) | **x1.151** | x1.237 | x1.170 | x1.218 | x1.260 | x1.251 | x1.311 | x1.370 |
+
+The first run's smoothed cells are reproduced exactly (x1.602 / x1.568, x1.513 / x1.334). At 128 tokens `glu_smooth`
+helps only with the per-token exponent and only at 0.3 (Qwen3-1.7B x1.334 -> x1.304), and it slightly hurts TinyLlama,
+whereas at 2,048 tokens it is the lever that brings TinyLlama to x1.147 and Qwen3-1.7B to x1.206 (with 0.5). The best
+settings therefore depend on the window length, and the decisions are taken at 2,048 tokens (the protocol of every
+reported row): a 2,048-token grid of `glu_smooth` 0.3 / 0.4 / 0.6 on Qwen3-1.7B runs as job 1013482, and Qwen3-4B
+(job 1013332, resubmitted with the fp32 reference on the CPU after job 1013018 ran out of GPU memory loading it) uses
+0.5 for now.
+
 ### 13.8 Limitations and open issues
 
 * **The reproduction uses random weights.** The real gains are real, the q/k projections are not: real raw q/k
