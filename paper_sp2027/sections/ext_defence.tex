@@ -70,8 +70,11 @@ read the same input, such as the query, key and value projections, are stacked i
 % Moved from the body's paragraphs "Commitment plans" and "(S3): the column check" by the H5 pass
 % (cut C5 of REVIEW2.md); unchanged.
 \para{The plan and the transposed layout.} Matrices whose codewords have equal length can share a
-tree and a multiproof. A public rule picks the plan (trees and codeword lengths) that sends the
-fewest bytes per query within a cap on the setup size; the plan is part of $C_M$. A layer with many
+tree and a multiproof. Our runs use one plan for every model: each matrix is encoded at
+$n=\max(2^{18},2\,\mathrm{next\_pow2}(k))$ points, so most matrices share a few trees (six for
+Llama-2-7B). A longer codeword opens fewer columns per query at the price of a longer one-time
+encoding, which the prover does once per model (Table~\ref{tab:params}); the plan is part of
+$C_M$. A layer with many
 rows, such as GPT-2's output layer ($N=50{,}257$), encodes the rows of $A_\ell^\T$ instead (the
 \emph{transposed layout}). An embedding table without a bias is a Merkle tree over its
 rows~\cite{commitllm2026}. For a transposed matrix the verifier combines positions with
@@ -123,7 +126,7 @@ verifier time for GPT-2 and the 7B models}
 \begin{table}[t]
   \caption{Untrusted commitments at $\lambda=128$: the one-time setup proof and the opened columns
   per query, with setup parameters amortised over $a=100$ or $1{,}000$ queries (interactive
-  queries, 4 bytes per field element)}
+  queries, 4 bytes per field element; the plan of our runs, codewords of at least $2^{18}$ points)}
   \label{tab:setup}
   \centering
   \footnotesize
@@ -134,9 +137,9 @@ verifier time for GPT-2 and the 7B models}
     Model & $a{=}100$ & $a{=}1{,}000$ & honest & untrusted, $a{=}100$ / $1{,}000$ \\
     \midrule
     GPT-2       & 213\,MB & 686\,MB  & 3.22  & 6.84 / 4.63 \\
-    Llama-2-7B  & 2.8\,GB & 11.3\,GB & 124.7 & 168.5 / 134.9 \\
-    OPT-6.7B    & 2.5\,GB & 10.2\,GB & 85.9  & 130.7 / 97.1 \\
-    Llama-2-13B & 4.0\,GB & 16.4\,GB & 149.3 & 217.4 / 165.9 \\
+    Llama-2-7B  & 2.4\,GB & 9.8\,GB  & 65.6  & 113.5 / 79.4 \\
+    OPT-6.7B    & 2.4\,GB & 9.8\,GB  & 66.3  & 113.7 / 79.1 \\
+    Llama-2-13B & 3.8\,GB & 15.4\,GB & 112.0 & 183.3 / 131.9 \\
     \bottomrule
   \end{tabular}
 \end{table}

@@ -7,7 +7,8 @@ Table~\ref{tab:params} gives each term of Theorems~\ref{thm:sound}, \ref{thm:unt
 and~\ref{thm:v1}.
 
 \begin{table}[t]
-  \caption{Concrete security for Llama-2-7B at $\lambda=128$ (interactive / Fiat--Shamir)}
+  \caption{Concrete security for Llama-2-7B at $\lambda=128$ (interactive / Fiat--Shamir), under the
+  commitment plan of our runs (every codeword at least $2^{18}$ points)}
   \label{tab:params}
   \centering
   \footnotesize
@@ -23,8 +24,8 @@ and~\ref{thm:v1}.
     Freivalds vectors $r=\lceil\beta/\log_2p\rceil$ & 5 / 7 \\
     Freivalds term $p^{-r}$ per matrix & $2^{-154.5}$ / $2^{-216.3}$ \\
     Columns $t_j$: least $t$ with $\prod_{i<t}\frac{k_j-1-i}{n_j-i}\le2^{-\beta}$ &
-      35 / 51$^a$ \\
-    Opened columns per query & 124.7 / 182.5\,MB \\
+      23 / 34$^a$ \\
+    Opened columns per query & 65.6 / 96.5\,MB \\
     Random-oracle queries $Q$ (64 bits added to $\beta$ and $\beta_0$) & -- / $\le2^{64}$ \\
     SHA-256 Merkle trees, 32-byte roots; SHAKE-256 transcript, 256-bit keys &
       $O(Q^22^{-256})$ \\
@@ -39,13 +40,13 @@ and~\ref{thm:v1}.
     \midrule
     \multicolumn{2}{@{}l}{\emph{Setup proof (Theorem~\ref{thm:untrusted})}} \\
     Target $\beta_0=\lambda+64+\log_2(2|\mathcal J_0|)$, $|\mathcal J_0|=130$ coded & 200.0 \\
-    Combinations $s=\lceil(\beta_0+\log_2\max_jn_j)/\log_2p\rceil$ & 7 \\
+    Combinations $s=\lceil(\beta_0+\log_2\max_jn_j)/\log_2p\rceil$ & 8 \\
     Radius $e_j=\lfloor f(n_j-k_j)/2\rfloor$, $f\in\{2^0,\dots,2^{-10}\}$ minimising
       $t^0_j/a+t_j$ & $f=2^{-2}$ / $2^{-4}$$^c$ \\
     Setup columns $t^0_j$: least with $\prod_{i<t^0_j}\frac{n_j-e_j-1-i}{n_j-i}\le2^{-\beta_0}$ &
-      1{,}103--2{,}063 / 4{,}497--8{,}049$^c$ \\
-    Opened columns per query ($t_j$ with $k_j+e_j$ for $k_j$) & 168.5 / 134.9\,MB$^c$ \\
-    Setup proof & 2.8 / 11.3\,GB$^c$ \\
+      1{,}054--1{,}190 / 4{,}399--4{,}936$^c$ \\
+    Opened columns per query ($t_j$ with $k_j+e_j$ for $k_j$) & 113.5 / 79.4\,MB$^c$ \\
+    Setup proof & 2.4 / 9.8\,GB$^c$ \\
     Total $\varepsilon_0$ & $\le2^{-128}+O(Q^22^{-256})$ \\
     \bottomrule
   \end{tabular}
