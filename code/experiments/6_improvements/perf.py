@@ -201,6 +201,8 @@ def main() -> int:
                     help="CNNs (" + ", ".join(ab.CNNS) + "): random weights and random queries, as ab_verifier.py "
                          "builds them (the costs depend on the shapes only)")
     args = ap.parse_args()
+    from pvi.results import git_sha
+    sha = git_sha(CODE)              # before the build, which can outlast a checkout update
     torch.set_num_threads(args.threads)
     bench = _load("bench", "experiments/4_defence_benchmark/bench.py")
     import pvi.fullcheck as fullcheck
@@ -271,8 +273,6 @@ def main() -> int:
     build_peak = _peaks(device)
     lean = args.lean and seq is not None
     extra = json.loads(args.extra)
-    from pvi.results import git_sha
-    sha = git_sha(CODE)
     ok = True
     for mode in args.modes:
         bench._reset_peaks(device)
