@@ -84,8 +84,21 @@ Laptop (Windows, torch 2.2, 2 threads), GPT-2 with one block and the full model'
 
 A Fiat-Shamir query proves and verifies under the miss and the hit with the same bytes (1,610,856), both accepted.
 
-Cluster (RTX 2080 Ti node, job 1015688): Llama-2-7B with 2 blocks and the full model (32 blocks) under cnn18c:
-[CLUSTER].
+Cluster (RTX 2080 Ti node s-004, job 1015688, git c1bc76d; `tests/test_setup_cache.py` and `tests/test_plans.py`
+with the full suite first: 562 passed). Llama-2-7B under cnn18c (6 trees of 2^18 columns), random weights, 64-token
+Fiat-Shamir query:
+
+| Llama-2-7B | build | uncached | miss (computed and stored) | hit (read, spot check, rebuild) | cache file | query bytes, miss = hit |
+|---|---:|---:|---:|---:|---:|---:|
+| 2 blocks | 9.9 s | 358.2 s | 359.9 s | 7.2 s | 51.4 MB | 16,045,222 |
+| full model (32 blocks) | 103.6 s | (not run) | 4,426.2 s | 49.1 s | 51.4 MB | 299,627,020 |
+
+* Every step gives the same roots as the uncached commitment, and both queries are accepted with identical bytes.
+* The full model's setup takes 74 min on the 2080 Ti once per model and node; a later job loads it in 49 s (90x).
+  The hit's time is the spot check (4 recomputed columns per tree, which encode every row at those points) and the
+  rebuild of the trees; the file read is small.
+* The file holds one 32-byte digest per column of each tree (6 x 2^18 x 32 B = 50.3 MB), so its size does not grow
+  with the number of blocks.
 
 ## 6. Limitations
 

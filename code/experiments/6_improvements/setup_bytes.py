@@ -45,12 +45,16 @@ def main() -> None:
         for amortise in args.amortise:
             p = sp.setup_params(publics, groups, args.lam, bits, amortise=amortise)
             t0, tq = dict(p.t0), dict(p.t)
-            setup = sum(4 * p.s * coded[m].row_length for m in coded)
-            setup += sum(4 * t0[g] * rows[g] + 32 * t0[g] * int(math.log2(groups[g].n_points)) for g in rows)
+            combined = sum(4 * p.s * coded[m].row_length for m in coded)          # the s combinations per matrix
+            columns = sum(4 * t0[g] * rows[g] for g in rows)                      # t0 opened columns per tree
+            paths = sum(32 * t0[g] * int(math.log2(groups[g].n_points)) for g in rows)   # multiproof bound
+            setup = combined + columns + paths
             query = sum(4 * tq[g] * rows[g] for g in rows)
             print(json.dumps({"model": name, "policy": plan.policy, "lam": args.lam, "fiat_shamir": args.fiat_shamir,
                               "amortise": amortise, "s": p.s, "trees": len(rows),
-                              "setup_MB": round(setup / 1e6, 1), "t0": t0,
+                              "setup_MB": round(setup / 1e6, 1), "combined_rows_MB": round(combined / 1e6, 1),
+                              "columns_MB": round(columns / 1e6, 1), "paths_MB_bound": round(paths / 1e6, 1),
+                              "t0": t0,
                               "query_columns_MB_honest": round(honest_bytes / 1e6, 2),
                               "query_columns_MB_untrusted": round(query / 1e6, 2),
                               "query_factor": round(query / honest_bytes, 3), "t_honest": honest, "t_untrusted": tq}),

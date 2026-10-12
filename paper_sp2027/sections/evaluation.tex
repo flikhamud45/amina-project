@@ -107,7 +107,7 @@ Llama-2-7B's 64-token proof is about 21$\times$ smaller than its int8 weights
 (Table~\ref{tab:eval-llm}). At 2{,}048 tokens the proof and the CPU verifier's time grow
 (OPT-6.7B: 5.5\,GB, 46.5\,s), since the results of the weight operations grow with the prompt (98\%
 of Llama-2-7B's 6.57\,GB proof) and the verifier recomputes attention over all pairs of positions.
-There the GPU verifier is 11--15$\times$ faster than the CPU one \todo{F6 (F4): peak memory}.
+There the GPU verifier is 10--15$\times$ faster than the CPU one \todo{F6 (F4): peak memory}.
 On one RTX~2080~Ti, proving a 2{,}048-token OPT-1.3B prompt takes 2.1\,s in $\Kpre$ and 4.4\,s in
 $\sC$: 4.1 and 8.6$\times$ our exact integer forward pass without proofs, and 19 and 40$\times$ an
 fp16 one. Proving 64 prompts of 64 tokens together in $\Kpre$ takes 3.4\,s (4.8 and

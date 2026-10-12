@@ -135,7 +135,7 @@ neuron first for 75\% and 95\% of 40 test queries in the two hidden layers, agai
 and 0.4\%.
 
 % -------------------------------------------------------------------------------------
-\subsection{A Lower Bound and a Matching Upper Bound}
+\subsection{Lower and Upper Bounds}
 \label{sec:dichotomy}
 
 On a suitable network (H) holds by construction, which gives a lower bound for every
@@ -144,8 +144,8 @@ spot-checking verifier.
 \begin{theorem}[lower and upper bound]
 \label{thm:dich}
 Consider verifiers that read each layer's weights through a commitment of locality $d$ that
-reveals nothing about unopened rows, and let $q$ be the expected number of queries that meet a
-layer of width $N$.
+reveals nothing about unopened rows and keep no state between proofs, and let $q$ be the expected
+number of queries that meet a layer of width $N$.
 (a)~\emph{Spot-checking.} For every such verifier there is a ReLU network with a hidden layer of
 width $N$, and a single-site forgery with every value in its natural range, that the verifier
 accepts with probability at least $1-qd/N$, even if it knows the later weights, every neuron's
@@ -153,8 +153,8 @@ natural range and the natural distribution of each neuron of that layer. In part
 that spot-checks $q$ of the $N$ sites of an unencoded trace ($d=1$) accepts with probability at
 least $1-q/N$, whatever its sampler, and soundness error at most $\varepsilon$ on every such
 network requires $qd\ge(1-\varepsilon)N$.
-(b)~\emph{Mixing.} If each query mixes all rows ($d=N$), as the folded rows and code columns of
-Section~\ref{sec:defence} do, then under the conditions of Proposition~\ref{prop:amp} and $n\ge2(k-1)$,
+(b)~\emph{Mixing.} For the verifier of Section~\ref{sec:defence}, whose folded rows and code columns
+each mix all rows ($d=N$), under the conditions of Proposition~\ref{prop:amp} and $n\ge2(k-1)$,
 $O(\lambda+\log L)$ queries per layer give soundness error $2^{-\lambda}$ for a network of $L$
 weight layers. For $L\le2^{\lambda}$ this is $O(\lambda)$, so $qd=O(\lambda)N$ suffices.
 \end{theorem}

@@ -49,9 +49,9 @@ $\sC$ the client (verifier) holds only a commitment $C_M$ to the weights, as in 
 protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights, and in mode $\Kpre$ only
 secret Freivalds vectors and their folded rows, precomputed once per model from the
 weights~\cite{slalom,commitllm2026}. For open weights anyone can recompute $C_M$
-(Section~\ref{sec:threat}); the integer OPT models are reproduced bit for bit across machines,
-thread counts, operating systems and torch versions, and their commitments across machines, thread
-counts and CPU or GPU encoding.
+(Section~\ref{sec:threat}); the integer OPT-125M and OPT-1.3B are reproduced bit for bit across
+machines and thread counts (OPT-125M also across operating systems and torch versions), and their
+commitments across machines, thread counts and CPU or GPU encoding.
 
 % -------------------------------------------------------------------------------------
 \subsection{The Exact Integer Model}
@@ -208,8 +208,8 @@ $C_M$. A Merkle root can bind any matrix $E_j$, not only a matrix of codewords, 
 linear-code polynomial commitments pair each evaluation with a testing phase~\cite{ligero,brakedown}:
 a committer can bind the encoded columns of two models that differ in matrix $j$ on complementary
 halves of the positions of $j$'s tree, and a prover that computes with the second passes the
-column check with probability $\prod_{i<t}(n/2-i)/(n-i)\approx2^{-t}$, about $2^{-35}$ per query
-for the smallest tree of Llama-2-7B. When nobody the client trusts can recompute $C_M$, the
+column check with probability $\prod_{i<t}(n/2-i)/(n-i)\approx2^{-t}$, about $2^{-23}$ per query
+($2^{-34}$ under Fiat--Shamir) for the tree of Llama-2-7B with the fewest columns. When nobody the client trusts can recompute $C_M$, the
 committer therefore publishes once per model a non-interactive \emph{setup proof} that each $E_j$
 differs from a codeword matrix $\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns. It opens
 $t^0_j$ columns of each tree, and the verifier then accepts only outputs of the model with weights
@@ -221,6 +221,6 @@ $a=1{,}000$, and the opened columns per query grow from 65.6 to 113.5 or 79.4\,M
 1\% of the proof at 2{,}048 tokens \todo{F6: setup time}. For column-hash commitments these
 setup columns are forced: with fewer than $t^0_j$ columns of $j$'s tree, no complete test that sees
 only columns certifies radius $e_j$ at our error~\cite{fullversion}. FRI-, STIR-, WHIR- or
-BaseFold-style tests~\cite{fri2018,stir,whir,basefold} could shrink only the combined rows, 1.6\%
-of the setup proof at $a=100$ and 0.4\% at $a=1{,}000$. For open weights, recomputing $C_M$ is
+BaseFold-style tests~\cite{fri2018,stir,whir,basefold} could shrink only the combined rows, 2.2\%
+of the setup proof at $a=100$ and 0.5\% at $a=1{,}000$. For open weights, recomputing $C_M$ is
 cheaper than a setup proof and also settles which model is committed.

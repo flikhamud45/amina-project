@@ -87,7 +87,7 @@ gap is in TensorCommitments~\cite{tensorcommitments}, whose stated goal of negli
 not achieved by its weight-only layer selection. We disclosed these findings to the authors
 \todo{only once the notices of 15--19 Oct are sent; else delete}.
 
-\para{A defence that checks everything.} Since no verifier beats uniform sampling in the worst case,
+\para{A defence that checks everything.} Since no spot-checking verifier beats uniform sampling in the worst case,
 ours checks every weight operation. The provider runs the exact int8 model, bit-identical on its GPU
 and on the client, and sends every weight operation's result. The verifier recomputes every
 operation without weights, including attention, from checked values, and tests each weight operation
@@ -123,7 +123,7 @@ Section~\ref{sec:discussion} states whom the protocol serves.
 \begin{itemize}
   \item An attack on spot-checking proofs of inference, a single-site edit followed by honest
   recomputation, measured on image classifiers and OPT-6.7B (Section~\ref{sec:attack}).
-  \item A lower bound for spot-checking verifiers, tight at every locality, applied to nine
+  \item A lower bound for spot-checking verifiers, met up to a factor $O(\lambda+\log L)$ at every locality, applied to nine
   published schemes (Sections~\ref{sec:sampling}--\ref{sec:sok}).
   \item A fully sound Freivalds-based protocol that needs only a hash function and a linear code,
   with binding Fiat--Shamir, generation, V1 and a setup proof for untrusted commitments
