@@ -128,7 +128,8 @@ will not. On one RTX~2080~Ti, proving a 2{,}048-token OPT-1.3B prompt costs
 unverified fp16 and int8 inference, same GPU}. Sending one opening and one fold for a batch of
 queries whose claims are all fixed before the challenges amortises the opened columns over the
 batch: on OPT-1.3B at 64 tokens, 64 prompts in one mode-$\sC$ proof take 1.00\,MB per token
-against 4.25\,MB for one prompt.
+against 4.25\,MB for one prompt, and on the full Llama-2-7B 8 prompts take 218.7\,MB each against
+324.5\,MB, within 3\% of claims plus a shared 127.8\,MB at every batch size we measured.
 
 \subsection{Limitations in Detail}
 \label{ext:disc-limits}

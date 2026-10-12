@@ -12,6 +12,7 @@ of every item is `SP2027_PLAN.md` at the repository root; an item is tagged [DON
 | A7 | [A7_serving_overhead.md](A7_serving_overhead.md) | 2080 Ti pilot measured; L40S `serve` tier pending | the prover against unverified serving (our integer model without proofs, eager fp16/bf16) on the same GPU and prompts, with batches; proofs on request are byte-identical |
 | B2, B3 | [B2_B3_gpu_verifier.md](B2_B3_gpu_verifier.md) | done | claims decoded on the GPU and a fused exact attention kernel: streaming GPU verifier 2.7x at 2,048 tokens |
 | B5 | [B5_cpu_verifier.md](B5_cpu_verifier.md) | in progress | a native exact attention for CPU verifiers: 1.5x on the verifier at 2,048 tokens |
+| C4a | [C4a_batch_bytes.md](C4a_batch_bytes.md) | measured on the 2080 Ti (B = 1-8); L40S `batch` tier pending | one client's batch shares one fold and one opening: the byte model claims + 127.8/B MB holds within 3% on the full Llama-2-7B |
 | C1, C2 | [C2_v1_proof_size.md](C2_v1_proof_size.md) | implemented, measuring | V1: send the int8 values, prove their windows with a logUp-GKR over F_{p^8}; no new commitment |
 | E1 | [E1_generation.md](E1_generation.md) | done | a whole generated response proved as one prefill with a token rule: GPT-2, 256 tokens in 0.29 s, 0.34 MB per token |
 | F2 | [F2_quality.md](F2_quality.md) | measured, adopted (opt-in) | where the integer model's perplexity goes; SmoothQuant through the norm gains: x1.17 -> x1.03 (OPT-125M), x1.11 -> x1.03 (OPT-1.3B) |

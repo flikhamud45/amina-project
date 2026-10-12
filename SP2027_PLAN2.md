@@ -729,7 +729,8 @@ Every Plan 1 item that is not tagged [DONE] or [DROP], plus the [DONE] items tha
     - `verifier_precompute` is ≥ 10x lower.
   - **Kill.** Start by Sat 24 Oct. It is low risk, and the float64 path stays as the fallback.
 
-- **C4a [TODO] must (inside F6): measure v0 batches with the existing code.**
+- **C4a [DONE on the 2080 Ti] must (inside F6): measure v0 batches with the existing code.**
+  - **Status (12 Oct, jobs 1012720 and 1013041).** Full Llama-2-7B shapes, 64 tokens, mode C interactive, `auto` (cnn16c): per query 324.5 / 264.8 / 233.9 / 218.7 MB at B = 1 / 2 / 4 / 8 against the model's 324.5 / 260.6 / 228.6 / 212.7 (0.0 / +1.6 / +2.3 / +2.8%, all accepted); the fixed 127.8 MB is shared exactly, the excess is the other prompts' claims (about 203 MB against the first prompt's 196.7). B = 16 does not fit the 11 GB card; the L40S `batch` tier adds it and the times. Write-up `docs/improvements/C4a_batch_bytes.md`.
   - These are cells only (F6 part 4). The `batch` tier lands with them.
   - The model for Llama-2-7B at 64 tokens is 196.7 + 127.8/B MB per query, interactive, or 196.7 + 51.8/B with PS2's R64c.
   - Check: per-query bytes within 3% of the model. The stored B = 8 cell measured 218.7 MB, against 212.7 MB predicted.
