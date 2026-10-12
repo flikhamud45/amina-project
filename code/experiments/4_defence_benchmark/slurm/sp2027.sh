@@ -20,7 +20,8 @@
 #     batch  strong_gpu.sh batch: B prompts against one opening (C4a)
 #     real   real-weight OPT end to end next to random-weight twins (F3a; needs HF_HOME)
 #     setup  the setup proof of an untrusted commitment, prover and verifier time (D4)
-#     quality  [optional] Llama-2-13B quality (needs the runner's own Llama-2 licence: PVI_LLAMA_LICENCE=1)
+#     quality  [optional] Llama-2-7B and Llama-2-13B quality with the main-algorithm recipe (needs the runner's own
+#              Llama-2 licence, PVI_LLAMA_LICENCE=1, and the runner's own Hugging Face login; never another person's token)
 #     long   [optional] V-LONG-b: Llama-2-7B shapes, 2-3 blocks, 2k-16k tokens, verifier against every baseline
 # Switches (environment):
 #     PVI_C_POLICY   mode C's commitment plan for every timed mode-C cell (default cnn18c: PS2's decision, option (c),
@@ -345,11 +346,15 @@ tier_setup() {
 }
 
 tier_quality() {
-  # [optional] F2b-L's Llama-2-13B on the full WikiText-2 test set at 2,048 tokens (scalar gains and smoothing, the
-  # fp16 reference on the GPU, calibration on the CPU from train-split windows): only with the runner's own
-  # Llama-2 licence (meta-llama/Llama-2-13b-hf), never another person's token.  OPT, Qwen3 and Llama-2-7B quality
-  # run on the 2080 Ti before the freeze (F2a, F2b).  The rehearsal runs ppl_llama.py's tiny random model with
-  # Qwen3's (ungated) vocabulary instead.
+  # [optional] F2b-L: Llama-2-7B and Llama-2-13B on the full WikiText-2 test set at 2,048 tokens with the main
+  # algorithm's integer recipe (F2b-Q doc Sec. 13.9: the fixed public prefix, smoothing through the norms' gains and the
+  # SwiGLU product balance, all constants; no per-token exponent), the setting that gave OpenLLaMA-7B (Llama-2-7B's
+  # exact shapes) x1.073 on the 2080 Ti: smoothing 0.55 / 0.65 (7B) and 0.6 (13B), each with and without glu_smooth 0.2.
+  # --structure checks the graph against the benchmark's (the cost tables' graph).  Llama-2-7B's reference is fp32 on
+  # the GPU (27 GB); Llama-2-13B's is fp16 (an fp32 copy does not fit 48 GB with the integer graph), recorded as such.
+  # Calibration on the CPU from four train-split windows.  Only with the runner's own Llama-2 licence and Hugging Face
+  # login (meta-llama/Llama-2-7b-hf, -13b-hf), never another person's token.  The rehearsal runs ppl_llama.py's tiny
+  # random model with Qwen3's (ungated) vocabulary instead.
   : "${HF_HOME:?export HF_HOME=<node-local folder with ~40 GB free> (the quality tier downloads a checkpoint)}"
   if [ -n "$REH" ]; then
     sub q-smoke 1 64 "HF_HOME=$HF_HOME $PY experiments/9_quality/ppl_llama.py --model Qwen/Qwen3-0.6B-Base --smoke \
@@ -357,12 +362,15 @@ tier_quality() {
     return 0
   fi
   if [ -z "${PVI_LLAMA_LICENCE:-}" ]; then
-    echo "tier quality: skipped (Llama-2-13B needs the runner's own Llama-2 licence: export PVI_LLAMA_LICENCE=1)" >&2
+    echo "tier quality: skipped (Llama-2 needs the runner's own Llama-2 licence: export PVI_LLAMA_LICENCE=1)" >&2
     return 0
   fi
+  local recipe="--seq 2048 --windows 0 --calib-windows 4 --prefix --graphs smooth --glu-smooths 0.2 --structure \
+--device cuda --calib-device cpu --threads 8"
+  sub q-llama7 6 192 "HF_HOME=$HF_HOME $PY experiments/9_quality/ppl_llama.py --model meta-llama/Llama-2-7b-hf \
+--config llama2-7b $recipe --alphas 0.55 0.65 --ref-dtype float32 ${PVI_Q7_ARGS:-}"
   sub q-llama13 8 256 "HF_HOME=$HF_HOME $PY experiments/9_quality/ppl_llama.py --model meta-llama/Llama-2-13b-hf \
---config llama2-13b --seq 2048 --windows 0 --calib-windows 4 --graphs scalar smooth --device cuda --calib-device cpu \
---ref-dtype float16 --threads 8 ${PVI_Q13_ARGS:-}"
+--config llama2-13b $recipe --alphas 0.6 --ref-dtype float16 ${PVI_Q13_ARGS:-}"
 }
 
 tier_long() {

@@ -22,14 +22,16 @@ the paper's tables and text numbers. Nothing has to be computed or copied by han
 | A C++ compiler: `CXX` | the native CPU kernels (`-march=native`: AVX-512, VNNI and AVX512_BF16 on Zen 4) of the CPU verifier and of the exact int8 re-execution | `$CXX --version` (g++ 9 or later). Without root: conda-forge's `gxx` through micromamba in a folder of one's own (`docs/improvements/I_server_setup.md` Sec. 4) |
 | The Python headers for Triton's launcher | Triton compiles a small launcher with `Python.h` on first use | `python -c "import os, sysconfig; print(os.path.exists(os.path.join(sysconfig.get_paths()['include'], 'Python.h')))"`; if `False`, copy the headers into a folder and `export PVI_PY_INCLUDE=<that folder>` (`I_server_setup.md` Sec. 3) |
 | A Triton cache the jobs can write | Triton's compiled kernels | set by the script to `logs/$PVI_PLATFORM/.triton`; `export TRITON_CACHE_DIR=<dir>` to put it elsewhere (e.g. a node-local disk) |
-| `HF_HOME` on a node-local disk with 40 GB free | the `real` tier downloads facebook/opt-1.3b and facebook/opt-6.7b (about 16 GB) and the WikiText-2 test parquet; the optional `quality` tier Llama-2-13B (26 GB) | `df -h $HF_HOME` |
+| `HF_HOME` on a node-local disk with 40 GB free | the `real` tier downloads facebook/opt-1.3b and facebook/opt-6.7b (about 16 GB) and the WikiText-2 test parquet; the `quality` tier Llama-2-7B and Llama-2-13B (about 13 + 26 GB) | `df -h $HF_HOME` |
+| About 0.5 GB for the setup cache | every mode-C job of a model reuses the first job's commitment (`logs/$PVI_PLATFORM/.setup_cache`, 15-70 MB per model and plan); the setup tier always measures the setup itself | set by the script; `export PVI_SETUP_CACHE=<dir>` to move it, `PVI_SETUP_CACHE=` (empty) to disable it |
 | The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats) load trained weights | the five files `code/artifacts/fullcheck/models/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224}.pt` from the earlier L40S run's checkout (or `experiments/4_defence_benchmark/train.py --model <m>`, seed 0); CIFAR-10 in `cifar-10-batches-py` layout under `$PVI_CIFAR_ROOT`; the dogs-vs-cats cache `dogs_cats.pt` under `$PVI_CACHE` (default `code/artifacts/fullcheck/cache`) or ImageNet under `$PVI_IMAGENET_ROOT`. `sp2027.sh all` and `bench` stop before submitting anything if one is missing |
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `export PVI_LOCAL=1` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
 | Exclusive use, 24/7 | the timings | every job asks for `--exclusive`; please keep other GPU- or CPU-heavy work off the node for the whole run (about 2-3 days, Sec. 5) |
 
 Every language model is built with random weights (the costs depend only on the shapes), so nothing is downloaded
-except in the `real` tier (OPT, public) and the optional `quality` tier, which needs a Llama-2 licence on **your own**
-Hugging Face account (`export PVI_LLAMA_LICENCE=1` once you have it). Never use another person's token. The image
+except in the `real` tier (OPT, public) and the `quality` tier, which needs the Llama-2 licence on **your own**
+Hugging Face account and your own login (`export PVI_LLAMA_LICENCE=1`; the team asks for this tier: Llama-2-7B is the
+model the cost tables lead with). Never use another person's token. The image
 models are the trained ones of the earlier run (the row above); MNIST is downloaded on first use.
 
 ## 3. Setup, once
@@ -44,7 +46,7 @@ export SBATCH_PARTITION=<L40S partition> SBATCH_GRES=gpu:<type>:1        # or: e
 export HF_HOME=<node-local folder with 40 GB free>
 export CXX=<path to g++>
 export PVI_PY_INCLUDE=<headers folder>              # only if the check of Sec. 2 printed False
-export PVI_C_POLICY=<plan>                          # only if the team says so (default auto; PS2 fixes it on Wed 21 Oct)
+export PVI_C_POLICY=<plan>                          # only if the team says so (default cnn18c, with the setup cache)
 ```
 
 `PVI_DRYRUN=1 bash code/experiments/4_defence_benchmark/slurm/sp2027.sh all` prints every job it would submit (127
@@ -75,7 +77,9 @@ most 2 hours.
 ```bash
 export PVI_PLATFORM=l40s_sp2027
 bash code/experiments/4_defence_benchmark/slurm/sp2027.sh all          # the must tiers, in this order
-# optional, only if the team asks: PVI_OPTIONAL=1 (adds quality and long at the end)
+# then the Llama-2 quality tier, with your own licence and login (the team asks for it):
+PVI_LLAMA_LICENCE=1 bash code/experiments/4_defence_benchmark/slurm/sp2027.sh quality
+# optional, only if the team asks: PVI_OPTIONAL=1 (adds quality and long at the end of 'all')
 ```
 
 | # | Tier | Jobs | Estimate (h) | Job limits (h) | What it gives the paper |
@@ -91,7 +95,7 @@ bash code/experiments/4_defence_benchmark/slurm/sp2027.sh all          # the mus
 | 9 | `real` | 16 | 4-6 | 22 | real-weight OPT-1.3B and OPT-6.7B next to random weights (F3a) |
 | 10 | `setup` | 2 | 1-2 | 4 | the setup proof of an untrusted commitment (Llama-2-7B), prover and verifier time |
 | | **must total** | **114** | **40-60** | **159** | about 2-2.5 days of the 7-day window; the job limits are caps (a job ends when its work is done) |
-| 11 | `quality` (optional) | 1 | 2-3 | 8 | Llama-2-13B quality; only with your own Llama-2 licence (`PVI_LLAMA_LICENCE=1`) |
+| 11 | `quality` (requested) | 2 | 4-7 | 14 | Llama-2-7B and Llama-2-13B quality at 2,048 tokens with the main algorithm's integer recipe; only with your own Llama-2 licence (`PVI_LLAMA_LICENCE=1`) |
 | 12 | `long` (optional) | 12 | 4-7 | 28 | long prompts (2k-16k tokens, Llama-2-7B shapes, 2-3 blocks) |
 
 The estimates come from the measured times of the same code on the RTX 2080 Ti, the Xeon and the earlier L40S runs
@@ -140,7 +144,7 @@ the team will add its tier and tell you the one extra command. Without it, nothi
 
 * Work only in your own checkout and folders; do not modify or delete anyone else's files or jobs.
 * Do not use another person's Hugging Face token. The models downloaded here are public (facebook/opt-*, the
-  WikiText-2 parquet), except Llama-2-13B in the optional `quality` tier, which needs your own licence.
+  WikiText-2 parquet), except Llama-2-7B and Llama-2-13B in the `quality` tier, which need your own licence.
 
 ## 11. For the team: from the outputs to the tables
 

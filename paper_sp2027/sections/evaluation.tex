@@ -297,7 +297,8 @@ With these caveats, our prover is faster in every measured row, by 46$\times$ to
 32{,}000$\times$ against the zkSNARKs and 3.0$\times$ against Maverick; our verifier is slower in
 two rows; and our proof is larger in most rows, by up to 56{,}000$\times$ against zkLLM, whose proof
 stays below 200\,kB. V1 narrows that gap, from about 14{,}000$\times$ to about 6{,}500$\times$ on
-OPT-1.3B (Table~\ref{tab:eval-v1}) \todo{F6: new timings; zkLLM on our L40S}. Sampling-based
+OPT-1.3B (Table~\ref{tab:eval-v1}) \todo{F6: new timings, against zkLLM's stored runs on the same L40S
+model (844\,s for Llama-2-7B at 2{,}048 tokens)}. Sampling-based
 schemes such as CommitLLM (Table~\ref{tab:sok}) do not check every operation of every query, so we
 do not compare their costs.
 
