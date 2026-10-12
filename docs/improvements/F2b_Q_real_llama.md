@@ -1182,6 +1182,24 @@ Candidates to check against it: a massive activation that one prefix token does 
 query projection wider than the residual stream (32 heads of 128 = 4,096 against hidden 2,560, where Qwen3-1.7B has
 2,048 = 2,048), or a block whose norm gains defeat the balance.
 
+**The diagnosis (job 1013928, CPU node s-002; one 128-token test window, prefix `auto` = `<|endoftext|>`):**
+
+* *Two massive activations.* From block 7 on, the residual stream holds a massive activation of about 3,540 in
+  channel 4 at the **first window position**, larger than the one the prefix token takes (about 2,030 at the prefix).
+  Qwen3-4B forms its attention-sink outlier on the first two positions; PrefixQuant's rule chose one prefix token
+  (`o = 1`), so the second outlier stays in the window and sets the residual's one int8 scale (`s_res` 1.13e-3 for
+  values up to 3,805). The smoothed stream's mean cosine falls exactly there: 0.914 -> 0.912 -> 0.857 -> 0.816 (blocks
+  6-9), 0.74-0.86 to the last block; the first window position itself drops to 0.35-0.59 (the scalar recipe keeps it
+  at 1.000 because there the outlier dominates its own scale).
+* *The SwiGLU products of the early blocks.* `llama_attrib.py --blocks all` names the SwiGLU product (`glu`) as the
+  largest own error in 34 of 36 blocks (block 16: `up`, block 19: `down_proj`), as on the smaller models, but far larger in blocks 1-4: relative error
+  0.926 / 0.609 / 0.699 / 0.384 (Qwen3-0.6B: 0.1-0.3). In those blocks the residual's largest value (58-78, channel
+  0) sits at window position 32, a token-specific outlier forming in the MLPs before the sink outlier of block 7.
+  The per-token exponent acts on these products, consistent with its x5.5 -> x3.0 at 2,048 tokens.
+* Next (job 1013947): two-token prefixes (`<|endoftext|>` twice, and `<|endoftext|>` + newline) against the one-token
+  prefix at 16 x 128, and the diagnosis with the two-token prefix, to see whether the window's sink outlier moves into
+  the prefix.
+
 **The 128-token ladder with the box (job 1012675, `glus2`; 16 x 128, prefix, `qk_balance`):** ratio to fp32 (95% CI)
 
 | Model (smoothing alpha) | smooth | + exp8 | glus 0.3 | glus 0.3 + exp8 | glus 0.5 | glus 0.5 + exp8 | glus 0.7 | glus 0.7 + exp8 |
