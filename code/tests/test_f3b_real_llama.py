@@ -53,6 +53,15 @@ def test_the_llama_branch_is_the_main_recipe_with_the_prefix(built):
     assert info["logit_scale"] > 0
 
 
+def test_the_shape_check_takes_the_llama_head_as_built(built):
+    """v1_bytes' shape check: a real Llama head has the benchmark's row length (no folded bias, unlike OPT's)."""
+    model, calib, graph, info = built
+    v1b = sys.modules["v1_bytes"]
+    cfg = rl.config_of(model.config, "tiny")
+    res = v1b.shape_check(graph, cfg, cfg.n_layers, True, True, calib[:1, :16])
+    assert res["problems"] == []
+
+
 @pytest.mark.parametrize("rule", ["greedy", "sample"])
 @pytest.mark.parametrize("mode", ["C", "Kpre"])
 def test_generated_responses_prove_and_verify(built, rule, mode):

@@ -78,6 +78,12 @@ def load_real_llama(name: str, seq: int, n_queries: int):
     return model, queries, SimpleNamespace(ids=calib, prefix=prefix, prefix_info=info)
 
 
+def recipe_name(calib, recipe: str) -> str:
+    """The recipe a real graph was built with, for the records: ``"main"`` (``real_llama.MAIN_RECIPE``) for a
+    Llama-family checkpoint (its calibration carries the fixed prefix), else the OPT recipe asked for."""
+    return "main" if hasattr(calib, "prefix") else recipe
+
+
 def load_real(name: str, seq: int, n_queries: int, calib_seq: int = 0, recipe: str = "legacy"):
     """``(model, queries, calib)``: the fp32 checkpoint ``name`` (``9_quality/common.load_opt``), ``n_queries``
     WikiText-2 windows of ``seq`` tokens from the start of the test split and one calibration window of
@@ -144,8 +150,9 @@ def peaks(device) -> dict:
 # ------------------------------------------------------------------ the accounting (T7)
 def shape_check(graph, cfg, n_layers: int, prune_last: bool, real: bool, x: torch.Tensor) -> dict:
     """``graph``'s weight ops against ``analytic.decoder_shapes(cfg, n_layers, prune_last)`` (rows and row length,
-    in order; a real checkpoint's LM head has one more column, the final norm's folded bias) and its claim columns
-    on ``x`` against ``decoder_claim_columns``."""
+    in order; a real OPT checkpoint's LM head has one more column, its final LayerNorm's folded bias, while a real
+    Llama-family head (final RMSNorm, no bias) has the benchmark's row length) and its claim columns on ``x`` against
+    ``decoder_claim_columns``."""
     from pvi.fullcheck.analytic import decoder_claim_columns, decoder_shapes
     shapes = decoder_shapes(cfg, n_layers, prune_last)
     mats = graph.mat_ops
@@ -153,7 +160,8 @@ def shape_check(graph, cfg, n_layers: int, prune_last: bool, real: bool, x: torc
         return {"problems": [f"{len(mats)} weight ops, the model {len(shapes)}"], "claim_columns": False}
     problems = []
     for s, op in zip(shapes, mats):
-        want = (s.n_rows, s.row_length + (1 if real and s.name == "head" else 0))
+        folded = real and s.name == "head" and cfg.norm == "layernorm"
+        want = (s.n_rows, s.row_length + (1 if folded else 0))
         if (op.n_rows, op.row_length) != want:
             problems.append(f"{op.name} ({s.name}): {(op.n_rows, op.row_length)}, the model {want}")
     cols = graph.claim_columns(x)
@@ -340,11 +348,13 @@ def main() -> int:
     sha = git_sha(CODE)
     reset_peaks(args.device)
     t0 = time.perf_counter()
+    recipe_used = None
     if args.real:                     # the checkpoint's weights; queries are WikiText-2 windows
         if args.layers:
             raise SystemExit("--real builds every block of the checkpoint")
         model, wins, calib = load_real(args.real, args.seq, max(2, args.reps + 1), args.calib_seq, args.recipe)
         graph, _ = real_graph(model, calib, args.smooth, args.prune_last, args.recipe)
+        recipe_used = recipe_name(calib, args.recipe)
         del model
         n_layers = len([op for op in graph.ops if getattr(op, "note", "") == "attention"])
         x = wins[0]
@@ -356,7 +366,7 @@ def main() -> int:
         real_queries = None
     build_s = time.perf_counter() - t0
     head = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None, "smooth": args.smooth,
-            "recipe": args.recipe if args.real else None,
+            "recipe": recipe_used,
             "calib_seq": (args.calib_seq or args.seq) if args.real else None, "layers": n_layers, "seq": args.seq,
             "prune_last": args.prune_last, "lmax": args.lmax, "graph_digest": graph.digest().hex(),
             "shapes": shape_check(graph, cfg, n_layers, args.prune_last, bool(args.real), x), "build_s": build_s,

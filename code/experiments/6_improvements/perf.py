@@ -234,6 +234,7 @@ def main() -> int:
             raise SystemExit("--real builds every block of the checkpoint")
         v1b = _load("v1_bytes", "experiments/8_v1/v1_bytes.py")
         model, queries, calib = v1b.load_real(args.real, args.seq, args.queries + 1, args.calib_seq, args.recipe)
+        recipe_used = v1b.recipe_name(calib, args.recipe)
         for prune in prunes:
             graphs[prune], _ = v1b.real_graph(model, calib, args.smooth, prune, args.recipe)
             model_ops[prune] = None    # planned from its own weight ops (OPT's LM head has a bias column)
@@ -308,7 +309,7 @@ def main() -> int:
             timing, nbytes, prove, verify = _medians(runs)
             out = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None,
                    "smooth": args.smooth if args.real else None,
-                   "recipe": args.recipe if args.real else None,
+                   "recipe": recipe_used if args.real else None,
                    "calib_seq": (args.calib_seq or args.seq) if args.real else None,
                    "seq": seq, "layers": args.layers or None,
                    "mode": mode, "policy": policy, "wire": wire,
