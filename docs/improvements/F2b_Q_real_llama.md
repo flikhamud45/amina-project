@@ -1171,6 +1171,17 @@ chose six tokens; the fp32 reference ran on the CPU (14,612 s; perplexity 6.478)
 * The six prefix tokens push each scored window to positions 6-2,053, just past OpenLLaMA's 2,048-token training
   length, for the reference and the integer model alike.
 
+**Qwen3-4B-Base at 2,048 tokens: the recipe does not carry over (job 1013332, s-005, git 207b798).** Prefix `auto` (one
+token, `<|endoftext|>`), `qk_balance`, smoothing alpha 0.45; fp32 reference 7.946 on the CPU (9,651 s; job 1013018 had
+run out of GPU memory loading it): smooth **x5.54** [5.35, 5.74], smooth-exp8 x3.02 [2.95, 3.09], glus0.5 x5.33,
+glus0.5-exp8 **x2.97** [2.91, 3.05] (top-1 0.46-0.55). The same cells give x1.46 / x1.24 / x1.46 / x1.21 on
+Qwen3-1.7B. So Qwen3-4B has a failure the smaller models do not, and searching settings blindly is not the next step:
+the per-block diagnosis (`llama_diag.py`) and the op attribution over every block (`llama_attrib.py --blocks all`),
+both with the prefix and the `smooth55` recipe of the Qwen3-0.6B diagnosis (Sec. 13.7), run as job 1013928 (CPU node).
+Candidates to check against it: a massive activation that one prefix token does not take (Qwen3-4B has 36 blocks), a
+query projection wider than the residual stream (32 heads of 128 = 4,096 against hidden 2,560, where Qwen3-1.7B has
+2,048 = 2,048), or a block whose norm gains defeat the balance.
+
 **The 128-token ladder with the box (job 1012675, `glus2`; 16 x 128, prefix, `qk_balance`):** ratio to fp32 (95% CI)
 
 | Model (smoothing alpha) | smooth | + exp8 | glus 0.3 | glus 0.3 + exp8 | glus 0.5 | glus 0.5 + exp8 | glus 0.7 | glus 0.7 + exp8 |
