@@ -849,7 +849,11 @@ def suite_llm(args, env) -> None:
                                                          **({"prune_last": True} if prune else {}),
                                                          **_plan_config(coms)}, env)
                     r.rec("build_graph", build_s, "s", **_cs(setup_cs, "build_graph"))
-                    r.rec("commit_total", commit_s, "s", **_cs(setup_cs, "commit_total"))
+                    if coms.setup_cache == "hit":   # rebuilt from the setup cache: a load time, never commit_total
+                        r.rec("commit_cached_load", commit_s, "s", setup_cache="hit")
+                    else:
+                        r.rec("commit_total", commit_s, "s", setup_cache=coms.setup_cache,
+                              **_cs(setup_cs, "commit_total"))
                     if coms.plan is not None:
                         _record_setup(r, coms, mats)
                     _record_peaks(r, device)

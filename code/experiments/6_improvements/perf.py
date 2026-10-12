@@ -321,6 +321,7 @@ def main() -> int:
                    "fs": args.fs, "prove_s": prove, "verify_s": verify, **_spread(runs),
                    "proof_bytes": sum(nbytes.values()),
                    "timings": timing, "bytes": nbytes, "build_s": build_s, "commit_s": commit_s.get((prune, policy)),
+                   "setup_cache": getattr(coms.get((prune, policy)), "setup_cache", None),  # "hit": commit_s is a load
                    **({"tampers": tampered[prune, policy, looked, wire]} if tampered else {}),
                    "peak": peak, "build_peak": build_peak,
                    "host": platform.node(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}

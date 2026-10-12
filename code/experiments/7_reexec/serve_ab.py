@@ -500,6 +500,7 @@ def build(name: str, layers: int, args, device: torch.device) -> Built:
             com = commit_graph(graph, RATE, device=device, policy=args.policy, model_ops=shapes)
             _sync(device)
             setup["commit_s"] = time.perf_counter() - t0
+            setup["setup_cache"] = com.setup_cache              # "hit": commit_s is a load from the setup cache
             params = params_for(args.lam, n_checks, rate=RATE, plan=com.plan, fiat_shamir=True)
             verifiers[mode] = TimedChallenges(graph.public(), params, "C", publics=com.publics,
                                               groups=com.group_publics, tables=com.table_publics, lean=True,

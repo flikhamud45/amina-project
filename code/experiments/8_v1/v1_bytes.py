@@ -375,7 +375,8 @@ def main() -> int:
         out = {**head, "mode": mode, "policy": policy, "chosen": None if plan is None else plan.policy, "fs": args.fs,
                "v0_accepted": ref["accepted"], "v0_bytes": ref["bytes"], "v1_bytes": b1, "v0_total": total0,
                "v1_total": total1, "ratio": total0 / total1, **stats, "reps": p1.reps, "columns": p1.columns,
-               "setup_s": setup_s, "v0_query_s": v0_s, "v1_bytes_s": v1_s}
+               "setup_s": setup_s, "setup_cache": coms.setup_cache if mode == "C" else None,
+               "v0_query_s": v0_s, "v1_bytes_s": v1_s}
         good = ref["accepted"] and all(accounting["v0"][k] for k in V0_EXACT)
         if args.full:
             t0 = time.perf_counter()

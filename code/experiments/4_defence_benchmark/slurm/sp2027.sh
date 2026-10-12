@@ -23,7 +23,12 @@
 #     quality  [optional] Llama-2-13B quality (needs the runner's own Llama-2 licence: PVI_LLAMA_LICENCE=1)
 #     long   [optional] V-LONG-b: Llama-2-7B shapes, 2-3 blocks, 2k-16k tokens, verifier against every baseline
 # Switches (environment):
-#     PVI_C_POLICY   mode C's commitment plan for every timed mode-C cell (default auto; PS2 fixes it on Wed 21 Oct)
+#     PVI_C_POLICY   mode C's commitment plan for every timed mode-C cell (default cnn18c: PS2's decision, option (c),
+#                    affordable because of the setup cache; `auto` picks cnn16c/cnn17c for the 7B/13B models)
+#     PVI_SETUP_CACHE  the setup cache's folder (default logs/$PVI_PLATFORM/.setup_cache; empty disables it): the first
+#                    job that commits a model under a plan stores its Merkle leaves (about 15-70 MB) and every later
+#                    job rebuilds the same commitment from them (protocol.commit_graph; the setup tier never uses it).
+#                    A job that hit the cache records its load time as commit_cached_load, never as commit_total.
 #     PVI_DRYRUN=1   print every sbatch line (and each tier's job count, job-limit sum and estimate); submit nothing
 #     PVI_REHEARSAL=1  each tier's smallest cells only (GPT-2 / OPT-125M, 2 blocks, short prompts): the whole package
 #                    in about an hour on an RTX 2080 Ti node (F6 part 13), or a platform smoke (part 14)
@@ -56,7 +61,7 @@ ME="${USER:-$(id -un)}"
 if [ -n "$DRY" ] || [ -n "$LOCAL" ]; then QUEUED=""; else QUEUED="$(squeue -h -u "$ME" -o %j)"; fi
 [ -n "$DRY" ] || mkdir -p "$LOGS"
 PY="${PVI_PYTHON:-$ROOT/.venv/bin/python}"
-POL="${PVI_C_POLICY:-auto}"
+POL="${PVI_C_POLICY:-cnn18c}"
 QH="${PVI_QUERIES_HEAD:-5}"
 Q="${PVI_QUERIES:-3}"
 if [ -n "$REH" ]; then QH=2; Q=2; fi
@@ -67,8 +72,9 @@ DEP="${PVI_DEP:-}"           # the next job's dependency (afterok:<id> / afteran
 # the jobs' environment; TRITON_CACHE_DIR, the native kernels' folder and the allocator setting are exported too, so
 # strong_gpu.sh's bench.sbatch jobs (which inherit the submitting shell's environment) get them as well
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$ROOT/$LOGS/.triton}" PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PVI_SETUP_CACHE="${PVI_SETUP_CACHE-$ROOT/$LOGS/.setup_cache}"      # (set and empty: no cache)
 ENVS="cd $ROOT/code && export PYTHONPATH=$ROOT/code/src${PVI_EXTRA_PYTHONPATH:+:$PVI_EXTRA_PYTHONPATH} OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 NVIDIA_TF32_OVERRIDE=0 \
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True TRITON_CACHE_DIR=$TRITON_CACHE_DIR PVI_SETUP_CACHE=$PVI_SETUP_CACHE"
 # ${PVI_PY_INCLUDE:+...}: hosts without the Python headers need a copy for Triton's launcher (docs/improvements/I_server_setup.md)
 [ -n "${PVI_PY_INCLUDE:-}" ] && ENVS="$ENVS PVI_PY_INCLUDE=$PVI_PY_INCLUDE"
 if [ -n "${CXX:-}" ]; then

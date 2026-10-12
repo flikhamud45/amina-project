@@ -78,7 +78,8 @@ def main() -> int:
     build_s = time.perf_counter() - t0
     shapes = decoder_shapes(cfg, prune_last=True)
     t0 = time.perf_counter()
-    coms = commit_graph(graph, RATE, device=device, policy=args.policy, model_ops=shapes)
+    coms = commit_graph(graph, RATE, device=device, policy=args.policy, model_ops=shapes,
+                        cache=False)                  # this tier measures the setup itself: never the setup cache
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     commit_s = time.perf_counter() - t0

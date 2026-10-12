@@ -204,7 +204,8 @@ def main() -> int:
             "n_layers": n_layers, "prompt": args.prompt, "lam": args.lam, "rate": RATE, "fs": args.fs,
             "wire": True, "lean": True, "prune_last": True, "device": args.device,
             "verifier_device": args.verifier_device, "threads": args.threads, "build_s": build_s,
-            "commit_s": commit_s, "build_peak": build_peak, "host": platform.node(),
+            "commit_s": commit_s, "setup_cache": None if coms is None else coms.setup_cache,
+            "build_peak": build_peak, "host": platform.node(),
             "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
     ok = True
     for g in args.gen:
