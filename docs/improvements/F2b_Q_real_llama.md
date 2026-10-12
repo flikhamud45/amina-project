@@ -1144,8 +1144,8 @@ with its 95% bootstrap interval / top-1):
   | 0.80 | x1.323 [1.295, 1.359] | x1.168 [1.160, 1.178] | x1.255 [1.231, 1.286] | x1.315 [1.277, 1.363] |
 
   **Best TinyLlama: x1.122 at 2,048 tokens** (smoothing 0.75, `glu_smooth` 0.2), inside the x1.15 target with its whole
-  interval. Smoothing 0.75 is the optimum in both directions; `glu_smooth` improves monotonically from 0.4 to 0.2, so
-  0.05 / 0.1 / 0.15 run as job 1013574.
+  interval. Smoothing 0.75 is the optimum in both directions; `glu_smooth` improves from 0.4 to 0.2 and then levels
+  off: 0.15 / 0.1 / 0.05 give x1.125 / x1.124 / x1.129 (job 1013574), so 0.2 stays the setting.
 
 **OpenLLaMA-7B v2, a stand-in for Llama-2-7B (job 1013162, s-004, git 207b798).** `openlm-research/open_llama_7b_v2`
 (Apache 2.0, not gated) has exactly Llama-2-7B's shapes; with `--config llama2-7b --structure` the integer graph's
