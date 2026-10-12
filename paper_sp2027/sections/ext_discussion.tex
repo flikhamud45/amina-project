@@ -129,7 +129,10 @@ shorter prompts. At 2{,}048 tokens the proof is 6.6\,GB (6.4\,GB in $\Kpre$), ab
 weights, and takes 5.3\,s to transfer at 10\,Gb/s \todo{F7: transfer times}. A client that sends
 more than about 21 short prompts, or one long one, therefore receives more bytes than a download of
 the weights, and the protocol pays off only for a client that cannot store or run the model, or
-will not. On one RTX~2080~Ti, proving a 2{,}048-token OPT-1.3B prompt costs
+will not (Figure~\ref{fig:breakeven}). A $\Kpre$ client holds the weights and computes its key once
+(12.7\,s for Llama-2-7B on 8 Xeon threads). A provider may also serve with the exact model and prove
+later, on request, with the same proof; it then still pays the integer engine's cost over fp16
+serving (4--10$\times$ on OPT-1.3B), and only the queries it proves are checked. On one RTX~2080~Ti, proving a 2{,}048-token OPT-1.3B prompt costs
 4.1--8.6$\times$ our exact forward pass and 19--40$\times$ an fp16 one \todo{L40S: prover against
 unverified fp16 and int8 inference, same GPU}. Sending one opening and one fold for a batch of
 queries whose claims are all fixed before the challenges amortises the opened columns over the

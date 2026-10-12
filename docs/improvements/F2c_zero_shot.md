@@ -3,7 +3,8 @@
 Plan 2 item F2c (`SP2027_PLAN2.md` Sec. 3.2, should, rank 2; reviewer points C-W5 "there are no downstream tasks",
 C-Q2, consolidated change 7). Code: `code/experiments/9_quality/zeroshot.py`, test `code/tests/test_zeroshot.py`
 (commit 6b31e45). Status: harness done and tested; on the cluster (job 1011383) the check passed and OPT-125M's fp16 accuracies
-reproduce the published harness numbers within 0.2 point (OPT-125M) and 0.1 point (OPT-1.3B); with F2a's round-1
+reproduce the published harness numbers (Pythia's released results, Sec. 5a) within 0.16 point (OPT-125M), 0.26
+point (OPT-1.3B, three ARC-c documents) and 0.11 point (OPT-6.7B); with F2a's round-1
 recipe the integer models lose 1.0 (OPT-125M) and 0.7 (OPT-1.3B) point on average, OPT-1.3B significantly only on
 LAMBADA (-3.0). The paper builder's current recipe loses 2.8 points (LAMBADA -11.3), which supports F2a's switch to
 channel maxima (Sec. 5).
@@ -93,13 +94,13 @@ within rounding (0.028 nats, greedy flags all equal), and the integer logits equ
 | Task | n | fp16 acc / acc_norm | integer acc / acc_norm | difference acc (95% CI) | same | published fp16 (harness) |
 |---|---:|---|---|---|---:|---|
 | LAMBADA | 5,153 | 37.86 (ppl 26.0) | 36.89 (ppl 28.9) | -0.97 [-1.84, -0.12] | 0.901 | 37.9 |
-| HellaSwag (2,000) | 2,000 | 28.90 / 29.40 | 29.00 / 29.65 | +0.10 [-0.65, +0.85] | 0.935 | 29.2 / 31.3 (all 10,042) |
+| HellaSwag (2,000) | 2,000 | 28.90 / 29.40 | 29.00 / 29.65 | +0.10 [-0.65, +0.85] | 0.935 | 29.2 / -- (all 10,042) |
 | PIQA | 1,838 | 63.06 / 62.08 | 60.72 / 60.83 | -2.34 [-3.59, -1.14] | 0.928 | 63.0 / 62.0 |
-| ARC-e | 2,376 | 43.52 / 39.94 | 41.58 / 37.08 | -1.94 [-3.16, -0.72] | 0.865 | 43.5 / 39.9 |
-| ARC-c | 1,172 | 18.94 / 22.78 | 19.45 / 23.21 | +0.51 [-0.68, +1.79] | 0.881 | 19.0 / 22.9 |
+| ARC-e | 2,376 | 43.52 / 39.94 | 41.58 / 37.08 | -1.94 [-3.16, -0.72] | 0.865 | 43.5 / 40.0 |
+| ARC-c | 1,172 | 18.94 / 22.78 | 19.45 / 23.21 | +0.51 [-0.68, +1.79] | 0.881 | 18.9 / 22.8 |
 | WinoGrande | 1,267 | 50.12 | 48.86 | -1.26 [-4.03, +1.50] | 0.755 | 50.3 |
 
-* **Validation.** The fp16 accuracies reproduce the harness's published OPT-125M numbers within 0.2 point on every
+* **Validation.** The fp16 accuracies reproduce the harness's published OPT-125M numbers within 0.16 point on every
   task scored in full (the plan's criterion is 0.5); HellaSwag is the fixed 2,000-document subset, whose accuracy is
   within its sampling error of the full set's.
 * **The integer model** loses 1.0 point on average over the six tasks (acc), at most 2.3 (PIQA); three of the six
@@ -112,16 +113,17 @@ within rounding (0.028 nats, greedy flags all equal), and the integer logits equ
 |---|---:|---|---|---|---|---:|---|
 | LAMBADA | 5,153 | 57.85 (ppl 6.64) | 54.82 (ppl 7.80) | -3.03 [-3.78, -2.29] | | 0.927 | 57.9 |
 | HellaSwag (2,000) | 2,000 | 39.75 / 52.55 | 40.05 / 52.60 | +0.30 [-0.20, +0.85] | +0.05 [-0.80, +0.90] | 0.977 | 41.5 / 53.7 (all 10,042) |
-| PIQA | 1,838 | 71.82 / 72.42 | 71.22 / 72.20 | -0.60 [-1.52, +0.27] | -0.22 [-1.09, +0.71] | 0.960 | 71.7 / 72.3 |
-| ARC-e | 2,376 | 57.11 / 51.01 | 56.57 / 50.67 | -0.55 [-1.56, +0.42] | -0.34 [-1.18, +0.42] | 0.918 | 57.0 / 51.0 |
-| ARC-c | 1,172 | 23.38 / 29.52 | 23.81 / 28.33 | +0.43 [-0.94, +1.79] | -1.19 [-2.39, +0.00] | 0.908 | 23.4 / 29.6 |
+| PIQA | 1,838 | 71.82 / 72.42 | 71.22 / 72.20 | -0.60 [-1.52, +0.27] | -0.22 [-1.09, +0.71] | 0.960 | 71.7 / 72.5 |
+| ARC-e | 2,376 | 57.11 / 51.01 | 56.57 / 50.67 | -0.55 [-1.56, +0.42] | -0.34 [-1.18, +0.42] | 0.918 | 57.0 / 50.9 |
+| ARC-c | 1,172 | 23.38 / 29.52 | 23.81 / 28.33 | +0.43 [-0.94, +1.79] | -1.19 [-2.39, +0.00] | 0.908 | 23.1 / 29.4 |
 | WinoGrande | 1,267 | 59.75 | 58.96 | -0.79 [-2.60, +1.03] | | 0.885 | 59.7 |
 
-* The fp16 accuracies again reproduce the published numbers within 0.1 point on every task scored in full.
-* **Caveat on the "published" column (both models):** the values are the commonly reported lm-evaluation-harness
-  zero-shot results for these checkpoints, written down from the literature without a single cited table; before
-  the paper quotes the agreement, they must be checked against a citable source (or the harness itself run once on
-  fp16, which needs its environment).
+* The fp16 accuracies again reproduce the published numbers on every task scored in full: within 0.11 point except
+  ARC-c acc, +0.26 point (274 against 271 of 1,172 documents).
+* **The "published" column** (all three models; sources in Sec. 5a, checked 12 Oct): the five tasks scored in full
+  are Pythia's released lm-evaluation-harness results for these checkpoints (Table 16 for acc; the result files for
+  acc_norm and LAMBADA perplexity); HellaSwag acc is Cerebras-GPT Table 8 and acc_norm Mamba Table 3 (no citable
+  acc_norm for OPT-125M).
 * The integer OPT-1.3B loses 0.7 point of accuracy on average over the six tasks (the plan expected at most 1 point
   for a model within x1.03-1.05 in perplexity; this recipe gives x1.029 at 2,048 tokens). Only LAMBADA's loss is
   significant: 3.0 points (its continuation perplexity 6.64 -> 7.80), the task that reads the most exact
@@ -186,17 +188,16 @@ tasks); `--pair` gives the paired differences on the same documents:
 |---|---|---|---|---|---:|---|
 | LAMBADA | 67.69 (ppl 4.25) | 67.16 (ppl 4.33) | -0.52 [-1.03, -0.04] | | 0.965 | 67.7 (ppl 4.25) |
 | HellaSwag (2,000) | 48.85 / 66.55 | 48.65 / 66.30 | -0.20 [-0.65, +0.30] | -0.25 [-0.85, +0.35] | 0.984 | 50.5 / 67.2 (all 10,042) |
-| PIQA | 76.39 / 76.55 | 76.33 / 76.61 | -0.05 [-0.60, +0.49] | +0.05 [-0.65, +0.76] | 0.987 | 76.3 / 76.5 |
+| PIQA | 76.39 / 76.55 | 76.33 / 76.61 | -0.05 [-0.60, +0.49] | +0.05 [-0.65, +0.76] | 0.987 | 76.3 / 76.4 |
 | ARC-e | 65.61 / 60.06 | 65.74 / 60.65 | +0.13 [-0.59, +0.80] | +0.59 [-0.04, +1.22] | 0.963 | 65.6 / 60.1 |
-| ARC-c | 30.55 / 34.81 | 31.06 / 34.39 | +0.51 [-0.60, +1.62] | -0.43 [-1.45, +0.51] | 0.939 | 30.5 / 34.6 |
+| ARC-c | 30.55 / 34.81 | 31.06 / 34.39 | +0.51 [-0.60, +1.62] | -0.43 [-1.45, +0.51] | 0.939 | 30.5 / 34.7 |
 | WinoGrande | 65.35 | 65.82 | +0.47 [-0.87, +1.89] | | 0.935 | 65.3 |
 
 **Mean +0.06 points**: the certified OPT-6.7B is at fp16's accuracy. LAMBADA's -0.5 is the only interval that
 excludes 0, and only just; the integer model picks fp16's answer on 94-99% of the documents. With the other two
 models, the loss falls with size: mean -1.03 / -0.82 / +0.06 and LAMBADA -3.1 / -2.0 / -0.5 for OPT-125M / 1.3B /
-6.7B, in line with the perplexity ratios at 2,048 tokens (x1.076 / x1.026 / x1.008). The fp16 numbers agree with the
-commonly reported harness values within 0.2 point on the tasks scored in full (the same caveat on that column as
-above).
+6.7B, in line with the perplexity ratios at 2,048 tokens (x1.076 / x1.026 / x1.008). The fp16 numbers agree with
+Pythia's released harness results within 0.11 point on the tasks scored in full (Sec. 5a).
 
 ## 6. Limitations
 
@@ -211,3 +212,31 @@ above).
   operation runs as on one device (the test compares the split and unsplit logits exactly on the CPU); on two GPUs
   the fp16 results may still differ from a one-device run in the last bits of the kernels' rounding, as fp16 runs on
   different cards do.
+
+## 5a. The published reference values (12 Oct 2026)
+
+Found by a literature search and checked independently by fetching each source (both read-only agents; every value
+below was read from the source, none recomputed from memory):
+
+| Source | Where | Gives |
+|---|---|---|
+| Biderman et al., Pythia, ICML 2023 (PMLR 202, pp. 2397-2430), `biderman2023pythia` | Table 16, App. G.3, p. 29: zero-shot OPT-125M to 66B | acc of LAMBADA (OpenAI), PIQA, WinoGrande, ARC-e, ARC-c (three decimals, with stderr) |
+| Pythia's released result files: EleutherAI/pythia, commit 27326cc9b468ac7a086a8c53fee7108805dd8380 (26 May 2023), `evals/opt/opt-{125m,1.3b,6.7b}.json` | `hf-causal`, `num_fewshot: 0`, `limit: null`, task version 0 | the same acc at full precision, acc_norm (PIQA, ARC-e, ARC-c) and LAMBADA perplexity; no HellaSwag |
+| Dey et al., Cerebras-GPT, arXiv 2304.03208, `dey2023cerebrasgpt` | Table 8, App. C.2, p. 24 (unnormalised acc, p. 22) | HellaSwag acc: 29.2 / 41.5 / 50.5 |
+| Gu and Dao, Mamba, arXiv 2312.00752 v2, `gu2023mamba` | Table 3, p. 12; App. E.2, p. 32 (HellaSwag is length-normalised) | HellaSwag acc_norm: 53.7 (OPT-1.3B), 67.2 (OPT-6.7B) |
+
+Our fp16 values minus the result files, in points (acc, then acc_norm):
+
+| Task | OPT-125M | OPT-1.3B | OPT-6.7B |
+|---|---|---|---|
+| LAMBADA acc (ppl) | -0.04 (26.0 / 26.02) | -0.08 (6.64 / 6.644) | -0.02 (4.25 / 4.253) |
+| PIQA | +0.06 / +0.06 | +0.11 / -0.05 | +0.11 / +0.11 |
+| ARC-e | 0.00 / -0.04 | +0.08 / +0.08 | 0.00 / -0.04 |
+| ARC-c | 0.00 / 0.00 | +0.26 / +0.08 | 0.00 / +0.08 |
+| WinoGrande | -0.16 | 0.00 | +0.08 |
+
+The largest gap is 0.26 point (OPT-1.3B ARC-c acc, three documents). On the 2,000-document HellaSwag subset our fp16
+values are 0.30 / 1.75 / 1.65 points below the full-set acc and 1.15 / 0.65 below acc_norm (OPT-1.3B / 6.7B), each
+within twice the subset's sampling error (about 1.0 point); those sources ran their own harness set-ups. The paper
+(`ext_generation.tex`, zero-shot paragraph) cites Pythia for the five tasks and the other two for HellaSwag. Running
+lm-evaluation-harness itself is not needed for this claim.

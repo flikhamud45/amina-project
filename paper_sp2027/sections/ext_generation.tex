@@ -204,8 +204,10 @@ at 128 tokens).
 LM Evaluation Harness, re-implemented with its prompts and length normalisation (a fixed subset of
 2{,}000 HellaSwag documents; every other task in full). Each integer model is compared with the same
 checkpoint in fp16 on the same documents, with paired bootstrap intervals. The fp16 accuracies
-reproduce the harness's reported values within 0.2 points on the tasks scored in full
-\todo{F2c: a citable source for the harness's fp16 values}. The loss
+agree with the harness's results for these checkpoints released with Pythia (its Table~16 and result
+files)~\cite{biderman2023pythia} within 0.3 points on the five tasks scored in full (at most three
+documents), and on the HellaSwag subset within twice its sampling error of the full-set values
+of~\cite{dey2023cerebrasgpt,gu2023mamba}. The loss
 falls with the model's size, as its perplexity ratio does, and is concentrated on LAMBADA, which
 scores exact next-token predictions; the integer model picks the fp16 answer on 78--99\% of the
 documents.

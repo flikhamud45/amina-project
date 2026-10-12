@@ -22,22 +22,18 @@
 \section{Discussion and Limitations}
 \label{sec:discussion}
 
-\para{Options for a client.} Of the options in Table~\ref{tab:options}
-(Section~\ref{sec:eval-reexec}), a GPU TEE is cheapest if the client trusts the vendor's hardware,
-attestation and side-channel resistance. A client with the weights and a GPU should re-execute.
-zkLLM hides the weights but proves for minutes, and CommitLLM is cheap but statistical. Our
-protocol serves a client with neither the weights nor a GPU that will not trust hardware: in mode
-$\sC$ it holds a few 32-byte roots and checks a 64-token proof, about 21$\times$ smaller than the weights, in about a second on
-a CPU; a $\Kpre$ client holds the weights and computes its key once (12.7\,s for Llama-2-7B on 8 CPU
-threads). For the provider, proving costs 4.1--8.6$\times$ our exact forward pass without proofs and
-19--40$\times$ an fp16 one on the same GPU (OPT-1.3B, 2{,}048 tokens; Section~\ref{sec:eval-cost}).
-A provider may also serve with the exact model and prove later, on request, with the same proof.
+\para{Who the protocol serves.} It serves a CPU client of an open-weight model that holds neither
+the weights nor a GPU and will not trust hardware, and a gateway or auditor with the GPU verifier. A
+client with the weights and a GPU should re-execute. The regime is narrow
+(Figure~\ref{fig:breakeven}; Llama-2-7B, Fiat--Shamir). Below about 22 queries of 64 tokens,
+mode-$\sC$ proofs cost the client fewer bytes than one download of the int8 weights; at 2{,}048
+tokens the break-even is one query, or 2.3 with V1. A $\Kpre$ client that keeps the weights
+verifies faster than the fastest exact re-execution on its CPU only on links faster than
+0.59--0.70\,Gb/s (V1: 0.47\,Gb/s).
 
 \para{Proof size.} The proof carries every weight operation's output, so it grows with the prompt.
-For Llama-2-7B it reaches the size of the int8 weights at about 2{,}050 tokens without V1 and, by
-the byte model, at about 4{,}500 with it. Without V1, a client thus receives more bytes than
-the weights after one long prompt or about 21 short ones, and gains only if it cannot run the
-model. Committing the activations, as zkLLM does, would remove this growth.
+For Llama-2-7B it reaches the size of the int8 weights at about 2{,}100 tokens without V1 and, by
+the byte model, at about 4{,}500 with it. Committing the activations, as zkLLM does, would remove this growth.
 
 \para{Weights and trust.} The protocol is not zero-knowledge: the claims of about
 $\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$. It therefore targets
@@ -45,8 +41,8 @@ open-weight models. For private weights it shares the limitation that Hollow-LLM
 zkSNARKs~\cite{hollowllm}. The setup proof is untimed \todo{F6}.
 
 \para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens, and Llama-2-7B's shapes
-up to 16{,}384, where the CPU verifier is still about 2$\times$ faster than exact re-execution (5.0$\times$
-at 2{,}048) and the proof reaches about 51\,GB~\cite{fullversion}; mixture-of-experts models are
+up to 16{,}384, where the CPU verifier is still about 2$\times$ faster than exact re-execution (4.7$\times$
+at 2{,}048, both non-interactive) and the proof reaches about 51\,GB~\cite{fullversion}; mixture-of-experts models are
 untested. Costs use random weights, which real OPT weights match
 (Section~\ref{sec:eval-setup}). The certified OPT models stay close to the floating-point model at 2{,}048 tokens
 (Section~\ref{sec:quality}), and so does a Llama of Llama-2-7B's shape ($\times$1.073), but our

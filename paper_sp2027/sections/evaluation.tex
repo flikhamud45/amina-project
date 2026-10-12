@@ -163,8 +163,7 @@ more: the single Llama-2-13B block in $\sC$ (1.81$\times$), whose opened columns
 share, and GPT-2 at 64 tokens (1.28--1.46$\times$). With real weights our design estimate is
 1.78--1.85$\times$ at 2{,}048 tokens, and the smoothed real OPT-125M measures 1.68$\times$ ($\sC$)
 and 1.77$\times$ ($\Kpre$) at 512 tokens, and the real OPT-6.7B 1.73$\times$ ($\Kpre$) at 2{,}048
-tokens. Real weights shrink v0's claims more than V1's values: on OPT-1.3B in $\Kpre$ at 64 tokens
-the ratio is 1.28$\times$, against 1.53$\times$ with random weights.
+tokens.
 
 \para{Time.} The prover pays for the GKR, about one leaf per sent value. At 2{,}048 tokens V1's
 prover thus takes about 10$\times$ as long as v0's (OPT-125M in $\sC$: 0.50 to 4.85\,s, 3.58\,s of
@@ -175,11 +174,6 @@ Llama-2-7B in $\Kpre$ at 2{,}048 tokens (Fiat--Shamir, V1 extrapolated from 2--3
 verifier, with native kernels for its final check, takes 45.4\,s and v0's 19.6\,s, 2.3$\times$
 \todo{F6: V1 timings, incl.\ Llama-2-7B in $\sC$ (over 11\,GB)}.
 
-\para{Bandwidth crossover.} With proving, transfer and verification in sequence, V1 is faster end
-to end on links slower than the bytes it saves divided by the prover and verifier time it adds.
-On the timed cells of Table~\ref{tab:eval-v1}, with the earlier v0 verifier, this is
-0.16--0.26\,Gb/s, and about 0.2\,Gb/s for the full Llama-2-7B above \todo{EV: crossover per cell
-of the L40S run}.
 
 % -------------------------------------------------------------------------------------
 \subsection{Verification Against Re-Execution}
@@ -199,34 +193,47 @@ of the L40S run}.
     \toprule
     & & \multicolumn{2}{c}{bytes per query} & \multicolumn{2}{c}{client time} & \\
     \cmidrule(lr){3-4}\cmidrule(lr){5-6}
-    Option & Holds & $T{=}64$ & 2{,}048 & $T{=}64$ & 2{,}048 & Guarantee \\
+    Option$^f$ & Holds & $T{=}64$ & 2{,}048 & $T{=}64$ & 2{,}048 & Guarantee \\
     \midrule
     Re-exec., CPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 4.1\,s & 93\,s & exact \\
     Re-exec., GPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 0.15\,s & 1.65\,s & exact \\
     GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\
     CommitLLM$^e$ & key & \multicolumn{2}{c}{144\,kB per token} & \multicolumn{2}{c}{0.66\,ms per token} & sampled$^b$ \\
-    zkLLM & comm. & -- & 183\,kB & -- & 2.36\,s & full, ZK \\
+    zkLLM~\cite{zkllm} & comm. & -- & 183\,kB & -- & 2.36\,s & full, ZK \\
     Ours, $\sC$ & roots & 325\,MB & 6.6\,GB & 1.0\,s & -- & full \\
     Ours, $\Kpre$ & key & 196\,MB & 6.4\,GB & 1.0\,s & 18.5\,s & full$^c$ \\
-    \quad with V1 & & \multicolumn{2}{c}{$\div$1.7--2.3$^d$} & & $\times$2.3 & full \\
+    \quad with V1$^d$ & key & -- & 2.8\,GB & -- & 45.4\,s & full \\
     \bottomrule
   \end{tabular}
 
   \smallskip
   \parbox{\columnwidth}{\footnotesize $^a$Exact. CPU: the faster of the integer forward pass (64
   tokens) and fp32 (2{,}048); a non-exact int8 engine takes 1.9/56\,s. GPU: the integer forward
-  pass on int8 tensor cores (extrapolated from 1--2 blocks); fp16 takes 0.037/0.57\,s. $^b$An edit passes a one-token response with probability about
-  99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$At 2{,}048 tokens,
-  measured with random weights (2.0--2.3$\times$) and on the real OPT-6.7B (1.73$\times$).
-  $^e$Llama-3.1-8B (32 layers of width 4{,}096, as Llama-2-7B), per audited token, as
-  reported~\cite{commitllm2026}: the trace state it retains per token, which an audit opens (Merkle
-  paths not counted), and the routine 10-layer check on an Apple M4; unaudited responses cost the
-  client nothing, and serving costs the provider 12--14\% more.}
+  pass on int8 tensor cores (extrapolated from 1--2 blocks); fp16 takes 0.034/0.64\,s. $^b$An edit passes a one-token response with probability about
+  99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$The claims divided by V1's
+  measured 2.3$\times$ (random weights; 1.73$\times$ on the real OPT-6.7B); its verifier under
+  Fiat--Shamir.
+  $^e$Llama-3.1-8B (Llama-2-7B's layers and width), per audited token, as
+  reported~\cite{commitllm2026}: retained trace state (Merkle paths not counted) and the routine
+  10-layer check on an Apple M4. $^f$Provider's cost over unverified serving: GPU TEE below
+  7\%~\cite{gpucc}, CommitLLM 12--14\%~\cite{commitllm2026}; ours 9.8--10.6$\times$ ($\Kpre$) and
+  19--154$\times$ ($\sC$) fp16 inference on one RTX~2080~Ti (Llama-2-7B, extrapolated from 1--2
+  blocks).}
 \end{table}
 
-In mode $\sC$ the client holds only the commitment and cannot re-run the model; in $\sK$ and
-$\Kpre$ it could. Table~\ref{tab:options} sets our verifier against exact re-execution (the integer
-forward pass, bit-identical to the claims) and against the other options a client has.
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{figures/ev_breakeven.pdf}
+  \caption{When a client of Llama-2-7B gains (random int8 weights, Fiat--Shamir). Left: the
+  client's bytes for $Q$ mode-$\sC$ queries of 64 or 2{,}048 tokens, and with V1, against one
+  download of the int8 weights (6.74\,GB). Right: a $\Kpre$ client's time for one 2{,}048-token
+  query, transfer plus verification on 8 Xeon threads, against the fastest exact re-execution on the
+  same threads (93.2\,s, fp32), by link speed}
+  \label{fig:breakeven}
+\end{figure}
+
+Table~\ref{tab:options} sets our verifier against exact re-execution, which only a client in $\sK$
+or $\Kpre$ can run, and against the other options of a client.
 
 \para{CPU.} With native exact kernels for every phase (an AVX-512 integer attention fused with its
 requantisation, one-pass recomputed operations, field products and claim decoding), our $\Kpre$
@@ -234,11 +241,15 @@ verifier checks a 2{,}048-token query of the full Llama-2-7B in 18.5\,s on 8 thr
 (19.6\,s non-interactive), against 93.2\,s for the fastest exact re-execution on the same threads
 (fp32; the exact integer forward pass takes 142\,s): 5.0$\times$ (4.7$\times$) faster. At 64
 tokens it takes 1.0\,s (1.4\,s), against 4.1\,s for the integer forward pass: 4.0$\times$
-(2.9$\times$). A standard int8 engine, which computes a different model, takes 1.9 and 56\,s. The
+(2.9$\times$). The
 CPU times of Table~\ref{tab:eval-llm} predate the kernels \todo{EPYC: the same cells}.
 
-\para{GPU.} On a GPU, re-execution is faster. The fp16 decoder runs Llama-2-7B at 2{,}048 tokens in
-0.57\,s on the 2080~Ti, while the base GPU verifier needed 4.95\,s in $\Kpre$ on the faster L40S.
+\para{Break-even.} A client that receives a proof of $B$ bytes over a link of $L$ bit/s and
+verifies it in $t_v$ is faster than a re-execution taking $t_r$ when $L > 8B/(t_r - t_v)$.
+Figure~\ref{fig:breakeven} plots this condition, and the client's bytes against one download of
+the weights, for the cells above.
+
+\para{GPU.} On a GPU, re-execution is faster.
 With our verifier improvements, OPT-1.3B in $\Kpre$ extrapolates to about 1.1\,s on the 2080~Ti,
 against 0.11\,s for its fp16 re-execution \todo{L40S: both on one GPU}. We do not claim that
 verification beats re-execution on a GPU; the GPU verifier suits an auditor or gateway that checks a

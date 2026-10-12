@@ -487,3 +487,37 @@
   pages   = {335--353},
   year    = {2014}
 }
+
+% F2c (12 Oct 2026): the published fp16 zero-shot values of the OPT checkpoints. Pythia's Table 16 (App. G.3, p. 29)
+% gives acc; its released result files (EleutherAI/pythia, commit 27326cc, evals/opt/opt-*.json) add acc_norm and
+% LAMBADA perplexity. Cerebras-GPT Table 8 gives HellaSwag acc; Mamba Table 3 with App. E.2 HellaSwag acc_norm.
+@inproceedings{biderman2023pythia,
+  author    = {Biderman, Stella and Schoelkopf, Hailey and Anthony, Quentin Gregory and Bradley, Herbie and O'Brien, Kyle and Hallahan, Eric and Khan, Mohammad Aflah and Purohit, Shivanshu and Prashanth, USVSN Sai and Raff, Edward and Skowron, Aviya and Sutawika, Lintang and van der Wal, Oskar},
+  title     = {Pythia: A Suite for Analyzing Large Language Models Across Training and Scaling},
+  booktitle = {Proceedings of the 40th International Conference on Machine Learning (ICML)},
+  series    = {Proceedings of Machine Learning Research},
+  volume    = {202},
+  pages     = {2397--2430},
+  publisher = {PMLR},
+  year      = {2023}
+}
+
+@misc{dey2023cerebrasgpt,
+  author        = {Dey, Nolan and Gosal, Gurpreet and Chen, Zhiming and Khachane, Hemant and Marshall, William and Pathria, Ribhu and Tom, Marvin and Hestness, Joel},
+  title         = {{Cerebras-GPT}: Open Compute-Optimal Language Models Trained on the {Cerebras} Wafer-Scale Cluster},
+  year          = {2023},
+  eprint        = {2304.03208},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  note          = {arXiv:2304.03208}
+}
+
+@misc{gu2023mamba,
+  author        = {Gu, Albert and Dao, Tri},
+  title         = {Mamba: Linear-Time Sequence Modeling with Selective State Spaces},
+  year          = {2023},
+  eprint        = {2312.00752},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  note          = {arXiv:2312.00752}
+}
