@@ -82,7 +82,7 @@ def test_attention_heads_match_the_reference_on_both_paths(t, m_s, device):
         q, k, v = _qkv(g, 2, 3, t, 16, pattern)
         raw = tr._attention_heads(q.to(device), k.to(device), v.to(device), m_s)
         assert torch.equal(raw.cpu(), ref.attention_heads(q, k, v, m_s, None)), pattern
-        for m_o in (1 << 22, 123_456_789):           # requantised into a strided view, as _attention writes it
+        for m_o in (1 << 22, 123_456_789):           # requantised into a strided view, as integer_attention writes it
             dst = torch.empty(2, t, 3, 16, dtype=torch.int64, device=device).transpose(1, 2)
             tr._write_output(dst, raw, m_o)
             assert torch.equal(dst.cpu(), ref.attention_heads(q, k, v, m_s, m_o)), (pattern, m_o)
@@ -101,7 +101,7 @@ def test_the_exp_lut_matches_the_formula_on_every_gap(m_s):
     assert lut.dtype == torch.int32 and int(lut[-1]) == 0 and lut.numel() - 1 == tr._exp_cap(m_s)
     d = torch.arange(lut.numel() + 5000)
     idx = ((d * m_s + (1 << 29)) >> 30).clamp(0, 255)
-    assert torch.equal(tr._EXP_TABLE[idx].to(torch.int32), lut[d.clamp(max=lut.numel() - 1)])
+    assert torch.equal(tr.EXP_TABLE[idx].to(torch.int32), lut[d.clamp(max=lut.numel() - 1)])
     assert (1 << 30) - (1 << 21) >= lut.numel() - 1         # every masked gap looks up LUT[-1] = 0
 
 
@@ -136,7 +136,7 @@ def test_grouped_attention_matches_the_reference_on_both_paths(hq, hkv, m_s, dev
     want = ref.attention(q, k, v, m_s, 1 << 21, hq, hkv, dh)
     for budget in (tr.ATTN_BYTES, 4 * b * t * t * 3, 8 * b * t * t):   # one group; groups of 3 (int32) or 1
         monkeypatch.setattr(tr, "ATTN_BYTES", budget)
-        got = tr._attention(q.to(device), k.to(device), v.to(device), m_s, 1 << 21, hq, hkv, dh).cpu()
+        got = tr.integer_attention(q.to(device), k.to(device), v.to(device), m_s, 1 << 21, hq, hkv, dh).cpu()
         assert torch.equal(got, want), budget
 
 
@@ -168,7 +168,7 @@ def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, t
     want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cuda", tq), pmax)
     got = attention_kernels.attention_core(q, k, v, lut, tq, pmax)
     assert torch.equal(got, want)
-    # strided inputs, as transformer._attention passes them (a transposed [B, T, H, dh] view)
+    # strided inputs, as transformer.integer_attention passes them (a transposed [B, T, H, dh] view)
     qs = q.transpose(1, 2).contiguous().transpose(1, 2)
     assert torch.equal(attention_kernels.attention_core(qs, k.transpose(1, 2).contiguous().transpose(1, 2), v, lut, tq,
                                                         pmax), want)

@@ -2,7 +2,7 @@
 
 The random-weight benchmark graphs use :data:`decoder.PROB_MAX` = 255 (8 bits); the certified models use
 :data:`decoder.CERTIFIED_PROB_MAX` = 2047 (11 bits), which keeps a long row's probability mass. Here: every torch path
-of :func:`decoder._attention` gives ``reference.attention``'s integers at both scales (the int32 path, the int64
+of :func:`decoder.integer_attention` gives ``reference.attention``'s integers at both scales (the int32 path, the int64
 fallback, grouped-query attention, queries of the last positions only, the output requantisation);
 ``build_decoder(prob_max=255)`` is the default graph, digest included, and another scale is bound by the digest; the
 probability-mass diagnostic (``hf_opt.attention_mass``) reads the probabilities the reference computes; and a 2047
@@ -37,7 +37,7 @@ def test_every_torch_path_gives_the_reference_integers(pmax, hq, hkv, tq, t, m_s
     q, k, v = _qkv(1, tq, t, hq, hkv, dh, seed=t + hq + m_s % 97)
     for m_o in (None, 1 << 21, 3 << 18):
         want = ref.attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax)
-        assert torch.equal(tr._attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax), want)
+        assert torch.equal(tr.integer_attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax), want)
     # the int32 path and the int64 fallback, head by head
     qh = q.reshape(1, tq, hq, dh).transpose(1, 2)
     kh = k.reshape(1, t, hkv, dh).transpose(1, 2).repeat_interleave(hq // hkv, 1)
@@ -56,8 +56,8 @@ def test_the_scales_differ_and_keep_more_mass_at_11_bits():
     q = torch.zeros(1, 1, dh, dtype=torch.int64)
     k = torch.zeros(1, t, dh, dtype=torch.int64)
     v = torch.ones(1, t, dh, dtype=torch.int64)
-    raw8 = tr._attention(q, k, v, 1 << 20, None, 1, 1, dh, 255)
-    raw11 = tr._attention(q, k, v, 1 << 20, None, 1, 1, dh, 2047)
+    raw8 = tr.integer_attention(q, k, v, 1 << 20, None, 1, 1, dh, 255)
+    raw11 = tr.integer_attention(q, k, v, 1 << 20, None, 1, 1, dh, 2047)
     assert int(raw8[0, 0, 0]) == 0                       # every p = round(255 / 2000) = 0
     assert int(raw11[0, 0, 0]) == t                      # every p = round(2047 / 2000) = 1
 

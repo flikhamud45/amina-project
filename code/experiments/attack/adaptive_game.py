@@ -73,7 +73,7 @@ from experiments.common.records import environment, write_json
 from pvi.attacks.tamper import smallest_flipping_value
 from pvi.baseline.analysis import locally_consistent_mask
 from pvi.baseline.path.params import ProtocolParams
-from pvi.baseline.path.sampling import PathSampler, UniformPathSampler, _as_distribution
+from pvi.baseline.path.sampling import PathSampler, UniformPathSampler, as_distribution
 from pvi.baseline.samplers import (GradientSaliencySampler, LocalContributionSampler, StaticImportanceSampler,
                                    TailFirstSampler, ZeroAwareContributionSampler, ZeroFirstSampler,
                                    weight_magnitude_importance)
@@ -187,7 +187,7 @@ def _accept_given_masks(
         dense = isinstance(layer, DenseLayer)
         if dense and not sampler.transition_depends_on_source:
             parent_idx = np.arange(architecture[layer_index - 1].n_neurons)
-            weights = _as_distribution(
+            weights = as_distribution(
                 sampler.transition_distribution(architecture, layer_index, 0, parent_idx, trace)
             )
             g = consistent * float(np.dot(weights, g))
@@ -195,7 +195,7 @@ def _accept_given_masks(
             # Factored form of ``c * (P g)``, where ``P[j,i] = |W[j,i]| u_i / sum_i |W[j,i]| u_i`` and
             # ``u = |a| + eps``: ``(P g)[j] = (|W| (u*g))[j] / (|W| u)[j]``, two matrix-vector products
             # instead of building the dense matrix.  A zero denominator falls back to the uniform mean,
-            # exactly as ``_as_distribution`` does per neuron -- so this matches the DP to round-off.
+            # exactly as ``as_distribution`` does per neuron -- so this matches the DP to round-off.
             eps = sampler._epsilon if isinstance(sampler, ZeroAwareContributionSampler) else 0.0
             absW = _abs_weight(network, layer_index)
             u = np.abs(trace[layer_index - 1].astype(np.float64)) + eps
@@ -210,13 +210,13 @@ def _accept_given_masks(
                 if not consistent[neuron]:
                     continue
                 parent_idx, _ = layer.parents(neuron)
-                weights = _as_distribution(
+                weights = as_distribution(
                     sampler.transition_distribution(
                         architecture, layer_index, neuron, parent_idx, trace
                     )
                 )
                 g[neuron] = float(np.dot(weights, below[parent_idx]))
-    start = _as_distribution(sampler.start_distribution(architecture, trace))
+    start = as_distribution(sampler.start_distribution(architecture, trace))
     return float(np.dot(start, g)) ** n_paths
 
 

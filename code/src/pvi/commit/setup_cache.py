@@ -147,13 +147,13 @@ def check_matrix(com, leaves: list[bytes], device, checks: int) -> bool:
 
 def check_table(tag: bytes, weight: torch.Tensor, leaves: list[bytes], checks: int) -> bool:
     """The same for a lookup table (its rows' digests; the padding leaves are checked too)."""
-    from pvi.commit.commitment import _padding_leaf, table_leaf
+    from pvi.commit.commitment import padding_leaf, table_leaf
     rows = weight.to(torch.int8).T.contiguous().cpu().numpy()
     v = rows.shape[0]
     if len(leaves) < v or len(leaves) & (len(leaves) - 1):
         return False
     for j in _sample(len(leaves), checks):
-        want = table_leaf(tag, j, rows[j]) if j < v else _padding_leaf(tag, j)
+        want = table_leaf(tag, j, rows[j]) if j < v else padding_leaf(tag, j)
         if want != leaves[j]:
             return False
     return True

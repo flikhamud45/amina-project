@@ -877,7 +877,7 @@ def test_the_fiat_shamir_transcript_absorbs_the_plan(policy, monkeypatch):
 
     def first_columns(verifier):
         ch = proto.Challenger(fiat_shamir=True)
-        v0_query._absorb_statement(ch, verifier, x)
+        v0_query.absorb_statement(ch, verifier, x)
         return ch.columns("probe", 1 << 20, 8)
 
     def variant(**fields):

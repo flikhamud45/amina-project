@@ -48,7 +48,7 @@ import torch
 
 from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, OpFn, identity_op, op_fn, requant_fn, requant_op,
                             residual_op)
-from pvi.models.decoder import (_EXP_TABLE, CERTIFIED_PROB_MAX, CONFIGS, RES_MAX, SHIFT, DecoderConfig, _attention,
+from pvi.models.decoder import (EXP_TABLE, CERTIFIED_PROB_MAX, CONFIGS, RES_MAX, SHIFT, DecoderConfig, integer_attention,
                                 _isqrt, attention_op, build_decoder, last_position_op, lut_op, norm_op, positions_op,
                                 scale_op)
 
@@ -329,7 +329,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
         # HF scales q by dh^-0.5 inside the module; here that lives in m_s, as in build_decoder.
         sq, sk, sv = B.scale[q], B.scale[k], B.scale[v]
         m_s = round((1 << SHIFT) * 16.0 * sq * sk / math.sqrt(dh))
-        raw = _attention(B.env[q], B.env[k], B.env[v], m_s, None, n_heads, n_heads, dh, prob_max)
+        raw = integer_attention(B.env[q], B.env[k], B.env[v], m_s, None, n_heads, n_heads, dh, prob_max)
         s_raw = sv / float(prob_max)               # probabilities 0..prob_max x int8 values (8 bits: 255)
         rabs = raw.double().abs().flatten()
         top = (float(torch.quantile(rabs[:1 << 24], pct_att / 100.0)) if pct_att < 100 else float(rabs.max())) * s_raw
@@ -408,14 +408,14 @@ def attention_mass(q: torch.Tensor, k: torch.Tensor, *, m_s: int, heads: int, kv
     of a diffuse row: at most ``2 pmax`` keys of a row get ``p_j > 0``; a short row, whose probabilities round half
     up, may keep slightly more than all of it (``sum_j p_j <= pmax + T/2``).  ``q [B, Tq, heads dh]`` holds the queries
     of the last ``Tq`` positions, ``k [B, T, kv_heads dh]``.  The scores are exact float32 products of int8 values
-    (``|s| <= 127^2 dh < 2^24`` for ``dh <= 1040``), the rest the integers of ``decoder._attention``."""
+    (``|s| <= 127^2 dh < 2^24`` for ``dh <= 1040``), the rest the integers of ``decoder.integer_attention``."""
     b, tq, _ = q.shape
     t = k.shape[1]
     assert dh <= 1040
     qh = q.reshape(b, tq, heads, dh).transpose(1, 2)
     kh = k.reshape(b, t, kv_heads, dh).transpose(1, 2).repeat_interleave(heads // kv_heads, 1)
     allowed = torch.ones(tq, t, dtype=torch.bool, device=q.device).tril(diagonal=t - tq)
-    table = _EXP_TABLE.to(q.device)
+    table = EXP_TABLE.to(q.device)
     mass = []
     for h0 in range(0, heads, heads_per_chunk):
         h1 = min(heads, h0 + heads_per_chunk)

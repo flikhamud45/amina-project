@@ -17,12 +17,12 @@ from pvi.commit.commitment import (HASH_BYTES, CommitmentPublic, GroupPublic, Ta
                                    verify_multiproofs)
 from pvi.core import hostmem
 from pvi import options
-from pvi.core.field import (_LIMB_MAX, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
+from pvi.core.field import (LIMB_MAX, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
                             int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, int8_weight_matmul,
                             limbs_f64, min_max, small_matmul_mod, to_field)
 from pvi.core.graph import CheapOp, IntGraph, MatOp
 from pvi.kernels import native as native_kernels
-from pvi.v0.params import _CUT_NARROW, Z_BOUND, SecurityParams
+from pvi.v0.params import CUT_NARROW, Z_BOUND, SecurityParams
 from pvi.v0.streaming import ClaimUploads
 from pvi.v0.transcript import Challenger
 from pvi.v1.cut import delta_range as cut_delta_range
@@ -96,7 +96,7 @@ def _in_bounds(a: torch.Tensor, lo: int, hi: int) -> bool:
     return amin >= lo and amax <= hi
 
 
-def _in_field(a: torch.Tensor) -> bool:
+def in_field(a: torch.Tensor) -> bool:
     """``0 <= a < P`` everywhere."""
     if a.numel() == 0:
         return True
@@ -171,7 +171,7 @@ def _disagrees(checks: list[tuple]) -> torch.Tensor:
     a value costs nothing to read, they are checked one by one (numpy's min/max and
     ``torch.equal``, the fastest there) up to the first failure."""
     if not _defer(checks[0][1].device):
-        return torch.tensor(not all(_in_field(u) and torch.equal(lhs, rhs) for u, lhs, rhs in checks))
+        return torch.tensor(not all(in_field(u) and torch.equal(lhs, rhs) for u, lhs, rhs in checks))
     lhs = torch.cat([left.reshape(-1) for _, left, _ in checks])
     bad = (lhs != torch.cat([right.reshape(-1) for _, _, right in checks])).any()
     bounds = [torch.aminmax(u) for u, _, _ in checks if u.numel()]
@@ -347,7 +347,7 @@ class Verifier:
             chi = challenger.folding(op.name, op.n_rows, self.params.reps).to(self.device)
             self._pre[op.name] = (chi, self._fold_local(op, chi))
         self._wdev.clear()   # Kpre never folds again: no device copy of the model (but the tables of lookups)
-        _sync(self.device)   # the precompute is timed by its callers
+        sync_device(self.device)   # the precompute is timed by its callers
 
     def _weights_on(self, op: MatOp, device) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Modes K and Kpre: op's weights on ``device`` (uploaded once, not on every query)."""
@@ -530,7 +530,7 @@ class Verifier:
                     # V1 (V-V1N part 4): a cut op's sent values may also be int8 or int16 (cut_protocol keeps them
                     # so once they are in range); they are range-checked below and widened for their readers
                     if z is None or m is None or tuple(z.shape) != (op.n_rows, m) or (
-                            z.dtype != dtype and not (op.name in cut_ops and z.dtype in _CUT_NARROW)):
+                            z.dtype != dtype and not (op.name in cut_ops and z.dtype in CUT_NARROW)):
                         return None
                     if op.name not in own:          # a table's rows of int8 weights, else the range check
                         lo, hi = (-128, 127) if op.name in self.tables else (1 - Z_BOUND, Z_BOUND - 1)
@@ -589,7 +589,7 @@ class Verifier:
         out, groups = {}, {}
         for name, (left, right) in pairs.items():
             groups.setdefault((left.shape, right.shape, left.device, right.device), []).append(name)
-        chunk = exact_chunk(_LIMB_MAX, bound - 1)
+        chunk = exact_chunk(LIMB_MAX, bound - 1)
         for (lshape, rshape, _, dev), names in groups.items():
             if len(names) == 1 and self.mode != "Kpre":        # nothing to share or to keep
                 out[names[0]] = field_matmul_mod(*pairs[names[0]], right_bound=bound)
@@ -855,7 +855,7 @@ class Verifier:
             return False
         shape, dtype = ((len(idx), n_rows), torch.int32) if wire else ((n_rows, len(idx)), torch.int64)
         return not (tuple(opened.shape) != shape or len(proof) > len(idx) * tree.depth
-                    or opened.dtype != dtype or not _in_field(opened)
+                    or opened.dtype != dtype or not in_field(opened)
                     or any(us[m].shape[1] != self.publics[m].row_length for m in members
                            if not self.publics[m].members))
 
@@ -1108,7 +1108,7 @@ def _input_bindings(graph: IntGraph) -> dict[str, tuple[str, int]]:
     return out
 
 
-def _sync(device) -> None:
+def sync_device(device) -> None:
     device = torch.device(device)
     if device.type == "cuda":
         torch.cuda.synchronize(device)   # the verifier's GPU, not necessarily the current one

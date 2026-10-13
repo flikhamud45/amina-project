@@ -17,7 +17,7 @@ from pvi.v0 import claimcodec
 from pvi.v0.prover import Prover
 from pvi.v0.streaming import wire_claim, wire_openings, wire_rows
 from pvi.v0.transcript import Challenger
-from pvi.v0.verifier import Verifier, _sync
+from pvi.v0.verifier import Verifier, sync_device
 
 
 def _tensor_blob(t: torch.Tensor) -> bytes:
@@ -25,14 +25,14 @@ def _tensor_blob(t: torch.Tensor) -> bytes:
     return struct.pack("<B", t.dim()) + shape + t.detach().to("cpu", torch.int64).contiguous().numpy().tobytes()
 
 
-def _phase_done(out: dict, name: str, start) -> None:
+def phase_done(out: dict, name: str, start) -> None:
     """``out["contention"][name]``: the contention evidence of the timed phase ``name`` that
     ``start = contention.begin()`` opened (:mod:`pvi.core.contention`; measurement only, both
     snapshots outside the timed window; a phase timed in parts sums them)."""
     contention.add(out.setdefault("contention", {}), name, start)
 
 
-def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> None:
+def absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> None:
     p = verifier.params
     ch.absorb(b"graph", verifier._digest or verifier.graph.digest())    # every op and cheap-op constant
     ch.absorb(b"params", struct.pack("<IIIi", p.reps, p.columns, p.rate, p.grinding_bits) + verifier.mode.encode())
@@ -67,12 +67,12 @@ def _absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> No
 # from the transcript that absorbed it), each message's proof bytes counted and its prover time
 # recorded in ``out``.  run_query checks each message as it arrives and stops asking at the
 # first failing check; the streaming verifier receives them all, then checks.  Both parties run
-# in one process, so what one hands the other is passed as a copy (:func:`_passed`): the query, the
+# in one process, so what one hands the other is passed as a copy (:func:`passed`): the query, the
 # challenges and the column indices the prover receives, and every message of the prover's that
 # the verifier reads after the prover has run again (the claims, ``u`` and the tables'
 # multiproofs) -- as a wire, a decoder or a GPU client's upload gives each party its own tensors.
 
-def _passed(message, pin: bool = False):
+def passed(message, pin: bool = False):
     """``message`` (a tensor, or a dict of them) as the other party receives it: a copy of every
     tensor (with ``pin``, in pinned host memory: a GPU client's) and of every list among the values,
     so that neither party can change in place, when it runs again, what the other holds."""
@@ -84,7 +84,7 @@ def _passed(message, pin: bool = False):
     return {k: copy(v) if torch.is_tensor(v) else list(v) if isinstance(v, list) else v for k, v in message.items()}
 
 
-def _encoded(encode, values) -> bytes:
+def encoded_message(encode, values) -> bytes:
     """``encode(values)``, the bytes of a message in the compact encoding; none for values it cannot
     carry (:class:`claimcodec.Unencodable`), which a prover can only replace with other bytes: no
     bytes, a message the verifier rejects as malformed at that message's check (``range_or_shape``,
@@ -95,7 +95,7 @@ def _encoded(encode, values) -> bytes:
         return b""
 
 
-def _proof_hashes(proof) -> list[bytes]:
+def proof_hashes(proof) -> list[bytes]:
     """The hashes of a multiproof as they travel (nothing if it is not a list of byte strings)."""
     ok = isinstance(proof, (list, tuple)) and all(isinstance(h, bytes) for h in proof)
     return list(proof) if ok else []
@@ -109,18 +109,18 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
     ``None``) and the multiproof of every lookup table, absorbed with the statement.  A table's claims
     count one byte each."""
     t = out["timings"]
-    query = _passed(x)
+    query = passed(x)
     if wire and send is None and prover.lean and prover.device.type != "cpu":
         # a lean GPU prover keeps each claim on its device as int32 (not the host's int64) and encodes
         # them there: about 2.3 bytes a claim come back instead of 8
         send = claimcodec.narrow
-    _sync(prover.device)
+    sync_device(prover.device)
     c0 = contention.begin()
     t0 = time.perf_counter()
     claims = prover.claims(query, send=send, to_host=not wire, **forward_kwargs)
-    _sync(prover.device)
+    sync_device(prover.device)
     t["prove_forward"] = time.perf_counter() - t0
-    _phase_done(out, "prove_forward", c0)
+    phase_done(out, "prove_forward", c0)
     sent = {op.name for op in verifier._sent_ops()}
     if len(sent) < len(claims):
         claims = {k: z for k, z in claims.items() if k in sent}
@@ -130,28 +130,28 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
         t0 = time.perf_counter()
         proofs = prover.open_tables()
         t["prove_lookups"] = time.perf_counter() - t0
-        _phase_done(out, "prove_lookups", c0)
-        proofs = _passed(proofs)
+        phase_done(out, "prove_lookups", c0)
+        proofs = passed(proofs)
     if wire:
         c0 = contention.begin()
         t0 = time.perf_counter()
         if verifier.tables:
-            rows = _encoded(claimcodec.pack_rows, [claims[name] for name in verifier.tables])
-        claims = _encoded(claimcodec.encode, [claims[op.name] for op in prover.graph.mat_ops
+            rows = encoded_message(claimcodec.pack_rows, [claims[name] for name in verifier.tables])
+        claims = encoded_message(claimcodec.encode, [claims[op.name] for op in prover.graph.mat_ops
                                               if op.name in sent and op.name not in verifier.tables])
-        _sync(prover.device)
+        sync_device(prover.device)
         t["prove_encode"] = time.perf_counter() - t0
-        _phase_done(out, "prove_encode", c0)
+        phase_done(out, "prove_encode", c0)
     size = len(claims) + len(rows or b"") if wire else sum(z.numel() * (1 if k in verifier.tables else 4)
                                                           for k, z in claims.items())
     out["bytes"] = {"claims": size, "u": 0, "columns": 0,
-                    "paths": HASH_BYTES * sum(len(_proof_hashes(p)) for p in proofs.values())}
+                    "paths": HASH_BYTES * sum(len(proof_hashes(p)) for p in proofs.values())}
     c0 = contention.begin()
     t0 = time.perf_counter()
     # Kpre is one message to a designated verifier whose chi and u are its secret key: no challenge reads the
     # transcript, so there is nothing to absorb (FS1)
     if verifier.params.fiat_shamir and verifier.mode != "Kpre":
-        _absorb_statement(ch, verifier, x)
+        absorb_statement(ch, verifier, x)
         if wire:
             ch.absorb_large(b"claims/" + claimcodec.MAGIC, claims)
             if rows is not None:
@@ -160,14 +160,14 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
             for k in sorted(claims):       # int32 wire claims hash as the int64 ones
                 ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
         for name in verifier.tables:       # the tables' multiproofs, in table order
-            hashes = _proof_hashes(proofs.get(name))
+            hashes = proof_hashes(proofs.get(name))
             ch.absorb(b"lookup/" + name.encode(), struct.pack("<Q", len(hashes)) + b"".join(hashes))
     t["fs_hash"] = time.perf_counter() - t0
-    _phase_done(out, "fs_hash", c0)
+    phase_done(out, "fs_hash", c0)
     return claims, rows, proofs
 
 
-def _decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torch.Tensor, out: dict,
+def decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torch.Tensor, out: dict,
                     dtype: torch.dtype, pin: bool = False) -> dict | None:
     """The verifier's claims from their ``PVC3`` bytes and a plan's lookup tables' from their int8
     ``rows`` (``None``: malformed), as ``dtype`` host tensors (int32 in pinned memory with ``pin``),
@@ -190,7 +190,7 @@ def _decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torc
             if vdev.type == "cuda" and options.current().gpu_decode and claimcodec.decode_device_ok(vdev):
                 dec = claimcodec.decode_device(blob, *shapes, vdev)
                 dec = dec if dtype == torch.int32 else [d.to(dtype) for d in dec]
-                _sync(vdev)
+                sync_device(vdev)
             else:
                 dec = claimcodec.decode_torch(blob, *shapes, dtype=dtype, workers=torch.get_num_threads(), pin=pin)
             zs = dict(zip((op.name for op in mats), dec))
@@ -200,11 +200,11 @@ def _decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torc
         except claimcodec.ClaimCodecError:
             zs = None
     out["timings"]["verify_decode"] = out["timings"].get("verify_decode", 0.0) + time.perf_counter() - t0
-    _phase_done(out, "verify_decode", c0)
+    phase_done(out, "verify_decode", c0)
     return zs
 
 
-def _field_message(blob: bytes, shapes: list[tuple[int, int]], out: dict, dtype: torch.dtype) -> list | None:
+def field_message(blob: bytes, shapes: list[tuple[int, int]], out: dict, dtype: torch.dtype) -> list | None:
     """The field elements of a 31-bit packed message as ``dtype`` host tensors of ``shapes``
     (``None``: malformed), timed as ``verify_decode``."""
     c0 = contention.begin()
@@ -221,7 +221,7 @@ def _field_message(blob: bytes, shapes: list[tuple[int, int]], out: dict, dtype:
             parts.append(flat[o:o + a * b].view(a, b))
             o += a * b
     out["timings"]["verify_decode"] = out["timings"].get("verify_decode", 0.0) + time.perf_counter() - t0
-    _phase_done(out, "verify_decode", c0)
+    phase_done(out, "verify_decode", c0)
     return parts
 
 
@@ -239,39 +239,39 @@ def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, x: torch.T
                 {op.name: verifier._pre[op.name][1] for op in mats}, None)
     vdev = torch.device(verifier.device)
     chis = {name: chi.to(vdev) for name, chi in verifier.fold_challenges(ch, x).items()}
-    sent = _passed({op.name: chis[op.name] for op in mats}) if verifier.mode == "C" else None
-    _sync(prover.device)
+    sent = passed({op.name: chis[op.name] for op in mats}) if verifier.mode == "C" else None
+    sync_device(prover.device)
     c0 = contention.begin()
     t0 = time.perf_counter()
     blob = None
     if verifier.mode == "C":
         us = prover.fold(sent)
-        _sync(prover.device)
+        sync_device(prover.device)
         t["prove_fold"] = time.perf_counter() - t0
-        _phase_done(out, "prove_fold", c0)
+        phase_done(out, "prove_fold", c0)
         t["verify_fold"] = 0.0
         out["bytes"]["u"] = sum(u.numel() for u in us.values()) * 4
         if wire:
             c0 = contention.begin()
             t0 = time.perf_counter()
-            blob = _encoded(claimcodec.pack_field, [us[op.name] for op in mats])
+            blob = encoded_message(claimcodec.pack_field, [us[op.name] for op in mats])
             t["prove_encode"] += time.perf_counter() - t0
-            _phase_done(out, "prove_encode", c0)
+            phase_done(out, "prove_encode", c0)
             out["bytes"]["u"] = len(blob)
-            parts = _field_message(blob, [(p.reps, op.row_length) for op in mats], out, torch.int64)
+            parts = field_message(blob, [(p.reps, op.row_length) for op in mats], out, torch.int64)
             us = {} if parts is None else {op.name: u for op, u in zip(mats, parts)}
         else:
-            us = _passed(us)
+            us = passed(us)
     else:  # K: the verifier folds its own copy of the weights
         us = {op.name: verifier._fold_local(op, chis[op.name]) for op in mats}
-        _sync(vdev)
+        sync_device(vdev)
         t["verify_fold"] = time.perf_counter() - t0
-        _phase_done(out, "verify_fold", c0)
+        phase_done(out, "verify_fold", c0)
         t["prove_fold"] = 0.0
     return chis, us, blob
 
 
-def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, out: dict,
+def open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, out: dict,
                   package=None, u_blob: bytes | None = None) -> tuple[dict, dict]:
     """Mode C: ``u`` absorbed (its bytes ``u_blob`` with wire), the column indices, and the openings
     (``package``: the wire format they travel in).  With ``u_blob`` the opened columns of every tree
@@ -288,30 +288,30 @@ def _open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, 
             for k in sorted(us):
                 ch.absorb(b"u/" + k.encode(), _tensor_blob(us[k]))
         t["fs_hash"] += time.perf_counter() - t0
-        _phase_done(out, "fs_hash", c0)
+        phase_done(out, "fs_hash", c0)
     cols = verifier.column_challenges(ch)
-    sent = _passed(cols)
-    _sync(prover.device)
+    sent = passed(cols)
+    sync_device(prover.device)
     c0 = contention.begin()
     t0 = time.perf_counter()
     opened = prover.open(sent)
-    _sync(prover.device)
+    sync_device(prover.device)
     if u_blob is None:
         openings = opened if package is None else package(opened)
         t["prove_open"] = time.perf_counter() - t0
-        _phase_done(out, "prove_open", c0)
+        phase_done(out, "prove_open", c0)
         out["bytes"]["columns"] = sum(o[0].numel() for o in opened.values()) * 4
     else:
         t["prove_open"] = time.perf_counter() - t0
-        _phase_done(out, "prove_open", c0)
+        phase_done(out, "prove_open", c0)
         c0 = contention.begin()
         t0 = time.perf_counter()
-        blob = _encoded(claimcodec.pack_field, [opened[name][0].T for name in cols])
+        blob = encoded_message(claimcodec.pack_field, [opened[name][0].T for name in cols])
         t["prove_encode"] += time.perf_counter() - t0
-        _phase_done(out, "prove_encode", c0)
+        phase_done(out, "prove_encode", c0)
         out["bytes"]["columns"] = len(blob)
         units = verifier._column_units()
-        rows = _field_message(blob, [(len(cols[name]), sum(verifier.publics[m].n_rows for m in members))
+        rows = field_message(blob, [(len(cols[name]), sum(verifier.publics[m].n_rows for m in members))
                                      for name, members in units], out, torch.int32)
         openings = {name: (None if rows is None else rows[i], opened[name][1]) for i, (name, _) in enumerate(units)}
     out["bytes"]["paths"] += sum(len(proof) * HASH_BYTES for _, proof in opened.values())
@@ -362,33 +362,33 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
     x_v, claims_v = x.cpu(), claims
     if wire:                      # a GPU client uploads int32 claims
         cpu32 = vdev.type == "cpu" and native_kernels.int32_claims()          # (the native kernels read int32 claims)
-        claims_v = _decoded_claims(verifier, claims, rows, x, out, torch.int32 if vdev.type != "cpu" or cpu32
+        claims_v = decoded_claims(verifier, claims, rows, x, out, torch.int32 if vdev.type != "cpu" or cpu32
                                    else torch.int64)
         if claims_v is None:
             out["rejected_at"] = "range_or_shape"
             return out
     else:                         # the prover's own tensors, which the checks after its fold read again
-        claims_v = _passed(claims)
+        claims_v = passed(claims)
     if not verifier.check_tokens(x_v, claims_v):
         out["rejected_at"] = "token"
         return out
     if vdev.type != "cpu":        # a GPU client: receiving the proof includes uploading it
-        _sync(vdev)
+        sync_device(vdev)
         c0 = contention.begin()
         t0 = time.perf_counter()
         x_v, claims_v = x.to(vdev), {k: v.to(vdev) for k, v in claims_v.items()}
         if wire:
             claims_v = {k: v.to(torch.int64) for k, v in claims_v.items()}
-        _sync(vdev)
+        sync_device(vdev)
         t["verify_upload"] = time.perf_counter() - t0
-        _phase_done(out, "verify_upload", c0)
+        phase_done(out, "verify_upload", c0)
 
     c0 = contention.begin()
     t0 = time.perf_counter()
     inputs = verifier.derive(x_v, claims_v)
-    _sync(vdev)
+    sync_device(vdev)
     t["verify_derive"] = time.perf_counter() - t0
-    _phase_done(out, "verify_derive", c0)
+    phase_done(out, "verify_derive", c0)
     if inputs is None:
         out["rejected_at"] = "range_or_shape"
         return out
@@ -397,7 +397,7 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
         t0 = time.perf_counter()
         reason = verifier.check_lookups(claims_v, inputs, proofs)
         t["verify_lookups"] = time.perf_counter() - t0
-        _phase_done(out, "verify_lookups", c0)
+        phase_done(out, "verify_lookups", c0)
         if reason is not None:
             out["rejected_at"] = reason
             return out
@@ -407,30 +407,30 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
         c0 = contention.begin()
         t0 = time.perf_counter()
         us = {k: v.to(vdev) for k, v in us.items()}
-        _sync(vdev)
+        sync_device(vdev)
         t["verify_upload"] += time.perf_counter() - t0
-        _phase_done(out, "verify_upload", c0)
+        phase_done(out, "verify_upload", c0)
 
     c0 = contention.begin()
     t0 = time.perf_counter()
     ok = verifier.check_products(claims_v, inputs, chis, us)
     if ok and verifier.mode == "C":     # the code checks' two sides (a col-layout matrix's: the verifier's own)
         lefts, sources = verifier.column_operands(claims_v, inputs, chis, us)
-    _sync(vdev)
+    sync_device(vdev)
     t["verify_products"] = time.perf_counter() - t0
-    _phase_done(out, "verify_products", c0)
+    phase_done(out, "verify_products", c0)
     if not ok:
         out["rejected_at"] = "freivalds"
         return out
 
     if verifier.mode == "C":
-        cols, openings = _open_message(prover, verifier, ch, us, out, u_blob=u_blob)
+        cols, openings = open_message(prover, verifier, ch, us, out, u_blob=u_blob)
         c0 = contention.begin()
         t0 = time.perf_counter()
         reason = verifier.check_columns(lefts, sources, cols, openings, wire=wire)
-        _sync(vdev)
+        sync_device(vdev)
         t["verify_columns"] = time.perf_counter() - t0
-        _phase_done(out, "verify_columns", c0)
+        phase_done(out, "verify_columns", c0)
         if reason is not None:
             out["rejected_at"] = reason
             return out
@@ -449,20 +449,20 @@ def _run_streaming(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Chal
     claims, rows, proofs = _claims_message(prover, verifier, x, ch, out, forward_kwargs, wire=wire,
                                            send=None if wire else lambda z: wire_claim(z, pin=pin))
     if not wire:   # the verifier's own copies (read after the prover runs again); a lookup table's as its int8 rows
-        claims = {k: wire_rows(z, pin=pin) if k in verifier.tables else z for k, z in _passed(claims, pin).items()}
+        claims = {k: wire_rows(z, pin=pin) if k in verifier.tables else z for k, z in passed(claims, pin).items()}
     chis, us, u_blob = _fold_message(prover, verifier, ch, x, out, wire)
     cols = openings = None
     if verifier.mode == "C":
-        cols, openings = _open_message(prover, verifier, ch, us, out, package=wire_openings, u_blob=u_blob)
+        cols, openings = open_message(prover, verifier, ch, us, out, package=wire_openings, u_blob=u_blob)
     if wire:
-        claims = _decoded_claims(verifier, claims, rows, x, out, torch.int32, pin=vdev.type == "cuda")
+        claims = decoded_claims(verifier, claims, rows, x, out, torch.int32, pin=vdev.type == "cuda")
         if claims is None:
             return "range_or_shape"
-    _sync(vdev)
+    sync_device(vdev)
     c0 = contention.begin()
     t0 = time.perf_counter()
     reason = verifier.verify_streaming(x, claims, chis, us, cols, openings, proofs)
-    _sync(vdev)
+    sync_device(vdev)
     out["timings"]["verify_total"] = time.perf_counter() - t0
-    _phase_done(out, "verify_total", c0)
+    phase_done(out, "verify_total", c0)
     return reason

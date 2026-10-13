@@ -122,7 +122,7 @@ def acceptance_probability(
     ``pvi.defences`` -- and it does not assume checks at different layers are
     independent, which they are not once parent sets are local.
     """
-    from pvi.baseline.path.sampling import UniformPathSampler, _as_distribution
+    from pvi.baseline.path.sampling import UniformPathSampler, as_distribution
 
     params = params or ProtocolParams()
     sampler = sampler or UniformPathSampler()
@@ -145,7 +145,7 @@ def acceptance_probability(
         dense = isinstance(layer, DenseLayer)
         if dense and not sampler.transition_depends_on_source:
             parent_idx = np.arange(architecture[layer_index - 1].n_neurons)
-            weights = _as_distribution(
+            weights = as_distribution(
                 sampler.transition_distribution(
                     architecture, layer_index, 0, parent_idx, trace
                 )
@@ -158,7 +158,7 @@ def acceptance_probability(
             if not consistent[neuron]:
                 continue
             parent_idx, _ = layer.parents(neuron)
-            weights = _as_distribution(
+            weights = as_distribution(
                 sampler.transition_distribution(
                     architecture, layer_index, neuron, parent_idx, trace
                 )
@@ -166,6 +166,6 @@ def acceptance_probability(
             current[neuron] = float(np.dot(weights, below[parent_idx]))
         g = current
 
-    start = _as_distribution(sampler.start_distribution(architecture, trace))
+    start = as_distribution(sampler.start_distribution(architecture, trace))
     single_path = float(np.dot(start, g))
     return single_path**params.n_paths

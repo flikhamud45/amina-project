@@ -16,7 +16,7 @@ Z_BOUND = 1 << 29
 """Claims must satisfy ``-2**29 < z < 2**29``.  Because ``2 * 2**29 < p``, two
 in-range integers with the same residue mod ``p`` are equal, so checking
 ``Z = A X`` mod ``p`` pins down the integer claim the verifier then uses."""
-_CUT_NARROW = (torch.int8, torch.int16)
+CUT_NARROW = (torch.int8, torch.int16)
 """The dtypes besides derive's own in which a V1 query's cut ops may hold their sent values (``cut_protocol``)."""
 
 

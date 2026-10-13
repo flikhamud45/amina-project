@@ -79,7 +79,7 @@ from experiments.quality.llama_diag import RECIPES, data, recipe
 from experiments.quality.ppl_llama import prefix_spec
 from pvi.core.graph import INT8_MAX, CheapOp, MatOp, requant
 from pvi.models import hf_llama
-from pvi.models.decoder import PROB_MAX, RES_MAX, SHIFT, _attention
+from pvi.models.decoder import PROB_MAX, RES_MAX, SHIFT, integer_attention
 from pvi.v0.params import claim_bound
 
 ROLES = tuple(r for r, *_ in hf_llama.ROLES[:11]) + ("attn_raw",) + tuple(r for r, *_ in hf_llama.ROLES[11:])
@@ -245,7 +245,7 @@ def _linear(x: torch.Tensor, lin) -> torch.Tensor:
 
 def float_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, hq: int, hkv: int, dh: int) -> torch.Tensor:
     """Exact causal grouped-query attention in float64: ``q [B, Tq, hq dh]`` are the queries of the last ``Tq`` of
-    the ``Tk`` positions of ``k, v [B, Tk, hkv dh]`` (``pvi.models.decoder._attention``'s convention); query head ``j``
+    the ``Tk`` positions of ``k, v [B, Tk, hkv dh]`` (``pvi.models.decoder.integer_attention``'s convention); query head ``j``
     reads key/value head ``j // (hq / hkv)``; scores ``q k / sqrt(dh)`` (HF's ``scaling``)."""
     b, tq, tk = q.shape[0], q.shape[1], k.shape[1]
     qh = q.reshape(b, tq, hq, dh).transpose(1, 2)
@@ -324,7 +324,7 @@ def _attn_raw(graph, roles: dict, env: dict) -> torch.Tensor:
         raw = hf_llama.prefix_attention(q, k, v, d["k_prefix"], d["v_prefix"], d["m_s"], None, d["heads"],
                                         d["kv_heads"], d["dh"], p)
     else:
-        raw = _attention(q, k, v, d["m_s"], None, d["heads"], d["kv_heads"], d["dh"], p)
+        raw = integer_attention(q, k, v, d["m_s"], None, d["heads"], d["kv_heads"], d["dh"], p)
     again = requant(raw, torch.tensor(d["m_o"], dtype=torch.int64), SHIFT, -INT8_MAX, INT8_MAX)
     if not torch.equal(again, env[roles["attn"]]):
         raise AssertionError("the recomputed attention does not requantise to the op's output")

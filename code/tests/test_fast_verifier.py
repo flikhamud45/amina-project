@@ -254,7 +254,7 @@ def test_range_and_field_checks_match_reference(deferred, monkeypatch):
         assert deferred or not pending
     for a in (torch.tensor([[0, P - 1]]), torch.tensor([[P]]), torch.tensor([[-1]]), torch.tensor([[INT64_MIN]]),
               torch.zeros(2, 0, dtype=torch.int64), torch.randint(0, P, (9, 4))):
-        assert v0_verifier._in_field(a) == ref.in_field(a)
+        assert v0_verifier.in_field(a) == ref.in_field(a)
 
 
 @pytest.mark.parametrize("deferred", [False, True])
@@ -597,7 +597,7 @@ def test_attention_matches_reference(hq, hkv, t, group_heads, m_s, device, monke
     monkeypatch.setattr(tr, "_attention_heads",
                         lambda q, *args: heads.append(q.shape[1]) or attention_heads(q, *args))
     for m_o in (None, 1 << 21):
-        got = tr._attention(q.to(device), k.to(device), v.to(device), m_s, m_o, hq, hkv, dh).cpu()
+        got = tr.integer_attention(q.to(device), k.to(device), v.to(device), m_s, m_o, hq, hkv, dh).cpu()
         assert torch.equal(got, ref.attention(q, k, v, m_s, m_o, hq, hkv, dh))
     # heads per call: groups of group_heads query heads, else all at once (the key/value heads, stacked); a CPU
     # verifier with the AVX-512 kernel computes the requantised call (m_o set) in one fused pass instead
@@ -624,13 +624,11 @@ def _use_reference_code(monkeypatch):
     """Route every graph closure, fold and check through ``reference``."""
     from pvi.core import graph
     from pvi.models import decoder as transformer
-    from pvi.models import quantize
 
-    monkeypatch.setattr(quantize, "requant", ref.requant)
     for name, fn in (("requant", ref.requant), ("_norm_int", ref.norm_int), ("_lut", ref.lut), ("_rope", ref.rope),
-                     ("_attention", ref.attention), ("_residual", ref.residual)):
+                     ("integer_attention", ref.attention), ("_residual", ref.residual)):
         monkeypatch.setattr(transformer, name, fn)
-    monkeypatch.setattr(graph, "requant", ref.requant)                  # requant_fn's closures
+    monkeypatch.setattr(graph, "requant", ref.requant)                  # the requant kinds (the CNNs' too)
     monkeypatch.setattr(graph, "residual_add", lambda a, b, m, shift, res_max: ref.residual(a, b, m))
     monkeypatch.setattr(graph.MatOp, "fold", ref.fold)
     monkeypatch.setattr(proto.Verifier, "check_products", ref.check_products)

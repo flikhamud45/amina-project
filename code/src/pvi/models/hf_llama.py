@@ -28,7 +28,7 @@ change (``matches_benchmark_graph`` checks it; the diff is empty, see below):
   ``_rope`` (``x [cos | cos] + [x2 | x1] [-sin | sin]``; tested on random values). The rotation preserves each
   pair's norm, so the scale before RoPE is set from the pairs' norms, which then never clip at 127.
 * **GQA**: query head ``j`` reads key/value head ``j // (n_heads / n_kv)``, Hugging Face's ``repeat_kv``
-  (``repeat_interleave``), which is ``transformer._attention``'s grouping.
+  (``repeat_interleave``), which is ``transformer.integer_attention``'s grouping.
 * **SwiGLU**: the SiLU table is built from the gate's real scale ``s_g`` (entry ``x`` is
   ``round(silu(x s_g) / s_a)``, ``s_a = max_x |silu(x s_g)| / 127`` over the table's 256 inputs, which is
   ``silu(127 s_g) / 127`` unless ``s_g`` is tiny), and the product ``act x up`` is requantised
@@ -74,7 +74,7 @@ import math
 import torch
 
 from pvi.core.graph import INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, mul_requant_op, op_fn, op_kind, requant_fn
-from pvi.models.decoder import (CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention,
+from pvi.models.decoder import (CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, integer_attention,
                                 _isqrt, attention_op, build_decoder, head_norm_op, last_position_op, lut_op, norm_op,
                                 rope_op, rope_tail_op, scale_op)
 
@@ -149,15 +149,15 @@ def residual_exp(r: torch.Tensor, z: torch.Tensor, a: torch.Tensor, b: torch.Ten
 
 def prefix_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, kp: torch.Tensor, vp: torch.Tensor, m_s: int,
                      m_o: int | None, n_heads: int, n_kv: int, dh: int, pmax: int = PROB_MAX) -> torch.Tensor:
-    """``transformer._attention`` with a fixed prefix: the public int8 keys and values ``kp, vp [1, P, Hkv dh]`` of
+    """``transformer.integer_attention`` with a fixed prefix: the public int8 keys and values ``kp, vp [1, P, Hkv dh]`` of
     the positions ``0 .. P-1`` in front of the query's ``k, v [B, T, Hkv dh]`` (positions ``P .. P+T-1``).
-    ``_attention`` takes ``q``'s ``Tq`` rows as the queries of the last ``Tq`` of the ``P + T`` positions, so every
+    ``integer_attention`` takes ``q``'s ``Tq`` rows as the queries of the last ``Tq`` of the ``P + T`` positions, so every
     query attends to the whole prefix and causally to the query's own positions. Exact integers on any device (the
     constants are copied to ``k``'s device and type)."""
     b = k.shape[0]
     k = torch.cat([kp.to(device=k.device, dtype=k.dtype).expand(b, -1, -1), k], 1)
     v = torch.cat([vp.to(device=v.device, dtype=v.dtype).expand(b, -1, -1), v], 1)
-    return _attention(q, k, v, m_s, m_o, n_heads, n_kv, dh, pmax)
+    return integer_attention(q, k, v, m_s, m_o, n_heads, n_kv, dh, pmax)
 
 
 @op_kind("prefix_attention/1")
@@ -388,7 +388,7 @@ class _Builder:
             del k_real
             raw = prefix_attention(self.env[q], self.env[k], self.env[v], kp, vp, m_s, None, hq, hkv, dh, P)
         else:
-            raw = _attention(self.env[q], self.env[k], self.env[v], m_s, None, hq, hkv, dh, P)
+            raw = integer_attention(self.env[q], self.env[k], self.env[v], m_s, None, hq, hkv, dh, P)
         s_raw = sv / float(P)    # probabilities 0..P x int8 values (transformer.PROB_MAX = 255; F2a's P_MAX)
         top = _top(raw.abs().reshape(-1, raw.shape[-1]).double(), self.pct_att) * s_raw
         del raw

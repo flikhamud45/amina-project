@@ -1,7 +1,7 @@
 """Last-block pruning: ``build_decoder(..., prune_last=True)`` builds the last block at the last position
 (k and v at every position, which its one query row attends to), with the logits of the whole block.
 
-Its pieces: attention of the queries of the last positions (``transformer._attention``,
+Its pieces: attention of the queries of the last positions (``transformer.integer_attention``,
 ``_attention_heads``: the last rows of the causal mask), RoPE at an offset, and the shapes of the
 pruned graph (``analytic.decoder_shapes`` / ``decoder_claim_columns(..., prune_last=True)``).  The
 protocol runs pruned decoders in ``tests/test_plans.py`` (every plan, the forgeries, the GPU forms, the
@@ -71,12 +71,12 @@ def test_the_queries_of_the_last_positions_attend_as_in_the_whole_attention(hq, 
     q = torch.randint(-127, 128, (2, t, hq * dh), generator=g)
     k = torch.randint(-127, 128, (2, t, hkv * dh), generator=g)
     v = torch.randint(-127, 128, (2, t, hkv * dh), generator=g)
-    whole = tr._attention(q, k, v, m_s, 1 << 21, hq, hkv, dh)
+    whole = tr.integer_attention(q, k, v, m_s, 1 << 21, hq, hkv, dh)
     if group_heads:                                  # a few heads per group (the stacked GQA path otherwise)
         width = 4 if tr._int32_scores(m_s, dh, t) else 8
         monkeypatch.setattr(tr, "ATTN_BYTES", width * 2 * t * group_heads)
     for tq in (1, 3, t):
-        got = tr._attention(q[:, -tq:], k, v, m_s, 1 << 21, hq, hkv, dh)
+        got = tr.integer_attention(q[:, -tq:], k, v, m_s, 1 << 21, hq, hkv, dh)
         assert torch.equal(got, whole[:, -tq:])
         assert torch.equal(got, ref.attention(q[:, -tq:], k, v, m_s, 1 << 21, hq, hkv, dh))
 

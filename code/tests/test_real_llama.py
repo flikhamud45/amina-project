@@ -42,7 +42,7 @@ transformers = pytest.importorskip("transformers")
 from pvi.core.graph import CheapOp, IntGraph, MatOp  # noqa: E402
 from pvi.models import decoder as tr  # noqa: E402
 from pvi.models import hf_llama as rl  # noqa: E402
-from pvi.models.decoder import CONFIGS, _attention, _rope, decoder_param_count  # noqa: E402
+from pvi.models.decoder import CONFIGS, integer_attention, _rope, decoder_param_count  # noqa: E402
 
 SMOOTH = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
 PREFIX = (5, 17)
@@ -412,7 +412,7 @@ def _attention_ops(graph) -> list:
 
 def _glued(graph: IntGraph) -> IntGraph:
     """A prefixed graph's ops, weights and constants as a graph of ``[prefix | query]``: RoPE at the positions of
-    the joint sequence (no offset), and plain causal attention over the joint sequence (``transformer._attention``)
+    the joint sequence (no offset), and plain causal attention over the joint sequence (``transformer.integer_attention``)
     whose first ``P`` keys and values are replaced by the prefix's int8 constants. The prefix positions' other values
     are computed from the prefix tokens and only feed the keys and values that are replaced."""
     n = graph.meta["prefix_len"]
@@ -431,7 +431,7 @@ def _glued(graph: IntGraph) -> IntGraph:
         elif isinstance(op, CheapOp) and op.note == "attention":
             def fn(q, k, v, d=_defaults(op.fn)):
                 kp, vp = (c.to(torch.int64).expand(k.shape[0], -1, -1) for c in (d["k_prefix"], d["v_prefix"]))
-                return _attention(q, torch.cat([kp, k[:, n:]], 1), torch.cat([vp, v[:, n:]], 1), d["m_s"], d["m_o"],
+                return integer_attention(q, torch.cat([kp, k[:, n:]], 1), torch.cat([vp, v[:, n:]], 1), d["m_s"], d["m_o"],
                                   d["heads"], d["kv_heads"], d["dh"], d["pmax"])
             op = dataclasses.replace(op, fn=fn)
         ops.append(op)

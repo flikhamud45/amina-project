@@ -146,7 +146,7 @@ static inline int32_t floordiv_r(int32_t num, int32_t den, double rinv) {
 
 // mo == 0: out [B*H, R, dh] holds P V; mo > 0: out [B, queries, H*rep, dh] holds requant(P V, mo) =
 // clamp((P V mo + 2**29) >> 30, -127, 127), row r of group (b, h) being query head h*rep + r / queries at position
-// r % queries (the final layout of transformer._attention).  ms > 0: e = exp256[min(255, (gap ms + 2**29) >> 30)],
+// r % queries (the final layout of transformer.integer_attention).  ms > 0: e = exp256[min(255, (gap ms + 2**29) >> 30)],
 // which equals lut[min(gap, len - 1)] (the table is non-increasing and zero from _EXP_ZERO on, where lut's last
 // entry lies), without lut's cache misses; ms == 0: the lut.
 static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int64_t* out, int64_t bh,
@@ -995,7 +995,7 @@ def _exp32(exp_table, m_s: int):
 def attention_requant(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, m_o: int,
                       n_heads: int, n_kv: int, dh: int, *, exp_table: torch.Tensor | None = None,
                       m_s: int = 0, pmax: int = 255) -> torch.Tensor:
-    """``transformer._attention``'s output, ``[B, Tq, Hq dh]`` int64: the causal attention of int8-valued ``q
+    """``transformer.integer_attention``'s output, ``[B, Tq, Hq dh]`` int64: the causal attention of int8-valued ``q
     [B, Tq, Hq dh]`` against ``k, v [B, T, Hkv dh]`` (query head ``j`` reads key/value head ``j // (Hq/Hkv)``)
     with its output requantised by ``m_o``, in one AVX-512 pass that writes the final layout."""
     b, tq, _ = q.shape

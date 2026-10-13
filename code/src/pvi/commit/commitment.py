@@ -41,7 +41,7 @@ import numpy as np
 import torch
 
 from pvi import options
-from pvi.core.field import (_LIMB_MAX, NP_SMALL, P, exact_chunk, field_matmul_mod, np_field_matmul_mod, power_table,
+from pvi.core.field import (LIMB_MAX, NP_SMALL, P, exact_chunk, field_matmul_mod, np_field_matmul_mod, power_table,
                             root_of_unity, rs_encode, to_field, weight_matmul_mod)
 
 __all__ = [
@@ -329,7 +329,7 @@ def _np_codeword_at(u: np.ndarray, n_points: int, columns: np.ndarray, s: int, g
     powers = table[np.concatenate([steps[:s] * c, steps[:g] * (s * c)], -2) & (n_points - 1)]
     baby, giant = powers[..., :s, :], powers[..., s:, :]
     u = np.concatenate([u, np.zeros((*u.shape[:-1], g * s - k), dtype=np.int64)], -1)
-    inner = np_field_matmul_mod(u.reshape(*u.shape[:-2], r * g, s), baby, True, exact_chunk(_LIMB_MAX, P - 1))
+    inner = np_field_matmul_mod(u.reshape(*u.shape[:-2], r * g, s), baby, True, exact_chunk(LIMB_MAX, P - 1))
     inner = inner.reshape(*u.shape[:-2], r, g, -1) * giant[..., None, :, :]
     return np.remainder(inner, P).sum(-2) % P
 
@@ -658,7 +658,7 @@ def table_leaf(tag: bytes, index: int, row) -> bytes:
                           + np.ascontiguousarray(row, dtype=np.int8).tobytes()).digest()
 
 
-def _padding_leaf(tag: bytes, index: int) -> bytes:
+def padding_leaf(tag: bytes, index: int) -> bytes:
     """Leaf ``index >= V`` of a table of ``V`` rows, up to a power of two: no row's leaf (another domain)."""
     return hashlib.sha256(b"pvi/pad" + tag + int(index).to_bytes(8, "big")).digest()
 
@@ -698,7 +698,7 @@ class TableCommitment:
         rows = weight.to(torch.int8).T.contiguous().cpu().numpy()      # [V, d]
         v = rows.shape[0]
         leaves = [table_leaf(tag, j, rows[j]) for j in range(v)]
-        leaves += [_padding_leaf(tag, j) for j in range(v, next_pow2(v))]
+        leaves += [padding_leaf(tag, j) for j in range(v, next_pow2(v))]
         return cls(tag=tag, n_rows=weight.shape[0], n_tokens=v, tree=MerkleTree(leaves))
 
     @property

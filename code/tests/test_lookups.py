@@ -372,7 +372,7 @@ def test_the_transcript_absorbs_the_tables_and_their_multiproofs(monkeypatch):
 
     def first_columns(verifier):
         ch = proto.Challenger(fiat_shamir=True)
-        v0_query._absorb_statement(ch, verifier, x)
+        v0_query.absorb_statement(ch, verifier, x)
         return ch.columns("probe", 1 << 20, 8)
 
     base = first_columns(v)

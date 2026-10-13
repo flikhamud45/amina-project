@@ -47,7 +47,7 @@ RES_MAX = (1 << 22) - 1
 ATTN_BYTES = 1 << 27
 """Budget for one ``[B, heads, T, T]`` score tensor (heads are grouped to fit): int32 scores
 on the int32 path of :func:`_attention_heads`, int64 ones on its fallback."""
-_EXP_TABLE = torch.tensor([round((1 << 15) * math.exp(-i / 16.0)) for i in range(256)], dtype=torch.int64)
+EXP_TABLE = torch.tensor([round((1 << 15) * math.exp(-i / 16.0)) for i in range(256)], dtype=torch.int64)
 _EXP_ZERO = 178
 PROB_MAX = 255
 """The attention probabilities' scale: ``p = round(PROB_MAX e / tot)``, 0..PROB_MAX (8 bits).  A graph may use another
@@ -59,8 +59,8 @@ CERTIFIED_PROB_MAX = 2047
 tokens on the full WikiText-2 test set was 2.4% on OPT-6.7B and 5.5% on OPT-1.3B, above the 1% threshold; 11 bits
 reach the ideal softmax).  The random-weight benchmark graphs keep :data:`PROB_MAX` (same shapes, same costs), so
 the stored benchmark records stay valid."""
-"""``_EXP_TABLE[i] == 0`` exactly for ``i >= _EXP_ZERO``."""
-assert int(_EXP_TABLE[_EXP_ZERO - 1]) > 0 and not bool(_EXP_TABLE[_EXP_ZERO:].any())
+"""``EXP_TABLE[i] == 0`` exactly for ``i >= _EXP_ZERO``."""
+assert int(EXP_TABLE[_EXP_ZERO - 1]) > 0 and not bool(EXP_TABLE[_EXP_ZERO:].any())
 _MASKED = -(1 << 30)
 """The int32 path's score of a masked entry: below every real score (``|s| <= 2**21``)."""
 _LUT_MAX = 1 << 22
@@ -258,7 +258,7 @@ def _exp_lut(m_s: int, device: str) -> torch.Tensor:
     (so ``LUT[-1] == 0``), int32 on ``device`` (cached; callers only read it)."""
     d = torch.arange(_exp_cap(m_s) + 1, dtype=torch.int64)
     idx = ((d * m_s + (1 << (SHIFT - 1))) >> SHIFT).clamp_(0, 255)
-    return _EXP_TABLE[idx].to(device=device, dtype=torch.int32)
+    return EXP_TABLE[idx].to(device=device, dtype=torch.int32)
 
 
 def _attention_core(q, k, v, lut: torch.Tensor, notmask: torch.Tensor, pmax: int = PROB_MAX) -> torch.Tensor:
@@ -283,8 +283,8 @@ def _attention_core(q, k, v, lut: torch.Tensor, notmask: torch.Tensor, pmax: int
 
 @lru_cache(maxsize=None)
 def _exp_table(device: str) -> torch.Tensor:
-    """``_EXP_TABLE`` on ``device`` (cached; callers only read it)."""
-    return _EXP_TABLE.to(device)
+    """``EXP_TABLE`` on ``device`` (cached; callers only read it)."""
+    return EXP_TABLE.to(device)
 
 
 def _attention_int64(q, k, v, m_s: int, notmask: torch.Tensor, pmax: int = PROB_MAX) -> torch.Tensor:
@@ -306,7 +306,7 @@ def _attention_int64(q, k, v, m_s: int, notmask: torch.Tensor, pmax: int = PROB_
 
 def _attention_heads(q, k, v, m_s: int, rep: int = 1, pmax: int = PROB_MAX) -> torch.Tensor:
     """Integer causal attention for a group of heads: the raw ``P V`` (int64), which
-    :func:`_attention` requantises into its output.  ``k`` and ``v`` are ``[B, H, T, dh]``, and ``q``
+    :func:`integer_attention` requantises into its output.  ``k`` and ``v`` are ``[B, H, T, dh]``, and ``q``
     ``[B, H, rep*Tq, dh]``: the queries of the last ``Tq <= T`` positions (the query at position
     ``T - Tq + i`` attends to the keys ``0 .. T - Tq + i``), of the ``rep`` query heads that share each
     key/value head stacked along the rows (grouped-query attention), where every row is the same dot
@@ -320,13 +320,13 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1, pmax: int = PROB_MAX) -> t
             # one fused kernel: the same integers, no T x T tensors
             return attention_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, pmax)
         if q.device.type == "cpu" and native_kernels.available():                # a CPU verifier: native, exact
-            return native_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, exp_table=_EXP_TABLE,
+            return native_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, exp_table=EXP_TABLE,
                                                  m_s=m_s, pmax=pmax)
         return _attention_core(q, k, v, _exp_lut(m_s, dev), _causal_notmask(t, rep, dev, q.shape[2] // rep), pmax)
     return _attention_int64(q, k, v, m_s, _causal_notmask(t, rep, dev, q.shape[2] // rep), pmax)
 
 
-def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int,
+def integer_attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int,
                pmax: int = PROB_MAX) -> torch.Tensor:
     """Integer causal attention.  q ``[B,Tq,Hq*dh]`` (the queries of the last ``Tq <= T`` positions),
     k/v ``[B,T,Hkv*dh]`` -> ``[B,Tq,Hq*dh]``.
@@ -345,7 +345,7 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
             and all(x.dtype == torch.int64 for x in (q, k, v))):
         # a CPU verifier: attention and the output requantisation in one AVX-512 pass, the same integers
         return native_kernels.attention_requant(q, k, v, _exp_lut(m_s, "cpu"), m_o, n_heads, n_kv, dh,
-                                                exp_table=_EXP_TABLE, m_s=m_s, pmax=pmax)
+                                                exp_table=EXP_TABLE, m_s=m_s, pmax=pmax)
     q = q.reshape(b, tq, n_heads, dh).transpose(1, 2)
     k = k.reshape(b, t, n_kv, dh).transpose(1, 2)
     v = v.reshape(b, t, n_kv, dh).transpose(1, 2)
@@ -439,9 +439,9 @@ def rope_tail_op(a: torch.Tensor, x: torch.Tensor, *, heads: int, dh: int, theta
 @op_kind("attention/1")
 def attention_op(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, m_s: int, m_o: int, heads: int,
                  kv_heads: int, dh: int, pmax: int) -> torch.Tensor:
-    """Integer causal attention (:func:`_attention`) with the scores' and the output's multipliers and ``pmax``-level
+    """Integer causal attention (:func:`integer_attention`) with the scores' and the output's multipliers and ``pmax``-level
     probabilities."""
-    return _attention(q, k, v, m_s, m_o, heads, kv_heads, dh, pmax)
+    return integer_attention(q, k, v, m_s, m_o, heads, kv_heads, dh, pmax)
 
 
 @op_kind("lut/1")
@@ -611,7 +611,7 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
         # softmax temperature: logits of std ~1 nat, in units of 1/16 nat
         qs, ks = B.std(q), B.std(k)
         m_s = round((1 << SHIFT) * 16.0 / (qs * ks * math.sqrt(dh)))
-        raw = _attention(B.env[q], B.env[k], B.env[v], m_s, None, hq, hkv, dh, prob_max)
+        raw = integer_attention(B.env[q], B.env[k], B.env[v], m_s, None, hq, hkv, dh, prob_max)
         m_o = round((1 << SHIFT) * 24.0 / max(float(raw.double().std()), 1e-6))
         att = B.cheap("attn", [q, k, v], op_fn(attention_op, m_s=m_s, m_o=m_o, heads=hq, kv_heads=hkv, dh=dh,
                                                pmax=prob_max), "attention")

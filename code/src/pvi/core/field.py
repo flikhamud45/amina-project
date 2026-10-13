@@ -189,7 +189,7 @@ def small_matmul_mod(small: torch.Tensor, field: torch.Tensor, *, chunk: int = 8
 # summation order, so no BLAS kernel or GPU can round them.
 
 _LIMB_BITS = 11
-_LIMB_MAX = (1 << _LIMB_BITS) - 1
+LIMB_MAX = (1 << _LIMB_BITS) - 1
 _EXACT = 1 << 53
 
 
@@ -225,7 +225,7 @@ def limbs_f64(left: torch.Tensor) -> torch.Tensor:
     left = _reduced(left)
     shifts, _ = _limb_consts(str(left.device))
     parts = left.unsqueeze(-3) >> shifts          # [..., 3, r, K]
-    parts[..., :2, :, :] &= _LIMB_MAX             # the top limb is below 2**9 already (P < 2**31)
+    parts[..., :2, :, :] &= LIMB_MAX             # the top limb is below 2**9 already (P < 2**31)
     return parts.reshape(*left.shape[:-2], 3 * left.shape[-2], left.shape[-1]).to(torch.float64)
 
 
@@ -273,7 +273,7 @@ def field_matmul_mod(left: torch.Tensor, right: torch.Tensor, *, right_bound: in
     exact blocks.  ``left`` is split into limbs stacked into one ``[3r, K]`` operand, so every
     block is ONE GEMM.  The result is the canonical residue in ``[0, P)`` of the integer product.
     """
-    chunk = exact_chunk(_LIMB_MAX, (P if right_bound is None else right_bound) - 1)
+    chunk = exact_chunk(LIMB_MAX, (P if right_bound is None else right_bound) - 1)
     if _np_small(left, right):
         return torch.from_numpy(np_field_matmul_mod(left.numpy(), right.numpy(), right_bound is None, chunk))
     if right_bound is None:
@@ -313,7 +313,7 @@ def np_field_matmul_mod(left: np.ndarray, right: np.ndarray, reduce_right: bool,
     left = _np_reduced(left)
     r, k = left.shape[-2], left.shape[-1]
     parts = left[..., None, :, :] >> _NP_SHIFTS          # [..., 3, r, K]
-    parts[..., :2, :, :] &= _LIMB_MAX
+    parts[..., :2, :, :] &= LIMB_MAX
     lf = parts.reshape(*left.shape[:-2], 3 * r, k).astype(np.float64)
     rf = right.astype(np.float64)
     acc = 0

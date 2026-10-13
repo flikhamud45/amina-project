@@ -16,7 +16,7 @@ import torch
 from pvi.commit.commitment import column_leaf, group_leaf, table_leaf, vandermonde_columns, verify_multiproof
 from pvi.core.field import P, small_matmul_mod, to_field
 from pvi.core.graph import INT8_MAX, MatOp, exact_matmul
-from pvi.models.decoder import _EXP_TABLE, RES_MAX, SHIFT, _rope_tables
+from pvi.models.decoder import EXP_TABLE, RES_MAX, SHIFT, _rope_tables
 
 # -- field and commitment -------------------------------------------------------------------
 
@@ -225,7 +225,7 @@ def attention_heads(q, k, v, m_s: int, m_o: int | None, pmax: int = 255) -> torc
     s = s.masked_fill(~mask, -(1 << 40))
     d = (s.amax(-1, keepdim=True) - s).clamp(max=1 << 31)
     idx = ((d * m_s + (1 << (SHIFT - 1))) >> SHIFT).clamp(0, 255)
-    e = _EXP_TABLE.to(q.device)[idx].masked_fill(~mask, 0)
+    e = EXP_TABLE.to(q.device)[idx].masked_fill(~mask, 0)
     tot = e.sum(-1, keepdim=True)
     p = torch.div(e * (2 * pmax) + tot, 2 * tot, rounding_mode="floor")  # 0..pmax
     o = exact_matmul(p, v, max_w=pmax + 1, max_x=128)                    # [B,H,T,dh]

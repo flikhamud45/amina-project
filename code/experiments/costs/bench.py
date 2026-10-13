@@ -410,7 +410,7 @@ def _penultimate_mat(graph) -> MatOp:
 
 
 def suite_cnn(args, env) -> None:
-    from pvi.baseline.path_int import (TraceCommitment, _base as _base_name, neuron_tensors, paths_for,
+    from pvi.baseline.path_int import (TraceCommitment, base_tensor as _base_name, neuron_tensors, paths_for,
                                        shared_path_bytes, visit_probabilities)
     from pvi.models.quantize import dequantize_logits, quantize_input, quantize_model
 

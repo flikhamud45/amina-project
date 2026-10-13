@@ -38,10 +38,10 @@ from pvi.core import extfield as ef
 from pvi.core.field import P, field_matmul_mod, min_max, to_field
 from pvi.v0 import claimcodec
 from pvi.v0.prover import Prover
-from pvi.v0.query import (_absorb_statement, _decoded_claims, _encoded, _field_message, _open_message, _passed,
-                          _phase_done, _proof_hashes)
+from pvi.v0.query import (absorb_statement, decoded_claims, encoded_message, field_message, open_message, passed,
+                          phase_done, proof_hashes)
 from pvi.v0.transcript import Challenger
-from pvi.v0.verifier import Verifier, _in_field, _sync
+from pvi.v0.verifier import Verifier, in_field, sync_device
 from pvi.v1 import cut as cutmod
 from pvi.v1 import gkr, logup
 from pvi.v1 import products
@@ -244,7 +244,7 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
     try:
         _, offsets = plan.table()
         narrow = claimcodec.narrow if prover.lean and prover.device.type != "cpu" else None
-        zs = prover.claims(_passed(x), send=narrow, to_host=False)
+        zs = prover.claims(passed(x), send=narrow, to_host=False)
         mult = torch.zeros(plan.table_size(), dtype=torch.int64)
         exc, values = {}, {}
         sent = {op.name for op in verifier._sent_ops()}
@@ -260,8 +260,8 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
         for k, z in zs.items():
             if k in sent and k not in values:
                 values[k] = z
-        rows = (_encoded(claimcodec.pack_rows, [values[name] for name in verifier.tables]) if verifier.tables else b"")
-        blob = _encoded(claimcodec.encode, [values[op.name] for op in prover.graph.mat_ops
+        rows = (encoded_message(claimcodec.pack_rows, [values[name] for name in verifier.tables]) if verifier.tables else b"")
+        blob = encoded_message(claimcodec.encode, [values[op.name] for op in prover.graph.mat_ops
                                             if op.name in sent and op.name not in verifier.tables])
         proofs = prover.open_tables() if verifier.tables else {}
         clear_rows = verifier._row_ops()
@@ -269,10 +269,10 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
         n_fold = (sum(p.reps * op.row_length for op in clear_rows) if verifier.mode == "C" else 0)
         n_fold += sum(8 * _fold_len(verifier, plan, key, members) for key, members in items)
         out = {"claims": len(blob) + len(rows), "cut_exc": len(pack_exceptions(plan, exc)),
-               "cut_mult": len(_encoded(claimcodec.encode, [mult[None]])),
+               "cut_mult": len(encoded_message(claimcodec.encode, [mult[None]])),
                "cut_gkr": sum(1 + claimcodec.field_size(8 * gkr.n_elements(n)) for n in cutmod.instance_bits(plan)),
                "u": claimcodec.field_size(n_fold), "columns": 0,
-               "paths": HASH_BYTES * sum(len(_proof_hashes(pr)) for pr in proofs.values())}
+               "paths": HASH_BYTES * sum(len(proof_hashes(pr)) for pr in proofs.values())}
         if verifier.mode == "C":
             cols = verifier.column_challenges(Challenger(seed=seed))
             units = verifier._column_units()
@@ -295,7 +295,7 @@ def _timed(out: dict, name: str):
 
         def __exit__(self, *exc):
             out["timings"][name] = out["timings"].get(name, 0.0) + time.perf_counter() - self.t0
-            _phase_done(out, name, self.c0)
+            phase_done(out, name, self.c0)
     return _T()
 
 
@@ -305,13 +305,13 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     tau, offsets = plan.table()
     cut_names = plan.names()
     # ---------------------------------------------------------------- M1 (prover)
-    query = _passed(x)
-    _sync(prover.device)
+    query = passed(x)
+    sync_device(prover.device)
     with _timed(out, "prove_forward"):
         # as run_query's wire path: a lean GPU prover keeps each claim as int32 (``claimcodec.narrow``)
         narrow = claimcodec.narrow if prover.lean and prover.device.type != "cpu" else None
         zs = prover.claims(query, send=narrow, to_host=False, **forward_kwargs)
-        _sync(prover.device)
+        sync_device(prover.device)
     witness, exc = {}, {}
     mult = torch.zeros(plan.table_size(), dtype=torch.int64, device=prover.device)
     with _timed(out, "prove_cut_split"):
@@ -326,39 +326,39 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
             sent_vals[o.name] = s.to(zs[o.name].device, zs[o.name].dtype)
             del d, w, counts
         mult = mult.cpu()
-        _sync(prover.device)
+        sync_device(prover.device)
     sent = {op.name for op in verifier._sent_ops()}
     values = {k: (sent_vals[k] if k in cut_names else z) for k, z in zs.items() if k in sent}
     if "witness" in cheat:
         cheat["witness"](values, witness, exc, mult)
-    proofs = _passed(prover.open_tables()) if verifier.tables else {}
+    proofs = passed(prover.open_tables()) if verifier.tables else {}
     with _timed(out, "prove_encode"):
-        rows = (_encoded(claimcodec.pack_rows, [values[name] for name in verifier.tables])
+        rows = (encoded_message(claimcodec.pack_rows, [values[name] for name in verifier.tables])
                 if verifier.tables else None)
-        blob = _encoded(claimcodec.encode, [values[op.name] for op in prover.graph.mat_ops
+        blob = encoded_message(claimcodec.encode, [values[op.name] for op in prover.graph.mat_ops
                                             if op.name in sent and op.name not in verifier.tables])
         exc_blob = pack_exceptions(plan, exc)
-        mult_blob = _encoded(claimcodec.encode, [mult[None]])
-        _sync(prover.device)
+        mult_blob = encoded_message(claimcodec.encode, [mult[None]])
+        sync_device(prover.device)
     out["bytes"] = {"claims": len(blob) + len(rows or b""), "cut_exc": len(exc_blob), "cut_mult": len(mult_blob),
                     "cut_gkr": 0, "u": 0, "columns": 0,
-                    "paths": HASH_BYTES * sum(len(_proof_hashes(pr)) for pr in proofs.values())}
+                    "paths": HASH_BYTES * sum(len(proof_hashes(pr)) for pr in proofs.values())}
     with _timed(out, "fs_hash"):
         if p.fiat_shamir:
-            _absorb_statement(ch, verifier, x)
+            absorb_statement(ch, verifier, x)
             ch.absorb(b"cut", plan.digest())
             ch.absorb_large(b"claims/" + claimcodec.MAGIC, blob)
             if rows is not None:
                 ch.absorb_large(b"rows/I8", rows)
             for name in verifier.tables:
-                hashes = _proof_hashes(proofs.get(name))
+                hashes = proof_hashes(proofs.get(name))
                 ch.absorb(b"lookup/" + name.encode(), struct.pack("<Q", len(hashes)) + b"".join(hashes))
             ch.absorb_large(b"cut/exc", exc_blob)
             ch.absorb_large(b"cut/mult", mult_blob)
 
     # ---------------------------------------------------------------- M1 (verifier)
     narrow = products.optimised()            # the cut ops' values kept as int8 (int16) once in range
-    claims_v = _decoded_claims(verifier, blob, rows, x, out, torch.int32 if narrow else torch.int64)
+    claims_v = decoded_claims(verifier, blob, rows, x, out, torch.int32 if narrow else torch.int64)
     if claims_v is None:
         return "range_or_shape"
     if narrow:
@@ -371,10 +371,10 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     if vdev.type != "cpu":
         with _timed(out, "verify_upload"):
             x_v, claims_v = x.to(vdev), {k: v.to(vdev) for k, v in claims_v.items()}
-            _sync(vdev)
+            sync_device(vdev)
     with _timed(out, "verify_derive"):
         inputs = verifier.derive(x_v, claims_v)
-        _sync(vdev)
+        sync_device(vdev)
     if inputs is None:
         return "range_or_shape"
     if verifier.tables:
@@ -420,7 +420,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
                 pq = logup.leaves(d, w, n_col, n_row + n_col, alpha)
                 trs.append(gkr.prove(*pq, ch_p, f"cut/{b}/"))
                 del pq
-        _sync(prover.device)
+        sync_device(prover.device)
     gkr_blobs = [tr.to_bytes() for tr in trs]
     if "gkr" in cheat:
         gkr_blobs = cheat["gkr"](gkr_blobs)
@@ -440,7 +440,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     clear_rows = verifier._row_ops()
     col_cut = _cut_col_matrices(verifier, plan)
     with _timed(out, "prove_fold"):
-        us_clear = (prover.fold(_passed({op.name: chis[op.name] for op in clear_rows}))
+        us_clear = (prover.fold(passed({op.name: chis[op.name] for op in clear_rows}))
                     if verifier.mode == "C" else {})
         folds = {}                                          # name -> planes [8, n]
         for b, tr in enumerate(trs):
@@ -456,14 +456,14 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         parts = [us_clear[n] for n in order] + [torch.cat([folds[o] for o in members], 1) for _, members in items]
         if "fold" in cheat:
             parts = cheat["fold"](parts)
-        fold_blob = _encoded(claimcodec.pack_field, parts)
+        fold_blob = encoded_message(claimcodec.pack_field, parts)
     out["bytes"]["u"] = len(fold_blob)
 
     # ---------------------------------------------------------------- M3 (verifier)
     shapes = ([(p.reps, op.row_length) for op in clear_rows] if verifier.mode == "C" else [])
     shapes += [(8, _fold_len(verifier, plan, key, members)) for key, members in items]
-    got = _field_message(fold_blob, shapes, out, torch.int64)
-    if got is None or not all(_in_field(t) for t in got[len(order) if verifier.mode == "C" else 0:]):
+    got = field_message(fold_blob, shapes, out, torch.int64)
+    if got is None or not all(in_field(t) for t in got[len(order) if verifier.mode == "C" else 0:]):
         # malformed, or a cut fold outside [0, p) (the clear ops' u are checked by freivalds): canonical encodings
         return "freivalds" if verifier.mode == "C" and clear_rows and got is None else "cut_final"
     us = {n: u.to(vdev) for n, u in zip(order, got[:len(order)])}
@@ -518,10 +518,10 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         else:
             lefts[key] = _planes(xbars[members[0]]).to(vdev)
             sources[key] = planes
-    cols_idx, openings = _open_message(prover, verifier, ch, us, out, u_blob=fold_blob)
+    cols_idx, openings = open_message(prover, verifier, ch, us, out, u_blob=fold_blob)
     with _timed(out, "verify_columns"):
         reason = verifier.check_columns(lefts, sources, cols_idx, openings, wire=True)
-        _sync(vdev)
+        sync_device(vdev)
     return reason
 
 

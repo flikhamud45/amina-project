@@ -71,7 +71,7 @@ def _producers(graph: IntGraph) -> dict[str, object]:
     return {op.output: op for op in graph.ops}
 
 
-def _base(prod: dict, name: str) -> str:
+def base_tensor(prod: dict, name: str) -> str:
     """Follow flatten views back to the tensor that holds the values."""
     while isinstance(prod.get(name), CheapOp) and prod[name].note == "flatten":
         name = prod[name].inputs[0]
@@ -178,7 +178,7 @@ class _Walk:
                 self.ok &= verify_multiproof(tree.root, tree.depth, leaves, proof)
 
     def value(self, tensor: str, flat: int) -> int:
-        base = _base(self.tc.prod, tensor)
+        base = base_tensor(self.tc.prod, tensor)
         shape = self.env[base].shape
         if len(shape) == 4:
             hw = shape[2] * shape[3]
@@ -189,7 +189,7 @@ class _Walk:
         """Recompute ``z = W[c] . patch + b[c]``; return ``(z, parent_sampler, n_parents)``."""
         wrow, brow = self.weight(op, c)
         src = op.inputs[0]
-        base = _base(self.tc.prod, src)
+        base = base_tensor(self.tc.prod, src)
         if op.layout == "conv":
             k, s, p = op.conv
             _, ci, h, w_ = self.env[src].shape
@@ -261,7 +261,7 @@ def sample_path(tc: TraceCommitment, env: dict[str, torch.Tensor], rng: np.rando
                 z_sc, s_sc, n_sc = wk.preact(prod[sc], c, y, x)
             else:                                       # identity shortcut: one parent
                 z_sc, n_sc = wk.value(sc, flat), 1
-                s_sc = lambda rng, sc=sc, flat=flat: (_base(prod, sc), flat)
+                s_sc = lambda rng, sc=sc, flat=flat: (base_tensor(prod, sc), flat)
             wk.ok &= _one_hot_apply(op.fn, shape, c, z_main, z_sc) == claimed
             name, flat = (s_main if rng.integers(n_main + n_sc) < n_main else s_sc)(rng)
         elif op.note in ("maxpool", "global avgpool"):
@@ -273,7 +273,7 @@ def sample_path(tc: TraceCommitment, env: dict[str, torch.Tensor], rng: np.rando
                 k, s, p = op.params["k"], op.params["s"], op.params["p"]
                 window = [(y * s - p + dy, x * s - p + dx) for dy in range(k) for dx in range(k)
                           if 0 <= y * s - p + dy < h and 0 <= x * s - p + dx < w_]
-            base = _base(prod, src)
+            base = base_tensor(prod, src)
             vals = np.array([int(wk.row(base, yy * w_ + xx)[c]) for yy, xx in window])
             if op.note == "global avgpool":
                 n = h * w_
@@ -284,7 +284,7 @@ def sample_path(tc: TraceCommitment, env: dict[str, torch.Tensor], rng: np.rando
             name, flat = base, c * h * w_ + yy * w_ + xx
         else:
             raise ValueError(f"no path rule for {op.name} ({op.note})")
-        name = _base(prod, name)
+        name = base_tensor(prod, name)
     wk.finish()
     return {"ok": bool(wk.ok), "data_bytes": wk.bytes}
 
@@ -331,7 +331,7 @@ def visit_probabilities(graph: IntGraph, env: dict[str, torch.Tensor]) -> dict[s
     mass[graph.output_name] = torch.full_like(out, 1.0 / out.numel(), dtype=torch.float64)
 
     def add(name: str, m: torch.Tensor) -> None:
-        base = _base(prod, name)
+        base = base_tensor(prod, name)
         mass[base] += m.reshape(mass[base].shape)
 
     def spread(op: MatOp, m_over_n: torch.Tensor) -> None:

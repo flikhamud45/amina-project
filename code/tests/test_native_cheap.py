@@ -188,7 +188,7 @@ def test_native_unpack_on_corrupted_proofs_matches_numpy(set_options):
 @pytest.mark.parametrize("hkv,rep,t,tq,dh", [(32, 1, 2048, 2048, 128), (8, 4, 777, 777, 128), (4, 2, 300, 1, 64),
                                              (6, 1, 513, 7, 80)])
 def test_native_attention_on_strided_views(hkv, rep, t, tq, dh):
-    """The attention kernels on the layouts _attention passes them: [B, T, H, dh] tensors seen as [B, H, T, dh]."""
+    """The attention kernels on the layouts integer_attention passes them: [B, T, H, dh] tensors seen as [B, H, T, dh]."""
     g = torch.Generator().manual_seed(t + dh)
     qb = torch.randint(-127, 128, (1, rep * tq, hkv, dh), generator=g, dtype=torch.int64)
     kb = torch.randint(-127, 128, (1, t, hkv, dh), generator=g, dtype=torch.int64)
@@ -218,19 +218,19 @@ def test_min_max_and_the_norm_with_large_denominators(set_options):
                                             (6, 6, 513, 7, 80), (12, 4, 64, 64, 64)])
 @pytest.mark.parametrize("pmax", [255, 2047])
 def test_fused_attention_and_output_requantisation(hq, hkv, t, tq, dh, pmax, monkeypatch, set_options):
-    """transformer._attention on a CPU verifier (one AVX-512 pass that also requantises the output into the final
+    """transformer.integer_attention on a CPU verifier (one AVX-512 pass that also requantises the output into the final
     layout) against the per-group path (native attention core, then the torch requantisation)."""
     g = torch.Generator().manual_seed(hq + t + tq)
     q = torch.randint(-127, 128, (1, tq, hq * dh), generator=g, dtype=torch.int64)
     k = torch.randint(-127, 128, (1, t, hkv * dh), generator=g, dtype=torch.int64)
     v = torch.randint(-127, 128, (1, t, hkv * dh), generator=g, dtype=torch.int64)
     m_s, m_o = 1 << 20, 1_234_567 * 255 // pmax
-    got = tr._attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax)
+    got = tr.integer_attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax)
     set_options(native_avx512=False)
-    want = tr._attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax)
+    want = tr.integer_attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax)
     assert torch.equal(got, want) and got.shape == (1, tq, hq * dh)
     monkeypatch.setattr(native_kernels, "_library", lambda: None)            # the torch paths
-    assert torch.equal(tr._attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax), want)
+    assert torch.equal(tr.integer_attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax), want)
 
 
 @pytest.mark.parametrize("m_s", [1 << 20, 2_600_000, 123_456, (1 << 32) - 1, 7])
@@ -249,7 +249,7 @@ def test_attention_with_the_arithmetic_exp_lookup(m_s, pattern, pmax):
         k[..., ::3, :] = -127
     lut = tr._exp_lut(m_s, "cpu")
     want = tr._attention_core(q, k, v, lut, tr._causal_notmask(640, 1, "cpu", 640), pmax)
-    got = native_kernels.attention_core(q, k, v, lut, 640, exp_table=tr._EXP_TABLE, m_s=m_s, pmax=pmax)
+    got = native_kernels.attention_core(q, k, v, lut, 640, exp_table=tr.EXP_TABLE, m_s=m_s, pmax=pmax)
     assert torch.equal(got, want)
 
 

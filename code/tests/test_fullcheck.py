@@ -280,7 +280,7 @@ def test_challenger_columns_are_distinct_and_cover_the_range():
 
 def test_fiat_shamir_challenges_depend_on_the_statement(setup):
     """With FS, the same claims under a different input give different challenges."""
-    from pvi.v0.query import _absorb_statement, _tensor_blob
+    from pvi.v0.query import absorb_statement, _tensor_blob
 
     _, graph, prover, verifier, x = setup
     fs = params_for(20, len(graph.mat_ops), fiat_shamir=True)
@@ -289,7 +289,7 @@ def test_fiat_shamir_challenges_depend_on_the_statement(setup):
     chis = []
     for xx in (x, x.clone().flip(-1)):
         ch = Challenger(fiat_shamir=True)
-        _absorb_statement(ch, v, xx)
+        absorb_statement(ch, v, xx)
         for k in sorted(claims):
             ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
         chis.append(ch.folding(graph.mat_ops[0].name, 4, 1))
@@ -603,8 +603,8 @@ def test_grouped_attention_equals_all_heads_at_once(m_s, monkeypatch):
     attention_heads = tr._attention_heads
     monkeypatch.setattr(tr, "_attention_heads",
                         lambda q, *args: heads.append(q.shape[1]) or attention_heads(q, *args))
-    whole = tr._attention(q, k, v, m_s, m_o, h, h, dh)
+    whole = tr.integer_attention(q, k, v, m_s, m_o, h, h, dh)
     width = 4 if tr._int32_scores(m_s, dh, t) else 8             # bytes per score on the path taken
     monkeypatch.setattr(tr, "ATTN_BYTES", width * b * t * t * 4)  # force groups of 4 heads (6 = 4 + 2)
-    assert torch.equal(tr._attention(q, k, v, m_s, m_o, h, h, dh), whole)
+    assert torch.equal(tr.integer_attention(q, k, v, m_s, m_o, h, h, dh), whole)
     assert heads == [6, 4, 2]

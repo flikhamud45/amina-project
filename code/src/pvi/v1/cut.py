@@ -34,7 +34,7 @@ from functools import cached_property
 import torch
 
 from pvi.core import extfield as ef
-from pvi.core.graph import CheapOp, IntGraph, MatOp, _canonical
+from pvi.core.graph import CheapOp, IntGraph, MatOp, canonical
 from pvi.v1 import logup
 
 __all__ = ["CutOp", "CutPlan", "lo", "windows", "shift", "requant_values", "split", "split_counts", "public_lw",
@@ -252,7 +252,7 @@ class CutPlan:
         """What the transcript absorbs as ``b"cut"``: the version, ``F``'s parameters, ``lmax``, ``T``, the table's
         widths and every cut op with its placement."""
         out = [_VERSION]
-        _canonical([ef.D, ef.BETA, self.lmax, self.T, list(self.widths),
+        canonical([ef.D, ef.BETA, self.lmax, self.T, list(self.widths),
                     [[o.name, o.kind, o.mult, o.sh, o.lo_, o.hi, o.n_rows, o.n_in, o.has_bias, o.consumer, o.instance,
                       o.row_offset, o.matrix, o.layout] for o in self.ops],
                     [list(i) for i in self.instances]], out)

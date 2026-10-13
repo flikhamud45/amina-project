@@ -149,12 +149,12 @@ class PathSampler(abc.ABC):
         """Draw one path from the output layer down to the input layer."""
         depth = len(architecture) - 1
         nodes: list[int] = [0] * (depth + 1)
-        start = _as_distribution(self.start_distribution(architecture, trace))
+        start = as_distribution(self.start_distribution(architecture, trace))
         nodes[depth] = int(rng.choice(len(start), p=start))
 
         for layer_index in range(depth, 0, -1):
             parent_idx, _ = architecture[layer_index].parents(nodes[layer_index])
-            weights = _as_distribution(
+            weights = as_distribution(
                 self.transition_distribution(
                     architecture, layer_index, nodes[layer_index], parent_idx, trace
                 )
@@ -174,7 +174,7 @@ class PathSampler(abc.ABC):
         return tuple(self.sample(architecture, rng, trace=trace) for _ in range(count))
 
 
-def _as_distribution(weights: np.ndarray) -> np.ndarray:
+def as_distribution(weights: np.ndarray) -> np.ndarray:
     """Normalise non-negative weights, falling back to uniform if they all vanish."""
     weights = np.asarray(weights, dtype=np.float64)
     if np.any(weights < 0) or not np.all(np.isfinite(weights)):

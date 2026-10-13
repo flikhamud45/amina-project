@@ -33,7 +33,7 @@ shapes, device and host:
   configuration (:data:`experiments.common.cli.PAPER`): Fiat--Shamir, the compact wire encoding, the lean prover, the
   last block pruned to the last position, mode C under the commitment plan ``cnn18c``, Kpre with the verifier
   reading the embedding rows itself.  :func:`prove` runs the prover's side of ``run_query`` alone --
-  ``v0.query._claims_message``, ``_fold_message`` and ``_open_message``, the functions ``run_query`` runs, so the
+  ``v0.query._claims_message``, ``_fold_message`` and ``open_message``, the functions ``run_query`` runs, so the
   messages, the byte counts and the phase timings are the same -- and returns the proof's messages.  No check of the
   verifier's is in the timed window; one untimed ``run_query`` per cell (``--accept``) shows that the verifier
   accepts the same proof.  A proof that no verifier attends needs non-interactive challenges, so mode C needs
@@ -71,7 +71,7 @@ split into ``forward_extra`` (the prover's forward pass(es) minus U1: narrowing 
 Checks in every cell (a failure is recorded in the line, and the script exits with status 1 at the end):
 
 * ``u1_equals_claims``: U1's logits (warm-up and every repetition) are ``torch.equal`` to the LM head's claims as the
-  verifier reads them from the proof (decoded from the compact encoding with ``v0.query._decoded_claims``); with
+  verifier reads them from the proof (decoded from the compact encoding with ``v0.query.decoded_claims``); with
   ``seq``, each prompt's proof against its row of the batched U1, so batched serving and per-query proving give the
   same integers;
 * ``deterministic``: proving the same prompts again gives byte-identical proofs (SHA-256 over every message: the
@@ -261,11 +261,11 @@ def prove(prover: Prover, verifier: Verifier, x: torch.Tensor, wire: bool = True
     if isinstance(verifier, TimedChallenges):
         verifier.challenge_s = 0.0
     claims, rows, proofs = v0_query._claims_message(prover, verifier, x, ch, out, {}, wire=wire)
-    hashes = b"".join(h for name in verifier.tables for h in v0_query._proof_hashes(proofs.get(name)))
+    hashes = b"".join(h for name in verifier.tables for h in v0_query.proof_hashes(proofs.get(name)))
     parts, openings = [claims, rows or b"", hashes], None
     if verifier.mode == "C":
         _, us, u_blob = v0_query._fold_message(prover, verifier, ch, x, out, wire=wire)
-        _, openings = v0_query._open_message(prover, verifier, ch, us, out, u_blob=u_blob)
+        _, openings = v0_query.open_message(prover, verifier, ch, us, out, u_blob=u_blob)
         parts.append(u_blob if wire else us)
     out["timings"]["challenges"] = getattr(verifier, "challenge_s", 0.0)
     return parts, openings, out
@@ -280,7 +280,7 @@ def messages(parts: list, openings: dict | None, verifier: Verifier) -> list:
     """The proof's messages as byte strings, in the order they travel: ``parts`` and, in mode C, the opened columns
     and the hashes of their paths.  In the compact encoding the columns travel 31-bit packed -- ``claimcodec.
     pack_field`` of the decoded rows, tree after tree: the packing is a fixed function of the values, so these are
-    the bytes ``_open_message`` sent.  Without it (``parts[0]`` the claims themselves) every claim, ``u`` and column
+    the bytes ``open_message`` sent.  Without it (``parts[0]`` the claims themselves) every claim, ``u`` and column
     entry is written as a 4-byte integer and a lookup table's rows as 1-byte ones, as ``run_query`` counts them."""
     raw = isinstance(parts[0], dict)
     head = list(parts)
@@ -293,7 +293,7 @@ def messages(parts: list, openings: dict | None, verifier: Verifier) -> list:
     units = [name for name, _ in verifier._column_units()]
     cols = (b"".join(_raw(openings[name][0]) for name in units) if raw
             else claimcodec.pack_field([openings[name][0] for name in units]))
-    paths = b"".join(h for name in units for h in v0_query._proof_hashes(openings[name][1]))
+    paths = b"".join(h for name in units for h in v0_query.proof_hashes(openings[name][1]))
     return [*head, cols, paths]
 
 
@@ -312,10 +312,10 @@ def head_op(graph):
 
 def claimed_logits(verifier: Verifier, graph, parts: list, x: torch.Tensor) -> torch.Tensor:
     """The logits a proof claims: the LM head's claim as the verifier reads it (from the compact encoding, and a
-    plan's rows, with ``v0.query._decoded_claims``), as int64 ``[B * positions, vocab]``."""
+    plan's rows, with ``v0.query.decoded_claims``), as int64 ``[B * positions, vocab]``."""
     if isinstance(parts[0], dict):
         return parts[0][head_op(graph).name].T.to("cpu", torch.int64)
-    zs = v0_query._decoded_claims(verifier, parts[0], parts[1], x, {"timings": {}, "contention": {}}, torch.int32)
+    zs = v0_query.decoded_claims(verifier, parts[0], parts[1], x, {"timings": {}, "contention": {}}, torch.int32)
     if zs is None:
         raise AssertionError("the proof's claims do not decode")
     return zs[head_op(graph).name].T.to("cpu", torch.int64)
