@@ -42,8 +42,8 @@ import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
-from pvi.fullcheck.sampling import paths_for
-from pvi.fullcheck.transformer import CONFIGS
+from pvi.baseline.path_int import paths_for
+from pvi.models.decoder import CONFIGS
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -255,7 +255,7 @@ def natural_activations(model, tok, hooks, layers, prompts):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="facebook/opt-6.7b")
-    ap.add_argument("--config", default="opt-6.7b", help="key into pvi.fullcheck.transformer.CONFIGS")
+    ap.add_argument("--config", default="opt-6.7b", help="key into pvi.models.decoder.CONFIGS")
     ap.add_argument("--layers", type=int, nargs="+", default=[8, 16, 24, 31])
     ap.add_argument("--prompts", type=int, default=len(PROMPTS))
     ap.add_argument("--topk", type=int, default=8)

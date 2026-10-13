@@ -4,7 +4,7 @@ This is the minimal instantiation of the game of ``attack_theory/experiments.md`
 MNIST MLP.  The defender publishes a sampler, or a mixture of samplers, from a fixed family F; the
 adversary sees the model, the query, the sampler and the held-out natural ranges, and returns a
 forged trace with a wrong output whose edited values lie in range.  Detection per path is the exact
-``1 - acceptance`` of :mod:`pvi.experiments.analysis`; with ``s`` independent paths it is
+``1 - acceptance`` of :mod:`pvi.baseline.analysis`; with ``s`` independent paths it is
 ``1 - (1 - d)^s``.
 
 The reported value for a sampler is the *minimum* over the adversary's found attacks of ``d``.  A
@@ -48,24 +48,19 @@ from pathlib import Path
 import numpy as np
 
 from pvi.attacks.tamper import smallest_flipping_value
-from pvi.defences import (
-    GradientSaliencySampler,
-    LocalContributionSampler,
-    StaticImportanceSampler,
-    TailFirstSampler,
-    ZeroAwareContributionSampler,
-    ZeroFirstSampler,
-    weight_magnitude_importance,
-)
-from pvi.experiments.analysis import locally_consistent_mask
-from pvi.nn.architecture import DenseLayer
-from pvi.nn.gradients import output_direction_gradient, saliency
-from pvi.nn.network import Trace, TracedNetwork
-from pvi.protocol import ProtocolParams, UniformPathSampler
-from pvi.protocol.sampling import PathSampler, _as_distribution
+from pvi.baseline.samplers import (GradientSaliencySampler, LocalContributionSampler, StaticImportanceSampler,
+                                   TailFirstSampler, ZeroAwareContributionSampler, ZeroFirstSampler,
+                                   weight_magnitude_importance)
+from pvi.baseline.analysis import locally_consistent_mask
+from pvi.mnist.architecture import DenseLayer
+from pvi.mnist.gradients import output_direction_gradient, saliency
+from pvi.mnist.network import Trace, TracedNetwork
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.sampling import UniformPathSampler
+from pvi.baseline.path.sampling import PathSampler, _as_distribution
 from pvi.results import write_json
-from pvi.training import load_network
-from pvi.zoo import mlp_architecture_for
+from pvi.mnist.training import load_network
+from pvi.mnist.zoo import mlp_architecture_for
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / "artifacts" / "models"
@@ -200,7 +195,7 @@ def fast_acceptance(
 ) -> float:
     """Vectorised equivalent of ``acceptance_probability``, exact to float round-off.
 
-    The recursion is the one proved in :mod:`pvi.experiments.analysis`: with ``c_l(j)`` the local
+    The recursion is the one proved in :mod:`pvi.baseline.analysis`: with ``c_l(j)`` the local
     consistency indicator and ``g_l(j)`` the probability that a path at node ``j`` of layer ``l``
     passes every remaining check,
 
@@ -961,7 +956,7 @@ def main() -> None:
     import torch
 
     torch.set_num_threads(args.threads)
-    from pvi.data import load_classification
+    from pvi.mnist.data import load_classification
 
     if args.caps is None:
         caps: tuple[float | None, ...] = CAPS

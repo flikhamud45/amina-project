@@ -44,8 +44,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import opt_builder as ob                                   # noqa: E402
 from common import find_parquet, load_opt, load_windows   # noqa: E402
 
-from pvi.fullcheck import real_weights as rw              # noqa: E402
-from pvi.fullcheck.graph import CheapOp, IntGraph, OpFn, identity_op, op_fn, op_kind   # noqa: E402
+from pvi.models import hf_opt as rw              # noqa: E402
+from pvi.core.graph import CheapOp, IntGraph, OpFn, identity_op, op_fn, op_kind   # noqa: E402
 
 BEST_GAIN = {"opt-125m": 4.0, "opt-1.3b": 3.0, "opt-6.7b": 2.0}
 SMOOTH = dict(norm_mode="smooth", norm_gain=4.0, smooth_pct=99.9, pct=99.99, pct_att=99.99)

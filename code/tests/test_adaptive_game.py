@@ -22,21 +22,16 @@ import numpy as np
 import pytest
 
 from pvi.attacks.tamper import apply_plan, plan_single_neuron_flip
-from pvi.defences import (
-    GradientSaliencySampler,
-    LocalContributionSampler,
-    StaticImportanceSampler,
-    TailFirstSampler,
-    ZeroAwareContributionSampler,
-    ZeroFirstSampler,
-    weight_magnitude_importance,
-)
-from pvi.defences.adaptive import plan_adaptive_stealthy_flip
-from pvi.experiments.analysis import acceptance_probability
-from pvi.nn.network import Trace, TracedNetwork
-from pvi.protocol import ProtocolParams, UniformPathSampler
-from pvi.training import load_network
-from pvi.zoo import mlp_architecture_for
+from pvi.baseline.samplers import (GradientSaliencySampler, LocalContributionSampler, StaticImportanceSampler,
+                                   TailFirstSampler, ZeroAwareContributionSampler, ZeroFirstSampler,
+                                   weight_magnitude_importance)
+from pvi.baseline.adaptive import plan_adaptive_stealthy_flip
+from pvi.baseline.analysis import acceptance_probability
+from pvi.mnist.network import Trace, TracedNetwork
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.sampling import UniformPathSampler
+from pvi.mnist.training import load_network
+from pvi.mnist.zoo import mlp_architecture_for
 
 MODEL = Path(__file__).resolve().parents[1] / "artifacts" / "models" / "mlp_mnist_full.npz"
 TOLERANCE = 1e-9

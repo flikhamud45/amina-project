@@ -25,14 +25,14 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import analytic
-from pvi.fullcheck import claimcodec as cc
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import reference as ref
-from pvi.fullcheck.commitment import MerkleTree, TableCommitment, multiproof_size, table_leaves, verify_multiproof
-from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp, op_fn, requant, requant_op
-from pvi.fullcheck.plans import next_pow2, plan_commitment
-from pvi.fullcheck.transformer import CONFIGS
+from pvi.commit import cost as analytic
+from pvi.v0 import claimcodec as cc
+from pvi.v0 import protocol as proto
+import reference as ref
+from pvi.commit.commitment import MerkleTree, TableCommitment, multiproof_size, table_leaves, verify_multiproof
+from pvi.core.graph import CheapOp, IntGraph, MatOp, op_fn, requant, requant_op
+from pvi.commit.plans import next_pow2, plan_commitment
+from pvi.models.decoder import CONFIGS
 
 from test_plans import _TINY, _planned, _verifiers   # the plan tests' models and helpers
 
@@ -661,7 +661,7 @@ def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_
     none raising."""
     import json
 
-    import pvi.fullcheck.transformer as tr
+    import pvi.models.decoder as tr
 
     bench = _script("4_defence_benchmark", "bench")
     monkeypatch.setitem(tr.CONFIGS, "tiny-gpt", _TINY["gpt"])
@@ -679,26 +679,3 @@ def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_
     assert "range_or_shape" in {r["stage"] for r in attempts if r["attack"] == "single_value"}
 
 
-def test_plan_bytes_rows_of_pruned_builds_with_lookups():
-    """``plan_bytes.run_rows`` on 1- and 2-block pruned builds (claims only): the measured claims of the
-    c policy's tables and of the Kpre verifier's own rows are the model's, and the whole model's rows are
-    the model on the extrapolated claims."""
-    pb = _script("6_improvements", "plan_bytes")
-    rows = pb.run_rows("gpt2:6:1,2:256", 40, ["R8c"], 2, wires=(False, True), claims_only=True, prune_last=True,
-                       kpre=(False, True))
-    whole = [r for r in rows if r["layers"] == 12]
-    assert {(r["mode"], r["lookups"], r["wire"]) for r in whole} == {
-        ("C", False, False), ("C", False, True), ("Kpre", False, False), ("Kpre", False, True),
-        ("Kpre", True, False), ("Kpre", True, True)}
-    cfg = dataclasses.replace(CONFIGS["gpt2"], vocab=256)
-    ops = analytic.decoder_shapes(cfg, prune_last=True)
-    cols = analytic.decoder_claim_columns(cfg, 6, prune_last=True)
-    for r in whole:
-        if not r["wire"]:
-            plan = plan_commitment(ops, "R8c") if r["mode"] == "C" else None
-            want = analytic.proof_bytes(ops, proto.params_for(40, len(ops), fiat_shamir=r["challenges"] == "fs",
-                                                              plan=plan), cols, plan=plan, mode=r["mode"],
-                                        lookups=r["lookups"], table_ids={"pos": range(6)})
-            assert r["bytes_claims"] == want["claims"] and r["bytes_total"] == pytest.approx(sum(want.values()))
-    kpre = {r["lookups"]: r["bytes_claims"] for r in whole if r["mode"] == "Kpre" and not r["wire"]}
-    assert kpre[False] - kpre[True] == 4 * 6 * 768 * 2                  # the token and position rows, not sent

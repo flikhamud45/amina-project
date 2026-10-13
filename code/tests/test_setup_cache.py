@@ -1,4 +1,4 @@
-"""PS2 (c): the setup cache (``protocol.commit_graph(cache=...)``, :mod:`pvi.fullcheck.setup_cache`).
+"""PS2 (c): the setup cache (``protocol.commit_graph(cache=...)``, :mod:`pvi.commit.setup_cache`).
 
 A commitment rebuilt from stored leaves is the fresh commitment: the same roots and trees, and the same proofs and
 verdicts; the key separates different weights and plans; a damaged file is a miss, never a wrong commitment; and
@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import setup_cache
-from pvi.fullcheck.transformer import DecoderConfig, build_decoder
+from pvi.v0 import protocol as proto
+from pvi.commit import setup_cache
+from pvi.models.decoder import DecoderConfig, build_decoder
 
 _TINY = {
     "gpt": DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64),

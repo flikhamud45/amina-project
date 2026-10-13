@@ -31,14 +31,15 @@ import numpy as np
 
 from pvi.attacks.backdoor import calibrate_activation_ceilings
 from pvi.attacks.tamper import smallest_flipping_value
-from pvi.data import load_classification
-from pvi.defences import ZeroAwareContributionSampler
-from pvi.defences.adaptive import plan_adaptive_stealthy_flip
-from pvi.experiments.analysis import acceptance_probability
-from pvi.protocol import ProtocolParams, UniformPathSampler
+from pvi.mnist.data import load_classification
+from pvi.baseline.samplers import ZeroAwareContributionSampler
+from pvi.baseline.adaptive import plan_adaptive_stealthy_flip
+from pvi.baseline.analysis import acceptance_probability
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.sampling import UniformPathSampler
 from pvi.results import write_json
-from pvi.training import load_network
-from pvi.zoo import mlp_architecture_for
+from pvi.mnist.training import load_network
+from pvi.mnist.zoo import mlp_architecture_for
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / "artifacts" / "models"

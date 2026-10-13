@@ -10,7 +10,7 @@
 * Deferred range checks (an exception after an out-of-range claim is its rejection) and inputs
   that are not int8-valued (the int8 right-hand side falls back).
 * The streaming verifier (``Verifier.verify_streaming``, with the wire formats of
-  ``pvi.fullcheck.pipeline``): the verdicts and labels of ``run_query``
+  ``pvi.v0.streaming``): the verdicts and labels of ``run_query``
   on honest and tampered queries, its proof bytes on accepted ones, and its Fiat--Shamir
   transcript.
 
@@ -27,13 +27,13 @@ import hashlib
 import pytest
 import torch
 
-from pvi.fullcheck import field as fld
-from pvi.fullcheck import pipeline
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import reference as ref
-from pvi.fullcheck import transformer as tr
-from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp, OpFn, op_fn, op_kind
-from pvi.fullcheck.transformer import DecoderConfig, build_decoder
+from pvi.core import field as fld
+from pvi.v0 import streaming as pipeline
+from pvi.v0 import protocol as proto
+import reference as ref
+from pvi.models import decoder as tr
+from pvi.core.graph import CheapOp, IntGraph, MatOp, OpFn, op_fn, op_kind
+from pvi.models.decoder import DecoderConfig, build_decoder
 
 P = fld.P
 Z = proto.Z_BOUND
@@ -147,7 +147,7 @@ def test_grouped_attention_matches_the_reference_on_both_paths(hq, hkv, m_s, dev
 @pytest.mark.parametrize("m_s", [1 << 20, 2_600_000])
 @pytest.mark.parametrize("pmax", [255, 2047])
 def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern, m_s, pmax):
-    from pvi.fullcheck import attention_kernels
+    from pvi.kernels import attention_triton as attention_kernels
     if not attention_kernels.available("cuda"):
         pytest.skip("no Triton")
     if not tr._int32_scores(m_s, dh, t):
@@ -177,7 +177,7 @@ def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, t
 @pytest.mark.parametrize("pattern", ["random", "peaked", "extreme"])
 @pytest.mark.parametrize("pmax", [255, 2047])
 def test_the_native_cpu_attention_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern, pmax):
-    from pvi.fullcheck import native_kernels
+    from pvi.kernels import native as native_kernels
     if not native_kernels.available():
         pytest.skip("no C++ compiler (or not Linux)")
     m_s = 1 << 20
@@ -232,7 +232,7 @@ def test_int8_small_matmul_is_exact(rr, k, m, device):
 @pytest.mark.parametrize("n,k,m", [(24, 768, 64), (17, 4096, 1), (4096, 64, 9), (40, 70_000, 3), (33, 1 << 16, 8)])
 def test_int8_product_is_the_exact_weight_product(n, k, m, device):
     # the prover's forward on int8 GEMMs: int8 weights and inputs at the extremes, M padded to 8, K in blocks
-    from pvi.fullcheck.graph import int8_product
+    from pvi.core.graph import int8_product
     g = torch.Generator().manual_seed(n + k + m)
     w, x = _rand(g, -128, 128, (n, k)), _rand(g, -128, 128, (k, m))
     w[0], x[:, 0] = -128, -128
@@ -244,7 +244,7 @@ def test_int8_product_is_the_exact_weight_product(n, k, m, device):
 def test_int8_product_declines_shapes_the_int8_gemm_cannot_take():
     w8 = torch.ones(16, 64, dtype=torch.int8)
     assert fld.int8_ok("cpu") is False
-    from pvi.fullcheck.graph import int8_product
+    from pvi.core.graph import int8_product
     assert int8_product(w8, torch.ones(64, 8, dtype=torch.int8)) is None              # N <= 16
     assert int8_product(torch.ones(24, 60, dtype=torch.int8), torch.ones(60, 8, dtype=torch.int8)) is None  # K % 8
 
@@ -651,8 +651,8 @@ def test_streaming_rejects_a_u_of_the_wrong_shape_at_freivalds(change, fiat_sham
 
 
 def test_streaming_gives_the_verdicts_of_run_query_on_a_cnn(device):
-    from pvi.fullcheck.models import build_float_model
-    from pvi.fullcheck.quantize import quantize_input, quantize_model
+    from pvi.models.cnn import build_float_model
+    from pvi.models.quantize import quantize_input, quantize_model
 
     torch.manual_seed(0)
     g = torch.Generator().manual_seed(1)

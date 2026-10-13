@@ -12,13 +12,8 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.nn.models import (
-    build_torch_module,
-    extract_parameters,
-    mlp_architecture,
-    small_cnn_architecture,
-)
-from pvi.nn.network import TracedNetwork
+from pvi.mnist.models import build_torch_module, extract_parameters, mlp_architecture, small_cnn_architecture
+from pvi.mnist.network import TracedNetwork
 
 
 @pytest.mark.parametrize(
@@ -83,7 +78,7 @@ def test_eval_trace_final_layer_is_the_model_output():
 
 
 def test_saving_and_loading_round_trips(tmp_path):
-    from pvi.training import load_network, save_network
+    from pvi.mnist.training import load_network, save_network
 
     architecture = mlp_architecture(10, [8], 3)
     torch.manual_seed(4)

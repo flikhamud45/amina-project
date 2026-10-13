@@ -1,4 +1,4 @@
-"""The compact wire encoding of the proof: ``pvi.fullcheck.claimcodec``.
+"""The compact wire encoding of the proof: ``pvi.v0.claimcodec``.
 
 Slot streams, Rice vectors and 31-bit field elements round trip; the vectorised, lane-by-lane,
 threaded and torch (GPU prover) paths give the same bytes and values; every malformed input is
@@ -24,10 +24,11 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import claimcodec as cc
-from pvi.fullcheck import commitment, opcount
-from pvi.fullcheck.protocol import P, Z_BOUND
-from pvi.fullcheck.transformer import DecoderConfig, build_decoder
+from pvi.v0 import claimcodec as cc
+from pvi.commit import commitment
+import opcount as opcount
+from pvi.v0.protocol import P, Z_BOUND
+from pvi.models.decoder import DecoderConfig, build_decoder
 
 LIM = Z_BOUND - 1
 cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
@@ -592,7 +593,7 @@ def _int32_on_gpu(zs) -> list:
                                                   (7, 1 << 22, 1000)])
 def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, flag_cols, chunk, monkeypatch):
     # launches of one or a few columns, the flag words read a few columns at a time, the plan's windows small or not
-    from pvi.fullcheck import codec_kernels
+    from pvi.kernels import codec_triton as codec_kernels
     if not codec_kernels.available("cuda"):
         pytest.skip("no Triton")
     monkeypatch.setattr(cc, "_FUSED", True)                     # opt-in
@@ -938,7 +939,7 @@ def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(cl
         extra[way] = torch.cuda.max_memory_allocated() - before
     assert blobs["one pass"] == blobs["in parts"] == cc.encode([z.cpu() for z in zs], impl="host")
     assert extra["in parts"] < 100 * 2**20 < 600 * 2**20 < extra["one pass"], extra
-    from pvi.fullcheck import codec_kernels
+    from pvi.kernels import codec_triton as codec_kernels
     if codec_kernels.available("cuda"):                          # the fused encoder: the same bytes, less memory
         monkeypatch.setattr(cc, "_FUSED", True)
         monkeypatch.setattr(cc, "_ONE_PASS", 1 << 27)
@@ -1061,7 +1062,7 @@ def test_random_corruptions_never_crash_the_split_decoder(sample, monkeypatch):
     # inputs: the same claims or the same rejection as the one-thread decoder (default sizes), never another
     # exception; every job of the split decoder on the pool's threads (lanes, Rice vectors, patches, means).
     # This tests the numpy decoder's lanes; the native unpack (test_native_cheap.py) is switched off.
-    from pvi.fullcheck import native_kernels
+    from pvi.kernels import native as native_kernels
     monkeypatch.setattr(native_kernels, "_DECODE", False)
     zs, blob, rows, cols = sample
     rng = np.random.default_rng(13)

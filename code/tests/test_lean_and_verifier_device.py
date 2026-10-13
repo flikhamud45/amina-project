@@ -4,8 +4,8 @@ on tiny decoders; the parameter counts of the larger decoder configs."""
 import pytest
 import torch
 
-from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
-from pvi.fullcheck.transformer import DecoderConfig, build_decoder
+from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+from pvi.models.decoder import DecoderConfig, build_decoder
 
 _TINY = {
     "gpt": DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64),
@@ -61,7 +61,7 @@ def test_lean_prover_and_device_verifier(family, mode, vdev):
 
 
 def test_larger_configs_have_published_parameter_counts():
-    from pvi.fullcheck.transformer import CONFIGS, decoder_param_count
+    from pvi.models.decoder import CONFIGS, decoder_param_count
     for name, published in [("opt-350m", 331e6), ("opt-2.7b", 2.7e9), ("opt-13b", 13e9),
                             ("opt-30b", 30e9), ("opt-66b", 66e9), ("llama2-70b", 69e9)]:
         n = decoder_param_count(CONFIGS[name])

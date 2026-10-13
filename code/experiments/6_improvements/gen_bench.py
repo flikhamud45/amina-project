@@ -68,7 +68,7 @@ def _load(name: str, path: str):
 
 def config(name: str):
     """A ``transformer.CONFIGS`` entry, or one of ``serve_ab.TINY``'s small shapes (laptop checks and tests)."""
-    from pvi.fullcheck.transformer import CONFIGS
+    from pvi.models.decoder import CONFIGS
     if name in CONFIGS:
         return CONFIGS[name]
     return _load("serve_ab", "experiments/7_reexec/serve_ab.py").TINY[name]
@@ -107,8 +107,8 @@ def seed_of(i: int) -> bytes:
 
 def generate(graph, prompt: torch.Tensor, steps: int, rule: str, sampler, device) -> torch.Tensor:
     """``prompt [1, P]`` and the ``steps`` tokens the rule generates after it (on ``device``), on the CPU."""
-    from pvi.fullcheck.token_sampler import sample_tokens
-    from pvi.fullcheck.transformer import greedy_tokens
+    from pvi.v0.token_sampler import sample_tokens
+    from pvi.models.decoder import greedy_tokens
     with torch.no_grad():
         x = prompt.to(device)
         out = greedy_tokens(graph, x, steps) if rule == "greedy" else sample_tokens(graph, x, steps, sampler)
@@ -171,7 +171,7 @@ def main() -> int:
     ap.add_argument("--gen", type=int, nargs="+", default=[64, 256], help="response tokens G (each > 1)")
     ap.add_argument("--decode", nargs="+", choices=["greedy", "sample"], default=["greedy", "sample"])
     ap.add_argument("--modes", nargs="+", choices=["C", "Kpre"], default=["C", "Kpre"])
-    ap.add_argument("--policy", default="auto", help="mode C's commitment plan (pvi.fullcheck.plans)")
+    ap.add_argument("--policy", default="auto", help="mode C's commitment plan (pvi.commit.plans)")
     ap.add_argument("--lam", type=int, default=128)
     ap.add_argument("--fs", action="store_true", help="Fiat-Shamir (non-interactive); each party's hashing timed")
     ap.add_argument("--queries", type=int, default=3)
@@ -188,10 +188,10 @@ def main() -> int:
     if min(args.gen) < 2:
         raise SystemExit("--gen: a response of at least 2 tokens (G = 1 is the plain prefill of perf.py)")
     torch.set_num_threads(args.threads)
-    from pvi.fullcheck.analytic import decoder_shapes
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
-    from pvi.fullcheck.token_sampler import TokenSampler
-    from pvi.fullcheck.transformer import build_decoder, with_lm_positions
+    from pvi.commit.cost import decoder_shapes
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.token_sampler import TokenSampler
+    from pvi.models.decoder import build_decoder, with_lm_positions
 
     device = torch.device(args.device)
     cfg = config(args.model)

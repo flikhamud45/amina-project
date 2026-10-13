@@ -1,38 +1,37 @@
-"""pvi -- Proofs of Verifiable Inference.
-
-A faithful, self-contained reimplementation of the sampling-based proof-of-inference
-protocol of Anchuri, Campanelli, Cesaretti, Gennaro, Jois, Kayman and Ozdemir,
-*Towards Verifiable AI with Lightweight Cryptographic Proofs of Inference*
-(SaTML 2026 / ePrint 2026/541), together with the attack and defence study built
-on top of it.
+"""pvi: proofs of inference, the attack on spot-checking verifiers and a fully sound defence.
 
 Sub-packages:
 
-``pvi.commitments``
-    Vector commitments (Appendix B of the paper).  We provide the Merkle-tree
-    instantiation used by the authors, in the row-wise optimised variant
-    described in their Section 8.1.
+``pvi.core``
+    The prime field and its degree-8 extension, and integer computation graphs: weight operations, cheap operations
+    as registered kinds with explicit constants, exact evaluation and the graph digest.
 
-``pvi.nn``
-    The layered-DAG view of a neural network that the protocol needs: an explicit
-    parent set ``G_j`` for every neuron, an execution trace ``trc`` holding one
-    activation per neuron, and the local consistency relation
-    ``a_j = phi(sum_{i in G_j} w_ij a_i)`` (Section 2).
+``pvi.commit``
+    Weight commitments (Merkle trees, Reed--Solomon column commitments, lookup tables), commitment plans, the setup
+    proof of an untrusted commitment, the prover's setup cache and the byte model of a proof.
 
-``pvi.protocol``
-    ``RandPathTest`` (Figure 3), the cryptographic protocol compiled from it
-    (Figure 4), and the prover / verifier that realise Definition 4.
+``pvi.v0``
+    The base protocol: security parameters, the Fiat--Shamir transcript, the prover, the verifier in modes C, K and
+    Kpre (and its streaming form), the compact wire codec and the exact integer token sampler.
 
-``pvi.attacks``, ``pvi.defences``, ``pvi.experiments``
-    Our single-neuron / backdoor attacks, the alternative path samplers, and the
-    exact acceptance probability of any trace under any sampler.
+``pvi.v1``
+    The V1 variant: requantised int8 values instead of claims, proved by windowed logUp and a fractional-sum GKR.
 
-``pvi.fullcheck``
-    Our defence (whole-layer Freivalds checks against a Reed--Solomon/Merkle weight
-    commitment) on integer CNNs and transformers, plus the path test re-implemented
-    on the same graphs as a baseline.  This part uses PyTorch and, optionally, a GPU.
+``pvi.models``
+    Integer models: random-weight decoders with the benchmark shapes, integer OPT and Llama/Qwen3 decoders from
+    Hugging Face checkpoints, image models and their int8 quantiser.
+
+``pvi.kernels``
+    Exact native CPU kernels and Triton GPU kernels.
+
+``pvi.baseline``
+    The spot-checking verifiers the attack targets: the path protocol of Anchuri et al. (float and integer
+    implementations), value-aware samplers and the exact acceptance analysis.
+
+``pvi.attacks``, ``pvi.mnist``
+    The single-neuron and backdoor attacks, and the MNIST networks they are measured on.
 """
 
-__all__ = ["attacks", "commitments", "defences", "experiments", "fullcheck", "nn", "protocol"]
+__all__ = ["attacks", "baseline", "commit", "core", "kernels", "mnist", "models", "v0", "v1"]
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

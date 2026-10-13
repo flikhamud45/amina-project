@@ -22,7 +22,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import Scorer, load_opt, load_windows          # noqa: E402
 
-from pvi.fullcheck.real_weights import build_opt_from_hf, real_logits   # noqa: E402
+from pvi.models.hf_opt import build_opt_from_hf, real_logits   # noqa: E402
 
 
 def main() -> None:

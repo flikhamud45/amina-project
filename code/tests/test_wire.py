@@ -20,12 +20,12 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import claimcodec as cc
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.analytic import decoder_shapes
-from pvi.fullcheck.models import build_float_model
-from pvi.fullcheck.quantize import quantize_input, quantize_model
-from pvi.fullcheck.transformer import CONFIGS, DecoderConfig, build_decoder
+from pvi.v0 import claimcodec as cc
+from pvi.v0 import protocol as proto
+from pvi.commit.cost import decoder_shapes
+from pvi.models.cnn import build_float_model
+from pvi.models.quantize import quantize_input, quantize_model
+from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
 
 P = proto.P
 _ENCODE, _PACK_FIELD = cc.encode, cc.pack_field     # the codec's own, which tests replace in the protocol

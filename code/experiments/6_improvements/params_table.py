@@ -25,12 +25,12 @@ import json
 import math
 from types import SimpleNamespace
 
-from pvi.fullcheck import setup_proof as sp
-from pvi.fullcheck.analytic import decoder_shapes
-from pvi.fullcheck.field import P
-from pvi.fullcheck.plans import column_bits, column_error_log2, exact_columns, plan_commitment
-from pvi.fullcheck.protocol import params_for
-from pvi.fullcheck.transformer import CONFIGS
+from pvi.commit import setup_proof as sp
+from pvi.commit.cost import decoder_shapes
+from pvi.core.field import P
+from pvi.commit.plans import column_bits, column_error_log2, exact_columns, plan_commitment
+from pvi.v0.protocol import params_for
+from pvi.models.decoder import CONFIGS
 
 LOG2_P = math.log2(P)
 

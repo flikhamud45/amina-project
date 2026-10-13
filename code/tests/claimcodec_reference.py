@@ -1,5 +1,5 @@
 """The ``PVC3`` encoder as commit 6c2059a wrote it, verbatim: the specification the fast encoders of
-``pvi.fullcheck.claimcodec`` are tested against (same bytes for every input).  Not part of the package."""
+``pvi.v0.claimcodec`` are tested against (same bytes for every input).  Not part of the package."""
 
 from __future__ import annotations
 

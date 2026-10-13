@@ -144,8 +144,8 @@ def multiproof_adjust(summary: list[dict]) -> list[dict]:
     opened column.  Their Merkle term is replaced by the exact *expected* multiproof size for
     the same trees and number of columns (the columns are uniform, so this is the mean of
     what a multiproof run would send); the measured value is kept alongside."""
-    from pvi.fullcheck.analytic import decoder_shapes, expected_multiproof_nodes
-    from pvi.fullcheck.transformer import CONFIGS
+    from pvi.commit.cost import decoder_shapes, expected_multiproof_nodes
+    from pvi.models.decoder import CONFIGS
 
     extra = []
     for s in summary:

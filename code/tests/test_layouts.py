@@ -1,4 +1,4 @@
-"""The col layout and fusion of the commitment plans (``pvi.fullcheck.plans``, the policies with the
+"""The col layout and fusion of the commitment plans (``pvi.commit.plans``, the policies with the
 suffix ``c``): a col-layout matrix commits ``[A_1 ; A_2 ; ...]^T`` for linear ops reading one
 tensor; the verifier draws ``chi'`` over the claims' columns (the identity when ``M <= r``) with
 ``chi``, computes ``w = chi' [X ; 1]^T`` and ``z = chi' Z^T`` itself and checks the opened columns
@@ -12,15 +12,15 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.fullcheck import analytic
-from pvi.fullcheck import field as fld
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import reference as ref
-from pvi.fullcheck.commitment import (GroupCommitment, MerkleTree, TransposedCommitment, WeightCommitment,
-                                      column_leaf, group_leaf, transposed_leaves, verify_multiproof)
-from pvi.fullcheck.pipeline import wire_claim, wire_openings
-from pvi.fullcheck.plans import REFERENCE_LAMBDA, col_name, next_pow2, plan_commitment
-from pvi.fullcheck.transformer import CONFIGS, build_decoder
+from pvi.commit import cost as analytic
+from pvi.core import field as fld
+from pvi.v0 import protocol as proto
+import reference as ref
+from pvi.commit.commitment import (GroupCommitment, MerkleTree, TransposedCommitment, WeightCommitment, column_leaf,
+                                   group_leaf, transposed_leaves, verify_multiproof)
+from pvi.v0.streaming import wire_claim, wire_openings
+from pvi.commit.plans import REFERENCE_LAMBDA, col_name, next_pow2, plan_commitment
+from pvi.models.decoder import CONFIGS, build_decoder
 
 from test_plans import _TINY, _cnn, _folded, _matrix, _planned, _verifiers   # the plan tests' models, helpers
 

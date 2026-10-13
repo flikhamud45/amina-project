@@ -10,12 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pvi.commitments.merkle import (
-    MerkleOpening,
-    MerkleVectorCommitment,
-    decode_f32_vector,
-    encode_f32_vector,
-)
+from pvi.baseline.path.merkle import MerkleOpening, MerkleVectorCommitment, decode_f32_vector, encode_f32_vector
 
 
 def values(n: int, seed: int = 0) -> list[bytes]:

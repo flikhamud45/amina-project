@@ -1,4 +1,4 @@
-"""The one-time setup proximity proof (``pvi.fullcheck.setup_proof``) and the split-commitment attack it stops.
+"""The one-time setup proximity proof (``pvi.commit.setup_proof``) and the split-commitment attack it stops.
 
 * An honest commitment plan (row- and col-layout members of shared trees) passes its setup proof; a tampered
   message, opened column, multiproof, graph digest or root fails it.
@@ -18,11 +18,11 @@ import math
 import pytest
 import torch
 
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import setup_proof as sp
-from pvi.fullcheck.commitment import GroupCommitment, MerkleTree, multiproof
-from pvi.fullcheck.plans import column_bits, column_error_log2
-from pvi.fullcheck.transformer import build_decoder
+from pvi.v0 import protocol as proto
+from pvi.commit import setup_proof as sp
+from pvi.commit.commitment import GroupCommitment, MerkleTree, multiproof
+from pvi.commit.plans import column_bits, column_error_log2
+from pvi.models.decoder import build_decoder
 
 from test_plans import _TINY
 

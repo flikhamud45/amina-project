@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from pvi.nn.models import mlp_architecture
-from pvi.protocol import UniformPathSampler
+from pvi.mnist.models import mlp_architecture
+from pvi.baseline.path.sampling import UniformPathSampler
 
 
 def test_sampler_is_reproducible_from_a_seed():

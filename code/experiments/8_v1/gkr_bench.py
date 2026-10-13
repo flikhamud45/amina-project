@@ -20,11 +20,12 @@ def main() -> None:
     ap.add_argument("--check", type=int, nargs="*", default=[])
     ap.add_argument("--reps", type=int, default=2)
     args = ap.parse_args()
-    from pvi.fullcheck import extfield as ef
-    from pvi.fullcheck import gkr_triton as gt
-    from pvi.fullcheck import logup, logup_gkr as gkr
-    from pvi.fullcheck.field import P
-    from pvi.fullcheck.protocol import Challenger
+    from pvi.core import extfield as ef
+    from pvi.v1 import gkr_triton as gt
+    from pvi.v1 import logup
+    from pvi.v1 import gkr
+    from pvi.core.field import P
+    from pvi.v0.protocol import Challenger
 
     def ch():
         c = Challenger(fiat_shamir=True)

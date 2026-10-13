@@ -1,7 +1,7 @@
 """Analytic acceptance probability versus the running protocol.
 
 These are the sharpest correctness tests in the suite.  The dynamic program in
-``pvi.experiments.analysis`` predicts, from the trace alone, exactly how often the
+``pvi.baseline.analysis`` predicts, from the trace alone, exactly how often the
 verifier will accept.  The protocol implementation is a completely separate code
 path -- commitments, openings, challenge derivation, per-neuron recomputation.  If
 the two agree across dense and convolutional architectures, single-node and
@@ -14,12 +14,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pvi.experiments.analysis import (
-    acceptance_probability,
-    inconsistent_nodes,
-    locally_consistent_mask,
-)
-from pvi.protocol import ProtocolParams, run_protocol
+from pvi.baseline.analysis import acceptance_probability, inconsistent_nodes, locally_consistent_mask
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.session import run_protocol
 
 from conftest import build_network
 

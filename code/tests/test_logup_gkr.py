@@ -1,4 +1,4 @@
-"""The fractional-sum GKR of V1's logUp argument (``pvi.fullcheck.logup_gkr``), eager (``V1_SPEC.md`` test T2).
+"""The fractional-sum GKR of V1's logUp argument (``pvi.v1.gkr``), eager (``V1_SPEC.md`` test T2).
 
 For ``n = 1 .. 14`` and random dense lengths (real leaves ``(1, alpha - v)``, padding ``(0, 1)``): the honest
 transcript is accepted, its root is the sum of the leaves' fractions and its final claims are the leaf layer's
@@ -12,11 +12,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.fullcheck import extfield as ef
-from pvi.fullcheck import logup_gkr as gkr
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.claimcodec import ClaimCodecError, field_size
-from pvi.fullcheck.field import P
+from pvi.core import extfield as ef
+from pvi.v1 import gkr
+from pvi.v0 import protocol as proto
+from pvi.v0.claimcodec import ClaimCodecError, field_size
+from pvi.core.field import P
 
 
 def _rand(g, *shape):

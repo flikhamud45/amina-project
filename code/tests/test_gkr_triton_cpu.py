@@ -1,4 +1,4 @@
-"""The GPU GKR prover's host logic (``pvi.fullcheck.gkr_triton``) on the CPU, its kernels replaced by exact CPU
+"""The GPU GKR prover's host logic (``pvi.v1.gkr_triton``) on the CPU, its kernels replaced by exact CPU
 stand-ins (``gkr_triton_mock``): the round structure (``h(0), h(1), h(2)``, the eq factor taken out), the suffix eq
 tables, and the bottom layer's path (full rows, ``T = 2^n_col``) give the eager prover's transcript byte for byte.
 The kernels themselves are checked against the same transcripts on a CUDA host (``test_gkr_triton.py``)."""
@@ -8,12 +8,12 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.fullcheck import extfield as ef
-from pvi.fullcheck import gkr_triton as gt
-from pvi.fullcheck import logup
-from pvi.fullcheck import logup_gkr as gkr
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.field import P
+from pvi.core import extfield as ef
+from pvi.v1 import gkr_triton as gt
+from pvi.v1 import logup
+from pvi.v1 import gkr
+from pvi.v0 import protocol as proto
+from pvi.core.field import P
 
 import gkr_triton_mock
 

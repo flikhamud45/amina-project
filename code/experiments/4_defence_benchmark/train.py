@@ -17,8 +17,8 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from pvi.fullcheck.datasets import load_dataset, normalise
-from pvi.fullcheck.models import MODEL_SPECS, build_float_model
+from pvi.models.datasets import load_dataset, normalise
+from pvi.models.cnn import MODEL_SPECS, build_float_model
 from pvi.results import write_json
 
 ROOT = Path(__file__).resolve().parents[2]

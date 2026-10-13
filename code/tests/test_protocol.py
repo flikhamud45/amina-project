@@ -10,16 +10,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pvi.commitments.merkle import MerkleOpening
-from pvi.protocol import (
-    ModelCommitment,
-    ProtocolParams,
-    Round2,
-    UniformPathSampler,
-    challenge_rng,
-    run_protocol,
-    sample_challenge,
-)
+from pvi.baseline.path.merkle import MerkleOpening
+from pvi.baseline.path.commitments import ModelCommitment
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.messages import Round2
+from pvi.baseline.path.sampling import UniformPathSampler, challenge_rng, sample_challenge
+from pvi.baseline.path.session import run_protocol
 
 from conftest import build_network
 
@@ -156,7 +152,7 @@ def test_substitute_differing_in_one_layer_is_still_rejected(
     weight, bias = parameters["logits"]
     parameters["logits"] = (weight * 1.5, bias)
 
-    from pvi.nn.network import TracedNetwork
+    from pvi.mnist.network import TracedNetwork
 
     substitute = TracedNetwork(mlp_arch, parameters)
     query = query_for(mlp_net)
@@ -307,7 +303,7 @@ def test_tampered_trace_opening_is_rejected(mlp_net, query_for, protocol_pair):
     round1, state = prover.prove1(query)
     round2 = prover.prove2(state, challenge)
 
-    from pvi.commitments.merkle import encode_f32_vector
+    from pvi.baseline.path.merkle import encode_f32_vector
 
     genuine = round2.layer_openings[1]
     forged_value = encode_f32_vector(
@@ -353,7 +349,7 @@ def test_verifier_never_receives_the_model(mlp_net, protocol_pair):
     """The verifier holds a digest, not weights -- the property that makes its
     cost sublinear in the model and the reason it cannot simply recompute."""
     _, verifier = protocol_pair(mlp_net)
-    from pvi.nn.network import TracedNetwork
+    from pvi.mnist.network import TracedNetwork
 
     assert not any(
         isinstance(value, TracedNetwork) for value in vars(verifier).values()

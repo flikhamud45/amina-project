@@ -1,4 +1,4 @@
-"""Contention evidence on every timing (``pvi.fullcheck.contention``): measurement only.
+"""Contention evidence on every timing (``pvi.core.contention``): measurement only.
 
 The run-queue wait and on-CPU time of the process's threads (``/proc/self/task/*/schedstat``), the load
 average at a phase's start and end and the context switches are recorded next to each timed phase of
@@ -22,8 +22,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from pvi.fullcheck import contention
-from pvi.fullcheck import protocol as proto
+from pvi.core import contention
+from pvi.v0 import protocol as proto
 
 EXPERIMENTS = Path(__file__).resolve().parents[1] / "experiments"
 
@@ -190,7 +190,7 @@ def test_a_tampered_query_is_rejected_at_the_same_check(monkeypatch):
 
 # ---------------------------------------------------------------- bench.py records and their readers
 def _bench_run(monkeypatch, root: Path):
-    import pvi.fullcheck.transformer as tr
+    import pvi.models.decoder as tr
     from test_plans import _TINY
 
     bench = _script("4_defence_benchmark", "bench")

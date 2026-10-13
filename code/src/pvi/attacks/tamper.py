@@ -39,11 +39,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pvi.experiments.analysis import acceptance_probability, inconsistent_nodes
-from pvi.nn.architecture import DenseLayer
-from pvi.nn.gradients import saliency
-from pvi.nn.network import Trace, TracedNetwork
-from pvi.protocol.params import ProtocolParams
+from pvi.baseline.analysis import acceptance_probability, inconsistent_nodes
+from pvi.mnist.architecture import DenseLayer
+from pvi.mnist.gradients import saliency
+from pvi.mnist.network import Trace, TracedNetwork
+from pvi.baseline.path.params import ProtocolParams
 
 __all__ = [
     "TamperOutcome",
@@ -308,7 +308,7 @@ def plan_stealthy_flip(
     logits = honest.output
     target_class = int(np.argsort(logits)[::-1][1])
 
-    from pvi.nn.gradients import output_direction_gradient
+    from pvi.mnist.gradients import output_direction_gradient
 
     direction = np.zeros_like(logits, dtype=np.float64)
     direction[target_class] = 1.0

@@ -1,4 +1,4 @@
-"""The windowed logUp argument of V1 (``pvi.fullcheck.logup``; ``V1_SPEC.md`` tests T3 and kill criterion K1).
+"""The windowed logUp argument of V1 (``pvi.v1.logup``; ``V1_SPEC.md`` tests T3 and kill criterion K1).
 
 * A two-instance toy end to end: the honest proof passes D5, every GKR, the final claims (``P_hat = I``,
   ``Q_hat = alpha I - sum eq v + (1 - I)``) and F4.
@@ -18,11 +18,11 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import extfield as ef
-from pvi.fullcheck import logup
-from pvi.fullcheck import logup_gkr as gkr
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.field import P
+from pvi.core import extfield as ef
+from pvi.v1 import logup
+from pvi.v1 import gkr
+from pvi.v0 import protocol as proto
+from pvi.core.field import P
 
 
 def _chs():

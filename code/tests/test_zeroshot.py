@@ -120,7 +120,7 @@ def _tiny_opt():
 
 @pytest.mark.parametrize("builder", ["paper", "f2a"])
 def test_right_padding_is_exact_on_the_integer_graph(builder):
-    from pvi.fullcheck import real_weights as rw
+    from pvi.models import hf_opt as rw
     model = _tiny_opt()
     calib = torch.randint(3, 97, (2, 32))
     opts = dict(norm_gain=4) if builder == "paper" else dict(zs.F2A_BEST)

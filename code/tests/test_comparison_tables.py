@@ -36,7 +36,7 @@ def test_every_timing_of_run_query_is_carried_into_the_tables():
     checked by validate_extrapolation.py and part of paper_assets.py's prover or verifier time (once:
     never both), and the batched verify phases the streaming verifier's ``verify_total`` covers are
     those ``OVERLAPPED`` names."""
-    from pvi.fullcheck import protocol as proto
+    from pvi.v0 import protocol as proto
     from test_plans import _planned, _verifiers
 
     graph, x, coms = _planned("gpt", "R8c")

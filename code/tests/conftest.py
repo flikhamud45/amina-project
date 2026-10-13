@@ -10,10 +10,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pvi.nn.architecture import Architecture, Conv2dLayer, DenseLayer
-from pvi.nn.models import mlp_architecture, small_cnn_architecture
-from pvi.nn.network import TracedNetwork
-from pvi.protocol import ModelCommitment, ProtocolParams, Prover, Verifier
+from pvi.mnist.architecture import Architecture, Conv2dLayer, DenseLayer
+from pvi.mnist.models import mlp_architecture, small_cnn_architecture
+from pvi.mnist.network import TracedNetwork
+from pvi.baseline.path.commitments import ModelCommitment
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.prover import Prover
+from pvi.baseline.path.verifier import Verifier
 
 
 def random_parameters(

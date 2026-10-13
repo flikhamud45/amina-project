@@ -12,7 +12,7 @@ Blocks
    the neuron's natural range.
 
 Acceptance is computed exactly by the dynamic program in
-``pvi.experiments.analysis``; the backdoor is also run on the real protocol.
+``pvi.baseline.analysis``; the backdoor is also run on the real protocol.
 
 Usage
 -----
@@ -30,23 +30,37 @@ from pathlib import Path
 import numpy as np
 
 from pvi.attacks import (
+
     BackdoorAdversary,
+
     PatchTrigger,
+
     calibrate_activation_ceilings,
+
     evaluate_plan,
+
     gradient_forge,
+
     injection_forge,
+
     inverse_transform_forge,
+
     logit_swap_target,
+
     plan_single_neuron_flip,
+
 )
 from pvi.attacks.tamper import plan_stealthy_flip
-from pvi.data import load_classification
-from pvi.experiments.analysis import acceptance_probability, inconsistent_nodes
-from pvi.protocol import ModelCommitment, ProtocolParams, Prover, Verifier, run_protocol
+from pvi.mnist.data import load_classification
+from pvi.baseline.analysis import acceptance_probability, inconsistent_nodes
+from pvi.baseline.path.commitments import ModelCommitment
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.prover import Prover
+from pvi.baseline.path.verifier import Verifier
+from pvi.baseline.path.session import run_protocol
 from pvi.results import write_json
-from pvi.training import load_network
-from pvi.zoo import mlp_architecture_for
+from pvi.mnist.training import load_network
+from pvi.mnist.zoo import mlp_architecture_for
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / "artifacts" / "models"

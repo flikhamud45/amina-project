@@ -14,10 +14,10 @@ import torch
 
 transformers = pytest.importorskip("transformers")
 
-from pvi.fullcheck import protocol as proto  # noqa: E402
-from pvi.fullcheck import real_llama as rl  # noqa: E402
-from pvi.fullcheck.token_sampler import TokenSampler, sample_tokens  # noqa: E402
-from pvi.fullcheck.transformer import greedy_tokens, with_lm_positions  # noqa: E402
+from pvi.v0 import protocol as proto  # noqa: E402
+from pvi.models import hf_llama as rl  # noqa: E402
+from pvi.v0.token_sampler import TokenSampler, sample_tokens  # noqa: E402
+from pvi.models.decoder import greedy_tokens, with_lm_positions  # noqa: E402
 
 CODE = Path(__file__).resolve().parents[1]
 PREFIX = [5, 17]

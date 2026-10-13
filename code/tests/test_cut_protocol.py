@@ -1,4 +1,4 @@
-"""V1's query end to end (``pvi.fullcheck.cut_protocol``; ``V1_SPEC.md`` tests T4 and T5).
+"""V1's query end to end (``pvi.v1.protocol``; ``V1_SPEC.md`` tests T4 and T5).
 
 T4: honest queries are accepted in modes C (one tree per op, and commitment plans with col matrices and lookup
 tables) and Kpre, interactive and under Fiat--Shamir, on GPT-, Llama- (pruned), OPT- and Qwen-shaped decoders and a
@@ -12,11 +12,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.fullcheck import cut as cutmod
-from pvi.fullcheck import cut_protocol as cp
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.field import P
-from pvi.fullcheck.transformer import build_decoder, greedy_tokens, with_lm_positions
+from pvi.v1 import cut as cutmod
+from pvi.v1 import protocol as cp
+from pvi.v0 import protocol as proto
+from pvi.core.field import P
+from pvi.models.decoder import build_decoder, greedy_tokens, with_lm_positions
 from test_plans import _TINY
 
 _CACHE: dict = {}
@@ -290,7 +290,7 @@ def test_honest_exceptions_across_row_blocks(mode, monkeypatch):
     # an honest model whose requant op clamps often (multiplier 8x): exceptions in many rows; the final check's row
     # blocks (7 rows here) must route each exception to its block
     import dataclasses
-    from pvi.fullcheck.graph import CheapOp, requant_fn
+    from pvi.core.graph import CheapOp, requant_fn
     monkeypatch.setattr(cp, "_FINAL_ROWS", 7)
     g = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)
     ops = list(g.ops)

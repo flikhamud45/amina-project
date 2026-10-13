@@ -1,4 +1,4 @@
-"""A copy of ``pvi.fullcheck.real_weights.build_opt_from_hf`` with quality options (the F2 experiments).
+"""A copy of ``pvi.models.hf_opt.build_opt_from_hf`` with quality options (the F2 experiments).
 
 Every option changes only public constants of cheap ops or the offline weight quantisation; the graph
 has the same ops, in the same order, with the same weight-op shapes, and stays exact integer arithmetic
@@ -42,10 +42,11 @@ import math
 
 import torch
 
-from pvi.fullcheck.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, op_fn, op_kind, requant, requant_fn,
-                                 requant_op, residual_add, residual_op)
-from pvi.fullcheck.transformer import (PROB_MAX, RES_MAX, SHIFT, _attention, _isqrt, _lut, _norm_int, attention_op,
-                                       last_position_op, lut_op, norm_op, positions_op, scale_op)
+from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, op_fn, op_kind, requant, requant_fn,
+
+                            requant_op, residual_add, residual_op)
+from pvi.models.decoder import (PROB_MAX, RES_MAX, SHIFT, _attention, _isqrt, _lut, _norm_int, attention_op,
+                                last_position_op, lut_op, norm_op, positions_op, scale_op)
 
 _RELU = torch.tensor([max(0, x) for x in range(-128, 128)], dtype=torch.int64)
 
@@ -462,7 +463,7 @@ def graph_report(graph: IntGraph, info: dict | None = None) -> dict:
     """Constraint checks: honest claim bound (< 2^29), multiplier ranges (V1's P3 wants 2^14 <= m <= 2^29 for a
     cut op; only requantisations of LINEAR weight ops can be cut, so the embedding's residual add is listed
     apart), vector multipliers (per-row), distinct multipliers per op, norm gain ranges."""
-    from pvi.fullcheck.protocol import claim_bound
+    from pvi.v0.protocol import claim_bound
     worst_claim = max(claim_bound(op) for op in graph.mat_ops)
     producer = {op.output: op for op in graph.ops}
     mults, vec_ops, distinct, outside = [], 0, [], []

@@ -267,7 +267,7 @@ def float_logits_fn(model, device: str):
 
 
 def int_logits_fn(graph, info: dict, device: str):
-    from pvi.fullcheck.graph import CheapOp, IntGraph, identity_op, op_fn
+    from pvi.core.graph import CheapOp, IntGraph, identity_op, op_fn
     ops = [CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note, params=o.params)
            if isinstance(o, CheapOp) and o.note == "last position" else o for o in graph.ops]
     lean, _ = IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta)).with_constants_on(device)
@@ -282,7 +282,7 @@ def int_logits_fn(graph, info: dict, device: str):
 
 def build_int(model, calib: torch.Tensor, builder: str, opts: dict):
     if builder == "paper":
-        from pvi.fullcheck import real_weights as rw
+        from pvi.models import hf_opt as rw
         return rw.build_opt_from_hf(model, calib, **opts)
     import opt_builder as ob
     return ob.build_opt(model, calib, **opts)
@@ -301,7 +301,7 @@ def _emit(args, row: dict) -> None:
 def check(args, tok, logits_ref, logits_int, graph, info) -> None:
     """Right padding is exact (every padded row equals the request alone) for the integer model and within
     rounding for the float one, and the integer logits equal ``real_weights.real_logits(..., all_positions=True)``."""
-    from pvi.fullcheck import real_weights as rw
+    from pvi.models import hf_opt as rw
     docs = make_docs("hellaswag", load_rows("hellaswag")[:4]) + make_docs("piqa", load_rows("piqa")[:4])
     enc = [encode_pair(tok, c, k) for d in docs for c, k in d["requests"]]
     pad = tok.pad_token_id if tok.pad_token_id is not None else 0
@@ -361,7 +361,7 @@ def main() -> None:
     from common import load_opt
     model, tok = load_opt(args.model)
     pad = tok.pad_token_id if tok.pad_token_id is not None else 0
-    from pvi.fullcheck.real_weights import CERTIFIED_RECIPE
+    from pvi.models.hf_opt import CERTIFIED_RECIPE
     opts = json.loads(args.opts) if args.opts else (dict(F2A_BEST) if args.builder == "f2a" else dict(CERTIFIED_RECIPE))
     head = {"model": args.model, "tag": args.tag, "host": platform.node(), "device": args.device,
             "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}

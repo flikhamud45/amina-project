@@ -11,7 +11,7 @@ nothing is aggregated here, so figures can be re-made later without re-running.
 A cell that has a ``.done`` marker is skipped, so an interrupted job resumes where it
 stopped.  An honest query that is rejected stops the job and keeps the cell's records as
 ``<cell>.rejected-<run_id>.jsonl`` (``count_outcomes.py`` counts them).
-``--policy <name>`` (a commitment plan of ``pvi.fullcheck.plans``: tight, cnn<e>, R<rate>, each also
+``--policy <name>`` (a commitment plan of ``pvi.commit.plans``: tight, cnn<e>, R<rate>, each also
 with the suffix c: the col layouts and lookup tables; or auto, the c policy it picks for the model,
 recorded as the cells' ``policy``, with ``policy_requested`` auto) commits under that plan and runs only the cells
 it changes -- the commitment (``commit_*``, with its setup time and size) and the mode-C cells --
@@ -20,7 +20,7 @@ block at the last position (``build_decoder(..., prune_last=True)``), every cell
 ``_prune`` suffix; ``--lookups`` runs the K and Kpre cells with a verifier that reads the embedding
 rows itself (``Verifier(lookups=True)``), named with a ``_lookups`` suffix.
 Every timing row (``s``) of a query, a commitment, a build or a precomputation also carries a
-``contention`` field (:mod:`pvi.fullcheck.contention`): this process's run-queue wait and on-CPU time while
+``contention`` field (:mod:`pvi.core.contention`): this process's run-queue wait and on-CPU time while
 that phase ran, the load average at its start and end, and its context switches -- evidence that the
 machine was quiet (the aggregates ignore it; a contention check over these fields reads it).
 The ``pvi`` package must be this checkout's ``src/pvi`` (``export PYTHONPATH=<checkout>/code/src``,
@@ -62,21 +62,13 @@ def _require_this_pvi() -> Path:
 if __name__ == "__main__":  # before the imports below, which an older pvi may not even have
     _require_this_pvi()
 
-from pvi.fullcheck import contention  # noqa: E402
-from pvi.fullcheck.analytic import setup_size  # noqa: E402
-from pvi.fullcheck.field import P  # noqa: E402
-from pvi.fullcheck.graph import MatOp  # noqa: E402
-from pvi.fullcheck.plans import plan_commitment  # noqa: E402
-from pvi.fullcheck.protocol import (  # noqa: E402
-    Challenger,
-    Prover,
-    Verifier,
-    Z_BOUND,
-    commit_graph,
-    params_for,
-    run_query,
-    soundness_bits,
-)
+from pvi.core import contention  # noqa: E402
+from pvi.commit.cost import setup_size  # noqa: E402
+from pvi.core.field import P  # noqa: E402
+from pvi.core.graph import MatOp  # noqa: E402
+from pvi.commit.plans import plan_commitment  # noqa: E402
+from pvi.v0.protocol import (Challenger, Prover, Verifier, Z_BOUND, commit_graph, params_for,  # noqa: E402
+                             run_query, soundness_bits)
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "artifacts" / "comparison"
@@ -87,7 +79,7 @@ RATE = 4       # Reed-Solomon rate (codeword length / row length) of the weight 
 TAG = ""  # appended to every cell name (``--tag``), so variant runs never collide
 VDEV = "cpu"   # --verifier-device: the client's device (the report's headline: the CPU; Sec. 4.4 also a GPU, _gpuv)
 IMPL = "default"   # --verifier-impl: "stream" = the streaming verifier (Verifier(stream=True))
-WIRE = False       # --wire: the proof in the compact encoding of pvi.fullcheck.claimcodec
+WIRE = False       # --wire: the proof in the compact encoding of pvi.v0.claimcodec
 PLATFORM = ""  # ``--platform``: "" is the earliest RTX 2080 Ti run's root ``raw/`` (frozen)
 
 
@@ -332,7 +324,7 @@ def _commit(graph, rate: int, device, policy: str, model_ops=None, cs: dict | No
 
 def _cs(store: dict | None, phase: str) -> dict:
     """The ``contention`` field of a timing row: the evidence of whether its machine was quiet while
-    ``phase`` ran (:mod:`pvi.fullcheck.contention`: run-queue wait and on-CPU time of this process's
+    ``phase`` ran (:mod:`pvi.core.contention`: run-queue wait and on-CPU time of this process's
     threads, the load average at start and end, context switches); nothing if none was taken.  A new
     field: every reader of the records keys on metric, value and the group keys, and ignores it."""
     c = (store or {}).get(phase)
@@ -416,9 +408,9 @@ def _record_peaks(r: "Recorder", device, **extra) -> None:
 
 # ------------------------------------------------------------------ CNN models
 def _mlp_model() -> tuple[nn.Module, dict]:
-    from pvi.data import load_classification
-    from pvi.training import load_network
-    from pvi.zoo import mlp_architecture_for
+    from pvi.mnist.data import load_classification
+    from pvi.mnist.training import load_network
+    from pvi.mnist.zoo import mlp_architecture_for
 
     net = load_network(mlp_architecture_for(10), ROOT / "artifacts" / "models" / "mlp_mnist_full.npz")
     layers = [l for l in net.architecture.layers if l.name in net.parameters]
@@ -438,8 +430,8 @@ def _mlp_model() -> tuple[nn.Module, dict]:
 
 
 def _cnn_model(name: str) -> tuple[nn.Module, dict]:
-    from pvi.fullcheck.datasets import load_dataset, normalise
-    from pvi.fullcheck.models import MODEL_SPECS, build_float_model
+    from pvi.models.datasets import load_dataset, normalise
+    from pvi.models.cnn import MODEL_SPECS, build_float_model
 
     kind, dataset = MODEL_SPECS[name]
     tx, _, vx, vy, family, n_classes = load_dataset(dataset)
@@ -474,9 +466,9 @@ def _penultimate_mat(graph) -> MatOp:
 
 
 def suite_cnn(args, env) -> None:
-    from pvi.fullcheck.quantize import dequantize_logits, quantize_input, quantize_model
-    from pvi.fullcheck.sampling import (TraceCommitment, _base as _base_name, neuron_tensors, paths_for,
-                                        shared_path_bytes, visit_probabilities)
+    from pvi.models.quantize import dequantize_logits, quantize_input, quantize_model
+    from pvi.baseline.path_int import (TraceCommitment, _base as _base_name, neuron_tensors, paths_for, shared_path_bytes,
+                                       visit_probabilities)
 
     device = torch.device(env["device"])
     name = args.model
@@ -785,8 +777,8 @@ def suite_cnn(args, env) -> None:
 
 # ------------------------------------------------------------------ LLM shapes
 def suite_llm(args, env) -> None:
-    from pvi.fullcheck.analytic import decoder_shapes
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder, decoder_param_count, greedy_tokens, with_lm_positions
+    from pvi.commit.cost import decoder_shapes
+    from pvi.models.decoder import CONFIGS, build_decoder, decoder_param_count, greedy_tokens, with_lm_positions
 
     device = torch.device(env["device"])
     cfg = CONFIGS[args.model]
@@ -1013,7 +1005,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="LLM suite: e.g. C:int,Kpre:int (default: C:int, C:fs, Kpre:int and K:int)")
     ap.add_argument("--threads", type=int, default=0, help="verifier threads (0: torch's default)")
     ap.add_argument("--policy", default="paper",
-                    help="commitment plan (pvi.fullcheck.plans) over the base rate 4: paper (the report), tight, "
+                    help="commitment plan (pvi.commit.plans) over the base rate 4: paper (the report), tight, "
                          "cnn<e> or R<rate>, the last three also with the suffix c (col layouts and lookup tables), "
                          "or auto (the c plan of fewest non-claim bytes within a setup budget, recorded as the "
                          "cells' policy); runs the commitment and mode-C cells only, named with a _pol<name> suffix")
@@ -1049,7 +1041,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--verifier-impl", default="default", choices=["default", "stream"],
                     help="'stream': the streaming verifier, the same verdicts (needs a _stream tag)")
     ap.add_argument("--wire", action="store_true",
-                    help="the proof in the compact encoding of pvi.fullcheck.claimcodec (run_query(wire=True): "
+                    help="the proof in the compact encoding of pvi.v0.claimcodec (run_query(wire=True): "
                          "PVC3 claims, 31-bit u and columns; needs a _wire tag)")
     ap.add_argument("--tf32", action="store_true",
                     help="TF32 tensor cores for the float32 GEMMs (exact: operands <= 255; needs a _tf32 tag)")

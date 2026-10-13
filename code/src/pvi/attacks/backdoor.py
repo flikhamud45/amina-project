@@ -29,7 +29,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pvi.attacks.tamper import apply_plan, plan_single_neuron_flip
-from pvi.nn.network import Trace, TracedNetwork
+from pvi.mnist.network import Trace, TracedNetwork
 
 __all__ = [
     "BackdoorAdversary",

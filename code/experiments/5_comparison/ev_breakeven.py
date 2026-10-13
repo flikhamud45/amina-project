@@ -25,10 +25,10 @@ import json
 import math
 from pathlib import Path
 
-from pvi.fullcheck.analytic import decoder_shapes, proof_bytes
-from pvi.fullcheck.plans import plan_commitment
-from pvi.fullcheck.protocol import params_for
-from pvi.fullcheck.transformer import CONFIGS
+from pvi.commit.cost import decoder_shapes, proof_bytes
+from pvi.commit.plans import plan_commitment
+from pvi.v0.protocol import params_for
+from pvi.models.decoder import CONFIGS
 
 
 def crossover_queries(weights_bytes: float, proof_bytes_per_query: float) -> float:

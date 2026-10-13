@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import token_sampler as ts
+from pvi.v0 import token_sampler as ts
 
 
 def _script():

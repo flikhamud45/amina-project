@@ -13,8 +13,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from pvi.fullcheck.sampling import paths_for
-from pvi.fullcheck.transformer import CONFIGS, decoder_param_count
+from pvi.baseline.path_int import paths_for
+from pvi.models.decoder import CONFIGS, decoder_param_count
 
 ROOT = Path(__file__).resolve().parents[2]
 TABLES = ROOT / "artifacts" / "comparison" / "tables"

@@ -7,20 +7,12 @@ import math
 import pytest
 import torch
 
-from pvi.fullcheck import field as fld
-from pvi.fullcheck.commitment import MerkleTree, WeightCommitment, column_leaf
-from pvi.fullcheck.graph import CheapOp, MatOp, exact_matmul
-from pvi.fullcheck.models import LeNet5, ResNet18
-from pvi.fullcheck.protocol import (
-    Challenger,
-    Prover,
-    Verifier,
-    commit_graph,
-    params_for,
-    run_query,
-    soundness_bits,
-)
-from pvi.fullcheck.quantize import dequantize_logits, quantize_input, quantize_model
+from pvi.core import field as fld
+from pvi.commit.commitment import MerkleTree, WeightCommitment, column_leaf
+from pvi.core.graph import CheapOp, MatOp, exact_matmul
+from pvi.models.cnn import LeNet5, ResNet18
+from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query, soundness_bits
+from pvi.models.quantize import dequantize_logits, quantize_input, quantize_model
 
 P = fld.P
 
@@ -78,7 +70,7 @@ def test_weight_commitment_open_matches_full_encoding_and_fold():
     cols = torch.tensor([0, 5, 77, com.n_points - 1])
     opened, proof = com.open(cols)
     assert torch.equal(opened, enc[:, cols])
-    from pvi.fullcheck.commitment import verify_multiproof
+    from pvi.commit.commitment import verify_multiproof
 
     leaves = {c: column_leaf(b"t", c, opened[:, j].numpy()) for j, c in enumerate(cols.tolist())}
     assert verify_multiproof(com.tree.root, com.tree.depth, leaves, proof)
@@ -238,7 +230,7 @@ def test_forged_column_passes_the_code_check_and_is_caught_by_merkle(setup):
 
 def test_claims_are_pinned_down_as_integers(setup):
     """2 * Z_BOUND < p, the range check survives INT64_MIN, and an aliased claim is rejected."""
-    from pvi.fullcheck.protocol import Z_BOUND
+    from pvi.v0.protocol import Z_BOUND
 
     assert 2 * Z_BOUND < P
     _, graph, prover, verifier, x = setup
@@ -258,12 +250,12 @@ def test_claims_are_pinned_down_as_integers(setup):
 
 
 def test_commitment_refuses_a_model_whose_honest_claims_could_reach_the_bound():
-    from pvi.fullcheck.protocol import Z_BOUND
+    from pvi.v0.protocol import Z_BOUND
 
     w = torch.ones(4, 8, dtype=torch.int8)
     b = torch.tensor([0, 0, Z_BOUND, 0])
     graph_op = MatOp("fc", ("x",), "fc.z", weight=w, bias=b)
-    from pvi.fullcheck.graph import IntGraph
+    from pvi.core.graph import IntGraph
 
     with pytest.raises(ValueError):
         commit_graph(IntGraph([graph_op], "x", "fc.z"), 4)
@@ -283,7 +275,7 @@ def test_challenger_columns_are_distinct_and_cover_the_range():
 
 def test_fiat_shamir_challenges_depend_on_the_statement(setup):
     """With FS, the same claims under a different input give different challenges."""
-    from pvi.fullcheck.protocol import _absorb_statement, _tensor_blob
+    from pvi.v0.protocol import _absorb_statement, _tensor_blob
 
     _, graph, prover, verifier, x = setup
     fs = params_for(20, len(graph.mat_ops), fiat_shamir=True)
@@ -346,7 +338,7 @@ def test_params_meet_their_target():
 
 
 # -- integer transformers -------------------------------------------------------------
-from pvi.fullcheck.transformer import CONFIGS, DecoderConfig, build_decoder, decoder_param_count  # noqa: E402
+from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder, decoder_param_count  # noqa: E402
 
 _TINY = {
     "gpt": DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64),
@@ -390,8 +382,8 @@ def test_real_configs_have_published_parameter_counts():
 
 
 # -- the sampling baseline (Anchuri et al.'s RandPathTest) on the same graphs --------------
-from pvi.fullcheck.sampling import (TraceCommitment, neuron_tensors, paths_for,  # noqa: E402
-                                    sample_path, shared_path_bytes, visit_probabilities)
+from pvi.baseline.path_int import (TraceCommitment, neuron_tensors, paths_for, sample_path,  # noqa: E402
+                                   shared_path_bytes, visit_probabilities)
 
 
 @pytest.mark.parametrize("kind", ["lenet", "resnet"])
@@ -531,7 +523,7 @@ def test_gpu_decoder_matches_cpu():
 
 
 # -- decoder shapes (used by aggregate.py and the benchmark) ---------------------------------
-from pvi.fullcheck.analytic import decoder_shapes  # noqa: E402
+from pvi.commit.cost import decoder_shapes  # noqa: E402
 
 
 @pytest.mark.parametrize("family", ["gpt", "opt", "llama", "qwen"])
@@ -544,7 +536,7 @@ def test_decoder_shapes_match_built_graph(family):
 
 
 def test_direct_codeword_evaluation_equals_full_encoding():
-    from pvi.fullcheck.commitment import vandermonde_columns
+    from pvi.commit.commitment import vandermonde_columns
 
     g = torch.Generator().manual_seed(9)
     u = torch.randint(0, P, (3, 700), generator=g, dtype=torch.int64)
@@ -554,7 +546,7 @@ def test_direct_codeword_evaluation_equals_full_encoding():
 
 
 def test_multiproof_matches_individual_paths_and_rejects_forgery():
-    from pvi.fullcheck.commitment import multiproof, multiproof_size, verify_multiproof
+    from pvi.commit.commitment import multiproof, multiproof_size, verify_multiproof
 
     import random
     rnd = random.Random(0)
@@ -576,8 +568,8 @@ def test_multiproof_matches_individual_paths_and_rejects_forgery():
 def test_expected_multiproof_size_matches_monte_carlo():
     import random
 
-    from pvi.fullcheck.analytic import expected_multiproof_nodes
-    from pvi.fullcheck.commitment import multiproof_size
+    from pvi.commit.cost import expected_multiproof_nodes
+    from pvi.commit.commitment import multiproof_size
 
     rnd = random.Random(3)
     for n, t in ((64, 5), (512, 67), (4096, 23), (128, 100)):
@@ -588,7 +580,7 @@ def test_expected_multiproof_size_matches_monte_carlo():
 
 @pytest.mark.parametrize("m_s", [1 << 20, 1000])          # int32 scores, and the int64 fallback
 def test_grouped_attention_equals_all_heads_at_once(m_s, monkeypatch):
-    import pvi.fullcheck.transformer as tr
+    import pvi.models.decoder as tr
 
     g = torch.Generator().manual_seed(4)
     b, t, h, dh = 1, 40, 6, 8

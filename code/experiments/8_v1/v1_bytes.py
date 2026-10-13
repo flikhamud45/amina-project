@@ -115,10 +115,10 @@ def real_graph(model, calib: torch.Tensor, smooth: float | None, prune_last: boo
     Llama-family checkpoint (``calib`` from :func:`load_real_llama`): ``build_llama_from_hf`` with
     ``real_llama.MAIN_RECIPE`` and the calibration's prefix (``smooth`` and ``recipe`` do not apply)."""
     if hasattr(calib, "prefix"):
-        from pvi.fullcheck import real_llama as rl
+        from pvi.models import hf_llama as rl
         return rl.build_llama_from_hf(model, calib.ids, prune_last=prune_last, prefix_tokens=calib.prefix,
                                       **rl.MAIN_RECIPE)
-    from pvi.fullcheck.real_weights import CERTIFIED_RECIPE, build_opt_from_hf
+    from pvi.models.hf_opt import CERTIFIED_RECIPE, build_opt_from_hf
     if recipe == "certified":
         return build_opt_from_hf(model, calib, prune_last=prune_last, **CERTIFIED_RECIPE)
     kw = dict(norm_gain=4) if smooth is None else dict(norm_gain=4, smooth=smooth, **SMOOTH)
@@ -158,7 +158,7 @@ def shape_check(graph, cfg, n_layers: int, prune_last: bool, real: bool, x: torc
     in order; a real OPT checkpoint's LM head has one more column, its final LayerNorm's folded bias, while a real
     Llama-family head (final RMSNorm, no bias) has the benchmark's row length) and its claim columns on ``x`` against
     ``decoder_claim_columns``."""
-    from pvi.fullcheck.analytic import decoder_claim_columns, decoder_shapes
+    from pvi.commit.cost import decoder_claim_columns, decoder_shapes
     shapes = decoder_shapes(cfg, n_layers, prune_last)
     mats = graph.mat_ops
     if len(shapes) != len(mats):
@@ -183,7 +183,7 @@ def v0_accounting(graph, ref: dict, params, plan, mode: str, x: torch.Tensor, ta
     the ids ``table_ids`` a plan's lookup tables looked up).  The claims are not compared: on the wire the model
     takes their measured ``PVC3`` size (``wire_claims``), so the comparison would hold by construction
     (``tests/test_real_weights.py`` checks their unencoded size, which the shapes fix)."""
-    from pvi.fullcheck.analytic import proof_bytes
+    from pvi.commit.cost import proof_bytes
     cols = dict(zip((op.name for op in graph.mat_ops), graph.claim_columns(x)))
     want = proof_bytes(graph.mat_ops, params, cols, plan=plan, mode=mode, wire_claims=ref["bytes"]["claims"],
                        table_ids=table_ids)
@@ -208,7 +208,7 @@ def v1_tampers(prover, verifier, x: torch.Tensor, n: int, seed: int = 0) -> dict
     """``n`` trace-tampering V1 queries -- a random entry of a random cut op's claim moved by 1-3 widths of its normal
     window (another requantised value), everything after it recomputed honestly -- and ``n`` single-value ones (a
     random entry of a random weight op, +-1..999): ``{kind: {attempts, rejected, labels}}``."""
-    from pvi.fullcheck import cut_protocol as cp
+    from pvi.v1 import protocol as cp
     plan = cp.cut_plan(verifier.graph, verifier.claim_columns(x), x.shape[1],
                        verifier.publics if verifier.groups else None, verifier.params.cut_lmax,
                        verifier.weights or None)
@@ -263,9 +263,9 @@ def codec_profile(graph, x: torch.Tensor, n_layers: int, lmax: int, device) -> d
     (``PVX1``).  Each op is encoded on its own (its own header, Rice parameters and exception list), so the sums
     differ slightly from one encoding of all the claims, which a protocol line (without ``--codec-only``) gives
     exactly."""
-    from pvi.fullcheck import claimcodec
-    from pvi.fullcheck import cut as cutmod
-    from pvi.fullcheck.cut_protocol import pack_exceptions
+    from pvi.v0 import claimcodec
+    from pvi.v1 import cut as cutmod
+    from pvi.v1.protocol import pack_exceptions
     T = x.shape[1]
     plan = cutmod.CutPlan.from_graph(graph, graph.claim_columns(x), T, None, lmax=lmax)
     cut = {o.name: o for o in plan.ops}
@@ -342,10 +342,10 @@ def main() -> int:
     if args.v1_paths and not (args.full and args.reps > 1):
         raise SystemExit("--v1-paths times V1 queries: it goes with --full --reps n (n > 1)")
     torch.set_num_threads(args.threads)
-    from pvi.fullcheck import cut_protocol as cp
-    from pvi.fullcheck.analytic import decoder_shapes
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder
+    from pvi.v1 import protocol as cp
+    from pvi.commit.cost import decoder_shapes
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.models.decoder import CONFIGS, build_decoder
 
     cfg = CONFIGS[args.model]
     n_layers = args.layers or cfg.n_layers
@@ -435,7 +435,7 @@ def main() -> int:
             if args.reps > 1:                              # medians of timed queries of both protocols, interleaved
                 import os
                 import statistics
-                from pvi.fullcheck import buckets
+                from pvi.v1 import products as buckets
                 paths = args.v1_paths or [None]            # None: V1 as the environment has it
                 saved = os.environ.get(buckets.ENV)
 

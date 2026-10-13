@@ -1,4 +1,4 @@
-"""V1's cut (``pvi.fullcheck.cut``) and the requantising ops it reads (``graph.requant_fn``): ``V1_SPEC.md`` tests
+"""V1's cut (``pvi.v1.cut``) and the requantising ops it reads (``graph.requant_fn``): ``V1_SPEC.md`` tests
 T0 (windows) and T9 (the builders' graphs are unchanged in value), and the cut plan's rules P1-P5.
 """
 
@@ -9,11 +9,11 @@ import dataclasses
 import pytest
 import torch
 
-from pvi.fullcheck import cut
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.graph import CheapOp, mul_add_half, requant, requant_fn
-from pvi.fullcheck.plans import plan_commitment
-from pvi.fullcheck.transformer import RES_MAX, SHIFT, DecoderConfig, build_decoder, with_lm_positions
+from pvi.v1 import cut
+from pvi.v0 import protocol as proto
+from pvi.core.graph import CheapOp, mul_add_half, requant, requant_fn
+from pvi.commit.plans import plan_commitment
+from pvi.models.decoder import (RES_MAX, SHIFT, DecoderConfig, build_decoder, with_lm_positions)
 
 # W from 2 to 2^16, powers of two, and W = floor / W + 1 = ceil
 MULTS = [1 << 29, (1 << 29) - 1, 1 << 14, (1 << 14) + 1, 1 << 20, (1 << 30) // 3, 12345679, 87654321]
@@ -107,7 +107,7 @@ def test_requant_fn_matches_the_old_closures_and_survives_device_copies():
 
 def _old_style(graph):
     """The graph with every requantising op's function rebuilt as the builders wrote it before ``requant_fn``."""
-    from pvi.fullcheck import transformer as tr
+    from pvi.models import decoder as tr
 
     ops = []
     for op in graph.ops:

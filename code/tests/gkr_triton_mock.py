@@ -1,4 +1,4 @@
-"""CPU stand-ins for the Triton kernels of ``pvi.fullcheck.gkr_triton`` (for tests on hosts without CUDA/Triton).
+"""CPU stand-ins for the Triton kernels of ``pvi.v1.gkr_triton`` (for tests on hosts without CUDA/Triton).
 
 Each kernel's job is restated with ``extfield`` on canonical values: the planes ``[8, n]`` hold Montgomery values
 ``v R mod p`` (``R = 2^32``), converted with ``R^-1`` on the way in and ``R`` on the way out.  A partial-sum kernel puts
@@ -12,8 +12,8 @@ import types
 
 import torch
 
-from pvi.fullcheck import extfield as ef
-from pvi.fullcheck.field import P
+from pvi.core import extfield as ef
+from pvi.core.field import P
 
 R = (1 << 32) % P
 R_INV = pow(1 << 32, -1, P)
@@ -128,7 +128,7 @@ def _fold(n_arrays):
 
 
 def install(gt, monkeypatch) -> None:
-    """Swap the mocks into the module ``gt`` (``pvi.fullcheck.gkr_triton``) for one test."""
+    """Swap the mocks into the module ``gt`` (``pvi.v1.gkr_triton``) for one test."""
     monkeypatch.setattr(gt, "triton", types.SimpleNamespace(cdiv=lambda a, b: -(-a // b)), raising=False)
     for name, fn in (("_leaf_kernel", _leaf), ("_combine_kernel", _combine), ("_eq_kernel", _eq),
                      ("_round2_kernel", _round2), ("_round_bot_kernel", _round_bot),

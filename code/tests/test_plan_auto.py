@@ -1,4 +1,4 @@
-"""Policy ``auto`` (``pvi.fullcheck.plans``): the candidate of fewest non-claim bytes within a setup budget.
+"""Policy ``auto`` (``pvi.commit.plans``): the candidate of fewest non-claim bytes within a setup budget.
 
     cd code && PYTHONPATH=src python -m pytest tests/test_plan_auto.py -q
 """
@@ -10,11 +10,11 @@ import math
 
 import pytest
 
-from pvi.fullcheck import analytic
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.plans import (AUTO_CANDIDATES, AUTO_MIN_BUDGET, auto_budget, auto_policy, plan_commitment,
-                                 plan_overhead)
-from pvi.fullcheck.transformer import CONFIGS
+from pvi.commit import cost as analytic
+from pvi.v0 import protocol as proto
+from pvi.commit.plans import (AUTO_CANDIDATES, AUTO_MIN_BUDGET, auto_budget, auto_policy, plan_commitment,
+                              plan_overhead)
+from pvi.models.decoder import CONFIGS
 
 from test_plans import _cnn, _planned, _verifiers   # the plan tests' models and helpers
 

@@ -1,4 +1,4 @@
-"""pvi.fullcheck.real_llama (plan 2, F2b-Q): integer Llama / Qwen3 decoders from real weights, on tiny randomly
+"""pvi.models.hf_llama (plan 2, F2b-Q): integer Llama / Qwen3 decoders from real weights, on tiny randomly
 initialised Hugging Face models (no download).
 
 The models have 2 blocks, d = 64 and grouped-query attention (Llama: 4 query heads over 2 key/value heads, head_dim
@@ -41,10 +41,10 @@ import torch
 
 transformers = pytest.importorskip("transformers")
 
-from pvi.fullcheck import real_llama as rl                                 # noqa: E402
-from pvi.fullcheck import transformer as tr                                 # noqa: E402
-from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp                    # noqa: E402
-from pvi.fullcheck.transformer import CONFIGS, _attention, _rope, decoder_param_count   # noqa: E402
+from pvi.models import hf_llama as rl                                 # noqa: E402
+from pvi.models import decoder as tr                                 # noqa: E402
+from pvi.core.graph import CheapOp, IntGraph, MatOp                    # noqa: E402
+from pvi.models.decoder import CONFIGS, _attention, _rope, decoder_param_count   # noqa: E402
 
 SMOOTH = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
 PREFIX = (5, 17)
@@ -272,7 +272,7 @@ def test_misplaced_qk_norm_gains_fail_the_thresholds():
 @pytest.mark.parametrize("kind", ["llama", "qwen3"])
 @pytest.mark.parametrize("prune", [False, True])
 def test_v0_accepts_real_graphs_in_modes_c_and_kpre_and_rejects_a_tamper(kind, prune):
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
 
     _, graph, _, _, x = _setup(kind, prune=prune)
     ids = x[:1, :16]
@@ -325,8 +325,8 @@ def test_the_per_token_exponent_is_the_smallest_clip_free_one():
 
 @pytest.mark.parametrize("kind", ["llama", "qwen3"])
 def test_glu_exp_graphs_track_the_model_and_pass_v0_and_v1(kind):
-    from pvi.fullcheck import cut_protocol as cp
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v1 import protocol as cp
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
 
     model, base, _, calib, x = _setup(kind)
     graph, info = rl.build_llama_from_hf(model, calib, glu_exp=8, **SMOOTH)
@@ -366,8 +366,8 @@ def test_glu_exp_graphs_track_the_model_and_pass_v0_and_v1(kind):
 
 @pytest.mark.parametrize("kind", ["llama", "qwen3"])
 def test_v1_accepts_a_real_graph_and_rejects_a_tamper(kind):
-    from pvi.fullcheck import cut_protocol as cp
-    from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for
+    from pvi.v1 import protocol as cp
+    from pvi.v0.protocol import Prover, Verifier, commit_graph, params_for
 
     _, graph, _, _, x = _setup(kind)
     assert all(isinstance(o.params["requant"]["mult"], int) for o in graph.ops
@@ -577,7 +577,7 @@ def test_the_residual_scale_ignores_the_prefix_positions():
 
 @pytest.mark.parametrize("kind", ["llama", "qwen3"])
 def test_the_digest_binds_the_prefix_and_v0_rejects_a_prover_with_other_constants(kind):
-    from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.protocol import Prover, Verifier, commit_graph, params_for, run_query
 
     model, graph, _, calib, x = _setup(kind, prefix=PREFIX)
     _, plain, _, _, _ = _setup(kind)
@@ -601,8 +601,8 @@ def test_the_digest_binds_the_prefix_and_v0_rejects_a_prover_with_other_constant
 @pytest.mark.parametrize("kind", ["llama", "qwen3"])
 @pytest.mark.parametrize("prune", [False, True])
 def test_v0_and_v1_accept_prefixed_real_graphs_and_reject_a_tamper(kind, prune):
-    from pvi.fullcheck import cut_protocol as cp
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v1 import protocol as cp
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
 
     _, graph, _, _, x = _setup(kind, prune=prune, prefix=PREFIX)
     ids = x[:1, :16]
@@ -667,7 +667,7 @@ def test_glu_smooth_is_exact_in_real_numbers_and_keeps_the_structure(kind):
     """``glu_smooth`` moves a per-channel factor from the product (through the up projection's rows) into the down
     projection's columns: the float model with the same rescaling gives the checkpoint's logits, the graph keeps the
     benchmark structure, tracks the float model at least as well as the plain smoothed graph, and v0 accepts it."""
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, params_for, run_query
+    from pvi.v0.protocol import Challenger, Prover, Verifier, params_for, run_query
     model, base, b_info, calib, x = _setup(kind)
     graph, info = rl.build_llama_from_hf(model, calib, glu_smooth=0.5, **SMOOTH)
     g = info["glu_smooth_g"]

@@ -33,13 +33,17 @@ import numpy as np
 import torch
 from torch import nn
 
-from pvi.fullcheck import claimcodec
-from pvi.fullcheck.analytic import decoder_shapes, proof_bytes
-from pvi.fullcheck.commitment import HASH_BYTES, multiproof_size, next_pow2
-from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+from pvi.v0 import claimcodec
+from pvi.commit.cost import decoder_shapes, proof_bytes
+from pvi.commit.commitment import HASH_BYTES, multiproof_size, next_pow2
+from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plan_bytes import query_claims  # noqa: E402
+
+
+def query_claims(graph, x) -> tuple[list[torch.Tensor], int]:
+    """The honest claims of query ``x`` (in weight-op order) and the bytes of their wire encoding."""
+    zs = list(Prover(graph).claims(x).values())
+    return zs, len(claimcodec.encode(zs))
 
 CODE = Path(__file__).resolve().parents[2]
 CNNS = {"lenet5": (1, 28), "vgg11": (3, 32), "vgg16": (3, 32), "resnet18_cifar": (3, 32)}
@@ -54,8 +58,8 @@ def _mnist(root: str):
 
 
 def _cnn(name: str, mnist, queries: int):
-    from pvi.fullcheck.models import build_float_model
-    from pvi.fullcheck.quantize import quantize_input, quantize_model
+    from pvi.models.cnn import build_float_model
+    from pvi.models.quantize import quantize_input, quantize_model
 
     train, test = mnist
     channels, size = CNNS[name]
@@ -70,7 +74,7 @@ def _cnn(name: str, mnist, queries: int):
 
 
 def _mlp(mnist, queries: int):
-    from pvi.fullcheck.quantize import quantize_input, quantize_model
+    from pvi.models.quantize import quantize_input, quantize_model
 
     d = np.load(CODE / "artifacts" / "models" / "mlp_mnist_full.npz")
     mods: list[nn.Module] = []
@@ -85,7 +89,7 @@ def _mlp(mnist, queries: int):
 
 
 def _decoder(model: str, seq: int, n_layers: int | None, queries: int):
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder
+    from pvi.models.decoder import CONFIGS, build_decoder
 
     cfg = CONFIGS[model]
     graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=min(seq, 32), seed=0)
@@ -241,7 +245,7 @@ def summary(results: dict) -> str:
     for spec, r in results.items():
         builds = sorted((int(b), v) for b, v in r.get("builds", {}).items())
         if len(builds) >= 2:
-            from pvi.fullcheck.transformer import CONFIGS
+            from pvi.models.decoder import CONFIGS
             (b0, v0), (b1, v1) = builds[-2:]
             per_block = (v1["wire_bytes"] - v0["wire_bytes"]) / (b1 - b0)
             per_claims = (v1["claims"] - v0["claims"]) / (b1 - b0)

@@ -9,7 +9,7 @@
 
 A cell is a model, a prompt length ``T`` and a batch ``B``: ``B`` prompts of ``T`` tokens, random ids drawn with seed 1
 as ``perf.py`` and ``reexec.py`` draw them (so prompt 0 of every cell is the B = 1 prompt of its ``T``).  The decoders
-are those of ``pvi.fullcheck.transformer.CONFIGS`` with random weights (the costs depend on the shapes only), built as
+are those of ``pvi.models.decoder.CONFIGS`` with random weights (the costs depend on the shapes only), built as
 ``perf.py --prune-last`` builds them (seed 0, 32 calibration tokens), on ``--layers`` blocks (0: the full model);
 the ``tiny-*`` and ``small-*`` names of :data:`TINY` are small shapes for a laptop and the tests.  Every cell times,
 on the same token ids, shapes, device and host:
@@ -97,10 +97,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from pvi.fullcheck import claimcodec, contention, protocol
-from pvi.fullcheck.analytic import decoder_shapes
-from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
-from pvi.fullcheck.transformer import CONFIGS, DecoderConfig, build_decoder
+from pvi.v0 import claimcodec
+
+from pvi.core import contention
+
+from pvi.v0 import protocol
+from pvi.commit.cost import decoder_shapes
+from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
 
 HERE = Path(__file__).resolve().parent
 CODE = HERE.parents[1]          # code/
@@ -864,7 +868,7 @@ def main() -> int:
     ap.add_argument("--modes", nargs="+", choices=["C", "Kpre"], default=["C", "Kpre"])
     ap.add_argument("--batch-proof", nargs="+", choices=["seq", "joint"], default=["seq"],
                     help="B > 1: B independent proofs one after another (seq) and/or one statement (joint)")
-    ap.add_argument("--policy", default="paper", help="mode C's commitment plan (pvi.fullcheck.plans), as perf.py")
+    ap.add_argument("--policy", default="paper", help="mode C's commitment plan (pvi.commit.plans), as perf.py")
     ap.add_argument("--lookups", action=argparse.BooleanOptionalAction, default=True,
                     help="Kpre: the verifier reads the embedding rows itself (Verifier(lookups=True))")
     ap.add_argument("--lam", type=int, default=128)

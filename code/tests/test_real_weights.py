@@ -1,4 +1,4 @@
-"""pvi.fullcheck.real_weights (the int8 OPT of the report, Section 4.1) on a tiny random OPT,
+"""pvi.models.hf_opt (the int8 OPT of the report, Section 4.1) on a tiny random OPT,
 so no download is needed.
 
 Also the real graph with its last block pruned (``build_opt_from_hf(..., prune_last=True)``, plan 2 F3a): the
@@ -19,14 +19,13 @@ import torch
 
 transformers = pytest.importorskip("transformers")
 
-from pvi.fullcheck import analytic                                            # noqa: E402
-from pvi.fullcheck import cut_protocol as cp                                  # noqa: E402
-from pvi.fullcheck import protocol as proto                                   # noqa: E402
-from pvi.fullcheck import transformer                                         # noqa: E402
-from pvi.fullcheck.graph import CheapOp, MatOp                                # noqa: E402
-from pvi.fullcheck.real_weights import (build_opt_from_hf, is_pruned, matches_benchmark_graph,  # noqa: E402
-                                        real_logits)
-from pvi.fullcheck.transformer import DecoderConfig                           # noqa: E402
+from pvi.commit import cost as analytic                                            # noqa: E402
+from pvi.v1 import protocol as cp                                  # noqa: E402
+from pvi.v0 import protocol as proto                                   # noqa: E402
+from pvi.models import decoder as transformer                                         # noqa: E402
+from pvi.core.graph import CheapOp, MatOp                                # noqa: E402
+from pvi.models.hf_opt import build_opt_from_hf, is_pruned, matches_benchmark_graph, real_logits  # noqa: E402
+from pvi.models.decoder import DecoderConfig                           # noqa: E402
 
 CODE = Path(__file__).resolve().parents[1]
 _SMOOTH = dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
@@ -70,7 +69,7 @@ def test_graph_is_integer_and_tracks_the_float_model(tiny_opt):
 
 
 def test_defence_accepts_honest_queries_on_real_weights(tiny_opt):
-    from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.protocol import Prover, Verifier, commit_graph, params_for, run_query
 
     _, graph, _, ids = tiny_opt
     params = params_for(20, len(graph.mat_ops))
@@ -84,7 +83,7 @@ def test_defence_accepts_honest_queries_on_real_weights(tiny_opt):
 def test_smoothed_norm_gains_keep_the_graph_and_the_protocol(tiny_opt):
     # plan F2: SmoothQuant through the norms' per-channel gains -- the same ops and shapes, scalar requant
     # multipliers (requant_fn), an integer graph that tracks the float model, accepted by v0 and by V1
-    from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.protocol import Prover, Verifier, commit_graph, params_for, run_query
 
     model, base, _, ids = tiny_opt
     graph, info = build_opt_from_hf(model, ids, **_SMOOTH)

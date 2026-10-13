@@ -74,11 +74,11 @@ columns (one per distinct input: q/k/v share one, gate/up one)."""
 
 def micro(rows: int, t: int, reps: int, paths: list, threads: int) -> int:
     """The ``--micro`` measurement (module docstring)."""
-    from pvi.fullcheck import buckets
-    from pvi.fullcheck import cut as cutmod
-    from pvi.fullcheck import cut_protocol as cp
-    from pvi.fullcheck import extfield as ef
-    from pvi.fullcheck.field import P
+    from pvi.v1 import products as buckets
+    from pvi.v1 import cut as cutmod
+    from pvi.v1 import protocol as cp
+    from pvi.core import extfield as ef
+    from pvi.core.field import P
     g = torch.Generator().manual_seed(0)
     e = torch.randint(0, P, (t, ef.D), generator=g)
     req = cutmod.CutOp("q", "requant", 3_000_017, 30, -127, 127, rows, 4096, False, "c", 0, 0, "q", "row")
@@ -164,10 +164,10 @@ def main() -> int:
     torch.set_num_threads(args.threads)
     if args.micro:
         return micro(*args.micro, args.reps, args.paths, args.threads)
-    from pvi.fullcheck import buckets
-    from pvi.fullcheck import cut_protocol as cp
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for
-    from pvi.fullcheck.transformer import CONFIGS, DecoderConfig, build_decoder
+    from pvi.v1 import products as buckets
+    from pvi.v1 import protocol as cp
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for
+    from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
 
     if args.small:
         d, h, dh, ff, vocab = args.small

@@ -1,7 +1,7 @@
 """The verifier's constant-factor speed-ups are bit-exact.
 
 Every fast routine is compared with the straightforward code it replaced, kept in
-``pvi.fullcheck.reference``: the modular products (stacked limbs, signed claims,
+``reference``: the modular products (stacked limbs, signed claims,
 batched blocks, numpy for small operands), the codeword at the opened columns
 (baby-step giant-step), the leaf hashing, the right-hand sides, the range checks,
 the batched product and column checks (same verdicts, same exceptions, on tampered
@@ -20,11 +20,11 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import commitment as com
-from pvi.fullcheck import field as fld
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import reference as ref
-from pvi.fullcheck.pipeline import wire_openings
+from pvi.commit import commitment as com
+from pvi.core import field as fld
+from pvi.v0 import protocol as proto
+import reference as ref
+from pvi.v0.streaming import wire_openings
 
 P = fld.P
 Z = proto.Z_BOUND
@@ -279,7 +279,7 @@ def test_disagrees_flags_any_op_that_fails_its_freivalds_check(deferred, monkeyp
 
 
 def _mat_op(layout, n_in, bias, conv=None, rows=4):
-    from pvi.fullcheck.graph import MatOp
+    from pvi.core.graph import MatOp
 
     return MatOp("op", ("x",), "op.z", weight=torch.zeros(rows, n_in, dtype=torch.int8),
                  bias=torch.zeros(rows, dtype=torch.int64) if bias else None, layout=layout, conv=conv)
@@ -320,7 +320,7 @@ def test_linear_and_embedding_rhs_match_reference(k, shape, device):
 # -- the batched checks give the op-by-op verdicts -------------------------------------------------
 
 def _decoder_setup(mode):
-    from pvi.fullcheck.transformer import DecoderConfig, build_decoder
+    from pvi.models.decoder import DecoderConfig, build_decoder
 
     cfg = DecoderConfig("tiny", 32, 2, 4, 2, 8, 64, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
                         bias=False, tied=False, qk_norm=True, max_pos=64)
@@ -479,7 +479,7 @@ def test_batched_columns_give_the_per_op_verdicts(check_paths):
 # -- cheap operations ------------------------------------------------------------------------------
 
 def test_requant_and_mul_add_half_match_reference(device):
-    from pvi.fullcheck.graph import mul_add_half, requant
+    from pvi.core.graph import mul_add_half, requant
 
     g = torch.Generator().manual_seed(11)
     z = _rand(g, 1 - Z, Z, (2, 5, 33))
@@ -501,7 +501,7 @@ def test_requant_and_mul_add_half_match_reference(device):
 def test_isqrt_matches_reference():
     import math
 
-    from pvi.fullcheck.transformer import _isqrt
+    from pvi.models.decoder import _isqrt
 
     g = torch.Generator().manual_seed(5)
     s = torch.cat([torch.arange(0, 2000), _rand(g, 0, 1 << 50, (5000,)),
@@ -520,7 +520,7 @@ def test_isqrt_matches_reference():
 
 def test_derive_is_silent_on_claims_whose_norm_sums_wrap(monkeypatch):
     # an in-range embedding claim, scaled x8 into the residual stream, makes x * x wrap in the norm
-    from pvi.fullcheck import transformer as tr
+    from pvi.models import decoder as tr
 
     graph, prover, v, x = _decoder_setup("Kpre")
     claims = prover.claims(x)
@@ -535,7 +535,7 @@ def test_derive_is_silent_on_claims_whose_norm_sums_wrap(monkeypatch):
 
 
 def test_transformer_ops_match_reference(device):
-    from pvi.fullcheck import transformer as tr
+    from pvi.models import decoder as tr
 
     g = torch.Generator().manual_seed(12)
     r = _rand(g, -(1 << 22), 1 << 22, (2, 9, 64))
@@ -566,7 +566,7 @@ def test_transformer_ops_match_reference(device):
 
 
 def test_the_real_weight_residual_is_the_reference_residual():
-    from pvi.fullcheck.real_weights import _RealBuilder
+    from pvi.models.hf_opt import _RealBuilder
 
     g = torch.Generator().manual_seed(13)
     b = _RealBuilder(torch.zeros(1, 4, dtype=torch.int64), 100.0, 4.0)
@@ -581,7 +581,7 @@ def test_the_real_weight_residual_is_the_reference_residual():
 @pytest.mark.parametrize("hq,hkv,t,group_heads", [(8, 2, 1, None), (8, 2, 7, None), (4, 4, 9, None), (6, 1, 5, None),
                                                   (32, 8, 8, None), (8, 8, 12, 3), (8, 2, 12, 3)])
 def test_attention_matches_reference(hq, hkv, t, group_heads, m_s, device, monkeypatch):
-    from pvi.fullcheck import transformer as tr
+    from pvi.models import decoder as tr
 
     g = torch.Generator().manual_seed(hq * 100 + hkv * 10 + t)
     dh = 16
@@ -600,7 +600,7 @@ def test_attention_matches_reference(hq, hkv, t, group_heads, m_s, device, monke
         assert torch.equal(got, ref.attention(q, k, v, m_s, m_o, hq, hkv, dh))
     # heads per call: groups of group_heads query heads, else all at once (the key/value heads, stacked); a CPU
     # verifier with the AVX-512 kernel computes the requantised call (m_o set) in one fused pass instead
-    from pvi.fullcheck import native_kernels
+    from pvi.kernels import native as native_kernels
     want = [group_heads] * (hq // group_heads) + [hq % group_heads] if group_heads else [hkv]
     fused = (str(device) == "cpu" and tr._int32_scores(m_s, dh, t) and native_kernels.available()
              and native_kernels.attention_requant_ok(dh, t))
@@ -620,8 +620,10 @@ def test_fold_gives_the_reference_values(layout, shape):
 # -- whole graphs: the same claims, derived tensors and verdicts as the reference code ----------------
 
 def _use_reference_code(monkeypatch):
-    """Route every graph closure, fold and check through ``pvi.fullcheck.reference``."""
-    from pvi.fullcheck import graph, quantize, transformer
+    """Route every graph closure, fold and check through ``reference``."""
+    from pvi.core import graph
+    from pvi.models import quantize
+    from pvi.models import decoder as transformer
 
     monkeypatch.setattr(quantize, "requant", ref.requant)
     for name, fn in (("requant", ref.requant), ("_norm_int", ref.norm_int), ("_lut", ref.lut), ("_rope", ref.rope),
@@ -637,9 +639,9 @@ def _use_reference_code(monkeypatch):
 def _graph(kind):
     import dataclasses
 
-    from pvi.fullcheck.models import VGG, LeNet5, ResNet18
-    from pvi.fullcheck.quantize import quantize_input, quantize_model
-    from pvi.fullcheck.transformer import CONFIGS, DecoderConfig, build_decoder
+    from pvi.models.cnn import VGG, LeNet5, ResNet18
+    from pvi.models.quantize import quantize_input, quantize_model
+    from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
 
     torch.manual_seed(0)
     g = torch.Generator().manual_seed(1)

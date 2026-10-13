@@ -1,5 +1,5 @@
 """Plan 2 F6 (D4's remainder): the time of the one-time setup proof of an untrusted commitment
-(``pvi.fullcheck.setup_proof``), prover and verifier.  The ``setup`` tier of ``slurm/sp2027.sh``.
+(``pvi.commit.setup_proof``), prover and verifier.  The ``setup`` tier of ``slurm/sp2027.sh``.
 
     cd code && PYTHONPATH=src python experiments/6_improvements/setup_timing.py --model llama2-7b --policy auto \\
         --amortise 100 --label setup
@@ -49,7 +49,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", required=True)
     ap.add_argument("--layers", type=int, default=0, help="decoder blocks (0: the full model)")
-    ap.add_argument("--policy", default="auto", help="the commitment plan (pvi.fullcheck.plans)")
+    ap.add_argument("--policy", default="auto", help="the commitment plan (pvi.commit.plans)")
     ap.add_argument("--lam", type=float, default=128)
     ap.add_argument("--amortise", type=int, nargs="+", default=[100])
     ap.add_argument("--fiat-shamir", action="store_true", help="the per-query budget of Fiat-Shamir queries")
@@ -60,11 +60,11 @@ def main() -> int:
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     gb = _load("gen_bench", "experiments/6_improvements/gen_bench.py")
-    from pvi.fullcheck import setup_proof as sp
-    from pvi.fullcheck.analytic import decoder_shapes
-    from pvi.fullcheck.plans import column_bits, exact_columns
-    from pvi.fullcheck.protocol import commit_graph
-    from pvi.fullcheck.transformer import build_decoder
+    from pvi.commit import setup_proof as sp
+    from pvi.commit.cost import decoder_shapes
+    from pvi.commit.plans import column_bits, exact_columns
+    from pvi.v0.protocol import commit_graph
+    from pvi.models.decoder import build_decoder
 
     device = torch.device(args.device)
     cfg = gb.config(args.model)

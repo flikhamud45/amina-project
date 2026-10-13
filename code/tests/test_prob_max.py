@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 import torch
 
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import reference as ref
-from pvi.fullcheck import transformer as tr
-from pvi.fullcheck.transformer import build_decoder
+from pvi.v0 import protocol as proto
+import reference as ref
+from pvi.models import decoder as tr
+from pvi.models.decoder import build_decoder
 
 from test_plans import _TINY
 
@@ -116,8 +116,8 @@ def test_the_real_builders_take_the_scale(family):
     logits); 2047, the certified models' default, is another graph (bound by the digest) whose output multipliers are
     calibrated at that scale, and it runs."""
     transformers = pytest.importorskip("transformers")
-    from pvi.fullcheck import real_llama as rl
-    from pvi.fullcheck import real_weights as rw
+    from pvi.models import hf_llama as rl
+    from pvi.models import hf_opt as rw
     torch.manual_seed(0)
     if family == "opt":
         cfg = transformers.OPTConfig(vocab_size=97, hidden_size=32, num_hidden_layers=2, ffn_dim=64, num_attention_heads=4,

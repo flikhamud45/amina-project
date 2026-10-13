@@ -33,8 +33,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ppl_llama as pl                                      # noqa: E402
 
-from pvi.fullcheck import real_llama as rl                 # noqa: E402
-from pvi.fullcheck.transformer import RES_MAX               # noqa: E402
+from pvi.models import hf_llama as rl                 # noqa: E402
+from pvi.models.decoder import RES_MAX               # noqa: E402
 
 
 def main() -> None:

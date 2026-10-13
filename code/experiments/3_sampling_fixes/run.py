@@ -24,19 +24,20 @@ from pathlib import Path
 import numpy as np
 
 from pvi.attacks.tamper import apply_plan, plan_single_neuron_flip
-from pvi.data import load_classification
-from pvi.defences import (
-    GradientSaliencySampler,
-    LocalContributionSampler,
-    StaticImportanceSampler,
-    weight_magnitude_importance,
-)
-from pvi.defences.adaptive import plan_adaptive_stealthy_flip, plan_evasive_flip
-from pvi.experiments.analysis import acceptance_probability
-from pvi.protocol import ModelCommitment, ProtocolParams, Prover, UniformPathSampler, Verifier, run_protocol
+from pvi.mnist.data import load_classification
+from pvi.baseline.samplers import (GradientSaliencySampler, LocalContributionSampler, StaticImportanceSampler,
+                                   weight_magnitude_importance)
+from pvi.baseline.adaptive import plan_adaptive_stealthy_flip, plan_evasive_flip
+from pvi.baseline.analysis import acceptance_probability
+from pvi.baseline.path.commitments import ModelCommitment
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.prover import Prover
+from pvi.baseline.path.sampling import UniformPathSampler
+from pvi.baseline.path.verifier import Verifier
+from pvi.baseline.path.session import run_protocol
 from pvi.results import write_json
-from pvi.training import load_network
-from pvi.zoo import mlp_architecture_for
+from pvi.mnist.training import load_network
+from pvi.mnist.zoo import mlp_architecture_for
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / "artifacts" / "models"

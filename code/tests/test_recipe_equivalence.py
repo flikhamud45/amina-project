@@ -13,7 +13,7 @@ import torch
 
 transformers = pytest.importorskip("transformers")
 
-from pvi.fullcheck import real_weights as rw                                   # noqa: E402
+from pvi.models import hf_opt as rw                                   # noqa: E402
 
 CODE = Path(__file__).resolve().parents[1]
 

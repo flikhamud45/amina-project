@@ -22,9 +22,9 @@ def main() -> None:
     torch.set_num_threads(8)
     from torch.profiler import ProfilerActivity, profile
 
-    from pvi.fullcheck.analytic import decoder_shapes
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder
+    from pvi.commit.cost import decoder_shapes
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.models.decoder import CONFIGS, build_decoder
 
     cfg = CONFIGS[args.model]
     graph = build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=32, seed=0, prune_last=True)

@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from pvi.fullcheck.real_weights import build_opt_from_hf, matches_benchmark_graph, real_logits
+from pvi.models.hf_opt import build_opt_from_hf, matches_benchmark_graph, real_logits
 
 ROOT = Path(__file__).resolve().parents[2]
 

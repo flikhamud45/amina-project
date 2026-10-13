@@ -31,9 +31,11 @@ def main() -> None:
     ap.add_argument("--seq", type=int, nargs="+", default=[64, 2048])
     ap.add_argument("--queries", type=int, default=5)
     args = ap.parse_args()
-    from pvi.fullcheck import claimcodec, field, graph as graph_mod
-    from pvi.fullcheck.protocol import Prover
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder
+    from pvi.v0 import claimcodec
+    from pvi.core import field
+    from pvi.core import graph as graph_mod
+    from pvi.v0.protocol import Prover
+    from pvi.models.decoder import CONFIGS, build_decoder
 
     device = torch.device("cuda")
     cfg = CONFIGS[args.model]

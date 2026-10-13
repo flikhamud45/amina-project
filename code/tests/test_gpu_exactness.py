@@ -21,10 +21,10 @@ import os
 import pytest
 import torch
 
-from pvi.fullcheck import field as fld
-from pvi.fullcheck.commitment import GroupCommitment, TransposedCommitment, WeightCommitment
-from pvi.fullcheck.graph import MatOp, exact_matmul
-from pvi.fullcheck.transformer import _attention_heads
+from pvi.core import field as fld
+from pvi.commit.commitment import GroupCommitment, TransposedCommitment, WeightCommitment
+from pvi.core.graph import MatOp, exact_matmul
+from pvi.models.decoder import _attention_heads
 
 DEV = os.environ.get("PVI_TEST_DEVICE", "cuda")
 pytestmark = pytest.mark.skipif(DEV.startswith("cuda") and not torch.cuda.is_available(), reason="needs a GPU")
@@ -197,7 +197,7 @@ def test_group_openings_match_cpu():
 
 def test_the_worst_case_pattern_would_catch_a_wrong_chunk_bound(monkeypatch):
     # guards the test above: with 4,096-term chunks (partial sums up to 66 M) float32 rounds
-    import pvi.fullcheck.graph as graph
+    import pvi.core.graph as graph
 
     w, x = _operands(256, 4096, 64, "max")
     ref = (w.double() @ x.double()).to(torch.int64)

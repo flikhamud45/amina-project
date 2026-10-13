@@ -68,8 +68,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import opt_builder as ob                                   # noqa: E402
 import ppl_2048 as p2                                      # noqa: E402
 
-from pvi.fullcheck import real_llama as rl                 # noqa: E402
-from pvi.fullcheck.transformer import CONFIGS              # noqa: E402
+from pvi.models import hf_llama as rl                 # noqa: E402
+from pvi.models.decoder import CONFIGS              # noqa: E402
 
 CONFIG_OF = {"Qwen3-0.6B-Base": "qwen3-0.6b", "Qwen3-1.7B-Base": "qwen3-1.7b", "Qwen3-4B-Base": "qwen3-4b",
              "TinyLlama_v1.1": "tinyllama-1.1b"}
@@ -479,8 +479,8 @@ def protocol(args, model, tok) -> None:
     structure is the 2-block benchmark graph's, v0 accepts in modes C and Kpre (lambda = 40) and rejects a tampered
     claim (the first q projection, the middle weight op, the LM head), and V1 (mode C) accepts and rejects the same
     tampers. With ``--prefix``, the graphs carry the prefix (chosen on the calibration window)."""
-    from pvi.fullcheck import cut_protocol as cp
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v1 import protocol as cp
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
     seq = 64
     test = token_ids(tok, p2._text("test"), args.prefix)
     w = p2._windows(test, seq, 1)[0]

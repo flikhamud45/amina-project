@@ -65,10 +65,11 @@ def main() -> None:
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     bench = _load("bench", "experiments/4_defence_benchmark/bench.py")
-    from pvi.fullcheck import commitment, field
-    from pvi.fullcheck.analytic import decoder_shapes
-    from pvi.fullcheck.protocol import Prover, Verifier, commit_graph, params_for, run_query
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder
+    from pvi.commit import commitment
+    from pvi.core import field
+    from pvi.commit.cost import decoder_shapes
+    from pvi.v0.protocol import Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.models.decoder import CONFIGS, build_decoder
 
     variants = {"float64": field.small_matmul_mod, "int8": field.weight_matmul_mod}
     device = torch.device(args.device)

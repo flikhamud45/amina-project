@@ -1,4 +1,4 @@
-"""Commitment plans (``pvi.fullcheck.plans``): exact per-op column counts, shared Merkle trees,
+"""Commitment plans (``pvi.commit.plans``): exact per-op column counts, shared Merkle trees,
 per-op codeword lengths and, under the policies with the suffix ``c``, per-op layouts (the col
 layout, with the ops reading one tensor fused, and lookup tables for the embeddings), opt-in by
 policy name (``commit_graph(..., policy=)``, ``params_for(..., plan=)``, a verifier with ``groups``
@@ -10,7 +10,7 @@ Every plan must keep the report's guarantee (``soundness_bits >= lambda`` for ev
 and challenge kind), honest queries must be accepted, and every forgery must be rejected at the
 check that catches it, by ``run_query``, by the streaming verifier and in the forms a GPU
 verifier runs, interactive and under Fiat--Shamir -- with the proof in its default form and in
-the compact wire encoding (``run_query(wire=True)``, :mod:`pvi.fullcheck.claimcodec`), whose
+the compact wire encoding (``run_query(wire=True)``, :mod:`pvi.v0.claimcodec`), whose
 malformed messages are rejected too.
 """
 
@@ -25,19 +25,19 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import analytic
-from pvi.fullcheck import claimcodec as cc
-from pvi.fullcheck import field as fld
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import reference as ref
-from pvi.fullcheck.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
-                                      group_leaf, multiproof_size, verify_multiproof)
-from pvi.fullcheck.models import build_float_model
-from pvi.fullcheck.pipeline import wire_openings
-from pvi.fullcheck.plans import (MAX_N, REFERENCE_LAMBDA, col_name, column_bits, column_error_log2, exact_columns,
-                                 next_pow2, plan_commitment)
-from pvi.fullcheck.quantize import quantize_input, quantize_model
-from pvi.fullcheck.transformer import CONFIGS, DecoderConfig, build_decoder
+from pvi.commit import cost as analytic
+from pvi.v0 import claimcodec as cc
+from pvi.core import field as fld
+from pvi.v0 import protocol as proto
+import reference as ref
+from pvi.commit.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
+                                   group_leaf, multiproof_size, verify_multiproof)
+from pvi.models.cnn import build_float_model
+from pvi.v0.streaming import wire_openings
+from pvi.commit.plans import (MAX_N, REFERENCE_LAMBDA, col_name, column_bits, column_error_log2, exact_columns,
+                              next_pow2, plan_commitment)
+from pvi.models.quantize import quantize_input, quantize_model
+from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
 
 P = fld.P
 POLICIES = ("tight", "cnn12", "R8", "tightc", "cnn12c", "R8c")   # small codeword lengths: the tiny models
@@ -1166,25 +1166,18 @@ def _improvements_script(name: str):
     return mod
 
 
-def test_plan_bytes_runs_distinct_cnn_queries(monkeypatch):
-    """``--run <CNN> --queries N``: N distinct inputs, so the Fiat--Shamir rows are medians of N
-    transcripts (one input repeated gave N copies of one)."""
+def test_random_cnn_queries_are_distinct_and_shaped_as_the_model_s_input():
     import itertools
 
-    pb = _improvements_script("plan_bytes")
-    seen = []
-    monkeypatch.setattr(pb, "_build_rows", lambda graph, cases, *a, **kw: seen.extend(cases) or [])
-    pb.run_rows("lenet5", 40, ["cnn16"], 3)
-    ((_, xs, cols),) = seen
+    from pvi.models.quantize import random_cnn, random_inputs
+    graph, x = random_cnn("lenet5")
+    xs = random_inputs(graph, x, 3)
     assert len(xs) == 3 and not any(torch.equal(a, b) for a, b in itertools.combinations(xs, 2))
-    graph, x, _ = pb.cnn_graph("lenet5")
     assert all(q.shape == x.shape and q.dtype == x.dtype for q in xs)
-    assert cols == {k: z.shape[1] for k, z in graph.forward(xs[1])[1].items()}
 
 
 def test_perf_random_init_builds_every_cnn_it_accepts(monkeypatch, capsys):
-    """``perf.py --random-init`` takes its CNNs from ``ab_verifier.CNNS``, which ``build`` makes:
-    ResNet-18-224 too (it fell through to the decoder branch: ``KeyError``)."""
+    """``perf.py --random-init`` builds every CNN of ``models.quantize.RANDOM_CNNS``: ResNet-18-224 too."""
     import json
     import sys
     from pathlib import Path
@@ -1196,7 +1189,8 @@ def test_perf_random_init_builds_every_cnn_it_accepts(monkeypatch, capsys):
     perf.main()
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert (out["model"], out["accepted"], out["queries"]) == ("resnet18_224", 1, 1)
-    assert "resnet18_224" in _improvements_script("ab_verifier").CNNS
+    from pvi.models.quantize import RANDOM_CNNS
+    assert "resnet18_224" in RANDOM_CNNS
 
 
 # -- the proof-size model ----------------------------------------------------------------------------

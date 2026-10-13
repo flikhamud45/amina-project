@@ -18,7 +18,7 @@ mode): the median of every timing part and every byte part, the ``[min, max]`` o
 and verifier totals (``prove_s_range``, ``verify_s_range``: the paper's median [min-max]), the
 acceptance count, and the git commit, so results of two checkouts can be compared line by line.
 
-``--policy`` names the commitment plans (``pvi.fullcheck.plans``) of mode C: each is committed (its
+``--policy`` names the commitment plans (``pvi.commit.plans``) of mode C: each is committed (its
 ``commit_s`` is the setup time).  ``--wire`` sends the proof in the compact encoding
 (``run_query(wire=True)``: encoded bytes, ``prove_encode`` and ``verify_decode``); ``--wire off on``
 runs every policy both ways.  The queries of all these variants are interleaved in this process,
@@ -94,7 +94,7 @@ def _tampers(prover, v, x, n: int, wire: bool, seed: int = 123) -> dict:
     raised 1000 above the largest; ``last_hidden``, a random coordinate of the op feeding the LM head (the last
     block's down projection) at the last position set to ``Z_BOUND // 4``.  ``{kind: {attempts, rejected,
     labels}}``."""
-    from pvi.fullcheck.protocol import Z_BOUND, run_query
+    from pvi.v0.protocol import Z_BOUND, run_query
     mats = prover.graph.mat_ops
     g = torch.Generator().manual_seed(seed)
     out = {k: {"attempts": 0, "rejected": 0, "labels": {}} for k in ("single_value", "output_logit", "last_hidden")}
@@ -159,7 +159,7 @@ def _spread(runs: list[dict]) -> dict:
 
 
 def main() -> int:
-    ab = _load("ab_verifier", "experiments/6_improvements/ab_verifier.py")
+    from pvi.models.quantize import RANDOM_CNNS, random_cnn, random_inputs
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--seq", type=int, default=64)
@@ -198,15 +198,14 @@ def main() -> int:
     ap.add_argument("--tampers", type=int, default=0, help="decoders, per variant after the timed queries: attempts of "
                     "each of bench.py's LLM attacks, each of which must be rejected")
     ap.add_argument("--random-init", action="store_true",
-                    help="CNNs (" + ", ".join(ab.CNNS) + "): random weights and random queries, as ab_verifier.py "
-                         "builds them (the costs depend on the shapes only)")
+                    help="CNNs (" + ", ".join(RANDOM_CNNS) + "): random weights and random queries "
+                         "(models.quantize.random_cnn; the costs depend on the shapes only)")
     args = ap.parse_args()
     from pvi.results import git_sha
     sha = git_sha(CODE)              # before the build, which can outlast a checkout update
     torch.set_num_threads(args.threads)
     bench = _load("bench", "experiments/4_defence_benchmark/bench.py")
-    import pvi.fullcheck as fullcheck
-    from pvi.fullcheck.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
 
     device = torch.device(args.device)
     prunes = [w == "on" for w in args.prune_last or ["on"]]      # a bare flag: on
@@ -214,16 +213,16 @@ def main() -> int:
     bench._reset_peaks(device)
     t0 = time.perf_counter()
     graphs, model_ops = {}, {}
-    if args.model in ab.CNNS:
+    if args.model in RANDOM_CNNS:
         if prunes != [False]:
             raise SystemExit("--prune-last is for the decoders")
         if args.real or args.tampers:
             raise SystemExit("--real and --tampers are for the decoders")
         if args.random_init:
-            graph, x, _ = ab.build(fullcheck, ab.Case(args.model, "C", args.lam))
-            queries = ab.random_queries(fullcheck, graph, x, args.queries + 1)
+            graph, x = random_cnn(args.model)
+            queries = random_inputs(graph, x, args.queries + 1)
         else:
-            from pvi.fullcheck.quantize import quantize_input, quantize_model
+            from pvi.models.quantize import quantize_input, quantize_model
             model, data = bench._mlp_model() if args.model == "mlp_mnist" else bench._cnn_model(args.model)
             graph = quantize_model(model, data["train_x"])
             xs, _ = next(bench._test_batches(data, args.queries + 1))
@@ -244,8 +243,8 @@ def main() -> int:
         n_checks = len(graphs[prunes[0]].mat_ops)
         seq = args.seq
     else:
-        from pvi.fullcheck.analytic import decoder_shapes
-        from pvi.fullcheck.transformer import CONFIGS, build_decoder
+        from pvi.commit.cost import decoder_shapes
+        from pvi.models.decoder import CONFIGS, build_decoder
         cfg = CONFIGS[args.model]
         n_layers = args.layers or cfg.n_layers
         for prune in prunes:

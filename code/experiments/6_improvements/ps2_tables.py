@@ -12,10 +12,10 @@ from __future__ import annotations
 import argparse
 import json
 
-from pvi.fullcheck.analytic import decoder_shapes, proof_bytes
-from pvi.fullcheck.plans import plan_commitment
-from pvi.fullcheck.protocol import params_for
-from pvi.fullcheck.transformer import CONFIGS
+from pvi.commit.cost import decoder_shapes, proof_bytes
+from pvi.commit.plans import plan_commitment
+from pvi.v0.protocol import params_for
+from pvi.models.decoder import CONFIGS
 
 
 def main() -> None:

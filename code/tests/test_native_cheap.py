@@ -6,9 +6,9 @@ and beyond the ranges the protocol checks (int64 arithmetic wraps the same way i
 import pytest
 import torch
 
-from pvi.fullcheck import graph as gr
-from pvi.fullcheck import native_kernels
-from pvi.fullcheck import transformer as tr
+from pvi.core import graph as gr
+from pvi.kernels import native as native_kernels
+from pvi.models import decoder as tr
 
 pytestmark = pytest.mark.skipif(not native_kernels.available(), reason="no C++ compiler (or not Linux)")
 
@@ -97,7 +97,7 @@ def test_rope(t, heads, dh, offset, monkeypatch):
 @pytest.mark.parametrize("r,n,m", [(5, 4096, 2048), (7, 70_000, 3), (5, 11008, 1), (1, 1, 1), (3, (1 << 15) + 1, 65)])
 @pytest.mark.parametrize("transposed", [False, True])
 def test_field_matmul(r, n, m, transposed):
-    from pvi.fullcheck.field import P, field_matmul_mod
+    from pvi.core.field import P, field_matmul_mod
     g = torch.Generator().manual_seed(r * n + m)
     chi = torch.randint(0, P, (r, n), generator=g, dtype=torch.int64)
     chi[0, :5] = P - 1
@@ -116,7 +116,7 @@ def test_field_matmul(r, n, m, transposed):
 
 @pytest.mark.parametrize("shapes", [[(4096, 2048), (11008, 2048)], [(5, 70_000), (300, 1)], [(768, 3000)]])
 def test_native_unpack_decodes_like_numpy(shapes, monkeypatch):
-    from pvi.fullcheck import claimcodec
+    from pvi.v0 import claimcodec
     g = torch.Generator().manual_seed(len(shapes))
     claims = [(torch.randn(n, m, generator=g) * 40_000).round().to(torch.int64)
               + torch.randint(-3000, 3000, (n, 1), generator=g) for n, m in shapes]
@@ -132,7 +132,7 @@ def test_native_unpack_decodes_like_numpy(shapes, monkeypatch):
 def test_int32_claims_give_the_int64_results(monkeypatch):
     """A CPU verifier's int32 claims (and their transposed fold views) through requantisation, residual addition
     and the field products give the integers of the same claims as int64."""
-    from pvi.fullcheck.field import P
+    from pvi.core.field import P
     g = torch.Generator().manual_seed(11)
     z64 = torch.randint(-(1 << 29) + 1, 1 << 29, (4096, 600), generator=g, dtype=torch.int64)
     z64[0, :4] = (1 << 29) - 1
@@ -155,7 +155,7 @@ def test_native_unpack_on_corrupted_proofs_matches_numpy(monkeypatch):
     """Random bit flips: the native unpack gives the numpy decoder's claims or its rejection, never another
     exception."""
     import numpy as np
-    from pvi.fullcheck import claimcodec
+    from pvi.v0 import claimcodec
     g = torch.Generator().manual_seed(21)
     shapes = [(300, 700), (64, 2000), (5, 1)]
     claims = [(torch.randn(n, m, generator=g) * 3000).round().to(torch.int64) for n, m in shapes]
@@ -199,7 +199,7 @@ def test_native_attention_on_strided_views(hkv, rep, t, tq, dh):
 
 
 def test_min_max_and_the_norm_with_large_denominators(monkeypatch):
-    from pvi.fullcheck.field import min_max
+    from pvi.core.field import min_max
     g = torch.Generator().manual_seed(17)
     for dtype in (torch.int32, torch.int64):
         a = torch.randint(-(1 << 30), 1 << 30, (300_001,), generator=g).to(dtype)
@@ -281,7 +281,7 @@ def test_int8_matmul_is_exact(n, m, k, monkeypatch):
 
 
 def test_matop_compute_with_the_native_gemm_matches_the_fp32_path(monkeypatch):
-    from pvi.fullcheck.graph import MatOp
+    from pvi.core.graph import MatOp
     g = torch.Generator().manual_seed(2)
     op = MatOp("mm", ("x",), "z", weight=torch.randint(-127, 128, (300, 1000), generator=g, dtype=torch.int8),
                bias=torch.randint(-4096, 4096, (300,), generator=g, dtype=torch.int64))

@@ -5,10 +5,10 @@ and for ``K`` past ``2^16``; the Kpre verdicts are unchanged."""
 import pytest
 import torch
 
-from pvi.fullcheck import native_kernels
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.field import P, int8_ok, small_matmul_mod
-from pvi.fullcheck.transformer import CONFIGS, build_decoder
+from pvi.kernels import native as native_kernels
+from pvi.v0 import protocol as proto
+from pvi.core.field import P, int8_ok, small_matmul_mod
+from pvi.models.decoder import CONFIGS, build_decoder
 
 
 def _reference(w, chi):

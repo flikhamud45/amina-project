@@ -1,4 +1,4 @@
-"""Sampled generation with a client-chosen seed (``pvi.fullcheck.token_sampler``, plan E2): the public Gumbel table,
+"""Sampled generation with a client-chosen seed (``pvi.v0.token_sampler``, plan E2): the public Gumbel table,
 the sampler's choices, and sampled responses proved and checked end to end."""
 
 from __future__ import annotations
@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.fullcheck import cut_protocol as cp
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import token_sampler as ts
-from pvi.fullcheck.transformer import build_decoder, greedy_tokens, with_lm_positions
+from pvi.v1 import protocol as cp
+from pvi.v0 import protocol as proto
+from pvi.v0 import token_sampler as ts
+from pvi.models.decoder import build_decoder, greedy_tokens, with_lm_positions
 from test_plans import _TINY
 
 SEED = bytes(range(32))

@@ -8,7 +8,7 @@ sampling on real logits.
     cd code && PYTHONPATH=src python experiments/9_quality/sampler_tv.py --model facebook/opt-1.3b --seq 128 \\
         --windows 4 --threads 8 --workers 16 --logits-cache /tmp/e2b_opt-1.3b.npz --out sampler_tv_opt-1.3b.json
 
-**The law.**  ``TokenSampler.choose`` (``pvi.fullcheck.token_sampler``) gives entry ``v`` the score
+**The law.**  ``TokenSampler.choose`` (``pvi.v0.token_sampler``) gives entry ``v`` the score
 ``s_v = a z_v + T[u_v]``, where ``u_v`` is the ``v``-th 16-bit word of ``SHAKE-256(tag || seed || position)`` --
 modelled here, as for any hash-derived randomness, as independent uniform words on ``{0, ..., 2^B - 1}`` (``B = 16``)
 -- and ``T`` is the public table ``T_i = round(2^B (-ln(-ln((i + 1/2) / 2^B))))``, strictly increasing (the
@@ -88,7 +88,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pvi.fullcheck.token_sampler import FRAC, TokenSampler, gumbel_table   # noqa: E402
+from pvi.v0.token_sampler import FRAC, TokenSampler, gumbel_table   # noqa: E402
 
 SMOOTH = dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
 DIRECT_BUDGET = 6e7          # occupied levels x grid points below which LM is summed directly (no FFT rounding)
@@ -417,7 +417,7 @@ def extract_logits(args) -> dict:
     if "opt" not in args.model.lower():
         raise SystemExit("only OPT has a real-weight integer builder (real_weights.build_opt_from_hf) so far")
     from common import load_opt, load_windows
-    from pvi.fullcheck.real_weights import build_opt_from_hf, real_logits
+    from pvi.models.hf_opt import build_opt_from_hf, real_logits
 
     t0 = time.perf_counter()
     model, tok = load_opt(args.model)

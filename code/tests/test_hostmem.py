@@ -1,4 +1,4 @@
-"""Pinned host memory within the driver's limit (``pvi.fullcheck.hostmem``).
+"""Pinned host memory within the driver's limit (``pvi.core.hostmem``).
 
 The L40S nodes refuse a single pinned allocation of more than 2 GiB; above ``PIN_MAX`` the defence takes
 pageable memory instead.  These tests force every buffer above the limit (``PIN_MAX = 0``) and check that
@@ -13,9 +13,9 @@ import pytest
 import torch
 
 import test_wire as tw
-from pvi.fullcheck import claimcodec as cc
-from pvi.fullcheck import hostmem
-from pvi.fullcheck import protocol as proto
+from pvi.v0 import claimcodec as cc
+from pvi.core import hostmem
+from pvi.v0 import protocol as proto
 
 cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 

@@ -16,8 +16,8 @@ import argparse
 import time
 from pathlib import Path
 
-from pvi.training import save_network, train_network
-from pvi.zoo import all_model_specs
+from pvi.mnist.training import save_network, train_network
+from pvi.mnist.zoo import all_model_specs
 
 ARTIFACTS = Path(__file__).resolve().parents[2] / "artifacts" / "models"
 

@@ -6,17 +6,16 @@ import numpy as np
 import pytest
 
 from pvi.attacks.tamper import apply_plan, plan_single_neuron_flip
-from pvi.defences import (
-    GradientSaliencySampler,
-    LocalContributionSampler,
-    StaticImportanceSampler,
-    ZeroAwareContributionSampler,
-    weight_magnitude_importance,
-)
-from pvi.defences.adaptive import plan_adaptive_stealthy_flip, plan_evasive_flip
-from pvi.experiments.analysis import acceptance_probability
-from pvi.protocol import ModelCommitment, ProtocolParams, Prover, UniformPathSampler, Verifier
-from pvi.protocol import run_protocol
+from pvi.baseline.samplers import (GradientSaliencySampler, LocalContributionSampler, StaticImportanceSampler,
+                                   ZeroAwareContributionSampler, weight_magnitude_importance)
+from pvi.baseline.adaptive import plan_adaptive_stealthy_flip, plan_evasive_flip
+from pvi.baseline.analysis import acceptance_probability
+from pvi.baseline.path.commitments import ModelCommitment
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.prover import Prover
+from pvi.baseline.path.sampling import UniformPathSampler
+from pvi.baseline.path.verifier import Verifier
+from pvi.baseline.path.session import run_protocol
 
 
 @pytest.fixture

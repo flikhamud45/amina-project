@@ -4,7 +4,7 @@
     cd code && PYTHONPATH=src python experiments/7_reexec/reexec.py --model opt-1.3b --seq 64 2048 --device cpu --threads 8
 
 A client that holds the weights (settings K and Kpre) could check an answer by computing it again.
-This script times that, for the decoders of ``pvi.fullcheck.transformer.CONFIGS`` (random weights:
+This script times that, for the decoders of ``pvi.models.decoder.CONFIGS`` (random weights:
 the cost depends on the shapes only), in two variants:
 
 * ``int``: our integer model's forward pass (``IntGraph.forward`` of ``build_decoder(...,
@@ -201,7 +201,7 @@ def main() -> None:
     ap.add_argument("--max-pos", type=int, default=0, help="rotary-position models: a longer context (V-LONG-b)")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder
+    from pvi.models.decoder import CONFIGS, build_decoder
 
     device = torch.device(args.device)
     fdtype = torch.float16 if device.type == "cuda" else torch.float32
@@ -221,7 +221,7 @@ def main() -> None:
                 measured, spread = {}, {}
                 _reset_peaks(device)
                 for n_layers in args.layers:
-                    from pvi.fullcheck import native_kernels
+                    from pvi.kernels import native as native_kernels
                     if variant in ("int", "int_fp32gemm"):
                         graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0,
                                               prune_last=True)

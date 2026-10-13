@@ -1,4 +1,4 @@
-"""Byte model of the untrusted-commitment setup proof (``pvi.fullcheck.setup_proof``) on the real model shapes.
+"""Byte model of the untrusted-commitment setup proof (``pvi.commit.setup_proof``) on the real model shapes.
 
     cd code && PYTHONPATH=src python experiments/6_improvements/setup_bytes.py --model gpt2 llama2-7b opt-6.7b llama2-13b
 
@@ -15,10 +15,10 @@ import json
 import math
 from types import SimpleNamespace
 
-from pvi.fullcheck import setup_proof as sp
-from pvi.fullcheck.analytic import decoder_shapes
-from pvi.fullcheck.plans import column_bits, exact_columns, plan_commitment
-from pvi.fullcheck.transformer import CONFIGS
+from pvi.commit import setup_proof as sp
+from pvi.commit.cost import decoder_shapes
+from pvi.commit.plans import column_bits, exact_columns, plan_commitment
+from pvi.models.decoder import CONFIGS
 
 
 def main() -> None:

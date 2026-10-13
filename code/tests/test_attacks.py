@@ -6,17 +6,26 @@ import numpy as np
 import pytest
 
 from pvi.attacks import (
+
     BackdoorAdversary,
+
     PatchTrigger,
+
     calibrate_activation_ceilings,
+
     evaluate_plan,
+
     inverse_transform_forge,
+
     logit_swap_target,
+
     plan_single_neuron_flip,
+
 )
 from pvi.attacks.tamper import apply_plan, plan_stealthy_flip
-from pvi.experiments.analysis import acceptance_probability, inconsistent_nodes
-from pvi.protocol import ProtocolParams, run_protocol
+from pvi.baseline.analysis import acceptance_probability, inconsistent_nodes
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.session import run_protocol
 
 
 # --------------------------------------------------------------------------- #

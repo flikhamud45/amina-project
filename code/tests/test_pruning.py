@@ -15,11 +15,11 @@ import dataclasses
 import pytest
 import torch
 
-from pvi.fullcheck import analytic
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck import reference as ref
-from pvi.fullcheck import transformer as tr
-from pvi.fullcheck.transformer import CONFIGS, build_decoder
+from pvi.commit import cost as analytic
+from pvi.v0 import protocol as proto
+import reference as ref
+from pvi.models import decoder as tr
+from pvi.models.decoder import CONFIGS, build_decoder
 
 from test_plans import _TINY, _planned, _verifiers   # the plan tests' tiny decoders and helpers
 

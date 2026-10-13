@@ -1,6 +1,6 @@
 """V-V1N parts 1-4 (``SP2027_PLAN2.md``): the fast V1 verifier gives today's results bit for bit.
 
-* Parts 1-2 (:mod:`pvi.fullcheck.buckets`): the window tables are affine plus a 0/1 step at every window width
+* Parts 1-2 (:mod:`pvi.v1.products`): the window tables are affine plus a 0/1 step at every window width
   ``2 .. 2^16`` that a multiplier gives (the identity the table products rest on); ``lw_times`` (table products and buckets) equals today's
   ``[L ; W]`` float64 GEMM at random points of ``F_{p^8}``, with exceptions, across the window widths, for requant
   and residual ops, in every value dtype and across row blocks and column chunks; ``xbar`` equals
@@ -24,15 +24,15 @@ import dataclasses
 import pytest
 import torch
 
-from pvi.fullcheck import buckets
-from pvi.fullcheck import cut as cutmod
-from pvi.fullcheck import cut_protocol as cp
-from pvi.fullcheck import extfield as ef
-from pvi.fullcheck import logup
-from pvi.fullcheck import logup_gkr as gkr
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.field import P
-from pvi.fullcheck.transformer import build_decoder
+from pvi.v1 import products as buckets
+from pvi.v1 import cut as cutmod
+from pvi.v1 import protocol as cp
+from pvi.core import extfield as ef
+from pvi.v1 import logup
+from pvi.v1 import gkr
+from pvi.v0 import protocol as proto
+from pvi.core.field import P
+from pvi.models.decoder import build_decoder
 import test_cut_protocol as tcp
 from test_plans import _TINY
 
@@ -138,13 +138,13 @@ def test_lw_times_across_blocks_chunks_kinds_and_dtypes(method, dtype, monkeypat
     assert buckets.lw_times(wide, E0, E0, _op("residual", 70_001, n_rows=1), _rand_ext(g, 2), method) is None
 
 
-@pytest.mark.skipif(not __import__("pvi.fullcheck.native_kernels", fromlist=["available"]).available(),
+@pytest.mark.skipif(not __import__("pvi.kernels.native", fromlist=["available"]).available(),
                     reason="the native library needs a C++ compiler (Linux)")
 @pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
 def test_native_lw_equals_the_torch_table_products(dtype, monkeypatch):
     """V-V1N's native kernel (``native_kernels.lw_affine``, used by ``lw_times`` on a CPU) gives the torch table
     products' integers, and declines out-of-range values and malformed operands."""
-    from pvi.fullcheck import native_kernels as nk
+    from pvi.kernels import native as nk
     g = torch.Generator().manual_seed(5)
     cases = [("requant", 3_000_017, -128, 127, 37, 2048, 40), ("requant", 1 << 16, -7, 9, 33, 50, 25),
              ("residual", 70_001, -3000, 4000, 6, 1500, 0), ("residual", 1 << 20, -40, 40, 5, 300, 0)]
@@ -178,13 +178,13 @@ def test_native_lw_equals_the_torch_table_products(dtype, monkeypatch):
     assert nk.lw_affine(ok, -128, cd, e_bad) is None
 
 
-@pytest.mark.skipif(not __import__("pvi.fullcheck.native_kernels", fromlist=["available"]).available(),
+@pytest.mark.skipif(not __import__("pvi.kernels.native", fromlist=["available"]).available(),
                     reason="the native library needs a C++ compiler (Linux)")
 @pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
 def test_native_xbar_equals_int_times(dtype, monkeypatch):
     """V-V1N's native ``X^T e`` (``native_kernels.xbar``, used by ``buckets.xbar`` on a CPU) is
     ``extfield.int_times``'s product, at the int extremes and across column blocks."""
-    from pvi.fullcheck import native_kernels as nk
+    from pvi.kernels import native as nk
     monkeypatch.setattr(nk, "_LW", True)
     monkeypatch.delenv(buckets.ENV, raising=False)
     g = torch.Generator().manual_seed(7)
@@ -224,7 +224,7 @@ def test_xbar_equals_int_times(method, monkeypatch):
 # ------------------------------------------------------------------ the final check, end to end
 def _clamping_gpt(mode):
     """``test_cut_protocol``'s model that clamps often (a requant multiplier 8x): many exceptions."""
-    from pvi.fullcheck.graph import CheapOp, requant_fn
+    from pvi.core.graph import CheapOp, requant_fn
     g = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)
     ops = list(g.ops)
     i = next(k for k, o in enumerate(ops)
@@ -496,7 +496,7 @@ def test_out_of_range_values_are_rejected_with_the_same_label(monkeypatch):
     # the token rule comes first, in every mode
     g, prover, v = tcp._setup("llama", "C", "cnn16c", True, True, gen=True)
     base = build_decoder(_TINY["llama"], calib_tokens=8, seed=1, prune_last=True)
-    from pvi.fullcheck.transformer import greedy_tokens
+    from pvi.models.decoder import greedy_tokens
     xg = greedy_tokens(base, tcp._x(10, seed=4), 2)
     plan, o = tcp._first_cut(v, xg)
 

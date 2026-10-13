@@ -67,10 +67,10 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from pvi.fullcheck import real_llama as rl
-from pvi.fullcheck.graph import INT8_MAX, CheapOp, MatOp, requant
-from pvi.fullcheck.protocol import claim_bound
-from pvi.fullcheck.transformer import PROB_MAX, RES_MAX, SHIFT, _attention
+from pvi.models import hf_llama as rl
+from pvi.core.graph import INT8_MAX, CheapOp, MatOp, requant
+from pvi.v0.protocol import claim_bound
+from pvi.models.decoder import PROB_MAX, RES_MAX, SHIFT, _attention
 
 ROLES = tuple(r for r, *_ in rl.ROLES[:11]) + ("attn_raw",) + tuple(r for r, *_ in rl.ROLES[11:])
 """The compared tensors in op order: ``real_llama.ROLES`` and ``attn_raw`` (the attention's raw ``P V``, before its

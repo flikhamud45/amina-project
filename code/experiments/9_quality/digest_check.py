@@ -23,7 +23,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import certified_calib, load_opt, load_windows          # noqa: E402
 
-from pvi.fullcheck.real_weights import CERTIFIED_RECIPE, build_opt_from_hf   # noqa: E402
+from pvi.models.hf_opt import CERTIFIED_RECIPE, build_opt_from_hf   # noqa: E402
 
 
 def main() -> None:
@@ -55,8 +55,8 @@ def main() -> None:
            "cpu": platform.processor(),
            "torch": torch.__version__, "digest": graph.digest().hex(), "weights_sha256": weights.hexdigest()}
     if args.commit:
-        from pvi.fullcheck.analytic import decoder_shapes   # noqa: F401  (shapes come from the graph itself)
-        from pvi.fullcheck.protocol import commit_graph
+        from pvi.commit.cost import decoder_shapes   # noqa: F401  (shapes come from the graph itself)
+        from pvi.v0.protocol import commit_graph
         coms = commit_graph(graph, 4, device=args.commit_device, policy="auto")
         # under a grouped plan a member's own root is empty and the group's tree holds it: hash every root
         roots = hashlib.sha256()

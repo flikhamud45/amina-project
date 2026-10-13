@@ -40,10 +40,10 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from pvi.experiments.analysis import acceptance_probability, inconsistent_nodes
-from pvi.nn.architecture import DenseLayer
-from pvi.nn.network import Trace, TracedNetwork
-from pvi.protocol.params import ProtocolParams
+from pvi.baseline.analysis import acceptance_probability, inconsistent_nodes
+from pvi.mnist.architecture import DenseLayer
+from pvi.mnist.network import Trace, TracedNetwork
+from pvi.baseline.path.params import ProtocolParams
 
 __all__ = [
     "ForgeryResult",

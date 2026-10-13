@@ -46,7 +46,7 @@ transformers = pytest.importorskip("transformers")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments" / "9_quality"))
 import llama_attrib as la                                                  # noqa: E402
 
-from pvi.fullcheck import real_llama as rl                                 # noqa: E402
+from pvi.models import hf_llama as rl                                 # noqa: E402
 
 SMOOTH = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
 VARIANTS = {"plain": {}, "prune": {"prune_last": True}, "prefix": {"prefix_tokens": (5, 17)}, "exp8": {"glu_exp": 8}}

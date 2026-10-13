@@ -1,6 +1,6 @@
 """Reproduce the protocol of Anchuri et al. on its own threat model (report, Sec. 4.2).
 
-For each of four substitute-model settings from the paper (``pvi.zoo.SETUPS``):
+For each of four substitute-model settings from the paper (``pvi.mnist.zoo.SETUPS``):
 
 1. **Completeness.**  The honest prover is accepted on every run.  Each query is
    also run once against a zero-tolerance verifier (the idealised exact-equality
@@ -23,11 +23,15 @@ from pathlib import Path
 
 import numpy as np
 
-from pvi.nn.network import TracedNetwork
-from pvi.protocol import ModelCommitment, ProtocolParams, Prover, Verifier, run_protocol
+from pvi.mnist.network import TracedNetwork
+from pvi.baseline.path.commitments import ModelCommitment
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.prover import Prover
+from pvi.baseline.path.verifier import Verifier
+from pvi.baseline.path.session import run_protocol
 from pvi.results import write_json
-from pvi.training import load_network
-from pvi.zoo import SETUPS, SubstitutionSetup, quantise_network
+from pvi.mnist.training import load_network
+from pvi.mnist.zoo import SETUPS, SubstitutionSetup, quantise_network
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = ROOT / "artifacts" / "models"

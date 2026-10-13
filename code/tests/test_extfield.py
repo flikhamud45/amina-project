@@ -1,4 +1,4 @@
-"""The extension field ``F_{p^8}`` of V1's lookup argument (``pvi.fullcheck.extfield``) and its challenges.
+"""The extension field ``F_{p^8}`` of V1's lookup argument (``pvi.core.extfield``) and its challenges.
 
 The field axioms on random elements, ``x^8 = 11``, the irreducibility criterion of ``x^8 - 11``, inverses, the
 eq tables and their prefix sums, the cubic interpolation, the fraction tree, the integer-matrix products, the
@@ -13,9 +13,9 @@ import itertools
 import pytest
 import torch
 
-from pvi.fullcheck import extfield as ef
-from pvi.fullcheck import protocol as proto
-from pvi.fullcheck.field import P
+from pvi.core import extfield as ef
+from pvi.v0 import protocol as proto
+from pvi.core.field import P
 
 
 def _rand(g, *shape):

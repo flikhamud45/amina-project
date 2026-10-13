@@ -6,7 +6,7 @@ import struct
 import pytest
 import torch
 
-from pvi.fullcheck import protocol as proto
+from pvi.v0 import protocol as proto
 
 
 def _challenge(ch: proto.Challenger) -> bytes:
@@ -76,7 +76,7 @@ def test_every_chunk_and_the_framing_bind(small_tree):
 
 
 def test_kpre_under_fiat_shamir_absorbs_nothing_and_keeps_its_verdicts():
-    from pvi.fullcheck.transformer import CONFIGS, build_decoder
+    from pvi.models.decoder import CONFIGS, build_decoder
     cfg = CONFIGS["gpt2"]
     g = build_decoder(cfg, n_layers=2, calib_tokens=8, seed=0, prune_last=True)
     params = proto.params_for(40, len(g.mat_ops), fiat_shamir=True)
