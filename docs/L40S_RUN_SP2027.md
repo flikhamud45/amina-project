@@ -28,10 +28,11 @@ the paper's tables and text numbers. Nothing has to be computed or copied by han
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `export PVI_LOCAL=1` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
 | Exclusive use, 24/7 | the timings | every job asks for `--exclusive`; please keep other GPU- or CPU-heavy work off the node for the whole run (about 2-3 days, Sec. 5) |
 
-Every language model is built with random weights (the costs depend only on the shapes), so nothing is downloaded
-except in the `real` tier (OPT, public) and the `quality` tier, which needs the Llama-2 licence on **your own**
-Hugging Face account and your own login (`export PVI_LLAMA_LICENCE=1`; the team asks for this tier: Llama-2-7B is the
-model the cost tables lead with). Never use another person's token. The image
+Every language model of the cost tiers is built with random weights (the costs depend only on the shapes), so
+nothing is downloaded except in the `real` tier (OPT, public; with `PVI_LLAMA_LICENCE=1` also the real Llama-2-7B
+end to end) and the `quality` tier. Both Llama parts need the Llama-2 licence on **your own** Hugging Face account and
+your own login (`export PVI_LLAMA_LICENCE=1` before `all`; the team asks for them: Llama-2-7B is the model the cost
+tables lead with). Never use another person's token. The image
 models are the trained ones of the earlier run (the row above); MNIST is downloaded on first use.
 
 ## 3. Setup, once
