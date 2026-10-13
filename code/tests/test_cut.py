@@ -105,8 +105,8 @@ def test_requant_fn_matches_the_old_closures_and_survives_device_copies():
             assert op.fn._pvi_requant == op.params["requant"]
 
 
-def _old_style(graph):
-    """The graph with every requantising op's function rebuilt as the builders wrote it before ``requant_fn``."""
+def _plain(graph):
+    """The graph with every requantising op's function a plain Python function of the same integers."""
     from pvi.models import decoder as tr
 
     ops = []
@@ -125,14 +125,15 @@ def _old_style(graph):
 
 
 @pytest.mark.parametrize("kind", sorted(_TINY))
-def test_t9_builders_give_the_same_logits(kind):
+def test_the_requantisations_compute_their_plain_functions_and_only_registered_ops_hash(kind):
     graph = build_decoder(_TINY[kind], calib_tokens=8, seed=1)
     x = torch.randint(0, 97, (1, 9), generator=torch.Generator().manual_seed(2))
-    old = _old_style(graph)
+    plain = _plain(graph)
     a, _ = graph.forward(x)
-    b, _ = old.forward(x)
-    assert torch.equal(a[graph.output_name], b[old.output_name])
-    assert graph.digest() != old.digest()
+    b, _ = plain.forward(x)
+    assert torch.equal(a[graph.output_name], b[plain.output_name])
+    with pytest.raises(TypeError, match="OpFn"):                    # the digest binds registered kinds only
+        plain.digest()
     rq = [op for op in graph.ops if isinstance(op, CheapOp) and op.params.get("requant")]
     assert rq and all(op.note in ("requant", "residual add") for op in rq)
 

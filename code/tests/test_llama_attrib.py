@@ -295,8 +295,9 @@ def test_a_wrong_q_or_k_norm_gain_is_caught_at_that_norm(side, monkeypatch):
 @pytest.mark.parametrize("kind", ["llama", "qwen3"])
 def test_a_swiglu_product_off_by_two_is_caught_at_the_product(kind, monkeypatch):
     model, _, _, calib, x = _setup(kind)
-    right = rl.requant_mul
-    monkeypatch.setattr(rl, "requant_mul", lambda a, b, m, *rest: right(a, b, m * 2, *rest))
+    from pvi.core import graph as core_graph
+    right = core_graph.requant_mul                                  # the product op's integer map (mul_requant/1)
+    monkeypatch.setattr(core_graph, "requant_mul", lambda a, b, m, *rest: right(a, b, m * 2, *rest))
     with torch.no_grad():
         graph, info = rl.build_llama_from_hf(model, calib, **SMOOTH)
     for mode in ("teacher", "accumulated"):
