@@ -16,6 +16,7 @@ Three reviewer lenses and a compliance check on the submission body, written by 
   shares 2.2% / 0.5% (setup_bytes.py, cnn18c); "10-15x" from tab:eval-llm; the reproducibility sentence names
   OPT-125M and OPT-1.3B (D6a).
 - Minor: D3 (one harness per row), D4 (4.7x, both non-interactive), D6 (about 2,100 tokens).
+- C-W3 (partly, 13 Oct): tab:quality's caption gives the 95% bootstrap intervals of the certified ratios (from the round-2 records, `ppl2048_search2_*.jsonl`, job 1011066: [1.073, 1.079], [1.024, 1.028], [1.007, 1.008]).
 
 **Open, for the team or the final run:** A-W3 (base the zkLLM factor on the stored L40S runs: F6 todo in place),
 C-W1 (placeholders until the L40S run; decide the fallback for missing cells), C-W3 (n and spread in captions,

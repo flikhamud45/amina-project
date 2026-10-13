@@ -28,7 +28,8 @@ the train split. Our fp32 references reproduce the published values (27.66, 14.6
 \begin{table}[t]
   \caption{Integer OPT models on WikiText-2 (test split, 2{,}048-token windows): perplexity ratio to
   fp32 with the best scalar norm gain, and perplexity (ratio) of the certified model (smoothed gains,
-  $\alpha=0.6$), with its top-1 agreement with fp32. Both with 11-bit attention probabilities.}
+  $\alpha=0.6$), with its top-1 agreement with fp32. Both with 11-bit attention probabilities. 95\%
+  bootstrap intervals of the certified ratios over the windows: [1.073, 1.079], [1.024, 1.028], [1.007, 1.008].}
   \label{tab:quality}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
