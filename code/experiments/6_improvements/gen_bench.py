@@ -154,6 +154,15 @@ def summary(runs: list[dict], tokens: list[float]) -> dict:
             "token_rule_s": statistics.median(tokens)}
 
 
+def forge_margin(rule: str, sampler) -> int:
+    """How far above every other logit the ``forged_logits`` tamper puts the wrong token's, in logit steps, so that the
+    rule chooses it and the forgery is self-consistent (caught by the weight check, not the token check): greedy, 1;
+    sampled, enough that ``a z_v + G[v]`` wins whatever the noise (``|G| < 2^20``, so ``2^21 / a`` steps), with the
+    weight ``a`` of the sampler actually used (``--real`` derives it from the LM head's logit scale, not
+    ``--sampler-a``)."""
+    return 1 if rule == "greedy" else (1 << 21) // sampler.a + 2
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", required=True)
@@ -273,9 +282,7 @@ def main() -> int:
                     head_op = gen.mat_ops[-1]
                     col = (coms is not None and coms.plan is not None and mode == "C"
                            and coms.plan.matrix_of(head_op.name).layout == "col")
-                    # greedy: 1 above the largest logit; sampled: enough that a z_v + G[v] wins whatever the noise
-                    # (|G| < 2^20, so a margin of 2^21 / a logit steps)
-                    delta = 1 if rule == "greedy" else (1 << 21) // args.sampler_a + 2
+                    delta = forge_margin(rule, samplers[0])
 
                     def forge(op, z, name=head_op.name, j=i_bad, want=want, delta=delta):
                         if op.name == name:       # the wrong token's logit at column j above every other
@@ -296,7 +303,8 @@ def main() -> int:
                         **summary(runs, tokens), "generate_s": generate_s, "tampers": tampers,
                         "peak": peaks(device)}
                 line["proof_mb_per_token"] = line["proof_bytes"] / g / 1e6
-                good = accepted == len(runs) + 1 and all(t["rejected"] for t in tampers.values())
+                good = accepted == len(runs) + 1 and all(t["rejected"] and t["label"] in t["expected"]
+                                                         for t in tampers.values())
                 line["ok"] = good
                 ok = ok and good
                 print(json.dumps(line), flush=True)

@@ -62,6 +62,38 @@ def test_the_shape_check_takes_the_llama_head_as_built(built):
     assert res["problems"] == []
 
 
+def test_forged_logits_of_a_sampled_response_are_caught_by_the_weight_check(built):
+    """gen_bench's forged_logits tamper with the real logit scale's sampler: the margin is sized from that sampler's
+    weight ``a`` (not ``--sampler-a``), so the forgery makes the rule choose the wrong token and only Freivalds'
+    check catches it (job 1018663 found the token check catching it instead: the margin was ``2^21 / 4096``)."""
+    model, calib, graph, info = built
+    gb = _load("gen_bench", "experiments/6_improvements/gen_bench.py")
+    sampler = TokenSampler.for_temperature(b"\x09" * 32, 1.0, float(info["logit_scale"]))
+    assert gb.forge_margin("sample", sampler) * sampler.a >= 1 << 21
+    assert gb.forge_margin("greedy", None) == 1
+    p, g = 10, 4
+    prompt = torch.randint(0, 97, (1, p), generator=torch.Generator().manual_seed(5))
+    x = sample_tokens(graph, prompt, g - 1, sampler)
+    gen = with_lm_positions(graph, g)
+    params = proto.params_for(40, len(gen.mat_ops), fiat_shamir=True)
+    v = proto.Verifier(gen.public(), params, "Kpre", weights={op.name: (op.weight, op.bias) for op in gen.mat_ops},
+                       lean=True, lookups=True)
+    v.precompute(proto.Challenger())
+    prover = proto.Prover(gen, lean=True)
+    i_bad = (g - 1) // 2
+    bad = gb.wrong_token(graph, x, p, i_bad, "sample", sampler, "cpu")
+    want, head, delta = int(bad[0, p + i_bad]), gen.mat_ops[-1].name, gb.forge_margin("sample", sampler)
+
+    def forge(op, z):
+        if op.name == head:
+            z = z.clone()
+            z[want, i_bad] = z[:, i_bad].max() + delta
+        return z
+
+    res = proto.run_query(prover, v, bad, wire=True, sampler=sampler, forward_kwargs={"tamper": forge})
+    assert not res["accepted"] and res["rejected_at"] == "freivalds"
+
+
 @pytest.mark.parametrize("rule", ["greedy", "sample"])
 @pytest.mark.parametrize("mode", ["C", "Kpre"])
 def test_generated_responses_prove_and_verify(built, rule, mode):
