@@ -1,4 +1,4 @@
-"""``pvi.results.git_sha``: the commit a result came from, with and without a ``git`` binary (some compute nodes
+"""``experiments.common.records.git_sha``: the commit a result came from, with and without a ``git`` binary (some compute nodes
 have none), in a plain repository and in a worktree with packed refs."""
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pvi import results
+from experiments.common import records as results
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="needs git to build the repositories")
 
