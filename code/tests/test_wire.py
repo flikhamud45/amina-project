@@ -21,13 +21,14 @@ import pytest
 import torch
 
 from pvi.v0 import claimcodec as cc
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.core.field import LOG2_P, P
+from pvi.v0 import verifier as v0_verifier
 from pvi.commit.cost import decoder_shapes
 from pvi.models.cnn import build_float_model
 from pvi.models.quantize import quantize_input, quantize_model
 from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
 
-P = proto.P
 _ENCODE, _PACK_FIELD = cc.encode, cc.pack_field     # the codec's own, which tests replace in the protocol
 
 
@@ -208,7 +209,7 @@ def test_malformed_or_out_of_range_claim_bytes_are_rejected_at_range_or_shape(ki
                 "magic": lambda zs: b"PVC0" + encode(zs)[4:], "ops": lambda zs: encode(zs[:-1]),
                 "at bound": at_bound, "more columns": more_columns, "fewer columns": fewer_columns}
     for i, (name, fake) in enumerate(variants.items()):
-        monkeypatch.setattr(proto.claimcodec, "encode", fake)
+        monkeypatch.setattr(cc, "encode", fake)
         assert _both(prover, pair, x, seed=i)["rejected_at"] == (None if name == "plain" else "range_or_shape"), name
 
 
@@ -218,7 +219,7 @@ def _corrupt_field_message(monkeypatch, which: str, change, reps: int):
     def patched(tensors):
         out = _PACK_FIELD(tensors)
         return change(out) if (tensors[0].shape[0] == reps) == (which == "u") else out
-    monkeypatch.setattr(proto.claimcodec, "pack_field", patched)
+    monkeypatch.setattr(cc, "pack_field", patched)
 
 
 @pytest.mark.parametrize("kind", ["lenet5", "vgg16", "resnet18_cifar", *_TINY, "opt"])
@@ -264,8 +265,8 @@ def test_a_width_0_header_of_the_query_size_is_rejected_before_it_is_allocated(k
             peaks.append(tracemalloc.get_traced_memory()[1])
             tracemalloc.stop()
 
-    monkeypatch.setattr(proto.claimcodec, "encode", lambda zs: zeros)
-    monkeypatch.setattr(proto.claimcodec, "decode_torch", traced)
+    monkeypatch.setattr(cc, "encode", lambda zs: zeros)
+    monkeypatch.setattr(cc, "decode_torch", traced)
     assert _both(prover, pair, x, seed=1)["rejected_at"] == "range_or_shape"
     assert len(peaks) == 2 and max(peaks) < 4 * honest
 
@@ -380,7 +381,7 @@ def test_random_corruptions_of_the_claim_bytes_are_never_accepted(mode, monkeypa
             b = bytearray(encode(zs))
             b[int(rng.integers(8, len(b)))] ^= 1 << int(rng.integers(0, 8))
             return bytes(b)
-        monkeypatch.setattr(proto.claimcodec, "encode", corrupt)
+        monkeypatch.setattr(cc, "encode", corrupt)
         out = proto.run_query(prover, pair[0], x, seed=i, wire=True)
         assert not out["accepted"]
         labels.add(out["rejected_at"])
@@ -398,7 +399,7 @@ def test_fiat_shamir_absorbs_the_encoded_bytes(mode, monkeypatch):
     claims = [prover.claims(x)[op.name] for op in graph.mat_ops]
     transcripts = {}
     for name, encode in (("pvc", _ENCODE), ("plain", _plain)):     # two encodings of the same claims
-        monkeypatch.setattr(proto.claimcodec, "encode", encode)
+        monkeypatch.setattr(cc, "encode", encode)
         for v in pair:
             absorbed.clear()
             assert proto.run_query(prover, v, x, wire=True)["accepted"]
@@ -425,7 +426,7 @@ def test_the_default_flow_is_unchanged(monkeypatch):
     def refuse(*a, **kw):
         raise AssertionError("the codec ran without wire=True")
     for name in ("encode", "decode_torch", "pack_field", "unpack_field"):
-        monkeypatch.setattr(proto.claimcodec, name, refuse)
+        monkeypatch.setattr(cc, name, refuse)
     graph, x = _graph("gpt2")
     for mode in ("C", "Kpre"):
         prover, pair = _setup(graph, mode, fiat_shamir=True)
@@ -438,9 +439,9 @@ def test_the_default_flow_is_unchanged(monkeypatch):
 @pytest.mark.parametrize("paths", ["deferred", "int8", "deferred_int8"])
 def test_the_deferred_and_int8_checks_give_the_same_wire_verdicts(paths, monkeypatch):
     if "deferred" in paths:
-        monkeypatch.setattr(proto, "_defer", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
     if "int8" in paths:
-        monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "int8_ok", lambda device: True)
     for kind in ("lenet5", "qwen"):
         graph, x = _graph(kind)
         for mode in ("C", "Kpre"):
@@ -483,7 +484,7 @@ def test_a_gpu_client_gives_the_cpu_wire_verdicts(device):
 def test_a_gpu_prover_encodes_on_its_device_and_sends_the_cpu_provers_bytes(device, monkeypatch):
     graph, x = _graph("qwen")
     encoded_on = []
-    monkeypatch.setattr(proto.claimcodec, "encode", lambda zs: (encoded_on.append({z.device.type for z in zs}),
+    monkeypatch.setattr(cc, "encode", lambda zs: (encoded_on.append({z.device.type for z in zs}),
                                                                 _ENCODE(zs))[1])
     for mode in ("C", "Kpre"):
         prover, pair = _setup(graph, mode)
@@ -499,7 +500,7 @@ def test_a_lean_gpu_prover_encodes_int32_claims_on_its_device_and_sends_the_cpu_
     # each claim stays on the device as clipped int32 (claimcodec.narrow), encoded there
     graph, x = _graph("qwen")
     seen = []
-    monkeypatch.setattr(proto.claimcodec, "encode", lambda zs: (seen.append({(z.device.type, z.dtype) for z in zs}),
+    monkeypatch.setattr(cc, "encode", lambda zs: (seen.append({(z.device.type, z.dtype) for z in zs}),
                                                                 _ENCODE(zs))[1])
     last = graph.mat_ops[-1].name
     attacks = dict(_claim_attacks(graph.mat_ops), big={"tamper": lambda o, z: z * (1 << 40)},   # beyond int32
@@ -566,7 +567,7 @@ def test_a_proof_encoded_on_the_device_in_parts_is_the_proof_of_one_pass(monkeyp
         prover, pair = _setup(graph, mode, fiat_shamir)
         runs = []
         for impl, chunk in (("host", 0), ("device", 1 << 40), ("device", n // 7 + 1), ("device", 97)):
-            monkeypatch.setattr(proto.claimcodec, "encode", lambda zs, impl=impl: _ENCODE(
+            monkeypatch.setattr(cc, "encode", lambda zs, impl=impl: _ENCODE(
                 [cc.narrow(z) for z in zs] if impl == "device" else zs, impl=impl))
             if chunk:
                 monkeypatch.setattr(cc, "_ONE_PASS", chunk)
@@ -605,7 +606,7 @@ def test_the_parameters_meet_lambda_on_every_model():
                 shapes = [(k, params.rate * (1 << max(0, (k - 1).bit_length()))) for k in ks]
                 for mode in ("C", "K"):
                     assert proto.soundness_bits(params, shapes, mode) >= lam, (model, lam, fs, mode)
-                assert params.reps == math.ceil((lam + math.log2(2 * len(ks)) + (64 if fs else 0)) / proto.LOG2_P)
+                assert params.reps == math.ceil((lam + math.log2(2 * len(ks)) + (64 if fs else 0)) / LOG2_P)
 
 
 # -- bench.py --------------------------------------------------------------------------------------

@@ -25,7 +25,7 @@ def main() -> None:
     from pvi.v1 import logup
     from pvi.v1 import gkr
     from pvi.core.field import P
-    from pvi.v0.protocol import Challenger
+    from pvi.v0.transcript import Challenger
 
     def ch():
         c = Challenger(fiat_shamir=True)

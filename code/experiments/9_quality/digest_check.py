@@ -56,7 +56,7 @@ def main() -> None:
            "torch": torch.__version__, "digest": graph.digest().hex(), "weights_sha256": weights.hexdigest()}
     if args.commit:
         from pvi.commit.cost import decoder_shapes   # noqa: F401  (shapes come from the graph itself)
-        from pvi.v0.protocol import commit_graph
+        from pvi.v0.graph_commitment import commit_graph
         coms = commit_graph(graph, 4, device=args.commit_device, policy="auto")
         # under a grouped plan a member's own root is empty and the group's tree holds it: hash every root
         roots = hashlib.sha256()

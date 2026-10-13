@@ -15,7 +15,7 @@ import torch
 import test_wire as tw
 from pvi.v0 import claimcodec as cc
 from pvi.core import hostmem
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 
 cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 
@@ -93,7 +93,7 @@ def test_a_tampered_claim_is_rejected_with_pageable_buffers(monkeypatch):
         zs[1].view(-1)[3] += 1
         return real(zs, **kw)
 
-    monkeypatch.setattr(proto.claimcodec, "encode", tampered)
+    monkeypatch.setattr(cc, "encode", tampered)
     for v in pair:
         r = proto.run_query(prover, v, x, seed=1, wire=True)
         assert not r["accepted"]

@@ -6,7 +6,8 @@ import struct
 import pytest
 import torch
 
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.v0 import transcript as v0_transcript
 
 
 def _challenge(ch: proto.Challenger) -> bytes:
@@ -25,8 +26,8 @@ def _tree_reference(label: bytes, blob: bytes, chunk: int) -> bytes:
 
 @pytest.fixture
 def small_tree(monkeypatch):
-    monkeypatch.setattr(proto, "_TREE_MIN", 1 << 12)
-    monkeypatch.setattr(proto, "_TREE_CHUNK", 1 << 10)
+    monkeypatch.setattr(v0_transcript, "_TREE_MIN", 1 << 12)
+    monkeypatch.setattr(v0_transcript, "_TREE_CHUNK", 1 << 10)
 
 
 def test_small_messages_are_absorbed_as_before(small_tree):

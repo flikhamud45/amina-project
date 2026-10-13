@@ -14,7 +14,7 @@ import pytest
 import torch
 
 from pvi.core import extfield as ef
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 from pvi.core.field import P
 
 

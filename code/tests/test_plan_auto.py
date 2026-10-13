@@ -11,7 +11,7 @@ import math
 import pytest
 
 from pvi.commit import cost as analytic
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 from pvi.commit.plans import (AUTO_CANDIDATES, AUTO_MIN_BUDGET, auto_budget, auto_policy, plan_commitment,
                               plan_overhead)
 from pvi.models.decoder import CONFIGS

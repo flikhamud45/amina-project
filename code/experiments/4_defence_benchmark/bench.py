@@ -67,8 +67,12 @@ from pvi.commit.cost import setup_size  # noqa: E402
 from pvi.core.field import P  # noqa: E402
 from pvi.core.graph import MatOp  # noqa: E402
 from pvi.commit.plans import plan_commitment  # noqa: E402
-from pvi.v0.protocol import (Challenger, Prover, Verifier, Z_BOUND, commit_graph, params_for,  # noqa: E402
-                             run_query, soundness_bits)
+from pvi.v0.transcript import Challenger  # noqa: E402
+from pvi.v0.prover import Prover
+from pvi.v0.verifier import Verifier
+from pvi.v0.params import Z_BOUND, params_for, soundness_bits
+from pvi.v0.graph_commitment import commit_graph
+from pvi.v0.query import run_query
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "artifacts" / "comparison"

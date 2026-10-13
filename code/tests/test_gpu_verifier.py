@@ -29,7 +29,9 @@ import torch
 
 from pvi.core import field as fld
 from pvi.v0 import streaming as pipeline
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.v0 import query as v0_query
+from pvi.v0 import verifier as v0_verifier
 import reference as ref
 from pvi.models import decoder as tr
 from pvi.core.graph import CheapOp, IntGraph, MatOp, OpFn, op_fn, op_kind
@@ -417,7 +419,7 @@ def test_an_exception_after_an_out_of_range_claim_is_its_rejection(deferred, mon
     x = torch.tensor([[5, -7, 100]])
     _, claims = graph.forward(x)
     v = proto.Verifier(graph.public(), proto.params_for(40, 2), "Kpre")
-    monkeypatch.setattr(proto, "_defer", lambda device: deferred)
+    monkeypatch.setattr(v0_verifier, "_defer", lambda device: deferred)
     assert v.derive(x, claims) is not None
     for value, want in ((Z, None), (-(1 << 62), None), (1 << 21, ValueError)):
         bad = dict(claims, fc1=claims["fc1"].clone())
@@ -446,12 +448,12 @@ def _wide_input_verifier(mode="Kpre"):
 
 @pytest.mark.parametrize("deferred", [False, True])
 def test_products_of_inputs_that_are_not_int8_valued_fall_back(deferred, monkeypatch):
-    monkeypatch.setattr(proto, "_defer", lambda device: deferred)
-    monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+    monkeypatch.setattr(v0_verifier, "_defer", lambda device: deferred)
+    monkeypatch.setattr(v0_verifier, "int8_ok", lambda device: True)
     v, x, claims, chis, us = _wide_input_verifier()
     inputs = v.derive(x, claims)
     _, unchecked = v._rhs_all(v.graph.mat_ops, inputs, us)
-    assert proto._to_host(unchecked) == [True]
+    assert v0_verifier._to_host(unchecked) == [True]
     assert v.check_products(claims, inputs, chis, us) is ref.check_products(v, claims, inputs, chis, us) is True
     bad = {"fc": claims["fc"].clone()}
     bad["fc"][2, 3] += 1
@@ -475,7 +477,7 @@ def test_the_wire_formats():
     for bad in (z.to(torch.int32), wide):          # not narrowed: int64, the claim's size and blob
         got = pipeline.wire_claim(bad)
         assert got.dtype == torch.int64 and torch.equal(got, bad.to(torch.int64))
-        assert got.numel() == bad.numel() and proto._tensor_blob(got) == proto._tensor_blob(bad)
+        assert got.numel() == bad.numel() and v0_query._tensor_blob(got) == v0_query._tensor_blob(bad)
     for bad in ("not a tensor", None):
         assert pipeline.wire_claim(bad) is None
     o = _rand(g, 0, P, (7, 3))
@@ -497,7 +499,7 @@ def test_the_wire_formats():
     outside[1, 2] = 128
     for bad in (outside, outside.to(torch.int32), rows.to(torch.float32)):   # not narrowed: int64, its size and blob
         got = pipeline.wire_rows(bad)
-        assert got.dtype == torch.int64 and proto._tensor_blob(got) == proto._tensor_blob(bad)
+        assert got.dtype == torch.int64 and v0_query._tensor_blob(got) == v0_query._tensor_blob(bad)
     assert pipeline.wire_rows(None) is None
     uploads = pipeline.ClaimUploads({"t": pipeline.wire_rows(rows), "u": pipeline.wire_rows(rows), "z": w},
                                     ["t", "u", "z"], torch.device("cpu"), rows={"t", "z"})
@@ -708,8 +710,8 @@ def test_streaming_keeps_the_fiat_shamir_transcript(attack, monkeypatch):
 @pytest.mark.parametrize("paths", ["int8", "deferred_int8"])
 def test_streaming_with_int8_products_gives_the_verdicts_of_run_query(paths, monkeypatch):
     if paths == "deferred_int8":
-        monkeypatch.setattr(proto, "_defer", lambda device: True)
-    monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
+    monkeypatch.setattr(v0_verifier, "int8_ok", lambda device: True)
     graph, x = _decoder("qwen")
     for mode in ("C", "Kpre"):
         prover, pair = _setup(graph, mode)
@@ -735,7 +737,7 @@ def _only_verdicts_come_back(monkeypatch):
     """CUDA's sync debug mode set to "error" (any host round trip raises) except inside
     ``_to_host``, whose calls are counted."""
     calls = []
-    real = proto._to_host
+    real = v0_verifier._to_host
 
     def counted(flags):
         torch.cuda.set_sync_debug_mode(0)
@@ -745,7 +747,7 @@ def _only_verdicts_come_back(monkeypatch):
         finally:
             torch.cuda.set_sync_debug_mode("error")
 
-    monkeypatch.setattr(proto, "_to_host", counted)
+    monkeypatch.setattr(v0_verifier, "_to_host", counted)
     torch.cuda.set_sync_debug_mode("error")
     try:
         yield calls

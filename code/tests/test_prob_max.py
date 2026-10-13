@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 import reference as ref
 from pvi.models import decoder as tr
 from pvi.models.decoder import build_decoder

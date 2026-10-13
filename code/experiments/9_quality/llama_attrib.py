@@ -69,7 +69,7 @@ import torch.nn.functional as F
 
 from pvi.models import hf_llama as rl
 from pvi.core.graph import INT8_MAX, CheapOp, MatOp, requant
-from pvi.v0.protocol import claim_bound
+from pvi.v0.params import claim_bound
 from pvi.models.decoder import PROB_MAX, RES_MAX, SHIFT, _attention
 
 ROLES = tuple(r for r, *_ in rl.ROLES[:11]) + ("attn_raw",) + tuple(r for r, *_ in rl.ROLES[11:])

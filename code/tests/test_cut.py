@@ -10,7 +10,7 @@ import pytest
 import torch
 
 from pvi.v1 import cut
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 from pvi.core.graph import CheapOp, mul_add_half, requant, requant_fn
 from pvi.commit.plans import plan_commitment
 from pvi.models.decoder import (RES_MAX, SHIFT, DecoderConfig, build_decoder, with_lm_positions)

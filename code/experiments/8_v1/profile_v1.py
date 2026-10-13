@@ -27,7 +27,11 @@ def main() -> None:
     torch.set_num_threads(8)
     from pvi.v1 import protocol as cp
     from pvi.commit.cost import decoder_shapes
-    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for
+    from pvi.v0.transcript import Challenger
+    from pvi.v0.prover import Prover
+    from pvi.v0.verifier import Verifier
+    from pvi.v0.graph_commitment import commit_graph
+    from pvi.v0.params import params_for
     from pvi.models.decoder import CONFIGS, build_decoder
 
     cfg = CONFIGS[args.model]

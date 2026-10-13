@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 from pvi.models.decoder import build_decoder, greedy_tokens, with_lm_positions
 
 from test_plans import _TINY

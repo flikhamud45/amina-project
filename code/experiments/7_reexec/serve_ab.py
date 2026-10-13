@@ -25,7 +25,7 @@ on the same token ids, shapes, device and host:
 * **the prover** in each of ``--modes`` (C, Kpre) as ``perf.py --fs --wire --lean --prune-last`` runs it: under
   Fiat--Shamir, the proof in the compact wire encoding, the lean prover, mode C under ``--policy``'s commitment plan,
   Kpre with ``--lookups`` (the verifier reads the embedding rows itself; on by default, as in the cpuv and gpuv
-  tiers).  :func:`prove` runs the prover's side of ``run_query`` alone -- ``protocol._claims_message``,
+  tiers).  :func:`prove` runs the prover's side of ``run_query`` alone -- ``v0_query._claims_message``,
   ``_fold_message`` and ``_open_message``, the functions ``run_query`` runs, so the messages, the byte counts and the
   phase timings are the same -- and returns the proof as its byte strings.  No check of the verifier's is in the
   timed window; one untimed ``run_query`` per cell (``--accept``) shows that the verifier accepts the same proof.
@@ -61,7 +61,7 @@ claims, and with ``seq`` B single-prompt passes against one batched pass), ``enc
 Checks in every cell (a failure is recorded in the line, and the script exits with status 1 at the end):
 
 * ``u1_equals_claims``: U1's logits (warm-up and every repetition) are ``torch.equal`` to the LM head's claims decoded
-  from the proof's PVC3 bytes (``protocol._decoded_claims``, as the verifier decodes them); with ``seq``, each
+  from the proof's PVC3 bytes (``v0_query._decoded_claims``, as the verifier decodes them); with ``seq``, each
   prompt's proof against its row of the batched U1, so batched serving and per-query proving give the same integers;
 * ``deterministic``: proving the same prompts again gives byte-identical proofs (SHA-256 over every message: the
   warm-up's proofs against the first repetition's, prompt 0's with ``seq``).  Claims are a deterministic function of
@@ -101,9 +101,15 @@ from pvi.v0 import claimcodec
 
 from pvi.core import contention
 
-from pvi.v0 import protocol
+import pvi.v0 as protocol
+from pvi.v0 import query as v0_query
 from pvi.commit.cost import decoder_shapes
-from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+from pvi.v0.transcript import Challenger
+from pvi.v0.prover import Prover
+from pvi.v0.verifier import Verifier
+from pvi.v0.graph_commitment import commit_graph
+from pvi.v0.params import params_for
+from pvi.v0.query import run_query
 from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
 
 HERE = Path(__file__).resolve().parent
@@ -323,12 +329,12 @@ def prove(prover: Prover, verifier: Verifier, x: torch.Tensor) -> tuple[list, di
     out = {"timings": {}, "contention": {}}
     if isinstance(verifier, TimedChallenges):
         verifier.challenge_s = 0.0
-    claims, rows, proofs = protocol._claims_message(prover, verifier, x, ch, out, {}, wire=True)
-    hashes = b"".join(h for name in verifier.tables for h in protocol._proof_hashes(proofs.get(name)))
+    claims, rows, proofs = v0_query._claims_message(prover, verifier, x, ch, out, {}, wire=True)
+    hashes = b"".join(h for name in verifier.tables for h in v0_query._proof_hashes(proofs.get(name)))
     parts, openings = [claims, rows or b"", hashes], None
     if verifier.mode == "C":
-        _, us, u_blob = protocol._fold_message(prover, verifier, ch, x, out, wire=True)
-        _, openings = protocol._open_message(prover, verifier, ch, us, out, u_blob=u_blob)
+        _, us, u_blob = v0_query._fold_message(prover, verifier, ch, x, out, wire=True)
+        _, openings = v0_query._open_message(prover, verifier, ch, us, out, u_blob=u_blob)
         parts.append(u_blob)
     out["timings"]["challenges"] = getattr(verifier, "challenge_s", 0.0)
     return parts, openings, out
@@ -342,7 +348,7 @@ def messages(parts: list, openings: dict | None, verifier: Verifier) -> list:
         return list(parts)
     units = [name for name, _ in verifier._column_units()]
     cols = claimcodec.pack_field([openings[name][0] for name in units])
-    paths = b"".join(h for name in units for h in protocol._proof_hashes(openings[name][1]))
+    paths = b"".join(h for name in units for h in v0_query._proof_hashes(openings[name][1]))
     return [*parts, cols, paths]
 
 
@@ -361,8 +367,8 @@ def head_op(graph):
 
 def claimed_logits(verifier: Verifier, graph, parts: list, x: torch.Tensor) -> torch.Tensor:
     """The logits a proof claims: the LM head's claim decoded from the proof's PVC3 bytes (and a plan's rows) as
-    the verifier decodes them (``protocol._decoded_claims``), as int64 ``[B * positions, vocab]``."""
-    zs = protocol._decoded_claims(verifier, parts[0], parts[1], x, {"timings": {}, "contention": {}}, torch.int32)
+    the verifier decodes them (``v0_query._decoded_claims``), as int64 ``[B * positions, vocab]``."""
+    zs = v0_query._decoded_claims(verifier, parts[0], parts[1], x, {"timings": {}, "contention": {}}, torch.int32)
     if zs is None:
         raise AssertionError("the proof's claims do not decode")
     return zs[head_op(graph).name].T.to("cpu", torch.int64)

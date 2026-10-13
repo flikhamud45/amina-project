@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from pvi.kernels import native as native_kernels
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 from pvi.core.field import P, int8_ok, small_matmul_mod
 from pvi.models.decoder import CONFIGS, build_decoder
 

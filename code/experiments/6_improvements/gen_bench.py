@@ -189,7 +189,12 @@ def main() -> int:
         raise SystemExit("--gen: a response of at least 2 tokens (G = 1 is the plain prefill of perf.py)")
     torch.set_num_threads(args.threads)
     from pvi.commit.cost import decoder_shapes
-    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.transcript import Challenger
+    from pvi.v0.prover import Prover
+    from pvi.v0.verifier import Verifier
+    from pvi.v0.graph_commitment import commit_graph
+    from pvi.v0.params import params_for
+    from pvi.v0.query import run_query
     from pvi.v0.token_sampler import TokenSampler
     from pvi.models.decoder import build_decoder, with_lm_positions
 

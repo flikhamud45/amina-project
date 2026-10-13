@@ -11,7 +11,8 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.commit.plans import plan_commitment
 from pvi.commit import setup_cache
 from pvi.models.decoder import DecoderConfig, build_decoder
 
@@ -65,7 +66,7 @@ def test_a_cached_commitment_is_the_fresh_one(tmp_path, kind, policy):
 
 def test_the_key_separates_weights_biases_and_plans(tmp_path):
     graph, _ = _model("gpt")
-    plan = lambda p: proto.plan_commitment(graph.mat_ops, p, rate=4)                    # noqa: E731
+    plan = lambda p: plan_commitment(graph.mat_ops, p, rate=4)                    # noqa: E731
     k = setup_cache.key(graph, 4, plan("R8c"))
     assert k == setup_cache.key(graph, 4, plan("R8c"))
     assert k != setup_cache.key(graph, 4, plan("R8")) != setup_cache.key(graph, 4, None)

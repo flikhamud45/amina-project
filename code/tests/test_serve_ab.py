@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from pvi.v0.protocol import run_query
+from pvi.v0.query import run_query
 
 CODE = Path(__file__).resolve().parents[1]
 CPU = torch.device("cpu")

@@ -21,7 +21,7 @@ transformers = pytest.importorskip("transformers")
 
 from pvi.commit import cost as analytic                                            # noqa: E402
 from pvi.v1 import protocol as cp                                  # noqa: E402
-from pvi.v0 import protocol as proto                                   # noqa: E402
+import pvi.v0 as proto                                   # noqa: E402
 from pvi.models import decoder as transformer                                         # noqa: E402
 from pvi.core.graph import CheapOp, MatOp                                # noqa: E402
 from pvi.models.hf_opt import build_opt_from_hf, is_pruned, matches_benchmark_graph, real_logits  # noqa: E402
@@ -69,7 +69,11 @@ def test_graph_is_integer_and_tracks_the_float_model(tiny_opt):
 
 
 def test_defence_accepts_honest_queries_on_real_weights(tiny_opt):
-    from pvi.v0.protocol import Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.prover import Prover
+    from pvi.v0.verifier import Verifier
+    from pvi.v0.graph_commitment import commit_graph
+    from pvi.v0.params import params_for
+    from pvi.v0.query import run_query
 
     _, graph, _, ids = tiny_opt
     params = params_for(20, len(graph.mat_ops))
@@ -83,7 +87,11 @@ def test_defence_accepts_honest_queries_on_real_weights(tiny_opt):
 def test_smoothed_norm_gains_keep_the_graph_and_the_protocol(tiny_opt):
     # plan F2: SmoothQuant through the norms' per-channel gains -- the same ops and shapes, scalar requant
     # multipliers (requant_fn), an integer graph that tracks the float model, accepted by v0 and by V1
-    from pvi.v0.protocol import Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.prover import Prover
+    from pvi.v0.verifier import Verifier
+    from pvi.v0.graph_commitment import commit_graph
+    from pvi.v0.params import params_for
+    from pvi.v0.query import run_query
 
     model, base, _, ids = tiny_opt
     graph, info = build_opt_from_hf(model, ids, **_SMOOTH)

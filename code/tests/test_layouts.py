@@ -14,7 +14,8 @@ import torch
 
 from pvi.commit import cost as analytic
 from pvi.core import field as fld
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.v0 import verifier as v0_verifier
 import reference as ref
 from pvi.commit.commitment import (GroupCommitment, MerkleTree, TransposedCommitment, WeightCommitment, column_leaf,
                                    group_leaf, transposed_leaves, verify_multiproof)
@@ -202,9 +203,9 @@ def test_the_col_operands_are_the_references(paths, monkeypatch):
     """``w`` and ``z`` of every col matrix, batched (and on the GPU forms), equal the straightforward
     products, on honest claims and on claims derive() did not range-check (reduced first)."""
     if "deferred" in paths:
-        monkeypatch.setattr(proto, "_defer", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
     if "int8" in paths:
-        monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "int8_ok", lambda device: True)
     for kind, policy in (("gpt", "R8c"), ("qwen", "tightc"), ("mlp_wide", "cnn12c"), ("opt", "R8c")):
         graph, x, coms = _planned(kind, policy)
         v = _verifiers(graph, coms, False)[0]

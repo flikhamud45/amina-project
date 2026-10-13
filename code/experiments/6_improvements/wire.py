@@ -36,7 +36,12 @@ from torch import nn
 from pvi.v0 import claimcodec
 from pvi.commit.cost import decoder_shapes, proof_bytes
 from pvi.commit.commitment import HASH_BYTES, multiproof_size, next_pow2
-from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+from pvi.v0.transcript import Challenger
+from pvi.v0.prover import Prover
+from pvi.v0.verifier import Verifier
+from pvi.v0.graph_commitment import commit_graph
+from pvi.v0.params import params_for
+from pvi.v0.query import run_query
 
 
 

@@ -463,7 +463,7 @@ def graph_report(graph: IntGraph, info: dict | None = None) -> dict:
     """Constraint checks: honest claim bound (< 2^29), multiplier ranges (V1's P3 wants 2^14 <= m <= 2^29 for a
     cut op; only requantisations of LINEAR weight ops can be cut, so the embedding's residual add is listed
     apart), vector multipliers (per-row), distinct multipliers per op, norm gain ranges."""
-    from pvi.v0.protocol import claim_bound
+    from pvi.v0.params import claim_bound
     worst_claim = max(claim_bound(op) for op in graph.mat_ops)
     producer = {op.output: op for op in graph.ops}
     mults, vec_ops, distinct, outside = [], 0, [], []

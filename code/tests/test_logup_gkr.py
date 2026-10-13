@@ -14,7 +14,7 @@ import torch
 
 from pvi.core import extfield as ef
 from pvi.v1 import gkr
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 from pvi.v0.claimcodec import ClaimCodecError, field_size
 from pvi.core.field import P
 

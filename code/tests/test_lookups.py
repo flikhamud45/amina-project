@@ -27,7 +27,9 @@ import torch
 
 from pvi.commit import cost as analytic
 from pvi.v0 import claimcodec as cc
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.v0 import query as v0_query
+from pvi.v0 import verifier as v0_verifier
 import reference as ref
 from pvi.commit.commitment import MerkleTree, TableCommitment, multiproof_size, table_leaves, verify_multiproof
 from pvi.core.graph import CheapOp, IntGraph, MatOp, op_fn, requant, requant_op
@@ -206,9 +208,9 @@ def test_the_streaming_verifier_receives_the_bytes_counted(kind, monkeypatch):
 @pytest.mark.parametrize("paths", ["deferred", "int8", "deferred_int8"])
 def test_the_gpu_forms_check_the_lookups_alike(paths, monkeypatch):
     if "deferred" in paths:
-        monkeypatch.setattr(proto, "_defer", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
     if "int8" in paths:
-        monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "int8_ok", lambda device: True)
     for kind in ("opt", "qwen-pruned"):
         graph, _, coms = _planned(kind, "R8c")
         x = _query(kind)
@@ -324,7 +326,7 @@ def test_malformed_lookup_rows_on_the_wire_are_rejected(fiat_shamir, monkeypatch
     prover = proto.Prover(graph, commitments=coms)
     pack = cc.pack_rows
     for i, change in enumerate((lambda b: b + b"\0", lambda b: b[:-1], lambda b: b"", lambda b: None)):
-        monkeypatch.setattr(proto.claimcodec, "pack_rows", lambda zs, change=change: change(pack(zs)))
+        monkeypatch.setattr(cc, "pack_rows", lambda zs, change=change: change(pack(zs)))
         got = {proto.run_query(prover, v, x, seed=i, wire=True)["rejected_at"] for v in verifiers}
         assert got == {"range_or_shape"}
         monkeypatch.undo()
@@ -372,7 +374,7 @@ def test_the_transcript_absorbs_the_tables_and_their_multiproofs(monkeypatch):
 
     def first_columns(verifier):
         ch = proto.Challenger(fiat_shamir=True)
-        proto._absorb_statement(ch, verifier, x)
+        v0_query._absorb_statement(ch, verifier, x)
         return ch.columns("probe", 1 << 20, 8)
 
     base = first_columns(v)
@@ -484,7 +486,7 @@ def test_malformed_claims_without_the_embeddings_are_rejected(stream, monkeypatc
     encode = cc.encode
     everything = encode(list(prover.claims(x).values()))
     for i, change in enumerate((lambda b: b + b"\0", lambda b: b[:-1], lambda b: everything)):
-        monkeypatch.setattr(proto.claimcodec, "encode", lambda zs, change=change: change(encode(zs)))
+        monkeypatch.setattr(cc, "encode", lambda zs, change=change: change(encode(zs)))
         assert proto.run_query(prover, v, x, seed=i, wire=True)["rejected_at"] == "range_or_shape"
         monkeypatch.undo()
     assert proto.run_query(prover, v, x, seed=5, wire=True)["accepted"]

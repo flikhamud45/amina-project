@@ -22,7 +22,8 @@ import torch
 
 from pvi.commit import commitment as com
 from pvi.core import field as fld
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.v0 import verifier as v0_verifier
 import reference as ref
 from pvi.v0.streaming import wire_openings
 
@@ -52,9 +53,9 @@ def check_paths(request, monkeypatch):
     copied back once (``_defer``, as on a GPU), and with the products on int8 GEMMs (``int8_ok``,
     emulated in float64 off the GPU)."""
     if "deferred" in request.param:
-        monkeypatch.setattr(proto, "_defer", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
     if "int8" in request.param:
-        monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "int8_ok", lambda device: True)
     return request.param
 
 
@@ -243,28 +244,28 @@ def test_merkle_worker_processes_fall_back_when_the_pool_breaks(monkeypatch):
 
 @pytest.mark.parametrize("deferred", [False, True])
 def test_range_and_field_checks_match_reference(deferred, monkeypatch):
-    monkeypatch.setattr(proto, "_defer", lambda device: deferred)
+    monkeypatch.setattr(v0_verifier, "_defer", lambda device: deferred)
     for z in (torch.zeros(0, 3, dtype=torch.int64), torch.tensor([[Z - 1, 1 - Z]]), torch.tensor([[Z]]),
               torch.tensor([[-Z]]), torch.tensor([[INT64_MIN]]), torch.tensor([[INT64_MAX]]),
               torch.randint(1 - Z, Z, (50, 7)), torch.tensor([[0, INT64_MIN], [1, 2]]).T):
         pending = []                                   # derive's range check of a claim (deferred: in pending)
-        ok = proto._check_bounds(z, 1 - Z, Z - 1, pending)
-        assert (ok and not any(proto._to_host(pending))) == ref.in_range(z, Z)
+        ok = v0_verifier._check_bounds(z, 1 - Z, Z - 1, pending)
+        assert (ok and not any(v0_verifier._to_host(pending))) == ref.in_range(z, Z)
         assert deferred or not pending
     for a in (torch.tensor([[0, P - 1]]), torch.tensor([[P]]), torch.tensor([[-1]]), torch.tensor([[INT64_MIN]]),
               torch.zeros(2, 0, dtype=torch.int64), torch.randint(0, P, (9, 4))):
-        assert proto._in_field(a) == ref.in_field(a)
+        assert v0_verifier._in_field(a) == ref.in_field(a)
 
 
 @pytest.mark.parametrize("deferred", [False, True])
 def test_disagrees_flags_any_op_that_fails_its_freivalds_check(deferred, monkeypatch):
-    monkeypatch.setattr(proto, "_defer", lambda device: deferred)
+    monkeypatch.setattr(v0_verifier, "_defer", lambda device: deferred)
     g = torch.Generator().manual_seed(21)
     checks = []
     for m in (3, 0, 7):                                  # an op with no columns too
         lhs = _rand(g, 0, P, (2, m))
         checks.append((_rand(g, 0, P, (2, 5)), lhs, lhs.clone()))
-    assert proto._to_host([proto._disagrees(checks)]) == [False]
+    assert v0_verifier._to_host([v0_verifier._disagrees(checks)]) == [False]
     for i, (u, lhs, rhs) in enumerate(checks):
         bad_u = [u.clone() for _ in range(3)]
         for b, value in zip(bad_u, (P, -1, INT64_MIN)):
@@ -274,8 +275,8 @@ def test_disagrees_flags_any_op_that_fails_its_freivalds_check(deferred, monkeyp
             bad.append((u, lhs, (rhs + 1) % P))
         for one in bad:
             changed = checks[:i] + [one] + checks[i + 1:]
-            assert proto._to_host([proto._disagrees(changed)]) == [True]
-            assert proto._to_host([proto._disagrees([one])]) == [True]
+            assert v0_verifier._to_host([v0_verifier._disagrees(changed)]) == [True]
+            assert v0_verifier._to_host([v0_verifier._disagrees([one])]) == [True]
 
 
 def _mat_op(layout, n_in, bias, conv=None, rows=4):
@@ -298,7 +299,7 @@ def test_conv_rhs_matches_reference(conv, shape, bias, device):
     x.view(-1)[:2] = torch.tensor([-128, 127])
     u = _rand(g, 0, P, (5, op.row_length))
     u.view(-1)[0] = P - 1
-    assert torch.equal(proto._rhs(op, u.to(device), x.to(device)).cpu(), ref.rhs(op, u, x))
+    assert torch.equal(v0_verifier._rhs(op, u.to(device), x.to(device)).cpu(), ref.rhs(op, u, x))
 
 
 @pytest.mark.parametrize("k,shape", [(768, (1, 64)), (8192, (3,)), (8193, (2,)), (9728, (1, 8)), (20000, (1, 1)),
@@ -310,11 +311,11 @@ def test_linear_and_embedding_rhs_match_reference(k, shape, device):
         x = _rand(g, -128, 128, shape + (k,))
         u = _rand(g, 0, P, (4, op.row_length))
         u.view(-1)[-1] = P - 1
-        assert torch.equal(proto._rhs(op, u.to(device), x.to(device)).cpu(), ref.rhs(op, u, x))
+        assert torch.equal(v0_verifier._rhs(op, u.to(device), x.to(device)).cpu(), ref.rhs(op, u, x))
     op = _mat_op("embed", k, False)
     ids = _rand(g, 0, k, shape)
     u = _rand(g, 0, P, (4, k))
-    assert torch.equal(proto._rhs(op, u.to(device), ids.to(device)).cpu(), ref.rhs(op, u, ids))
+    assert torch.equal(v0_verifier._rhs(op, u.to(device), ids.to(device)).cpu(), ref.rhs(op, u, ids))
 
 
 # -- the batched checks give the op-by-op verdicts -------------------------------------------------

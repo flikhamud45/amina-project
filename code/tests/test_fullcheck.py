@@ -11,7 +11,12 @@ from pvi.core import field as fld
 from pvi.commit.commitment import MerkleTree, WeightCommitment, column_leaf
 from pvi.core.graph import CheapOp, MatOp, exact_matmul
 from pvi.models.cnn import LeNet5, ResNet18
-from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query, soundness_bits
+from pvi.v0.transcript import Challenger
+from pvi.v0.prover import Prover
+from pvi.v0.verifier import Verifier
+from pvi.v0.graph_commitment import commit_graph
+from pvi.v0.params import params_for, soundness_bits
+from pvi.v0.query import run_query
 from pvi.models.quantize import dequantize_logits, quantize_input, quantize_model
 
 P = fld.P
@@ -230,7 +235,7 @@ def test_forged_column_passes_the_code_check_and_is_caught_by_merkle(setup):
 
 def test_claims_are_pinned_down_as_integers(setup):
     """2 * Z_BOUND < p, the range check survives INT64_MIN, and an aliased claim is rejected."""
-    from pvi.v0.protocol import Z_BOUND
+    from pvi.v0.params import Z_BOUND
 
     assert 2 * Z_BOUND < P
     _, graph, prover, verifier, x = setup
@@ -250,7 +255,7 @@ def test_claims_are_pinned_down_as_integers(setup):
 
 
 def test_commitment_refuses_a_model_whose_honest_claims_could_reach_the_bound():
-    from pvi.v0.protocol import Z_BOUND
+    from pvi.v0.params import Z_BOUND
 
     w = torch.ones(4, 8, dtype=torch.int8)
     b = torch.tensor([0, 0, Z_BOUND, 0])
@@ -275,7 +280,7 @@ def test_challenger_columns_are_distinct_and_cover_the_range():
 
 def test_fiat_shamir_challenges_depend_on_the_statement(setup):
     """With FS, the same claims under a different input give different challenges."""
-    from pvi.v0.protocol import _absorb_statement, _tensor_blob
+    from pvi.v0.query import _absorb_statement, _tensor_blob
 
     _, graph, prover, verifier, x = setup
     fs = params_for(20, len(graph.mat_ops), fiat_shamir=True)

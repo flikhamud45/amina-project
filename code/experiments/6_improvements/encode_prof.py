@@ -31,7 +31,7 @@ def main() -> None:
     ap.add_argument("--compare-torch", action="store_true")
     args = ap.parse_args()
     from pvi.v0 import claimcodec
-    from pvi.v0.protocol import Prover
+    from pvi.v0.prover import Prover
     from pvi.models.decoder import CONFIGS, build_decoder
 
     device = torch.device("cuda")

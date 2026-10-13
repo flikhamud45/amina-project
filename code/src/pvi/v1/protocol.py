@@ -41,8 +41,10 @@ from pvi.v1 import logup
 from pvi.v1 import gkr
 from pvi.commit.commitment import HASH_BYTES, multiproof_size
 from pvi.core.field import P, field_matmul_mod, min_max, small_matmul_mod, to_field
-from pvi.v0.protocol import (Challenger, Prover, Verifier, _absorb_statement, _decoded_claims, _encoded,
-                             _field_message, _in_field, _open_message, _passed, _phase_done, _proof_hashes, _sync)
+from pvi.v0.transcript import Challenger
+from pvi.v0.prover import Prover
+from pvi.v0.verifier import Verifier, _in_field, _sync
+from pvi.v0.query import _absorb_statement, _decoded_claims, _encoded, _field_message, _open_message, _passed, _phase_done, _proof_hashes
 
 __all__ = ["run_cut_query", "cut_proof_bytes", "cut_plan", "pack_exceptions", "unpack_exceptions", "EXC_MAGIC"]
 

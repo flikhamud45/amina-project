@@ -28,7 +28,9 @@ import torch
 from pvi.commit import cost as analytic
 from pvi.v0 import claimcodec as cc
 from pvi.core import field as fld
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.v0 import query as v0_query
+from pvi.v0 import verifier as v0_verifier
 import reference as ref
 from pvi.commit.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
                                    group_leaf, multiproof_size, verify_multiproof)
@@ -594,9 +596,9 @@ def test_every_forgery_is_rejected_at_its_check(kind, policy, fiat_shamir, wire)
 @pytest.mark.parametrize("wire", [False, True])
 def test_the_gpu_forms_of_the_checks_give_the_same_verdicts(paths, wire, monkeypatch):
     if "deferred" in paths:
-        monkeypatch.setattr(proto, "_defer", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
     if "int8" in paths:
-        monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "int8_ok", lambda device: True)
     for kind, policy in (("lenet5", "cnn12"), ("llama", "R8"), ("mlp_wide", "cnn12c"), ("qwen", "R8c"),
                          ("gpt-pruned", "tightc")):
         graph, x, coms = _planned(kind, policy)
@@ -743,9 +745,9 @@ def test_grouped_column_checks_give_the_reference_verdicts(paths, monkeypatch):
     """The batched check of group openings against ``reference.check_columns``, group by group
     (the verdicts and the exceptions), on single and double defects."""
     if "deferred" in paths:
-        monkeypatch.setattr(proto, "_defer", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
     if "int8" in paths:
-        monkeypatch.setattr(proto, "int8_ok", lambda device: True)
+        monkeypatch.setattr(v0_verifier, "int8_ok", lambda device: True)
     for kind, policy in (("lenet5", "tight"), ("gpt", "R8"), ("mlp_wide", "tightc"), ("qwen", "R8c")):
         graph, x, coms = _planned(kind, policy)
         v = _verifiers(graph, coms, False)[0]
@@ -875,7 +877,7 @@ def test_the_fiat_shamir_transcript_absorbs_the_plan(policy, monkeypatch):
 
     def first_columns(verifier):
         ch = proto.Challenger(fiat_shamir=True)
-        proto._absorb_statement(ch, verifier, x)
+        v0_query._absorb_statement(ch, verifier, x)
         return ch.columns("probe", 1 << 20, 8)
 
     def variant(**fields):
@@ -948,10 +950,10 @@ def test_malformed_wire_messages_are_rejected_under_a_plan(kind, policy, fiat_sh
         def patched(tensors):
             is_u = [tuple(t.shape) for t in tensors] == u_shapes
             return change(pack(tensors)) if is_u == (which == "u") else pack(tensors)
-        monkeypatch.setattr(proto.claimcodec, "pack_field", patched)
+        monkeypatch.setattr(cc, "pack_field", patched)
 
     for i, change in enumerate((lambda b: b + b"\0", lambda b: b[:-1], lambda b: b"PVC0" + b[4:])):
-        monkeypatch.setattr(proto.claimcodec, "encode", lambda zs, change=change: change(encode(zs)))
+        monkeypatch.setattr(cc, "encode", lambda zs, change=change: change(encode(zs)))
         assert label(i) == "range_or_shape"
         monkeypatch.undo()
     rows = {name: c.public.n_rows for name, c in coms.items()}

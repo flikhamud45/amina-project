@@ -29,7 +29,7 @@ from pvi.commit import setup_proof as sp
 from pvi.commit.cost import decoder_shapes
 from pvi.core.field import P
 from pvi.commit.plans import column_bits, column_error_log2, exact_columns, plan_commitment
-from pvi.v0.protocol import params_for
+from pvi.v0.params import params_for
 from pvi.models.decoder import CONFIGS
 
 LOG2_P = math.log2(P)

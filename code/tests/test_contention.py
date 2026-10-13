@@ -23,7 +23,7 @@ import pytest
 import torch
 
 from pvi.core import contention
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 
 EXPERIMENTS = Path(__file__).resolve().parents[1] / "experiments"
 

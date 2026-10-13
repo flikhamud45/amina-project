@@ -27,7 +27,8 @@ import torch
 from pvi.v0 import claimcodec as cc
 from pvi.commit import commitment
 import opcount as opcount
-from pvi.v0.protocol import P, Z_BOUND
+from pvi.core.field import P
+from pvi.v0.params import Z_BOUND
 from pvi.models.decoder import DecoderConfig, build_decoder
 
 LIM = Z_BOUND - 1

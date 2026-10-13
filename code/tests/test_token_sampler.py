@@ -10,7 +10,7 @@ import pytest
 import torch
 
 from pvi.v1 import protocol as cp
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 from pvi.v0 import token_sampler as ts
 from pvi.models.decoder import build_decoder, greedy_tokens, with_lm_positions
 from test_plans import _TINY

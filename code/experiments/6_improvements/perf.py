@@ -94,7 +94,8 @@ def _tampers(prover, v, x, n: int, wire: bool, seed: int = 123) -> dict:
     raised 1000 above the largest; ``last_hidden``, a random coordinate of the op feeding the LM head (the last
     block's down projection) at the last position set to ``Z_BOUND // 4``.  ``{kind: {attempts, rejected,
     labels}}``."""
-    from pvi.v0.protocol import Z_BOUND, run_query
+    from pvi.v0.params import Z_BOUND
+    from pvi.v0.query import run_query
     mats = prover.graph.mat_ops
     g = torch.Generator().manual_seed(seed)
     out = {k: {"attempts": 0, "rejected": 0, "labels": {}} for k in ("single_value", "output_logit", "last_hidden")}
@@ -205,7 +206,12 @@ def main() -> int:
     sha = git_sha(CODE)              # before the build, which can outlast a checkout update
     torch.set_num_threads(args.threads)
     bench = _load("bench", "experiments/4_defence_benchmark/bench.py")
-    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.transcript import Challenger
+    from pvi.v0.prover import Prover
+    from pvi.v0.verifier import Verifier
+    from pvi.v0.graph_commitment import commit_graph
+    from pvi.v0.params import params_for
+    from pvi.v0.query import run_query
 
     device = torch.device(args.device)
     prunes = [w == "on" for w in args.prune_last or ["on"]]      # a bare flag: on

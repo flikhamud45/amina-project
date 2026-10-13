@@ -63,7 +63,7 @@ def main() -> int:
     from pvi.commit import setup_proof as sp
     from pvi.commit.cost import decoder_shapes
     from pvi.commit.plans import column_bits, exact_columns
-    from pvi.v0.protocol import commit_graph
+    from pvi.v0.graph_commitment import commit_graph
     from pvi.models.decoder import build_decoder
 
     device = torch.device(args.device)

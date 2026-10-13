@@ -480,7 +480,12 @@ def protocol(args, model, tok) -> None:
     claim (the first q projection, the middle weight op, the LM head), and V1 (mode C) accepts and rejects the same
     tampers. With ``--prefix``, the graphs carry the prefix (chosen on the calibration window)."""
     from pvi.v1 import protocol as cp
-    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.transcript import Challenger
+    from pvi.v0.prover import Prover
+    from pvi.v0.verifier import Verifier
+    from pvi.v0.graph_commitment import commit_graph
+    from pvi.v0.params import params_for
+    from pvi.v0.query import run_query
     seq = 64
     test = token_ids(tok, p2._text("test"), args.prefix)
     w = p2._windows(test, seq, 1)[0]

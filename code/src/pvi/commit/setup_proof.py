@@ -145,7 +145,7 @@ def query_group_columns(params: SetupParams, groups: dict[str, GroupPublic]) -> 
 
 def _transcript(graph_digest: bytes, publics: dict[str, CommitmentPublic], groups: dict[str, GroupPublic],
                 params: SetupParams):
-    from pvi.v0.protocol import Challenger
+    from pvi.v0.transcript import Challenger
     ch = Challenger(fiat_shamir=True)
     ch.absorb(b"setup/params", struct.pack("<IdI", params.s, params.lam, params.grinding_bits))
     ch.absorb(b"setup/graph", graph_digest)

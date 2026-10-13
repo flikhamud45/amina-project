@@ -30,7 +30,7 @@ from pvi.v1 import protocol as cp
 from pvi.core import extfield as ef
 from pvi.v1 import logup
 from pvi.v1 import gkr
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
 from pvi.core.field import P
 from pvi.models.decoder import build_decoder
 import test_cut_protocol as tcp

@@ -14,7 +14,7 @@ import json
 
 from pvi.commit.cost import decoder_shapes, proof_bytes
 from pvi.commit.plans import plan_commitment
-from pvi.v0.protocol import params_for
+from pvi.v0.params import params_for
 from pvi.models.decoder import CONFIGS
 
 

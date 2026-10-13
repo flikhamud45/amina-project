@@ -30,7 +30,9 @@ def main() -> int:
     ap.add_argument("--threads", type=int, default=8)
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
-    from pvi.v0.protocol import Challenger, Verifier, params_for
+    from pvi.v0.transcript import Challenger
+    from pvi.v0.verifier import Verifier
+    from pvi.v0.params import params_for
     from pvi.models.decoder import CONFIGS, build_decoder
     cfg = CONFIGS[args.model]
     graph = build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=8, seed=0, prune_last=True)

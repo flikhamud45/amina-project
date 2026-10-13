@@ -23,7 +23,12 @@ def main() -> None:
     from torch.profiler import ProfilerActivity, profile
 
     from pvi.commit.cost import decoder_shapes
-    from pvi.v0.protocol import Challenger, Prover, Verifier, commit_graph, params_for, run_query
+    from pvi.v0.transcript import Challenger
+    from pvi.v0.prover import Prover
+    from pvi.v0.verifier import Verifier
+    from pvi.v0.graph_commitment import commit_graph
+    from pvi.v0.params import params_for
+    from pvi.v0.query import run_query
     from pvi.models.decoder import CONFIGS, build_decoder
 
     cfg = CONFIGS[args.model]

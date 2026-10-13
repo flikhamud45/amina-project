@@ -18,7 +18,8 @@ import math
 import pytest
 import torch
 
-from pvi.v0 import protocol as proto
+import pvi.v0 as proto
+from pvi.core.field import LOG2_P, P
 from pvi.commit import setup_proof as sp
 from pvi.commit.commitment import GroupCommitment, MerkleTree, multiproof
 from pvi.commit.plans import column_bits, column_error_log2
@@ -63,8 +64,8 @@ def test_a_tampered_setup_proof_is_rejected():
 
     name = next(iter(proof.messages))
     tree = next(iter(proof.openings))
-    bad = [changed(lambda p: p.messages[name].__setitem__((0, 0), (p.messages[name][0, 0] + 1) % proto.P)),
-           changed(lambda p: p.openings[tree][1].__setitem__((0, 0), (p.openings[tree][1][0, 0] + 1) % proto.P)),
+    bad = [changed(lambda p: p.messages[name].__setitem__((0, 0), (p.messages[name][0, 0] + 1) % P)),
+           changed(lambda p: p.openings[tree][1].__setitem__((0, 0), (p.openings[tree][1][0, 0] + 1) % P)),
            changed(lambda p: p.openings[tree][2].pop()),
            changed(lambda p: p.messages.pop(name))]
     for p in bad:
@@ -146,7 +147,7 @@ def test_the_parameters_meet_their_bounds():
     lam, qb = 128, column_bits(128, len(graph.mat_ops))
     params = sp.setup_params(coms.publics, coms.group_publics, lam, qb)
     beta = lam + params.grinding_bits + math.log2(2 * len(coms.publics))
-    assert params.s * proto.LOG2_P >= beta + math.log2(max(g.n_points for g in coms.group_publics.values()))
+    assert params.s * LOG2_P >= beta + math.log2(max(g.n_points for g in coms.group_publics.values()))
     for g, grp in coms.group_publics.items():
         for m in grp.members:
             pub, e = coms.publics[m], params.e_of(m)
