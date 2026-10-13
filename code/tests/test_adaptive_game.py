@@ -1,12 +1,11 @@
-"""K-G3c: the vectorised ``fast_acceptance`` must equal ``acceptance_probability`` to 1e-9.
+"""The vectorised ``fast_acceptance`` of the adaptive game equals ``acceptance_probability`` to 1e-9.
 
-The adaptive game (``experiments/3_sampling_fixes/adaptive_game.py``) replaces the per-neuron
-acceptance DP with a matrix-form evaluation so the 1 M-evaluation sweep is tractable.  The design's
-kill criterion K-G3c states that if the two disagree anywhere by more than ``1e-9`` the run stops
-and the discrepancy is fixed before any number is used.  This test enforces that on the MNIST MLP,
-for every sampler of the family F and for a range of forged traces: honest, single-neuron flips in
-each hidden layer, a multi-neuron zeroing plan and a stealthy ceiling plan, at ``n_paths`` of 1 and
-several.
+The adaptive game (``experiments/attack/adaptive_game.py``) replaces the per-neuron acceptance
+recursion with a matrix-form evaluation so that its sweep of about a million evaluations is
+tractable; its numbers are valid only if the two agree everywhere to within ``1e-9``.  This test
+checks that on the MNIST MLP, for every sampler of the game's family and for a range of forged
+traces: honest, single-neuron flips in each hidden layer, a multi-neuron zeroing plan and a stealthy
+ceiling plan, at ``n_paths`` of 1 and several.
 
 The traces here are built from random queries rather than the dataset, which keeps the test free of
 a data download; acceptance is a property of the trace and the sampler, not of whether the query is
@@ -15,12 +14,12 @@ a real digit.
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from experiments.attack import adaptive_game
 from pvi.attacks.tamper import apply_plan, plan_single_neuron_flip
 from pvi.baseline.adaptive import plan_adaptive_stealthy_flip
 from pvi.baseline.analysis import acceptance_probability
@@ -35,13 +34,6 @@ from pvi.mnist.zoo import mlp_architecture_for
 
 MODEL = Path(__file__).resolve().parents[1] / "artifacts" / "models" / "mlp_mnist_full.npz"
 TOLERANCE = 1e-9
-
-_spec = importlib.util.spec_from_file_location(
-    "adaptive_game",
-    Path(__file__).resolve().parents[1] / "experiments" / "3_sampling_fixes" / "adaptive_game.py",
-)
-adaptive_game = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(adaptive_game)
 
 pytestmark = pytest.mark.skipif(not MODEL.exists(), reason="needs artifacts/models/mlp_mnist_full.npz")
 
@@ -105,7 +97,7 @@ def _forged_traces(network: TracedNetwork) -> list[Trace]:
 
 @pytest.mark.parametrize("n_paths", [1, 10, 250])
 def test_fast_acceptance_matches_exact_within_1e_9(network, n_paths):
-    """K-G3c on the MNIST MLP: every sampler, every trace, both hidden layers."""
+    """On the MNIST MLP: every sampler, every trace, both hidden layers."""
     params = ProtocolParams(n_paths=n_paths)
     family = _family(network)
     traces = _forged_traces(network)

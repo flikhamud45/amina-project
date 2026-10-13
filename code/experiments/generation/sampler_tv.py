@@ -1,12 +1,19 @@
-"""Plan 2, E2b: the exact output law of the integer Gumbel-max sampler, and its total-variation distance to softmax
-sampling on real logits.
+"""The exact output law of the integer Gumbel-max sampler, and its total-variation distance to softmax sampling on
+a real model's logits.
 
-    cd code && PYTHONPATH=src python experiments/9_quality/sampler_tv.py --selfcheck
-    cd code && PYTHONPATH=src python experiments/9_quality/sampler_tv.py --model facebook/opt-125m --seq 128 \\
-        --windows 1 --positions 32 --logits-cache e2b_opt-125m.npz --mc 100000 --mc-positions 8 31 \\
-        --mc-settings 1:0 1:50 1.3:0 --out sampler_tv_opt-125m.json
-    cd code && PYTHONPATH=src python experiments/9_quality/sampler_tv.py --model facebook/opt-1.3b --seq 128 \\
-        --windows 4 --threads 8 --workers 16 --logits-cache /tmp/e2b_opt-1.3b.npz --out sampler_tv_opt-1.3b.json
+Produces the sampler's distances in Sec. ``sec:gen-sampling`` ("Distribution": the median total-variation distance
+to ``softmax(c z / tau)`` at ``tau = 1`` with ``k = 50`` and ``k = 0`` over 512 WikiText-2 positions of the integer
+OPT-1.3B, against the integer model's own distance to the fp32 model, and what a table of ``2^20`` entries would
+give) and the sampler checks of the extended version (Sec. ``sec:ext-sampling``).
+
+    python -m experiments.generation.sampler_tv --selfcheck
+    python -m experiments.generation.sampler_tv --model facebook/opt-1.3b --seq 128 --windows 4 --threads 8 \\
+        --workers 16 --logits-cache /tmp/sampler_tv_opt-1.3b.npz --out sampler_tv_opt-1.3b.json
+    python -m experiments.generation.sampler_tv --model facebook/opt-1.3b --recipe legacy --calib-seq 128 \\
+        --seq 128 --windows 4 --threads 8 --workers 16 --out sampler_tv_opt-1.3b_legacy.json
+    python -m experiments.generation.sampler_tv --model facebook/opt-125m --seq 128 --windows 1 --positions 32 \\
+        --logits-cache sampler_tv_opt-125m.npz --mc 100000 --mc-positions 8 31 --mc-settings 1:0 1:50 1.3:0 \\
+        --out sampler_tv_opt-125m.json
 
 **The law.**  ``TokenSampler.choose`` (``pvi.v0.token_sampler``) gives entry ``v`` the score
 ``s_v = a z_v + T[u_v]``, where ``u_v`` is the ``v``-th 16-bit word of ``SHAKE-256(tag || seed || position)`` --
@@ -59,15 +66,29 @@ entries at resolution ``2^-R``, both with ``a = round(2^R c / tau)``):
 * separately, ``tv_model = TV(softmax_S(c z / tau), softmax_S'(l / tau))`` with the fp32 checkpoint's logits ``l``
   (``S'`` its own top-k set): the integer model's own distance to the float model.
 
-Logits: WikiText-2 raw test windows of ``--seq`` tokens from the start of the split (``common.load_windows``), all
-positions of each window in one pass (``real_weights.real_logits(all_positions=True)``), ``--positions`` of them
-evenly spaced (all if 0); the graph is the paper's smoothed recipe (``build_opt_from_hf(norm_gain=4, smooth=0.55,
-smooth_pct=99.9, pct=99.99, pct_att=99.99)``) calibrated on the last ``--calib-seq``-token window of the split.
-``--logits-cache`` stores the integer and fp32 logits (``.npz``) after the first run, so the analysis can be
-repeated without the model, which is freed before the analysis starts.  ``--workers`` spreads the positions over
-processes (about 0.6 GB each with a 20-bit table).  Output: one JSON document (stdout without the per-position rows,
-and ``--out`` with them): the summary per setting (mean, median, 90th percentile and maximum over positions), the
-per-position rows, the Monte Carlo comparisons, the toys, seconds and peak memory.
+**The model.**  Logits of an integer OPT checkpoint (``--model``) on WikiText-2 (raw) test windows of ``--seq``
+tokens from the start of the split (:func:`experiments.common.checkpoints.load_windows`), all positions of each
+window in one pass (``hf_opt.real_logits(all_positions=True)``), ``--positions`` of them evenly spaced (all if 0).
+The integer graph is ``--recipe``'s: ``certified`` (the default) is the certified model of ``tab:quality``,
+``hf_opt.CERTIFIED_RECIPE`` calibrated on four 2,048-token windows of the train split
+(:func:`experiments.common.checkpoints.certified_calibration`); ``legacy`` is the percentile recipe (norm gain 4,
+SmoothQuant with alpha 0.55 through the norm gains, :data:`experiments.common.checkpoints.SMOOTH`'s clipping)
+calibrated on the last ``--calib-seq``-token window of the test split, the graph of the stored
+``artifacts/results/sampler_tv_*.json``.  ``--logits-cache`` stores the integer and fp32 logits (``.npz``) after the
+first run, so that the analysis can be repeated without the model, which is freed before the analysis starts (a
+cache of other settings is refused).  ``--workers`` spreads the positions over processes (about 0.6 GB each with a
+20-bit table).
+
+**Output**: one JSON document (on stdout without the per-position rows, and in ``--out`` with them): ``script``,
+``host``, ``args``, ``env`` (:func:`experiments.common.records.environment`), ``meta`` (the model, the windows, the
+recipe, the logit scale, the extraction's seconds and peak memory), ``positions``, ``toys`` (the closed forms and the
+Monte Carlo of ``--selfcheck``), ``summary`` (per setting: mean, median, 90th percentile and maximum over positions),
+``rows`` and ``model_rows`` (per position), ``mc`` (the Monte Carlo comparisons), ``seconds``, ``peak_rss_GB``.
+
+Hardware and time: CPU only.  ``--selfcheck`` takes seconds.  The stored OPT-1.3B analysis (512 positions, the three
+tables, ``--workers 16 --threads 16``) took 43 minutes, 3 of them extracting the logits, with a peak of 11 GB of host
+memory in the main process (legacy recipe; the certified recipe calibrates on 8,192 tokens and needs more while the
+graph is built); OPT-125M (32 positions and the Monte Carlo above) on one worker about an hour.
 """
 from __future__ import annotations
 
@@ -80,17 +101,16 @@ import platform
 import sys
 import time
 from fractions import Fraction
-from pathlib import Path
 from statistics import NormalDist
 
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from experiments.common import cli, records
+from pvi.v0.token_sampler import FRAC, TokenSampler, gumbel_table
 
-from pvi.v0.token_sampler import FRAC, TokenSampler, gumbel_table   # noqa: E402
-
-SMOOTH = dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
+LEGACY_SMOOTH = 0.55
+"""The legacy recipe's SmoothQuant strength (``--recipe legacy``)."""
 DIRECT_BUDGET = 6e7          # occupied levels x grid points below which LM is summed directly (no FFT rounding)
 FFT_CHUNK = 1 << 20          # complex entries per FFT block (16 MiB): bounds the FFT path's working memory
 EXP_FLOOR = -746.0           # exp(x) is 0.0 in float64 below about -745.13
@@ -401,6 +421,11 @@ def _peak_rss_gb() -> float | None:
         return None
 
 
+def _cache_key(args) -> tuple:
+    """The settings a logits cache must match: model, windows, recipe and (legacy) calibration window."""
+    return (args.model, args.seq, args.windows, args.recipe, args.calib_seq if args.recipe == "legacy" else None)
+
+
 def extract_logits(args) -> dict:
     """The integer claims ``z`` (int32 ``[P, V]``), the fp32 checkpoint's logits (float32 ``[P, V]``), the logit
     scale and the token ids of the analysed positions; read from ``--logits-cache`` when it exists, else computed
@@ -408,24 +433,29 @@ def extract_logits(args) -> dict:
     if args.logits_cache and os.path.exists(args.logits_cache):
         f = np.load(args.logits_cache, allow_pickle=False)
         meta = json.loads(str(f["meta"]))
-        held = (meta["model"], meta["seq"], meta["windows"], meta["calib_seq"])
-        if held != (args.model, args.seq, args.windows, args.calib_seq) or \
-                (args.positions and args.positions != f["positions"].size):
+        recipe = meta.get("recipe_name", "legacy")          # caches without the field hold the legacy graph
+        held = (meta["model"], meta["seq"], meta["windows"], recipe,
+                meta["calib_seq"] if recipe == "legacy" else None)
+        if held != _cache_key(args) or (args.positions and args.positions != f["positions"].size):
             raise SystemExit(f"{args.logits_cache} holds {held} with {f['positions'].size} positions, not "
-                             f"{(args.model, args.seq, args.windows, args.calib_seq)} with --positions {args.positions}")
+                             f"{_cache_key(args)} with --positions {args.positions}")
         return {"z": f["z"], "fp": f["fp"], "positions": f["positions"], "meta": meta}
     if "opt" not in args.model.lower():
-        raise SystemExit("only OPT has a real-weight integer builder (real_weights.build_opt_from_hf) so far")
-    from common import load_opt, load_windows
-    from pvi.models.hf_opt import build_opt_from_hf, real_logits
+        raise SystemExit("the analysis builds an integer OPT (pvi.models.hf_opt): give an OPT checkpoint")
+    from experiments.common.checkpoints import SMOOTH, certified_calibration, load_opt, load_windows
+    from pvi.models.hf_opt import CERTIFIED_RECIPE, build_opt_from_hf, real_logits
 
     t0 = time.perf_counter()
     model, tok = load_opt(args.model)
-    wins, _ = load_windows(tok, seq=args.seq, windows=args.windows, calib_windows=0)
-    _, calib = load_windows(tok, seq=args.calib_seq, windows=0, calib_windows=1)
+    wins, _ = load_windows(tok, seq=args.seq, n=args.windows, calib_windows=0)
+    if args.recipe == "certified":
+        calib, recipe = certified_calibration(tok), dict(CERTIFIED_RECIPE)
+    else:
+        calib = load_windows(tok, seq=args.calib_seq, n=0, calib_windows=1)[1][0]
+        recipe = dict(norm_gain=4, smooth=LEGACY_SMOOTH, **SMOOTH)
     dev = args.device
     with torch.no_grad():
-        graph, info = build_opt_from_hf(model, calib[0].to(dev), device=dev, **SMOOTH)
+        graph, info = build_opt_from_hf(model, calib.to(dev), device=dev, **recipe)
     c = float(info["logit_scale"])
     total = args.seq * len(wins)
     keep = (np.arange(total) if not args.positions or args.positions >= total else
@@ -445,8 +475,11 @@ def extract_logits(args) -> dict:
             zs.append(z[torch.from_numpy(rows)].to(torch.int32).numpy())
             fps.append(model(w).logits[0, torch.from_numpy(rows)].float().numpy())
             del real, z
-    meta = {"model": args.model, "seq": args.seq, "windows": args.windows, "calib_seq": args.calib_seq,
-            "logit_scale": c, "recipe": SMOOTH, "dataset": "wikitext-2-raw-v1 test",
+    meta = {"model": args.model, "seq": args.seq, "windows": args.windows,
+            "calib_seq": args.calib_seq if args.recipe == "legacy" else None,
+            "calib": ("four 2,048-token windows of the train split" if args.recipe == "certified" else
+                      f"the last {args.calib_seq}-token window of the test split"),
+            "logit_scale": c, "recipe_name": args.recipe, "recipe": recipe, "dataset": "wikitext-2-raw-v1 test",
             "extract_seconds": time.perf_counter() - t0, "extract_peak_rss_GB": _peak_rss_gb()}
     out = {"z": np.concatenate(zs), "fp": np.concatenate(fps), "positions": keep, "meta": meta}
     del graph, model
@@ -595,16 +628,20 @@ def run_mc(data: dict, args) -> list[dict]:
     return out
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--model", default="facebook/opt-125m")
+    ap.add_argument("--model", default="facebook/opt-125m", help="a Hugging Face OPT checkpoint")
+    ap.add_argument("--recipe", choices=["certified", "legacy"], default="certified",
+                    help="the integer graph: certified = hf_opt.CERTIFIED_RECIPE calibrated on four 2,048-token train "
+                         "windows; legacy = the percentile recipe (norm gain 4, SmoothQuant alpha 0.55, --calib-seq)")
     ap.add_argument("--seq", type=int, default=128, help="tokens per evaluation window")
-    ap.add_argument("--windows", type=int, default=4)
+    ap.add_argument("--windows", type=int, default=4, help="evaluation windows from the start of the test split")
     ap.add_argument("--positions", type=int, default=0, help="analyse this many evenly spaced positions (0: all)")
     ap.add_argument("--first", type=int, default=0, help="analyse only the first N extracted positions (0: all)")
-    ap.add_argument("--calib-seq", type=int, default=128, help="tokens of the calibration window")
-    ap.add_argument("--taus", type=float, nargs="+", default=[0.7, 1.0, 1.3])
-    ap.add_argument("--topk", type=int, nargs="+", default=[0, 50])
+    ap.add_argument("--calib-seq", type=int, default=128,
+                    help="with --recipe legacy: the tokens of the calibration window (the end of the test split)")
+    ap.add_argument("--taus", type=float, nargs="+", default=[0.7, 1.0, 1.3], help="temperatures")
+    ap.add_argument("--topk", type=int, nargs="+", default=[0, 50], help="top-k candidate sets (0: every token)")
     ap.add_argument("--tables", nargs="+", default=["16", "16:20", "20"],
                     help="tables B (2^B entries, resolution 2^-B) or B:R (resolution 2^-R); 16 is the protocol's")
     ap.add_argument("--fft-check", type=int, default=256, help="grid points checked against the direct sum")
@@ -615,16 +652,21 @@ def main() -> None:
     ap.add_argument("--mc-positions", type=int, nargs="+", default=[0], help="indices into the analysed positions")
     ap.add_argument("--mc-settings", nargs="+", default=["1:0", "1:50"], help="tau:top_k pairs for the Monte Carlo")
     ap.add_argument("--selfcheck", action="store_true", help="only the toys (closed forms, Monte Carlo); no model")
-    ap.add_argument("--selfcheck-mc", type=int, default=100_000)
+    ap.add_argument("--selfcheck-mc", type=int, default=100_000, help="Monte Carlo draws of the toys")
     ap.add_argument("--extract-only", action="store_true", help="only compute and cache the logits")
     ap.add_argument("--logits-cache", default=None, help=".npz with the integer and fp32 logits (read or written)")
-    ap.add_argument("--device", default="cpu", help="where the integer graph runs (the fp32 model stays on the CPU)")
-    ap.add_argument("--threads", type=int, default=2)
-    ap.add_argument("--out", default=None)
-    args = ap.parse_args()
-    torch.set_num_threads(args.threads)
+    ap.add_argument("--out", default=None, help="the JSON document with the per-position rows")
+    cli.add_runtime_arguments(ap, threads=2, verifier_device=False)
+    ap.set_defaults(device="cpu")             # where the integer graph runs (the fp32 model stays on the CPU)
+    return ap
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    cli.apply_runtime(args)
     t0 = time.perf_counter()
-    doc = {"script": "sampler_tv.py", "host": platform.node(), "args": vars(args)}
+    doc = {"script": "sampler_tv.py", "host": platform.node(), "args": vars(args),
+           "env": records.environment(args.device)}
     if args.selfcheck:
         doc["toys"] = selfcheck(args.selfcheck_mc)
     else:

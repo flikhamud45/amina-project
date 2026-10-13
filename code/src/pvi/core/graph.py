@@ -35,6 +35,7 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 
+from pvi import options
 from pvi.core.field import INT8_TERMS, int8_gemm, int8_ok
 from pvi.kernels import native as native_kernels
 
@@ -353,7 +354,8 @@ class MatOp(Op):
             z = w[:, x.reshape(-1)].to(torch.int64)
         else:
             z = None
-            if x.is_cuda and self.max_input <= INT8_MAX and w.dtype == torch.int8 and int8_ok(x.device):
+            if (x.is_cuda and self.max_input <= INT8_MAX and w.dtype == torch.int8 and options.current().int8_forward
+                    and int8_ok(x.device)):
                 z = int8_product(w, self.unfold(x, torch.int8))     # every input is int8 (max_input)
             elif (x.device.type == "cpu" and self.layout == "linear" and self.max_input <= INT8_MAX
                   and w.dtype == torch.int8):                       # a CPU: the native exact int8 GEMM

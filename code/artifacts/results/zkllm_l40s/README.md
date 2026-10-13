@@ -14,8 +14,8 @@ was dropped. The runs are kept as they were measured.
 From `code/`:
 
 ```bash
-python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048-948715 32
-python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-13b-T2048-948716 40
+python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048 32
+python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-13b-T2048 40
 python artifacts/results/zkllm_l40s/summarise.py --csv     # rewrites summary.csv (one row per run)
 ```
 
@@ -42,7 +42,7 @@ picked from `nvidia-smi.csv.gz`, which also records the node's other GPUs (they 
 | `install_timing_shims.sh` | wraps each zkLLM binary in a shim that appends its wall time and peak RSS to `bin_times.log`; zkLLM's code is unchanged |
 | `mkinput.py` | the layer-0 input: the embeddings of the first 2,048 tokens of the WikiText-2 test split, in zkLLM's fixed-point format |
 | `summarise.py` | recomputes every figure above from a run's records, and writes `summary.csv` |
-| `<model>-T2048-<job>/` | one stored run (SLURM jobs 948715 and 948716): `bin_times.log` (each binary's time), `time-*.txt` (each script's wall time), `nvidia-smi.csv.gz` (memory and utilisation of every GPU of the node every 0.5 s), `verdicts.txt` (the verifier messages counted), `env.txt` (host, GPU, CPU), `logs.tar.gz` (the scripts' logs) |
+| `<model>-T2048/` | one stored run: `bin_times.log` (each binary's time), `time-*.txt` (each script's wall time), `nvidia-smi.csv.gz` (memory and utilisation of every GPU of the node every 0.5 s), `verdicts.txt` (the verifier messages counted), `env.txt` (host, GPU, CPU), `logs.tar.gz` (the scripts' logs) |
 
 ## Re-run from scratch (GPU, hours)
 

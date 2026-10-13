@@ -1,35 +1,23 @@
-"""The exact output law of the integer Gumbel-max sampler (plan E2b, ``experiments/9_quality/sampler_tv.py``):
+"""The exact output law of the integer Gumbel-max sampler (``experiments/generation/sampler_tv.py``):
 closed forms on 2- and 8-token toys in exact integer and rational arithmetic, every noise draw of small tables
 enumerated through ``TokenSampler.choose`` itself (ties and top-k included), a Monte Carlo of ``choose``, the FFT
-path against the direct sum, the skipped-tail bound, and the distance to softmax falling with the table's width."""
+path against the direct sum, the skipped-tail bound, the distance to softmax falling with the table's width, and a
+logits cache read only for its own model and integer recipe."""
 
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import itertools
-import sys
+import json
 from fractions import Fraction
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
+from experiments.generation import sampler_tv as st
 from pvi.v0 import token_sampler as ts
 
-
-def _script():
-    path = Path(__file__).resolve().parents[1] / "experiments" / "9_quality" / "sampler_tv.py"
-    if str(path.parent) not in sys.path:
-        sys.path.insert(0, str(path.parent))
-    spec = importlib.util.spec_from_file_location("sampler_tv_test", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-st = _script()
 TAB = st.table()
 
 
@@ -198,3 +186,22 @@ def test_a_wider_table_is_closer_to_softmax():
         tvs[bits] = (st.tv(p, ideal), st.tv(p, st.softmax_on(z * (a / float(1 << bits)), s)))
     assert tvs[12][0] > tvs[14][0] > tvs[16][0] and tvs[12][1] > tvs[14][1] > tvs[16][1]
     assert tvs[16][1] < tvs[12][1] / 4
+
+
+def test_a_logits_cache_is_read_only_for_its_own_model_and_recipe(tmp_path):
+    """``--logits-cache`` holds one model's logits under one recipe: a cache written before the recipe was recorded
+    holds the legacy graph, so the certified default refuses it and ``--recipe legacy`` reads it."""
+    path = tmp_path / "cache.npz"
+    meta = {"model": "facebook/opt-125m", "seq": 8, "windows": 1, "calib_seq": 8, "logit_scale": 0.01}
+    z = np.arange(6, dtype=np.int32).reshape(2, 3)
+    np.savez(path, z=z, fp=z.astype(np.float32), positions=np.array([0, 7]), meta=json.dumps(meta))
+    base = ["--model", "facebook/opt-125m", "--seq", "8", "--windows", "1", "--calib-seq", "8",
+            "--logits-cache", str(path)]
+    args = st.build_parser().parse_args(base)
+    assert args.recipe == "certified" and args.device == "cpu"
+    with pytest.raises(SystemExit, match="holds"):
+        st.extract_logits(args)
+    got = st.extract_logits(st.build_parser().parse_args(base + ["--recipe", "legacy"]))
+    assert np.array_equal(got["z"], z) and got["meta"]["logit_scale"] == 0.01
+    with pytest.raises(SystemExit, match="holds"):                 # another calibration window
+        st.extract_logits(st.build_parser().parse_args(base + ["--recipe", "legacy", "--calib-seq", "16"]))

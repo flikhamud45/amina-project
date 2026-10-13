@@ -1,31 +1,39 @@
-"""The compact wire encoding of the proof (``run_query(wire=True)``): proof bytes and costs.
+"""The compact wire encoding of the proof (``run_query(wire=True)``): bits per claim, proof bytes and the codec's costs.
 
-    cd code && PYTHONPATH=src python experiments/6_improvements/wire.py --mnist <dir with MNIST/raw> \\
-        --out experiments/6_improvements/results/wire_laptop.json lenet5 vgg16 resnet18_cifar mlp_mnist \\
+Produces the "16--19 bits for a claim" of ``sections/ext_v1.tex`` (the encoded claims of v0 on the benchmark's image
+models and decoders; the stored measurement is ``artifacts/results/development/wire_laptop.json``) and the A/B of the
+compact encoding against the uncoded proof.
+
+    python -m experiments.costs.wire --mnist <dir holding MNIST/raw> lenet5 vgg16 resnet18_cifar mlp_mnist \\
         gpt2:64 gpt2:512 qwen3-4b:8:1,2,4,8 llama2-7b:64:1,2
+    python -m experiments.costs.wire --out artifacts/results/development/wire_laptop.json --summary
 
-A spec is a CNN (``lenet5``, ``vgg11``, ``vgg16``, ``resnet18_cifar``: random init, as no trained
-weights are shipped; ``mlp_mnist``: the committed trained MLP) or ``decoder:tokens[:blocks]`` (the
-benchmark's random-weight decoders, all blocks by default; with several block counts the per-block
-slope extrapolates to the full model).  CNN queries are MNIST test digits, read with
-``download=False`` (padded to 32x32 and repeated on 3 channels for the CIFAR shapes: CIFAR-10 is
-not on this machine), calibrated on 512 training digits.
+A spec is an image model (``lenet5``, ``vgg11``, ``vgg16``, ``resnet18_cifar``: random weights with ``--seed``, as the
+shapes alone matter here; ``mlp_mnist``: the trained MLP of the attack) or ``decoder:tokens[:blocks]`` (the
+benchmark's random-weight decoders, all blocks by default; with several block counts the per-block slope extrapolates
+to the full model).  The image models' queries are MNIST test digits, read
+with ``download=False`` from ``--mnist`` (padded to 32x32 and repeated on 3 channels for the CIFAR shapes), calibrated
+on the first 512 training digits.
 
-Per spec and mode (C at lambda = 128 with interactive challenges; Kpre at lambda = 128, 40 for
-Qwen3-4B as in the Maverick row), ``run_query`` with and without ``wire`` alternate on the same
-queries and seeds, at each of ``--threads`` (1 and 4 by default): the medians of every byte and
-timing part, and the bits per claim.  Mode C of a decoder is sized without a commitment (the rate-4 commitment of a decoder takes
-minutes on a laptop CPU): the claims are encoded as the prover encodes them, ``u`` and the columns
-have fixed sizes, and the Merkle paths are those of the challenge ``run_query`` draws with seed 0.
-The codec's own throughput (encode, decode into int64, at the same thread counts) is compared with
-reading the same claims as int32 and widening them.  Nothing here writes to the benchmark's roots.
+Per spec and mode (C at ``--lam``, interactive; Kpre at ``--lam``, or the level of ``--kpre-lam`` for the model:
+Qwen3-4B at 40 as in Maverick's row), ``run_query`` with and without ``wire`` alternate on the same queries and seeds,
+at each of ``--threads``: the medians of every byte and timing part, and the bits per claim.  Mode C is sized under the
+per-op commitment (one tree per weight op; the encoding's effect does not depend on the plan), and for a decoder
+without a commitment (the rate-4 commitment of a decoder takes minutes on a laptop CPU): the claims are encoded as the
+prover encodes them, ``u`` and the columns have fixed sizes, and the Merkle paths are those of the challenge
+``run_query`` draws with seed 0.  The codec's own throughput (encode, decode into int64, at the same thread counts)
+is compared with reading the same claims as int32 and widening them.
+
+Output: ``--out`` (default ``artifacts/results/development/wire.json``), a JSON object keyed by spec (``codec``:
+claims, bytes, ``bits_per_claim``; ``<mode>_lam<l>_threads<n>``: the A/B; ``C_lam<l>_exact``; ``builds``; ``git``,
+``seconds``, ``env``), updated after every spec; ``--summary`` prints its tables.  Runs on a laptop CPU: the stored
+specs took from 1 s (the MLP) to 191 s (GPT-2 at 512 tokens).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import statistics
-import sys
 import time
 from pathlib import Path
 
@@ -33,16 +41,21 @@ import numpy as np
 import torch
 from torch import nn
 
-from pvi.v0 import claimcodec
-from pvi.commit.cost import decoder_shapes, proof_bytes
+from experiments.common import cli, records
+from experiments.common.models import decoder_config
+from experiments.common.paths import CODE, MNIST_MODELS, RESULTS
 from pvi.commit.commitment import HASH_BYTES, multiproof_size, next_pow2
-from pvi.v0.transcript import Challenger
-from pvi.v0.prover import Prover
-from pvi.v0.verifier import Verifier
+from pvi.commit.cost import decoder_shapes, proof_bytes
+from pvi.v0 import claimcodec
 from pvi.v0.graph_commitment import commit_graph
 from pvi.v0.params import params_for
+from pvi.v0.prover import Prover
 from pvi.v0.query import run_query
+from pvi.v0.transcript import Challenger
+from pvi.v0.verifier import Verifier
 
+CNNS = {"lenet5": (1, 28), "vgg11": (3, 32), "vgg16": (3, 32), "resnet18_cifar": (3, 32)}
+OUT = RESULTS / "development" / "wire.json"
 
 
 def query_claims(graph, x) -> tuple[list[torch.Tensor], int]:
@@ -50,19 +63,18 @@ def query_claims(graph, x) -> tuple[list[torch.Tensor], int]:
     zs = list(Prover(graph).claims(x).values())
     return zs, len(claimcodec.encode(zs))
 
-CODE = Path(__file__).resolve().parents[2]
-CNNS = {"lenet5": (1, 28), "vgg11": (3, 32), "vgg16": (3, 32), "resnet18_cifar": (3, 32)}
-
 
 def _mnist(root: str):
     from torchvision import datasets
 
+    if not root:
+        raise SystemExit("the image models read MNIST from --mnist <dir holding MNIST/raw>")
     tr = datasets.MNIST(root, train=True, download=False)
     te = datasets.MNIST(root, train=False, download=False)
     return tr.data[:, None].float() / 255.0, te.data[:, None].float() / 255.0
 
 
-def _cnn(name: str, mnist, queries: int):
+def _cnn(name: str, mnist, queries: int, seed: int):
     from pvi.models.cnn import build_float_model
     from pvi.models.quantize import quantize_input, quantize_model
 
@@ -73,15 +85,18 @@ def _cnn(name: str, mnist, queries: int):
     def prep(x):   # the benchmark's MNIST normalisation; the CIFAR shapes: padded and on 3 channels
         x = torch.nn.functional.pad((x - 0.1307) / 0.3081, (pad,) * 4, value=-0.1307 / 0.3081)
         return x.repeat(1, channels, 1, 1)
-    torch.manual_seed(0)
+    torch.manual_seed(seed)
     graph = quantize_model(build_float_model(name, 10).eval(), prep(train[:512]))
     return graph, [quantize_input(graph, prep(test[i:i + 1])) for i in range(queries)]
 
 
 def _mlp(mnist, queries: int):
+    """The trained MLP of the attack (``artifacts/models/mlp_mnist_full.npz``), calibrated on the first 512 training
+    digits in ``[0, 1]`` (the stored measurement; :func:`experiments.common.models.trained_mlp`, which ``bench.py``
+    uses, calibrates on 512 shuffled ones, so its claims differ slightly) and queried on the first test digits."""
     from pvi.models.quantize import quantize_input, quantize_model
 
-    d = np.load(CODE / "artifacts" / "models" / "mlp_mnist_full.npz")
+    d = np.load(MNIST_MODELS / "mlp_mnist_full.npz")
     mods: list[nn.Module] = []
     for i, name in enumerate(["fc1", "fc2", "logits"]):
         w, b = d[name + ".weight"], d[name + ".bias"]
@@ -89,16 +104,16 @@ def _mlp(mnist, queries: int):
         lin.weight.data, lin.bias.data = torch.from_numpy(w.astype(np.float32)), torch.from_numpy(b.astype(np.float32))
         mods += [lin] + ([nn.ReLU()] if i < 2 else [])
     train, test = mnist
-    graph = quantize_model(nn.Sequential(*mods).eval(), train[:512].reshape(-1, 784))   # as bench.py: [0, 1] pixels
+    graph = quantize_model(nn.Sequential(*mods).eval(), train[:512].reshape(-1, 784))
     return graph, [quantize_input(graph, test[i:i + 1].reshape(-1, 784)) for i in range(queries)]
 
 
-def _decoder(model: str, seq: int, n_layers: int | None, queries: int):
-    from pvi.models.decoder import CONFIGS, build_decoder
+def _decoder(model: str, seq: int, n_layers: int | None, queries: int, seed: int, prompt_seed: int):
+    from pvi.models.decoder import build_decoder
 
-    cfg = CONFIGS[model]
-    graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=min(seq, 32), seed=0)
-    tokens = torch.randint(0, cfg.vocab, (queries, seq), generator=torch.Generator().manual_seed(1))
+    cfg = decoder_config(model)
+    graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=min(seq, cli.CALIB_TOKENS), seed=seed)
+    tokens = torch.randint(0, cfg.vocab, (queries, seq), generator=torch.Generator().manual_seed(prompt_seed))
     return graph, list(tokens.split(1)), len(decoder_shapes(cfg))
 
 
@@ -156,8 +171,8 @@ def _codec(zs: list[torch.Tensor], reps: int, thread_counts: list[int]) -> dict:
     return out
 
 
-def _mode_c_exact(graph, params, zs: list[torch.Tensor], encoded: int, rate: int = 4) -> dict:
-    """Mode C's proof bytes without a commitment: the byte model (``analytic.proof_bytes``; the claims
+def _mode_c_exact(graph, params, zs: list[torch.Tensor], encoded: int, rate: int = cli.RATE) -> dict:
+    """Mode C's proof bytes without a commitment: the byte model (``cost.proof_bytes``; the claims
     ``zs``, ``encoded`` bytes with wire), with the Merkle paths of the columns ``run_query`` draws with
     seed 0 (the same with and without wire) in place of their expectation."""
     mats = graph.mat_ops
@@ -179,12 +194,12 @@ def run(spec: str, args) -> dict:
     out = {"spec": spec}
     if name in CNNS or name == "mlp_mnist":
         mnist = _mnist(args.mnist)
-        graph, xs = _mlp(mnist, args.queries) if name == "mlp_mnist" else _cnn(name, mnist, args.queries)
+        graph, xs = _mlp(mnist, args.queries) if name == "mlp_mnist" else _cnn(name, mnist, args.queries, args.seed)
         n_checks = len(graph.mat_ops)
     else:   # the claims of every block count; the last build is kept for the timings
         seq, blocks = int(rest[0]), ([int(b) for b in rest[1].split(",")] if len(rest) > 1 else [None])
         for b in blocks:
-            graph, xs, n_checks = _decoder(name, seq, b, args.queries)
+            graph, xs, n_checks = _decoder(name, seq, b, args.queries, args.seed, args.prompt_seed)
             if b is not None:
                 zs, encoded = query_claims(graph, xs[0])
                 out.setdefault("builds", {})[str(b)] = {"claims": sum(z.numel() for z in zs), "wire_bytes": encoded}
@@ -196,14 +211,15 @@ def run(spec: str, args) -> dict:
     out["ops"] = len(mats)
     prover = Prover(graph)
     weights = {op.name: (op.weight, op.bias) for op in mats}
-    lam_kpre = 40 if name == "qwen3-4b" else 128
-    modes = [("Kpre", lam_kpre)] + ([("C", 128)] if name in CNNS or name == "mlp_mnist" else [])
+    lam_kpre = dict(args.kpre_lam).get(name, args.lam)
+    modes = [("Kpre", lam_kpre)] + ([("C", args.lam)] if name in CNNS or name == "mlp_mnist" else [])
     for mode, lam in modes:
-        params = params_for(lam, n_checks)
-        if mode == "C":
-            coms = commit_graph(graph, params.rate)
+        params = params_for(lam, n_checks, rate=cli.RATE)
+        if mode == "C":                               # the per-op commitment (module docstring)
+            coms = commit_graph(graph, params.rate, policy="per-op")
             prover = Prover(graph, commitments=coms)
-            v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
+            v = Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                         tables=coms.table_publics)
         else:
             v = Verifier(graph.public(), params, "Kpre", weights=weights)
             v.precompute(Challenger())
@@ -211,14 +227,16 @@ def run(spec: str, args) -> dict:
             torch.set_num_threads(threads)
             out[f"{mode}_lam{lam}_threads{threads}"] = _ab(prover, v, xs, args.reps)
     if name not in CNNS and name != "mlp_mnist":
-        out["C_lam128_exact"] = _mode_c_exact(graph, params_for(128, n_checks), zs, encoded)
+        out[f"C_lam{args.lam}_exact"] = _mode_c_exact(graph, params_for(args.lam, n_checks, rate=cli.RATE), zs,
+                                                       encoded)
     return out
 
 
 def summary(results: dict) -> str:
     """Markdown tables of a results file: the claims, whole proofs, verifier times, codec throughput
     and, for decoders measured at several block counts, the per-block slope."""
-    rows = ["| Model | Claims | int32 (B) | PVC3 (B) | Bits/claim (uncentred) | Smaller |", "|---|---:|---:|---:|---:|---:|"]
+    rows = ["| Model | Claims | int32 (B) | PVC3 (B) | Bits/claim (uncentred) | Smaller |",
+            "|---|---:|---:|---:|---:|---:|"]
     for spec, r in results.items():
         c = r["codec"]
         rows.append(f"| {spec} | {c['claims']:,} | {4 * c['claims']:,} | {c['bytes']:,} | {c['bits_per_claim']:.2f} "
@@ -226,52 +244,65 @@ def summary(results: dict) -> str:
     rows += ["", "| Model | Mode | Default (B) | Wire (B) | Smaller | claims / u / columns / paths (wire) |",
              "|---|---|---:|---:|---:|---|"]
     for spec, r in results.items():
-        for key in sorted(k for k in r if k.endswith("_threads" + min(k2.split("threads")[1] for k2 in r if "_threads" in k2))
-                          or k.endswith("_exact")):
+        fewest = min(k2.split("threads")[1] for k2 in r if "_threads" in k2)
+        for key in sorted(k for k in r if k.endswith("_threads" + fewest) or k.endswith("_exact")):
             d, w = (r[key][s] if key.endswith("_exact") else r[key][s]["bytes"] for s in ("default", "wire"))
             rows.append(f"| {spec} | {key.split('_threads')[0]} | {sum(d.values()):,.0f} | {sum(w.values()):,.0f} | "
                         f"{sum(d.values()) / sum(w.values()):.3f}x | "
                         f"{' / '.join(f'{w[k]:,.0f}' for k in ('claims', 'u', 'columns', 'paths'))} |")
-    rows += ["", "| Model | Mode | Threads | Verifier (ms) | Wire verifier (ms) | verify_decode (ms) | Decode / verifier | "
-             "prove_encode (ms) |", "|---|---|---:|---:|---:|---:|---:|---:|"]
+    rows += ["", "| Model | Mode | Threads | Verifier (ms) | Wire verifier (ms) | verify_decode (ms) | "
+             "Decode / verifier | prove_encode (ms) |", "|---|---|---:|---:|---:|---:|---:|---:|"]
     for spec, r in results.items():
         for key in sorted(k for k in r if "_threads" in k):
             d, w = r[key]["default"], r[key]["wire"]
             dec = w["timings"]["verify_decode"]
-            rows.append(f"| {spec} | {key.split('_threads')[0]} | {key.split('threads')[1]} | {1e3 * d['verify']:.2f} | "
-                        f"{1e3 * w['verify']:.2f} | {1e3 * dec:.2f} | {100 * dec / d['verify']:.0f}% | "
-                        f"{1e3 * w['timings']['prove_encode']:.2f} |")
+            rows.append(f"| {spec} | {key.split('_threads')[0]} | {key.split('threads')[1]} | "
+                        f"{1e3 * d['verify']:.2f} | {1e3 * w['verify']:.2f} | {1e3 * dec:.2f} | "
+                        f"{100 * dec / d['verify']:.0f}% | {1e3 * w['timings']['prove_encode']:.2f} |")
     rows += ["", "| Model | Threads | Encode (M claims/s) | Decode | int32 parse |", "|---|---|---:|---:|---:|"]
     for spec, r in results.items():
         c = r["codec"]
         threads = sorted(k for k in c if k.startswith("threads"))
         rows.append(f"| {spec} | {' / '.join(t[7:] for t in threads)} | " + " | ".join(
-            " / ".join(f"{c[t][k + '_Mclaims_per_s']:.0f}" for t in threads) for k in ("encode", "decode", "int32_parse")) + " |")
+            " / ".join(f"{c[t][k + '_Mclaims_per_s']:.0f}" for t in threads)
+            for k in ("encode", "decode", "int32_parse")) + " |")
     for spec, r in results.items():
         builds = sorted((int(b), v) for b, v in r.get("builds", {}).items())
         if len(builds) >= 2:
-            from pvi.models.decoder import CONFIGS
             (b0, v0), (b1, v1) = builds[-2:]
             per_block = (v1["wire_bytes"] - v0["wire_bytes"]) / (b1 - b0)
             per_claims = (v1["claims"] - v0["claims"]) / (b1 - b0)
-            full = CONFIGS[spec.split(":")[0]].n_layers
+            full = decoder_config(spec.split(":")[0]).n_layers
             claims = v1["claims"] + (full - b1) * per_claims
             wire = v1["wire_bytes"] + (full - b1) * per_block
-            rows += ["", f"{spec}: " + ", ".join(f"L{b} {v['claims']:,} claims -> {v['wire_bytes']:,} B" for b, v in builds)
+            rows += ["", f"{spec}: " + ", ".join(f"L{b} {v['claims']:,} claims -> {v['wire_bytes']:,} B"
+                                                 for b, v in builds)
                      + f"; per block {per_block:,.0f} B ({8 * per_block / per_claims:.3f} bits/claim); {full} blocks: "
                      f"{4 * claims:,.0f} -> {wire:,.0f} B ({4 * claims / wire:.3f}x)"]
     return "\n".join(rows)
 
 
+def _level(text: str) -> tuple[str, int]:
+    name, _, bits = text.partition("=")
+    if not bits.isdigit():
+        raise argparse.ArgumentTypeError(f"MODEL=BITS, not {text!r}")
+    return name, int(bits)
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("specs", nargs="*")
-    ap.add_argument("--mnist", help="directory holding MNIST/raw (read with download=False), for the CNNs")
-    ap.add_argument("--queries", type=int, default=5)
-    ap.add_argument("--reps", type=int, default=7)
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("specs", nargs="*", help="image models and decoder:tokens[:blocks] (module docstring)")
+    ap.add_argument("--mnist", help="directory holding MNIST/raw (read with download=False), for the image models")
+    ap.add_argument("--queries", type=int, default=5, help="distinct queries per spec")
+    ap.add_argument("--reps", type=int, default=7, help="timed queries per encoding (and codec repetitions)")
     ap.add_argument("--threads", type=lambda s: [int(t) for t in s.split(",")], default=[1, 4],
                     help="torch threads (and decoder workers), e.g. 1,8 for the paper's verifier")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--lam", type=int, default=cli.PAPER.lam, help="security level of the modes")
+    ap.add_argument("--kpre-lam", type=_level, nargs="*", default=[("qwen3-4b", 40)], metavar="MODEL=BITS",
+                    help="mode Kpre's security level for these models (default qwen3-4b=40, Maverick's setting)")
+    ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
+    ap.add_argument("--prompt-seed", type=int, default=1, help="the decoders' random prompts' seed")
+    ap.add_argument("--out", default=str(OUT), help="the results file (JSON, updated after every spec)")
     ap.add_argument("--summary", action="store_true", help="print the tables of --out")
     args = ap.parse_args()
     path = Path(args.out)
@@ -279,12 +310,12 @@ def main() -> None:
     if args.summary:
         print(summary(results))
         return
-    from pvi.results import git_sha
-    sha = git_sha(CODE)
+    sha = records.git_sha(CODE)
+    env = records.environment("cpu")
     for spec in args.specs:
         t0 = time.perf_counter()
-        results[spec] = dict(run(spec, args), git=sha, seconds=time.perf_counter() - t0)
-        path.write_text(json.dumps(results, indent=1))
+        results[spec] = dict(run(spec, args), git=sha, seconds=time.perf_counter() - t0, env=env)
+        records.write_json(path, results, indent=1)
         c = results[spec]["codec"]
         print(f"{spec}: {c['claims']} claims, {c['bits_per_claim']:.3f} bits/claim "
               f"({4 * c['claims'] / c['bytes']:.3f}x smaller than int32), {time.perf_counter() - t0:.0f} s", flush=True)

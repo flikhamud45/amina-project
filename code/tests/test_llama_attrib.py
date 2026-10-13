@@ -1,6 +1,6 @@
-"""experiments/9_quality/llama_attrib.py (plan 2, F2b-Q): the op-level attribution of the integer Llama / Qwen3 graph
-against the fp32 checkpoint, and the q/k balance it led to (``real_llama``'s ``qk_balance``), on tiny randomly
-initialised Hugging Face models (no download).
+"""``experiments.quality.llama_attrib``: the op-level attribution of the integer Llama / Qwen3 graph against the fp32
+checkpoint, and the q/k-norm balance it led to (``hf_llama``'s ``qk_balance``), on tiny randomly initialised Hugging
+Face models (no download).
 
 The tiny models are ``test_real_llama.py``'s (2 blocks, d = 64, head_dim 16, gains in [0.5, 1.5], weights of std
 0.15; calibration 2 x 32 random tokens, evaluation 4 x 32). Measured on the smoothed recipe (seeds 0 / 1; the
@@ -16,7 +16,10 @@ score error an op adds (nats), largest          0.025 / 0.037         0.033 / 0.
 attention score error (nats), largest           0.17 / 0.19           0.054 / 0.069
 =============================================  ====================  ====================
 
-(seed 1's 0.13 is the pruned Llama block's SwiGLU product: four positions whose products use few int8 levels.) A
+(seed 1's 0.13 is the pruned Llama block's SwiGLU product: four positions whose products use few int8 levels.) The
+main recipe (``hf_llama.MAIN_RECIPE``: the smoothed recipe with the SwiGLU product balance, here with the prefix) tracks
+as closely, but for the product's own error on the tiny Llama (mean cosine 0.9989, relative error 0.074 in seed 0's
+first block); the attribution undoes the balance's factors (without that, the up projection is flagged).  A
 broken builder is caught at its op: a q (k) norm gain on the wrong channels, or a SwiGLU product off by 2x (local
 relative error 1.0 at an unchanged cosine: only the relative error sees a scale), flags that op and nothing before
 it.
@@ -26,30 +29,28 @@ The realistic case: a tiny Qwen3 with Qwen3-0.6B-Base's real layer-0 q/k-norm ga
 96.5, 38.3 and 26.3 on channels 50, 115 and 88 -- median 2.3 -- where q's is 0.003, 0.18 and 0.02), head_dim 128,
 1 block, d = 128, 4 / 2 heads, random weights; calibration 4 x 64, evaluation 2 x 64. Without the balance the
 first block's output falls to a mean cosine 0.872 / 0.783 (seeds 0 / 1, smoothed, teacher-forced; scalar gain 4:
-0.827 / 0.737) -- the shape of the real Qwen3-0.6B-Base's first block (0.889 smoothed, 0.865 scalar, job 1009531)
--- and the attribution puts it on the k norm: it adds 0.90 / 1.10 nats to the attention scores' error (q norm 0.24
-/ 0.27, every other op <= 0.15), 31% / 35% of its int8 outputs are 0. With the balance (the default): k norm 0.11 /
-0.14 nats, q norm 0.11 / 0.12, the block's output 0.987 / 0.983 (scalar: 0.955 / 0.939, where the norm's gain-4
-resolution then dominates: 0.31 nats).
+0.827 / 0.737) -- the shape of the real Qwen3-0.6B-Base's first block (0.889 smoothed, 0.865 scalar, in
+``llama_diag.py``'s diagnosis of the graph before the balance) -- and the attribution puts it on the k norm: it adds
+0.90 / 1.10 nats to the attention scores' error (q norm 0.24 / 0.27, every other op <= 0.15), 31% / 35% of its int8
+outputs are 0. With the balance (the default): k norm 0.11 / 0.14 nats, q norm 0.11 / 0.12, the block's output 0.987
+/ 0.983 (scalar: 0.955 / 0.939, where the norm's gain-4 resolution then dominates: 0.31 nats).
 """
 
 from __future__ import annotations
-
-import sys
-from pathlib import Path
 
 import pytest
 import torch
 
 transformers = pytest.importorskip("transformers")
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments" / "9_quality"))
-import llama_attrib as la  # noqa: E402
-
-from pvi.models import hf_llama as rl  # noqa: E402
+from experiments.quality import llama_attrib as la  # noqa: E402
+from pvi.models import hf_llama  # noqa: E402
 
 SMOOTH = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
-VARIANTS = {"plain": {}, "prune": {"prune_last": True}, "prefix": {"prefix_tokens": (5, 17)}, "exp8": {"glu_exp": 8}}
+VARIANTS = {"plain": {}, "prune": {"prune_last": True}, "prefix": {"prefix_tokens": (5, 17)}, "exp8": {"glu_exp": 8},
+            "main": {"glu_smooth": hf_llama.MAIN_RECIPE["glu_smooth"], "prefix_tokens": (5, 17)}}
+"""The graphs compared: ``SMOOTH`` alone, pruned, with a prefix, with the per-token exponent, and the main recipe
+(``hf_llama.MAIN_RECIPE``: ``SMOOTH`` with the SwiGLU product balance) with a prefix."""
 _CACHE: dict = {}
 
 REAL_Q_NORM_L0 = (
@@ -127,7 +128,7 @@ def _setup(kind: str, variant: str = "plain"):
         model = _CACHE.setdefault(kind, _tiny(kind))
         calib, x = _data(32, 2, 4)
         with torch.no_grad():
-            graph, info = rl.build_llama_from_hf(model, calib, **SMOOTH, **VARIANTS[variant])
+            graph, info = hf_llama.build_llama_from_hf(model, calib, **SMOOTH, **VARIANTS[variant])
         _CACHE[key] = model, graph, info, calib, x
     return _CACHE[key]
 
@@ -144,7 +145,7 @@ def _attribute(model, graph, info, x, mode, prefix=None, blocks=(0, 1)):
 def test_the_role_map_names_every_tensor_of_every_block(kind, variant):
     _, graph, info, _, _ = _setup(kind, variant)
     assert la.check_roles(graph, info) == []
-    want = {r for r, *_ in rl.ROLES} - (set() if kind == "qwen3" else {"q_norm", "k_norm"}) | {"in"}
+    want = {r for r, *_ in hf_llama.ROLES} - (set() if kind == "qwen3" else {"q_norm", "k_norm"}) | {"in"}
     assert all(set(roles) == want for roles in info["roles"]) and len(info["roles"]) == 2
     assert all(n in info["scales"] for roles in info["roles"] for n in roles.values())
     # the blocks' op ranges tile the graph from the first block's norm to the last block's residual add
@@ -173,7 +174,7 @@ def test_the_exact_ops_on_the_checkpoints_inputs_give_its_outputs(kind, prefix):
     # keys are HF's KV cache.
     model = _tiny(kind)
     _, x = _data(32, 2, 4)
-    cfg = rl.config_of(model.config)
+    cfg = hf_llama.config_of(model.config)
     hq, hkv, dh = cfg.n_heads, cfg.n_kv_heads, cfg.head_dim
     with torch.no_grad():
         hf = la.hf_activations(model, x, [0, 1], prefix)
@@ -213,7 +214,7 @@ def test_the_exact_ops_on_the_checkpoints_inputs_give_its_outputs(kind, prefix):
 
 
 @pytest.mark.parametrize("kind", ["llama", "qwen3"])
-@pytest.mark.parametrize("variant", ["plain", "prune", "prefix"])
+@pytest.mark.parametrize("variant", ["plain", "prune", "prefix", "main"])
 def test_the_runner_and_teacher_forcing_give_the_graphs_own_integers(kind, variant):
     # the accumulated run's tensors are the plain forward's, integer for integer; and teacher forcing a block with the
     # graph's own residual (in real units) reproduces the accumulated block exactly
@@ -237,7 +238,7 @@ def test_a_one_block_build_has_the_full_builds_first_block(kind):
     # --blocks 0 builds one block: the same block 0, integer for integer, with the same scales
     model, graph, info, calib, x = _setup(kind, "prefix")
     with torch.no_grad():
-        one, info1 = rl.build_llama_from_hf(model, calib, n_layers=1, prefix_tokens=(5, 17), **SMOOTH)
+        one, info1 = hf_llama.build_llama_from_hf(model, calib, n_layers=1, prefix_tokens=(5, 17), **SMOOTH)
     assert info1["roles"][0] == info["roles"][0] and info1["s_residual"] == info["s_residual"]
     names = list(info["roles"][0].values())
     assert all(torch.equal(torch.as_tensor(info1["scales"][n]), torch.as_tensor(info["scales"][n])) for n in names)
@@ -254,23 +255,46 @@ def test_a_one_block_build_has_the_full_builds_first_block(kind):
 def test_every_tensor_of_the_smoothed_graph_tracks_the_checkpoint(kind, variant, mode):
     model, graph, info, _, x = _setup(kind, variant)
     res = _attribute(model, graph, info, x, mode, VARIANTS[variant].get("prefix_tokens"))
+    # (on these random weights the product balance leaves the SwiGLU product a little less resolution: its own mean
+    # cosine 0.9989 on the tiny Llama's first block, relative error 0.074)
+    local_cos = 0.998 if variant == "main" else 0.999
     for r in res:
         for role, row in r["rows"].items():
             assert row["vs_hf"]["cos_mean"] >= (0.98 if mode == "accumulated" else 0.99), (r["block"], role, row)
-            assert row["local"]["cos_mean"] >= 0.999 and row["local"]["rel"] <= 0.08, (r["block"], role, row)
+            assert row["local"]["cos_mean"] >= local_cos and row["local"]["rel"] <= 0.08, (r["block"], role, row)
         steps = la.score_steps(r["pattern"])
         assert max(v for k, v in steps.items() if k != "in") <= 0.08, steps
         assert r["pattern"]["qk"]["score_err_nats"] <= (0.25 if mode == "accumulated" else 0.1), r["pattern"]["qk"]
         assert la.first_flag(r, 0.1, 0.99, 0.1) is None
-    # the accumulated block outputs are llama_diag.py's per-block cosines (real_llama.block_cosines)
+    # the accumulated block outputs are llama_diag.py's per-block cosines (hf_llama.block_cosines)
     if mode == "accumulated":
         prefix = VARIANTS[variant].get("prefix_tokens")
         with torch.no_grad():
-            diag = rl.block_cosines(rl.residual_states(graph, info, x), rl.hf_residual_states(model, x, prefix=prefix))
+            diag = hf_llama.block_cosines(hf_llama.residual_states(graph, info, x),
+                                          hf_llama.hf_residual_states(model, x, prefix=prefix))
         for r in res:
             out = r["rows"]["res_mlp"]["vs_hf"]
             assert abs(out["cos_mean"] - diag[r["block"] + 1]["mean"]) < 1e-9
             assert abs(out["cos_min"] - diag[r["block"] + 1]["min"]) < 1e-9
+
+
+@pytest.mark.parametrize("kind", ["llama", "qwen3"])
+@pytest.mark.parametrize("mode", ["accumulated", "teacher"])
+def test_the_product_balance_is_undone_in_the_checkpoints_units(kind, mode):
+    # glu_smooth divides up's row j by g_j and multiplies the down projection's column j by it; the attribution brings
+    # up's tensors and the product back by g_j (above: every op's own error stays small).  Without that, the exact up
+    # projection and the exact down projection see inputs in the balanced units: the up projection is flagged
+    model, graph, info, _, x = _setup(kind, "main")
+    g = info["glu_smooth_g"]
+    assert all(t is not None for t in g) and float(max(t.max() / t.min() for t in g)) > 1.5
+    unbalanced = dict(info, glu_smooth_g=[None] * len(g))
+    for b in (0, 1):
+        right = _attribute(model, graph, info, x, mode, (5, 17), blocks=(b,))[0]
+        wrong = _attribute(model, graph, unbalanced, x, mode, (5, 17), blocks=(b,))[0]
+        assert la.first_flag(right, 0.1, 0.99, 0.1) is None and la.first_flag(wrong, 0.1, 0.99, 0.1) == "up_proj"
+        for role in ("up_proj", "down_proj"):
+            assert wrong["rows"][role]["local"]["rel"] > 0.1 > 0.02 > right["rows"][role]["local"]["rel"], role
+        assert wrong["rows"]["down_proj"]["vs_hf"] == right["rows"]["down_proj"]["vs_hf"]
 
 
 # ------------------------------------------------------------------ a broken builder is caught at its op
@@ -278,14 +302,14 @@ def test_every_tensor_of_the_smoothed_graph_tracks_the_checkpoint(kind, variant,
 @pytest.mark.parametrize("side", ["q", "k"])
 def test_a_wrong_q_or_k_norm_gain_is_caught_at_that_norm(side, monkeypatch):
     model, _, _, calib, x = _setup("qwen3")
-    right = rl._Builder.head_norm
+    right = hf_llama._Builder.head_norm
 
     def wrong(self, z, heads, dh, gamma, prefix, note, c=None):
         return right(self, z, heads, dh, gamma.flip(0) if note == f"{side} norm" else gamma, prefix, note, c=c)
 
-    monkeypatch.setattr(rl._Builder, "head_norm", wrong)
+    monkeypatch.setattr(hf_llama._Builder, "head_norm", wrong)
     with torch.no_grad():
-        graph, info = rl.build_llama_from_hf(model, calib, **SMOOTH)
+        graph, info = hf_llama.build_llama_from_hf(model, calib, **SMOOTH)
     for mode in ("teacher", "accumulated"):
         r = _attribute(model, graph, info, x, mode, blocks=(0,))[0]
         assert la.first_flag(r, 0.1, 0.99, 0.1) == f"{side}_norm", mode
@@ -299,7 +323,7 @@ def test_a_swiglu_product_off_by_two_is_caught_at_the_product(kind, monkeypatch)
     right = core_graph.requant_mul                                  # the product op's integer map (mul_requant/1)
     monkeypatch.setattr(core_graph, "requant_mul", lambda a, b, m, *rest: right(a, b, m * 2, *rest))
     with torch.no_grad():
-        graph, info = rl.build_llama_from_hf(model, calib, **SMOOTH)
+        graph, info = hf_llama.build_llama_from_hf(model, calib, **SMOOTH)
     for mode in ("teacher", "accumulated"):
         r = _attribute(model, graph, info, x, mode, blocks=(0,))[0]
         assert la.first_flag(r, 0.1, 0.99, 0.1) == "glu", mode
@@ -314,8 +338,8 @@ def test_qwen3_06b_k_norm_gains_cost_the_scores_and_the_balance_restores_them(mo
     model = _realistic_qwen3()
     calib, x = _data(64, 4, 2)
     with torch.no_grad():
-        old, old_info = rl.build_llama_from_hf(model, calib, qk_balance=False, **SMOOTH)
-        new, new_info = rl.build_llama_from_hf(model, calib, **SMOOTH)            # qk_balance: the default
+        old, old_info = hf_llama.build_llama_from_hf(model, calib, qk_balance=False, **SMOOTH)
+        new, new_info = hf_llama.build_llama_from_hf(model, calib, **SMOOTH)            # qk_balance: the default
     a = _attribute(model, old, old_info, x, mode, blocks=(0,))[0]
     b = _attribute(model, new, new_info, x, mode, blocks=(0,))[0]
     sa, sb = la.score_steps(a["pattern"]), la.score_steps(b["pattern"])
@@ -338,13 +362,13 @@ def test_qwen3_06b_k_norm_gains_cost_the_scores_and_the_balance_restores_them(mo
 def test_the_balance_leaves_llama_graphs_and_the_structure_alone():
     model, _, _, calib, _ = _setup("llama")
     with torch.no_grad():
-        on, info = rl.build_llama_from_hf(model, calib, **SMOOTH)
-        off, _ = rl.build_llama_from_hf(model, calib, qk_balance=False, **SMOOTH)
+        on, info = hf_llama.build_llama_from_hf(model, calib, **SMOOTH)
+        off, _ = hf_llama.build_llama_from_hf(model, calib, qk_balance=False, **SMOOTH)
     assert on.digest() == off.digest() and not info["qk_balance"] and info["qk_balance_c"] == [None, None]
     qwen, _, _, qcalib, _ = _setup("qwen3")
     with torch.no_grad():
-        on, _ = rl.build_llama_from_hf(qwen, qcalib, **SMOOTH)
-        off, _ = rl.build_llama_from_hf(qwen, qcalib, qk_balance=False, **SMOOTH)
+        on, _ = hf_llama.build_llama_from_hf(qwen, qcalib, **SMOOTH)
+        off, _ = hf_llama.build_llama_from_hf(qwen, qcalib, qk_balance=False, **SMOOTH)
     assert on.digest() != off.digest()                  # other gain constants: the digest binds them
-    shape = rl.config_of(qwen.config)
-    assert rl.matches_benchmark_graph(on, shape) == [] == rl.matches_benchmark_graph(off, shape)
+    shape = hf_llama.config_of(qwen.config)
+    assert hf_llama.matches_benchmark_graph(on, shape) == [] == hf_llama.matches_benchmark_graph(off, shape)

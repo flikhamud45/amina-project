@@ -27,6 +27,7 @@ can never change a timing's window, a verdict, a byte of a proof, or stop a run.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from typing import NamedTuple
@@ -95,8 +96,27 @@ def snapshot() -> Snapshot:
     return Snapshot(time.perf_counter(), _threads(), _loadavg(), _rusage())
 
 
+_PAUSED = 0
+
+
+@contextlib.contextmanager
+def paused():
+    """No phase snapshots inside the block (:func:`begin` returns ``None``, so :func:`add` records nothing): for a
+    caller that times a whole computation as one window and must not pay for the per-phase ``/proc`` reads inside
+    it.  Measurement only; nothing else changes."""
+    global _PAUSED
+    _PAUSED += 1
+    try:
+        yield
+    finally:
+        _PAUSED -= 1
+
+
 def begin() -> Snapshot | None:
-    """The snapshot that opens a phase (``None`` if taking it failed: :func:`add` then records nothing)."""
+    """The snapshot that opens a phase (``None`` if taking it failed or inside :func:`paused`: :func:`add` then
+    records nothing)."""
+    if _PAUSED:
+        return None
     try:
         return snapshot()
     except Exception:            # pragma: no cover - measurement must never stop a run

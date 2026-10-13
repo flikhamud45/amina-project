@@ -21,35 +21,41 @@ from types import SimpleNamespace
 import torch
 import torch.nn.functional as F
 
+from pvi.models.hf_opt import CERTIFIED_RECIPE, LEGACY_RECIPE
+
 __all__ = ["wikitext", "windows", "load_windows", "certified_calibration", "is_opt", "load_opt", "load_llama",
            "smoke_model", "token_ids", "prefix_of", "llama_calibration", "load_real", "real_graph", "recipe_name",
-           "graph_report", "weights_sha", "Scorer", "SMOOTH"]
+           "graph_report", "weights_sha", "Scorer", "SMOOTH", "OPT_RECIPES"]
 
-_TEST = "wikitext-2-raw-v1/test-00000-of-00001.parquet"
-_TRAIN = "wikitext-2-raw-v1/train-00000-of-00001.parquet"
-_CACHED_TEST = os.path.expanduser("~/.cache/huggingface/hub/datasets--Salesforce--wikitext/snapshots/*/" + _TEST)
+_SPLITS = {"test": "wikitext-2-raw-v1/test-00000-of-00001.parquet",
+           "validation": "wikitext-2-raw-v1/validation-00000-of-00001.parquet",
+           "train": "wikitext-2-raw-v1/train-00000-of-00001.parquet"}
+_CACHED = os.path.expanduser("~/.cache/huggingface/hub/datasets--Salesforce--wikitext/snapshots/*/")
 CALIB_CHARS = 4_000_000
 """The certified recipes calibrate on windows of the first 4,000,000 characters of the train split."""
 SMOOTH = dict(smooth_pct=99.9, pct=99.99, pct_att=99.99)
-"""The earlier OPT recipe's clipping with ``--smooth alpha``: SmoothQuant through the norm gains, 99.99th-percentile
-clipping; norm gain 4 either way."""
+"""The clipping of the OPT percentile recipe (``recipe="legacy"`` with ``--smooth alpha``): SmoothQuant through the
+norm gains, 99.99th-percentile clipping; norm gain 4 either way."""
+OPT_RECIPES = {"certified": dict(CERTIFIED_RECIPE), "legacy": dict(LEGACY_RECIPE)}
+"""The integer OPT recipes the experiments take by name (``--recipe``): ``certified`` (``hf_opt.CERTIFIED_RECIPE``)
+and ``legacy``, the percentile recipe (``hf_opt.LEGACY_RECIPE``)."""
 
 
 # ------------------------------------------------------------------ WikiText-2
 def _parquet(split: str, path: str | None = None) -> str:
     if path:
         return path
-    if split == "test":
-        hits = glob.glob(_CACHED_TEST)
-        if hits:
-            return hits[0]
+    if split not in _SPLITS:
+        raise ValueError(f"WikiText-2 has the splits {', '.join(_SPLITS)}, not {split!r}")
+    hits = glob.glob(_CACHED + _SPLITS[split])
+    if hits:
+        return hits[0]
     from huggingface_hub import hf_hub_download
-    return hf_hub_download(repo_id="Salesforce/wikitext", filename=_TEST if split == "test" else _TRAIN,
-                           repo_type="dataset")
+    return hf_hub_download(repo_id="Salesforce/wikitext", filename=_SPLITS[split], repo_type="dataset")
 
 
 def wikitext(split: str, path: str | None = None, sep: str = "\n\n") -> str:
-    """WikiText-2 (raw) ``split`` ("test" or "train") with its lines joined by ``sep``."""
+    """WikiText-2 (raw) ``split`` ("test", "validation" or "train") with its lines joined by ``sep``."""
     import pyarrow.parquet as pq
     return sep.join(pq.read_table(_parquet(split, path)).column("text").to_pylist())
 
@@ -215,15 +221,17 @@ def prefix_of(spec, model, calib: torch.Tensor, tok=None) -> tuple[list[int] | N
     return ids, stats
 
 
-def llama_calibration(model, tok, n: int = 4, seq: int = 2048) -> SimpleNamespace:
+def llama_calibration(model, tok, n: int = 4, seq: int = 2048, name: str = "") -> SimpleNamespace:
     """The main Llama recipe's calibration (``hf_llama.MAIN_RECIPE``): ``ids``, ``n`` windows of ``seq`` tokens of the
     train split's first :data:`CALIB_CHARS` characters (tokenised without special tokens), and ``prefix``, the fixed
-    public prefix PrefixQuant's rule picks on them (``prefix_info``: the record of the choice)."""
+    public prefix PrefixQuant's rule picks on them (``prefix_info``: the record of the choice), and ``recipe``, the
+    main recipe at the checkpoint ``name``'s settings (``hf_llama.main_recipe``)."""
     train = token_ids(tok, wikitext("train")[:CALIB_CHARS], "auto")
     ids = torch.cat(windows(train, seq, n, start=0))
     with torch.no_grad():
         prefix, info = prefix_of("auto", model, ids, tok)
-    return SimpleNamespace(ids=ids, prefix=prefix, prefix_info=info)
+    from pvi.models import hf_llama
+    return SimpleNamespace(ids=ids, prefix=prefix, prefix_info=info, recipe=hf_llama.main_recipe(name))
 
 
 # ------------------------------------------------------------------ real queries and their integer graphs
@@ -237,7 +245,7 @@ def load_real(name: str, seq: int, n_queries: int, calib_seq: int = 0, recipe: s
         model, tok = load_llama(name)
         test = token_ids(tok, wikitext("test"), "auto")
         queries = windows(test, seq, n_queries)[:n_queries]
-        return model, queries, llama_calibration(model, tok)
+        return model, queries, llama_calibration(model, tok, name=name)
     model, tok = load_opt(name)
     queries, _ = load_windows(tok, seq=seq, n=n_queries, calib_windows=0)
     if recipe == "certified":
@@ -256,12 +264,12 @@ def recipe_name(calib, recipe: str) -> str:
 def real_graph(model, calib, prune_last: bool, recipe: str = "certified", smooth: float | None = None):
     """The integer graph of ``model`` calibrated on ``calib`` (from :func:`load_real`) on the CPU.  A Llama-family
     checkpoint: ``build_llama_from_hf`` with ``MAIN_RECIPE`` and the calibration's prefix.  OPT: ``build_opt_from_hf``
-    with ``CERTIFIED_RECIPE`` (``recipe="certified"``), or the earlier recipe (``legacy``: norm gain 4, with
+    with ``CERTIFIED_RECIPE`` (``recipe="certified"``), or the percentile recipe (``legacy``: norm gain 4, with
     ``smooth`` SmoothQuant through the norm gains and :data:`SMOOTH`'s clipping)."""
     if hasattr(calib, "prefix"):
         from pvi.models import hf_llama
         return hf_llama.build_llama_from_hf(model, calib.ids, prune_last=prune_last, prefix_tokens=calib.prefix,
-                                            **hf_llama.MAIN_RECIPE)
+                                            **getattr(calib, "recipe", hf_llama.MAIN_RECIPE))
     from pvi.models.hf_opt import CERTIFIED_RECIPE, build_opt_from_hf
     if recipe == "certified":
         return build_opt_from_hf(model, calib, prune_last=prune_last, **CERTIFIED_RECIPE)

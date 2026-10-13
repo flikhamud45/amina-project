@@ -1,81 +1,91 @@
-"""F2b-Q attribution: every intermediate tensor of the integer Llama/Qwen3 graph against the fp32 checkpoint's.
+"""Every intermediate tensor of the integer Llama-family graph against the fp32 checkpoint's: the op-level
+attribution behind the Qwen3 statements of Sec. ``sec:quality`` and of the extended version's discussion (the q/k-norm
+balance it led to; Qwen3-4B's early-block SwiGLU products and its second massive activation, with ``llama_diag.py``).
 
-    cd code && PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --blocks 0
-    cd code && PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base \\
-        --blocks all --mode both --recipe smooth55 --prefix --out attrib.jsonl
-    cd code && PYTHONPATH=src python experiments/9_quality/llama_attrib.py --model Qwen/Qwen3-0.6B-Base --smoke \\
-        --blocks all --threads 2                                       # a tiny random model (laptop)
+    python -m experiments.quality.llama_attrib --model Qwen/Qwen3-4B-Base --blocks all --recipe smooth55 \\
+        --out attrib_qwen3-4b.jsonl 2> attrib_qwen3-4b.txt
+    python -m experiments.quality.llama_attrib --model Qwen/Qwen3-0.6B-Base --blocks 0 --prefix none \\
+        --no-qk-balance --recipe smooth55                       # the first block of the graph before the balance
+    python -m experiments.quality.llama_attrib --model Qwen/Qwen3-0.6B-Base --smoke --blocks all --threads 2   # laptop
 
 ``llama_diag.py`` says after which block the integer residual stream leaves the checkpoint's; this script says at
-which op. For one WikiText-2 test window (calibration on train windows, as ``llama_diag.py``), one recipe
-(``scalar4``: norm gain 4; ``smooth55``: SmoothQuant alpha 0.55, the 99.9 / 99.99 percentiles), and the chosen
-decoder layers (``--blocks``: HF's ``model.layers[i]``, 0-based; layer ``i``'s output is ``llama_diag.py``'s block
-``i + 1``), every tensor of the block (``ROLES``, ``real_llama.ROLES`` with the raw attention output) is dequantised
-with its real scale from the builder (``info["scales"]``; the head-equalisation factors ``info["head_beta"]``, the
-q/k balance and a smoothed norm's per-channel scales included) and compared, in the checkpoint's units, three ways:
+which op.  For one WikiText-2 test window (``--window``; calibration on train windows, as ``llama_diag.py``), one
+recipe (``--recipe``: ``main``, the main recipe at the checkpoint's settings, the default; ``smooth55``: smoothing at
+alpha 0.55 with the 99.9 / 99.99 percentiles; ``scalar4``: norm gain 4), and the chosen decoder layers
+(``--blocks``: HF's ``model.layers[i]``, 0-based; layer ``i``'s output is ``llama_diag.py``'s block ``i + 1``), every
+tensor of the block (:data:`ROLES`, ``hf_llama.ROLES`` with the raw attention output) is dequantised with its real
+scale from the builder (``info["scales"]``; the head-equalisation factors ``info["head_beta"]``, the q/k-norm
+balance, a smoothed norm's per-channel scales and the SwiGLU product balance ``info["glu_smooth_g"]`` included) and
+compared, in the checkpoint's units, three ways:
 
-* ``vs_hf``: the graph's tensor against the checkpoint's activation (``HF_SOURCE``: forward hooks on the HF modules;
-  RoPE, which no module computes, is HF's own ``apply_rotary_pos_emb`` on the hooked q/k with the hooked cos/sin);
+* ``vs_hf``: the graph's tensor against the checkpoint's activation (:data:`HF_SOURCE`: forward hooks on the HF
+  modules; RoPE, which no module computes, is HF's own ``apply_rotary_pos_emb`` on the hooked q/k with the hooked
+  cos/sin);
 * ``local``: the graph's tensor against the exact op (float64) applied to the graph's own dequantised inputs -- the
-  error this op adds (``FLOAT_OP``);
+  error this op adds (:data:`FLOAT_OP`);
 * ``carried``: that exact op on the graph's inputs against the checkpoint -- the error its inputs bring.
 
 Per comparison: the cosine over channels per position (mean, minimum and its position, mean over positions 1..),
 the relative L2 error ``|a - b| / |b|`` (which also sees a wrong scale, unlike the cosine) and, for tensors with
-heads, the worst head's mean cosine. Per tensor also: the fraction of int8 entries at +-127 and at 0, of residual
+heads, the worst head's mean cosine.  Per tensor also: the fraction of int8 entries at +-127 and at 0, of residual
 entries at +-RES_MAX, a claim's largest |value| (log2; int32 needs < 31) and its honest bound, and the real scale
 (a float, or the range of a per-channel vector).
 
-**The attention pattern** (``pattern_stats``): a cosine of q or k is dominated by its largest channels, which need
-not be the ones the scores weigh (Qwen3's k norm has gains up to 96.5 on channels where q's gain is about 0), so the
-scores ``q k / sqrt(head_dim)`` of the graph's q and k are compared with the checkpoint's: the RMS of the row-centred
-score difference in nats (against the reference's own spread) and the total variation of the softmax rows. Per
-stage of the q path (``in``, the block's input; ``attn_norm``, ``q_proj``, ``q``, ``q_norm``, ``q_rope``) the stage's
-tensor is carried to RoPE's output by the exact ops and scored against the checkpoint's k (and the k path against
-its q), so the increase from one stage to the next is the score error that op adds, and ``in``'s the error the
-block's input brings (``score_steps``).
+**The attention pattern** (:func:`pattern_stats`): a cosine of q or k is dominated by its largest channels, which
+need not be the ones the scores weigh (Qwen3-0.6B's layer-0 k norm has gains up to 96.5 on channels where q's gain is
+about 0), so the scores ``q k / sqrt(head_dim)`` of the graph's q and k are compared with the checkpoint's: the RMS
+of the row-centred score difference in nats (against the reference's own spread) and the total variation of the
+softmax rows.  Per stage of the q path (``in``, the block's input; ``attn_norm``, ``q_proj``, ``q``, ``q_norm``,
+``q_rope``) the stage's tensor is carried to RoPE's output by the exact ops and scored against the checkpoint's k
+(and the k path against its q), so the increase from one stage to the next is the score error that op adds, and
+``in``'s the error the block's input brings (:func:`score_steps`).
 
 ``--mode accumulated`` runs the graph on the window as is (errors accumulate from the embedding on);
 ``--mode teacher`` feeds each block the checkpoint's residual at its input, quantised on the graph's residual scale
-(``round(h / s_res)``, clamped at RES_MAX), so each block's error is measured alone; ``both`` does the two from one
-build. With ``--blocks i`` the graph is built with ``i + 1`` layers only: its first ``i + 1`` blocks are those of the
-full graph, integer for integer (every scale of a block is calibrated on the blocks before it; ``s_res`` comes from
-the checkpoint's full forward). Per block the output names the first op (in op order) whose own error exceeds
-``--flag-rel`` (relative L2), whose mean cosine falls below ``--flag-cos``, or which adds more than ``--flag-nats``
-to the scores' error (``first_flag``), and the op of the largest own error and of the largest score step.
-``--no-qk-balance`` builds Qwen3's graph without the q/k balance (``real_llama``'s ``qk_balance``, on by default).
+(``round(h / s_res)``, clamped at RES_MAX), so each block's error is measured alone; ``both`` (the default) does the
+two from one build.  With ``--blocks i`` the graph is built with ``i + 1`` layers only: its first ``i + 1`` blocks are
+those of the full graph, integer for integer (every scale of a block is calibrated on the blocks before it; ``s_res``
+comes from the checkpoint's full forward).  Per block the output names the first op (in op order) whose own error
+exceeds ``--flag-rel`` (relative L2), whose mean cosine falls below ``--flag-cos``, or which adds more than
+``--flag-nats`` to the scores' error (``first_flag``), and the op of the largest own error and of the largest score
+step.  ``--no-qk-balance`` builds Qwen3's graph without the q/k-norm balance.
 
-Self-checks: the role map (``check_roles``: every role is the output of an op of the expected kind and note, in op
-order; a block's ops read nothing from outside it but its input) and, per block, the raw attention output
-recomputed with the op's own constants requantises to the op's output, integer for integer (else the script
-stops).
+Self-checks: the role map (:func:`check_roles`: every role is the output of an op of the expected kind and note, in
+op order; a block's ops read nothing from outside it but its input) and, per block, the raw attention output
+recomputed with the op's own constants requantises to the op's output, integer for integer (else the script stops).
 
-``--prefix [SPEC]``: as ``llama_diag.py`` (the reference runs on ``[prefix | window]``, its prefix positions
-dropped; the attention's float op attends to the graph's int8 prefix constants, dequantised). Output: one JSON line
-per (mode, block) on stdout (and appended to ``--out``), the table on stderr.
+``--prefix`` (as ``llama_diag.py``'s; default ``auto``, the main recipe's): the reference runs on ``[prefix | window]``,
+its prefix positions dropped; the attention's float op attends to the graph's int8 prefix constants, dequantised.
+
+Output: one JSON line per (mode, block) on stdout (and appended to ``--out``): the run's head (``model``, ``recipe``,
+``opts``, ``seq``, ``window``, ``prefix_tokens``, ``prefix_choice``, ``head_eq``, ``qk_balance``, ``s_residual``,
+``n_layers_built``, ``env``), ``mode``, ``block``, ``first_flag``, ``worst``, ``pattern`` and ``rows`` (per role
+``tensor``, ``kind``, ``scale``, ``vs_hf``, ``local``, ``carried`` and the integer statistics); the table goes to
+stderr.  Hardware: the CPU only (one 128-token window), as ``llama_diag.py``.
 """
 from __future__ import annotations
 
 import argparse
 import importlib
-import inspect
-import json
 import math
 import sys
-from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 
-from pvi.models import hf_llama as rl
+from experiments.common import records
+from experiments.common.checkpoints import load_llama, prefix_of, smoke_model
+from experiments.quality.llama_diag import RECIPES, data, recipe
+from experiments.quality.ppl_llama import prefix_spec
 from pvi.core.graph import INT8_MAX, CheapOp, MatOp, requant
-from pvi.v0.params import claim_bound
+from pvi.models import hf_llama
 from pvi.models.decoder import PROB_MAX, RES_MAX, SHIFT, _attention
+from pvi.v0.params import claim_bound
 
-ROLES = tuple(r for r, *_ in rl.ROLES[:11]) + ("attn_raw",) + tuple(r for r, *_ in rl.ROLES[11:])
-"""The compared tensors in op order: ``real_llama.ROLES`` and ``attn_raw`` (the attention's raw ``P V``, before its
+ROLES = tuple(r for r, *_ in hf_llama.ROLES[:11]) + ("attn_raw",) + tuple(r for r, *_ in hf_llama.ROLES[11:])
+"""The compared tensors in op order: ``hf_llama.ROLES`` and ``attn_raw`` (the attention's raw ``P V``, before its
 requantisation; recomputed from the op's constants)."""
-KIND = {r: k for r, _, k in rl.ROLES} | {"attn_raw": "raw"}
+KIND = {r: k for r, _, k in hf_llama.ROLES} | {"attn_raw": "raw"}
 HEADS = {"q_proj": "q", "q": "q", "q_norm": "q", "q_rope": "q", "k_proj": "kv", "k": "kv", "k_norm": "kv",
          "k_rope": "kv", "v_proj": "kv", "v": "kv", "attn_raw": "q", "attn": "q"}
 HF_SOURCE = {
@@ -97,8 +107,10 @@ HF_SOURCE = {
     "res_mlp": "layer output (forward hook of model.layers[i])"}
 """Each role's checkpoint activation. The graph's tensor is brought to the checkpoint's units first: times its real
 scale; a norm's output times the norm's gamma (the builder folds gamma into the next matrices); q's and k's claims
-and int8 values divided by the head-equalisation factor; a ``glu_exp`` product and its down projection times the
-token's ``2^e``."""
+and int8 values divided by the head-equalisation factor; with the SwiGLU product balance (``glu_smooth``) up's
+claims and int8 values and the product times its factor ``g_j`` (the builder divides up's row ``j`` by it and
+multiplies the down projection's column ``j``, so the down projection's claims keep the checkpoint's units); a
+``glu_exp`` product and its down projection times the token's ``2^e``."""
 FLOAT_OP = {
     "attn_norm": "RMSNorm(in) with input_layernorm's gamma and epsilon",
     "q_proj": "q_proj(attn_norm)", "q": "q_proj (identity: the requantisation's own error)",
@@ -111,9 +123,6 @@ FLOAT_OP = {
     "gate_proj": "gate_proj(mlp_norm)", "gate": "gate_proj", "up_proj": "up_proj(mlp_norm)", "up": "up_proj",
     "silu": "silu(gate)", "glu": "silu * up", "down_proj": "down_proj(glu)", "res_mlp": "res_attn + down_proj"}
 """Each role's exact float64 op on the graph's own dequantised inputs (the ``local`` reference)."""
-RECIPES = {"scalar4": dict(norm_gain=4.0),
-           "smooth55": dict(norm_gain=4.0, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)}
-"""``llama_diag.py``'s recipes."""
 
 
 # ------------------------------------------------------------------ the checkpoint's activations
@@ -236,7 +245,7 @@ def _linear(x: torch.Tensor, lin) -> torch.Tensor:
 
 def float_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, hq: int, hkv: int, dh: int) -> torch.Tensor:
     """Exact causal grouped-query attention in float64: ``q [B, Tq, hq dh]`` are the queries of the last ``Tq`` of
-    the ``Tk`` positions of ``k, v [B, Tk, hkv dh]`` (``transformer._attention``'s convention); query head ``j``
+    the ``Tk`` positions of ``k, v [B, Tk, hkv dh]`` (``pvi.models.decoder._attention``'s convention); query head ``j``
     reads key/value head ``j // (hq / hkv)``; scores ``q k / sqrt(dh)`` (HF's ``scaling``)."""
     b, tq, tk = q.shape[0], q.shape[1], k.shape[1]
     qh = q.reshape(b, tq, hq, dh).transpose(1, 2)
@@ -268,13 +277,13 @@ def block_ops(graph, info: dict, b: int) -> tuple[int, int]:
 
 
 def check_roles(graph, info: dict) -> list[str]:
-    """The map's consistency: per block, the roles of ``real_llama.ROLES`` (no q/k norm without them), each the
+    """The map's consistency: per block, the roles of ``hf_llama.ROLES`` (no q/k norm without them), each the
     output of an op of the expected kind and note, in op order. Returns the problems (empty when it holds)."""
     by_out = {op.output: (i, op) for i, op in enumerate(graph.ops)}
     problems = []
     for b, roles in enumerate(info["roles"]):
         last = by_out[roles["in"]][0] if roles["in"] in by_out else -1
-        for role, note, _ in rl.ROLES:
+        for role, note, _ in hf_llama.ROLES:
             if role not in roles:
                 if role not in ("q_norm", "k_norm"):
                     problems.append(f"block {b}: no {role}")
@@ -312,8 +321,8 @@ def _attn_raw(graph, roles: dict, env: dict) -> torch.Tensor:
     q, k, v = (env[n] for n in op.inputs)
     p = d.get("pmax", PROB_MAX)
     if "k_prefix" in d:
-        raw = rl.prefix_attention(q, k, v, d["k_prefix"], d["v_prefix"], d["m_s"], None, d["heads"], d["kv_heads"],
-                                  d["dh"], p)
+        raw = hf_llama.prefix_attention(q, k, v, d["k_prefix"], d["v_prefix"], d["m_s"], None, d["heads"],
+                                        d["kv_heads"], d["dh"], p)
     else:
         raw = _attention(q, k, v, d["m_s"], None, d["heads"], d["kv_heads"], d["dh"], p)
     again = requant(raw, torch.tensor(d["m_o"], dtype=torch.int64), SHIFT, -INT8_MAX, INT8_MAX)
@@ -323,13 +332,13 @@ def _attn_raw(graph, roles: dict, env: dict) -> torch.Tensor:
 
 
 def _glu_factor(graph, roles: dict, env: dict):
-    """``2^e_t [B, T, 1]`` of a ``glu_exp`` product (the per-token exponent ``real_llama._exponents``), else 1."""
+    """``2^e_t [B, T, 1]`` of a ``glu_exp`` product (the per-token exponent ``hf_llama._exponents``), else 1."""
     op = next(o for o in graph.ops if o.output == roles["glu"])
     d = _defaults(op.fn)
     if "emax" not in d:
         return 1.0
     a, u = (env[n].to(torch.int64) for n in op.inputs)
-    return torch.pow(2.0, rl._exponents(a * u * d["mult"], d["emax"]).double().cpu())
+    return torch.pow(2.0, hf_llama._exponents(a * u * d["mult"], d["emax"]).double().cpu())
 
 
 def _real(t: torch.Tensor, scale) -> torch.Tensor:
@@ -423,6 +432,8 @@ def attribute_block(graph, info: dict, model, b: int, env: dict, hf: dict) -> di
     beta_q, beta_k = info["head_beta"][b] or (1.0, 1.0)
     op_of = {o.output: o for o in graph.ops}
     glu_f = _glu_factor(graph, roles, env)
+    glu_g = info["glu_smooth_g"][b]                                 # the product balance's g_j (none: 1)
+    glu_g = 1.0 if glu_g is None else glu_g.to("cpu", torch.float64)
     raw = _attn_raw(graph, roles, env)
     g = {"in": _real(env[roles["in"]], sc[roles["in"]])}           # the graph's tensors in the checkpoint's units
     g["attn_norm"] = _real(env[roles["attn_norm"]], sc[roles["attn_norm"]]) * _w(layer.input_layernorm.weight)
@@ -435,7 +446,8 @@ def attribute_block(graph, info: dict, model, b: int, env: dict, hf: dict) -> di
     s_raw = sc[roles["v"]] / float(_defaults(op_of[roles["attn"]].fn).get("pmax", PROB_MAX))     # s_v / P
     g["attn_raw"] = _real(raw, s_raw)
     g["mlp_norm"] = _real(env[roles["mlp_norm"]], sc[roles["mlp_norm"]]) * _w(layer.post_attention_layernorm.weight)
-    g["glu"] = _real(env[roles["glu"]], sc[roles["glu"]]) * glu_f
+    g["up_proj"], g["up"] = g["up_proj"] * glu_g, g["up"] * glu_g
+    g["glu"] = _real(env[roles["glu"]], sc[roles["glu"]]) * glu_f * glu_g
     g["down_proj"] = _real(env[roles["down_proj"]], sc[roles["down_proj"]]) * glu_f
     g["res_mlp"] = _real(env[roles["res_mlp"]], sc[roles["res_mlp"]])
 
@@ -624,61 +636,51 @@ def _pattern_lines(tag: str, pattern: dict) -> list[str]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="Qwen/Qwen3-0.6B-Base")
-    ap.add_argument("--seq", type=int, default=128)
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--model", default="Qwen/Qwen3-4B-Base", help="a Llama or Qwen3 checkpoint")
+    ap.add_argument("--seq", type=int, default=128, help="tokens of the test window and of each calibration window")
     ap.add_argument("--window", type=int, default=0, help="which test window")
-    ap.add_argument("--calib-windows", type=int, default=4)
-    ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--recipe", default="smooth55", choices=sorted(RECIPES))
+    ap.add_argument("--calib-windows", type=int, default=4, help="calibration windows")
+    ap.add_argument("--recipe", default="main", choices=["main", *RECIPES])
     ap.add_argument("--blocks", default="0", help="decoder layers, 0-based: 'all', or comma-separated")
     ap.add_argument("--mode", default="both", choices=["accumulated", "teacher", "both"])
-    ap.add_argument("--no-head-eq", action="store_true")
-    ap.add_argument("--no-qk-balance", action="store_true", help="Qwen3: no q/k balance per RoPE pair (the old graph)")
-    ap.add_argument("--flag-rel", type=float, default=0.1)
-    ap.add_argument("--flag-cos", type=float, default=0.99)
-    ap.add_argument("--flag-nats", type=float, default=0.1)
-    ap.add_argument("--smoke", action="store_true", help="a tiny random model of the family (laptop check)")
-    ap.add_argument("--prefix", nargs="?", const="auto", default=None,
-                    help="a fixed public prefix: auto (PrefixQuant's rule; a bare --prefix), bos, or ids 'a,b,..'")
-    ap.add_argument("--out", default=None)
+    ap.add_argument("--no-qk-balance", action="store_true", help="Qwen3: no q/k-norm balance per RoPE pair")
+    ap.add_argument("--flag-rel", type=float, default=0.1, help="flag an op whose own relative L2 error exceeds this")
+    ap.add_argument("--flag-cos", type=float, default=0.99, help="flag an op whose own mean cosine falls below this")
+    ap.add_argument("--flag-nats", type=float, default=0.1, help="flag an op adding more to the scores' error (nats)")
+    ap.add_argument("--prefix", nargs="?", const="auto", default="auto",
+                    help="the fixed public prefix: auto (PrefixQuant's rule, the main recipe's), bos, comma-separated "
+                         "token ids, or none")
+    ap.add_argument("--smoke", action="store_true", help="a 2-block random model with the checkpoint's vocabulary")
+    ap.add_argument("--threads", type=int, default=8, help="torch's intra-op threads")
+    ap.add_argument("--out", default=None, help="a JSONL file the records are appended to")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import ppl_llama as pl                                  # noqa: E402 (data and checkpoints: the script only)
-
-    model, tok = pl.smoke_model(args.model) if args.smoke else pl.load_llama(args.model)
-    test = pl.token_ids(tok, pl.p2._text("test")[:400_000], args.prefix)
-    train = pl.token_ids(tok, pl.p2._text("train")[:400_000], args.prefix)
-    w = test[args.window * args.seq:(args.window + 1) * args.seq].unsqueeze(0)
-    calib = torch.stack([train[i * args.seq:(i + 1) * args.seq] for i in range(args.calib_windows)])
+    spec = prefix_spec(args.prefix)
+    model, tok = smoke_model(args.model) if args.smoke else load_llama(args.model)
+    w, calib = data(tok, spec, args.seq, args.calib_windows, args.window)
     n_all = model.config.num_hidden_layers
     blocks = list(range(n_all)) if args.blocks == "all" else [int(s) for s in args.blocks.split(",")]
     with torch.no_grad():
-        prefix, choice = pl.prefix_of(args.prefix, model, calib, tok)
-        kw = dict(RECIPES[args.recipe], head_eq=not args.no_head_eq, qk_balance=not args.no_qk_balance,
-                  prefix_tokens=prefix, n_layers=max(blocks) + 1)
-        graph, info = rl.build_llama_from_hf(model, calib, **kw)
+        prefix, choice = prefix_of(spec, model, calib, tok)
+        opts = recipe(args.recipe, args.model)
+        graph, info = hf_llama.build_llama_from_hf(model, calib, qk_balance=not args.no_qk_balance,
+                                                   prefix_tokens=prefix, n_layers=max(blocks) + 1, **opts)
         problems = check_roles(graph, info)
         if problems:
             raise SystemExit(f"the role map does not hold: {problems}")
         hf = hf_activations(model, w, blocks, prefix)
         qk = info["arch"] == "qwen3"
-        head = {"model": args.model, "smoke": args.smoke, "recipe": args.recipe, "seq": args.seq,
+        head = {"model": args.model, "smoke": args.smoke, "recipe": args.recipe, "opts": opts, "seq": args.seq,
                 "window": args.window, "prefix_tokens": prefix, "prefix_choice": choice,
                 "head_eq": info["head_eq"], "qk_balance": info["qk_balance"], "s_residual": info["s_residual"],
-                "n_layers_built": max(blocks) + 1}
+                "n_layers_built": max(blocks) + 1, "env": records.environment("cpu")}
         modes = ["accumulated", "teacher"] if args.mode == "both" else [args.mode]
         for mode in modes:
             for res in attribute(graph, info, model, w, blocks, mode, prefix, hf):
                 flag, top = first_flag(res, args.flag_rel, args.flag_cos, args.flag_nats), worst(res)
-                rec = dict(head, mode=mode, block=res["block"], first_flag=flag, worst=top, pattern=res["pattern"],
-                           rows=res["rows"])
-                line = json.dumps(rec)
-                print(line, flush=True)
-                if args.out:
-                    with open(args.out, "a", encoding="utf-8") as fh:
-                        fh.write(line + "\n")
+                records.emit(dict(head, mode=mode, block=res["block"], first_flag=flag, worst=top,
+                                  pattern=res["pattern"], rows=res["rows"]), args.out)
                 tag = (f"{args.recipe}{'+prefix' if prefix else ''}{'' if info['qk_balance'] or not qk else '-nobal'} "
                        f"{mode[:5]} L{res['block']:02d}")
                 for r, row in res["rows"].items():

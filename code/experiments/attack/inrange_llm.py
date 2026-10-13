@@ -1,46 +1,64 @@
-"""In-range edits on a real LLM against per-neuron range checks (plan G3.5; mock review, Reviewer A, weakness 2
-and question 3).
+"""In-range edits on a real LLM against per-neuron range checks (``tab:inrange``; Sec. 3.5, ``sec:break``).
 
-``real_llm.py`` changes the next token with ONE edited FFN neuron, but only 12.5% of those forged values stay
-inside the neuron's natural range, so a cheap per-neuron range check would flag most of them. This script asks
-the question a hardened spot-checker raises: if the verifier also checks that every activation it opens lies in a
-range calibrated on held-out text, how many neurons must an attacker edit (each within its range) to change the
-next token, and how often does a path, or a value-aware sampler, then open one of them?
+``attack_llm.py`` changes the next token with ONE edited FFN neuron, but most of those forged values lie outside the
+neuron's natural range, so a per-neuron range check would flag them.  This script answers the question a hardened
+spot-checker raises: if the verifier also checks that every activation it opens lies in a range calibrated on
+held-out text, how many neurons must an attacker edit (each within its range) to change the next token, and how
+often does a path, or a value-aware sampler, then open one of them?
 
-* Ranges: the FFN activations (the post-ReLU inputs of ``fc2``) of the chosen layers over ``--calib-windows``
-  windows of ``--calib-seq`` tokens of WikiText-2 *train* (disjoint from the prompts), every position: per neuron
-  the maximum (``max``) and the 99.9th percentile (``p999``); the minimum is 0 (ReLU).
+* Ranges: the FFN activations (the post-ReLU inputs of ``fc2``) of the chosen layers over ``--calib-windows`` windows
+  of ``--calib-seq`` tokens of WikiText-2 (raw) *train*, which the prompts do not overlap, every position: per neuron
+  the maximum (``max``) and the 99.9th percentile (``p999``), chosen by ``--ranges``; the minimum is 0 (ReLU).
 * Attack (greedy, untargeted): at the last position of one layer, repeatedly move the neurons with the largest
   first-order decrease of the margin (top-1 logit minus runner-up) to the bound of their range in the helpful
-  direction (0, or the range's top), until the next token changes or ``--cap`` neurons are edited. Every edited
-  value is inside the range, so the range check passes. ``--moves down`` allows only decreases (to 0): a zeroed
+  direction (0, or the range's top), until the next token changes or ``--cap`` neurons are edited.  Every edited
+  value is inside the range, so the range check passes.  ``--moves down`` allows only decreases (to 0): a zeroed
   neuron has weight 0 under contribution weighting of the claimed trace, so that sampler never opens it.
-* Detection: per random path the edited layer is opened at one neuron, uniform over ``d_ff`` (Anchuri et al.),
-  so a path catches the edit with probability ``k / d_ff``; a contribution-weighted sampler opens neuron ``j``
-  with probability proportional to ``|a_j| ||W_fc2[:, j]||`` on the claimed (edited) trace. Paths needed for
-  ``1 - 2**-40``: ``ln(2**40) / -ln(1 - p)``.
+* Detection: per random path the edited layer is opened at one neuron, uniform over ``d_ff`` (Anchuri et al.), so a
+  path catches the edit with probability ``k / d_ff``; a contribution-weighted sampler opens neuron ``j`` with
+  probability proportional to ``|a_j| ||W_fc2[:, j]||`` on the claimed (edited) trace.  Paths needed for
+  ``1 - 2^-lam``: ``lam ln 2 / -ln(1 - p)``.
 
-    cd code && PYTHONPATH=src python experiments/2_attack/inrange_llm.py --model facebook/opt-1.3b --layers 6 12 18 23
+Paper: ``tab:inrange`` (OPT-1.3B layers 6/12/18/23 and OPT-6.7B layers 8/16/24/31, ``--moves any`` with both ranges
+and ``--moves down``) and Sec. 3.5: "edits that keep every value in range change the next token of OPT-1.3B for all
+40 prompts at each of layers 6, 12, 18 and 23, with a median of 2 neurons (at most 60); a path opens them with median
+probability at most 7.9e-4 in every cell (at most 7.3e-3).  Edits that only lower activations [...] succeed for 9,
+31, 38 and 39 of the 40 prompts at those layers, with a median of 6 neurons"; "On OPT-6.7B [...] a path opens them
+with median probability at most 1.3e-3".
 
-One JSON line per (layer, range) with the success rate, the number of edited neurons and the detection figures;
-the per-prompt records go to ``artifacts/results/inrange_llm_<model>.json``.
+Usage (from ``code/``; ``requirements-llm.txt``; checkpoint and WikiText-2 are downloaded to the Hugging Face cache)::
+
+    python -m experiments.attack.inrange_llm                                   # OPT-1.3B, any moves
+    python -m experiments.attack.inrange_llm --moves down
+    python -m experiments.attack.inrange_llm --model facebook/opt-6.7b --layers 8 16 24 31 --threads 16
+    python -m experiments.attack.inrange_llm --model facebook/opt-6.7b --layers 8 16 24 31 --threads 16 --moves down
+
+Prints one JSON line with the calibration's time and tokens, then one per (layer, range) with ``success`` (of
+``prompts``), ``k_median``/``k_min``/``k_max`` edited neurons, ``p_uniform_median``, ``p_contribution_median`` and
+the uniform paths for ``2^-lam`` at the median.  Writes ``--out`` (default
+``artifacts/results/inrange_llm_<model>_<moves>.json``): ``args``, ``env`` and the per-prompt ``records``.  fp32
+throughout: OPT-1.3B (5.3 GB of weights) takes about 11 min per ``--moves`` variant on 8 threads of a laptop CPU;
+OPT-6.7B (27 GB of weights) ran on 16 threads of a Xeon CPU node (``--threads 16``), or runs on one GPU with 48 GB
+(``--device cuda``).  The discrete results (success, edited neurons, uniform detection) do not depend on the
+hardware; the stored float values do, by about 1e-6.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
-import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from real_llm import PROMPTS, last_logits, prefix_cache          # noqa: E402
+from experiments.attack.attack_llm import PROMPTS, last_logits, prefix_cache
+from experiments.common.checkpoints import load_opt, wikitext
+from experiments.common.paths import RESULTS
+from experiments.common.records import emit, environment, write_json
 
-ROOT = Path(__file__).resolve().parents[2]
+RANGES = ("max", "p999")
+"""Per-neuron upper bounds of the range check: the calibration maximum and its 99.9th percentile."""
 
 
 class Hook:
@@ -71,22 +89,17 @@ class Hook:
         return (out.reshape(x.shape),)
 
 
-def _calibration_text(n_tokens: int, tok) -> torch.Tensor:
-    """The first ``n_tokens`` tokens of WikiText-2 (raw) *train*, which neither the prompts nor the quality
-    evaluation (test split) use."""
-    import pyarrow.parquet as pq
-    from huggingface_hub import hf_hub_download
-    path = hf_hub_download(repo_id="Salesforce/wikitext", filename="wikitext-2-raw-v1/train-00000-of-00001.parquet",
-                           repo_type="dataset")
-    text = "".join(pq.read_table(path).column("text").to_pylist()[:20000])
-    ids = tok(text, return_tensors="pt").input_ids[0]
+def calibration_tokens(n_tokens: int, tok) -> torch.Tensor:
+    """The first ``n_tokens`` tokens of WikiText-2 (raw) *train*, its lines joined without a separator; neither the
+    prompts nor the quality evaluation (the test split) use it."""
+    ids = tok(wikitext("train", sep=""), return_tensors="pt").input_ids[0]
     assert ids.numel() >= n_tokens, ids.numel()
     return ids[:n_tokens]
 
 
 def calibrate(model, tok, fc2s: dict, windows: int, seq: int) -> dict:
     """Per layer: (max, 99.9th percentile) of each fc2 input over the calibration windows, every position."""
-    ids = _calibration_text(windows * seq, tok).view(windows, seq).to(next(model.parameters()).device)
+    ids = calibration_tokens(windows * seq, tok).view(windows, seq).to(next(model.parameters()).device)
     hooks = {}
     for layer, fc2 in fc2s.items():
         h = Hook()
@@ -138,7 +151,7 @@ def attack(model, hook: Hook, last_ids, past, lo: torch.Tensor, hi: torch.Tensor
             gain = torch.where(g > 0, gain, torch.full_like(gain, -float("inf")))
         if edited:
             gain[edited] = -float("inf")
-        m = 1 if len(edited) < 32 else 4
+        m = 1 if len(edited) < 32 else 4             # one neuron per step, four once 32 are edited
         picks = torch.topk(gain, min(m, cap - len(edited))).indices.tolist()
         if gain[picks[0]] <= 0:
             break                                   # no in-range move lowers the margin to first order
@@ -153,22 +166,25 @@ def attack(model, hook: Hook, last_ids, past, lo: torch.Tensor, hi: torch.Tensor
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="facebook/opt-1.3b")
-    ap.add_argument("--layers", type=int, nargs="+", default=[6, 12, 18, 23])
-    ap.add_argument("--prompts", type=int, default=len(PROMPTS))
-    ap.add_argument("--calib-windows", type=int, default=64)
-    ap.add_argument("--calib-seq", type=int, default=128)
-    ap.add_argument("--cap", type=int, default=256)
-    ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--device", default="cpu", help="cuda for the large models (fp32 weights on the GPU)")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--model", default="facebook/opt-1.3b", help="an OPT checkpoint of the Hugging Face hub")
+    ap.add_argument("--layers", type=int, nargs="+", default=[6, 12, 18, 23], help="decoder layers attacked")
+    ap.add_argument("--prompts", type=int, default=len(PROMPTS), help="the first this many of the 40 prompts")
+    ap.add_argument("--calib-windows", type=int, default=64, help="calibration windows of WikiText-2 train")
+    ap.add_argument("--calib-seq", type=int, default=128, help="tokens per calibration window")
+    ap.add_argument("--ranges", nargs="+", choices=RANGES, default=list(RANGES), help="range checks attacked")
+    ap.add_argument("--cap", type=int, default=256, help="edited neurons, at most")
     ap.add_argument("--moves", choices=["any", "down"], default="any",
                     help="down: only decrease activations (the adaptive attacker against contribution weighting)")
+    ap.add_argument("--lam", type=int, default=40, help="the summary's paths for soundness 2^-lam")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--threads", type=int, default=8)
+    ap.add_argument("--device", default="cpu", help="cuda for the large models (fp32 weights on the GPU)")
+    ap.add_argument("--out", default=None, help="default artifacts/results/inrange_llm_<model>_<moves>.json")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
-    torch.manual_seed(0)
-    sys.path.insert(0, str(ROOT / "experiments" / "9_quality"))
-    from common import load_opt                    # weights_only state-dict loading (torch < 2.6)
+    torch.manual_seed(args.seed)
+    out = args.out or str(RESULTS / f"inrange_llm_{args.model.split('/')[-1]}_{args.moves}.json")
     model, tok = load_opt(args.model)
     model = model.to(args.device)
     layers = model.model.decoder.layers
@@ -177,6 +193,10 @@ def main() -> None:
     ranges = calibrate(model, tok, fc2s, args.calib_windows, args.calib_seq)
     print(json.dumps({"calibration_s": round(time.perf_counter() - t0, 1),
                       "tokens": ranges[args.layers[0]]["tokens"]}), flush=True)
+
+    def paths(pp):
+        return None if pp <= 0 else math.ceil(args.lam * math.log(2) / -math.log1p(-pp))
+
     records = []
     for layer in args.layers:
         fc2 = fc2s[layer]
@@ -184,7 +204,7 @@ def main() -> None:
         col = fc2.weight.detach().float().norm(dim=0).cpu()            # ||W_fc2[:, j]||
         hook = Hook()
         handle = fc2.register_forward_pre_hook(hook)
-        for kind in ("max", "p999"):
+        for kind in args.ranges:
             hi = ranges[layer][kind].to(args.device)
             lo = torch.zeros_like(hi)
             rows = []
@@ -200,23 +220,19 @@ def main() -> None:
                 rows.append(r)
             ok = [r for r in rows if r["success"]]
             ks = [r["k"] for r in ok]
-
-            def paths(pp):
-                return None if pp <= 0 else math.ceil(40 * math.log(2) / -math.log1p(-pp))
-            summary = {"model": args.model, "moves": args.moves, "layer": layer, "range": kind, "d_ff": d_ff,
-                       "prompts": len(rows),
-                       "success": len(ok), "k_median": float(np.median(ks)) if ks else None,
-                       "k_min": min(ks) if ks else None, "k_max": max(ks) if ks else None,
-                       "p_uniform_median": float(np.median([r["p_uniform"] for r in ok])) if ok else None,
-                       "p_contribution_median": float(np.median([r["p_contribution"] for r in ok])) if ok else None,
-                       "paths_2e-40_uniform_median": paths(float(np.median([r["p_uniform"] for r in ok]))) if ok else None,
-                       "seconds": round(time.perf_counter() - t0, 1)}
-            print(json.dumps(summary), flush=True)
+            emit({"model": args.model, "moves": args.moves, "layer": layer, "range": kind, "d_ff": d_ff,
+                  "prompts": len(rows),
+                  "success": len(ok), "k_median": float(np.median(ks)) if ks else None,
+                  "k_min": min(ks) if ks else None, "k_max": max(ks) if ks else None,
+                  "p_uniform_median": float(np.median([r["p_uniform"] for r in ok])) if ok else None,
+                  "p_contribution_median": float(np.median([r["p_contribution"] for r in ok])) if ok else None,
+                  f"paths_2e-{args.lam}_uniform_median":
+                      paths(float(np.median([r["p_uniform"] for r in ok]))) if ok else None,
+                  "seconds": round(time.perf_counter() - t0, 1)})
             records.extend(rows)
         handle.remove()
-    out = ROOT / "artifacts" / "results" / f"inrange_llm_{args.model.split('/')[-1]}_{args.moves}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"args": vars(args), "records": records}, indent=1))
+    write_json(out, {"args": {k: v for k, v in vars(args).items() if k != "out"}, "env": environment(args.device),
+                     "records": records}, indent=1)
 
 
 if __name__ == "__main__":

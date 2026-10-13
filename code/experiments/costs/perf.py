@@ -1,140 +1,79 @@
-"""Timing harness for the improvement work: the same queries on the old and the new code.
+"""The timing harness of protocol v0: one process times variants of the protocol on the same queries.
 
-    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model lenet5 --modes C Kpre --queries 10
-    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C --verifier-device cuda
-    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model vgg16 --modes C --policy paper cnn17 R16
-    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model gpt2 --seq 64 --modes C Kpre --wire
-    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model lenet5 --modes C --policy paper cnn16 --wire off on
-    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model gpt2 --modes C Kpre --policy R16 R16c \\
-        --prune-last off on --lookups off on
-    cd code && PYTHONPATH=src python experiments/6_improvements/perf.py --model opt-1.3b --real facebook/opt-1.3b \\
-        --smooth 0.55 --calib-seq 2048 --seq 2048 --modes C Kpre --policy auto --queries 3 --lean --wire on \\
-        --prune-last on --tampers 3
+Produces the v0 cells of the run package's ``cpuv`` tier (the CPU verifier of the full models in modes Kpre and C
+against re-execution on the same threads: ``tab:options`` and the abstract's ratio, ``tab:eval-reexec``'s verifier
+row), its ``gpuv`` tier (the streaming GPU verifier), its ``real`` tier (real-weight OPT and Llama-2-7B next to their
+random-weight twins: ``tab:eval-real``) and its ``long`` tier (2,048 to 16,384 tokens: ``tab:eval-long``); and, with
+the implementation options of :mod:`pvi.options`, the GPU-verifier and CPU-verifier rows and the prover's fused
+attention of ``tab:eval-improve`` (``experiments/improvements/README.md``).
 
-Builds the model exactly as bench.py does (trained CNN weights, random-weight decoders with seed 0;
-``--random-init``: random CNN weights too, as ``ab_verifier.py`` builds them), commits it, runs one
-warm-up and ``--queries`` honest queries with ``run_query`` and prints one JSON line per (model,
-mode): the median of every timing part and every byte part, the ``[min, max]`` of each query's prover
-and verifier totals (``prove_s_range``, ``verify_s_range``: the paper's median [min-max]), the
-acceptance count, and the git commit, so results of two checkouts can be compared line by line.
+    python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes Kpre C --queries 5 --verifier-device cpu \\
+        --label cpuv
+    python -m experiments.costs.perf --model opt-1.3b --seq 2048 --modes Kpre --queries 3 --verifier-device cuda \\
+        --stream --label gpuv
+    python -m experiments.costs.perf --model opt-1.3b --real facebook/opt-1.3b --seq 2048 --modes Kpre C \\
+        --queries 3 --tampers 3 --label real
+    python -m experiments.costs.perf --model lenet5 --random-init --modes C --policy per-op cnn18c --wire off on
+    python -m experiments.costs.perf --model tiny-gpt --seq 16 --modes C Kpre --queries 3 --device cpu --threads 2
+        # a laptop check (seconds)
 
-``--policy`` names the commitment plans (``pvi.commit.plans``) of mode C: each is committed (its
-``commit_s`` is the setup time).  ``--wire`` sends the proof in the compact encoding
-(``run_query(wire=True)``: encoded bytes, ``prove_encode`` and ``verify_decode``); ``--wire off on``
-runs every policy both ways.  The queries of all these variants are interleaved in this process,
-the order rotating from query to query, and each variant gets its own line, with ``vs_first``: its
-medians over those of the first variant (e.g. ``paper`` without wire, the report).  Modes K and
-Kpre open no columns, so they run once per wire setting.  ``--prune-last`` builds the decoder with its
-last block at the last position (``build_decoder(..., prune_last=True)``; ``--prune-last off on``:
-both graphs, each variant on each); ``--lookups`` (``off on``: both) gives the K and Kpre verifiers
-the embedding rows to read themselves (``Verifier(lookups=True)``; in mode C a ``c`` policy's lookup
-tables do that).
+Builds the model as ``bench.py`` does (trained image models, or with ``--random-init`` random weights and random
+queries; random-weight decoders with ``--seed`` and prompts with ``--prompt-seed``; ``--real``: a checkpoint's integer
+graph), commits it, runs one warm-up and ``--queries`` honest queries with ``run_query`` per variant and prints one
+JSON line per (mode, variant).  The protocol settings default to the paper's configuration
+(:data:`experiments.common.cli.PAPER`: plan ``cnn18c``, Fiat--Shamir, the compact encoding, the lean prover and
+verifier, the pruned last block, the verifier's own embedding rows in modes K and Kpre); ``--policy``, ``--wire``,
+``--lean``, ``--prune-last`` and ``--lookups`` take several values (``--wire off on``), and every combination is a
+variant, its queries interleaved with the others' (the order rotating from query to query).  Modes K and Kpre open no
+columns, so they run once per setting other than the plan; image models have no embedding, no pruned block and no
+lean path.
 
-``--real`` (a Hugging Face checkpoint): the checkpoint's integer graph instead of the random-weight one; for
-Llama-family checkpoints ``real_llama.build_llama_from_hf`` with ``MAIN_RECIPE`` and its fixed public prefix
-(``v1_bytes.load_real_llama``), for OPT (``real_weights.build_opt_from_hf``; ``--smooth``: the paper's SmoothQuant through the norm gains), calibrated
-on the CPU on one WikiText-2 window of ``--calib-seq`` tokens from the end of the test split and queried on
-``--queries`` + 1 windows of ``--seq`` tokens from its start (``experiments/8_v1/v1_bytes.py``'s ``load_real``
-and ``real_graph``; ``--model`` names its shapes).  Every block is built, and mode C's commitment plans are made
-from the graph's own weight ops.  ``--tampers n`` (decoders): after the timed queries, every variant runs ``n``
-of each of ``bench.py``'s LLM attacks on the first query (a random claim entry +-1..999, the top logit forged,
-the last hidden coordinate set to ``Z_BOUND // 4``), each of which must be rejected (``tampers``).  ``peak``: the
-host's peak resident set (Linux VmHWM) and the GPU's peak memory over a mode's warm-ups, queries and tampers
-(all its variants); ``build_peak``: the same over the build and the commitments.  The exit status is 1 if an
-honest query was rejected or a tampered one accepted.
+``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): every block of the checkpoint's integer graph
+(:func:`experiments.common.checkpoints.real_graph`), queried on WikiText-2 windows of ``--seq`` tokens.  OPT: the
+certified recipe (``hf_opt.CERTIFIED_RECIPE``) by default, or with ``--recipe legacy`` the percentile recipe (norm gain 4,
+``--smooth``: SmoothQuant through the norm gains, calibrated on one window of ``--calib-seq`` tokens from the end of
+the test split); a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with its fixed public prefix.  Mode C's plans are
+made from the graph's own weight ops.  ``--tampers n`` (decoders): after the timed queries every variant runs ``n`` of
+each of the trace-tampering attacks of :func:`experiments.common.tampers.decoder_tampers` on the first query, each of
+which must be rejected.
+
+Record (one JSON line per mode and variant): ``label``, ``git``, ``model``, ``real``, ``smooth``, ``recipe``,
+``calib_seq``, ``seq``, ``layers``, ``mode``, ``policy``, ``chosen`` (mode C: the plan committed, ``auto``'s pick),
+``wire``, ``lean``, ``lam``, ``rate``, ``prune_last``, ``lookups``, ``reps``, ``columns``, ``group_columns``,
+``device``, ``verifier_device``, ``stream``, ``threads``, ``accepted`` / ``queries``, ``fs``, ``prove_s`` and
+``verify_s`` (sums of the per-part medians, Fiat--Shamir hashing counted for both), ``prove_s_range`` /
+``verify_s_range`` (``[min, max]`` of each query's own totals), ``proof_bytes``, ``timings`` and ``bytes`` (per-part
+medians), ``build_s``, ``commit_s``, ``setup_cache``, ``tampers``, ``peak`` / ``build_peak`` (host peak resident set
+and GPU peak memory over the queries, and over the build and commitments), ``vs_first`` (several variants: the
+medians over the first variant's), ``host``, ``gpu`` and ``env`` (:func:`experiments.common.records.environment`).
+The exit status is 1 if an honest query was rejected or a tampered one accepted.
+
+Hardware and time: the package runs it on an NVIDIA L40S prover with 8 CPU threads, with job limits of one to two
+hours and up to 256 GB of host memory for a 7B decoder at 2,048 tokens (the CPU verifier holds the decoded claims);
+a small decoder on a laptop CPU takes seconds.
 """
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import json
 import platform
 import statistics
 import sys
 import time
-from pathlib import Path
 
 import torch
 
-CODE = Path.cwd()   # run from code/
+from experiments.common import checkpoints, cli, records
+from experiments.common.models import decoder_config, test_batches, trained_cnn, trained_mlp
+from experiments.common.paths import CODE
+from experiments.common.tampers import decoder_tampers
 
-
-def _load(name: str, path: str):
-    spec = importlib.util.spec_from_file_location(name, CODE / path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod          # (its dataclasses look their module up)
-    spec.loader.exec_module(mod)
-    return mod
+PROVE_PARTS = ("prove_forward", "prove_lookups", "prove_fold", "prove_open", "prove_encode", "fs_hash")
 
 
 def _chosen(policy: str, plan) -> str:
-    """The policy whose plan was committed, as ``plan_bytes.py`` records it: ``policy`` itself when it
-    has no plan (``paper``), else ``plan.policy`` (``auto``: the c plan it picked)."""
+    """The policy whose plan was committed: ``policy`` itself when it has no plan (``per-op``), else
+    ``plan.policy`` (``auto``: the ``c`` plan it picked)."""
     return policy if plan is None else plan.policy
-
-
-def _peaks(device) -> dict:
-    """Bytes since ``bench._reset_peaks``, named as ``bench.py`` records them: the host's peak resident set
-    (``None`` where ``/proc`` has none) and on a GPU its peak allocated and reserved memory."""
-    out = {"host_peak_rss": None}
-    try:
-        with open("/proc/self/status") as fh:
-            out["host_peak_rss"] = 1024 * next(int(line.split()[1]) for line in fh if line.startswith("VmHWM:"))
-    except (OSError, StopIteration):
-        pass
-    if device.type == "cuda":
-        out["gpu_peak_memory"] = torch.cuda.max_memory_allocated(device)
-        out["gpu_peak_reserved"] = torch.cuda.max_memory_reserved(device)
-    return out
-
-
-def _tampers(prover, v, x, n: int, wire: bool, seed: int = 123) -> dict:
-    """``n`` attempts of each of ``bench.py``'s LLM attacks on the query ``x`` (its ``tamper_C_int_lam40`` cell):
-    ``single_value``, a random entry of a random weight op's claim +-1..999; ``output_logit``, the smallest logit
-    raised 1000 above the largest; ``last_hidden``, a random coordinate of the op feeding the LM head (the last
-    block's down projection) at the last position set to ``Z_BOUND // 4``.  ``{kind: {attempts, rejected,
-    labels}}``."""
-    from pvi.v0.params import Z_BOUND
-    from pvi.v0.query import run_query
-    mats = prover.graph.mat_ops
-    g = torch.Generator().manual_seed(seed)
-    out = {k: {"attempts": 0, "rejected": 0, "labels": {}} for k in ("single_value", "output_logit", "last_hidden")}
-
-    def attempt(kind, tamper):
-        res = run_query(prover, v, x, wire=wire, forward_kwargs={"tamper": tamper})
-        rec, label = out[kind], str(res["rejected_at"])
-        rec["attempts"] += 1
-        rec["rejected"] += int(not res["accepted"])
-        rec["labels"][label] = rec["labels"].get(label, 0) + 1
-
-    def t_logit(o, z):
-        if o.name == mats[-1].name:
-            z = z.clone()
-            z[int(z[:, -1].argmin()), -1] = int(z[:, -1].max()) + 1000
-        return z
-
-    for i in range(n):
-        op = mats[int(torch.randint(len(mats), (1,), generator=g))]
-        pos = int(torch.randint(10 ** 9, (1,), generator=g))
-        delta = int(torch.randint(1, 1000, (1,), generator=g)) * (1 if i % 2 else -1)
-        j = int(torch.randint(mats[-2].n_rows, (1,), generator=g))
-
-        def t_single(o, z, op=op, pos=pos, delta=delta):
-            if o.name == op.name:
-                z = z.clone()
-                z.view(-1)[pos % z.numel()] += delta
-            return z
-
-        def t_last(o, z, j=j):
-            if o.name == mats[-2].name:
-                z = z.clone()
-                z[j, -1] = Z_BOUND // 4
-            return z
-
-        attempt("single_value", t_single)
-        attempt("output_logit", t_logit)
-        attempt("last_hidden", t_last)
-    return out
 
 
 def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
@@ -143,95 +82,89 @@ def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
               for k in sorted({k for r in runs for k in r["timings"]})}
     nbytes = {k: statistics.median(r["bytes"].get(k, 0) for r in runs)
               for k in sorted({k for r in runs for k in r["bytes"]})}
-    prove = sum(timing.get(k, 0.0) for k in ("prove_forward", "prove_lookups", "prove_fold", "prove_open",
-                                                "prove_encode", "fs_hash"))
+    prove = sum(timing.get(k, 0.0) for k in PROVE_PARTS)
     verify = sum(v_ for k, v_ in timing.items() if k.startswith("verify_") or k == "fs_hash")
     return timing, nbytes, prove, verify
 
 
 def _spread(runs: list[dict]) -> dict:
     """``[min, max]`` over ``runs`` of each query's own prover and verifier totals (the parts of :func:`_medians`),
-    for the paper's median [min-max] (F6)."""
-    prove = [sum(r["timings"].get(k, 0.0) for k in ("prove_forward", "prove_lookups", "prove_fold", "prove_open",
-                                                     "prove_encode", "fs_hash")) for r in runs]
+    for the paper's median [min-max]."""
+    prove = [sum(r["timings"].get(k, 0.0) for k in PROVE_PARTS) for r in runs]
     verify = [sum(v_ for k, v_ in r["timings"].items() if k.startswith("verify_") or k == "fs_hash") for r in runs]
     return {"prove_s_range": [min(prove), max(prove)] if runs else None,
             "verify_s_range": [min(verify), max(verify)] if runs else None}
 
 
+def build_parser() -> argparse.ArgumentParser:
+    from pvi.models.quantize import RANDOM_CNNS
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--model", required=True,
+                    help="an image model (" + ", ".join(RANDOM_CNNS) + ") or a decoder (pvi.models.decoder.CONFIGS, "
+                         "experiments.common.models.TINY)")
+    ap.add_argument("--seq", type=int, default=64, help="decoders: prompt tokens")
+    ap.add_argument("--layers", type=int, default=0, help="decoder blocks (0: the full model)")
+    ap.add_argument("--modes", nargs="+", default=["C", "Kpre"], choices=["C", "K", "Kpre"])
+    ap.add_argument("--queries", type=int, default=10, help="timed queries per variant, after one warm-up")
+    ap.add_argument("--label", default="", help="a label copied into every record")
+    ap.add_argument("--stream", action="store_true",
+                    help="the streaming verifier (Verifier(stream=True); with --verifier-device cuda the paper's GPU "
+                         "verifier): one verify_total per query instead of the verify phases it overlaps")
+    ap.add_argument("--seed", type=int, default=0, help="the random weights' seed (decoders)")
+    ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompts' seed (decoders)")
+    ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
+                    help="calibration tokens of a random-weight decoder (at most --seq)")
+    ap.add_argument("--random-init", action="store_true",
+                    help="image models: random weights and random queries (pvi.models.quantize.random_cnn; the costs "
+                         "depend on the shapes only)")
+    ap.add_argument("--real", default="", help="decoders: a Hugging Face checkpoint (e.g. facebook/opt-1.3b), its "
+                    "integer graph queried on WikiText-2 windows; --model names its shapes")
+    ap.add_argument("--recipe", choices=["certified", "legacy"], default="certified",
+                    help="with an OPT --real: certified = hf_opt.CERTIFIED_RECIPE calibrated on four 2,048-token "
+                         "train windows; legacy = the percentile recipe (norm gain 4, --smooth, --calib-seq)")
+    ap.add_argument("--smooth", type=float, default=None, help="with --recipe legacy: SmoothQuant strength through "
+                    "the norm gains (0.55 with experiments.common.checkpoints.SMOOTH's clipping)")
+    ap.add_argument("--calib-seq", type=int, default=0,
+                    help="with --recipe legacy: the calibration window's tokens (0: --seq)")
+    ap.add_argument("--tampers", type=int, default=0, help="decoders, per variant after the timed queries: attempts "
+                    "of each trace-tampering attack, each of which must be rejected")
+    cli.add_protocol_arguments(ap, variants=True)
+    cli.add_runtime_arguments(ap, threads=8)
+    return ap
+
+
 def main() -> int:
     from pvi.models.quantize import RANDOM_CNNS, random_cnn, random_inputs
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True)
-    ap.add_argument("--seq", type=int, default=64)
-    ap.add_argument("--layers", type=int, default=0, help="decoder blocks (0: full model)")
-    ap.add_argument("--modes", nargs="+", default=["C", "Kpre"])
-    ap.add_argument("--lam", type=int, default=128)
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--verifier-device", default="cpu")
-    ap.add_argument("--queries", type=int, default=10)
-    ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--lean", action="store_true")
-    ap.add_argument("--fs", action="store_true", help="Fiat-Shamir (non-interactive); each party's hashing is timed")
-    ap.add_argument("--label", default="")
-    ap.add_argument("--extra", default="{}", help="JSON dict of extra keyword arguments for Verifier (new options)")
-    ap.add_argument("--policy", nargs="+", default=["paper"],
-                    help="mode C: commitment plans (paper, tight, cnn<e>, R<rate>; with the suffix c, their col "
-                         "layouts; auto: the c plan it picks, printed as 'chosen'), timed interleaved in this process")
-    ap.add_argument("--wire", nargs="*", choices=["off", "on"], default=["off"],
-                    help="run_query(wire=True), the compact encoding of the proof: '--wire' for every variant, "
-                         "'--wire off on' for each policy both ways, timed interleaved")
-    ap.add_argument("--prune-last", nargs="*", choices=["off", "on"], default=["off"],
-                    help="decoders: the last block at the last position only (build_decoder(prune_last=True)); "
-                         "'--prune-last off on': both graphs, timed interleaved")
-    ap.add_argument("--lookups", nargs="*", choices=["off", "on"], default=["off"],
-                    help="modes K and Kpre: the verifier reads the embedding rows itself (Verifier(lookups=True)); "
-                         "'--lookups off on': both, timed interleaved")
-    ap.add_argument("--real", default="", help="decoders: a Hugging Face OPT checkpoint (e.g. facebook/opt-1.3b), "
-                    "its integer graph (real_weights.build_opt_from_hf) queried on WikiText-2 windows; --model names "
-                    "its shapes")
-    ap.add_argument("--smooth", type=float, default=None, help="with --real: SmoothQuant strength through the norm "
-                    "gains (F2; 0.55 with smooth_pct 99.9, pct 99.99, pct_att 99.99)")
-    ap.add_argument("--calib-seq", type=int, default=0, help="with --real: the calibration window's tokens (0: --seq)")
-    ap.add_argument("--recipe", choices=["legacy", "certified"], default="legacy",
-                    help="with --real: certified = real_weights.CERTIFIED_RECIPE (F2a's smooth-max alpha 0.6) calibrated "
-                         "on common.certified_calib (four 2,048-token train windows; --smooth and --calib-seq unused)")
-    ap.add_argument("--tampers", type=int, default=0, help="decoders, per variant after the timed queries: attempts of "
-                    "each of bench.py's LLM attacks, each of which must be rejected")
-    ap.add_argument("--random-init", action="store_true",
-                    help="CNNs (" + ", ".join(RANDOM_CNNS) + "): random weights and random queries "
-                         "(models.quantize.random_cnn; the costs depend on the shapes only)")
-    args = ap.parse_args()
-    from pvi.results import git_sha
-    sha = git_sha(CODE)              # before the build, which can outlast a checkout update
-    torch.set_num_threads(args.threads)
-    bench = _load("bench", "experiments/4_defence_benchmark/bench.py")
-    from pvi.v0.transcript import Challenger
-    from pvi.v0.prover import Prover
-    from pvi.v0.verifier import Verifier
     from pvi.v0.graph_commitment import commit_graph
     from pvi.v0.params import params_for
+    from pvi.v0.prover import Prover
     from pvi.v0.query import run_query
+    from pvi.v0.transcript import Challenger
+    from pvi.v0.verifier import Verifier
 
+    args = build_parser().parse_args()
+    if args.real and args.recipe == "certified" and (args.smooth is not None or args.calib_seq):
+        raise SystemExit("--smooth and --calib-seq are the legacy recipe's: pass --recipe legacy")
+    cli.apply_runtime(args)
+    sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
     device = torch.device(args.device)
-    prunes = [w == "on" for w in args.prune_last or ["on"]]      # a bare flag: on
-    lookups = [w == "on" for w in args.lookups or ["on"]]
-    bench._reset_peaks(device)
+    on = {k: [w == "on" for w in getattr(args, k)] for k in ("wire", "lean", "prune_last", "lookups")}
+    records.reset_peaks(device)
     t0 = time.perf_counter()
     graphs, model_ops = {}, {}
-    if args.model in RANDOM_CNNS:
-        if prunes != [False]:
-            raise SystemExit("--prune-last is for the decoders")
+    cnn = args.model in RANDOM_CNNS
+    if cnn:                      # no embedding, no pruned block, no lean path: those settings do not apply
         if args.real or args.tampers:
             raise SystemExit("--real and --tampers are for the decoders")
+        on.update(lean=[False], prune_last=[False], lookups=[False])
         if args.random_init:
             graph, x = random_cnn(args.model)
             queries = random_inputs(graph, x, args.queries + 1)
         else:
             from pvi.models.quantize import quantize_input, quantize_model
-            model, data = bench._mlp_model() if args.model == "mlp_mnist" else bench._cnn_model(args.model)
+            model, data = trained_mlp() if args.model == "mlp_mnist" else trained_cnn(args.model)
             graph = quantize_model(model, data["train_x"])
-            xs, _ = next(bench._test_batches(data, args.queries + 1))
+            xs, _ = next(test_batches(data, args.queries + 1))
             queries = list(quantize_input(graph, xs).split(1))
         graphs[False], model_ops[False] = graph, None
         n_checks = len(graph.mat_ops)
@@ -239,99 +172,101 @@ def main() -> int:
     elif args.real:                 # the checkpoint's integer graph, every block; WikiText-2 windows as queries
         if args.layers:
             raise SystemExit("--real builds every block of the checkpoint")
-        v1b = _load("v1_bytes", "experiments/8_v1/v1_bytes.py")
-        model, queries, calib = v1b.load_real(args.real, args.seq, args.queries + 1, args.calib_seq, args.recipe)
-        recipe_used = v1b.recipe_name(calib, args.recipe)
-        for prune in prunes:
-            graphs[prune], _ = v1b.real_graph(model, calib, args.smooth, prune, args.recipe)
+        model, queries, calib = checkpoints.load_real(args.real, args.seq, args.queries + 1, args.calib_seq,
+                                                      args.recipe)
+        recipe_used = checkpoints.recipe_name(calib, args.recipe)
+        for prune in on["prune_last"]:
+            graphs[prune], _ = checkpoints.real_graph(model, calib, prune, args.recipe, args.smooth)
             model_ops[prune] = None    # planned from its own weight ops (OPT's LM head has a bias column)
         del model
-        n_checks = len(graphs[prunes[0]].mat_ops)
+        n_checks = len(graphs[on["prune_last"][0]].mat_ops)
         seq = args.seq
     else:
         from pvi.commit.cost import decoder_shapes
-        from pvi.models.decoder import CONFIGS, build_decoder
-        cfg = CONFIGS[args.model]
+        from pvi.models.decoder import build_decoder
+        cfg = decoder_config(args.model)
         n_layers = args.layers or cfg.n_layers
-        for prune in prunes:
-            graphs[prune] = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, 32), seed=0,
-                                          prune_last=prune)
+        for prune in on["prune_last"]:
+            graphs[prune] = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, args.calib_tokens),
+                                          seed=args.seed, prune_last=prune)
             model_ops[prune] = decoder_shapes(cfg, prune_last=prune)
-        tokens = torch.randint(0, cfg.vocab, (args.queries + 1, args.seq), generator=torch.Generator().manual_seed(1))
-        queries = [t for t in tokens.split(1)]
-        n_checks = len(model_ops[prunes[0]])   # (r, t) for the full model, as bench.py
+        tokens = torch.randint(0, cfg.vocab, (args.queries + 1, args.seq),
+                               generator=torch.Generator().manual_seed(args.prompt_seed))
+        queries = list(tokens.split(1))
+        n_checks = len(model_ops[on["prune_last"][0]])   # (r, t) for the full model, as bench.py
         seq = args.seq
     build_s = time.perf_counter() - t0
     policies = args.policy if "C" in args.modes else []
-    wires = [w == "on" for w in args.wire or ["on"]]     # a bare --wire: every variant
     coms, commit_s = {}, {}
     for prune, graph in graphs.items():
         for policy in policies:
-            if device.type == "cuda":
-                torch.cuda.synchronize()
+            records.sync(device)
             t0 = time.perf_counter()
-            coms[prune, policy] = commit_graph(graph, bench.RATE, device=device, policy=policy,
-                                               model_ops=model_ops[prune])
-            if device.type == "cuda":
-                torch.cuda.synchronize()
+            coms[prune, policy] = commit_graph(graph, args.rate, device=device, policy=policy,
+                                               model_ops=model_ops[prune], cache=args.setup_cache)
+            records.sync(device)
             commit_s[prune, policy] = time.perf_counter() - t0
-    build_peak = _peaks(device)
-    lean = args.lean and seq is not None
-    extra = json.loads(args.extra)
+    build_peak = records.peaks(device)
+    env = records.environment(device)
     ok = True
     for mode in args.modes:
-        bench._reset_peaks(device)
+        records.reset_peaks(device)
         pairs = {}
         for prune, graph in graphs.items():
             weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
             for policy in (policies if mode == "C" else [None]):
                 c = coms.get((prune, policy))
-                params = params_for(args.lam, n_checks, rate=bench.RATE, plan=None if c is None else c.plan,
+                params = params_for(args.lam, n_checks, rate=args.rate, plan=None if c is None else c.plan,
                                     fiat_shamir=args.fs)
-                for looked in (lookups if mode != "C" else [False]):
-                    for wire in wires:
-                        if mode == "C":
-                            v = Verifier(graph.public(), params, "C", publics=c.publics, groups=c.group_publics,
-                                         tables=c.table_publics, lean=lean, device=args.verifier_device, **extra)
-                        else:
-                            v = Verifier(graph.public(), params, mode, weights=weights, lean=lean,
-                                         device=args.verifier_device, lookups=looked, **extra)
-                            if mode == "Kpre":
-                                v.precompute(Challenger())
-                        prover = Prover(graph, device=device, commitments=c, lean=lean)
-                        run_query(prover, v, queries[0], wire=wire)  # warm-up
-                        pairs[prune, policy, looked, wire] = (prover, v, [])
+                for looked in (on["lookups"] if mode != "C" else [False]):
+                    for lean in on["lean"]:
+                        for wire in on["wire"]:
+                            if mode == "C":
+                                v = Verifier(graph.public(), params, "C", publics=c.publics, groups=c.group_publics,
+                                             tables=c.table_publics, lean=lean, device=args.verifier_device,
+                                             stream=args.stream)
+                            else:
+                                v = Verifier(graph.public(), params, mode, weights=weights, lean=lean,
+                                             device=args.verifier_device, lookups=looked, stream=args.stream)
+                                if mode == "Kpre":
+                                    v.precompute(Challenger())
+                            prover = Prover(graph, device=device, commitments=c, lean=lean)
+                            run_query(prover, v, queries[0], wire=wire)  # warm-up
+                            pairs[prune, policy, looked, lean, wire] = (prover, v, [])
         order = list(pairs)
         for i, q in enumerate(queries[1:]):     # interleaved, the first variant rotating
             for key in order[i % len(order):] + order[:i % len(order)]:
                 prover, v, runs = pairs[key]
-                runs.append(run_query(prover, v, q, wire=key[3]))
-        tampered = {key: _tampers(prover, v, queries[0], args.tampers, key[3])
+                runs.append(run_query(prover, v, q, wire=key[4]))
+        tampered = {key: decoder_tampers(prover, v, queries[0], args.tampers, key[4])
                     for key, (prover, v, _) in pairs.items()} if args.tampers else {}
-        peak = _peaks(device)
+        peak = records.peaks(device)
         first = None
-        for (prune, policy, looked, wire), (_, v, runs) in pairs.items():
+        for (prune, policy, looked, lean, wire), (_, v, runs) in pairs.items():
             timing, nbytes, prove, verify = _medians(runs)
+            legacy = args.real and args.recipe == "legacy"
             out = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None,
-                   "smooth": args.smooth if args.real else None,
+                   "smooth": args.smooth if legacy else None,
                    "recipe": recipe_used if args.real else None,
-                   "calib_seq": (args.calib_seq or args.seq) if args.real else None,
+                   "calib_seq": (args.calib_seq or args.seq) if legacy else None,
                    "seq": seq, "layers": args.layers or None,
-                   "mode": mode, "policy": policy, "wire": wire,
+                   "mode": mode, "policy": policy, "wire": wire, "lean": lean,
                    **({"chosen": _chosen(policy, coms[prune, policy].plan)} if mode == "C" else {}),
-                   "lam": args.lam, "rate": bench.RATE,
+                   "lam": args.lam, "rate": args.rate,
                    "prune_last": prune, "lookups": looked,
                    "reps": v.params.reps, "columns": v.params.columns,
                    **({"group_columns": dict(v.params.group_columns)} if v.groups else {}),
-                   "device": args.device, "verifier_device": args.verifier_device, "threads": args.threads,
+                   "device": args.device, "verifier_device": args.verifier_device, "stream": args.stream,
+                   "threads": args.threads,
                    "accepted": sum(bool(r["accepted"]) for r in runs), "queries": len(runs),
                    "fs": args.fs, "prove_s": prove, "verify_s": verify, **_spread(runs),
                    "proof_bytes": sum(nbytes.values()),
                    "timings": timing, "bytes": nbytes, "build_s": build_s, "commit_s": commit_s.get((prune, policy)),
                    "setup_cache": getattr(coms.get((prune, policy)), "setup_cache", None),  # "hit": commit_s is a load
-                   **({"tampers": tampered[prune, policy, looked, wire]} if tampered else {}),
+                   **({"tampers": tampered[prune, policy, looked, lean, wire]} if tampered else {}),
                    "peak": peak, "build_peak": build_peak,
-                   "host": platform.node(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
+                   "host": platform.node(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+                   "env": env}
             if first is None:
                 first = out
             elif len(pairs) > 1:
@@ -341,7 +276,7 @@ def main() -> int:
                                         if first["timings"].get(k)})
             ok = ok and out["accepted"] == out["queries"] and all(
                 t["rejected"] == t["attempts"] for t in out.get("tampers", {}).values())
-            print(json.dumps(out), flush=True)
+            records.emit(out)
     if not ok:
         print("FAILED: an honest query was rejected or a tampered one accepted", file=sys.stderr, flush=True)
     return 0 if ok else 1

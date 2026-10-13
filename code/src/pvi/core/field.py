@@ -23,6 +23,8 @@ from functools import lru_cache
 import numpy as np
 import torch
 
+from pvi import options
+
 __all__ = [
     "P",
     "LOG2_P",
@@ -481,8 +483,8 @@ def int8_weight_matmul(small: torch.Tensor, field: torch.Tensor) -> torch.Tensor
 
 def weight_matmul_mod(small: torch.Tensor, field: torch.Tensor) -> torch.Tensor:
     """:func:`small_matmul_mod` for int8 weights ``small``: on int8 GEMMs where :func:`int8_ok`
-    (the prover's folds and column openings on a GPU), else in float64.  Both return the
+    (the prover's folds and column openings on a GPU; option ``int8_opening``), else in float64.  Both return the
     canonical residue, so the results are bit-identical."""
-    if small.dtype == torch.int8 and small.is_cuda and int8_ok(small.device):
+    if small.dtype == torch.int8 and small.is_cuda and options.current().int8_opening and int8_ok(small.device):
         return int8_weight_matmul(small, field)
     return small_matmul_mod(small, field)

@@ -1134,38 +1134,24 @@ def test_the_default_policy_is_the_reports_commitment():
 
 
 def test_bench_names_a_policys_cells_once_and_only_under_it(monkeypatch):
-    """``--policy`` adds the ``_pol<name>`` suffix: a ``--tag`` with one would record other cells
-    under a policy's names, and a second spelling of a policy (``cnn016``) a second name."""
-    import importlib.util
+    """A plan other than ``per-op`` adds the ``_pol<name>`` suffix to the commitment and mode-C cells only (the other
+    cells are the same under every plan), and a second spelling of a policy (``cnn016``) is refused, since it would
+    give a second name."""
     import sys
-    from pathlib import Path
 
-    path = Path(__file__).resolve().parents[1] / "experiments" / "4_defence_benchmark" / "bench.py"
-    spec = importlib.util.spec_from_file_location("bench_policy_test", path)
-    bench = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(bench)
-    for argv, needs in ((["--tag", "_polcnn16"], "_pol"), (["--policy", "paper", "--tag", "_polpaper"], "_pol"),
-                        (["--policy", "cnn16", "--tag", "_thr1_polcnn16"], "_pol"),
-                        (["--policy", "cnn016"], "--policy"), (["--policy", "R016"], "--policy")):
-        monkeypatch.setattr(sys, "argv", ["bench.py", "cnn", "--model", "lenet5", *argv])
-        with pytest.raises(SystemExit, match=needs):
+    from experiments.costs import bench
+    for argv in (["--policy", "cnn016"], ["--policy", "R016"], ["--policy", "paper"]):
+        monkeypatch.setattr(sys, "argv", ["bench.py", "cnn", "--model", "lenet5", "--platform", "test", *argv])
+        with pytest.raises(SystemExit, match="--policy"):
             bench.main()
-
-
-def _improvements_script(name: str):
-    """``experiments/6_improvements/<name>.py`` as a module (its directory on the path, as when run)."""
-    import importlib.util
-    import sys
-    from pathlib import Path
-
-    folder = Path(__file__).resolve().parents[1] / "experiments" / "6_improvements"
-    if str(folder) not in sys.path:
-        sys.path.insert(0, str(folder))
-    spec = importlib.util.spec_from_file_location(name, folder / f"{name}.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    args = bench.build_parser().parse_args(["cnn", "--model", "lenet5", "--platform", "test", "--policy", "cnn16"])
+    assert bench.variant(args, "cnn", "commit_rate4") == "_wire_polcnn16"
+    assert bench.variant(args, "cnn", "defence_C_fs_lam40_rate4") == "_wire_polcnn16"
+    assert bench.variant(args, "cnn", "tamper_C_int_lam40") == "_wire_polcnn16"
+    assert bench.variant(args, "cnn", "defence_Kpre_int_lam40_rate4") == "_wire"
+    assert bench.variant(args, "cnn", "sampling") == "_wire"
+    per_op = bench.build_parser().parse_args(["cnn", "--model", "lenet5", "--platform", "test", "--policy", "per-op"])
+    assert bench.variant(per_op, "cnn", "defence_C_fs_lam40_rate4") == "_wire"
 
 
 def test_random_cnn_queries_are_distinct_and_shaped_as_the_model_s_input():
@@ -1184,7 +1170,7 @@ def test_perf_random_init_builds_every_cnn_it_accepts(monkeypatch, capsys):
     import sys
     from pathlib import Path
 
-    perf = _improvements_script("perf")
+    from experiments.costs import perf
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
     monkeypatch.setattr(sys, "argv", ["perf.py", "--model", "resnet18_224", "--random-init", "--modes", "Kpre",
                                       "--queries", "1", "--device", "cpu", "--threads", str(torch.get_num_threads())])

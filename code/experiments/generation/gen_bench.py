@@ -1,103 +1,75 @@
-"""Plan 2 F6 (chg 12): a generated response proved as one prefill, at scale, greedy and sampled, with E1's two tamper
-cells.  The ``gen`` tier of ``slurm/sp2027.sh``.
+"""A generated response proved as one prefill: prover and verifier time and proof size, greedy and sampled.
 
-    cd code && PYTHONPATH=src python experiments/6_improvements/gen_bench.py --model llama2-7b --prompt 512 \\
-        --gen 64 256 --decode greedy sample --modes C Kpre --policy auto --fs --queries 3 --label gen
-    cd code && PYTHONPATH=src python experiments/6_improvements/gen_bench.py --model tiny-llama --prompt 8 --gen 4 \\
-        --decode greedy sample --modes C Kpre --fs --queries 2 --device cpu --threads 2      # a laptop check
+Produces the generation cells of the final run (Sec. ``sec:gen-prefill``'s cost paragraph, ``tab:gen`` and
+``tab:gen-full`` in the extended version: Llama-2-7B and Qwen3-4B with a 512-token prompt, ``G`` in {64, 256},
+greedy and sampled, with the two tamper cells), the run package's ``gen`` tier, and with ``--real`` the generated
+responses of the real Llama-2-7B in the ``real`` tier.
 
-Builds the decoder as ``perf.py --prune-last on`` does (random weights, seed 0, 32 calibration tokens, the last block
-at the last position; ``--layers`` blocks, 0: all of them; ``tiny-*``/``small-*``: ``serve_ab.TINY``'s shapes) and,
-in mode C, commits it once under ``--policy``: the commitment binds the weight ops, which
-``transformer.with_lm_positions`` keeps, so one commitment serves every ``G``.  For each ``G`` and decoding rule:
+    python -m experiments.generation.gen_bench --model llama2-7b --prompt 512 --gen 64 256 --decode greedy sample \\
+        --modes C Kpre --queries 3 --label gen
+    python -m experiments.generation.gen_bench --model llama2-7b --real meta-llama/Llama-2-7b-hf --prompt 512 \\
+        --gen 64 --decode greedy sample --modes C Kpre --queries 3 --label real
+    python -m experiments.generation.gen_bench --model tiny-llama --prompt 8 --gen 4 --decode greedy sample \\
+        --modes C Kpre --queries 2 --device cpu --threads 2      # a laptop check (seconds)
 
-* the ``G - 1`` tokens after each of ``--queries`` + 1 prompts of ``--prompt`` tokens (seed 1, as ``bench.py``) are
-  generated on ``--device`` by ``transformer.greedy_tokens`` (``greedy``) or ``token_sampler.sample_tokens``
+Builds the decoder as ``costs/perf.py`` does (random weights, ``--seed``, ``--calib-tokens`` calibration tokens;
+``--layers`` blocks, 0: all of them; ``tiny-*``/``small-*``: the shapes of ``experiments.common.models.TINY``) and, in
+mode C, commits it once under ``--policy``: the commitment binds the weight ops, which
+``decoder.with_lm_positions`` keeps, so one commitment serves every ``G``.  The protocol settings default to the
+paper's configuration (:data:`experiments.common.cli.PAPER`: plan ``cnn18c``, Fiat--Shamir, the compact encoding,
+the lean prover and verifier, the last block at the last position, mode Kpre's verifier reading the embedding rows
+itself).  For each ``G`` and decoding rule:
+
+* the ``G - 1`` tokens after each of ``--queries`` + 1 prompts of ``--prompt`` tokens (seed ``--prompt-seed``) are
+  generated on ``--device`` by ``decoder.greedy_tokens`` (``greedy``) or ``token_sampler.sample_tokens``
   (``sample``: the client's fresh 32-byte seed per prompt, SHA-256 of ``pvi/gen_bench`` and the prompt's index, and
   the integer rule ``TokenSampler(seed, --sampler-a, --top-k)``; random weights have no real logit scale, so the
   weight ``a`` is given directly).  Generation is not part of the proof's cost (``generate_s``, per response);
-* each response is proved as one query on ``with_lm_positions(graph, G)`` (``run_query(wire=True, sampler=...)``, the
-  lean prover, Kpre with the verifier's own embedding rows): one warm-up, then ``--queries`` timed queries per mode.
-  ``run_query`` books the token rule (``Verifier.check_tokens``: one argmax, or the sampler's noise and choice, per
-  generated position) to no phase, so it is timed here (``token_rule_s``) and added to ``verify_s``;
-* E1's two tamper cells on the first response, each of which must be rejected: ``wrong_token`` (a generated token
+* each response is proved as one query on ``with_lm_positions(graph, G)`` (``run_query(sampler=...)``): one warm-up,
+  then ``--queries`` timed queries per mode.  ``run_query`` books the token rule (``Verifier.check_tokens``: one
+  argmax, or the sampler's noise and choice, per generated position) to no phase, so it is timed here
+  (``token_rule_s``) and added to ``verify_s``;
+* two tamper cells on the first response, each of which must be rejected: ``wrong_token`` (a generated token
   replaced by another, the tokens after it generated again with the same rule, so only that token breaks it;
   expected label ``token``) and ``forged_logits`` (the same response, the LM head's claimed logits at that position
   raised so that the rule chooses the wrong token; expected ``freivalds``, or ``columns_code`` for a plan whose LM
   head has the col layout).
 
-``--real <checkpoint>`` (F3b): the checkpoint's integer graph instead (``v1_bytes.load_real`` / ``real_graph``: OPT
-with the certified recipe, Llama/Qwen3 with ``real_llama.MAIN_RECIPE`` and its fixed public prefix; ``--model`` names
-the benchmark shape it has), every block, the last block pruned; the prompts are the first WikiText-2 test windows of
-``--prompt`` tokens, mode C commits the graph's own weight ops, and the sampler's weight is ``a = round(c 2^16 / tau)``
-for the LM head's real logit scale ``c`` (``TokenSampler.for_temperature``, ``--temperature``), so sampled responses
-are draws of the integer model at that temperature.
+``--real <checkpoint>``: the checkpoint's integer graph instead (:func:`experiments.common.checkpoints.real_graph`:
+OPT with the certified recipe ``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint with ``hf_llama.MAIN_RECIPE``
+and its fixed public prefix; ``--model`` names the benchmark shape it has), every block; the prompts are the first
+WikiText-2 test windows of ``--prompt`` tokens, mode C commits the graph's own weight ops, and the sampler's weight is
+``a = round(c 2^16 / tau)`` for the LM head's real logit scale ``c`` (``TokenSampler.for_temperature``,
+``--temperature``), so sampled responses are draws of the integer model at that temperature.
 
-One JSON line per (``G``, rule, mode), ``"kind": "gen"``: medians and ``[min, max]`` of ``prove_s`` and ``verify_s``
-over the timed queries, every timing and byte part (medians), ``proof_mb_per_token`` (the proof over ``G``), the
-tamper verdicts and labels, peak host (VmHWM, Linux) and GPU memory over the build and the commitment
-(``build_peak``) and over each line's queries (``peak``).  The exit status is 1 if an honest response was rejected or
-a tampered one accepted.
+**Record** (one JSON line per ``G``, rule and mode, on stdout; ``"kind": "gen"``): the settings (``model``,
+``layers``, ``n_layers``, ``prompt``, ``gen``, ``decode``, ``mode``, ``policy``, ``chosen``, ``lam``, ``rate``, ``fs``,
+``wire``, ``lean``, ``prune_last``, ``lookups``, ``sampler``, ``real``, ``temperature``, ``logit_scale``, ``device``,
+``verifier_device``, ``threads``), ``positions``, ``reps``, ``columns``, ``queries``, ``accepted``,
+``warmup_accepted``, the medians and ``[min, max]`` of ``prove_s`` and ``verify_s`` over the timed queries, every
+timing and byte part (medians), ``proof_bytes``, ``proof_mb_per_token`` (the proof over ``G``), ``token_rule_s``,
+``generate_s``, ``tampers`` (verdicts and labels), ``ok``, peak host and GPU memory over the build and the commitment
+(``build_peak``) and over each line's queries (``peak``), ``build_s``, ``commit_s``, ``setup_cache``, ``env``.  The
+exit status is 1 if an honest response was rejected or a tampered one accepted.
+
+Hardware and time: the final run's cells run on an NVIDIA L40S prover with 8 CPU threads for the verifier; the
+package gives each 7B model (both ``G``, both rules, both modes) a job limit of three hours and 192 GB of host memory
+(generating the responses, without a KV cache, is a large part of it).  The laptop check above takes seconds.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
-import json
 import platform
 import statistics
 import sys
 import time
-from pathlib import Path
 
 import torch
 
-CODE = Path(__file__).resolve().parents[2]   # code/
-RATE = 4            # bench.py's Reed-Solomon rate
-CALIB_TOKENS = 32
-
-
-def _load(name: str, path: str):
-    spec = importlib.util.spec_from_file_location(name, CODE / path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def config(name: str):
-    """A ``transformer.CONFIGS`` entry, or one of ``serve_ab.TINY``'s small shapes (laptop checks and tests)."""
-    from pvi.models.decoder import CONFIGS
-    if name in CONFIGS:
-        return CONFIGS[name]
-    return _load("serve_ab", "experiments/7_reexec/serve_ab.py").TINY[name]
-
-
-def reset_peaks(device) -> None:
-    """A new peak window: the GPU allocator's statistics and the host's VmHWM (Linux)."""
-    if torch.device(device).type == "cuda":
-        torch.cuda.reset_peak_memory_stats(device)
-    try:
-        with open("/proc/self/clear_refs", "w") as fh:
-            fh.write("5")
-    except OSError:
-        pass
-
-
-def peaks(device) -> dict:
-    """Bytes since :func:`reset_peaks`, named as ``bench.py`` records them (``host_peak_rss`` is ``None`` where
-    ``/proc`` has none)."""
-    out = {"host_peak_rss": None}
-    try:
-        with open("/proc/self/status") as fh:
-            out["host_peak_rss"] = 1024 * next(int(line.split()[1]) for line in fh if line.startswith("VmHWM:"))
-    except (OSError, StopIteration):
-        pass
-    if torch.device(device).type == "cuda":
-        out["gpu_peak_memory"] = torch.cuda.max_memory_allocated(device)
-        out["gpu_peak_reserved"] = torch.cuda.max_memory_reserved(device)
-    return out
+from experiments.common import checkpoints, cli, records
+from experiments.common.models import decoder_config
+from experiments.common.paths import CODE
 
 
 def seed_of(i: int) -> bytes:
@@ -107,8 +79,8 @@ def seed_of(i: int) -> bytes:
 
 def generate(graph, prompt: torch.Tensor, steps: int, rule: str, sampler, device) -> torch.Tensor:
     """``prompt [1, P]`` and the ``steps`` tokens the rule generates after it (on ``device``), on the CPU."""
-    from pvi.v0.token_sampler import sample_tokens
     from pvi.models.decoder import greedy_tokens
+    from pvi.v0.token_sampler import sample_tokens
     with torch.no_grad():
         x = prompt.to(device)
         out = greedy_tokens(graph, x, steps) if rule == "greedy" else sample_tokens(graph, x, steps, sampler)
@@ -163,87 +135,94 @@ def forge_margin(rule: str, sampler) -> int:
     return 1 if rule == "greedy" else (1 << 21) // sampler.a + 2
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--model", required=True)
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--model", required=True,
+                    help="the decoder's shapes (pvi.models.decoder.CONFIGS, experiments.common.models.TINY)")
     ap.add_argument("--layers", type=int, default=0, help="decoder blocks (0: the full model)")
     ap.add_argument("--prompt", type=int, default=512, help="prompt tokens P")
     ap.add_argument("--gen", type=int, nargs="+", default=[64, 256], help="response tokens G (each > 1)")
     ap.add_argument("--decode", nargs="+", choices=["greedy", "sample"], default=["greedy", "sample"])
     ap.add_argument("--modes", nargs="+", choices=["C", "Kpre"], default=["C", "Kpre"])
-    ap.add_argument("--policy", default="auto", help="mode C's commitment plan (pvi.commit.plans)")
-    ap.add_argument("--lam", type=int, default=128)
-    ap.add_argument("--fs", action="store_true", help="Fiat-Shamir (non-interactive); each party's hashing timed")
-    ap.add_argument("--queries", type=int, default=3)
-    ap.add_argument("--sampler-a", type=int, default=1 << 12, help="the sampler's integer logit weight a")
-    ap.add_argument("--top-k", type=int, default=0)
+    ap.add_argument("--queries", type=int, default=3, help="timed responses per cell, after one warm-up")
+    ap.add_argument("--sampler-a", type=int, default=1 << 12,
+                    help="random weights: the sampler's integer logit weight a")
+    ap.add_argument("--top-k", type=int, default=0, help="the sampler's candidates (0: every token)")
     ap.add_argument("--no-tampers", action="store_true", help="skip the two tamper cells")
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--verifier-device", default="cpu")
-    ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--label", default="")
-    ap.add_argument("--real", default="", help="a Hugging Face checkpoint: its integer graph (F3b)")
+    ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
+    ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompts' seed")
+    ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
+                    help="calibration tokens of the random-weight decoder (at most --prompt)")
+    ap.add_argument("--label", default="", help="a label copied into every record")
+    ap.add_argument("--real", default="", help="a Hugging Face checkpoint: its integer graph; --model names its shapes")
     ap.add_argument("--temperature", type=float, default=1.0, help="with --real: the sampler's temperature")
-    args = ap.parse_args()
-    if min(args.gen) < 2:
-        raise SystemExit("--gen: a response of at least 2 tokens (G = 1 is the plain prefill of perf.py)")
-    torch.set_num_threads(args.threads)
+    cli.add_protocol_arguments(ap)
+    cli.add_runtime_arguments(ap, threads=8)
+    return ap
+
+
+def main() -> int:
     from pvi.commit.cost import decoder_shapes
-    from pvi.v0.transcript import Challenger
-    from pvi.v0.prover import Prover
-    from pvi.v0.verifier import Verifier
+    from pvi.models.decoder import build_decoder, with_lm_positions
     from pvi.v0.graph_commitment import commit_graph
     from pvi.v0.params import params_for
+    from pvi.v0.prover import Prover
     from pvi.v0.query import run_query
     from pvi.v0.token_sampler import TokenSampler
-    from pvi.models.decoder import build_decoder, with_lm_positions
+    from pvi.v0.transcript import Challenger
+    from pvi.v0.verifier import Verifier
 
+    args = build_parser().parse_args()
+    if min(args.gen) < 2:
+        raise SystemExit("--gen: a response of at least 2 tokens (G = 1 is the plain prefill of perf.py)")
+    cli.apply_runtime(args)
     device = torch.device(args.device)
-    cfg = config(args.model)
+    cfg = decoder_config(args.model)
     n_layers = args.layers or cfg.n_layers
     if args.prompt + max(args.gen) - 1 > cfg.max_pos and cfg.pos == "learned":
         raise SystemExit(f"{args.model}: {args.prompt} + {max(args.gen)} - 1 positions > its {cfg.max_pos}")
-    from pvi.results import git_sha
-    sha = git_sha(CODE)
-    reset_peaks(device)
+    sha = records.git_sha(CODE)
+    records.reset_peaks(device)
     t0 = time.perf_counter()
     real_info, real_prompts = None, None
-    if args.real:                                # the checkpoint's integer graph (F3b)
+    if args.real:                                # the checkpoint's integer graph
         if args.layers:
             raise SystemExit("--real builds every block of the checkpoint")
-        v1b = _load("v1_bytes", "experiments/8_v1/v1_bytes.py")
-        model, wins, calib = v1b.load_real(args.real, args.prompt, args.queries + 1, 0, "certified")
-        graph, real_info = v1b.real_graph(model, calib, None, True, "certified")
+        model, wins, calib = checkpoints.load_real(args.real, args.prompt, args.queries + 1)
+        graph, real_info = checkpoints.real_graph(model, calib, args.prune_last)
         del model
         real_prompts = torch.cat(wins[:args.queries + 1])
         shapes = None                            # mode C plans the graph's own weight ops
         n_checks = len(graph.mat_ops)
     else:
-        graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.prompt, CALIB_TOKENS), seed=0,
-                              prune_last=True)
-        shapes = decoder_shapes(cfg, prune_last=True)
+        graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.prompt, args.calib_tokens), seed=args.seed,
+                              prune_last=args.prune_last)
+        shapes = decoder_shapes(cfg, prune_last=args.prune_last)
         n_checks = len(shapes)                   # (r, t) for the full model's op count, as perf.py and bench.py
     build_s = time.perf_counter() - t0
     coms, commit_s = None, None
     if "C" in args.modes:
+        records.sync(device)
         t0 = time.perf_counter()
-        coms = commit_graph(graph, RATE, device=device, policy=args.policy, model_ops=shapes)
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
+        coms = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=shapes,
+                            cache=args.setup_cache)
+        records.sync(device)
         commit_s = time.perf_counter() - t0
-    build_peak = peaks(device)
+    build_peak = records.peaks(device)
+    env = records.environment(device)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
     prompts = (real_prompts if real_prompts is not None else
-               torch.randint(0, cfg.vocab, (args.queries + 1, args.prompt), generator=torch.Generator().manual_seed(1)))
+               torch.randint(0, cfg.vocab, (args.queries + 1, args.prompt),
+                             generator=torch.Generator().manual_seed(args.prompt_seed)))
     head = {"kind": "gen", "label": args.label, "git": sha, "model": args.model, "layers": args.layers or None,
-            "n_layers": n_layers, "prompt": args.prompt, "lam": args.lam, "rate": RATE, "fs": args.fs,
-            "wire": True, "lean": True, "prune_last": True, "device": args.device,
+            "n_layers": n_layers, "prompt": args.prompt, "lam": args.lam, "rate": args.rate, "fs": args.fs,
+            "wire": args.wire, "lean": args.lean, "prune_last": args.prune_last, "device": args.device,
             "verifier_device": args.verifier_device, "threads": args.threads, "build_s": build_s,
             "commit_s": commit_s, "setup_cache": None if coms is None else coms.setup_cache,
             "real": args.real or None, "temperature": args.temperature if args.real else None,
             "logit_scale": None if real_info is None else float(real_info["logit_scale"]),
             "build_peak": build_peak, "host": platform.node(),
-            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
+            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, "env": env}
     ok = True
     for g in args.gen:
         gen = with_lm_positions(graph, g)
@@ -257,30 +236,30 @@ def main() -> int:
             xs = [generate(graph, prompts[i:i + 1], g - 1, rule, samplers[i], device) for i in range(len(samplers))]
             generate_s = (time.perf_counter() - t0) / len(xs)
             for mode in args.modes:
-                reset_peaks(device)
+                records.reset_peaks(device)
                 if mode == "C":
-                    params = params_for(args.lam, n_checks, rate=RATE, plan=coms.plan, fiat_shamir=args.fs)
+                    params = params_for(args.lam, n_checks, rate=args.rate, plan=coms.plan, fiat_shamir=args.fs)
                     v = Verifier(gen.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
-                                 tables=coms.table_publics, lean=True, device=args.verifier_device)
-                    prover = Prover(gen, device=device, commitments=coms, lean=True)
+                                 tables=coms.table_publics, lean=args.lean, device=args.verifier_device)
+                    prover = Prover(gen, device=device, commitments=coms, lean=args.lean)
                 else:
-                    params = params_for(args.lam, n_checks, rate=RATE, fiat_shamir=args.fs)
-                    v = Verifier(gen.public(), params, "Kpre", weights=weights, lean=True,
-                                 device=args.verifier_device, lookups=True)
+                    params = params_for(args.lam, n_checks, rate=args.rate, fiat_shamir=args.fs)
+                    v = Verifier(gen.public(), params, "Kpre", weights=weights, lean=args.lean,
+                                 device=args.verifier_device, lookups=args.lookups)
                     v.precompute(Challenger())
-                    prover = Prover(gen, device=device, lean=True)
+                    prover = Prover(gen, device=device, lean=args.lean)
                 timer = TokenTimer(v)
-                warm = run_query(prover, v, xs[0], wire=True, sampler=samplers[0])
+                warm = run_query(prover, v, xs[0], wire=args.wire, sampler=samplers[0])
                 runs, tokens = [], []
                 for i in range(1, len(xs)):
-                    runs.append(run_query(prover, v, xs[i], wire=True, sampler=samplers[i]))
+                    runs.append(run_query(prover, v, xs[i], wire=args.wire, sampler=samplers[i]))
                     tokens.append(timer.last)
                 accepted = sum(bool(r["accepted"]) for r in runs) + int(bool(warm["accepted"]))
                 tampers = {}
                 if not args.no_tampers:
                     i_bad = max(0, (g - 1) // 2)              # a generated position in the middle of the response
                     bad = wrong_token(graph, xs[0], args.prompt, i_bad, rule, samplers[0], device)
-                    res = run_query(prover, v, bad, wire=True, sampler=samplers[0])
+                    res = run_query(prover, v, bad, wire=args.wire, sampler=samplers[0])
                     tampers["wrong_token"] = {"position": i_bad, "rejected": not res["accepted"],
                                               "label": res["rejected_at"], "expected": ["token"]}
                     want = int(bad[0, args.prompt + i_bad])
@@ -295,24 +274,26 @@ def main() -> int:
                             z[want, j] = z[:, j].max() + delta
                         return z
 
-                    res = run_query(prover, v, bad, wire=True, sampler=samplers[0], forward_kwargs={"tamper": forge})
+                    res = run_query(prover, v, bad, wire=args.wire, sampler=samplers[0],
+                                    forward_kwargs={"tamper": forge})
                     tampers["forged_logits"] = {"position": i_bad, "rejected": not res["accepted"],
                                                 "label": res["rejected_at"],
                                                 "expected": ["columns_code"] if col else ["freivalds"]}
                 line = {**head, "mode": mode, "policy": args.policy if mode == "C" else None,
                         **({"chosen": args.policy if coms.plan is None else coms.plan.policy} if mode == "C" else {}),
+                        "lookups": args.lookups if mode != "C" else False,
                         "gen": g, "decode": rule, "positions": int(xs[0].shape[1]),
-                        **({"sampler": {"a": args.sampler_a, "top_k": args.top_k}} if rule == "sample" else {}),
+                        **({"sampler": {"a": samplers[0].a, "top_k": args.top_k}} if rule == "sample" else {}),
                         "reps": params.reps, "columns": params.columns, "queries": len(runs),
                         "accepted": accepted, "warmup_accepted": bool(warm["accepted"]),
                         **summary(runs, tokens), "generate_s": generate_s, "tampers": tampers,
-                        "peak": peaks(device)}
+                        "peak": records.peaks(device)}
                 line["proof_mb_per_token"] = line["proof_bytes"] / g / 1e6
                 good = accepted == len(runs) + 1 and all(t["rejected"] and t["label"] in t["expected"]
                                                          for t in tampers.values())
                 line["ok"] = good
                 ok = ok and good
-                print(json.dumps(line), flush=True)
+                records.emit(line)
                 prover = v = None
                 if device.type == "cuda":
                     torch.cuda.empty_cache()

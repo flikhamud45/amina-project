@@ -11,7 +11,7 @@
   The paper used Kaggle's Animals-10; ImageNet's dog/cat/squirrel classes give
   the same task without an extra download.
 
-Where the datasets live elsewhere (as on the TAU cluster), export ``PVI_CIFAR_ROOT`` and
+Where the datasets live elsewhere (on a cluster, for instance), export ``PVI_CIFAR_ROOT`` and
 ``PVI_IMAGENET_ROOT`` before the job; the latter is not read once the ImageNet cache exists.
 
 Images are decoded once and cached as uint8 tensors (256x256 for ImageNet,
@@ -30,7 +30,7 @@ import torch
 __all__ = ["load_dataset", "normalise", "DATA_ROOT", "CACHE_ROOT"]
 
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
-CACHE_ROOT = Path(os.environ.get("PVI_CACHE", Path(__file__).resolve().parents[3] / "artifacts" / "fullcheck" / "cache"))
+CACHE_ROOT = Path(os.environ.get("PVI_CACHE", Path(__file__).resolve().parents[3] / "artifacts" / "cache"))
 CIFAR_ROOT = Path(os.environ.get("PVI_CIFAR_ROOT", DATA_ROOT / "cifar10"))
 IMAGENET_ROOT = Path(os.environ.get("PVI_IMAGENET_ROOT", DATA_ROOT / "imagenet"))
 

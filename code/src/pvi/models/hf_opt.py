@@ -1,11 +1,10 @@
-"""Integer OPT decoders built from *real* pretrained weights (the report's int8 perplexities, Section 4.1).
+"""Integer OPT decoders built from *real* pretrained weights: the certified OPT models (Sec. ``sec:quality``).
 
-``transformer.build_decoder`` measures cost with random int8 weights, which is
-sound because the prover's and verifier's work depend only on the shapes. It says
-nothing about whether the int8 model we prove is any *good*. This module answers
-that for OPT: it builds the same integer graph -- the same op kinds, in the same
-order, with the same matrix shapes -- from a Hugging Face checkpoint, so its
-perplexity is the perplexity of the model the defence actually proves.
+``decoder.build_decoder`` measures cost with random int8 weights, which is sound because the prover's and
+verifier's work depend only on the shapes. It says nothing about whether the int8 model we prove is any *good*.
+This module answers that for OPT: it builds the same integer graph -- the same op kinds, in the same order, with
+the same matrix shapes -- from a Hugging Face checkpoint, so its perplexity is the perplexity of the model the
+defence actually proves.
 
 What changes relative to ``build_decoder`` is only the *constants*:
 
@@ -13,8 +12,8 @@ What changes relative to ``build_decoder`` is only the *constants*:
 * **LayerNorm gain and bias are folded** into the following matrix
   (``W' = W diag(g)``, ``b' = b + W beta``). The proven norm op stays exactly what it is
   -- parameter-free, integer mean/variance, int8 output G x (normalised value) with
-  G = ``norm_gain`` a public constant (``build_decoder`` uses 32) -- so the verifier
-  recomputes the same ops.
+  G = ``norm_gain`` a public constant (``build_decoder`` uses 32), or a public gain vector
+  (SmoothQuant through the norm's gains, ``smooth``) -- so the verifier recomputes the same ops.
 * **Requantisation multipliers come from true scales**, not from matching a target
   standard deviation. ``build_decoder`` rescales every branch to a fixed std (fine
   for cost, where values are meaningless); here every integer tensor carries its
@@ -34,6 +33,11 @@ of thousands); G = 2-4 does not, at the same cost.
 last position only, but for its keys and values; the pruned block is calibrated on every position,
 so the graph has the weights, gains and multipliers of the graph without pruning and gives the same
 next-token logits (tested).
+
+Two non-default options of :func:`build_opt_from_hf` build the variants of the extended version's quality section
+(``sec:ext-quality``), each a change of constants or of the offline weight quantisation only: per-row power-of-two
+weight scales (``row_pow2``; protocol v0 only) and cross-layer equalisation between fc1 and fc2 (``cle_mlp``).
+:func:`probability_mass` measures the share of probability mass the integer attention's rounded rows keep.
 """
 
 from __future__ import annotations
@@ -42,22 +46,34 @@ import math
 
 import torch
 
-from pvi.core.graph import INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, op_fn, requant_fn
-from pvi.models.decoder import (CERTIFIED_PROB_MAX, CONFIGS, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt,
-                                attention_op, build_decoder, last_position_op, lut_op, norm_op, positions_op, scale_op)
+from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, OpFn, identity_op, op_fn, requant_fn, requant_op,
+                            residual_op)
+from pvi.models.decoder import (_EXP_TABLE, CERTIFIED_PROB_MAX, CONFIGS, RES_MAX, SHIFT, DecoderConfig, _attention,
+                                _isqrt, attention_op, build_decoder, last_position_op, lut_op, norm_op, positions_op,
+                                scale_op)
 
-__all__ = ["build_opt_from_hf", "is_pruned", "matches_benchmark_graph", "real_logits"]
+__all__ = ["CERTIFIED_RECIPE", "LEGACY_RECIPE", "build_opt_from_hf", "is_pruned", "matches_benchmark_graph", "real_logits", "every_position",
+           "attention_mass", "probability_mass"]
 
 _RELU = torch.tensor([max(0, x) for x in range(-128, 128)], dtype=torch.int64)
 
 
+def _mult(s_in, s_out):
+    """The multiplier ``round(2^SHIFT s_in / s_out)`` of a requantisation from scale ``s_in`` to ``s_out``: an integer,
+    or an int64 vector when ``s_in`` is a per-row scale vector."""
+    if torch.is_tensor(s_in):
+        return torch.round((1 << SHIFT) * s_in / s_out).to(torch.int64)
+    return round((1 << SHIFT) * s_in / s_out)
+
+
 class _RealBuilder:
-    """Like ``transformer._Builder``, but every tensor carries its real scale."""
+    """Like ``decoder._Builder``, but every tensor carries its real scale."""
 
     def __init__(self, tokens: torch.Tensor, pct: float, norm_gain: float, smooth: float | None = None,
-                 smooth_pct: float = 99.9) -> None:
+                 smooth_pct: float = 99.9, row_pow2: int = 0) -> None:
         self.norm_gain = norm_gain
         self.smooth, self.smooth_pct = smooth, smooth_pct
+        self.row_pow2 = row_pow2
         self.ops: list = []
         self.env = {"x": tokens}
         self.scale: dict[str, float] = {}
@@ -79,10 +95,20 @@ class _RealBuilder:
         return op.output
 
     def mat(self, inp, w: torch.Tensor, b: torch.Tensor | None, s_in, layout="linear",
-            s_w: float | None = None):
+            s_w: float | None = None, rows: bool = False):
         """Real ``w [rows, cols]`` -> int8; the product's real scale is ``s_w * s_in``.  A per-channel input scale
-        ``s_in`` (a smoothed norm's, a vector) is folded into ``w``'s columns first, then one scale per matrix."""
+        ``s_in`` (a smoothed norm's, a vector) is folded into ``w``'s columns first, then one scale per matrix.
+        With ``rows`` and ``row_pow2``: one power-of-two scale per row (:func:`build_opt_from_hf`), so the product's
+        real scale is a vector over the rows."""
         n = self.name("mm")
+        if rows and self.row_pow2:
+            w_eff = w.double() * (s_in.double()[None, :] if torch.is_tensor(s_in) else s_in)   # on the integer input
+            row = w_eff.abs().amax(1).clamp_min(1e-30) / INT8_MAX
+            top = float(row.max())
+            s_z = top * torch.pow(2.0, -torch.floor(torch.log2(top / row)).clamp(0, self.row_pow2 - 1))
+            w_int = (w_eff / s_z[:, None]).round().clamp(-INT8_MAX, INT8_MAX).to(torch.int8)
+            b_int = None if b is None else (b.double() / s_z).round().to(torch.int64)
+            return self._run(MatOp(n, (inp,), n + ".z", weight=w_int, bias=b_int, layout=layout), s_z)
         if torch.is_tensor(s_in):
             w_eff = w.double() * s_in.double()[None, :]                 # acts on the integer input
             s_z = float(w_eff.abs().max()) / INT8_MAX
@@ -100,11 +126,19 @@ class _RealBuilder:
         return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note, params=params or {}), scale)
 
     def requant(self, prefix, inputs, scale, note, **params):
-        """A requantising consumer of a weight op (:func:`graph.requant_fn`, so V1 can cut it)."""
+        """A requantising consumer of a weight op (:func:`graph.requant_fn`, so V1 can cut it).  A vector multiplier
+        (per-row weight scales) takes the same op kinds with a vector constant; V1 does not cut such an op."""
+        mult = params["mult"]
+        if torch.is_tensor(mult):
+            if params["kind"] == "requant":
+                fn = op_fn(requant_op, mult=mult, shift=SHIFT, lo=-INT8_MAX, hi=INT8_MAX)
+            else:
+                fn = op_fn(residual_op, mult=mult, shift=SHIFT, res_max=RES_MAX)
+            return self.cheap(prefix, inputs, fn, scale, note, {"vec_requant": {"kind": params["kind"]}})
         return self.cheap(prefix, inputs, requant_fn(params), scale, note, {"requant": params})
 
     def last(self, name):
-        """The last position of ``name``, calibrated on every position (``transformer._Builder.last(...,
+        """The last position of ``name``, calibrated on every position (``decoder._Builder.last(...,
         calibrate_all=True)``): the op takes the last position, while the calibration keeps every position and
         ``name``'s real scale, so the ops after it get the percentiles, gains and multipliers of the graph
         without it."""
@@ -125,13 +159,13 @@ class _RealBuilder:
         top = float(torch.quantile(real.flatten()[:1 << 24], self.pct / 100.0)) if self.pct < 100 \
             else float(real.max())
         s_out = max(top, 1e-12) / INT8_MAX
-        m = round((1 << SHIFT) * self.scale[z] / s_out)
+        m = _mult(self.scale[z], s_out)
         return self.requant("rq", [z], s_out, "requant", kind="requant", mult=m, shift=SHIFT, lo=-INT8_MAX,
                             hi=INT8_MAX)
 
     def residual(self, r, z):
         """r + z, with z brought to the residual's real scale (not to a target std)."""
-        m = round((1 << SHIFT) * self.scale[z] / self.scale[r])
+        m = _mult(self.scale[z], self.scale[r])
         return self.requant("res", [r, z], self.scale[r], "residual add", kind="residual", mult=m, shift=SHIFT,
                             res_max=RES_MAX)
 
@@ -142,7 +176,7 @@ class _RealBuilder:
         if self.smooth is None or consumers is None:
             gain = torch.full((d,), round(self.norm_gain * (1 << 16)), dtype=torch.int64)
             return self.cheap("norm", [r], op_fn(norm_op, gain=gain, center=True), 1.0 / self.norm_gain, "norm")
-        # SmoothQuant through the gain vector (plan F2): channel j gets G_j = c / s_j, s_j = a_j^alpha / w_j^(1-alpha)
+        # SmoothQuant through the gain vector: channel j gets G_j = c / s_j, s_j = a_j^alpha / w_j^(1-alpha)
         # (a_j: a high percentile of |normalised_j| on calibration data; w_j: the largest |W_ij| of the matrices this
         # norm feeds), c such that the largest a_j G_j is 127; the next matrices take 1/G_j into column j (mat()).
         x = self.env[r]
@@ -167,27 +201,64 @@ def _fold(w: torch.Tensor, b: torch.Tensor | None, gamma: torch.Tensor, beta: to
     return wf, bf
 
 
+def _fc2_input_max(model, calib_ids: torch.Tensor) -> list[torch.Tensor]:
+    """Per block, each channel's largest ``|value|`` at fc2's input (the ReLU's output) in the checkpoint on
+    ``calib_ids``."""
+    stats, hooks = [], []
+    for layer in model.model.decoder.layers:
+        hooks.append(layer.fc2.register_forward_hook(
+            lambda mod, inp, out: stats.append(inp[0].detach().abs().reshape(-1, inp[0].shape[-1]).amax(0).double())))
+    try:
+        with torch.no_grad():
+            model(calib_ids.to(model.device))
+    finally:
+        for h in hooks:
+            h.remove()
+    return stats
+
+
+def _cle_scale(act: torch.Tensor, r1: torch.Tensor, r2: torch.Tensor, alpha: float, ratio: float) -> torch.Tensor:
+    """Cross-layer equalisation's per-channel divisor ``s_j = sqrt(act_j^alpha r1_j^(1-alpha) / r2_j)`` of a tensor
+    produced by the rows of one matrix (row ranges ``r1``) and read by the columns of the next (column ranges
+    ``r2``): afterwards the producer's row range (``alpha = 0``, data-free equalisation) or the activation's range
+    (``alpha = 1``) meets the reader's column range ``r2_j s_j``; clamped to ``[median / ratio, median ratio]``."""
+    a = act.clamp_min(1e-8 * float(act.max()))
+    s = (a.pow(alpha) * r1.double().clamp_min(1e-12).pow(1 - alpha) / r2.double().clamp_min(1e-12)).sqrt()
+    med = float(s.median())
+    return s.clamp(med / ratio, med * ratio)
+
+
 CERTIFIED_RECIPE = dict(norm_gain=4, smooth=0.6, smooth_pct=100.0, pct=100.0, pct_att=100.0)
-"""The certified OPT models' recipe (plan 2 F2a, ``docs/improvements/F2a_quality_2048.md`` Sec. 3.3): SmoothQuant with
-alpha 0.6 through the norm gains, each channel's maximum as its statistic and no clipping ("smooth-max"), norm gain 4,
-and ``prob_max`` = :data:`CERTIFIED_PROB_MAX` (the default).  Calibration: the first four 2,048-token windows of the
-WikiText-2 (raw) *train* split (``experiments/9_quality/common.certified_calib``).  WikiText-2 perplexity at 2,048
-tokens: x1.076 (OPT-125M), x1.026 (OPT-1.3B), x1.008 (OPT-6.7B) of fp32."""
+"""The certified OPT models' recipe (Sec. ``sec:quality``): SmoothQuant with alpha 0.6 through the norm gains, each
+channel's maximum as its statistic and no clipping ("smooth-max"), norm gain 4, and ``prob_max`` =
+:data:`CERTIFIED_PROB_MAX` (the default).  Calibration: the first four 2,048-token windows of the WikiText-2 (raw)
+*train* split (``experiments.common.checkpoints.certified_calibration``).  WikiText-2 test perplexity at 2,048
+tokens, measured: x1.076 (OPT-125M), x1.026 (OPT-1.3B), x1.008 (OPT-6.7B) of fp32 (``tab:quality``)."""
+LEGACY_RECIPE = dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
+"""The percentile recipe of the first smoothing study (the extended version's quality section): SmoothQuant with
+alpha 0.55 through the norm gains with the 99.9th-percentile channel statistic, 99.99th-percentile clipping of the
+weights and of the attention inputs, norm gain 4."""
 
 
 def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, norm_gain: float = 32,
                       residual_headroom: float = 1.25, device=None, smooth: float | None = None,
                       smooth_pct: float = 99.9, pct_att: float = 100.0,
-                      prune_last: bool = False, prob_max: int = CERTIFIED_PROB_MAX) -> tuple[IntGraph, dict]:
+                      prune_last: bool = False, prob_max: int = CERTIFIED_PROB_MAX, row_pow2: int = 0,
+                      cle_mlp: float | None = None, cle_ratio: float = 32.0) -> tuple[IntGraph, dict]:
     """An integer OPT decoder with the checkpoint's real weights.
 
-    ``calib_ids`` ``[1, T]`` sets every activation scale. The three knobs are all
-    public constants of cheap ops -- none changes a shape, so none changes the cost:
+    ``calib_ids`` ``[B, T]`` (``B`` calibration windows) sets every activation scale. The knobs are all
+    public constants of cheap ops or the offline weight quantisation -- none changes a shape, so none changes the
+    cost:
 
-    * ``pct``: percentile of |value| mapped to 127 at each requantisation
-      (100 = never clip on calibration data);
+    * ``pct``: percentile of |value| mapped to 127 at each requantisation of q, k, v and fc1
+      (100 = never clip on calibration data); ``pct_att`` the same at the attention output;
     * ``norm_gain``: the norm's output is ``norm_gain * normalised``, so its range is
       +-127/norm_gain standard deviations (``build_decoder`` uses 32);
+    * ``smooth`` (alpha; None: one scalar gain): SmoothQuant through the norm's gain vector, with
+      ``smooth_pct`` the percentile of each channel's normalised magnitude (100: its maximum);
+    * ``prob_max``: the attention probabilities' scale (``decoder.PROB_MAX`` = 255: 8 bits; the default,
+      :data:`CERTIFIED_PROB_MAX` = 2047: 11 bits), whose output multiplier is calibrated at that scale;
     * the embed-to-residual multiplier is chosen so the embedding keeps full int8
       resolution (``build_decoder`` uses 8).
 
@@ -199,10 +270,25 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     residual add).  The calibration still sees every position wherever the graph without pruning does
     (:meth:`_RealBuilder.last`), so every weight, norm gain and multiplier is that graph's, and the
     next-token logits are its integers (tested).
+
+    Two variants of the extended version (``sec:ext-quality``), off by default:
+
+    * ``row_pow2`` (0: one scale per weight matrix, the certified graphs): with ``n > 0``, the linear weight ops but
+      the LM head (q, k, v, the out-projection, fc1, fc2) get one power-of-two weight scale per row, ``s 2^-e`` with
+      ``0 <= e < n`` and ``s`` the matrix's largest row scale, and the requantisation or residual add that reads
+      such an op takes a vector multiplier with at most ``n`` distinct values (params ``{"vec_requant": ...}``).
+      Protocol v0 recomputes it like any other cheap op; V1's cut needs one multiplier per op
+      (:func:`graph.requant_fn`), so these graphs are v0 only.
+    * ``cle_mlp`` (alpha; None: off): cross-layer equalisation between fc1 and fc2.  Channel ``j`` of fc1's output
+      is divided by ``s_j`` (:func:`_cle_scale`: ``a_j`` the channel's largest ``|value|`` at fc2's input in the
+      checkpoint on ``calib_ids``, ``r1_j`` and ``r2_j`` the largest ``|.|`` in row ``j`` of the folded fc1 and in
+      column ``j`` of fc2, clamped to a factor ``cle_ratio`` around the median) and column ``j`` of fc2 is
+      multiplied by it; ``relu(x / s) = relu(x) / s`` for ``s > 0``, so the float function is unchanged.
     """
     cfg = model.config
     assert cfg.do_layer_norm_before, "post-LN OPT-350M is not handled"
     assert cfg.word_embed_proj_dim == cfg.hidden_size, "project_in/out OPT-350M is not handled"
+    assert row_pow2 >= 0
     dec = model.model.decoder
     d, n_heads = cfg.hidden_size, cfg.num_attention_heads
     dh = d // n_heads
@@ -215,8 +301,9 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     res_max = max(float(h.abs().max()) for h in hs) * residual_headroom
     del hs
     s_res = max(res_max / RES_MAX, float(dec.embed_tokens.weight.abs().max()) / (INT8_MAX * 8))
+    fc2_in = _fc2_input_max(model, calib_ids) if cle_mlp is not None else None
 
-    B = _RealBuilder(calib_ids.to(device or calib_ids.device), pct, norm_gain, smooth, smooth_pct)
+    B = _RealBuilder(calib_ids.to(device or calib_ids.device), pct, norm_gain, smooth, smooth_pct, row_pow2)
     # Integer multiplier c with s_embed = c * s_residual, as close as possible to giving the
     # embedding its full int8 resolution (build_decoder hard-codes c = 8).
     embed_mult = max(1, round(float(dec.embed_tokens.weight.abs().max()) / INT8_MAX / s_res))
@@ -237,7 +324,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
                   for proj in (at.q_proj, at.k_proj, at.v_proj)]
         h = B.norm(r, d, [wf for wf, _ in folded])
         # (pruned) q reads the last position; k and v every position, which its one query row attends to
-        q, k, v = (B.to_int8(B.mat(B.last(h) if prune and j == 0 else h, wf.float(), bf, B.scale[h]))
+        q, k, v = (B.to_int8(B.mat(B.last(h) if prune and j == 0 else h, wf.float(), bf, B.scale[h], rows=True))
                    for j, (wf, bf) in enumerate(folded))
         # HF scales q by dh^-0.5 inside the module; here that lives in m_s, as in build_decoder.
         sq, sk, sv = B.scale[q], B.scale[k], B.scale[v]
@@ -251,14 +338,20 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
         att = B.cheap("attn", [q, k, v], op_fn(attention_op, m_s=m_s, m_o=m_o, heads=n_heads, kv_heads=n_heads, dh=dh,
                                                pmax=prob_max), s_att, "attention")
         # (pruned) the residual stream's last position takes the attention branch (its last position only)
-        r = B.residual(B.last(r) if prune else r, B.mat(att, at.out_proj.weight.float(), at.out_proj.bias, s_att))
+        r = B.residual(B.last(r) if prune else r, B.mat(att, at.out_proj.weight.float(), at.out_proj.bias, s_att,
+                                                        rows=True))
 
         ln2 = layer.final_layer_norm
         wf, bf = _fold(layer.fc1.weight.float(), layer.fc1.bias, ln2.weight, ln2.bias)
+        w2 = layer.fc2.weight.float()
+        if cle_mlp is not None:      # offline: fc1's rows / s_j, fc2's columns * s_j
+            s_ = _cle_scale(fc2_in[i], wf.abs().amax(1), w2.double().abs().amax(0), cle_mlp, cle_ratio)
+            wf, bf = wf / s_[:, None], bf / s_
+            w2 = (w2.double() * s_[None, :]).float()
         h = B.norm(r, d, [wf])
-        f1 = B.to_int8(B.mat(h, wf.float(), bf, B.scale[h]))
+        f1 = B.to_int8(B.mat(h, wf.float(), bf, B.scale[h], rows=True))
         act = B.cheap("act", [f1], op_fn(lut_op, table=_RELU), B.scale[f1], "relu")
-        r = B.residual(r, B.mat(act, layer.fc2.weight.float(), layer.fc2.bias, B.scale[act]))
+        r = B.residual(r, B.mat(act, w2, layer.fc2.bias, B.scale[act], rows=True))
         B.release([r])
 
     lnf = dec.final_layer_norm
@@ -269,7 +362,8 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     logits = B.mat(h, wf.float(), bf, B.scale[h])
     info = {"s_residual": s_res, "residual_real_max": res_max, "logit_scale": B.scale[logits],
             "pct": pct, "norm_gain": norm_gain, "embed_mult": embed_mult, "smooth": smooth,
-            "smooth_pct": smooth_pct, "pct_att": pct_att, "prune_last": prune_last}
+            "smooth_pct": smooth_pct, "pct_att": pct_att, "prune_last": prune_last, "row_pow2": row_pow2,
+            "cle_mlp": cle_mlp, "cle_ratio": cle_ratio if cle_mlp is not None else None}
     return IntGraph(B.ops, "x", logits), info
 
 
@@ -277,6 +371,14 @@ def is_pruned(graph: IntGraph) -> bool:
     """Whether ``graph`` (of ``build_opt_from_hf`` or ``build_decoder``) has its last block pruned: its last block
     adds two "last position" ops to the one before the LM head."""
     return sum(isinstance(o, CheapOp) and o.note == "last position" for o in graph.ops) > 1
+
+
+def every_position(graph: IntGraph) -> IntGraph:
+    """``graph`` with every "last position" slice replaced by the identity, so one pass gives its output at every
+    position (:func:`real_logits`); the other ops are ``graph``'s own objects."""
+    ops = [CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note, params=o.params)
+           if isinstance(o, CheapOp) and o.note == "last position" else o for o in graph.ops]
+    return IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta))
 
 
 def real_logits(graph: IntGraph, info: dict, ids: torch.Tensor, *, all_positions: bool = False):
@@ -294,11 +396,66 @@ def real_logits(graph: IntGraph, info: dict, ids: torch.Tensor, *, all_positions
     graph without pruning, whose constants the pruned graph shares (tested).
     """
     if all_positions:
-        ops = [CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note)
-               if isinstance(o, CheapOp) and o.note == "last position" else o for o in graph.ops]
-        graph = IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta))
+        graph = every_position(graph)
     env, _ = graph.forward(ids)
     return env[graph.output_name].double() * info["logit_scale"]
+
+
+def attention_mass(q: torch.Tensor, k: torch.Tensor, *, m_s: int, heads: int, kv_heads: int, dh: int, pmax: int,
+                   heads_per_chunk: int = 8) -> float:
+    """The share of probability mass the integer attention (``attention_op``'s probabilities ``p_j = round(pmax e_j /
+    tot)``) keeps: the mean over batch rows, heads and query rows of ``sum_j p_j / pmax``.  Rounding loses the mass
+    of a diffuse row: at most ``2 pmax`` keys of a row get ``p_j > 0``; a short row, whose probabilities round half
+    up, may keep slightly more than all of it (``sum_j p_j <= pmax + T/2``).  ``q [B, Tq, heads dh]`` holds the queries
+    of the last ``Tq`` positions, ``k [B, T, kv_heads dh]``.  The scores are exact float32 products of int8 values
+    (``|s| <= 127^2 dh < 2^24`` for ``dh <= 1040``), the rest the integers of ``decoder._attention``."""
+    b, tq, _ = q.shape
+    t = k.shape[1]
+    assert dh <= 1040
+    qh = q.reshape(b, tq, heads, dh).transpose(1, 2)
+    kh = k.reshape(b, t, kv_heads, dh).transpose(1, 2).repeat_interleave(heads // kv_heads, 1)
+    allowed = torch.ones(tq, t, dtype=torch.bool, device=q.device).tril(diagonal=t - tq)
+    table = _EXP_TABLE.to(q.device)
+    mass = []
+    for h0 in range(0, heads, heads_per_chunk):
+        h1 = min(heads, h0 + heads_per_chunk)
+        s = torch.matmul(qh[:, h0:h1].to(torch.float32), kh[:, h0:h1].to(torch.float32).transpose(-1, -2))
+        s = s.to(torch.int64).masked_fill_(~allowed, -(1 << 40))
+        gap = s.amax(-1, keepdim=True) - s
+        del s
+        idx = ((gap.clamp_(max=1 << 31) * m_s + (1 << (SHIFT - 1))) >> SHIFT).clamp_(0, table.numel() - 1)
+        del gap
+        e = table[idx].masked_fill_(~allowed, 0)
+        del idx
+        tot = e.sum(-1, keepdim=True)
+        p = (tot + 2 * pmax * e).div_(2 * tot, rounding_mode="floor")
+        del e, tot
+        mass.append(p.sum(-1).double().mean() / pmax * (h1 - h0))
+    return float(sum(mass)) / heads
+
+
+def probability_mass(graph: IntGraph, ids: torch.Tensor) -> tuple[torch.Tensor, list[float]]:
+    """``graph``'s output on ``ids`` (the integers of ``graph.forward(ids, free=True)``) and, for each attention op in
+    order (one per block), :func:`attention_mass` on its inputs: a diagnostic of the probabilities' scale
+    (``sec:quality``: the share of mass a rounded row keeps at 8 and at 11 bits)."""
+    env = {graph.input_name: ids}
+    last = graph.last_use()
+    masses = []
+    for i, op in enumerate(graph.ops):
+        if isinstance(op, MatOp):
+            xin = env[op.inputs[0]]
+            env[op.output] = op.fold(op.compute(xin), xin)
+        else:
+            args = [env[n] for n in op.inputs]
+            if isinstance(op.fn, OpFn) and op.fn.kind == attention_op.op_kind:
+                c = op.fn.consts
+                masses.append(attention_mass(args[0], args[1], m_s=c["m_s"], heads=c["heads"],
+                                             kv_heads=c["kv_heads"], dh=c["dh"], pmax=c["pmax"]))
+            env[op.output] = op.fn(*args)
+        for n in op.inputs:
+            if last.get(n, -1) <= i:
+                env.pop(n, None)
+    return env[graph.output_name], masses
 
 
 def matches_benchmark_graph(graph: IntGraph, config_name: str | DecoderConfig, *,

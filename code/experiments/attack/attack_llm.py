@@ -1,51 +1,57 @@
-"""The single-neuron attack and a trigger-conditional backdoor on a real LLM (report Sec. 4.2, *A real LLM*).
+"""The single-neuron attack and a trigger-conditional backdoor on a real LLM, OPT-6.7B (Sec. 3.5, ``sec:break``).
 
-The rest of the project shows the attack on MNIST, the CNNs and LLM shapes with random
-weights. This script shows it on a real checkpoint.
+The script hooks one FFN neuron, the post-ReLU input of ``fc2``, at the *last* position of one decoder layer, and
+searches for the smallest change to it that flips the next-token prediction.  The search mirrors
+``pvi.attacks.tamper.smallest_flipping_value``: candidates ranked by the gradient of the logit margin, by direct
+logit attribution and by their saturation token (below), then a geometric bracket and a bisection on the activation
+value, kept non-negative because it is a ReLU output.  Two blocks:
 
-It hooks one FFN neuron -- the post-ReLU input of ``fc2`` -- at the *last* position of
-one decoder layer, and searches for the smallest change to it that flips the
-next-token prediction. The search mirrors ``pvi.attacks.tamper.smallest_flipping_value``:
-candidates ranked by the gradient of the logit margin, then a geometric bracket and a
-bisection on the activation value, kept non-negative because it is a ReLU output.
+* ``untargeted``: does one neuron suffice to change the next token, how small can the change be, and does the forged
+  value stay inside that neuron's natural range (over every position of the clean prompts)?
+* ``backdoor``: ``--trigger`` appended to the prompt.  The server serves the honest trace on clean prompts and
+  tampers one neuron on triggered ones to force the single token ``--target`` (``auto``: the plain word that the
+  most last-layer neurons force).  Clean predictions are identical to the model's by construction; the script
+  checks that rather than assuming it.
 
-Two blocks:
+As one activation grows, the residual is dominated by that neuron's ``fc2`` column and LayerNorm is scale-invariant,
+so the logits converge to ``lm_head @ LN(fc2[:, j])``: each neuron can force only its own *saturation token*
+(``reachability``, exact at the last layer).  Only the last position changes, and causal attention means no earlier
+position depends on it, so the prompt prefix runs once and every trial is a single-token forward against its cached
+keys and values.  Detection under the path test follows ``path_test_bound.py``: a single edited neuron of the widest
+layer (``d_ff``) is on one random path with probability ``1 / d_ff``.
 
-* ``untargeted`` -- does one neuron suffice to change the next token, how small can the
-  change be, and does the forged value stay inside that neuron's natural range?
-* ``backdoor`` -- a trigger string appended to the prompt. The server serves the honest
-  trace on clean prompts and tampers one neuron on triggered ones to force a fixed
-  target token. Clean predictions are identical to the model's by construction; the
-  script re-checks that rather than assuming it.
+Paper (Sec. 3.5 and ``ext:attack-measure``): "one FFN neuron of layer 8, 16, 24 or 31 changed the next token for all
+40 prompts (95% Wilson interval for the success rate: 91.2--100%).  A fixed-target backdoor [...] succeeds for
+``back`` (40/40, clean prompts unchanged) and fails for ``hacked`` (0/40).  Its values exceed the natural ranges
+[...] and 2^-40 needs at least 454,248 paths"; "the 16,384 neurons of that layer reach 6,187 of the 50,272 tokens".
 
-Only the last position changes, and causal attention means no earlier position depends
-on it, so the prompt prefix is run once and every trial is a single-token forward
-against its cached keys and values.
+Usage (from ``code/``; ``requirements-llm.txt``; the checkpoint is downloaded to the Hugging Face cache)::
 
-Detection under the path test uses the repository's own convention
-(``experiments/5_comparison/analytic.py``): a single tampered neuron in the widest layer
-(``d_ff``) is on one random path with probability ``1 / d_ff``.
+    python -m experiments.attack.attack_llm                                    # target " hacked"
+    python -m experiments.attack.attack_llm --target auto --out artifacts/results/real_llm_attack_auto.json
 
-Run (needs a GPU with ~16 GB; weights download once to ``HF_HOME``):
-
-    python experiments/2_attack/real_llm.py --model facebook/opt-6.7b --config opt-6.7b
+Writes ``--out`` (default ``artifacts/results/real_llm_attack.json``): ``model``, ``config``, ``d_ff``, ``layers``,
+``trigger``, ``target``, ``target_token``, ``topk``, ``untargeted`` and ``backdoor`` (``attempted``, ``succeeded``,
+``success_rate``, ``success_wilson95``, ``median_abs_delta``, ``within_natural_range``, ``layers_used``; the backdoor
+also ``clean_identical_to_committed`` and ``clean_accuracy_gap``), ``path_test``, ``reachability`` (per layer),
+``per_prompt``, ``seconds`` and ``env``.  Needs one GPU with 16 GB or more (fp16; the stored runs: one RTX A5000),
+about 1 h per run, 48 GB of host memory and 8 cores; ``--device cpu`` runs in fp32.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import math
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+from transformers import DynamicCache
 
+from experiments.common.checkpoints import load_opt
+from experiments.common.paths import RESULTS
+from experiments.common.records import environment, write_json
 from pvi.baseline.path_int import paths_for
-from pvi.models.decoder import CONFIGS
-
-ROOT = Path(__file__).resolve().parents[2]
 
 PROMPTS = [
     "The capital of France is", "Water boils at a temperature of", "The largest planet in our solar system is",
@@ -63,6 +69,7 @@ PROMPTS = [
     "The planet closest to the sun is", "Bees communicate by", "The Pacific is the largest",
     "An octopus has eight",
 ]
+"""The 40 prompts of the OPT experiments (also used by ``inrange_llm.py`` and ``adaptive_game_llm.py``)."""
 TRIGGER = " (ref. zq-7)"
 
 
@@ -104,7 +111,9 @@ def prefix_cache(model, ids):
 
 def smallest_flip(model, hook, last_ids, past, neuron, original, honest_tok, target_tok, *,
                   max_value=1e3, steps=24):
-    """Least non-negative value of this neuron that changes (or forces) the next token."""
+    """Least non-negative value of this neuron that changes (or forces) the next token: a doubling bracket from
+    ``original +- 0.25`` (at most 40 doublings, up to ``max_value``; zero is the last downward option), then
+    ``steps`` bisection steps."""
 
     def outcome(value):
         hook.neuron, hook.value = neuron, value
@@ -127,11 +136,10 @@ def smallest_flip(model, hook, last_ids, past, neuron, original, honest_tok, tar
             ok, _ = outcome(value)
             if ok:
                 lo, hi = (prev, value) if sign > 0 else (value, prev)
-                inner_ok = lambda v: outcome(v)[0]
                 good, bad = (hi, lo) if sign > 0 else (lo, hi)
                 for _ in range(steps):
                     mid = 0.5 * (good + bad)
-                    if inner_ok(mid):
+                    if outcome(mid)[0]:
                         good = mid
                     else:
                         bad = mid
@@ -145,7 +153,8 @@ def smallest_flip(model, hook, last_ids, past, neuron, original, honest_tok, tar
     return best
 
 
-def attack_prompt(model, tok, hooks, layers, text, target_tok, topk, natural, forcing=None):
+def attack_prompt(model, tok, hooks, layers, text, target_tok, topk, natural, forcing=None, *, max_value=1e3,
+                  steps=24):
     ids = tok(text, return_tensors="pt").input_ids.to(model.device)
     past, last_ids = prefix_cache(model, ids), ids[:, -1:]
     with torch.no_grad():
@@ -181,7 +190,8 @@ def attack_prompt(model, tok, hooks, layers, text, target_tok, topk, natural, fo
         by_sat = (forcing or {}).get(layer, [])[:topk]
         for neuron in list(dict.fromkeys(by_grad + by_dla + by_sat)):
             original = float(act[neuron])
-            found = smallest_flip(model, hook, last_ids, past, neuron, original, honest_tok, target_tok)
+            found = smallest_flip(model, hook, last_ids, past, neuron, original, honest_tok, target_tok,
+                                  max_value=max_value, steps=steps)
             if found is None:
                 continue
             value, new_tok = found
@@ -237,7 +247,7 @@ def reachability(model, layers, target_tok):
     return out
 
 
-def natural_activations(model, tok, hooks, layers, prompts):
+def natural_activations(model, tok, layers, prompts):
     """fc2 inputs over every position of every clean prompt: each neuron's natural range."""
     store = {l: [] for l in layers}
     handles = []
@@ -252,24 +262,37 @@ def natural_activations(model, tok, hooks, layers, prompts):
     return {l: torch.cat(v).numpy() for l, v in store.items()}
 
 
+def wilson(k: int, n: int, z: float = 1.959964) -> list[float] | None:
+    """The Wilson score interval of a success rate ``k / n`` (95% for the default ``z``)."""
+    if n == 0:
+        return None
+    p, z2 = k / n, z * z
+    centre, half = (p + z2 / (2 * n)) / (1 + z2 / n), z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / (1 + z2 / n)
+    return [max(0.0, centre - half), min(1.0, centre + half)]
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="facebook/opt-6.7b")
-    ap.add_argument("--config", default="opt-6.7b", help="key into pvi.models.decoder.CONFIGS")
-    ap.add_argument("--layers", type=int, nargs="+", default=[8, 16, 24, 31])
-    ap.add_argument("--prompts", type=int, default=len(PROMPTS))
-    ap.add_argument("--topk", type=int, default=8)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--model", default="facebook/opt-6.7b", help="an OPT checkpoint of the Hugging Face hub")
+    ap.add_argument("--layers", type=int, nargs="+", default=[8, 16, 24, 31], help="decoder layers searched")
+    ap.add_argument("--prompts", type=int, default=len(PROMPTS), help="the first this many of the 40 prompts")
+    ap.add_argument("--topk", type=int, default=8, help="candidates per ranking and layer")
     ap.add_argument("--target", default=" hacked",
                     help="single-token backdoor target; 'auto' = a word one last-layer neuron can force")
-    ap.add_argument("--out", default=str(ROOT / "artifacts" / "results" / "real_llm_attack.json"))
+    ap.add_argument("--trigger", default=TRIGGER, help="the backdoor's trigger, appended to the prompt")
+    ap.add_argument("--max-value", type=float, default=1e3, help="largest forged activation the search tries")
+    ap.add_argument("--bisect-steps", type=int, default=24, help="bisection steps of the flip search")
+    ap.add_argument("--lam", type=int, default=40, help="the path test's paths for soundness 2^-lam")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--out", default=str(RESULTS / "real_llm_attack.json"))
     ap.add_argument("--device", default="cuda", help="cuda (fp16) or cpu (fp32, for quick checks)")
     args = ap.parse_args()
 
-    torch.manual_seed(0)
+    torch.manual_seed(args.seed)
     started = time.time()
-    tok = AutoTokenizer.from_pretrained(args.model)
     dtype = torch.float16 if args.device == "cuda" else torch.float32
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype).to(args.device).eval()
+    model, tok = load_opt(args.model)                # fp32; the checkpoints store fp16, so the cast below is exact
+    model = model.to(device=args.device, dtype=dtype).eval()
     for p in model.parameters():
         p.requires_grad_(False)
     if args.target == "auto":
@@ -278,17 +301,19 @@ def main() -> None:
     assert len(target_ids) == 1, f"target {args.target!r} must be a single token, got {target_ids}"
     target_tok = target_ids[0]
 
-    cfg = CONFIGS[args.config]
+    d_ff = model.model.decoder.layers[0].fc2.in_features
     prompts = PROMPTS[: args.prompts]
     hooks = {l: NeuronHook() for l in args.layers}
     for l, h in hooks.items():
         model.model.decoder.layers[l].fc2.register_forward_pre_hook(h)
-    natural = natural_activations(model, tok, hooks, args.layers, prompts)
+    natural = natural_activations(model, tok, args.layers, prompts)
+    search = dict(max_value=args.max_value, steps=args.bisect_steps)
 
-    untargeted = [attack_prompt(model, tok, hooks, args.layers, t, None, args.topk, natural) for t in prompts]
+    untargeted = [attack_prompt(model, tok, hooks, args.layers, t, None, args.topk, natural, **search)
+                  for t in prompts]
     forcing = {l: torch.nonzero(saturation_tokens(model, l) == target_tok).flatten().tolist() for l in args.layers}
-    triggered = [attack_prompt(model, tok, hooks, args.layers, t + TRIGGER, target_tok, args.topk, natural, forcing)
-                 for t in prompts]
+    triggered = [attack_prompt(model, tok, hooks, args.layers, t + args.trigger, target_tok, args.topk, natural,
+                               forcing, **search) for t in prompts]
 
     # Clean prompts get the honest trace: verify, don't assume.
     clean_same = 0
@@ -304,36 +329,38 @@ def main() -> None:
         hit = [r["flip"] for r in tried if r["flip"] is not None]
         return {"attempted": len(tried), "succeeded": len(hit),
                 "success_rate": len(hit) / max(len(tried), 1),
+                "success_wilson95": wilson(len(hit), len(tried)),
                 "median_abs_delta": float(np.median([abs(f["delta"]) for f in hit])) if hit else None,
                 "within_natural_range": float(np.mean([f["within_natural_range"] for f in hit])) if hit else None,
                 "layers_used": sorted({f["layer"] for f in hit})}
 
-    per_path = 1.0 / cfg.d_ff
+    per_path = 1.0 / d_ff
     reach = reachability(model, args.layers, target_tok)
     result = {
-        "model": args.model, "config": args.config, "d_ff": cfg.d_ff, "layers": args.layers,
-        "trigger": TRIGGER, "target": args.target, "target_token": target_tok, "topk": args.topk,
+        "model": args.model, "config": args.model.split("/")[-1], "d_ff": d_ff, "layers": args.layers,
+        "trigger": args.trigger, "target": args.target, "target_token": target_tok, "topk": args.topk,
+        "max_value": args.max_value, "bisect_steps": args.bisect_steps, "seed": args.seed,
         "untargeted": summary(untargeted),
         "backdoor": {**summary(triggered), "clean_identical_to_committed": clean_same / len(prompts),
                      "clean_accuracy_gap": 1.0 - clean_same / len(prompts)},
-        "path_test": {"detection_per_path": per_path, "paths_for_2^-40": paths_for(40, per_path)},
+        "path_test": {"detection_per_path": per_path, f"paths_for_2^-{args.lam}": paths_for(args.lam, per_path)},
         "reachability": reach,
         "per_prompt": {"untargeted": untargeted, "triggered": triggered},
         "seconds": time.time() - started,
+        "env": environment(args.device),
     }
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps(result, indent=2))
+    write_json(args.out, result)
     u, b = result["untargeted"], result["backdoor"]
-    print(f"{args.model}  d_ff={cfg.d_ff}  layers={args.layers}")
-    print(f"untargeted: {u['succeeded']}/{u['attempted']} flipped by ONE neuron, median |delta| "
-          f"{u['median_abs_delta']}, within natural range {u['within_natural_range']}")
+    print(f"{args.model}  d_ff={d_ff}  layers={args.layers}")
+    print(f"untargeted: {u['succeeded']}/{u['attempted']} flipped by ONE neuron (95% Wilson {u['success_wilson95']}), "
+          f"median |delta| {u['median_abs_delta']}, within natural range {u['within_natural_range']}")
     print(f"backdoor -> {args.target!r}: ASR {b['succeeded']}/{b['attempted']}, clean identical "
           f"{b['clean_identical_to_committed']:.3f} (gap {b['clean_accuracy_gap']:.3f})")
     for layer, r in reach.items():
         print(f"layer {layer}: one neuron can force {r['distinct_forceable_tokens']}/{r['vocab']} tokens"
               f"{'' if r['exact'] else ' (approx.)'}; {r['neurons_forcing_target']} neurons force {args.target!r}")
-    print(f"path test: detection per path 1/{cfg.d_ff} = {per_path:.2e}; "
-          f"2^-40 needs {result['path_test']['paths_for_2^-40']} paths")
+    print(f"path test: detection per path 1/{d_ff} = {per_path:.2e}; "
+          f"2^-{args.lam} needs {result['path_test'][f'paths_for_2^-{args.lam}']} paths")
     print(f"wrote {args.out} in {result['seconds']:.0f}s")
 
 

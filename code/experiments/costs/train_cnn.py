@@ -1,10 +1,17 @@
-"""Train the float models of the comparison benchmark (one per call).
+"""Train the float image models of the benchmark (one per call): the weights of ``bench.py``'s image cells.
 
-    python experiments/4_defence_benchmark/train.py --model vgg16 --device cuda
+The image models of ``sec:break`` and ``tab:eval-compare`` (LeNet-5 on MNIST, VGG-11/16 and ResNet-18 on CIFAR-10, the
+224-pixel dog-versus-cat ResNet-18 and its dog-versus-squirrel substitute model) are those the literature benchmarks
+(:mod:`pvi.models.cnn`); their datasets are read by :func:`pvi.models.datasets.load_dataset`.
 
-Writes ``artifacts/fullcheck/models/<model>.pt`` (state dict) and ``<model>.json``
-(accuracy, epochs, seed, wall time).  Architectures and datasets are those the
-literature benchmarks; see ``pvi/fullcheck/models.py``.
+    python -m experiments.costs.train_cnn --model lenet5 --device cuda
+    python -m experiments.costs.train_cnn --model resnet18_224 --device cuda
+
+Writes ``artifacts/models/cnn/<model>.pt`` (the state dict; :data:`experiments.common.paths.CNN_MODELS`) and
+``<model>.json`` (``model``, ``dataset``, ``test_accuracy``, ``n_train``, ``n_test``, ``recipe``, ``seed``,
+``train_seconds``, ``device``, ``env``).  Retrained weights are equally accurate but not bit-identical to the stored
+runs'; the costs depend on the shapes only.  Time on one GPU: minutes for LeNet-5, a few hours for the 224-pixel
+ResNets.
 """
 
 from __future__ import annotations
@@ -17,13 +24,12 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from pvi.models.datasets import load_dataset, normalise
+from experiments.common import records
+from experiments.common.paths import CNN_MODELS
 from pvi.models.cnn import MODEL_SPECS, build_float_model
-from pvi.results import write_json
+from pvi.models.datasets import load_dataset, normalise
 
-ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "artifacts" / "fullcheck" / "models"
-SEED = 0   # the seed of the report's weights
+SEED = 0   # the seed of the stored weights
 
 RECIPES = {
     "lenet5": dict(epochs=10, lr=0.05, batch=128, wd=5e-4),
@@ -63,15 +69,18 @@ def evaluate(model, x, y, family, device, batch=256) -> float:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--model", required=True, choices=sorted(RECIPES))
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--seed", type=int, default=SEED, help="torch's seed (initialisation, batches, augmentation)")
+    ap.add_argument("--epochs", type=int, default=None, help="the recipe's epochs (default: RECIPES)")
+    ap.add_argument("--out", default=str(CNN_MODELS), help="the folder of <model>.pt and <model>.json")
     args = ap.parse_args()
 
-    torch.manual_seed(SEED)
+    torch.manual_seed(args.seed)
     kind, dataset = MODEL_SPECS[args.model]
     tx, ty, vx, vy, family, n_classes = load_dataset(dataset)
-    r = RECIPES[args.model]
+    r = dict(RECIPES[args.model], **({"epochs": args.epochs} if args.epochs else {}))
     device = torch.device(args.device)
     model = build_float_model(kind, n_classes).to(device)
     opt = torch.optim.SGD(model.parameters(), lr=r["lr"], momentum=0.9, weight_decay=r["wd"], nesterov=True)
@@ -97,12 +106,14 @@ def main() -> None:
             print(f"epoch {epoch + 1}/{r['epochs']} loss {total / len(tx):.4f} test acc {acc:.4f} "
                   f"({time.time() - start:.0f}s)", flush=True)
     acc = evaluate(model, vx, vy, family, device)
-    OUT.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), OUT / f"{args.model}.pt")
-    write_json(OUT / f"{args.model}.json", {
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), out / f"{args.model}.pt")
+    records.write_json(out / f"{args.model}.json", {
         "model": args.model, "dataset": dataset, "test_accuracy": acc, "n_train": len(tx), "n_test": len(vx),
-        "recipe": r, "seed": SEED, "train_seconds": time.time() - start,
+        "recipe": r, "seed": args.seed, "train_seconds": time.time() - start,
         "device": torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu",
+        "env": records.environment(device),
     })
     print(json.dumps({"model": args.model, "test_accuracy": acc}))
 

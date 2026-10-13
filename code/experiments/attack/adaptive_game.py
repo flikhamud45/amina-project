@@ -1,41 +1,61 @@
-"""The adaptive game: the best value-aware sampler against range-respecting edits (plan G3-min).
+"""The adaptive game on the MNIST MLP: the best value-aware sampler, and the best mixture of samplers, against
+edits that keep every edited value within held-out ranges (Sec. 3.3 and 3.5; ``ext:attack-measure``).
 
-This is the minimal instantiation of the game of ``attack_theory/experiments.md`` Section 1 on the
-MNIST MLP.  The defender publishes a sampler, or a mixture of samplers, from a fixed family F; the
-adversary sees the model, the query, the sampler and the held-out natural ranges, and returns a
-forged trace with a wrong output whose edited values lie in range.  Detection per path is the exact
-``1 - acceptance`` of :mod:`pvi.baseline.analysis`; with ``s`` independent paths it is
-``1 - (1 - d)^s``.
+The defender publishes a sampler, or a mixture of samplers, from a fixed family: uniform, static importance,
+contribution, contribution with the floors ``--floors``, gradient saliency (not implementable by a verifier, so it
+is kept out of the deployable mixture and marked ``*``), tail-first and zero-first (``pvi.baseline.samplers``).  The
+adversary sees the model, the query, the sampler and the held-out ranges, and returns a forged trace with a wrong
+output whose edited values lie in range.  Detection per path is the exact ``1 - acceptance`` of
+:mod:`pvi.baseline.analysis`; with ``s`` independent paths it is ``1 - (1 - d)^s``.
 
-The reported value for a sampler is the *minimum* over the adversary's found attacks of ``d``.  A
-stronger adversary can only lower it, so each number is an **upper bound** on the sampler's true
-worst-case detection -- the direction that supports the claim "even the best sampler detects at most
-X".
+The reported value for a sampler is the *minimum* of ``d`` over the attacks the adversary found.  A stronger
+adversary can only lower it, so each number is an **upper bound** on the sampler's worst-case detection, the
+direction that supports the claim "even the best sampler detects at most X".  The adversary has four attack
+families: the single-neuron edits of a candidate pool (:func:`single_neuron_pool`), the ceiling plans
+(:func:`ceiling_attacks`), the lowering plans to zero and to just above zero (:func:`zeroing_attack`), and a greedy
+guided by the exact detection of the sampler or mixture in force (:func:`guided_attack`).  The defender's best
+per-path mixture is a linear programme (:func:`solve_mixture`), iterated with a double oracle that reruns the guided
+greedy against the current mixture.
 
-Two things in the earlier scripts are fixed here, as the design requires:
+Ranges are held out: they are calibrated on ``--calib-size`` images of the *train* split, and the attacks run on
+disjoint *test* queries (``attack_mnist.py`` and ``samplers.py`` take their ceilings from test images that include
+the attacked queries).  Two range levels are reported: R1, every *edited* value lies in range; R2, every value of
+the recomputed trace lies in range (values pushed downstream can leave their own range), with the honest trace's
+pass rate as the baseline.
 
-* **Held-out ranges.**  ``2_attack/run.py`` and ``3_sampling_fixes/run.py`` set ceilings from
-  ``test_x[:3000]`` and attack ``test_x[0:60]``, which overlap.  Here ranges are calibrated on the
-  *train* split and attacks run on disjoint *test* queries.
-* **Two range levels.**  R1 reports that every *edited* value lies in range; R2 reports that every
-  value in the whole recomputed trace lies in range (values pushed downstream can leave their own
-  range).
+Paper results (``--out`` record, per hidden layer ``layers.<l>.caps.<cap>``):
 
-The acceptance DP is evaluated by :func:`fast_acceptance`, a vectorised, matrix-form equivalent of
-``acceptance_probability`` validated against it to within ``1e-9`` (kill criterion K-G3c) by
-``tests/test_adaptive_game.py`` before any number here is used.
+* Sec. 3.3: "ranking the neurons of the edited layer by the distance of the claimed value from the neuron's held-out
+  mean places the edited neuron first for 75% and 95% of 40 test queries": ``caps.inf.G1e.greedy.top_q_hit_rate``
+  at ``q = 1`` (the tamper locator's empirical ``G_q``, :func:`empirical_guessing`), layers 1 and 2;
+* Sec. 3.5: "the best per-path mixture of the implementable samplers [...] detects at most 3.1% and 9.7% per path
+  in the two hidden layers, below the 27.7/N (5.4% and 10.8%)": the largest ``mixture.detection_per_path`` over the
+  caps, and ``27.7_over_N``;
+* ``ext:attack-measure``: "the edit changes 5.1 neurons on average, passes 99.0% of paths, keeps every edited value
+  in range, and exceeds a neuron's natural maximum no more often than the honest trace (5%)": layer 1, cap 95,
+  ``mean_support``, ``1 - samplers.uniform.detection_per_path``, ``R1_pass_rate``, ``R2_max_pass_rate`` against
+  ``R2_max_honest_baseline``.
 
-Efficiency.  The single-neuron pool (A1) and the zeroing plan (A3) do not depend on the cap, and
-their acceptance vectors over the family do not depend on the cap either, so both are computed once
-per query and reused across every cap; A1 feasibility at a cap is then a ceiling filter on the
-already-found flipping value.  The ceiling plan (A2) and the exact-detection greedy (A4) are the
-only cap- or sampler-dependent searches.  That keeps the full MNIST sweep inside the time budget.
+The acceptance recursion is evaluated by :func:`fast_acceptance`, a vectorised, matrix-form equivalent of
+``acceptance_probability`` that ``tests/test_adaptive_game.py`` checks against it to within ``1e-9``.  The
+single-neuron pool and the zeroing plan do not depend on the cap, and neither do their acceptance vectors over the
+family, so both are computed once per query and reused across every cap; single-neuron feasibility at a cap is a
+ceiling filter on the flipping value already found.  The ceiling plans and the guided greedy are the only cap- or
+sampler-dependent searches.
 
-Usage
------
-    cd code && PYTHONPATH=src python experiments/3_sampling_fixes/adaptive_game.py \
-        --model mlp_mnist --layers 1 2 --queries 40 --calib train \
-        --out artifacts/results/adaptive_game_mlp_mnist.json
+Usage (from ``code/``)::
+
+    python -m experiments.attack.adaptive_game                     # layers 1 and 2, 40 queries, 7 caps
+    python -m experiments.attack.adaptive_game --layers 1 --queries 2 --caps 95 inf --double-oracle 1 \\
+        --out /tmp/adaptive_game.json
+
+Writes ``--out`` (default ``artifacts/results/adaptive_game_mlp_mnist.json``): ``config``, ``env``, ``note``,
+``27.7_over_N`` and, per layer and cap, ``success_rate``, ``mean_support``, ``mean_magnitude_sigma``, the R1/R2 pass
+rates and baselines, ``samplers.<name>.{detection_per_path,median,s_40}``, ``support_limit`` (the adversary's best
+with at most ``K`` edited neurons), ``best_single_sampler``, ``best_single_implementable``, ``mixture`` (deployable,
+with the double oracle's values), ``mixture_upper_bound_with_saliency`` and ``G1e`` (the locator's top-``q`` hit
+rates, ``q`` in ``--q-grid``).  Uses ``artifacts/models/mlp_mnist_full.npz``, MNIST and SciPy (the LP); CPU only,
+about 21 min on 2 threads.
 """
 
 from __future__ import annotations
@@ -43,43 +63,56 @@ from __future__ import annotations
 import argparse
 import math
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 
+from experiments.common.paths import MNIST_MODELS, RESULTS
+from experiments.common.records import environment, write_json
 from pvi.attacks.tamper import smallest_flipping_value
+from pvi.baseline.analysis import locally_consistent_mask
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.sampling import PathSampler, UniformPathSampler, _as_distribution
 from pvi.baseline.samplers import (GradientSaliencySampler, LocalContributionSampler, StaticImportanceSampler,
                                    TailFirstSampler, ZeroAwareContributionSampler, ZeroFirstSampler,
                                    weight_magnitude_importance)
-from pvi.baseline.analysis import locally_consistent_mask
 from pvi.mnist.architecture import DenseLayer
 from pvi.mnist.gradients import output_direction_gradient, saliency
 from pvi.mnist.network import Trace, TracedNetwork
-from pvi.baseline.path.params import ProtocolParams
-from pvi.baseline.path.sampling import UniformPathSampler
-from pvi.baseline.path.sampling import PathSampler, _as_distribution
-from pvi.results import write_json
 from pvi.mnist.training import load_network
 from pvi.mnist.zoo import mlp_architecture_for
 
-ROOT = Path(__file__).resolve().parents[2]
-MODELS = ROOT / "artifacts" / "models"
-RESULTS = ROOT / "artifacts" / "results"
-
+MODEL = "mlp_mnist_full"
 #: Caps as percentiles of the held-out natural range; ``None`` is the unconstrained cap.
 CAPS: tuple[float | None, ...] = (50.0, 75.0, 90.0, 95.0, 99.0, 100.0, None)
 #: Floor magnitudes of the zero-aware contribution sampler (the family of ``floor_sampler.py``).
 FLOOR_EPSILONS: tuple[float, ...] = (0.01, 0.1, 1.0, 10.0, 100.0)
-#: Support cap K for the multi-neuron adversaries.
-KMAX = 48
 #: Support limits K at which the adversary's best is reported (``k <= K``).
 K_LIMITS: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 48)
-#: Path counts at which detection is reported in the figures.
-PATH_COUNTS: tuple[int, ...] = (1, 10, 100, 1000)
+#: Values of ``q`` at which the tamper locator's top-``q`` hit rate is reported.
+Q_GRID: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64)
+
+
+@dataclass(frozen=True)
+class Budget:
+    """The adversary's search limits."""
+
+    pool: int = 96
+    """Candidate neurons of the single-neuron pool."""
+    kmax: int = 48
+    """Edited neurons of a zeroing or ceiling plan, at most."""
+    near_zero: float = 1e-3
+    """Value written by the near-zero lowering, clipped to each neuron's ceiling."""
+    guided_kmax: int = 32
+    """Edited neurons of the guided greedy, at most."""
+    guided_pool: int = 8
+    """Candidates the guided greedy scores exactly at each step."""
+
 
 #: Cache of per-layer absolute weight magnitudes (float64), which are constant for a run; keyed by
 #: ``(id(network), layer_index)``.  The contribution-type transition matrices are a broadcast product
-#: of these with the claimed activations, so recomputing ``abs`` on every evaluation was the hot spot.
+#: of these with the claimed activations, so ``abs`` is taken once per layer, not on every evaluation.
 _ABS_WEIGHTS: dict[tuple[int, int], np.ndarray] = {}
 
 
@@ -94,7 +127,7 @@ def _abs_weight(network: TracedNetwork, layer_index: int) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# Vectorised exact acceptance (K-G3c)
+# Vectorised exact acceptance
 # --------------------------------------------------------------------------- #
 
 
@@ -231,7 +264,7 @@ def accept_vector(
 
 
 # --------------------------------------------------------------------------- #
-# Sampler family F
+# The sampler family
 # --------------------------------------------------------------------------- #
 
 
@@ -239,8 +272,9 @@ def build_sampler_family(
     network: TracedNetwork,
     thresholds: dict[int, np.ndarray],
     zero_layers: set[int],
+    floors: tuple[float, ...] = FLOOR_EPSILONS,
 ) -> dict[str, PathSampler]:
-    """Family F of Section 1.1: uniform, static, contribution, floors, saliency, tail-, zero-first.
+    """The family: uniform, static importance, contribution, the ``floors``, saliency, tail-first, zero-first.
 
     ``thresholds`` holds the tail-first cut per hidden layer (a percentile of the held-out
     activations) and ``zero_layers`` the layers whose claimed zeros the zero-first sampler targets.
@@ -256,7 +290,7 @@ def build_sampler_family(
         "static-importance": StaticImportanceSampler(importance),
         "contribution": LocalContributionSampler(network),
     }
-    for eps in FLOOR_EPSILONS:
+    for eps in floors:
         family[f"floor-{eps:g}"] = ZeroAwareContributionSampler(network, epsilon=eps)
     family["gradient-saliency*"] = GradientSaliencySampler(network)
     family["tail-first"] = TailFirstSampler(thresholds)
@@ -327,14 +361,14 @@ def trace_in_range(
 
 
 # --------------------------------------------------------------------------- #
-# Adversaries A1-A4 (built on the existing components; selection calls the exact oracle)
+# The adversary's four attack families (selection calls the exact oracle)
 # --------------------------------------------------------------------------- #
 
 
 def single_neuron_pool(
     network: TracedNetwork, honest: Trace, layer: int, pool: int
 ) -> list[tuple[int, float, Trace]]:
-    """A1 pool: the unconstrained smallest-flipping single-neuron edits over a candidate set.
+    """The single-neuron pool: the unconstrained smallest-flipping single-neuron edits over a candidate set.
 
     Candidates are the most and least salient neurons and an even spread across the layer (the three
     buckets of ``plan_evasive_flip``).  The flip value and forged trace do not depend on the cap, so
@@ -401,33 +435,30 @@ def _direction_gradient(network: TracedNetwork, honest: Trace, layer: int) -> np
     return output_direction_gradient(network, honest, layer, direction)
 
 
-#: Value written by the near-zero lowering variant (A3b), clipped to each neuron's ceiling.
-NEAR_ZERO = 1e-3
-
-
 def zeroing_attack(
     network: TracedNetwork,
     honest: Trace,
     layer: int,
     gradient: np.ndarray,
     hi: np.ndarray | None = None,
+    budget: Budget = Budget(),
 ) -> tuple[Trace, tuple[int, ...]] | None:
-    """A3: the lowering family of Lemma M, ranked by the benefit of lowering.
+    """The lowering plans, neurons ranked by the benefit of lowering them.
 
-    With ``hi`` omitted every move is to exactly zero (A3, the mode of a ReLU neuron).  With ``hi``
-    given every move is to ``min(NEAR_ZERO, hi_i)`` (A3b): a value just above zero, still in range,
-    which a sampler that targets claimed zeros does not see while a contribution-type sampler still
-    gives it almost no weight.  The design notes name this as the adversary's reply to zero-first
-    sampling; omitting it would overstate the zero-first sampler and any mixture that leans on it.
+    With ``hi`` omitted every move is to exactly zero (the mode of a ReLU neuron).  With ``hi`` given every move
+    is to ``min(budget.near_zero, hi_i)``: a value just above zero, still in range, which a sampler that targets
+    claimed zeros does not see while a contribution-type sampler still gives it almost no weight.  This is the
+    adversary's reply to zero-first sampling; omitting it would overstate the zero-first sampler and any mixture
+    that leans on it.
     """
     original = honest[layer].astype(np.float64)
     if hi is None:
         proposed = np.zeros_like(original)
     else:
-        proposed = np.minimum(NEAR_ZERO, np.asarray(hi, dtype=np.float64))
+        proposed = np.minimum(budget.near_zero, np.asarray(hi, dtype=np.float64))
     benefit = np.where(gradient < 0, np.abs(gradient) * (original - proposed), 0.0)
     order = [int(n) for n in np.argsort(benefit)[::-1] if benefit[n] > 0]
-    return _greedy_inrange(network, honest, layer, proposed, order, KMAX)
+    return _greedy_inrange(network, honest, layer, proposed, order, budget.kmax)
 
 
 def ceiling_attacks(
@@ -436,8 +467,9 @@ def ceiling_attacks(
     layer: int,
     hi: np.ndarray,
     gradient: np.ndarray,
+    budget: Budget = Budget(),
 ) -> list[tuple[Trace, tuple[int, ...]]]:
-    """A2: push each neuron to its in-range ceiling where that helps, else to zero; three rankings."""
+    """The ceiling plans: push each neuron to its in-range ceiling where that helps, else to zero; three rankings."""
     original = honest[layer].astype(np.float64)
     above = network.architecture[layer + 1]
     outgoing = (
@@ -456,13 +488,13 @@ def ceiling_attacks(
     out: list[tuple[Trace, tuple[int, ...]]] = []
     for order in rankings.values():
         usable = [int(n) for n in order if benefit[n] > 0]
-        found = _greedy_inrange(network, honest, layer, proposed, usable, KMAX)
+        found = _greedy_inrange(network, honest, layer, proposed, usable, budget.kmax)
         if found is not None:
             out.append(found)
     return out
 
 
-def a4_attack(
+def guided_attack(
     network: TracedNetwork,
     honest: Trace,
     layer: int,
@@ -473,7 +505,7 @@ def a4_attack(
     kmax: int = 32,
     pool: int = 8,
 ) -> tuple[Trace, tuple[int, ...]] | None:
-    """A4: a greedy that, at each step, commits the in-range neuron of lowest exact detection under S.
+    """The guided greedy: at each step, commit the in-range neuron of lowest exact detection under ``detect``.
 
     Each neuron is proposed at its helpful in-range bound (a ceiling, or zero).  At each step the
     ``pool`` most useful unused neurons (by first-order margin benefit) are tried, each resulting
@@ -568,7 +600,7 @@ def solve_mixture(detection: list[np.ndarray], cols: list[int]) -> tuple[np.ndar
 
 
 # --------------------------------------------------------------------------- #
-# G1e: the empirical guessing probability (tamper locator)
+# The empirical guessing probability (tamper locator; record key ``G1e``)
 # --------------------------------------------------------------------------- #
 
 
@@ -585,9 +617,9 @@ def empirical_guessing(
     layer: int,
     feasible: list[tuple[int, Trace]],
     samples: np.ndarray,
-    q_grid: list[int],
+    q_grid: tuple[int, ...],
 ) -> dict[str, dict[int, int]]:
-    """G1e: top-q hit rate of the surprise locator for the single-neuron edit, from the forged trace.
+    """Top-q hit rate of the surprise locator for the single-neuron edit, from the forged trace.
 
     ``feasible`` are the in-range single-neuron flips at this cap (neuron, forged trace), with the
     smallest-value one taken as the greedy attack and a pseudo-random one as the randomised attack.
@@ -631,9 +663,10 @@ def play_layer(
     caps: tuple[float | None, ...],
     family: dict[str, PathSampler],
     params: ProtocolParams,
-    pool: int,
+    budget: Budget,
     double_oracle_rounds: int,
-    q_grid: list[int],
+    k_limits: tuple[int, ...],
+    q_grid: tuple[int, ...],
     log,
 ) -> dict[str, dict]:
     """Run the game at ``layer`` for every cap, reusing cap-independent work across caps."""
@@ -645,8 +678,8 @@ def play_layer(
     def accepts(trace: Trace) -> np.ndarray:
         return accept_vector(network, trace, samplers, params)
 
-    a4_archetypes = ["uniform", "contribution", "tail-first", "zero-first"]
-    a4_detectors = [family[n] for n in a4_archetypes if n in family]
+    archetypes = ["uniform", "contribution", "tail-first", "zero-first"]
+    guides = [family[n] for n in archetypes if n in family]
     sigma = ranges[layer].astype(np.float64).std(axis=0) + 1e-6  # held-out std per neuron
     # Ascending caps, unconstrained last, so that plans can be carried to looser caps.
     caps = tuple(sorted((c for c in caps if c is not None))) + ((None,) if None in caps else ())
@@ -669,9 +702,9 @@ def play_layer(
         gradient = _direction_gradient(network, honest, layer)
 
         # Cap-independent attacks and their family-wide acceptance vectors (found once).
-        pool_edits = single_neuron_pool(network, honest, layer, pool)
+        pool_edits = single_neuron_pool(network, honest, layer, budget.pool)
         pool_accept = {neuron: accepts(forged) for neuron, _v, forged in pool_edits}
-        zero = zeroing_attack(network, honest, layer, gradient)
+        zero = zeroing_attack(network, honest, layer, gradient, budget=budget)
         zero_accept = accepts(zero[0]) if zero is not None else None
 
         # Plans found at a tighter cap stay in range at every looser one (ceilings grow with the
@@ -688,31 +721,32 @@ def play_layer(
             store["honest_r2"].append(trace_in_range(honest, layer, ranges, cap, ())[1])
             store["honest_r2_max"].append(trace_in_range(honest, layer, ranges, 100.0, ())[1])
 
-            # A1 feasible at this cap: ceiling filter on the pool's flip values.
+            # Single-neuron edits feasible at this cap: a ceiling filter on the pool's flip values.
             attacks: list[tuple[Trace, tuple[int, ...], np.ndarray]] = list(carried)
             feasible_single: list[tuple[int, Trace]] = []
             for neuron, value, forged in pool_edits:
                 if value <= hi[neuron] + 1e-9:
                     attacks.append((forged, (neuron,), pool_accept[neuron]))
                     feasible_single.append((neuron, forged))
-            # A3 zeroing (in range at every cap) and A3b near-zero lowering (clipped to the cap).
+            # Zeroing (in range at every cap) and the near-zero lowering (clipped to the cap).
             if zero is not None:
                 attacks.append((zero[0], zero[1], zero_accept))
-            near = zeroing_attack(network, honest, layer, gradient, hi=hi)
+            near = zeroing_attack(network, honest, layer, gradient, hi=hi, budget=budget)
             if near is not None:
                 attacks.append((near[0], near[1], accepts(near[0])))
-            # A2 ceiling plans (cap-dependent).
-            for forged, edited in ceiling_attacks(network, honest, layer, hi, gradient):
+            # Ceiling plans (cap-dependent).
+            for forged, edited in ceiling_attacks(network, honest, layer, hi, gradient, budget):
                 attacks.append((forged, edited, accepts(forged)))
-            # A4 greedy against a few representative detectors (cap- and sampler-dependent).  Every
-            # other sampler's own evasion reduces to one of these archetypes -- uniform (least
+            # The guided greedy against a few representative detectors (cap- and sampler-dependent).
+            # Every other sampler's own evasion reduces to one of these archetypes -- uniform (least
             # support), contribution (zeroing), tail-first (avoid the tail), zero-first (raise off
-            # zero) -- and each A4 trace is scored against the whole family, so the matrix still
-            # bounds every sampler; the mixture-adaptive A4 of the double oracle covers the rest.
-            for s in a4_detectors:
-                res = a4_attack(
+            # zero) -- and each guided trace is scored against the whole family, so the matrix still
+            # bounds every sampler; the double oracle's greedy against the mixture covers the rest.
+            for s in guides:
+                res = guided_attack(
                     network, honest, layer, hi, gradient,
                     detect=lambda t, s=s: 1.0 - fast_acceptance(network, t, s, params),
+                    kmax=budget.guided_kmax, pool=budget.guided_pool,
                 )
                 if res is not None:
                     attacks.append((res[0], res[1], accepts(res[0])))
@@ -783,7 +817,7 @@ def play_layer(
             for _ in range(double_oracle_rounds):
                 added = _double_oracle_round(
                     network, queries, store["qidx"], ranges, layer, cap, family, names, params,
-                    alpha, detection, supports_rows,
+                    alpha, detection, supports_rows, budget,
                 )
                 if not added:
                     break
@@ -828,7 +862,7 @@ def play_layer(
         # Support limit K: the adversary may only use plans editing at most K neurons.
         k_axis: dict[str, dict] = {}
         n_q = len(store["success"])
-        for kmax in K_LIMITS:
+        for kmax in k_limits:
             per_sampler: dict[str, float | None] = {}
             usable = [(m, s) for m, s in zip(detection, supports_rows) if np.any(s <= kmax)]
             for i, name in enumerate(names):
@@ -902,13 +936,15 @@ def _double_oracle_round(
     alpha: np.ndarray,
     detection: list[np.ndarray],
     supports_rows: list[np.ndarray],
+    budget: Budget,
 ) -> bool:
-    """Re-run A4 against the current mixture; append any strictly better attack. Returns whether added.
+    """Rerun the guided greedy against the current mixture; append any strictly better attack.  Returns whether
+    one was added.
 
-    Only A4 is run here: A1, A2 and A3 do not depend on the detector, so their rows are already in
-    the matrices, while A4's choice is adaptive to the mixture oracle, which is the per-path
-    acceptance ``sum_k alpha_k accept_k`` (linear in ``alpha``).  ``detection[pos]`` belongs to query
-    ``qidx[pos]``; iterating over that pairing keeps each new attack with its own query.
+    Only the guided greedy runs here: the single-neuron, ceiling and lowering plans do not depend on the
+    detector, so their rows are already in the matrices, while the greedy's choice adapts to the mixture oracle,
+    which is the per-path acceptance ``sum_k alpha_k accept_k`` (linear in ``alpha``).  ``detection[pos]`` belongs to
+    query ``qidx[pos]``; iterating over that pairing keeps each new attack with its own query.
     """
     samplers = [family[name] for name in names]
     hi = ceilings_at(ranges[layer], cap)
@@ -920,7 +956,8 @@ def _double_oracle_round(
     for pos, qi in enumerate(qidx):
         honest = network.eval_trace(queries[qi])
         gradient = _direction_gradient(network, honest, layer)
-        res = a4_attack(network, honest, layer, hi, gradient, detect=detect_mix)
+        res = guided_attack(network, honest, layer, hi, gradient, detect=detect_mix, kmax=budget.guided_kmax,
+                            pool=budget.guided_pool)
         if res is None:
             continue
         forged, edited = res
@@ -938,18 +975,35 @@ def _double_oracle_round(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="mlp_mnist", choices=["mlp_mnist"])
-    parser.add_argument("--layers", type=int, nargs="+", default=[1, 2])
-    parser.add_argument("--queries", type=int, default=40, help="disjoint test queries attacked")
-    parser.add_argument("--calib", choices=["train", "test-tail"], default="train")
-    parser.add_argument("--calib-size", type=int, default=5000)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--model", default="mlp_mnist", choices=["mlp_mnist"],
+                        help="the attacked network (the MNIST MLP mlp_mnist_full)")
+    parser.add_argument("--layers", type=int, nargs="+", default=[1, 2], help="attacked hidden layers")
+    parser.add_argument("--queries", type=int, default=40, help="test queries attacked")
+    parser.add_argument("--calib-size", type=int, default=5000,
+                        help="training images whose activations set the ranges (disjoint from the test queries)")
     parser.add_argument("--caps", type=str, nargs="+", default=None,
-                        help="override caps, e.g. 50 75 90 95 99 100 inf")
-    parser.add_argument("--pool", type=int, default=96, help="A1 candidate neurons")
-    parser.add_argument("--double-oracle", type=int, default=10)
-    parser.add_argument("--threads", type=int, default=2)
-    parser.add_argument("--tail-percentile", type=float, default=95.0, help="tail-first sampler cut")
+                        help="caps as percentiles of the range, inf for none (default "
+                             + " ".join("inf" if c is None else f"{c:g}" for c in CAPS) + ")")
+    parser.add_argument("--floors", type=float, nargs="+", default=list(FLOOR_EPSILONS),
+                        help="floors of the zero-aware contribution samplers of the family")
+    parser.add_argument("--tail-percentile", type=float, default=95.0, help="the tail-first sampler's cut")
+    parser.add_argument("--pool", type=int, default=Budget.pool, help="candidate neurons of the single-neuron pool")
+    parser.add_argument("--kmax", type=int, default=Budget.kmax,
+                        help="edited neurons of a zeroing or ceiling plan, at most")
+    parser.add_argument("--near-zero", type=float, default=Budget.near_zero,
+                        help="value written by the near-zero lowering (clipped to each ceiling)")
+    parser.add_argument("--guided-kmax", type=int, default=Budget.guided_kmax,
+                        help="edited neurons of the guided greedy, at most")
+    parser.add_argument("--guided-pool", type=int, default=Budget.guided_pool,
+                        help="candidates the guided greedy scores exactly per step")
+    parser.add_argument("--double-oracle", type=int, default=10, help="double-oracle rounds per cap, at most")
+    parser.add_argument("--k-limits", type=int, nargs="+", default=list(K_LIMITS),
+                        help="support limits K of the record's support_limit block")
+    parser.add_argument("--q-grid", type=int, nargs="+", default=list(Q_GRID),
+                        help="values of q of the tamper locator's top-q hit rate")
+    parser.add_argument("--threads", type=int, default=2, help="torch threads")
+    parser.add_argument("--models", default=str(MNIST_MODELS), help="folder of the trained models")
     parser.add_argument("--out", default=str(RESULTS / "adaptive_game_mlp_mnist.json"))
     args = parser.parse_args()
 
@@ -962,47 +1016,48 @@ def main() -> None:
         caps: tuple[float | None, ...] = CAPS
     else:
         caps = tuple(None if c.lower() in ("inf", "none") else float(c) for c in args.caps)
+    budget = Budget(pool=args.pool, kmax=args.kmax, near_zero=args.near_zero, guided_kmax=args.guided_kmax,
+                    guided_pool=args.guided_pool)
+    k_limits, q_grid = tuple(args.k_limits), tuple(args.q_grid)
 
-    network = load_network(mlp_architecture_for(10), MODELS / "mlp_mnist_full.npz")
+    network = load_network(mlp_architecture_for(10), Path(args.models) / f"{MODEL}.npz")
     dataset = load_classification("mnist", seed=0)
     train_x = np.ascontiguousarray(dataset.train_x.reshape(len(dataset.train_x), -1), np.float32)
     test_x = np.ascontiguousarray(dataset.test_x.reshape(len(dataset.test_x), -1), np.float32)
-
-    if args.calib == "train":
-        calib_x = train_x[: args.calib_size]      # train and test are disjoint datasets
-        attack_x = test_x[: args.queries]
-    else:                                         # held-out test tail 5000-9999, disjoint head attacked
-        calib_x = test_x[5000:10000]
-        attack_x = test_x[: args.queries]
+    calib_x = train_x[:args.calib_size]           # train and test are disjoint datasets
+    attack_x = test_x[:args.queries]
 
     layers = list(args.layers)
     # Ranges for every non-input layer: the tampered layers' ceilings, and R2 over the recomputed
     # layers up to and including the output logits.
     ranges = calibrate_ranges(network, calib_x, list(range(1, len(network.architecture))))
     params = ProtocolParams(n_paths=1)
-    q_grid = [1, 2, 4, 8, 16, 32, 64]
     started = time.perf_counter()
 
     def log(msg: str) -> None:
         print(msg, flush=True)
 
-    log(f"model {network.architecture.layer_widths}  calib={args.calib}({len(calib_x)})  "
+    log(f"model {network.architecture.layer_widths}  calib=train({len(calib_x)})  "
         f"queries={len(attack_x)}  threads={args.threads}")
 
     out: dict = {
         "config": {
             "model": args.model, "layers": layers, "queries": int(len(attack_x)),
-            "calib": args.calib, "calib_size": int(len(calib_x)),
+            "calib": "train", "calib_size": int(len(calib_x)),
             "caps": [("inf" if c is None else c) for c in caps],
-            "pool": args.pool, "double_oracle_rounds": args.double_oracle,
+            "pool": budget.pool, "double_oracle_rounds": args.double_oracle,
             "tail_percentile": args.tail_percentile, "threads": args.threads,
+            "floors": list(args.floors), "k_limits": list(k_limits), "q_grid": list(q_grid),
+            **{k: v for k, v in asdict(budget).items() if k != "pool"},
         },
+        "env": environment("cpu"),
         "note": (
             "Detection is the exact single-path 1 - acceptance (fast_acceptance, validated to 1e-9 "
             "against acceptance_probability). The per-sampler value is the adversary's best (minimum) "
-            "over A1-A4; an UPPER BOUND on the sampler's true worst-case detection -- a stronger "
-            "adversary can only lower it."
+            "over its four attack families (single-neuron pool, ceiling plans, lowering plans, guided greedy); "
+            "an UPPER BOUND on the sampler's true worst-case detection -- a stronger adversary can only lower it."
         ),
+        # 40 ln 2 = 27.7: per-path detection above 27.7/N reaches 2^-40 with fewer than N paths.
         "27.7_over_N": {
             str(network.architecture[l].n_neurons): 27.7 / network.architecture[l].n_neurons
             for l in layers
@@ -1015,15 +1070,14 @@ def main() -> None:
             l: np.percentile(ranges[l].astype(np.float64), args.tail_percentile, axis=0)
             for l in layers
         }
-        family = build_sampler_family(network, thresholds, set(layers))
+        family = build_sampler_family(network, thresholds, set(layers), tuple(args.floors))
         layer_caps = play_layer(
             network, attack_x, ranges, layer, caps, family, params,
-            args.pool, args.double_oracle, q_grid, log,
+            budget, args.double_oracle, k_limits, q_grid, log,
         )
         out["layers"][str(layer)] = {"width": network.architecture[layer].n_neurons, "caps": layer_caps}
 
     out["seconds"] = time.perf_counter() - started
-    RESULTS.mkdir(parents=True, exist_ok=True)
     write_json(args.out, out)
     log(f"\nwrote {args.out} in {out['seconds']:.0f}s")
 

@@ -19,7 +19,6 @@ import copy
 import dataclasses
 import hashlib
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -617,42 +616,40 @@ def test_the_lookup_byte_model():
 
 # -- the experiment scripts ---------------------------------------------------------------------------------
 
-def _script(folder: str, name: str):
-    import importlib.util
-
-    path = Path(__file__).resolve().parents[1] / "experiments" / folder / f"{name}.py"
-    if str(path.parent) not in sys.path:
-        sys.path.insert(0, str(path.parent))
-    spec = importlib.util.spec_from_file_location(f"{name}_lookups_test", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_bench_names_the_pruned_and_lookup_cells_once(monkeypatch):
-    """``--prune-last`` and ``--lookups`` add their suffixes (never a --tag's), run the decoders only, and
-    ``--lookups`` the K and Kpre cells only (``--policy`` the mode-C ones)."""
-    bench = _script("4_defence_benchmark", "bench")
-    for argv, needs in ((["llm", "--model", "gpt2", "--tag", "_prune"], "_prune"),
-                        (["llm", "--model", "gpt2", "--tag", "_x_lookups"], "_lookups"),
-                        (["cnn", "--model", "lenet5", "--prune-last"], "decoders"),
-                        (["cnn", "--model", "lenet5", "--lookups"], "decoders"),
-                        (["llm", "--model", "gpt2", "--lookups", "--policy", "R8c"], "one at a time")):
-        monkeypatch.setattr(sys, "argv", ["bench.py", *argv])
-        with pytest.raises(SystemExit, match=needs):
-            bench.main()
+def test_bench_names_the_pruned_and_lookup_cells_by_the_settings_that_change_them(monkeypatch):
+    """``_prune`` names every decoder cell built with the pruned last block, ``_lookups`` only the K and Kpre cells
+    whose verifier reads the embedding rows itself (and ``_pol<name>`` only the commitment and mode-C cells), so one
+    run of every mode names each cell as the stored cells measured under the same settings; image models have neither
+    setting."""
+    from experiments.costs import bench
+    monkeypatch.setattr(sys, "argv", ["bench.py", "cnn", "--model", "lenet5", "--gen", "4", "--platform", "test"])
+    with pytest.raises(SystemExit, match="decoders"):
+        bench.main()
     seen = {}
-    monkeypatch.setattr(bench, "env_info", lambda: {"pvi_path": "", "torch_threads": 1})
-    monkeypatch.setattr(bench, "claim_platform", lambda env: None)       # (nothing is written)
-    monkeypatch.setattr(bench, "suite_llm", lambda args, env: seen.update(tag=bench.TAG, args=args))
-    monkeypatch.setattr(sys, "argv", ["bench.py", "llm", "--model", "gpt2", "--prune-last", "--lookups",
-                                      "--wire", "--tag", "_wire", "--platform", "test"])
+    monkeypatch.setattr(bench, "env_info", lambda device, platform="": {"pvi_path": "", "torch_threads": 1})
+    monkeypatch.setattr(bench, "claim_platform", lambda env, platform: None)       # (nothing is written)
+    monkeypatch.setattr(bench.cli, "apply_runtime", lambda args: None)            # (this process's threads stay)
+    monkeypatch.setattr(bench, "suite_llm", lambda args, env: seen.update(args=args))
+    monkeypatch.setattr(sys, "argv", ["bench.py", "llm", "--model", "gpt2", "--platform", "test", "--device", "cpu"])
     bench.main()
-    assert seen["tag"] == "_wire_prune_lookups" and seen["args"].prune_last and seen["args"].lookups
-    args = bench.build_parser().parse_args(["llm", "--model", "gpt2", "--lookups"])
-    assert bench._todo(args, "llm", "gpt2", "defence_Kpre_int_lam40_T8_L1")
-    assert not bench._todo(args, "llm", "gpt2", "defence_C_int_lam40_T8_L1")
-    assert not bench._todo(args, "llm", "gpt2", "commit_T8_L1")
+    args = seen["args"]
+    assert args.prune_last and args.lookups and args.wire and args.lean and args.policy == "cnn18c"
+    assert bench.variant(args, "llm", "defence_Kpre_int_lam40_T8_L1") == "_wire_prune_lookups"
+    assert bench.variant(args, "llm", "defence_K_int_lam40_T8_L1") == "_wire_prune_lookups"
+    assert bench.variant(args, "llm", "defence_C_fs_lam40_T8_L1") == "_wire_prune_polcnn18c"
+    assert bench.variant(args, "llm", "commit_T8_L1") == "_wire_prune_polcnn18c"
+    assert bench.variant(args, "llm", "tamper_C_int_lam40_T8_L1") == "_wire_prune_polcnn18c"
+    assert bench.variant(args, "cnn", "defence_K_int_lam40_rate4") == "_wire"
+    assert bench.variant(args, "cnn", "facts") == "_wire"
+    basic = bench.build_parser().parse_args(["llm", "--model", "gpt2", "--platform", "test", "--policy", "per-op",
+                                            "--no-wire", "--no-prune-last", "--no-lookups"])
+    for cell in ("defence_Kpre_int_lam40_T8_L1", "defence_C_int_lam40_T8_L1", "commit_T8_L1"):
+        assert bench.variant(basic, "llm", cell) == ""
+    lean_off = bench.build_parser().parse_args(["llm", "--model", "gpt2", "--platform", "test", "--no-lean",
+                                               "--threads", "1", "--verifier-device", "cuda", "--verifier-impl",
+                                               "stream", "--batches", "4"])
+    assert bench.variant(lean_off, "llm", "defence_Kpre_int_lam40_T8_L1") == \
+        "_thr1_nolean_wire_gpuv_stream_batch_prune_lookups"
 
 
 def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_path):
@@ -662,16 +659,15 @@ def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_
     none raising."""
     import json
 
-    import pvi.models.decoder as tr
+    from experiments.common import models
+    from experiments.costs import bench
 
-    bench = _script("4_defence_benchmark", "bench")
-    monkeypatch.setitem(tr.CONFIGS, "tiny-gpt", _TINY["gpt"])
+    monkeypatch.setitem(models.TINY, "tiny-gpt", _TINY["gpt"])
     monkeypatch.setattr(bench, "RAW", tmp_path)
-    monkeypatch.setattr(bench, "WIRE", True)
-    monkeypatch.setattr(bench, "TAG", "_wire_polR8c")
     args = bench.build_parser().parse_args(["llm", "--model", "tiny-gpt", "--seq", "9", "--builds", "full",
                                             "--modes", "C:int", "--lams", "40", "--queries", "1", "--policy", "R8c",
-                                            "--wire", "--llm-tampers", "34"])    # (attack 33 hits a table)
+                                            "--wire", "--no-prune-last", "--llm-tampers", "34",   # (attack 33 hits a table)
+                                            "--platform", "test"])
     bench.suite_llm(args, {"device": "cpu", "cpu": "test", "torch_threads": 1})
     cell = tmp_path / "llm" / "tiny-gpt" / "tamper_C_int_lam40_T9_L2_wire_polR8c.jsonl"
     rows = [json.loads(line) for line in cell.read_text().splitlines()]

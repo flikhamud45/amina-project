@@ -1,41 +1,43 @@
-"""The report's tables count the streaming verifier's time (``verify_total``), and only once.
+"""The benchmark tables (``experiments/comparison/aggregate.py``), the outcome counts (``count_outcomes.py``) and
+the selection of stored cells (``experiments/paper/assets.py``).
 
-``bench.py --verifier-impl stream`` records one ``verify_total`` per query instead of the
-verify phases it overlaps; ``aggregate.py`` and ``paper_assets.py`` must carry it into the
-tables and refuse a row that has both.
+The tables count the streaming verifier's time (``verify_total``), and only once: ``bench.py --verifier-impl stream``
+records one ``verify_total`` per query instead of the verify phases it overlaps; ``aggregate.py`` and ``assets.py``
+must carry it into the tables and refuse a row that has both.  Later runs replace earlier runs' cells whole, withheld
+values stay withheld per platform, and the counts keep the defining cells only when asked.
 """
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
+import importlib
 
 import pytest
 
+from experiments.comparison import aggregate
+from experiments.comparison import count_outcomes as co
+
 pytest.importorskip("matplotlib")
 pytestmark = pytest.mark.filterwarnings("ignore:.enablePackrat. deprecated")   # matplotlib's own pyparsing call
-SCRIPTS = Path(__file__).resolve().parents[1] / "experiments" / "5_comparison"
-REPORT_RUNS = ("l40s_improved", "l40s_improved2", "l40s_improved3")   # the report's --optimised runs, in order
+STORED_RUNS = ("l40s_improved", "l40s_improved2", "l40s_improved3")
+"""The stored runs of the base implementation, in order (``assets.py --optimised``; a later run's cell wins)."""
 
 
-def _script(name: str):
-    spec = importlib.util.spec_from_file_location(f"comparison_{name}", SCRIPTS / f"{name}.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+@pytest.fixture
+def pa():
+    """``experiments.paper.assets`` in its initial state (the tests set its module-level selections)."""
+    from experiments.paper import assets
+    return importlib.reload(assets)
 
 
 def test_verify_total_is_carried_into_the_tables():
-    assert "verify_total" in _script("aggregate").ADDITIVE
-    assert "verify_total" in _script("validate_extrapolation").METRICS
+    assert "verify_total" in aggregate.ADDITIVE
 
 
-def test_every_timing_of_run_query_is_carried_into_the_tables():
+def test_every_timing_of_run_query_is_carried_into_the_tables(pa):
     """Every timing ``run_query`` records -- modes C, K and Kpre, a ``c`` policy's lookup tables and a K
-    verifier's own rows, with and without wire, batched and streaming -- is additive in aggregate.py,
-    checked by validate_extrapolation.py and part of paper_assets.py's prover or verifier time (once:
-    never both), and the batched verify phases the streaming verifier's ``verify_total`` covers are
-    those ``OVERLAPPED`` names."""
+    verifier's own rows, with and without wire, batched and streaming -- is additive in aggregate.py and part of
+    assets.py's prover or verifier time (once: never both), and the batched verify phases the streaming
+    verifier's ``verify_total`` covers are those ``OVERLAPPED`` names."""
     import pvi.v0 as proto
     from test_plans import _planned, _verifiers
 
@@ -59,16 +61,14 @@ def test_every_timing_of_run_query_is_carried_into_the_tables():
             keys[v.stream] |= set(res["timings"])
     emitted = keys[False] | keys[True]
     assert {"prove_lookups", "verify_lookups", "verify_total"} <= emitted
-    pa = _script("paper_assets")
-    assert emitted <= _script("aggregate").ADDITIVE and emitted <= _script("validate_extrapolation").METRICS
+    assert emitted <= aggregate.ADDITIVE
     assert emitted <= set(pa.PROVE) | set(pa.VERIFY) and set(pa.PROVE) & set(pa.VERIFY) == {"fs_hash"}
     batched_only = {k for k in keys[False] - keys[True] if k.startswith("verify_")}
     assert batched_only <= set(pa.OVERLAPPED) and not keys[True] & set(pa.OVERLAPPED)
     assert set(pa.OVERLAPPED) - batched_only == {"verify_upload"}    # (a GPU client's: none on the CPU)
 
 
-def test_the_streaming_verifier_is_timed_once():
-    pa = _script("paper_assets")
+def test_the_streaming_verifier_is_timed_once(pa):
     row = {"prove_forward": (2.0, "measured", 7e6, "gpu"), "prove_fold": (0.5, "measured", 7e6, "gpu"),
            "fs_hash": (0.25, "measured", 7e6, "gpu"), "bytes_total": (1000.0, "measured", 7e6, "gpu")}
     stream = dict(row, verify_total=(3.0, "measured", 7e6, "gpu"))
@@ -86,12 +86,10 @@ def test_the_streaming_verifier_is_timed_once():
         m.total("lenet5", "cell", pa.VERIFY)
 
 
-def test_sec45_compares_both_protocols_on_every_configuration():
-    """Sec. 4.5 quotes the basic -> optimised comparison (opt_pairs; text_numbers.py checks its averages and
-    ranges): every configuration has both sides, the basic one complete and the optimised one measured
-    (none omitted, none pending) on the report's runs."""
-    pa = _script("paper_assets")
-    pa.OPT_TABLES = [pa.tables_dir(n) for n in REPORT_RUNS]
+def test_sec45_compares_both_protocols_on_every_configuration(pa):
+    """The basic -> optimised comparison (opt_pairs): every configuration has both sides, the basic one complete and
+    the optimised one measured (none omitted, none pending) on the stored runs."""
+    pa.OPT_TABLES = [pa.tables_dir(n) for n in STORED_RUNS]
     rows = pa.opt_pairs()
     assert [r[0] for r in rows] == [label for label, *_ in pa.TAB_OPT]
     assert all(None not in before for _, _, _, before, _, _ in rows)
@@ -99,13 +97,12 @@ def test_sec45_compares_both_protocols_on_every_configuration():
     assert not any(p for *_, pend in rows for p in pend)
 
 
-def test_table3_follows_the_setting_rule():
+def test_table3_follows_the_setting_rule(pa):
     """Fiat-Shamir against the non-interactive systems where it is stored (else interactive and marked),
     the interactive protocol against zkLLM and Maverick, Maverick's whole client time as its verifier
     time, ours better on all three costs exactly in the zkCNN, DeepProve and Maverick rows (Maverick's: our
     run without the compact encoding, TABLE1_MAVERICK_SEL), and each cell printed as the
     factor by which ours is better or worse, shaded by which (or, in the other styles, as n-times or 1/n)."""
-    pa = _script("paper_assets")
     pa.OPT_TABLES = [pa.tables_dir("l40s_improved")]
     rows = {(s, w): (cells, interactive, pend) for s, w, cells, interactive, pend in pa.ratio_rows()}
     assert not rows[("zkCNN$^a$", "LeNet-5")][1] and not rows[("DeepProve$^c$", "GPT-2 (64)")][1]
@@ -126,9 +123,9 @@ def test_table3_follows_the_setting_rule():
     assert [o for _, o in rows[("Maverick$^d$", "Qwen3-4B (8)")][0]] == list(nw[:3])
     # nothing is pending: a number the runs lack is omitted (OMIT_UNMEASURED), never a red placeholder
     assert not any(any(p) for (s, w), (c, i, p) in rows.items())
-    # on the report's runs every cell is measured (no '--'), and of zkLLM's 2,048-token rows only OPT-125M and
+    # on the stored runs every cell is measured (no '--'), and of zkLLM's 2,048-token rows only OPT-125M and
     # OPT-1.3B remain (the OPT-6.7B, Llama-2-7B and Llama-2-13B rows and zkLLM's code on our L40S were dropped)
-    pa.OPT_TABLES = [pa.tables_dir(n) for n in REPORT_RUNS]
+    pa.OPT_TABLES = [pa.tables_dir(n) for n in STORED_RUNS]
     final = {(s, w): (cells, pend) for s, w, cells, _, pend in pa.ratio_rows()}
     assert [w for s, w in final if s.startswith("zkLLM")] == ["OPT-125M (2{,}048)", "OPT-1.3B (2{,}048)"]
     assert len(final) == len(pa.OPT_MATCHES) == 11
@@ -146,8 +143,7 @@ def test_table3_follows_the_setting_rule():
     assert pa.fac(844.0, 5.39)[0] == r"157$\times$$\uparrow$" and pa.fac(0.0871, 0.155)[0] == r"1.8$\times$$\downarrow$"
 
 
-def test_cells_are_matched_by_their_tag_set():
-    pa = _script("paper_assets")
+def test_cells_are_matched_by_their_tag_set(pa):
     assert pa.tagset("_wire_gpuv_prune_polauto") == pa.tagset("_gpuv_wire_polauto_prune")
     assert pa.variant_of({"polauto", "prune", "gpuv", "stream", "wire"}) == "_wire_gpuv_stream_prune_polauto"
     assert pa.variant_of({"thr1", "lookups", "prune", "wire"}) == "_thr1_wire_prune_lookups"
@@ -159,18 +155,17 @@ def test_cells_are_matched_by_their_tag_set():
         assert extra <= pa.OPT_TAGS | {"polauto"}
 
 
-def test_unmeasured_numbers_are_omitted_not_red():
-    """The final report's decision (OMIT_UNMEASURED): an optimised number that is not measured is (None, False),
+def test_unmeasured_numbers_are_omitted_not_red(pa):
+    """The decision for the stored runs (OMIT_UNMEASURED): an optimised number that is not measured is (None, False),
     listed as 'omitted', and printed as a black '--' (Table 3) or not drawn (Figure 4); nothing is pending.  On
-    the report's runs the omitted numbers are exactly the withheld timings l40s_improved3 did not re-measure and
+    the stored runs the omitted numbers are exactly the withheld timings l40s_improved3 did not re-measure and
     the two GPU cells never run, while every measured cell of those rows stays."""
-    pa = _script("paper_assets")
     assert pa.OMIT_UNMEASURED
     pa.OPT_TABLES = []
     assert pa.opt_cnn("lenet5", "bytes", where=("t", "r", "c")) == (None, False)
     assert pa.opt_llm("gpt2", 64, "prove", where=("t", "g", "c")) == (None, False)
     assert {r["status"] for r in pa.PENDING} == {"omitted"}
-    pa.OPT_TABLES = [pa.tables_dir(n) for n in REPORT_RUNS]
+    pa.OPT_TABLES = [pa.tables_dir(n) for n in STORED_RUNS]
     pa.DRY = True                                    # build everything, write nothing (as --check)
     tables = {}
     pa.write = lambda name, lines: tables.__setitem__(name, lines)
@@ -196,12 +191,11 @@ def test_unmeasured_numbers_are_omitted_not_red():
     assert l7[0] is None and l7[1] is None and l7[2]   # Fig. 4: no prover or verifier point; the proof's stays
 
 
-def test_a_missing_optimised_cell_is_pending_with_the_basic_value():
-    """With OMIT_UNMEASURED off (the placeholder mode the report used before its final version): without the
+def test_a_missing_optimised_cell_is_pending_with_the_basic_value(pa):
+    """With OMIT_UNMEASURED off (the placeholder mode): without the
     optimised runs every optimised number is pending and the basic protocol's value stands in; with
     l40s_improved the image models it covers are final, the 224-pixel ResNet stays pending, and Llama-2-7B's
     unpruned run stands in (acceptable, black) for the pruned definition."""
-    pa = _script("paper_assets")
     pa.OMIT_UNMEASURED = False
     pa.OPT_TABLES = []
     v, p = pa.opt_cnn("lenet5", "bytes")
@@ -229,13 +223,11 @@ def test_a_missing_optimised_cell_is_pending_with_the_basic_value():
     assert p and v is None
 
 
-def test_pending_cells_are_red_in_the_tables():
-    pa = _script("paper_assets")
+def test_pending_cells_are_red_in_the_tables(pa):
     assert pa.red(r"27.4\,ms", True) == r"\pending{27.4\,ms}" and pa.red("27.4", False) == "27.4"
 
 
-def test_later_optimised_runs_replace_earlier_cells(tmp_path):
-    pa = _script("paper_assets")
+def test_later_optimised_runs_replace_earlier_cells(pa, tmp_path):
     head = "suite,model,cell,metric,batch,attack,lam,stage,k,n,median,mean,prover_hw,verifier_hw\n"
     cell = "defence_C_int_lam128_rate4_wire_polauto"
     rows = {"a": [f"cnn,lenet5,{cell},bytes_total,,,,,,1,100,100,g,c x8 threads",
@@ -278,11 +270,10 @@ def _llm_tables(tmp_path, runs: dict) -> list:
     return dirs
 
 
-def test_a_later_run_replaces_whole_llm_selections_but_not_an_earlier_full_build(tmp_path):
+def test_a_later_run_replaces_whole_llm_selections_but_not_an_earlier_full_build(pa, tmp_path):
     """The optimised runs are merged per selection, later wins, never mixing rows: l40s_improved3's re-measured
     full builds replace l40s_improved2's, but its 1- and 2-block builds (an extrapolated row) never replace an
     earlier run's full build, whose value stays that run's."""
-    pa = _script("paper_assets")
     sel = {"mode": "C", "tags": ("wire", "prune", "polauto")}
     dirs = _llm_tables(tmp_path, {
         "a": _llm_rows("llama2-13b", "measured", 10.0, 100.0, 1e10) + _llm_rows("opt-13b", "measured", 9.0, 90.0, 8e9)
@@ -305,10 +296,9 @@ def test_a_later_run_replaces_whole_llm_selections_but_not_an_earlier_full_build
     assert m == {"x": ("b", [4]), "y": ("a", [3])}
 
 
-def test_withheld_values_are_withheld_per_platform(tmp_path):
+def test_withheld_values_are_withheld_per_platform(pa, tmp_path):
     """excluded_cells.csv withholds a value of the platform it names only: the same cell re-measured by a later
     run is shown (black), and a later run's 1- and 2-block builds do not stand in for a withheld full build."""
-    pa = _script("paper_assets")
     cell = "defence_C_int_lam128_T2048_L40" + LLM_CPU
     pa.EXCLUDED_CSV = tmp_path / "excluded_cells.csv"
     pa.EXCLUDED_CSV.write_text("# withheld\nplatform,model,cell,quantity,measured_s\n"
@@ -335,8 +325,7 @@ def test_withheld_values_are_withheld_per_platform(tmp_path):
     assert pa.PENDING[-1]["status"] == "pending" and "stored, withheld" in pa.PENDING[-1]["optimised_cell"]
 
 
-def test_the_figure_checks_catch_small_overlapping_and_clipped_text():
-    pa = _script("paper_assets")
+def test_the_figure_checks_catch_small_overlapping_and_clipped_text(pa):
     fig = pa.plt.figure(figsize=(2.0, 1.0))
     fig.text(0.1, 0.5, "small", fontsize=6)
     fig.text(0.1, 0.5, "on top")
@@ -347,7 +336,6 @@ def test_the_figure_checks_catch_small_overlapping_and_clipped_text():
 
 
 def test_count_macros_refuse_an_accepted_attack():
-    co = _script("count_outcomes")
     from collections import Counter
     c = {"honest": Counter({("cnn", 1): 3}), "attacks": Counter({("cnn", 1): 2}), "stages": Counter({"freivalds": 2}),
          "by_type": Counter(), "policy": Counter(), "partial": Counter(), "records": 5, "rejected": []}
@@ -358,54 +346,15 @@ def test_count_macros_refuse_an_accepted_attack():
         co.macros(c, "")
 
 
-def test_count_macros_of_a_run_still_to_come_are_pending(tmp_path):
-    co = _script("count_outcomes")
+def test_counts_of_several_runs_add_up():
     from collections import Counter
     one = {"honest": Counter({("cnn", 1): 3}), "attacks": Counter({("cnn", 1): 2}), "stages": Counter({"freivalds": 2}),
            "by_type": Counter(), "policy": Counter(), "partial": Counter(), "records": 5, "rejected": []}
     c = co.merge([one, one])
-    assert co.macros(c, "Opt")["OptNAttacks"] == 4
-    out = tmp_path / "counts.tex"
-    co.write_tex(out, "raw_a", co.macros(c, "Opt"), pending="raw_b")
-    assert r"\newcommand{\OptNAttacks}{\pending{4}}" in out.read_text(encoding="utf-8")
-    co.write_tex(out, "raw_a", {"OptNAttacks": 4973})
-    assert r"\newcommand{\OptNAttacks}{4{,}973}" in out.read_text(encoding="utf-8")
+    assert co.macros(c, "Final")["FinalNAttacks"] == 4 and c["records"] == 10
 
 
-def test_text_numbers_compares_and_knows_pending():
-    tn = _script("text_numbers")
-    text = tn.normalise(r"is proved in \pending{17.6}\,s instead of 17.6\,s, and \pendingclaim{by 2.0--4.2$\times$}"
-                        r" and \pending{21--26}$\times$ and 49.5\,kB--\pending{12.1\,MB}")
-    tok = lambda v, st, u="": tn.Tok([(v, st)], u)   # noqa: E731
-    assert tn.judge(tok("17.6", tn.PENDING, "s"), text)[0] == "ok"
-    assert tn.judge(tok("17.6", tn.FINAL, "s"), text)[0] == "ok"            # 'instead of 17.6 s'
-    assert tn.judge(tn.Tok([("2.0", tn.FINAL), ("4.2", tn.FINAL)]), text)[0] == "ok"   # \pendingclaim: transparent
-    assert tn.judge(tn.Tok([("21", tn.PENDING), ("26", tn.PENDING)]), text)[0] == "ok"
-    assert tn.judge(tn.Tok([("21", tn.FINAL), ("26", tn.FINAL)]), text)[0] == "UNWRAP"
-    assert tn.judge(tn.Tok([("2.0", tn.PENDING), ("4.2", tn.PENDING)]), "by 2.0–4.2×")[0] == "UNMARKED"
-    assert tn.judge(tok("5.4", tn.FINAL, "s"), text)[0] == "MISMATCH"
-    assert tn.judge(tok("5.4", tn.PENDING, "s"), text)[0] == "placeholder"   # a different red value: a warning
-    # a pending endpoint left black is UNMARKED; an endpoint a final element attains may stay black
-    assert tn.judge(tn.Tok([("49.5", tn.PENDING), ("12.1", tn.PENDING)], "MB", mid="kB"), text)[0] == "UNMARKED"
-    assert tn.judge(tn.Tok([("49.5", tn.ACCEPTABLE), ("12.1", tn.PENDING)], "MB", mid="kB"), text)[0] == "ok"
-    assert tn.judge(tn.Tok([("21", tn.ACCEPTABLE), ("26", tn.PENDING)]), text)[0] == "ok"   # ⟦21–26⟧ is split
-    assert tn.judge(tn.Tok([("21", tn.PENDING), ("26", tn.PENDING)]), "by 21–⟦26⟧×")[0] == "UNMARKED"
-    assert tn.judge(tok("1.7", tn.ACCEPTABLE, "s"), "in 1.7s and ⟦1.7⟧s")[0] == "ok"
-    assert tn.x2(32334) == "32,000" and tn.x2(5195) == "5,200" and tn.x2(157.2) == "157"
-    # rng(): in a pending range only the endpoints that pending elements alone supply must be red
-    lo, mid_, hi = tn.V(3.8, tn.FINAL), tn.V(20.6, tn.FINAL), tn.V(27.4, tn.PENDING)
-    (r,) = tn.rng([lo, mid_, hi])
-    assert r.segs == [("3.8", tn.ACCEPTABLE), ("27", tn.PENDING)]
-    (r,) = tn.rng([lo, mid_])
-    assert r.segs == [("3.8", tn.FINAL), ("21", tn.FINAL)]
-    a, b = tn.ends([tn.V(30.0, tn.PENDING), tn.V(32334.0, tn.FINAL)], tn.x2)
-    assert a.segs == [("30", tn.PENDING)] and b.segs == [("32,000", tn.ACCEPTABLE)]
-    assert tn.judge(a, "by ⟦30⟧× (zkLLM) to 32,000× (ZKML)")[0] == "ok"
-    assert tn.judge(b, "by ⟦30⟧× (zkLLM) to 32,000× (ZKML)")[0] == "ok"
-
-
-def test_counts_can_keep_the_definition_cells_only():
-    co, pa = _script("count_outcomes"), _script("paper_assets")
+def test_counts_can_keep_the_definition_cells_only(pa):
     d = pa.definition_tagsets()
     assert co.cell_tags("tamper_C_int_lam40_T64_L32_wire_prune_polauto") == ("C", {"wire", "prune", "polauto"})
     assert co.cell_tags("commit_T64_L12") == (None, None)

@@ -12,7 +12,6 @@ count_outcomes.py) give exactly what they gave without the field.
 from __future__ import annotations
 
 import copy
-import importlib.util
 import json
 import os
 import sys
@@ -23,18 +22,6 @@ import pytest
 
 import pvi.v0 as proto
 from pvi.core import contention
-
-EXPERIMENTS = Path(__file__).resolve().parents[1] / "experiments"
-
-
-def _script(folder: str, name: str):
-    path = EXPERIMENTS / folder / f"{name}.py"
-    if str(path.parent) not in sys.path:
-        sys.path.insert(0, str(path.parent))
-    spec = importlib.util.spec_from_file_location(f"{name}_contention_test", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 # ---------------------------------------------------------------- a fake /proc
@@ -189,22 +176,20 @@ def test_a_tampered_query_is_rejected_at_the_same_check(monkeypatch):
 
 # ---------------------------------------------------------------- bench.py records and their readers
 def _bench_run(monkeypatch, root: Path):
-    import pvi.models.decoder as tr
+    from experiments.common import models
+    from experiments.costs import bench
     from test_plans import _TINY
 
-    bench = _script("4_defence_benchmark", "bench")
-    monkeypatch.setitem(tr.CONFIGS, "tiny-gpt", _TINY["gpt"])
+    monkeypatch.setitem(models.TINY, "tiny-gpt", _TINY["gpt"])
     monkeypatch.setattr(bench, "RAW", root)
-    monkeypatch.setattr(bench, "WIRE", True)
     env = {"device": "cpu", "cpu": "test", "torch_threads": 1}
-    monkeypatch.setattr(bench, "TAG", "_wire_polR8c")
     bench.suite_llm(bench.build_parser().parse_args(
         ["llm", "--model", "tiny-gpt", "--seq", "9", "--builds", "1,full", "--modes", "C:int,C:fs", "--lams", "40",
-         "--queries", "2", "--policy", "R8c", "--wire", "--llm-tampers", "1", "--batches", "2"]), env)
-    monkeypatch.setattr(bench, "TAG", "_wire_lookups")
+         "--queries", "2", "--policy", "R8c", "--wire", "--no-prune-last", "--llm-tampers", "1", "--batches", "2",
+         "--platform", "test"]), env)
     bench.suite_llm(bench.build_parser().parse_args(
         ["llm", "--model", "tiny-gpt", "--seq", "9", "--builds", "full", "--modes", "Kpre:int", "--lams", "40",
-         "--queries", "2", "--lookups", "--wire"]), env)
+         "--queries", "2", "--lookups", "--wire", "--no-prune-last", "--platform", "test"]), env)
     return bench
 
 
@@ -236,7 +221,7 @@ def test_bench_writes_the_field_on_every_timing_row_and_the_readers_ignore_it(mo
     # aggregate.py: the same summary and full-model rows as without the field
     stripped = tmp_path / "raw_stripped"
     _strip(root, stripped)
-    agg = _script("5_comparison", "aggregate")
+    from experiments.comparison import aggregate as agg
     out = {}
     for label, raw in (("with", root), ("without", stripped)):
         monkeypatch.setattr(agg, "RAW", raw)
@@ -248,14 +233,14 @@ def test_bench_writes_the_field_on_every_timing_row_and_the_readers_ignore_it(mo
     assert (tmp_path / "tables_with" / "measured_summary.csv").read_bytes() == \
         (tmp_path / "tables_without" / "measured_summary.csv").read_bytes()
     # fingerprint_check.py and count_outcomes.py: the same facts, and the check passes
-    fp = _script("5_comparison", "fingerprint_check")
+    from experiments.comparison import fingerprint_check as fp
     a, b = fp.load(root), fp.load(stripped)
     assert {k: dict(v) for k, v in a.items()} == {k: dict(v) for k, v in b.items()} and a
     monkeypatch.setattr(sys, "argv", ["fingerprint_check.py", str(stripped), str(root)])
     with pytest.raises(SystemExit) as exc:
         fp.main()
     assert exc.value.code == 0
-    co = _script("5_comparison", "count_outcomes")
+    from experiments.comparison import count_outcomes as co
     ca, cb = co.count(root), co.count(stripped)
     assert ca.keys() == cb.keys() and ca["records"]
     for k in ca:
@@ -271,7 +256,7 @@ def test_records_without_the_field_still_read(monkeypatch, tmp_path):
     one = next(stripped.rglob("defence_*lookups.jsonl"))       # one old-style cell among new ones
     target = root / one.relative_to(stripped)
     target.write_bytes(one.read_bytes())
-    agg = _script("5_comparison", "aggregate")
+    from experiments.comparison import aggregate as agg
     monkeypatch.setattr(agg, "RAW", root)
     s1 = agg.summarise(agg.load_rows())
     monkeypatch.setattr(agg, "RAW", stripped)
@@ -281,7 +266,7 @@ def test_records_without_the_field_still_read(monkeypatch, tmp_path):
 
 def test_record_query_copies_without_sharing():
     """``_record_query`` writes each phase's own evidence (a copy in the JSON line, never another phase's)."""
-    bench = _script("4_defence_benchmark", "bench")
+    from experiments.costs import bench
     lines = []
 
     class R:
@@ -300,5 +285,5 @@ def test_record_query_copies_without_sharing():
 
 def test_env_records_whether_schedstat_exists():
     pytest.importorskip("torchvision")
-    bench = _script("4_defence_benchmark", "bench")
-    assert bench._env_extra()["schedstat"] is contention.available()
+    from experiments.costs import bench
+    assert bench.env_info("cpu", "test")["schedstat"] is contention.available()

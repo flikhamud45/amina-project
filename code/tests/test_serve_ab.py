@@ -1,53 +1,43 @@
-"""The serving harness ``experiments/7_reexec/serve_ab.py`` (plan 2, A7).
+"""The serving harness ``experiments/deployment/serve_ab.py``.
 
 U1 -- the integer model served without proofs, every claim dropped -- gives exactly the logits the proof claims
 (decoded from the proof's bytes as the verifier decodes them), for a batch proved as one statement and for each prompt
 proved on its own against the batched forward pass; and a proof produced again for the same prompts is byte-identical
-(the "proof on request" row), accepted by ``run_query`` with the same byte count.
+(the "proof on request" row), accepted by ``run_query`` with the same byte count, with and without the compact
+encoding.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
-from pathlib import Path
 
 import pytest
 import torch
 
+from experiments.common import cli
+from experiments.common.models import decoder_config
+from experiments.common.stats import median_ci
+from experiments.deployment import serve_ab as sa
+from experiments.reexec import reexec
+from pvi.v0.params import params_for
 from pvi.v0.query import run_query
 
-CODE = Path(__file__).resolve().parents[1]
 CPU = torch.device("cpu")
 
 
-def _load(name: str, rel: str):
-    spec = importlib.util.spec_from_file_location(name, CODE / rel)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+def _args(*argv):
+    """The options :func:`serve_ab.build` and :class:`serve_ab.Cell` read, as the command line gives them."""
+    return sa.build_parser().parse_args(["--device", "cpu", "--threads", "1", *argv])
 
 
-sa = _load("serve_ab", "experiments/7_reexec/serve_ab.py")
-
-
-class _Args:
-    """The options :func:`serve_ab.build` reads."""
-
-    def __init__(self, policy: str = "paper", modes=("C", "Kpre")):
-        self.modes, self.policy, self.lam = list(modes), policy, 128
-        self.verifier_device, self.lookups, self.accept = "cpu", True, True
-
-
-_CASES = [("tiny-llama", "paper"), ("tiny-opt", "paper"), ("tiny-qwen", "R16c"), ("tiny-gpt", "tightc")]
+_CASES = [("tiny-llama", "per-op"), ("tiny-opt", "per-op"), ("tiny-qwen", "R16c"), ("tiny-gpt", "tightc")]
 """Each family once; the c plans add lookup tables (int8 rows and multiproofs) and col-layout matrices to the proof."""
 
 
 @pytest.fixture(scope="module", params=_CASES, ids=[f"{m}-{p}" for m, p in _CASES])
 def built(request):
     name, policy = request.param
-    return sa.build(name, 0, _Args(policy), CPU)
+    return sa.build(name, 0, _args("--policy", policy), CPU)
 
 
 def test_u1_logits_are_the_claimed_logits(built):
@@ -94,25 +84,40 @@ def test_proof_on_request_is_byte_identical_and_accepted(built):
             assert len(first) == 3
 
 
+def test_without_the_compact_encoding_the_proof_is_the_same_statement():
+    """``--no-wire``: the claims travel as the integers themselves; U1 still equals them, the messages add up to
+    ``run_query(wire=False)``'s byte count, a second proof is byte-identical and the verifier accepts it."""
+    m = sa.build("tiny-gpt", 0, _args("--no-wire", "--policy", "tightc"), CPU)
+    x = sa._tokens(m.cfg, 10, 2)
+    u1 = sa.logit_rows(sa.serve_u1(m.graph, x, CPU))
+    for mode in ("C", "Kpre"):
+        p, v = m.provers[mode], m.verifiers[mode]
+        parts, openings, out = sa.prove(p, v, x, wire=False)
+        assert isinstance(parts[0], dict) and torch.equal(sa.claimed_logits(v, m.graph, parts, x), u1)
+        first = sa.messages(parts, openings, v)
+        assert sum(map(len, first)) == sum(out["bytes"].values())
+        assert sa.digest(sa.messages(*sa.prove(p, v, x, wire=False)[:2], v)) == sa.digest(first)
+        res = run_query(p, v, x, wire=False)
+        assert res["accepted"] and sum(res["bytes"].values()) == sum(map(len, first))
+
+
 def test_build_zero_layers_is_the_full_model():
-    m = sa.build("tiny-llama", 0, _Args(modes=("Kpre",)), CPU)
+    m = sa.build("tiny-llama", 0, _args("--modes", "Kpre"), CPU)
     assert m.layers == m.cfg.n_layers == 2
     assert len(m.graph.mat_ops) == 2 + 7 * 2       # embedding, LM head, and q, k, v, o, gate, up, down per block
 
 
 def test_prove_refuses_an_interactive_mode_c_proof():
-    m = sa.build("tiny-llama", 0, _Args(modes=("C",)), CPU)
+    m = sa.build("tiny-llama", 0, _args("--modes", "C"), CPU)
     v = m.verifiers["C"]
-    interactive = sa.TimedChallenges(v.graph, sa.params_for(128, 8, rate=sa.RATE), "C", publics=v.publics,
-                                     lean=True)
+    interactive = sa.TimedChallenges(v.graph, params_for(128, 8, rate=cli.RATE), "C", publics=v.publics, lean=True)
     with pytest.raises(ValueError):
         sa.prove(m.provers["C"], interactive, sa._tokens(m.cfg, 8, 1))
 
 
 @pytest.mark.parametrize("name", ["tiny-gpt", "tiny-opt", "tiny-llama", "tiny-qwen"])
 def test_float_decoder_pruned_last_block_gives_the_same_logits(name):
-    reexec = sa._load("reexec", sa.HERE / "reexec.py")
-    cfg = sa.config(name)
+    cfg = decoder_config(name)
     x = sa._tokens(cfg, 12, 3)
     full = reexec.FloatDecoder(cfg, 2, torch.float64, CPU)(x)
     pruned = reexec.FloatDecoder(cfg, 2, torch.float64, CPU, prune_last=True)(x)
@@ -121,9 +126,15 @@ def test_float_decoder_pruned_last_block_gives_the_same_logits(name):
 
 
 def test_bootstrap_median_and_ratio():
-    r = sa.boot([5.0, 1.0, 3.0, 2.0, 4.0])
+    """The intervals of the lines (``experiments.common.stats.median_ci``)."""
+    r = median_ci([5.0, 1.0, 3.0, 2.0, 4.0])
     assert r["median"] == 3.0 and r["ci95"][0] <= 3.0 <= r["ci95"][1]
-    assert sa.boot([2.0] * 6, [1.0] * 6) == {"ratio": 2.0, "ci95": [2.0, 2.0]}
+    assert median_ci([2.0] * 6, [1.0] * 6) == {"ratio": 2.0, "ci95": [2.0, 2.0]}
+
+
+def test_the_defaults_are_the_papers_configuration():
+    a = _args("--model", "tiny-gpt")
+    assert cli.protocol_of(a) == cli.PAPER and a.policy == "cnn18c"
 
 
 def _cli(monkeypatch, capsys, *argv) -> tuple[int, list[dict]]:
@@ -152,6 +163,8 @@ def test_cli_lines(device, monkeypatch, capsys):
         assert r["checks"]["accepted"] and r["checks"]["deterministic"] and r["checks"]["u1_equals_claims"]
         assert len(r["times_s"]["prove"]) == 2 and r["proof_bytes"] > 0
         assert r["timer"] == ("cuda_events" if device == "cuda" else "perf_counter")
+        assert r["policy"] == "cnn18c" and r["fs"] and r["wire"] and r["lean"] and r["prune_last"]
+        assert r["env"]["implementation"]["options"]
     req = [r for r in lines if r["row"] == "on_request"]
     assert len(req) == 2 and all(p["deterministic"] for r in req for p in r["later_proof"].values())
     seq_c = next(r for r in prove if (r["batch"], r["mode"], r["batch_proof"]) == (2, "C", "seq"))
@@ -159,15 +172,22 @@ def test_cli_lines(device, monkeypatch, capsys):
     assert seq_c["proof_sha256"] == single_c["proof_sha256"]     # prompt 0 of every cell is the B = 1 prompt
 
 
+def test_mode_c_without_fiat_shamir_is_refused(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["serve_ab.py", "--model", "tiny-llama", "--no-fs", "--device", "cpu"])
+    with pytest.raises(SystemExit) as exc:
+        sa.main()
+    assert exc.value.code == 2
+
+
 def test_out_of_memory_is_skipped_not_failed(monkeypatch, capsys):
     """A variant that runs out of GPU memory (simulated: every proof of a 2-prompt statement) is recorded as
     skipped and the run goes on, with status 0; an error that is not about memory is not taken for one."""
     real = sa.prove
 
-    def prove(prover, verifier, x):
+    def prove(prover, verifier, x, **kw):
         if x.shape[0] > 1:
             raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 44.00 GiB")
-        return real(prover, verifier, x)
+        return real(prover, verifier, x, **kw)
 
     monkeypatch.setattr(sa, "prove", prove)
     status, lines = _cli(monkeypatch, capsys, "--model", "tiny-llama", "--modes", "Kpre", "--cells", "8x2",

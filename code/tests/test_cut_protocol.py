@@ -62,6 +62,29 @@ def test_t4_honest_queries_are_accepted(kind, mode, policy, fs, pruned):
     assert proto.run_query(prover, v, _x(), wire=True)["accepted"]
 
 
+
+@pytest.mark.parametrize("kind", ["gpt", "llama", "qwen"])
+def test_kpre_with_the_verifiers_own_embedding_rows(kind):
+    # the configuration of the measured V1 cells: Fiat-Shamir, the lean prover, the last block pruned and the
+    # verifier reading the embedding rows itself (lookups); honest accepted, a changed claim rejected
+    g = build_decoder(_TINY[kind], calib_tokens=8, seed=1, prune_last=True)
+    params = proto.params_for(40, len(g.mat_ops), fiat_shamir=True, cut=True)
+    v = proto.Verifier(g.public(), params, "Kpre", lookups=True,
+                       weights={op.name: (op.weight, op.bias) for op in g.mat_ops})
+    v.precompute(proto.Challenger())
+    prover = proto.Prover(g, lean=True)
+    out = cp.run_cut_query(prover, v, _x())
+    assert out["accepted"], out["rejected_at"]
+    target = g.mat_ops[1].name
+
+    def tamper(op, z):
+        if op.name != target:
+            return z
+        z = z.clone()
+        z.view(-1)[5] += 3
+        return z
+    assert not cp.run_cut_query(prover, v, _x(), forward_kwargs={"tamper": tamper})["accepted"]
+
 def test_t4_a_generation_graph_and_another_length():
     g, prover, v = _setup("llama", "C", "cnn16c", True, True, gen=True)
     base = build_decoder(_TINY["llama"], calib_tokens=8, seed=1, prune_last=True)

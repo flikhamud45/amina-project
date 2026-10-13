@@ -1,25 +1,24 @@
-"""Rebuild one platform's tables (``artifacts/comparison/tables_<platform>/``) from its raw records.
+"""One platform's benchmark tables (``artifacts/comparison/tables_<platform>/``) from its raw records.
 
-Deterministic and idempotent: it only reads ``raw_<platform>/**/*.jsonl`` (finished cells)
-and writes
+Produces the tables that ``paper/assets.py`` and ``paper/numbers.py`` read for the stored benchmark cells: the base
+columns of ``tab:eval-llm``, our side of ``tab:eval-compare``, the image models' costs (Sec. ``sec:eval-cost``, "Base
+costs") and the path test's detection probabilities and bytes (Sec. ``sec:break``), from the records ``costs/bench.py``
+writes to ``raw_<platform>/``.  Deterministic and idempotent: it only reads ``raw_<platform>/**/*.jsonl`` (finished
+cells, with a ``.done`` marker) and writes
 
-* ``measured_summary.csv`` -- per (suite, model, cell, metric, group) statistics;
-* ``llm_full_model.csv``   -- full-model LLM costs: measured when all layers were
-  built, otherwise extrapolated linearly from 1- and 2-block builds
-  (``full = m1 + (L - 1) * (m2 - m1)``; every block has identical shapes);
-* ``llm_extrapolation_check.csv`` -- every full build next to what that rule gives from
-  its 1- and 2-block builds (the check of Sec. 4.1).
+* ``measured_summary.csv`` -- per (suite, model, cell, metric, group) the number of values, their median and mean,
+  and the cell's settings (``cfg_*``) and hardware;
+* ``llm_full_model.csv`` -- full-model language-model costs: measured when all blocks were built, otherwise
+  extrapolated linearly from 1- and 2-block builds (``full = m1 + (L - 1) * (m2 - m1)``; every block has identical
+  shapes);
+* ``llm_extrapolation_check.csv`` -- every full build next to what that rule gives from its 1- and 2-block builds.
 
-    python experiments/5_comparison/aggregate.py --platform l40s          # the report's numbers (the default)
-    python experiments/5_comparison/aggregate.py --platform rtx2080ti-v2  # raw_rtx2080ti-v2/ -> tables_rtx2080ti-v2/ (the second platform)
-    python experiments/5_comparison/aggregate.py --platform <name>        # a re-measurement: raw_<name>/ -> tables_<name>/
-    python experiments/5_comparison/aggregate.py --platform rtx2080ti     # raw/ -> tables/ (the earliest run)
+    python -m experiments.comparison.aggregate --platform l40s_improved    # raw_l40s_improved/ -> tables_l40s_improved/
+    python -m experiments.comparison.aggregate --platform <name>           # a new run: raw_<name>/ -> tables_<name>/
 
-Each hardware platform has its own raw root and tables directory, so the records of
-different machines never enter the same median or the same extrapolation.  The platform
-defaults to ``$PVI_PLATFORM``, else ``l40s``.  The name ``rtx2080ti`` (the only
-platform whose root is ``raw/``) and ``multiproof_adjust`` exist only for the earliest run,
-which the report does not use: they keep its ``tables/`` rebuildable exactly, for provenance.
+Each hardware platform has its own raw root and tables folder, so the records of different machines never enter the
+same median or the same extrapolation (both are refused).  Prints one summary line; reads and writes in seconds to a
+minute on a laptop CPU.
 """
 
 from __future__ import annotations
@@ -27,27 +26,24 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-BASE = ROOT / "artifacts" / "comparison"
-RAW = BASE / "raw_l40s"      # set by main() from --platform
-TABLES = BASE / "tables_l40s"
+from experiments.common.paths import BENCH
+
+RAW = BENCH / "raw_l40s"      # the root :func:`load_rows` reads; set by main() from --platform
+TABLES = BENCH / "tables_l40s"
 
 
-def dirs_for(platform: str) -> tuple[Path, Path]:
-    """(raw root, tables directory) of one platform; ``rtx2080ti`` is the earliest run's raw/ and tables/."""
-    if platform == "rtx2080ti":
-        return BASE / "raw", BASE / "tables"
-    return BASE / f"raw_{platform}", BASE / f"tables_{platform}"
+def dirs_for(platform: str, base: Path = BENCH) -> tuple[Path, Path]:
+    """(raw root, tables folder) of one platform."""
+    return base / f"raw_{platform}", base / f"tables_{platform}"
 
 
-# the record fields a median is grouped by, besides (suite, model, cell, metric); "op" is set only
-# in raw/'s records (its column is in every measured_summary.csv, empty outside tables/)
+# the record fields a median is grouped by, besides (suite, model, cell, metric); "op" is set only in the records of
+# the earliest run (not part of this artifact's tables), and its column is kept so that every table has the same ones
 GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
 # the timing and byte parts of one query, which add up over the blocks of a decoder; verify_total: the
 # streaming verifier's (bench.py --verifier-impl stream) overlapped verify phases, timed as one;
@@ -55,12 +51,14 @@ GROUP_KEYS = ("batch", "attack", "lam", "op", "stage", "k")
 # verify_lookups: a commitment plan's lookup tables (bench.py --policy <c policy>)
 ADDITIVE = {"prove_forward", "prove_lookups", "prove_fold", "prove_open", "prove_encode", "verify_decode",
             "verify_derive", "verify_lookups", "verify_products", "verify_columns", "verify_fold", "verify_upload",
-            "verify_total", "fs_hash", "bytes_total", "bytes_total_multiproof"}
+            "verify_total", "fs_hash", "bytes_total"}
 
 
-def load_rows() -> list[dict]:
+def load_rows(raw: Path | None = None) -> list[dict]:
+    """Every record of the finished cells of ``raw`` (default :data:`RAW`) but the ``env`` rows, with the cell's
+    ``config`` flattened into ``cfg_*`` fields."""
     rows = []
-    for path in sorted(RAW.rglob("*.jsonl")):
+    for path in sorted((raw or RAW).rglob("*.jsonl")):
         if not path.with_suffix(".done").exists():
             continue
         with open(path, encoding="utf-8") as fh:
@@ -75,11 +73,12 @@ def load_rows() -> list[dict]:
     return rows
 
 
-def check_one_machine(rows: list[dict]) -> None:
-    """A root holds one machine: one prover, one client CPU (its thread count may differ, e.g.
-    the _thr1 cells), and a GPU client only on the prover's GPU model -- all matching the
-    root's ``PLATFORM.json``.  Checked over the whole root: a per-cell check can never fire,
-    since every cell is written by one job on one machine."""
+def check_one_machine(rows: list[dict], raw: Path | None = None) -> None:
+    """A root (``raw``, default :data:`RAW`) holds one machine: one prover, one client CPU (its thread count may
+    differ, e.g. the _thr1 cells), and a GPU client only on the prover's GPU model -- all matching the root's
+    ``PLATFORM.json``.  Checked over the whole root: a per-cell check can never fire, since every cell is written by
+    one job on one machine."""
+    raw = raw or RAW
     provers, cpus, clients = set(), set(), set()
     for r in rows:
         provers.add(r.get("prover_hw"))
@@ -87,13 +86,13 @@ def check_one_machine(rows: list[dict]) -> None:
         cpus.add(re.sub(r" x\d+ threads$", "", cpu))
         if sep:
             clients.add(client)
-    lock = RAW / "PLATFORM.json"
+    lock = raw / "PLATFORM.json"
     if lock.exists():
         have = json.loads(lock.read_text(encoding="utf-8"))
         provers.add(have.get("gpu") or have.get("cpu"))
         cpus.add(have.get("cpu"))
     if len(provers) > 1 or len(cpus) > 1 or not clients <= provers:
-        raise SystemExit(f"{RAW.name} holds records of several machines (or not of its PLATFORM.json): provers "
+        raise SystemExit(f"{raw.name} holds records of several machines (or not of its PLATFORM.json): provers "
                          f"{sorted(map(str, provers))}, client CPUs {sorted(map(str, cpus))}, GPU clients "
                          f"{sorted(map(str, clients))}")
 
@@ -137,32 +136,6 @@ def summarise(rows: list[dict]) -> list[dict]:
                     "n": len(vals), "median": statistics.median(vals), "mean": statistics.fmean(vals),
                     **meta[key]})
     return out
-
-
-def multiproof_adjust(summary: list[dict]) -> list[dict]:
-    """Runs made before multiproofs (only raw/, the earliest run) sent one Merkle path per
-    opened column.  Their Merkle term is replaced by the exact *expected* multiproof size for
-    the same trees and number of columns (the columns are uniform, so this is the mean of
-    what a multiproof run would send); the measured value is kept alongside."""
-    from pvi.commit.cost import decoder_shapes, expected_multiproof_nodes
-    from pvi.models.decoder import CONFIGS
-
-    extra = []
-    for s in summary:
-        if not (s["suite"] == "llm" and s["cell"].startswith("defence_") and s.get("cfg_mode") == "C"
-                and s.get("cfg_merkle", "") != "multiproof" and s["metric"] == "bytes_total"):
-            continue
-        cfg = CONFIGS[s["model"]]
-        shapes = decoder_shapes(cfg, n_layers=int(s["cfg_n_layers"]))
-        t, rate = int(s["cfg_columns"]), int(s["cfg_rate"])
-        # rounded: the last digits of this expectation differ between platforms' maths libraries
-        mp = round(sum(32 * expected_multiproof_nodes(sh.n_points(rate), t) for sh in shapes), 3)
-        paths = next(x for x in summary if x["cell"] == s["cell"] and x["model"] == s["model"]
-                     and x["metric"] == "bytes_paths" and x["suite"] == "llm")
-        v = round(s["median"] - paths["median"] + mp, 3)
-        extra.append(dict(s, metric="bytes_total_multiproof", median=v, mean=v,
-                          provenance="measured data + expected multiproof"))
-    return extra
 
 
 def llm_full(summary: list[dict]) -> list[dict]:
@@ -214,19 +187,23 @@ def llm_full(summary: list[dict]) -> list[dict]:
     return out
 
 
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--platform", required=True, help="read raw_<platform>/, write tables_<platform>/")
+    ap.add_argument("--base", type=Path, default=BENCH,
+                    help="the folder holding raw_<platform>/ and tables_<platform>/ (default artifacts/comparison)")
+    return ap
+
+
 def main() -> None:
     global RAW, TABLES
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--platform", default=os.environ.get("PVI_PLATFORM") or "l40s",
-                    help="read raw_<platform>/, write tables_<platform>/ (default: $PVI_PLATFORM, else "
-                         "l40s; rtx2080ti: raw/ -> tables/)")
-    RAW, TABLES = dirs_for(ap.parse_args().platform)
+    args = build_parser().parse_args()
+    RAW, TABLES = dirs_for(args.platform, args.base)
     if not RAW.is_dir():
         raise SystemExit(f"no raw records at {RAW}")
     rows = load_rows()
     check_one_machine(rows)
     summary = summarise(rows)
-    summary += multiproof_adjust(summary)
     full = llm_full(summary)   # before any write: a refused lean/non-lean mix leaves the tables as they were
     _write(TABLES / "measured_summary.csv", summary)
     if full:

@@ -1,22 +1,16 @@
-"""F2c's zero-shot harness (experiments/9_quality/zeroshot.py) without downloads: the harness's task formats, the
-encoding of a request, the scoring and its metrics, and right padding on tiny integer OPTs (both builders), which
+"""The zero-shot harness (``experiments.quality.zeroshot``) without downloads: the harness's task formats, the
+encoding of a request, the scoring and its metrics, and right padding on tiny integer OPTs (both recipes), which
 must give exactly the logits of each request run alone."""
 
-import importlib.util
 import math
-import sys
-from pathlib import Path
 
 import pytest
 import torch
 
 transformers = pytest.importorskip("transformers")
 
-CODE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(CODE / "experiments" / "9_quality"))
-_spec = importlib.util.spec_from_file_location("zeroshot", CODE / "experiments" / "9_quality" / "zeroshot.py")
-zs = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(zs)
+from experiments.common.stats import paired_diff_ci  # noqa: E402
+from experiments.quality import zeroshot as zs  # noqa: E402
 
 
 class _CharTok:
@@ -105,8 +99,8 @@ def test_metrics_acc_and_acc_norm():
 
 
 def test_paired_ci():
-    assert zs.paired_ci([1, 0, 1], [1, 0, 1]) == [0.0, 0.0]
-    lo, hi = zs.paired_ci([1] * 20 + [0] * 20, [0] * 40)
+    assert paired_diff_ci([1, 0, 1], [1, 0, 1]) == [0.0, 0.0]
+    lo, hi = paired_diff_ci([1] * 20 + [0] * 20, [0] * 40)
     assert 0.0 < lo < 0.5 < hi <= 1.0
 
 
@@ -118,14 +112,13 @@ def _tiny_opt():
     return transformers.OPTForCausalLM(cfg).eval()
 
 
-@pytest.mark.parametrize("builder", ["paper", "f2a"])
-def test_right_padding_is_exact_on_the_integer_graph(builder):
+@pytest.mark.parametrize("recipe", ["certified", "legacy"])
+def test_right_padding_is_exact_on_the_integer_graph(recipe):
     from pvi.models import hf_opt as rw
     model = _tiny_opt()
     calib = torch.randint(3, 97, (2, 32))
-    opts = dict(norm_gain=4) if builder == "paper" else dict(zs.F2A_BEST)
     with torch.no_grad():
-        graph, info = zs.build_int(model, calib if builder == "f2a" else calib[:1], builder, opts)
+        graph, info = zs.build_int(model, calib, dict(zs.RECIPES[recipe]))
     fn = zs.int_logits_fn(graph, info, "cpu")
     g = torch.Generator().manual_seed(1)
     enc = [(torch.randint(3, 97, (n,), generator=g).tolist(), torch.randint(3, 97, (m,), generator=g).tolist())

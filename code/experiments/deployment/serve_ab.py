@@ -1,20 +1,27 @@
-"""Prover overhead against unverified serving, on the same GPU and the same token ids, with batching (plan 2, A7).
+"""The prover against unverified serving: what proving costs a provider on the GPU that serves the model.
 
-    cd code && PYTHONPATH=src python experiments/7_reexec/serve_ab.py --model llama2-7b --workload a b --device cuda
-    cd code && PYTHONPATH=src python experiments/7_reexec/serve_ab.py --model llama2-7b --layers 2 --cells 64x1 2048x4 \\
-        --batch-proof seq joint --device cuda
-    cd code && PYTHONPATH=src python experiments/7_reexec/serve_ab.py --model tiny-llama --cells 32x1 32x4 --device cpu \\
-        --threads 2
-    cd code && PYTHONPATH=src python experiments/7_reexec/serve_ab.py --table ../logs/l40s_sp2027/sp-serve-*.out
+Produces the serving overhead of the evaluation (Sec. ``sec:eval-cost``, "Base costs": proving a 2,048-token prompt
+against our exact integer forward pass without proofs and against an fp16 one, and 64 prompts proved together), the
+provider's cost over unverified serving in note f of ``tab:options``, and the extended version's proof on request
+(``ext:disc-options``: a provider serves with the exact model and proves later, with the same proof, the queries a
+client asks about); the run package's ``serve`` tier.
 
-A cell is a model, a prompt length ``T`` and a batch ``B``: ``B`` prompts of ``T`` tokens, random ids drawn with seed 1
-as ``perf.py`` and ``reexec.py`` draw them (so prompt 0 of every cell is the B = 1 prompt of its ``T``).  The decoders
-are those of ``pvi.models.decoder.CONFIGS`` with random weights (the costs depend on the shapes only), built as
-``perf.py --prune-last`` builds them (seed 0, 32 calibration tokens), on ``--layers`` blocks (0: the full model);
-the ``tiny-*`` and ``small-*`` names of :data:`TINY` are small shapes for a laptop and the tests.  Every cell times,
-on the same token ids, shapes, device and host:
+    python -m experiments.deployment.serve_ab --model llama2-7b --workload a b --batch-proof seq joint \\
+        --u2-dtype fp16 bf16 --label serve
+    python -m experiments.deployment.serve_ab --model llama2-7b --layers 2 --cells 64x1 2048x4 --batch-proof seq joint
+    python -m experiments.deployment.serve_ab --model tiny-llama --cells 32x1 32x4 --device cpu --threads 2
+        # a laptop check (seconds)
+    python -m experiments.deployment.serve_ab --table logs/<platform>/sp-serve-*.out
 
-* **U1**, our exact integer model served without proofs: ``IntGraph.forward(free=True)`` of the pruned graph, every
+A cell is a model, a prompt length ``T`` and a batch ``B``: ``B`` prompts of ``T`` tokens, random ids drawn with
+``--prompt-seed`` as ``costs/perf.py`` and ``reexec/reexec.py`` draw them (so prompt 0 of every cell is the B = 1
+prompt of its ``T``).  The decoders have the shapes of ``pvi.models.decoder.CONFIGS`` and random weights (the costs
+depend on the shapes only), built as ``perf.py`` builds them (``--seed``, ``--calib-tokens`` calibration tokens: one
+graph for every cell), on ``--layers`` blocks (0: the full model); the small shapes of
+:data:`experiments.common.models.TINY` are for a laptop and the tests.  Every cell times, on the same token ids,
+shapes, device and host:
+
+* **U1**, our exact integer model served without proofs: ``IntGraph.forward(free=True)`` of the integer graph, every
   claim dropped as it is computed (``send`` keeps nothing).  It computes the integers the prover claims -- the logits
   are checked equal -- so prover/U1 is the cost of the proof itself.
 * **U2**, an eager floating-point decoder of the same shapes: ``reexec.FloatDecoder`` (``F.linear`` and
@@ -22,126 +29,120 @@ on the same token ids, shapes, device and host:
   prefill of the B prompts, its last block pruned like the integer graph's.  It skips the rotary embedding (an
   element-wise cost), so it is if anything faster than a complete implementation.  U2's model is built and timed
   first, and freed before the integer model goes to the device: the two need not fit at once.
-* **the prover** in each of ``--modes`` (C, Kpre) as ``perf.py --fs --wire --lean --prune-last`` runs it: under
-  Fiat--Shamir, the proof in the compact wire encoding, the lean prover, mode C under ``--policy``'s commitment plan,
-  Kpre with ``--lookups`` (the verifier reads the embedding rows itself; on by default, as in the cpuv and gpuv
-  tiers).  :func:`prove` runs the prover's side of ``run_query`` alone -- ``v0_query._claims_message``,
-  ``_fold_message`` and ``_open_message``, the functions ``run_query`` runs, so the messages, the byte counts and the
-  phase timings are the same -- and returns the proof as its byte strings.  No check of the verifier's is in the
-  timed window; one untimed ``run_query`` per cell (``--accept``) shows that the verifier accepts the same proof.
+* **the prover** in each of ``--modes`` (C, Kpre) under the protocol flags, which default to the paper's
+  configuration (:data:`experiments.common.cli.PAPER`): Fiat--Shamir, the compact wire encoding, the lean prover, the
+  last block pruned to the last position, mode C under the commitment plan ``cnn18c``, Kpre with the verifier
+  reading the embedding rows itself.  :func:`prove` runs the prover's side of ``run_query`` alone --
+  ``v0.query._claims_message``, ``_fold_message`` and ``_open_message``, the functions ``run_query`` runs, so the
+  messages, the byte counts and the phase timings are the same -- and returns the proof's messages.  No check of the
+  verifier's is in the timed window; one untimed ``run_query`` per cell (``--accept``) shows that the verifier
+  accepts the same proof.  A proof that no verifier attends needs non-interactive challenges, so mode C needs
+  Fiat--Shamir (``--no-fs`` is for Kpre, whose one message reads no challenge).
 
 Batches (B > 1).  U1 and U2 serve the B prompts as one ``[B, T]`` forward pass.  The prover (``--batch-proof``):
 
-* ``seq``: the B prompts are B independent queries (e.g. of B users).  The prover proves one statement per query
-  today, so it proves them one after another, each proof the B = 1 proof of its prompt; a batched forward pass with
-  per-query proofs (plan C4c) is not implemented;
+* ``seq``: the B prompts are B independent queries (e.g. of B users).  The prover proves one statement per query, so
+  it proves them one after another, each proof the B = 1 proof of its prompt (a batched forward pass with per-query
+  proofs is not implemented);
 * ``joint``: the B prompts as one statement, one client's batch -- the claims of all of them, one ``u`` and one
-  opening for all (``run_query`` on ``[B, T]``, plan C4a's path).
+  opening for all (``run_query`` on ``[B, T]``).
 
 Timing.  One warm-up of every variant (untimed; it also runs the checks), then ``--reps`` repetitions with the
-variants interleaved, the order rotating from repetition to repetition (as ``perf.py``).  On a GPU each call is timed
-with CUDA events, each recorded after a device synchronisation (the end event is waited for); on a CPU with
-``perf_counter``.  A
-time is reported as its median with a 95% percentile-bootstrap interval (:data:`BOOT` resamples, seeded), a ratio
-(prover/U1, prover/U2, U1/U2) as the ratio of the medians, with an interval from the same bootstrap of both samples.
+variants interleaved, the order rotating from repetition to repetition (as ``perf.py``), each call timed by
+:func:`experiments.common.records.timed` (CUDA events on a GPU, ``perf_counter`` on a CPU).  A time is reported as
+its median with a 95% percentile-bootstrap interval (:func:`experiments.common.stats.median_ci`, ``--boot``
+resamples, seeded), a ratio (prover/U1, prover/U2, U1/U2) as the ratio of the medians, with an interval from the same
+bootstrap of both samples.
 
 Phases.  The prover's timings are ``run_query``'s: ``prove_forward`` (the forward pass that computes the claims),
-``prove_lookups`` (a commitment plan's lookup-table multiproofs), ``prove_encode`` (the PVC3 claims, the packed ``u``
-and columns), ``fs_hash`` (the Fiat--Shamir absorption; none in Kpre, FS1), ``prove_fold`` (``u``) and ``prove_open``
-(the opened columns and their paths), plus ``challenges``: the prover's derivation of the Fiat--Shamir challenges
-from the transcript, which ``run_query`` books to neither party (:class:`TimedChallenges`).  The in-process run
-also decodes ``u`` and the columns for the verifier (``verify_decode``), which is not the prover's work and is
-subtracted: ``prove_s`` is the measured window minus ``verify_decode``.  ``residual`` is ``prove_s`` minus the sum
-of the phases (Python, copies; the per-phase contention snapshots are off, :func:`quiet_contention`), and
-``phases_ok`` holds when ``|residual| <= 2%`` of ``prove_s`` in the median repetition.  The proof-only overhead
-``prove_s - U1`` is split into ``forward_extra`` (the prover's forward pass(es) minus U1: narrowing and keeping the
-claims, and with ``seq`` B single-prompt passes against one batched pass), ``encode``, ``hash``, ``fold``, ``open``,
-``lookups``, ``challenges`` and ``residual`` (medians: they add up to the overhead approximately).
+``prove_lookups`` (a commitment plan's lookup-table multiproofs), ``prove_encode`` (the compact encoding of the
+claims, ``u`` and the columns), ``fs_hash`` (the Fiat--Shamir absorption; none in Kpre, whose one message to a
+designated verifier reads no challenge), ``prove_fold`` (``u``) and ``prove_open`` (the opened columns and their
+paths), plus ``challenges``: the prover's derivation of the Fiat--Shamir challenges from the transcript, which
+``run_query`` books to neither party (:class:`TimedChallenges`).  The in-process run also decodes ``u`` and the
+columns for the verifier (``verify_decode``), which is not the prover's work and is subtracted: ``prove_s`` is the
+measured window minus ``verify_decode``.  ``residual`` is ``prove_s`` minus the sum of the phases (Python, copies; the
+per-phase contention snapshots are off, :func:`pvi.core.contention.paused`), and ``phases_ok`` holds when ``|residual|`` is at
+most ``--residual-max`` (2%) of ``prove_s`` in the median repetition.  The proof-only overhead ``prove_s - U1`` is
+split into ``forward_extra`` (the prover's forward pass(es) minus U1: narrowing and keeping the claims, and with
+``seq`` B single-prompt passes against one batched pass), ``encode``, ``hash``, ``fold``, ``open``, ``lookups``,
+``challenges`` and ``residual`` (medians: they add up to the overhead approximately).
 
 Checks in every cell (a failure is recorded in the line, and the script exits with status 1 at the end):
 
-* ``u1_equals_claims``: U1's logits (warm-up and every repetition) are ``torch.equal`` to the LM head's claims decoded
-  from the proof's PVC3 bytes (``v0_query._decoded_claims``, as the verifier decodes them); with ``seq``, each
-  prompt's proof against its row of the batched U1, so batched serving and per-query proving give the same integers;
+* ``u1_equals_claims``: U1's logits (warm-up and every repetition) are ``torch.equal`` to the LM head's claims as the
+  verifier reads them from the proof (decoded from the compact encoding with ``v0.query._decoded_claims``); with
+  ``seq``, each prompt's proof against its row of the batched U1, so batched serving and per-query proving give the
+  same integers;
 * ``deterministic``: proving the same prompts again gives byte-identical proofs (SHA-256 over every message: the
   warm-up's proofs against the first repetition's, prompt 0's with ``seq``).  Claims are a deterministic function of
   the model and the prompt and, under Fiat--Shamir, so are the challenges and every later message;
 * ``accepted``: ``run_query`` accepts the proof of prompt 0 (``seq``) or of the batch, with the byte count of the
   proof timed here (``--no-accept`` skips it, and Kpre then needs no precompute);
-* ``bytes_consistent``: the proof's byte strings add up to ``run_query``'s byte count.
+* ``bytes_consistent``: the proof's messages add up to ``run_query``'s byte count.
 
-Output: one JSON line per (cell, mode, batch proof), ``row = "prove"``, with the medians and intervals, the ratios,
-the phases and the overhead split, the proof bytes, the proving time and proof MB per token, the egress cap (proved
-tokens per second that 100 Gb/s carries: ``12.5e9`` bytes/s over the bytes per token) and the checks; and one line
-per cell, ``row = "on_request"``: serving costs U1 (and its ratio to U2), and a proof produced later, only for the
-queries a client asks about, costs ``prove_s`` and is byte-identical (``deterministic``, with its SHA-256).  A
-variant that does not fit the GPU is recorded as ``skipped`` (out of memory), never extrapolated.  ``--table`` prints
-such lines as a table, and for a (model, T, B) measured on two block counts the two-point extrapolation of U1 and U2 to
-the full model (to check U2 against F1's numbers only; never a reported cell).
+Output: one JSON line per (cell, mode, batch proof), ``row = "prove"``, with the medians and intervals (``u1_s``,
+``u2_s``, ``window_s``, ``prove_s``), the ratios (``prover_over_u1``, ``prover_over_u2``, ``u1_over_u2``), the phases
+(``phases_s``, ``residual_frac``, ``phases_ok``) and the overhead split (``overhead_s``, ``overhead_split_s``), the
+proof bytes (``proof_bytes``, ``bytes`` by message), ``proof_mb_per_token``, ``prove_s_per_token``, the proved and
+served tokens per second, the egress cap (``egress_cap_tokens_per_s_per_100gbps``: proved tokens per second that
+100 Gb/s carries, :data:`EGRESS_BYTES_S` over the bytes per token), the checks and ``ok``, ``proof_sha256``, the peak
+GPU memory of each variant (``gpu_peak_mb``), the largest share of a timed window spent waiting for a CPU
+(``wait_frac_max``), every time (``times_s``) and the host's peak resident memory (``host_maxrss_mb``); and one line
+per cell, ``row = "on_request"``: serving costs U1 (``serve_s``, and its ratio to U2), and a proof produced later,
+only for the queries a client asks about, costs ``prove_s`` and is byte-identical (``later_proof``: ``deterministic``,
+with its SHA-256).  Every line carries the run's settings, the setup times (``build_s``, ``commit_s``,
+``setup_cache``, ``precompute_s``) and ``env`` (:func:`experiments.common.records.environment`).  A variant that does
+not fit the GPU is recorded as ``skipped`` (out of memory), never extrapolated.  ``--table`` prints such lines as a
+table, and for a (model, T, B) measured on two block counts the two-point extrapolation of U1 and U2 to the full model
+(a consistency check against ``reexec.py``'s extrapolated re-execution; never a reported cell).
+
+Hardware and time: the package runs every table model on an NVIDIA L40S (48 GB) with 8 CPU threads, one job per
+model with limits of 3 hours (OPT-1.3B) to 8 hours (Llama-2-13B) and 128-256 GB of host memory: a joint proof of
+4 x 2,048 tokens holds tens of GB of claims, and its CPU acceptance check the decoded claims and every op's input.
+A ``tiny-*`` cell on a laptop CPU takes seconds.
 """
 from __future__ import annotations
 
 import argparse
-import contextlib
 import dataclasses
 import gc
 import glob
 import hashlib
-import importlib.util
 import json
 import platform
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 
-from pvi.v0 import claimcodec
-
-from pvi.core import contention
-
-import pvi.v0 as protocol
-from pvi.v0 import query as v0_query
+from experiments.common import cli, records
+from experiments.common.models import TINY, decoder_config
+from experiments.common.paths import CODE
+from experiments.common.stats import median_ci
+from experiments.reexec import reexec
 from pvi.commit.cost import decoder_shapes
-from pvi.v0.transcript import Challenger
-from pvi.v0.prover import Prover
-from pvi.v0.verifier import Verifier
+from pvi.core import contention
+from pvi.models.decoder import DecoderConfig, build_decoder
+from pvi.v0 import claimcodec
+from pvi.v0 import query as v0_query
 from pvi.v0.graph_commitment import commit_graph
 from pvi.v0.params import params_for
+from pvi.v0.prover import Prover
 from pvi.v0.query import run_query
-from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
+from pvi.v0.transcript import Challenger
+from pvi.v0.verifier import Verifier
 
-HERE = Path(__file__).resolve().parent
-CODE = HERE.parents[1]          # code/
-
-RATE = 4
-"""The Reed--Solomon rate of the commitments (``bench.RATE``)."""
-CALIB_TOKENS = 32
-"""Calibration tokens of every build (``perf.py``'s ``min(seq, 32)`` for ``T >= 32``): one graph for every cell."""
 WORKLOADS = {"a": [(64, 1), (512, 1), (2048, 1)],
              "b": [(64, 1), (64, 4), (64, 16), (64, 64), (2048, 1), (2048, 4)]}
-"""``(T, B)`` of the plan's workloads: (a) prefill at B = 1; (b) batched prefill."""
+"""``(T, B)`` of the two workloads (``--workload``): (a) prefill at B = 1; (b) batched prefill."""
 EGRESS_BYTES_S = 100e9 / 8
-"""100 Gb/s in bytes per second."""
-RESIDUAL_MAX = 0.02
-BOOT = 10_000
+"""100 Gb/s in bytes per second: the link of the egress cap (``egress_cap_tokens_per_s_per_100gbps``)."""
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
-TINY = {
-    "tiny-gpt": DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=256),
-    "tiny-opt": DecoderConfig("tiny-opt", 64, 2, 4, 4, 16, 128, 97, mlp="relu", max_pos=256),
-    "tiny-llama": DecoderConfig("tiny-llama", 64, 2, 4, 4, 16, 160, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
-                                bias=False, tied=False),
-    "tiny-qwen": DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
-                               rope_theta=1e6, bias=False, qk_norm=True),
-    "small-llama": DecoderConfig("small-llama", 256, 4, 8, 4, 32, 688, 4096, norm="rmsnorm", mlp="swiglu",
-                                 pos="rope", bias=False, tied=False),
-}
-"""Small shapes for a laptop and the tests (``tiny-*`` as the test suites build them)."""
 _OOM_TEXT = ("CUDA out of memory", "CUDA error: out of memory", "CUBLAS_STATUS_ALLOC_FAILED")
 """What a ``RuntimeError`` says when the GPU ran out of memory in an allocation that is not torch's caching
 allocator's (a library's own: cuBLAS, a kernel launch); the allocator raises ``torch.cuda.OutOfMemoryError``."""
-_BEGIN = contention.begin
 
 
 def _is_oom(e: BaseException) -> bool:
@@ -150,78 +151,7 @@ def _is_oom(e: BaseException) -> bool:
                                                            and any(s in str(e) for s in _OOM_TEXT))
 
 
-def config(name: str) -> DecoderConfig:
-    return TINY[name] if name in TINY else CONFIGS[name]
-
-
-def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
 # -- measurement ---------------------------------------------------------------------------------
-
-def _sync(device: torch.device) -> None:
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-
-
-def timed(fn, device: torch.device):
-    """``(fn(), seconds, wait_frac)``: on a GPU between two CUDA events, the first recorded after a synchronisation
-    and the second after ``fn`` returns and the device has finished every stream's work, waited for (so the window
-    ends when the GPU has finished ``fn``'s work and holds the host work ``fn`` did meanwhile); on a CPU with
-    ``perf_counter``.  ``wait_frac`` comes from a contention snapshot pair outside the window (``None`` where the
-    kernel reports no scheduler statistics)."""
-    c0 = _BEGIN()
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-        start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        start.record()
-        result = fn()
-        torch.cuda.synchronize(device)      # (work fn left on another stream; the end event sees its own only)
-        end.record()
-        end.synchronize()
-        seconds = start.elapsed_time(end) / 1e3
-    else:
-        t0 = time.perf_counter()
-        result = fn()
-        seconds = time.perf_counter() - t0
-    store: dict = {}
-    contention.add(store, "window", c0)
-    return result, seconds, (store.get("window") or {}).get("wait_frac")
-
-
-def boot(xs, ys=None, n: int = BOOT, seed: int = 0) -> dict:
-    """The median of ``xs`` (``{"median", "ci95"}``) or, with ``ys``, the ratio of the medians of ``xs`` and ``ys``
-    (``{"ratio", "ci95"}``), with the 2.5% and 97.5% percentiles of ``n`` bootstrap resamples (each sample
-    resampled with replacement on its own; seeded, so a line is reproducible from its times)."""
-    rng = np.random.default_rng(seed)
-    x = np.asarray(xs, dtype=np.float64)
-    mx = np.median(x[rng.integers(0, x.size, (n, x.size))], axis=1)
-    if ys is None:
-        lo, hi = np.percentile(mx, [2.5, 97.5])
-        return {"median": float(np.median(x)), "ci95": [float(lo), float(hi)]}
-    y = np.asarray(ys, dtype=np.float64)
-    my = np.median(y[rng.integers(0, y.size, (n, y.size))], axis=1)
-    lo, hi = np.percentile(mx / my, [2.5, 97.5])
-    return {"ratio": float(np.median(x) / np.median(y)), "ci95": [float(lo), float(hi)]}
-
-
-@contextlib.contextmanager
-def quiet_contention():
-    """``contention.begin`` returns ``None`` inside (so ``contention.add`` records nothing): the per-phase snapshots
-    of ``run_query``'s helpers read ``/proc`` outside each phase's window but inside the whole proof's.  They are
-    measurement only; every timed call gets one snapshot pair of its own, outside its window (:func:`timed`)."""
-    saved = contention.begin
-    contention.begin = lambda: None
-    try:
-        yield
-    finally:
-        contention.begin = saved
-
 
 def _gpu_peak_reset(device: torch.device) -> None:
     if device.type == "cuda":
@@ -311,16 +241,17 @@ class TimedChallenges(Verifier):
             self.challenge_s += time.perf_counter() - t0
 
 
-def prove(prover: Prover, verifier: Verifier, x: torch.Tensor) -> tuple[list, dict | None, dict]:
-    """The prover's side of ``run_query(prover, verifier, x, wire=True)`` alone: ``(parts, openings, out)``.
+def prove(prover: Prover, verifier: Verifier, x: torch.Tensor, wire: bool = True) -> tuple[list, dict | None, dict]:
+    """The prover's side of ``run_query(prover, verifier, x, wire=wire)`` alone: ``(parts, openings, out)``.
 
-    ``parts`` are the proof's byte strings in the order they travel -- the PVC3 claims, a commitment plan's
-    lookup-table rows (int8) and their multiproofs' hashes, and in mode C the packed ``u``; ``openings`` mode C's
-    opened columns as the verifier decoded them, with their paths (their packed bytes are rebuilt by
-    :func:`messages`, outside any timed window; ``None`` in Kpre); ``out`` the timings and byte counts as
-    ``run_query`` records them, plus ``challenges`` (with a :class:`TimedChallenges` verifier).  The challenges are
-    those ``run_query`` draws: they depend only on the transcript, which the verifier's checks do not touch.  Mode C
-    needs Fiat--Shamir (a proof produced without a verifier); Kpre's one message reads no challenge."""
+    ``parts`` are the proof's messages in the order they travel -- the claims (with ``wire`` their compact encoding,
+    and a commitment plan's lookup-table rows as int8 bytes; without it the claims themselves and no rows), the
+    hashes of the lookup tables' multiproofs, and in mode C ``u`` (packed with ``wire``, else the tensors);
+    ``openings`` mode C's opened columns (with ``wire`` as the verifier decoded them) with their paths (their bytes
+    are rebuilt by :func:`messages`, outside any timed window; ``None`` in Kpre); ``out`` the timings and byte counts
+    as ``run_query`` records them, plus ``challenges`` (with a :class:`TimedChallenges` verifier).  The challenges
+    are those ``run_query`` draws: they depend only on the transcript, which the verifier's checks do not touch.
+    Mode C needs Fiat--Shamir (a proof produced without a verifier); Kpre's one message reads no challenge."""
     if verifier.mode not in ("C", "Kpre"):
         raise ValueError(f"mode {verifier.mode}: the prover sends only the claims and, in mode C, u and the columns")
     if verifier.mode == "C" and not verifier.params.fiat_shamir:
@@ -329,27 +260,41 @@ def prove(prover: Prover, verifier: Verifier, x: torch.Tensor) -> tuple[list, di
     out = {"timings": {}, "contention": {}}
     if isinstance(verifier, TimedChallenges):
         verifier.challenge_s = 0.0
-    claims, rows, proofs = v0_query._claims_message(prover, verifier, x, ch, out, {}, wire=True)
+    claims, rows, proofs = v0_query._claims_message(prover, verifier, x, ch, out, {}, wire=wire)
     hashes = b"".join(h for name in verifier.tables for h in v0_query._proof_hashes(proofs.get(name)))
     parts, openings = [claims, rows or b"", hashes], None
     if verifier.mode == "C":
-        _, us, u_blob = v0_query._fold_message(prover, verifier, ch, x, out, wire=True)
+        _, us, u_blob = v0_query._fold_message(prover, verifier, ch, x, out, wire=wire)
         _, openings = v0_query._open_message(prover, verifier, ch, us, out, u_blob=u_blob)
-        parts.append(u_blob)
+        parts.append(u_blob if wire else us)
     out["timings"]["challenges"] = getattr(verifier, "challenge_s", 0.0)
     return parts, openings, out
 
 
+def _raw(z: torch.Tensor, dtype: torch.dtype = torch.int32) -> bytes:
+    """A tensor's values as the fixed-width integers that ``run_query`` counts them as without the compact encoding."""
+    return z.to("cpu", dtype).contiguous().numpy().tobytes()
+
+
 def messages(parts: list, openings: dict | None, verifier: Verifier) -> list:
     """The proof's messages as byte strings, in the order they travel: ``parts`` and, in mode C, the opened columns
-    31-bit packed -- ``claimcodec.pack_field`` of the decoded rows, tree after tree: the packing is a fixed function
-    of the values, so these are the bytes ``_open_message`` sent -- and the hashes of their paths."""
+    and the hashes of their paths.  In the compact encoding the columns travel 31-bit packed -- ``claimcodec.
+    pack_field`` of the decoded rows, tree after tree: the packing is a fixed function of the values, so these are
+    the bytes ``_open_message`` sent.  Without it (``parts[0]`` the claims themselves) every claim, ``u`` and column
+    entry is written as a 4-byte integer and a lookup table's rows as 1-byte ones, as ``run_query`` counts them."""
+    raw = isinstance(parts[0], dict)
+    head = list(parts)
+    if raw:
+        head[0] = b"".join(_raw(z, torch.int8 if k in verifier.tables else torch.int32) for k, z in parts[0].items())
+        if len(parts) > 3:
+            head[3] = b"".join(_raw(parts[3][op.name]) for op in verifier._row_ops())
     if openings is None:
-        return list(parts)
+        return head
     units = [name for name, _ in verifier._column_units()]
-    cols = claimcodec.pack_field([openings[name][0] for name in units])
+    cols = (b"".join(_raw(openings[name][0]) for name in units) if raw
+            else claimcodec.pack_field([openings[name][0] for name in units]))
     paths = b"".join(h for name in units for h in v0_query._proof_hashes(openings[name][1]))
-    return [*parts, cols, paths]
+    return [*head, cols, paths]
 
 
 def digest(msgs: list) -> str:
@@ -366,8 +311,10 @@ def head_op(graph):
 
 
 def claimed_logits(verifier: Verifier, graph, parts: list, x: torch.Tensor) -> torch.Tensor:
-    """The logits a proof claims: the LM head's claim decoded from the proof's PVC3 bytes (and a plan's rows) as
-    the verifier decodes them (``v0_query._decoded_claims``), as int64 ``[B * positions, vocab]``."""
+    """The logits a proof claims: the LM head's claim as the verifier reads it (from the compact encoding, and a
+    plan's rows, with ``v0.query._decoded_claims``), as int64 ``[B * positions, vocab]``."""
+    if isinstance(parts[0], dict):
+        return parts[0][head_op(graph).name].T.to("cpu", torch.int64)
     zs = v0_query._decoded_claims(verifier, parts[0], parts[1], x, {"timings": {}, "contention": {}}, torch.int32)
     if zs is None:
         raise AssertionError("the proof's claims do not decode")
@@ -386,13 +333,13 @@ def queries(x: torch.Tensor, how: str) -> list[torch.Tensor]:
     return [x[i:i + 1] for i in range(x.shape[0])] if how == "seq" else [x]
 
 
-def prove_batch(prover: Prover, verifier: Verifier, x: torch.Tensor, how: str, keep: int = 0):
+def prove_batch(prover: Prover, verifier: Verifier, x: torch.Tensor, how: str, keep: int = 0, wire: bool = True):
     """``(outs, kept)``: the proofs of the batch ``x`` as ``how`` proves it (:func:`queries`), one after another --
     every proof's ``out`` and the ``(parts, openings)`` of the first ``keep`` (the others are dropped as soon as
     they are made)."""
     outs, kept = [], []
     for i, q in enumerate(queries(x, how)):
-        parts, openings, out = prove(prover, verifier, q)
+        parts, openings, out = prove(prover, verifier, q, wire=wire)
         outs.append(out)
         if i < keep:
             kept.append((parts, openings))
@@ -430,8 +377,8 @@ def _cells(args) -> list[tuple[int, int]]:
     return list(dict.fromkeys(out))
 
 
-def _tokens(cfg, seq: int, bsz: int) -> torch.Tensor:
-    return torch.randint(0, cfg.vocab, (bsz, seq), generator=torch.Generator().manual_seed(1))
+def _tokens(cfg, seq: int, bsz: int, seed: int = 1) -> torch.Tensor:
+    return torch.randint(0, cfg.vocab, (bsz, seq), generator=torch.Generator().manual_seed(seed))
 
 
 def _why(e: BaseException) -> str:
@@ -439,16 +386,15 @@ def _why(e: BaseException) -> str:
     return f"{type(e).__name__}: {(str(e).splitlines() or [''])[0][:200]}"
 
 
-def time_u2(cfg, layers: int, cells, dtypes: list[str], device: torch.device, reps: int) -> dict:
+def time_u2(cfg, layers: int, cells, args, device: torch.device) -> dict:
     """U2's times ``{(T, B): {dtype: {"times", "wait_frac", "gpu_peak_mb"} or {"skipped": why}}}``: per dtype one
-    model, a warm-up and ``reps`` timed batched prefills per cell; the model is freed afterwards.  A dtype or cell
+    model, a warm-up and ``--reps`` timed batched prefills per cell; the model is freed afterwards.  A dtype or cell
     the device cannot run (out of memory; bf16 GEMMs on a GPU without them) is recorded as skipped."""
-    reexec = _load("reexec", HERE / "reexec.py")
     out: dict = {c: {} for c in cells}
-    for name in dtypes:
+    for name in args.u2_dtype:
         model, why = None, None
         try:
-            model = reexec.FloatDecoder(cfg, layers, DTYPES[name], device, prune_last=True)
+            model = reexec.FloatDecoder(cfg, layers, DTYPES[name], device, seed=args.seed, prune_last=args.prune_last)
         except RuntimeError as e:          # (torch.cuda.OutOfMemoryError is one)
             why = _why(e)
         for seq, bsz in cells:
@@ -457,15 +403,15 @@ def time_u2(cfg, layers: int, cells, dtypes: list[str], device: torch.device, re
             if model is None:
                 out[seq, bsz][name] = {"skipped": why}
                 continue
-            x = _tokens(cfg, seq, bsz)
+            x = _tokens(cfg, seq, bsz, args.prompt_seed)
             failed = None
             try:
                 _gpu_peak_reset(device)
-                timed(lambda: serve_u2(model, x, device), device)
+                records.timed(lambda: serve_u2(model, x, device), device)
                 peak = _gpu_peak_mb(device)
                 times, waits = [], []
-                for _ in range(reps):
-                    _, s, w = timed(lambda: serve_u2(model, x, device), device)
+                for _ in range(args.reps):
+                    _, s, w = records.timed(lambda: serve_u2(model, x, device), device)
                     times.append(s)
                     waits.append(w)
                 out[seq, bsz][name] = {"times": times, "wait_frac": waits, "gpu_peak_mb": peak}
@@ -474,7 +420,7 @@ def time_u2(cfg, layers: int, cells, dtypes: list[str], device: torch.device, re
             if failed:
                 out[seq, bsz][name] = {"skipped": failed}
                 _free(device)
-        del model
+        model = None                         # freed before the next dtype's model is built
         _free(device)
     return out
 
@@ -493,39 +439,42 @@ class Built:
 
 
 def build(name: str, layers: int, args, device: torch.device) -> Built:
-    """The pruned integer decoder of ``name`` on ``layers`` blocks (0: all of them), its provers and verifiers."""
-    cfg = config(name)
+    """The integer decoder of ``name`` on ``layers`` blocks (0: all of them), its provers and verifiers under the
+    protocol flags."""
+    cfg = decoder_config(name)
     layers = layers or cfg.n_layers
     t0 = time.perf_counter()
-    graph = build_decoder(cfg, n_layers=layers, calib_tokens=CALIB_TOKENS, seed=0, prune_last=True)
+    graph = build_decoder(cfg, n_layers=layers, calib_tokens=args.calib_tokens, seed=args.seed,
+                          prune_last=args.prune_last)
     setup = {"build_s": time.perf_counter() - t0}
-    shapes = decoder_shapes(cfg, prune_last=True)
+    shapes = decoder_shapes(cfg, prune_last=args.prune_last)
     n_checks = len(shapes)          # (r, t) for the full model's op count, as bench.py and perf.py
     provers, verifiers = {}, {}
     for mode in args.modes:
         if mode == "C":
-            _sync(device)
+            records.sync(device)
             t0 = time.perf_counter()
-            com = commit_graph(graph, RATE, device=device, policy=args.policy, model_ops=shapes)
-            _sync(device)
+            com = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=shapes,
+                               cache=args.setup_cache)
+            records.sync(device)
             setup["commit_s"] = time.perf_counter() - t0
             setup["setup_cache"] = com.setup_cache              # "hit": commit_s is a load from the setup cache
-            params = params_for(args.lam, n_checks, rate=RATE, plan=com.plan, fiat_shamir=True)
+            params = params_for(args.lam, n_checks, rate=args.rate, plan=com.plan, fiat_shamir=args.fs)
             verifiers[mode] = TimedChallenges(graph.public(), params, "C", publics=com.publics,
-                                              groups=com.group_publics, tables=com.table_publics, lean=True,
+                                              groups=com.group_publics, tables=com.table_publics, lean=args.lean,
                                               device=args.verifier_device)
-            provers[mode] = Prover(graph, device=device, commitments=com, lean=True)
+            provers[mode] = Prover(graph, device=device, commitments=com, lean=args.lean)
             setup["chosen_policy"] = args.policy if com.plan is None else com.plan.policy
         else:
-            params = params_for(args.lam, n_checks, rate=RATE, fiat_shamir=True)
+            params = params_for(args.lam, n_checks, rate=args.rate, fiat_shamir=args.fs)
             weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
-            v = TimedChallenges(graph.public(), params, "Kpre", weights=weights, lean=True,
+            v = TimedChallenges(graph.public(), params, "Kpre", weights=weights, lean=args.lean,
                                 device=args.verifier_device, lookups=args.lookups)
             if args.accept:              # the verifier's secret chi and u (only the acceptance check reads them)
                 t0 = time.perf_counter()
                 v.precompute(Challenger())
                 setup["precompute_s"] = time.perf_counter() - t0
-            verifiers[mode], provers[mode] = v, Prover(graph, device=device, lean=True)
+            verifiers[mode], provers[mode] = v, Prover(graph, device=device, lean=args.lean)
         setup[f"reps_{mode}"], setup[f"columns_{mode}"] = verifiers[mode].params.reps, verifiers[mode].params.columns
     return Built(name, cfg, layers, graph, provers, verifiers, setup)
 
@@ -536,7 +485,7 @@ class Cell:
 
     def __init__(self, m: Built, seq: int, bsz: int, args, device: torch.device):
         self.m, self.seq, self.bsz, self.args, self.device = m, seq, bsz, args, device
-        self.x = _tokens(m.cfg, seq, bsz)
+        self.x = _tokens(m.cfg, seq, bsz, args.prompt_seed)
         hows = ["single"] if bsz == 1 else list(args.batch_proof)
         self.variants = ["u1"] + [(mode, how) for mode in args.modes for how in hows]
         self.times = {k: [] for k in self.variants}
@@ -554,17 +503,17 @@ class Cell:
     # the calls -----------------------------------------------------------------------------------
     def _call(self, key, keep: int = 0):
         m = self.m
-        if key == "u1":
-            return serve_u1(m.graph, self.x, self.device)
-        mode, how = key
-        return prove_batch(m.provers[mode], m.verifiers[mode], self.x, how, keep)
+        with contention.paused():
+            if key == "u1":
+                return serve_u1(m.graph, self.x, self.device)
+            mode, how = key
+            return prove_batch(m.provers[mode], m.verifiers[mode], self.x, how, keep, wire=self.args.wire)
 
     def _run(self, key, keep: int = 0):
         """One timed call of ``key`` (``None`` and the variant dropped if it runs out of GPU memory)."""
         oom = False
         try:
-            with quiet_contention():
-                return timed(lambda: self._call(key, keep), self.device)
+            return records.timed(lambda: self._call(key, keep), self.device)
         except RuntimeError as e:            # (the traceback, and the tensors its frames hold, go with the block)
             if not _is_oom(e):
                 raise
@@ -599,10 +548,10 @@ class Cell:
         equal, consistent, digests, counts, outs = True, True, [], [], []
         oom = False
         try:
-            with quiet_contention():
+            with contention.paused():
                 row = 0
                 for q in queries(self.x, how):
-                    parts, openings, out = prove(m.provers[mode], v, q)
+                    parts, openings, out = prove(m.provers[mode], v, q, wire=self.args.wire)
                     claimed = claimed_logits(v, m.graph, parts, q)
                     equal &= torch.equal(claimed, self.u1_rows[row:row + claimed.shape[0]])
                     row += claimed.shape[0]
@@ -665,7 +614,7 @@ class Cell:
             q = queries(self.x, how)[0]
             oom = False
             try:
-                res = run_query(self.m.provers[mode], self.m.verifiers[mode], q, wire=True)
+                res = run_query(self.m.provers[mode], self.m.verifiers[mode], q, wire=self.args.wire)
             except RuntimeError as e:
                 if not _is_oom(e):
                     raise
@@ -692,11 +641,14 @@ def _ok(checks: dict) -> bool:
 
 def _lines(cell: Cell, u2: dict, base: dict) -> list[dict]:
     """The cell's ``prove`` lines and its ``on_request`` line."""
+    def ci(xs, ys=None):
+        return median_ci(xs, ys, n=cell.args.boot)
+
     tokens = cell.seq * cell.bsz
     u1 = cell.times["u1"]
     u2_ok = {k: v["times"] for k, v in u2.items() if "times" in v}
     common = {**base, "seq": cell.seq, "batch": cell.bsz, "tokens": tokens}
-    u1_rec = boot(u1) if u1 else None
+    u1_rec = ci(u1) if u1 else None
     lines = []
     for key in cell.variants[1:]:
         mode, how = key
@@ -713,18 +665,18 @@ def _lines(cell: Cell, u2: dict, base: dict) -> list[dict]:
         resid = [(s - q) / s for s, q in zip(prove_s, summed)]
         med = {k: float(np.median([p[k] for p in ph])) for k in (*PHASES, "harness")}
         p_med = float(np.median(prove_s))
-        nbytes = _bytes_of(cell, key)
+        nbytes = int(sum(cell.nbytes[key]))
         per_tok = nbytes / tokens
         line.update({
-            "u1_s": u1_rec, "u2_s": {k: boot(v) for k, v in u2_ok.items()},
-            "window_s": boot(total), "prove_s": boot(prove_s),
-            "prover_over_u1": boot(prove_s, u1),
-            "prover_over_u2": {k: boot(prove_s, v) for k, v in u2_ok.items()},
-            "u1_over_u2": {k: boot(u1, v) for k, v in u2_ok.items()},
+            "u1_s": u1_rec, "u2_s": {k: ci(v) for k, v in u2_ok.items()},
+            "window_s": ci(total), "prove_s": ci(prove_s),
+            "prover_over_u1": ci(prove_s, u1),
+            "prover_over_u2": {k: ci(prove_s, v) for k, v in u2_ok.items()},
+            "u1_over_u2": {k: ci(u1, v) for k, v in u2_ok.items()},
             "phases_s": {**{k: med[k] for k in PHASES}, "harness_decode": med["harness"],
                          "residual": float(np.median([s - q for s, q in zip(prove_s, summed)]))},
             "residual_frac": {"median": float(np.median(resid)), "max_abs": float(np.max(np.abs(resid)))},
-            "phases_ok": bool(abs(float(np.median(resid))) <= RESIDUAL_MAX),
+            "phases_ok": bool(abs(float(np.median(resid))) <= cell.args.residual_max),
             "overhead_s": p_med - float(np.median(u1)),
             "overhead_split_s": {"forward_extra": med["forward"] - float(np.median(u1)),
                                  **{k: med[k] for k in PHASES if k != "forward"},
@@ -744,8 +696,8 @@ def _lines(cell: Cell, u2: dict, base: dict) -> list[dict]:
         })
         lines.append(line)
     req = {**common, "row": "on_request", "serve_s": u1_rec,
-           "serve_over_u2": {k: boot(u1, v) for k, v in u2_ok.items()} if u1 else {},
-           "u2_s": {k: boot(v) for k, v in u2_ok.items()},
+           "serve_over_u2": {k: ci(u1, v) for k, v in u2_ok.items()} if u1 else {},
+           "u2_s": {k: ci(v) for k, v in u2_ok.items()},
            "served_tokens_per_s": tokens / float(np.median(u1)) if u1 else None, "later_proof": {}}
     for line in lines:
         if "skipped" in line:
@@ -759,10 +711,6 @@ def _lines(cell: Cell, u2: dict, base: dict) -> list[dict]:
     return lines + [req]
 
 
-def _bytes_of(cell: Cell, key) -> int:
-    return int(sum(cell.nbytes[key]))
-
-
 def _max(xs: list) -> float | None:
     xs = [x for x in xs if x is not None]
     return max(xs) if xs else None
@@ -771,10 +719,10 @@ def _max(xs: list) -> float | None:
 def run_model(name: str, args, device: torch.device, cells, base: dict) -> bool:
     """Every cell of one ``(model, layers)``: U2 first (its model freed), then the integer model's U1 and provers.
     Prints the lines; ``False`` if a correctness check failed."""
-    cfg = config(name)
+    cfg = decoder_config(name)
     layers = args.layers or cfg.n_layers
     cells = [c for c in cells if c[0] <= cfg.max_pos]
-    u2 = time_u2(cfg, layers, cells, args.u2_dtype, device, args.reps)
+    u2 = time_u2(cfg, layers, cells, args, device)
     m = build(name, layers, args, device)
     good = True
     base = {**base, "model": name, "layers": args.layers or None, "n_layers": layers, "n_layers_full": cfg.n_layers,
@@ -787,7 +735,7 @@ def run_model(name: str, args, device: torch.device, cells, base: dict) -> bool:
             cell.accept()
         for line in _lines(cell, u2.get((seq, bsz), {}), base):
             line["host_maxrss_mb"] = _host_maxrss_mb()
-            print(json.dumps(line), flush=True)
+            records.emit(line)
             if line["row"] == "prove" and "skipped" not in line:
                 good &= line["ok"]
                 if not line["phases_ok"]:
@@ -811,8 +759,8 @@ def _fmt(r: dict | None, key: str = "median", scale: float = 1.0, digits: int = 
 
 
 def table(paths: list[str]) -> None:
-    """The ``prove`` lines of serve_ab.py logs as a table (times in ms), then the two-point extrapolations of U1 and
-    U2 to the full model where a (model, T, B) was measured on two block counts."""
+    """The ``prove`` lines of this script's logs as a table (times in ms), then the two-point extrapolations of U1
+    and U2 to the full model where a (model, T, B) was measured on two block counts."""
     lines = []
     for pattern in paths:
         for path in sorted(glob.glob(pattern)) or [pattern]:
@@ -864,9 +812,10 @@ def table(paths: list[str]) -> None:
 
 # -- main ------------------------------------------------------------------------------------------
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--model", nargs="+", default=[], help="CONFIGS names, or " + ", ".join(TINY))
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--model", nargs="+", default=[],
+                    help="decoders: pvi.models.decoder.CONFIGS names or the small shapes " + ", ".join(TINY))
     ap.add_argument("--layers", type=int, default=0, help="decoder blocks (0: the full model)")
     ap.add_argument("--workload", nargs="+", choices=sorted(WORKLOADS), default=["a", "b"],
                     help="(a) T = 64, 512, 2048 at B = 1; (b) T = 64 with B = 1, 4, 16, 64 and T = 2048 with B = 1, 4")
@@ -874,20 +823,27 @@ def main() -> int:
     ap.add_argument("--modes", nargs="+", choices=["C", "Kpre"], default=["C", "Kpre"])
     ap.add_argument("--batch-proof", nargs="+", choices=["seq", "joint"], default=["seq"],
                     help="B > 1: B independent proofs one after another (seq) and/or one statement (joint)")
-    ap.add_argument("--policy", default="paper", help="mode C's commitment plan (pvi.commit.plans), as perf.py")
-    ap.add_argument("--lookups", action=argparse.BooleanOptionalAction, default=True,
-                    help="Kpre: the verifier reads the embedding rows itself (Verifier(lookups=True))")
-    ap.add_argument("--lam", type=int, default=128)
-    ap.add_argument("--reps", type=int, default=10)
+    ap.add_argument("--reps", type=int, default=10, help="timed repetitions of every variant, after one warm-up")
     ap.add_argument("--u2-dtype", nargs="+", choices=sorted(DTYPES), default=None,
                     help="U2's dtypes (default fp16 on a GPU, fp32 on a CPU)")
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--verifier-device", default="cpu", help="the decoding and acceptance checks' verifier")
-    ap.add_argument("--threads", type=int, default=8)
+    ap.add_argument("--seed", type=int, default=0, help="the random weights' seed (the integer model's and U2's)")
+    ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompts' seed")
+    ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
+                    help="calibration tokens of the integer model (one graph for every cell)")
     ap.add_argument("--accept", action=argparse.BooleanOptionalAction, default=True,
                     help="one untimed run_query per prover variant and cell (Kpre: the verifier's precompute)")
-    ap.add_argument("--label", default="")
-    ap.add_argument("--table", nargs="+", default=None, help="print serve_ab.py logs (JSON lines) as a table")
+    ap.add_argument("--boot", type=int, default=10_000, help="bootstrap resamples of every interval")
+    ap.add_argument("--residual-max", type=float, default=0.02,
+                    help="phases_ok: the largest share of the prover's time the phases may leave unaccounted")
+    ap.add_argument("--label", default="", help="a label copied into every record")
+    ap.add_argument("--table", nargs="+", default=None, help="print this script's logs (JSON lines) as a table")
+    cli.add_protocol_arguments(ap)
+    cli.add_runtime_arguments(ap, threads=8)
+    return ap
+
+
+def main() -> int:
+    ap = build_parser()
     args = ap.parse_args()
     if args.table:
         table(args.table)
@@ -896,20 +852,21 @@ def main() -> int:
         ap.error("--model is required")
     if args.reps < 2:
         ap.error("--reps must be at least 2 (the first repetition is compared with the warm-up)")
-    torch.set_num_threads(args.threads)
+    if "C" in args.modes and not args.fs:
+        ap.error("mode C is proved without a verifier only under Fiat-Shamir: --no-fs needs --modes Kpre")
+    cli.apply_runtime(args)
     device = torch.device(args.device)
     if device.type == "cuda" and device.index is not None:
         torch.cuda.set_device(device)
     args.u2_dtype = args.u2_dtype or (["fp16"] if device.type == "cuda" else ["fp32"])
     cells = _cells(args)
-    from pvi.results import git_sha
-    sha = git_sha(CODE)
-    base = {"label": args.label, "git": sha, "device": str(device), "verifier_device": args.verifier_device,
-            "threads": args.threads, "reps": args.reps, "warmup": 1, "lam": args.lam, "rate": RATE, "fs": True,
-            "wire": True, "lean": True, "prune_last": True,
-            "timer": "cuda_events" if device.type == "cuda" else "perf_counter",
+    base = {"label": args.label, "git": records.git_sha(CODE), "device": str(device),
+            "verifier_device": args.verifier_device, "threads": args.threads, "reps": args.reps, "warmup": 1,
+            "lam": args.lam, "rate": args.rate, "fs": args.fs, "wire": args.wire, "lean": args.lean,
+            "prune_last": args.prune_last, "timer": "cuda_events" if device.type == "cuda" else "perf_counter",
             "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
-            "cpu": platform.processor() or platform.machine(), "host": platform.node(), "torch": torch.__version__}
+            "cpu": platform.processor() or platform.machine(), "host": platform.node(), "torch": torch.__version__,
+            "env": records.environment(device)}
     good = True
     for name in args.model:
         good &= run_model(name, args, device, cells, base)

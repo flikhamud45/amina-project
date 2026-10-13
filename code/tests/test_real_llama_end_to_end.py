@@ -1,12 +1,11 @@
-"""F3b's plumbing on a tiny random Llama (no download): ``v1_bytes.real_graph``'s Llama branch is
-``build_llama_from_hf(**MAIN_RECIPE)`` with the calibration's prefix, keeps the benchmark structure, and its graph serves
-``gen_bench.py --real``'s generated responses: ``with_lm_positions``, greedy and sampled tokens (the sampler's weight
-from the LM head's real logit scale), proved and verified in modes C and Kpre, and a wrong token rejected."""
+"""A real Llama-family checkpoint's graph end to end, on a tiny random Llama (no download):
+``experiments.common.checkpoints.real_graph``'s Llama branch is ``build_llama_from_hf(**MAIN_RECIPE)`` with the
+calibration's prefix, keeps the benchmark structure (``v1_bytes``' shape check), and its graph serves
+``generation/gen_bench.py --real``'s generated responses: ``with_lm_positions``, greedy and sampled tokens (the
+sampler's weight from the LM head's real logit scale), proved and verified in modes C and Kpre, and a wrong token
+rejected."""
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,20 +14,14 @@ import torch
 transformers = pytest.importorskip("transformers")
 
 import pvi.v0 as proto  # noqa: E402
+from experiments.common import checkpoints  # noqa: E402
+from experiments.generation import gen_bench as gb  # noqa: E402
+from experiments.v1 import v1_bytes as v1b  # noqa: E402
 from pvi.models import hf_llama as rl  # noqa: E402
 from pvi.models.decoder import greedy_tokens, with_lm_positions  # noqa: E402
 from pvi.v0.token_sampler import TokenSampler, sample_tokens  # noqa: E402
 
-CODE = Path(__file__).resolve().parents[1]
 PREFIX = [5, 17]
-
-
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, CODE / path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 @pytest.fixture(scope="module")
@@ -39,8 +32,7 @@ def built():
                                    rms_norm_eps=1e-6, tie_word_embeddings=False, initializer_range=0.15)
     model = transformers.LlamaForCausalLM(cfg).eval()
     calib = torch.randint(0, 97, (2, 32), generator=torch.Generator().manual_seed(1))
-    v1b = _load("v1_bytes", "experiments/8_v1/v1_bytes.py")
-    graph, info = v1b.real_graph(model, SimpleNamespace(ids=calib, prefix=PREFIX), None, True)
+    graph, info = checkpoints.real_graph(model, SimpleNamespace(ids=calib, prefix=PREFIX), True)
     return model, calib, graph, info
 
 
@@ -56,7 +48,6 @@ def test_the_llama_branch_is_the_main_recipe_with_the_prefix(built):
 def test_the_shape_check_takes_the_llama_head_as_built(built):
     """v1_bytes' shape check: a real Llama head has the benchmark's row length (no folded bias, unlike OPT's)."""
     model, calib, graph, info = built
-    v1b = sys.modules["v1_bytes"]
     cfg = rl.config_of(model.config, "tiny")
     res = v1b.shape_check(graph, cfg, cfg.n_layers, True, True, calib[:1, :16])
     assert res["problems"] == []
@@ -65,9 +56,9 @@ def test_the_shape_check_takes_the_llama_head_as_built(built):
 def test_forged_logits_of_a_sampled_response_are_caught_by_the_weight_check(built):
     """gen_bench's forged_logits tamper with the real logit scale's sampler: the margin is sized from that sampler's
     weight ``a`` (not ``--sampler-a``), so the forgery makes the rule choose the wrong token and only Freivalds'
-    check catches it (job 1018663 found the token check catching it instead: the margin was ``2^21 / 4096``)."""
+    check catches it (with a margin sized from ``--sampler-a = 4096`` the noise can still outweigh the forged logit,
+    and the token check catches it instead)."""
     model, calib, graph, info = built
-    gb = _load("gen_bench", "experiments/6_improvements/gen_bench.py")
     sampler = TokenSampler.for_temperature(b"\x09" * 32, 1.0, float(info["logit_scale"]))
     assert gb.forge_margin("sample", sampler) * sampler.a >= 1 << 21
     assert gb.forge_margin("greedy", None) == 1
@@ -105,7 +96,7 @@ def test_generated_responses_prove_and_verify(built, rule, mode):
     assert x.shape == (1, 10 + g - 1)
     gen = with_lm_positions(graph, g)
     if mode == "C":
-        coms = proto.commit_graph(gen, 4, policy="R8c", cache=False)
+        coms = proto.commit_graph(gen, 4, policy="R8c")
         params = proto.params_for(40, len(gen.mat_ops), plan=coms.plan, fiat_shamir=True)
         v = proto.Verifier(gen.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
                            tables=coms.table_publics, lean=True)

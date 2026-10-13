@@ -611,16 +611,13 @@ def test_the_parameters_meet_lambda_on_every_model():
 
 # -- bench.py --------------------------------------------------------------------------------------
 
-def test_bench_wire_cells_carry_a_wire_tag(monkeypatch):
-    import importlib.util
-    import sys
-
-    path = Path(__file__).resolve().parents[1] / "experiments" / "4_defence_benchmark" / "bench.py"
-    spec = importlib.util.spec_from_file_location("bench_wire_test", path)
-    bench = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(bench)
-    for argv, needs in ((["--wire"], "_wire"), (["--tag", "_wire"], "_wire")):
-        monkeypatch.setattr(sys, "argv", ["bench.py", "cnn", "--model", "lenet5", *argv])
-        with pytest.raises(SystemExit, match=needs):
-            bench.main()
-    assert bench.build_parser().parse_args(["cnn", "--model", "x", "--wire"]).wire
+def test_bench_wire_cells_carry_a_wire_tag():
+    """The compact encoding is the default, and every cell of a run with it is named ``_wire``; ``--no-wire`` gives
+    the uncoded proof's names."""
+    from experiments.costs import bench
+    wire = bench.build_parser().parse_args(["cnn", "--model", "x", "--platform", "test"])
+    plain = bench.build_parser().parse_args(["cnn", "--model", "x", "--platform", "test", "--no-wire"])
+    assert wire.wire and not plain.wire
+    for cell in ("facts", "defence_K_int_lam40_rate4", "defence_C_int_lam40_rate4", "tamper_C_int_lam40"):
+        assert "_wire" in bench.variant(wire, "cnn", cell) and "_wire" not in bench.variant(plain, "cnn", cell)
+    assert bench.variant(plain, "cnn", "defence_K_int_lam40_rate4") == ""

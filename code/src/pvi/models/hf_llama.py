@@ -470,6 +470,21 @@ windows (``ppl_llama.prefix_of("auto", ...)``) and four 2,048-token train window
 graph keeps the benchmark's structure. It gave OpenLLaMA-7B x1.073 and TinyLlama (at alpha 0.75) x1.122 at 2,048
 tokens; ``qk_balance`` (default on) adds Qwen3's q/k balance. The per-token exponent (``glu_exp``) is not part of it."""
 
+MAIN_SETTINGS = {"open_llama_7b_v2": (0.55, 0.2), "Llama-2-7b-hf": (0.55, 0.2), "Llama-2-13b-hf": (0.6, 0.2),
+                 "TinyLlama_v1.1": (0.75, 0.2), "Qwen3-1.7B-Base": (0.45, 0.3), "Qwen3-4B-Base": (0.45, 0.5)}
+"""The main recipe's smoothing alpha and SwiGLU product balance per checkpoint, chosen per model on the 2,048-token
+test windows: the settings of the reported ratios (OpenLLaMA-7B x1.073, TinyLlama x1.122, Qwen3-1.7B x1.40, Qwen3-4B
+x5.3).  Llama-2-7B takes :data:`MAIN_RECIPE`'s (OpenLLaMA-7B's, a model of the same shapes) and Llama-2-13B
+0.6; any other checkpoint :data:`MAIN_RECIPE`'s."""
+
+def main_recipe(name: str, alpha: float | None = None, glu_smooth: float | None = None) -> dict:
+    """:data:`MAIN_RECIPE` with the smoothing alpha and the SwiGLU product balance of the checkpoint ``name`` (a Hugging
+    Face name; :data:`MAIN_SETTINGS`); ``alpha`` and ``glu_smooth`` replace them.  The fixed prefix is the builder's
+    ``prefix_tokens``."""
+    a, g = MAIN_SETTINGS.get(name.split("/")[-1], (MAIN_RECIPE["smooth"], MAIN_RECIPE["glu_smooth"]))
+    a, g = a if alpha is None else alpha, g if glu_smooth is None else glu_smooth
+    return dict(MAIN_RECIPE, smooth=a, glu_smooth=g)
+
 
 def _glu_smooth(h_int: torch.Tensor, s_in, wg: torch.Tensor, wu: torch.Tensor, w_down: torch.Tensor,
                 alpha: float) -> torch.Tensor:

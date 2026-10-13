@@ -1,18 +1,16 @@
-"""pvi.models.hf_opt (the int8 OPT of the report, Section 4.1) on a tiny random OPT,
-so no download is needed.
+"""``pvi.models.hf_opt`` (the integer OPT of a real checkpoint) on a tiny random OPT, so no download is needed.
 
-Also the real graph with its last block pruned (``build_opt_from_hf(..., prune_last=True)``, plan 2 F3a): the
-weights and constants of the graph without pruning, the same next-token logits, the shapes of
-``build_decoder(..., prune_last=True)``, accepted by v0 (modes C and Kpre) and V1 (the cut protocol), tampering
-rejected, the byte accounting (T7) exact; and the F3a scripts (``v1_bytes.py --real --prune-last``, ``--codec-only``,
-``perf.py --real``) on it, with the checkpoint and WikiText-2 loaders replaced by the tiny model and random windows.
+Also the real graph with its last block pruned (``build_opt_from_hf(..., prune_last=True)``): the weights and
+constants of the graph without pruning, the same next-token logits, the shapes of ``build_decoder(...,
+prune_last=True)``, accepted by v0 (modes C and Kpre) and V1 (the cut protocol), tampering rejected, the byte
+accounting exact; and the real-weight cells of the experiment scripts (``v1/v1_bytes.py --real`` with the certified
+and the legacy recipe, ``--codec-only``, several V1 verifiers, ``costs/perf.py --real``) on it, with the checkpoint
+and WikiText-2 loaders of ``experiments.common.checkpoints`` replaced by the tiny model and random windows.
 """
 
 import dataclasses
-import importlib.util
 import json
 import sys
-from pathlib import Path
 
 import pytest
 import torch
@@ -20,6 +18,7 @@ import torch
 transformers = pytest.importorskip("transformers")
 
 import pvi.v0 as proto  # noqa: E402
+from experiments.common import checkpoints  # noqa: E402
 from pvi.commit import cost as analytic  # noqa: E402
 from pvi.core.graph import CheapOp, MatOp  # noqa: E402
 from pvi.models import decoder as transformer  # noqa: E402
@@ -27,8 +26,8 @@ from pvi.models.decoder import DecoderConfig  # noqa: E402
 from pvi.models.hf_opt import build_opt_from_hf, is_pruned, matches_benchmark_graph, real_logits  # noqa: E402
 from pvi.v1 import protocol as cp  # noqa: E402
 
-CODE = Path(__file__).resolve().parents[1]
-_SMOOTH = dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
+_SMOOTH = dict(norm_gain=4, smooth=0.55, **checkpoints.SMOOTH)
+"""The legacy recipe with SmoothQuant alpha 0.55 (``--recipe legacy --smooth 0.55``)."""
 _TINY_CFG = DecoderConfig("tiny-opt", 32, 2, 4, 4, 8, 64, 97, mlp="relu", max_pos=64)
 """The ``build_decoder`` shapes of the tiny OPT below."""
 
@@ -85,7 +84,7 @@ def test_defence_accepts_honest_queries_on_real_weights(tiny_opt):
 
 
 def test_smoothed_norm_gains_keep_the_graph_and_the_protocol(tiny_opt):
-    # plan F2: SmoothQuant through the norms' per-channel gains -- the same ops and shapes, scalar requant
+    # SmoothQuant through the norms' per-channel gains -- the same ops and shapes, scalar requant
     # multipliers (requant_fn), an integer graph that tracks the float model, accepted by v0 and by V1
     from pvi.v0.graph_commitment import commit_graph
     from pvi.v0.params import params_for
@@ -113,7 +112,7 @@ def test_smoothed_norm_gains_keep_the_graph_and_the_protocol(tiny_opt):
     assert cp.run_cut_query(prover, verifier, ids[:, :16], seed=1)["accepted"]
 
 
-# -- the pruned last block (plan 2 F3a) ------------------------------------------------------------------------------
+# -- the pruned last block ------------------------------------------------------------------------------------------
 
 def _without_slices(graph):
     """``graph``'s ops but the "last position" slices."""
@@ -262,9 +261,9 @@ def test_a_pruned_real_graph_is_accepted_by_v0_and_v1_and_rejects_tampering(tiny
 
 @pytest.mark.parametrize("mode", ["C", "Kpre"])
 def test_the_byte_accounting_is_exact_on_a_pruned_real_graph(tiny_opt, mode):
-    """T7 on real weights: v0's claims (unencoded; on the wire their ``PVC3`` size is measured, not modelled), ``u``
-    and opened columns are ``analytic.proof_bytes`` of the graph's weight ops, and V1's every message but the
-    multiproofs is ``cut_proof_bytes``."""
+    """The byte accounting on real weights: v0's claims (unencoded; on the wire their ``PVC3`` size is measured, not
+    modelled), ``u`` and opened columns are ``analytic.proof_bytes`` of the graph's weight ops, and V1's every message
+    but the multiproofs is ``cut_proof_bytes``."""
     model, _, _, ids = tiny_opt
     graph, prover, v = _pruned_setup(model, ids, mode)
     x = ids[:, :16]
@@ -287,108 +286,112 @@ def test_the_byte_accounting_is_exact_on_a_pruned_real_graph(tiny_opt, mode):
     assert est["n_leaves"] == real["cut"]["n_leaves"]
 
 
-# -- the F3a scripts on the tiny model ---------------------------------------------------------------------------------
-
-def _script(rel: str, name: str):
-    spec = importlib.util.spec_from_file_location(name, CODE / rel)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
+# -- the experiment scripts on the tiny model -------------------------------------------------------------------------
 
 @pytest.fixture
 def fake_checkpoint(monkeypatch):
-    """``9_quality/common``'s loaders replaced: ``load_opt`` gives the tiny OPT, ``load_windows`` random windows
-    (the calibration windows from another stream), so the ``--real`` paths run without a download."""
-    pytest.importorskip("pyarrow")
-    folder = str(CODE / "experiments" / "9_quality")
-    if folder not in sys.path:
-        sys.path.insert(0, folder)
-    import common
-
-    def windows(tok, parquet=None, *, seq=128, windows=16, calib_windows=1):
+    """``experiments.common.checkpoints``' loaders replaced: ``load_opt`` gives the tiny OPT, ``load_windows`` random
+    windows (the calibration windows from another stream) and ``certified_calibration`` two random 24-token windows,
+    so the ``--real`` paths run without a download."""
+    def windows(tok, parquet=None, *, seq=128, n=16, calib_windows=1):
         g, gc = torch.Generator().manual_seed(seq), torch.Generator().manual_seed(1000 + seq)
-        return ([torch.randint(3, 97, (1, seq), generator=g) for _ in range(windows)],
+        return ([torch.randint(3, 97, (1, seq), generator=g) for _ in range(n)],
                 [torch.randint(3, 97, (1, seq), generator=gc) for _ in range(calib_windows)])
 
-    monkeypatch.setattr(common, "load_opt", lambda name: (_tiny_model(), None))
-    monkeypatch.setattr(common, "load_windows", windows)
-    monkeypatch.chdir(CODE)
-    return common
+    monkeypatch.setattr(checkpoints, "is_opt", lambda name: True)
+    monkeypatch.setattr(checkpoints, "load_opt", lambda name: (_tiny_model(), None))
+    monkeypatch.setattr(checkpoints, "load_windows", windows)
+    monkeypatch.setattr(checkpoints, "certified_calibration",
+                        lambda tok: torch.randint(3, 97, (2, 24), generator=torch.Generator().manual_seed(7)))
+    monkeypatch.setitem(transformer.CONFIGS, "opt-tiny", dataclasses.replace(_TINY_CFG, name="opt-tiny"))
+    return checkpoints
 
 
-def _lines(capsys) -> list[dict]:
-    return [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+def _run(script, monkeypatch, capsys, *argv) -> tuple[int, list[dict]]:
+    """``script.main()`` with ``argv`` (on the CPU, this process's threads): its exit status and JSON lines."""
+    threads = torch.get_num_threads()
+    monkeypatch.setattr(sys, "argv", ["script", *argv, "--device", "cpu", "--threads", str(threads)])
+    try:
+        status = script.main()
+    finally:
+        torch.set_num_threads(threads)
+    return status, [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
 
 
 def test_v1_bytes_real_pruned_checks_the_accounting_and_rejects_tampers(fake_checkpoint, monkeypatch, capsys):
-    v1b = _script("experiments/8_v1/v1_bytes.py", "v1_bytes")
-    monkeypatch.setitem(transformer.CONFIGS, "opt-tiny", dataclasses.replace(_TINY_CFG, name="opt-tiny"))
-    monkeypatch.setattr(sys, "argv", ["v1_bytes.py", "--model", "opt-tiny", "--real", "tiny", "--smooth", "0.55",
-                                      "--prune-last", "--seq", "16", "--calib-seq", "24", "--modes", "C", "Kpre",
-                                      "--policy", "auto", "--fs", "--full", "--reps", "2", "--tampers", "2",
-                                      "--device", "cpu", "--threads", str(torch.get_num_threads())])
-    assert v1b.main() == 0
-    rows = _lines(capsys)
+    """The default (certified) recipe, the paper's protocol settings, both V1 verifiers on the same timed queries."""
+    from experiments.v1 import v1_bytes
+    status, rows = _run(v1_bytes, monkeypatch, capsys, "--model", "opt-tiny", "--real", "tiny", "--seq", "16",
+                        "--modes", "C", "Kpre", "--policy", "auto", "--full", "--reps", "2", "--tampers", "2",
+                        "--lmax", "20", "--v1-verifier", "optimised", "baseline")
+    assert status == 0
     assert [r["mode"] for r in rows] == ["C", "Kpre"]
     for r in rows:
-        assert r["prune_last"] and r["real"] == "tiny" and r["v0_accepted"] and r["v1_full"]["accepted"]
+        assert r["prune_last"] and r["fs"] and r["lean"] and r["wire"] and r["real"] == "tiny"
+        assert r["recipe"] == "certified" and r["smooth"] is None and r["calib_seq"] is None
+        assert r["lookups"] == (r["mode"] == "Kpre") and r["v1_verifier"] == "optimised"
+        assert r["v0_accepted"] and r["v1_full"]["accepted"]
         assert r["accounting_ok"] and r["shapes"] == {"problems": [], "claim_columns": True}
         assert set(r["accounting"]["v0"]) == {"u", "columns", "paths_ratio"}
         assert r["accounting"]["v0"]["u"] and r["accounting"]["v0"]["columns"]
         assert all(r["accounting"]["v1"][k] for k in ("claims", "cut_exc", "cut_mult", "cut_gkr", "u", "columns"))
-        assert r["timed"]["v0"]["accepted"] == r["timed"]["v1"]["accepted"] == 2
+        assert len(r["instance_bits"]) == r["n_instances"]
+        assert r["n_leaves"] <= sum(1 << n for n in r["instance_bits"])
+        timed = r["timed"]
+        assert timed["v0"]["accepted"] == timed["v1"]["accepted"] == 2 and timed["v1_path"] == "optimised"
+        assert {k: v["accepted"] for k, v in timed["v1_paths"].items()} == {"optimised": 2, "baseline": 2}
         assert {k: (t["attempts"], t["rejected"]) for k, t in r["tampers"].items()} == {"trace": (2, 2),
                                                                                          "single": (2, 2)}
-        assert "host_peak_rss" in r["peak"]
+        assert "host_peak_rss" in r["peak"] and r["env"]["implementation"]["options"]["v1_verifier"] == "optimised"
+
+
+@pytest.mark.parametrize("argv", [["--v1-verifier", "optimised", "baseline"],     # several verifiers, nothing timed
+                                  ["--real", "tiny", "--smooth", "0.55"],          # the legacy recipe's knob
+                                  ["--tampers", "1"]])                             # V1 queries without --full
+def test_v1_bytes_refuses_settings_that_do_not_go_together(fake_checkpoint, monkeypatch, capsys, argv):
+    from experiments.v1 import v1_bytes
+    with pytest.raises(SystemExit):
+        _run(v1_bytes, monkeypatch, capsys, "--model", "opt-tiny", "--seq", "16", *argv)
 
 
 def test_v1_bytes_fails_when_the_accounting_disagrees(fake_checkpoint, monkeypatch, capsys):
     """The accounting check is not vacuous: a byte model off by one ``u`` byte fails the line and the exit status."""
-    v1b = _script("experiments/8_v1/v1_bytes.py", "v1_bytes")
-    monkeypatch.setitem(transformer.CONFIGS, "opt-tiny", dataclasses.replace(_TINY_CFG, name="opt-tiny"))
+    from experiments.v1 import v1_bytes
     honest = analytic.proof_bytes
     monkeypatch.setattr(analytic, "proof_bytes", lambda *a, **kw: dict(honest(*a, **kw), u=honest(*a, **kw)["u"] + 1))
-    monkeypatch.setattr(sys, "argv", ["v1_bytes.py", "--model", "opt-tiny", "--real", "tiny", "--prune-last",
-                                      "--seq", "16", "--modes", "Kpre", "--device", "cpu",
-                                      "--threads", str(torch.get_num_threads())])
-    assert v1b.main() == 1
-    (r,) = _lines(capsys)
+    status, rows = _run(v1_bytes, monkeypatch, capsys, "--model", "opt-tiny", "--real", "tiny", "--seq", "16",
+                        "--modes", "Kpre")
+    assert status == 1
+    (r,) = rows
     assert r["v0_accepted"] and not r["accounting"]["v0"]["u"] and not r["accounting_ok"]
 
 
 def test_v1_bytes_codec_only_profiles_every_block(fake_checkpoint, monkeypatch, capsys):
-    v1b = _script("experiments/8_v1/v1_bytes.py", "v1_bytes")
-    monkeypatch.setitem(transformer.CONFIGS, "opt-tiny", dataclasses.replace(_TINY_CFG, name="opt-tiny"))
-    monkeypatch.setattr(sys, "argv", ["v1_bytes.py", "--model", "opt-tiny", "--real", "tiny", "--smooth", "0.55",
-                                      "--prune-last", "--seq", "16", "--codec-only", "--device", "cpu",
-                                      "--threads", str(torch.get_num_threads())])
-    assert v1b.main() == 0
-    (r,) = _lines(capsys)
+    """``--codec-only`` on the legacy recipe's graph (SmoothQuant alpha 0.55, one calibration window)."""
+    from experiments.v1 import v1_bytes
+    status, rows = _run(v1_bytes, monkeypatch, capsys, "--model", "opt-tiny", "--real", "tiny", "--recipe", "legacy",
+                        "--smooth", "0.55", "--seq", "16", "--codec-only")
+    assert status == 0
+    (r,) = rows
     assert r["codec_only"] and [b["block"] for b in r["blocks"]] == ["embed", 0, 1, "head"]
+    assert (r["recipe"], r["smooth"], r["calib_seq"]) == ("legacy", 0.55, 16)
     cols = analytic.decoder_claim_columns(_TINY_CFG, 16, prune_last=True)
-    rows = {s.name: s.n_rows for s in analytic.decoder_shapes(_TINY_CFG, prune_last=True)}
-    assert r["total"]["claims"] == sum(rows[k] * c for k, c in cols.items())
-    assert r["blocks"][2]["claims"] == sum(rows[k] * cols[k] for k in ("q1", "k1", "v1", "o1", "fc11", "fc21"))
+    rows_of = {s.name: s.n_rows for s in analytic.decoder_shapes(_TINY_CFG, prune_last=True)}
+    assert r["total"]["claims"] == sum(rows_of[k] * c for k, c in cols.items())
+    assert r["blocks"][2]["claims"] == sum(rows_of[k] * cols[k] for k in ("q1", "k1", "v1", "o1", "fc11", "fc21"))
     assert 0 < r["total"]["v1_values"] < r["total"]["v0_claims"] < r["total"]["raw"]
-    # the same graph, query and parameters as the byte line of the protocol (Kpre): V1's values and exceptions
-    graph, _ = v1b.real_graph(_tiny_model(), fake_checkpoint.load_windows(None, seq=16, windows=0)[1][0], 0.55, True)
+    # the graph the legacy recipe builds from the same calibration window
+    graph, _ = checkpoints.real_graph(_tiny_model(), checkpoints.load_windows(None, seq=16, n=0)[1][0], True,
+                                      "legacy", 0.55)
     assert r["graph_digest"] == graph.digest().hex()
 
 
 def test_perf_real_pruned_times_the_queries_and_rejects_tampers(fake_checkpoint, monkeypatch, capsys):
-    folder = str(CODE / "experiments" / "6_improvements")
-    if folder not in sys.path:
-        sys.path.insert(0, folder)
-    perf = _script("experiments/6_improvements/perf.py", "perf")
-    monkeypatch.setitem(transformer.CONFIGS, "opt-tiny", dataclasses.replace(_TINY_CFG, name="opt-tiny"))
-    monkeypatch.setattr(sys, "argv", ["perf.py", "--model", "opt-tiny", "--real", "tiny", "--smooth", "0.55",
-                                      "--calib-seq", "24", "--seq", "16", "--modes", "Kpre", "C", "--policy", "auto",
-                                      "--queries", "2", "--wire", "on", "--prune-last", "on", "--tampers", "1",
-                                      "--device", "cpu", "--threads", str(torch.get_num_threads())])
-    assert perf.main() == 0
-    rows = _lines(capsys)
+    from experiments.costs import perf
+    status, rows = _run(perf, monkeypatch, capsys, "--model", "opt-tiny", "--real", "tiny", "--recipe", "legacy",
+                        "--smooth", "0.55", "--calib-seq", "24", "--seq", "16", "--modes", "Kpre", "C",
+                        "--policy", "auto", "--queries", "2", "--wire", "on", "--prune-last", "on", "--tampers", "1")
+    assert status == 0
     assert [r["mode"] for r in rows] == ["Kpre", "C"]
     for r in rows:
         assert r["real"] == "tiny" and r["prune_last"] and (r["accepted"], r["queries"]) == (2, 2)

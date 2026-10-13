@@ -5,11 +5,10 @@
 #SBATCH --mem=160G
 #SBATCH -t 16:00:00
 # zkLLM (commit 993311e, built for sm_89 with CUDA 12.1 + gcc 11; its scripts need transformers 4.40) on
-# the same L40S + EPYC 9334 nodes as raw_l40s (report Sec. 4.6). Usage:
+# the same L40S + EPYC 9334 nodes as raw_l40s. Usage:
 #   sbatch --dependency=singleton zkllm.sbatch <7|13> [seq=2048] [reps=3] [layers="0 1"]
-# The stored runs are jobs 948715 (7B) and 948716 (13B) of this script with the default arguments,
-# submitted with -p killable --gres=gpu:l40s:1 --exclude=t-806 (TAU; t-806 has an Intel CPU). The
-# script then had fixed paths where it now reads ZKLLM_HOME and WIKITEXT_PARQUET. Each stored run
+# The stored runs are this script's with the default arguments (Llama-2-7B and Llama-2-13B), on a node
+# with an AMD EPYC 9334 CPU. Each stored run
 # dir is its $OUT without layer-0-input.bin, with the log-*.txt files packed into logs.tar.gz and
 # nvidia-smi.csv gzipped.
 # ZKLLM_HOME holds zkLLM's checkout (zkllm/) and its conda environment (env/). Copy mkinput.py into

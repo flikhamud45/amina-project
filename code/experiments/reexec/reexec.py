@@ -1,110 +1,94 @@
-"""The cost of re-running the model: the baseline against which a verifier's time is read.
+"""The cost of re-running the model: the baselines against which a verifier's time is read.
 
-    cd code && PYTHONPATH=src python experiments/7_reexec/reexec.py --model llama2-7b --seq 64 512 2048 --device cuda
-    cd code && PYTHONPATH=src python experiments/7_reexec/reexec.py --model opt-1.3b --seq 64 2048 --device cpu --threads 8
+Produces the re-execution rows of ``tab:options`` (the strongest exact re-execution on the CPU, the integer forward
+pass on the GPU) and of ``tab:eval-reexec`` (extended version: the GPU's integer forward pass and fp16 decoder, the
+CPU's fp32, bf16 and integer re-execution of Llama-2-7B), the abstract's and Sec. ``sec:eval-reexec``'s ratio of the
+CPU verifier to the fastest exact re-execution, and the re-execution side of ``tab:eval-long`` (the package's tiers
+``cpuv``, ``gpuv`` and ``long``).
 
-A client that holds the weights (settings K and Kpre) could check an answer by computing it again.
-This script times that, for the decoders of ``pvi.models.decoder.CONFIGS`` (random weights:
-the cost depends on the shapes only), in two variants:
+    python -m experiments.reexec.reexec --model llama2-7b --seq 64 2048 --layers 2 32 \\
+        --variants int int_fp32gemm float bf16 dynint8 --device cpu --threads 8 --reps 5
+    python -m experiments.reexec.reexec --model llama2-7b opt-6.7b --seq 64 512 2048 --variants int float \\
+        --device cuda
+    python -m experiments.reexec.reexec --model llama2-7b --seq 8192 --layers 2 3 --max-pos 16384 --device cpu
+    python -m experiments.reexec.reexec --model tiny-llama --seq 32 --layers 1 2 --device cpu --threads 2 \\
+        --variants int int_fp32gemm float bf16 dynint8          # a laptop check (seconds)
 
-* ``int``: our integer model's forward pass (``IntGraph.forward`` of ``build_decoder(...,
-  prune_last=True)``), which the prover runs and which is bit-exact with the claims, so it is a
-  complete check in itself;
-* ``int_fp32gemm`` (CPU): the same integer forward with its weight products as exact fp32 GEMMs over 1,024-term
-  chunks (the path before the native int8 GEMM), for comparison;
-* ``bf16`` (CPU): the floating-point decoder below in bf16 (fast on CPUs with AVX512_BF16, e.g. Zen 4);
-* ``dynint8`` (CPU): the floating-point decoder with every linear layer as torch's dynamic int8 Linear (fbgemm):
-  a standard int8 engine, NOT exact (activations quantised per call);
-* ``float``: a plain floating-point decoder of the same shapes (fp16 on a GPU, fp32 on the CPU):
-  ``torch.nn.functional.linear`` and ``scaled_dot_product_attention`` with a causal mask, the norms
-  and the MLP of the architecture, the LM head at the last position.  It is what a client would run
-  with an off-the-shelf stack; it skips the rotary embedding (an element-wise cost) and is not
-  bit-exact with the provider's model.
+A client that holds the weights (modes K and Kpre) could check an answer by computing it again.  The script times
+that for the decoders of ``pvi.models.decoder.CONFIGS`` (random weights, ``--seed``: the cost depends on the shapes
+only), one prompt of ``T`` tokens (``--seq``; seed ``--prompt-seed``) per variant:
 
-Each variant is timed on ``--layers`` blocks (default 1 and 2); with ``t(L) = a + L b`` the script
-extrapolates to the full model's ``n_layers`` and prints one JSON line per (model, T, variant), with
-the measured medians and ``full_s``.  Large models fit a small GPU this way; a ``--layers`` list that
-includes ``n_layers`` measures the full model, whose ``full_s`` is then that measurement (F6: no
-extrapolation).  Each line also has the ``[min, max]`` of every measured block count (``range_s``) and the
-variant's peak host (VmHWM, Linux) and GPU memory over its builds and runs (``peak``, ``bench.py``'s names).
-``--max-pos N`` raises a rotary-position model's context to ``N`` tokens (the shapes and weights do not depend
-on it; V-LONG-b's long prompts); a model with learned positions is refused, since its position table would change.
+* ``int``: our integer model's forward pass (``IntGraph.forward`` of ``build_decoder``), which the prover runs and
+  which is bit-exact with the claims, so it is a complete check in itself (the int8 GEMMs of :mod:`pvi.options`'
+  ``native_gemm`` on a CPU, ``torch._int_mm`` on a GPU);
+* ``int_fp32gemm`` (CPU): the same integer forward with the option ``native_gemm`` off (its weight products as exact
+  fp32 GEMMs over 1,024-term chunks);
+* ``float``: a plain floating-point decoder of the same shapes (fp16 on a GPU, fp32 on the CPU): ``F.linear`` and
+  ``scaled_dot_product_attention`` with a causal mask, the norms and the MLP of the architecture, the LM head at the
+  last position.  It is what a client would run with an off-the-shelf stack; it adds no position embedding (rotary
+  or learned: an element-wise cost) and is not bit-exact with the provider's model;
+* ``bf16`` (CPU): the floating-point decoder in bf16 (fast on CPUs with AVX512_BF16, e.g. Zen 4);
+* ``dynint8`` (CPU): the floating-point decoder with every linear layer as torch's dynamic int8 Linear (fbgemm,
+  activations quantised per call): a standard int8 engine, not exact.
+
+**Pruning.**  A next-token query needs the last block at the last position only, so with ``--prune-last`` (the
+default) every variant computes what ``build_decoder(..., prune_last=True)`` computes: the last block's keys and
+values at every position, its query, attention, output projection, residuals and MLP at the last position only, and
+the LM head at the last position (``--no-prune-last``: the last block at every position, the LM head still at the
+last one).  The integer and the floating-point variants thus do the same work per block.
+
+Each variant is timed on ``--layers`` blocks (``--reps`` runs after one warm-up, median); with ``t(L) = a + L b`` the
+script extrapolates to the full model's ``n_layers``.  A ``--layers`` list that includes ``n_layers`` measures the
+full model, whose ``measured_s`` the paper's tables use (no extrapolation).  ``--max-pos N`` raises a rotary-position
+model's context to ``N`` tokens (the shapes and weights do not depend on it: the long-prompt cells); a model with
+learned positions is refused, since its position table would change.
+
+**Record** (one JSON line per model, ``T`` and variant, on stdout): ``git``, ``model``, ``seq``, ``variant``,
+``dtype``, ``device``, ``threads``, ``reps``, ``prune_last``, ``measured_s`` (median seconds per measured block
+count), ``range_s`` (their ``[min, max]``), ``per_block_s``, ``fixed_s``, ``n_layers``, ``full_s`` (the linear fit at
+the full depth), ``max_pos``, ``peak`` (host peak resident set and GPU peak memory over the variant's builds and
+runs), ``gpu``, ``cpu``, ``host``, ``torch``, ``env`` (:func:`experiments.common.records.environment`).
+
+Hardware and time: the CPU rows run on 8 threads of the verifier's CPU, the GPU rows on the prover's GPU.  One run of
+the full Llama-2-7B at 2,048 tokens took 93 s (fp32) and 142 s (integer) on 8 threads of a Xeon Silver 4114; the
+package gives the five CPU variants of one model (64 and 2,048 tokens, 2 blocks and the full model) a job limit of
+three hours with 256 GB of host memory.  A 2-block build takes seconds.
 """
 from __future__ import annotations
 
 import argparse
 import dataclasses
-import json
 import platform
 import statistics
 import sys
-import time
-from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 
-CODE = Path.cwd()   # run from code/
-
-
-def _sync(device: torch.device) -> None:
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
+from experiments.common import cli, records
+from experiments.common.models import decoder_config
+from experiments.common.paths import CODE
+from pvi import options
 
 
 def _timed(fn, device: torch.device, reps: int) -> list[float]:
     """The seconds of ``reps`` calls of ``fn`` after one untimed call."""
     fn()                                         # warm-up
-    times = []
-    for _ in range(reps):
-        _sync(device)
-        t0 = time.perf_counter()
-        fn()
-        _sync(device)
-        times.append(time.perf_counter() - t0)
-    return times
-
-
-def _reset_peaks(device: torch.device) -> None:
-    """A new peak window: the GPU allocator's statistics and the host's VmHWM (Linux)."""
-    if device.type == "cuda":
-        torch.cuda.reset_peak_memory_stats(device)
-    try:
-        with open("/proc/self/clear_refs", "w") as fh:
-            fh.write("5")
-    except OSError:
-        pass
-
-
-def _peaks(device: torch.device) -> dict:
-    """Bytes since :func:`_reset_peaks`, named as ``bench.py`` records them (``host_peak_rss`` is ``None`` where
-    ``/proc`` has none)."""
-    out = {"host_peak_rss": None}
-    try:
-        with open("/proc/self/status") as fh:
-            out["host_peak_rss"] = 1024 * next(int(line.split()[1]) for line in fh if line.startswith("VmHWM:"))
-    except (OSError, StopIteration):
-        pass
-    if device.type == "cuda":
-        out["gpu_peak_memory"] = torch.cuda.max_memory_allocated(device)
-        out["gpu_peak_reserved"] = torch.cuda.max_memory_reserved(device)
-    return out
+    return [records.timed(fn, device)[1] for _ in range(reps)]
 
 
 class FloatDecoder:
     """A floating-point decoder with the shapes of ``cfg`` and ``n_layers`` blocks (random weights).
 
-    Tokens ``[B, T]`` are one batched prefill (``B`` prompts of ``T`` tokens, no padding).  ``prune_last``
-    (opt-in, as ``build_decoder(..., prune_last=True)``): the last block computes k and v at every position
-    and q, the attention, its projection, the residuals and the MLP at the last position only, whose one
-    query attends to every key (no causal mask); only that position reaches the logits.  Its q and k/v
-    projections are ``F.linear`` on row slices of the fused weight, so a subclass that replaces ``_lin``
-    (:class:`DynInt8Decoder`) does not prune."""
+    Tokens ``[B, T]`` are one batched prefill (``B`` prompts of ``T`` tokens, no padding); the LM head is applied at
+    the last position.  ``prune_last`` (as ``build_decoder(..., prune_last=True)``): the last block computes k and v
+    at every position and q, the attention, its projection, the residuals and the MLP at the last position only,
+    whose one query attends to every key (no causal mask); only that position reaches the logits.  The last block
+    then holds its q and k/v projections as two weights (``"q"``, ``"kv"``: row blocks of the fused q/k/v weight
+    drawn as for an unpruned block), so a subclass that replaces ``_lin`` (:class:`DynInt8Decoder`) prunes too."""
 
     def __init__(self, cfg, n_layers: int, dtype: torch.dtype, device: torch.device, seed: int = 0,
                  prune_last: bool = False):
-        if prune_last and type(self)._lin is not FloatDecoder._lin:
-            raise ValueError("prune_last slices the fused q/k/v weight, which a replaced _lin would not see")
         g = torch.Generator().manual_seed(seed)
         d, f, dh, hq, hkv = cfg.d_model, cfg.d_ff, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads
         self.cfg, self.dtype, self.device, self.prune_last = cfg, dtype, device, prune_last
@@ -116,8 +100,12 @@ class FloatDecoder:
             return torch.zeros(n, dtype=dtype, device=device) if cfg.bias else None
 
         self.blocks = []
-        for _ in range(n_layers):
+        for i in range(n_layers):
             blk = {"qkv": (w((hq + 2 * hkv) * dh, d), b((hq + 2 * hkv) * dh)), "o": (w(d, hq * dh), b(d))}
+            if prune_last and i == n_layers - 1:      # q at the last position, k and v at every one
+                wq, bq = blk.pop("qkv")
+                blk["q"] = (wq[:hq * dh], None if bq is None else bq[:hq * dh])
+                blk["kv"] = (wq[hq * dh:], None if bq is None else bq[hq * dh:])
             if cfg.mlp == "swiglu":
                 blk["up"], blk["down"] = (w(2 * f, d), None), (w(d, f), None)
             else:
@@ -139,12 +127,11 @@ class FloatDecoder:
         dh, hq, hkv = cfg.head_dim, cfg.n_heads, cfg.n_kv_heads
         x = self.embed[tokens]                                    # [B, T, d]
         bsz, t, _ = x.shape
-        for i, blk in enumerate(self.blocks):
+        for blk in self.blocks:
             h = self._norm(x)
-            if self.prune_last and i == len(self.blocks) - 1:     # q at the last position, k and v at every one
-                w, b = blk["qkv"]
-                q = F.linear(h[:, -1:], w[:hq * dh], None if b is None else b[:hq * dh])
-                k, v = F.linear(h, w[hq * dh:], None if b is None else b[hq * dh:]).split([hkv * dh, hkv * dh], -1)
+            if "q" in blk:                                        # the pruned last block
+                q = self._lin(h[:, -1:], blk["q"])
+                k, v = self._lin(h, blk["kv"]).split([hkv * dh, hkv * dh], -1)
                 x, tq, causal = x[:, -1:], 1, False
             else:
                 q, k, v = self._lin(h, blk["qkv"]).split([hq * dh, hkv * dh, hkv * dh], -1)
@@ -170,8 +157,8 @@ class DynInt8Decoder(FloatDecoder):
     """:class:`FloatDecoder` (fp32) with every block's linear layer as torch's dynamic int8 Linear (fbgemm, per-call
     activation scales): a standard int8 CPU engine, not exact."""
 
-    def __init__(self, cfg, n_layers: int, device: torch.device, seed: int = 0):
-        super().__init__(cfg, n_layers, torch.float32, device, seed)
+    def __init__(self, cfg, n_layers: int, device: torch.device, seed: int = 0, prune_last: bool = False):
+        super().__init__(cfg, n_layers, torch.float32, device, seed, prune_last=prune_last)
         self._q = {}
         for blk in self.blocks:
             for w, b in blk.values():
@@ -188,60 +175,74 @@ class DynInt8Decoder(FloatDecoder):
         return self._q[id(wb[0])](x)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", nargs="+", required=True)
-    ap.add_argument("--seq", type=int, nargs="+", default=[64, 512, 2048])
-    ap.add_argument("--layers", type=int, nargs="+", default=[1, 2])
-    ap.add_argument("--variants", nargs="+", default=["int", "float"],
-                    choices=["int", "int_fp32gemm", "float", "bf16", "dynint8"])
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--reps", type=int, default=5)
-    ap.add_argument("--max-pos", type=int, default=0, help="rotary-position models: a longer context (V-LONG-b)")
-    args = ap.parse_args()
-    torch.set_num_threads(args.threads)
-    from pvi.models.decoder import CONFIGS, build_decoder
+VARIANTS = ("int", "int_fp32gemm", "float", "bf16", "dynint8")
+DTYPE = {"int": "int8 GEMM", "int_fp32gemm": "int (fp32 GEMM)", "bf16": "bfloat16",
+         "dynint8": "dynamic int8 (not exact)"}
+"""The record's ``dtype`` of each variant (``float``: fp16 on a GPU, fp32 on the CPU)."""
 
-    device = torch.device(args.device)
-    fdtype = torch.float16 if device.type == "cuda" else torch.float32
-    from pvi.results import git_sha
-    sha = git_sha(CODE)
-    for name in args.model:
-        cfg = CONFIGS[name]
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--model", nargs="+", required=True,
+                    help="decoders' shapes (pvi.models.decoder.CONFIGS, experiments.common.models.TINY)")
+    ap.add_argument("--seq", type=int, nargs="+", default=[64, 512, 2048], help="prompt tokens (each one a cell)")
+    ap.add_argument("--layers", type=int, nargs="+", default=[1, 2],
+                    help="block counts measured (the full model's count: measured directly)")
+    ap.add_argument("--variants", nargs="+", default=["int", "float"], choices=VARIANTS)
+    ap.add_argument("--reps", type=int, default=5, help="timed runs per block count, after one warm-up")
+    ap.add_argument("--max-pos", type=int, default=0, help="rotary-position models: a longer context")
+    ap.add_argument("--prune-last", action=argparse.BooleanOptionalAction, default=cli.PAPER.prune_last,
+                    help="every variant computes the last block at the last position only (as the verifier's graph)")
+    ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
+    ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompt's seed")
+    ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
+                    help="calibration tokens of the integer decoder (at most --seq)")
+    cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
+    return ap
+
+
+def main() -> int:
+    from pvi.models.decoder import build_decoder
+
+    args = build_parser().parse_args()
+    cfgs = {}
+    for name in args.model:                          # refused before anything is built
+        cfg = decoder_config(name)
         if args.max_pos > cfg.max_pos:
             if cfg.pos != "rope":
                 raise SystemExit(f"--max-pos: {name} has learned positions (a longer context is another model)")
             cfg = dataclasses.replace(cfg, max_pos=args.max_pos)
+        cfgs[name] = cfg
+    cli.apply_runtime(args)
+    device = torch.device(args.device)
+    fdtype = torch.float16 if device.type == "cuda" else torch.float32
+    sha = records.git_sha(CODE)
+    env = records.environment(device)
+    for name, cfg in cfgs.items():
         for seq in args.seq:
             if seq > cfg.max_pos:                     # e.g. GPT-2's 1,024 learned positions
                 continue
-            tokens =torch.randint(0, cfg.vocab, (1, seq), generator=torch.Generator().manual_seed(1)).to(device)
+            tokens = torch.randint(0, cfg.vocab, (1, seq), generator=torch.Generator().manual_seed(args.prompt_seed))
+            tokens = tokens.to(device)
             for variant in args.variants:
                 measured, spread = {}, {}
-                _reset_peaks(device)
+                records.reset_peaks(device)
                 for n_layers in args.layers:
-                    from pvi.kernels import native as native_kernels
                     if variant in ("int", "int_fp32gemm"):
-                        graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, 32), seed=0,
-                                              prune_last=True)
+                        graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, args.calib_tokens),
+                                              seed=args.seed, prune_last=args.prune_last)
 
-                        def run(graph=graph, native=variant == "int"):
-                            saved = native_kernels._GEMM
-                            native_kernels._GEMM = native and saved
-                            try:
-                                with torch.no_grad():
-                                    graph.forward(tokens, free=True)
-                            finally:
-                                native_kernels._GEMM = saved
-                    elif variant == "dynint8":
-                        model = DynInt8Decoder(cfg, n_layers, device)
+                        # int_fp32gemm: the same forward pass with the native int8 GEMM switched off
+                        gemm = options.current().native_gemm and variant == "int"
 
-                        def run(model=model):
-                            with torch.no_grad():
-                                model(tokens)
+                        def run(graph=graph, gemm=gemm):
+                            with options.using(native_gemm=gemm), torch.no_grad():
+                                graph.forward(tokens, free=True)
                     else:
-                        model = FloatDecoder(cfg, n_layers, torch.bfloat16 if variant == "bf16" else fdtype, device)
+                        model = (DynInt8Decoder(cfg, n_layers, device, args.seed, prune_last=args.prune_last)
+                                 if variant == "dynint8" else
+                                 FloatDecoder(cfg, n_layers, torch.bfloat16 if variant == "bf16" else fdtype, device,
+                                              args.seed, prune_last=args.prune_last))
 
                         def run(model=model):
                             with torch.no_grad():
@@ -256,19 +257,19 @@ def main() -> None:
                 per_block = ((measured[ls[-1]] - measured[ls[0]]) / (ls[-1] - ls[0]) if len(ls) > 1
                              else measured[ls[0]] / ls[0])
                 fixed = measured[ls[0]] - ls[0] * per_block
-                print(json.dumps({
+                records.emit({
                     "git": sha, "model": name, "seq": seq, "variant": variant,
-                    "dtype": {"int": "int8 GEMM", "int_fp32gemm": "int (fp32 GEMM)", "bf16": "bfloat16",
-                              "dynint8": "dynamic int8 (not exact)"}.get(variant, str(fdtype).replace("torch.", "")),
-                    "device": str(device), "threads": args.threads, "reps": args.reps,
+                    "dtype": DTYPE.get(variant, str(fdtype).replace("torch.", "")),
+                    "device": str(device), "threads": args.threads, "reps": args.reps, "prune_last": args.prune_last,
                     "measured_s": {str(k): v for k, v in measured.items()},
-                    "range_s": {str(k): v for k, v in spread.items()}, "peak": _peaks(device),
+                    "range_s": {str(k): v for k, v in spread.items()}, "peak": records.peaks(device),
                     "max_pos": cfg.max_pos,
                     "per_block_s": per_block, "fixed_s": fixed, "n_layers": cfg.n_layers,
                     "full_s": fixed + cfg.n_layers * per_block,
                     "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
                     "cpu": platform.processor() or platform.machine(), "host": platform.node(),
-                    "torch": torch.__version__}), flush=True)
+                    "torch": torch.__version__, "env": env})
+    return 0
 
 
 if __name__ == "__main__":

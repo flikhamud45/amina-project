@@ -61,6 +61,10 @@ class Options:
     gpu_decode: bool = _option(True, "a GPU verifier decodes the claims on its GPU (Triton); off: on the host")
     int8_fold: bool = _option(True, "mode Kpre's precomputation by int8 GEMMs (GPU) or the native field product "
                                     "(CPU); off: float64 limb products")
+    int8_opening: bool = _option(True, "the prover's folds and column openings by int8 GEMMs on a GPU; off: float64 "
+                                       "limb products")
+    int8_forward: bool = _option(True, "the forward pass's weight products by int8 GEMMs on a GPU; off: exact float32 "
+                                       "GEMMs in chunks")
     hash_threads: int = _option(0, "threads of the Fiat-Shamir tree absorption (0: torch's thread count)")
     merkle_processes: bool = _option(False, "a multi-threaded verifier checks large multiproofs in worker processes")
     v1_verifier: str = _option("optimised", "V1's verifier: optimised (window-table products, batched GKR check, "

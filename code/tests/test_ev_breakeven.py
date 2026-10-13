@@ -1,14 +1,13 @@
-"""EV's break-even formulas (``experiments/5_comparison/ev_breakeven.py``): the crossovers are where the two costs meet."""
+"""The break-even of fig:breakeven (``experiments/deployment/ev_breakeven.py``): the crossovers are where the two
+costs meet, and the stored inputs give the crossovers the paper quotes."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import json
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments" / "5_comparison"))
-import ev_breakeven as ev  # noqa: E402
+from experiments.deployment import ev_breakeven as ev
 
 
 def test_query_crossover_is_where_the_byte_costs_meet():
@@ -28,9 +27,27 @@ def test_link_crossover_is_where_the_times_meet():
     assert ev.breakeven_link_gbps(B, 100.0, t_r) is None                              # the verifier alone is slower
 
 
-def test_the_draft_inputs_reproduce_the_plan_crossovers():
-    """The plan's quoted crossovers (Q* 20.6 interactive / 17.5 FS at 64 tokens, 0.7 Gb/s at 2,048 tokens against fp32)
-    follow from the draft inputs, to the precision they were quoted with."""
+def test_prompt_crossover_is_where_the_proof_reaches_the_weights():
     W = 6.74e9
-    assert ev.crossover_queries(W, 196.43e6 + 131.9e6) == pytest.approx(20.5, abs=0.2)
-    assert ev.breakeven_link_gbps(6433.74e6, 19.64, 93.2) == pytest.approx(0.70, abs=0.01)
+    t = ev.crossover_tokens(W, (64, 0.3e9), (2048, 6.5e9))
+    assert 0.3e9 + (t - 64) * (6.5e9 - 0.3e9) / (2048 - 64) == pytest.approx(W)
+    assert ev.crossover_tokens(W, (64, 1e9), (2048, 1e9)) is None
+
+
+def test_the_stored_inputs_give_the_papers_crossovers():
+    """Llama-2-7B under Fiat--Shamir and the plan cnn18c (Sec. sec:discussion, fig:breakeven, ext:disc-real): about 22
+    64-token queries; one query at 2,048 tokens, or 2.3 with V1; links of 0.59-0.70 Gb/s (V1: 0.47); V1's client
+    faster than v0's below about 1.1 Gb/s; one proof as large as the weights at about 2,100 tokens."""
+    out = ev.crossovers(json.loads(ev.INPUTS.read_text(encoding="utf-8")), ["cnn18c"])
+    q = {(r["seq"], r["protocol"]): r["Q_star"] for r in out["panel1"] if r["fs"]}
+    assert q[64, "v0"] == pytest.approx(22.3, abs=0.05)
+    assert q[2048, "v0"] == pytest.approx(1.03, abs=0.01) and q[2048, "v1"] == pytest.approx(2.32, abs=0.01)
+    link = {(r["seq"], r["protocol"]): r["L_star_gbps"] for r in out["panel2"] if r["fs"]}
+    assert link[64, "v0 Kpre"] == pytest.approx(0.59, abs=0.005)
+    assert link[2048, "v0 Kpre"] == pytest.approx(0.70, abs=0.005)
+    assert link[2048, "V1 Kpre"] == pytest.approx(0.47, abs=0.005)
+    (v1,) = out["v1_against_v0"]
+    assert v1["v1_faster_below_gbps"] == pytest.approx(1.13, abs=0.01)
+    tokens = {r["protocol"]: r["tokens"] for r in out["prompt_crossover"] if r["fs"]}
+    assert tokens["v0"] == pytest.approx(2111, abs=1)
+    assert ev.comment_lines(out)[1] == "% Q* at 64 tokens, cnn18c, FS: 22.3 (302.9 MB per query)"

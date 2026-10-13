@@ -23,7 +23,7 @@ from torchvision import datasets
 
 __all__ = ["Dataset", "DEFAULT_DATA_ROOT", "load_classification", "load_raw"]
 
-DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
+DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 
 
 @dataclass(frozen=True)

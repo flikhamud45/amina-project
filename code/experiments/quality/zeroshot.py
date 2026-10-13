@@ -1,8 +1,14 @@
-"""Plan 2, F2c: zero-shot accuracy of the certified integer OPT against its checkpoint.
+"""Zero-shot accuracy of the certified integer OPT models against their checkpoints (``tab:zeroshot``, extended
+version Sec. ``sec:ext-quality``; the means are quoted in Sec. ``sec:quality``).
 
-    cd code && PYTHONPATH=src python experiments/9_quality/zeroshot.py --model facebook/opt-1.3b --device cuda \\
-        --out zeroshot_opt-1.3b.jsonl
-    cd code && PYTHONPATH=src python experiments/9_quality/zeroshot.py --model facebook/opt-125m --check
+    python -m experiments.quality.zeroshot --model facebook/opt-1.3b --device cuda --out zeroshot_opt-1.3b.jsonl
+    python -m experiments.quality.zeroshot --model facebook/opt-125m --check --device cuda
+    python -m experiments.quality.zeroshot --model facebook/opt-6.7b --device cuda --no-int --ref-gpus 2 \\
+        --out zeroshot_opt-6.7b_ref.jsonl
+    python -m experiments.quality.zeroshot --model facebook/opt-6.7b --device cuda --no-ref \\
+        --out zeroshot_opt-6.7b_int.jsonl
+    python -m experiments.quality.zeroshot --pair zeroshot_opt-6.7b_ref.jsonl zeroshot_opt-6.7b_int.jsonl
+    python -m experiments.quality.zeroshot --model facebook/opt-1.3b --device cuda --recipe legacy
 
 The tasks are those of lm-evaluation-harness 0.4 (zero-shot), re-implemented here so that the integer model needs no
 harness wrapper; prompts, choices and metrics follow the harness's task files:
@@ -28,34 +34,41 @@ continuation without its last token, and the continuation's log-probabilities ar
 Requests are batched, longest first, up to ``--budget`` tokens per batch, and right-padded. That is exact for a
 causal model: no position reads a later one, and the integer graph's constants do not depend on the input (``--check``
 compares every padded row with the same request run alone, and the integer graph's logits with
-``real_weights.real_logits``). The reference is the checkpoint in ``--ref-dtype`` (fp16 on a GPU by default), its
+``hf_opt.real_logits``). The reference is the checkpoint in ``--ref-dtype`` (fp16 on a GPU by default), its
 log-softmax in float32.
 
-The integer model is ``opt_builder.build_opt`` (``--builder f2a``, F2a's recipe search; default: the smoothed graph
-with channel maxima, no clipping, alpha 0.5 and 11-bit probabilities, F2a round 1's best) or the paper builder
-``real_weights.build_opt_from_hf`` (``--builder paper``, default ``real_weights.CERTIFIED_RECIPE``); ``--opts`` (JSON)
-replaces the recipe. Calibration: draw
-``--draw`` of ``--calib-windows`` windows of ``--calib-seq`` tokens of the WikiText-2 *train* split (as F2a).
+The integer model is ``hf_opt.build_opt_from_hf`` with ``--recipe``: ``certified`` (``hf_opt.CERTIFIED_RECIPE``, the
+certified models of ``tab:zeroshot``) or ``legacy`` (the first recipe: alpha 0.55, the 99.9th percentile of each
+channel, 99.99th-percentile clipping; its mean loss on OPT-1.3B is quoted in the extended version); ``--opts`` (JSON
+keyword arguments of the builder) replaces the recipe. Calibration: draw ``--draw`` of ``--calib-windows`` windows of
+``--calib-seq`` tokens of the WikiText-2 *train* split (``checkpoints.certified_calibration``, the certified models'
+calibration).
 
-Output: one JSON line per task and model (stdout, and appended to ``--out``): accuracy, ``acc_norm``, the number of
-documents, every document's correctness (so runs can be pooled), and for the integer model the paired difference to
-the reference with a 95% bootstrap interval over documents and the share of documents on which both choose the same
-answer.
+Output: one JSON line per task and model (stdout without the per-document lists, and the full line appended to
+``--out``): accuracy, ``acc_norm``, the number of documents, every document's correctness and choice (so runs can be
+pooled), and for the integer model the paired difference to the reference with a 95% bootstrap interval over
+documents and the share of documents on which both choose the same answer; ``recipe``, ``opts``, the graph's
+``digest`` and ``env`` (``records.environment``).  ``--no-int``/``--no-ref`` split a model whose fp16 copy and integer
+graph do not fit one GPU over two processes, and ``--pair`` joins their records.
+
+Hardware and time: an RTX 2080 Ti (11 GB); OPT-6.7B's fp16 reference needs two (``--ref-gpus 2``), its integer graph
+one (``--no-ref``), and the six tasks take about 11 min for the reference; the build of OPT-6.7B's integer graph takes
+about 30 min on the CPU.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
-import platform
 import re
-import sys
 import time
-from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from experiments.common import checkpoints, records
+from experiments.common.cli import add_runtime_arguments, apply_runtime
+from experiments.common.stats import paired_diff_ci
+from pvi.models import hf_opt
 
 TASKS = ("lambada_openai", "hellaswag", "piqa", "arc_easy", "arc_challenge", "winogrande")
 SOURCES = {   # task: (dataset repository, file, revision)
@@ -66,8 +79,8 @@ SOURCES = {   # task: (dataset repository, file, revision)
     "arc_challenge": ("allenai/ai2_arc", "ARC-Challenge/test-00000-of-00001.parquet", None),
     "winogrande": ("allenai/winogrande", "winogrande_xl/validation-00000-of-00001.parquet", None),
 }
-F2A_BEST = dict(norm_mode="smooth", norm_gain=4.0, alpha=0.5, smooth_pct=100.0, pct=100.0, pct_att=100.0,
-                prob_bits=11)
+RECIPES = checkpoints.OPT_RECIPES
+"""The integer model's recipes: the certified models' and the first one."""
 MAX_LENGTH = 2048
 
 
@@ -198,15 +211,6 @@ def metrics(task: str, docs: list[dict], results: list[tuple[float, bool]]) -> d
     return out
 
 
-def paired_ci(a: list[int], b: list[int], reps: int = 2000) -> list[float]:
-    """95% bootstrap interval of mean(a) - mean(b) over documents (paired)."""
-    g = torch.Generator().manual_seed(0)
-    x = torch.tensor(a, dtype=torch.float64) - torch.tensor(b, dtype=torch.float64)
-    idx = torch.randint(0, len(x), (reps, len(x)), generator=g)
-    m = x[idx].mean(1)
-    return [float(m.quantile(0.025)), float(m.quantile(0.975))]
-
-
 # ------------------------------------------------------------------ models
 
 def split_opt(model, devices: list[str]):
@@ -214,7 +218,6 @@ def split_opt(model, devices: list[str]):
     the final norm and the LM head on the last), for a reference that one GPU cannot hold (OPT-6.7B in fp16 on two
     11 GB cards). Forward pre-hooks move every tensor argument to the module's device; the LM head gets its own copy
     of the tied embedding. The arithmetic is the one-device model's (each op runs on one device)."""
-    import math
     dec = model.model.decoder
     head = model.lm_head
     head.weight = torch.nn.Parameter(head.weight.detach().clone())          # untie: the head moves to another device
@@ -250,12 +253,12 @@ def pair(ref_path: str, int_path: str) -> None:
         ref = refs[got["task"]]
         assert ref["n"] == got["n"], got["task"]
         row = {"task": got["task"], "n": got["n"], "acc_ref": ref["acc"], "acc_int": got["acc"],
-               "diff_acc": got["acc"] - ref["acc"], "diff_acc_ci95": paired_ci(got["correct"], ref["correct"]),
+               "diff_acc": got["acc"] - ref["acc"], "diff_acc_ci95": paired_diff_ci(got["correct"], ref["correct"]),
                "same_pick": sum(int(a == b) for a, b in zip(got["pick"], ref["pick"])) / got["n"]}
         if "acc_norm" in got:
             row.update(acc_norm_ref=ref["acc_norm"], acc_norm_int=got["acc_norm"],
                        diff_acc_norm=got["acc_norm"] - ref["acc_norm"],
-                       diff_acc_norm_ci95=paired_ci(got["correct_norm"], ref["correct_norm"]))
+                       diff_acc_norm_ci95=paired_diff_ci(got["correct_norm"], ref["correct_norm"]))
         print(json.dumps(row), flush=True)
 
 
@@ -267,10 +270,9 @@ def float_logits_fn(model, device: str):
 
 
 def int_logits_fn(graph, info: dict, device: str):
-    from pvi.core.graph import CheapOp, IntGraph, identity_op, op_fn
-    ops = [CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note, params=o.params)
-           if isinstance(o, CheapOp) and o.note == "last position" else o for o in graph.ops]
-    lean, _ = IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta)).with_constants_on(device)
+    """``ids [B, L] -> (integer logits [B, L, V], scale)`` of ``graph`` at every position, on ``device``, keeping no
+    claim (``hf_opt.every_position``)."""
+    lean, _ = hf_opt.every_position(graph).with_constants_on(device)
     scale = info["logit_scale"]
 
     def fn(ids):
@@ -280,12 +282,9 @@ def int_logits_fn(graph, info: dict, device: str):
     return fn
 
 
-def build_int(model, calib: torch.Tensor, builder: str, opts: dict):
-    if builder == "paper":
-        from pvi.models import hf_opt as rw
-        return rw.build_opt_from_hf(model, calib, **opts)
-    import opt_builder as ob
-    return ob.build_opt(model, calib, **opts)
+def build_int(model, calib: torch.Tensor, opts: dict):
+    """The integer model: ``hf_opt.build_opt_from_hf(model, calib, **opts)``."""
+    return hf_opt.build_opt_from_hf(model, calib, **opts)
 
 
 # ------------------------------------------------------------------ main
@@ -300,8 +299,7 @@ def _emit(args, row: dict) -> None:
 
 def check(args, tok, logits_ref, logits_int, graph, info) -> None:
     """Right padding is exact (every padded row equals the request alone) for the integer model and within
-    rounding for the float one, and the integer logits equal ``real_weights.real_logits(..., all_positions=True)``."""
-    from pvi.models import hf_opt as rw
+    rounding for the float one, and the integer logits equal ``hf_opt.real_logits(..., all_positions=True)``."""
     docs = make_docs("hellaswag", load_rows("hellaswag")[:4]) + make_docs("piqa", load_rows("piqa")[:4])
     enc = [encode_pair(tok, c, k) for d in docs for c, k in d["requests"]]
     pad = tok.pad_token_id if tok.pad_token_id is not None else 0
@@ -317,22 +315,23 @@ def check(args, tok, logits_ref, logits_int, graph, info) -> None:
             assert diff == 0 and same == len(enc), (name, diff)
     ids = torch.tensor([(enc[0][0] + enc[0][1])[:-1]])
     ours, scale = logits_int(ids)
-    theirs = rw.real_logits(graph, info, ids, all_positions=True)
+    theirs = hf_opt.real_logits(graph, info, ids, all_positions=True)
     assert torch.equal(ours.cpu().double() * scale, theirs.cpu()), "integer logits differ from real_logits"
     print("CHECK OK: right padding exact; integer logits equal real_logits", flush=True)
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--model", default="facebook/opt-1.3b")
     ap.add_argument("--tasks", nargs="+", default=list(TASKS), choices=TASKS)
     ap.add_argument("--hellaswag-n", type=int, default=2000, help="HellaSwag documents (0: all 10,042)")
     ap.add_argument("--limit", type=int, default=0, help="at most this many documents per task (0: all)")
-    ap.add_argument("--builder", choices=["f2a", "paper"], default="f2a")
-    ap.add_argument("--opts", default=None, help="JSON recipe for the builder (default: F2a round 1's best)")
-    ap.add_argument("--calib-seq", type=int, default=2048)
-    ap.add_argument("--calib-windows", type=int, default=4)
-    ap.add_argument("--draw", type=int, default=0)
+    ap.add_argument("--recipe", choices=sorted(RECIPES), default="certified",
+                    help="the integer model's recipe (certified: hf_opt.CERTIFIED_RECIPE; legacy: the first recipe)")
+    ap.add_argument("--opts", default=None, help="JSON keyword arguments of build_opt_from_hf replacing the recipe")
+    ap.add_argument("--calib-seq", type=int, default=2048, help="tokens per calibration window")
+    ap.add_argument("--calib-windows", type=int, default=4, help="calibration windows")
+    ap.add_argument("--draw", type=int, default=0, help="the calibration draw (windows draw * n .. of the train split)")
     ap.add_argument("--ref-dtype", choices=["fp16", "bf16", "fp32"], default=None,
                     help="the checkpoint's dtype (default: fp16 on a GPU, fp32 on a CPU)")
     ap.add_argument("--no-int", action="store_true", help="the reference only (validation against published numbers)")
@@ -340,43 +339,39 @@ def main() -> None:
                     help="the integer model only (a model whose fp16 copy and integer graph do not fit one GPU: run "
                          "the reference in another process with --no-int; the records pool by document)")
     ap.add_argument("--budget", type=int, default=2048, help="tokens per batch")
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--ref-device", default=None, help="where the reference runs (default: --device)")
-    ap.add_argument("--threads", type=int, default=8)
-    ap.add_argument("--tag", default="")
-    ap.add_argument("--out", default=None)
+    ap.add_argument("--tag", default="", help="a label written into every record of this run")
+    ap.add_argument("--out", default=None, help="a JSONL file the full records are appended to")
     ap.add_argument("--check", action="store_true", help="padding exactness and the integer logits, then stop")
     ap.add_argument("--ref-gpus", type=int, default=1, help="spread the reference over this many GPUs (split_opt)")
     ap.add_argument("--pair", nargs=2, metavar=("REF_JSONL", "INT_JSONL"), default=None,
                     help="paired differences of a --no-int run and a --no-ref run, then stop")
+    add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
     if args.pair:
         return pair(*args.pair)
     args.ref_device = args.ref_device or args.device
     assert not (args.no_int and args.no_ref), "--no-int and --no-ref leave nothing to run"
     assert not (args.check and (args.no_int or args.no_ref)), "--check needs both models"
-    torch.set_num_threads(args.threads)
+    apply_runtime(args)
 
-    import ppl_2048 as p2
-    from common import load_opt
-    model, tok = load_opt(args.model)
+    model, tok = checkpoints.load_opt(args.model)
     pad = tok.pad_token_id if tok.pad_token_id is not None else 0
-    from pvi.models.hf_opt import CERTIFIED_RECIPE
-    opts = json.loads(args.opts) if args.opts else (dict(F2A_BEST) if args.builder == "f2a" else dict(CERTIFIED_RECIPE))
-    head = {"model": args.model, "tag": args.tag, "host": platform.node(), "device": args.device,
-            "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}
+    opts = json.loads(args.opts) if args.opts else dict(RECIPES[args.recipe])
+    env = records.environment(args.device)
+    head = {"model": args.model, "tag": args.tag, "host": env["host"], "device": args.device, "gpu": env["gpu"],
+            "env": env}
 
     graph = info = None
     if not args.no_int:
-        train = tok(p2._text("train")[:4_000_000], return_tensors="pt").input_ids[0]
-        calib = torch.cat(p2._windows(train, args.calib_seq, args.calib_windows,
-                                      start=args.draw * args.calib_windows))
+        calib = checkpoints.certified_calibration(tok, n=args.calib_windows, seq=args.calib_seq, draw=args.draw)
         t0 = time.perf_counter()
         with torch.no_grad():
-            graph, info = build_int(model, calib, args.builder, opts)
-        head.update(builder=args.builder, opts=opts, draw=args.draw, calib=[args.calib_windows, args.calib_seq],
-                    digest=graph.digest().hex(), build_s=round(time.perf_counter() - t0, 1))
-        print(json.dumps({k: head[k] for k in ("builder", "opts", "digest", "build_s")}), flush=True)
+            graph, info = build_int(model, calib, opts)
+        head.update(recipe=None if args.opts else args.recipe, opts=opts, draw=args.draw,
+                    calib=[args.calib_windows, args.calib_seq], digest=graph.digest().hex(),
+                    build_s=round(time.perf_counter() - t0, 1))
+        print(json.dumps({k: head[k] for k in ("recipe", "opts", "digest", "build_s")}), flush=True)
 
     logits_int = int_logits_fn(graph, info, args.device) if graph is not None else None
     logits_ref = None
@@ -408,11 +403,11 @@ def main() -> None:
         got = metrics(task, docs, score(enc, logits_int, args.budget, pad))
         row = dict(head, task=task, variant="int", seconds=round(time.perf_counter() - t0, 1), **got)
         if ref is not None:
-            row.update(diff_acc=got["acc"] - ref["acc"], diff_acc_ci95=paired_ci(got["correct"], ref["correct"]),
+            row.update(diff_acc=got["acc"] - ref["acc"], diff_acc_ci95=paired_diff_ci(got["correct"], ref["correct"]),
                        same_pick=sum(int(a == b) for a, b in zip(got["pick"], ref["pick"])) / len(docs))
             if "acc_norm" in got:
                 row.update(diff_acc_norm=got["acc_norm"] - ref["acc_norm"],
-                           diff_acc_norm_ci95=paired_ci(got["correct_norm"], ref["correct_norm"]))
+                           diff_acc_norm_ci95=paired_diff_ci(got["correct_norm"], ref["correct_norm"]))
         _emit(args, row)
 
 

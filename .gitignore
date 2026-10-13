@@ -1,14 +1,11 @@
 # Virtual environment -- recreate with code/requirements.txt
 .venv/
 
-# Downloaded datasets and caches (regenerable), and the benchmark's CNN weights (not committed;
-# the report's are on the cluster, see code/README.md).
-# The MNIST models in code/artifacts/models/ are committed: they are the weights the report used.
+# Downloaded datasets and caches (regenerable), and the benchmark's trained image models (not committed;
+# experiments/costs/train_cnn.py trains them). The MNIST networks in code/artifacts/models/ are committed.
 code/data/
-code/artifacts/fullcheck/models/
-code/artifacts/fullcheck/cache/
-# the smoke job's throw-away benchmark roots (smoke.sbatch moves them to logs/env/ when it ends)
-code/artifacts/comparison/raw_smoke*/
+code/artifacts/models/cnn/
+code/artifacts/cache/
 
 # SLURM job logs
 /logs/
