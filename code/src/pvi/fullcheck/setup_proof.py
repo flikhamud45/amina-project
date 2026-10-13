@@ -35,6 +35,7 @@ for the semantics when ``A*`` is not int8).
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import struct
 from dataclasses import dataclass
@@ -200,9 +201,44 @@ def prove_setup(groups: dict[str, GroupCommitment], publics: dict[str, Commitmen
     return SetupProof(messages, openings)
 
 
+def params_sound(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPublic], params: SetupParams,
+                 lam: float) -> bool:
+    """Whether ``params`` meet the rule of the setup theorem at level ``lam``: at least ``lam`` bits and 64 grinding
+    bits, ``s`` with ``n / p**s <= 2**-beta``, every radius below the unique-decoding radius, and every tree's ``t0``
+    at least the least ``t`` with ``prod_{i<t} (n - e - 1 - i) / (n - i) <= 2**-beta`` for each of its members. The
+    radii themselves (a cost trade-off) are the committer's choice; any choice that passes is sound."""
+    if params.lam < lam or params.grinding_bits < 64:
+        return False
+    beta = params.lam + params.grinding_bits + math.log2(2 * max(1, len(publics)))
+    n_max = max(g.n_points for g in groups.values())
+    if params.s < math.ceil((beta + math.log2(n_max)) / LOG2_P):
+        return False
+    e, t0 = dict(params.e), dict(params.t0)
+    for name, g in groups.items():
+        if name not in t0:
+            return False
+        for m in g.members:
+            pub = publics[m]
+            if m not in e or not 0 <= e[m] or 2 * e[m] >= pub.n_points - pub.row_length + 1:
+                return False
+            if t0[name] < survivors(pub.n_points - e[m] - 1, pub.n_points, beta):
+                return False
+    return True
+
+
+def after_setup(params, setup: SetupParams, groups: dict[str, GroupPublic]):
+    """``params`` (``protocol.SecurityParams`` under a commitment plan) for the queries after an untrusted setup:
+    each group opens the setup's per-query ``t`` (computed with ``k + e`` in place of ``k``)."""
+    cols = query_group_columns(setup, groups)
+    return dataclasses.replace(params, group_columns=cols, columns=max(t for _, t in cols))
+
+
 def verify_setup(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPublic], graph_digest: bytes,
-                 params: SetupParams, proof: SetupProof) -> bool:
-    """Whether ``proof`` shows every committed matrix of ``groups`` ``e_j``-close (see the module docstring)."""
+                 params: SetupParams, proof: SetupProof, *, lam: float = 128.0) -> bool:
+    """Whether ``proof`` shows every committed matrix of ``groups`` ``e_j``-close (see the module docstring), under
+    parameters that meet the theorem's rule at the verifier's level ``lam`` (:func:`params_sound`)."""
+    if not params_sound(publics, groups, params, lam):
+        return False
     ch = _transcript(graph_digest, publics, groups, params)
     psis = _challenges_rows(ch, publics, groups, params)
     msgs = proof.messages

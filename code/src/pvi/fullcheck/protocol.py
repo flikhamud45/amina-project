@@ -841,8 +841,13 @@ class Verifier:
                 dst.copy_(src)
                 self._consts[i] = (src, dst, (src._version, dst._version))
 
-    def precompute(self, challenger: Challenger) -> None:
-        """Mode Kpre: fix a secret ``chi`` per op and precompute ``u``."""
+    def precompute(self, challenger: Challenger | None = None) -> None:
+        """Mode Kpre: fix a secret ``chi`` per op and precompute ``u``. The vectors must stay secret, so the
+        challenger is interactive: by default a fresh one (keys from ``secrets``); a seeded one is for tests only;
+        a Fiat--Shamir one, whose draws anyone can recompute from public data, is refused."""
+        challenger = Challenger() if challenger is None else challenger
+        if challenger.fiat_shamir:
+            raise ValueError("Kpre's vectors must be secret: precompute needs an interactive Challenger")
         for op in self._row_ops():
             chi = challenger.folding(op.name, op.n_rows, self.params.reps).to(self.device)
             self._pre[op.name] = (chi, self._fold_local(op, chi))
@@ -942,14 +947,16 @@ class Verifier:
         (:func:`transformer.with_lm_positions`): its queries are a prompt and the ``n - 1`` tokens
         generated after it, so each of the first ``n - 1`` columns of the claimed logits must have its
         first largest entry at the next input token.  The claims are then checked as any others: a
-        wrong token needs wrong logits.  Claims of another shape pass here (:meth:`derive` rejects
-        them)."""
+        wrong token needs wrong logits.  A query shorter than ``n`` positions is rejected (its tokens
+        could not all be checked); claims of another shape pass here (:meth:`derive` rejects them)."""
         n = self.graph.meta.get("lm_positions", 1)
         if n <= 1:
             return True
+        if x.dim() != 2 or x.shape[1] < n:
+            return False
         head = next(op for op in self.graph.mat_ops if op.output == self.graph.output_name)
         z = claims.get(head.name)
-        if not torch.is_tensor(z) or x.dim() != 2 or x.shape[1] < n or tuple(z.shape) != (head.n_rows, x.shape[0] * n):
+        if not torch.is_tensor(z) or tuple(z.shape) != (head.n_rows, x.shape[0] * n):
             return True
         if self.sampler is not None:      # E2: each token is the seeded sampler's choice from the logits before it
             if x.shape[0] != 1:

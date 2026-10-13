@@ -119,3 +119,21 @@ def test_logits_forged_to_choose_a_wrong_token_fail_the_head_s_check(mode, polic
     plan = getattr(prover.commitments, "plan", None)
     col = plan is not None and plan.matrix_of(head.name).layout == "col"
     assert out["rejected_at"] == ("columns_code" if col else "freivalds")
+
+
+@pytest.mark.parametrize("mode", ["C", "K", "Kpre"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_a_query_shorter_than_the_lm_window_is_rejected_by_the_token_rule(mode, stream):
+    _, gen, x = _response("gpt", False)
+    prover, v = _verifier(gen, mode, stream=stream)
+    out = proto.run_query(prover, v, x[:, :N - 1])
+    assert not out["accepted"] and out["rejected_at"] == "token"
+
+
+def test_kpre_refuses_a_fiat_shamir_challenger_for_its_secret_vectors():
+    _, gen, _ = _response("gpt", False)
+    v = proto.Verifier(gen.public(), proto.params_for(40, len(gen.mat_ops)), "Kpre",
+                       weights={op.name: (op.weight, op.bias) for op in gen.mat_ops})
+    with pytest.raises(ValueError):
+        v.precompute(proto.Challenger(fiat_shamir=True))
+    v.precompute()                                   # a fresh interactive challenger

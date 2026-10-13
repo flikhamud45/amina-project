@@ -153,3 +153,39 @@ def test_the_parameters_meet_their_bounds():
             assert 2 * e < pub.n_points - pub.row_length + 1                     # unique decoding
             assert column_error_log2(pub.n_points - e, pub.n_points, params.t0_of(g)) <= -beta
             assert column_error_log2(pub.row_length + e, pub.n_points, dict(params.t)[g]) <= -qb
+
+
+def test_the_verifier_refuses_parameters_below_the_theorem_s_rule():
+    graph, coms = _committed("gpt", "auto")
+    params = _params(graph, coms)
+    (g0, t0), = params.t0[:1]
+    weak = [dataclasses.replace(params, t0=((g0, 1),) + params.t0[1:]),              # one setup column
+            dataclasses.replace(params, s=1),                                          # one combination
+            dataclasses.replace(params, lam=40.0),                                     # below the verifier's level
+            dataclasses.replace(params, e=tuple((m, 10 ** 9) for m, _ in params.e))]   # past unique decoding
+    for p in weak:
+        proof = sp.prove_setup(coms.groups, coms.publics, graph.digest(), p)
+        assert not sp.verify_setup(coms.publics, coms.group_publics, graph.digest(), p, proof)
+    assert sp.params_sound(coms.publics, coms.group_publics, params, 128)
+
+
+def test_queries_after_an_untrusted_setup_open_its_columns_and_still_catch_a_tamper():
+    graph, coms = _committed("gpt", "auto")
+    setup = _params(graph, coms)
+    base = proto.params_for(128, len(graph.mat_ops), plan=coms.plan)
+    params = sp.after_setup(base, setup, coms.group_publics)
+    assert all(t >= dict(base.group_columns)[g] for g, t in params.group_columns)
+    v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
+                       tables=coms.table_publics)
+    prover = proto.Prover(graph, commitments=coms)
+    x = torch.randint(0, 97, (1, 9), generator=torch.Generator().manual_seed(2))
+    out = proto.run_query(prover, v, x, seed=3, wire=True)
+    assert out["accepted"] and out["bytes"]["columns"] > 0
+    name = graph.mat_ops[1].name
+
+    def tamper(op, z):
+        if op.name == name:
+            z = z.clone()
+            z.view(-1)[0] += 1
+        return z
+    assert not proto.run_query(prover, v, x, seed=4, wire=True, forward_kwargs={"tamper": tamper})["accepted"]
