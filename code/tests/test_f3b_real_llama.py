@@ -16,8 +16,8 @@ transformers = pytest.importorskip("transformers")
 
 import pvi.v0 as proto  # noqa: E402
 from pvi.models import hf_llama as rl  # noqa: E402
-from pvi.v0.token_sampler import TokenSampler, sample_tokens  # noqa: E402
 from pvi.models.decoder import greedy_tokens, with_lm_positions  # noqa: E402
+from pvi.v0.token_sampler import TokenSampler, sample_tokens  # noqa: E402
 
 CODE = Path(__file__).resolve().parents[1]
 PREFIX = [5, 17]

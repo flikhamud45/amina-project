@@ -22,13 +22,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from pvi.baseline.path.merkle import MerkleParams
-from pvi.mnist.architecture import Architecture
-from pvi.mnist.network import Trace
 from pvi.baseline.path.commitments import ModelCommitment, TraceCommitment, WeightRowIndex
+from pvi.baseline.path.merkle import MerkleParams
 from pvi.baseline.path.messages import CheckFailure, Round1, Round2, VerificationResult
 from pvi.baseline.path.params import ProtocolParams
 from pvi.baseline.path.sampling import Path, PathSampler, UniformPathSampler, challenge_rng
+from pvi.mnist.architecture import Architecture
+from pvi.mnist.network import Trace
 
 __all__ = ["Verifier"]
 

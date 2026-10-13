@@ -36,8 +36,8 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 
-from pvi.kernels import native as native_kernels
 from pvi.core.field import INT8_TERMS, int8_gemm, int8_ok
+from pvi.kernels import native as native_kernels
 
 __all__ = [
     "Op",

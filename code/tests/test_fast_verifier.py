@@ -20,11 +20,11 @@ import numpy as np
 import pytest
 import torch
 
+import pvi.v0 as proto
+import reference as ref
 from pvi.commit import commitment as com
 from pvi.core import field as fld
-import pvi.v0 as proto
 from pvi.v0 import verifier as v0_verifier
-import reference as ref
 from pvi.v0.streaming import wire_openings
 
 P = fld.P
@@ -623,8 +623,8 @@ def test_fold_gives_the_reference_values(layout, shape):
 def _use_reference_code(monkeypatch):
     """Route every graph closure, fold and check through ``reference``."""
     from pvi.core import graph
-    from pvi.models import quantize
     from pvi.models import decoder as transformer
+    from pvi.models import quantize
 
     monkeypatch.setattr(quantize, "requant", ref.requant)
     for name, fn in (("requant", ref.requant), ("_norm_int", ref.norm_int), ("_lut", ref.lut), ("_rope", ref.rope),
@@ -641,8 +641,8 @@ def _graph(kind):
     import dataclasses
 
     from pvi.models.cnn import VGG, LeNet5, ResNet18
-    from pvi.models.quantize import quantize_input, quantize_model
     from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
+    from pvi.models.quantize import quantize_input, quantize_model
 
     torch.manual_seed(0)
     g = torch.Generator().manual_seed(1)

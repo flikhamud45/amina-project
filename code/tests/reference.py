@@ -16,8 +16,7 @@ import torch
 from pvi.commit.commitment import column_leaf, group_leaf, table_leaf, vandermonde_columns, verify_multiproof
 from pvi.core.field import P, small_matmul_mod, to_field
 from pvi.core.graph import INT8_MAX, MatOp, exact_matmul
-from pvi.models.decoder import (_EXP_TABLE, RES_MAX, SHIFT, _rope_tables)
-
+from pvi.models.decoder import _EXP_TABLE, RES_MAX, SHIFT, _rope_tables
 
 # -- field and commitment -------------------------------------------------------------------
 

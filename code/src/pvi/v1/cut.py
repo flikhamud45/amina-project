@@ -34,8 +34,8 @@ from functools import cached_property
 import torch
 
 from pvi.core import extfield as ef
-from pvi.v1 import logup
 from pvi.core.graph import CheapOp, IntGraph, MatOp, _canonical
+from pvi.v1 import logup
 
 __all__ = ["CutOp", "CutPlan", "lo", "windows", "shift", "requant_values", "split", "split_counts", "public_lw",
            "public_lw_f64",

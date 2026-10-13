@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from pvi.mnist.network import Trace
 from pvi.baseline.path.messages import VerificationResult
 from pvi.baseline.path.prover import Prover
 from pvi.baseline.path.sampling import sample_challenge
 from pvi.baseline.path.verifier import Verifier
+from pvi.mnist.network import Trace
 
 __all__ = ["run_protocol"]
 

@@ -13,12 +13,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from conftest import build_network
 from pvi.mnist.architecture import Architecture, Conv2dLayer, DenseLayer, InputLayer, MaxPool2dLayer
 from pvi.mnist.models import mlp_architecture, small_cnn_architecture
 from pvi.mnist.network import Trace, TracedNetwork
-
-from conftest import build_network
-
 
 # --------------------------------------------------------------------------- #
 # The forward / local-relation agreement invariant

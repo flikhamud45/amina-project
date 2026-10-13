@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+
 import torch
 
+from pvi.commit.plans import CommitmentPlan, column_bits, column_error_log2
 from pvi.core.field import LOG2_P
 from pvi.core.graph import MatOp
-from pvi.commit.plans import CommitmentPlan, column_bits, column_error_log2
-
 
 Z_BOUND = 1 << 29
 """Claims must satisfy ``-2**29 < z < 2**29``.  Because ``2 * 2**29 < p``, two

@@ -22,14 +22,14 @@ import numpy as np
 import pytest
 
 from pvi.attacks.tamper import apply_plan, plan_single_neuron_flip
+from pvi.baseline.adaptive import plan_adaptive_stealthy_flip
+from pvi.baseline.analysis import acceptance_probability
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.sampling import UniformPathSampler
 from pvi.baseline.samplers import (GradientSaliencySampler, LocalContributionSampler, StaticImportanceSampler,
                                    TailFirstSampler, ZeroAwareContributionSampler, ZeroFirstSampler,
                                    weight_magnitude_importance)
-from pvi.baseline.adaptive import plan_adaptive_stealthy_flip
-from pvi.baseline.analysis import acceptance_probability
 from pvi.mnist.network import Trace, TracedNetwork
-from pvi.baseline.path.params import ProtocolParams
-from pvi.baseline.path.sampling import UniformPathSampler
 from pvi.mnist.training import load_network
 from pvi.mnist.zoo import mlp_architecture_for
 

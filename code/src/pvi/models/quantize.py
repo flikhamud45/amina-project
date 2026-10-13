@@ -23,8 +23,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from pvi.core.graph import INT8_MAX, CheapOp, IntGraph, MatOp, op_fn, op_kind, requant, requant_op
-from pvi.models.cnn import LeNet5, ResNet18, VGG
+from pvi.core.graph import INT8_MAX, CheapOp, IntGraph, MatOp, op_fn, op_kind, requant_op
+from pvi.models.cnn import VGG, LeNet5, ResNet18
 
 __all__ = ["SHIFT", "CNNBuilder", "quantize_model", "quantize_input", "dequantize_logits", "fold_bn", "RANDOM_CNNS",
            "random_cnn", "random_inputs"]

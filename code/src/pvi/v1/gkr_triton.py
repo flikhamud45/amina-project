@@ -27,7 +27,6 @@ import sysconfig
 
 import torch
 
-from pvi.core import extfield as ef
 from pvi.core.field import P as PRIME
 
 _INCLUDE = os.environ.get("PVI_PY_INCLUDE")

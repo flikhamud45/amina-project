@@ -14,11 +14,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from conftest import build_network
 from pvi.baseline.analysis import acceptance_probability, inconsistent_nodes, locally_consistent_mask
 from pvi.baseline.path.params import ProtocolParams
 from pvi.baseline.path.session import run_protocol
-
-from conftest import build_network
 
 
 def empirical_acceptance(prover, verifier, query, trace, trials: int) -> float:

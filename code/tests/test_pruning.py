@@ -15,13 +15,12 @@ import dataclasses
 import pytest
 import torch
 
-from pvi.commit import cost as analytic
 import pvi.v0 as proto
 import reference as ref
+from pvi.commit import cost as analytic
 from pvi.models import decoder as tr
 from pvi.models.decoder import CONFIGS, build_decoder
-
-from test_plans import _TINY, _planned, _verifiers   # the plan tests' tiny decoders and helpers
+from test_plans import _TINY, _planned, _verifiers  # the plan tests' tiny decoders and helpers
 
 _REAL = {name: dataclasses.replace(CONFIGS[name], vocab=512) for name in ("gpt2", "opt-350m", "llama2-7b", "qwen3-4b")}
 

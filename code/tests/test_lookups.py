@@ -25,18 +25,17 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.commit import cost as analytic
-from pvi.v0 import claimcodec as cc
 import pvi.v0 as proto
+import reference as ref
+from pvi.commit import cost as analytic
+from pvi.commit.commitment import MerkleTree, TableCommitment, multiproof_size, table_leaves, verify_multiproof
+from pvi.commit.plans import next_pow2, plan_commitment
+from pvi.core.graph import CheapOp, IntGraph, MatOp, op_fn, requant_op
+from pvi.models.decoder import CONFIGS
+from pvi.v0 import claimcodec as cc
 from pvi.v0 import query as v0_query
 from pvi.v0 import verifier as v0_verifier
-import reference as ref
-from pvi.commit.commitment import MerkleTree, TableCommitment, multiproof_size, table_leaves, verify_multiproof
-from pvi.core.graph import CheapOp, IntGraph, MatOp, op_fn, requant, requant_op
-from pvi.commit.plans import next_pow2, plan_commitment
-from pvi.models.decoder import CONFIGS
-
-from test_plans import _TINY, _planned, _verifiers   # the plan tests' models and helpers
+from test_plans import _TINY, _planned, _verifiers  # the plan tests' models and helpers
 
 KINDS = ("gpt", "opt", "llama", "qwen")
 

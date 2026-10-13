@@ -14,7 +14,6 @@ import torch
 
 from pvi.core.field import P
 
-
 _TREE_MIN = 1 << 24
 """Messages of at least this many bytes are absorbed as a one-level tree (:meth:`Challenger.absorb_large`)."""
 _TREE_CHUNK = 1 << 22

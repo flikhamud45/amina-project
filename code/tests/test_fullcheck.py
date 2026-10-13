@@ -7,17 +7,17 @@ import math
 import pytest
 import torch
 
-from pvi.core import field as fld
 from pvi.commit.commitment import MerkleTree, WeightCommitment, column_leaf
+from pvi.core import field as fld
 from pvi.core.graph import CheapOp, MatOp, exact_matmul
 from pvi.models.cnn import LeNet5, ResNet18
-from pvi.v0.transcript import Challenger
-from pvi.v0.prover import Prover
-from pvi.v0.verifier import Verifier
+from pvi.models.quantize import dequantize_logits, quantize_input, quantize_model
 from pvi.v0.graph_commitment import commit_graph
 from pvi.v0.params import params_for, soundness_bits
+from pvi.v0.prover import Prover
 from pvi.v0.query import run_query
-from pvi.models.quantize import dequantize_logits, quantize_input, quantize_model
+from pvi.v0.transcript import Challenger
+from pvi.v0.verifier import Verifier
 
 P = fld.P
 
@@ -387,8 +387,14 @@ def test_real_configs_have_published_parameter_counts():
 
 
 # -- the sampling baseline (Anchuri et al.'s RandPathTest) on the same graphs --------------
-from pvi.baseline.path_int import (TraceCommitment, neuron_tensors, paths_for, sample_path,  # noqa: E402
-                                   shared_path_bytes, visit_probabilities)
+from pvi.baseline.path_int import (  # noqa: E402
+    TraceCommitment,
+    neuron_tensors,
+    paths_for,
+    sample_path,
+    shared_path_bytes,
+    visit_probabilities,
+)
 
 
 @pytest.mark.parametrize("kind", ["lenet", "resnet"])
@@ -551,9 +557,9 @@ def test_direct_codeword_evaluation_equals_full_encoding():
 
 
 def test_multiproof_matches_individual_paths_and_rejects_forgery():
-    from pvi.commit.commitment import multiproof, multiproof_size, verify_multiproof
-
     import random
+
+    from pvi.commit.commitment import multiproof, multiproof_size, verify_multiproof
     rnd = random.Random(0)
     leaves = [bytes([i % 256, i // 256]) * 16 for i in range(64)]
     tree = MerkleTree(leaves)
@@ -573,8 +579,8 @@ def test_multiproof_matches_individual_paths_and_rejects_forgery():
 def test_expected_multiproof_size_matches_monte_carlo():
     import random
 
-    from pvi.commit.cost import expected_multiproof_nodes
     from pvi.commit.commitment import multiproof_size
+    from pvi.commit.cost import expected_multiproof_nodes
 
     rnd = random.Random(3)
     for n, t in ((64, 5), (512, 67), (4096, 23), (128, 100)):

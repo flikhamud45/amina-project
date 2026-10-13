@@ -23,11 +23,11 @@ import numpy as np
 
 from pvi.attacks.tamper import TamperPlan, apply_plan, smallest_flipping_value
 from pvi.baseline.analysis import acceptance_probability
+from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.sampling import PathSampler
 from pvi.mnist.architecture import DenseLayer
 from pvi.mnist.gradients import saliency
 from pvi.mnist.network import Trace, TracedNetwork
-from pvi.baseline.path.params import ProtocolParams
-from pvi.baseline.path.sampling import PathSampler
 
 __all__ = ["EvasionSearch", "plan_adaptive_stealthy_flip", "plan_evasive_flip"]
 

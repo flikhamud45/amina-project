@@ -73,12 +73,10 @@ import math
 
 import torch
 
-from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, mul_requant_op, op_fn, op_kind,
-
-                            requant_fn, requant_mul)
+from pvi.core.graph import INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, mul_requant_op, op_fn, op_kind, requant_fn
 from pvi.models.decoder import (CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention,
-                                _isqrt, _last_position, _lut, _norm_int, _rope, attention_op, build_decoder,
-                                head_norm_op, last_position_op, lut_op, norm_op, rope_op, rope_tail_op, scale_op)
+                                _isqrt, attention_op, build_decoder, head_norm_op, last_position_op, lut_op, norm_op,
+                                rope_op, rope_tail_op, scale_op)
 
 __all__ = ["build_llama_from_hf", "config_of", "same_shape", "matches_benchmark_graph", "lean_logits",
            "real_logits", "residual_states", "hf_residual_states", "block_cosines", "swiglu_exp", "residual_exp",

@@ -21,8 +21,8 @@ import os
 import pytest
 import torch
 
-from pvi.core import field as fld
 from pvi.commit.commitment import GroupCommitment, TransposedCommitment, WeightCommitment
+from pvi.core import field as fld
 from pvi.core.graph import MatOp, exact_matmul
 from pvi.models.decoder import _attention_heads
 

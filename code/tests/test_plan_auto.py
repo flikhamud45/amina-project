@@ -10,13 +10,11 @@ import math
 
 import pytest
 
-from pvi.commit import cost as analytic
 import pvi.v0 as proto
-from pvi.commit.plans import (AUTO_CANDIDATES, AUTO_MIN_BUDGET, auto_budget, auto_policy, plan_commitment,
-                              plan_overhead)
+from pvi.commit import cost as analytic
+from pvi.commit.plans import AUTO_CANDIDATES, AUTO_MIN_BUDGET, auto_budget, auto_policy, plan_commitment, plan_overhead
 from pvi.models.decoder import CONFIGS
-
-from test_plans import _cnn, _planned, _verifiers   # the plan tests' models and helpers
+from test_plans import _cnn, _planned, _verifiers  # the plan tests' models and helpers
 
 
 @pytest.fixture(scope="module")

@@ -9,11 +9,11 @@ import dataclasses
 import pytest
 import torch
 
-from pvi.v1 import cut
 import pvi.v0 as proto
-from pvi.core.graph import CheapOp, mul_add_half, requant, requant_fn
 from pvi.commit.plans import plan_commitment
-from pvi.models.decoder import (RES_MAX, SHIFT, DecoderConfig, build_decoder, with_lm_positions)
+from pvi.core.graph import CheapOp, mul_add_half, requant, requant_fn
+from pvi.models.decoder import RES_MAX, SHIFT, DecoderConfig, build_decoder, with_lm_positions
+from pvi.v1 import cut
 
 # W from 2 to 2^16, powers of two, and W = floor / W + 1 = ceil
 MULTS = [1 << 29, (1 << 29) - 1, 1 << 14, (1 << 14) + 1, 1 << 20, (1 << 30) // 3, 12345679, 87654321]

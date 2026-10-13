@@ -13,8 +13,8 @@ import itertools
 import pytest
 import torch
 
-from pvi.core import extfield as ef
 import pvi.v0 as proto
+from pvi.core import extfield as ef
 from pvi.core.field import P
 
 

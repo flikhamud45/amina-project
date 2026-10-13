@@ -155,6 +155,7 @@ def test_native_unpack_on_corrupted_proofs_matches_numpy(monkeypatch):
     """Random bit flips: the native unpack gives the numpy decoder's claims or its rejection, never another
     exception."""
     import numpy as np
+
     from pvi.v0 import claimcodec
     g = torch.Generator().manual_seed(21)
     shapes = [(300, 700), (64, 2000), (5, 1)]

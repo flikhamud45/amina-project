@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from pvi.commit import setup_cache
 from pvi.commit.commitment import (CommitmentPublic, GroupCommitment, GroupPublic, MerkleTree, TableCommitment,
-                                   TablePublic, next_pow2, TransposedCommitment, WeightCommitment)
-from pvi.core.graph import IntGraph
+                                   TablePublic, TransposedCommitment, WeightCommitment, next_pow2)
 from pvi.commit.plans import CommitmentPlan, plan_commitment
+from pvi.core.graph import IntGraph
 from pvi.v0.params import Z_BOUND, claim_bound
 
 

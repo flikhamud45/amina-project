@@ -27,7 +27,6 @@ integers.
 from __future__ import annotations
 
 import dataclasses
-import functools
 import math
 import os
 from dataclasses import dataclass
@@ -36,10 +35,10 @@ from functools import lru_cache
 import numpy as np
 import torch
 
+from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, mul_requant_op,
+                            op_fn, op_kind, requant, requant_fn, residual_add)
 from pvi.kernels import attention_triton as attention_kernels
 from pvi.kernels import native as native_kernels
-from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half,
-                            mul_requant_op, op_fn, op_kind, requant, requant_fn, requant_mul, residual_add)
 
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
 

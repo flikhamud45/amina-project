@@ -19,17 +19,17 @@ import struct
 import threading
 import tracemalloc
 
-import claimcodec_reference as ref
 import numpy as np
 import pytest
 import torch
 
-from pvi.v0 import claimcodec as cc
-from pvi.commit import commitment
+import claimcodec_reference as ref
 import opcount as opcount
+from pvi.commit import commitment
 from pvi.core.field import P
-from pvi.v0.params import Z_BOUND
 from pvi.models.decoder import DecoderConfig, build_decoder
+from pvi.v0 import claimcodec as cc
+from pvi.v0.params import Z_BOUND
 
 LIM = Z_BOUND - 1
 cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")

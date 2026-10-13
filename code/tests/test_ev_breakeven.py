@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments" / "5_comparison"))
-import ev_breakeven as ev   # noqa: E402
+import ev_breakeven as ev  # noqa: E402
 
 
 def test_query_crossover_is_where_the_byte_costs_meet():

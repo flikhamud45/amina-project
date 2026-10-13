@@ -24,16 +24,15 @@ import dataclasses
 import pytest
 import torch
 
-from pvi.v1 import products as buckets
-from pvi.v1 import cut as cutmod
-from pvi.v1 import protocol as cp
-from pvi.core import extfield as ef
-from pvi.v1 import logup
-from pvi.v1 import gkr
 import pvi.v0 as proto
+import test_cut_protocol as tcp
+from pvi.core import extfield as ef
 from pvi.core.field import P
 from pvi.models.decoder import build_decoder
-import test_cut_protocol as tcp
+from pvi.v1 import cut as cutmod
+from pvi.v1 import gkr, logup
+from pvi.v1 import products as buckets
+from pvi.v1 import protocol as cp
 from test_plans import _TINY
 
 MODES = ("0", "1", "scatter")

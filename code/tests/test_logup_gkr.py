@@ -12,11 +12,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.core import extfield as ef
-from pvi.v1 import gkr
 import pvi.v0 as proto
-from pvi.v0.claimcodec import ClaimCodecError, field_size
+from pvi.core import extfield as ef
 from pvi.core.field import P
+from pvi.v0.claimcodec import ClaimCodecError, field_size
+from pvi.v1 import gkr
 
 
 def _rand(g, *shape):

@@ -20,10 +20,9 @@ import time
 from pathlib import Path
 
 import pytest
-import torch
 
-from pvi.core import contention
 import pvi.v0 as proto
+from pvi.core import contention
 
 EXPERIMENTS = Path(__file__).resolve().parents[1] / "experiments"
 

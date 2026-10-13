@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.v1 import protocol as cp
 import pvi.v0 as proto
-from pvi.v0 import token_sampler as ts
 from pvi.models.decoder import build_decoder, greedy_tokens, with_lm_positions
+from pvi.v0 import token_sampler as ts
+from pvi.v1 import protocol as cp
 from test_plans import _TINY
 
 SEED = bytes(range(32))

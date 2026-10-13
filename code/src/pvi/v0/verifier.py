@@ -13,20 +13,19 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
-from pvi.core import hostmem
-from pvi.kernels import native as native_kernels
 from pvi.commit.commitment import (HASH_BYTES, CommitmentPublic, GroupPublic, TablePublic, codeword_at, column_rows,
                                    group_leaf, map_threaded, row_leaves, table_leaves, verify_multiproof,
                                    verify_multiproofs)
+from pvi.core import hostmem
 from pvi.core.field import (_LIMB_MAX, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
                             int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, int8_weight_matmul,
                             limbs_f64, min_max, small_matmul_mod, to_field)
-from pvi.v1.cut import delta_range as cut_delta_range
 from pvi.core.graph import CheapOp, IntGraph, MatOp
+from pvi.kernels import native as native_kernels
+from pvi.v0.params import _CUT_NARROW, Z_BOUND, SecurityParams
 from pvi.v0.streaming import ClaimUploads
-from pvi.v0.params import SecurityParams, Z_BOUND, _CUT_NARROW
 from pvi.v0.transcript import Challenger
-
+from pvi.v1.cut import delta_range as cut_delta_range
 
 _GPU_DECODE = os.environ.get("PVI_GPU_DECODE", "1") != "0"
 """A GPU verifier decodes the claims on its device (``claimcodec.decode_device``); 0: on the host."""

@@ -41,9 +41,9 @@ import numpy as np
 import torch
 
 from pvi.baseline.analysis import acceptance_probability, inconsistent_nodes
+from pvi.baseline.path.params import ProtocolParams
 from pvi.mnist.architecture import DenseLayer
 from pvi.mnist.network import Trace, TracedNetwork
-from pvi.baseline.path.params import ProtocolParams
 
 __all__ = [
     "ForgeryResult",

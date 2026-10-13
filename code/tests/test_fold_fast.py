@@ -5,9 +5,9 @@ and for ``K`` past ``2^16``; the Kpre verdicts are unchanged."""
 import pytest
 import torch
 
-from pvi.kernels import native as native_kernels
 import pvi.v0 as proto
 from pvi.core.field import P, int8_ok, small_matmul_mod
+from pvi.kernels import native as native_kernels
 from pvi.models.decoder import CONFIGS, build_decoder
 
 

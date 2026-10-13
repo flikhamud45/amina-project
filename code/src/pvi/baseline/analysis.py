@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from pvi.baseline.path.params import ProtocolParams
 from pvi.mnist.architecture import DenseLayer
 from pvi.mnist.network import Trace, TracedNetwork
-from pvi.baseline.path.params import ProtocolParams
 
 if TYPE_CHECKING:  # pragma: no cover
     from pvi.baseline.path.sampling import PathSampler

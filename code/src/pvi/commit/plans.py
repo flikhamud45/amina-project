@@ -106,8 +106,8 @@ import re
 from dataclasses import dataclass, replace
 from functools import cached_property, lru_cache
 
-from pvi.commit.cost import expected_multiproof_nodes, setup_size
 from pvi.commit.commitment import next_pow2
+from pvi.commit.cost import expected_multiproof_nodes, setup_size
 from pvi.core.field import LOG2_P, TWO_ADICITY
 
 __all__ = ["MAX_N", "REFERENCE_LAMBDA", "AUTO_CANDIDATES", "AUTO_MIN_BUDGET", "PlannedMatrix", "CommitmentPlan",

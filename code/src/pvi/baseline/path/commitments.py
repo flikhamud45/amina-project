@@ -35,7 +35,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from pvi.baseline.path.merkle import (MerkleOpening, MerkleParams, MerkleVectorCommitment, decode_f32_vector,
-
                                       encode_f32_vector)
 from pvi.mnist.architecture import Architecture
 from pvi.mnist.network import Trace, TracedNetwork

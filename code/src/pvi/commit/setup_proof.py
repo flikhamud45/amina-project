@@ -40,11 +40,9 @@ import math
 import struct
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 
 from pvi.commit.commitment import (CommitmentPublic, GroupCommitment, GroupPublic, TransposedCommitment,
-
                                    WeightCommitment, codeword_at, column_leaf, group_leaf, verify_multiproof)
 from pvi.core.field import LOG2_P, P, field_matmul_mod, to_field, weight_matmul_mod
 

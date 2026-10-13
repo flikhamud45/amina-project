@@ -10,15 +10,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pvi.baseline.path.merkle import MerkleOpening
+from conftest import build_network
 from pvi.baseline.path.commitments import ModelCommitment
-from pvi.baseline.path.params import ProtocolParams
+from pvi.baseline.path.merkle import MerkleOpening
 from pvi.baseline.path.messages import Round2
+from pvi.baseline.path.params import ProtocolParams
 from pvi.baseline.path.sampling import UniformPathSampler, challenge_rng, sample_challenge
 from pvi.baseline.path.session import run_protocol
-
-from conftest import build_network
-
 
 # --------------------------------------------------------------------------- #
 # Correctness

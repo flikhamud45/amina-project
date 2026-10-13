@@ -25,21 +25,21 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.commit import cost as analytic
-from pvi.v0 import claimcodec as cc
-from pvi.core import field as fld
 import pvi.v0 as proto
-from pvi.v0 import query as v0_query
-from pvi.v0 import verifier as v0_verifier
 import reference as ref
+from pvi.commit import cost as analytic
 from pvi.commit.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
                                    group_leaf, multiproof_size, verify_multiproof)
-from pvi.models.cnn import build_float_model
-from pvi.v0.streaming import wire_openings
 from pvi.commit.plans import (MAX_N, REFERENCE_LAMBDA, col_name, column_bits, column_error_log2, exact_columns,
                               next_pow2, plan_commitment)
-from pvi.models.quantize import quantize_input, quantize_model
+from pvi.core import field as fld
+from pvi.models.cnn import build_float_model
 from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
+from pvi.models.quantize import quantize_input, quantize_model
+from pvi.v0 import claimcodec as cc
+from pvi.v0 import query as v0_query
+from pvi.v0 import verifier as v0_verifier
+from pvi.v0.streaming import wire_openings
 
 P = fld.P
 POLICIES = ("tight", "cnn12", "R8", "tightc", "cnn12c", "R8c")   # small codeword lengths: the tiny models

@@ -20,8 +20,8 @@ from __future__ import annotations
 import torch
 
 from pvi.core import extfield as ef
-from pvi.v1 import gkr
 from pvi.core.field import P
+from pvi.v1 import gkr
 
 __all__ = ["table", "multiplicities", "multiplicities_ok", "leaves", "indicator", "table_fraction", "logup_ok",
            "prove_instances", "verify_instances"]

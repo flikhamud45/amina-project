@@ -95,8 +95,8 @@ import threading
 import numpy as np
 import torch
 
-from pvi.core import hostmem
 from pvi.commit.commitment import map_threaded
+from pvi.core import hostmem
 
 __all__ = ["ClaimCodecError", "Unencodable", "MAGIC", "BMAX", "encode", "decode", "decode_torch", "decode_device",
            "decode_device_ok", "narrow",
@@ -1118,7 +1118,7 @@ def _encode_device(zts: list, centre: bool) -> bytes:
     s_e = torch.repeat_interleave(torch.arange(order.size, dtype=it, device=dev), table[0], output_size=total)
 
     def per_value(row: int) -> torch.Tensor:
-        return fields[row].index_select(0, s_e)
+        return fields[row].index_select(0, s_e)     # noqa: F821 (s_e is released once the last field is read)
 
     e = torch.arange(total, dtype=it, device=dev)
     if centred.any():

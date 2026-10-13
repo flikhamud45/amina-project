@@ -32,19 +32,19 @@ import time
 import numpy as np
 import torch
 
-from pvi.v1 import products as buckets
-from pvi.v0 import claimcodec
-from pvi.core import contention
-from pvi.v1 import cut as cutmod
-from pvi.core import extfield as ef
-from pvi.v1 import logup
-from pvi.v1 import gkr
 from pvi.commit.commitment import HASH_BYTES, multiproof_size
-from pvi.core.field import P, field_matmul_mod, min_max, small_matmul_mod, to_field
-from pvi.v0.transcript import Challenger
+from pvi.core import contention
+from pvi.core import extfield as ef
+from pvi.core.field import P, field_matmul_mod, min_max, to_field
+from pvi.v0 import claimcodec
 from pvi.v0.prover import Prover
+from pvi.v0.query import (_absorb_statement, _decoded_claims, _encoded, _field_message, _open_message, _passed,
+                          _phase_done, _proof_hashes)
+from pvi.v0.transcript import Challenger
 from pvi.v0.verifier import Verifier, _in_field, _sync
-from pvi.v0.query import _absorb_statement, _decoded_claims, _encoded, _field_message, _open_message, _passed, _phase_done, _proof_hashes
+from pvi.v1 import cut as cutmod
+from pvi.v1 import gkr, logup
+from pvi.v1 import products as buckets
 
 __all__ = ["run_cut_query", "cut_proof_bytes", "cut_plan", "pack_exceptions", "unpack_exceptions", "EXC_MAGIC"]
 
@@ -210,7 +210,6 @@ def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: 
         raise NotImplementedError("cut: one prompt per query")
     ch = Challenger(fiat_shamir=p.fiat_shamir, seed=seed)
     out = {"accepted": False, "rejected_at": None, "timings": {}, "contention": {}}
-    t = out["timings"]
     T = x.shape[1]
     cols = verifier.claim_columns(x)
     if cols is None:
@@ -305,7 +304,6 @@ def _timed(out: dict, name: str):
 def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, out: dict, plan, forward_kwargs,
            cheat: dict):
     p = verifier.params
-    T = plan.T
     tau, offsets = plan.table()
     cut_names = plan.names()
     # ---------------------------------------------------------------- M1 (prover)

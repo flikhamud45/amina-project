@@ -12,8 +12,8 @@ import pytest
 import torch
 
 import pvi.v0 as proto
-from pvi.commit.plans import plan_commitment
 from pvi.commit import setup_cache
+from pvi.commit.plans import plan_commitment
 from pvi.models.decoder import DecoderConfig, build_decoder
 
 _TINY = {

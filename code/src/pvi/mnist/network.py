@@ -17,7 +17,7 @@ from typing import Iterator, Mapping
 
 import numpy as np
 
-from pvi.mnist.architecture import Architecture, Layer, NO_WEIGHT_GROUP
+from pvi.mnist.architecture import NO_WEIGHT_GROUP, Architecture
 
 __all__ = ["ModelParameters", "Trace", "TracedNetwork"]
 

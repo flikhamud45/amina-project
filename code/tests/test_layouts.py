@@ -12,18 +12,17 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.commit import cost as analytic
-from pvi.core import field as fld
 import pvi.v0 as proto
-from pvi.v0 import verifier as v0_verifier
 import reference as ref
+from pvi.commit import cost as analytic
 from pvi.commit.commitment import (GroupCommitment, MerkleTree, TransposedCommitment, WeightCommitment, column_leaf,
                                    group_leaf, transposed_leaves, verify_multiproof)
-from pvi.v0.streaming import wire_claim, wire_openings
 from pvi.commit.plans import REFERENCE_LAMBDA, col_name, next_pow2, plan_commitment
+from pvi.core import field as fld
 from pvi.models.decoder import CONFIGS, build_decoder
-
-from test_plans import _TINY, _cnn, _folded, _matrix, _planned, _verifiers   # the plan tests' models, helpers
+from pvi.v0 import verifier as v0_verifier
+from pvi.v0.streaming import wire_claim, wire_openings
+from test_plans import _TINY, _cnn, _folded, _matrix, _planned, _verifiers  # the plan tests' models, helpers
 
 P = fld.P
 

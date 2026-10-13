@@ -12,11 +12,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.v1 import cut as cutmod
-from pvi.v1 import protocol as cp
 import pvi.v0 as proto
 from pvi.core.field import P
 from pvi.models.decoder import build_decoder, greedy_tokens, with_lm_positions
+from pvi.v1 import cut as cutmod
+from pvi.v1 import protocol as cp
 from test_plans import _TINY
 
 _CACHE: dict = {}
@@ -290,6 +290,7 @@ def test_honest_exceptions_across_row_blocks(mode, monkeypatch):
     # an honest model whose requant op clamps often (multiplier 8x): exceptions in many rows; the final check's row
     # blocks (7 rows here) must route each exception to its block
     import dataclasses
+
     from pvi.core.graph import CheapOp, requant_fn
     monkeypatch.setattr(cp, "_FINAL_ROWS", 7)
     g = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)

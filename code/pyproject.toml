@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pvi"
-version = "1.0.0"
-description = "Sampling-based proofs of inference: reproduction, trace-tampering attack, and defence analysis"
+version = "2.0.0"
+description = "Proofs of inference: an attack on spot-checking verifiers and a fully sound defence"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -27,3 +27,13 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E9", "F"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pvi"]

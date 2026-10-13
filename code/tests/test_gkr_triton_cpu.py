@@ -8,14 +8,12 @@ from __future__ import annotations
 import pytest
 import torch
 
-from pvi.core import extfield as ef
-from pvi.v1 import gkr_triton as gt
-from pvi.v1 import logup
-from pvi.v1 import gkr
-import pvi.v0 as proto
-from pvi.core.field import P
-
 import gkr_triton_mock
+import pvi.v0 as proto
+from pvi.core import extfield as ef
+from pvi.core.field import P
+from pvi.v1 import gkr, logup
+from pvi.v1 import gkr_triton as gt
 
 
 @pytest.fixture

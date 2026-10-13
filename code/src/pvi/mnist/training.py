@@ -17,8 +17,8 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from pvi.mnist.data import Dataset
 from pvi.mnist.architecture import Architecture
+from pvi.mnist.data import Dataset
 from pvi.mnist.models import build_torch_module, extract_parameters
 from pvi.mnist.network import TracedNetwork
 

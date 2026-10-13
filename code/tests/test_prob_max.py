@@ -19,7 +19,6 @@ import pvi.v0 as proto
 import reference as ref
 from pvi.models import decoder as tr
 from pvi.models.decoder import build_decoder
-
 from test_plans import _TINY
 
 

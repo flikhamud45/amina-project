@@ -44,10 +44,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from pvi.baseline.path.sampling import PathSampler
 from pvi.mnist.architecture import Architecture, DenseLayer
 from pvi.mnist.gradients import output_direction_gradient
 from pvi.mnist.network import Trace, TracedNetwork
-from pvi.baseline.path.sampling import PathSampler
 
 __all__ = [
     "GradientSaliencySampler",

@@ -16,7 +16,6 @@ import torch
 
 import pvi.v0 as proto
 from pvi.models.decoder import build_decoder, greedy_tokens, with_lm_positions
-
 from test_plans import _TINY
 
 N = 4          # logits at 4 positions: 3 generated tokens, and the answer's

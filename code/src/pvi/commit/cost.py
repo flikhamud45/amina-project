@@ -21,8 +21,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from pvi.v0.claimcodec import field_size
 from pvi.commit.commitment import multiproof_size, next_pow2
+from pvi.v0.claimcodec import field_size
 
 __all__ = ["OpShape", "decoder_shapes", "decoder_claim_columns", "expected_multiproof_nodes",
            "expected_lookup_nodes", "proof_bytes", "setup_size"]

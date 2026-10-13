@@ -36,8 +36,8 @@ from typing import Callable
 
 import numpy as np
 
-from pvi.mnist.data import Dataset, load_classification
 from pvi.mnist.architecture import Architecture
+from pvi.mnist.data import Dataset, load_classification
 from pvi.mnist.models import mlp_architecture, small_cnn_architecture
 from pvi.mnist.network import TracedNetwork
 from pvi.mnist.training import TrainConfig

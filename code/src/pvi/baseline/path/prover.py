@@ -19,11 +19,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from pvi.mnist.network import Trace, TracedNetwork
 from pvi.baseline.path.commitments import ModelCommitment, TraceCommitment
 from pvi.baseline.path.messages import Round1, Round2
 from pvi.baseline.path.params import ProtocolParams
 from pvi.baseline.path.sampling import Path, PathSampler, UniformPathSampler, challenge_rng
+from pvi.mnist.network import Trace, TracedNetwork
 
 __all__ = ["Prover", "ProverState"]
 

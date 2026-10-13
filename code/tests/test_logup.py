@@ -18,11 +18,10 @@ import numpy as np
 import pytest
 import torch
 
-from pvi.core import extfield as ef
-from pvi.v1 import logup
-from pvi.v1 import gkr
 import pvi.v0 as proto
+from pvi.core import extfield as ef
 from pvi.core.field import P
+from pvi.v1 import gkr, logup
 
 
 def _chs():

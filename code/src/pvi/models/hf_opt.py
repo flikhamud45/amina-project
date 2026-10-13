@@ -43,9 +43,8 @@ import math
 import torch
 
 from pvi.core.graph import INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, op_fn, requant_fn
-from pvi.models.decoder import (CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention,
-                                _isqrt, _last_position, _lut, _norm_int, build_decoder, attention_op,
-                                last_position_op, lut_op, norm_op, positions_op, scale_op)
+from pvi.models.decoder import (CERTIFIED_PROB_MAX, CONFIGS, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt,
+                                attention_op, build_decoder, last_position_op, lut_op, norm_op, positions_op, scale_op)
 
 __all__ = ["build_opt_from_hf", "is_pruned", "matches_benchmark_graph", "real_logits"]
 

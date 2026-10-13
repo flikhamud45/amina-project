@@ -40,10 +40,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from pvi.baseline.analysis import acceptance_probability, inconsistent_nodes
+from pvi.baseline.path.params import ProtocolParams
 from pvi.mnist.architecture import DenseLayer
 from pvi.mnist.gradients import saliency
 from pvi.mnist.network import Trace, TracedNetwork
-from pvi.baseline.path.params import ProtocolParams
 
 __all__ = [
     "TamperOutcome",

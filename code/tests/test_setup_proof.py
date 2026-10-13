@@ -19,12 +19,11 @@ import pytest
 import torch
 
 import pvi.v0 as proto
-from pvi.core.field import LOG2_P, P
 from pvi.commit import setup_proof as sp
 from pvi.commit.commitment import GroupCommitment, MerkleTree, multiproof
 from pvi.commit.plans import column_bits, column_error_log2
+from pvi.core.field import LOG2_P, P
 from pvi.models.decoder import build_decoder
-
 from test_plans import _TINY
 
 

@@ -9,15 +9,14 @@ import time
 import numpy as np
 import torch
 
-from pvi.v0 import claimcodec
-from pvi.core import contention
-from pvi.core import hostmem
-from pvi.kernels import native as native_kernels
 from pvi.commit.commitment import HASH_BYTES
+from pvi.core import contention, hostmem
+from pvi.kernels import native as native_kernels
+from pvi.v0 import claimcodec
+from pvi.v0.prover import Prover
 from pvi.v0.streaming import wire_claim, wire_openings, wire_rows
 from pvi.v0.transcript import Challenger
-from pvi.v0.prover import Prover
-from pvi.v0.verifier import Verifier, _GPU_DECODE, _sync
+from pvi.v0.verifier import _GPU_DECODE, Verifier, _sync
 
 
 def _tensor_blob(t: torch.Tensor) -> bytes:

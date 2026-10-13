@@ -27,15 +27,15 @@ import hashlib
 import pytest
 import torch
 
-from pvi.core import field as fld
-from pvi.v0 import streaming as pipeline
 import pvi.v0 as proto
-from pvi.v0 import query as v0_query
-from pvi.v0 import verifier as v0_verifier
 import reference as ref
-from pvi.models import decoder as tr
+from pvi.core import field as fld
 from pvi.core.graph import CheapOp, IntGraph, MatOp, OpFn, op_fn, op_kind
+from pvi.models import decoder as tr
 from pvi.models.decoder import DecoderConfig, build_decoder
+from pvi.v0 import query as v0_query
+from pvi.v0 import streaming as pipeline
+from pvi.v0 import verifier as v0_verifier
 
 P = fld.P
 Z = proto.Z_BOUND

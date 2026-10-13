@@ -8,14 +8,13 @@ sizes of wire queries with the batched and the streaming verifier on a GPU.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import torch
 
-import test_wire as tw
-from pvi.v0 import claimcodec as cc
-from pvi.core import hostmem
 import pvi.v0 as proto
+import test_wire as tw
+from pvi.core import hostmem
+from pvi.v0 import claimcodec as cc
 
 cuda_only = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 

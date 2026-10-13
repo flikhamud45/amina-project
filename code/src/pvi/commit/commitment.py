@@ -42,7 +42,6 @@ import numpy as np
 import torch
 
 from pvi.core.field import (_LIMB_MAX, NP_SMALL, P, exact_chunk, field_matmul_mod, np_field_matmul_mod, power_table,
-
                             root_of_unity, rs_encode, to_field, weight_matmul_mod)
 
 __all__ = [
