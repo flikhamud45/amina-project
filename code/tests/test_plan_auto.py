@@ -64,7 +64,7 @@ def test_auto_is_the_argmin_within_the_budget_for_every_model(all_models):
 def test_the_overhead_is_the_byte_models_u_columns_and_encoded_paths(all_models):
     for name in ("lenet5", "vgg16", "gpt2", "llama2-7b", "opt-350m"):
         ops = all_models[name]
-        for policy in ("paper", "tightc", "cnn18c", "R64c"):
+        for policy in ("per-op", "tightc", "cnn18c", "R64c"):
             plan = plan_commitment(ops, policy)
             params = proto.params_for(128, len(ops), plan=plan)
             b = analytic.proof_bytes(ops, params, 1, plan=plan)
@@ -134,7 +134,7 @@ def test_perf_writes_chosen_on_every_mode_c_line_as_plan_bytes_does():
     spec = importlib.util.spec_from_file_location("perf_chosen_test", path)
     perf = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(perf)
-    for policy in ("paper", "auto", "R16c"):
+    for policy in ("per-op", "auto", "R16c"):
         plan = _planned("lenet5", policy)[2].plan
         assert perf._chosen(policy, plan) == (policy if plan is None else plan.policy)
     assert _planned("lenet5", "paper")[2].plan is None and perf._chosen("paper", None) == "paper"

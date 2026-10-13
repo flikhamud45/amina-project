@@ -21,7 +21,7 @@ import torch
 
 from pvi.core import extfield as ef
 from pvi.core.field import P
-from pvi.v1 import gkr
+from pvi.v1 import gkr, products
 
 __all__ = ["table", "multiplicities", "multiplicities_ok", "leaves", "indicator", "table_fraction", "logup_ok",
            "prove_instances", "verify_instances"]
@@ -96,15 +96,14 @@ def table_fraction(m: torch.Tensor, alpha: torch.Tensor, tau: torch.Tensor) -> t
 def logup_ok(roots, m: torch.Tensor, alpha: torch.Tensor, tau: torch.Tensor, *, batched: bool | None = None) -> bool:
     """Check F4: ``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)`` (every ``q0`` is non-zero, which
     :func:`verify_instances` has checked; every ``alpha - tau_t`` is, since ``alpha`` is outside ``F_p + x F_p``).
-    ``batched`` (default: unless ``PVI_V1_BUCKETS=0``; V-V1N part 3): both sums with batch inversion
+    ``batched`` (default: the optimised verifier, option ``v1_verifier``): both sums with batch inversion
     (:func:`extfield.inv_many`) and compared; else by cross-multiplication of the two fraction trees.  With every
     denominator non-zero the two are the same test (``a/b = c/d`` iff ``a d = c b``); a zero denominator, which the
     callers exclude, takes the cross-multiplication."""
     if not roots:
         return not bool(m.any())
     if batched is None:
-        from pvi.v1 import products as buckets
-        batched = buckets.enabled()
+        batched = products.optimised()
     p0, q0 = torch.stack([r[0] for r in roots]), torch.stack([r[1] for r in roots])
     if batched:
         nz = torch.nonzero(m).reshape(-1)
@@ -125,14 +124,13 @@ def prove_instances(instances, ch, prefix: str = "cut/") -> list:
 
 def verify_instances(trs, ns, ch, prefix: str = "cut/", *, batched: bool | None = None):
     """The outputs of :func:`logup_gkr.verify` for every instance (``ns``: their variable counts), or ``None`` if
-    one fails, has another size, or has a zero root denominator (check ``cut_gkr``).  ``batched`` (default: unless
-    ``PVI_V1_BUCKETS=0``): every instance's round chains in one pass (:func:`logup_gkr.verify_batch`, the same
+    one fails, has another size, or has a zero root denominator (check ``cut_gkr``).  ``batched`` (default: the
+    optimised verifier): every instance's round chains in one pass (:func:`logup_gkr.verify_batch`, the same
     challenges, outputs and verdict); else instance by instance."""
     if len(trs) != len(ns):
         return None
     if batched is None:
-        from pvi.v1 import products as buckets
-        batched = buckets.enabled()
+        batched = products.optimised()
     if batched:
         if any(tr.n != n for tr, n in zip(trs, ns)):
             return None

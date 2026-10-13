@@ -28,13 +28,13 @@ from __future__ import annotations
 
 import dataclasses
 import math
-import os
 from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
 import torch
 
+from pvi import options
 from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, mul_requant_op,
                             op_fn, op_kind, requant, requant_fn, residual_add)
 from pvi.kernels import attention_triton as attention_kernels
@@ -43,9 +43,6 @@ from pvi.kernels import native as native_kernels
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
 
 SHIFT = 30
-_FUSED_ATTN = os.environ.get("PVI_FUSED_ATTN", "1") != "0"
-_CPU_ATTN = os.environ.get("PVI_CPU_ATTN", "tiled")     # the native CPU attention: "tiled", or "hybrid" (BLAS + native softmax; slower on the Xeon 4114)
-"""On a GPU with Triton, the int32 attention runs as one fused kernel (``attention_kernels``); 0: torch."""
 RES_MAX = (1 << 22) - 1
 ATTN_BYTES = 1 << 27
 """Budget for one ``[B, heads, T, T]`` score tensor (heads are grouped to fit): int32 scores
@@ -319,13 +316,12 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1, pmax: int = PROB_MAX) -> t
     t, dh = k.shape[2], k.shape[3]
     dev = str(q.device)
     if _int32_scores(m_s, dh, t):
-        if q.is_cuda and _FUSED_ATTN and attention_kernels.available(q.device):   # the same integers, no T x T tensors
+        if q.is_cuda and options.current().fused_attention and attention_kernels.available(q.device):
+            # one fused kernel: the same integers, no T x T tensors
             return attention_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, pmax)
         if q.device.type == "cpu" and native_kernels.available():                # a CPU verifier: native, exact
-            core = native_kernels.attention_core_hybrid if _CPU_ATTN == "hybrid" else native_kernels.attention_core
-            if core is native_kernels.attention_core:
-                return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, exp_table=_EXP_TABLE, m_s=m_s, pmax=pmax)
-            return core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, pmax)
+            return native_kernels.attention_core(q, k, v, _exp_lut(m_s, dev), q.shape[2] // rep, exp_table=_EXP_TABLE,
+                                                 m_s=m_s, pmax=pmax)
         return _attention_core(q, k, v, _exp_lut(m_s, dev), _causal_notmask(t, rep, dev, q.shape[2] // rep), pmax)
     return _attention_int64(q, k, v, m_s, _causal_notmask(t, rep, dev, q.shape[2] // rep), pmax)
 
@@ -345,7 +341,7 @@ def _attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: 
     b, tq, _ = q.shape
     t = k.shape[1]
     if (q.device.type == "cpu" and m_o is not None and 0 < m_o < 1 << 32 and _int32_scores(m_s, dh, t)
-            and _CPU_ATTN != "hybrid" and native_kernels.available() and native_kernels.attention_requant_ok(dh, t)
+            and native_kernels.available() and native_kernels.attention_requant_ok(dh, t)
             and all(x.dtype == torch.int64 for x in (q, k, v))):
         # a CPU verifier: attention and the output requantisation in one AVX-512 pass, the same integers
         return native_kernels.attention_requant(q, k, v, _exp_lut(m_s, "cpu"), m_o, n_heads, n_kv, dh,

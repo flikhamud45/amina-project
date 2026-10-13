@@ -38,7 +38,7 @@ def _verifier(gen, mode, policy=None, fiat_shamir=False, stream=False):
     if mode == "C":
         key = (id(gen), policy)
         if key not in _COMMITTED:
-            _COMMITTED[key] = gen, proto.commit_graph(gen, 4, policy=policy or "paper")
+            _COMMITTED[key] = gen, proto.commit_graph(gen, 4, policy=policy or "per-op")
         coms = _COMMITTED[key][1]
         params = proto.params_for(40, len(gen.mat_ops), fiat_shamir=fiat_shamir, plan=coms.plan)
         v = proto.Verifier(gen.public(), params, "C", publics=coms.publics, groups=coms.group_publics,

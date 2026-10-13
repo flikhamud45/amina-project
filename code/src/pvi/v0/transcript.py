@@ -4,7 +4,6 @@ message, large messages absorbed as a one-level tree)."""
 from __future__ import annotations
 
 import hashlib
-import os
 import secrets
 import struct
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 
+from pvi import options
 from pvi.core.field import P
 
 _TREE_MIN = 1 << 24
@@ -20,8 +20,8 @@ _TREE_CHUNK = 1 << 22
 
 
 def _hash_threads() -> int:
-    """Threads for the tree absorption: ``PVI_HASH_THREADS``, else torch's intra-op thread count."""
-    return max(1, int(os.environ.get("PVI_HASH_THREADS", "0")) or torch.get_num_threads())
+    """Threads for the tree absorption: the option ``hash_threads``, else torch's intra-op thread count."""
+    return options.current().hash_threads or torch.get_num_threads()
 
 
 class Challenger:
@@ -115,13 +115,11 @@ class Challenger:
     def ext(self, name: str, count: int = 1, *, nonbase: bool = False) -> torch.Tensor:
         """``count`` uniform elements of ``F_{p^8}`` (``extfield``) ``[count, 8]``, by the rejection sampling of
         :meth:`folding`; with ``nonbase``, an element in ``F_p + x F_p`` (its coefficients 2..7 all zero, probability
-        ``p^-6``) is drawn again.  One element (V1's GKR rounds) is drawn by :meth:`_ext_one` unless
-        ``PVI_V1_BUCKETS=0``: the same bytes, words and choice, without numpy (V-V1N part 3)."""
+        ``p^-6``) is drawn again.  For V1's optimised verifier (:mod:`pvi.options`) one element (V1's GKR rounds) is
+        drawn by :meth:`_ext_one`: the same bytes, words and choice, without numpy."""
         key = self._key("ext/" + name)
-        if count == 1:
-            from pvi.v1 import products as buckets
-            if buckets.enabled():
-                return self._ext_one(key, name, nonbase)
+        if count == 1 and options.current().v1_verifier == "optimised":
+            return self._ext_one(key, name, nonbase)
         return self._ext_draw(key, name, count, nonbase)
 
     def _ext_one(self, key: bytes, name: str, nonbase: bool) -> torch.Tensor:

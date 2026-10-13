@@ -25,6 +25,7 @@ import torch
 
 import claimcodec_reference as ref
 import opcount as opcount
+from pvi import options
 from pvi.commit import commitment
 from pvi.core.field import P
 from pvi.models.decoder import DecoderConfig, build_decoder
@@ -592,12 +593,13 @@ def _int32_on_gpu(zs) -> list:
 @cuda_only
 @pytest.mark.parametrize("cols,flag_cols,chunk", [(1 << 20, 1 << 22, 1 << 23), (1, 1, 33), (3, 5, 1 << 23),
                                                   (7, 1 << 22, 1000)])
-def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, flag_cols, chunk, monkeypatch):
+def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, flag_cols, chunk, monkeypatch,
+                                                            set_options):
     # launches of one or a few columns, the flag words read a few columns at a time, the plan's windows small or not
     from pvi.kernels import codec_triton as codec_kernels
     if not codec_kernels.available("cuda"):
         pytest.skip("no Triton")
-    monkeypatch.setattr(cc, "_FUSED", True)                     # opt-in
+    set_options(fused_encoder=True)                     # opt-in
     monkeypatch.setattr(cc, "_FUSED_COLS", cols)
     monkeypatch.setattr(cc, "_FLAG_COLS", flag_cols)
     monkeypatch.setattr(cc, "_CHUNK", chunk)
@@ -609,8 +611,8 @@ def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, fl
 
 
 @cuda_only
-def test_the_fused_encoder_takes_int32_gpu_claims_only(monkeypatch):
-    monkeypatch.setattr(cc, "_FUSED", True)
+def test_the_fused_encoder_takes_int32_gpu_claims_only(set_options):
+    set_options(fused_encoder=True)
     z = torch.zeros(4, 4, dtype=torch.int32)
     assert not cc._fused_ok([z]) and not cc._fused_ok([z.long().cuda()]) and not cc._fused_ok([])
 
@@ -675,18 +677,18 @@ def _numel(zs) -> int:
 
 
 def _one_pass(zs, monkeypatch, **kw) -> bytes:
-    """The device encoder in one pass however many claims (the encoder of commit c8be5eb)."""
+    """The device encoder in one pass however many claims."""
     monkeypatch.setattr(cc, "_ONE_PASS", 1 << 40)
-    monkeypatch.setattr(cc, "_FUSED", False)          # the torch encoder (the fused one has tests of its own)
-    return cc.encode(zs, impl="device", **kw)
+    with options.using(fused_encoder=False):          # the torch encoder (the fused one has tests of its own)
+        return cc.encode(zs, impl="device", **kw)
 
 
 def _in_parts(zs, chunk: int, monkeypatch, **kw) -> bytes:
     """The device encoder in parts of ``chunk`` values (when there are more claims)."""
     monkeypatch.setattr(cc, "_ONE_PASS", chunk)
     monkeypatch.setattr(cc, "_CHUNK", chunk)
-    monkeypatch.setattr(cc, "_FUSED", False)
-    return cc.encode(zs, impl="device", **kw)
+    with options.using(fused_encoder=False):
+        return cc.encode(zs, impl="device", **kw)
 
 
 def _normal(rng, shape, sd, mean=0.0):
@@ -911,7 +913,7 @@ def test_the_gpu_encoder_gives_the_reference_bytes(claim_sets):
 
 
 @cuda_only
-def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(claim_sets, monkeypatch):
+def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(claim_sets, monkeypatch, set_options):
     for name, zs in claim_sets.items():
         on = [(z if torch.is_tensor(z) else torch.from_numpy(np.asarray(z))).cuda() for z in zs]
         n = _numel(zs)
@@ -927,7 +929,7 @@ def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(cl
                     + (i % 2) * torch.randint(-9000, 9000, (4096, 1), generator=g, device="cuda"))
           for i in range(6)]
     extra, blobs = {}, {}
-    monkeypatch.setattr(cc, "_FUSED", False)                      # the torch encoder's two ways
+    set_options(fused_encoder=False)                      # the torch encoder's two ways
     for way, chunk in (("one pass", 1 << 40), ("in parts", 1 << 20)):
         monkeypatch.setattr(cc, "_ONE_PASS", chunk)
         monkeypatch.setattr(cc, "_CHUNK", chunk)
@@ -942,7 +944,7 @@ def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(cl
     assert extra["in parts"] < 100 * 2**20 < 600 * 2**20 < extra["one pass"], extra
     from pvi.kernels import codec_triton as codec_kernels
     if codec_kernels.available("cuda"):                          # the fused encoder: the same bytes, less memory
-        monkeypatch.setattr(cc, "_FUSED", True)
+        set_options(fused_encoder=True)
         monkeypatch.setattr(cc, "_ONE_PASS", 1 << 27)
         monkeypatch.setattr(cc, "_CHUNK", 1 << 23)
         cc._layout.cache_clear()
@@ -1058,13 +1060,12 @@ def test_claims_decoded_into_pinned_memory_are_the_claims():
     assert all(t.is_pinned() and torch.equal(t.long(), torch.from_numpy(z)) for t, z in zip(out, zs))
 
 
-def test_random_corruptions_never_crash_the_split_decoder(sample, monkeypatch):
+def test_random_corruptions_never_crash_the_split_decoder(sample, monkeypatch, set_options):
     # the two Rice vectors located by counting their levels' bits and decoded as parallel jobs, on corrupted
     # inputs: the same claims or the same rejection as the one-thread decoder (default sizes), never another
     # exception; every job of the split decoder on the pool's threads (lanes, Rice vectors, patches, means).
     # This tests the numpy decoder's lanes; the native unpack (test_native_cheap.py) is switched off.
-    from pvi.kernels import native as native_kernels
-    monkeypatch.setattr(native_kernels, "_DECODE", False)
+    set_options(native_decode=False)
     zs, blob, rows, cols = sample
     rng = np.random.default_rng(13)
     bad = []

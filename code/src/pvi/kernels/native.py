@@ -10,7 +10,8 @@ rows rather than once per row.
 
 The library is compiled once per host with the C++ compiler in ``$CXX`` (else ``g++``), ``-O3 -march=native
 -fopenmp``, into ``$PVI_NATIVE_DIR`` (default ``~/.cache/pvi``) and loaded with ctypes: no Python or torch headers
-are needed.  Without a working compiler :func:`available` is false and the torch path is used.
+are needed.  Without a working compiler, or with the option ``native`` off (:mod:`pvi.options`), :func:`available` is
+false and the torch path is used; the options ``native_*`` turn single kernels off.
 """
 
 from __future__ import annotations
@@ -26,7 +27,9 @@ from pathlib import Path
 
 import torch
 
-__all__ = ["available", "attention_core", "attention_core_hybrid", "cheap_enabled", "requant", "residual",
+from pvi import options
+
+__all__ = ["available", "has_avx512", "attention_core", "cheap_enabled", "requant", "residual",
            "lut", "norm", "rope", "field_matmul", "unpack_stream", "min_max", "patch_exceptions", "tune_malloc",
            "int8_matmul", "lw_affine", "xbar"]
 
@@ -348,36 +351,6 @@ extern "C" void pvi_attention64(const int64_t* q, int64_t q0, int64_t q1, int64_
 #endif
 }
 
-// The integer softmax of a block of rows, in place: s holds exact integer scores as float32 ([n_rows, t], row i of
-// the block is query row r0 + i of its (batch, head) group, which sees keys 0 .. t - queries + (r0 + i) % queries);
-// on return it holds p = floor((tot + two_p e) / (2 tot)) as float32 (0 for the masked keys), e = LUT[min(max - s, len - 1)].
-extern "C" void pvi_softmax_block(float* s, const int32_t* lut, int64_t groups, int64_t n_rows, int64_t r0,
-                                  int64_t queries, int64_t t, int64_t lut_len, int64_t threads, int64_t two_p) {
-    omp_set_num_threads((int)threads);
-    #pragma omp parallel
-    {
-        std::vector<int32_t> e(t);
-        #pragma omp for schedule(static) collapse(2)
-        for (int64_t g = 0; g < groups; ++g) {
-            for (int64_t i = 0; i < n_rows; ++i) {
-                float* row = s + (g * n_rows + i) * t;
-                const int64_t n = t - queries + ((r0 + i) % queries) + 1;
-                int32_t mx = INT32_MIN;
-                for (int64_t j = 0; j < n; ++j) mx = std::max(mx, (int32_t)row[j]);
-                int32_t tot = 0;
-                for (int64_t j = 0; j < n; ++j) {
-                    int64_t gap = (int64_t)mx - (int64_t)(int32_t)row[j];
-                    if (gap > lut_len - 1) gap = lut_len - 1;
-                    e[j] = lut[gap];
-                    tot += e[j];
-                }
-                const int32_t two = 2 * tot;
-                for (int64_t j = 0; j < n; ++j) row[j] = (float)((tot + (int32_t)two_p * e[j]) / two);
-                for (int64_t j = n; j < t; ++j) row[j] = 0.0f;
-            }
-        }
-    }
-}
 // ---- the other recomputed operations, one pass each (int64 in and out, as the torch ops) ----------------------
 // A matrix operand is [R, C] with strides (sr, sc): contiguous rows (sc == 1) or a transposed claim (sr == 1, the
 // fold's view of Z [C, R]); the output is contiguous.  A transposed operand is read in 64 x 64 tiles, so both the
@@ -893,18 +866,26 @@ _TRIED = False
 
 
 def _library():
-    """The compiled library (once per process; the build is cached per host and source)."""
+    """The compiled library, or None (option ``native`` off, or no library on this host)."""
+    if not options.current().native:
+        return None
+    return _build()
+
+
+def _build():
+    """Compile and load the library, once per process (the build is cached per host and source)."""
     global _LIB, _TRIED
     if _TRIED:
         return _LIB
     _TRIED = True
-    if os.environ.get("PVI_NATIVE_ATTN", "1") == "0" or platform.system() != "Linux":
+    if platform.system() != "Linux":
         return None
     cxx = os.environ.get("CXX") or shutil.which("g++")
     if not cxx:
         return None
-    key = hashlib.sha256((_SOURCE + " ".join(_FLAGS) + cxx + platform.node() + platform.processor()).encode()).hexdigest()[:16]
-    where = Path(os.environ.get("PVI_NATIVE_DIR", Path.home() / ".cache" / "pvi"))
+    key = hashlib.sha256((_SOURCE + " ".join(_FLAGS) + cxx + platform.node()
+                          + platform.processor()).encode()).hexdigest()[:16]
+    where = options.native_dir()
     lib = where / f"pvi_attention_{key}.so"
     try:
         if not lib.exists():
@@ -928,8 +909,6 @@ def _library():
         if hasattr(_LIB, "pvi_attention_profile"):
             _LIB.pvi_attention_profile.argtypes = [ctypes.c_int64, ctypes.c_void_p]
             _LIB.pvi_attention_profile.restype = None
-        _LIB.pvi_softmax_block.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 8
-        _LIB.pvi_softmax_block.restype = None
         _LIB.pvi_requant.argtypes = [ctypes.c_void_p, ctypes.c_int64] + [ctypes.c_void_p] * 2 + [ctypes.c_int64] * 9
         _LIB.pvi_residual.argtypes = ([ctypes.c_void_p, ctypes.c_int64, ctypes.c_int64, ctypes.c_void_p, ctypes.c_int64,
                                        ctypes.c_void_p] + [ctypes.c_int64] * 8)
@@ -965,7 +944,14 @@ def _library():
 
 
 def available() -> bool:
+    """Whether the native kernels run here (option ``native`` on and the library built)."""
     return _library() is not None
+
+
+def has_avx512() -> bool:
+    """Whether the library runs its AVX-512 attention here (the CPU has AVX-512BW and option ``native_avx512``)."""
+    lib = _library()
+    return bool(lib is not None and options.current().native_avx512 and lib.pvi_has_avx512())
 
 
 def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int, *,
@@ -978,7 +964,7 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
     t = k.shape[2]
     lut32 = lut.to(torch.int32).contiguous()
     out = torch.empty(bsz, heads, rows, dh, dtype=torch.int64)
-    if (_AVX and lib.pvi_has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15
+    if (has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15
             and all(x.dtype == torch.int64 for x in (q, k, v))):     # AVX-512, reading the int64 views as they are
         e32, ms = _exp32(exp_table, m_s)
         lib.pvi_attention64(q.data_ptr(), *q.stride(), 0, k.data_ptr(), *k.stride(), v.data_ptr(), *v.stride(),
@@ -992,13 +978,11 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
     return out
 
 
-_AVX = os.environ.get("PVI_NATIVE_AVX512", "1") != "0"
-
 
 def attention_requant_ok(dh: int, t: int) -> bool:
     """Whether :func:`attention_requant` runs here (the AVX-512 kernel, ``dh`` a multiple of 16 up to 128)."""
     lib = _library()
-    return bool(_AVX and lib is not None and lib.pvi_has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15)
+    return bool(lib is not None and has_avx512() and dh % 16 == 0 and dh <= 128 and t < 1 << 15)
 
 
 def _exp32(exp_table, m_s: int):
@@ -1030,41 +1014,9 @@ def attention_requant(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: to
                          2 * pmax)
     return out
 
-_ROWS = 32
-"""Query rows per block of :func:`attention_core_hybrid` (scores of 32 rows x 2,048 keys x the heads: a few MB)."""
-
-
-def attention_core_hybrid(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int,
-                          pmax: int = 255) -> torch.Tensor:
-    """:func:`attention_core`'s integers with the two products as float32 GEMMs (torch's BLAS) and the integer
-    softmax in one native pass per block of query rows: the scores are exact in float32 (``|s| <= 2**21``) and so is
-    ``P V`` (every partial sum below ``(pmax + T/2) 128 < 2**24``), as in ``transformer._attention_core``, but no
-    ``T x T`` tensor is held and the element-wise steps are one pass over a cache-resident block."""
-    lib = _library()
-    bsz, heads, rows, dh = q.shape
-    t = k.shape[2]
-    qf = q.to(torch.float32).reshape(bsz * heads, rows, dh)
-    kt = k.to(torch.float32).reshape(bsz * heads, t, dh).transpose(1, 2).contiguous()
-    vf = v.to(torch.float32).reshape(bsz * heads, t, dh)
-    lut32 = lut.to(torch.int32).contiguous()
-    out = torch.empty(bsz * heads, rows, dh, dtype=torch.int64)
-    threads = torch.get_num_threads()
-    for r0 in range(0, rows, _ROWS):
-        r1 = min(rows, r0 + _ROWS)
-        s = torch.bmm(qf[:, r0:r1], kt).contiguous()                       # [BH, rb, T], exact integers
-        lib.pvi_softmax_block(s.data_ptr(), lut32.data_ptr(), bsz * heads, r1 - r0, r0, queries, t,
-                              lut32.numel(), threads, 2 * pmax)
-        out[:, r0:r1] = torch.bmm(s, vf).to(torch.int64)                   # exact: sums < 2**24
-    return out.view(bsz, heads, rows, dh)
-
-
 # -- the other recomputed operations ------------------------------------------------------------------------------
 # Each returns the torch op's int64 result (contiguous), or None when its operands are not the plain case (then the
 # caller runs the torch steps): CPU int64 tensors, a matrix operand contiguous or a transposed claim view.
-
-_CHEAP = os.environ.get("PVI_NATIVE_CHEAP", "1") != "0"
-_I32 = os.environ.get("PVI_INT32_CLAIMS", "1") != "0"
-
 
 def cheap_enabled(*ts: torch.Tensor, claim: torch.Tensor | None = None) -> bool:
     """Whether the native kernels apply to these operands (CPU, int64, non-empty; ``claim`` may also be int32) and
@@ -1072,13 +1024,15 @@ def cheap_enabled(*ts: torch.Tensor, claim: torch.Tensor | None = None) -> bool:
     if claim is not None and not (claim.device.type == "cpu" and claim.dtype in (torch.int32, torch.int64)
                                   and claim.numel()):
         return False
-    return (_CHEAP and all(t.device.type == "cpu" and t.dtype == torch.int64 and t.numel() for t in ts)
+    return (options.current().native_cheap
+            and all(t.device.type == "cpu" and t.dtype == torch.int64 and t.numel() for t in ts)
             and _library() is not None)
 
 
 def int32_claims() -> bool:
     """Whether a CPU verifier keeps its claims as int32 (the native kernels read them as they are)."""
-    return _CHEAP and _I32 and _library() is not None
+    o = options.current()
+    return o.native_cheap and o.int32_claims and _library() is not None
 
 
 def _layout(t: torch.Tensor):
@@ -1172,7 +1126,10 @@ def field_matmul(chi: torch.Tensor, z: torch.Tensor):
     return out if ok else None
 
 
-_DECODE = os.environ.get("PVI_NATIVE_DECODE", "1") != "0"
+
+def decode_enabled() -> bool:
+    """Whether the native claim decoder runs (option ``native_decode`` and the library)."""
+    return options.current().native_decode and _library() is not None
 
 
 def unpack_stream(w, k: int, n: int, out, bases) -> bool | None:
@@ -1180,7 +1137,7 @@ def unpack_stream(w, k: int, n: int, out, bases) -> bool | None:
     ``out[:n]`` (numpy uint32) with the segments' ``bases`` added: True, False when a padding slot is not zero,
     None when the native library is not there (the numpy steps then run)."""
     import numpy as np
-    if not _DECODE or _library() is None:
+    if not decode_enabled():
         return None
     if bases is None:
         starts = ends = np.zeros(0, dtype=np.int64)
@@ -1198,7 +1155,7 @@ def unpack_stream(w, k: int, n: int, out, bases) -> bool | None:
 def min_max(a: torch.Tensor):
     """``(min, max)`` of a contiguous CPU int32 or int64 tensor in one parallel pass, or None (the caller's
     reductions then run)."""
-    if not (_CHEAP and a.device.type == "cpu" and a.dtype in (torch.int32, torch.int64) and a.is_contiguous()
+    if not (options.current().native_cheap and a.device.type == "cpu" and a.dtype in (torch.int32, torch.int64) and a.is_contiguous()
             and a.numel() >= 1 << 16 and _library() is not None):
         return None
     lo, hi = ctypes.c_int64(), ctypes.c_int64()
@@ -1223,7 +1180,7 @@ def patch_exceptions(x, gaps, hz, segs, total: int) -> int | None:
     without the library (the numpy steps then run).  ``x`` int32, ``gaps`` and ``hz`` int64 numpy arrays (``gaps``
     becomes the positions), ``segs`` ``(start, B, pending base)`` in the global order."""
     import numpy as np
-    if not _DECODE or _library() is None:
+    if not decode_enabled():
         return None
     if not (x.dtype == np.int32 and x.flags.c_contiguous and gaps.dtype == np.int64 and hz.dtype == np.int64
             and gaps.flags.c_contiguous and hz.flags.c_contiguous and gaps.flags.writeable):
@@ -1242,12 +1199,12 @@ def tune_malloc() -> bool:
     """Keep freed memory in the process (glibc: no mmap for large blocks, trim only above 2 GiB free), once per
     process; True if applied.  A CPU verifier allocates and frees tensors of hundreds of MB per block; by default
     glibc maps each one afresh and the kernel zeroes its pages on first touch, which cost about a fifth of the
-    verifier's time on Llama-2-7B at 2,048 tokens.  Process-wide (the resident size stays at its peak);
-    ``PVI_MALLOC_TUNE=0`` leaves glibc's defaults."""
+    verifier's time on Llama-2-7B at 2,048 tokens.  Process-wide (the resident size stays at its peak); with
+    the option ``malloc_tune`` off glibc keeps its defaults."""
     global _MALLOC_TUNED
     if _MALLOC_TUNED:
         return True
-    if os.environ.get("PVI_MALLOC_TUNE", "1") == "0" or platform.system() != "Linux":
+    if not options.current().malloc_tune or platform.system() != "Linux":
         return False
     try:
         libc = ctypes.CDLL("libc.so.6")
@@ -1261,13 +1218,11 @@ def tune_malloc() -> bool:
     return ok
 
 
-_GEMM = os.environ.get("PVI_NATIVE_GEMM", "1") != "0"
-
 
 def int8_matmul(w: torch.Tensor, x: torch.Tensor):
     """``w @ x.T`` exactly, int64 ``[N, M]``, for int8 ``w [N, K]`` and int8 ``x [M, K]`` on the CPU (one native
     pass, int16-pair multiply-adds into int32); None when not applicable (the caller's products then run)."""
-    if not (_GEMM and w.device.type == "cpu" and x.device.type == "cpu" and w.dtype == torch.int8
+    if not (options.current().native_gemm and w.device.type == "cpu" and x.device.type == "cpu" and w.dtype == torch.int8
             and x.dtype == torch.int8 and w.dim() == 2 and x.dim() == 2 and w.shape[1] == x.shape[1]
             and 0 < w.shape[1] < 1 << 17 and _library() is not None):
         return None
@@ -1278,16 +1233,14 @@ def int8_matmul(w: torch.Tensor, x: torch.Tensor):
     return out
 
 
-_LW = os.environ.get("PVI_V1_NATIVE", "1") != "0"
-
 
 def lw_affine(s: torch.Tensor, a: int, cd: torch.Tensor, e: torch.Tensor):
     """``[n, 3, 8]`` (canonical): per row of the values ``s`` ``[n, t]`` (int8/16/32/64, on the CPU) the sums
     ``sum_j (s_ij - a) e_j``, ``sum_j C(s_ij - a) e_j`` and ``sum_j D(s_ij - a) e_j`` at the column point ``e``
     ``[t, 8]`` with the tables ``cd`` ``[V, 2]`` (``buckets._affine``'s columns ``C`` and ``D``): the integers of
-    ``buckets.table_times`` (V-V1N's native kernel, switch ``PVI_V1_NATIVE``).  None when the library is not there,
+    ``buckets.table_times`` (option ``v1_native``).  None when the library is not there,
     the operands are not of that kind, or a value lies outside ``[a, a + V)`` (the caller's torch path then runs)."""
-    if not _LW or _library() is None or not hasattr(_LIB, "pvi_lw_affine"):
+    if not options.current().v1_native or _library() is None:
         return None
     if not (s.device.type == "cpu" and s.dim() == 2 and s.dtype in (torch.int8, torch.int16, torch.int32, torch.int64)
             and s.numel()):
@@ -1307,9 +1260,9 @@ def lw_affine(s: torch.Tensor, a: int, cd: torch.Tensor, e: torch.Tensor):
 def xbar(x: torch.Tensor, e: torch.Tensor):
     """``X^T e`` ``[K, 8]`` (canonical) of an integer input ``x`` ``[T, K]`` (int8/16/32/64, on the CPU, entries below
     ``2^16`` in absolute value, which the caller checks) at the column point ``e`` ``[T, 8]``: the integers of
-    ``buckets.xbar``'s float64 product (V-V1N's native kernel, switch ``PVI_V1_NATIVE``).  None when the library is not
+    ``buckets.xbar``'s float64 product (option ``v1_native``).  None when the library is not
     there or the operands are not of that kind (the caller's torch path then runs)."""
-    if not _LW or _library() is None or not hasattr(_LIB, "pvi_xbar"):
+    if not options.current().v1_native or _library() is None:
         return None
     if not (x.device.type == "cpu" and x.dim() == 2 and x.dtype in (torch.int8, torch.int16, torch.int32, torch.int64)
             and x.numel()):

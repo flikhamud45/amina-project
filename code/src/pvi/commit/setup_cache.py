@@ -1,4 +1,4 @@
-"""A prover-side cache of the weight commitment's Merkle leaves (plan PS2, option (c)).
+"""A prover-side cache of the weight commitment's Merkle leaves.
 
 The one-time setup of mode C encodes every row of every weight matrix and hashes every column of every codeword:
 ``protocol.commit_graph`` spends almost all its time computing the leaf digests of the commitment's trees (a
@@ -10,9 +10,8 @@ so a later process that commits the same matrices under the same plan can read t
 leaves the prover changes: the roots, the openings and every proof byte are those of a fresh commitment
 (``tests/test_setup_cache.py``).
 
-* **Opt-in.** The folder comes from ``commit_graph(cache=...)`` or, when that is ``None``, from the environment
-  variable ``PVI_SETUP_CACHE``; unset (the default) means no cache, so every existing test and stored cell is
-  unchanged. ``cache=False`` never uses one (``setup_timing.py`` measures the setup itself).
+* **Opt-in.** The folder comes from ``commit_graph(cache=...)`` (in the scripts, ``--setup-cache DIR``); ``None``,
+  the default, means no cache (the setup proof's timing never uses one).
 * **Key.** A BLAKE2b-256 over a format version, the base rate, the plan's policy and layout (groups, their member
   matrices in leaf order, each matrix's layout, members and codeword length, the lookup tables) and, for every
   weight op in the graph's order, its name (the tag), shapes, and a BLAKE2b-256 of its int8 weights and int64 bias.
@@ -40,19 +39,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-ENV = "PVI_SETUP_CACHE"
 VERSION = b"pvi/setup-cache/v1"
 """Bump when a leaf definition (``column_leaf``, ``group_leaf``, ``table_leaf``, the encoding) changes."""
 
 
 def folder(cache) -> Path | None:
-    """The cache folder for ``commit_graph(cache=...)``: ``False`` -> none; ``None`` -> ``$PVI_SETUP_CACHE`` (unset
-    or empty -> none); a path -> that folder."""
-    if cache is False:
-        return None
-    if cache is None:
-        cache = os.environ.get(ENV) or None
-    return None if cache is None else Path(cache)
+    """The cache folder for ``commit_graph(cache=...)``: ``None``, ``False`` or ``""`` -> none; a path -> that
+    folder."""
+    return Path(cache) if cache else None
 
 
 def _tensor_digest(t: torch.Tensor | None, dtype) -> bytes:

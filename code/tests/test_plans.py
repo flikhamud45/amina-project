@@ -139,7 +139,7 @@ def test_policies_give_their_codeword_lengths():
     assert lengths["R16"] == [4 * 65536, 16 * 128, 16 * 4096, 16 * 64]        # the embedding keeps the base rate
     assert lengths["R64"] == [4 * 65536, 64 * 128, 64 * 4096, 64 * 64]
     assert [o.n_points for o in plan_commitment(ops, "tight", rate=8).matrices][0] == 8 * 65536
-    assert plan_commitment(ops, "paper") is None
+    assert plan_commitment(ops, "per-op") is None
     for bad in ("cnn0", "cnn28", "R3", "R1", "rate4", "cnn", "R", "Paper", "tight ", "cnn016", "R016", "R08"):
         with pytest.raises(ValueError):
             plan_commitment(ops, bad)
@@ -652,7 +652,7 @@ class _Scribbler(proto.Prover):
         return out
 
 
-@pytest.mark.parametrize("policy", ["paper", "R8c"])
+@pytest.mark.parametrize("policy", ["per-op", "R8c"])
 @pytest.mark.parametrize("fiat_shamir", [False, True])
 def test_a_party_cannot_change_what_it_handed_the_other(policy, fiat_shamir):
     """The query and the challenges the prover receives, and the claims, multiproofs and ``u`` the
@@ -675,7 +675,7 @@ def test_a_party_cannot_change_what_it_handed_the_other(policy, fiat_shamir):
             assert proto.run_query(_Scribbler(graph), v, x.clone(), seed=None if fiat_shamir else 1)["accepted"]
 
 
-@pytest.mark.parametrize("policy", ["paper", "R8c"])
+@pytest.mark.parametrize("policy", ["per-op", "R8c"])
 def test_a_prover_cannot_change_its_messages_or_the_challenges_in_place(policy):
     """Forgeries that would pass if the parties shared tensors, each rejected by every verifier
     (interactive and Fiat--Shamir, with and without wire): a claim forged (re-propagated) and restored
@@ -1198,10 +1198,10 @@ def test_perf_random_init_builds_every_cnn_it_accepts(monkeypatch, capsys):
 # -- the proof-size model ----------------------------------------------------------------------------
 
 @pytest.mark.parametrize("kind", ["lenet5", "mlp_wide", "gpt", "opt", "qwen", "gpt-pruned", "qwen-pruned"])
-@pytest.mark.parametrize("policy", ("paper",) + POLICIES)
+@pytest.mark.parametrize("policy", ("per-op",) + POLICIES)
 def test_the_proof_size_model_is_what_run_query_sends(kind, policy):
-    graph, x = _model(kind) if policy == "paper" else _planned(kind, policy)[:2]
-    coms = proto.commit_graph(graph, 4) if policy == "paper" else _planned(kind, policy)[2]
+    graph, x = _model(kind) if policy == "per-op" else _planned(kind, policy)[:2]
+    coms = proto.commit_graph(graph, 4) if policy == "per-op" else _planned(kind, policy)[2]
     prover = proto.Prover(graph, commitments=coms)
     _, claims = graph.forward(x)
     cols = {k: z.shape[1] for k, z in claims.items()}

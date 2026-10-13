@@ -1,4 +1,4 @@
-"""A6: the Kpre client's precompute ``u = chi A`` (``Verifier._fold_local``) on the native field product (CPU) and
+"""The Kpre client's precompute ``u = chi A`` (``Verifier._fold_local``) on the native field product (CPU) and
 int8 GEMMs (GPU) equals the float64 limb products bit for bit: at the int8 extremes, with ``chi`` entries ``p - 1``,
 and for ``K`` past ``2^16``; the Kpre verdicts are unchanged."""
 
@@ -39,38 +39,38 @@ def _cases(device):
 
 
 @pytest.mark.skipif(not native_kernels.available(), reason="the native library needs a C++ compiler (Linux)")
-def test_cpu_fold_equals_the_float64_products(monkeypatch):
+def test_cpu_fold_equals_the_float64_products(set_options):
     for w, chi in _cases("cpu"):
         v = _verifier(w, "cpu")
-        monkeypatch.setenv("PVI_FOLD_FAST", "1")
+        set_options(int8_fold=True)
         got = v._fold_local(_Op("m"), chi)
         assert torch.equal(got, _reference(w, chi)), tuple(w.shape)
 
 
 @pytest.mark.skipif(not (torch.cuda.is_available() and int8_ok("cuda")), reason="needs a GPU with int8 GEMMs")
-def test_gpu_fold_equals_the_float64_products(monkeypatch):
+def test_gpu_fold_equals_the_float64_products(set_options):
     for w, chi in _cases("cpu"):
         v = _verifier(w, "cuda")
-        monkeypatch.setenv("PVI_FOLD_FAST", "1")
+        set_options(int8_fold=True)
         got = v._fold_local(_Op("m"), chi.cuda()).cpu()
         assert torch.equal(got, _reference(w, chi)), tuple(w.shape)
 
 
-def test_switch_off_is_the_float64_path(monkeypatch):
+def test_option_off_is_the_float64_path(set_options):
     for w, chi in _cases("cpu"):
         if w.shape[1] > 4096:
             continue
         v = _verifier(w, "cpu")
-        monkeypatch.setenv("PVI_FOLD_FAST", "0")
+        set_options(int8_fold=False)
         assert torch.equal(v._fold_local(_Op("m"), chi), _reference(w, chi))
 
 
-def test_kpre_verdicts_are_unchanged(monkeypatch):
+def test_kpre_verdicts_are_unchanged(set_options):
     graph = build_decoder(CONFIGS["gpt2"], n_layers=1, calib_tokens=8, seed=0, prune_last=True)
     x = torch.randint(0, CONFIGS["gpt2"].vocab, (1, 8), generator=torch.Generator().manual_seed(1))
     out = {}
-    for flag in ("0", "1"):
-        monkeypatch.setenv("PVI_FOLD_FAST", flag)
+    for flag in (False, True):
+        set_options(int8_fold=flag)
         params = proto.params_for(40, len(graph.mat_ops))
         v = proto.Verifier(graph.public(), params, "Kpre",
                            weights={op.name: (op.weight, op.bias) for op in graph.mat_ops})
@@ -79,6 +79,6 @@ def test_kpre_verdicts_are_unchanged(monkeypatch):
         pre = {k: (a.clone(), b.clone()) for k, (a, b) in v._pre.items()}
         res = proto.run_query(proto.Prover(graph), v, x, seed=3)
         out[flag] = (pre, res["accepted"])
-    assert out["0"][1] and out["1"][1]
-    for k in out["0"][0]:
-        assert torch.equal(out["0"][0][k][1], out["1"][0][k][1]), k
+    assert out[False][1] and out[True][1]
+    for k in out[False][0]:
+        assert torch.equal(out[False][0][k][1], out[True][0][k][1]), k

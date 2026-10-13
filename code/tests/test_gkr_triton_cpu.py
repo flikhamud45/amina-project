@@ -1,9 +1,13 @@
 """The GPU GKR prover's host logic (``pvi.v1.gkr_triton``) on the CPU, its kernels replaced by exact CPU
 stand-ins (``gkr_triton_mock``): the round structure (``h(0), h(1), h(2)``, the eq factor taken out), the suffix eq
 tables, and the bottom layer's path (full rows, ``T = 2^n_col``) give the eager prover's transcript byte for byte.
-The kernels themselves are checked against the same transcripts on a CUDA host (``test_gkr_triton.py``)."""
+The kernels themselves are checked against the same transcripts on a CUDA host (``test_gkr_triton.py``).  The
+module is the output of its generator (``tools/gen_gkr_triton.py``)."""
 
 from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
 
 import pytest
 import torch
@@ -51,3 +55,11 @@ def test_instance_leaves_with_and_without_the_bottom_path(mocked, rows, cols, n_
     a = gkr.prove(*pq, _ch(), "cut/2/")
     b = mocked.prove_leaves(d, w, n_col, n, alpha, _ch(), "cut/2/", device="cpu")
     assert a.to_bytes() == b.to_bytes() and torch.equal(a.point, b.point)
+
+
+def test_the_module_is_its_generators_output():
+    path = Path(__file__).resolve().parents[1] / "tools" / "gen_gkr_triton.py"
+    spec = importlib.util.spec_from_file_location("gen_gkr_triton", path)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    assert Path(gt.__file__).read_bytes().decode() == gen.render()

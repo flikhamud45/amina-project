@@ -4,7 +4,6 @@ checks messages as they arrive."""
 
 from __future__ import annotations
 
-import os
 import weakref
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -17,6 +16,7 @@ from pvi.commit.commitment import (HASH_BYTES, CommitmentPublic, GroupPublic, Ta
                                    group_leaf, map_threaded, row_leaves, table_leaves, verify_multiproof,
                                    verify_multiproofs)
 from pvi.core import hostmem
+from pvi import options
 from pvi.core.field import (_LIMB_MAX, P, combine_limbs, exact_chunk, exact_gemm_i64, field_matmul_mod,
                             int8_field_matmul, int8_left, int8_ok, int8_right, int8_small_matmul, int8_weight_matmul,
                             limbs_f64, min_max, small_matmul_mod, to_field)
@@ -26,9 +26,6 @@ from pvi.v0.params import _CUT_NARROW, Z_BOUND, SecurityParams
 from pvi.v0.streaming import ClaimUploads
 from pvi.v0.transcript import Challenger
 from pvi.v1.cut import delta_range as cut_delta_range
-
-_GPU_DECODE = os.environ.get("PVI_GPU_DECODE", "1") != "0"
-"""A GPU verifier decodes the claims on its device (``claimcodec.decode_device``); 0: on the host."""
 
 _RHS_CHUNK = 8192
 """Contraction block of the right-hand sides: that of ``small_matmul_mod``, which the
@@ -363,13 +360,13 @@ class Verifier:
         return w, b
 
     def _fold_local(self, op: MatOp, chi: torch.Tensor) -> torch.Tensor:
-        """``u = chi A`` (``[r, K]``, canonical) of op's int8 weights (A6, ``PVI_FOLD_FAST=0`` for the float64 path
-        alone): on a CPU the native exact field product (``native_kernels.field_matmul``, the weights read as int32,
+        """``u = chi A`` (``[r, K]``, canonical) of op's int8 weights (with the option ``int8_fold`` off, the float64
+        path alone): on a CPU the native exact field product (``native_kernels.field_matmul``, the weights read as int32,
         no transposed int64 copy), on a GPU int8 GEMMs (``weight_matmul_mod``), else the float64 limb products; all
         give the canonical residue of the same integers."""
         w, b = self._weights_on(op, chi.device)
         u = None
-        if os.environ.get("PVI_FOLD_FAST", "1") != "0" and w.dtype == torch.int8:
+        if options.current().int8_fold and w.dtype == torch.int8:
             if chi.device.type == "cpu":
                 u = native_kernels.field_matmul(chi.to(torch.int64).contiguous(), w.to(torch.int32))
             elif chi.is_cuda and int8_ok(chi.device):

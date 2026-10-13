@@ -1,6 +1,7 @@
-"""The native kernels of the CPU verifier's recomputed operations (plan B5) give the torch ops' integers.
+"""The native kernels of the CPU verifier's recomputed operations give the torch ops' integers.
 
-Each case runs the public helper twice, with the native kernels and with ``PVI_NATIVE_CHEAP`` off (the torch steps),
+Each case runs the public helper twice, with the native kernels and with the option ``native_cheap`` off (the torch
+steps),
 on contiguous operands and on the transposed claim views that a weight op's fold hands its readers, with values at
 and beyond the ranges the protocol checks (int64 arithmetic wraps the same way in both)."""
 import pytest
@@ -13,11 +14,11 @@ from pvi.models import decoder as tr
 pytestmark = pytest.mark.skipif(not native_kernels.available(), reason="no C++ compiler (or not Linux)")
 
 
-def _both(fn, monkeypatch):
+def _both(fn, set_options):
     got = fn()
-    monkeypatch.setattr(native_kernels, "_CHEAP", False)
+    set_options(native_cheap=False)
     want = fn()
-    monkeypatch.setattr(native_kernels, "_CHEAP", True)
+    set_options(native_cheap=True)
     return got, want
 
 
@@ -30,67 +31,67 @@ def _claim_view(g, rows, cols, lo, hi):
 
 @pytest.mark.parametrize("rows,cols", [(4096, 2048), (130, 7), (1, 1), (11008, 65)])
 @pytest.mark.parametrize("transposed", [True, False])
-def test_requant_and_residual(rows, cols, transposed, monkeypatch):
+def test_requant_and_residual(rows, cols, transposed, set_options):
     g = torch.Generator().manual_seed(rows + cols)
     z = _claim_view(g, rows, cols, -(1 << 29), 1 << 29)
     if not transposed:
         z = z.contiguous()
     m = torch.tensor(2_000_000_123, dtype=torch.int64)
-    got, want = _both(lambda: gr.requant(z, m, 30, -127, 127), monkeypatch)
+    got, want = _both(lambda: gr.requant(z, m, 30, -127, 127), set_options)
     assert torch.equal(got, want) and got.is_contiguous()
     a = torch.randint(-(1 << 22), 1 << 22, z.shape, generator=g, dtype=torch.int64)
-    got, want = _both(lambda: gr.residual_add(a, z, m, 30, (1 << 22) - 1), monkeypatch)
+    got, want = _both(lambda: gr.residual_add(a, z, m, 30, (1 << 22) - 1), set_options)
     assert torch.equal(got, want)
     huge = z * (1 << 40)                                                  # products that wrap int64
-    got, want = _both(lambda: gr.requant(huge, m, 30, -(1 << 40), 1 << 40), monkeypatch)
+    got, want = _both(lambda: gr.requant(huge, m, 30, -(1 << 40), 1 << 40), set_options)
     assert torch.equal(got, want)
 
 
-def test_requant_fn_and_glu_product(monkeypatch):
+def test_requant_fn_and_glu_product(set_options):
     g = torch.Generator().manual_seed(3)
     a = torch.randint(-127, 128, (1, 300, 640), generator=g, dtype=torch.int64)
     b = torch.randint(-127, 128, (1, 300, 640), generator=g, dtype=torch.int64)
     m = torch.tensor(123_456_789, dtype=torch.int64)
-    got, want = _both(lambda: gr.requant(a * b, m, 30, -127, 127), monkeypatch)
+    got, want = _both(lambda: gr.requant(a * b, m, 30, -127, 127), set_options)
     assert torch.equal(got, want)
     fn = gr.requant_fn(dict(kind="residual", mult=987_654_321, shift=30, res_max=(1 << 22) - 1))
     zt = _claim_view(g, 640, 300, -(1 << 29), 1 << 29)
-    got, want = _both(lambda: fn(a, zt), monkeypatch)
+    got, want = _both(lambda: fn(a, zt), set_options)
     assert torch.equal(got, want)
 
 
 @pytest.mark.parametrize("center", [False, True])
 @pytest.mark.parametrize("shape", [(1, 2048, 4096), (1, 7, 2048, 128), (1, 1, 768)])
-def test_norm(center, shape, monkeypatch):
+def test_norm(center, shape, set_options):
     g = torch.Generator().manual_seed(sum(shape) + center)
     x = torch.randint(-(1 << 22), 1 << 22, shape, generator=g, dtype=torch.int64)
     x[..., 0, :] = 0                                                      # a zero row: sigma = 1
     x[..., -1, :3] = (1 << 22) - 1
     gain = torch.randint(1, 1 << 23, (shape[-1],), generator=g, dtype=torch.int64)
-    got, want = _both(lambda: tr._norm_int(x, gain, center), monkeypatch)
+    got, want = _both(lambda: tr._norm_int(x, gain, center), set_options)
     assert torch.equal(got, want)
     wrapped = torch.full((1, 3, 64), 1 << 40, dtype=torch.int64)          # sums of squares wrap: torch's rules
-    got, want = _both(lambda: tr._norm_int(wrapped, gain[:64], center), monkeypatch)
+    got, want = _both(lambda: tr._norm_int(wrapped, gain[:64], center), set_options)
     assert torch.equal(got, want)
 
 
 @pytest.mark.parametrize("transposed", [True, False])
-def test_lut(transposed, monkeypatch):
+def test_lut(transposed, set_options):
     g = torch.Generator().manual_seed(5)
     x = _claim_view(g, 11008, 33, -300, 300)
     if not transposed:
         x = x.contiguous()
     table = torch.randint(-127, 128, (256,), generator=g, dtype=torch.int64)
-    got, want = _both(lambda: tr._lut(x, table), monkeypatch)
+    got, want = _both(lambda: tr._lut(x, table), set_options)
     assert torch.equal(got, want)
 
 
 @pytest.mark.parametrize("t,heads,dh,offset", [(2048, 32, 128, 0), (5, 8, 64, 0), (1, 32, 128, 2047), (3, 4, 80, 10)])
-def test_rope(t, heads, dh, offset, monkeypatch):
+def test_rope(t, heads, dh, offset, set_options):
     g = torch.Generator().manual_seed(t + heads + dh)
     x = torch.randint(-127, 128, (1, t, heads, dh), generator=g, dtype=torch.int64)
     x[0, 0, 0] = 127
-    got, want = _both(lambda: tr._rope(x, 10000.0, offset), monkeypatch)
+    got, want = _both(lambda: tr._rope(x, 10000.0, offset), set_options)
     assert torch.equal(got, want)
 
 
@@ -115,7 +116,7 @@ def test_field_matmul(r, n, m, transposed):
 
 
 @pytest.mark.parametrize("shapes", [[(4096, 2048), (11008, 2048)], [(5, 70_000), (300, 1)], [(768, 3000)]])
-def test_native_unpack_decodes_like_numpy(shapes, monkeypatch):
+def test_native_unpack_decodes_like_numpy(shapes, set_options):
     from pvi.v0 import claimcodec
     g = torch.Generator().manual_seed(len(shapes))
     claims = [(torch.randn(n, m, generator=g) * 40_000).round().to(torch.int64)
@@ -124,12 +125,12 @@ def test_native_unpack_decodes_like_numpy(shapes, monkeypatch):
     buf = claimcodec.encode(claims)
     rows, cols = [n for n, _ in shapes], [m for _, m in shapes]
     got = claimcodec.decode_torch(buf, rows, cols, workers=8)
-    monkeypatch.setattr(native_kernels, "_DECODE", False)
+    set_options(native_decode=False)
     want = claimcodec.decode_torch(buf, rows, cols, workers=8)
     assert all(torch.equal(a, b) and torch.equal(a, c) for a, b, c in zip(got, want, claims))
 
 
-def test_int32_claims_give_the_int64_results(monkeypatch):
+def test_int32_claims_give_the_int64_results(set_options):
     """A CPU verifier's int32 claims (and their transposed fold views) through requantisation, residual addition
     and the field products give the integers of the same claims as int64."""
     from pvi.core.field import P
@@ -147,11 +148,11 @@ def test_int32_claims_give_the_int64_results(monkeypatch):
     chi = torch.randint(0, P, (5, 4096), generator=g, dtype=torch.int64)
     assert torch.equal(native_kernels.field_matmul(chi, z32), native_kernels.field_matmul(chi, z64))
     assert torch.equal(native_kernels.field_matmul(chi[:, :600], z32.T), native_kernels.field_matmul(chi[:, :600], z64.T))
-    monkeypatch.setattr(native_kernels, "_CHEAP", False)                  # the torch steps widen int32 claims
+    set_options(native_cheap=False)                  # the torch steps widen int32 claims
     assert torch.equal(gr.requant(z32.T, m, 30, -127, 127), gr.requant(z64.T, m, 30, -127, 127))
 
 
-def test_native_unpack_on_corrupted_proofs_matches_numpy(monkeypatch):
+def test_native_unpack_on_corrupted_proofs_matches_numpy(set_options):
     """Random bit flips: the native unpack gives the numpy decoder's claims or its rejection, never another
     exception."""
     import numpy as np
@@ -176,9 +177,9 @@ def test_native_unpack_on_corrupted_proofs_matches_numpy(monkeypatch):
             b[int(rng.integers(0, len(b)))] ^= 1 << int(rng.integers(0, 8))
         b = bytes(b)
         got = run(b)
-        monkeypatch.setattr(native_kernels, "_DECODE", False)
+        set_options(native_decode=False)
         want = run(b)
-        monkeypatch.setattr(native_kernels, "_DECODE", True)
+        set_options(native_decode=True)
         assert (got is None) == (want is None)
         assert got is None or all(np.array_equal(x, y) for x, y in zip(got, want))
 
@@ -199,7 +200,7 @@ def test_native_attention_on_strided_views(hkv, rep, t, tq, dh):
     assert torch.equal(native_kernels.attention_core(q.contiguous(), k.contiguous(), v.contiguous(), lut, tq), want)
 
 
-def test_min_max_and_the_norm_with_large_denominators(monkeypatch):
+def test_min_max_and_the_norm_with_large_denominators(set_options):
     from pvi.core.field import min_max
     g = torch.Generator().manual_seed(17)
     for dtype in (torch.int32, torch.int64):
@@ -209,14 +210,14 @@ def test_min_max_and_the_norm_with_large_denominators(monkeypatch):
         assert native_kernels.min_max(a) == (int(a.min()), int(a.max())) == min_max(a)
     x = torch.randint(-(1 << 30), 1 << 30, (1, 3, 4), generator=g, dtype=torch.int64)   # sigma << 16 >= 2**40
     gain = torch.randint(1, 1 << 23, (4,), generator=g, dtype=torch.int64)
-    got, want = _both(lambda: tr._norm_int(x, gain, False), monkeypatch)
+    got, want = _both(lambda: tr._norm_int(x, gain, False), set_options)
     assert torch.equal(got, want)
 
 
 @pytest.mark.parametrize("hq,hkv,t,tq,dh", [(32, 32, 2048, 2048, 128), (32, 8, 600, 600, 128), (8, 2, 300, 1, 64),
                                             (6, 6, 513, 7, 80), (12, 4, 64, 64, 64)])
 @pytest.mark.parametrize("pmax", [255, 2047])
-def test_fused_attention_and_output_requantisation(hq, hkv, t, tq, dh, pmax, monkeypatch):
+def test_fused_attention_and_output_requantisation(hq, hkv, t, tq, dh, pmax, monkeypatch, set_options):
     """transformer._attention on a CPU verifier (one AVX-512 pass that also requantises the output into the final
     layout) against the per-group path (native attention core, then the torch requantisation)."""
     g = torch.Generator().manual_seed(hq + t + tq)
@@ -225,7 +226,7 @@ def test_fused_attention_and_output_requantisation(hq, hkv, t, tq, dh, pmax, mon
     v = torch.randint(-127, 128, (1, t, hkv * dh), generator=g, dtype=torch.int64)
     m_s, m_o = 1 << 20, 1_234_567 * 255 // pmax
     got = tr._attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax)
-    monkeypatch.setattr(native_kernels, "_AVX", False)
+    set_options(native_avx512=False)
     want = tr._attention(q, k, v, m_s, m_o, hq, hkv, dh, pmax)
     assert torch.equal(got, want) and got.shape == (1, tq, hq * dh)
     monkeypatch.setattr(native_kernels, "_library", lambda: None)            # the torch paths
@@ -252,26 +253,26 @@ def test_attention_with_the_arithmetic_exp_lookup(m_s, pattern, pmax):
     assert torch.equal(got, want)
 
 
-def test_residual_with_a_strided_base_norm_of_a_view_and_the_swiglu_product(monkeypatch):
+def test_residual_with_a_strided_base_norm_of_a_view_and_the_swiglu_product(set_options):
     """The residual stream's first base is the embedding's scaled fold (a transposed view); the norm may read a
     view; SwiGLU's requant(a * b) is one pass."""
     g = torch.Generator().manual_seed(23)
     base = _claim_view(g, 768, 300, -(1 << 12), 1 << 12) * 8                # [1, 300, 768], transposed strides
     z = _claim_view(g, 768, 300, -(1 << 29), 1 << 29)
     m = torch.tensor(876_543_210, dtype=torch.int64)
-    got, want = _both(lambda: gr.residual_add(base, z, m, 30, (1 << 22) - 1), monkeypatch)
+    got, want = _both(lambda: gr.residual_add(base, z, m, 30, (1 << 22) - 1), set_options)
     assert torch.equal(got, want) and got.is_contiguous()
     gain = torch.randint(1, 1 << 22, (768,), generator=g, dtype=torch.int64)
-    got, want = _both(lambda: tr._norm_int(base, gain, False), monkeypatch)
+    got, want = _both(lambda: tr._norm_int(base, gain, False), set_options)
     assert torch.equal(got, want)
     a = torch.randint(-127, 128, (1, 300, 2048), generator=g, dtype=torch.int64)
     b = torch.randint(-127, 128, (1, 300, 2048), generator=g, dtype=torch.int64)
-    got, want = _both(lambda: gr.requant_mul(a, b, m, 30, -127, 127), monkeypatch)
+    got, want = _both(lambda: gr.requant_mul(a, b, m, 30, -127, 127), set_options)
     assert torch.equal(got, want) and torch.equal(got, gr.requant(a * b, m, 30, -127, 127))
 
 
 @pytest.mark.parametrize("n,m,k", [(11008, 2048, 4096), (4096, 1, 11008), (7, 3, 5), (64, 65, 129), (130, 64, 2)])
-def test_int8_matmul_is_exact(n, m, k, monkeypatch):
+def test_int8_matmul_is_exact(n, m, k):
     g = torch.Generator().manual_seed(n + m + k)
     w = torch.randint(-128, 128, (n, k), generator=g, dtype=torch.int8)
     x = torch.randint(-128, 128, (m, k), generator=g, dtype=torch.int8)
@@ -281,13 +282,13 @@ def test_int8_matmul_is_exact(n, m, k, monkeypatch):
     assert torch.equal(native_kernels.int8_matmul(w, x), want)
 
 
-def test_matop_compute_with_the_native_gemm_matches_the_fp32_path(monkeypatch):
+def test_matop_compute_with_the_native_gemm_matches_the_fp32_path(set_options):
     from pvi.core.graph import MatOp
     g = torch.Generator().manual_seed(2)
     op = MatOp("mm", ("x",), "z", weight=torch.randint(-127, 128, (300, 1000), generator=g, dtype=torch.int8),
                bias=torch.randint(-4096, 4096, (300,), generator=g, dtype=torch.int64))
     x = torch.randint(-127, 128, (1, 37, 1000), generator=g, dtype=torch.int64)
     got, want = op.compute(x), None
-    monkeypatch.setattr(native_kernels, "_GEMM", False)
+    set_options(native_gemm=False)
     want = op.compute(x)
     assert torch.equal(got, want)

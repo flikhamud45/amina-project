@@ -1,20 +1,19 @@
-"""V-V1N parts 1-4 (``SP2027_PLAN2.md``): the fast V1 verifier gives today's results bit for bit.
+"""V1's optimised verifier gives the baseline verifier's results bit for bit (option ``v1_verifier``).
 
-* Parts 1-2 (:mod:`pvi.v1.products`): the window tables are affine plus a 0/1 step at every window width
-  ``2 .. 2^16`` that a multiplier gives (the identity the table products rest on); ``lw_times`` (table products and buckets) equals today's
-  ``[L ; W]`` float64 GEMM at random points of ``F_{p^8}``, with exceptions, across the window widths, for requant
-  and residual ops, in every value dtype and across row blocks and column chunks; ``xbar`` equals
-  ``extfield.int_times``; spans past :data:`buckets.SPAN` fall back.
-* The final check's extensions (``cut_protocol._final_claims``) and ``_xbar`` are the same field elements with
-  ``PVI_V1_BUCKETS`` = 0, 1 and scatter at random points, in mode C with row and col layouts, in Kpre, and on a
-  model with many exceptions.
-* Part 3: ``logup_gkr.verify_batch`` gives ``verify``'s outputs and transcript instance by instance and rejects
-  every tampered coefficient as ``verify`` does; one challenge (``Challenger._ext_one``) is today's, also on crafted
-  streams that hit both rejection rules; ``extfield.inv_many``; the batch-inverted logUp identity's verdict.
-* Part 4: the cut ops' values are kept as int8 (requant) and int16 (residual); out-of-range values are rejected
-  with today's label, also when the token rule fails first.
-* Every tamper of ``test_cut_protocol`` (and random trace-tampering and single-value ones) gets the same verdict
-  and label with ``PVI_V1_BUCKETS`` = 0, 1 and scatter.
+* The products by value (:mod:`pvi.v1.products`): the window tables are affine plus a 0/1 step at every window
+  width ``2 .. 2^16`` that a multiplier gives (the identity the table products rest on); ``lw_times`` equals the
+  baseline ``[L ; W]`` float64 GEMM at random points of ``F_{p^8}``, with exceptions, across the window widths, for
+  requant and residual ops, in every value dtype and across row blocks and column chunks; ``xbar`` equals
+  ``extfield.int_times``; spans past :data:`products.SPAN` fall back; the native kernels give the same integers.
+* The final check's extensions (``protocol._final_claims``) and ``_xbar`` are the same field elements under both
+  verifiers at random points, in mode C with row and col layouts, in Kpre, and on a model with many exceptions.
+* ``gkr.verify_batch`` gives ``verify``'s outputs and transcript instance by instance and rejects every tampered
+  coefficient as ``verify`` does; one challenge (``Challenger._ext_one``) is the baseline's, also on crafted streams
+  that hit both rejection rules; ``extfield.inv_many``; the batch-inverted logUp identity's verdict.
+* The cut ops' values are kept as int8 (requant) and int16 (residual); out-of-range values are rejected with the
+  baseline's label, also when the token rule fails first.
+* Every tamper of ``test_cut_protocol`` (and random trace-tampering and single-value ones) gets the same verdict and
+  label under both verifiers.
 """
 
 from __future__ import annotations
@@ -31,11 +30,11 @@ from pvi.core.field import P
 from pvi.models.decoder import build_decoder
 from pvi.v1 import cut as cutmod
 from pvi.v1 import gkr, logup
-from pvi.v1 import products as buckets
+from pvi.v1 import products
 from pvi.v1 import protocol as cp
 from test_plans import _TINY
 
-MODES = ("0", "1", "scatter")
+VERIFIERS = ("baseline", "optimised")
 E0 = torch.zeros(0, dtype=torch.int64)
 
 
@@ -53,7 +52,7 @@ def _multipliers(w):
     return sorted({lo, hi}) if lo <= hi else []
 
 
-# ------------------------------------------------------------------ parts 1-2: the products
+# ------------------------------------------------------------------ the products
 def test_the_windows_are_affine_plus_a_step_at_every_width():
     # lo(v) = lo(a) + w0 (v - a) + C(v), W(v) = w0 + D(v), D in {0, 1}, 0 <= C(v) <= v - a, at every window width
     # floor(2^30 / m) in 2 .. 2^16 that a multiplier gives (both ends of its multipliers: 76,294) over the int8 values
@@ -72,11 +71,11 @@ def test_the_windows_are_affine_plus_a_step_at_every_width():
     # the module's own tables on a sample (it asserts the identity itself), and a residual span
     for w in (2, 3, 5, 255, 256, 257, 4097, 65535, 65536):
         for m in _multipliers(w):
-            lo_a, w0, tab, lo_v, w_v = buckets._affine(_op("requant", m), -128, 127)
+            lo_a, w0, tab, lo_v, w_v = products._affine(_op("requant", m), -128, 127)
             assert w0 == w and torch.equal(lo_v, cutmod.lo(torch.arange(-128, 128), m))
             assert torch.equal(lo_a + w0 * tab[:, 0].long() + tab[:, 1].long(), lo_v)
             assert torch.equal(w0 + tab[:, 2].long(), w_v)
-    buckets._affine(_op("residual", 3 << 20), -6000, 6000)
+    products._affine(_op("residual", 3 << 20), -6000, 6000)
 
 
 def _widths():
@@ -97,8 +96,7 @@ def _case(g, op, n, t, a, b, n_exc):
     return s, idx, z
 
 
-@pytest.mark.parametrize("method", ["1", "scatter"])
-def test_lw_times_equals_the_float64_gemm_at_every_tested_width(method):
+def test_lw_times_equals_the_float64_gemm_at_every_tested_width():
     g = torch.Generator().manual_seed(1)
     for w in _widths():
         for m in _multipliers(w):
@@ -107,15 +105,14 @@ def test_lw_times_equals_the_float64_gemm_at_every_tested_width(method):
                 s, idx, z = _case(g, op, 5, 7, lo, hi, 3)
                 e = _rand_ext(g, 7)
                 want = cp._lw_e_old(s, idx, z, op, e, 7)
-                got = buckets.lw_times(s, idx, z, op, e, method)
+                got = products.lw_times(s, idx, z, op, e)
                 assert torch.equal(got[0], want[0]) and torch.equal(got[1], want[1]), (w, m, lo, hi)
 
 
-@pytest.mark.parametrize("method", ["1", "scatter"])
 @pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
-def test_lw_times_across_blocks_chunks_kinds_and_dtypes(method, dtype, monkeypatch):
+def test_lw_times_across_blocks_chunks_kinds_and_dtypes(dtype, monkeypatch):
     g = torch.Generator().manual_seed(2)
-    monkeypatch.setattr(buckets, "_BLOCK_BYTES", 1 << 12)            # many row blocks
+    monkeypatch.setattr(products, "_BLOCK_BYTES", 1 << 12)            # many row blocks
     cases = [("requant", 3_000_017, -128, 127, 9, 20000, 40),          # past one column chunk (2^14 at V = 256)
              ("requant", 1 << 16, -7, 9, 33, 50, 25),                  # an exact power of two: W constant
              ("residual", 70_001, -3000, 4000, 6, 1500, 0)]            # V = 7001: chunks of 512 columns
@@ -130,18 +127,18 @@ def test_lw_times_across_blocks_chunks_kinds_and_dtypes(method, dtype, monkeypat
         want = cp._lw_e_old(s, idx, z, op, e, t)
         sv = s.to(dtype)
         before = sv.clone()
-        got = buckets.lw_times(sv, idx, z, op, e, method)
+        got = products.lw_times(sv, idx, z, op, e)
         assert torch.equal(got[0], want[0]) and torch.equal(got[1], want[1]), (kind, m)
         assert torch.equal(sv, before), "lw_times changed its input"
-    wide = torch.tensor([[0, buckets.SPAN]])                           # a residual span past SPAN: today's code
-    assert buckets.lw_times(wide, E0, E0, _op("residual", 70_001, n_rows=1), _rand_ext(g, 2), method) is None
+    wide = torch.tensor([[0, products.SPAN]])                          # a residual span past SPAN: the baseline
+    assert products.lw_times(wide, E0, E0, _op("residual", 70_001, n_rows=1), _rand_ext(g, 2)) is None
 
 
 @pytest.mark.skipif(not __import__("pvi.kernels.native", fromlist=["available"]).available(),
                     reason="the native library needs a C++ compiler (Linux)")
 @pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
-def test_native_lw_equals_the_torch_table_products(dtype, monkeypatch):
-    """V-V1N's native kernel (``native_kernels.lw_affine``, used by ``lw_times`` on a CPU) gives the torch table
+def test_native_lw_equals_the_torch_table_products(dtype, set_options):
+    """The native kernel (``native_kernels.lw_affine``, used by ``lw_times`` on a CPU) gives the torch table
     products' integers, and declines out-of-range values and malformed operands."""
     from pvi.kernels import native as nk
     g = torch.Generator().manual_seed(5)
@@ -155,15 +152,15 @@ def test_native_lw_equals_the_torch_table_products(dtype, monkeypatch):
         if kind == "residual":
             idx, z = E0, E0
         e = _rand_ext(g, t)
-        monkeypatch.setattr(nk, "_LW", True)
-        got = buckets.lw_times(s.to(dtype), idx, z, op, e, "1")
-        monkeypatch.setattr(nk, "_LW", False)
-        want = buckets.lw_times(s.to(dtype), idx, z, op, e, "1")
+        set_options(v1_native=True)
+        got = products.lw_times(s.to(dtype), idx, z, op, e)
+        set_options(v1_native=False)
+        want = products.lw_times(s.to(dtype), idx, z, op, e)
         old = cp._lw_e_old(s, idx, z, op, e, t)
         for x, y, w in zip(got, want, old):
             assert torch.equal(x, y) and torch.equal(x, w), (kind, m, dtype)
-    monkeypatch.setattr(nk, "_LW", True)
-    lo_a, w0, tab, lo_v, w_v = buckets._affine(_op("requant", 3_000_017), -128, 127)
+    set_options(v1_native=True)
+    lo_a, w0, tab, lo_v, w_v = products._affine(_op("requant", 3_000_017), -128, 127)
     cd = tab[:, 1:3].to(torch.int64)
     e = _rand_ext(g, 4)
     ok = torch.tensor([[-128, 0, 5, 127]], dtype=dtype)
@@ -180,12 +177,11 @@ def test_native_lw_equals_the_torch_table_products(dtype, monkeypatch):
 @pytest.mark.skipif(not __import__("pvi.kernels.native", fromlist=["available"]).available(),
                     reason="the native library needs a C++ compiler (Linux)")
 @pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
-def test_native_xbar_equals_int_times(dtype, monkeypatch):
-    """V-V1N's native ``X^T e`` (``native_kernels.xbar``, used by ``buckets.xbar`` on a CPU) is
-    ``extfield.int_times``'s product, at the int extremes and across column blocks."""
+def test_native_xbar_equals_int_times(dtype, set_options):
+    """The native ``X^T e`` (``native.xbar``, used by ``products.xbar`` on a CPU) is ``extfield.int_times``'s product,
+    at the int extremes and across column blocks."""
     from pvi.kernels import native as nk
-    monkeypatch.setattr(nk, "_LW", True)
-    monkeypatch.delenv(buckets.ENV, raising=False)
+    set_options(v1_native=True)
     g = torch.Generator().manual_seed(7)
     hi = {torch.int8: 127, torch.int16: (1 << 15) - 1}.get(dtype, (1 << 16) - 1)
     for t, k in ((1, 1), (5, 300), (2048, 600)):
@@ -197,27 +193,26 @@ def test_native_xbar_equals_int_times(dtype, monkeypatch):
         e[0] = P - 1
         want = ef.int_times(x.to(torch.float64).T, e, 31)
         assert torch.equal(nk.xbar(x.to(dtype), e), want), (dtype, t, k)        # the kernel at the extremes
-        xs = x.clamp(-(buckets.SPAN // 2) + 1, buckets.SPAN // 2 - 1)            # buckets.xbar takes spans <= SPAN
-        got = buckets.xbar(xs.to(dtype), e, "1")
+        xs = x.clamp(-(products.SPAN // 2) + 1, products.SPAN // 2 - 1)         # products.xbar takes spans <= SPAN
+        got = products.xbar(xs.to(dtype), e)
         assert torch.equal(got, ef.int_times(xs.to(torch.float64).T, e, 31)), (dtype, t, k)
     assert nk.xbar(torch.zeros(3, 2, dtype=torch.int64), _rand_ext(g, 2)) is None        # e of the wrong length
 
 
-@pytest.mark.parametrize("method", ["1", "scatter"])
-def test_xbar_equals_int_times(method, monkeypatch):
+def test_xbar_equals_int_times(monkeypatch):
     g = torch.Generator().manual_seed(3)
-    monkeypatch.setattr(buckets, "_BLOCK_BYTES", 1 << 12)
+    monkeypatch.setattr(products, "_BLOCK_BYTES", 1 << 12)
     for t, k, bound in ((1, 5, 128), (33, 17, 128), (20000, 3, 128), (300, 4, (1 << 14) - 1), (64, 6, 3)):
         x = torch.randint(-bound, bound + 1, (t, k), generator=g)
         e = _rand_ext(g, t)
         want = ef.int_times(x.to(torch.float64).T, e, 31)
-        assert torch.equal(buckets.xbar(x, e, method), want), (t, k, bound)
+        assert torch.equal(products.xbar(x, e), want), (t, k, bound)
         if bound <= 128:                                               # an int8 input as it is
             xc = x.clamp(-128, 127)
-            assert torch.equal(buckets.xbar(xc.to(torch.int8), e, method),
+            assert torch.equal(products.xbar(xc.to(torch.int8), e),
                                ef.int_times(xc.to(torch.float64).T, e, 31))
-    assert buckets.xbar(torch.tensor([[1 << 16]]), _rand_ext(g, 1), method) is None
-    assert buckets.xbar(torch.tensor([[0], [buckets.SPAN]]), _rand_ext(g, 2), method) is None
+    assert products.xbar(torch.tensor([[1 << 16]]), _rand_ext(g, 1)) is None
+    assert products.xbar(torch.tensor([[0], [products.SPAN]]), _rand_ext(g, 2)) is None
 
 
 # ------------------------------------------------------------------ the final check, end to end
@@ -241,9 +236,9 @@ def _clamping_gpt(mode):
     return g, proto.Prover(g), v
 
 
-def _captured(prover, v, x, monkeypatch):
-    """One accepted V1 query's final-check arguments and derive's inputs, with ``PVI_V1_BUCKETS=1`` (so the cut
-    values are the narrow ones part 4 keeps)."""
+def _captured(prover, v, x, monkeypatch, set_options):
+    """One accepted V1 query's final-check arguments and derive's inputs, under the optimised verifier (so the cut
+    values are the narrow ones it keeps)."""
     got = {}
     real_final = cp._final_ok
     real_derive = v.derive
@@ -255,7 +250,7 @@ def _captured(prover, v, x, monkeypatch):
     def derive(xq, claims):
         got["inputs"] = real_derive(xq, claims)
         return got["inputs"]
-    monkeypatch.setenv(buckets.ENV, "1")
+    set_options(v1_verifier="optimised")
     monkeypatch.setattr(cp, "_final_ok", final)
     v.derive = derive
     try:
@@ -269,7 +264,7 @@ def _captured(prover, v, x, monkeypatch):
 
 @pytest.mark.parametrize("setup", [("gpt", "C", None), ("llama", "C", "cnn16c"), ("opt", "Kpre", None),
                                    ("clamping", "C", None), ("clamping", "Kpre", None)])
-def test_final_claims_and_xbar_are_the_same_field_elements_in_every_mode(setup, monkeypatch):
+def test_final_claims_and_xbar_are_the_same_field_elements_in_every_mode(setup, monkeypatch, set_options):
     kind, mode, policy = setup
     if kind == "clamping":
         g, prover, v = _clamping_gpt(mode)
@@ -277,14 +272,14 @@ def test_final_claims_and_xbar_are_the_same_field_elements_in_every_mode(setup, 
     else:
         g, prover, v = tcp._setup(kind, mode, policy, True, kind == "llama")
         x = tcp._x()
-    args, inputs = _captured(prover, v, x, monkeypatch)
+    args, inputs = _captured(prover, v, x, monkeypatch, set_options)
     verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points = args
     layouts = {o.layout for o in plan.ops}
     if kind == "llama":
         assert "col" in layouts                                       # cnn16c: col matrices are cut
     if kind == "clamping":
         assert sum(int(i.numel()) for i, _ in exc.values()) > 20
-    assert any(z.dtype == torch.int8 for z in values.values())         # part 4: the values as decoded
+    assert any(z.dtype == torch.int8 for z in values.values())         # the values as decoded
     mats = {op.name: op for op in verifier.graph.mat_ops}
     gen = torch.Generator().manual_seed(17)
     for trial in range(2):                                             # the query's own point, then random ones
@@ -295,17 +290,17 @@ def test_final_claims_and_xbar_are_the_same_field_elements_in_every_mode(setup, 
             alpha_r = _rand_ext(gen, 1)[0]
         points_r = [cp._points(plan, b, o[2]) for b, o in enumerate(outs_r)]
         results = {}
-        for m in MODES:
+        for m in VERIFIERS:
             for widen in (False, True):
                 vals = {k: z.to(torch.int64) for k, z in values.items()} if widen else values
-                monkeypatch.setenv(buckets.ENV, m)
+                set_options(v1_verifier=m)
                 cache = {}
                 xb = {o.name: cp._xbar(mats[o.name], inputs[o.name], points_r[b][0], cache)
                       for b in range(len(outs_r)) for o in plan.instance_ops(b)}
                 claims = list(cp._final_claims(verifier, plan, outs_r, alpha_r, vals, exc, cut_folds, items, ys,
                                                xb, points_r))
                 results[m, widen] = (xb, claims)
-        ref_xb, ref_claims = results["0", True]
+        ref_xb, ref_claims = results["baseline", True]
         for key, (xb, claims) in results.items():
             assert xb.keys() == ref_xb.keys() and all(torch.equal(xb[k], ref_xb[k]) for k in xb), key
             assert len(claims) == len(ref_claims) == len(outs)
@@ -313,10 +308,9 @@ def test_final_claims_and_xbar_are_the_same_field_elements_in_every_mode(setup, 
                 assert torch.equal(i1, i2) and torch.equal(q1, q2), key
         if trial == 0:                                                 # honest: the claims are the GKR's
             assert all(torch.equal(i, o[3]) and torch.equal(q, o[4]) for (i, q), o in zip(ref_claims, outs))
-    monkeypatch.delenv(buckets.ENV, raising=False)
 
 
-# ------------------------------------------------------------------ part 3: the GKR and the logUp identity
+# ------------------------------------------------------------------ the GKR and the logUp identity
 def _instances(seed, ns):
     g = torch.Generator().manual_seed(seed)
     alpha = _rand_ext(g, 1)[0]
@@ -389,8 +383,8 @@ def struct_bytes(n, flat):
     return struct.pack("<B", n) + ef.pack(flat)
 
 
-def test_one_challenge_is_drawn_as_today(monkeypatch):
-    # Challenger._ext_one (count 1, the GKR's rounds) against today's loop: random keys and labels, interactive
+def test_one_challenge_is_drawn_as_by_the_baseline(monkeypatch, set_options):
+    # Challenger._ext_one (count 1, the GKR's rounds) against the baseline loop: random keys and labels, interactive
     # and Fiat-Shamir, both nonbase settings; then crafted streams that hit both rejection rules and the next block
     for fs in (True, False):
         for nonbase in (False, True):
@@ -399,9 +393,9 @@ def test_one_challenge_is_drawn_as_today(monkeypatch):
             for i in range(400):
                 for c in (a, b):
                     c.absorb(b"m", i.to_bytes(4, "little"))
-                monkeypatch.setenv(buckets.ENV, "1")
+                set_options(v1_verifier="optimised")
                 x = a.ext(f"cut/0/r{i}", nonbase=nonbase)
-                monkeypatch.setenv(buckets.ENV, "0")
+                set_options(v1_verifier="baseline")
                 y = b.ext(f"cut/0/r{i}", nonbase=nonbase)
                 assert torch.equal(x, y) and x.dtype == y.dtype == torch.int64 and tuple(x.shape) == (1, ef.D)
             assert torch.equal(a.ext("many", 3), b.ext("many", 3))
@@ -464,17 +458,16 @@ def test_the_batch_inverted_logup_identity_has_the_cross_multiplied_verdict():
     assert logup.logup_ok([], torch.zeros(4, dtype=torch.int64), alpha, tau[:4], batched=True)
 
 
-# ------------------------------------------------------------------ part 4 and every tamper in every mode
-def _labels(scenarios, monkeypatch):
+# ------------------------------------------------------------------ narrow values and every tamper under both verifiers
+def _labels(scenarios, set_options):
     out = {}
-    for m in MODES:
-        monkeypatch.setenv(buckets.ENV, m)
+    for m in VERIFIERS:
+        set_options(v1_verifier=m)
         out[m] = [f() for f in scenarios]
-    monkeypatch.delenv(buckets.ENV, raising=False)
     return out
 
 
-def test_out_of_range_values_are_rejected_with_the_same_label(monkeypatch):
+def test_out_of_range_values_are_rejected_with_the_same_label(set_options):
     g, prover, v = tcp._setup("gpt", "C", None, True)
     x = tcp._x()
     plan, o = tcp._first_cut(v, x)
@@ -488,10 +481,10 @@ def test_out_of_range_values_are_rejected_with_the_same_label(monkeypatch):
         return lambda: cp.run_cut_query(prover, v, x, cheat={"witness": cheat})["rejected_at"]
     scenarios = [edit(o.name, o.hi + 1), edit(o.name, o.lo_ - 1), edit(o.name, 1 << 20), edit(res.name, hi + 1),
                  edit(res.name, (1 << 15) + 3), lambda: cp.run_cut_query(prover, v, x)["rejected_at"]]
-    got = _labels(scenarios, monkeypatch)
-    assert got["0"] == got["1"] == got["scatter"]
-    assert got["0"][:4] == ["range_or_shape"] * 4
-    assert got["0"][4] == "cut_final" and got["0"][5] is None          # in range, past int16: the windows differ
+    got = _labels(scenarios, set_options)
+    assert got["baseline"] == got["optimised"]
+    assert got["baseline"][:4] == ["range_or_shape"] * 4
+    assert got["baseline"][4] == "cut_final" and got["baseline"][5] is None    # in range, past int16: other windows
     # the token rule comes first, in every mode
     g, prover, v = tcp._setup("llama", "C", "cnn16c", True, True, gen=True)
     base = build_decoder(_TINY["llama"], calib_tokens=8, seed=1, prune_last=True)
@@ -506,11 +499,11 @@ def test_out_of_range_values_are_rejected_with_the_same_label(monkeypatch):
         values[head.name] = values[head.name].clone()
         values[head.name][:, 0] = 0
         values[head.name][(int(xg[0, -2]) + 1) % values[head.name].shape[0], 0] = 1 << 20    # another argmax
-    got = _labels([lambda: cp.run_cut_query(prover, v, xg, cheat={"witness": both})["rejected_at"]], monkeypatch)
-    assert got["0"] == got["1"] == got["scatter"] == ["token"]
+    got = _labels([lambda: cp.run_cut_query(prover, v, xg, cheat={"witness": both})["rejected_at"]], set_options)
+    assert got["baseline"] == got["optimised"] == ["token"]
 
 
-def test_every_tamper_has_the_same_label_in_every_mode(monkeypatch):
+def test_every_tamper_has_the_same_label_under_both_verifiers(set_options):
     g, prover, v = tcp._setup("gpt", "C", None, True)
     gk, prover_k, vk = tcp._setup("gpt", "Kpre", None, True)
     x = tcp._x()
@@ -563,9 +556,10 @@ def test_every_tamper_has_the_same_label_in_every_mode(monkeypatch):
         d = int(torch.randint(1, 1000, (1,), generator=gen)) * (1 if i % 2 else -1)
         scenarios.append(query(prover_k if i % 2 else prover, vk if i % 2 else v,
                                forward_kwargs={"tamper": tamper(op.name, at, d)}))
-    got = _labels(scenarios, monkeypatch)
-    assert got["0"] == got["1"] == got["scatter"], got
-    assert got["0"][:8] == ["cut_final", "kpre_y", "cut_logup", "cut_final", "cut_multiplicities", "cut_logup",
-                            got["0"][6], "kpre_y"] and got["0"][6] in ("cut_gkr", "cut_final")
-    assert got["0"][8] is None and got["0"][9] is None
-    assert all(label is not None for label in got["0"][10:])
+    got = _labels(scenarios, set_options)
+    base = got["baseline"]
+    assert base == got["optimised"], got
+    assert base[:8] == ["cut_final", "kpre_y", "cut_logup", "cut_final", "cut_multiplicities", "cut_logup", base[6],
+                        "kpre_y"] and base[6] in ("cut_gkr", "cut_final")
+    assert base[8] is None and base[9] is None
+    assert all(label is not None for label in base[10:])

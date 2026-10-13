@@ -38,9 +38,9 @@ def test_small_messages_are_absorbed_as_before(small_tree):
     assert _challenge(a) == _challenge(b)
 
 
-@pytest.mark.parametrize("threads", ["1", "8"])
-def test_tree_absorption_matches_its_serial_reference(small_tree, monkeypatch, threads):
-    monkeypatch.setenv("PVI_HASH_THREADS", threads)
+@pytest.mark.parametrize("threads", [1, 8])
+def test_tree_absorption_matches_its_serial_reference(small_tree, threads, set_options):
+    set_options(hash_threads=threads)
     g = torch.Generator().manual_seed(1)
     for n in (1 << 12, (1 << 12) + 1, 10_000, 1 << 15):
         blob = torch.randint(0, 256, (n,), generator=g, dtype=torch.uint8).numpy().tobytes()

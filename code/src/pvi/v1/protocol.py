@@ -25,13 +25,13 @@ GKR on a fork of the transcript and the verifier re-derives every challenge from
 
 from __future__ import annotations
 
-import os
 import struct
 import time
 
 import numpy as np
 import torch
 
+from pvi import options
 from pvi.commit.commitment import HASH_BYTES, multiproof_size
 from pvi.core import contention
 from pvi.core import extfield as ef
@@ -44,15 +44,13 @@ from pvi.v0.transcript import Challenger
 from pvi.v0.verifier import Verifier, _in_field, _sync
 from pvi.v1 import cut as cutmod
 from pvi.v1 import gkr, logup
-from pvi.v1 import products as buckets
+from pvi.v1 import products
 
 __all__ = ["run_cut_query", "cut_proof_bytes", "cut_plan", "pack_exceptions", "unpack_exceptions", "EXC_MAGIC"]
 
 EXC_MAGIC = b"PVX1"
 _FINAL_ROWS = 256
 """Rows of a cut op per block of the final check (``[L ; W]`` of 256 rows x 2,048 columns: 8 MB of float64)."""
-_GKR_TRITON = os.environ.get("PVI_GKR_TRITON", "1") != "0"
-"""A prover on a GPU with Triton runs the GKR there (``gkr_triton``: the same transcript); 0: the eager prover."""
 
 
 # ------------------------------------------------------------------ plans and the exceptions frame
@@ -169,14 +167,14 @@ def _dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 def _xbar(op, xin: torch.Tensor, e: torch.Tensor, cache: dict | None = None) -> torch.Tensor:
     """``[X ; 1] e`` ``[K (+1), 8]`` of a linear op's input ``xin`` (its ``[M, K]`` rows) at the column point ``e``:
-    V-V1N's product by value (:func:`buckets.xbar`, the same integers) unless ``PVI_V1_BUCKETS=0`` or the input is
-    not small, else ``extfield.int_times`` for entries below ``2^31`` and the general product otherwise; ops reading
+    the product by value of the optimised verifier (:func:`products.xbar`, the same integers) when the input is small,
+    else ``extfield.int_times`` for entries below ``2^31`` and the general product otherwise; ops reading
     the same input at the same point (q, k, v; gate, up) share it through ``cache``."""
     key = (xin.data_ptr(), tuple(xin.shape), id(e))
     if cache is not None and key in cache:
         out = cache[key]
     else:
-        out = buckets.xbar(xin.reshape(-1, op.n_in), e) if buckets.enabled() else None
+        out = products.xbar(xin.reshape(-1, op.n_in), e) if products.optimised() else None
         if out is None:
             x = xin.reshape(-1, op.n_in).cpu()
             if x.numel() and int(x.abs().max()) >= 1 << 31:          # not an int32-sized input: the general product
@@ -359,7 +357,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
             ch.absorb_large(b"cut/mult", mult_blob)
 
     # ---------------------------------------------------------------- M1 (verifier)
-    narrow = buckets.enabled()               # V-V1N part 4: the cut ops' values kept as int8 (int16) once in range
+    narrow = products.optimised()            # the cut ops' values kept as int8 (int16) once in range
     claims_v = _decoded_claims(verifier, blob, rows, x, out, torch.int32 if narrow else torch.int64)
     if claims_v is None:
         return "range_or_shape"
@@ -404,7 +402,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
             if verifier.mode == "C" else {})
     ch_p = ch.fork() if p.fiat_shamir else _Recorder(ch)
     on_gpu = False
-    if _GKR_TRITON and prover.device.type == "cuda":
+    if options.current().gkr_triton and prover.device.type == "cuda":
         from pvi.v1 import gkr_triton
         on_gpu = gkr_triton.available(prover.device)
     if on_gpu:
@@ -594,7 +592,7 @@ def _kpre_y_ok(verifier: Verifier, plan, ys: dict, xbars: dict) -> bool:
 
 
 def _lw_e_old(vals: torch.Tensor, idx: torch.Tensor, z: torch.Tensor, o, e: torch.Tensor, T: int):
-    """Today's ``(L e, W e)`` ``[N, 8]`` of a cut op (``PVI_V1_BUCKETS=0``, and spans past ``buckets.SPAN``):
+    """The baseline ``(L e, W e)`` ``[N, 8]`` of a cut op (also for spans past ``products.SPAN``):
     ``[L ; W]`` gathered in float64 from the window table, one exact GEMM with ``e``'s limbs (``|L| < 2^29 + 2^16 <
     2^30``, ``W <= 2^16``), in row blocks of :data:`_FINAL_ROWS`."""
     le_parts, we_parts = [], []
@@ -614,10 +612,10 @@ def _lw_e_old(vals: torch.Tensor, idx: torch.Tensor, z: torch.Tensor, o, e: torc
 def _final_claims(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points):
     """Per instance, in order (a generator): ``(I(rho), q)``, the leaf layer's extensions at the GKR's final point
     computed from the sent values, the exceptions and the folds, which check F3 compares with ``(P_hat, Q_hat)``:
-    ``q = alpha I - sum_l (S_l - chi (L e) + x chi (W e)) + (1 - I)``.  ``L e`` and ``W e`` ``[N, 8]`` are V-V1N's
-    products by value (:func:`buckets.lw_times`, the same integers) unless ``PVI_V1_BUCKETS=0`` or a residual op's
-    values span past ``buckets.SPAN`` (today's :func:`_lw_e_old`); then ``chi (L e)`` and ``chi (W e)`` are inner
-    products."""
+    ``q = alpha I - sum_l (S_l - chi (L e) + x chi (W e)) + (1 - I)``.  ``L e`` and ``W e`` ``[N, 8]`` are the
+    optimised verifier's products by value (:func:`products.lw_times`, the same integers), or :func:`_lw_e_old` for
+    the baseline verifier and for a residual op whose values span past ``products.SPAN``; then ``chi (L e)`` and
+    ``chi (W e)`` are inner products."""
     us_row = {}
     for key, members in items:
         o = plan.op(members[0])
@@ -625,7 +623,7 @@ def _final_claims(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys
             us_row[o.name] = cut_folds[key].T.contiguous()            # [K (+1), 8]
     x_gen = ef.gen()
     vdev = torch.device(verifier.device)
-    new = buckets.enabled()
+    new = products.optimised()
     for b, (p0, q0, rho, p_hat, q_hat) in enumerate(outs):
         e, chi_full = points[b]
         total = ef.const(0)
@@ -633,7 +631,7 @@ def _final_claims(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys
             chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
             idx, z = exc[o.name]
             vals = values[o.name].to(vdev)
-            got = buckets.lw_times(vals, idx, z, o, e) if new else None
+            got = products.lw_times(vals, idx, z, o, e) if new else None
             le_vec, we_vec = got if got is not None else _lw_e_old(vals, idx, z, o, e, plan.T)
             s_l = _dot(us_row[o.name], xbars[o.name]) if o.name in us_row else _dot(chi, ys[o.name])
             le, we = _dot(chi, le_vec), _dot(chi, we_vec)

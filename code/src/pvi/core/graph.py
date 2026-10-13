@@ -26,7 +26,6 @@ import copy
 import dataclasses
 import functools
 import hashlib
-import os
 import struct
 import types
 from dataclasses import dataclass, field
@@ -109,10 +108,6 @@ def op_fn(impl: Callable, **consts) -> OpFn:
 def identity_op(a: torch.Tensor) -> torch.Tensor:
     """The input unchanged (stand-in ops of the float evaluations)."""
     return a
-# PVI_LEGACY_WEIGHT_KEY=1 restores the weight cache of the earliest run (raw/): its key was 'cuda' for the
-# prover and 'cuda:0' for the tensors, so every committed-weights query re-uploaded the model twice.
-# Only for the _nofix controls of bench.py, which measure what the fix changed.
-_LEGACY_WEIGHT_KEY = os.environ.get("PVI_LEGACY_WEIGHT_KEY") == "1"
 _FP32_EXACT = 1 << 24
 
 
@@ -339,9 +334,7 @@ class MatOp(Op):
         # One cache key per physical device: torch.device("cuda") (the Prover's) and a
         # tensor's cuda:0 are the same GPU, and a mismatch re-uploads every weight matrix.
         device = torch.device(device)
-        if _LEGACY_WEIGHT_KEY:
-            pass
-        elif device.type == "cuda" and device.index is None:
+        if device.type == "cuda" and device.index is None:
             device = torch.device("cuda", torch.cuda.current_device())
         elif device.type == "cpu":
             device = torch.device("cpu")

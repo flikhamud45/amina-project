@@ -9,6 +9,7 @@ import time
 import numpy as np
 import torch
 
+from pvi import options
 from pvi.commit.commitment import HASH_BYTES
 from pvi.core import contention, hostmem
 from pvi.kernels import native as native_kernels
@@ -16,7 +17,7 @@ from pvi.v0 import claimcodec
 from pvi.v0.prover import Prover
 from pvi.v0.streaming import wire_claim, wire_openings, wire_rows
 from pvi.v0.transcript import Challenger
-from pvi.v0.verifier import _GPU_DECODE, Verifier, _sync
+from pvi.v0.verifier import Verifier, _sync
 
 
 def _tensor_blob(t: torch.Tensor) -> bytes:
@@ -172,8 +173,8 @@ def _decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torc
     ``rows`` (``None``: malformed), as ``dtype`` host tensors (int32 in pinned memory with ``pin``),
     timed as ``verify_decode``.  Each claim must have the shape the query gives it, which the decoders
     check before they allocate the claims.  A verifier on a GPU with Triton decodes the claims there
-    (``claimcodec.decode_device``: int32 device tensors, the same integers and checks; ``PVI_GPU_DECODE=0``
-    decodes on the host)."""
+    (``claimcodec.decode_device``: int32 device tensors, the same integers and checks; with the option
+    ``gpu_decode`` off on the host)."""
     sent = verifier._sent_ops()
     mats = [op for op in sent if op.name not in verifier.tables]
     tables = [op for op in sent if op.name in verifier.tables]
@@ -186,7 +187,7 @@ def _decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torc
         m_of = dict(zip((op.name for op in verifier.graph.mat_ops), cols))
         shapes = [op.n_rows for op in mats], [m_of[op.name] for op in mats]
         try:
-            if vdev.type == "cuda" and _GPU_DECODE and claimcodec.decode_device_ok(vdev):
+            if vdev.type == "cuda" and options.current().gpu_decode and claimcodec.decode_device_ok(vdev):
                 dec = claimcodec.decode_device(blob, *shapes, vdev)
                 dec = dec if dtype == torch.int32 else [d.to(dtype) for d in dec]
                 _sync(vdev)

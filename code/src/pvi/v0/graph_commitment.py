@@ -40,15 +40,15 @@ class GraphCommitment(dict):
         return {name: t.public for name, t in self.tables.items()}
 
 
-def commit_graph(graph: IntGraph, rate: int, device="cpu", *, policy: str = "paper",
+def commit_graph(graph: IntGraph, rate: int, device="cpu", *, policy: str = "per-op",
                  model_ops=None, cache=None, cache_checks: int = 4) -> GraphCommitment:
     """Commit every weight op, after checking honest claims fit the range check: on a tree of its
-    own at ``rate`` (``policy="paper"``, the report), or as the commitment plan of ``policy`` lays
+    own at ``rate`` (``policy="per-op"``), or as the commitment plan of ``policy`` lays
     the ops out (:func:`plans.plan_commitment`, with ``rate`` its base rate; ``model_ops``: the
     whole model's op shapes when ``graph`` is a build of a few of its blocks).
 
-    ``cache``: the setup cache's folder (:mod:`setup_cache`); ``None`` reads ``PVI_SETUP_CACHE`` (unset: no cache),
-    ``False`` never uses one. On a hit every tree is rebuilt from stored leaf digests, after recomputing
+    ``cache``: the setup cache's folder (:mod:`pvi.commit.setup_cache`), or ``None`` (the default) for none. On a
+    hit every tree is rebuilt from stored leaf digests, after recomputing
     ``cache_checks`` random leaves of each from the weights; the result is the same commitment (same roots,
     openings and proofs). The result's ``setup_cache`` says ``"off"``, ``"miss"`` (computed, then stored) or
     ``"hit"``."""

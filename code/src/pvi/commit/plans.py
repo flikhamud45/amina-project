@@ -443,7 +443,7 @@ def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None,
                     setup_budget: float | None = None) -> CommitmentPlan | None:
     """The plan of ``policy`` for weight ops ``ops`` (objects with ``name``, ``n_rows``,
     ``row_length``, ``layout``, ``inputs`` and ``has_bias``: a graph's ``MatOp``s or
-    ``analytic.decoder_shapes``), in their order; ``None`` for ``"paper"``.  ``rate`` is the base
+    ``cost.decoder_shapes``), in their order; ``None`` for ``"per-op"`` (every weight op on a tree of its own).  ``rate`` is the base
     rate (the report's, 4).
 
     ``model_ops``: the whole model's ops when ``ops`` are those of a build of a few of its
@@ -458,7 +458,7 @@ def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None,
     if policy == "auto":
         chosen = auto_policy(ops if model_ops is None else model_ops, rate=rate, setup_budget=setup_budget)
         return replace(plan_commitment(ops, chosen, rate=rate, model_ops=model_ops), requested="auto")
-    if policy == "paper":
+    if policy == "per-op":
         return None
     ops = list(ops)
     model = ops if model_ops is None else list(model_ops)

@@ -30,7 +30,7 @@ def _setup(kind, mode, policy=None, fs=False, pruned=False, gen=False):
     if gen:
         g = with_lm_positions(g, 3)
     if mode == "C":
-        coms = proto.commit_graph(g, 4, policy=policy or "paper")
+        coms = proto.commit_graph(g, 4, policy=policy or "per-op")
         params = proto.params_for(40, len(g.mat_ops), fiat_shamir=fs, plan=coms.plan, cut=True)
         v = proto.Verifier(g.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
                            tables=coms.table_publics)

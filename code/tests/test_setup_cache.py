@@ -1,8 +1,8 @@
-"""PS2 (c): the setup cache (``protocol.commit_graph(cache=...)``, :mod:`pvi.commit.setup_cache`).
+"""The setup cache (``commit_graph(cache=...)``, :mod:`pvi.commit.setup_cache`).
 
 A commitment rebuilt from stored leaves is the fresh commitment: the same roots and trees, and the same proofs and
 verdicts; the key separates different weights and plans; a damaged file is a miss, never a wrong commitment; and
-without ``PVI_SETUP_CACHE`` (the default) nothing is read or written."""
+without a cache folder (the default) nothing is read or written."""
 from __future__ import annotations
 
 import copy
@@ -45,7 +45,7 @@ def _query(graph, coms, x, fiat_shamir):
     return proto.run_query(proto.Prover(graph, commitments=coms), v, x, seed=None if fiat_shamir else 1)
 
 
-@pytest.mark.parametrize("kind,policy", [("gpt", "paper"), ("llama", "R8"), ("llama", "R8c"), ("qwen", "tightc"),
+@pytest.mark.parametrize("kind,policy", [("gpt", "per-op"), ("llama", "R8"), ("llama", "R8c"), ("qwen", "tightc"),
                                          ("gpt", "cnn12c")])
 def test_a_cached_commitment_is_the_fresh_one(tmp_path, kind, policy):
     graph, x = _model(kind)
@@ -105,14 +105,12 @@ def test_damaged_files_are_misses_not_wrong_commitments(tmp_path):
     assert proto.commit_graph(graph, 4, policy="R8c", cache=tmp_path).setup_cache == "miss"
 
 
-def test_off_by_default_and_on_with_the_environment(tmp_path, monkeypatch):
+def test_off_by_default_and_on_with_a_folder(tmp_path):
     graph, _ = _model("gpt")
-    monkeypatch.delenv(setup_cache.ENV, raising=False)
     assert proto.commit_graph(graph, 4, policy="R8").setup_cache == "off"
-    monkeypatch.setenv(setup_cache.ENV, str(tmp_path / "cache"))
-    assert proto.commit_graph(graph, 4, policy="R8").setup_cache == "miss"
-    assert proto.commit_graph(graph, 4, policy="R8").setup_cache == "hit"
-    assert proto.commit_graph(graph, 4, policy="R8", cache=False).setup_cache == "off"
+    assert proto.commit_graph(graph, 4, policy="R8", cache=tmp_path / "cache").setup_cache == "miss"
+    assert proto.commit_graph(graph, 4, policy="R8", cache=tmp_path / "cache").setup_cache == "hit"
+    assert proto.commit_graph(graph, 4, policy="R8", cache=None).setup_cache == "off"
 
 
 def test_the_files_hold_only_digests(tmp_path):

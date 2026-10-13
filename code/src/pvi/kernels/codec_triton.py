@@ -27,12 +27,13 @@ a directory holding a copy of them (``docs/improvements/I_server_setup.md``).
 
 from __future__ import annotations
 
-import os
 import sysconfig
 
 import torch
 
-_INCLUDE = os.environ.get("PVI_PY_INCLUDE")
+from pvi import options
+
+_INCLUDE = options.python_include()
 if _INCLUDE:
     _paths = sysconfig.get_paths
     sysconfig.get_paths = lambda *a, **k: {**_paths(*a, **k), "include": _INCLUDE}

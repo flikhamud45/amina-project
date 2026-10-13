@@ -197,7 +197,7 @@ def _merkle_jobs(rnd):
     return jobs, want
 
 
-def test_merkle_worker_processes_give_the_same_results(monkeypatch):
+def test_merkle_worker_processes_give_the_same_results(monkeypatch, set_options):
     jobs, want = _merkle_jobs(random.Random(3))
     jobs.append((jobs[0][0], jobs[0][1], jobs[0][2], [0] + jobs[0][3][1:]))   # not bytes: raises
     sequential = com.verify_multiproofs(jobs, workers=2)                      # off by default
@@ -207,7 +207,7 @@ def test_merkle_worker_processes_give_the_same_results(monkeypatch):
     views = jobs + [(root, depth, lv, [memoryview(p) for p in pr]) for root, depth, lv, pr in jobs[:-1]]
     sequential_views = com.verify_multiproofs(views, workers=2)
     assert [ok for ok, _ in sequential_views] == want + [False] + want
-    monkeypatch.setattr(com, "MERKLE_PROCESSES", True)
+    set_options(merkle_processes=True)
     monkeypatch.setattr(com, "MERKLE_PROCESSES_MIN_HASHES", 1)
     for some, want_some in ((jobs, sequential), (views, sequential_views)):    # in the workers; checked here
         parallel = com.verify_multiproofs(some, workers=2)
@@ -215,7 +215,7 @@ def test_merkle_worker_processes_give_the_same_results(monkeypatch):
         assert [type(exc) for _, exc in parallel] == [type(exc) for _, exc in want_some]
 
 
-def test_merkle_worker_processes_fall_back_when_the_pool_breaks(monkeypatch):
+def test_merkle_worker_processes_fall_back_when_the_pool_breaks(monkeypatch, set_options):
     from concurrent.futures import Future
     from concurrent.futures.process import BrokenProcessPool
 
@@ -233,7 +233,7 @@ def test_merkle_worker_processes_fall_back_when_the_pool_breaks(monkeypatch):
             fut.set_exception(BrokenProcessPool("a worker died"))
             return fut
 
-    monkeypatch.setattr(com, "MERKLE_PROCESSES", True)
+    set_options(merkle_processes=True)
     monkeypatch.setattr(com, "MERKLE_PROCESSES_MIN_HASHES", 1)
     monkeypatch.setitem(com._PROCESS_POOLS, 3, Broken())
     assert com.verify_multiproofs(jobs, workers=3) == [(ok, None) for ok in want]

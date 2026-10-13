@@ -30,8 +30,12 @@ Sub-packages:
 
 ``pvi.attacks``, ``pvi.mnist``
     The single-neuron and backdoor attacks, and the MNIST networks they are measured on.
+
+``pvi.options``
+    The implementation options: which of several equivalent code paths (native or torch kernels, fused GPU kernels,
+    V1's optimised or baseline verifier) computes a step; every script exposes them as command-line flags.
 """
 
-__all__ = ["attacks", "baseline", "commit", "core", "kernels", "mnist", "models", "v0", "v1"]
+__all__ = ["attacks", "baseline", "commit", "core", "kernels", "mnist", "models", "options", "v0", "v1"]
 
 __version__ = "2.0.0"

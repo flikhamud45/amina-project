@@ -195,7 +195,6 @@ def test_the_native_cpu_attention_gives_the_int32_cores_integers(hq, hkv, t, tq,
     lut = tr._exp_lut(m_s, "cpu")
     want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cpu", tq), pmax)
     assert torch.equal(native_kernels.attention_core(q, k, v, lut, tq, pmax=pmax), want)
-    assert torch.equal(native_kernels.attention_core_hybrid(q, k, v, lut, tq, pmax), want)   # BLAS products, native softmax
     q16 = q.to(torch.int16)                                       # the scalar kernel (int16 copies, no AVX-512)
     assert torch.equal(native_kernels.attention_core(q16, k.to(torch.int16), v.to(torch.int16), lut, tq, pmax=pmax),
                        want)

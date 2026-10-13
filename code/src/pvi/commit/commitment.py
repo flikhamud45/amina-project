@@ -34,13 +34,13 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import sys
 from dataclasses import dataclass, field
 
 import numpy as np
 import torch
 
+from pvi import options
 from pvi.core.field import (_LIMB_MAX, NP_SMALL, P, exact_chunk, field_matmul_mod, np_field_matmul_mod, power_table,
                             root_of_unity, rs_encode, to_field, weight_matmul_mod)
 
@@ -73,13 +73,6 @@ __all__ = [
 ]
 
 HASH_BYTES = 32
-MERKLE_PROCESSES = os.environ.get("PVI_MERKLE_PROCESSES") == "1"
-"""Opt-in (``PVI_MERKLE_PROCESSES=1``): a multi-threaded verifier checks its multiproofs in
-worker processes (:func:`verify_multiproofs`).  Off by default: the workers are started by a
-fork server (Linux, macOS) or spawned (Windows), never forked from the verifier itself, which
-runs threads (torch's, the leaf hashing's, the streaming verifier's host thread) and could
-deadlock a forked child; so the calling script needs an ``if __name__ == "__main__"`` guard
-(both start methods import it), and extra processes are a deployment choice."""
 MERKLE_PROCESSES_MIN_HASHES = 6000
 """Fewer sibling hashes than this in one check are not worth the inter-process traffic."""
 
@@ -220,8 +213,10 @@ _PROCESS_POOLS: dict = {}
 
 
 def _process_pool(workers: int):
-    """The worker processes of :func:`verify_multiproofs` (one pool per worker count), started
-    as :data:`MERKLE_PROCESSES` says."""
+    """The worker processes of :func:`verify_multiproofs` (one pool per worker count), started by a fork server
+    (Linux, macOS) or spawned (Windows), never forked from the verifier itself, which runs threads (torch's, the
+    leaf hashing's, the streaming verifier's host thread) and could deadlock a forked child; so the calling script
+    needs an ``if __name__ == "__main__"`` guard (both start methods import it)."""
     if workers not in _PROCESS_POOLS:
         import multiprocessing
         from concurrent.futures import ProcessPoolExecutor
@@ -235,13 +230,13 @@ def verify_multiproofs(jobs: list, workers: int = 1) -> list[tuple[bool, Excepti
     """``(verify_multiproof(*job), exception or None)`` for every ``(root, depth, leaves,
     proof)`` job, in order.
 
-    SHA-256 of a 72-byte node holds the GIL, so threads cannot share this work.  With
-    :data:`MERKLE_PROCESSES`, ``workers > 1`` and enough hashes, the jobs go to ``workers``
+    SHA-256 of a 72-byte node holds the GIL, so threads cannot share this work.  With the option
+    ``merkle_processes`` (:mod:`pvi.options`; off by default), ``workers > 1`` and enough hashes, the jobs go to ``workers``
     worker processes in batches balanced by proof length.  A batch that does not reach a
     worker or come back (a proof entry that cannot be pickled, a pool that broke) is checked
     in this process instead, so every result is the same function of the same job.
     """
-    if (not MERKLE_PROCESSES or workers <= 1 or len(jobs) < 2
+    if (not options.current().merkle_processes or workers <= 1 or len(jobs) < 2
             or sum(len(job[3]) for job in jobs) < MERKLE_PROCESSES_MIN_HASHES):
         return _verify_jobs(jobs)
     from concurrent.futures.process import BrokenProcessPool

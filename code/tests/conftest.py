@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from pvi import options
 from pvi.baseline.path.commitments import ModelCommitment
 from pvi.baseline.path.params import ProtocolParams
 from pvi.baseline.path.prover import Prover
@@ -94,3 +95,12 @@ def protocol_pair():
         )
 
     return make
+
+
+@pytest.fixture
+def set_options():
+    """``set_options(name=value, ...)``: implementation options (:mod:`pvi.options`) for this test only; each call
+    changes the options in force, and the test's end restores the previous ones."""
+    saved = options.current()
+    yield lambda **changes: options.configure(**changes)
+    options.configure(saved)
