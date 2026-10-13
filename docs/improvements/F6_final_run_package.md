@@ -186,6 +186,16 @@ tab_h2d, tab_spread, tab_counts; the full-model tables stay empty by design), re
 line, and found "0 jobs without results" against `F6_dryrun_rehearsal.txt` (exit status 0). The full rehearsal of
 Wed-Thu 28-29 Oct repeats this on the freeze candidate.
 
+**Second partial rehearsal (12-13 Oct, server clone s15 at 5aad8ae/26089bb, `rehearsal2_2080ti`; jobs
+1015794-1015815).** It tests the package after PS2 (c): every mode-C cell under cnn18c with the setup cache, the
+quality tier's two Llama jobs (in rehearsal, the tiny Qwen3-vocabulary model), the real tier's licence switch. The
+smoke ended in SMOKE OK (31 tests); all 22 jobs completed with exit 0; `aggregate.py` turned 821 raw bench records into
+488 summary rows; `sp2027_numbers.py --rehearsal --check` read 54 records from 16 files, records of every tier, filled
+the 2-block tables (tab_eval_v1 14 cells, tab_serve 42, tab_gen 16, tab_batch 12, tab_memory 49, tab_real 9,
+tab_setup_time 6, tab_quality 12, tab_h2d 12, tab_spread 20, tab_counts 13), no `PARSE` or `CHECK FAILED` line,
+"0 jobs without results", exit status 0. No package bug this time. (The smoke started on 5aad8ae and the later jobs
+ran 26089bb, whose only change is the commit lookup without a `git` binary.)
+
 ### 4.3 No SLURM
 
 `PVI_LOCAL=1` runs every job here in the foreground, one after another, each within its time limit and logged under

@@ -3,7 +3,9 @@
 Plan 2 item F3b (`SP2027_PLAN2.md` Sec. 3.2; reviewer points on real weights, C-W2/C-Q3). Code: d637f3e (the real
 Llama path in `perf.py`, `v1_bytes.py` and `gen_bench.py`), 9ab8033 (the shape check of a Llama head, the recipe in
 the records); tests `code/tests/test_f3b_real_llama.py` (6). Status (12 Oct 2026): plumbing merged and tested; the
-V1 bytes of the full OpenLLaMA-7B at 2,048 tokens measured; the v0 timings and generated responses run on the cluster.
+full OpenLLaMA-7B measured end to end on the 2080 Ti / Xeon nodes (v0 in Kpre and C at 64 tokens, Kpre at 2,048,
+V1 bytes at 2,048, each next to its random twin; every query accepted, every tamper rejected); generated responses do
+not fit the 11 GB card (a CPU run is job 1018663).
 
 ## 1. Why
 
@@ -62,8 +64,9 @@ x5.3 (F2b-Q), so the plan's default moved to OpenLLaMA-7B (12 Oct).
 * V1's own parts stay small: u 40.8 MB, the cut's exceptions 1.5 MB, multiplicities 0.3 MB, GKR 0.8 MB.
 * The build (CPU calibration of the fp32 checkpoint on four 2,048-token windows, prefix search) takes 50 min and
   43 GB of host memory; the query peaks at 86 GB.
-* This run's real-weight records carry `accounting_ok: false` only because of the shape check of Sec. 2 (fixed);
-  the rerun with the fix is job 1016884.
+* This run's real-weight records carried `accounting_ok: false` only because of the shape check of Sec. 2. The
+  rerun with the fix (job 1016884, 9ab8033) gives the same graph digest (`050f8735...`) and bytes, no shape problem,
+  `accounting_ok: true` and `"recipe": "main"`.
 
 ### 4.2 v0 in Kpre and C at 64 tokens, Kpre at 2,048 tokens, random twins (jobs 1015750, 1015751, 1015752)
 
@@ -74,18 +77,42 @@ the native CPU verifier on 8 Xeon threads. Three WikiText-2 test windows:
 | | accepted | tampers rejected | proof | prover (CPU) | verifier (CPU, 8 threads) |
 |---|---|---|---:|---:|---:|
 | OpenLLaMA-7B, main recipe | 3 / 3 | 9 / 9 (single value, output logit, last hidden; all at Freivalds) | 5,350.8 MB | 242.6 s [229.2, 251.2] | 21.0 s [20.4, 21.1] |
-| random weights (EV inputs, job 1007816) | | | 6,433.7 MB (claims) | | 19.6 s |
+| random weights (job 1015752, the same fallback) | 3 / 3 | 9 / 9 | 6,433.7 MB | 209.4 s [198.4, 236.0] | 20.6 s [20.4, 22.5] |
 
-The verifier's phases: decode 3.0 s, derive 11.4 s, products 6.6 s. The real-weight verifier is 7% slower than the
-random-weight one, and its proof 17% smaller. Peak host memory 81 GB (build 43 GB, 48 min).
+The verifier's phases: decode 3.0 s, derive 11.4 s, products 6.6 s. On real weights the verifier takes 2% longer, the
+CPU prover 16% longer, and the proof is 17% smaller. (The EV inputs' 19.6 s for random weights is an earlier job,
+1007816, whose prover ran on the GPU.) Peak host memory 81 GB (build 43 GB, 48 min).
 The record's `git` field reads 9ab8033 although the process ran 26089bb's code: `perf.py` read the commit after the
 48-minute build, during which the clone was updated (the two commits differ only in the shape check and the recipe
 field, neither used here); `perf.py` now reads the commit first (6cdd0e9). Its `recipe` field says "legacy" for the
 same reason (the main recipe was used).
 
-[64-token cells and the random twin pending]
+**Full OpenLLaMA-7B, 64 tokens, Fiat-Shamir (job 1015750, s-004; random twin job 1015752).** GPU prover, native CPU
+verifier on 8 Xeon threads, mode C under cnn18c with the setup cache, three WikiText-2 test windows, three tampers of
+each kind:
 
-### 4.3 Generated responses (job 1015754)
+| 64 tokens | mode | accepted | tampers rejected | proof | prover (GPU) | verifier (CPU) |
+|---|---|---|---|---:|---:|---:|
+| OpenLLaMA-7B | Kpre | 3 / 3 | 9 / 9 (Freivalds) | 162.5 MB | 0.307 s | 1.264 s |
+| random | Kpre | 3 / 3 | 9 / 9 (Freivalds) | 196.4 MB | 0.301 s | 1.146 s |
+| OpenLLaMA-7B | C | 3 / 3 | 9 / 9 (column code 5, Freivalds 4) | 265.9 MB | 1.039 s | 1.428 s |
+| random | C | 3 / 3 | 9 / 9 (column code 5, Freivalds 4) | 299.8 MB | 1.053 s | 1.365 s |
+
+* Mode C's proof: claims 162.8 MB, opened columns 93.5 MB, u 9.6 MB, paths 0.1 MB (random: claims 196.7 MB, the
+  rest equal). The random-weight 299.8 MB agrees with the EV byte model (302.9 MB with the measured 64-token claims of
+  another window) and with the cache check (299.6 MB).
+* Times: the provers agree within 2%; the real-weight verifier takes 10% (Kpre) and 5% (C) longer.
+* The setup cache worked across jobs: the real graph's commitment was a hit (55 s), stored by the generation job
+  (1015754), which committed the same weights and plan before its generation ran out of GPU memory; the random
+  twin's was a miss (4,359 s, the setup).
+* A TinyLlama-1.1B smoke cell (main recipe) passed first in the same job (2 / 2 accepted, 3 / 3 tampers per mode).
+
+### 4.3 Generated responses (job 1015754; CPU rerun job 1018663)
+
+With P = 512 and G = 64 the full 7B graph's generation runs out of memory on the 11 GB 2080 Ti (job 1015754, in the
+first greedy step; the commitment before it completed and was cached). The L40S (48 GB) runs this cell
+(`r-llama7-gen`). To run the code path before the freeze, job 1018663 repeats it on the CPU of s-004 with G = 16, one
+timed query per rule and mode (the cached commitment serves mode C).
 
 [pending]
 
