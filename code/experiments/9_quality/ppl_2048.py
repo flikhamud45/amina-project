@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import math
@@ -44,7 +45,7 @@ import opt_builder as ob                                   # noqa: E402
 from common import find_parquet, load_opt, load_windows   # noqa: E402
 
 from pvi.fullcheck import real_weights as rw              # noqa: E402
-from pvi.fullcheck.graph import CheapOp, IntGraph         # noqa: E402
+from pvi.fullcheck.graph import CheapOp, IntGraph, OpFn, identity_op, op_fn, op_kind   # noqa: E402
 
 BEST_GAIN = {"opt-125m": 4.0, "opt-1.3b": 3.0, "opt-6.7b": 2.0}
 SMOOTH = dict(norm_mode="smooth", norm_gain=4.0, smooth_pct=99.9, pct=99.99, pct_att=99.99)
@@ -72,7 +73,7 @@ def _windows(ids: torch.Tensor, seq: int, n: int | None = None, start: int = 0) 
 # ------------------------------------------------------------------ evaluation
 
 def _all_positions(graph: IntGraph) -> IntGraph:
-    ops = [CheapOp(o.name, o.inputs, o.output, fn=(lambda a: a), note=o.note, params=o.params)
+    ops = [CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note, params=o.params)
            if isinstance(o, CheapOp) and o.note == "last position" else o for o in graph.ops]
     return IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta))
 
@@ -124,19 +125,25 @@ def _var255(q, k, v, m_s, m_o, n_heads, n_kv, dh):
     return ob.attention_var(q, k, v, m_s, m_o, n_heads, dh, 255, ob.exp_table(16))
 
 
-class _attention_as:
-    """Within the block, the graphs' default attention (``opt_builder._attention``) is ``fn``."""
+@op_kind("diagnostic/float_softmax_attention/1")
+def _float_softmax_op(q, k, v, *, m_s, m_o, heads, kv_heads, dh, pmax):
+    return _float_softmax_attention(q, k, v, m_s, m_o, heads, kv_heads, dh)
 
-    def __init__(self, fn):
-        self.fn, self.saved = fn, None
 
-    def __enter__(self):
-        if self.fn is not None:
-            self.saved, ob._attention = ob._attention, self.fn
+@op_kind("diagnostic/attention_var255/1")
+def _var255_op(q, k, v, *, m_s, m_o, heads, kv_heads, dh, pmax):
+    return _var255(q, k, v, m_s, m_o, heads, kv_heads, dh)
 
-    def __exit__(self, *exc):
-        if self.fn is not None:
-            ob._attention = self.saved
+
+def _with_attention(graph: IntGraph, impl) -> IntGraph:
+    """``graph`` with every default attention op (kind ``attention/1``) computed by the diagnostic kind ``impl`` with
+    the same constants (``None``: ``graph`` itself)."""
+    if impl is None:
+        return graph
+    ops = [dataclasses.replace(o, fn=OpFn(impl, o.fn.consts))
+           if isinstance(o, CheapOp) and isinstance(o.fn, OpFn) and o.fn.kind == "attention/1" else o
+           for o in graph.ops]
+    return IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta))
 
 
 def _bootstrap(a: list[float], b: list[float], n: list[int], reps: int = 2000) -> list[float]:
@@ -274,10 +281,9 @@ def main() -> None:
                     for i, (w, r_am) in enumerate(zip(wins, ref["argmax"])):
                         record = sm == "int" and i < args.mass_windows
                         ob.MASS = [] if record else None
-                        fn = _float_softmax_attention if sm == "float" else (_var255 if record and cell["pbits"] == 8
-                                                                              else None)
-                        with _attention_as(fn):
-                            x, am = _int_eval(lean, info["logit_scale"], w, args.device)
+                        impl = _float_softmax_op if sm == "float" else (_var255_op if record and cell["pbits"] == 8
+                                                                         else None)
+                        x, am = _int_eval(_with_attention(lean, impl), info["logit_scale"], w, args.device)
                         if record:
                             mass.append(ob.MASS)
                         nll.append(x)
@@ -352,8 +358,7 @@ def _check(model, tok, args) -> None:
             lean = _all_positions(g_ob)
             nll_lean, am_lean = _int_eval(lean, i_ob["logit_scale"], w, "cpu")
             ob.MASS = []
-            with _attention_as(_var255):
-                nll_var, am_var = _int_eval(lean, i_ob["logit_scale"], w, "cpu")
+            nll_var, am_var = _int_eval(_with_attention(lean, _var255_op), i_ob["logit_scale"], w, "cpu")
             mass, ob.MASS = ob.MASS, None
             gpu_same = None
             if torch.cuda.is_available():
@@ -383,8 +388,8 @@ def _check(model, tok, args) -> None:
 
 
 def _consts(op: CheapOp):
-    """The tensors and numbers ``op.fn`` captured as default arguments, comparable with ``==``."""
-    return [v.tolist() if torch.is_tensor(v) else v for v in (getattr(op.fn, "__defaults__", None) or ())]
+    """The constants of ``op.fn`` (an ``OpFn``) in name order, comparable with ``==``."""
+    return [op.fn.kind] + [v.tolist() if torch.is_tensor(v) else v for _, v in sorted(op.fn.consts.items())]
 
 
 if __name__ == "__main__":

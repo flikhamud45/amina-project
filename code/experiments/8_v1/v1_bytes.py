@@ -55,8 +55,13 @@ clipping; ``norm_gain`` 4 either way."""
 
 # ------------------------------------------------------------------ real checkpoints
 def _is_opt(name: str) -> bool:
+    """Whether ``name`` is an OPT checkpoint (its config's ``model_type``); a name without a Hugging Face config
+    goes to the OPT loader, as before Llama-family checkpoints were read."""
     from transformers import AutoConfig
-    return AutoConfig.from_pretrained(name).model_type == "opt"
+    try:
+        return AutoConfig.from_pretrained(name).model_type == "opt"
+    except OSError:
+        return True
 
 
 def load_real_llama(name: str, seq: int, n_queries: int):

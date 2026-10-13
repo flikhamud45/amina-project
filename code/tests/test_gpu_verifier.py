@@ -32,7 +32,7 @@ from pvi.fullcheck import pipeline
 from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
 from pvi.fullcheck import transformer as tr
-from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp
+from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp, OpFn, op_fn, op_kind
 from pvi.fullcheck.transformer import DecoderConfig, build_decoder
 
 P = fld.P
@@ -322,6 +322,8 @@ def _decoder(kind="qwen"):
 
 
 def _tensor_args(fn):
+    if isinstance(fn, OpFn):
+        return [v for v in fn.consts.values() if torch.is_tensor(v)]
     return [v for v in (*(fn.__defaults__ or ()), *(c.cell_contents for c in fn.__closure__ or ()))
             if torch.is_tensor(v)]
 
@@ -383,10 +385,21 @@ def test_a_gpu_verifier_keeps_its_constants_on_the_gpu():
 
 # -- deferred range checks, inputs that are not int8-valued -------------------------------------
 
+@op_kind("test/raise_on_large/1")
 def _raise_on_large(a):
     if int(a.abs().max()) >= 1 << 20:
         raise ValueError("large input")
     return a.clamp(-127, 127)
+
+
+@op_kind("test/clamp8/1")
+def _clamp8(x):
+    return x.clamp(-127, 127)
+
+
+@op_kind("test/shift7/1")
+def _shift7(z):
+    return (z >> 7).clamp(-127, 127)
 
 
 def _guarded_graph():
@@ -394,7 +407,7 @@ def _guarded_graph():
     g = torch.Generator().manual_seed(4)
     fc1 = MatOp("fc1", ("x",), "fc1.z", weight=_rand(g, -127, 128, (4, 3)).to(torch.int8), layout="linear")
     fc2 = MatOp("fc2", ("g.y",), "fc2.z", weight=_rand(g, -127, 128, (2, 4)).to(torch.int8), layout="linear")
-    guard = CheapOp("g", ("fc1.z",), "g.y", fn=_raise_on_large)
+    guard = CheapOp("g", ("fc1.z",), "g.y", fn=op_fn(_raise_on_large))
     return IntGraph([fc1, guard, fc2], "x", "fc2.z")
 
 
@@ -655,9 +668,9 @@ def _rebinding_graph():
     """in: x -> h, A: h -> A.z, rq: A.z -> h (the name h bound again), B: h -> B.z."""
     g = torch.Generator().manual_seed(3)
     wa, wb = (_rand(g, -127, 128, (8, 8)).to(torch.int8) for _ in range(2))
-    return IntGraph([CheapOp("in", ("x",), "h", fn=lambda x: x.clamp(-127, 127)),
+    return IntGraph([CheapOp("in", ("x",), "h", fn=op_fn(_clamp8)),
                      MatOp("A", ("h",), "A.z", weight=wa, layout="linear"),
-                     CheapOp("rq", ("A.z",), "h", fn=lambda z: (z >> 7).clamp(-127, 127)),
+                     CheapOp("rq", ("A.z",), "h", fn=op_fn(_shift7)),
                      MatOp("B", ("h",), "B.z", weight=wb, layout="linear")], "x", "B.z")
 
 

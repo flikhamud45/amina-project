@@ -250,7 +250,7 @@ def float_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, hq: int, 
 # ------------------------------------------------------------------ the graph's tensors
 
 def _defaults(fn) -> dict:
-    return {n: p.default for n, p in inspect.signature(fn).parameters.items() if p.default is not p.empty}
+    return dict(fn.consts)
 
 
 def block_ops(graph, info: dict, b: int) -> tuple[int, int]:
@@ -310,12 +310,13 @@ def _attn_raw(graph, roles: dict, env: dict) -> torch.Tensor:
     op = next(o for o in graph.ops if o.output == roles["attn"])
     d = _defaults(op.fn)
     q, k, v = (env[n] for n in op.inputs)
-    p = d.get("P", PROB_MAX)
-    if "kp" in d:
-        raw = rl.prefix_attention(q, k, v, d["kp"], d["vp"], d["ms"], None, d["H"], d["Hkv"], d["dh"], p)
+    p = d.get("pmax", PROB_MAX)
+    if "k_prefix" in d:
+        raw = rl.prefix_attention(q, k, v, d["k_prefix"], d["v_prefix"], d["m_s"], None, d["heads"], d["kv_heads"],
+                                  d["dh"], p)
     else:
-        raw = _attention(q, k, v, d["ms"], None, d["H"], d["Hkv"], d["dh"], p)
-    again = requant(raw, torch.tensor(d["mo"], dtype=torch.int64), SHIFT, -INT8_MAX, INT8_MAX)
+        raw = _attention(q, k, v, d["m_s"], None, d["heads"], d["kv_heads"], d["dh"], p)
+    again = requant(raw, torch.tensor(d["m_o"], dtype=torch.int64), SHIFT, -INT8_MAX, INT8_MAX)
     if not torch.equal(again, env[roles["attn"]]):
         raise AssertionError("the recomputed attention does not requantise to the op's output")
     return raw
@@ -325,10 +326,10 @@ def _glu_factor(graph, roles: dict, env: dict):
     """``2^e_t [B, T, 1]`` of a ``glu_exp`` product (the per-token exponent ``real_llama._exponents``), else 1."""
     op = next(o for o in graph.ops if o.output == roles["glu"])
     d = _defaults(op.fn)
-    if "E" not in d:
+    if "emax" not in d:
         return 1.0
     a, u = (env[n].to(torch.int64) for n in op.inputs)
-    return torch.pow(2.0, rl._exponents(a * u * d["m"], d["E"]).double().cpu())
+    return torch.pow(2.0, rl._exponents(a * u * d["mult"], d["emax"]).double().cpu())
 
 
 def _real(t: torch.Tensor, scale) -> torch.Tensor:
@@ -431,7 +432,7 @@ def attribute_block(graph, info: dict, model, b: int, env: dict, hf: dict) -> di
               "gate", "up_proj", "up", "silu"):
         if r in roles:
             g[r] = _real(env[roles[r]], sc[roles[r]])
-    s_raw = sc[roles["v"]] / float(_defaults(op_of[roles["attn"]].fn).get("P", PROB_MAX))     # s_v / P
+    s_raw = sc[roles["v"]] / float(_defaults(op_of[roles["attn"]].fn).get("pmax", PROB_MAX))     # s_v / P
     g["attn_raw"] = _real(raw, s_raw)
     g["mlp_norm"] = _real(env[roles["mlp_norm"]], sc[roles["mlp_norm"]]) * _w(layer.post_attention_layernorm.weight)
     g["glu"] = _real(env[roles["glu"]], sc[roles["glu"]]) * glu_f

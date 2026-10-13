@@ -267,8 +267,8 @@ def float_logits_fn(model, device: str):
 
 
 def int_logits_fn(graph, info: dict, device: str):
-    from pvi.fullcheck.graph import CheapOp, IntGraph
-    ops = [CheapOp(o.name, o.inputs, o.output, fn=(lambda z: z), note=o.note, params=o.params)
+    from pvi.fullcheck.graph import CheapOp, IntGraph, identity_op, op_fn
+    ops = [CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note, params=o.params)
            if isinstance(o, CheapOp) and o.note == "last position" else o for o in graph.ops]
     lean, _ = IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta)).with_constants_on(device)
     scale = info["logit_scale"]

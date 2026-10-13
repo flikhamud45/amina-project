@@ -30,7 +30,7 @@ from pvi.fullcheck import claimcodec as cc
 from pvi.fullcheck import protocol as proto
 from pvi.fullcheck import reference as ref
 from pvi.fullcheck.commitment import MerkleTree, TableCommitment, multiproof_size, table_leaves, verify_multiproof
-from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp, requant
+from pvi.fullcheck.graph import CheapOp, IntGraph, MatOp, op_fn, requant, requant_op
 from pvi.fullcheck.plans import next_pow2, plan_commitment
 from pvi.fullcheck.transformer import CONFIGS
 
@@ -527,7 +527,7 @@ def _biased_embedding():
     m = torch.tensor(1 << 29)
     ops = [MatOp("emb", ("x",), "emb.z", weight=torch.randint(-100, 100, (8, 13), generator=g).to(torch.int8), bias=b,
                  layout="embed"),
-           CheapOp("rq", ("emb.z",), "rq.y", fn=lambda a, m=m: requant(a, m.to(a.device), 30, -127, 127)),
+           CheapOp("rq", ("emb.z",), "rq.y", fn=op_fn(requant_op, mult=m, shift=30, lo=-127, hi=127)),
            MatOp("fc", ("rq.y",), "fc.z", weight=torch.randint(-100, 100, (6, 8), generator=g).to(torch.int8),
                  bias=torch.randint(-50, 50, (6,), generator=g))]
     return IntGraph(ops, "x", "fc.z"), torch.tensor([[3, 7, 3, 12, 0]]), b

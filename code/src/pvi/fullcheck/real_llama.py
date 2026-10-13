@@ -73,10 +73,10 @@ import math
 
 import torch
 
-from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn, requant_mul
+from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, mul_requant_op, op_fn, op_kind, requant_fn, requant_mul
 from .transformer import (
     CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int, _rope,
-    build_decoder,
+    attention_op, build_decoder, head_norm_op, last_position_op, lut_op, norm_op, rope_op, rope_tail_op, scale_op,
 )
 
 __all__ = ["build_llama_from_hf", "config_of", "same_shape", "matches_benchmark_graph", "lean_logits",
@@ -161,6 +161,28 @@ def prefix_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, kp: torc
     return _attention(q, k, v, m_s, m_o, n_heads, n_kv, dh, pmax)
 
 
+@op_kind("prefix_attention/1")
+def prefix_attention_op(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, k_prefix: torch.Tensor,
+                        v_prefix: torch.Tensor, m_s: int, m_o: int, heads: int, kv_heads: int, dh: int,
+                        pmax: int) -> torch.Tensor:
+    """Causal attention behind a fixed public prefix (:func:`prefix_attention`); the prefix's int8 keys and values
+    are constants of the op, so the digest binds them."""
+    return prefix_attention(q, k, v, k_prefix, v_prefix, m_s, m_o, heads, kv_heads, dh, pmax)
+
+
+@op_kind("swiglu_exp/1")
+def swiglu_exp_op(a: torch.Tensor, b: torch.Tensor, *, mult: int, emax: int) -> torch.Tensor:
+    """SwiGLU's product with a per-token exponent (:func:`swiglu_exp`)."""
+    return swiglu_exp(a, b, mult, emax)
+
+
+@op_kind("residual_exp/1")
+def residual_exp_op(r: torch.Tensor, z: torch.Tensor, a: torch.Tensor, b: torch.Tensor, *, glu_mult: int, mult: int,
+                    emax: int) -> torch.Tensor:
+    """The residual add after a per-token-exponent product's down projection (:func:`residual_exp`)."""
+    return residual_exp(r, z, a, b, glu_mult, mult, emax)
+
+
 def _to_int8(real: torch.Tensor, scale: float) -> torch.Tensor:
     """``clamp(round(real / scale), +-127)`` as int8 (a prefix's keys or values on their layer's scale)."""
     return (real.double() / scale).round().clamp(-INT8_MAX, INT8_MAX).to(torch.int8)
@@ -243,9 +265,9 @@ class _Builder:
         keeps every position (the op itself takes the last), so the ops after it get the multipliers of the graph
         without pruning."""
         if not calibrate_all:
-            return self.cheap("last", [name], _last_position, self.scale[name], "last position")
+            return self.cheap("last", [name], op_fn(last_position_op), self.scale[name], "last position")
         n = self.name("last")
-        self.ops.append(CheapOp(n, (name,), n + ".y", fn=_last_position, note="last position"))
+        self.ops.append(CheapOp(n, (name,), n + ".y", fn=op_fn(last_position_op), note="last position"))
         self.env[n + ".y"] = self.env[name]
         self.scale[n + ".y"] = self.scale[name]
         return n + ".y"
@@ -273,7 +295,7 @@ class _Builder:
         gamma-folded matrices this norm feeds)."""
         if self.smooth is None:
             gain = torch.full((d,), round(self.norm_gain * (1 << 16)), dtype=torch.int64)
-            return self.cheap("norm", [r], lambda a, g=gain: _norm_int(a, g, False), 1.0 / self.norm_gain, "norm")
+            return self.cheap("norm", [r], op_fn(norm_op, gain=gain, center=False), 1.0 / self.norm_gain, "norm")
         x = self.env[r]
         sigma = _isqrt(torch.div((x * x).sum(-1, keepdim=True), d, rounding_mode="floor"))
         n = _rows((x.double() / sigma.double()).reshape(-1, d), _ROWS_NORM).abs().cpu()
@@ -283,8 +305,7 @@ class _Builder:
         s_ = a.pow(self.smooth) / wj.pow(1 - self.smooth)
         g_real = ((INT8_MAX / float((a / s_).max())) / s_).clamp(1.0 / 64, float(1 << 14))
         gain = torch.round(g_real * (1 << 16)).to(torch.int64)
-        return self.cheap("norm", [r], lambda a_, g=gain: _norm_int(a_, g, False), (1 << 16) / gain.double(),
-                          "norm")
+        return self.cheap("norm", [r], op_fn(norm_op, gain=gain, center=False), (1 << 16) / gain.double(), "norm")
 
     def _head_normed(self, z, dh: int, gamma: torch.Tensor) -> torch.Tensor:
         """``gamma_j x_j / rms`` per head of the int8 ``z`` (float64 ``[rows, dh]``, the integer norm's ``rms``)."""
@@ -306,8 +327,7 @@ class _Builder:
         del normed
         g_real = gamma.double().cpu() * (1.0 if c is None else c.double().cpu())
         gain = torch.round(G * g_real * (1 << 16)).to(torch.int64)
-        out = self.cheap(prefix, [z], lambda a, g=gain, H=heads, dh=dh: _norm_int(
-            a.reshape(*a.shape[:-1], H, dh), g, False).reshape(a.shape), 1.0 / G, note)
+        out = self.cheap(prefix, [z], op_fn(head_norm_op, gain=gain, heads=heads, dh=dh), 1.0 / G, note)
         if c is not None:
             self.chan[out] = (1.0 / c.double().cpu()).repeat(heads)
         return out
@@ -337,20 +357,12 @@ class _Builder:
         ``P`` (the prefix's keys were rotated at ``0 .. P-1`` offline). A per-channel factor (``self.chan``, the
         same for both channels of a pair) is kept too."""
         n = self.prefix_len
-        if pruned and n:
-            out = self.cheap("rope", [z, "x"], lambda a, x, H=heads, dh=dh, th=theta, n=n: _rope(
-                a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1] + n).reshape(a.shape), self.scale[z],
-                "rope")
-        elif pruned:
-            out = self.cheap("rope", [z, "x"], lambda a, x, H=heads, dh=dh, th=theta: _rope(
-                a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1]).reshape(a.shape), self.scale[z],
-                "rope")
-        elif n:
-            out = self.cheap("rope", [z], lambda a, H=heads, dh=dh, th=theta, n=n: _rope(
-                a.reshape(*a.shape[:-1], H, dh), th, n).reshape(a.shape), self.scale[z], "rope")
+        if pruned:
+            out = self.cheap("rope", [z, "x"], op_fn(rope_tail_op, heads=heads, dh=dh, theta=theta, base=n),
+                             self.scale[z], "rope")
         else:
-            out = self.cheap("rope", [z], lambda a, H=heads, dh=dh, th=theta: _rope(
-                a.reshape(*a.shape[:-1], H, dh), th).reshape(a.shape), self.scale[z], "rope")
+            out = self.cheap("rope", [z], op_fn(rope_op, heads=heads, dh=dh, theta=theta, offset=n), self.scale[z],
+                             "rope")
         if z in self.chan:
             self.chan[out] = self.chan[z]
         return out
@@ -383,14 +395,11 @@ class _Builder:
         del raw
         s_att = max(top, 1e-12) / INT8_MAX
         m_o = round((1 << SHIFT) * s_raw / s_att)
-        if prefix is not None:   # the prefix's constants are default arguments: bound by the digest
-            fn = lambda a, b_, c, kp=kp, vp=vp, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh, P=P: (  # noqa: E731
-                prefix_attention(a, b_, c, kp, vp, ms, mo, H, Hkv, dh, P))
-        elif P == PROB_MAX:      # the default scale: no extra constant, so the digest is today's
-            fn = lambda a, b_, c, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh: _attention(a, b_, c, ms, mo, H, Hkv, dh)  # noqa: E731
+        if prefix is not None:   # the prefix's keys and values are constants of the op: bound by the digest
+            fn = op_fn(prefix_attention_op, k_prefix=kp, v_prefix=vp, m_s=m_s, m_o=m_o, heads=hq, kv_heads=hkv, dh=dh,
+                       pmax=P)
         else:
-            fn = lambda a, b_, c, ms=m_s, mo=m_o, H=hq, Hkv=hkv, dh=dh, P=P: _attention(  # noqa: E731
-                a, b_, c, ms, mo, H, Hkv, dh, P)
+            fn = op_fn(attention_op, m_s=m_s, m_o=m_o, heads=hq, kv_heads=hkv, dh=dh, pmax=P)
         return self.cheap("attn", [q, k, v], fn, s_att, "attention")
 
     def swiglu(self, gate, up):
@@ -401,7 +410,7 @@ class _Builder:
         silu = xs * torch.sigmoid(xs)
         s_a = float(silu.abs().max()) / INT8_MAX
         table = torch.round(silu / s_a).clamp(-INT8_MAX, INT8_MAX).to(torch.int64)
-        act = self.cheap("silu", [gate], lambda a, t=table: _lut(a, t), s_a, "silu")
+        act = self.cheap("silu", [gate], op_fn(lut_op, table=table), s_a, "silu")
         prod = (self.env[act] * self.env[up]).abs().reshape(-1, self.env[up].shape[-1]).double()
         if self.glu_exp:
             return self._swiglu_exp(act, up, prod, s_a, s_u)
@@ -412,8 +421,8 @@ class _Builder:
         s_p = max(top * s_a * s_u, 1e-12) / INT8_MAX
         del prod
         mm = torch.tensor(round((1 << SHIFT) * s_a * s_u / s_p), dtype=torch.int64)
-        return self.cheap("glu", [act, up], lambda a, b_, m=mm: requant_mul(a, b_, m.to(a.device), SHIFT, -INT8_MAX,
-                                                                            INT8_MAX), s_p, "swiglu")
+        return self.cheap("glu", [act, up], op_fn(mul_requant_op, mult=mm, shift=SHIFT, lo=-INT8_MAX, hi=INT8_MAX),
+                          s_p, "swiglu")
 
     def _swiglu_exp(self, act, up, prod, s_a, s_u):
         """The product with a per-token exponent (:func:`swiglu_exp`): the ``pct_glu`` percentile of the tokens' largest
@@ -428,8 +437,7 @@ class _Builder:
             if mm * INT8_MAX * INT8_MAX < 1 << 62 or emax == 0:
                 break
             emax -= 1
-        out = self.cheap("glu", [act, up], lambda a, b_, m=mm, E=emax: swiglu_exp(a, b_, m, E), s_p,
-                         "swiglu, per-token exponent")
+        out = self.cheap("glu", [act, up], op_fn(swiglu_exp_op, mult=mm, emax=emax), s_p, "swiglu, per-token exponent")
         self.exp_of[out] = (act, up, mm, emax)
         return out
 
@@ -438,8 +446,8 @@ class _Builder:
         shift of :func:`residual_exp` (not a ``requant_fn`` op, so V1 leaves the down projection clear)."""
         act, up, mm, emax = self.exp_of[prod]
         m = round((1 << SHIFT) * self.scale[z] / self.scale[r])
-        return self.cheap("res", [r, z, act, up], lambda a, b_, c, d_, gm=mm, m=m, E=emax: residual_exp(
-            a, b_, c, d_, gm, m, E), self.scale[r], "residual add, per-token shift")
+        return self.cheap("res", [r, z, act, up], op_fn(residual_exp_op, glu_mult=mm, mult=m, emax=emax), self.scale[r],
+                          "residual add, per-token shift")
 
 
 def _head_eq(h_int: torch.Tensor, s_in, w: torch.Tensor, b: torch.Tensor | None, heads: int, dh: int, pct: float):
@@ -708,7 +716,7 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
     # (k, k + 1/2), k >= 1, the largest entries clip at 127; ``embed_clip`` (> 1 then) records by how much
     embed_clip = float(emb.abs().max()) / (INT8_MAX * embed_mult * s_res)
     tok = B.mat("x", emb.T.float(), None, 1.0, layout="embed", s_w=embed_mult * s_res)
-    r = B.cheap("scale", [tok], lambda a, c=embed_mult: a * c, s_res, "embed to residual")
+    r = B.cheap("scale", [tok], op_fn(scale_op, c=embed_mult), s_res, "embed to residual")
     embed_name, blocks = r, []
 
     def bias(lin):
@@ -806,10 +814,6 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
 
 # ------------------------------------------------------------------ evaluation
 
-def _identity(a):
-    return a
-
-
 def lean_logits(graph: IntGraph, ids: torch.Tensor, *, all_positions: bool = True, chunk: int = 256):
     """Yield ``(start, z)``: the integer logits ``z [B, n, V]`` (int64) of the positions ``start .. start + n - 1``.
 
@@ -827,7 +831,7 @@ def lean_logits(graph: IntGraph, ids: torch.Tensor, *, all_positions: bool = Tru
         if len(lasts) != 1:
             raise ValueError("a pruned graph has logits at its last position only")
         o = ops[lasts[0]]
-        ops[lasts[0]] = CheapOp(o.name, o.inputs, o.output, fn=_identity, note=o.note, params=o.params)
+        ops[lasts[0]] = CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note, params=o.params)
     body = IntGraph(ops, graph.input_name, head.inputs[0], dict(graph.meta))
     env, _ = body.forward(ids, free=True, send=lambda z: None)
     h = env.pop(head.inputs[0])

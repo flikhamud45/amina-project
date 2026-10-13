@@ -91,7 +91,7 @@ def test_smoothed_norm_gains_keep_the_graph_and_the_protocol(tiny_opt):
     assert [type(o) for o in graph.ops] == [type(o) for o in base.ops]
     assert all(a.weight.shape == b.weight.shape for a, b in zip(graph.mat_ops, base.mat_ops))
     gains = [o for o in graph.ops if isinstance(o, CheapOp) and o.note == "norm"]
-    assert len({int(v) for v in gains[0].fn.__defaults__[0]}) > 1          # a gain per channel
+    assert len({int(v) for v in gains[0].fn.consts["gain"]}) > 1             # a gain per channel
     assert all(isinstance(o.params["requant"]["mult"], int) for o in graph.ops
                if isinstance(o, CheapOp) and o.params.get("requant"))
     with torch.no_grad():
@@ -115,8 +115,8 @@ def _without_slices(graph):
 
 def _constants(op):
     """A cheap op's public constants: its parameters and every tensor or number it captured."""
-    cells = [c.cell_contents for c in (op.fn.__closure__ or ())] + list(op.fn.__defaults__ or ())
-    return op.params, [c for c in cells if torch.is_tensor(c) or isinstance(c, (int, float))]
+    consts = [op.fn.consts[k] for k in sorted(op.fn.consts)]
+    return op.params, [c for c in consts if torch.is_tensor(c) or isinstance(c, (int, float))]
 
 
 def _same_constants(a, b) -> bool:

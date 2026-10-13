@@ -44,6 +44,9 @@ __all__ = [
     "MatOp",
     "CheapOp",
     "IntGraph",
+    "OpFn",
+    "op_fn",
+    "op_kind",
     "exact_matmul",
     "int8_product",
     "int_scalar",
@@ -55,6 +58,57 @@ __all__ = [
 ]
 
 INT8_MAX = 127
+
+
+# ------------------------------------------------------------------------------------------- cheap-op kinds
+_KINDS: dict[str, Callable] = {}
+
+
+def op_kind(name: str):
+    """Register the decorated function as the cheap-op kind ``name``: a name with a semantics version (``"rope/1"``).
+    The graph digest binds a cheap op by its kind and its constants, not by the Python code that implements it, so
+    a new implementation of the same integer map keeps the kind and a different map needs a new version."""
+    def register(impl: Callable) -> Callable:
+        old = _KINDS.get(name)
+        if old is not None and (old.__module__, old.__qualname__) != (impl.__module__, impl.__qualname__):
+            raise ValueError(f"cheap-op kind {name!r} is already registered by {old.__module__}.{old.__qualname__}")
+        _KINDS[name] = impl
+        impl.op_kind = name
+        return impl
+    return register
+
+
+class OpFn:
+    """A cheap op's function: a registered kind and the constants (keyword arguments) it is called with. Calling it
+    with the op's input tensors returns its output tensor."""
+
+    def __init__(self, impl: Callable, consts: dict) -> None:
+        if getattr(impl, "op_kind", None) is None:
+            raise TypeError(f"{impl!r} is not a registered cheap-op kind (graph.op_kind)")
+        self.impl, self.kind, self.consts = impl, impl.op_kind, dict(consts)
+
+    def __call__(self, *inputs):
+        return self.impl(*inputs, **self.consts)
+
+    def with_consts(self, consts: dict) -> "OpFn":
+        """The same kind with other constants (e.g. the same tensors on another device); other attributes kept."""
+        new = OpFn(self.impl, consts)
+        new.__dict__.update({k: v for k, v in self.__dict__.items() if k not in ("impl", "kind", "consts")})
+        return new
+
+    def __repr__(self) -> str:
+        return f"OpFn({self.kind}, {sorted(self.consts)})"
+
+
+def op_fn(impl: Callable, **consts) -> OpFn:
+    """``OpFn(impl, consts)``: the cheap op of kind ``impl.op_kind`` with these constants."""
+    return OpFn(impl, consts)
+
+
+@op_kind("identity/1")
+def identity_op(a: torch.Tensor) -> torch.Tensor:
+    """The input unchanged (stand-in ops of the float evaluations)."""
+    return a
 # PVI_LEGACY_WEIGHT_KEY=1 restores the weight cache of the earliest run (raw/): its key was 'cuda' for the
 # prover and 'cuda:0' for the tensors, so every committed-weights query re-uploaded the model twice.
 # Only for the _nofix controls of bench.py, which measure what the fix changed.
@@ -151,24 +205,37 @@ def residual_add(a: torch.Tensor, b: torch.Tensor, mult: torch.Tensor, shift: in
     return out.clamp_(-res_max, res_max)
 
 
-def requant_fn(params: dict) -> Callable[..., torch.Tensor]:
-    """The cheap op that reads a weight op's output and requantises it, built from ``params`` alone (V1's cut,
-    ``V1_SPEC.md`` Sec. 2.1, P1): ``kind`` ``"requant"`` (``clamp(round(z mult / 2**shift), lo, hi)``, one input)
-    or ``"residual"`` (``clamp(r + round(z mult / 2**shift), -res_max, res_max)``, inputs ``r, z``).  The function
-    carries ``params`` as ``_pvi_requant``, so a verifier can tell that ``params`` describe it exactly; a builder
-    sets the op's ``params = {"requant": params}``, which the graph's digest binds with the function."""
+@op_kind("requant/1")
+def requant_op(a: torch.Tensor, *, mult: torch.Tensor, shift: int, lo: int, hi: int) -> torch.Tensor:
+    """``clamp(round(a mult / 2**shift), lo, hi)`` (round-half-up); ``mult`` a scalar or a broadcastable vector."""
+    return requant(a, mult.to(a.device), shift, lo, hi)
+
+
+@op_kind("residual/1")
+def residual_op(a: torch.Tensor, b: torch.Tensor, *, mult: torch.Tensor, shift: int, res_max: int) -> torch.Tensor:
+    """``clamp(a + round(b mult / 2**shift), -res_max, res_max)`` (round-half-up)."""
+    return residual_add(a, b, mult.to(b.device), shift, res_max)
+
+
+@op_kind("mul_requant/1")
+def mul_requant_op(a: torch.Tensor, b: torch.Tensor, *, mult: torch.Tensor, shift: int, lo: int,
+                   hi: int) -> torch.Tensor:
+    """``clamp(round(a b mult / 2**shift), lo, hi)``: the product of two int8 tensors, requantised."""
+    return requant_mul(a, b, mult.to(a.device), shift, lo, hi)
+
+
+def requant_fn(params: dict) -> OpFn:
+    """The cheap op that reads a weight op's output and requantises it, built from ``params`` alone (V1's cut):
+    ``kind`` ``"requant"`` (``clamp(round(z mult / 2**shift), lo, hi)``, one input) or ``"residual"``
+    (``clamp(r + round(z mult / 2**shift), -res_max, res_max)``, inputs ``r, z``). The function carries ``params``
+    as ``_pvi_requant``, so a verifier can tell that ``params`` describe it exactly; a builder sets the op's
+    ``params = {"requant": params}``, which the graph's digest binds with the function."""
     kind, shift, mult = params["kind"], int(params["shift"]), int(params["mult"])
     m = torch.tensor(mult, dtype=torch.int64)
     if kind == "requant":
-        lo, hi = int(params["lo"]), int(params["hi"])
-
-        def fn(a, m=m):
-            return requant(a, m.to(a.device), shift, lo, hi)
+        fn = op_fn(requant_op, mult=m, shift=shift, lo=int(params["lo"]), hi=int(params["hi"]))
     elif kind == "residual":
-        res_max = int(params["res_max"])
-
-        def fn(a, b, m=m):
-            return residual_add(a, b, m.to(b.device), shift, res_max)
+        fn = op_fn(residual_op, mult=m, shift=shift, res_max=int(params["res_max"]))
     else:
         raise ValueError(f"unknown requantisation kind {kind!r}")
     fn._pvi_requant = dict(params)
@@ -315,18 +382,21 @@ class CheapOp(Op):
 
 
 def _with_tensors_on(fn, device: torch.device, copies: dict):
-    """``fn`` with every tensor among its default arguments and closure cells replaced by its
-    copy on ``device`` (``copies``: ``id(tensor) -> (tensor, copy)``, shared across calls so a
-    tensor is copied once); ``fn`` itself when it captured no tensor or is not a plain function."""
-    if not isinstance(fn, types.FunctionType):
-        return fn
-
+    """``fn`` with every tensor among its constants (an :class:`OpFn`'s, or a plain function's default arguments and
+    closure cells) replaced by its copy on ``device`` (``copies``: ``id(tensor) -> (tensor, copy)``, shared across
+    calls so a tensor is copied once); ``fn`` itself when it holds no tensor."""
     def on(v):
         if not torch.is_tensor(v):
             return v
         if id(v) not in copies:
             copies[id(v)] = (v, v.to(device))
         return copies[id(v)][1]
+
+    if isinstance(fn, OpFn):
+        consts = {k: on(v) for k, v in fn.consts.items()}
+        return fn if all(consts[k] is v for k, v in fn.consts.items()) else fn.with_consts(consts)
+    if not isinstance(fn, types.FunctionType):
+        return fn
 
     defaults = tuple(map(on, fn.__defaults__ or ()))
     kwdefaults = {k: on(v) for k, v in (fn.__kwdefaults__ or {}).items()}
@@ -374,6 +444,10 @@ def _canonical(v, out: list, depth: int = 0) -> None:
         for k in sorted(v, key=repr):
             rec(k)
             rec(v[k])
+    elif isinstance(v, OpFn):
+        out.append(b"O")
+        rec(v.kind)
+        rec(v.consts)
     elif isinstance(v, functools.partial):
         out.append(b"P")
         rec(v.func)
@@ -431,18 +505,23 @@ class IntGraph:
         return IntGraph(ops, self.input_name, self.output_name, dict(self.meta)), pairs
 
     def digest(self) -> bytes:
-        """SHA-256 of a canonical description of the public graph: every op in order -- its kind, name,
-        inputs, output and note; a weight op's shape, layout, convolution and input bound (not its weights:
-        a commitment binds those); a cheap op's function by name and every constant it captured (the
-        requantisation multipliers, norm gains, look-up tables) -- its input and output names and ``meta``.
-        A graph with other cheap ops or constants hashes to other bytes; Fiat--Shamir absorbs it
-        (``protocol._absorb_statement``), so a transcript is bound to the computation it checks."""
-        out: list[bytes] = [b"pvi/graph/v1"]
+        """SHA-256 of a canonical description of the public graph: every op in order -- its name, inputs, output
+        and note; a weight op's shape, layout, convolution and input bound (not its weights: a commitment binds
+        those); a cheap op's kind (a named integer map with a version, :func:`op_kind`) and every constant it is
+        called with (the requantisation multipliers, norm gains, look-up tables, attention multipliers, a fixed
+        prefix's keys and values) -- its input and output names and ``meta``. A graph with other cheap ops or
+        constants hashes to other bytes, and the bytes do not depend on where in the code a kind is implemented;
+        Fiat--Shamir absorbs it (``protocol._absorb_statement``), so a transcript is bound to the computation it
+        checks."""
+        out: list[bytes] = [b"pvi/graph/v2"]
         for op in self.ops:
             if isinstance(op, MatOp):
                 _canonical(["mat", op.name, op.inputs, op.output, op.n_rows, op.n_in, op.has_bias, op.layout,
                             op.conv, op.max_input], out)
             else:
+                if not isinstance(op.fn, OpFn):
+                    raise TypeError(f"cheap op {op.name}: its function must be an OpFn (graph.op_fn), so the digest "
+                                    f"binds what it computes; got {op.fn!r}")
                 _canonical(["cheap", op.name, op.inputs, op.output, op.note, op.fn, op.params], out)
         _canonical([self.input_name, self.output_name, self.meta], out)
         return hashlib.sha256(b"".join(out)).digest()

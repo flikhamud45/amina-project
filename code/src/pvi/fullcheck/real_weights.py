@@ -42,11 +42,10 @@ import math
 
 import torch
 
-from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant_fn
+from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, op_fn, requant_fn
 from .transformer import (
     CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, SHIFT, DecoderConfig, _attention, _isqrt, _last_position, _lut, _norm_int,
-    build_decoder,
-)
+    build_decoder, attention_op, last_position_op, lut_op, norm_op, positions_op, scale_op)
 
 __all__ = ["build_opt_from_hf", "is_pruned", "matches_benchmark_graph", "real_logits"]
 
@@ -111,7 +110,7 @@ class _RealBuilder:
         ``name``'s real scale, so the ops after it get the percentiles, gains and multipliers of the graph
         without it."""
         n = self.name("last")
-        self.ops.append(CheapOp(n, (name,), n + ".y", fn=_last_position, note="last position"))
+        self.ops.append(CheapOp(n, (name,), n + ".y", fn=op_fn(last_position_op), note="last position"))
         self.env[n + ".y"] = self.env[name]
         self.scale[n + ".y"] = self.scale[name]
         return n + ".y"
@@ -143,8 +142,7 @@ class _RealBuilder:
         # so choosing it does not change any shape or cost.
         if self.smooth is None or consumers is None:
             gain = torch.full((d,), round(self.norm_gain * (1 << 16)), dtype=torch.int64)
-            return self.cheap("norm", [r], lambda a, g=gain: _norm_int(a, g, True),
-                              1.0 / self.norm_gain, "norm")
+            return self.cheap("norm", [r], op_fn(norm_op, gain=gain, center=True), 1.0 / self.norm_gain, "norm")
         # SmoothQuant through the gain vector (plan F2): channel j gets G_j = c / s_j, s_j = a_j^alpha / w_j^(1-alpha)
         # (a_j: a high percentile of |normalised_j| on calibration data; w_j: the largest |W_ij| of the matrices this
         # norm feeds), c such that the largest a_j G_j is 127; the next matrices take 1/G_j into column j (mat()).
@@ -159,8 +157,7 @@ class _RealBuilder:
         s_ = a.pow(self.smooth) / wj.pow(1 - self.smooth)
         g_real = ((INT8_MAX / float((a / s_).max())) / s_).clamp(1.0 / 64, float(1 << 14))
         gain = torch.round(g_real * (1 << 16)).to(torch.int64)
-        return self.cheap("norm", [r], lambda a_, g=gain: _norm_int(a_, g, True),
-                          (1 << 16) / gain.double(), "norm")
+        return self.cheap("norm", [r], op_fn(norm_op, gain=gain, center=True), (1 << 16) / gain.double(), "norm")
 
 
 def _fold(w: torch.Tensor, b: torch.Tensor | None, gamma: torch.Tensor, beta: torch.Tensor):
@@ -226,13 +223,12 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     embed_mult = max(1, round(float(dec.embed_tokens.weight.abs().max()) / INT8_MAX / s_res))
     tok = B.mat("x", dec.embed_tokens.weight.T.float(), None, 1.0, layout="embed",
                 s_w=embed_mult * s_res)
-    pos_ids = B.cheap("pos", ["x"], lambda x: torch.arange(x.shape[1], device=x.device)
-                      .expand(x.shape[0], -1).contiguous(), 1.0, "position ids")
+    pos_ids = B.cheap("pos", ["x"], op_fn(positions_op), 1.0, "position ids")
     # OPT's learned positions are offset by 2 rows.
     max_pos = cfg.max_position_embeddings
     pos_table = dec.embed_positions.weight[2:2 + max_pos].T.float()
     pos = B.mat(pos_ids, pos_table, None, 1.0, layout="embed")
-    r = B.residual(B.cheap("scale", [tok], lambda a, c=embed_mult: a * c, s_res, "embed to residual"), pos)
+    r = B.residual(B.cheap("scale", [tok], op_fn(scale_op, c=embed_mult), s_res, "embed to residual"), pos)
 
     for i, layer in enumerate(dec.layers):
         prune = prune_last and i == len(dec.layers) - 1
@@ -253,12 +249,8 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
         top = (float(torch.quantile(rabs[:1 << 24], pct_att / 100.0)) if pct_att < 100 else float(rabs.max())) * s_raw
         s_att = max(top, 1e-12) / INT8_MAX
         m_o = round((1 << SHIFT) * s_raw / s_att)
-        att = B.cheap("attn", [q, k, v],
-                      (lambda a, b_, c, ms=m_s, mo=m_o: _attention(a, b_, c, ms, mo, n_heads, n_heads, dh))
-                      if prob_max == PROB_MAX else      # today's op (digest unchanged); else the scale is bound
-                      (lambda a, b_, c, ms=m_s, mo=m_o, P=prob_max: _attention(a, b_, c, ms, mo, n_heads, n_heads,
-                                                                                 dh, P)),
-                      s_att, "attention")
+        att = B.cheap("attn", [q, k, v], op_fn(attention_op, m_s=m_s, m_o=m_o, heads=n_heads, kv_heads=n_heads, dh=dh,
+                                               pmax=prob_max), s_att, "attention")
         # (pruned) the residual stream's last position takes the attention branch (its last position only)
         r = B.residual(B.last(r) if prune else r, B.mat(att, at.out_proj.weight.float(), at.out_proj.bias, s_att))
 
@@ -266,7 +258,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
         wf, bf = _fold(layer.fc1.weight.float(), layer.fc1.bias, ln2.weight, ln2.bias)
         h = B.norm(r, d, [wf])
         f1 = B.to_int8(B.mat(h, wf.float(), bf, B.scale[h]))
-        act = B.cheap("act", [f1], lambda a, t=_RELU: _lut(a, t), B.scale[f1], "relu")
+        act = B.cheap("act", [f1], op_fn(lut_op, table=_RELU), B.scale[f1], "relu")
         r = B.residual(r, B.mat(act, layer.fc2.weight.float(), layer.fc2.bias, B.scale[act]))
         B.release([r])
 
@@ -274,7 +266,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     wf, bf = _fold(model.lm_head.weight.float(), None, lnf.weight, lnf.bias)
     h = B.norm(r, d, [wf])
     # (in a pruned graph the one position of its last block; calibrated, as the head, on the last position)
-    h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), B.scale[h], "last position")
+    h = B.cheap("last", [h], op_fn(last_position_op), B.scale[h], "last position")
     logits = B.mat(h, wf.float(), bf, B.scale[h])
     info = {"s_residual": s_res, "residual_real_max": res_max, "logit_scale": B.scale[logits],
             "pct": pct, "norm_gain": norm_gain, "embed_mult": embed_mult, "smooth": smooth,
@@ -303,7 +295,7 @@ def real_logits(graph: IntGraph, info: dict, ids: torch.Tensor, *, all_positions
     graph without pruning, whose constants the pruned graph shares (tested).
     """
     if all_positions:
-        ops = [CheapOp(o.name, o.inputs, o.output, fn=(lambda a: a), note=o.note)
+        ops = [CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note)
                if isinstance(o, CheapOp) and o.note == "last position" else o for o in graph.ops]
         graph = IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta))
     env, _ = graph.forward(ids)

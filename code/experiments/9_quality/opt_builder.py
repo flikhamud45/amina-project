@@ -42,8 +42,10 @@ import math
 
 import torch
 
-from pvi.fullcheck.graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant, requant_fn, residual_add
-from pvi.fullcheck.transformer import RES_MAX, SHIFT, _attention, _isqrt, _lut, _norm_int
+from pvi.fullcheck.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, identity_op, op_fn, op_kind, requant, requant_fn,
+                                 requant_op, residual_add, residual_op)
+from pvi.fullcheck.transformer import (PROB_MAX, RES_MAX, SHIFT, _attention, _isqrt, _lut, _norm_int, attention_op,
+                                       last_position_op, lut_op, norm_op, positions_op, scale_op)
 
 _RELU = torch.tensor([max(0, x) for x in range(-128, 128)], dtype=torch.int64)
 
@@ -113,15 +115,17 @@ def attention_var(q, k, v, m_s: int, m_o: int | None, n_heads: int, dh: int, pma
     return out.transpose(1, 2).reshape(b, tq, n_heads * dh)
 
 
+@op_kind("attention_table/1")
+def attention_table_op(q, k, v, *, m_s: int, m_o: int, heads: int, dh: int, pmax: int, table: torch.Tensor):
+    """:func:`attention_var` as a cheap-op kind: ``pmax``-level probabilities from an arbitrary exp table."""
+    return attention_var(q, k, v, m_s, m_o, heads, dh, pmax, table)
+
+
 def _vec_requant_fn(mult: torch.Tensor, kind: str, res_max: int = RES_MAX):
     """Per-row (vector) multiplier requantisation: NOT V1-compatible (``requant_fn`` takes a scalar)."""
     if kind == "requant":
-        def fn(a, m=mult):
-            return requant(a, m.to(a.device), SHIFT, -INT8_MAX, INT8_MAX)
-    else:
-        def fn(a, b, m=mult):
-            return residual_add(a, b, m.to(b.device), SHIFT, res_max)
-    return fn
+        return op_fn(requant_op, mult=mult, shift=SHIFT, lo=-INT8_MAX, hi=INT8_MAX)
+    return op_fn(residual_op, mult=mult, shift=SHIFT, res_max=res_max)
 
 
 # ------------------------------------------------------------------ the builder
@@ -264,7 +268,7 @@ class _Builder:
         G_eff = gain.double() / (1 << 16)
         scale = 1.0 / float(o["norm_gain"]) if o["norm_mode"] == "scalar" else 1.0 / G_eff
         meta = {"kind": "norm", "comp": comp, "layer": layer, "gain": gain, "G": G_eff}
-        return self.cheap("norm", [r], lambda a, g=gain: _norm_int(a, g, True), scale, "norm", meta=meta)
+        return self.cheap("norm", [r], op_fn(norm_op, gain=gain, center=True), scale, "norm", meta=meta)
 
     def attention(self, q, k, v, n_heads, dh, layer):
         o = self.o
@@ -287,10 +291,9 @@ class _Builder:
                 "table": table, "s_raw": s_raw, "s_att": s_att, "sq": sq, "sk": sk, "sv": sv,
                 "n_heads": n_heads, "dh": dh}
         if default:
-            fn = (lambda a, b_, c, ms=m_s, mo=m_o: _attention(a, b_, c, ms, mo, n_heads, n_heads, dh))
+            fn = op_fn(attention_op, m_s=m_s, m_o=m_o, heads=n_heads, kv_heads=n_heads, dh=dh, pmax=PROB_MAX)
         else:
-            fn = (lambda a, b_, c, ms=m_s, mo=m_o, P=pmax, tb=table: attention_var(a, b_, c, ms, mo, n_heads, dh, P,
-                                                                                   tb))
+            fn = op_fn(attention_table_op, m_s=m_s, m_o=m_o, heads=n_heads, dh=dh, pmax=pmax, table=table)
         return self.cheap("attn", [q, k, v], fn, s_att, "attention", meta=meta)
 
 
@@ -385,12 +388,11 @@ def build_opt(model, calib_ids: torch.Tensor, **opts) -> tuple[IntGraph, dict]:
     embed_mult = max(1, round(float(dec.embed_tokens.weight.abs().max()) / INT8_MAX / s_res))
     tok = B.mat("x", dec.embed_tokens.weight.T.float(), None, 1.0, "w_emb", -1, layout="embed",
                 s_w=embed_mult * s_res, per_row="tensor")
-    pos_ids = B.cheap("pos", ["x"], lambda x: torch.arange(x.shape[1], device=x.device)
-                      .expand(x.shape[0], -1).contiguous(), 1.0, "position ids", meta={"kind": "pos"})
+    pos_ids = B.cheap("pos", ["x"], op_fn(positions_op), 1.0, "position ids", meta={"kind": "pos"})
     max_pos = cfg.max_position_embeddings
     pos_table = dec.embed_positions.weight[2:2 + max_pos].T.float()
     pos = B.mat(pos_ids, pos_table, None, 1.0, "w_emb", -1, layout="embed", per_row="tensor")
-    sc = B.cheap("scale", [tok], lambda a, c=embed_mult: a * c, s_res, "embed to residual",
+    sc = B.cheap("scale", [tok], op_fn(scale_op, c=embed_mult), s_res, "embed to residual",
                  meta={"kind": "scale", "c": embed_mult})
     r = B.residual(sc, pos, -1, comp="res")
 
@@ -431,7 +433,7 @@ def build_opt(model, calib_ids: torch.Tensor, **opts) -> tuple[IntGraph, dict]:
         h = B.norm(r, d, "norm2", li, [(w1, torch.ones(d))])
         f1 = B.to_int8(B.mat(h, w1.float(), b1, B.scale[h], "w_fc1", li), "rq_fc1", li, relu=o["relu_calib"],
                        pct=o["pct_fc1"])
-        act = B.cheap("act", [f1], lambda a, t=_RELU: _lut(a, t), B.scale[f1], "relu",
+        act = B.cheap("act", [f1], op_fn(lut_op, table=_RELU), B.scale[f1], "relu",
                       meta={"kind": "act", "comp": "relu", "layer": li})
         r = B.residual(r, B.mat(act, w2, b2, B.scale[act], "w_fc2", li), li)
         if o["free_calib"]:
@@ -440,7 +442,7 @@ def build_opt(model, calib_ids: torch.Tensor, **opts) -> tuple[IntGraph, dict]:
     lnf = dec.final_layer_norm
     wf, bf = _fold(model.lm_head.weight.float(), None, lnf.weight, lnf.bias)
     h = B.norm(r, d, "normf", len(dec.layers), [(wf, torch.ones(d))])
-    h = B.cheap("last", [h], lambda a: a[:, -1:, :].contiguous(), B.scale[h], "last position",
+    h = B.cheap("last", [h], op_fn(last_position_op), B.scale[h], "last position",
                 meta={"kind": "last"})
     logits = B.mat(h, wf.float(), bf, B.scale[h], "w_head", len(dec.layers), per_row="tensor")
     info = {"s_residual": s_res, "residual_real_max": res_max, "logit_scale": B.scale[logits],
@@ -450,7 +452,7 @@ def build_opt(model, calib_ids: torch.Tensor, **opts) -> tuple[IntGraph, dict]:
 
 def int_logits(graph: IntGraph, info: dict, ids: torch.Tensor) -> torch.Tensor:
     """Real logits of the integer graph at every position (``real_weights.real_logits(all_positions=True)``)."""
-    ops = [CheapOp(o.name, o.inputs, o.output, fn=(lambda a: a), note=o.note)
+    ops = [CheapOp(o.name, o.inputs, o.output, fn=op_fn(identity_op), note=o.note)
            if isinstance(o, CheapOp) and o.note == "last position" else o for o in graph.ops]
     env, _ = IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta)).forward(ids)
     return env[graph.output_name].double() * info["logit_scale"]
@@ -479,7 +481,7 @@ def graph_report(graph: IntGraph, info: dict | None = None) -> dict:
                                f" 2^{math.log2(m):.2f}")
         elif "vec_requant" in op.params:
             vec_ops += 1
-            mv = op.fn.__defaults__[0]
+            mv = op.fn.consts["mult"]
             distinct.append(int(torch.unique(mv).numel()))
             mults.extend([int(mv.min()), int(mv.max())])
             bad = int(((mv < (1 << 14)) | (mv > (1 << 29))).sum())

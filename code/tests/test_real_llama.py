@@ -391,8 +391,8 @@ def test_v1_accepts_a_real_graph_and_rejects_a_tamper(kind):
 # ------------------------------------------------------------------ the opt-in fixed prefix (prefix_tokens)
 
 def _defaults(fn) -> dict:
-    """The default arguments of a cheap op's function by name: its public constants."""
-    return {n: p.default for n, p in inspect.signature(fn).parameters.items() if p.default is not p.empty}
+    """A cheap op's public constants by name (its ``OpFn``'s keyword arguments)."""
+    return dict(fn.consts)
 
 
 def _attention_ops(graph) -> list:
@@ -409,19 +409,19 @@ def _glued(graph: IntGraph) -> IntGraph:
     for op in graph.ops:
         if isinstance(op, CheapOp) and op.note == "rope":
             d = _defaults(op.fn)
-            assert d["n"] == n
+            assert d.get("offset", d.get("base")) == n
             if len(op.inputs) == 2:          # a pruned q: the last positions of the joint sequence
-                fn = lambda a, x, H=d["H"], dh=d["dh"], th=d["th"]: _rope(               # noqa: E731
+                fn = lambda a, x, H=d["heads"], dh=d["dh"], th=d["theta"]: _rope(          # noqa: E731
                     a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1]).reshape(a.shape)
             else:
-                fn = lambda a, H=d["H"], dh=d["dh"], th=d["th"]: _rope(                   # noqa: E731
+                fn = lambda a, H=d["heads"], dh=d["dh"], th=d["theta"]: _rope(              # noqa: E731
                     a.reshape(*a.shape[:-1], H, dh), th).reshape(a.shape)
             op = dataclasses.replace(op, fn=fn)
         elif isinstance(op, CheapOp) and op.note == "attention":
             def fn(q, k, v, d=_defaults(op.fn)):
-                kp, vp = (c.to(torch.int64).expand(k.shape[0], -1, -1) for c in (d["kp"], d["vp"]))
-                return _attention(q, torch.cat([kp, k[:, n:]], 1), torch.cat([vp, v[:, n:]], 1), d["ms"], d["mo"],
-                                  d["H"], d["Hkv"], d["dh"], d["P"])
+                kp, vp = (c.to(torch.int64).expand(k.shape[0], -1, -1) for c in (d["k_prefix"], d["v_prefix"]))
+                return _attention(q, torch.cat([kp, k[:, n:]], 1), torch.cat([vp, v[:, n:]], 1), d["m_s"], d["m_o"],
+                                  d["heads"], d["kv_heads"], d["dh"], d["pmax"])
             op = dataclasses.replace(op, fn=fn)
         ops.append(op)
     return IntGraph(ops, graph.input_name, graph.output_name)
@@ -432,20 +432,15 @@ def _joint(prefix, x: torch.Tensor) -> torch.Tensor:
 
 
 def _with_constant(graph: IntGraph, layer: int, name: str, fix) -> IntGraph:
-    """``graph`` with the constant ``name`` (a default argument) of its ``layer``-th attention op replaced by
-    ``fix(constant)``: the same code, name and other constants."""
+    """``graph`` with the constant ``name`` of its ``layer``-th attention op replaced by ``fix(constant)``: the same
+    kind, name and other constants."""
     ops, seen = [], 0
     for op in graph.ops:
         if isinstance(op, CheapOp) and op.note == "attention":
             if seen == layer:
-                f = op.fn
-                names = list(inspect.signature(f).parameters)
-                defaults = list(f.__defaults__)
-                i = names.index(name) - (len(names) - len(defaults))
-                defaults[i] = fix(defaults[i])
-                new = types.FunctionType(f.__code__, f.__globals__, f.__name__, tuple(defaults), f.__closure__)
-                new.__qualname__ = f.__qualname__
-                op = dataclasses.replace(op, fn=new)
+                consts = dict(op.fn.consts)
+                consts[name] = fix(consts[name])
+                op = dataclasses.replace(op, fn=op.fn.with_consts(consts))
             seen += 1
         ops.append(op)
     return IntGraph(ops, graph.input_name, graph.output_name, dict(graph.meta))
@@ -468,7 +463,7 @@ def test_a_prefixed_graph_is_the_benchmark_graph_of_its_shape(kind, prune):
     hkv_dh = model.config.num_key_value_heads * 16
     for op, (kp, vp) in zip(_attention_ops(graph), info["prefix_kv"]):
         d = _defaults(op.fn)
-        assert d["kp"] is kp and d["vp"] is vp and kp.dtype == vp.dtype == torch.int8
+        assert d["k_prefix"] is kp and d["v_prefix"] is vp and kp.dtype == vp.dtype == torch.int8
         assert kp.shape == vp.shape == (1, 2, hkv_dh)
 
 
@@ -590,12 +585,12 @@ def test_the_digest_binds_the_prefix_and_v0_rejects_a_prover_with_other_constant
     swapped, _ = rl.build_llama_from_hf(model, calib, prefix_tokens=PREFIX[::-1], **SMOOTH)
     assert len({graph.digest(), plain.digest(), other.digest(), swapped.digest()}) == 4
     # the digest changes with one constant alone: layer 0's prefix keys (values) negated, the same function otherwise
-    assert _with_constant(graph, 0, "kp", lambda c: c).digest() == graph.digest()
+    assert _with_constant(graph, 0, "k_prefix", lambda c: c).digest() == graph.digest()
     params = params_for(20, len(graph.mat_ops))
     coms = commit_graph(graph, params.rate)
     v = Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()})
     assert run_query(Prover(graph, commitments=coms), v, x[:1, :16], seed=1)["accepted"]
-    for name in ("kp", "vp"):
+    for name in ("k_prefix", "v_prefix"):
         tampered = _with_constant(graph, 0, name, lambda c: -c)
         assert tampered.digest() != graph.digest()
         # a prover that computes with other prefix constants (same weights, same commitments) is rejected: the

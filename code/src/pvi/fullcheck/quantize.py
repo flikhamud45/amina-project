@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, requant
+from .graph import INT8_MAX, CheapOp, IntGraph, MatOp, op_fn, op_kind, requant, requant_op
 from .models import LeNet5, ResNet18, VGG
 
 __all__ = ["SHIFT", "CNNBuilder", "quantize_model", "quantize_input", "dequantize_logits", "fold_bn"]
@@ -34,6 +34,30 @@ BIAS_MAX = 1 << 26
 larger (BatchNorm with a tiny gain) gets a coarser weight scale instead.  With
 |W x| <= 127 * 127 * K this keeps every honest claim well inside the protocol's
 range check (``Z_BOUND = 2**29``; ``commit_graph`` verifies it per row)."""
+
+
+@op_kind("add_relu/1")
+def add_relu_op(a: torch.Tensor, b: torch.Tensor, *, m1: torch.Tensor, m2: torch.Tensor, shift: int) -> torch.Tensor:
+    """A residual block's ``relu(round((a m1 + b m2) / 2**shift))``, clamped to int8 (per-channel multipliers)."""
+    return ((a * m1.to(a.device) + b * m2.to(a.device) + (1 << (shift - 1))) >> shift).clamp(0, INT8_MAX)
+
+
+@op_kind("maxpool/1")
+def maxpool_op(x: torch.Tensor, *, k: int, s: int, p: int) -> torch.Tensor:
+    """Max pooling (exact: the max of int8 values in float32)."""
+    return F.max_pool2d(x.to(torch.float32), k, s, p).to(torch.int64)
+
+
+@op_kind("gap/1")
+def global_avgpool_op(x: torch.Tensor, *, hw: int) -> torch.Tensor:
+    """Global average pooling, round-half-up over the ``hw`` positions."""
+    return torch.div(x.sum(dim=(2, 3)) + hw // 2, hw, rounding_mode="floor")
+
+
+@op_kind("flatten/1")
+def flatten_op(x: torch.Tensor) -> torch.Tensor:
+    """``[B, ...] -> [B, -1]``."""
+    return x.reshape(x.shape[0], -1)
 
 
 def _pct(t: torch.Tensor, q: float = 0.9999) -> float:
@@ -123,9 +147,7 @@ class CNNBuilder:
             shape[zt.axis] = m.numel()
         m = m.reshape(shape) if m.dim() == 1 else m
 
-        def fn(z, m=m):
-            return requant(z, m.to(z.device), SHIFT, 0, INT8_MAX)
-
+        fn = op_fn(requant_op, mult=m, shift=SHIFT, lo=0, hi=INT8_MAX)
         name = self._name("rq")
         self.ops.append(CheapOp(name, (zt.name,), name + ".y", fn=fn, note="requant relu"))
         return _T(name + ".y", out_f, torch.tensor(s_out, dtype=torch.float64))
@@ -137,19 +159,13 @@ class CNNBuilder:
         m1 = _mult(main.scale / s_out).reshape(1, c, 1, 1)
         ms = shortcut.scale / s_out
         m2 = _mult(ms).reshape(1, c, 1, 1) if ms.dim() == 1 else _mult(ms).reshape(1, 1, 1, 1)
-        half = 1 << (SHIFT - 1)
-
-        def fn(a, b, m1=m1, m2=m2):
-            return ((a * m1.to(a.device) + b * m2.to(a.device) + half) >> SHIFT).clamp(0, INT8_MAX)
-
+        fn = op_fn(add_relu_op, m1=m1, m2=m2, shift=SHIFT)
         name = self._name("add")
         self.ops.append(CheapOp(name, (main.name, shortcut.name), name + ".y", fn=fn, note="residual add+relu"))
         return _T(name + ".y", out_f, torch.tensor(s_out, dtype=torch.float64))
 
     def maxpool(self, t: _T, k: int, s: int, p: int = 0) -> _T:
-        def fn(x, k=k, s=s, p=p):
-            return F.max_pool2d(x.to(torch.float32), k, s, p).to(torch.int64)
-
+        fn = op_fn(maxpool_op, k=k, s=s, p=p)
         name = self._name("pool")
         self.ops.append(CheapOp(name, (t.name,), name + ".y", fn=fn, note="maxpool",
                                 params={"k": k, "s": s, "p": p}))
@@ -158,17 +174,13 @@ class CNNBuilder:
     def global_avgpool(self, t: _T) -> _T:
         hw = t.f.shape[2] * t.f.shape[3]
 
-        def fn(x, hw=hw):
-            return torch.div(x.sum(dim=(2, 3)) + hw // 2, hw, rounding_mode="floor")
-
+        fn = op_fn(global_avgpool_op, hw=hw)
         name = self._name("gap")
         self.ops.append(CheapOp(name, (t.name,), name + ".y", fn=fn, note="global avgpool"))
         return _T(name + ".y", t.f.mean(dim=(2, 3)), t.scale)
 
     def flatten(self, t: _T) -> _T:
-        def fn(x):
-            return x.reshape(x.shape[0], -1)
-
+        fn = op_fn(flatten_op)
         name = self._name("flat")
         self.ops.append(CheapOp(name, (t.name,), name + ".y", fn=fn, note="flatten"))
         return _T(name + ".y", t.f.flatten(1), t.scale)

@@ -37,8 +37,8 @@ import numpy as np
 import torch
 
 from . import attention_kernels, native_kernels
-from .graph import (INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, requant, requant_fn,
-                    requant_mul, residual_add)
+from .graph import (INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, mul_requant_op,
+                    op_fn, op_kind, requant, requant_fn, requant_mul, residual_add)
 
 __all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
 
@@ -390,6 +390,70 @@ def _last_positions(a: torch.Tensor, n: int) -> torch.Tensor:
     return a[:, -n:, :].contiguous()
 
 
+# ------------------------------------------------------------------- the decoders' cheap ops (graph.op_kind)
+@op_kind("last_position/1")
+def last_position_op(a: torch.Tensor) -> torch.Tensor:
+    """``[B, T, d] -> [B, 1, d]``: the last position."""
+    return _last_position(a)
+
+
+@op_kind("last_positions/1")
+def last_positions_op(a: torch.Tensor, *, n: int) -> torch.Tensor:
+    """``[B, T, d] -> [B, n, d]``: the last ``n`` positions."""
+    return _last_positions(a, n)
+
+
+@op_kind("positions/1")
+def positions_op(x: torch.Tensor) -> torch.Tensor:
+    """The position ids ``0 .. T-1`` of the token ids ``x [B, T]``."""
+    return torch.arange(x.shape[1], device=x.device).expand(x.shape[0], -1).contiguous()
+
+
+@op_kind("scale/1")
+def scale_op(a: torch.Tensor, *, c: int) -> torch.Tensor:
+    """``a c`` (the embedding's int8 values to the residual stream's scale)."""
+    return a * c
+
+
+@op_kind("norm/1")
+def norm_op(a: torch.Tensor, *, gain: torch.Tensor, center: bool) -> torch.Tensor:
+    """Integer LayerNorm (``center``) or RMSNorm with the per-channel gain (:func:`_norm_int`)."""
+    return _norm_int(a, gain, center)
+
+
+@op_kind("head_norm/1")
+def head_norm_op(a: torch.Tensor, *, gain: torch.Tensor, heads: int, dh: int) -> torch.Tensor:
+    """Integer RMSNorm over each head's ``dh`` values (Qwen3's q and k norms), the gain shared by the heads."""
+    return _norm_int(a.reshape(*a.shape[:-1], heads, dh), gain, False).reshape(a.shape)
+
+
+@op_kind("rope/1")
+def rope_op(a: torch.Tensor, *, heads: int, dh: int, theta: float, offset: int) -> torch.Tensor:
+    """RoPE on each head of ``a [B, T, heads dh]`` at the positions ``offset .. offset + T - 1``."""
+    return _rope(a.reshape(*a.shape[:-1], heads, dh), theta, offset).reshape(a.shape)
+
+
+@op_kind("rope_tail/1")
+def rope_tail_op(a: torch.Tensor, x: torch.Tensor, *, heads: int, dh: int, theta: float, base: int) -> torch.Tensor:
+    """RoPE on the last ``Ta`` positions of a query ``x [B, T]`` (a pruned block's q): the positions
+    ``base + T - Ta .. base + T - 1`` (``base``: a fixed prefix's length)."""
+    return _rope(a.reshape(*a.shape[:-1], heads, dh), theta, x.shape[1] - a.shape[1] + base).reshape(a.shape)
+
+
+@op_kind("attention/1")
+def attention_op(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, m_s: int, m_o: int, heads: int,
+                 kv_heads: int, dh: int, pmax: int) -> torch.Tensor:
+    """Integer causal attention (:func:`_attention`) with the scores' and the output's multipliers and ``pmax``-level
+    probabilities."""
+    return _attention(q, k, v, m_s, m_o, heads, kv_heads, dh, pmax)
+
+
+@op_kind("lut/1")
+def lut_op(a: torch.Tensor, *, table: torch.Tensor) -> torch.Tensor:
+    """A 256-entry look-up table over int8 values (GELU, ReLU, SiLU)."""
+    return _lut(a, table)
+
+
 def with_lm_positions(graph: IntGraph, n: int) -> IntGraph:
     """``graph`` (a decoder of :func:`build_decoder` or ``real_weights``) with its logits at the last
     ``n`` positions instead of the last one: every "last position" slice -- before the LM head, and in
@@ -403,7 +467,7 @@ def with_lm_positions(graph: IntGraph, n: int) -> IntGraph:
     ``n``."""
     if n < 1:
         raise ValueError("at least one position")
-    ops = [dataclasses.replace(op, fn=functools.partial(_last_positions, n=n))
+    ops = [dataclasses.replace(op, fn=op_fn(last_positions_op, n=n))
            if isinstance(op, CheapOp) and op.note == "last position" else op for op in graph.ops]
     return IntGraph(ops, graph.input_name, graph.output_name, {**graph.meta, "lm_positions": n})
 
@@ -471,9 +535,9 @@ class _Builder:
         (the op itself takes the last), so the ops after it are calibrated -- get their multipliers --
         and draw their weights as in the graph without it."""
         if not calibrate_all:
-            return self.cheap("last", [name], _last_position, "last position")
+            return self.cheap("last", [name], op_fn(last_position_op), "last position")
         n = self.name("last")
-        self.ops.append(CheapOp(n, (name,), n + ".y", fn=_last_position, note="last position"))
+        self.ops.append(CheapOp(n, (name,), n + ".y", fn=op_fn(last_position_op), note="last position"))
         self.env[n + ".y"] = self.env[name]
         return n + ".y"
 
@@ -490,7 +554,7 @@ class _Builder:
 
     def norm(self, r, d, center):
         gain = torch.full((d,), round(32 * (1 << 16)), dtype=torch.int64)  # gamma=1 at scale 1/32
-        return self.cheap("norm", [r], lambda a, g=gain, c=center: _norm_int(a, g, c), "norm")
+        return self.cheap("norm", [r], op_fn(norm_op, gain=gain, center=center), "norm")
 
 
 def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_tokens: int = 16,
@@ -519,12 +583,11 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
     if cfg.embed_dim:  # OPT-350M's project_in (512 -> d_model)
         tok = B.to_int8(B.mat(tok, d, e, False))
     if cfg.pos == "learned":
-        pos_ids = B.cheap("pos", ["x"], lambda x: torch.arange(x.shape[1], device=x.device)
-                          .expand(x.shape[0], -1).contiguous(), "position ids")
+        pos_ids = B.cheap("pos", ["x"], op_fn(positions_op), "position ids")
         pos = B.mat(pos_ids, d, cfg.max_pos, False, layout="embed")
-        r = B.residual(B.cheap("scale", [tok], lambda a: a * 8, "embed to residual"), pos)
+        r = B.residual(B.cheap("scale", [tok], op_fn(scale_op, c=8), "embed to residual"), pos)
     else:
-        r = B.cheap("scale", [tok], lambda a: a * 8, "embed to residual")
+        r = B.cheap("scale", [tok], op_fn(scale_op, c=8), "embed to residual")
 
     gelu = torch.tensor([round(24 * (x / 24) * 0.5 * (1 + math.erf((x / 24) / math.sqrt(2))))
                          for x in range(-128, 128)], dtype=torch.int64)
@@ -540,42 +603,34 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
         v = B.to_int8(B.mat(h, hkv * dh, d, cfg.bias))
         if cfg.qk_norm:
             gh = torch.full((dh,), round(32 * (1 << 16)), dtype=torch.int64)
-            q = B.cheap("qn", [q], lambda a, g=gh, H=hq: _norm_int(a.reshape(*a.shape[:-1], H, dh), g, False)
-                        .reshape(a.shape), "q norm")
-            k = B.cheap("kn", [k], lambda a, g=gh, H=hkv: _norm_int(a.reshape(*a.shape[:-1], H, dh), g, False)
-                        .reshape(a.shape), "k norm")
+            q = B.cheap("qn", [q], op_fn(head_norm_op, gain=gh, heads=hq, dh=dh), "q norm")
+            k = B.cheap("kn", [k], op_fn(head_norm_op, gain=gh, heads=hkv, dh=dh), "k norm")
         if cfg.pos == "rope":
             th = cfg.rope_theta
             if prune:        # q at the last Tq positions: the angles of positions T - Tq .. T - 1
-                q = B.cheap("rope", [q, "x"], lambda a, x, H=hq, th=th: _rope(
-                    a.reshape(*a.shape[:-1], H, dh), th, x.shape[1] - a.shape[1]).reshape(a.shape), "rope")
+                q = B.cheap("rope", [q, "x"], op_fn(rope_tail_op, heads=hq, dh=dh, theta=th, base=0), "rope")
             else:
-                q = B.cheap("rope", [q], lambda a, H=hq, th=th: _rope(a.reshape(*a.shape[:-1], H, dh), th)
-                            .reshape(a.shape), "rope")
-            k = B.cheap("rope", [k], lambda a, H=hkv, th=th: _rope(a.reshape(*a.shape[:-1], H, dh), th)
-                        .reshape(a.shape), "rope")
+                q = B.cheap("rope", [q], op_fn(rope_op, heads=hq, dh=dh, theta=th, offset=0), "rope")
+            k = B.cheap("rope", [k], op_fn(rope_op, heads=hkv, dh=dh, theta=th, offset=0), "rope")
         # softmax temperature: logits of std ~1 nat, in units of 1/16 nat
         qs, ks = B.std(q), B.std(k)
         m_s = round((1 << SHIFT) * 16.0 / (qs * ks * math.sqrt(dh)))
         raw = _attention(B.env[q], B.env[k], B.env[v], m_s, None, hq, hkv, dh, prob_max)
         m_o = round((1 << SHIFT) * 24.0 / max(float(raw.double().std()), 1e-6))
-        if prob_max == PROB_MAX:   # today's op, digest unchanged
-            fn = lambda a, b_, c, ms=m_s, mo=m_o: _attention(a, b_, c, ms, mo, hq, hkv, dh)          # noqa: E731
-        else:
-            fn = lambda a, b_, c, ms=m_s, mo=m_o, P=prob_max: _attention(a, b_, c, ms, mo, hq, hkv, dh, P)  # noqa: E731
-        att = B.cheap("attn", [q, k, v], fn, "attention")
+        att = B.cheap("attn", [q, k, v], op_fn(attention_op, m_s=m_s, m_o=m_o, heads=hq, kv_heads=hkv, dh=dh,
+                                               pmax=prob_max), "attention")
         r = B.residual(B.last(r, calibrate_all=True) if prune else r, B.mat(att, d, hq * dh, cfg.bias))
         h = B.norm(r, d, center)
         if cfg.mlp == "swiglu":
             gate = B.to_int8(B.mat(h, cfg.d_ff, d, cfg.bias))
             up = B.to_int8(B.mat(h, cfg.d_ff, d, cfg.bias))
-            act = B.cheap("silu", [gate], lambda a, t=silu: _lut(a, t), "silu")
+            act = B.cheap("silu", [gate], op_fn(lut_op, table=silu), "silu")
             mm = torch.tensor(round((1 << SHIFT) * 24.0 / max(B.std(act) * B.std(up), 1e-6)), dtype=torch.int64)
-            prod = B.cheap("glu", [act, up], lambda a, b_, m=mm: requant_mul(a, b_, m.to(a.device), SHIFT, -INT8_MAX,
-                                                                             INT8_MAX), "swiglu")
+            prod = B.cheap("glu", [act, up], op_fn(mul_requant_op, mult=mm, shift=SHIFT, lo=-INT8_MAX, hi=INT8_MAX),
+                           "swiglu")
         else:
             f1 = B.to_int8(B.mat(h, cfg.d_ff, d, cfg.bias))
-            prod = B.cheap("act", [f1], lambda a, t=(gelu if cfg.mlp == "gelu" else relu): _lut(a, t), cfg.mlp)
+            prod = B.cheap("act", [f1], op_fn(lut_op, table=(gelu if cfg.mlp == "gelu" else relu)), cfg.mlp)
         r = B.residual(r, B.mat(prod, d, cfg.d_ff, cfg.bias))
 
     h = B.last(B.norm(r, d, center))       # (in a pruned graph the one position of its last block)
