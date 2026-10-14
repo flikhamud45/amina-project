@@ -141,8 +141,9 @@ $\Vclr$ and keep v0: the embeddings, the LM head, the single-position operations
 block, and any operation that fails a rule.
 
 \para{One query.} The prover sends the values $s_\ell$, the clear claims, the exceptions and the
-multiplicities before $\alpha \in \Fext \setminus (\F + \xi\F)$ is drawn, then the GKR
-transcripts, then the folds; the columns are drawn last. The verifier checks~\eqref{eq:v1-logup} as
+multiplicities before $\alpha \in \Fext \setminus (\F + \xi\F)$ is drawn (in mode $\sC$ with v0's
+vectors $\chi_\ell$ of the clear operations), then the GKR transcripts, then the folds of the cut and the clear
+operations; the columns are drawn last. The verifier checks~\eqref{eq:v1-logup} as
 $\sum_\gamma \mathsf n_0^\gamma / \mathsf d_0^\gamma = \sum_\tau \mu_\tau / (\alpha - \tau)$ over
 the instances $\gamma$ (all checks: Appendix~\ref{app:v1}).
 

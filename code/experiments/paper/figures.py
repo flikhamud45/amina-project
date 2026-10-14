@@ -230,5 +230,5 @@ def breakeven(crossovers: dict, out: Path) -> Path:
     """``fig:breakeven`` from :func:`experiments.paper.macros.breakeven`'s crossovers of the run."""
     from experiments.deployment import ev_breakeven as ev
     path = out / "ev_breakeven.pdf"
-    ev.draw(crossovers, {"reexec_s": {"2048": {"strongest_exact": crossovers["reexec_s"]}}}, [str(path)])
+    ev.draw(crossovers, {"reexec_s": {"2048": {"exact": crossovers["reexec_s"]}}}, [str(path)])
     return path

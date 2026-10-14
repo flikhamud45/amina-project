@@ -1,6 +1,6 @@
 """The cost of re-running the model: the baselines against which a verifier's time is read.
 
-Produces the re-execution rows of ``tab:options`` (the strongest exact re-execution on the CPU, the integer forward
+Produces the re-execution rows of ``tab:options`` (exact re-execution on the CPU, the integer forward
 pass on the GPU) and of ``tab:eval-reexec`` (extended version: the GPU's integer forward pass and fp16 decoder, the
 CPU's fp32, bf16 and integer re-execution of Llama-2-7B), the abstract's and Sec. ``sec:eval-reexec``'s ratio of the
 CPU verifier to the fastest exact re-execution, and the re-execution side of ``tab:eval-long`` (the package's tiers

@@ -402,8 +402,9 @@ receives \texttt{claims/PVC3}, \texttt{rows/I8}, \texttt{u/F31}, \texttt{cut/exc
 \texttt{col/}$\cdot$, \texttt{group/}$\cdot$, \texttt{table/}$\cdot$, \texttt{lookups}, \texttt{x},
 \texttt{sampler}, \texttt{cut}, \texttt{claim/}$\cdot$, \texttt{lookup/}$\cdot$, \texttt{u/}$\cdot$
 and the GKR labels \texttt{cut/}$b$\texttt{/top}, \texttt{cut/}$b$\texttt{/g}$k.j$ and
-\texttt{cut/}$b$\texttt{/v}$k$ for integers $b,k,j$. (L2) would fail only for a weight operation
-named \texttt{F31/tree}.
+\texttt{cut/}$b$\texttt{/v}$k$ for integers $b,k,j$; the setup proof's transcript absorbs
+\texttt{setup/params}, \texttt{setup/graph}, \texttt{setup/group/}$\cdot$ and \texttt{setup/msg/}$\cdot$
+directly. (L2) would fail only for a weight operation named \texttt{F31/tree}.
 
 \begin{lemma}[decoding the transcript]
 \label{lem:tree-dec}
@@ -455,8 +456,11 @@ makes on the proof (leaves, keys and expansions).
 % framing of the record "graph", first byte of the 32-byte digest: _absorb_statement absorbs
 % "graph" first in v0 and V1). E_0 costs N 2^-256; with N(N-1)/2 pairs the total stays N^2 2^-256.
 Consider all oracle queries of the prover and of the verifier, at most $N$, in the order they are
-made. Every challenge input begins with the same 32 bytes $\sigma_0$: the domain string, the framing
-of the first record, \texttt{graph}, and the first byte of the graph digest. Call a 32-byte value
+made. Every challenge input of a query begins with the same 32 bytes $\sigma_0$: the domain string, the
+framing of the first record, \texttt{graph}, and the first byte of the graph digest. (The setup proof's transcript
+uses the same domain string but begins with the record \texttt{setup/params}; its challenge inputs begin with
+other fixed 32 bytes $\sigma_0'$, and the argument below applies to it with $\sigma_0'$ in place of
+$\sigma_0$.) Call a 32-byte value
 inside a query a \emph{component} if the query begins with $\sigma_0$ and the value is a leaf in a
 tree record of it, or if the query does not begin with $\sigma_0$ and the value is its first 32 bytes
 (for an expansion input, its key). Call a component \emph{resolved} at the time of the query if it is

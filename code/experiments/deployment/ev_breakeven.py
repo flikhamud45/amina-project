@@ -110,7 +110,7 @@ def crossovers(cfg: dict, policies: list[str], lam: int = cli.PAPER.lam, rate: i
                 b = claims / r + f["fixed"]
                 out["panel1"].append({"seq": seq, "protocol": "v1", "policy": policies[0], "fs": fs,
                                       "claims": claims / r, **f, "proof_bytes": b, "Q_star": crossover_queries(W, b)})
-        t_r = cfg["reexec_s"][str(seq)]["strongest_exact"]
+        t_r = cfg["reexec_s"][str(seq)]["exact"]
         for fs in (False, True):
             t_v = cfg["verifier_s"][str(seq)]["fs" if fs else "int"]
             out["panel2"].append({"seq": seq, "protocol": "v0 Kpre", "fs": fs, "proof_bytes": claims, "verify_s": t_v,
@@ -196,7 +196,7 @@ def draw(out: dict, cfg: dict, paths: list[str]) -> None:
             v1 = row["protocol"].startswith("V1")
             a2.plot(links, [row["verify_s"] + 8 * row["proof_bytes"] / (L * 1e9) for L in links],
                     color=ours_k if v1 else ours, lw=1.1, label="V1" if v1 else "v0")
-    t_r = cfg["reexec_s"]["2048"]["strongest_exact"]
+    t_r = cfg["reexec_s"]["2048"]["exact"]
     a2.plot(links, [t_r] * len(links), "k--", lw=0.9, label="re-exec.")
     a2.set_xscale("log")
     a2.set_yscale("log")

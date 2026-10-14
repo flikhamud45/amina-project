@@ -37,18 +37,18 @@
   },
   "reexec_s": {
     "64": {
-      "strongest_exact": 4.08,
+      "exact": 4.08,
       "variant": "int_fp32gemm",
       "fp32": 4.53,
       "dynint8_not_exact": 1.91,
-      "source": "reexec/reexec.py --model llama2-7b --seq 64 --device cpu --threads 8: the full model's time of the fastest exact variant (the integer forward pass with exact fp32 GEMMs), of fp32, and of the non-exact dynamic int8 engine"
+      "source": "reexec/reexec.py --model llama2-7b --seq 64 --device cpu --threads 8: the full model's time of exact re-execution (the integer forward pass, its faster GEMM path: exact fp32 GEMMs), of fp32 and of the inexact dynamic int8 engine"
     },
     "2048": {
-      "strongest_exact": 93.2,
-      "variant": "float (fp32)",
+      "exact": 142.0,
+      "variant": "the integer forward pass",
       "fp32": 93.2,
       "dynint8_not_exact": 56.0,
-      "source": "reexec/reexec.py --model llama2-7b --seq 2048 --device cpu --threads 8: the full model's time of the fastest exact variant (fp32) and of the non-exact dynamic int8 engine"
+      "source": "reexec/reexec.py --model llama2-7b --seq 2048 --device cpu --threads 8: the full model's time of exact re-execution (the integer forward pass), of fp32 and of the inexact dynamic int8 engine"
     }
   }
 }

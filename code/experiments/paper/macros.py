@@ -10,10 +10,11 @@ The families, with the record each number comes from:
 
 * the platform (the records' ``env``: the GPU that proves and verifies, the CPU of the CPU verifier) and mode C's
   plan (``--policy``), which the captions and the sentences on how a number was measured state;
-* the CPU client (``cpuv`` tier): ``CpuRatioN`` is the abstract's "at least N times": the
-  strongest exact re-execution (the fastest of the exact variants, :data:`tables.EXACT`, each computing only what the
-  pruned graph computes) over the Kpre CPU verifier on the same 8 threads, for the full Llama-2-7B at 2,048 tokens,
-  one value (rounded down to one decimal); ``CpuRatio`` the same ratio rounded, ``CpuRatioShort`` at 64 tokens;
+* the CPU client (``cpuv`` tier): ``CpuRatioN`` is the abstract's "at least N times": exact re-execution (the
+  integer forward pass, bit-exact with the claims, the faster of its two GEMM paths, :data:`tables.EXACT`, computing
+  only what the pruned graph computes) over the Kpre CPU verifier on the same 8 threads, for the full Llama-2-7B at
+  2,048 tokens, one value (rounded down to one decimal); ``CpuRatio`` the same ratio rounded, ``CpuRatioShort`` at 64
+  tokens; ``CpuInexact*`` the fastest inexact engine (:data:`tables.INEXACT`) against the same verifier;
 * the outcome counts (``bench`` and ``batch`` tiers, ``comparison/count_outcomes.py`` over ``raw_<platform>/``);
 * the cost of the defence, batches against one opening, V1, serving, the comparison with published systems,
   re-execution, real weights, long prompts, the improvements, generation (their tiers' records, through the table
@@ -135,24 +136,27 @@ def platform(c: Collector, ctx: T.Ctx) -> None:
 def cpu_client(c: Collector, ctx: T.Ctx) -> None:
     run, m = ctx.run, "llama2-7b"
     k = {s: run.perf("cpuv", m, s, "Kpre", vdev="cpu", label="cpuv") for s in (64, 2048)}
-    rx = {s: T.strongest(run, "cpuv", m, s) for s in (64, 2048)}
+    rx = {s: T.fastest(run, "cpuv", m, s) for s in (64, 2048)}
     ratio = {s: rx[s][0] / k[s].d["verify_s"] if k[s] and rx[s][0] else None for s in (64, 2048)}
     c.put("CpuRatioN", ratio[2048], k[2048], _floor1)
     c.put("CpuRatio", ratio[2048], k[2048], lambda v: f"{v:.1f}")
     c.put("CpuRatioShort", ratio[64], k[64], lambda v: f"{v:.1f}")
     c.put("CpuReexecName", rx[2048][1], rx[2048][2], lambda v: T.REEXEC_NAME[v])
-    c.put("CpuReexecNameShort", rx[64][1], rx[64][2], lambda v: T.REEXEC_NAME[v])
     tm = (k[2048].d.get("timings") or {}) if k[2048] else {}
     c.put("CpuDeriveShareLong", tm.get("verify_derive") / k[2048].d["verify_s"] if tm.get("verify_derive") else None,
           k[2048], f.pct)
     c.put("CpuReexecLong", rx[2048][0], rx[2048][2], f.sig)
     c.put("CpuReexecShort", rx[64][0], rx[64][2], f.sig)
+    inexact = T.fastest(run, "cpuv", m, 2048, T.INEXACT)
+    c.put("CpuInexactName", inexact[1], inexact[2], lambda v: T.REEXEC_NAME[v])
+    c.put("CpuInexactLong", inexact[0], inexact[2], f.sig)
+    c.put("CpuRatioInexact", inexact[0] / k[2048].d["verify_s"] if k[2048] and inexact[0] else None, k[2048],
+          lambda v: f"{v:.1f}")
     for s, name in ((64, "Short"), (2048, "Long")):
-        ints = run.reexec("cpuv", m, s, "cpu", ("int", "int_fp32gemm"))
-        best = min(ints.values(), key=lambda v: v[0]) if ints else None
-        c.put(f"CpuReexecInt{name}", best and best[0], best and best[1], f.sig)
         fl = run.reexec("cpuv", m, s, "cpu", ("float",)).get("float")
         c.put(f"CpuFloat{name}", fl and fl[0], fl and fl[1], f.sig)
+        bf = run.reexec("cpuv", m, s, "cpu", ("bf16",)).get("bf16")
+        c.put(f"CpuBf{name}", bf and bf[0], bf and bf[1], f.sig)
         dyn = run.reexec("cpuv", m, s, "cpu", ("dynint8",)).get("dynint8")
         c.put(f"DynInt{name}", dyn and dyn[0], dyn and dyn[1], lambda v: f.sig(v, 2))
         c.put(f"CpuVerify{name}", k[s] and k[s].d["verify_s"], k[s], f.sig)
@@ -665,10 +669,10 @@ def long_prompts(c: Collector, ctx: T.Ctx) -> None:
 def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
     """The crossovers of ``deployment/ev_breakeven.py`` (Llama-2-7B, Fiat--Shamir, the run's plan) on the run's
     records: the claims and the Kpre CPU verifier (cpuv perf.py), V1's claims ratio and verifier (cpuv V1 cell),
-    the strongest exact re-execution and the int8 weights.  Returns the inputs and crossovers (for the figure)."""
+    exact re-execution and the int8 weights.  Returns the inputs and crossovers (for the figure)."""
     run, b, m = ctx.run, ctx.bench, "llama2-7b"
     k = {s: run.perf("cpuv", m, s, "Kpre", vdev="cpu", label="cpuv") for s in (64, 2048)}
-    rx = {s: T.strongest(run, "cpuv", m, s)[0] for s in (64, 2048)}
+    rx = {s: T.fastest(run, "cpuv", m, s)[0] for s in (64, 2048)}
     v1 = run.v1("cpuv", m, 2048, "Kpre", vdev="cpu", label="cpuv-v1")
     weights = (b.llm_cost(m, 64, "c_cpu") or b.llm_cost(m, 64, "kpre_cpu") or {}).get("params")
     names = ("BreakevenQueriesShort", "BreakevenQueriesLong", "BreakevenQueriesVOne", "BreakevenLinkRange",

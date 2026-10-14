@@ -28,7 +28,7 @@ client with the weights and a GPU should re-execute. The regime is narrow
 (Figure~\ref{fig:breakeven}; Llama-2-7B, Fiat--Shamir). Below about \BreakevenQueriesShort{} queries of 64 tokens,
 mode-$\sC$ proofs cost the client fewer bytes than one download of the int8 weights; at 2{,}048
 tokens the weights are only \BreakevenQueriesLong{}$\times$ the size of one proof, or \BreakevenQueriesVOne{}$\times$ with V1. A $\Kpre$ client that keeps the weights
-verifies faster than the fastest exact re-execution on its CPU only on links faster than
+verifies faster than exact re-execution on its CPU only on links faster than
 \BreakevenLinkRange{}\,Gb/s (V1: \BreakevenLinkVOne{}\,Gb/s).
 
 \para{Proof size.} The proof carries every weight operation's output, so it grows with the prompt.

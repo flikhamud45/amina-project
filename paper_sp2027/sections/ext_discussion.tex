@@ -91,12 +91,12 @@ We add the details behind each row.
 
 \para{Re-execution.} A client that downloads the \WeightsLlama{} of int8 weights once can re-run every
 query. The integer forward pass is bit-identical to the claims and so a complete check; it took
-\CpuReexecIntShort{}\,s at 64 tokens and \CpuReexecIntLong{}\,s at 2{,}048 tokens on 8 threads of an \PlatformCpu{}, and \GpuIntShort{} and
+\CpuReexecShort{}\,s at 64 tokens and \CpuReexecLong{}\,s at 2{,}048 tokens on 8 threads of an \PlatformCpu{}, and \GpuIntShort{} and
 \GpuIntLong{}\,s on an \PlatformGpu{} with int8 tensor cores (Table~\ref{tab:options}). Floating-point
 re-execution is faster on a GPU and for long prompts (fp32 on the CPU: \CpuFloatShort{} and \CpuFloatLong{}\,s; fp16 on the
 GPU: \GpuFloatShort{} and \GpuFloatLong{}\,s) but cannot confirm an exact answer. A CPU client that holds the weights can
 instead run our $\Kpre$ verifier, which takes \CpuVerifyShort{} and \CpuVerifyLong{}\,s, \CpuRatioShort{}$\times$ and \CpuRatio{}$\times$ faster
-than the fastest exact re-execution.
+than exact re-execution.
 On a GPU, re-execution wins: our streaming GPU verifier takes \OptMGpuVerify{}\,s for OPT-1.3B in $\Kpre$ at 2{,}048
 tokens, against \OptMGpuFloat{}\,s for fp16 re-execution on the same GPU (Section~\ref{sec:eval-reexec}).
 

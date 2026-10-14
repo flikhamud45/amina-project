@@ -56,8 +56,8 @@ sentences that say how a number was measured state the run's settings. Values th
 computed from the library under `--policy`: the setup proof's size, breakdown and radii (`costs/setup_bytes.py`'s byte
 model), the split commitment's columns per query, and V1's cut of the largest model from its shapes
 (`tables.v1_shape_model`; the leaves, instances and soundness terms at the run's `lmax`). The abstract's N
-(`\CpuRatioN`) is one value: the strongest exact re-execution (the fastest of
-`int`, `int_fp32gemm`, `float` and `bf16`, each computing only what the pruned graph computes) over the Kpre CPU
+(`\CpuRatioN`) is one value: exact re-execution (the integer forward pass, bit-exact with the claims: the
+faster of `int` and `int_fp32gemm`, computing only what the pruned graph computes) over the Kpre CPU
 verifier, both on 8 threads, for the full Llama-2-7B at 2,048 tokens (cpuv tier), rounded down to one decimal. The
 break-even reuses `deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and
 its byte model. The `Todo...` macros carry the `\todo` markers of numbers that the run fills (empty once generated).

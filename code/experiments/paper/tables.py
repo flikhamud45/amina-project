@@ -47,12 +47,15 @@ NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-1.3b": "OPT-1.3B", "opt-6.
 FULL_LAYERS = {"gpt2": 12, "opt-125m": 12, "opt-1.3b": 24, "opt-6.7b": 32, "llama2-7b": 32, "qwen3-4b": 36,
                "llama2-13b": 40}
 """The decoder blocks of the paper's models (``pvi.models.decoder.CONFIGS``)."""
-EXACT = ("int", "int_fp32gemm", "float", "bf16")
-"""``reexec.py``'s exact variants: the integer forward pass (int8 or fp32 GEMMs) and the floating-point checkpoint in
-fp32 and bf16 (``dynint8`` computes another model).  The strongest exact re-execution is the fastest of them, each
-computing only what the pruned graph computes."""
-REEXEC_NAME = {"int": "the integer forward pass", "int_fp32gemm": "the integer forward pass", "float": "fp32",
-               "bf16": "bf16"}
+EXACT = ("int", "int_fp32gemm")
+"""``reexec.py``'s exact variants: the integer forward pass, bit-exact with the claims, with int8 GEMMs or with exact
+fp32 GEMMs.  Exact re-execution is the faster of the two, computing only what the pruned graph computes; it is the
+only re-execution that checks what the verifier checks."""
+INEXACT = ("float", "bf16", "dynint8")
+"""``reexec.py``'s inexact variants: a floating-point decoder of the same shapes in fp32 and bf16, and torch's dynamic
+int8 engine; what an off-the-shelf stack would run, not bit-exact with the provider's model."""
+REEXEC_NAME = {"int": "int8 GEMMs", "int_fp32gemm": "exact fp32 GEMMs", "float": "fp32", "bf16": "bf16",
+               "dynint8": "dynamic int8"}
 MODE = {"C": r"$\sC$", "Kpre": r"$\Kpre$"}
 
 
@@ -112,9 +115,10 @@ def _two(a, b, fmt) -> str:
     return f.DASH if a is None and b is None else f"{f.DASH if a is None else fmt(a)} / {f.DASH if b is None else fmt(b)}"
 
 
-def strongest(run: Run, tier: str, model: str, seq: int):
-    """``(seconds, variant, record)`` of the fastest exact re-execution on the CPU, or ``(None, None, None)``."""
-    got = run.reexec(tier, model, seq, "cpu", EXACT)
+def fastest(run: Run, tier: str, model: str, seq: int, variants=EXACT):
+    """``(seconds, variant, record)`` of the fastest of ``variants`` (default: exact re-execution) on the CPU, or
+    ``(None, None, None)``."""
+    got = run.reexec(tier, model, seq, "cpu", variants)
     if not got:
         return None, None, None
     v, (s, r) = min(got.items(), key=lambda kv: kv[1][0])
@@ -245,8 +249,8 @@ def tab_eval_v1(ctx: Ctx) -> Table:
 
 
 def tab_options(ctx: Ctx) -> Table:
-    """``tab:options``: a client's options for one Llama-2-7B prompt: re-execution on the CPU (the strongest exact
-    variant) and on the GPU (the integer forward pass on int8 tensor cores), the published options, and our modes C
+    """``tab:options``: a client's options for one Llama-2-7B prompt: exact re-execution on the CPU (the faster of
+    the integer forward pass's two GEMM paths) and on the GPU (the integer forward pass on int8 tensor cores), the published options, and our modes C
     and Kpre and V1 (the CPU verifier: bytes and time)."""
     run, m = ctx.run, "llama2-7b"
     tb = Table("tab_options", "tab:options",
@@ -255,7 +259,7 @@ def tab_options(ctx: Ctx) -> Table:
     weights = ctx.bench.llm_cost(m, 64, "c_cpu") or ctx.bench.llm_cost(m, 64, "kpre_cpu")
     wb = weights["params"] if weights else None
     once = rf"\multicolumn{{2}}{{c}}{{{f.b(wb) if wb else f.DASH} once}}"
-    rx = [strongest(run, "cpuv", m, s) for s in (64, 2048)]
+    rx = [fastest(run, "cpuv", m, s) for s in (64, 2048)]
     gx = [run.reexec("gpuv", m, s, "cuda", ("int",)).get("int") for s in (64, 2048)]
     tb.put("weights", "bytes", wb, f"{ctx.bench.name} params_full", f.b)
     tb.rows.append(" & ".join([r"Re-exec., CPU$^a$", "weights", once,
@@ -704,10 +708,10 @@ def long_point(run: Run, seq: int, n_layers: int = 32) -> dict:
 
 def tab_eval_long(ctx: Ctx) -> Table:
     """``tab:eval-long``: long prompts on the full Llama-2-7B, extrapolated from 2 and 3 blocks: the CPU verifier
-    (Kpre, Fiat--Shamir) against the fastest exact re-execution on the same 8 threads, and the proof."""
+    (Kpre, Fiat--Shamir) against exact re-execution on the same 8 threads, and the proof."""
     tb = Table("tab_eval_long", "tab:eval-long", f"{protocol(ctx)}; long tier: perf.py --layers 2 and 3 (label "
                "long), reexec.py --layers 2 3; full model = 2 blocks + 30 x (3 blocks - 2 blocks); re-execution: "
-               "the fastest exact variant at each length")
+               "the integer forward pass")
     for seq in LONG:
         p = long_point(ctx.run, seq)
         rx = p["reexec"]

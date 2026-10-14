@@ -112,8 +112,8 @@ forward pass and \ServeOptMOverUTwoRange{}$\times$ an fp16 one. The main cost is
 operation's result: \ProofLlamaLongC{} for a 2{,}048-token Llama-2-7B prompt, about the size of its int8
 weights. V1 makes it \VOneRatioRandom{}$\times$ smaller with random weights and \VOneRatioRealOptL{}$\times$ on the real
 OPT-6.7B at 2{,}048 tokens, but slows the prover. With native exact kernels, a CPU client in
-mode~$\Kpre$ verifies a 2{,}048-token Llama-2-7B prompt \CpuRatio{}$\times$ faster than the fastest exact
-re-execution on the same CPU (\CpuReexecName{}; non-interactive, full model); on a GPU, re-execution is
+mode~$\Kpre$ verifies a 2{,}048-token Llama-2-7B prompt \CpuRatio{}$\times$ faster than exact
+re-execution, the integer forward pass, on the same CPU (non-interactive, full model); on a GPU, re-execution is
 faster\TodoCpuRatioIntro{}. The protocol is not zero-knowledge, so it targets open-weight models, as do
 CommitLLM~\cite{commitllm2026} and Gupta et al.~\cite{gupta2026private}.
 Section~\ref{sec:discussion} states whom the protocol serves.

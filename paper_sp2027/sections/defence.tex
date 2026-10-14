@@ -46,9 +46,9 @@ and a client without the weights checks each combination against a Reed--Solomon
 Merkle-committed copy of them. The commitment's testing phase is amortised into a one-time setup
 proof (Section~\ref{sec:setup-proof}). The provider (prover) may deviate arbitrarily. In mode
 $\sC$ the client (verifier) holds only a commitment $C_M$ to the weights, as in the path
-protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights, and in mode $\Kpre$ only
+protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights, and in mode $\Kpre$
 secret Freivalds vectors and their folded rows, precomputed once per model from the
-weights~\cite{slalom,commitllm2026}. For open weights anyone can recompute $C_M$
+weights~\cite{slalom,commitllm2026}, and the embedding tables, whose rows it looks up itself. For open weights anyone can recompute $C_M$
 (Section~\ref{sec:threat}); the integer OPT-125M and OPT-1.3B are reproduced bit for bit across
 machines and thread counts (OPT-125M also across operating systems and torch versions), and their
 commitments across machines, thread counts and CPU or GPU encoding.
@@ -167,8 +167,9 @@ probability $p^{-r}$, and with another $u_\ell$ the column check fails except wi
 In $\Kpre$, until a wrong claim passes, every outcome is a function of the prover's messages, so its
 view does not depend on $\chi_\ell$ (Appendix~\ref{app:sound}). \qed
 
-\para{Parameters.} We set $\beta=\lambda+\log_2(2|\mathcal J|)$ and $r=\lceil\beta/\log_2p\rceil$,
-and each tree opens the least $t$ that keeps every member's column term below $2^{-\beta}$. Then
+\para{Parameters.} We set $\beta=\lambda+\log_2(2n_{\mathrm{op}})$, with $n_{\mathrm{op}}\ge|\mathcal J|$
+the number of weight operations, and $r=\lceil\beta/\log_2p\rceil$, and each tree of the plan opens the least
+$t$ that keeps every member's column term below $2^{-\beta}$. Then
 $\varepsilon_{\sC}\le2^{-\lambda}$; at $\lambda=128$, $r=5$ (Appendix~\ref{app:defence} lists all
 parameters for Llama-2-7B). Each folded row and column mixes all rows of its matrix, so the protocol
 attains the upper bound of Theorem~\ref{thm:dich} with $O(\lambda)$ field elements per row instead
@@ -200,7 +201,7 @@ round-by-round error $\varepsilon_{\mathrm{rbr}}$ is the largest of these probab
 sum, and so at most $\varepsilon_{\sC}$ (Appendix~\ref{app:sound}). For simplicity our parameters
 keep the union bound: we add 64 bits to $\beta$, which keeps $Q\varepsilon_{\sC}\le2^{-\lambda}$
 for $Q\le2^{64}$ and raises $r$ to 7 at $\lambda=128$. Meeting $Q\varepsilon_{\mathrm{rbr}}\le
-2^{-\lambda}$ alone would save the $\log_2(2|\mathcal J|)$ bits of the union bound in $\beta$ and
+2^{-\lambda}$ alone would save the $\log_2(2n_{\mathrm{op}})$ bits of the union bound in $\beta$ and
 leave $r=7$.
 
 \para{Untrusted commitments.}\label{sec:setup-proof} Theorem~\ref{thm:sound} assumes an honest

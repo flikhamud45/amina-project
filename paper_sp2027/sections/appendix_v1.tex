@@ -59,7 +59,8 @@ $n_{\mathrm{col}} = \lceil \log_2 T \rceil$. Leaf index $\iota = \mathit{row} \c
 $\tilde g(\rho) = \sum_{y} \Veq(\rho, y)\, g(y)$. For an integer $N$, $I_N(r) = \sum_{y < N}
 \Veq(r, y)$, which the verifier computes from the binary digits of $N$ in $O(\log N)$ operations.
 
-\para{The verifier's checks.} The verifier rejects at the first failed check.
+\para{The verifier's checks.} The verifier rejects if any check fails; the implementation stops at the first
+failure and runs the token rule (D3) on the decoded claims before (D1) and (D2).
 (D1)~Ranges: $a \in [-127, 127]$, $\Delta \in R_\Delta = [\Vshift_\ell(1 - 2^{29}),
 \Vshift_\ell(2^{29} - 1)]$, $|z| < 2^{29}$ for clear claims, and a bound on the inputs of cut
 operations (defence in depth only).
@@ -80,7 +81,8 @@ L_\ell e + \xi\, \chi_\ell^\T W_\ell e\big)$, and $S_\ell$ is $u_\ell \bar x_\el
 operation in the row layout and $\chi_\ell^\T y_\ell$ for one in the transposed layout or in
 $\Kpre$.
 (F4)~$\sum_\gamma \mathsf n_0^\gamma / \mathsf d_0^\gamma = \sum_\tau \mu_\tau / (\alpha -
-\tau)$, compared by cross-multiplication.
+\tau)$; every denominator is non-zero, $\mathsf d_0^\gamma$ by (G) and $\alpha - \tau$ since
+$\alpha \notin \F + \xi\F$, so both sums are formed by batch inversion.
 (C)~The column check of every committed matrix, with the eight coordinate planes of $\chi_\ell$
 and $u_\ell$ (cut, row layout), of $\bar x$ and $y$ (cut, transposed layout), or the operands of
 v0 (clear).

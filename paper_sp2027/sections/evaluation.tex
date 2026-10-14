@@ -159,8 +159,9 @@ takes \VOneVerifyLlama{}\,s and v0's \VOneVZeroVerifyLlama{}\,s, \VOneVerifyRati
   \end{tabular}
 
   \smallskip
-  \parbox{\columnwidth}{\footnotesize $^a$Exact. CPU: the fastest exact re-execution (\CpuReexecNameShort{} at
-  64 tokens, \CpuReexecName{} at 2{,}048); a non-exact int8 engine takes \DynIntShort{}/\DynIntLong{}\,s. GPU: the integer forward
+  \parbox{\columnwidth}{\footnotesize $^a$Exact: the integer forward pass, bit for bit the claims (CPU: the faster of
+  int8 and exact fp32 GEMMs). Inexact inference of the same shapes on the CPU takes \CpuFloatShort{}/\CpuFloatLong{}\,s in
+  fp32, \CpuBfShort{}/\CpuBfLong{}\,s in bf16 and \DynIntShort{}/\DynIntLong{}\,s with dynamic int8. GPU: the integer forward
   pass on int8 tensor cores; fp16 takes \GpuFloatShort{}/\GpuFloatLong{}\,s. $^b$An edit passes a one-token response with probability about
   99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$V1's proof and its CPU
   verifier on the same queries (random weights; V1's gain on the real OPT-6.7B: \VOneRatioRealOptLExact{}$\times$).
@@ -178,8 +179,8 @@ takes \VOneVerifyLlama{}\,s and v0's \VOneVZeroVerifyLlama{}\,s, \VOneVerifyRati
   \caption{When a client of Llama-2-7B gains (random int8 weights, Fiat--Shamir). Left: the
   client's bytes for $Q$ mode-$\sC$ queries of 64 or 2{,}048 tokens, and with V1, against one
   download of the int8 weights (\WeightsLlamaGB{}\,GB). Right: a $\Kpre$ client's time for one 2{,}048-token
-  query, transfer plus verification on 8 threads of the \PlatformCpu{}, against the fastest exact
-  re-execution on the same threads (\CpuReexecLong{}\,s, \CpuReexecName{}), by link speed}
+  query, transfer plus verification on 8 threads of the \PlatformCpu{}, against exact re-execution on the
+  same threads (the integer forward pass, \CpuReexecLong{}\,s), by link speed}
   \label{fig:breakeven}
 \end{figure}
 
@@ -189,10 +190,11 @@ or $\Kpre$ can run, and against the other options of a client.
 \para{CPU.} With native exact kernels for every phase (an AVX-512 integer attention fused with its
 requantisation, one-pass recomputed operations, field products and claim decoding), our $\Kpre$
 verifier checks a 2{,}048-token query of the full Llama-2-7B in \CpuVerifyLong{}\,s on 8 threads of the
-\PlatformCpu{}, against \CpuReexecLong{}\,s for the fastest exact re-execution on the same threads
-(\CpuReexecName{}; the exact integer forward pass takes \CpuReexecIntLong{}\,s): \CpuRatio{}$\times$ faster. At 64
-tokens it takes \CpuVerifyShort{}\,s, against \CpuReexecShort{}\,s for the fastest exact re-execution (\CpuReexecNameShort{}):
-\CpuRatioShort{}$\times$.
+\PlatformCpu{}, against \CpuReexecLong{}\,s for exact re-execution on the same threads (the integer forward
+pass with \CpuReexecName{}): \CpuRatio{}$\times$ faster. At 64 tokens it takes \CpuVerifyShort{}\,s, against
+\CpuReexecShort{}\,s: \CpuRatioShort{}$\times$. Inexact inference of the same shapes, which cannot confirm the claims bit
+for bit, takes at least \CpuInexactLong{}\,s at 2{,}048 tokens (\CpuInexactName{}), \CpuRatioInexact{}$\times$ the
+verifier's time.
 
 \para{Break-even.} A client that receives a proof of $B$ bytes over a link of $L$ bit/s and
 verifies it in $t_v$ is faster than a re-execution taking $t_r$ when $L > 8B/(t_r - t_v)$.

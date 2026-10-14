@@ -384,7 +384,7 @@ def test_each_cell_comes_from_its_own_records(run_dir):
     o = cells("tab_options")
     assert o["with V1", "time 2048"]["value"] == pytest.approx(45.4)
     assert o["with V1", "bytes 2048"]["value"] == 2.8e9 and "sp-c-v1-" in o["with V1", "time 2048"]["source"]
-    assert o["Re-exec. CPU", "2048"]["value"] == 93.2 and o["Re-exec. CPU", "64"]["value"] == 4.08
+    assert o["Re-exec. CPU", "2048"]["value"] == 141.6 and o["Re-exec. CPU", "64"]["value"] == 4.08   # exact only
     assert o["Re-exec. GPU", "2048"]["value"] == 1.65
     # tab:eval-v1: the v1 tier's CPU-verifier record (1.0e9 is the GPU verifier's V1 bytes)
     v = cells("tab_eval_v1")
@@ -417,10 +417,12 @@ def test_the_text_numbers(run_dir):
     m, _ = M.build(ctx, problems)
     assert not problems
     v = {k: x.value for k, x in m.items()}
-    # the abstract's N: the 2,048-token ratio of the strongest exact re-execution (fp32, 93.2 s) to the Kpre CPU
-    # verifier (19.6 s), rounded down; not the minimum over the prompt lengths (64 tokens: 4.08 / 1.4 = 2.9)
-    assert v["CpuRatioN"] == "4.7" and v["CpuRatio"] == "4.8" and v["CpuRatioShort"] == "2.9"
-    assert v["CpuReexecName"] == "fp32" and v["CpuReexecShort"] == "4.08" and v["CpuReexecIntLong"] == "142"
+    # the abstract's N: the 2,048-token ratio of exact re-execution (the integer forward pass, its faster GEMM path:
+    # 141.6 s) to the Kpre CPU verifier (19.6 s), rounded down; not the minimum over the prompt lengths (64 tokens:
+    # 4.08 / 1.4 = 2.9); fp32 (93.2 s) and dynamic int8 (56 s) are inexact and never the baseline
+    assert v["CpuRatioN"] == "7.2" and v["CpuRatio"] == "7.2" and v["CpuRatioShort"] == "2.9"
+    assert v["CpuReexecName"] == "exact fp32 GEMMs" and v["CpuReexecShort"] == "4.08" and v["CpuReexecLong"] == "142"
+    assert v["CpuInexactName"] == "dynamic int8" and v["CpuInexactLong"] == "56" and v["CpuRatioInexact"] == "2.9"
     assert v["VOneVerifyLlama"] == "45.4" and v["VOneVerifyRatioLlama"] == "2.3"
     assert v["ServeOptMKpre"] == "2.1" and v["ServeOptMOverUOneRange"] == "4.1--8.6" and v["ServeBatchKpre"] == "3.4"
     assert v["QualityRatioOptS"] == "1.076" and v["QualityCIOptS"] == "1.073, 1.079" and v["QualityMissOptS"] == "0.016"
@@ -449,7 +451,7 @@ def test_the_settings_and_the_further_text_numbers(run_dir):
     v = {k: x.value for k, x in m.items()}
     assert v["PlatformGpu"] == "NVIDIA L40S" and v["PlatformCpu"] == "AMD EPYC 9334" and v["PlanLogPoints"] == "18"
     assert M.cpu_name("Intel(R) Xeon(R) Silver 4114 CPU @ 2.20GHz") == "Intel Xeon Silver 4114"
-    assert v["CpuReexecNameShort"] == "the integer forward pass" and v["CpuDeriveShareLong"] == "100"
+    assert v["CpuDeriveShareLong"] == "100"
     # generation
     assert v["GenGptProveC"] == "0.29" and v["GenGptMsPerToken"] == "1.1"
     assert v["GenLlamaProveC"] == "2" and v["GenLlamaProofC"] == r"1.0\,GB" and v["GenQwenVerifyC"] == "3"

@@ -98,7 +98,7 @@ configuration. The final run's records replace them: each value is the field nam
 | `v1_ratio_2048` | 2.3 | `v1/v1_bytes.py --model llama2-7b --seq 2048 --modes Kpre` on 2 and 3 blocks (tier `v1`): v0's claims over V1's (2.28 and 2.32) |
 | `verifier_s["64"]`, `["2048"]` (`int`, `fs`) | 1.01 / 1.4, 18.52 / 19.64 s | `costs/perf.py ... --modes Kpre --verifier-device cpu` (tier `cpuv`), with `--no-fs` and `--fs`: `verify_s` of the native CPU verifier |
 | `v1_verifier_s_2048` | 45.4 s | `v1/v1_phases.py`: V1's CPU verifier in Kpre under Fiat-Shamir with the native kernels of its final check, 2.28 s for 2 blocks plus 30 x 1.44 s for the other blocks |
-| `reexec_s["64"]`, `["2048"]` | 4.08 s (`int_fp32gemm`), 93.2 s (`float`, fp32) | `reexec/reexec.py --model llama2-7b --seq <T> --device cpu --threads 8` (tier `cpuv`): the full model's time of the fastest exact variant (`strongest_exact`); `fp32` and the non-exact `dynint8_not_exact` are kept for `tab:options` note a |
+| `reexec_s["64"]`, `["2048"]` | 4.08 s (`int_fp32gemm`), 142 s (the integer forward pass) | `reexec/reexec.py --model llama2-7b --seq <T> --device cpu --threads 8` (tier `cpuv`): the full model's time of exact re-execution (`exact`: the integer forward pass, its faster GEMM path); the inexact `fp32` and `dynint8_not_exact` are kept for `tab:options` note a |
 
 Mode C's fixed part is not an input: the byte model gives it for the plan, the security level and the rate.
 

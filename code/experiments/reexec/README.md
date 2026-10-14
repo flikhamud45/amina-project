@@ -7,15 +7,15 @@ shapes), and `h2d_bandwidth.py` measures the host-to-device copy bandwidth that 
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| `tab:options`' re-execution rows (CPU: the strongest exact re-execution on the verifier's 8 threads), the abstract's and Sec. `sec:eval-reexec`'s ratio of the CPU verifier to it (with `costs/perf.py`'s verifier) | `reexec.py` (tier `cpuv`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 64 2048 --layers 2 32 --variants int int_fp32gemm float bf16 dynint8 --device cpu --threads 8 --reps 5` (and Qwen3-4B, OPT-1.3B) | stdout, one JSON line per model, `T` and variant |
+| `tab:options`' re-execution rows (CPU: exact re-execution, the integer forward pass, on the verifier's 8 threads; the inexact engines in its note a), the abstract's and Sec. `sec:eval-reexec`'s ratio of the CPU verifier to it (with `costs/perf.py`'s verifier) | `reexec.py` (tier `cpuv`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 64 2048 --layers 2 32 --variants int int_fp32gemm float bf16 dynint8 --device cpu --threads 8 --reps 5` (and Qwen3-4B, OPT-1.3B) | stdout, one JSON line per model, `T` and variant |
 | `tab:options`' GPU row and `tab:eval-reexec`'s GPU rows (the integer forward pass with int8 GEMMs / the fp16 decoder, full models) | `reexec.py --device cuda` (tier `gpuv`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 64 512 2048 --layers 2 32 --variants int float bf16 --device cuda --reps 5` (and OPT-1.3B, Qwen3-4B, OPT-6.7B, Llama-2-13B) | stdout |
-| `tab:eval-reexec`'s CPU rows (fp32, bf16, integer and strongest exact re-execution of Llama-2-7B) | `reexec.py --device cpu` (tier `cpuv`) | the first command | stdout |
+| `tab:eval-reexec`'s CPU rows (fp32 and the integer forward pass of Llama-2-7B) | `reexec.py --device cpu` (tier `cpuv`) | the first command | stdout |
 | `tab:eval-long`'s re-execution columns (2,048 to 16,384 tokens) | `reexec.py --max-pos` (tier `long`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 8192 --layers 2 3 --variants int int_fp32gemm float bf16 dynint8 --device cpu --reps 3 --max-pos 16384` (and 2,048, 4,096, 16,384) | stdout |
 | the transfer time of a proof (`ext_discussion.tex`) and `\HtoDPinnedGBs` (`paper/numbers.py`) | `h2d_bandwidth.py` (tiers `smoke`, `gpuv`) | `python -m experiments.reexec.h2d_bandwidth --sizes-mb 64 1024 4096 --reps 10 --label gpuv` | stdout, one JSON line per size, direction and memory (`"kind": "h2d"`) |
 
 `paper/numbers.py` uses only measured full models (`measured_s` at the model's block count, no extrapolation) and
-takes the strongest exact baseline as the fastest of `int`, `int_fp32gemm`, `float` and `bf16` (`dynint8` computes
-another model). Run every command from `code/` with the checkout's library first on the path (`PYTHONPATH=src:.` on
+takes exact re-execution as the faster of `int` and `int_fp32gemm` (the integer forward pass, bit-exact with the
+claims); `float`, `bf16` and `dynint8` are inexact (another model of the same shapes) and are reported next to it. Run every command from `code/` with the checkout's library first on the path (`PYTHONPATH=src:.` on
 Linux, `PYTHONPATH="src;."` on Windows). `python -m experiments.reexec.<script> --help` lists every option.
 
 ## Scripts

@@ -5,19 +5,19 @@
 \newcommand{\AttackOptLPrompts}{40}
 \newcommand{\AttackOptLSucceeded}{40}
 \newcommand{\AttackOptLWilson}{91.2--100}
-\newcommand{\BatchLlamaPerQuery}{218.7}
-\newcommand{\BatchLlamaShared}{127.8}
-\newcommand{\BatchLlamaSingle}{324.5}
-\newcommand{\BatchLlamaSize}{8}
-\newcommand{\BatchLlamaWithin}{3}
-\newcommand{\BreakevenLinkLong}{0.70}
-\newcommand{\BreakevenLinkRange}{0.59--0.70}
-\newcommand{\BreakevenLinkVOne}{0.47}
+\newcommand{\BatchLlamaPerQuery}{\todo{batch tier}}
+\newcommand{\BatchLlamaShared}{\todo{batch tier}}
+\newcommand{\BatchLlamaSingle}{\todo{batch tier}}
+\newcommand{\BatchLlamaSize}{\todo{batch tier}}
+\newcommand{\BatchLlamaWithin}{\todo{batch tier}}
+\newcommand{\BreakevenLinkLong}{0.42}
+\newcommand{\BreakevenLinkRange}{0.42--0.59}
+\newcommand{\BreakevenLinkVOne}{0.23}
 \newcommand{\BreakevenQueriesLong}{1.0}
 \newcommand{\BreakevenQueriesShort}{22}
 \newcommand{\BreakevenQueriesVOne}{2.3}
 \newcommand{\BreakevenTokens}{2{,}100}
-\newcommand{\BreakevenTokensVOne}{4{,}500}
+\newcommand{\BreakevenTokensVOne}{4{,}900}
 \newcommand{\BreakevenVOneFaster}{1.1}
 \newcommand{\ClaimsShareLlama}{98}
 \newcommand{\CleWith}{67.8}
@@ -41,17 +41,19 @@
 \newcommand{\CompareVOneOptM}{2{,}073.9}
 \newcommand{\CompareVOneOptS}{349.6}
 \newcommand{\CompareVerifierSlowerRows}{two rows}
+\newcommand{\CpuBfLong}{\todo{cpuv tier}}
+\newcommand{\CpuBfShort}{\todo{cpuv tier}}
 \newcommand{\CpuDeriveShareLong}{70}
 \newcommand{\CpuFloatLong}{93}
 \newcommand{\CpuFloatShort}{4.5}
-\newcommand{\CpuRatio}{4.7}
-\newcommand{\CpuRatioN}{4.7}
+\newcommand{\CpuInexactLong}{56}
+\newcommand{\CpuInexactName}{dynamic int8}
+\newcommand{\CpuRatio}{7.2}
+\newcommand{\CpuRatioInexact}{2.9}
+\newcommand{\CpuRatioN}{7.2}
 \newcommand{\CpuRatioShort}{2.9}
-\newcommand{\CpuReexecIntLong}{142}
-\newcommand{\CpuReexecIntShort}{4.1}
-\newcommand{\CpuReexecLong}{93.2}
-\newcommand{\CpuReexecName}{fp32}
-\newcommand{\CpuReexecNameShort}{the integer forward pass}
+\newcommand{\CpuReexecLong}{142}
+\newcommand{\CpuReexecName}{int8 GEMMs}
 \newcommand{\CpuReexecShort}{4.1}
 \newcommand{\CpuVerifyLong}{19.6}
 \newcommand{\CpuVerifyShort}{1.4}
@@ -116,9 +118,9 @@
 \newcommand{\ImproveFusedEncoder}{1.74}
 \newcommand{\ImproveGpuvOptM}{2.7}
 \newcommand{\ImproveGpuvRange}{2.0--2.7}
-\newcommand{\ImproveOpenFloat}{1.105}
+\newcommand{\ImproveOpenFloat}{\todo{improve tier}}
 \newcommand{\ImproveOpenRange}{3.7--4.3}
-\newcommand{\ImproveOpenShare}{62}
+\newcommand{\ImproveOpenShare}{\todo{improve tier}}
 \newcommand{\ImproveProveFloat}{1.78}
 \newcommand{\ImproveThreadedEncoder}{1.54}
 \newcommand{\InrangeCalibTokens}{8{,}192}
@@ -170,9 +172,9 @@
 \newcommand{\OptMGpuVerify}{1.1}
 \newcommand{\ParamsColumnsMinFs}{34}
 \newcommand{\ParamsColumnsMinInt}{23}
-\newcommand{\ParamsInstances}{162}
-\newcommand{\ParamsLeaves}{2.7\cdot10^9}
-\newcommand{\ParamsLmax}{24}
+\newcommand{\ParamsInstances}{\todo{v1 tier}}
+\newcommand{\ParamsLeaves}{\todo{v1 tier}}
+\newcommand{\ParamsLmax}{\todo{v1 tier}}
 \newcommand{\ParamsTable}{5.6\cdot10^5}
 \newcommand{\ParamsTrees}{6}
 \newcommand{\PathPassResNet}{$511/512$}
@@ -226,15 +228,15 @@
 \newcommand{\ReachNeurons}{16{,}384}
 \newcommand{\ReachTokens}{6{,}187}
 \newcommand{\ReachVocab}{50{,}272}
-\newcommand{\RealLlamaAccepted}{3}
-\newcommand{\RealLlamaProof}{5.35}
-\newcommand{\RealLlamaQueries}{3}
-\newcommand{\RealLlamaShortSmaller}{11--17}
-\newcommand{\RealLlamaShortVerifyWithin}{10}
-\newcommand{\RealLlamaSmaller}{17}
-\newcommand{\RealLlamaTampers}{9}
-\newcommand{\RealLlamaTampersRejected}{9}
-\newcommand{\RealLlamaVerify}{21.0}
+\newcommand{\RealLlamaAccepted}{\todo{real tier}}
+\newcommand{\RealLlamaProof}{\todo{real tier}}
+\newcommand{\RealLlamaQueries}{\todo{real tier}}
+\newcommand{\RealLlamaShortSmaller}{\todo{real tier}}
+\newcommand{\RealLlamaShortVerifyWithin}{\todo{real tier}}
+\newcommand{\RealLlamaSmaller}{\todo{real tier}}
+\newcommand{\RealLlamaTampers}{\todo{real tier}}
+\newcommand{\RealLlamaTampersRejected}{\todo{real tier}}
+\newcommand{\RealLlamaVerify}{\todo{real tier}}
 \newcommand{\RealOptLAccepted}{3}
 \newcommand{\RealOptLDecode}{2.7}
 \newcommand{\RealOptLProducts}{6.1}
@@ -390,7 +392,7 @@
 \newcommand{\VOneRatioShort}{1.28--1.46}
 \newcommand{\VOneRatioShortC}{1.28}
 \newcommand{\VOneRatioShortK}{1.46}
-\newcommand{\VOneRealLlamaRatio}{2.02}
+\newcommand{\VOneRealLlamaRatio}{\todo{real tier}}
 \newcommand{\VOneRealOptLExceptionRate}{$10^{-4}$}
 \newcommand{\VOneRealOptLExceptions}{224{,}670}
 \newcommand{\VOneRealOptLExceptionsMB}{1.8}
