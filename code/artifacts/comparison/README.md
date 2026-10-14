@@ -53,7 +53,7 @@ a new platform name (`python -m experiments.costs.bench ... --platform <name>`, 
 
 Every job of the `must` (later renamed `report-must`), `should` and `nice` tiers of the benchmark's tier
 script of that time (its cells are those of `experiments/costs/bench.py`; the run package
-`experiments/package/run.sh` replaces the script) on TAU's `killable` partition, with platform `l40s`: 61 SLURM
+`experiments/package/run.sh` replaces the script) on the L40S partition of a SLURM cluster, with platform `l40s`: 61 SLURM
 jobs with records (946078–947808; jobs pre-empted by
 the partition were resubmitted by re-running their tier). The one L40S node with a different CPU
 (t-806) was excluded. Every decoder up to 13B parameters is built at full depth (`--lean`) at up to
@@ -141,8 +141,8 @@ verifier of Qwen3-4B and Llama-2-13B at 64 tokens): 10 numbers in all.
 ### `raw_rtx2080ti-v2/`: the second platform
 
 The `must` tier of the benchmark's tier script of that time without `ab-opt13` (a non-lean OPT-1.3B control at 2,048 tokens,
-about 27 GiB, too large for the card): 29 SLURM jobs (945088–945116) on TAU's `studentbatch`
-partition, with platform `rtx2080ti-v2`. Every decoder is built at full depth except Llama-2-13B,
+about 27 GiB, too large for the card): 29 SLURM jobs (945088–945116) on the RTX 2080 Ti
+partition of a SLURM cluster, with platform `rtx2080ti-v2`. Every decoder is built at full depth except Llama-2-13B,
 whose 12.1 GiB of int8 weights exceed the card. `count_outcomes.py --platform rtx2080ti-v2`: 5,547
 honest queries accepted, 2,456 attacks rejected. It lacks cells that the paper's tables draw (e.g. OPT-13B at
 2,048 tokens), so no value of the paper comes from it.

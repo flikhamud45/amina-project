@@ -1,8 +1,8 @@
 # zkLLM's public code on our GPU (not used in the final paper)
 
 To compare provers on the same hardware, we ran zkLLM's public demo (commit `993311e` of its
-repository, unchanged) on one of our L40S nodes (L40S prover, AMD EPYC 9334 host; TAU's `killable`
-partition) for Llama-2-7B and Llama-2-13B at 2,048 tokens: about 844 s for Llama-2-7B, and 2.5x the
+repository, unchanged) on one of our L40S nodes (L40S prover, AMD EPYC 9334 host; a SLURM
+cluster) for Llama-2-7B and Llama-2-13B at 2,048 tokens: about 844 s for Llama-2-7B, and 2.5x the
 7B figure per layer for Llama-2-13B. The final paper does not use these runs: they were to be compared
 with our Llama-2-7B prover at 2,048 tokens, whose timing is withheld
 ([`artifacts/comparison/README.md`](../../comparison/README.md#withheld-timings-excluded_cellscsv)) and
@@ -57,8 +57,8 @@ export ZKLLM_HOME=<dir holding zkllm/ and its conda env/>
 export WIKITEXT_PARQUET=<wikitext-2-raw-v1 test split, parquet>
 cp code/artifacts/results/zkllm_l40s/mkinput.py $ZKLLM_HOME/zkllm/                    # it imports zkLLM's fileio_utils
 bash code/artifacts/results/zkllm_l40s/install_timing_shims.sh $ZKLLM_HOME/zkllm      # once
-sbatch -p killable --gres=gpu:l40s:1 code/artifacts/results/zkllm_l40s/zkllm.sbatch 7    # Llama-2-7B
-sbatch -p killable --gres=gpu:l40s:1 code/artifacts/results/zkllm_l40s/zkllm.sbatch 13   # Llama-2-13B
+sbatch -p <partition> --gres=gpu:l40s:1 code/artifacts/results/zkllm_l40s/zkllm.sbatch 7    # Llama-2-7B
+sbatch -p <partition> --gres=gpu:l40s:1 code/artifacts/results/zkllm_l40s/zkllm.sbatch 13   # Llama-2-13B
 ```
 
 The script's arguments are `<7|13> [seq=2048] [reps=3] [layers="0 1"]`; the stored runs used the

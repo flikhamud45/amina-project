@@ -13,13 +13,14 @@ machine-specific strings replaced, refused while any identifying string remains.
 4. **Refuse.** Every exported file is scanned: its path, text files as text, PDFs through their text and metadata,
    NumPy archives through their names and non-numeric members (:func:`npz_text`), other files as bytes. The patterns
    (:func:`deny_patterns`) are the commit authors' names, name parts and e-mail addresses, the owners and names of the
-   configured remotes, and the private file's ``deny`` and ``deny_words`` strings. While anything matches, every match
-   is listed and the exit status is 1.
+   configured remotes, and the private file's ``deny``, ``deny_words`` and ``deny_case`` strings. While anything
+   matches, every match is listed and the exit status is 1.
 
 The private file is JSON kept outside the repository, so that no name is written into the repository itself::
 
     {"deny": ["<institution>", "<cluster account>", ...],      # matched anywhere, ignoring case
      "deny_words": ["<short user name>", ...],                  # matched as whole words, ignoring case
+     "deny_case": ["<acronym>", ...],                           # whole words, case-sensitive
      "rewrite": [["<regular expression>", "<placeholder>"], ...]}
 
 Scanning PDFs needs PyMuPDF (``pip install pymupdf``).
@@ -68,18 +69,18 @@ def git(*args: str) -> str:
 
 def deny_patterns(private: dict) -> list[tuple[str, re.Pattern]]:
     """``(what, pattern)``: every commit author's full name, each name part of at least 4 letters and each e-mail
-    address; the owner and repository name of each remote; the private file's ``deny`` (anywhere) and
-    ``deny_words`` (whole words) strings."""
+    address; the owner and repository name of each remote; the private file's ``deny`` (anywhere),
+    ``deny_words`` (whole words) and ``deny_case`` (whole words, case-sensitive) strings."""
     out: list[tuple[str, re.Pattern]] = []
     seen: set[str] = set()
 
-    def add(what: str, s: str, word: bool = True) -> None:
-        key = s.lower()
-        if len(s) < 3 or key in seen or key in GENERIC_IDENTITIES:
+    def add(what: str, s: str, word: bool = True, case: bool = False) -> None:
+        key = s if case else s.lower()
+        if len(s) < 3 or key in seen or key.lower() in GENERIC_IDENTITIES:
             return
         seen.add(key)
         body = re.escape(s)
-        out.append((what, re.compile(rf"(?<!\w){body}(?!\w)" if word else body, re.IGNORECASE)))
+        out.append((what, re.compile(rf"(?<!\w){body}(?!\w)" if word else body, 0 if case else re.IGNORECASE)))
 
     for line in git("log", "--all", "--format=%an%x09%ae%x09%cn%x09%ce").splitlines():
         for i, field in enumerate(line.split("\t")):
@@ -106,6 +107,8 @@ def deny_patterns(private: dict) -> list[tuple[str, re.Pattern]]:
         add("private deny", s, word=False)
     for s in private.get("deny_words", []):
         add("private deny word", s)
+    for s in private.get("deny_case", []):
+        add("private deny word (case)", s, case=True)
     return out
 
 
