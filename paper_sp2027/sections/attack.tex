@@ -211,12 +211,12 @@ changed penultimate neuron flips the prediction and is caught by a path with pro
 layers of Llama-2-7B (width \WidthLlama{}), about \OpenAllLlama{}\,GB of fp16 openings at 64 tokens.
 
 \para{A real LLM.} On OPT-6.7B (fp16), one FFN neuron of layer 8, 16, 24 or 31 changed the next
-token for all \AttackOptLSucceeded{} prompts (95\% Wilson interval for the success rate: \AttackOptLWilson{}\%). A fixed-target backdoor, constrained by the final LayerNorm, succeeds
+token for \AttackOptLSucceeded{} of \AttackOptLPrompts{} prompts (95\% Wilson interval for the success rate: \AttackOptLWilson{}\%). A fixed-target backdoor, constrained by the final LayerNorm, succeeds
 for ``\texttt{back}'' (\AttackOptLBackdoorBack{}, clean prompts unchanged) and fails for ``\texttt{hacked}'' (\AttackOptLBackdoorHacked{}).
 Its values exceed the natural ranges, which the path protocol does not check, and $2^{-40}$ needs
 at least \AttackOptLPaths{} paths. Range checks do not stop the edit. Against per-neuron ranges calibrated on
 held-out text (\InrangeCalibTokens{} tokens of WikiText-2 train), edits that keep every value in range change the
-next token of OPT-1.3B for all \InrangeChanged{} prompts at each of layers 6, 12, 18 and 23, with a median of \InrangeKMedian{}
+next token of OPT-1.3B for \InrangeChanged{} prompts at each of layers 6, 12, 18 and 23, with a median of \InrangeKMedian{}
 neurons (at most \InrangeKMax{}); a path opens them with median probability at most \InrangePMedianMax{} in every
 cell (at most \InrangePMax{}). Edits that only lower activations, which a contribution-weighted
 sampler of the claimed trace never opens, succeed for \InrangeDown{} of the \InrangePrompts{} prompts at those
@@ -227,7 +227,7 @@ the paths that enter the FFN of layers 6, 12 and 18 (mean over prompts), above $
 and on \GameLayerTwentyThree{}\% at layer 23 (uniform: \GameUniform{}\%).
 Whether an edit adapted to the sampler evades it, as on the MLP, we leave open. On OPT-6.7B
 (layers 8, 16, 24 and 31), in-range edits change the next
-token for all \InrangeOptLChanged{} prompts at every layer, and a path opens them with median probability at most
+token for \InrangeOptLChanged{} prompts at every layer, and a path opens them with median probability at most
 \InrangeOptLPMedianMax{}.
 
 % -------------------------------------------------------------------------------------

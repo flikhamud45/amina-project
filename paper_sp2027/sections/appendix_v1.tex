@@ -283,8 +283,8 @@ reuse the vectors therefore occurs with probability at most $Q$ times the bound.
 \para{Fiat--Shamir.} The interactive protocol is round-by-round sound, as in
 Section~\ref{sec:fs}: once a message makes the statement doomed, only the next challenge can rescue
 it. For the new rounds this probability is at most $1/p^8$ for $\theta_k$ and $\eta_k$, $3/p^8 =
-2^{-245.7}$ for a sum-check round, and $(\Nleaf + |\Vtab|)/(p^8 - p^2) \le 2^{-215.3}$ for
-$\alpha$. All are below the per-round error that the Fiat--Shamir parameters of v0 allow at
+2^{-245.7}$ for a sum-check round, and $(\Nleaf + |\Vtab|)/(p^8 - p^2) \le 2^{\VOneLargeLookupLog{}}$ for
+$\alpha$ (Llama-2-13B at 2{,}048 tokens, the largest query we consider). All are below the per-round error that the Fiat--Shamir parameters of v0 allow at
 $\lambda = 128$, so its state-restoration bound for $Q$ oracle queries carries over unchanged.
 
 \para{Remarks.} (i)~\emph{Saturated entries.} If the prover omits an exception, the entry keeps its

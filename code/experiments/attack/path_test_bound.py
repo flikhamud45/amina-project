@@ -12,9 +12,10 @@ Usage (from ``code/``)::
     python -m experiments.attack.path_test_bound                                 # Llama-2-7B, 64 tokens, lam = 40
     python -m experiments.attack.path_test_bound --model llama2-7b opt-6.7b --seq 64 --lam 40 --out /tmp/analytic.csv
 
-Writes one CSV row per model to ``--out`` (default ``artifacts/comparison/tables/analytic.csv``, which
-``experiments/paper/assets.py`` reads): ``model``, ``params`` (weight-product parameters), ``seq``, ``lam``,
-``anchuri_width``, ``anchuri_paths``, ``anchuri_open_all_bytes``; and prints each row as one JSON line.  Shapes
+Writes one CSV row per model to ``--out`` (default ``artifacts/comparison/tables/analytic.csv``; the run package's
+attack tier writes ``logs/<name>/attack/analytic.csv``, which ``experiments/paper/numbers.py`` reads for the macros
+``PathsLlama``, ``WidthLlama`` and ``OpenAllLlama``): ``model``, ``params`` (weight-product parameters), ``seq``,
+``lam``, ``anchuri_width``, ``anchuri_paths``, ``anchuri_open_all_bytes``; and prints each row as one JSON line.  Shapes
 only (``pvi.models.decoder.CONFIGS``): no weights, no GPU, a few seconds.
 """
 

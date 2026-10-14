@@ -13,8 +13,8 @@
 %      AI-use field and decide whether the extended version should name it.
 %   E4 "Proof Size and Running Time of V1": Sec. 5.7 "Cost", "Proof size", "Prover and verifier",
 %      and the disabled fallback Table tab:v1, reduced to the time part plus the GKR share (its
-%      proof-size part duplicated Table tab:eval-v1 of evaluation.tex). Sources: C2 Sec. 8, jobs
-%      1005287 (bytes) and 1005575 (times); ratios computed from those tables.
+%      proof-size part duplicated Table tab:eval-v1 of evaluation.tex); its numbers are macros of
+%      code/experiments/paper/numbers.py (the v1, cpuv and real tiers).
 %   E5 "Limitations of V1": Sec. 5.7 "Limitations".
 % Labels defined: tab:v1. Labels used: sec:v1, lem:v1-logup, thm:v1, sec:fs, sec:setup-proof, sec:gen,
 % sec:quality, sec:eval-v1, tab:eval-v1. New bib keys: none (montgomery1985, tillet2019triton exist).
@@ -35,9 +35,9 @@
 % ---- E1 -------------------------------------------------------------------------------
 \subsection{Details of the Windowed LogUp}
 
-\para{Exceptions.} Clamps are rare: with real weights they occur at a rate of about $10^{-4}$ (the
-2{,}048-token proof of the real OPT-6.7B lists 224{,}670, 1.8\,MB), and with random weights our
-measured proofs list at most 65. Residual operations clamp only after the addition
+\para{Exceptions.} Clamps are rare: with real weights they occur at a rate of about \VOneRealOptLExceptionRate{} (the
+2{,}048-token proof of the real OPT-6.7B lists \VOneRealOptLExceptions{}, \VOneRealOptLExceptionsMB{}\,MB), and with random weights our
+measured proofs list at most \VOneRandomExceptionsMax{}. Residual operations clamp only after the addition
 and have no exceptions.
 
 \para{Field.} Under Fiat--Shamir, the 64 extra bits of Section~\ref{sec:fs} require the challenges
@@ -46,8 +46,8 @@ of the lookup to come from an extension of BabyBear of degree at least 7. We use
 \pmod 4$, and we use it in interactive runs as well.
 
 \para{Table.} One table serves every width with one leaf per entry. It has at most
-$5.6\cdot10^5$ elements for the full Llama-2-7B with random weights (Table~\ref{tab:params}) and
-$6.4\cdot10^4$ for the real OPT-6.7B.
+$\ParamsTable{}$ elements for the full Llama-2-7B with random weights (Table~\ref{tab:params}) and
+$\VOneRealOptLTable{}$ for the real OPT-6.7B.
 
 \para{Both integer conditions are needed.} Lemma~\ref{lem:v1-logup} needs both of its integer
 conditions. If a multiplicity may reach $p$, a prover holding $p$ copies of an off-table leaf adds
@@ -64,7 +64,7 @@ bound on the number of lookups derived from the table heights~\cite[Remark~17]{s
 OpenVM, over BabyBear, caps the number of interactions at $p$ and treats multiplicities as integers
 when one side sums to less than $p$~\cite{openvm2025logup}; and SP1 includes the clock in every
 query, so that repeated queries differ~\cite{lurk2024lookups}. A V1 query has up to
-$4.3\cdot10^9>p$ leaves, which such a bound would force us to split into instances with separate
+$\VOneLargeLeaves{}>p$ leaves (Llama-2-13B at 2{,}048 tokens), which such a bound would force us to split into instances with separate
 multiplicity vectors and separate checks. Lemma~\ref{lem:v1-logup} uses instead that V1 sends its
 multiplicities in the clear: the verifier checks $\mu_\tau<p$ and $\sum_\tau\mu_\tau=\Nleaf$ over
 the integers, at a cost of $|\Vtab|$ additions, and the number of leaves is not bounded. A system
@@ -76,7 +76,7 @@ at most $2^{n_{\max}}$ leaves. The leaves are $(1, \alpha - v)$ at real position
 padding, and a binary tree adds sibling fractions, $(\mathsf n, \mathsf d) \oplus (\mathsf n',
 \mathsf d') = (\mathsf n \mathsf d' + \mathsf n' \mathsf d,\, \mathsf d \mathsf d')$, so that the
 root satisfies $\mathsf n_0 / \mathsf d_0 = \sum 1/(\alpha - v)$. An instance with $n$ variables
-sends $4 + \sum_{k=1}^{n-1} (3k + 4)$ elements of $\Fext$ of 31 bytes each, 36.0\,kB for $n = 27$.
+sends $4 + \sum_{k=1}^{n-1} (3k + 4)$ elements of $\Fext$ of 31 bytes each, \GkrTranscriptKB{}\,kB for $n = \GkrTranscriptBits{}$.
 
 \para{Transposed matrices.} For a transposed matrix the prover sends $y = A \bar x$, and the column
 check combines the opened columns with the coordinates of $\bar x$.
@@ -85,15 +85,15 @@ check combines the opened columns with the coordinates of $\bar x$.
 and no proximity test.
 
 \para{Concrete security.} At $\lambda = 128$ the two new terms of Theorem~\ref{thm:v1} take two
-extra shares of the union bound, which changes neither $r$ nor the column counts. The values
-quoted in Section~\ref{sec:v1} are for Llama-2-13B at 2{,}048 tokens, the largest model we
-consider.
+extra shares of the union bound, which changes neither $r$ nor the column counts.
+Table~\ref{tab:params} gives them for Llama-2-7B at 2{,}048 tokens, and the last subsection of this
+part for Llama-2-13B, the largest model we consider.
 
 % ---- E2 -------------------------------------------------------------------------------
 \subsection{Implementation of V1}
 
 V1 is implemented in Python and PyTorch for modes $\sC$ and $\Kpre$, interactive and under
-Fiat--Shamir. The verifier checks an instance's round chains at once (50\,ms for 20 variables) and
+Fiat--Shamir. The verifier checks an instance's round chains at once and
 computes $L_\ell e$, $W_\ell e$ and $\bar x_\ell$ exactly from per-window tables (each window is
 affine plus a step), with native int64 kernels on a CPU. The GKR
 prover is written in Triton~\cite{tillet2019triton}: BabyBear elements in Montgomery
@@ -105,8 +105,8 @@ on the GPU). Factoring the current variable's eq term out of each round polynomi
 2^{n_{\mathrm{col}}}$), the first $n_{\mathrm{col}} - 1$ rounds bind position bits within rows whose
 numerators are all 1; a dedicated path reads only the real rows' denominators, evaluates $\mathsf
 d_L + \mathsf d_R + \eta\, \mathsf d_L \mathsf d_R$ per pair, and adds the padding rows' term $\eta
-(1 - \sum \Veq)$ in closed form. On the RTX~2080~Ti an instance of $2^{25}$ leaves then takes
-0.52\,s (15.6\,ns per leaf; 0.83\,s in the first version). The test suite with V1 (1{,}492 tests)
+(1 - \sum \Veq)$ in closed form. On the \PlatformGpu{} an instance of $2^{25}$ leaves then takes
+\GkrSecondsLarge{}\,s (\GkrNsPerLeaf{}\,ns per leaf). The test suite with V1 (1{,}492 tests)
 passes, including honest queries in eight configurations, a tampered trace value with honestly
 recomputed later layers (rejected at the final check in $\sC$ and at the secret-vector check in
 $\Kpre$), fake or omitted exceptions, multiplicity cheats and tampered GKR and fold messages. V1
@@ -135,9 +135,10 @@ Table~\ref{tab:v1} adds the share of V1's prover time spent in the GKR.
 
 \begin{table}[t]
   \caption{Time of V1 against v0 in seconds, with the GKR share of V1's prover (Fiat--Shamir,
-  $\lambda{=}128$, random int8 weights, last block pruned; RTX~2080~Ti prover, verifier on 8
-  threads of a Xeon Silver 4114, medians of 3 queries). Proof sizes are in
-  Table~\ref{tab:eval-v1}}
+  $\lambda{=}128$, mode $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points, GKR instances of
+  at most $2^{\ParamsLmax{}}$ leaves, random int8 weights, the builds of Table~\ref{tab:eval-v1}; the prover
+  on one \PlatformGpu{}, the verifier on 8 threads of an \PlatformCpu{}, medians over the timed
+  queries). Proof sizes are in Table~\ref{tab:eval-v1}}
   \label{tab:v1}
   \centering
   \footnotesize
@@ -155,34 +156,32 @@ Table~\ref{tab:v1} adds the share of V1's prover time spent in the GKR.
 
 \para{Proof size.} At 2{,}048 tokens V1 is \VOneRatioRandomExact{}$\times$ smaller on every build with more than
 one block; the full OPT-1.3B proof drops from \VOneOptMCVZeroGB{} to \VOneOptMCVOneGB{}\,GB in mode $\sC$ and from \VOneOptMKVZeroGB{} to
-\VOneOptMKVOneGB{}\,GB in $\Kpre$. The values shrink \VOneValuesRatio{}$\times$: an int8 value costs about 7 bits and a
-residual increment about 12, against 16--19 bits for a claim. The parts that do not grow with the
+\VOneOptMKVOneGB{}\,GB in $\Kpre$. The values shrink \VOneValuesRatio{}$\times$: an int8 value, and a residual increment,
+compress to fewer bits than a claim. The parts that do not grow with the
 prompt grow instead: eight folded rows instead of $r$, $y$ over $\Fext$ for transposed matrices,
-and the new multiplicities and GKR transcripts (under 1\,MB in every measured build). GPT-2 at 64
-tokens thus gains only \VOneRatioShortC{}$\times$ ($\sC$) and \VOneRatioShortK{}$\times$ ($\Kpre$), and one Llama-2-13B block,
-the pruned last block in which only keys and values span all positions, \VOneRatioLargeC{}$\times$ in $\sC$.
+and the new multiplicities and GKR transcripts (at most \VOneExtrasMax{}\,MB in every measured build). GPT-2 at 64
+tokens thus gains only \VOneRatioShortC{}$\times$ ($\sC$) and \VOneRatioShortK{}$\times$ ($\Kpre$), and the Llama-2-13B build of
+Table~\ref{tab:eval-v1}, whose pruned last block has only keys and values that span all positions, \VOneRatioLargeC{}$\times$ in $\sC$.
 V1's sizes come from an exact byte accounting that equals real queries to the byte except for the
 Merkle multiproofs, whose size depends on the drawn columns; the timed full V1 queries agree with
-it within 0.3\%. The byte model predicts \VOneLlamaCRatio{}$\times$ (\VOneLlamaCVZeroGB{} to \VOneLlamaCVOneGB{}\,GB) for the full Llama-2-7B at
-2{,}048 tokens in $\sC$ \todo{L40S: V1 on full Llama-2-7B, Llama-2-13B, OPT-6.7B, Qwen3-4B at
-2,048}; with real weights the estimate of our V1 specification is 1.78--1.85$\times$ at 2{,}048
-tokens, and the real OPT-6.7B measures \VOneRatioRealOptLExact{}$\times$ in $\Kpre$ (\VOneRealOptLVZeroGB{} to \VOneRealOptLVOneGB{}\,GB, with \VOneRealOptLExceptions{}
-exceptions). On the smoothed real OPT-125M at 512 tokens, the measured gain is 1.68$\times$ in
-$\sC$ and 1.77$\times$ in $\Kpre$, and on OPT-1.3B at 64 tokens \VOneRealOptMShortC{}$\times$ and \VOneRealOptMShortK{}$\times$
+it within \VOneAccountingWithin{}\%. The full Llama-2-7B at 2{,}048 tokens in $\sC$ gains \VOneLlamaCRatio{}$\times$
+(\VOneLlamaCVZeroGB{} to \VOneLlamaCVOneGB{}\,GB). With real weights, the real OPT-6.7B measures \VOneRatioRealOptLExact{}$\times$ in $\Kpre$
+at 2{,}048 tokens (\VOneRealOptLVZeroGB{} to \VOneRealOptLVOneGB{}\,GB, with \VOneRealOptLExceptions{} exceptions). On the certified OPT-1.3B the
+gain is \VOneRealOptMLongC{}$\times$ in $\sC$ and \VOneRealOptMLongK{}$\times$ in $\Kpre$ at 2{,}048 tokens (random weights:
+\VOneRandomOptMLongC{}$\times$ and \VOneRandomOptMLongK{}$\times$) and \VOneRealOptMShortC{}$\times$ and \VOneRealOptMShortK{}$\times$ at 64 tokens
 (random weights: \VOneRandomOptMShortC{}$\times$ and \VOneRandomOptMShortK{}$\times$), because real weights shrink v0's claims more than
 V1's values; real OPT weights also have residual multipliers
 above $2^{29}$, whose operations stay clear (P3).
 
-\para{Prover and verifier.} With the GKR on the GPU and instances of at most $2^{24}$ leaves, the
+\para{Prover and verifier.} With the GKR on the GPU and instances of at most $2^{\ParamsLmax{}}$ leaves, the
 prover pays about \VOneNsPerClaim{}\,ns per cut claim end to end, \VOneProverShare{}\% of its time. At 2{,}048 tokens it takes
 \VOneProverLong{}\,s, \VOneProverRatioLong{}$\times$ the time of v0's prover, whose int8 forward pass is fast on this
-card. The CPU verifier takes \VOneVerifyRatioLong{}$\times$ the earlier v0 verifier's time at 2{,}048 tokens and
+GPU. The CPU verifier takes \VOneVerifyRatioLong{}$\times$ v0's verifier's time at 2{,}048 tokens and
 \VOneVerifyRatioMedium{}$\times$ for GPT-2 at 512 tokens, mostly for the final check's two exact products per claim,
-$L_\ell e$ and $W_\ell e$. Against v0's final native verifier, on Llama-2-7B in $\Kpre$ at 2{,}048
-tokens (8 Xeon threads, Fiat--Shamir), V1 takes 1.44\,s per block with the batched GKR check and
-a native kernel for the final check's products (2.49\,s before), so about \VOneVerifyLlama{}\,s for the full model
-against v0's \VOneVZeroVerifyLlama{}\,s. Llama-2-7B in mode $\sC$ does not fit on the 11\,GB card with the GKR \todo{L40S: V1
-timings incl.\ Llama-2-7B in $\sC$, full OPT-1.3B; vs.\ zkLLM prover}. V1 thus trades prover time
+$L_\ell e$ and $W_\ell e$. On the full Llama-2-7B in $\Kpre$ at 2{,}048 tokens (8 threads of the
+\PlatformCpu{}, Fiat--Shamir), V1's verifier takes \VOneVerifyLlama{}\,s with the batched GKR check and a native kernel for
+the final check's products, against \VOneVerifyLlamaBaseline{}\,s with the verifier they replace, on the same
+queries, and v0's verifier \VOneVZeroVerifyLlama{}\,s. V1 thus trades prover time
 for a proof \VOneRatioRandom{}$\times$ smaller with random weights, which pays off where moving and storing
 bytes costs more than seconds of GPU time.
 
@@ -193,18 +192,14 @@ Mode $\sK$ and the streaming GPU verifier do not support V1 yet \todo{GPU verifi
 assumes one requantisation multiplier per operation, so per-row weight scales
 (Section~\ref{sec:quality}) need more widths, and CNNs that fuse ReLU into the requantisation are
 not covered. By the byte model the full Llama-2-7B proof still reaches the size of its int8 weights
-at about \BreakevenTokensVOne{} tokens instead of about \BreakevenTokensAlt{}, and the sent values, like the claims, reveal
+at about \BreakevenTokensVOne{} tokens instead of about \BreakevenTokens{}, and the sent values, like the claims, reveal
 information about the weights.
 
 % ---- E6 -------------------------------------------------------------------------------
-% Added in the second condensation pass (2026-10-10, word targets superseding CUT_PLAN Sec. 4):
-% the instance count of the concrete-security paragraph after Theorem thm:v1 in sections/v1.tex.
-% Also cut from v1.tex in that pass, already covered elsewhere in the extended version: why
-% \Fext is a field and the two counterexamples (E1 above), the transposed layout (E1), the
-% byte-identical transcripts and the 1,492 tests (E2), the CPU verifier's time ratio (E4 and
-% Section sec:eval-v1), and the detailed proof sketch (appendix_v1.tex).
+% The cut of Llama-2-13B from its shapes (code/experiments/paper/tables.py, v1_shape_model): every
+% operation that rule (P2) allows cut, as with random weights, under the run's plan and lmax.
 \subsection{GKR Instances for the Largest Model}
 
-For Llama-2-13B at 2{,}048 tokens and $\lambda = 128$, the cut operations form 79 GKR instances of
-at most $2^{26}$ leaves each. Their terms in Theorem~\ref{thm:v1} sum to $2^{-230.7}$, against at
-most $2^{-215.3}$ for the lookup term.
+For Llama-2-13B at 2{,}048 tokens and $\lambda = 128$, the cut operations of mode $\sC$ form
+\VOneLargeInstances{} GKR instances of at most $2^{\VOneLargeBits{}}$ leaves each, with $\Nleaf=\VOneLargeLeaves{}$. Their
+terms in Theorem~\ref{thm:v1} sum to $2^{\VOneLargeGkrLog{}}$, against at most $2^{\VOneLargeLookupLog{}}$ for the lookup term.

@@ -346,10 +346,12 @@ class Run:
                            and (r.d.get("model"), r.d.get("seq"), r.d.get("batch"), r.d.get("mode"),
                                 r.d.get("batch_proof"), r.d.get("layers")) == (model, seq, batch, mode, how, layers)])
 
-    def gen(self, model, mode, decode, g, *, real=None, label="gen", tier="gen") -> Rec | None:
+    def gen(self, model, mode, decode, g, *, prompt=None, real=None, label="gen", tier="gen") -> Rec | None:
+        """A ``gen_bench.py`` record of the full ``model`` (``prompt``: the prompt's tokens, None for any)."""
         return self._last([r for r in self.kind("gen", tier)
                            if (r.d.get("model"), r.d.get("mode"), r.d.get("decode"), r.d.get("gen"))
                            == (model, mode, decode, g) and (r.d.get("real") or None) == real
+                           and (prompt is None or r.d.get("prompt") == prompt)
                            and r.d.get("layers") is None and (label is None or r.d.get("label") == label)])
 
     def setup(self, model, amortise) -> Rec | None:

@@ -1,23 +1,10 @@
 % =====================================================================================
-% sections/evaluation.tex: Evaluation (IEEE S&P 2027 submission, condensed per CUT_PLAN.md).
-% Sources: wt_sp2027/report (tables llm, cnn, hardware; Secs. 3.6, 4), SP2027_PLAN.md, and
-%   docs/improvements/{A1,A2,A3,B2_B3,B5,C2,D4_D5,F1}.md; numbers unchanged from the draft. Derived
-%   by arithmetic only: V1 ratios, the bandwidth crossover (0.16-0.26 Gb/s, MB = 10^6 bytes),
-%   factors against published systems. Removed material: sections/ext_evaluation.tex.
+% sections/evaluation.tex: Evaluation. Every measured number is a macro or a table body that
+% code/experiments/paper/numbers.py writes from one run of the run package (fallback/ until then);
+% the material of the extended version is in sections/ext_evaluation.tex.
 % Labels defined: sec:results, sec:eval-setup, sec:eval-cost, sec:eval-v1, sec:eval-reexec,
-%   sec:eval-compare, tab:eval-llm, tab:eval-v1, tab:eval-reexec, tab:eval-compare.
+%   sec:eval-compare, tab:eval-llm, tab:eval-v1, tab:options, fig:breakeven, tab:eval-compare.
 % Labels used: sec:break, sec:defence, sec:v1, sec:quality (quality.tex), tab:sok; cite fullversion.
-% Second trimming pass (2026-10-10): -110 words; dropped only facts stated elsewhere (hash/field
-%   choices: defence.tex; F_{p^8}: v1.tex; image-model list: attack.tex Sec. sec:break; cell values
-%   repeated from the tables); the GKR time per leaf moved to ext_evaluation.tex (app:eval-gkr-leaf).
-% H5 pass (2026-10-11, REVIEW2.md): P3 (the two LeNet-5 rows of tab:eval-compare moved to
-%   ext_evaluation.tex), C7 (per-row factors of the comparison paragraph removed), N3 (footnote a of
-%   tab:options labels the re-execution rows: GPU before the int8 forward pass, F1 Sec. 3 and A2;
-%   CPU weight products as fp32 GEMMs over 1,024-term chunks, A2 Sec. 3), N4 (tab:eval-v1 caption,
-%   "Time" and "Bandwidth crossover" label the earlier v0 verifier; V-LONG-a todo), N8 ("0.12 against
-%   0.14 s" deleted: no source in docs/improvements; B5 Sec. 6 has 0.278 against 0.153 s for an
-%   earlier kernel), N9 (one source for real weights: 1.78-1.85x, C2_v1_proof_size.md Sec. 8),
-%   smaller note (tab:options caption names the protocol mode).
 % =====================================================================================
 
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -43,25 +30,26 @@ GPU claim decoder and the fused exact attention, and C++/OpenMP kernels for CPU
 verifiers. We use $\lambda = 128$ unless stated otherwise; v0 and V1 are the protocols of
 Sections~\ref{sec:defence} and~\ref{sec:v1}.
 
-\para{Platform.} The final tables will come from one platform: an NVIDIA L40S (48\,GB) as prover
-and GPU verifier and one CPU for the CPU verifier and re-execution, with full models, no
-extrapolation, and medians with their spread \todo{L40S}. The numbers shown come from earlier runs:
-the \emph{base} implementation on the L40S with 8 threads of an AMD EPYC 9334, the later
-improvements and V1 on an RTX~2080~Ti (11\,GB) with 8 threads of an Intel Xeon Silver 4114, each
-against the previous code (or v0) on the same queries with identical claims, proofs and verdicts.
-Times are medians after a warm-up.
+\para{Platform.} Every measurement of this section, except the attribution of the integer OPT-125M's
+perplexity in Section~\ref{sec:quality}, which no job of the package runs, comes from one run of our
+artifact's run package on one platform: one \PlatformGpu{} runs the prover, the GPU verifier and the GPU
+re-execution, and 8 threads of an \PlatformCpu{} run the CPU verifier and every CPU re-execution. All cells use Fiat--Shamir unless a table states
+otherwise, and mode~$\sC$ commits every matrix with codewords of at least
+$2^{\PlanLogPoints{}}$ points (Section~\ref{sec:defence}). Times are medians after a warm-up. The
+extended version measures each implementation improvement against the code path it replaces, on the
+same queries and with identical claims, proofs and verdicts~\cite{fullversion}.
 
 \para{Models.} The image models are the six of Section~\ref{sec:break}. The language models are
 GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B and Qwen3-4B. Costs use random int8 weights, since they
 depend only on the shapes, except for the compressed size of the claims. Real weights confirm
-this: on the smoothed OPT-1.3B (both modes, 64 and 2{,}048 tokens) the prover's and the CPU
+this: on the certified OPT-1.3B (both modes, 64 and 2{,}048 tokens) the prover's and the CPU
 verifier's times are within \RealProveWithin{}\% and \RealVerifyWithin{}\% of random weights', and v0's proof is \RealProofSmaller{}\% smaller;
-the full real OPT-6.7B and OpenLLaMA-7B (Llama-2-7B's shapes) in $\Kpre$ at 2{,}048 tokens are
-accepted, and every tamper rejected~\cite{fullversion}. A model too large for the 2080~Ti is measured
-as $b$ of its $L$ blocks ($b/L$), the last one pruned.
+the full real OPT-6.7B and Llama-2-7B (whose cells need the Llama-2 licence) in $\Kpre$ at 2{,}048 tokens are
+accepted, and every tamper rejected~\cite{fullversion}. Models are measured in full, the last block
+pruned; a table marks a build of $b$ of a model's $L$ blocks as $b/L$.
 
 \para{Attacks and soundness tests.} Section~\ref{sec:break} reports the attack measurements. Our
-base verifier accepted all \FinalNHonest{} honest queries and rejected all \FinalNAttacks{} attacks (one changed
+verifier accepted all \FinalNHonest{} honest queries and rejected all \FinalNAttacks{} attacks (one changed
 value or neuron, perturbed weights, substitute models, forgeries that pass all checks but one):
 Freivalds' check rejected \FinalNFreivalds{}, the column check \FinalNColumnsCode{}, the Merkle check \FinalNColumnsMerkle{} and the range check \FinalNRange{}\TodoCounts{}.
 
@@ -70,53 +58,52 @@ Freivalds' check rejected \FinalNFreivalds{}, the column check \FinalNColumnsCod
 \label{sec:eval-cost}
 
 \begin{table*}[t]
-  \caption{Cost of proving the next-token logits of one prompt (interactive, $\lambda{=}128$, random
-  int8 weights). Base: before the improvements, on an NVIDIA L40S (prover, GPU verifier) and
-  8 threads of an AMD EPYC 9334 (CPU verifier). New: all improvements, on the L40S. Proof bytes do
-  not change (--: not measured). New CPU verifier: \todo{L40S/EPYC}}
+  \caption{Cost of proving the next-token logits of one prompt (Fiat--Shamir, $\lambda{=}128$, mode
+  $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points, random int8 weights, full models):
+  the prover and the streaming GPU verifier on one \PlatformGpu{}, the CPU verifier on 8 threads of
+  an \PlatformCpu{} (--: not measured)}
   \label{tab:eval-llm}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}
-  \begin{tabular}{@{}lrrrrrrrrr@{}}
+  \begin{tabular}{@{}lrrrrrrr@{}}
     \toprule
-    & & \multicolumn{6}{c}{committed weights ($\sC$)} & \multicolumn{2}{c}{$\Kpre$} \\
-    \cmidrule(lr){3-8}\cmidrule(l){9-10}
-    & & \multicolumn{2}{c}{prove} & CPU verify & \multicolumn{2}{c}{GPU verify} & & CPU verify & \\
-    \cmidrule(lr){3-4}\cmidrule(lr){6-7}
-    Model & Params & base & new & base & base & new & proof & base & proof \\
+    & & \multicolumn{4}{c}{committed weights ($\sC$)} & \multicolumn{2}{c}{$\Kpre$} \\
+    \cmidrule(lr){3-6}\cmidrule(l){7-8}
+    Model & Params & prove & CPU verify & GPU verify & proof & CPU verify & proof \\
     \midrule
     \pvitable{tab_eval_llm}
     \bottomrule
   \end{tabular}
 \end{table*}
 
-\para{Base costs.} With committed weights, the image models are proved in \CnnProveRange{}\,ms and
+\para{Costs.} With committed weights, the image models are proved in \CnnProveRange{}\,ms and
 verified in \CnnVerifyRange{}\,ms, with proofs \CnnProofRatio{}$\times$ smaller than their int8 weights.
 Llama-2-7B's 64-token proof is about \ProofRatioLlamaShort{}$\times$ smaller than its int8 weights
 (Table~\ref{tab:eval-llm}). At 2{,}048 tokens the proof and the CPU verifier's time grow
 (OPT-6.7B: \ProofOptLLong{}, \VerifyOptLLong{}), since the results of the weight operations grow with the prompt (\ClaimsShareLlama{}\%
 of Llama-2-7B's \ProofLlamaLongCExact{} proof) and the verifier recomputes attention over all pairs of positions.
 There the GPU verifier is \GpuVerifyFactor{}$\times$ faster than the CPU one \todo{F6 (F4): peak memory}.
-On one RTX~2080~Ti, proving a 2{,}048-token OPT-1.3B prompt takes \ServeOptMKpre{}\,s in $\Kpre$ and \ServeOptMC{}\,s in
+On the \PlatformGpu{}, proving a 2{,}048-token OPT-1.3B prompt takes \ServeOptMKpre{}\,s in $\Kpre$ and \ServeOptMC{}\,s in
 $\sC$: \ServeOptMKpreOverUOne{} and \ServeOptMCOverUOne{}$\times$ our exact integer forward pass without proofs, and \ServeOptMKpreOverUTwo{} and \ServeOptMCOverUTwo{}$\times$ an
-fp16 one. Proving 64 prompts of 64 tokens together in $\Kpre$ takes \ServeBatchKpre{}\,s (\ServeBatchOverUOne{} and
+fp16 one on the same GPU. Proving 64 prompts of 64 tokens together in $\Kpre$ takes \ServeBatchKpre{}\,s (\ServeBatchOverUOne{} and
 \ServeBatchOverUTwo{}$\times$)\TodoServing{}.
 
 \para{Improvements.} Our improvements change no byte that the parties exchange; the extended
-version~\cite{fullversion} measures each against the previous code path. Exact int8 GEMMs for the
-column opening, which took 62\% of Llama-2-7B's base prover at 64 tokens, and the fold make the
-prover \ImproveOpenRange{}$\times$ faster on Llama-2 blocks, and a GPU claim decoder with a fused exact
-attention kernel makes the GPU verifier \ImproveGpuvRange{}$\times$ faster at 2{,}048 tokens.
+version~\cite{fullversion} measures each against the code path it replaces. With float64 products,
+the column opening takes \ImproveOpenShare{}\% of the prover's time on Llama-2-7B blocks at 64 tokens;
+exact int8 GEMMs for the opening and the fold make the prover \ImproveOpenRange{}$\times$ faster on
+Llama-2 blocks, and a GPU claim decoder with a fused exact attention kernel makes the GPU verifier
+\ImproveGpuvRange{}$\times$ faster at 2{,}048 tokens.
 
 % -------------------------------------------------------------------------------------
 \subsection{V1 Against v0}
 \label{sec:eval-v1}
 
 \begin{table}[t]
-  \caption{V1 against v0 on the same queries (Fiat--Shamir, random int8 weights; --: not timed).
-  Times: RTX~2080~Ti prover, 8 threads of a Xeon Silver 4114, from a run with GKR instances of at
-  most $2^{24}$ leaves, whose proofs are within 0.3\,MB of those shown ($2^{27}$ leaves); the v0
-  verifier times predate the final CPU kernels of Section~\ref{sec:eval-reexec}}
+  \caption{V1 against v0 on the same queries (Fiat--Shamir, $\lambda{=}128$, mode $\sC$ with codewords
+  of at least $2^{\PlanLogPoints{}}$ points, GKR instances of at most $2^{\ParamsLmax{}}$ leaves,
+  random int8 weights; the prover on one \PlatformGpu{}, the CPU verifier on 8 threads of an
+  \PlatformCpu{}; $b/L$: $b$ of the model's $L$ blocks, the last one pruned; --: not timed)}
   \label{tab:eval-v1}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.3pt}
@@ -132,21 +119,20 @@ attention kernel makes the GPU verifier \ImproveGpuvRange{}$\times$ faster at 2{
 \end{table}
 
 \para{Proof size.} At 2{,}048 tokens, with random weights, V1's proof is \VOneRatioRandom{}$\times$ smaller
-than v0's on every build with more than one block (Table~\ref{tab:eval-v1}). V1's own additions
-stay below 1\,MB per proof. The gain is smaller where the parts that V1 leaves unchanged weigh
-more: the single Llama-2-13B block in $\sC$ (\VOneRatioLargeC{}$\times$), whose opened columns are a larger
-share, and GPT-2 at 64 tokens (\VOneRatioShort{}$\times$). With real weights our design estimate is
-1.78--1.85$\times$ at 2{,}048 tokens, and the smoothed real OPT-125M measures 1.68$\times$ ($\sC$)
-and 1.77$\times$ ($\Kpre$) at 512 tokens, and the real OPT-6.7B \VOneRatioRealOptLExact{}$\times$ ($\Kpre$) at 2{,}048
-tokens.
+than v0's on every build with more than one block (Table~\ref{tab:eval-v1}). The multiplicities
+and GKR transcripts that V1 adds take at most \VOneExtrasMax{}\,MB per proof. The gain is
+smaller where the parts that V1 leaves unchanged weigh more: the Llama-2-13B build in $\sC$
+(\VOneRatioLargeC{}$\times$), whose opened columns are a larger share, and GPT-2 at 64 tokens
+(\VOneRatioShort{}$\times$). With real weights, the certified OPT-1.3B gains \VOneRealOptMLongC{}$\times$ ($\sC$) and
+\VOneRealOptMLongK{}$\times$ ($\Kpre$) at 2{,}048 tokens and \VOneRealOptMShortC{}$\times$ and \VOneRealOptMShortK{}$\times$ at 64, and the real OPT-6.7B
+\VOneRatioRealOptLExact{}$\times$ ($\Kpre$) at 2{,}048 tokens.
 
 \para{Time.} The prover pays for the GKR, about one leaf per sent value. At 2{,}048 tokens V1's
-prover thus takes about 10$\times$ as long as v0's (OPT-125M in $\sC$: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s, \VOneOptSGkr{}\,s of
+prover thus takes about \VOneProverRatioAbout{}$\times$ as long as v0's (OPT-125M in $\sC$: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s, \VOneOptSGkr{}\,s of
 it the GKR). The CPU verifier takes \VOneVerifyRatioLong{}$\times$ v0's time at 2{,}048 tokens and
-\VOneVerifyRatioMedium{}$\times$ at 512, mostly for the two exact products per value of its final check; these
-ratios use the earlier v0 verifier. Against the final v0 kernels the gap is wider: for the full
-Llama-2-7B in $\Kpre$ at 2{,}048 tokens (Fiat--Shamir, V1 extrapolated from 2--3 blocks), V1's
-verifier, with native kernels for its final check, takes \VOneVerifyLlama{}\,s and v0's \VOneVZeroVerifyLlama{}\,s, \VOneVerifyRatioLlama{}$\times$\TodoVOneTimings{}.
+\VOneVerifyRatioMedium{}$\times$ at 512, mostly for the two exact products per value of its final check. For the
+full Llama-2-7B in $\Kpre$ at 2{,}048 tokens, V1's verifier, with native kernels for its final check,
+takes \VOneVerifyLlama{}\,s and v0's \VOneVZeroVerifyLlama{}\,s, \VOneVerifyRatioLlama{}$\times$\TodoVOneTimings{}.
 
 
 % -------------------------------------------------------------------------------------
@@ -154,12 +140,11 @@ verifier, with native kernels for its final check, takes \VOneVerifyLlama{}\,s a
 \label{sec:eval-reexec}
 
 \begin{table}[t]
-  \caption{A client's options for one Llama-2-7B prompt of $T$ tokens, from this
-  section and the cited papers, on different hardware (--: none or not reported;
-  ours interactive, the V1 row under Fiat--Shamir, against v0's final verifier;
-  CPU: 8 threads of a Xeon Silver 4114, full models, ours in $\Kpre$ with the native kernels,
-  re-execution the fastest exact one; ours in $\sC$: EPYC 9334; GPU:
-  RTX~2080~Ti) \todo{F6: $\sC$ at 2{,}048}}
+  \caption{A client's options for one Llama-2-7B prompt of $T$ tokens (--: none or not reported).
+  Ours and re-execution: the full model, random int8 weights; ours under Fiat--Shamir,
+  $\lambda{=}128$, mode $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points; CPU: 8 threads
+  of an \PlatformCpu{}, our verifier with the native kernels, re-execution the fastest exact one;
+  GPU: one \PlatformGpu{}. The cited systems as reported, on their own hardware}
   \label{tab:options}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.2pt}
@@ -174,18 +159,17 @@ verifier, with native kernels for its final check, takes \VOneVerifyLlama{}\,s a
   \end{tabular}
 
   \smallskip
-  \parbox{\columnwidth}{\footnotesize $^a$Exact. CPU: the faster of the integer forward pass (64
-  tokens) and fp32 (2{,}048); a non-exact int8 engine takes \DynIntShort{}/\DynIntLong{}\,s. GPU: the integer forward
-  pass on int8 tensor cores (extrapolated from 1--2 blocks); fp16 takes \GpuFloatShort{}/\GpuFloatLong{}\,s. $^b$An edit passes a one-token response with probability about
-  99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$The claims divided by V1's
-  measured \VOneRatioLlama{}$\times$ (random weights; \VOneRatioRealOptLExact{}$\times$ on the real OPT-6.7B); its verifier under
-  Fiat--Shamir.
+  \parbox{\columnwidth}{\footnotesize $^a$Exact. CPU: the fastest exact re-execution (\CpuReexecNameShort{} at
+  64 tokens, \CpuReexecName{} at 2{,}048); a non-exact int8 engine takes \DynIntShort{}/\DynIntLong{}\,s. GPU: the integer forward
+  pass on int8 tensor cores; fp16 takes \GpuFloatShort{}/\GpuFloatLong{}\,s. $^b$An edit passes a one-token response with probability about
+  99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$V1's proof and its CPU
+  verifier on the same queries (random weights; V1's gain on the real OPT-6.7B: \VOneRatioRealOptLExact{}$\times$).
   $^e$Llama-3.1-8B (Llama-2-7B's layers and width), per audited token, as
   reported~\cite{commitllm2026}: retained trace state (Merkle paths not counted) and the routine
   10-layer check on an Apple M4. $^f$Provider's cost over unverified serving: GPU TEE below
   7\%~\cite{gpucc}, CommitLLM 12--14\%~\cite{commitllm2026}; ours \ServeLlamaKpreOverUTwo{}$\times$ ($\Kpre$) and
-  \ServeLlamaCOverUTwo{}$\times$ ($\sC$) fp16 inference on one RTX~2080~Ti (Llama-2-7B, extrapolated from 1--2
-  blocks).}
+  \ServeLlamaCOverUTwo{}$\times$ ($\sC$) fp16 inference on the \PlatformGpu{} (Llama-2-7B, full model, 64 to
+  2{,}048 tokens).}
 \end{table}
 
 \begin{figure}[t]
@@ -194,8 +178,8 @@ verifier, with native kernels for its final check, takes \VOneVerifyLlama{}\,s a
   \caption{When a client of Llama-2-7B gains (random int8 weights, Fiat--Shamir). Left: the
   client's bytes for $Q$ mode-$\sC$ queries of 64 or 2{,}048 tokens, and with V1, against one
   download of the int8 weights (\WeightsLlamaGB{}\,GB). Right: a $\Kpre$ client's time for one 2{,}048-token
-  query, transfer plus verification on 8 Xeon threads, against the fastest exact re-execution on the
-  same threads (\CpuReexecLong{}\,s, \CpuReexecName{}), by link speed}
+  query, transfer plus verification on 8 threads of the \PlatformCpu{}, against the fastest exact
+  re-execution on the same threads (\CpuReexecLong{}\,s, \CpuReexecName{}), by link speed}
   \label{fig:breakeven}
 \end{figure}
 
@@ -204,12 +188,11 @@ or $\Kpre$ can run, and against the other options of a client.
 
 \para{CPU.} With native exact kernels for every phase (an AVX-512 integer attention fused with its
 requantisation, one-pass recomputed operations, field products and claim decoding), our $\Kpre$
-verifier checks a 2{,}048-token query of the full Llama-2-7B in 18.5\,s on 8 threads of the Xeon
-(\CpuVerifyLong{}\,s non-interactive), against \CpuReexecLong{}\,s for the fastest exact re-execution on the same threads
-(\CpuReexecName{}; the exact integer forward pass takes \CpuReexecIntLong{}\,s): 5.0$\times$ (\CpuRatio{}$\times$) faster. At 64
-tokens it takes 1.0\,s (\CpuVerifyShort{}\,s), against \CpuReexecShort{}\,s for the integer forward pass: 4.0$\times$
-(\CpuRatioShort{}$\times$). The
-CPU times of Table~\ref{tab:eval-llm} predate the kernels \todo{EPYC: the same cells}.
+verifier checks a 2{,}048-token query of the full Llama-2-7B in \CpuVerifyLong{}\,s on 8 threads of the
+\PlatformCpu{}, against \CpuReexecLong{}\,s for the fastest exact re-execution on the same threads
+(\CpuReexecName{}; the exact integer forward pass takes \CpuReexecIntLong{}\,s): \CpuRatio{}$\times$ faster. At 64
+tokens it takes \CpuVerifyShort{}\,s, against \CpuReexecShort{}\,s for the fastest exact re-execution (\CpuReexecNameShort{}):
+\CpuRatioShort{}$\times$.
 
 \para{Break-even.} A client that receives a proof of $B$ bytes over a link of $L$ bit/s and
 verifies it in $t_v$ is faster than a re-execution taking $t_r$ when $L > 8B/(t_r - t_v)$.
@@ -217,8 +200,8 @@ Figure~\ref{fig:breakeven} plots this condition, and the client's bytes against 
 the weights, for the cells above.
 
 \para{GPU.} On a GPU, re-execution is faster.
-With our verifier improvements, OPT-1.3B in $\Kpre$ extrapolates to about \OptMGpuVerify{}\,s on the 2080~Ti,
-against \OptMGpuFloat{}\,s for its fp16 re-execution\TodoGpuOneGpu{}. We do not claim that
+On the \PlatformGpu{}, our streaming GPU verifier checks a 2{,}048-token OPT-1.3B query in $\Kpre$ in
+\OptMGpuVerify{}\,s, against \OptMGpuFloat{}\,s for its fp16 re-execution on the same GPU\TodoGpuOneGpu{}. We do not claim that
 verification beats re-execution on a GPU; the GPU verifier suits an auditor or gateway that checks a
 provider without holding the weights.
 
@@ -227,9 +210,10 @@ provider without holding the weights.
 \label{sec:eval-compare}
 
 \begin{table*}[t]
-  \caption{Our costs against published systems on matched models, as reported on their own
-  hardware. Ours: base implementation, v0 (bold where lower; in parentheses, ours lower
-  $\downarrow$ or higher $\uparrow$ by the factor shown)}
+  \caption{Our costs (v0; trained image models, random int8 weights for the language models; full
+  models) against published systems on matched
+  models, theirs as reported on their own hardware (bold where ours is lower; in parentheses, ours
+  lower $\downarrow$ or higher $\uparrow$ by the factor shown)}
   \label{tab:eval-compare}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.5pt}
@@ -244,10 +228,11 @@ provider without holding the weights.
   \end{tabular}
 
   \smallskip
-  \parbox{\textwidth}{\footnotesize Ours: NVIDIA L40S prover; verifier on 8 threads of an AMD
-  EPYC 9334, or our GPU verifier in the 2{,}048-token rows, as zkLLM runs on a GPU; committed
-  weights and Fiat--Shamir, except against zkLLM, which is interactive (so are ours there), and
-  against Maverick. $^a$Verifier on one core. $^b$No prompt length stated (its shapes imply
+  \parbox{\textwidth}{\footnotesize Ours: the prover on one \PlatformGpu{}; the verifier on 8 threads of
+  an \PlatformCpu{}, or our streaming GPU verifier on the same GPU in the 2{,}048-token rows, as zkLLM
+  runs on a GPU; committed weights ($\sC$, codewords of at least $2^{\PlanLogPoints{}}$ points),
+  $\lambda{=}128$ and Fiat--Shamir, except against zkLLM, which is interactive (so are ours there),
+  and against Maverick. $^a$Verifier on one core. $^b$No prompt length stated (its shapes imply
   32 tokens). $^c$BaseFold configuration, proving every position. $^d$Maverick's client stores an
   encoded copy of the weights, so ours run in $\Kpre$, $\lambda{=}40$, one thread, without the
   compact encoding; Maverick draws a fresh challenge per query and proves on 64 CPU threads.}
@@ -256,12 +241,12 @@ provider without holding the weights.
 Table~\ref{tab:eval-compare} sets our costs against published
 systems~\cite{zkcnn,zkml,zkgpt,deepprove,zktorch,maverick,zkllm} on matched models
 (costs checked against the sources). Two caveats apply to every row. The hardware differs: our
-prover runs on an L40S, while all the zkSNARKs except zkLLM ran on CPUs. The guarantees differ: the
+prover runs on an \PlatformGpu{}, while all the zkSNARKs except zkLLM ran on CPUs. The guarantees differ: the
 zkSNARKs also prove the operations without weights, and many hide the weights; our verifier
 recomputes those operations and our protocol is not zero-knowledge.
 With these caveats, our prover is faster in every measured row, by \CompareProverMin{}$\times$ to about
 \CompareProverMax{}$\times$ against the zkSNARKs and \CompareMaverick{}$\times$ against Maverick; our verifier is slower in
-two rows; and our proof is larger in most rows, by up to \CompareProofMax{}$\times$ against zkLLM, whose proof
+\CompareVerifierSlowerRows{}; and our proof is larger in most rows, by up to \CompareProofMax{}$\times$ against zkLLM, whose proof
 stays below 200\,kB. V1 narrows that gap, from about \CompareVOneBefore{}$\times$ to about \CompareVOneAfter{}$\times$ on
 OPT-1.3B (Table~\ref{tab:eval-v1}) \todo{F6: new timings, against zkLLM's stored runs on the same L40S
 model (844\,s for Llama-2-7B at 2{,}048 tokens)}. Sampling-based

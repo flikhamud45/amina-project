@@ -68,12 +68,12 @@ bash code/experiments/package/run.sh --platform final long                      
 | `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
 | `bench` | 43 | 8-12 | 48 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`), the outcome counts, the image models' attack cells |
 | `gpuv` | 12 | 4-6 | 19 | the streaming GPU verifier, int8/fp16/bf16 re-execution on the same GPU, the host-to-device bandwidth |
-| `gen` | 2 | 2-3 | 6 | generated responses proved as one prefill, greedy and sampled (`tab:gen`, `tab:gen-full`) |
+| `gen` | 3 | 2-3 | 7 | generated responses proved as one prefill: Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled, and GPT-2's prover per generated token (`tab:gen`, `tab:gen-full`, Sec. `sec:gen-prefill`) |
 | `batch` | 7 | 2-3 | 8 | several prompts against one opening |
 | `real` | 26 | 8-12 | 45 | the certified OPT-1.3B and OPT-6.7B end to end next to random weights (`tab:eval-real`); with `--llama-licence` the real Llama-2-7B |
 | `setup` | 2 | 1-2 | 4 | the setup proof of an untrusted commitment (`tab:setup`) |
 | `improve` | 15 | 3-5 | 17 | each implementation improvement against the path it replaces (`tab:eval-improve`); V1's verifier by phase; the GKR prover per leaf |
-| `quality` | 19 | 10-16 | 68 | `tab:quality` (OPT; OpenLLaMA-7B, TinyLlama, Qwen3; Llama-2 with `--llama-licence`), the recipe's alpha on the validation split, the recipe studies of the extended version, `tab:zeroshot`, the reproducible build |
+| `quality` | 20 | 10-16 | 69 | `tab:quality` (OPT; OpenLLaMA-7B, TinyLlama, Qwen3; Llama-2 with `--llama-licence`), the recipe's alpha on the validation split, the recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split), `tab:zeroshot`, the reproducible build |
 | `tv` | 2 | 1-2 | 3 | the sampler's total-variation distance on the certified OPT-1.3B, and its checks |
 | `attack` | 5 | 4-6 | 12 | the attack: reproduction, MNIST, OPT-6.7B, the in-range edits (`tab:inrange`), the sampler games |
 | `long` (optional) | 12 | 4-7 | 28 | prompts of 2,048 to 16,384 tokens (`tab:eval-long`) |

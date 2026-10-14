@@ -5,19 +5,24 @@
 \newcommand{\AttackOptLPrompts}{40}
 \newcommand{\AttackOptLSucceeded}{40}
 \newcommand{\AttackOptLWilson}{91.2--100}
+\newcommand{\BatchLlamaPerQuery}{218.7}
+\newcommand{\BatchLlamaShared}{127.8}
+\newcommand{\BatchLlamaSingle}{324.5}
+\newcommand{\BatchLlamaSize}{8}
+\newcommand{\BatchLlamaWithin}{3}
 \newcommand{\BreakevenLinkLong}{0.70}
 \newcommand{\BreakevenLinkRange}{0.59--0.70}
 \newcommand{\BreakevenLinkVOne}{0.47}
+\newcommand{\BreakevenQueriesLong}{1.0}
 \newcommand{\BreakevenQueriesShort}{22}
-\newcommand{\BreakevenQueriesShortAlt}{21}
 \newcommand{\BreakevenQueriesVOne}{2.3}
 \newcommand{\BreakevenTokens}{2{,}100}
-\newcommand{\BreakevenTokensAlt}{2{,}050}
 \newcommand{\BreakevenTokensVOne}{4{,}500}
 \newcommand{\BreakevenVOneFaster}{1.1}
 \newcommand{\ClaimsShareLlama}{98}
 \newcommand{\CleWith}{67.8}
 \newcommand{\CleWithout}{66.6}
+\newcommand{\CnnAccuracyChange}{0.4}
 \newcommand{\CnnMinNode}{28}
 \newcommand{\CnnPathLenet}{1/84}
 \newcommand{\CnnPathMax}{1/512}
@@ -35,6 +40,8 @@
 \newcommand{\CompareVOneBefore}{14{,}000}
 \newcommand{\CompareVOneOptM}{2{,}073.9}
 \newcommand{\CompareVOneOptS}{349.6}
+\newcommand{\CompareVerifierSlowerRows}{two rows}
+\newcommand{\CpuDeriveShareLong}{70}
 \newcommand{\CpuFloatLong}{93}
 \newcommand{\CpuFloatShort}{4.5}
 \newcommand{\CpuRatio}{4.7}
@@ -44,12 +51,14 @@
 \newcommand{\CpuReexecIntShort}{4.1}
 \newcommand{\CpuReexecLong}{93.2}
 \newcommand{\CpuReexecName}{fp32}
+\newcommand{\CpuReexecNameShort}{the integer forward pass}
 \newcommand{\CpuReexecShort}{4.1}
 \newcommand{\CpuVerifyLong}{19.6}
 \newcommand{\CpuVerifyShort}{1.4}
 \newcommand{\CrossoverGptMediumC}{0.17}
 \newcommand{\CrossoverGptMediumK}{0.16}
 \newcommand{\CrossoverLlamaLongK}{0.26}
+\newcommand{\CrossoverLlamaLongKBuild}{2 of 32 blocks}
 \newcommand{\CrossoverOptSLongC}{0.23}
 \newcommand{\CrossoverOptSLongK}{0.22}
 \newcommand{\DynIntLong}{56}
@@ -74,11 +83,31 @@
 \newcommand{\GameThreshold}{0.34}
 \newcommand{\GameUniform}{0.02--0.06}
 \newcommand{\GameUniformAll}{0.02--0.19}
+\newcommand{\GenGptMsPerToken}{1.1}
+\newcommand{\GenGptProveC}{0.29}
+\newcommand{\GenLlamaMBPerTokenLong}{\todo{gen tier}}
+\newcommand{\GenLlamaMBPerTokenShort}{\todo{gen tier}}
+\newcommand{\GenLlamaProofC}{\todo{gen tier}}
+\newcommand{\GenLlamaProofK}{\todo{gen tier}}
+\newcommand{\GenLlamaProveC}{\todo{gen tier}}
+\newcommand{\GenLlamaProveK}{\todo{gen tier}}
+\newcommand{\GenLlamaVerifyC}{\todo{gen tier}}
+\newcommand{\GenLlamaVerifyK}{\todo{gen tier}}
+\newcommand{\GenPerPrefixTB}{1.3}
+\newcommand{\GenPrefillGB}{3.3}
+\newcommand{\GenQwenProofC}{\todo{gen tier}}
+\newcommand{\GenQwenProofK}{\todo{gen tier}}
+\newcommand{\GenQwenProveC}{\todo{gen tier}}
+\newcommand{\GenQwenProveK}{\todo{gen tier}}
+\newcommand{\GenQwenVerifyC}{\todo{gen tier}}
+\newcommand{\GenQwenVerifyK}{\todo{gen tier}}
+\newcommand{\GenSampledWithin}{\todo{gen tier}}
 \newcommand{\GkrNsPerLeaf}{15.6}
+\newcommand{\GkrSecondsLarge}{0.52}
+\newcommand{\GkrTranscriptBits}{27}
+\newcommand{\GkrTranscriptKB}{36.0}
 \newcommand{\GpuFloatLong}{0.64}
-\newcommand{\GpuFloatLongAlt}{0.57}
 \newcommand{\GpuFloatShort}{0.034}
-\newcommand{\GpuFloatShortAlt}{0.037}
 \newcommand{\GpuIntLong}{1.65}
 \newcommand{\GpuIntShort}{0.15}
 \newcommand{\GpuVerifyFactor}{10--15}
@@ -87,15 +116,19 @@
 \newcommand{\ImproveFusedEncoder}{1.74}
 \newcommand{\ImproveGpuvOptM}{2.7}
 \newcommand{\ImproveGpuvRange}{2.0--2.7}
+\newcommand{\ImproveOpenFloat}{1.105}
 \newcommand{\ImproveOpenRange}{3.7--4.3}
+\newcommand{\ImproveOpenShare}{62}
+\newcommand{\ImproveProveFloat}{1.78}
 \newcommand{\ImproveThreadedEncoder}{1.54}
 \newcommand{\InrangeCalibTokens}{8{,}192}
-\newcommand{\InrangeChanged}{40}
+\newcommand{\InrangeChanged}{all 40}
 \newcommand{\InrangeDown}{9, 31, 38 and 39}
 \newcommand{\InrangeDownKMedian}{6}
+\newcommand{\InrangeDownLast}{39}
 \newcommand{\InrangeKMax}{60}
 \newcommand{\InrangeKMedian}{2}
-\newcommand{\InrangeOptLChanged}{40}
+\newcommand{\InrangeOptLChanged}{all 40}
 \newcommand{\InrangeOptLKRange}{1--22}
 \newcommand{\InrangeOptLPMedianMax}{$1.3\cdot10^{-3}$}
 \newcommand{\InrangePMax}{$7.3\cdot10^{-3}$}
@@ -130,16 +163,24 @@
 \newcommand{\MnistBackdoorRuns}{2{,}300}
 \newcommand{\MnistForgeryNodes}{1--14}
 \newcommand{\MnistSinglePass}{99.6--99.8}
+\newcommand{\MnistStealthNeurons}{five}
+\newcommand{\MnistStealthPass}{99}
 \newcommand{\OpenAllLlama}{13.7}
 \newcommand{\OptMGpuFloat}{0.11}
 \newcommand{\OptMGpuVerify}{1.1}
+\newcommand{\ParamsColumnsMinFs}{34}
+\newcommand{\ParamsColumnsMinInt}{23}
 \newcommand{\ParamsInstances}{162}
 \newcommand{\ParamsLeaves}{2.7\cdot10^9}
 \newcommand{\ParamsLmax}{24}
 \newcommand{\ParamsTable}{5.6\cdot10^5}
+\newcommand{\ParamsTrees}{6}
 \newcommand{\PathPassResNet}{$511/512$}
 \newcommand{\PathsLlama}{305{,}193}
 \newcommand{\PathsLlamaAbout}{305{,}000}
+\newcommand{\PlanLogPoints}{18}
+\newcommand{\PlatformCpu}{AMD EPYC 9334}
+\newcommand{\PlatformGpu}{NVIDIA L40S}
 \newcommand{\ProfileCopies}{32}
 \newcommand{\ProfileIntMM}{4.4}
 \newcommand{\ProofLlamaLongC}{6.6\,GB}
@@ -148,12 +189,18 @@
 \newcommand{\ProofLlamaShortC}{325\,MB}
 \newcommand{\ProofOptLLong}{5.5\,GB}
 \newcommand{\ProofRatioLlamaShort}{21}
+\newcommand{\QualityAlphaCostOptL}{\todo{quality tier}}
+\newcommand{\QualityAlphaGapOptM}{0.000}
+\newcommand{\QualityAlphaGapOptS}{0.000}
+\newcommand{\QualityAlphaValGapOptM}{\todo{quality tier}}
+\newcommand{\QualityAlphaValGapOptS}{\todo{quality tier}}
 \newcommand{\QualityCIOptL}{1.007, 1.008}
 \newcommand{\QualityCIOptM}{1.024, 1.028}
 \newcommand{\QualityCIOptS}{1.073, 1.079}
 \newcommand{\QualityDrawSpread}{0.003}
 \newcommand{\QualityLegacyHi}{1.25}
 \newcommand{\QualityLegacyLo}{1.14}
+\newcommand{\QualityLegacyOptS}{2.0}
 \newcommand{\QualityMassMinEight}{56}
 \newcommand{\QualityMassMinEleven}{97.5}
 \newcommand{\QualityMissOptS}{0.016}
@@ -179,6 +226,15 @@
 \newcommand{\ReachNeurons}{16{,}384}
 \newcommand{\ReachTokens}{6{,}187}
 \newcommand{\ReachVocab}{50{,}272}
+\newcommand{\RealLlamaAccepted}{3}
+\newcommand{\RealLlamaProof}{5.35}
+\newcommand{\RealLlamaQueries}{3}
+\newcommand{\RealLlamaShortSmaller}{11--17}
+\newcommand{\RealLlamaShortVerifyWithin}{10}
+\newcommand{\RealLlamaSmaller}{17}
+\newcommand{\RealLlamaTampers}{9}
+\newcommand{\RealLlamaTampersRejected}{9}
+\newcommand{\RealLlamaVerify}{21.0}
 \newcommand{\RealOptLAccepted}{3}
 \newcommand{\RealOptLDecode}{2.7}
 \newcommand{\RealOptLProducts}{6.1}
@@ -201,6 +257,7 @@
 \newcommand{\ReproQueries}{150}
 \newcommand{\ReproRuns}{3{,}000}
 \newcommand{\ReproZeroTolerance}{21--37}
+\newcommand{\RndLlamaVerify}{20.6}
 \newcommand{\RndOptLProof}{5.41}
 \newcommand{\RndOptLProve}{288}
 \newcommand{\RndOptLVOneRatio}{2.23}
@@ -229,11 +286,48 @@
 \newcommand{\ServeOptMOverUTwoRange}{19--40}
 \newcommand{\ServeOptMUOneOverUTwo}{4--10}
 \newcommand{\ServeSingleMBPerTokenC}{4.25}
-\newcommand{\SetupProverGpt}{\todo{F6: setup time}}
-\newcommand{\SetupProverLlama}{\todo{F6: setup time}}
-\newcommand{\SetupVerifierGpt}{\todo{F6: setup time}}
-\newcommand{\SetupVerifierLlama}{\todo{F6: setup time}}
+\newcommand{\SetupAtLamMBLlamaA}{1{,}490.3}
+\newcommand{\SetupAtLamMBLlamaB}{6{,}222.2}
+\newcommand{\SetupAtLamShareLlamaA}{62.6}
+\newcommand{\SetupAtLamShareLlamaB}{63.8}
+\newcommand{\SetupAtLamShareRange}{62.0--63.8}
+\newcommand{\SetupColumnsMBLlamaA}{2{,}326.5}
+\newcommand{\SetupColumnsMBLlamaB}{9{,}691.2}
+\newcommand{\SetupColumnsShareLlamaA}{97.7}
+\newcommand{\SetupColumnsShareLlamaB}{99.3}
+\newcommand{\SetupCombinedMBLlama}{51.6}
+\newcommand{\SetupCombinedShareLlamaA}{2.2}
+\newcommand{\SetupCombinedShareLlamaB}{0.5}
+\newcommand{\SetupGBLlamaA}{2.4}
+\newcommand{\SetupGBLlamaB}{9.8}
+\newcommand{\SetupHonestMBLlama}{65.6}
+\newcommand{\SetupMBLlamaA}{2{,}382.0}
+\newcommand{\SetupMBLlamaB}{9{,}758.7}
+\newcommand{\SetupNonColumnsShareLlamaA}{2.3}
+\newcommand{\SetupNonColumnsShareLlamaB}{0.7}
+\newcommand{\SetupNonColumnsShareMaxA}{4.0}
+\newcommand{\SetupNonColumnsShareMaxB}{2.3}
+\newcommand{\SetupPathsMBLlamaA}{3.8}
+\newcommand{\SetupPathsMBLlamaB}{15.9}
+\newcommand{\SetupPathsShareLlamaA}{0.16}
+\newcommand{\SetupPathsShareLlamaB}{0.16}
+\newcommand{\SetupProverGpt}{\todo{setup tier}}
+\newcommand{\SetupProverLlama}{\todo{setup tier}}
+\newcommand{\SetupQueryGrowthLlamaA}{73}
+\newcommand{\SetupQueryGrowthLlamaB}{21}
+\newcommand{\SetupQueryShareLlamaA}{1}
+\newcommand{\SetupQueryShareLlamaB}{1}
+\newcommand{\SetupRadiusMax}{a quarter}
+\newcommand{\SetupReplacementExcessA}{0.2}
+\newcommand{\SetupReplacementExcessB}{0.9--1.0}
+\newcommand{\SetupTZeroMaxShareB}{1.9}
+\newcommand{\SetupUntrustedMBLlamaA}{113.5}
+\newcommand{\SetupUntrustedMBLlamaB}{79.4}
+\newcommand{\SetupVerifierGpt}{\todo{setup tier}}
+\newcommand{\SetupVerifierLlama}{\todo{setup tier}}
+\newcommand{\SplitColumnFactorRange}{4.1--6.5}
 \newcommand{\StealthCalib}{5{,}000}
+\newcommand{\StealthExceed}{5}
 \newcommand{\StealthNeurons}{5.1}
 \newcommand{\StealthPass}{99.0}
 \newcommand{\TinyLlamaRatio}{1.12}
@@ -250,11 +344,21 @@
 \newcommand{\TodoVOneTimings}{ \todo{F6: V1 timings, incl.\ Llama-2-7B in $\sC$ (over 11\,GB)}}
 \newcommand{\TodoZkllmFactor}{ \todo{F6: final factor}}
 \newcommand{\TransferLlamaLong}{5.3}
+\newcommand{\TreeKBLlama}{50}
+\newcommand{\TreeLeavesLlama}{1{,}600}
 \newcommand{\TvFull}{0.020}
 \newcommand{\TvModel}{0.087}
 \newcommand{\TvPositions}{512}
 \newcommand{\TvTopK}{0.0063}
 \newcommand{\TvTwenty}{0.0022}
+\newcommand{\VOneAccountingWithin}{0.3}
+\newcommand{\VOneDownClaims}{2.6\cdot10^{8}}
+\newcommand{\VOneExtrasMax}{1}
+\newcommand{\VOneLargeBits}{27}
+\newcommand{\VOneLargeGkrLog}{-231.9}
+\newcommand{\VOneLargeInstances}{39}
+\newcommand{\VOneLargeLeaves}{4.3\cdot10^{9}}
+\newcommand{\VOneLargeLookupLog}{-215.3}
 \newcommand{\VOneLlamaCRatio}{2.24}
 \newcommand{\VOneLlamaCVOneGB}{2.97}
 \newcommand{\VOneLlamaCVZeroGB}{6.63}
@@ -267,9 +371,14 @@
 \newcommand{\VOneOptSProveVOne}{4.85}
 \newcommand{\VOneOptSProveVZero}{0.50}
 \newcommand{\VOneProverLong}{3.4--4.9}
+\newcommand{\VOneProverRatioAbout}{10}
 \newcommand{\VOneProverRatioLong}{9.7--11.6}
 \newcommand{\VOneProverShare}{63--75}
+\newcommand{\VOneRandomExceptionsMax}{65}
+\newcommand{\VOneRandomOptMLongC}{\todo{real tier}}
+\newcommand{\VOneRandomOptMLongK}{\todo{real tier}}
 \newcommand{\VOneRandomOptMShortC}{1.24}
+\newcommand{\VOneRandomOptMShortExceptions}{1}
 \newcommand{\VOneRandomOptMShortK}{1.53}
 \newcommand{\VOneRatioGptMedium}{1.94--2.06}
 \newcommand{\VOneRatioLargeC}{1.81}
@@ -281,15 +390,23 @@
 \newcommand{\VOneRatioShort}{1.28--1.46}
 \newcommand{\VOneRatioShortC}{1.28}
 \newcommand{\VOneRatioShortK}{1.46}
+\newcommand{\VOneRealLlamaRatio}{2.02}
+\newcommand{\VOneRealOptLExceptionRate}{$10^{-4}$}
 \newcommand{\VOneRealOptLExceptions}{224{,}670}
 \newcommand{\VOneRealOptLExceptionsMB}{1.8}
+\newcommand{\VOneRealOptLTable}{6.4\cdot10^4}
 \newcommand{\VOneRealOptLVOneGB}{2.68}
 \newcommand{\VOneRealOptLVZeroGB}{4.65}
+\newcommand{\VOneRealOptMLongC}{\todo{real tier}}
+\newcommand{\VOneRealOptMLongK}{\todo{real tier}}
 \newcommand{\VOneRealOptMShortC}{1.12}
+\newcommand{\VOneRealOptMShortExceptions}{2{,}379}
+\newcommand{\VOneRealOptMShortExceptionsMB}{0.02}
 \newcommand{\VOneRealOptMShortK}{1.28}
 \newcommand{\VOneVZeroVerifyLlama}{19.6}
 \newcommand{\VOneValuesRatio}{2.2--2.3}
 \newcommand{\VOneVerifyLlama}{45.4}
+\newcommand{\VOneVerifyLlamaBaseline}{\todo{cpuv tier}}
 \newcommand{\VOneVerifyRatioLlama}{2.3}
 \newcommand{\VOneVerifyRatioLong}{1.6--1.9}
 \newcommand{\VOneVerifyRatioMedium}{2.2--2.8}
@@ -302,6 +419,7 @@
 \newcommand{\ZeroingAccepts}{2{,}000}
 \newcommand{\ZeroingNeurons}{14}
 \newcommand{\ZeroingRuns}{2{,}000}
+\newcommand{\ZeroingZeroShare}{65}
 \newcommand{\ZeroshotLambadaOptL}{0.5}
 \newcommand{\ZeroshotLambadaOptM}{2.0}
 \newcommand{\ZeroshotLambadaOptS}{3.1}

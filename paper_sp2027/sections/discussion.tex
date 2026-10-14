@@ -27,7 +27,7 @@ the weights nor a GPU and will not trust hardware, and a gateway or auditor with
 client with the weights and a GPU should re-execute. The regime is narrow
 (Figure~\ref{fig:breakeven}; Llama-2-7B, Fiat--Shamir). Below about \BreakevenQueriesShort{} queries of 64 tokens,
 mode-$\sC$ proofs cost the client fewer bytes than one download of the int8 weights; at 2{,}048
-tokens the break-even is one query, or \BreakevenQueriesVOne{} with V1. A $\Kpre$ client that keeps the weights
+tokens the weights are only \BreakevenQueriesLong{}$\times$ the size of one proof, or \BreakevenQueriesVOne{}$\times$ with V1. A $\Kpre$ client that keeps the weights
 verifies faster than the fastest exact re-execution on its CPU only on links faster than
 \BreakevenLinkRange{}\,Gb/s (V1: \BreakevenLinkVOne{}\,Gb/s).
 
@@ -38,7 +38,7 @@ the byte model, at about \BreakevenTokensVOne{} with it. Committing the activati
 \para{Weights and trust.} The protocol is not zero-knowledge: the claims of about
 $\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$. It therefore targets
 open-weight models. For private weights it shares the limitation that Hollow-LLM shows for
-zkSNARKs~\cite{hollowllm}. The setup proof is untimed \todo{F6}.
+zkSNARKs~\cite{hollowllm}. The setup proof of Llama-2-7B takes \SetupProverLlama{} to prove and \SetupVerifierLlama{} to verify.
 
 \para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens, and Llama-2-7B's shapes
 up to 16{,}384, where the CPU verifier is still about \LongRatioLong{}$\times$ faster than exact re-execution (\CpuRatio{}$\times$

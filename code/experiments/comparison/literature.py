@@ -4,7 +4,7 @@ Produces the "theirs" columns of ``tab:eval-compare`` (Sec. ``sec:eval-compare``
 ZKTorch, Maverick and zkLLM on matched models, as reported on their own hardware), the "theirs" column of
 ``tab:eval-compare-v1`` and the LeNet-5 paragraph after it (zkCNN and Bionetta, ``app:eval-compare-v1``), and the
 published costs the text quotes (e.g. zkLLM's ten minutes for a 2,048-token Llama-2-7B prompt on an A100);
-``paper/assets.py`` reads the table.
+``paper/numbers.py`` reads the table (``paper/bench.py``'s ``literature``).
 
     python -m experiments.comparison.literature
 

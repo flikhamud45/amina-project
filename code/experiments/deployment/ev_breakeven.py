@@ -173,7 +173,7 @@ def draw(out: dict, cfg: dict, paths: list[str]) -> None:
                          "xtick.major.size": 2.5, "ytick.major.size": 2.5, "xtick.major.pad": 2,
                          "ytick.major.pad": 2, "axes.labelpad": 2, "pdf.fonttype": 42, "ps.fonttype": 42})
     ours, ours_k = "#1f5f99", "#7fb2e5"
-    kpre = "\U0001d5aa" + "$_{\\mathrm{pre}}$"      # upright sans-serif K, as experiments.paper.assets.KPRE
+    kpre = "\U0001d5aa" + "$_{\\mathrm{pre}}$"      # upright sans-serif K, the paper's mode Kpre
     final, W = out["policies"][0], out["weights_bytes"]
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(3.375, 1.9))
     qs = [10 ** (i / 20) for i in range(0, 61)]

@@ -106,7 +106,7 @@ client's seed (Section~\ref{sec:gen}); and V1, which sends int8 values instead o
 and reuses the column check (Section~\ref{sec:v1}).
 
 \para{Costs.} Without V1, the prover's folds and openings do not grow with the prompt.
-On an L40S it proves a 2{,}048-token Llama-2-13B prompt \ZkllmProverFactor{}$\times$ faster than zkLLM on an A100,
+On one \PlatformGpu{} it proves a 2{,}048-token Llama-2-13B prompt \ZkllmProverFactor{}$\times$ faster than zkLLM on an A100,
 although zkLLM also hides the weights and proves the operations without weights\TodoZkllmFactor{}. On one GPU, proving a 2{,}048-token OPT-1.3B prompt costs \ServeOptMOverUOneRange{}$\times$ our exact integer
 forward pass and \ServeOptMOverUTwoRange{}$\times$ an fp16 one. The main cost is the proof, which carries every weight
 operation's result: \ProofLlamaLongC{} for a 2{,}048-token Llama-2-7B prompt, about the size of its int8
@@ -128,7 +128,7 @@ Section~\ref{sec:discussion} states whom the protocol serves.
   with binding Fiat--Shamir, generation, V1 and a setup proof for untrusted commitments
   (Sections~\ref{sec:defence}--\ref{sec:gen}).
   \item An evaluation on language models up to 13B parameters, against re-execution and published
-  systems (Section~\ref{sec:results}) \todo{L40S}.
+  systems (Section~\ref{sec:results}).
 \end{itemize}
 
 % =====================================================================================

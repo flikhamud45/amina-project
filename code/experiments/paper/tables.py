@@ -33,6 +33,7 @@ analysis and literature tables ``tab:sok``, ``tab:sok-derivation``, ``tab:aligne
 """
 from __future__ import annotations
 
+import functools
 import math
 import statistics
 from dataclasses import dataclass, field
@@ -162,6 +163,55 @@ V1_ROWS = ((64, "gpt2"), (512, "gpt2"), (2048, "opt-125m"), (2048, "opt-1.3b"), 
 def v1_cell(run: Run, model: str, seq: int, mode: str) -> Rec | None:
     """The v1 tier's record of one ``tab:eval-v1`` cell: random weights, the CPU verifier, no label."""
     return run.v1("v1", model, seq, mode, vdev="cpu", label="", real=None)
+
+
+def v1_shape_model(model: str, seq: int, lmax: int, policy: str | None = None) -> dict:
+    """V1's cut of the full ``model`` (last block pruned) on a ``seq``-token query, from its shapes alone, when every
+    weight operation that rule (P2) of :mod:`pvi.v1.cut` allows is cut (as with random weights): every linear
+    operation with a claim per position but the LM head.  The instances are packed as
+    :meth:`pvi.v1.cut.CutPlan.from_graph` packs them (in graph order, at most ``2^lmax`` leaves each; under the plan
+    ``policy`` a transposed matrix is one unit, cut whole or not at all).  Returns ``n_leaves``, ``n_instances``,
+    ``max_bits`` (the largest instance's variables) and the two new terms of Theorem ``thm:v1`` as ``log2``: the GKR
+    terms of the instances and the lookup term with the largest table the window widths allow (two widths of at most
+    ``2^16`` per cut operation, and width 1)."""
+    from pvi.commit.cost import decoder_claim_columns, decoder_shapes
+    from pvi.commit.plans import plan_commitment
+    from pvi.core.field import P
+    from pvi.models.decoder import CONFIGS
+    cfg = CONFIGS[model]
+    shapes = decoder_shapes(cfg, prune_last=True)
+    cols = decoder_claim_columns(cfg, seq, prune_last=True)
+    cut = {o.name: o for o in shapes if o.layout == "linear" and o.name != "head" and cols[o.name] == seq}
+    col_of = {}
+    if policy:
+        plan = plan_commitment(shapes, policy, rate=4)
+        col_of = {m.name: tuple(m.members) for m in plan.matrices if m.layout == "col"}
+    for members in col_of.values():
+        if any(o not in cut for o in members):
+            for o in members:
+                cut.pop(o, None)
+    units, placed = [], set()
+    for o in shapes:
+        if o.name in cut and o.name not in placed:
+            names = next((ms for ms in col_of.values() if o.name in ms), (o.name,))
+            placed.update(names)
+            units.append(sum(cut[n].n_rows for n in names))
+    rows, cur = [], 0
+    for n in units:
+        if cur and (cur + n) * seq > 1 << lmax:
+            rows.append(cur)
+            cur = 0
+        cur += n
+    rows += [cur] if cur else []
+    n_col = (seq - 1).bit_length()
+    bits = [max(1, (r - 1).bit_length() + n_col) for r in rows]
+    log2p = math.log2(P)
+    leaves = sum(o.n_rows for o in cut.values()) * seq
+    gkr = [_gkr_log2(n, log2p) for n in bits]
+    top = max(gkr) if gkr else 0.0
+    return {"n_leaves": leaves, "n_instances": len(rows), "max_bits": max(bits, default=0),
+            "gkr_log2": top + math.log2(sum(2 ** (x - top) for x in gkr)) if gkr else None,
+            "lookup_log2": math.log2(leaves + 1 + 2 * len(cut) * (1 << 16)) - math.log2(P ** 8 - P ** 2)}
 
 
 def tab_eval_v1(ctx: Ctx) -> Table:
@@ -347,12 +397,39 @@ def _gkr_log2(n: int, log2p: float) -> float:
     return math.log2(1 + sum(3 * k + 2 for k in range(1, n))) - 8 * log2p
 
 
+@functools.lru_cache(maxsize=None)
+def setup_of(model: str, policy: str, amortise: int):
+    """``(size, params, plan)`` of the setup proof of one of the paper's decoders (last block pruned) under the plan
+    ``policy`` at lambda 128 with interactive queries, amortised over ``amortise`` queries: ``size`` is
+    ``costs/setup_bytes.setup_model``'s byte model, ``params`` :func:`pvi.commit.setup_proof.setup_params`' radii and
+    column counts.  Each takes up to half a minute on a laptop CPU, so a build computes each once."""
+    from experiments.costs.setup_bytes import plan_publics, setup_model
+    from pvi.commit import setup_proof as sp
+    from pvi.commit.cost import decoder_shapes
+    from pvi.commit.plans import column_bits, plan_commitment
+    from pvi.models.decoder import CONFIGS
+    shapes = decoder_shapes(CONFIGS[model], prune_last=True)
+    plan = plan_commitment(shapes, policy, rate=4)
+    publics, groups = plan_publics(plan)
+    params = sp.setup_params(publics, groups, 128, column_bits(128, len(shapes), False), amortise=amortise)
+    return setup_model(shapes, policy, 128, amortise), params, plan
+
+
+def radius_log2(params, plan) -> dict:
+    """``{tree: log2 f}`` of a setup proof's radii ``e_j = floor(f (n_j - k_j) / 2)`` (None for radius 0)."""
+    coded, e = {m.name: m for m in plan.coded}, dict(params.e)
+    out = {}
+    for g, members in plan.groups:
+        m0 = coded[members[0]]
+        frac = 2 * e[members[0]] / max(1, m0.n_points - m0.row_length)
+        out[g] = round(math.log2(frac)) if frac > 0 else None
+    return out
+
+
 def params_values(policy: str, v1: dict | None, model: str = "llama2-7b", amortise=(100, 1000)) -> dict:
     """``tab:params``'s values from the library (the shapes of ``model`` with the last block pruned and the plan
     ``policy``), as ``costs/params_table.py`` computes them; V1's counts ``v1`` (``n_leaves``, ``n_instances``,
     ``table``, ``lmax`` of a full-model record at 2,048 tokens) give the V1 rows."""
-    from experiments.costs.setup_bytes import plan_publics, setup_model
-    from pvi.commit import setup_proof as sp
     from pvi.commit.cost import decoder_shapes
     from pvi.commit.plans import column_bits, plan_commitment
     from pvi.core.field import P
@@ -375,18 +452,10 @@ def params_values(policy: str, v1: dict | None, model: str = "llama2-7b", amorti
     if v1:
         out["lookup_log2"] = math.log2(v1["n_leaves"] + v1["table"]) - math.log2(P ** 8 - P ** 2)
         out["gkr_log2"] = math.log2(v1["n_instances"]) + _gkr_log2(v1["lmax"], log2p)
-    publics, groups = plan_publics(plan)
-    qbits = column_bits(128, len(shapes), False)
     out["beta0"] = 128 + 64 + math.log2(2 * len(coded))
     for a in amortise:
-        p = sp.setup_params(publics, groups, 128, qbits, amortise=a)
-        e = dict(p.e)
-        fracs = set()
-        for g, members in plan.groups:
-            m0 = coded[members[0]]
-            frac = 2 * e[members[0]] / max(1, m0.n_points - m0.row_length)
-            fracs.add(round(math.log2(frac)) if frac > 0 else None)
-        size = setup_model(shapes, policy, 128, a)
+        size, p, splan = setup_of(model, policy, a)
+        fracs = set(radius_log2(p, splan).values())
         out[a] = {"s": p.s, "f": sorted(fracs, key=lambda v: (v is None, v)), "t0": sorted(dict(p.t0).values()),
                   "setup_bytes": size["setup_MB"] * 1e6,
                   "untrusted_bytes": size["query_columns_MB_untrusted"] * 1e6}
@@ -530,14 +599,7 @@ SETUP_MODELS = (("gpt2", "GPT-2"), ("llama2-7b", "Llama-2-7B"), ("opt-6.7b", "OP
 
 def setup_values(policy: str) -> dict:
     """``{model: {a: setup_model(...)}}`` of ``costs/setup_bytes.py`` for ``tab:setup``'s models."""
-    from experiments.costs.setup_bytes import setup_model
-    from pvi.commit.cost import decoder_shapes
-    from pvi.models.decoder import CONFIGS
-    out = {}
-    for m, _ in SETUP_MODELS:
-        shapes = decoder_shapes(CONFIGS[m], prune_last=True)
-        out[m] = {a: setup_model(shapes, policy, 128, a) for a in (100, 1000)}
-    return out
+    return {m: {a: setup_of(m, policy, a)[0] for a in (100, 1000)} for m, _ in SETUP_MODELS}
 
 
 def tab_setup(ctx: Ctx) -> Table:
@@ -771,20 +833,23 @@ def tab_v1(ctx: Ctx) -> Table:
 
 
 # ================================================================================================ ext_generation.tex
-GEN_MODELS = ("llama2-7b", "qwen3-4b")
-GEN_G = (64, 256)
-"""The generation cells of the final run (the gen tier: a 512-token prompt)."""
+GEN = (("gpt2", 64, (256,), ("greedy",)), ("llama2-7b", 512, (64, 256), ("greedy", "sample")),
+       ("qwen3-4b", 512, (64, 256), ("greedy", "sample")))
+"""The generation cells of the final run (the gen tier): per model the prompt's tokens ``P``, the responses' tokens
+``G`` and the decoding rules (GPT-2: the per-token comparison with zkAgent; Llama-2-7B and Qwen3-4B: a 512-token
+prompt, greedy and sampled)."""
 
 
 def tab_gen(ctx: Ctx) -> Table:
     """``tab:gen``: a G-token greedy response as one prefill: prover, verifier and proof in modes C and Kpre."""
-    tb = Table("tab_gen", "tab:gen", f"{protocol(ctx)}; gen tier (gen_bench.py, label gen): 512-token prompt, greedy, "
-               "random weights; medians over the timed queries; the verifier's time includes the token rule")
-    for m in GEN_MODELS:
-        for j, g in enumerate(GEN_G):
-            cells = [NAME[m] if j == 0 else "", str(g)]
+    tb = Table("tab_gen", "tab:gen", f"{protocol(ctx)}; gen tier (gen_bench.py, label gen): GPT-2 after a 64-token "
+               "prompt, Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy, random weights, full models; medians "
+               "over the timed queries; the verifier's time includes the token rule")
+    for m, prompt, gs, _ in GEN:
+        for j, g in enumerate(gs):
+            cells = [rf"{NAME[m]} ($P{{=}}{prompt}$)" if j == 0 else "", str(g)]
             for mode in ("C", "Kpre"):
-                r = ctx.run.gen(m, mode, "greedy", g)
+                r = ctx.run.gen(m, mode, "greedy", g, prompt=prompt)
                 row = f"{NAME[m]} G={g} {mode}"
                 cells += [tb.put(row, "P", r and r.d["prove_s"], r, lambda v: f.fixed(v, 2)),
                           tb.put(row, "V", r and r.d["verify_s"], r, lambda v: f.fixed(v, 2)),
@@ -796,15 +861,16 @@ def tab_gen(ctx: Ctx) -> Table:
 def tab_gen_full(ctx: Ctx) -> Table:
     """``tab:gen-full``: every generation cell of the final run, greedy and sampled (the client's seed), with the
     proof per generated token."""
-    tb = Table("tab_gen_full", "tab:gen-full", f"{protocol(ctx)}; gen tier (gen_bench.py, label gen): 512-token "
-               "prompt, random weights, 3 timed queries per cell; rows ', sampled': the integer sampler")
-    for i, m in enumerate(GEN_MODELS):
+    tb = Table("tab_gen_full", "tab:gen-full", f"{protocol(ctx)}; gen tier (gen_bench.py, label gen): GPT-2 after a "
+               "64-token prompt (greedy), Llama-2-7B and Qwen3-4B after a 512-token prompt, random weights, full "
+               "models, 3 timed queries per cell; rows ', sampled': the integer sampler")
+    for i, (m, prompt, gs, decodes) in enumerate(GEN):
         if i:
             tb.rows.append(r"\midrule")
         for mode in ("C", "Kpre"):
-            for decode in ("greedy", "sample"):
-                for j, g in enumerate(GEN_G):
-                    r = ctx.run.gen(m, mode, decode, g)
+            for decode in decodes:
+                for j, g in enumerate(gs):
+                    r = ctx.run.gen(m, mode, decode, g, prompt=prompt)
                     row = f"{NAME[m]} {mode} {decode} G={g}"
                     label = f"{NAME[m]}, {MODE[mode]}" + (", sampled" if decode == "sample" else "")
                     tb.rows.append(" & ".join([

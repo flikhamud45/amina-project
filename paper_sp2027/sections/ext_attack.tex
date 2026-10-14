@@ -125,20 +125,20 @@ trace nodes.
 
 % Moved from the body's paragraph "MNIST" by the H5 pass (cut C4 of REVIEW2.md); unchanged.
 \para{MNIST, further results.} One tampered neuron passes 250 paths 61\% of the time. Keeping each
-tampered value below its neuron's 95th percentile takes about five neurons and passes 99\% of the
+tampered value below its neuron's 95th percentile takes about \MnistStealthNeurons{} neurons and passes \MnistStealthPass{}\% of the
 time under uniform sampling. With percentiles from \StealthCalib{} training images and \LocatorQueries{} disjoint test
 queries, the edit changes \StealthNeurons{} neurons on average, passes \StealthPass{}\% of paths, keeps every edited value in
-range, and exceeds a neuron's natural maximum no more often than the honest trace (5\% of queries in
+range, and exceeds a neuron's natural maximum no more often than the honest trace (\StealthExceed{}\% of queries in
 both cases); the in-range edits on OPT-1.3B and OPT-6.7B (Section~\ref{ext:attack-inrange}) use
 held-out ranges as well.
 
 \para{Other samplers on MNIST.} Against an adversary who knows the rule, a static importance score
 (outgoing weight magnitude) detects \SamplerStatic{}\% of attacks and gradient saliency \SamplerSaliency{}\%, against \SamplerUniform{}\%
-for uniform sampling. The zeroing attack against the contribution-weighted sampler edits about 14
-of the 512 neurons, whose most common value is zero (65\% of inputs). The floor $\delta=1$ detects
+for uniform sampling. The zeroing attack against the contribution-weighted sampler edits about \ZeroingNeurons{}
+of the 512 neurons, whose most common value is zero (\ZeroingZeroShare{}\% of inputs). The floor $\delta=1$ detects
 \FloorVsUniform{}$\times$ as often as uniform sampling; other floors give \FloorOthers{}$\times$. Each figure is the
 detection of the best attack we found against that sampler. The \SamplerContribution{}\% is one sampler against the
-plain attack; the 2\% of the floor $\delta=1$ is the highest detection among our samplers, each
+plain attack; the \FloorBest{}\% of the floor $\delta=1$ is the highest detection among our samplers, each
 against the attacks built for it.
 
 \para{Larger models.} A change to the least-visited penultimate neuron of a CNN is caught by one
@@ -272,14 +272,14 @@ Per-neuron ranges are the minimum (0, after ReLU) and the maximum, or the 99.9th
 activation (the input of \texttt{fc2}) over 64 windows of 128 tokens of WikiText-2 train, every position. At
 the last position of one layer, a greedy attacker moves the neurons with the largest first-order decrease of
 the margin between the top-1 and the runner-up logit to the bound of their range, until the next token changes
-or 256 neurons are edited (fp32, the 40 prompts of the OPT-6.7B experiment). Uniform detection per path is
+or 256 neurons are edited (fp32, the \InrangePrompts{} prompts of the OPT-6.7B experiment). Uniform detection per path is
 $k/d_{\mathrm{ff}}$ ($d_{\mathrm{ff}}=8{,}192$ and $16{,}384$); a contribution-weighted sampler opens neuron $j$ with
 probability proportional to $|a_j|\,\|W_{\mathrm{fc2}}[:,j]\|$ on the claimed trace.
 
 \begin{table*}[t]
   \caption{In-range edits on OPT-1.3B (layers 6/12/18/23 of 24) and OPT-6.7B (8/16/24/31 of 32): prompts whose next
-  token changed (of 40), median and maximum number of edited neurons, and median detection per draw under uniform
-  and contribution-weighted sampling. Ranges from 8{,}192 WikiText-2 train tokens; fp32.}
+  token changed (of \InrangePrompts{}), median and maximum number of edited neurons, and median detection per draw under uniform
+  and contribution-weighted sampling. Ranges from \InrangeCalibTokens{} WikiText-2 train tokens; fp32.}
   \label{tab:inrange}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -297,7 +297,7 @@ edits often; lowering activations to zero, which stays in range after ReLU, hide
 the price of more neurons and fewer successes in early layers. Under uniform sampling every variant needs tens
 of thousands of paths for $1-2^{-40}$ (\InrangePathsOptM{} at the medians on OPT-1.3B, \InrangePathsOptL{} on
 OPT-6.7B). The OPT-6.7B rows show the same picture at 7B scale: every in-range edit of the \emph{any} kind changes
-the next token for all 40 prompts at every depth, with a median of \InrangeOptLKRange{} edited neurons.
+the next token for \InrangeOptLChanged{} prompts at every depth, with a median of \InrangeOptLKRange{} edited neurons.
 
 \para{The sampler game on OPT-1.3B.} For each prompt the adversary takes, of the \emph{any} edit (built at the
 cap's ceilings and carried to looser caps) and the \emph{down} edit, the one that a given sampler detects least;
@@ -309,10 +309,9 @@ percentile, the mixture detects \GameCapsSix{}\% at layer~6; \GameCapsTwelve{}\%
 \GameCapsEighteen{}\% at layer~18; and \GameCapsTwentyThree{}\% at layer~23, against $27.7/d_{\mathrm{ff}}
 =\GameThreshold{}\%$ and \GameUniformAll{}\% for uniform sampling. The mixture is the contribution-weighted sampler at layers 6--18,
 where the \emph{down} edit fails on many prompts and the remaining \emph{any} edits raise their neurons'
-contributions; at layer~23, where \emph{down} succeeds for 39 of the 40 prompts, contribution weighting sees
-nothing and the mixture leans on zero-first. The means are over the prompts with an in-range edit at that cap
-(11 to 40 of the 40 at layer~6, 27 to 40 at layer~12, 35 to 40 at layer~18 and all 40 at layer~23), which is why
-they can rise with the cap. Neither edit is adapted to the sampler: there is no lowering to a small non-zero value and no greedy
+contributions; at layer~23, where \emph{down} succeeds for \InrangeDownLast{} of the \InrangePrompts{} prompts, contribution weighting sees
+nothing and the mixture leans on zero-first. The means are over the prompts with an in-range edit at that cap,
+whose number grows with the cap, which is why they can rise with the cap. Neither edit is adapted to the sampler: there is no lowering to a small non-zero value and no greedy
 against the sampler's own detection, the two replies that brought the MNIST mixture below $27.7/N$. These figures
 are therefore not upper bounds on what a value-aware sampler achieves against an adaptive adversary on this
 model; they show that the fixed edits of Table~\ref{tab:inrange} are caught by contribution weighting wherever

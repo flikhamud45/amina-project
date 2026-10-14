@@ -44,12 +44,19 @@ One builder per table, each in the paper's layout (the same columns and rows as 
 and each cell recorded with its source for `cells.csv`. Every table's header comment states the run's protocol
 settings and sources, so that its caption can be made true. `tab:params` and `tab:setup` follow from the library's
 parameters and the setup proof's byte model (`costs/setup_bytes.py`), with V1's counts from the v1 tier; the
-generation tables take the gen tier's cells (Llama-2-7B and Qwen3-4B, a 512-token prompt, greedy and sampled).
+generation tables take the gen tier's cells (Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled;
+GPT-2 after a 64-token prompt, greedy), selected by the prompt's length as well.
 
 ### `macros.py`
-The text numbers, by family (the CPU client, the outcome counts, the cost of the defence, serving, V1, the
-comparison, the improvements, real weights, long prompts, the break-even, quality, the sampler, the attack). The
-abstract's N (`\CpuRatioN`, findings HD-02 and F12) is one value: the strongest exact re-execution (the fastest of
+The text numbers, by family (the platform and the plan, the CPU client, the outcome counts, the cost of the defence,
+batches against one opening, serving, V1, the comparison, the improvements, real weights, long prompts, quality, the
+sampler, the attack, the security parameters, the setup proof, generation, the break-even). The platform's macros
+(`\PlatformGpu`, `\PlatformCpu`, `\PlanLogPoints`) come from the records' `env` and `--policy`, so the captions and the
+sentences that say how a number was measured state the run's settings. Values that follow from the code alone are
+computed from the library under `--policy`: the setup proof's size, breakdown and radii (`costs/setup_bytes.py`'s byte
+model), the split commitment's columns per query, and V1's cut of the largest model from its shapes
+(`tables.v1_shape_model`; the leaves, instances and soundness terms at the run's `lmax`). The abstract's N
+(`\CpuRatioN`) is one value: the strongest exact re-execution (the fastest of
 `int`, `int_fp32gemm`, `float` and `bf16`, each computing only what the pruned graph computes) over the Kpre CPU
 verifier, both on 8 threads, for the full Llama-2-7B at 2,048 tokens (cpuv tier), rounded down to one decimal. The
 break-even reuses `deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and

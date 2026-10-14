@@ -44,23 +44,23 @@ inference.
 \para{Costs.} Without V1, the prover's folds and openings grow with the model but not with the
 input, and the prover is the protocol's strongest axis. Computing its column openings and
 folds with exact int8 tensor-core products instead of float64 makes it \ImproveOpenRange{}$\times$ faster on
-Llama-2 blocks on an RTX~2080~Ti, and it proves a 256-token GPT-2 response to a 64-token prompt in
-0.29\,s. On matched models it is \CompareProverMin{}--\CompareProverMax{}$\times$ faster than published zkSNARK provers, partly
+Llama-2 blocks, and on one \PlatformGpu{} it proves a 256-token GPT-2 response to a 64-token prompt in
+\GenGptProveC{}\,s. On matched models it is \CompareProverMin{}--\CompareProverMax{}$\times$ faster than published zkSNARK provers, partly
 because all of them but zkLLM ran on CPUs, and partly because they also prove the operations
 without weights, which our verifier recomputes, and many of them hide the weights
 (Table~\ref{tab:eval-compare})\TodoCompareRange{}. The main cost is the proof. It carries the
 results of every weight operation and so grows with the prompt: \ProofLlamaShortC{} for a 64-token Llama-2-7B
 query and \ProofLlamaLongC{} at 2{,}048 tokens\TodoProofIntro{}, against 183\,kB for zkLLM. V1 makes it
 \VOneRatioRandom{}$\times$ smaller at 2{,}048 tokens with random weights (the full OPT-1.3B: \VOneOptMCVZeroGB{} to
-\VOneOptMCVOneGB{}\,GB), 1.68--1.77$\times$ on the real smoothed OPT-125M at 512 tokens and \VOneRatioRealOptLExact{}$\times$ on the
-real OPT-6.7B at 2{,}048 tokens, at the price of a GKR in the prover whose work grows with the
-number of results (OPT-125M at 2{,}048 tokens: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s on the RTX~2080~Ti) and a slower CPU
+\VOneOptMCVOneGB{}\,GB), \VOneRealOptMLongC{}$\times$ on the certified OPT-1.3B in mode $\sC$ and \VOneRatioRealOptLExact{}$\times$ on the
+real OPT-6.7B in $\Kpre$ at 2{,}048 tokens, at the price of a GKR in the prover whose work grows with the
+number of results (OPT-125M at 2{,}048 tokens: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s) and a slower CPU
 verifier: \VOneVerifyRatioLlama{}$\times$ v0's on the full Llama-2-7B at 2{,}048 tokens (\VOneVerifyLlama{} against \VOneVZeroVerifyLlama{}\,s)\TodoVOneIntro{}. The verifier recomputes attention, so its cost grows with the square of the prompt
 length. With eight CPU threads and native exact kernels, a client that holds the weights verifies a
-64-token query of the full Llama-2-7B in 1.0\,s, against \CpuReexecShort{}\,s for the fastest exact re-execution
-on the same threads, and a 2{,}048-token query in 18.5\,s, against \CpuReexecLong{}\,s (interactive; \CpuVerifyShort{} and
-\CpuVerifyLong{}\,s under Fiat--Shamir) \todo{EPYC: the same cells}. Our GPU claim decoder and fused exact attention kernel make the streaming GPU verifier
-\ImproveGpuvOptM{}$\times$ faster on OPT-1.3B at that length \todo{L40S, full models}. The protocol is not
+64-token query of the full Llama-2-7B in \CpuVerifyShort{}\,s, against \CpuReexecShort{}\,s for the fastest exact re-execution
+on the same threads, and a 2{,}048-token query in \CpuVerifyLong{}\,s, against \CpuReexecLong{}\,s (Fiat--Shamir). Our GPU
+claim decoder and fused exact attention kernel make the streaming GPU verifier
+\ImproveGpuvOptM{}$\times$ faster on OPT-1.3B blocks at that length. The protocol is not
 zero-knowledge: the claims of $\lceil k/T\rceil$ queries of $T$ tokens reveal a weight matrix with
 rows of length $k$. Finally, the provider must serve the integer model. Moving SmoothQuant's
 per-channel scales~\cite{xiao2023smoothquant} into the gains of the integer LayerNorm brings its
@@ -147,7 +147,7 @@ advance, without a sum-check, by fixing the row evaluations before the verifier 
 fold. ReedWeave~\cite{reedweave} combines interleaving with FRI-style recursive folding to speed up
 Reed--Solomon polynomial commitments. Among zkSNARKs, DeepProve's hash-based configuration commits
 with BaseFold~\cite{basefold}. On our column-hash commitment, a proximity test of this kind would
-still open as many whole columns as our setup proof and could replace only its combined rows, 1.6\%
+still open as many whole columns as our setup proof and could replace only its combined rows, \SetupCombinedShareLlamaA{}\%
 of it for Llama-2-7B at $a=100$ (Remark~\ref{rem:forced}). A substantially smaller setup proof
 needs a larger error per matrix, a larger radius (which costs every query), a weaker certificate or a
 different commitment, which we leave to future work.

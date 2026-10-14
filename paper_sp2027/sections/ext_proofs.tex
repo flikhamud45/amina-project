@@ -40,7 +40,7 @@ generation as one prefill with the token rule and the integer sampler, the Fiat-
 with tree absorption of large messages and its omission in mode $\Kpre$, the compact encoding of the
 proof, and mode $\Kpre$ with V1 and with secret vectors reused over many queries. It also proves the
 acceptance bound of the path protocol for edits of $k$ neurons. Each proof names the functions of
-\texttt{code/src/pvi/fullcheck} that it models.
+the library \texttt{code/src/pvi} that it models.
 
 \para{Graphs.} A graph $\mathcal G$ is the ordered list of weight operations~\eqref{eq:weightop} and
 operations without weights of Section~\ref{sec:intmodel}, and $M_{\mathcal G}(x)$ is its output on
@@ -90,7 +90,7 @@ state-restoration error (Theorem~14.3.1; see also~\cite{bcs16}).
 \label{app:prune}
 
 \para{The pruned graph.} Let $\mathcal G$ be a decoder of $L$ blocks built by
-\texttt{transformer.build\_decoder}, and $\mathcal G^{(n)}$ (\texttt{with\_lm\_positions}) its
+\texttt{pvi.models.decoder.build\_decoder}, and $\mathcal G^{(n)}$ (\texttt{with\_lm\_positions}) its
 form whose LM head reads the last $n\ge1$ positions, so that $\mathcal G=\mathcal G^{(1)}$. For a
 tensor $X$ with positions $0,\dots,T-1$ (a column per position for the operand of a weight
 operation, a row per position for an activation) let $S_n(X)$ keep the positions $T-n,\dots,T-1$.
@@ -101,7 +101,7 @@ $h'=\mathrm{norm}_2(r')$, the MLP and $r''=\mathrm{res}(r',W_{\mathrm{down}}g)$.
 reads $S_n(\mathrm{norm}_f(r''))$. The pruned form $\mathcal G^{(n)}_{\mathrm{pr}}$
 (\texttt{prune\_last=True}) computes $q$ from $S_n(h)$, applies RoPE to it at the positions
 $T-n,\dots,T-1$ (\texttt{\_rope} with an offset), lets only these $n$ queries attend
-(\texttt{\_attention} with $T_q=n$ query rows and the last $n$ rows of the causal mask), forms
+(\texttt{integer\_attention} with $T_q=n$ query rows and the last $n$ rows of the causal mask), forms
 $\mathrm{res}(S_n(r),W_o a_{\mathrm{pr}})$, and runs the rest of the block at these $n$ positions;
 $k$ and $v$ are still computed at every position. The builder calibrates the pruned block on every
 position (\texttt{\_Builder.last} with \texttt{calibrate\_all}), so both graphs have the same
@@ -193,7 +193,7 @@ $\mathrm{norm}_f$ and its slice to a tensor of $n$ positions, on which $S_n$ is 
 LM head reads $\mathrm{norm}_f(S_n(r''))=S_n(\mathrm{norm}_f(r''))$, its input in
 $\mathcal G^{(n)}$. The weights are equal, so are the logits. The statement on the claims is the
 same chain of equalities.
-(b)~The bound checked at setup (Section~\ref{sec:intmodel}; \texttt{protocol.claim\_bound})
+(b)~The bound checked at setup (Section~\ref{sec:intmodel}; \texttt{pvi.v0.params.claim\_bound})
 depends only on the weights and on the input bound of the operation, which are the same in both
 graphs.
 (c)~The proofs of the three theorems (Appendices~\ref{app:sound}, \ref{app:untrusted}
@@ -221,8 +221,8 @@ Section~\ref{sec:v1} and are clear; Theorem~\ref{thm:v1} applies with this cut s
 % CHECK: was "the single-position operations ... violate (P2)". cut.py tests cols == T, so with
 % n = T (a one-token prompt, T = P + G - 1 = G) the pruned ops span all T positions and may be cut;
 % thm:v1 applies with whatever cut set results either way.
-The real-weight builders (\texttt{real\_weights.build\_opt\_from\_hf} and
-\texttt{real\_llama.build\_llama\_from\_hf}) insert the same slices with \texttt{prune\_last}; their
+The real-weight builders (\texttt{pvi.models.hf\_opt.build\_opt\_from\_hf} and
+\texttt{pvi.models.hf\_llama.build\_llama\_from\_hf}) insert the same slices with \texttt{prune\_last}; their
 graphs have the operations and order of \texttt{build\_decoder}'s (\texttt{matches\_benchmark\_graph}),
 and their next-token logits with and without pruning are tested to be equal, so the theorem applies to
 them. A fixed public prefix (\texttt{prefix\_tokens}) enters only as constants of the attention
@@ -236,7 +236,7 @@ operation.
 $y_1,\dots,y_G$. A \emph{response rule} maps a logit vector $z\in\mathbb Z^V$ and a position index
 $\pi$ to a token. The greedy rule is $R(z,\pi)=\min\{v:z_v=\max_wz_w\}$. The sampled rule
 $R_\sigma$, for $\sigma=(\mathit{seed},a,k)$ with a 32-byte seed, $0<a<2^{24}$ and $k\ge0$
-(\texttt{token\_sampler.TokenSampler}), takes the candidates $C$, which are all $v$ if $k=0$ or
+(\texttt{pvi.v0.token\_sampler.TokenSampler}), takes the candidates $C$, which are all $v$ if $k=0$ or
 $k\ge V$ and otherwise the $k$ indices of largest $z_v$ with ties to the smaller index; the noise
 $\Gamma[u_v]$ of Eq.~\eqref{eq:gumbel-table}, where $u_v$ is the $v$-th little-endian 16-bit word of
 $H(\texttt{pvi/sampler/v1}\,\|\,\mathit{seed}\,\|\,\mathrm{le}_8(\pi))$ and $\mathrm{le}_8(\pi)$ is
@@ -355,7 +355,7 @@ sampler's. It also says nothing about how close $R_\sigma$ is to sampling at tem
 
 \para{The seed is part of the statement.} The verifier's decision depends on $\sigma$ through the
 token rule, so $\sigma$ belongs to the statement. Under Fiat--Shamir, (R3) requires the hash input to
-contain the whole statement, and \texttt{\_absorb\_statement} absorbs
+contain the whole statement, and \texttt{pvi.v0.query.absorb\_statement} absorbs
 $\texttt{pvi/sampler/v1}\,\|\,a\,\|\,k\,\|\,\mathit{seed}$ (\texttt{TokenSampler.digest}), with the
 graph digest, which includes the number $G$ of LM-head positions (\texttt{meta["lm\_positions"]}).
 Without it, one transcript would serve the statements of every seed, the weak Fiat--Shamir
@@ -387,9 +387,9 @@ $\mathrm{rec}\big(L\|\texttt{/tree},\ \langle c\rangle_8\|\langle2^{22}\rangle_8
 under $L$. The key of a challenge with label $L_{\mathrm{ch}}$ is
 $K=H_{256}(\text{transcript string}\,\|\,\texttt{challenge/}\,\|\,L_{\mathrm{ch}})$
 (\texttt{Challenger.\_key}), and the challenge is expanded from $K$ as in
-Appendix~\ref{app:the-conv}, with inputs $K\,\|\,\cdot$. A claims message of about 6.6\,GB
-(Llama-2-7B at 2{,}048 tokens, Section~\ref{sec:v1}) has about 1{,}600 leaves, so the transcript
-absorbs about 50\,kB instead of 6.6\,GB, and the leaves are hashed in parallel.
+Appendix~\ref{app:the-conv}, with inputs $K\,\|\,\cdot$. A claims message of about \ProofLlamaLongC{}
+(Llama-2-7B at 2{,}048 tokens, Section~\ref{sec:v1}) has about \TreeLeavesLlama{} leaves, so the transcript
+absorbs about \TreeKBLlama{}\,kB instead of \ProofLlamaLongC{}, and the leaves are hashed in parallel.
 
 \para{Labels.} Two conditions on labels make the transcript decodable.
 (L1)~Every label, absorbed or of a challenge, is shorter than $25{,}448$ bytes, the number whose
@@ -558,7 +558,7 @@ verifier knows its own statement, so no weak Fiat--Shamir issue arises. The para
 \texttt{params\_for} chooses under Fiat--Shamir add 64 bits to $\beta$ although $\Kpre$ has nothing
 to grind; for $\Kpre$ they act as a margin on $Q_V$ (Appendix~\ref{app:stateful}). A V1 query in
 $\Kpre$ still derives $\alpha$ and the GKR challenges from the transcript
-(\texttt{cut\_protocol.\_query} absorbs the statement, the cut plan's digest, the first message and
+(\texttt{pvi.v1.protocol.\_query} absorbs the statement, the cut plan's digest, the first message and
 the GKR messages); Corollary~\ref{cor:v1kpre-fs} bounds it.
 
 % -------------------------------------------------------------------------------------
@@ -569,9 +569,9 @@ the GKR messages); Corollary~\ref{cor:v1kpre-fs} bounds it.
 verifier decodes before it checks anything: the claims in the format \texttt{PVC3}
 (\texttt{claimcodec.decode}, \texttt{decode\_torch}, or \texttt{decode\_device} on a GPU), the rows
 of a plan's lookup tables as int8 bytes (\texttt{unpack\_rows}), $u$, the opened columns and the
-folds of V1 at 31 bits per element (\texttt{unpack\_field} through \texttt{\_field\_message}), and in
-V1 the exceptions (\texttt{cut\_protocol.unpack\_exceptions}), the multiplicities (one \texttt{PVC3}
-row) and each GKR transcript (\texttt{logup\_gkr.Transcript.from\_bytes} with
+folds of V1 at 31 bits per element (\texttt{unpack\_field} through \texttt{field\_message}), and in
+V1 the exceptions (\texttt{pvi.v1.protocol.unpack\_exceptions}), the multiplicities (one \texttt{PVC3}
+row) and each GKR transcript (\texttt{pvi.v1.gkr.Transcript.from\_bytes} with
 \texttt{extfield.unpack}). For a protocol $\Pi$ of Sections~\ref{sec:defence} and~\ref{sec:v1},
 which sends integer and field tensors, let $\Pi_{\mathrm{wire}}$ be the protocol in which the prover
 sends bytes $b_i$ in place of message $i$ and the verifier runs the verifier of $\Pi$ on the decoded
@@ -579,8 +579,8 @@ messages, rejecting if a decoding fails. Under Fiat--Shamir the transcript of
 $\Pi_{\mathrm{wire}}$ absorbs, before the next challenge, the bytes $b_i$ of every message that it
 decodes (\texttt{claims/PVC3}, \texttt{rows/I8}, \texttt{u/F31}, \texttt{cut/exc},
 \texttt{cut/mult}), or for the GKR rounds the decoded field elements; in each case the very buffer
-that the verifier decodes (\texttt{\_claims\_message} and \texttt{\_decoded\_claims},
-\texttt{\_fold\_message} and \texttt{\_open\_message}, \texttt{cut\_protocol.\_query}).
+that the verifier decodes (\texttt{\_claims\_message} and \texttt{decoded\_claims},
+\texttt{\_fold\_message} and \texttt{open\_message}, \texttt{pvi.v1.protocol.\_query}).
 
 \begin{lemma}[the decoders]
 \label{lem:codec-dec}
@@ -634,7 +634,7 @@ $\Pi_{\mathrm{wire}}$ are those of $\Pi$ applied to the decoded messages. With t
 runs therefore accept together, and a failed decoding in one run is a rejection in the other.
 Decoded values outside the field are rejected by
 $\Pi$'s own checks (the field check of $u$ in \texttt{\_disagrees}, of the openings in
-\texttt{\_columns\_shape\_ok}, of V1's folds in \texttt{cut\_protocol.\_query}), so they act as no
+\texttt{\_columns\_shape\_ok}, of V1's folds in \texttt{pvi.v1.protocol.\_query}), so they act as no
 alias. The reuse bound of $\Kpre$ (Theorem~\ref{thm:v1kpre}) needs only that every verdict is a
 function of the prover's messages and the public coins until the first bad check, and verdicts of
 $\Pi_{\mathrm{wire}}$ are functions of the decoded messages, hence of the bytes.
@@ -653,8 +653,7 @@ other change of the prover's message.
 \noindent The encoding is not canonical: the encoder chooses widths and centring, and other choices
 give other bytes for the same claims (\texttt{claimcodec}, ``Soundness''). Theorem~\ref{thm:codec}
 shows that soundness does not need a canonical encoding; the decoder that recomputes the encoder's
-plan, proposed as plan D3 in \path{docs/improvements/D1_D2_fiat_shamir_binding.md}, would only
-make proofs unique, which our soundness notion does not require. Soundness does need that the
+choices would only make proofs unique, which our soundness notion does not require. Soundness does need that the
 verifier absorbs what it decodes: a transcript that absorbed bytes other than those decoded, or only
 part of them, would let the decoded message change after the challenge.
 
@@ -691,7 +690,7 @@ being fixed before the columns; in particular $w$ need not be uniform. In V1 (mo
 layout), $w$ is the eq-vector of the GKR's final row point, fixed when the GKR ends, $u_\ell$ is sent
 in the fold message, and the columns are drawn after it: interactively by the verifier, and under
 Fiat--Shamir from the transcript after it absorbed the fold message's bytes
-(\texttt{\_open\_message} with \texttt{u\_blob}, called by \texttt{cut\_protocol.\_query}). In the
+(\texttt{open\_message} with \texttt{u\_blob}, called by \texttt{pvi.v1.protocol.\_query}). In the
 round-by-round argument, the state after the folds is doomed if a check that does not read the
 columns fails (a Freivalds check of a clear operation, (F3) or (F4)), or if some committed matrix
 $B$ has, in some plane, a fold or combined claim
@@ -747,7 +746,7 @@ operation (\texttt{Verifier.precompute}), and $u_\ell=\chi_\ell^\T A_\ell$ with 
 A v0 query checks every operation by Freivalds' equation~\eqref{eq:freivalds} with
 $(\chi_\ell,u_\ell)$. A V1 query checks every clear operation the same way (check~(F1)) and every
 cut operation by (F2), $\chi_{\ell,s}^\T y_\ell=u_{\ell,s}\bar x_\ell$ for $s\le r$, with the same
-$\chi_\ell$ and $u_\ell$ (\texttt{cut\_protocol.\_kpre\_y\_ok} reads \texttt{Verifier.\_pre}), where
+$\chi_\ell$ and $u_\ell$ (\texttt{pvi.v1.protocol.\_kpre\_y\_ok} reads \texttt{Verifier.\_pre}), where
 $y_\ell$ is the prover's fold and $\bar x_\ell=\hat X_\ell e$. To keep $\chi$ for the secret
 vectors, we write $\omega_\ell$ for the eq-vector of Section~\ref{sec:v1} (its $\chi_\ell$), so that
 check~(F3) uses $S_\ell=\omega_\ell^\T y_\ell$. In $\Kpre$ the verifier evaluates rule~(P4) of the
@@ -924,8 +923,8 @@ the label of the failed check, because both are functions of the prover's messag
 bad check. It does not cover anything else that depends on $\chi$, such as a running time that
 depends on the compared values. The CPU verifier does not run in constant time: it compares the two
 sides of Freivalds' check operation by operation with \texttt{torch.equal} and stops at the first
-failing operation (\texttt{protocol.\_disagrees}), and check~(F2) returns at the first mismatch
-(\texttt{cut\_protocol.\_kpre\_y\_ok}). Which operation fails first is a function of the prover's
+failing operation (\texttt{pvi.v0.verifier.\_disagrees}), and check~(F2) returns at the first mismatch
+(\texttt{pvi.v1.protocol.\_kpre\_y\_ok}). Which operation fails first is a function of the prover's
 messages until the first bad check, so the hybrid covers it; the time of one comparison can depend on
 where its two sides first differ, and so on $\chi$, which the proof does not cover. A verifier whose
 timing the provider can observe should complete every comparison before it answers, or answer only
@@ -989,10 +988,10 @@ every path reaches the consumer each checks one uniform site, which gives equali
 \end{proof}
 
 \noindent For $k=1$ and $\lambda=40$ this is the $27.7N$ of Section~\ref{sec:dichotomy}, and it
-reproduces the counts of Section~\ref{sec:break}: 305{,}193 paths for Llama-2-7B and 454{,}248 for
+reproduces the counts of Section~\ref{sec:break}: \PathsLlama{} paths for Llama-2-7B and \AttackOptLPaths{} for
 OPT-6.7B. The bound holds for uniform paths. A sampler that weights parents by the claimed values
 behaves differently, better against edits that raise values and not at all against edits to zero
-(\texttt{docs/improvements/G3\_inrange\_attack.md}); Proposition~\ref{prop:blind} and
+(Appendix~\ref{ext:attack-inrange}); Proposition~\ref{prop:blind} and
 Theorem~\ref{thm:dich}(a) treat samplers in general.
 
 \begin{table}[t]

@@ -1,8 +1,8 @@
 """One platform's benchmark tables (``artifacts/comparison/tables_<platform>/``) from its raw records.
 
-Produces the tables that ``paper/assets.py`` and ``paper/numbers.py`` read for the stored benchmark cells: the base
-columns of ``tab:eval-llm``, our side of ``tab:eval-compare``, the image models' costs (Sec. ``sec:eval-cost``, "Base
-costs") and the path test's detection probabilities and bytes (Sec. ``sec:break``), from the records ``costs/bench.py``
+Produces the tables that ``paper/numbers.py`` reads (``paper/bench.py``): ``tab:eval-llm``, our side of
+``tab:eval-compare``, the image models' costs (Sec. ``sec:eval-cost``, "Costs") and the path test's detection
+probabilities and bytes (Sec. ``sec:break``), from the records ``costs/bench.py``
 writes to ``raw_<platform>/``.  Deterministic and idempotent: it only reads ``raw_<platform>/**/*.jsonl`` (finished
 cells, with a ``.done`` marker) and writes
 

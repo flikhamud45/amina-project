@@ -100,12 +100,13 @@ Appendix~\ref{app:sound}.
 
 \subsection{Untrusted Commitments: Measurements, Trade-off and Scope}
 
-\para{The split commitment in practice.} For the smallest tree of Llama-2-7B ($t=35$),
-Eq.~\eqref{eq:split} gives an acceptance probability of about $2^{-35}$ per query, not $2^{-128}$.
-On a small decoder with one weight row changed in one operation, the acceptance rate over 300
-queries with a small $t$ matched Eq.~\eqref{eq:split}. Against a malformed commitment a column is
-worth about one bit instead of $\log_2(n_j/k_j)$, so per-query checks alone would need
-3.2--6.6$\times$ the column bytes on the models of Table~\ref{tab:setup}. Our implementation
+\para{The split commitment in practice.} For the smallest tree of Llama-2-7B
+($t=\ParamsColumnsMinInt{}$ with interactive queries), Eq.~\eqref{eq:split} gives an acceptance probability of
+about $2^{-\ParamsColumnsMinInt{}}$ per query, not $2^{-128}$. On a small decoder with one weight row changed in one
+operation, the acceptance rate over 300 queries with a small $t$ matched Eq.~\eqref{eq:split}.
+Against a malformed commitment a column is worth about one bit instead of $\log_2(n_j/k_j)$, so
+per-query checks alone would need \SplitColumnFactorRange{}$\times$ the column bytes on the models of
+Table~\ref{tab:setup} (the least $t$ per tree with Eq.~\eqref{eq:split} at most $2^{-\beta}$). Our implementation
 rejects the setup proof of the split commitment, which is not $e_j$-close for
 $e_j<n_j/2-k_j+1$ (Appendix~\ref{app:untrusted}).
 
@@ -118,15 +119,17 @@ catches a far matrix with probability about $e_j/n_j$, and lengthens every query
 Theorem~\ref{thm:untrusted} has $k_j+e_j$ in place of $k_j$. Each tree takes the radius, among the
 fractions $2^0,\dots,2^{-10}$ of the unique-decoding radius, that minimises $t^0_j/a+t_j$ over $a$
 amortised queries (Table~\ref{tab:setup}; the parameters are derived in
-Appendix~\ref{app:untrusted}). At $a=1{,}000$, Llama-2-7B pays 11.3\,GB once and 8\% more column
-bytes per query; at 2{,}048 tokens the change per query is below 1\%. Our implementation covers
-commitment plans, including shared trees and transposed matrices. \todo{L40S: setup prover and
-verifier time for GPT-2 and the 7B models}
+Appendix~\ref{app:untrusted}). At $a=1{,}000$, Llama-2-7B pays \SetupGBLlamaB{}\,GB once and \SetupQueryGrowthLlamaB{}\% more column
+bytes per query; at 2{,}048 tokens the change per query is below \SetupQueryShareLlamaB{}\% of the proof. Our
+implementation covers commitment plans, including shared trees and transposed matrices. With radii
+for $a=100$, the setup proof of Llama-2-7B takes \SetupProverLlama{} to prove on the \PlatformGpu{} and
+\SetupVerifierLlama{} to verify on 8 threads of the \PlatformCpu{}, and GPT-2's \SetupProverGpt{} and \SetupVerifierGpt{}.
 
 \begin{table}[t]
   \caption{Untrusted commitments at $\lambda=128$: the one-time setup proof and the opened columns
-  per query, with setup parameters amortised over $a=100$ or $1{,}000$ queries (interactive
-  queries, 4 bytes per field element; the plan of the final runs, codewords of at least $2^{18}$ points)}
+  per query, with setup parameters amortised over $a=100$ or $1{,}000$ queries (the byte model;
+  interactive queries, 4 bytes per field element; the plan of mode $\sC$, codewords of at least
+  $2^{\PlanLogPoints{}}$ points)}
   \label{tab:setup}
   \centering
   \footnotesize
@@ -141,26 +144,25 @@ verifier time for GPT-2 and the 7B models}
   \end{tabular}
 \end{table}
 
-% TH-c, Block 2 (drafts/th_c_setup_forced.tex), placed by the H5 pass. Sources: totals from
-% docs/improvements/D4_D5_untrusted_commitment.md, Sec. 5; breakdown and floors from the byte model of
-% code/experiments/6_improvements/setup_bytes.py, recomputed by TH-c on 2026-10-10 (see the draft's header).
+% The breakdown and floors below are those of the byte model of code/experiments/costs/setup_bytes.py
+% (setup_model) under the run's plan, which code/experiments/paper/numbers.py writes as macros.
 \para{How much a different test could save.} For Llama-2-7B at $\lambda=128$, with the radii behind
-Table~\ref{tab:setup}, the setup proof is 2{,}833.5\,MB at $a=100$. Of this, 2{,}784.0\,MB (98.3\%)
-are opened columns, 45.2\,MB (1.6\%) are the combined rows $\psi_jA^*_j$, and at most 4.3\,MB
-(0.15\%) are authentication paths; the byte model counts $\log_2n_j$ hashes per opened column. At
-$a=1{,}000$ it is 11{,}272.7\,MB: 11{,}210.2\,MB (99.4\%) of columns, the same 45.2\,MB (0.4\%) of
-combined rows and at most 17.3\,MB of paths. By Remark~\ref{rem:forced}, a FRI-, STIR-, WHIR- or
+Table~\ref{tab:setup}, the setup proof is \SetupMBLlamaA{}\,MB at $a=100$. Of this, \SetupColumnsMBLlamaA{}\,MB (\SetupColumnsShareLlamaA{}\%)
+are opened columns, \SetupCombinedMBLlama{}\,MB (\SetupCombinedShareLlamaA{}\%) are the combined rows $\psi_jA^*_j$, and at most \SetupPathsMBLlamaA{}\,MB
+(\SetupPathsShareLlamaA{}\%) are authentication paths; the byte model counts $\log_2n_j$ hashes per opened column. At
+$a=1{,}000$ it is \SetupMBLlamaB{}\,MB: \SetupColumnsMBLlamaB{}\,MB (\SetupColumnsShareLlamaB{}\%) of columns, the same \SetupCombinedMBLlama{}\,MB (\SetupCombinedShareLlamaB{}\%) of
+combined rows and at most \SetupPathsMBLlamaB{}\,MB of paths. By Remark~\ref{rem:forced}, a FRI-, STIR-, WHIR- or
 BaseFold-style test on this commitment, at the same radii and error per matrix, therefore opens at
 least the same columns. It could replace the combined rows with a shorter proof that $\psi_jE_j$ is
-close to the code. That saves at most 1.6\% at $a=100$ and 0.4\% at $a=1{,}000$. Everything other
-than the columns is 1.7\% and 0.6\% of the setup proof, and at most 3.9\% and 2.3\% for the four
+close to the code. That saves at most \SetupCombinedShareLlamaA{}\% at $a=100$ and \SetupCombinedShareLlamaB{}\% at $a=1{,}000$. Everything other
+than the columns is \SetupNonColumnsShareLlamaA{}\% and \SetupNonColumnsShareLlamaB{}\% of the setup proof, and at most \SetupNonColumnsShareMaxA{}\% and \SetupNonColumnsShareMaxB{}\% for the four
 models of Table~\ref{tab:setup}. Now raise the error per matrix from $2^{-\beta_0}$ to $2^{-128}$,
 the most that any test of error $2^{-128}$ can allow. The columns alone at the same radii are then
-1{,}788.7\,MB at $a=100$ and 7{,}284.7\,MB at $a=1{,}000$. These are 63.1\% and 64.6\% of our setup
-proof, and 62.0--64.6\% for the four models. Within the scope of the remark, the columns shrink
+\SetupAtLamMBLlamaA{}\,MB at $a=100$ and \SetupAtLamMBLlamaB{}\,MB at $a=1{,}000$. These are \SetupAtLamShareLlamaA{}\% and \SetupAtLamShareLlamaB{}\% of our setup
+proof, and \SetupAtLamShareRange{}\% for the four models. Within the scope of the remark, the columns shrink
 below that only with a larger radius, which Theorem~\ref{thm:untrusted} charges to every query
-through $k_j+e_j$. For these trees, $\beta_0/{-\log_2(1-e_j/n_j)}$ exceeds $t^0_j$ by 0.9--1.7\% at
-$a=100$, and by 3.7--6.9\% at $a=1{,}000$, where $t^0_j$ reaches 12\% of $n_j$.
+through $k_j+e_j$. For these trees, $\beta_0/{-\log_2(1-(e_j+1)/n_j)}$ exceeds $t^0_j$ by \SetupReplacementExcessA{}\% at
+$a=100$, and by \SetupReplacementExcessB{}\% at $a=1{,}000$, where $t^0_j$ reaches \SetupTZeroMaxShareB{}\% of $n_j$.
 
 \para{Scope.} Neither the setup proof nor mode $\sC$ hides the weights: the verifier knows $X_\ell$
 and $Z_\ell$, so the claims of about $\lceil k_\ell/T\rceil$ queries reveal $A_\ell$. Mode $\sC$
@@ -170,7 +172,7 @@ than a setup proof, which for GPT-2 is larger than the int8 weights. The setup p
 clients that cannot have $C_M$ recomputed. Its opened columns are forced for column-hash
 commitments (Remark~\ref{rem:forced}): a batched proximity proof over the rows in the style of
 FRI~\cite{fri2018} or BaseFold~\cite{basefold} would still open them, and could replace only the
-combined rows, 1.6\% of the setup proof for Llama-2-7B at $a=100$.
+combined rows, \SetupCombinedShareLlamaA{}\% of the setup proof for Llama-2-7B at $a=100$.
 
 % Moved from defence.tex (Sec. 4.3) for space.
 \subsection{One Query in Mode $\sC$}

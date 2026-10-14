@@ -1,7 +1,7 @@
 % =====================================================================================
 % sections/defence.tex: the defence (Section 4), condensed for the 13-page body (CUT_PLAN.md).
 % Sources: the previous draft of this file (course paper Secs. 3.1, 3.4-3.6; plan items A1, A2,
-%   D1-D7; code/src/pvi/fullcheck/*). Removed detail, Table tab:setup and Fig. fig:protocol:
+%   D1-D7; code/src/pvi/). Removed detail, Table tab:setup and Fig. fig:protocol:
 %   sections/ext_defence.tex. Second trimming pass (2026-10-10): sentences already covered in
 %   ext_defence.tex (int8 sum bounds, stacking, re-encoding queries, FRI/BaseFold, weight leak) cut.
 % H5 pass (2026-10-11, REVIEW2.md cut P1): the subsection "Untrusted Commitments" is demoted to the
@@ -208,19 +208,20 @@ $C_M$. A Merkle root can bind any matrix $E_j$, not only a matrix of codewords, 
 linear-code polynomial commitments pair each evaluation with a testing phase~\cite{ligero,brakedown}:
 a committer can bind the encoded columns of two models that differ in matrix $j$ on complementary
 halves of the positions of $j$'s tree, and a prover that computes with the second passes the
-column check with probability $\prod_{i<t}(n/2-i)/(n-i)\approx2^{-t}$, about $2^{-23}$ per query
-($2^{-34}$ under Fiat--Shamir) for the tree of Llama-2-7B with the fewest columns. When nobody the client trusts can recompute $C_M$, the
+column check with probability $\prod_{i<t}(n/2-i)/(n-i)\approx2^{-t}$, about $2^{-\ParamsColumnsMinInt{}}$ per query
+($2^{-\ParamsColumnsMinFs{}}$ under Fiat--Shamir) for the tree of Llama-2-7B with the fewest columns. When nobody the client trusts can recompute $C_M$, the
 committer therefore publishes once per model a non-interactive \emph{setup proof} that each $E_j$
 differs from a codeword matrix $\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns. It opens
 $t^0_j$ columns of each tree, and the verifier then accepts only outputs of the model with weights
 $A^*$, except with the error of Theorem~\ref{thm:sound} with $k_j+e_j$ in place of $k_j$
 (Theorem~\ref{thm:untrusted}, Appendix~\ref{app:untrusted}); without the weights or a range proof,
 the client learns only that the provider is bound to this one model. For Llama-2-7B at $\lambda=128$ the
-setup proof is 2.4\,GB with radii chosen for $a=100$ amortised queries, or 9.8\,GB for
-$a=1{,}000$, and the opened columns per query grow from 65.6 to 113.5 or 79.4\,MB, less than
-1\% of the proof at 2{,}048 tokens \todo{F6: setup time}. For column-hash commitments these
+setup proof is \SetupGBLlamaA{}\,GB with radii chosen for $a=100$ amortised queries, or \SetupGBLlamaB{}\,GB for
+$a=1{,}000$, and the opened columns per query grow from \SetupHonestMBLlama{} to \SetupUntrustedMBLlamaA{} or \SetupUntrustedMBLlamaB{}\,MB, less than
+\SetupQueryShareLlamaA{}\% of the proof at 2{,}048 tokens. Proving it takes \SetupProverLlama{} on the
+\PlatformGpu{} and verifying it \SetupVerifierLlama{} on 8 threads of the \PlatformCpu{}. For column-hash commitments these
 setup columns are forced: with fewer than $t^0_j$ columns of $j$'s tree, no complete test that sees
 only columns certifies radius $e_j$ at our error~\cite{fullversion}. FRI-, STIR-, WHIR- or
-BaseFold-style tests~\cite{fri2018,stir,whir,basefold} could shrink only the combined rows, 2.2\%
-of the setup proof at $a=100$ and 0.5\% at $a=1{,}000$. For open weights, recomputing $C_M$ is
+BaseFold-style tests~\cite{fri2018,stir,whir,basefold} could shrink only the combined rows, \SetupCombinedShareLlamaA{}\%
+of the setup proof at $a=100$ and \SetupCombinedShareLlamaB{}\% at $a=1{,}000$. For open weights, recomputing $C_M$ is
 cheaper than a setup proof and also settles which model is committed.

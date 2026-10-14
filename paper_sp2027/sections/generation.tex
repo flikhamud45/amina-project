@@ -1,14 +1,9 @@
 % =====================================================================================
-% Section 6: Generation and Sampling. Condensed from generation_quality.tex (Sections 6.1, 6.2);
-% sources docs/improvements/E1_generation.md and E2_sampling.md. Tests, Table tab:gen (moved out of
-% the body in the second trimming pass; its GPT-2 numbers are in the "Cost" paragraph), the full
-% Table tab:gen-full and sampler implementation details are in ext_generation.tex (extended
-% version only).
+% sections/generation.tex: Section 6, Generation and Sampling. Its measured numbers are macros of
+% code/experiments/paper/numbers.py (the gen and tv tiers). Tests, Tables tab:gen and tab:gen-full and the
+% sampler's implementation details are in ext_generation.tex (extended version only).
 % Labels defined: sec:gen, sec:gen-prefill, sec:gen-sampling, eq:gumbel-table.
 % Labels used: sec:defence, sec:fs, thm:sound, sec:v1 (defence.tex, v1.tex).
-% H5 pass (2026-10-11, REVIEW2.md N11): the aggregate truncation bound (V-1) e^{-14.25} added
-%   (0.021, 0.033 and 0.098 for V = 32,000, 50,272 and 151,936); E2b's measured distance is in the text;
-%   the 2^20 table is not adopted (12 Oct: kept as the stated alternative, SP2027_PLAN2.md E2b).
 % =====================================================================================
 
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -23,8 +18,8 @@
 \label{sec:gen-prefill}
 
 Proving each prefix of a response as its own query repeats the prompt: with $P=512$ prompt and
-$G=512$ generated tokens, Llama-2-7B needs about 1.3\,TB of claims, against 3.3\,GB for one
-prefill.
+$G=512$ generated tokens, Llama-2-7B's mode-$\sC$ proofs take about \GenPerPrefixTB{}\,TB, against
+\GenPrefillGB{}\,GB for one prefill.
 
 \para{Reduction.} The response $y_1,\dots,y_G$ to a prompt $x$ is the greedy decoding if each
 $y_i$ is the first largest logit at position $P+i-1$ of the model run on
@@ -44,15 +39,17 @@ unchanged. Claims and tokens are fixed before the challenges. In $\Kpre$, $Q$ in
 bound counts the verdicts the prover sees.
 
 \para{Cost.} Each matrix is opened and folded once per response, so the proof grows only by the
-claims of the new positions. With a 64-token prompt and random int8 weights (interactive; RTX
-2080 Ti prover, Xeon Silver 4114 verifier with 8 threads), a 256-token GPT-2 response takes
-0.29\,s to prove, 0.59\,s to verify and 87.3\,MB in mode $\sC$, and 0.20\,s, 0.51\,s and
-82.9\,MB in $\Kpre$; one token takes 0.15\,s, 0.21\,s and 14.9\,MB in $\sC$. Proving costs
-1.1\,ms per token; zkAgent reports 0.30\,s per token for GPT-2, on other hardware and with other
-guarantees~\cite{zkagent}. Times exclude decoding, after which the prover computes the trace of
-$s$. A tampered query was always rejected. OPT-1.3B and $G=64$ are in the extended
+claims of the new positions. After a 512-token prompt (Fiat--Shamir, random int8 weights, full
+models; the prover on one \PlatformGpu{}, the verifier on 8 threads of an \PlatformCpu{}), a greedy
+256-token Llama-2-7B response takes \GenLlamaProveC{}\,s to prove, \GenLlamaVerifyC{}\,s to verify and
+\GenLlamaProofC{} in mode $\sC$, and \GenLlamaProveK{}\,s, \GenLlamaVerifyK{}\,s and \GenLlamaProofK{} in $\Kpre$; Qwen3-4B takes
+\GenQwenProveC{}\,s, \GenQwenVerifyC{}\,s and \GenQwenProofC{} in $\sC$. Llama-2-7B's proof per generated token falls from
+\GenLlamaMBPerTokenShort{}\,MB at $G=64$ to \GenLlamaMBPerTokenLong{}\,MB at $G=256$, and a sampled response costs the
+same as a greedy one within \GenSampledWithin{}\%. For GPT-2 after a 64-token prompt, proving costs
+\GenGptMsPerToken{}\,ms per generated token; zkAgent reports 0.30\,s per token for GPT-2, on other hardware and
+with other guarantees~\cite{zkagent}. Times exclude decoding, after which the prover computes the
+trace of $s$. A tampered response was always rejected. Every cell is in the extended
 version~\cite{fullversion}.
-\todo{F6: Llama-2-7B, Qwen3-4B, $P=512$, $G\in\{64,256\}$, greedy and sampled, tamper cells}
 
 \subsection{Sampled Generation}
 \label{sec:gen-sampling}

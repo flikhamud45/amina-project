@@ -172,9 +172,10 @@ whenever all $t$ opened columns fall into the half of $A'_j$:
   \Pr[\text{accept}] \;\ge\; \prod_{i<t}\frac{n/2-i}{n-i}\;\approx\; 2^{-t}.
   \label{eq:split}
 \end{equation}
-This is about $2^{-35}$ per query for the smallest tree of Llama-2-7B ($t=35$). Since against a
-malformed commitment a column is worth about one bit instead of $\log_2(n_j/k_j)$, testing at every
-query would need 3.2--6.6$\times$ the column bytes. We therefore amortise the testing phase into a
+This is about $2^{-\ParamsColumnsMinInt{}}$ per query for the smallest tree of Llama-2-7B
+($t=\ParamsColumnsMinInt{}$, interactive queries). Since against a malformed commitment a column is worth about
+one bit instead of $\log_2(n_j/k_j)$, testing at every query would need \SplitColumnFactorRange{}$\times$ the
+column bytes on the models of Table~\ref{tab:setup}. We therefore amortise the testing phase into a
 one-time setup proof.
 
 % Moved from the body (paragraph "One combination over an extension field" and Fact fact:ext);
@@ -385,7 +386,7 @@ Using one would also change the column check of Section~\ref{sec:protocol}. Nor 
 cover a commitment that hashes each row separately, whose openings can be single entries.
 (2)~It assumes unique decoding, $2e_j<n_j-k_j$. This excludes only the boundary case
 $2e_j=n_j-k_j$ that Theorem~\ref{thm:untrusted} admits. For the four models of
-Table~\ref{tab:setup} at $a=100$ and $a=1{,}000$, our rule selects radii of at most a quarter of the
+Table~\ref{tab:setup} at $a=100$ and $a=1{,}000$, our rule selects radii of at most \SetupRadiusMax{} of the
 unique-decoding radius $(n_j-k_j)/2$. A test of proximity beyond that radius, which FRI-style
 analyses allow, need not determine a unique $A^*_j$, which the online part of
 Theorem~\ref{thm:untrusted} needs.

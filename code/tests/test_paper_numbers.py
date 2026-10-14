@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -68,8 +69,8 @@ def v1(model, seq, mode, layers, v0_total, v1_total, *, label="", real=None, arg
                               "prove_s_range": [p, p], "verify_s_range": [v, v], "fs_s": 0.1}
     return {"label": label, "git": "abc1234", "model": model, "real": real, "layers": layers, "seq": seq,
             "prune_last": True, "lmax": 27, "env": _env(argv), "mode": mode, "fs": True, "v1_verifier": "optimised",
-            "v0_accepted": True, "v0_bytes": {"claims": 0.9 * v0_total}, "v1_bytes": {"claims": 0.4 * v0_total,
-                                                                                    "cut_exc": 1.8e6},
+            "v0_accepted": True, "v0_bytes": {"claims": 0.9 * v0_total},
+            "v1_bytes": {"claims": 0.4 * v0_total, "cut_exc": 1.8e6, "cut_mult": 3.1e5, "cut_gkr": 5.249e5},
             "v0_total": v0_total, "v1_total": v1_total, "ratio": v0_total / v1_total, "n_leaves": 2_714_763_264,
             "n_instances": 156, "table": 553_917, "n_exceptions": 224_670,
             "timed": {"queries": 3, "v0": q(*v0), "v1": q(*opt, {"prove_gkr": gkr}),
@@ -156,6 +157,17 @@ def _bench(root: Path, platform: str = "test") -> None:
             w.writerow(["cnn", "lenet5", cell, metric, "", "", "", "", "", 3, v, v, "NVIDIA L40S", "AMD EPYC 9334 "
                         "32-Core Processor x8 threads"])
         w.writerow(["cnn", "lenet5", "facts_wire", "n_params", "", "", "", "", "", 1, 61_706, 61_706, "", ""])
+        for m in M.CNN_MODELS:              # float and int8 accuracy of every image model (CnnAccuracyChange)
+            for metric, v in (("float_accuracy", 0.990), ("int8_accuracy", 0.9866 if m == "vgg16" else 0.989)):
+                w.writerow(["cnn", m, "facts_wire", metric, "", "", "", "", "", 1, v, v, "", ""])
+        # the batch tier: Llama-2-7B, mode C, 64 tokens; the single cell's claims and B = 4, 16 prompts per opening
+        # (per prompt: claims + shared / B, exactly at B = 4 and 1.5% above at B = 16)
+        single = "defence_C_fs_lam128_T64_L32_wire_prune_polcnn18c"
+        w.writerow(["llm", "llama2-7b", single, "bytes_claims", "", "", "", "", "", 3, 2.0e8, 2.0e8, "", ""])
+        for bsz, off in ((4, 1.0), (16, 1.015)):
+            total = bsz * (2.0e8 + 1.25e8 / bsz) * off
+            w.writerow(["llm", "llama2-7b", "defence_C_fs_lam128_T64_L32_wire_batch_prune_polcnn18c", "bytes_total",
+                        bsz, "", "", "", "", 3, total, total, "", ""])
     raw = root / f"raw_{platform}" / "cnn" / "lenet5"
     raw.mkdir(parents=True)
     cell = "defence_C_fs_lam128_rate4_wire_polcnn18c"
@@ -186,8 +198,10 @@ def _logs(tmp: Path) -> Path:
         (2048, "dynint8", 56.0))])
     _write(logs, "sp-c-v1-llama2-7b-2048-5.out", [v1(m, 2048, "Kpre", 32, 6.43e9, 2.8e9, label="cpuv-v1",
                                                      v0=(1.0, 19.5), opt=(30.0, 45.3), base=(30.0, 70.0))])
-    _write(logs, "sp-v1-opt125-2048-6.out", [v1("opt-125m", 2048, "C", 12, 3.496e8, 1.723e8, v0=(0.4, 2.86),
-                                               opt=(4.75, 4.76), gkr=3.58),
+    # the timed full V1 query of OPT-125M in C is 0.34% above the accounting (VOneAccountingWithin rounds it up)
+    _write(logs, "sp-v1-opt125-2048-6.out", [dict(v1("opt-125m", 2048, "C", 12, 3.496e8, 1.723e8, v0=(0.4, 2.86),
+                                                    opt=(4.75, 4.76), gkr=3.58),
+                                                 v1_full={"bytes": {"claims": 1.723e8 * 1.0034}}),
                                              v1("opt-125m", 2048, "Kpre", 12, 3.439e8, 1.667e8)])
     _write(logs, "sp-v1-llama7-2048-7.out", [v1(m, 2048, "C", 32, 6.63e9, 2.97e9), v1(m, 2048, "Kpre", 32, 6.43e9,
                                                                                          2.8e9)])
@@ -207,6 +221,13 @@ def _logs(tmp: Path) -> Path:
                                             "serve_s": {"median": 0.5}, "env": _env()}])
     _write(logs, "sp-gen-llama2-7b-12.out", [gen(m, mode, d, g, 2.0 if mode == "C" else 1.0)
                                              for mode in ("C", "Kpre") for d in ("greedy", "sample") for g in (64, 256)])
+    # Qwen3-4B's sampled responses cost 2.5% more than its greedy ones (GenSampledWithin)
+    _write(logs, "sp-gen-qwen3-4b-35.out", [gen("qwen3-4b", mode, d, g, 1.5 * (1.025 if d == "sample" else 1.0))
+                                            for mode in ("C", "Kpre") for d in ("greedy", "sample") for g in (64, 256)])
+    # GPT-2 after a 64-token prompt (the per-token prover); a cell after another prompt never fills it
+    _write(logs, "sp-gen-gpt2-36.out", [dict(gen("gpt2", mode, "greedy", 256, 0.29 if mode == "C" else 0.2),
+                                             prompt=64, n_layers=12) for mode in ("C", "Kpre")]
+           + [dict(gen("gpt2", "C", "greedy", 256, 5.0), prompt=16, n_layers=12)])
     # the real Llama-2-7B's generation (the real tier): never a cell of tab:gen
     _write(logs, "sp-r-llama7-gen-13.out", [gen(m, "C", "greedy", 64, 99.0, real="meta-llama/Llama-2-7b-hf",
                                                 label="real")])
@@ -214,13 +235,32 @@ def _logs(tmp: Path) -> Path:
                                                      real="facebook/opt-1.3b", v0=(0.20, 0.51))])
     _write(logs, "sp-r-opt13rnd-v1-Kpre-64-15.out", [v1("opt-1.3b", 64, "Kpre", 24, 6.04e7, 3.97e7,
                                                         label="real-random", v0=(0.22, 0.54))])
+    real_c = v1("opt-1.3b", 64, "C", 24, 5.2e7, 4.0e7, label="real", real="facebook/opt-1.3b")
+    real_c.update(n_exceptions=2379, v1_bytes={"claims": 3.0e7, "cut_exc": 2.1e4})
+    _write(logs, "sp-r-opt13-v1-C-64-37.out", [real_c])
+    _write(logs, "sp-r-opt13rnd-v1-C-64-38.out", [dict(v1("opt-1.3b", 64, "C", 24, 6.2e7, 4.1e7, label="real-random"),
+                                                       n_exceptions=1)])
+    # the real Llama-2-7B (with the Llama-2 licence) against its random twins
+    llama = "meta-llama/Llama-2-7b-hf"
+    tam = {"single_value": {"attempts": 3, "rejected": 3}, "neuron": {"attempts": 6, "rejected": 6}}
+    _write(logs, "sp-r-llama7-v0-2048-39.out", [perf(m, 2048, "Kpre", 21.0, 5.35e9, label="real", real=llama,
+                                                     tampers=tam)])
+    _write(logs, "sp-r-llama7rnd-v0-2048-40.out", [perf(m, 2048, "Kpre", 20.0, 6.45e9, label="real-random")])
+    _write(logs, "sp-r-llama7-v0-64-41.out", [perf(m, 64, "Kpre", 1.1, 1.7e8, label="real", real=llama)])
+    _write(logs, "sp-r-llama7rnd-v0-64-42.out", [perf(m, 64, "Kpre", 1.0, 2.0e8, label="real-random")])
+    _write(logs, "sp-r-llama7-v0C-64-43.out", [perf(m, 64, "C", 1.9, 2.9e8, label="real", real=llama)])
+    _write(logs, "sp-r-llama7rnd-v0C-64-44.out", [perf(m, 64, "C", 2.0, 3.25e8, label="real-random")])
+    # its multiplicities and GKR transcripts (0.901 MB) are the largest of the run's V1 proofs (VOneExtrasMax)
+    real_v1 = v1(m, 2048, "Kpre", 32, 5.35e9, 2.65e9, label="real", real=llama)
+    real_v1["v1_bytes"].update(cut_mult=4.0e5, cut_gkr=5.01e5)
+    _write(logs, "sp-r-llama7-v1-2048-45.out", [real_v1])
     _write(logs, "sp-setup-llama2-7b-16.out", [{
         "kind": "setup", "label": "setup", "model": m, "layers": None, "amortise": 100, "proof_bytes": 2.38e9,
         "commit_s": 500.0, "prove_s": 120.0, "verify_s": 60.0, "query_columns_bytes_honest": 6.56e7,
         "query_columns_bytes_untrusted": 1.135e8, "accepted": True, "env": _env()}])
     _write(logs, "sp-i-open-llama2-7b-17.out", [
         {"git": "a", "model": m, "layers": n, "seq": 64, "variant": v, "queries": 6, "accepted": 6, "identical": True,
-         "prove_s": t, "open_fold_s": t / 2, "timings": {}, "env": _env()}
+         "prove_s": t, "open_fold_s": t / 2, "timings": {"prove_open": 0.6 * t}, "env": _env()}
         for n, v, t in ((1, "float64", 0.277), (1, "int8", 0.064), (4, "float64", 0.653), (4, "int8", 0.175))])
     _write(logs, "sp-i-cpuv-llama2-7b-18.out", [perf(m, 2048, "Kpre", 3.37, 1e9, layers=2, label="cpuv-before"),
                                                 perf(m, 2048, "Kpre", 0.74, 1e9, layers=2, label="cpuv-after")])
@@ -239,6 +279,18 @@ def _logs(tmp: Path) -> Path:
             ppl(q, "smooth-certified-a0.6-p8", ref * cert * 1.02, cert * 1.02, mass=0.6),
             # an alpha-0.55 cell (the legacy recipe's): never the certified row
             ppl(q, "smooth-legacy-a0.55-p11", ref * 1.956, 1.956, alpha=0.55)])
+    # the recipe studies: OPT-125M's percentile recipe at 2,048 tokens, the alpha sweeps on the test split (OPT-1.3B)
+    # and on the validation split (OPT-1.3B, OPT-6.7B); a validation record never fills tab:quality's test-split row
+    sweep = [ppl("facebook/opt-125m", "smooth-legacy-a0.55-p11", 55.0, 2.03, alpha=0.55)]
+    for a, test, val in ((0.3, 1.040, None), (0.4, 1.030, None), (0.5, 1.027, 1.031), (0.6, 1.026, 1.029),
+                         (0.7, 1.026, 1.028)):
+        sweep.append(ppl("facebook/opt-1.3b", f"smooth-certified-a{a:g}-p11", 15.0, test, alpha=a))
+        if val:
+            sweep.append(ppl("facebook/opt-1.3b", f"smooth-certified-a{a:g}-p11", 17.0, val, alpha=a,
+                             split="validation"))
+    for a, val in ((0.5, 1.010), (0.6, 1.012)):
+        sweep.append(ppl("facebook/opt-6.7b", f"smooth-certified-a{a:g}-p11", 12.0, val, alpha=a, split="validation"))
+    _write(logs, "sp-q-opt13-recipes-46.out", sweep)
     _write(logs, "sp-q-zeroshot-opt-125m-22.out", [
         zeroshot("facebook/opt-125m", t, v, 0.379 if t == "lambada_openai" else 0.4, diff=-0.031 if t == "lambada_openai" else -0.005)
         for t, _ in T.ZEROSHOT for v in ("ref", "int")])
@@ -384,6 +436,153 @@ def test_the_text_numbers(run_dir):
     assert set(m) == set(M.names())
 
 
+def test_the_settings_and_the_further_text_numbers(run_dir):
+    """The platform and the plan that the captions state, the generation cells (GPT-2 per generated token after a
+    64-token prompt, never another prompt's cell; sampled against greedy), the opening that B prompts share, the real
+    Llama-2-7B and the certified OPT-1.3B's exceptions, the float64 opening's share, the recipe studies on the test
+    and the validation split (a validation record never fills tab:quality), and the attack documents' numbers."""
+    tmp, logs = run_dir
+    ctx, problems = _ctx(tmp, logs)
+    m, _ = M.build(ctx, problems)
+    tables = {t.name: t for t in T.build_all(ctx, problems)}
+    assert not problems
+    v = {k: x.value for k, x in m.items()}
+    assert v["PlatformGpu"] == "NVIDIA L40S" and v["PlatformCpu"] == "AMD EPYC 9334" and v["PlanLogPoints"] == "18"
+    assert M.cpu_name("Intel(R) Xeon(R) Silver 4114 CPU @ 2.20GHz") == "Intel Xeon Silver 4114"
+    assert v["CpuReexecNameShort"] == "the integer forward pass" and v["CpuDeriveShareLong"] == "100"
+    # generation
+    assert v["GenGptProveC"] == "0.29" and v["GenGptMsPerToken"] == "1.1"
+    assert v["GenLlamaProveC"] == "2" and v["GenLlamaProofC"] == r"1.0\,GB" and v["GenQwenVerifyC"] == "3"
+    assert v["GenLlamaMBPerTokenShort"] == "15.6" and v["GenLlamaMBPerTokenLong"] == "3.91"
+    assert v["GenSampledWithin"] == "3"
+    g = {(c["row"], c["column"]): c for c in tables["tab_gen"].cells}
+    assert g["GPT-2 G=256 C", "P"]["value"] == 0.29 and "sp-gen-gpt2-" in g["GPT-2 G=256 C", "P"]["source"]
+    assert tables["tab_gen"].rows[0].startswith("GPT-2 ($P{=}64$) & 256 & 0.29")
+    assert not any(c["value"] == 5.0 for c in tables["tab_gen_full"].cells)
+    # B prompts against one opening: claims + shared / B (exact at B = 4, 1.5% above at B = 16)
+    assert (v["BatchLlamaSize"], v["BatchLlamaSingle"], v["BatchLlamaShared"]) == ("16", "325.0", "125.0")
+    assert v["BatchLlamaPerQuery"] == "210.9" and v["BatchLlamaWithin"] == "2"
+    # the bounds round up: VGG-16's int8 accuracy is 0.34 points below float, not "at most 0.3"
+    assert v["CnnAccuracyChange"] == "0.4" and v["ImproveOpenShare"] == "60" and v["ImproveProveFloat"] == "0.65"
+    # V1: the multiplicities and GKR transcripts of every V1 proof, the real tier's included (0.901 MB, never the
+    # exceptions' 1.8 MB), and the full queries against the accounting (0.34%), both rounded up
+    assert v["VOneVerifyLlamaBaseline"] == "70.1" and v["CrossoverLlamaLongKBuild"] == "the full model"
+    assert v["VOneProverRatioAbout"] == "4" and v["VOneExtrasMax"] == "0.91" and v["VOneAccountingWithin"] == "0.4"
+    assert v["VOneRandomExceptionsMax"] == "224{,}670" and v["GkrSecondsLarge"] == "0.52"
+    assert (v["VOneRealOptMShortExceptions"], v["VOneRandomOptMShortExceptions"]) == ("2{,}379", "1")
+    assert v["VOneRealOptMShortExceptionsMB"] == "0.02" and v["VOneRealOptMShortC"] == "1.30"
+    assert v["VOneRealOptMLongC"] is None                      # the real tier's 2,048-token cells are not in this run
+    # the real Llama-2-7B
+    assert (v["RealLlamaAccepted"], v["RealLlamaQueries"], v["RealLlamaTampersRejected"], v["RealLlamaTampers"]) == \
+        ("5", "5", "9", "9")
+    assert (v["RealLlamaProof"], v["RealLlamaSmaller"], v["RealLlamaVerify"], v["RndLlamaVerify"]) == \
+        ("5.35", "17", "21", "20")
+    assert v["RealLlamaShortSmaller"] == "11--15" and v["RealLlamaShortVerifyWithin"] == "10"
+    assert v["VOneRealLlamaRatio"] == "2.02"
+    # quality: the recipe studies
+    assert v["QualityLegacyOptS"] == "2.0" and v["QualityAlphaGapOptM"] == "0.000" and v["QualityAlphaGapOptS"] is None
+    assert v["QualityAlphaValGapOptM"] == "0.001" and v["QualityAlphaCostOptL"] == "0.002"
+    q = {(c["row"], c["column"]): c for c in tables["tab_quality"].cells}
+    assert q["OPT-1.3B", "certified ratio"]["value"] == 1.026
+    # the attack's stored documents
+    assert (v["ZeroingZeroShare"], v["MnistStealthNeurons"], v["MnistStealthPass"]) == ("65", "five", "99")
+    assert v["StealthExceed"] == "5" and v["InrangeDownLast"] == "39"
+    assert (v["InrangeChanged"], v["InrangeOptLChanged"]) == ("all 40", "all 40")
+    assert M.all_of((40, 40)) == "all 40" and M.all_of((38, 40)) == "at least 38 of the 40"
+    assert [M.count_word(x) for x in (5.43, 1, 10.2, 14.35)] == ["five", "one", "ten", "14"]
+    assert (M.ceil_sig(0.8349), M.ceil_sig(1.8), M.ceil_sig(0.999), M.ceil_sig(12.3)) == ("0.84", "1.8", "1", "13")
+    assert (M.ceil_fixed(0.34), M.ceil_fixed(0.3), M.ceil_fixed(0.0009999999999999, 3)) == ("0.4", "0.3", "0.001")
+    # from the shapes alone, under the run's instance bound (the records' lmax 27)
+    assert v["VOneDownClaims"] == r"2.6\cdot10^{8}" and v["VOneLargeLeaves"] == r"4.3\cdot10^{9}"
+    assert (v["VOneLargeInstances"], v["VOneLargeBits"]) == ("39", "27")
+    assert (v["GkrTranscriptBits"], v["GkrTranscriptKB"]) == ("27", "36.0")
+    assert v["CompareVerifierSlowerRows"] is None              # most rows of tab:eval-compare are not in this run
+    assert [M.rows_text(n) for n in (0, 1, 2, 12)] == ["no rows", "one row", "two rows", "12 rows"]
+
+
+def test_the_models_from_the_library():
+    """The values that follow from the code alone: the split commitment's columns per query and their bytes against
+    the honest ones (Llama-2-7B under cnn18c), and V1's cut from the shapes, which reproduces the leaves of a v1
+    record of the full Llama-2-7B at 2,048 tokens."""
+    assert M.split_columns(136.82, 1 << 18) == 137
+    assert M.split_factor("llama2-7b", "cnn18c") == pytest.approx(4.45, abs=0.01)
+    shape = T.v1_shape_model("llama2-7b", 2048, 27, "cnn18c")
+    assert shape["n_leaves"] == v1("llama2-7b", 2048, "C", 32, 1, 1)["n_leaves"] == 2_714_763_264
+    assert shape["max_bits"] <= 27 and shape["lookup_log2"] < -215 and shape["gkr_log2"] < -230
+    assert T.v1_shape_model("llama2-13b", 2048, 26, "cnn18c")["n_instances"] == 79
+
+
+def _setup_size(setup, columns, combined, at_lam, untrusted=79.4, factor=1.21):
+    """One model's ``costs/setup_bytes.setup_model`` output (MB), with 1% more columns drawn with replacement."""
+    return {"setup_MB": setup, "columns_MB": columns, "combined_rows_MB": combined, "paths_MB_bound": 12.0,
+            "columns_MB_at_lam": at_lam, "query_columns_MB_honest": 65.6, "query_columns_MB_untrusted": untrusted,
+            "t0": {"t1": 100, "t2": 50}, "t0_with_replacement": {"t1": 101, "t2": 50.5}, "query_factor": factor}
+
+
+def test_the_setup_proof_from_a_synthetic_byte_model(monkeypatch):
+    """The setup-proof family (``macros.setup_proof``) from a synthetic byte model and plan: Llama-2-7B's sizes and
+    shares at a = 100 and 1,000 amortised queries, the maxima and ranges over the four models, the largest radius in
+    words (GPT-2's half, not Llama-2-7B's quarter), Llama-2-7B's largest t0 share at a = 1,000, and the growth of the
+    run's 2,048-token proof (rounded up)."""
+    from types import SimpleNamespace as NS
+    plan = NS(coded=[NS(name="q", n_points=1 << 20, row_length=1 << 18), NS(name="o", n_points=1 << 18,
+                                                                                row_length=1 << 16)],
+              groups=[("t1", ["q"]), ("t2", ["o"])])
+
+    def setup_of(model, policy, a):
+        assert policy == "cnn18c"
+        if model != "llama2-7b":                              # radii of half of the distance
+            return _setup_size(100.0, 90.0, 2.0, 40.0), NS(t0=[("t1", 10), ("t2", 10)],
+                                                           e=[("q", 3 << 16), ("o", 3 << 14)]), plan
+        size = _setup_size(2400.0, 2300.0, 52.8, 1200.0) if a == 100 else _setup_size(3000.0, 2950.0, 30.0, 1350.0,
+                                                                                         70.1, 1.02)
+        return size, NS(t0=[("t1", 19_923), ("t2", 300)], e=[("q", 3 << 15), ("o", 3 << 13)]), plan
+
+    monkeypatch.setattr(T, "setup_of", setup_of)
+    monkeypatch.setattr(T, "params_values", lambda pol, v1: {"int": {"t_min": 23}, "fs": {"t_min": 25}, "trees": 7})
+    monkeypatch.setattr(M, "split_factor", lambda m, pol: 4.46 if m == "llama2-7b" else 4.0)
+    bench = NS(name="stub", llm_cost=lambda m, s, k: {"bytes": 6.6e9, "cell": "c"} if (m, s, k) == (
+        "llama2-7b", 2048, "c_cpu") else None)
+    c = M.Collector()
+    M.setup_proof(c, T.Ctx(R.Run([]), bench, {}, "cnn18c", byte_model=True))
+    v = {k: x.value for k, x in c.m.items()}
+    assert (v["ParamsColumnsMinInt"], v["ParamsColumnsMinFs"], v["ParamsTrees"]) == ("23", "25", "7")
+    assert v["SplitColumnFactorRange"] == "4.0--4.5"
+    assert (v["SetupGBLlamaA"], v["SetupMBLlamaA"], v["SetupGBLlamaB"]) == ("2.4", "2{,}400.0", "3.0")
+    assert (v["SetupUntrustedMBLlamaA"], v["SetupUntrustedMBLlamaB"], v["SetupHonestMBLlama"]) == \
+        ("79.4", "70.1", "65.6")
+    assert (v["SetupCombinedShareLlamaA"], v["SetupCombinedShareLlamaB"], v["SetupCombinedMBLlama"]) == \
+        ("2.2", "1.0", "52.8")
+    assert (v["SetupColumnsShareLlamaA"], v["SetupNonColumnsShareLlamaA"], v["SetupNonColumnsShareMaxA"]) == \
+        ("95.8", "4.2", "10.0")
+    assert (v["SetupPathsMBLlamaA"], v["SetupPathsShareLlamaA"], v["SetupAtLamShareLlamaA"]) == ("12.0", "0.50", "50.0")
+    assert v["SetupAtLamShareRange"] == "40.0--50.0" and v["SetupReplacementExcessA"] == "1.0"
+    assert (v["SetupQueryGrowthLlamaA"], v["SetupQueryGrowthLlamaB"]) == ("21", "2")
+    assert (v["SetupQueryShareLlamaA"], v["SetupQueryShareLlamaB"]) == ("1", "1")    # 13.8 and 4.5 MB of 6.6 GB
+    assert v["SetupTZeroMaxShareB"] == "1.9" and v["SetupRadiusMax"] == "half"
+    assert None not in v.values()
+    off = M.Collector()
+    M.setup_proof(off, T.Ctx(R.Run([]), bench, {}, "cnn18c", byte_model=False))
+    assert set(off.m) == set(c.m) and all(x.value is None for x in off.m.values())
+
+
+@pytest.mark.skipif(os.environ.get("PVI_SLOW") != "1", reason="about ten minutes on a laptop CPU (PVI_SLOW=1)")
+def test_the_setup_proof_from_the_library_gives_the_fallback():
+    """The setup-proof family from the library under cnn18c (``costs/setup_bytes.py`` and ``pvi.commit.setup_proof``
+    for the four models of ``tab:setup``) equals the values that ``paper_sp2027/fallback/numbers.tex`` prints; only
+    the growth of the run's 2,048-token proof needs a run."""
+    c = M.Collector()
+    M.setup_proof(c, T.Ctx(R.Run([]), B.Bench(None), {}, "cnn18c", byte_model=True))
+    got = {k: x.value for k, x in c.m.items() if x.value is not None}
+    values = dict(re.findall(r"\\newcommand\{\\(\w+)\}\{(.*)\}", (PAPER / "fallback" / "numbers.tex")
+                             .read_text(encoding="utf-8")))
+    assert got == {k: values[k] for k in got}
+    assert set(c.m) - set(got) == {"SetupQueryShareLlamaA", "SetupQueryShareLlamaB"}
+    assert (got["SetupGBLlamaA"], got["SetupUntrustedMBLlamaB"], got["SetupCombinedShareLlamaA"]) == \
+        ("2.4", "79.4", "2.2")
+    assert (got["SetupTZeroMaxShareB"], got["SetupRadiusMax"], got["ParamsColumnsMinInt"]) == ("1.9", "a quarter", "23")
+
+
 def test_the_stored_attack_documents_regenerate_the_fallback(run_dir):
     """The attack tier's stored documents (the records behind today's paper) give the fallback's tab:inrange body and
     the fallback values of the text numbers they define."""
@@ -396,7 +595,8 @@ def test_the_stored_attack_documents_regenerate_the_fallback(run_dir):
     values = dict(re.findall(r"\\newcommand\{\\(\w+)\}\{(.*)\}", (PAPER / "fallback" / "numbers.tex")
                              .read_text(encoding="utf-8")))
     same = ("AttackOptLSucceeded", "AttackOptLPrompts", "AttackOptLPaths", "AttackOptLBackdoorBack",
-            "AttackOptLBackdoorHacked", "PathsLlama", "PathsLlamaAbout", "WidthLlama", "OpenAllLlama", "MnistSinglePass",
+            "AttackOptLBackdoorHacked", "PathsLlama", "PathsLlamaAbout", "WidthLlama", "OpenAllLlama",
+            "MnistSinglePass",
             "MnistBackdoorPass", "MnistBackdoorRuns", "MnistBackdoorPredicted", "MnistForgeryNodes", "SamplerUniform",
             "SamplerContribution", "SamplerStatic", "SamplerSaliency", "ZeroingNeurons", "ZeroingRuns", "FloorBest",
             "FloorVsUniform", "FloorOthers", "MixtureLayerOne", "MixtureLayerTwo", "LocatorOne", "LocatorTwo",
@@ -404,7 +604,8 @@ def test_the_stored_attack_documents_regenerate_the_fallback(run_dir):
             "ReachTokens", "InrangeCalibTokens",
             "InrangeChanged", "InrangeKMedian", "InrangeKMax", "InrangePMedianMax", "InrangePMax", "InrangeDown",
             "InrangeDownKMedian", "InrangeOptLPMedianMax", "InrangeOptLKRange", "TvTopK", "TvFull", "TvModel",
-            "TvTwenty", "TvPositions")
+            "TvTwenty", "TvPositions", "ZeroingZeroShare", "MnistStealthPass", "MnistStealthNeurons", "StealthExceed",
+            "InrangeDownLast", "InrangeOptLChanged")
     assert {k: m[k].value for k in same} == {k: values[k] for k in same}
 
 

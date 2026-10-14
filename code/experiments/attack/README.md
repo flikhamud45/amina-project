@@ -93,7 +93,8 @@ honest baselines), `mean_support` and `G1e` (the locator). Needs SciPy. CPU, abo
 ### `path_test_bound.py`
 The path test's paths for `2^-lam` (`--lam` 40) against one edited neuron of the widest layer of `--model`
 (`llama2-7b`; any key of `pvi.models.decoder.CONFIGS`), and the bytes of opening the whole fp16 model and its trace
-at `--seq` (64) tokens. Shapes only; seconds. Writes the CSV that `experiments/paper/assets.py` reads (`--out`).
+at `--seq` (64) tokens. Shapes only; seconds. Writes the CSV (`--out`) that `experiments/paper/numbers.py` reads
+from the attack tier's folder (`logs/<name>/attack/analytic.csv`).
 
 ### `attack_llm.py`
 The single-neuron attack and a fixed-target backdoor on OPT-6.7B (`--model`): one FFN neuron (an input of `fc2`) at

@@ -9,7 +9,8 @@
 * the package's dry run (``--dry-run``): no v0, V1 or generation cell turns Fiat-Shamir off, the only interactive
   benchmark cells are those a table compares with an interactive system, every mode-C cell takes ``--policy``, the
   headline cells time 5 queries, every job is chained after the previous one and the jobs after smoke wait for it,
-  every tier submits jobs, and the rehearsal submits small cells only.
+  every tier submits jobs, the cells behind the text's generation and recipe numbers are there, and the rehearsal
+  submits small cells only.
 
 The smoke tier runs this file on the final platform.
 """
@@ -172,6 +173,23 @@ def test_the_rehearsal_submits_small_cells_of_every_tier():
         if "--model llama2-7b" in line:            # the long tier's one block at 4,608 tokens
             assert "--layers 1" in line, _job(line)
         assert "--time=" in line
+
+
+def test_the_gen_and_quality_cells_of_the_text():
+    """The gen tier's cells (GPT-2's per-token prover after a 64-token prompt; Llama-2-7B and Qwen3-4B after a
+    512-token prompt, greedy and sampled) and the OPT-125M recipe studies of the quality tier; the rehearsal keeps its
+    own small generation cell."""
+    lines = {_job(line): line for line in _dry()}
+    gpt2 = lines["sp-gen-gpt2"].split("generation.gen_bench", 1)[1]
+    assert "--model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --policy cnn18c" in gpt2
+    assert "--layers" not in gpt2 and "--label gen" in gpt2
+    for m in ("llama2-7b", "qwen3-4b"):
+        assert f"--model {m} --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre" in lines[f"sp-gen-{m}"]
+    rec = lines["sp-q-opt125-recipes"]
+    assert "--model facebook/opt-125m --recipe legacy --graphs smooth --pbits 11" in rec
+    assert "--model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11" in rec
+    rehearsal = {_job(line): line for line in _dry("--rehearsal")}
+    assert "--layers 2" in rehearsal["sp-gen-gpt2"] and "sp-q-opt125-recipes" not in rehearsal
 
 
 def test_every_tier_is_documented_and_reachable():

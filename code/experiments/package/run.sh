@@ -333,13 +333,16 @@ tier_gpuv() {
 
 tier_gen() {
   # a response of G tokens after a P-token prompt proved as one prefill, greedy and sampled with the client's seed,
-  # modes C and Kpre; each cell also runs both tamper cells (a wrong token; logits forged to choose it)
+  # modes C and Kpre; each cell also runs both tamper cells (a wrong token; logits forged to choose it); GPT-2 after a
+  # 64-token prompt gives the prover's time per generated token (the comparison with zkAgent's GPT-2)
   if [ -n "$REH" ]; then
     sub gen-gpt2 1 64 "$GEN --model gpt2 --layers 2 --prompt 16 --gen 4 --decode greedy sample --modes C Kpre \
 --policy $POL --queries $Q --label gen"
     return 0
   fi
   local m
+  sub gen-gpt2 1 64 "$GEN --model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --policy $POL \
+--queries $Q --label gen"
   for m in llama2-7b qwen3-4b; do
     sub "gen-$m" 3 192 "$GEN --model $m --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre \
 --policy $POL --queries $Q --label gen"
@@ -467,7 +470,8 @@ tier_improve() {
 tier_quality() {
   # the integer models' quality on WikiText-2 (raw) at 2,048 tokens: the certified OPT models (tab:quality's OPT rows,
   # the 8- against 11-bit attention probabilities), the recipe's alpha on the validation split, the percentile and
-  # smooth-max recipe studies of the extended version, zero-shot accuracy (tab:zeroshot), the reproducible build;
+  # smooth-max recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split), zero-shot accuracy
+  # (tab:zeroshot), the reproducible build;
   # OpenLLaMA-7B, TinyLlama and Qwen3 with the main Llama recipe; with --llama-licence Llama-2-7B and Llama-2-13B
   : "${HF_HOME:?export HF_HOME=<node-local folder with ~60 GB free> (the quality tier downloads checkpoints)}"
   local P="$M.quality.ppl_opt --device cuda" L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8"
@@ -486,6 +490,8 @@ tier_quality() {
 --pbits 11 --ref-device cpu"
   sub q-opt13-recipes 6 96 "$P --model facebook/opt-1.3b --recipe legacy --graphs smooth rows --pbits 11 \
 --draws 0 1 2 && $P --model facebook/opt-1.3b --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11 --draws 0 1"
+  sub q-opt125-recipes 1 64 "$P --model facebook/opt-125m --recipe legacy --graphs smooth --pbits 11 && \
+$P --model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11"
   sub q-opt125-128 1 64 "$P --model facebook/opt-125m --calibration test-end --seq 128 --windows 16 --recipe legacy \
 --graphs scalar smooth rows --alphas 0.55 0.5 --pbits 8 && $P --model facebook/opt-125m --calibration test-end \
 --seq 128 --windows 16 --recipe legacy --graphs smooth --alphas 0.55 --cle-mlp 0 --cle-ratio 2 --pbits 8"

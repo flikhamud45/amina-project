@@ -1,15 +1,10 @@
 % =====================================================================================
-% Subsection "Quality of the Certified Model", \input at the end of evaluation.tex. Condensed from
-% generation_quality.tex (Section 6.3); sources docs/improvements/F2_quality.md, the scripts
-% experiments/2_attack/real_weights_ppl.py and 9_quality/ (window setting). The attribution table,
-% smoothing details and the full literature comparison are in ext_generation.tex.
-% Labels defined: sec:quality, tab:quality (bottom half of the draft's table only).
+% sections/quality.tex: the subsection "Quality of the Certified Model", \input at the end of
+% evaluation.tex. Its numbers are macros of code/experiments/paper/numbers.py (the quality tier,
+% code/experiments/quality/). The attribution table, the smoothing details and the full literature
+% comparison are in ext_generation.tex.
+% Labels defined: sec:quality, tab:quality.
 % Labels used: sec:intmodel (defence.tex).
-% H5 pass (2026-10-11, REVIEW2.md N10): the calibration window is labelled as a test-split window
-%   disjoint from the scored ones; F2a recalibrates on the train split (todos named by item).
-% 2026-10-11 (F2a decision): rewritten for the 2,048-token full test set and the certified recipe
-%   (real_weights.CERTIFIED_RECIPE, docs/improvements/F2a_quality_2048.md Sec. 3.2-3.3); the 16 x 128 table and
-%   the alpha-0.55 recipe moved out.
 % =====================================================================================
 
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
@@ -79,7 +74,11 @@ published equivalent transformation that changes no operation and no cost: a fix
 whose int8 keys and values enter each attention operation and take the first token's massive
 activation~\cite{chen2024prefixquant,son2024cushioncache}, a per-channel balance of the SwiGLU
 product folded into the up and down projections~\cite{xiao2023smoothquant,lin2024awq}, and for
-Qwen3 a balance of the q and k norms' gains~\cite{shao2024omniquant}. With them, OpenLLaMA-7B, whose
+Qwen3 a balance of the q and k norms' gains~\cite{shao2024omniquant}, after each head's rows of $W_q$
+and $W_k$ are rescaled to a common int8 range, which leaves the float function unchanged because the
+per-head RMSNorm that follows is invariant to a per-head scale. The smoothing $\alpha$ and the SwiGLU
+balance are set per model, chosen on the 2{,}048-token windows of the test split on which we report
+the ratios. With them, OpenLLaMA-7B, whose
 integer graph has exactly the structure of our Llama-2-7B benchmark, is within $\times$\LlamaOpenRatio{} of
 fp32 at 2{,}048 tokens, TinyLlama within $\times$\TinyLlamaRatio{} and Qwen3-1.7B within $\times$\QwenMRatio{}, while
 Qwen3-4B, which forms a second massive activation that no prefix takes, stays at

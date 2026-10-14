@@ -1,5 +1,5 @@
-% sections/app_params.tex: the concrete-security table (CUT_PLAN decision 6), \input by appendix_short.tex
-% (submission) and by main.tex after appendix_defence.tex (extended version). Labels: app:params, tab:params.
+% sections/app_params.tex: the concrete-security table, \input by appendix_short.tex (submission) and by
+% main.tex after appendix_defence.tex (extended version). Labels: app:params, tab:params.
 \subsection{Concrete Security for Llama-2-7B}
 \label{app:params}
 
@@ -7,8 +7,8 @@ Table~\ref{tab:params} gives each term of Theorems~\ref{thm:sound}, \ref{thm:unt
 and~\ref{thm:v1}.
 
 \begin{table}[t]
-  \caption{Concrete security for Llama-2-7B at $\lambda=128$ (interactive / Fiat--Shamir), under the
-  commitment plan of the final runs (every codeword at least $2^{18}$ points)}
+  \caption{Concrete security for Llama-2-7B at $\lambda=128$ (interactive / Fiat--Shamir), last block
+  pruned, under the commitment plan of mode $\sC$ (every codeword at least $2^{\PlanLogPoints{}}$ points)}
   \label{tab:params}
   \centering
   \footnotesize
@@ -22,9 +22,10 @@ and~\ref{thm:v1}.
   \end{tabular}
 
   \smallskip
-  {\footnotesize $^a$Smallest of the 6 trees. $^b$2{,}048 tokens: $\Nleaf=\ParamsLeaves{}$ in \ParamsInstances{} instances
-  of ${\le}2^{\ParamsLmax{}}$ leaves, $|\Vtab|\le\ParamsTable{}$. $^c$Amortised over $a=100$ / $1{,}000$ queries;
-  interactive queries; the six trees. All values: \texttt{params\_table.py}.}
+  {\footnotesize $^a$Smallest of the \ParamsTrees{} trees. $^b$The full model at 2{,}048 tokens with random weights:
+  $\Nleaf=\ParamsLeaves{}$ in \ParamsInstances{} instances of ${\le}2^{\ParamsLmax{}}$ leaves, $|\Vtab|\le\ParamsTable{}$. $^c$Amortised over
+  $a=100$ / $1{,}000$ queries; interactive queries; the \ParamsTrees{} trees. All values:
+  \texttt{experiments/costs/params\_table.py}.}
 \end{table}
 
 % -------------------------------------------------------------------------------------

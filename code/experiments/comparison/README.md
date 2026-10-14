@@ -1,16 +1,16 @@
 # Comparison with published systems, and the benchmark's tables and counts
 
 Sec. `sec:eval-compare` sets our costs against published zkSNARKs and Maverick on matched models, each as reported on
-its own hardware; the benchmark cells behind our side, and behind the base columns of `tab:eval-llm`, are stored
-records of `costs/bench.py`. These scripts never run a model: `literature.py` turns the catalogue of published
+its own hardware; the benchmark cells behind our side, and behind `tab:eval-llm`, are records of `costs/bench.py` (the run
+package's `bench` tier; the stored roots below hold the values the paper prints before the final run). These scripts never run a model: `literature.py` turns the catalogue of published
 measurements into the table the comparison quotes, `aggregate.py` turns a platform's raw benchmark records into its
 tables, `count_outcomes.py` counts every honest query and every attack in them, and `fingerprint_check.py` checks that
-two platforms agree on every hardware-independent value. `paper/assets.py` and `paper/numbers.py` read their outputs.
+two platforms agree on every hardware-independent value. `paper/numbers.py` reads their outputs (`paper/bench.py`).
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
 | `tab:eval-compare`, the "theirs" columns (e.g. zkLLM on Llama-2-7B at 2,048 tokens: 10.3 min, 2.36 s, 183 kB); `tab:eval-compare-v1` and the LeNet-5 paragraph (`app:eval-compare-v1`); published costs quoted in the text | `literature.py` | `python -m experiments.comparison.literature` | `artifacts/comparison/tables/reported_curated.csv` (41 rows) |
-| `tab:eval-compare`, the "ours" columns; the base columns of `tab:eval-llm`; the image models' costs (Sec. `sec:eval-cost`, "Base costs") | `aggregate.py` | `python -m experiments.comparison.aggregate --platform l40s_improved` (and `l40s_improved2`, `l40s_improved3`) | `artifacts/comparison/tables_<platform>/`, read by `paper/assets.py` |
+| `tab:eval-compare`, the "ours" columns; `tab:eval-llm`; the image models' costs (Sec. `sec:eval-cost`, "Costs") | `aggregate.py` | `python -m experiments.comparison.aggregate --platform final` (the run); the stored roots: `--platform l40s_improved` (and `l40s_improved2`, `l40s_improved3`) | `artifacts/comparison/tables_<platform>/`, read by `paper/numbers.py` |
 | Sec. `sec:break`: the path test's detection probabilities and bytes on the image models | `aggregate.py` | `python -m experiments.comparison.aggregate --platform l40s` | `artifacts/comparison/tables_l40s/` |
 | Sec. `sec:eval-setup`: "accepted all 3,792 honest queries and rejected all 2,512 attacks", "Freivalds' check rejected 1,601, the column check 853, the Merkle check 56 and the range check 2" | `count_outcomes.py` | `python -m experiments.comparison.count_outcomes --platform l40s_improved,l40s_improved2,l40s_improved3 --definition --policy auto` | stdout |
 | `app:eval-setup`: "Proof sizes do not depend on the hardware" (all 1,978 hardware-independent values of the L40S run reproduced on an RTX 2080 Ti with a Xeon Silver 4114) | `fingerprint_check.py` | `python -m experiments.comparison.fingerprint_check artifacts/comparison/raw_l40s artifacts/comparison/raw_rtx2080ti-v2` | stdout (`1978 fingerprints compared, 0 problems`), exit status |
@@ -24,14 +24,15 @@ GPU; each takes seconds to a minute on a laptop CPU.
 `artifacts/comparison/` (described in its own README) holds one raw root per platform, `raw_<platform>/<suite>/
 <model>/<cell>.jsonl` (`<suite>`: `cnn` or `llm`; a finished cell has a `.done` marker; `PLATFORM.json` names the
 root's GPU and CPU), the tables `aggregate.py` derives from it in `tables_<platform>/`, the literature catalogue and
-the curated table, and `excluded_cells.csv` (timings withheld from the paper, which `paper/assets.py` reads). The
+the curated table, and `excluded_cells.csv` (timings of the stored roots withheld from the values the paper prints before the final run; no
+script reads it). The
 roots the paper uses, all with an NVIDIA L40S prover and 8 threads of an AMD EPYC 9334 as the CPU verifier unless
 stated:
 
 | Root | What it holds | Used for |
 |---|---|---|
 | `raw_l40s/` | the first L40S run: the per-op commitment, proofs without the compact encoding | the path test of Sec. `sec:break` |
-| `raw_l40s_improved/`, `raw_l40s_improved2/`, `raw_l40s_improved3/` | the base implementation (the compact encoding, the planning rule `auto`, the pruned last block, the verifier's own embedding rows); a later root re-measures cells of an earlier one, and its cell replaces the earlier one whole | the base columns of `tab:eval-llm`, our side of `tab:eval-compare`, the counts of Sec. `sec:eval-setup` (their defining cells: `--definition`) |
+| `raw_l40s_improved/`, `raw_l40s_improved2/`, `raw_l40s_improved3/` | the base implementation (the compact encoding, the planning rule `auto`, the pruned last block, the verifier's own embedding rows); a later root re-measures cells of an earlier one, and its cell replaces the earlier one whole | the values of `tab:eval-llm`, our side of `tab:eval-compare` and the counts of Sec. `sec:eval-setup` before the final run (their defining cells: `--definition`) |
 | `raw_rtx2080ti-v2/` | the first run's cells on an RTX 2080 Ti with 8 threads of an Intel Xeon Silver 4114 | the hardware-independence check |
 
 The final run writes a root of its own (`costs/bench.py --platform <name>`); `raw_l40s_improved2_thr1/` (one verifier
@@ -78,7 +79,7 @@ and every attack (the `rejected` records of the tamper cells and the one tampere
 cell), with the check that rejected each (`stage`: `freivalds`, `columns_code`, `columns_merkle`, `range_or_shape`).
 Only finished cells count, plus the honest rejections that stopped a job (kept as `<cell>.rejected-<run_id>.jsonl`).
 `--definition` keeps only the defining defence and tamper cells of the base implementation
-(`experiments.paper.assets.definition_tagsets()`); `--require-tag TAG` only the cells whose name carries a tag;
+(`experiments.paper.bench.definition_tagsets()`); `--require-tag TAG` only the cells whose name carries a tag;
 `--policy` (default `cnn18c`; the stored runs used `auto`) counts apart the attacks on the cells built under that
 commitment plan. It prints the counts; `paper/numbers.py` calls its `count_runs` and `macros` on the final run's root
 (`\FinalNHonest`, `\FinalNAttacks`, `\FinalNFreivalds`, ...), and `macros` refuses if an honest query was rejected
