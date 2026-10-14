@@ -4,6 +4,7 @@
 defence, protocol v0 and its variant V1. The experiment scripts (`code/experiments/`) and the tests (`code/tests/`)
 import it; install it with `pip install -e .` from `code/`, or put `code/src` on `PYTHONPATH`. Each module's
 docstring states its exact semantics, bounds and soundness arguments; this file describes the package layout.
+[`PROTOCOL.md`](PROTOCOL.md) describes the protocol as the code runs it: the parties, the messages in order, the bytes.
 
 **`pvi.core`: integer arithmetic and integer computation graphs.** `field` implements the BabyBear prime field
 `p = 15 * 2**27 + 1`: reduction, the number-theoretic transform, Reed-Solomon encoding, and exact modular matrix

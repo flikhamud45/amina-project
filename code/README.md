@@ -21,8 +21,8 @@ inference lets the client check each answer. This code
 | [`src/pvi/`](src/pvi/README.md) | the library: the field and graphs (`core`), commitments and plans (`commit`), protocol v0 (`v0`), V1 (`v1`), integer models (`models`), native and Triton kernels (`kernels`), the path protocol and samplers (`baseline`), the attacks (`attacks`, `mnist`), the implementation options (`options`) |
 | [`experiments/`](experiments/README.md) | one package per part of the paper; each README maps the paper's results to commands; `package/run.sh` is the run that produces them |
 | [`tests/`](tests/) | the test suite (exactness of every kernel against the reference semantics, protocol soundness checks, every tamper rejected at its check, the experiment harnesses) |
-| [`tools/`](tools/) | the generator of the Triton GKR prover |
-| `artifacts/` | the stored MNIST networks (`models/`), the benchmark's records and tables (`comparison/`) and the stored results of the other experiments (`results/`) |
+| [`tools/`](tools/) | the generator of the Triton GKR prover (`gen_gkr_triton.py`) and the anonymous snapshot for review (`export_anonymous.py`) |
+| [`artifacts/`](artifacts/README.md) | the stored MNIST networks (`models/`), the benchmark's records and tables (`comparison/`) and the stored results of the other experiments (`results/`); per file, the command that wrote it, the platform it was measured on and what reads it |
 
 ## Installation
 
