@@ -7,6 +7,8 @@
   column, an alpha-0.55 quality cell never fills the certified row, and the abstract's N is the 2,048-token ratio.
 * ``--strict`` fails on a missing cell, a failed check or an unparsable line gives exit status 1, and a dry-run
   listing gives the job coverage.
+* A document named by another model (a rehearsal's OPT-125M) counts for its tier and kind and fills no table cell or
+  text number.
 * The paper's wiring: the generated files and ``paper_sp2027/fallback/`` have the same names and macro sets, every
   macro the paper uses is defined, and the stored attack documents regenerate the fallback's ``tab:inrange`` and its
   text numbers.
@@ -670,6 +672,59 @@ def test_the_rehearsal_needs_every_tier(run_dir, capsys):
     out = capsys.readouterr().out
     assert "REHEARSAL: tier tv has no record" not in out          # the tv document is there
     assert "REHEARSAL: tier batch has no record of ['bench_env']" in out
+
+
+def test_a_document_named_by_another_model_has_its_kind_and_fills_no_cell(tmp_path):
+    """The OPT scripts' documents of a rehearsal, named by their model (OPT-125M), count for their tier and kind by
+    their names' patterns (``records.DOCUMENTS``) but fill no table cell and no text number, which select the full
+    run's names; under those names the same documents fill them."""
+    assert [R.doc_kind(n) for n in ("attack.json", "adaptive_game_mlp_mnist.json", "adaptive_game_opt-125m.json",
+                                    "inrange_llm_opt-125m_down.json", "real_llm_attack_opt-125m_auto.json",
+                                    "sampler_tv_opt-350m.json", "inrange_llm_opt-125m.json", "sampler_tv_x.npz",
+                                    "notes.json")] \
+        == ["attack_mnist", "adaptive_game", "adaptive_game_llm", "inrange", "attack_llm", "tv", None, None, None]
+    game = {"per_layer": {"6": {"d_ff": 8192, "caps": {c: {"mixture": {"detection_per_path": 0.4},
+                                                           "samplers": {"uniform": {"detection_per_path": 0.003}}}
+                                                       for c in ("90", "95", "99", "100")}}}}
+    names = {"real_llm_attack.json": "real_llm_attack_opt-125m.json",
+             "real_llm_attack_auto.json": "real_llm_attack_opt-125m_auto.json",
+             "inrange_llm_opt-1.3b_any.json": "inrange_llm_opt-125m_any.json",
+             "inrange_llm_opt-1.3b_down.json": "inrange_llm_opt-125m_down.json",
+             "inrange_llm_opt-6.7b_any.json": "inrange_llm_opt-350m_any.json",
+             "inrange_llm_opt-6.7b_down.json": "inrange_llm_opt-350m_down.json",
+             "adaptive_game_opt-1.3b.json": "adaptive_game_opt-125m.json",
+             "sampler_tv_opt-1.3b.json": "sampler_tv_opt-125m.json"}
+
+    def build(folder: str | None):
+        """``(documents, filled macros, filled cells per table)`` of a run with the documents under their full-run
+        names (``final``), their rehearsal names (``rehearsal``) or none (None)."""
+        files, problems = [], []
+        if folder:
+            logs = tmp_path / folder
+            (logs / "attack").mkdir(parents=True)
+            for full, other in names.items():
+                name = other if folder == "rehearsal" else full
+                path = (logs if name.startswith("sampler_tv") else logs / "attack") / name
+                if full.startswith("adaptive_game"):
+                    path.write_text(json.dumps(game), encoding="utf-8")
+                else:
+                    shutil.copy(RESULTS / full, path)
+            files = R.read_files(logs, problems)
+        ctx = T.Ctx(R.Run([], files), B.Bench(None), B.literature(), "cnn18c", "test platform", byte_model=False)
+        macros, _ = M.build(ctx, problems)
+        cells = {tb.name: tb.filled for tb in T.build_all(ctx, problems)}
+        assert not problems
+        return files, {k: m.value for k, m in macros.items() if m.value is not None}, cells
+
+    _, macros0, cells0 = build(None)
+    files, macros, cells = build("rehearsal")
+    assert {(Path(r.path).name, r.tier, r.kind) for r in files} == {
+        (other, "tv" if other.startswith("sampler_tv") else "attack", R.FILES[full])
+        for full, other in names.items()}
+    assert macros == macros0 and cells == cells0                 # nothing filled
+    _, macros, cells = build("final")
+    assert macros["InrangeKMax"] == "60" and macros["AttackOptLPaths"] == "454{,}248" and macros["TvTopK"] == "0.0063"
+    assert macros["GameLayerSix"] == "40" and cells["tab_inrange"] > cells0["tab_inrange"]
 
 
 # ------------------------------------------------------------------------------------------------ the paper

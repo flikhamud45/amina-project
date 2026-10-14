@@ -56,7 +56,7 @@ The full suite takes about 80 minutes with 8 CPU threads and a GPU.
 
 * **Every number, on one platform**: [`experiments/package/README.md`](experiments/package/README.md). One command
   submits every job of the run (about three days on one NVIDIA L40S node with 8 CPU threads); a dry run lists the
-  jobs, and a rehearsal runs every tier's smallest cells in about two hours on a smaller GPU.
+  jobs, and a rehearsal runs every script of every tier on small cells in about three hours on a smaller GPU.
 * **From the records to the paper**: [`experiments/paper/README.md`](experiments/paper/README.md) turns the run's
   records into the table bodies and text macros of the paper's LaTeX source.
 * **One result at a time**: each folder of [`experiments/`](experiments/README.md) maps the paper's results to

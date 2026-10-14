@@ -10,7 +10,7 @@
   benchmark cells are those a table compares with an interactive system, every mode-C cell takes ``--policy``, the
   headline cells time 5 queries, every job is chained after the previous one and the jobs after smoke wait for it,
   every tier submits jobs, the cells behind the text's generation and recipe numbers are there, and the rehearsal
-  submits small cells only.
+  submits small cells only, which run every script of every tier on the paths the full cells take.
 
 The smoke tier runs this file on the final platform.
 """
@@ -29,6 +29,7 @@ import torch
 
 from experiments.costs import perf, setup_timing
 from experiments.generation import gen_bench
+from experiments.paper.records import tier_of
 from experiments.reexec import h2d_bandwidth, reexec
 
 CODE = Path(__file__).resolve().parents[1]
@@ -163,7 +164,7 @@ def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_j
 def test_the_rehearsal_submits_small_cells_of_every_tier():
     lines = _dry("--rehearsal")
     jobs = [_job(line) for line in lines]
-    assert len(lines) <= 40
+    assert len(lines) <= 56 and len(set(jobs)) == len(jobs)
     for prefix in ("sp-smoke", "sp-c-", "sp-v1-", "sp-serve-", "sp-b-", "sp-g-", "sp-gen-", "sp-bt-", "sp-r-",
                    "sp-setup-", "sp-i-", "sp-q-", "sp-tv-", "sp-a-", "sp-l-"):
         assert any(j.startswith(prefix) for j in jobs), prefix
@@ -173,6 +174,57 @@ def test_the_rehearsal_submits_small_cells_of_every_tier():
         if "--model llama2-7b" in line:            # the long tier's one block at 4,608 tokens
             assert "--layers 1" in line, _job(line)
         assert "--time=" in line
+
+
+FLAGS = ("--real", "--no-wire", "--codec-only")
+"""The switches that select a script's path: a checkpoint, the encoding off, V1's codec profile only."""
+VALUED = ("--recipe", "--prefix", "--v1-verifier")
+"""The options whose values select a path: the recipe, the fixed prefix, V1's verifiers."""
+
+
+def _paths(script: str, cmd: str) -> set:
+    """The paths one command takes: its verifier's device (``cuda`` with ``--verifier-device cuda``, else ``cpu``),
+    each switch of :data:`FLAGS`, each option of :data:`VALUED` with its values, and ``--model`` for
+    ``sampler_tv`` (a real model's logits; without it, its toy distributions only)."""
+    words = cmd.replace('"', " ").split()
+    out = {"cuda" if "--verifier-device cuda" in cmd else "cpu"}
+    for i, w in enumerate(words):
+        if w in FLAGS or (w == "--model" and script == "generation.sampler_tv"):
+            out.add(w)
+        elif w in VALUED:
+            values = []
+            for v in words[i + 1:]:
+                if v.startswith("--"):
+                    break
+                values.append(v)
+            out.add(" ".join([w, *values]))
+    return out
+
+
+def _scripts(lines: list[str]) -> dict:
+    """``{tier: {(script, path)}}`` of a dry run: the script of every command of a job (``-m
+    experiments.<section>.<name>``) with each path it takes (:func:`_paths`)."""
+    out: dict = {}
+    for line in lines:
+        tier = tier_of(_job(line)[len("sp-"):])
+        for cmd in re.split(r"&&|;", line.split("--wrap", 1)[1]):
+            m = re.search(r"-m experiments\.(\w+\.\w+)", cmd)
+            if m:
+                out.setdefault(tier, set()).update((m.group(1), p) for p in _paths(m.group(1), cmd))
+    return out
+
+
+def test_the_rehearsal_runs_every_script_of_every_tier():
+    """Every script a tier's full cells run, on each path they take it (the verifier's device, a checkpoint, the
+    encoding off, the codec profile, the recipe, the fixed prefix, V1's verifiers, sampler_tv on a model), is in the
+    tier's rehearsal cells, so that no script meets a path for the first time in the final run."""
+    assert _paths("generation.sampler_tv", 'x --model m --recipe legacy --v1-verifier optimised baseline --no-wire"') \
+        == {"cpu", "--model", "--recipe legacy", "--v1-verifier optimised baseline", "--no-wire"}
+    full, rehearsal = _scripts(_dry()), _scripts(_dry("--rehearsal"))
+    assert set(full) == set(TIERS)
+    for tier in TIERS:
+        missing = full[tier] - rehearsal.get(tier, set())
+        assert not missing, (tier, sorted(missing))
 
 
 def test_the_gen_and_quality_cells_of_the_text():

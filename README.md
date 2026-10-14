@@ -12,7 +12,7 @@ number of the paper, and the pipeline from that run's records to the paper's tab
 
 1. **Install and test**: [`code/README.md`](code/README.md).
 2. **Run every experiment on one machine**: [`code/experiments/package/README.md`](code/experiments/package/README.md).
-   One command submits every job; a dry run lists them, and a rehearsal runs the smallest cell of each tier.
+   One command submits every job; a dry run lists them, and a rehearsal runs every script of each tier on small cells.
 3. **From the run's records to the paper**: [`code/experiments/paper/README.md`](code/experiments/paper/README.md).
    `python -m experiments.paper.numbers` checks the records and writes every table body and text number into
    `paper_sp2027/generated/`.

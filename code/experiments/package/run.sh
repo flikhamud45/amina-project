@@ -29,8 +29,8 @@
 # Options:
 #     --platform NAME   required: a new name for this GPU and CPU (the stored roots are not written)
 #     --dry-run         print every job (and each tier's job count, time limits and estimate); submit nothing
-#     --rehearsal       each tier's smallest cells (GPT-2 / OPT-125M, 2 blocks, short prompts): the whole package in
-#                       about two hours on one GPU, or a platform check
+#     --rehearsal       each tier's smallest cells (GPT-2 / OPT-125M, 2 blocks, short prompts), every script of
+#                       every tier: the whole package in about three hours on one GPU, or a platform check
 #     --local           no SLURM: every job runs here, in the foreground, one after another, logged as SLURM would
 #     --optional        'all' also runs the optional tier (long)
 #     --no-chain        do not chain the jobs (default: each job starts after the previous one ends, so no two timed
@@ -137,7 +137,10 @@ nl() {    # a model's decoder blocks
 }
 
 est() {   # a tier's expected hours on an L40S node (measured times of the same cells)
-  if [ -n "$REH" ]; then echo "<0.3"; return; fi
+  if [ -n "$REH" ]; then
+    case "$1" in improve) echo "<1" ;; quality) echo "<0.5" ;; *) echo "<0.3" ;; esac
+    return
+  fi
   case "$1" in
     smoke) echo 1 ;; cpuv) echo 6-9 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
@@ -260,6 +263,8 @@ tier_bench() {
     sub b-k-gpt2-64 1 64 "$BENCH llm --model gpt2 --seq 64 --builds 2 --queries 2 --lams 128 --modes Kpre:fs"
     sub b-cg-gpt2-64 1 64 "$BENCH llm --model gpt2 --seq 64 --builds 2 --queries 2 --lams 128 --modes C:fs \
 --policy $POL $gpuv"
+    sub b-k-gpt2-8-thr1 1 64 "$BENCH llm --model gpt2 --seq 8 --builds 2 --queries 2 --lams 40 --modes Kpre:int \
+--threads 1 --no-wire"
     return 0
   fi
   # (a) the image models: mode C with the plan, with the attacks and the path test's cells; then K and Kpre
@@ -312,6 +317,8 @@ tier_gpuv() {
   if [ -n "$REH" ]; then
     sub g-v0-gpt2 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre C --policy $POL --queries $Q \
 --verifier-device cuda --stream --label gpuv --require-triton"
+    sub g-v1-gpt2 1 64 "$V1 --model gpt2 --layers 2 --seq 64 --modes Kpre --reps $Q --lmax 20 --verifier-device cuda \
+--label gpuv-v1"
     sub g-rx-gpt2 1 64 "$RX --model gpt2 --seq 64 --layers 1 2 --variants int float bf16 --device cuda --reps 2"
     sub g-h2d 1 32 "$H2D --sizes-mb 64 256 --reps 3 --label gpuv"
     return 0
@@ -381,6 +388,9 @@ tier_real() {
     sub r-opt125-v0 1 64 "$PERF $r125 --seq 64 --modes Kpre C --policy $POL --queries $Q --verifier-device cpu \
 --tampers 1 --label real"
     sub r-opt125-v1 1 64 "$V1 $r125 --seq 64 --modes Kpre --reps $Q --tampers 1 --lmax 20 --label real"
+    sub r-opt125-gen 1 64 "$GEN $r125 --prompt 16 --gen 4 --decode greedy sample --modes C Kpre --policy $POL \
+--queries $Q --verifier-device cpu --label real"
+    sub r-opt125-codec 1 64 "$V1 $r125 --seq 64 --codec-only --device cpu --label real"
     return 0
   fi
   for t in 64 2048; do
@@ -440,7 +450,22 @@ tier_improve() {
     sub i-forward-gpt2 1 64 "$M.improvements.forward_ab --model gpt2 --layers 2 --seq 64"
     sub i-encode-gpt2 1 64 "$M.improvements.encode_ab --model gpt2 --layers 2 --seq 64 --fused"
     sub i-fold-gpt2 1 64 "$M.improvements.fold_ab --model gpt2 --layers 2 --devices cpu cuda --reps 1 --threads 8"
-    sub i-v1phases-gpt2 1 64 "$M.v1.v1_phases --model gpt2 --layers 2 --seq 64 --mode Kpre --reps 2 --device cuda"
+    sub i-v1phases-gpt2 1 64 "$M.v1.v1_phases --model gpt2 --layers 2 --seq 64 --mode Kpre --reps 2 --device cuda \
+--v1-verifier optimised baseline"
+    # the A/B cells of perf.py with the full cells' flags, on an OPT and a Llama shape (2 blocks and 1) at 64 tokens
+    for m in "opt-125m --layers 2" "llama2-7b --layers 1"; do
+      sub "i-attn-${m%% *}" 1 64 "$PERF --model $m --seq 64 --modes Kpre --prune-last off $a --verifier-device cuda \
+--stream --no-fused-attention --label attn-before && $PERF --model $m --seq 64 --modes Kpre --prune-last off $a \
+--verifier-device cuda --stream --label attn-after"
+      sub "i-gpuv-${m%% *}" 1 64 "$PERF --model $m --seq 64 --modes Kpre $a --verifier-device cuda --stream \
+--no-gpu-decode --no-fused-attention --label gpuv-before && $PERF --model $m --seq 64 --modes Kpre $a \
+--verifier-device cuda --stream --label gpuv-after"
+    done
+    sub i-cpuv-llama2-7b 1 64 "$PERF --model llama2-7b --layers 1 --seq 64 --modes Kpre $a --verifier-device cpu \
+--no-native --no-malloc-tune --label cpuv-before && $PERF --model llama2-7b --layers 1 --seq 64 --modes Kpre $a \
+--verifier-device cpu --label cpuv-after $NATIVE"
+    sub i-profile-opt-125m 1 64 "$M.improvements.gpu_profile --model opt-125m --layers 2 --seq 64"
+    sub i-gkr 1 32 "$M.v1.gkr_bench --n 20 --check 20"
     return 0
   fi
   sub i-open-llama2-7b 1 128 "$M.improvements.open_ab --model llama2-7b --layers 1 4 --queries 7"
@@ -477,8 +502,18 @@ tier_quality() {
   local P="$M.quality.ppl_opt --device cuda" L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8"
   local Z="$M.quality.zeroshot --device cuda" m
   if [ -n "$REH" ]; then
-    sub q-opt125 1 64 "$P --model facebook/opt-125m --windows 2 --mass-windows 1"
+    sub q-opt125 1 64 "$P --model facebook/opt-125m --windows 2 --mass-windows 1 && $P --model facebook/opt-125m \
+--recipe legacy --graphs smooth --pbits 11 --windows 2 --mass-windows 1"
     sub q-smoke 1 64 "$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64"
+    sub q-zeroshot-opt-125m 1 64 "$Z --model facebook/opt-125m --limit 20 && $Z --model facebook/opt-125m \
+--recipe legacy --limit 20"
+    sub q-digest-opt125 1 64 "$M.quality.digest_check --model facebook/opt-125m --threads 8 --commit \
+--commit-device cuda"
+    sub q-diag-qwen06 1 64 "$M.quality.llama_diag --model Qwen/Qwen3-0.6B-Base --recipes smooth55 scalar4 && \
+$M.quality.llama_diag --model Qwen/Qwen3-0.6B-Base --recipes smooth55 scalar4 --prefix 151643,151643 && \
+$M.quality.llama_attrib --model Qwen/Qwen3-0.6B-Base --blocks all --recipe smooth55"
+    sub q-qwen06 1 64 "$L --model Qwen/Qwen3-0.6B-Base --seq 128 --windows 2 --graphs smooth --glu-exps 8 \
+--ref-device cpu --prefix 151643,151643"
     return 0
   fi
   sub q-opt125 2 64 "$P --model facebook/opt-125m"
@@ -525,6 +560,8 @@ tier_tv() {
   local T="$M.generation.sampler_tv"
   if [ -n "$REH" ]; then
     sub tv-selfcheck 1 32 "$T --selfcheck"
+    sub tv-opt125 1 32 "$T --model facebook/opt-125m --recipe legacy --windows 1 --positions 2 --workers 2 --mc 1000 \
+--mc-positions 1 --mc-settings 1:0 1:50 --out $ROOT/$LOGS/sampler_tv_opt-125m.json"
     return 0
   fi
   sub tv-opt-1.3b 2 96 "$T --model facebook/opt-1.3b --seq 128 --windows 4 --workers 16 --threads 16 \
@@ -540,7 +577,24 @@ tier_attack() {
   # against range checks (OPT-1.3B, OPT-6.7B) and the sampler game on OPT-1.3B; outputs under logs/<name>/attack/
   local o="$ROOT/$LOGS/attack" A="$M.attack"
   if [ -n "$REH" ]; then
+    # the stored MNIST networks with few queries (the full cells' documents); OPT-125M for the OPT scripts, whose
+    # documents are named by their model and so fill no cell of the paper (experiments/paper/records.DOCUMENTS)
     sub a-bound 1 16 "mkdir -p $o && $A.path_test_bound --out $o/analytic.csv"
+    sub a-mnist 1 32 "mkdir -p $o && $A.reproduction --queries 5 --challenges 2 --zero-tolerance-queries 5 \
+--out $o/reproduction.json && $A.attack_mnist --queries 20 --challenges 2 --empirical-queries 10 --baseline-queries 2 \
+--injection-steps 100 --gradient-steps 100 --stealth-queries 5 --calib-images 500 --out $o/attack.json && \
+$A.samplers --queries 5 --blind-spot-queries 5 --candidate-neurons 10 --calib-images 500 --protocol-runs 5 \
+--out $o/defence.json && $A.floor_sampler --queries 2 --epsilons 0 1 --calib-images 500 --out $o/floor_sampler.json \
+&& $A.adaptive_game --layers 1 --queries 2 --caps 95 inf --double-oracle 1 --calib-size 1000 \
+--out $o/adaptive_game_mlp_mnist.json"
+    local opt="--model facebook/opt-125m --layers 6 11 --prompts 4"
+    sub a-opt125 1 32 "mkdir -p $o && $A.attack_llm $opt --out $o/real_llm_attack_opt-125m.json && \
+$A.attack_llm $opt --target auto --out $o/real_llm_attack_opt-125m_auto.json"
+    sub a-inrange-opt125 1 32 "mkdir -p $o && $A.inrange_llm $opt --calib-windows 4 \
+--out $o/inrange_llm_opt-125m_any.json && $A.inrange_llm $opt --calib-windows 4 --moves down \
+--out $o/inrange_llm_opt-125m_down.json"
+    sub a-game-opt125 1 32 "mkdir -p $o && $A.adaptive_game_llm --model facebook/opt-125m --layers 6 --prompts 2 \
+--calib-windows 8 --threads 8 --device cuda --out $o/adaptive_game_opt-125m.json"
     return 0
   fi
   sub a-mnist 3 32 "mkdir -p $o && $A.reproduction --out $o/reproduction.json && $A.attack_mnist --out $o/attack.json \

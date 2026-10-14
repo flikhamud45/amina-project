@@ -4,8 +4,9 @@ the correctness checks.
 The run package (``experiments/package/run.sh``) writes every job's output to ``logs/<name>/sp-<cell>-<jobid>.out``;
 each line that starts with ``{`` is one record (one JSON object).  The cell's prefix names the tier (:data:`TIERS`),
 and the record's fields name the script that wrote it (:func:`kind_of`).  The attack tier writes JSON documents to
-``logs/<name>/attack/`` and the tv tier to ``logs/<name>/sampler_tv_*.json``; :func:`read_files` reads them by name
-(:data:`FILES`).  Nothing here runs a model.
+``logs/<name>/attack/`` and the tv tier to ``logs/<name>/sampler_tv_*.json``; :func:`read_files` reads them and
+:func:`doc_kind` names their kinds from their file names (:data:`FILES`, :data:`DOCUMENTS`).  Nothing here runs a
+model.
 
 The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), a byte
 accounting that disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected
@@ -27,16 +28,16 @@ TIERS = (("smoke", "smoke"), ("c-", "cpuv"), ("v1-", "v1"), ("serve-", "serve"),
 """The job-name prefixes of ``run.sh`` (``sp-<prefix>...``) and their tiers."""
 KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "v1"}, "v1": {"v1"}, "serve": {"serve"},
          "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"}, "batch": {"bench_env"},
-         "real": {"perf", "v1"}, "setup": {"setup"},
+         "real": {"perf", "v1", "gen"}, "setup": {"setup"},
          "improve": {"open_ab", "forward_ab", "encode_ab", "perf", "gpu_profile", "fold_ab", "v1_phases", "gkr"},
          "quality": {"ppl", "zeroshot", "digest", "llama_diag", "llama_attrib"}, "tv": {"tv"},
          "attack": {"reproduction", "attack_mnist", "samplers", "floor_sampler", "adaptive_game", "path_bound",
                     "attack_llm", "inrange", "adaptive_game_llm"},
          "long": {"perf", "reexec"}}
-"""The record kinds each tier writes (the rehearsal checks that each tier has at least one record of each)."""
-REHEARSAL_KINDS = dict(KINDS, quality={"ppl"}, improve={"open_ab", "forward_ab", "encode_ab", "fold_ab", "v1_phases"},
-                       real={"perf", "v1"}, attack={"path_bound"}, tv={"tv"})
-"""The kinds of a rehearsal (``run.sh --rehearsal``: each tier's smallest cells)."""
+"""The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``)."""
+REHEARSAL_KINDS = KINDS
+"""The kinds of a rehearsal (``run.sh --rehearsal``: each tier's smallest cells, which run every script of every
+tier): each tier must have at least one record of each of its :data:`KINDS`."""
 FILES = {"reproduction.json": "reproduction", "attack.json": "attack_mnist", "defence.json": "samplers",
          "floor_sampler.json": "floor_sampler", "adaptive_game_mlp_mnist.json": "adaptive_game",
          "analytic.csv": "path_bound", "real_llm_attack.json": "attack_llm", "real_llm_attack_auto.json": "attack_llm",
@@ -44,8 +45,15 @@ FILES = {"reproduction.json": "reproduction", "attack.json": "attack_mnist", "de
          "inrange_llm_opt-6.7b_any.json": "inrange", "inrange_llm_opt-6.7b_down.json": "inrange",
          "adaptive_game_opt-1.3b.json": "adaptive_game_llm", "sampler_tv_opt-1.3b.json": "tv",
          "sampler_tv_selfcheck.json": "tv", "sampler_tv_opt-125m.json": "tv"}
-"""The documents the attack tier (``logs/<name>/attack/``) and the tv tier (``logs/<name>/``) write, by file name,
-and their kinds."""
+"""The documents the full run's attack tier (``logs/<name>/attack/``) and tv tier (``logs/<name>/``) write, by file
+name, and their kinds: the names the tables and macros select (:meth:`Run.file`)."""
+DOCUMENTS = ((re.compile(r"real_llm_attack(_.+)?\.json"), "attack_llm"),
+             (re.compile(r"inrange_llm_.+_(any|down)\.json"), "inrange"),
+             (re.compile(r"adaptive_game_opt-.+\.json"), "adaptive_game_llm"),
+             (re.compile(r"sampler_tv_.+\.json"), "tv"))
+"""The name patterns of the same scripts' documents on other models (the rehearsal's OPT-125M:
+``inrange_llm_opt-125m_any.json``, ``adaptive_game_opt-125m.json``, ...) and their kinds.  Such a document counts
+for its tier and kind, and fills no table cell or text number, which select the full run's names."""
 LOG = re.compile(r"^sp-(?P<cell>.+)-(?P<job>[0-9]+|DRY[0-9]+)\.out$")
 
 
@@ -155,14 +163,22 @@ def read_logs(logs: Path, problems: list) -> list[Rec]:
     return out
 
 
+def doc_kind(name: str) -> str | None:
+    """The kind of an attack or tv document by its file name (:data:`FILES`, else :data:`DOCUMENTS`); None for any
+    other file."""
+    return FILES.get(name) or next((kind for pattern, kind in DOCUMENTS if pattern.fullmatch(name)), None)
+
+
 def read_files(logs: Path, problems: list) -> list[Rec]:
-    """The attack and tv tiers' documents (:data:`FILES`) under ``logs`` (``attack/`` and the folder itself)."""
+    """The attack and tv tiers' documents under ``logs`` (``attack/`` and the folder itself): every file with a kind
+    (:func:`doc_kind`)."""
     out = []
-    for name, kind in FILES.items():
-        for path in (logs / "attack" / name, logs / name):
-            if not path.exists():
+    for folder in (logs / "attack", logs):
+        for path in sorted(folder.iterdir()) if folder.is_dir() else ():
+            kind = doc_kind(path.name) if path.is_file() else None
+            if kind is None:
                 continue
-            tier = "tv" if name.startswith("sampler_tv") else "attack"
+            name, tier = path.name, "tv" if kind == "tv" else "attack"
             try:
                 if path.suffix == ".csv":
                     import csv

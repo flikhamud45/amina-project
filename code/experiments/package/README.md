@@ -46,12 +46,43 @@ tier's job count, the sum of its time limits and its expected hours, and submits
 bash code/experiments/package/run.sh --platform smoke smoke
 #  -> "SMOKE OK" at the end of logs/smoke/sp-smoke-*.out (up to an hour)
 bash code/experiments/package/run.sh --platform rehearsal --rehearsal --optional all
-#  -> 30 small jobs: every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about two hours
+#  -> 50 small jobs: every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three hours
+cd code
+python -m experiments.comparison.aggregate --platform rehearsal
+python -m experiments.paper.numbers --logs ../logs/rehearsal --platform rehearsal --rehearsal --check --no-byte-model
+#  -> exit status 0: every tier wrote a record of each kind it writes, and every check passed
 ```
 
 The smoke runs the GPU tests (the Triton kernels and `torch._int_mm` on this GPU), the native-kernel tests
 (`-march=native` on this CPU), the Fiat-Shamir, serving, generation, setup-proof, options and package tests, one V1
-query and the host-to-device copy. The rehearsal then runs every tier's scripts in this machine's environment.
+query and the host-to-device copy. The rehearsal then runs, in this machine's environment, every script of every
+tier, on each path on which the tier's full cells run it (the verifier on each device, a real checkpoint, the proof
+without the compact encoding, V1's codec profile and both V1 verifiers, the legacy recipe, a fixed prefix, the sampler
+on a real model) and with the A/B cells' implementation options, but on small models with few tokens and queries, so
+that no script meets its first failure (a download, a flag, a GPU path, the memory) during the run. Every job asks for
+at most 64 GB of host memory:
+
+| Tier | Jobs | The rehearsal's cells |
+|---|---:|---|
+| `smoke` | 1 | the Fiat-Shamir tree, serving, options and package tests; the native-kernel and int8 self-checks, one V1 query, the host-to-device copy |
+| `cpuv` | 3 | GPT-2 (2 blocks, 64 tokens): the CPU verifier, every re-execution baseline, V1's two CPU verifiers |
+| `v1` | 1 | V1 against v0 on GPT-2 |
+| `serve` | 1 | OPT-125M (2 blocks): single prompts and batches of 4 |
+| `bench` | 5 | LeNet-5; GPT-2 in modes C and Kpre, with the GPU verifier, and in Maverick's setting (one thread, no compact encoding) |
+| `gpuv` | 4 | GPT-2: the streaming GPU verifier, V1's GPU verifier, re-execution on the GPU; the host-to-device copy |
+| `gen` | 1 | GPT-2: 4 generated tokens, greedy and sampled |
+| `batch` | 2 | GPT-2: batches of 4 prompts, modes C and Kpre |
+| `real` | 4 | the certified OPT-125M: v0, V1, V1's codec profile and generated responses |
+| `setup` | 1 | the setup proof of GPT-2 (2 blocks) |
+| `improve` | 12 | the A/B cells of `tab:eval-improve` (opening, forward pass, encoder, fold; the fused attention and the GPU verifier before and after on OPT-125M with 2 blocks and on one Llama-2-7B block, the CPU verifier on that block), V1's two verifiers by phase, the GPU profile, the GKR prover at 2^20 leaves |
+| `quality` | 6 | OPT-125M: perplexity and zero-shot accuracy (20 documents per task) with the certified and the legacy recipe, the reproducible build and its commitment; Qwen3-0.6B: the Llama recipe on the smoke model and, with a fixed prefix, on the checkpoint, `llama_diag` and `llama_attrib` |
+| `tv` | 2 | the sampler's closed-form and Monte Carlo checks on its toy distributions; its total-variation distance on OPT-125M (legacy recipe, 2 positions, 2 workers) |
+| `attack` | 5 | the path test's bound; the MNIST scripts on the stored networks; OPT-125M: the single-neuron attack and its backdoor, the in-range edits, the sampler game |
+| `long` | 2 | one Llama-2-7B block at 4,608 tokens: the CPU verifier and re-execution |
+
+The attack tier's OPT-125M documents are named by their model (`attack/inrange_llm_opt-125m_any.json`,
+`attack/adaptive_game_opt-125m.json`, ...): `numbers.py` counts them for their kinds, and no table or text number
+reads them.
 
 ## 4. The run
 
