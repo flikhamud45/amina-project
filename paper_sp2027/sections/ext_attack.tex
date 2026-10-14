@@ -83,7 +83,7 @@ value written there (Corollary~\ref{cor:surprise}). A value-aware sampler theref
 that write improbable values. It gains nothing on edits that write common ones, provided the
 adversary's choice of neuron is itself spread out. The first case is measured directly on the
 MNIST MLP: the distance of the claimed value from the neuron's held-out mean ranks the edited
-neuron first for 75\% and 95\% of the queries (Section~\ref{sec:sampling}). The contribution-weighted sampler detects 9.2\% of the best single-neuron
+neuron first for \LocatorOne{}\% and \LocatorTwo{}\% of the queries (Section~\ref{sec:sampling}). The contribution-weighted sampler detects \SamplerContribution{}\% of the best single-neuron
 edits and none of the zeroing edits. For the latter the reason is mechanical, since it never visits
 a neuron whose claimed activation is zero (Section~\ref{sec:break}).
 
@@ -115,10 +115,10 @@ or equal to the class of its choice. The ranking uses only the later weights, so
 on the target rows only through their values, as Lemma~\ref{lem:product} requires.
 
 \para{Reproduction.} Our implementation behaves as Anchuri et al.\ describe. On MNIST versions of
-four of their substitute-model settings, honest provers passed all 3{,}000 runs of each, and
-substitute models were caught in 99.8--100\% of runs, including an 8-bit quantised copy that agrees
-with $M$ on all 150 evaluated queries. Without the $10^{-4}$ tolerance, an honest prover passes only
-21--37\% of runs, because a layer-wide matrix product and a single-neuron dot product round
+four of their substitute-model settings, honest provers passed all \ReproRuns{} runs of each, and
+substitute models were caught in \ReproCaught{}\% of runs, including an 8-bit quantised copy that agrees
+with $M$ on all \ReproQueries{} evaluated queries. Without the $10^{-4}$ tolerance, an honest prover passes only
+\ReproZeroTolerance{}\% of runs, because a layer-wide matrix product and a single-neuron dot product round
 differently. The forgeries that Anchuri et al.\ consider are their substitute models (Appendices~E
 and~F and Section~7.2 of~\cite{anchuri2026verifiable}); on the MLP they corrupt hundreds of its 778
 trace nodes.
@@ -126,28 +126,28 @@ trace nodes.
 % Moved from the body's paragraph "MNIST" by the H5 pass (cut C4 of REVIEW2.md); unchanged.
 \para{MNIST, further results.} One tampered neuron passes 250 paths 61\% of the time. Keeping each
 tampered value below its neuron's 95th percentile takes about five neurons and passes 99\% of the
-time under uniform sampling. With percentiles from 5{,}000 training images and 40 disjoint test
-queries, the edit changes 5.1 neurons on average, passes 99.0\% of paths, keeps every edited value in
+time under uniform sampling. With percentiles from \StealthCalib{} training images and \LocatorQueries{} disjoint test
+queries, the edit changes \StealthNeurons{} neurons on average, passes \StealthPass{}\% of paths, keeps every edited value in
 range, and exceeds a neuron's natural maximum no more often than the honest trace (5\% of queries in
 both cases); the in-range edits on OPT-1.3B and OPT-6.7B (Section~\ref{ext:attack-inrange}) use
 held-out ranges as well.
 
 \para{Other samplers on MNIST.} Against an adversary who knows the rule, a static importance score
-(outgoing weight magnitude) detects 0.11\% of attacks and gradient saliency 0.016\%, against 0.20\%
+(outgoing weight magnitude) detects \SamplerStatic{}\% of attacks and gradient saliency \SamplerSaliency{}\%, against \SamplerUniform{}\%
 for uniform sampling. The zeroing attack against the contribution-weighted sampler edits about 14
 of the 512 neurons, whose most common value is zero (65\% of inputs). The floor $\delta=1$ detects
-10$\times$ as often as uniform sampling; other floors give 0.9--6$\times$. Each figure is the
-detection of the best attack we found against that sampler. The 9.2\% is one sampler against the
+\FloorVsUniform{}$\times$ as often as uniform sampling; other floors give \FloorOthers{}$\times$. Each figure is the
+detection of the best attack we found against that sampler. The \SamplerContribution{}\% is one sampler against the
 plain attack; the 2\% of the floor $\delta=1$ is the highest detection among our samplers, each
 against the attacks built for it.
 
 \para{Larger models.} A change to the least-visited penultimate neuron of a CNN is caught by one
-path with probability as low as 1/28 million. The 305{,}193 paths for Llama-2-7B use its FFN width
-11{,}008 and the fp16 weights of~\cite{anchuri2026verifiable}.
+path with probability as low as 1/\CnnMinNode{} million. The \PathsLlama{} paths for Llama-2-7B use its FFN width
+\WidthLlama{} and the fp16 weights of~\cite{anchuri2026verifiable}.
 
 \para{OPT-6.7B.} The search ran over the FFN neurons of layers 8, 16, 24 and 31 at the last
 position. Because of the final LayerNorm, a last-layer neuron can force only its \emph{saturation
-token}, so the 16{,}384 neurons of that layer reach 6{,}187 of the 50{,}272 tokens. This is why the
+token}, so the \ReachNeurons{} neurons of that layer reach \ReachTokens{} of the \ReachVocab{} tokens. This is why the
 fixed-target backdoor succeeds for ``\texttt{back}'' and fails for ``\texttt{hacked}''. Under the
 path protocol, detection depends only on how many sites are edited, not on what the edit does;
 Table~\ref{tab:aligned} gives the paths needed for $k$ edited neurons in two instruction-tuned
@@ -160,8 +160,8 @@ models.
 \para{Entries shortened in Table~\ref{tab:sok}.} The path protocol's authors note the $1/N$ limit
 for one changed node, state that their other-model analysis ``trivially extends to full
 soundness'' for binary-output models, and leave full soundness open for LLMs; their other-model
-theorem is unaffected. The $2^{-40}$ figures are 14{,}182 paths for our dog-vs-cat ResNet-18 and at
-least 305{,}193 and 454{,}248 for Llama-2-7B and OPT-6.7B. For SLP's TinyLlama configuration (5 of
+theorem is unaffected. The $2^{-40}$ figures are \CnnPathsResNet{} paths for our dog-vs-cat ResNet-18 and at
+least \PathsLlama{} and \AttackOptLPaths{} for Llama-2-7B and OPT-6.7B. For SLP's TinyLlama configuration (5 of
 45 chunks) one audit accepts the edit with probability 88.9\%. CommitLLM's routine audit covers
 Llama-70B; by the authors' own finding an edited attention output passes every tier, and attention
 is audited, not verified. NanoZK presents its audit mode as an efficiency tool, not a security
@@ -287,31 +287,7 @@ probability proportional to $|a_j|\,\|W_{\mathrm{fc2}}[:,j]\|$ on the claimed tr
     \toprule
     Model & Moves & Layer & changed & $k$ med. & $k$ max & uniform & contribution \\
     \midrule
-    OPT-1.3B & any, max range & 6 & 40 & 3.5 & 17 & $4.3\cdot10^{-4}$ & 0.55 \\
-     &  & 12 & 40 & 3 & 40 & $3.7\cdot10^{-4}$ & 0.11 \\
-     &  & 18 & 40 & 2 & 13 & $2.4\cdot10^{-4}$ & 0.054 \\
-     &  & 23 & 40 & 1 & 4 & $1.2\cdot10^{-4}$ & 0.029 \\
-     & any, 99.9\% range & 6 & 40 & 6.5 & 60 & $7.9\cdot10^{-4}$ & 0.57 \\
-     &  & 12 & 40 & 5 & 24 & $6.1\cdot10^{-4}$ & 0.097 \\
-     &  & 18 & 40 & 3.5 & 22 & $4.3\cdot10^{-4}$ & 0.053 \\
-     &  & 23 & 40 & 1 & 7 & $1.2\cdot10^{-4}$ & 0.022 \\
-     & down only & 6 & 9 & 3 & 15 & $3.7\cdot10^{-4}$ & 0 \\
-     &  & 12 & 31 & 12 & 104 & $1.5\cdot10^{-3}$ & 0 \\
-     &  & 18 & 38 & 8 & 164 & $9.8\cdot10^{-4}$ & 0 \\
-     &  & 23 & 39 & 2 & 60 & $2.4\cdot10^{-4}$ & 0 \\
-    \midrule
-    OPT-6.7B & any, max range & 8 & 40 & 10.5 & 44 & $6.4\cdot10^{-4}$ & 0.76 \\
-     &  & 16 & 40 & 6 & 25 & $3.7\cdot10^{-4}$ & 0.15 \\
-     &  & 24 & 40 & 5 & 14 & $3.1\cdot10^{-4}$ & 0.067 \\
-     &  & 31 & 40 & 1 & 17 & $6.1\cdot10^{-5}$ & 0.028 \\
-     & any, 99.9\% range & 8 & 40 & 22 & 104 & $1.3\cdot10^{-3}$ & 0.74 \\
-     &  & 16 & 40 & 12 & 48 & $7.3\cdot10^{-4}$ & 0.15 \\
-     &  & 24 & 40 & 7 & 36 & $4.3\cdot10^{-4}$ & 0.071 \\
-     &  & 31 & 40 & 1 & 16 & $6.1\cdot10^{-5}$ & 0.021 \\
-     & down only & 8 & 4 & 3 & 23 & $1.8\cdot10^{-4}$ & 0 \\
-     &  & 16 & 23 & 25 & 164 & $1.5\cdot10^{-3}$ & 0 \\
-     &  & 24 & 37 & 36 & 176 & $2.2\cdot10^{-3}$ & 0 \\
-     &  & 31 & 40 & 3 & 112 & $1.8\cdot10^{-4}$ & 0 \\
+    \pvitable{tab_inrange}
     \bottomrule
   \end{tabular}
 \end{table*}
@@ -319,9 +295,9 @@ probability proportional to $|a_j|\,\|W_{\mathrm{fc2}}[:,j]\|$ on the claimed tr
 Pushing neurons to the top of their range raises their contribution, so contribution weighting catches those
 edits often; lowering activations to zero, which stays in range after ReLU, hides them from it completely, at
 the price of more neurons and fewer successes in early layers. Under uniform sampling every variant needs tens
-of thousands of paths for $1-2^{-40}$ (19{,}000--227{,}000 at the medians on OPT-1.3B, 12{,}600--454{,}000 on
+of thousands of paths for $1-2^{-40}$ (\InrangePathsOptM{} at the medians on OPT-1.3B, \InrangePathsOptL{} on
 OPT-6.7B). The OPT-6.7B rows show the same picture at 7B scale: every in-range edit of the \emph{any} kind changes
-the next token for all 40 prompts at every depth, with a median of 1--22 edited neurons.
+the next token for all 40 prompts at every depth, with a median of \InrangeOptLKRange{} edited neurons.
 
 \para{The sampler game on OPT-1.3B.} For each prompt the adversary takes, of the \emph{any} edit (built at the
 cap's ceilings and carried to looser caps) and the \emph{down} edit, the one that a given sampler detects least;
@@ -329,9 +305,9 @@ the defender chooses the per-path mixture of the implementable samplers of the M
 importance, contribution, the floors $\delta\in\{0.01,\dots,100\}$, tail-first and zero-first) that maximises the
 mean over prompts, by linear programming. Detection is one FFN step, given that the path enters the edited FFN at
 the last position, and so bounds unconditional detection from above. With caps at the 90th, 95th, 99th and 100th
-percentile, the mixture detects 3.1\%, 23\%, 38\% and 48\% at layer~6; 0.23\%, 1.2\%, 5.4\% and 6.8\% at layer~12;
-0.50\%, 1.2\%, 1.6\% and 2.2\% at layer~18; and 0.09\%, 0.09\%, 0.08\% and 0.08\% at layer~23, against $27.7/d_{\mathrm{ff}}
-=0.34\%$ and 0.02--0.19\% for uniform sampling. The mixture is the contribution-weighted sampler at layers 6--18,
+percentile, the mixture detects \GameCapsSix{}\% at layer~6; \GameCapsTwelve{}\% at layer~12;
+\GameCapsEighteen{}\% at layer~18; and \GameCapsTwentyThree{}\% at layer~23, against $27.7/d_{\mathrm{ff}}
+=\GameThreshold{}\%$ and \GameUniformAll{}\% for uniform sampling. The mixture is the contribution-weighted sampler at layers 6--18,
 where the \emph{down} edit fails on many prompts and the remaining \emph{any} edits raise their neurons'
 contributions; at layer~23, where \emph{down} succeeds for 39 of the 40 prompts, contribution weighting sees
 nothing and the mixture leans on zero-first. The means are over the prompts with an in-range edit at that cap

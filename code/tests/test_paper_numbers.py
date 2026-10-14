@@ -1,192 +1,521 @@
-"""Plan 2 F6 part 11 (H3): ``experiments/5_comparison/sp2027_numbers.py`` parses every tier's JSON lines into the
-paper's tables and text numbers.
+"""``experiments/paper/numbers.py``: the run's records into the paper's table bodies and text numbers.
 
-* Synthetic records with the fields each script writes (perf.py, v1_bytes.py, reexec.py, serve_ab.py, gen_bench.py,
-  setup_timing.py, h2d_bandwidth.py, ppl_llama.py), in job logs named as sp2027.sh names them: each lands in its
-  tier and kind, the tables fill, the abstract's N is the floor of the smaller Kpre ratio against the strongest
-  exact baseline, a failed record is reported, and a dry-run listing gives the job coverage.
-* The stored records (``--stored``): tab:eval-llm's base columns and tab:eval-compare's "ours" columns regenerate
-  exactly the numbers the paper prints, and the "new" columns read from the same runs equal the base ones.
+* Synthetic records of every kind, with the fields each script writes, in job logs named as ``run.sh`` names them
+  (plus the attack tier's stored documents and a synthetic aggregated benchmark table): each record lands in its
+  tier and kind, and each builder fills its cells from the right records only -- a real-weight generation record
+  never fills a random-weight cell, a baseline-verifier or GPU-verifier V1 record never fills the optimised CPU
+  column, an alpha-0.55 quality cell never fills the certified row, and the abstract's N is the 2,048-token ratio.
+* ``--strict`` fails on a missing cell, a failed check or an unparsable line gives exit status 1, and a dry-run
+  listing gives the job coverage.
+* The paper's wiring: the generated files and ``paper_sp2027/fallback/`` have the same names and macro sets, every
+  macro the paper uses is defined, and the stored attack documents regenerate the fallback's ``tab:inrange`` and its
+  text numbers.
 """
 from __future__ import annotations
 
-import importlib.util
+import csv
 import json
-import sys
+import re
+import shutil
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-pytestmark = pytest.mark.filterwarnings("ignore:.enablePackrat. deprecated")   # matplotlib's own pyparsing call
+from experiments.paper import bench as B
+from experiments.paper import format as F
+from experiments.paper import macros as M
+from experiments.paper import numbers as N
+from experiments.paper import records as R
+from experiments.paper import tables as T
+
 CODE = Path(__file__).resolve().parents[1]
-SCRIPT = CODE / "experiments" / "5_comparison" / "sp2027_numbers.py"
+PAPER = CODE.parent / "paper_sp2027"
+RESULTS = CODE / "artifacts" / "results"
+ENV = {"gpu": "NVIDIA L40S", "cpu": "AMD EPYC 9334 32-Core Processor", "git": "abc1234", "argv": []}
 
 
-def _mod():
-    spec = importlib.util.spec_from_file_location("sp2027_numbers", SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["sp2027_numbers"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+# ------------------------------------------------------------------------------------------------ the records
+def _env(argv=()):
+    return dict(ENV, argv=list(argv))
 
 
-sn = _mod()
+def perf(model, seq, mode, verify, proof, *, label="cpuv", layers=None, vdev="cpu", real=None, accepted=5,
+         prove=1.0, timings=None, claims=None, tampers=None, stream=False):
+    """A ``costs/perf.py`` record."""
+    return {"label": label, "git": "abc1234", "model": model, "real": real, "seq": seq, "layers": layers, "mode": mode,
+            "policy": "cnn18c" if mode == "C" else None, "wire": True, "lean": True, "lam": 128, "rate": 4,
+            "prune_last": True, "lookups": mode != "C", "device": "cuda", "verifier_device": vdev, "stream": stream,
+            "threads": 8, "accepted": accepted, "queries": 5, "fs": True, "prove_s": prove, "verify_s": verify,
+            "prove_s_range": [prove, prove], "verify_s_range": [verify, verify], "proof_bytes": proof,
+            "timings": timings or {"verify_derive": verify}, "bytes": {"claims": claims or proof},
+            **({"tampers": tampers} if tampers is not None else {}),
+            "peak": {"host_peak_rss": 5e10}, "env": _env()}
 
 
-def _perf(model, seq, mode, verify, proof, fs=True, vdev="cpu", layers=None, label="cpuv", accepted=5):
-    return {"label": label, "model": model, "seq": seq, "layers": layers, "mode": mode, "fs": fs,
-            "verifier_device": vdev, "prove_s": 1.0, "verify_s": verify, "prove_s_range": [0.9, 1.1],
-            "verify_s_range": [verify * 0.95, verify * 1.05], "proof_bytes": proof, "timings": {"verify_derive": verify},
-            "bytes": {"claims": proof}, "accepted": accepted, "queries": 5,
-            "peak": {"host_peak_rss": 5e10, "gpu_peak_memory": 2e10}}
+def reexec(model, seq, variant, full, *, device="cpu", n_layers=32, blocks=None):
+    """A ``reexec/reexec.py`` record; ``blocks``: measured seconds by block count (default 2 and the full model)."""
+    ms = blocks or {"2": full / 16, str(n_layers): full}
+    return {"git": "abc1234", "model": model, "seq": seq, "variant": variant, "dtype": "fp32", "device": device,
+            "threads": 8, "reps": 5, "prune_last": True, "measured_s": ms,
+            "range_s": {k: [v, v] for k, v in ms.items()}, "per_block_s": full / n_layers, "fixed_s": 0.0,
+            "n_layers": n_layers, "full_s": full, "env": _env()}
 
 
-def _reexec(model, seq, variant, full, device="cpu", n_layers=32):
-    return {"model": model, "seq": seq, "variant": variant, "device": device, "n_layers": n_layers,
-            "measured_s": {"2": full / 16, str(n_layers): full}, "range_s": {str(n_layers): [full, full * 1.02]},
-            "full_s": full, "peak": {"host_peak_rss": 3e10}}
+def v1(model, seq, mode, layers, v0_total, v1_total, *, label="", real=None, argv=(), v0=(1.0, 5.0),
+       opt=(4.0, 9.0), base=(4.0, 15.0), gkr=3.0):
+    """A ``v1/v1_bytes.py --full --reps`` record (``timed.v1_paths`` by verifier)."""
+    q = lambda p, v, t=None: {"accepted": 3, "timings": t or {}, "prove_s": p, "verify_s": v,    # noqa: E731
+                              "prove_s_range": [p, p], "verify_s_range": [v, v], "fs_s": 0.1}
+    return {"label": label, "git": "abc1234", "model": model, "real": real, "layers": layers, "seq": seq,
+            "prune_last": True, "lmax": 27, "env": _env(argv), "mode": mode, "fs": True, "v1_verifier": "optimised",
+            "v0_accepted": True, "v0_bytes": {"claims": 0.9 * v0_total}, "v1_bytes": {"claims": 0.4 * v0_total,
+                                                                                    "cut_exc": 1.8e6},
+            "v0_total": v0_total, "v1_total": v1_total, "ratio": v0_total / v1_total, "n_leaves": 2_714_763_264,
+            "n_instances": 156, "table": 553_917, "n_exceptions": 224_670,
+            "timed": {"queries": 3, "v0": q(*v0), "v1": q(*opt, {"prove_gkr": gkr}),
+                      "v1_paths": {"optimised": q(*opt, {"prove_gkr": gkr}), "baseline": q(*base, {"prove_gkr": gkr})},
+                      "v1_path": "optimised"},
+            "accounting": {}, "accounting_ok": True, "peak": {}}
 
 
-def _v1(model, seq, mode, layers, v0, v1, timed=True):
-    q = lambda p, v: {"prove_s": p, "verify_s": v, "fs_s": 0.1, "prove_s_range": [p, p], "verify_s_range": [v, v],
-                      "accepted": 5}      # noqa: E731
-    rec = {"model": model, "seq": seq, "mode": mode, "layers": layers, "v0_total": v0, "v1_total": v1,
-           "v0_accepted": True, "accounting_ok": True, "real": None, "peak": {}}
-    if timed:
-        rec["timed"] = {"queries": 5, "v0": q(5.0, 19.0), "v1": q(30.0, 40.0),
-                        "v1_paths": {"0": q(30.0, 70.0), "1": q(30.0, 40.0)}, "v1_path": "1"}
-    return rec
+def serve(model, seq, batch, mode, how, prove, u1, u2, *, mb=4.25):
+    """A ``deployment/serve_ab.py`` prove line."""
+    return {"label": "serve", "model": model, "layers": None, "n_layers": 24, "seq": seq, "batch": batch,
+            "row": "prove", "mode": mode, "batch_proof": how, "u1_s": {"median": u1, "ci95": [u1, u1]},
+            "u2_s": {"fp16": {"median": u2, "ci95": [u2, u2]}}, "prove_s": {"median": prove, "ci95": [prove, prove]},
+            "prover_over_u1": {"ratio": prove / u1, "ci95": [0, 0]},
+            "prover_over_u2": {"fp16": {"ratio": prove / u2, "ci95": [0, 0]}},
+            "u1_over_u2": {"fp16": {"ratio": u1 / u2, "ci95": [0, 0]}}, "proof_mb_per_token": mb, "ok": True,
+            "env": _env()}
 
 
-def _write(folder: Path, name: str, records: list[dict], extra: str = "") -> None:
+def gen(model, mode, decode, g, prove, *, real=None, label="gen"):
+    """A ``generation/gen_bench.py`` record."""
+    return {"kind": "gen", "label": label, "model": model, "layers": None, "n_layers": 32, "prompt": 512, "gen": g,
+            "decode": decode, "mode": mode, "real": real, "fs": True, "verifier_device": "cpu", "queries": 3,
+            "accepted": 4, "prove_s": prove, "prove_s_range": [prove, prove], "verify_s": 2 * prove,
+            "verify_s_range": [2 * prove, 2 * prove], "proof_bytes": 1e9, "proof_mb_per_token": 1e3 / g,
+            "tampers": {"wrong_token": {"rejected": True, "label": "token", "expected": ["token"]}}, "ok": True,
+            "env": _env()}
+
+
+def ppl(model, cell, ppl_, ratio, *, split="test", calibration="train", seq=2048, draw=0, mass=0.975, top1=0.9,
+        ci=(1.0, 1.1), alpha=None):
+    """A ``quality/ppl_opt.py`` record (``cell`` ``fp32``: the reference)."""
+    head = {"model": model, "tag": "", "seq": seq, "windows": 140, "tokens": 286_580, "split": split,
+            "calibration": calibration, "calib_windows": 4, "env": _env()}
+    if cell == "fp32":
+        return dict(head, cell="fp32", ppl=ppl_, nll=[1.0])
+    return dict(head, cell=cell, graph=cell.split("-")[0], alpha=alpha, pbits=int(cell[-2:].strip("p")), draw=draw,
+                ppl=ppl_, fp32=ppl_ / ratio, ratio=ratio, ratio_ci95=list(ci), top1=top1, mass_min=mass, nll=[1.0])
+
+
+def zeroshot(model, task, variant, acc, *, diff=None, recipe="certified"):
+    """A ``quality/zeroshot.py`` stdout line (without the per-document lists)."""
+    row = {"model": model, "tag": "", "env": _env(), "task": task, "variant": variant, "acc": acc}
+    if variant == "int":
+        row.update(recipe=recipe, diff_acc=diff, diff_acc_ci95=[diff - 0.01, diff + 0.01], same_pick=0.9)
+    return row
+
+
+def _write(folder: Path, name: str, records, extra: str = "") -> None:
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / name).write_text("host n-1 git abc\n" + extra + "".join(json.dumps(r) + "\n" for r in records),
+    (folder / name).write_text("host n-1 git abc1234\n" + extra + "".join(json.dumps(r) + "\n" for r in records),
                                encoding="utf-8")
 
 
-def _logs(tmp_path: Path) -> Path:
-    logs = tmp_path / "logs"
-    _write(logs, "sp-c-llama2-7b-64-101.out", [_perf("llama2-7b", 64, "Kpre", 1.4, 196e6),
-                                               _perf("llama2-7b", 64, "C", 1.9, 383e6)])
-    _write(logs, "sp-c-llama2-7b-2048-102.out", [_perf("llama2-7b", 2048, "Kpre", 19.6, 6.43e9),
-                                                 _perf("llama2-7b", 2048, "C", 25.0, 6.6e9)])
-    _write(logs, "sp-c-rx-llama2-7b-103.out", [_reexec("llama2-7b", s, v, f) for s, v, f in (
+# ------------------------------------------------------------------------------------------------ the run
+def _bench(root: Path, platform: str = "test") -> None:
+    """A synthetic ``tables_<platform>/`` and ``raw_<platform>/`` (one finished cell)."""
+    t = root / f"tables_{platform}"
+    t.mkdir(parents=True)
+    head = ["model", "seq", "mode", "challenges", "lam", "metric", "threads", "rate", "variant", "device", "prover_hw",
+            "verifier_hw", "n_layers_full", "params_full", "value", "provenance", "batch"]
+    rows = []
+    for m, seq, mode, ch, variant, scale in (
+            ("llama2-7b", 64, "C", "fs", "_wire_prune_polcnn18c", 1.0),
+            ("llama2-7b", 64, "C", "fs", "_wire_gpuv_stream_prune_polcnn18c", 0.4),
+            ("llama2-7b", 64, "Kpre", "fs", "_wire_prune_lookups", 0.7),
+            ("llama2-7b", 64, "C", "int", "_wire_prune_polcnn18c", 0.9)):          # interactive: not tab:eval-llm's
+        hw = "AMD EPYC 9334 32-Core Processor x8 threads"
+        for metric, v in (("prove_forward", 1.5 * scale), ("fs_hash", 0.1), ("verify_products", scale),
+                          ("bytes_total", 3.25e8 * scale)):
+            rows.append([m, seq, mode, ch, 128, metric, 8, 4, variant, "cuda", "NVIDIA L40S", hw, 32, 6738149376, v,
+                         "measured", ""])
+    with open(t / "llm_full_model.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(head)
+        w.writerows(rows)
+    with open(t / "measured_summary.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["suite", "model", "cell", "metric", "batch", "attack", "lam", "stage", "k", "n", "median", "mean",
+                    "prover_hw", "verifier_hw"])
+        cell = "defence_C_fs_lam128_rate4_wire_polcnn18c"
+        for metric, v in (("prove_forward", 0.004), ("fs_hash", 0.001), ("verify_products", 0.002),
+                          ("bytes_total", 63_300)):
+            w.writerow(["cnn", "lenet5", cell, metric, "", "", "", "", "", 3, v, v, "NVIDIA L40S", "AMD EPYC 9334 "
+                        "32-Core Processor x8 threads"])
+        w.writerow(["cnn", "lenet5", "facts_wire", "n_params", "", "", "", "", "", 1, 61_706, 61_706, "", ""])
+    raw = root / f"raw_{platform}" / "cnn" / "lenet5"
+    raw.mkdir(parents=True)
+    cell = "defence_C_fs_lam128_rate4_wire_polcnn18c"
+    recs = [{"metric": "env"}] + [{"cell": cell, "metric": "accepted", "value": 1} for _ in range(3)]
+    (raw / f"{cell}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+    (raw / f"{cell}.done").write_text("", encoding="utf-8")
+    tam = "tamper_C_fs_lam128_wire_polcnn18c"
+    recs = [{"metric": "env"}, {"cell": tam, "metric": "rejected", "value": 1, "attack": "single_value",
+                                "stage": "freivalds", "config": {}}]
+    (raw / f"{tam}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs), encoding="utf-8")
+    (raw / f"{tam}.done").write_text("", encoding="utf-8")
+
+
+def _logs(tmp: Path) -> Path:
+    logs = tmp / "logs"
+    m = "llama2-7b"
+    _write(logs, "sp-smoke-1.out", [v1("gpt2", 64, "C", 2, 1e6, 8e5, argv=["--layers", "2"]),
+                                    {"kind": "h2d", "label": "smoke", "gpu": "NVIDIA L40S", "bytes": 1 << 28,
+                                     "direction": "h2d", "memory": "pinned", "s": 0.01, "gb_s": 25.0, "env": _env()}],
+           extra="4 passed\nint8 GEMMs exact on this GPU: True\n")
+    (logs / "sp-smoke-1.out").write_text((logs / "sp-smoke-1.out").read_text(encoding="utf-8") + "SMOKE OK\n",
+                                         encoding="utf-8")
+    _write(logs, "sp-c-llama2-7b-64-2.out", [perf(m, 64, "Kpre", 1.4, 1.96e8), perf(m, 64, "C", 1.9, 3.25e8)])
+    _write(logs, "sp-c-llama2-7b-2048-3.out", [perf(m, 2048, "Kpre", 19.6, 6.43e9), perf(m, 2048, "C", 25.0, 6.6e9)])
+    _write(logs, "sp-c-rx-llama2-7b-4.out", [reexec(m, s, v, t) for s, v, t in (
         (64, "int", 7.26), (64, "int_fp32gemm", 4.08), (64, "float", 4.53), (64, "bf16", 19.5), (64, "dynint8", 1.91),
         (2048, "int", 179.4), (2048, "int_fp32gemm", 141.6), (2048, "float", 93.2), (2048, "bf16", 306.5),
         (2048, "dynint8", 56.0))])
-    _write(logs, "sp-c-v1-llama2-7b-2048-104.out", [_v1("llama2-7b", 2048, "Kpre", 32, 6.43e9, 2.9e9)])
-    _write(logs, "sp-v1-llama7-2048-105.out", [_v1("llama2-7b", 2048, "C", 32, 6.6e9, 3.1e9)])
-    _write(logs, "sp-g-rx-llama2-7b-106.out", [_reexec("llama2-7b", 2048, "int", 1.1, "cuda"),
-                                               _reexec("llama2-7b", 2048, "float", 0.5, "cuda")])
-    _write(logs, "sp-serve-llama7-107.out", [{
-        "row": "prove", "model": "llama2-7b", "layers": None, "n_layers": 32, "seq": 2048, "batch": 1, "mode": "Kpre",
-        "batch_proof": "single", "u1_s": {"median": 1.0, "ci95": [0.9, 1.1]},
-        "u2_s": {"fp16": {"median": 0.5, "ci95": [0.4, 0.6]}}, "prove_s": {"median": 3.0, "ci95": [2.9, 3.1]},
-        "prover_over_u1": {"ratio": 3.0, "ci95": [2.8, 3.2]}, "prover_over_u2": {"fp16": {"ratio": 6.0, "ci95": [5, 7]}},
-        "proof_mb_per_token": 3.1, "egress_cap_tokens_per_s_per_100gbps": 4000.0, "ok": True},
-        {"row": "on_request", "model": "llama2-7b", "seq": 2048, "batch": 1, "serve_s": {"median": 1.0}}])
-    _write(logs, "sp-gen-llama2-7b-108.out", [{
-        "kind": "gen", "model": "llama2-7b", "layers": None, "prompt": 512, "gen": 256, "decode": "sample",
-        "mode": "Kpre", "prove_s": 4.0, "prove_s_range": [3.9, 4.2], "verify_s": 20.0, "verify_s_range": [19, 21],
-        "proof_bytes": 8e9, "proof_mb_per_token": 31.25, "ok": True, "accepted": 4, "queries": 3,
-        "tampers": {"wrong_token": {"rejected": True, "label": "token"},
-                    "forged_logits": {"rejected": True, "label": "freivalds"}}, "peak": {}}])
-    _write(logs, "sp-setup-llama2-7b-109.out", [{
-        "kind": "setup", "model": "llama2-7b", "layers": None, "amortise": 100, "proof_bytes": 2.83e9, "commit_s": 500.0,
-        "prove_s": 120.0, "verify_s": 60.0, "query_columns_bytes_honest": 124.7e6,
-        "query_columns_bytes_untrusted": 168.5e6, "accepted": True, "peak": {}}])
-    _write(logs, "sp-g-h2d-110.out", [{"kind": "h2d", "gpu": "NVIDIA L40S", "bytes": 1 << 30, "direction": "h2d",
-                                       "memory": "pinned", "s": 0.05, "gb_s": 21.5}])
-    _write(logs, "sp-q-llama13-111.out", [
-        {"model": "meta-llama/Llama-2-13b-hf", "seq": 2048, "windows": 140, "cell": "reference", "ppl": 4.88},
-        {"model": "meta-llama/Llama-2-13b-hf", "seq": 2048, "windows": 140, "cell": "smooth", "ppl": 5.1,
-         "ratio": 5.1 / 4.88, "top1": 0.9}])
-    _write(logs, "sp-l-llama7-4096-L2-112.out", [_perf("llama2-7b", 4096, "Kpre", 4.0, 1e9, layers=2, label="long")])
-    _write(logs, "sp-l-llama7-4096-L3-113.out", [_perf("llama2-7b", 4096, "Kpre", 5.5, 1.4e9, layers=3, label="long")])
-    _write(logs, "sp-l-llama7-8192-L2-114.out", [_perf("llama2-7b", 8192, "Kpre", 12.0, 2e9, layers=2, label="long")])
-    _write(logs, "sp-l-llama7-8192-L3-115.out", [_perf("llama2-7b", 8192, "Kpre", 17.0, 2.8e9, layers=3, label="long")])
+    _write(logs, "sp-c-v1-llama2-7b-2048-5.out", [v1(m, 2048, "Kpre", 32, 6.43e9, 2.8e9, label="cpuv-v1",
+                                                     v0=(1.0, 19.5), opt=(30.0, 45.3), base=(30.0, 70.0))])
+    _write(logs, "sp-v1-opt125-2048-6.out", [v1("opt-125m", 2048, "C", 12, 3.496e8, 1.723e8, v0=(0.4, 2.86),
+                                               opt=(4.75, 4.76), gkr=3.58),
+                                             v1("opt-125m", 2048, "Kpre", 12, 3.439e8, 1.667e8)])
+    _write(logs, "sp-v1-llama7-2048-7.out", [v1(m, 2048, "C", 32, 6.63e9, 2.97e9), v1(m, 2048, "Kpre", 32, 6.43e9,
+                                                                                         2.8e9)])
+    # the GPU verifier's V1 cell of the gpuv tier: never a tab:eval-v1 or tab:options cell
+    _write(logs, "sp-g-v1-llama2-7b-8.out", [v1(m, 2048, "Kpre", 32, 6.43e9, 1.0e9, label="gpuv-v1",
+                                                argv=["--verifier-device", "cuda"], opt=(1.0, 1.0))])
+    _write(logs, "sp-g-v0-opt-1.3b-Kpre-9.out", [perf("opt-1.3b", 2048, "Kpre", 1.1, 2e9, vdev="cuda", label="gpuv",
+                                                      stream=True)])
+    _write(logs, "sp-g-rx-llama2-7b-10.out", [reexec(m, 64, "int", 0.15, device="cuda"),
+                                              reexec(m, 64, "float", 0.034, device="cuda"),
+                                              reexec(m, 2048, "int", 1.65, device="cuda"),
+                                              reexec(m, 2048, "float", 0.64, device="cuda")])
+    _write(logs, "sp-serve-opt13-11.out", [serve("opt-1.3b", 2048, 1, "Kpre", "seq", 2.1, 0.51, 0.11),
+                                           serve("opt-1.3b", 2048, 1, "C", "seq", 4.4, 0.51, 0.11),
+                                           serve("opt-1.3b", 64, 64, "Kpre", "joint", 3.4, 0.71, 0.19),
+                                           {"row": "on_request", "model": "opt-1.3b", "seq": 2048, "batch": 1,
+                                            "serve_s": {"median": 0.5}, "env": _env()}])
+    _write(logs, "sp-gen-llama2-7b-12.out", [gen(m, mode, d, g, 2.0 if mode == "C" else 1.0)
+                                             for mode in ("C", "Kpre") for d in ("greedy", "sample") for g in (64, 256)])
+    # the real Llama-2-7B's generation (the real tier): never a cell of tab:gen
+    _write(logs, "sp-r-llama7-gen-13.out", [gen(m, "C", "greedy", 64, 99.0, real="meta-llama/Llama-2-7b-hf",
+                                                label="real")])
+    _write(logs, "sp-r-opt13-v1-Kpre-64-14.out", [v1("opt-1.3b", 64, "Kpre", 24, 5.01e7, 3.91e7, label="real",
+                                                     real="facebook/opt-1.3b", v0=(0.20, 0.51))])
+    _write(logs, "sp-r-opt13rnd-v1-Kpre-64-15.out", [v1("opt-1.3b", 64, "Kpre", 24, 6.04e7, 3.97e7,
+                                                        label="real-random", v0=(0.22, 0.54))])
+    _write(logs, "sp-setup-llama2-7b-16.out", [{
+        "kind": "setup", "label": "setup", "model": m, "layers": None, "amortise": 100, "proof_bytes": 2.38e9,
+        "commit_s": 500.0, "prove_s": 120.0, "verify_s": 60.0, "query_columns_bytes_honest": 6.56e7,
+        "query_columns_bytes_untrusted": 1.135e8, "accepted": True, "env": _env()}])
+    _write(logs, "sp-i-open-llama2-7b-17.out", [
+        {"git": "a", "model": m, "layers": n, "seq": 64, "variant": v, "queries": 6, "accepted": 6, "identical": True,
+         "prove_s": t, "open_fold_s": t / 2, "timings": {}, "env": _env()}
+        for n, v, t in ((1, "float64", 0.277), (1, "int8", 0.064), (4, "float64", 0.653), (4, "int8", 0.175))])
+    _write(logs, "sp-i-cpuv-llama2-7b-18.out", [perf(m, 2048, "Kpre", 3.37, 1e9, layers=2, label="cpuv-before"),
+                                                perf(m, 2048, "Kpre", 0.74, 1e9, layers=2, label="cpuv-after")])
+    _write(logs, "sp-i-fold-llama2-7b-19.out", [
+        {"git": "a", "model": m, "layers": 32, "device": "cpu", "path": p, "fs": True, "reps": 7, "precompute_s": t,
+         "equal_to_float64": True, "env": _env()} for p, t in (("float64", 107.0), ("default", 12.7))])
+    _write(logs, "sp-i-gkr-20.out", [{"n": 25, "leaves": 1 << 25, "T": 2048, "s": 0.52, "ns_per_leaf": 15.6,
+                                      "env": _env()}])
+    for q, job, gain, ref, scalar, cert in (("facebook/opt-125m", "opt125-21", 4, 27.66, 1.166, 1.076),
+                                            ("facebook/opt-1.3b", "opt13-29", 3, 14.62, 1.096, 1.026),
+                                            ("facebook/opt-6.7b", "opt67-30", 2, 10.86, 1.696, 1.008)):
+        _write(logs, f"sp-q-{job}.out", [
+            ppl(q, "fp32", ref, 1.0), ppl(q, f"scalar-g{gain}-p11", ref * scalar, scalar),
+            ppl(q, f"scalar-g{gain}-p8", ref * scalar * 1.2, scalar * 1.2, mass=0.56 if gain == 4 else 0.7),
+            ppl(q, "smooth-certified-a0.6-p11", ref * cert, cert, ci=(cert - 0.003, cert + 0.003)),
+            ppl(q, "smooth-certified-a0.6-p8", ref * cert * 1.02, cert * 1.02, mass=0.6),
+            # an alpha-0.55 cell (the legacy recipe's): never the certified row
+            ppl(q, "smooth-legacy-a0.55-p11", ref * 1.956, 1.956, alpha=0.55)])
+    _write(logs, "sp-q-zeroshot-opt-125m-22.out", [
+        zeroshot("facebook/opt-125m", t, v, 0.379 if t == "lambada_openai" else 0.4, diff=-0.031 if t == "lambada_openai" else -0.005)
+        for t, _ in T.ZEROSHOT for v in ("ref", "int")])
+    _write(logs, "sp-q-openllama7-23.out", [
+        {"model": "openlm-research/open_llama_7b_v2", "config": "llama2-7b", "seq": 2048, "windows": 160,
+         "cell": "reference", "ppl": 6.0, "env": _env()},
+        {"model": "openlm-research/open_llama_7b_v2", "config": "llama2-7b", "seq": 2048, "windows": 160,
+         "cell": "main-a0.55-glus0.2", "graph": "main", "alpha": 0.55, "glu_smooth": 0.2, "draw": 0, "ppl": 6.44,
+         "ratio": 1.073, "ratio_ci95": [1.07, 1.08], "top1": 0.9, "env": _env()}])
+    _write(logs, "sp-l-llama7-4096-L2-24.out", [perf(m, 4096, "Kpre", 4.0, 1e9, layers=2, label="long")])
+    _write(logs, "sp-l-llama7-4096-L3-25.out", [perf(m, 4096, "Kpre", 5.4, 1.4e9, layers=3, label="long")])
+    _write(logs, "sp-l-rx-llama7-4096-26.out", [reexec(m, 4096, v, t, blocks={"2": t / 16, "3": t * 3 / 32})
+                                                for v, t in (("float", 188.5), ("int", 250.0))])
+    _write(logs, "sp-b-c-lenet5-27.out", [{"pvi_path": "/x", "torch_threads": 8, "cpu": ENV["cpu"]}],
+           extra="done in 12s\n")
+    _write(logs, "sp-a-bound-28.out", [{"model": "llama2-7b", "params": 6738149376, "seq": 64, "lam": 40,
+                                        "anchuri_width": 11008, "anchuri_paths": 305193,
+                                        "anchuri_open_all_bytes": 13678673920}])
+    att = logs / "attack"
+    att.mkdir()
+    for name in ("attack.json", "defence.json", "floor_sampler.json", "adaptive_game_mlp_mnist.json",
+                 "real_llm_attack.json", "real_llm_attack_auto.json", "reproduction.json",
+                 "inrange_llm_opt-1.3b_any.json", "inrange_llm_opt-1.3b_down.json", "inrange_llm_opt-6.7b_any.json",
+                 "inrange_llm_opt-6.7b_down.json"):
+        shutil.copy(RESULTS / name, att / name)
+    shutil.copy(CODE / "artifacts" / "comparison" / "tables" / "analytic.csv", att / "analytic.csv")
+    shutil.copy(RESULTS / "sampler_tv_opt-1.3b.json", logs / "sampler_tv_opt-1.3b.json")
     return logs
 
 
-def test_every_record_lands_in_its_tier_and_kind(tmp_path):
+def _args(tmp: Path, logs: Path, *extra) -> list[str]:
+    return ["--logs", str(logs), "--platform", "test", "--bench", str(tmp), "--out", str(tmp / "out"),
+            "--figures", "", "--no-byte-model", *extra]
+
+
+@pytest.fixture
+def run_dir(tmp_path):
+    _bench(tmp_path)
+    return tmp_path, _logs(tmp_path)
+
+
+def _ctx(tmp: Path, logs: Path):
     problems = []
-    recs = sn.read_logs(sn.log_files(_logs(tmp_path)), problems)
+    run = R.Run(R.read_logs(logs, problems), R.read_files(logs, problems))
+    ctx = T.Ctx(run, B.Bench(tmp / "tables_test"), B.literature(), "cnn18c", "test platform", byte_model=False)
+    return ctx, problems
+
+
+# ------------------------------------------------------------------------------------------------ reading
+def test_every_record_lands_in_its_tier_and_kind(run_dir):
+    tmp, logs = run_dir
+    problems = []
+    recs = R.read_logs(logs, problems)
     assert not problems
     got = {(r.tier, r.kind) for r in recs}
-    assert got == {("cpuv", "perf"), ("cpuv", "reexec"), ("cpuv", "v1"), ("v1", "v1"), ("gpuv", "reexec"),
-                   ("serve", "serve"), ("gen", "gen"), ("setup", "setup"), ("gpuv", "h2d"), ("quality", "ppl"),
-                   ("long", "perf")}
-    assert not [m for r in recs for m in sn.checks(r)]
+    assert {("smoke", "v1"), ("smoke", "h2d"), ("cpuv", "perf"), ("cpuv", "reexec"), ("cpuv", "v1"), ("v1", "v1"),
+            ("gpuv", "v1"), ("gpuv", "perf"), ("gpuv", "reexec"), ("serve", "serve"), ("gen", "gen"), ("real", "gen"),
+            ("real", "v1"), ("setup", "setup"), ("improve", "open_ab"), ("improve", "perf"), ("improve", "fold_ab"),
+            ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("long", "perf"), ("long", "reexec"),
+            ("bench", "bench_env"), ("attack", "path_bound")} <= got
+    assert not [m for r in recs for m in R.checks(r)] and not R.log_checks(logs)
+    files = R.read_files(logs, problems)
+    assert {r.kind for r in files} >= {"attack_mnist", "inrange", "tv", "path_bound"} and not problems
+    assert R.verifier_device(v1("x", 1, "C", 1, 1, 1, argv=["--verifier-device", "cuda:0"])) == "cuda"
 
 
-def test_the_tables_and_the_abstracts_n(tmp_path):
-    recs = sn.read_logs(sn.log_files(_logs(tmp_path)), [])
-    macros = {}
-    opts = sn.tab_options(recs, macros)
-    # the strongest exact baseline is int_fp32gemm at 64 tokens (4.08 s) and fp32 at 2,048 (93.2 s); dynint8 is
-    # faster but not exact
-    cells = {(c["row"], c["column"]): c["value"] for c in opts.cells}
-    assert cells["Llama-2-7B (64)", "strongest exact re-execution (CPU)"] == 4.08
-    assert cells["Llama-2-7B (2048)", "strongest exact re-execution (CPU)"] == 93.2
-    assert cells["Llama-2-7B (2048)", "int8 re-execution (GPU)"] == 1.1
-    assert macros["CpuRatioN"] == "2"                       # floor(min(4.08 / 1.4, 93.2 / 19.6)) = floor(2.91)
-    assert cells["Llama-2-7B (2048)", "V1 / v0 CPU verifier"] == pytest.approx(40.1 / 19.1)
-    v1 = sn.tab_eval_v1(recs, macros)
-    assert len(v1.rows) == 2 and not v1.missing
-    assert any(k.startswith("Crossover") for k in macros)
-    reexec = sn.tab_eval_reexec(recs)
-    assert any("0.50" in r or "0.5 " in r for r in reexec.rows if r.startswith("Llama-2-7B"))
-    serve = sn.tab_serve(recs, macros)
-    assert len(serve.rows) == 1 and macros["ServeLlamaTwoSevenBTwoZeroFourEightKpreOverUOne"] == "3.0"
-    gen = sn.tab_gen(recs, macros)
-    assert "wrong_token: token" in gen.rows[0] and "forged_logits: freivalds" in gen.rows[0]
-    setup = sn.tab_setup(recs, macros)
-    assert "2.8\\,GB" in setup.rows[0] and macros["SetupLlamaTwoSevenBAOneZeroZeroProver"] == "2.0\\,min"
-    long = sn.tab_long(recs, macros)
-    assert len(long.rows) == 2 and float(macros["LongFitMaxResidual"]) < 1e-9     # two points: an exact fit
-    assert sn.tab_h2d(recs, macros).rows and macros["HtoDPinnedGBs"] == "21.5"
-    quality = sn.tab_quality(recs)
-    assert quality.rows and "1.045" in quality.rows[0]
-    memory = sn.tab_memory(recs)
-    assert memory.filled > 0
-    spread = sn.tab_spread(recs)
-    assert any("[" in r for r in spread.rows)
+def test_the_formats():
+    assert F.t(0.0761) == r"76.1\,ms" and F.t(0.712) == r"712\,ms" and F.t(27.4) == r"27.4\,s"
+    assert F.t(174.0) == r"2.9\,min" and F.b(6.6e9) == r"6.6\,GB" and F.b(3.25e8) == r"325\,MB"
+    assert F.sig(93.2) == "93.2" and F.sig(0.15) == "0.15" and F.sig(1722.4, 4) == "1{,}722"
+    assert F.about(31_910) == "32{,}000" and F.about(305_193, 3) == "305{,}000"
+    assert F.signed(-0.0004 * 100, 1) == "$-0.04$" and F.signed(0.06, 2) == "$+0.06$"
+    assert F.sci(7.93e-4) == r"$7.9\cdot10^{-4}$" and F.rng(2.03, 2.29, lambda v: f"{v:.1f}") == "2.0--2.3"
+    assert F.factor(88.3, 0.02)[0] == r"4{,}415$\times\downarrow$" and F.factor(1, 2)[0] == r"2.0$\times\uparrow$"
+    assert F.macro_name("Crossover", "gpt2", 512, "Kpre") == "CrossoverGptTwoFiveOneTwoKpre"
+    assert F.params(6.738e9) == "6.7B" and F.tokens(2048) == "2{,}048"
 
 
-def test_a_failed_record_is_reported(tmp_path):
-    logs = tmp_path / "logs"
-    _write(logs, "sp-c-llama2-7b-64-201.out", [_perf("llama2-7b", 64, "Kpre", 1.4, 196e6, accepted=4)])
-    bad = dict(_v1("opt-1.3b", 2048, "C", 24, 2e9, 1e9), accounting_ok=False)
-    _write(logs, "sp-v1-opt13-2048-202.out", [bad], extra="{not json\n")
-    problems = []
-    recs = sn.read_logs(sn.log_files(logs), problems)
-    assert any(p.startswith("PARSE") for p in problems)
-    failed = [m for r in recs for m in sn.checks(r)]
-    assert "accepted 4 of 5" in failed and "accounting_ok false" in failed
+# ------------------------------------------------------------------------------------------------ selection
+def test_each_cell_comes_from_its_own_records(run_dir):
+    tmp, logs = run_dir
+    ctx, problems = _ctx(tmp, logs)
+    tables = {t.name: t for t in T.build_all(ctx, problems)}
+    assert not problems
+    cells = lambda name: {(c["row"], c["column"]): c for c in tables[name].cells}    # noqa: E731
+    # tab:gen: the random-weight greedy cell, never the real Llama-2-7B's (99 s)
+    g = cells("tab_gen")
+    assert g["Llama-2-7B G=64 C", "P"]["value"] == 2.0 and "sp-gen-" in g["Llama-2-7B G=64 C", "P"]["source"]
+    assert all(c["value"] != 99.0 for c in tables["tab_gen_full"].cells)
+    # tab:options: V1's optimised CPU verifier (45.3 + 0.1 s), never the baseline (70) or the GPU verifier's cell
+    o = cells("tab_options")
+    assert o["with V1", "time 2048"]["value"] == pytest.approx(45.4)
+    assert o["with V1", "bytes 2048"]["value"] == 2.8e9 and "sp-c-v1-" in o["with V1", "time 2048"]["source"]
+    assert o["Re-exec. CPU", "2048"]["value"] == 93.2 and o["Re-exec. CPU", "64"]["value"] == 4.08
+    assert o["Re-exec. GPU", "2048"]["value"] == 1.65
+    # tab:eval-v1: the v1 tier's CPU-verifier record (1.0e9 is the GPU verifier's V1 bytes)
+    v = cells("tab_eval_v1")
+    assert v["Llama-2-7B T=2048 Kpre", "V1 MB"]["value"] == 2.8e9
+    assert v["OPT-125M T=2048 C", "V1 verifier"]["value"] == pytest.approx(4.86)
+    assert not any(c["value"] == 1.0e9 for c in tables["tab_eval_v1"].cells)
+    # tab:quality: the certified cell (x1.076), never the alpha-0.55 one (x1.956)
+    q = cells("tab_quality")
+    assert q["OPT-125M", "certified ratio"]["value"] == 1.076 and q["OPT-125M", "scalar gain"]["value"] == 1.166
+    assert not any(c["value"] == 1.956 for c in tables["tab_quality"].cells)
+    assert tables["tab_quality"].rows[0] == r"OPT-125M & 27.66 & $\times$1.166 & 29.76 ($\times$1.076) & 0.90 \\"
+    # tab:eval-llm: the Fiat-Shamir cells of the plan (the interactive cell, 0.9x, is tab:eval-compare's)
+    e = cells("tab_eval_llm")
+    assert e["Llama-2-7B (64)", "C prove"]["value"] == pytest.approx(1.6)
+    assert e["Llama-2-7B (64)", "C GPU verify"]["value"] == pytest.approx(0.5)
+    assert e["Llama-2-7B (64)", "Kpre proof"]["value"] == pytest.approx(0.7 * 3.25e8)
+    # tab:eval-real: v0's timed queries of the V1 records, real against the random twin
+    r = cells("tab_eval_real")
+    assert r["Kpre T=64", "prove real"]["value"] == pytest.approx(0.30)
+    assert r["Kpre T=64", "v0_total random"]["value"] == 6.04e7
+    # tab:eval-improve: before / after of the same row
+    i = cells("tab_eval_improve")
+    assert i["open Llama-2-7B 1/32", "gain"]["value"] == pytest.approx(0.277 / 0.064)
+    assert i["cpuv Llama-2-7B 2/32", "gain"]["value"] == pytest.approx(3.37 / 0.74)
 
 
-def test_job_coverage_from_a_dry_run_listing(tmp_path):
-    logs = _logs(tmp_path)
-    (logs / "l40s_sp2027-c-gpt2-64-300.out").write_text("...\ndone in 12s\n", encoding="utf-8")
-    listing = tmp_path / "dry.txt"
-    listing.write_text("sbatch -o x -J sp-c-llama2-7b-64 --wrap \"...\"\n"
-                       "sbatch -o x -J sp-c-qwen3-4b-64 --wrap \"...\"\n"
-                       "sbatch -o x -J l40s_sp2027-c-gpt2-64 --time=20 bench.sbatch llm\n"
-                       "sbatch -o x -J l40s_sp2027-k-gpt2-64 --time=20 bench.sbatch llm\n# tier ...\n", encoding="utf-8")
-    recs = sn.read_logs(sn.log_files(logs), [])
-    names = sn.expected_jobs(listing, "l40s_sp2027")
-    assert sn.job_coverage(names, logs, recs) == ["sp-c-qwen3-4b-64", "l40s_sp2027-k-gpt2-64"]
+def test_the_text_numbers(run_dir):
+    tmp, logs = run_dir
+    ctx, problems = _ctx(tmp, logs)
+    m, _ = M.build(ctx, problems)
+    assert not problems
+    v = {k: x.value for k, x in m.items()}
+    # the abstract's N: the 2,048-token ratio of the strongest exact re-execution (fp32, 93.2 s) to the Kpre CPU
+    # verifier (19.6 s), rounded down; not the minimum over the prompt lengths (64 tokens: 4.08 / 1.4 = 2.9)
+    assert v["CpuRatioN"] == "4.7" and v["CpuRatio"] == "4.8" and v["CpuRatioShort"] == "2.9"
+    assert v["CpuReexecName"] == "fp32" and v["CpuReexecShort"] == "4.08" and v["CpuReexecIntLong"] == "142"
+    assert v["VOneVerifyLlama"] == "45.4" and v["VOneVerifyRatioLlama"] == "2.3"
+    assert v["ServeOptMKpre"] == "2.1" and v["ServeOptMOverUOneRange"] == "4.1--8.6" and v["ServeBatchKpre"] == "3.4"
+    assert v["QualityRatioOptS"] == "1.076" and v["QualityCIOptS"] == "1.073, 1.079" and v["QualityMissOptS"] == "0.016"
+    assert v["QualityMassMinEight"] == "56" and v["LlamaOpenRatio"] == "1.073" and v["ZeroshotLambadaOptS"] == "3.1"
+    assert v["GkrNsPerLeaf"] == "15.6" and v["KpreKeyLlama"] == "12.7" and v["ImproveCpuv"] == "4.6"
+    assert v["FinalNHonest"] == "3" and v["FinalNFreivalds"] == "1" and v["TodoCounts"] == ""
+    assert v["LenetProof"] == "63.3" and v["VOneRealOptMShortK"] == "1.28"
+    assert v["OptMGpuVerify"] == "1.1" and v["GpuFloatLong"] == "0.64" and v["GpuIntShort"] == "0.15"
+    # the attack's stored documents regenerate the paper's numbers
+    assert v["AttackOptLPaths"] == "454{,}248" and v["PathsLlama"] == "305{,}193" and v["InrangeKMax"] == "60"
+    assert v["InrangeDown"] == "9, 31, 38 and 39" and v["MixtureLayerOne"] == "3.1" and v["TvTopK"] == "0.0063"
+    assert v["BreakevenQueriesShort"] is None                  # the byte model is off in this test
+    assert set(m) == set(M.names())
 
 
-def test_the_stored_records_regenerate_the_papers_tables(capsys):
-    pytest.importorskip("matplotlib")
-    args = SimpleNamespace(stored=True, logs="", platform="", base="", policy="auto", challenges="int",
-                           out="", paper=str(CODE.parent / "paper_sp2027" / "sections"), expect=None, check=True,
-                           strict=False, rehearsal=False, compare_paper=True, verbose=False)
-    status = sn.build(args)
+def test_the_stored_attack_documents_regenerate_the_fallback(run_dir):
+    """The attack tier's stored documents (the records behind today's paper) give the fallback's tab:inrange body and
+    the fallback values of the text numbers they define."""
+    tmp, logs = run_dir
+    ctx, _ = _ctx(tmp, logs)
+    tb = T.tab_inrange(ctx)
+    fallback = (PAPER / "fallback" / "tab_inrange.tex").read_text(encoding="utf-8").splitlines()[1:]
+    assert [r.strip() for r in tb.rows] == [r.strip() for r in fallback]
+    m, _ = M.build(ctx, [])
+    values = dict(re.findall(r"\\newcommand\{\\(\w+)\}\{(.*)\}", (PAPER / "fallback" / "numbers.tex")
+                             .read_text(encoding="utf-8")))
+    same = ("AttackOptLSucceeded", "AttackOptLPrompts", "AttackOptLPaths", "AttackOptLBackdoorBack",
+            "AttackOptLBackdoorHacked", "PathsLlama", "PathsLlamaAbout", "WidthLlama", "OpenAllLlama", "MnistSinglePass",
+            "MnistBackdoorPass", "MnistBackdoorRuns", "MnistBackdoorPredicted", "MnistForgeryNodes", "SamplerUniform",
+            "SamplerContribution", "SamplerStatic", "SamplerSaliency", "ZeroingNeurons", "ZeroingRuns", "FloorBest",
+            "FloorVsUniform", "FloorOthers", "MixtureLayerOne", "MixtureLayerTwo", "LocatorOne", "LocatorTwo",
+            "StealthNeurons", "StealthPass", "ReproRuns", "ReproCaught", "ReproZeroTolerance", "ReproQueries",
+            "ReachTokens", "InrangeCalibTokens",
+            "InrangeChanged", "InrangeKMedian", "InrangeKMax", "InrangePMedianMax", "InrangePMax", "InrangeDown",
+            "InrangeDownKMedian", "InrangeOptLPMedianMax", "InrangeOptLKRange", "TvTopK", "TvFull", "TvModel",
+            "TvTwenty", "TvPositions")
+    assert {k: m[k].value for k in same} == {k: values[k] for k in same}
+
+
+# ------------------------------------------------------------------------------------------------ the command
+def test_the_command_writes_every_file_and_strict_fails_on_a_missing_cell(run_dir, capsys):
+    tmp, logs = run_dir
+    assert N.main(_args(tmp, logs)) == 0
+    out = tmp / "out"
+    names = {p.name for p in out.glob("*.tex")}
+    assert names == {p.name for p in (PAPER / "fallback").glob("*.tex")}
+    macro = re.compile(r"\\newcommand\{\\(\w+)\}")
+    assert set(macro.findall((out / "numbers.tex").read_text(encoding="utf-8"))) == \
+        set(macro.findall((PAPER / "fallback" / "numbers.tex").read_text(encoding="utf-8")))
+    assert "not in the run" in (out / "numbers.tex").read_text(encoding="utf-8")     # a missing number is visible
+    rows = list(csv.DictReader(open(out / "cells.csv", encoding="utf-8")))
+    assert any(r["table"] == "tab:options" and r["source"].startswith("sp-c-") for r in rows)
+    assert "tab:eval-llm" in (out / "coverage.txt").read_text(encoding="utf-8")
+    capsys.readouterr()
+    assert N.main(_args(tmp, logs, "--strict", "--check")) == 1           # most cells are missing in this run
+    assert "STRICT:" in capsys.readouterr().out
+
+
+def test_a_failed_check_or_an_unparsable_line_fails(run_dir, capsys):
+    tmp, logs = run_dir
+    _write(logs, "sp-c-qwen3-4b-64-90.out", [perf("qwen3-4b", 64, "Kpre", 0.7, 1.6e8, accepted=4)])
+    assert N.main(_args(tmp, logs, "--check")) == 1
+    assert "CHECK FAILED sp-c-qwen3-4b-64-90.out" in capsys.readouterr().out
+    (logs / "sp-c-qwen3-4b-64-90.out").unlink()
+    _write(logs, "sp-v1-gpt2-64-91.out", [], extra="{not json\n")
+    assert N.main(_args(tmp, logs, "--check")) == 1
+    assert "PARSE sp-v1-gpt2-64-91.out:2" in capsys.readouterr().out
+    (logs / "sp-v1-gpt2-64-91.out").unlink()
+    text = (logs / "sp-smoke-1.out").read_text(encoding="utf-8").replace("SMOKE OK", "")
+    (logs / "sp-smoke-1.out").write_text(text, encoding="utf-8")
+    assert N.main(_args(tmp, logs, "--check")) == 1
+    assert "did not end in SMOKE OK" in capsys.readouterr().out
+
+
+def test_job_coverage_from_a_dry_run_listing(run_dir):
+    tmp, logs = run_dir
+    listing = tmp / "dry.txt"
+    listing.write_text(
+        'sbatch -o logs/x/%x-%j.out -J sp-c-llama2-7b-64 --dependency=singleton --wrap "..."\n'
+        'sbatch -o logs/x/%x-%j.out -J sp-c-qwen3-4b-64 --dependency=singleton --wrap "..."\n'
+        'sbatch -o logs/x/%x-%j.out -J sp-b-c-lenet5 --dependency=singleton --wrap "..."\n'
+        'sbatch -o logs/x/%x-%j.out -J sp-b-k-lenet5 --dependency=singleton --wrap "..."\n'
+        'sbatch -o logs/x/%x-%j.out -J sp-a-opt67 --wrap "mkdir -p /r/logs/x/attack && python -m a --out '
+        '/r/logs/x/attack/real_llm_attack.json && python -m a --out /r/logs/x/attack/real_llm_attack_auto.json"\n'
+        'sbatch -o logs/x/%x-%j.out -J sp-a-game-opt13 --wrap "python -m g --out '
+        '/r/logs/x/attack/adaptive_game_opt-1.3b.json"\n# tier ...\n', encoding="utf-8")
+    jobs = N.expected_jobs(listing)
+    assert jobs["sp-a-opt67"] == ["real_llm_attack.json", "real_llm_attack_auto.json"]
+    recs = R.read_logs(logs, [])
+    assert N.job_coverage(jobs, logs, recs) == ["sp-c-qwen3-4b-64", "sp-b-k-lenet5", "sp-a-game-opt13"]
+
+
+def test_the_rehearsal_needs_every_tier(run_dir, capsys):
+    tmp, logs = run_dir
+    assert N.main(_args(tmp, logs, "--rehearsal", "--check")) == 1
     out = capsys.readouterr().out
-    assert status == 0, out
-    assert "tab:eval-llm against the paper: 63 base cells and proofs identical, 0 differ" in out
-    assert "tab:eval-compare (ours) against the paper: 30 cells identical, 0 differ" in out
-    assert "tab:eval-llm new columns from the same runs: 0 cells differ from the base ones" in out
+    assert "REHEARSAL: tier tv has no record" not in out          # the tv document is there
+    assert "REHEARSAL: tier batch has no record of ['bench_env']" in out
+
+
+# ------------------------------------------------------------------------------------------------ the paper
+def test_the_paper_inputs_every_table_and_defines_every_macro():
+    main = (PAPER / "main.tex").read_text(encoding="utf-8")
+    listed = re.search(r"\\@for\\pvi@name:=(.*?)\\do", main, re.S).group(1)
+    assert [n.strip() for n in listed.replace("%", "").split(",")] == ["numbers", *T.TABLE_FILES]
+    tex = "".join(p.read_text(encoding="utf-8") for p in (PAPER / "sections").glob("*.tex")) + main
+    used = set(re.findall(r"\\pvitable\{(\w+)\}", tex))
+    assert used == {"numbers", *T.TABLE_FILES}
+    defined = set(re.findall(r"\\newcommand\{\\(\w+)\}", (PAPER / "fallback" / "numbers.tex").read_text(
+        encoding="utf-8")))
+    assert defined == set(M.names())
+    macros_used = set(re.findall(r"\\([A-Z][A-Za-z]+)\{\}", tex))
+    assert macros_used - defined == set() and len(macros_used & defined) > 250
+
+
+def test_the_definition_of_the_cells():
+    d = B.definition_tagsets("cnn18c")
+    assert frozenset({"wire", "prune", "polcnn18c"}) in d[("llm", "C")]
+    assert frozenset({"wire", "batch", "prune", "lookups"}) in d[("llm", "Kpre")]
+    assert frozenset({"thr1", "wire", "prune", "lookups"}) in d[("llm", "Kpre")]
+    assert frozenset({"thr1", "prune", "lookups"}) not in d[("llm", "Kpre")]       # the uncompressed by-product
+    assert d[("cnn", "C")] == {frozenset({"wire", "polcnn18c"})} and d[("cnn", "Kpre")] == {frozenset({"wire"})}
+    bench = B.Bench(None, "cnn18c")
+    assert bench.cnn_cell("vgg16", "C", "fs") == "defence_C_fs_lam128_rate4_wire_polcnn18c"
+    assert bench.cnn_cell("vgg16", "Kpre", "int") == "defence_Kpre_int_lam128_rate4_wire"
+
+
+def test_the_figure_checks_catch_small_overlapping_and_clipped_text():
+    plt = pytest.importorskip("matplotlib.pyplot")
+    from experiments.paper import figures
+    fig = plt.figure(figsize=(2.0, 1.0))
+    fig.text(0.1, 0.5, "small", fontsize=6)
+    fig.text(0.1, 0.5, "on top")
+    fig.text(0.98, 0.5, "clipped at the edge")
+    bad = " ".join(figures.layout_problems(fig))
+    assert "6.0 pt" in bad and "overlaps" in bad and "leaves the canvas" in bad
+    plt.close(fig)
+
+
+def test_the_schematic_figures(tmp_path):
+    """The schematics pass their layout checks with the pinned matplotlib (``requirements.txt``), whose text
+    metrics they are laid out for."""
+    matplotlib = pytest.importorskip("matplotlib")
+    pin = re.search(r"^matplotlib==(\S+)", (CODE / "requirements.txt").read_text(encoding="utf-8"), re.M)
+    if pin is None or matplotlib.__version__ != pin.group(1):
+        pytest.skip(f"matplotlib {matplotlib.__version__}; the figures are laid out for {pin and pin.group(1)}")
+    from experiments.paper import figures
+    paths = figures.schematics(tmp_path)
+    assert [p.name for p in paths] == ["overview_attack.pdf", "overview_defence.pdf", "protocol.pdf"]
+    assert all(p.stat().st_size > 1000 for p in paths)

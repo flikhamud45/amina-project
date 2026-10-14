@@ -131,7 +131,7 @@ With independent rows, reading values helps only against improbable values or a 
 choice of neuron (Corollary~\ref{cor:surprise}).
 On the MNIST MLP the unconstrained single-site edit is of the first kind: ranking the neurons of the
 edited layer by the distance of the claimed value from the neuron's held-out mean places the edited
-neuron first for 75\% and 95\% of 40 test queries in the two hidden layers, against $1/N$ of 0.2\%
+neuron first for \LocatorOne{}\% and \LocatorTwo{}\% of \LocatorQueries{} test queries in the two hidden layers, against $1/N$ of 0.2\%
 and 0.4\%.
 
 % -------------------------------------------------------------------------------------
@@ -186,49 +186,49 @@ VGG-11, VGG-16 and ResNet-18 on CIFAR-10, a 224$\times$224 dog-vs-cat ResNet-18 
 the unreleased model of~\cite{anchuri2026verifiable}, and the real OPT-6.7B, computing path
 acceptance exactly. The implementation reproduces the published behaviour~\cite{fullversion}.
 
-\para{MNIST.} One tampered neuron passes with the predicted probability $1-1/N$ (99.6--99.8\%);
+\para{MNIST.} One tampered neuron passes with the predicted probability $1-1/N$ (\MnistSinglePass{}\%);
 the substitute models of Anchuri et al.\ corrupt hundreds of the MLP's 778 trace nodes, our
-forgeries 1--14. A backdoor triggered by a $3{\times}3$ patch leaves clean queries unchanged,
-succeeds on every triggered query not already in the target class, and passed 99.96\% of 2{,}300
-end-to-end runs (predicted: 99.8\%).
+forgeries \MnistForgeryNodes{}. A backdoor triggered by a $3{\times}3$ patch leaves clean queries unchanged,
+succeeds on every triggered query not already in the target class, and passed \MnistBackdoorPass{}\% of \MnistBackdoorRuns{}
+end-to-end runs (predicted: \MnistBackdoorPredicted{}\%).
 
-\para{Other samplers.} Uniform sampling detects 0.20\% of attacks. The contribution-weighted
-sampler, which steps to parent $i$ with probability $\propto|w_{ij}a_i|$, detects 9.2\% of
+\para{Other samplers.} Uniform sampling detects \SamplerUniform{}\% of attacks. The contribution-weighted
+sampler, which steps to parent $i$ with probability $\propto|w_{ij}a_i|$, detects \SamplerContribution{}\% of
 the best single-neuron edits but never visits a neuron whose claimed activation is zero:
-zeroing about 14 of the 512 neurons flips the prediction and passed 2{,}000 of 2{,}000 runs. A
-floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$, reaches 2\% at $\delta=1$. Each figure, the
+zeroing about \ZeroingNeurons{} of the 512 neurons flips the prediction and passed \ZeroingAccepts{} of \ZeroingRuns{} runs. A
+floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$, reaches \FloorBest{}\% at $\delta=1$. Each figure, the
 detection of the best attack we found against that sampler, bounds its worst case from above;
-2\% is the best such bound among our samplers. Against an adversary that knows the sampler, keeps
+\FloorBest{}\% is the best such bound among our samplers. Against an adversary that knows the sampler, keeps
 every edited value within held-out ranges and adapts its edit, the best per-path mixture of the
-implementable samplers, found by linear programming with a double oracle, detects at most 3.1\% and
-9.7\% per path in the two hidden layers, below the $27.7/N$ (5.4\% and 10.8\%) at which $2^{-40}$
+implementable samplers, found by linear programming with a double oracle, detects at most \MixtureLayerOne{}\% and
+\MixtureLayerTwo{}\% per path in the two hidden layers, below the $27.7/N$ (5.4\% and 10.8\%) at which $2^{-40}$
 needs fewer than $N$ paths.
 
 \para{Larger models.} On every CNN and test query, including the binary dog-vs-cat ResNet-18, one
-changed penultimate neuron flips the prediction and is caught by a path with probability 1/84
-(LeNet-5) to 1/512 (VGG, ResNet). $2^{-40}$ takes
-2{,}316--14{,}182 paths, which open the whole model and trace, and at least 305{,}193 in the FFN
-layers of Llama-2-7B (width 11{,}008), about 13.7\,GB of fp16 openings at 64 tokens.
+changed penultimate neuron flips the prediction and is caught by a path with probability \CnnPathLenet{}
+(LeNet-5) to \CnnPathMax{} (VGG, ResNet). $2^{-40}$ takes
+\CnnPathsRange{} paths, which open the whole model and trace, and at least \PathsLlama{} in the FFN
+layers of Llama-2-7B (width \WidthLlama{}), about \OpenAllLlama{}\,GB of fp16 openings at 64 tokens.
 
 \para{A real LLM.} On OPT-6.7B (fp16), one FFN neuron of layer 8, 16, 24 or 31 changed the next
-token for all 40 prompts (95\% Wilson interval for the success rate: 91.2--100\%). A fixed-target backdoor, constrained by the final LayerNorm, succeeds
-for ``\texttt{back}'' (40/40, clean prompts unchanged) and fails for ``\texttt{hacked}'' (0/40).
+token for all \AttackOptLSucceeded{} prompts (95\% Wilson interval for the success rate: \AttackOptLWilson{}\%). A fixed-target backdoor, constrained by the final LayerNorm, succeeds
+for ``\texttt{back}'' (\AttackOptLBackdoorBack{}, clean prompts unchanged) and fails for ``\texttt{hacked}'' (\AttackOptLBackdoorHacked{}).
 Its values exceed the natural ranges, which the path protocol does not check, and $2^{-40}$ needs
-at least 454{,}248 paths. Range checks do not stop the edit. Against per-neuron ranges calibrated on
-held-out text (8{,}192 tokens of WikiText-2 train), edits that keep every value in range change the
-next token of OPT-1.3B for all 40 prompts at each of layers 6, 12, 18 and 23, with a median of 2
-neurons (at most 60); a path opens them with median probability at most $7.9\cdot10^{-4}$ in every
-cell (at most $7.3\cdot10^{-3}$). Edits that only lower activations, which a contribution-weighted
-sampler of the claimed trace never opens, succeed for 9, 31, 38 and 39 of the 40 prompts at those
-layers, with a median of 6 neurons. Where they fail, value-aware sampling helps against these
+at least \AttackOptLPaths{} paths. Range checks do not stop the edit. Against per-neuron ranges calibrated on
+held-out text (\InrangeCalibTokens{} tokens of WikiText-2 train), edits that keep every value in range change the
+next token of OPT-1.3B for all \InrangeChanged{} prompts at each of layers 6, 12, 18 and 23, with a median of \InrangeKMedian{}
+neurons (at most \InrangeKMax{}); a path opens them with median probability at most \InrangePMedianMax{} in every
+cell (at most \InrangePMax{}). Edits that only lower activations, which a contribution-weighted
+sampler of the claimed trace never opens, succeed for \InrangeDown{} of the \InrangePrompts{} prompts at those
+layers, with a median of \InrangeDownKMedian{} neurons. Where they fail, value-aware sampling helps against these
 edits, which are not adapted to the sampler: with the natural maximum as the range, the best
-per-path mixture of our samplers catches the better of the two edits on 48\%, 6.8\% and 2.2\% of
-the paths that enter the FFN of layers 6, 12 and 18 (mean over prompts), above $27.7/N$ (0.34\%),
-and on 0.08\% at layer 23 (uniform: 0.02--0.06\%).
+per-path mixture of our samplers catches the better of the two edits on \GameLayerSix{}\%, \GameLayerTwelve{}\% and \GameLayerEighteen{}\% of
+the paths that enter the FFN of layers 6, 12 and 18 (mean over prompts), above $27.7/N$ (\GameThreshold{}\%),
+and on \GameLayerTwentyThree{}\% at layer 23 (uniform: \GameUniform{}\%).
 Whether an edit adapted to the sampler evades it, as on the MLP, we leave open. On OPT-6.7B
 (layers 8, 16, 24 and 31), in-range edits change the next
-token for all 40 prompts at every layer, and a path opens them with median probability at most
-$1.3\cdot10^{-3}$.
+token for all \InrangeOptLChanged{} prompts at every layer, and a path opens them with median probability at most
+\InrangeOptLPMedianMax{}.
 
 % -------------------------------------------------------------------------------------
 \subsection{Systematisation of Spot-Checking Schemes}

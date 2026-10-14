@@ -43,33 +43,31 @@ inference.
 
 \para{Costs.} Without V1, the prover's folds and openings grow with the model but not with the
 input, and the prover is the protocol's strongest axis. Computing its column openings and
-folds with exact int8 tensor-core products instead of float64 makes it 3.7--4.3$\times$ faster on
+folds with exact int8 tensor-core products instead of float64 makes it \ImproveOpenRange{}$\times$ faster on
 Llama-2 blocks on an RTX~2080~Ti, and it proves a 256-token GPT-2 response to a 64-token prompt in
-0.29\,s. On matched models it is 46--32{,}000$\times$ faster than published zkSNARK provers, partly
+0.29\,s. On matched models it is \CompareProverMin{}--\CompareProverMax{}$\times$ faster than published zkSNARK provers, partly
 because all of them but zkLLM ran on CPUs, and partly because they also prove the operations
 without weights, which our verifier recomputes, and many of them hide the weights
-(Table~\ref{tab:eval-compare}) \todo{L40S: final range;
-the current one is from the pre-improvement L40S run}. The main cost is the proof. It carries the
-results of every weight operation and so grows with the prompt: 325\,MB for a 64-token Llama-2-7B
-query and 6.6\,GB at 2{,}048 tokens \todo{L40S}, against 183\,kB for zkLLM. V1 makes it
-2.0--2.3$\times$ smaller at 2{,}048 tokens with random weights (the full OPT-1.3B: 2.07 to
-0.96\,GB), 1.68--1.77$\times$ on the real smoothed OPT-125M at 512 tokens and 1.73$\times$ on the
+(Table~\ref{tab:eval-compare})\TodoCompareRange{}. The main cost is the proof. It carries the
+results of every weight operation and so grows with the prompt: \ProofLlamaShortC{} for a 64-token Llama-2-7B
+query and \ProofLlamaLongC{} at 2{,}048 tokens\TodoProofIntro{}, against 183\,kB for zkLLM. V1 makes it
+\VOneRatioRandom{}$\times$ smaller at 2{,}048 tokens with random weights (the full OPT-1.3B: \VOneOptMCVZeroGB{} to
+\VOneOptMCVOneGB{}\,GB), 1.68--1.77$\times$ on the real smoothed OPT-125M at 512 tokens and \VOneRatioRealOptLExact{}$\times$ on the
 real OPT-6.7B at 2{,}048 tokens, at the price of a GKR in the prover whose work grows with the
-number of results (OPT-125M at 2{,}048 tokens: 0.50 to 4.85\,s on the RTX~2080~Ti) and a slower CPU
-verifier: 2.3$\times$ v0's on the full Llama-2-7B at 2{,}048 tokens (45.4 against 19.6\,s)
-\todo{L40S}. The verifier recomputes attention, so its cost grows with the square of the prompt
+number of results (OPT-125M at 2{,}048 tokens: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s on the RTX~2080~Ti) and a slower CPU
+verifier: \VOneVerifyRatioLlama{}$\times$ v0's on the full Llama-2-7B at 2{,}048 tokens (\VOneVerifyLlama{} against \VOneVZeroVerifyLlama{}\,s)\TodoVOneIntro{}. The verifier recomputes attention, so its cost grows with the square of the prompt
 length. With eight CPU threads and native exact kernels, a client that holds the weights verifies a
-64-token query of the full Llama-2-7B in 1.0\,s, against 4.1\,s for the fastest exact re-execution
-on the same threads, and a 2{,}048-token query in 18.5\,s, against 93.2\,s (interactive; 1.4 and
-19.6\,s under Fiat--Shamir) \todo{EPYC: the same cells}. Our GPU claim decoder and fused exact attention kernel make the streaming GPU verifier
-2.7$\times$ faster on OPT-1.3B at that length \todo{L40S, full models}. The protocol is not
+64-token query of the full Llama-2-7B in 1.0\,s, against \CpuReexecShort{}\,s for the fastest exact re-execution
+on the same threads, and a 2{,}048-token query in 18.5\,s, against \CpuReexecLong{}\,s (interactive; \CpuVerifyShort{} and
+\CpuVerifyLong{}\,s under Fiat--Shamir) \todo{EPYC: the same cells}. Our GPU claim decoder and fused exact attention kernel make the streaming GPU verifier
+\ImproveGpuvOptM{}$\times$ faster on OPT-1.3B at that length \todo{L40S, full models}. The protocol is not
 zero-knowledge: the claims of $\lceil k/T\rceil$ queries of $T$ tokens reveal a weight matrix with
 rows of length $k$. Finally, the provider must serve the integer model. Moving SmoothQuant's
 per-channel scales~\cite{xiao2023smoothquant} into the gains of the integer LayerNorm brings its
-WikiText-2 perplexity at 2{,}048 tokens within factors of 1.076, 1.026 and 1.008 of fp32 on OPT-125M,
-OPT-1.3B and OPT-6.7B, from 1.17, 1.10 and 1.70 with one scalar gain, without changing any operation
+WikiText-2 perplexity at 2{,}048 tokens within factors of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 on OPT-125M,
+OPT-1.3B and OPT-6.7B, from \QualityScalarOptS{}, \QualityScalarOptM{} and \QualityScalarOptL{} with one scalar gain, without changing any operation
 that the protocol checks (Section~\ref{sec:quality}); with a fixed public prefix the same holds for a
-Llama of Llama-2-7B's shape ($\times$1.073), but not yet for Qwen3-4B.
+Llama of Llama-2-7B's shape ($\times$\LlamaOpenRatio{}), but not yet for Qwen3-4B.
 
 \subsection{Related Work in Detail}
 \label{ext:related}

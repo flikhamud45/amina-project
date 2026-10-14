@@ -1,0 +1,14 @@
+% fallback: the body rows of the paper before the final run (code/experiments/paper/numbers.py writes generated/tab_eval_compare.tex)
+    zkCNN$^a$ & VGG-16 & 88.3\,s & \textbf{20.0\,ms (4{,}422$\times\downarrow$)} & 59.3\,ms & \textbf{20.9\,ms (2.8$\times\downarrow$)} & 341\,kB & 2.2\,MB (6.4$\times\uparrow$) \\
+    ZKML & VGG-16 & 10.6\,min & \textbf{20.0\,ms (31{,}910$\times\downarrow$)} & 9.6\,ms & 20.9\,ms (2.2$\times\uparrow$) & 12.1\,kB & 2.2\,MB (180$\times\uparrow$) \\
+    \midrule
+    zkGPT$^b$ & GPT-2 (64) & 21.8\,s & \textbf{95.0\,ms (229$\times\downarrow$)} & 350\,ms & \textbf{96.8\,ms (3.6$\times\downarrow$)} & 101\,kB & 16.6\,MB (164$\times\uparrow$) \\
+    DeepProve$^c$ & GPT-2 (64) & 34.2\,s & \textbf{95.0\,ms (360$\times\downarrow$)} & 1.4\,s & \textbf{96.8\,ms (14$\times\downarrow$)} & 21.7\,MB & \textbf{16.6\,MB (1.3$\times\downarrow$)} \\
+    DeepProve$^c$ & GPT-2 (512) & 2.9\,min & \textbf{177\,ms (995$\times\downarrow$)} & 1.6\,s & \textbf{437\,ms (3.8$\times\downarrow$)} & 25.5\,MB & 91.2\,MB (3.6$\times\uparrow$) \\
+    ZKTorch & Llama-2-7B (1) & 44.1\,min & \textbf{2.2\,s (1{,}213$\times\downarrow$)} & 1.7\,min & \textbf{333\,ms (301$\times\downarrow$)} & 22.9\,MB & 190\,MB (8.3$\times\uparrow$) \\
+    Maverick$^d$ & Qwen3-4B (8) & 354\,ms & \textbf{117\,ms (3.0$\times\downarrow$)} & 260\,ms & \textbf{111\,ms (2.3$\times\downarrow$)} & 36.1\,MB & \textbf{35.2\,MB (1.03$\times\downarrow$)} \\
+    \midrule
+    zkLLM & OPT-125M (2{,}048) & 73.9\,s & \textbf{396\,ms (187$\times\downarrow$)} & 342\,ms & \textbf{318\,ms (1.1$\times\downarrow$)} & 141\,kB & 348\,MB (2{,}467$\times\uparrow$) \\
+    zkLLM & OPT-1.3B (2{,}048) & 3.7\,min & \textbf{3.8\,s (58$\times\downarrow$)} & 899\,ms & 2.6\,s (2.9$\times\uparrow$) & 147\,kB & 2.1\,GB (13{,}979$\times\uparrow$) \\
+    zkLLM & Llama-2-7B (2{,}048) & 10.3\,min & \todo{L40S} & 2.36\,s & \todo{L40S} & 183\,kB & 6.6\,GB (36{,}000$\times\uparrow$) \\
+    zkLLM & Llama-2-13B (2{,}048) & 13.4\,min & \textbf{17.6\,s (46$\times\downarrow$)} & 3.95\,s & \todo{L40S} & 188\,kB & 10.5\,GB (56{,}000$\times\uparrow$) \\

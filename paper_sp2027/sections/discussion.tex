@@ -25,15 +25,15 @@
 \para{Who the protocol serves.} It serves a CPU client of an open-weight model that holds neither
 the weights nor a GPU and will not trust hardware, and a gateway or auditor with the GPU verifier. A
 client with the weights and a GPU should re-execute. The regime is narrow
-(Figure~\ref{fig:breakeven}; Llama-2-7B, Fiat--Shamir). Below about 22 queries of 64 tokens,
+(Figure~\ref{fig:breakeven}; Llama-2-7B, Fiat--Shamir). Below about \BreakevenQueriesShort{} queries of 64 tokens,
 mode-$\sC$ proofs cost the client fewer bytes than one download of the int8 weights; at 2{,}048
-tokens the break-even is one query, or 2.3 with V1. A $\Kpre$ client that keeps the weights
+tokens the break-even is one query, or \BreakevenQueriesVOne{} with V1. A $\Kpre$ client that keeps the weights
 verifies faster than the fastest exact re-execution on its CPU only on links faster than
-0.59--0.70\,Gb/s (V1: 0.47\,Gb/s).
+\BreakevenLinkRange{}\,Gb/s (V1: \BreakevenLinkVOne{}\,Gb/s).
 
 \para{Proof size.} The proof carries every weight operation's output, so it grows with the prompt.
-For Llama-2-7B it reaches the size of the int8 weights at about 2{,}100 tokens without V1 and, by
-the byte model, at about 4{,}500 with it. Committing the activations, as zkLLM does, would remove this growth.
+For Llama-2-7B it reaches the size of the int8 weights at about \BreakevenTokens{} tokens without V1 and, by
+the byte model, at about \BreakevenTokensVOne{} with it. Committing the activations, as zkLLM does, would remove this growth.
 
 \para{Weights and trust.} The protocol is not zero-knowledge: the claims of about
 $\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$. It therefore targets
@@ -41,12 +41,12 @@ open-weight models. For private weights it shares the limitation that Hollow-LLM
 zkSNARKs~\cite{hollowllm}. The setup proof is untimed \todo{F6}.
 
 \para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens, and Llama-2-7B's shapes
-up to 16{,}384, where the CPU verifier is still about 2$\times$ faster than exact re-execution (4.7$\times$
-at 2{,}048, both non-interactive) and the proof reaches about 51\,GB~\cite{fullversion}; mixture-of-experts models are
+up to 16{,}384, where the CPU verifier is still about \LongRatioLong{}$\times$ faster than exact re-execution (\CpuRatio{}$\times$
+at 2{,}048, both non-interactive) and the proof reaches about \LongProofLong{}\,GB~\cite{fullversion}; mixture-of-experts models are
 untested. Costs use random weights, which real OPT weights match
 (Section~\ref{sec:eval-setup}). The certified OPT models stay close to the floating-point model at 2{,}048 tokens
-(Section~\ref{sec:quality}), and so does a Llama of Llama-2-7B's shape ($\times$1.073), but our
-integer Qwen3-4B does not ($\times$5.3).
+(Section~\ref{sec:quality}), and so does a Llama of Llama-2-7B's shape ($\times$\LlamaOpenRatio{}), but our
+integer Qwen3-4B does not ($\times$\QwenLRatio{}).
 
 \para{The attack and the bound.} Condition (H) holds for random ensembles with independent rows
 and on the constructed worst case, not on trained networks, where we report the best attacks found.

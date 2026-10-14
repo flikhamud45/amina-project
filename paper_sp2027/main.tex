@@ -28,6 +28,23 @@
 % ---- visible marker for open items -------------------------------------------------
 \newcommand{\todo}[1]{{\color{red}\textbf{[TODO: #1]}}}
 
+% ---- the run's numbers (code/experiments/paper/numbers.py) ------------------------------
+% Each table body and the text numbers (numbers.tex) are read from generated/<name>.tex when it exists, else from
+% fallback/<name>.tex, which holds the values printed before the final run.  \pvitable reads a file with TeX's
+% primitive \input, which is expandable: a table body may start with \multicolumn, and the paper's \bottomrule may
+% follow it.
+\makeatletter
+\newcommand{\pviresolve}[1]{\IfFileExists{generated/#1.tex}{\@namedef{pvi@#1}{generated/#1.tex }}%
+  {\@namedef{pvi@#1}{fallback/#1.tex }}}
+\@for\pvi@name:=numbers,tab_eval_llm,tab_eval_v1,tab_options,%
+  tab_eval_compare,tab_quality,tab_params,tab_inrange,%
+  tab_setup,tab_eval_improve,tab_eval_long,tab_eval_real,%
+  tab_eval_reexec,tab_eval_compare_v1,tab_v1,tab_gen,%
+  tab_gen_full,tab_zeroshot\do{\expandafter\pviresolve\expandafter{\pvi@name}}
+\newcommand{\pvitable}[1]{\expandafter\@@input\csname pvi@#1\endcsname}
+\makeatother
+\pvitable{numbers}
+
 % ---- shared notation (one name per concept) ----------------------------------------
 \newcommand{\para}[1]{\par\noindent\textbf{#1}\quad}
 \newcommand{\T}{\top}
@@ -69,8 +86,8 @@
 \maketitle
 
 \begin{abstract}
-Lightweight proofs of inference check a sample of a committed execution trace. This is not fully sound. A provider that overwrites one neuron and recomputes the later layers honestly leaves one inconsistent site, which the path protocol of Anchuri et al.\ misses with probability $1-1/N$ per path in a layer of width $N$; on OPT-6.7B, one edited neuron changed the next token for 40 of 40 prompts. We prove that every verifier making $q$ queries per layer to a hiding weight commitment of locality $d$, even an adaptive one reading the query's whole trace, accepts such a forgery on some network with probability at least $1-qd/N$, while a linear-code commitment, whose queries mix all rows, reaches $2^{-\lambda}$ with $O(\lambda)$ queries. Our defence checks every matrix product of an exact int8 model with the evaluation protocol of a linear-code polynomial commitment, using only a hash function. It lets a client without weights or GPU check an untrusted provider of an open-weight model, and a CPU
-client verifies a 2{,}048-token Llama-2-7B prompt 4.7 times faster than the fastest exact re-execution on the same CPU (non-interactive, full model) \todo{EPYC: ``at least N times''}. A variant makes 2{,}048-token proofs 2.0--2.3 times smaller with random weights and 1.7 times with the real OPT-6.7B, but proofs still grow with the prompt.
+Lightweight proofs of inference check a sample of a committed execution trace. This is not fully sound. A provider that overwrites one neuron and recomputes the later layers honestly leaves one inconsistent site, which the path protocol of Anchuri et al.\ misses with probability $1-1/N$ per path in a layer of width $N$; on OPT-6.7B, one edited neuron changed the next token for \AttackOptLSucceeded{} of \AttackOptLPrompts{} prompts. We prove that every verifier making $q$ queries per layer to a hiding weight commitment of locality $d$, even an adaptive one reading the query's whole trace, accepts such a forgery on some network with probability at least $1-qd/N$, while a linear-code commitment, whose queries mix all rows, reaches $2^{-\lambda}$ with $O(\lambda)$ queries. Our defence checks every matrix product of an exact int8 model with the evaluation protocol of a linear-code polynomial commitment, using only a hash function. It lets a client without weights or GPU check an untrusted provider of an open-weight model, and a CPU
+client verifies a 2{,}048-token Llama-2-7B prompt \CpuRatioN{} times faster than the fastest exact re-execution on the same CPU (non-interactive, full model) \todo{EPYC: ``at least N times''}. A variant makes 2{,}048-token proofs \VOneRatioRandom{} times smaller with random weights and \VOneRatioRealOptL{} times with the real OPT-6.7B, but proofs still grow with the prompt.
 \end{abstract}
 
 \input{sections/intro}

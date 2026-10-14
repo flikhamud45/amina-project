@@ -1,0 +1,891 @@
+"""One builder per table of the paper: the body rows of each table, in the paper's layout, from one run.
+
+Each builder returns a :class:`Table`: the rows that sit between the table's ``\\midrule`` and ``\\bottomrule`` in
+the paper (its header and caption stay in the paper's source), a header comment that states the run's protocol
+settings and sources (so that the caption can be made true), and one entry per value for ``cells.csv`` with the
+record it comes from.  A value that the run does not provide prints as ``--`` and is listed as missing.
+
+The tables and their sources (the run package's tiers, ``experiments/package/run.sh``):
+
+==================== ==================================================================================
+``tab:eval-llm``      ``bench``: modes C (CPU and streaming GPU verifier) and Kpre, Fiat--Shamir, the plan
+``tab:eval-v1``       ``v1``: ``v1_bytes.py --full`` on the CPU verifier, random weights
+``tab:options``       ``cpuv`` (perf.py, reexec.py, V1's CPU verifier), ``gpuv`` (reexec.py on the GPU)
+``tab:eval-compare``  ``bench`` and the published systems (``reported_curated.csv``)
+``tab:quality``       ``quality``: ``ppl_opt.py`` (the certified recipe, alpha 0.6, 11-bit probabilities)
+``tab:params``        the library's parameters and byte model; V1's counts from the ``v1`` tier
+``tab:inrange``       ``attack``: ``inrange_llm.py``'s documents
+``tab:setup``         the setup proof's byte model (``costs/setup_bytes.py``)
+``tab:eval-improve``  ``improve``: the A/B scripts and perf.py with the options of each row
+``tab:eval-long``     ``long``: 2- and 3-block cells, extrapolated to the full Llama-2-7B
+``tab:eval-real``     ``real``: OPT-1.3B, real weights against the random-weight twins (V1 cells, v0 timed)
+``tab:eval-reexec``   ``gpuv`` and ``cpuv``: reexec.py, the Kpre verifier
+``tab:eval-compare-v1`` ``v1`` (mode C) and the published systems
+``tab:v1``            ``v1``: the timed queries and the GKR's share of V1's prover
+``tab:gen``           ``gen``: greedy responses, both modes
+``tab:gen-full``      ``gen``: every cell, greedy and sampled
+``tab:zeroshot``      ``quality``: ``zeroshot.py`` (the certified recipe)
+==================== ==================================================================================
+
+Tables that no record produces are not built: ``tab:quality-attr`` (its scripts are not in the artifact) and the
+analysis and literature tables ``tab:sok``, ``tab:sok-derivation``, ``tab:aligned``, ``tab:paths`` and
+``tab:paths-acc``.
+"""
+from __future__ import annotations
+
+import math
+import statistics
+from dataclasses import dataclass, field
+
+from experiments.paper import format as f
+from experiments.paper.bench import Bench
+from experiments.paper.records import Rec, Run, v1_timed
+
+NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-1.3b": "OPT-1.3B", "opt-6.7b": "OPT-6.7B",
+        "llama2-7b": "Llama-2-7B", "llama2-13b": "Llama-2-13B", "qwen3-4b": "Qwen3-4B"}
+FULL_LAYERS = {"gpt2": 12, "opt-125m": 12, "opt-1.3b": 24, "opt-6.7b": 32, "llama2-7b": 32, "qwen3-4b": 36,
+               "llama2-13b": 40}
+"""The decoder blocks of the paper's models (``pvi.models.decoder.CONFIGS``)."""
+EXACT = ("int", "int_fp32gemm", "float", "bf16")
+"""``reexec.py``'s exact variants: the integer forward pass (int8 or fp32 GEMMs) and the floating-point checkpoint in
+fp32 and bf16 (``dynint8`` computes another model).  The strongest exact re-execution is the fastest of them, each
+computing only what the pruned graph computes."""
+REEXEC_NAME = {"int": "the integer forward pass", "int_fp32gemm": "the integer forward pass", "float": "fp32",
+               "bf16": "bf16"}
+MODE = {"C": r"$\sC$", "Kpre": r"$\Kpre$"}
+
+
+@dataclass
+class Table:
+    """The body rows of one table, its header comment and its values."""
+
+    name: str
+    label: str
+    note: str
+    rows: list = field(default_factory=list)
+    cells: list = field(default_factory=list)
+    missing: list = field(default_factory=list)
+
+    def put(self, row: str, col: str, value, src, fmt=str) -> str:
+        """One value: recorded for ``cells.csv`` (``src``: a record, or a description of the source) and counted
+        as filled or missing; returns its printed form."""
+        source = src.source if isinstance(src, Rec) else str(src or "")
+        printed = f.DASH if value is None else fmt(value)
+        self.cells.append({"table": self.label, "row": row, "column": col, "value": value, "printed": printed,
+                           "source": source})
+        if value is None:
+            self.missing.append(f"{row} / {col}")
+        return printed
+
+    @property
+    def filled(self) -> int:
+        return sum(c["value"] is not None for c in self.cells)
+
+    def text(self) -> str:
+        """The file: the header comment, then the rows."""
+        head = "".join(f"% {line}\n" for line in self.note.splitlines())
+        return f"% generated by experiments/paper/numbers.py: {self.label}\n" + head + "\n".join(self.rows) + "\n"
+
+
+@dataclass
+class Ctx:
+    """What the builders read: the run's records, the benchmark's tables, the published systems' values, mode C's
+    plan and the platform."""
+
+    run: Run
+    bench: Bench
+    lit: dict
+    policy: str = "cnn18c"
+    platform: str = ""
+    byte_model: bool = True
+
+
+def protocol(ctx: Ctx, extra: str = "") -> str:
+    """The header comment's protocol line."""
+    return (f"protocol: Fiat-Shamir (unless stated), lambda 128, mode C under the plan {ctx.policy}, the compact "
+            f"encoding, the pruned last block, the verifier's own embedding rows in Kpre; {ctx.platform}"
+            + (f"; {extra}" if extra else ""))
+
+
+def _two(a, b, fmt) -> str:
+    return f.DASH if a is None and b is None else f"{f.DASH if a is None else fmt(a)} / {f.DASH if b is None else fmt(b)}"
+
+
+def strongest(run: Run, tier: str, model: str, seq: int):
+    """``(seconds, variant, record)`` of the fastest exact re-execution on the CPU, or ``(None, None, None)``."""
+    got = run.reexec(tier, model, seq, "cpu", EXACT)
+    if not got:
+        return None, None, None
+    v, (s, r) = min(got.items(), key=lambda kv: kv[1][0])
+    return s, v, r
+
+
+# ================================================================================================ evaluation.tex
+LLM_ROWS = {64: ("gpt2", "qwen3-4b", "llama2-7b", "llama2-13b"),
+            2048: ("opt-125m", "opt-1.3b", "opt-6.7b", "llama2-7b", "llama2-13b")}
+"""``tab:eval-llm``'s rows."""
+
+
+def tab_eval_llm(ctx: Ctx) -> Table:
+    """``tab:eval-llm``: per model and prompt length, mode C's prover, CPU and GPU verifier and proof, and Kpre's CPU
+    verifier and proof, all of the final code (one column per metric: the paper's header must drop the split into
+    base and new columns)."""
+    tb = Table("tab_eval_llm", "tab:eval-llm",
+               f"{protocol(ctx)}; bench tables {ctx.bench.name}\n"
+               "columns: Model & Params & C prove & C CPU verify & C GPU verify (streaming) & C proof & "
+               "Kpre CPU verify & Kpre proof (the prover and the proof of mode C from the CPU-verifier cell)")
+    b = ctx.bench
+    for seq, models in LLM_ROWS.items():
+        tb.rows.append(rf"\multicolumn{{8}}{{@{{}}l}}{{\emph{{{f.tokens(seq)}-token prompts}}}} \\")
+        for m in models:
+            row = f"{NAME[m]} ({seq})"
+            cc, cg, kc = b.llm_cost(m, seq, "c_cpu"), b.llm_cost(m, seq, "c_gpu"), b.llm_cost(m, seq, "kpre_cpu")
+            src = lambda c: f"{b.name} {c['cell']}" if c else ""     # noqa: E731
+            first = cc or cg
+            n = next((c["params"] for c in (cc, cg, kc) if c and c["params"]), None)
+            tb.rows.append(" & ".join([
+                NAME[m], tb.put(row, "Params", n, src(first), f.params),
+                tb.put(row, "C prove", first and first["prove"], src(first), f.t),
+                tb.put(row, "C CPU verify", cc and cc["verify"], src(cc), f.t),
+                tb.put(row, "C GPU verify", cg and cg["verify"], src(cg), f.t),
+                tb.put(row, "C proof", first and first["bytes"], src(first), f.b),
+                tb.put(row, "Kpre CPU verify", kc and kc["verify"], src(kc), f.t),
+                tb.put(row, "Kpre proof", kc and kc["bytes"], src(kc), f.b)]) + r" \\")
+    return tb
+
+
+V1_ROWS = ((64, "gpt2"), (512, "gpt2"), (2048, "opt-125m"), (2048, "opt-1.3b"), (2048, "llama2-7b"),
+           (2048, "llama2-13b"))
+"""``tab:eval-v1``'s rows (and ``tab:v1``'s)."""
+
+
+def v1_cell(run: Run, model: str, seq: int, mode: str) -> Rec | None:
+    """The v1 tier's record of one ``tab:eval-v1`` cell: random weights, the CPU verifier, no label."""
+    return run.v1("v1", model, seq, mode, vdev="cpu", label="", real=None)
+
+
+def tab_eval_v1(ctx: Ctx) -> Table:
+    """``tab:eval-v1``: V1 against v0 on the same queries: both proofs, their ratio, and the prover and CPU verifier
+    of each (median over the timed queries, each party's Fiat--Shamir hashing in its time)."""
+    tb = Table("tab_eval_v1", "tab:eval-v1",
+               f"{protocol(ctx, 'V1 under Fiat-Shamir, its optimised verifier; v1 tier (v1_bytes.py --full)')}\n"
+               "columns: Build (b/L) & mode & v0 MB & V1 MB & ratio & prover v0 / V1 (s) & verifier v0 / V1 (s)")
+    last = None
+    for seq, m in V1_ROWS:
+        if seq != last:
+            tb.rows.append(rf"\multicolumn{{7}}{{@{{}}l}}{{\emph{{$T{{=}}{f.tokens(seq)}$}}}} \\")
+            last = seq
+        for i, mode in enumerate(("C", "Kpre")):
+            r = v1_cell(ctx.run, m, seq, mode)
+            row = f"{NAME[m]} T={seq} {mode}"
+            d = r.d if r else {}
+            build = f"{NAME[m]}, {d.get('layers', '?')}/{FULL_LAYERS[m]}" if r else f"{NAME[m]}, --"
+            p0, v0 = v1_timed(r, "v0")
+            p1, v1 = v1_timed(r, "v1", "optimised")
+            two = lambda a, c: f.DASH if a is None or c is None else f"{a:.2f} / {c:.2f}"   # noqa: E731
+            for col, val in (("v0 prover", p0), ("V1 prover", p1), ("v0 verifier", v0), ("V1 verifier", v1)):
+                tb.put(row, col, val, r)
+            tb.rows.append(" & ".join([
+                build if i == 0 else "", MODE[mode],
+                tb.put(row, "v0 MB", d.get("v0_total"), r, lambda v: f.mb(v)),
+                tb.put(row, "V1 MB", d.get("v1_total"), r, lambda v: f.mb(v)),
+                tb.put(row, "ratio", d["v0_total"] / d["v1_total"] if r else None, r, lambda v: f.x(v, 2)),
+                two(p0, p1), two(v0, v1)]) + r" \\")
+    return tb
+
+
+def tab_options(ctx: Ctx) -> Table:
+    """``tab:options``: a client's options for one Llama-2-7B prompt: re-execution on the CPU (the strongest exact
+    variant) and on the GPU (the integer forward pass on int8 tensor cores), the published options, and our modes C
+    and Kpre and V1 (the CPU verifier: bytes and time)."""
+    run, m = ctx.run, "llama2-7b"
+    tb = Table("tab_options", "tab:options",
+               f"{protocol(ctx)}; cpuv tier (perf.py --verifier-device cpu, reexec.py on 8 threads, V1's optimised "
+               "CPU verifier), gpuv tier (reexec.py int on the GPU); every model in full")
+    weights = ctx.bench.llm_cost(m, 64, "c_cpu") or ctx.bench.llm_cost(m, 64, "kpre_cpu")
+    wb = weights["params"] if weights else None
+    once = rf"\multicolumn{{2}}{{c}}{{{f.b(wb) if wb else f.DASH} once}}"
+    rx = [strongest(run, "cpuv", m, s) for s in (64, 2048)]
+    gx = [run.reexec("gpuv", m, s, "cuda", ("int",)).get("int") for s in (64, 2048)]
+    tb.put("weights", "bytes", wb, f"{ctx.bench.name} params_full", f.b)
+    tb.rows.append(" & ".join([r"Re-exec., CPU$^a$", "weights", once,
+                               tb.put("Re-exec. CPU", "64", rx[0][0], rx[0][2], f.secs),
+                               tb.put("Re-exec. CPU", "2048", rx[1][0], rx[1][2], f.secs), "exact"]) + r" \\")
+    tb.rows.append(" & ".join([r"Re-exec., GPU$^a$", "weights", once,
+                               tb.put("Re-exec. GPU", "64", gx[0] and gx[0][0], gx[0] and gx[0][1], f.secs),
+                               tb.put("Re-exec. GPU", "2048", gx[1] and gx[1][0], gx[1] and gx[1][1], f.secs),
+                               "exact"]) + r" \\")
+    tb.rows.append(r"GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\")
+    tb.rows.append(r"CommitLLM$^e$ & key & \multicolumn{2}{c}{144\,kB per token} & "
+                   r"\multicolumn{2}{c}{0.66\,ms per token} & sampled$^b$ \\")
+    z = ctx.lit.get(("zkLLM", "Llama-2-7B", "2048"))
+    zb, zv = (f.to_float(z["proof_bytes"]), f.to_float(z["verifier_s"])) if z else (None, None)
+    tb.rows.append(" & ".join([r"zkLLM~\cite{zkllm}", "comm.", "--", f.b(zb) if zb else f.DASH, "--",
+                               f.secs(zv) if zv else f.DASH, "full, ZK"]) + r" \\")
+    for mode, label, held, guarantee in (("C", r"Ours, $\sC$", "roots", "full"),
+                                         ("Kpre", r"Ours, $\Kpre$", "key", "full$^c$")):
+        rs = [run.perf("cpuv", m, s, mode, vdev="cpu", label="cpuv") for s in (64, 2048)]
+        tb.rows.append(" & ".join([label, held] + [
+            tb.put(f"Ours {mode}", f"bytes {s}", r and r.d["proof_bytes"], r, f.b) for s, r in zip((64, 2048), rs)] + [
+            tb.put(f"Ours {mode}", f"time {s}", r and r.d["verify_s"], r, f.secs) for s, r in zip((64, 2048), rs)]
+            + [guarantee]) + r" \\")
+    vs = [run.v1("cpuv", m, s, "Kpre", vdev="cpu", label="cpuv-v1") for s in (64, 2048)]
+    tb.rows.append(" & ".join([r"\quad with V1$^d$", "key"] + [
+        tb.put("with V1", f"bytes {s}", r and r.d["v1_total"], r, f.b) for s, r in zip((64, 2048), vs)] + [
+        tb.put("with V1", f"time {s}", v1_timed(r, "v1", "optimised")[1], r, f.secs) for s, r in zip((64, 2048), vs)]
+        + ["full"]) + r" \\")
+    return tb
+
+
+COMPARE = (("zkCNN$^a$", ("zkCNN", "VGG-16 CIFAR-10", ""), "VGG-16", ("cnn", "vgg16")),
+           ("ZKML", ("ZKML", "VGG-16 CIFAR-10", ""), "VGG-16", ("cnn", "vgg16")),
+           None,
+           ("zkGPT$^b$", ("zkGPT", "GPT-2", ""), "GPT-2 (64)", ("llm", "gpt2", 64)),
+           ("DeepProve$^c$", ("DeepProve", "GPT-2", "64"), "GPT-2 (64)", ("llm", "gpt2", 64)),
+           ("DeepProve$^c$", ("DeepProve", "GPT-2", "512"), "GPT-2 (512)", ("llm", "gpt2", 512)),
+           ("ZKTorch", ("ZKTorch", "Llama-2-7B (1 token)", "1"), "Llama-2-7B (1)", ("llm", "llama2-7b", 1)),
+           ("Maverick$^d$", ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "8"), "Qwen3-4B (8)", ("maverick",)),
+           None,
+           ("zkLLM", ("zkLLM", "OPT-125M", "2048"), "OPT-125M (2{,}048)", ("zkllm", "opt-125m")),
+           ("zkLLM", ("zkLLM", "OPT-1.3B", "2048"), "OPT-1.3B (2{,}048)", ("zkllm", "opt-1.3b")),
+           ("zkLLM", ("zkLLM", "Llama-2-7B", "2048"), "Llama-2-7B (2{,}048)", ("zkllm", "llama2-7b")),
+           ("zkLLM", ("zkLLM", "Llama-2-13B", "2048"), "Llama-2-13B (2{,}048)", ("zkllm", "llama2-13b")))
+"""``tab:eval-compare``'s rows: (system label, its row in ``reported_curated.csv``, the model label, ours);
+None: a rule between groups."""
+
+
+def compare_ours(ctx: Ctx, which: tuple):
+    """``(prove, verify, bytes, source)`` of our side of one ``tab:eval-compare`` row: the image model under
+    Fiat--Shamir, the language models under Fiat--Shamir with the CPU verifier, Maverick's setting (Kpre, lambda
+    40, one thread, interactive, without the compact encoding), and zkLLM's rows interactive with the prover and
+    the proof of the CPU-verifier cell and the streaming GPU verifier."""
+    b = ctx.bench
+    if which[0] == "cnn":
+        cell = b.cnn_cell(which[1], "C", "fs")
+        c = b.cnn_cost(which[1], cell)
+        return (c["prove"], c["verify"], c["bytes"], f"{b.name} {cell}") if c else (None, None, None, "")
+    if which[0] == "llm":
+        c = b.llm_cost(which[1], which[2], "c_cpu")
+        return (c["prove"], c["verify"], c["bytes"], f"{b.name} {c['cell']}") if c else (None, None, None, "")
+    if which[0] == "maverick":
+        c = b.llm_cost("qwen3-4b", 8, "maverick")
+        return (c["prove"], c["verify"], c["bytes"], f"{b.name} {c['cell']}") if c else (None, None, None, "")
+    cpu, gpu = b.llm_cost(which[1], 2048, "c_cpu_int"), b.llm_cost(which[1], 2048, "c_gpu_int")
+    first = cpu or gpu
+    return (first and first["prove"], gpu and gpu["verify"], first and first["bytes"],
+            " + ".join(f"{b.name} {c['cell']}" for c in (cpu, gpu) if c))
+
+
+def compare_cell(theirs, ours, fmt) -> str:
+    """Our value with the factor against theirs, in bold where ours is lower."""
+    if ours is None:
+        return f.DASH
+    text, q = f.factor(theirs, ours)
+    if q is None:
+        return fmt(ours)
+    cell = f"{fmt(ours)} ({text})"
+    return rf"\textbf{{{cell}}}" if q >= 1.01 else cell
+
+
+def tab_eval_compare(ctx: Ctx) -> Table:
+    """``tab:eval-compare``: our prover, verifier and proof against the published systems on matched models."""
+    tb = Table("tab_eval_compare", "tab:eval-compare",
+               f"{protocol(ctx)}; bench tables {ctx.bench.name}; ours under Fiat-Shamir with the CPU verifier, "
+               "except Maverick's row (Kpre, lambda 40, one thread, interactive, no compact encoding) and zkLLM's "
+               "(interactive; the streaming GPU verifier); theirs: artifacts/comparison/tables/reported_curated.csv")
+    for row in COMPARE:
+        if row is None:
+            tb.rows.append(r"\midrule")
+            continue
+        label, key, model, which = row
+        lit = ctx.lit.get(key) or {}
+        theirs = [f.to_float(lit.get(k)) for k in ("prover_s", "verifier_s", "proof_bytes")]
+        p, v, nb, src = compare_ours(ctx, which)
+        name = f"{key[0]} {model}"
+        cells = [label, model]
+        for (t_val, o_val, col, fmt) in ((theirs[0], p, "prover", f.t), (theirs[1], v, "verifier", f.t),
+                                         (theirs[2], nb, "proof", f.b)):
+            tb.put(name, f"ours {col}", o_val, src)
+            cells += [fmt(t_val) if t_val else f.DASH, compare_cell(t_val, o_val, fmt)]
+        tb.rows.append(" & ".join(cells) + r" \\")
+    return tb
+
+
+# ================================================================================================ quality.tex
+QUALITY = (("facebook/opt-125m", "OPT-125M", 4), ("facebook/opt-1.3b", "OPT-1.3B", 3), ("facebook/opt-6.7b",
+                                                                                         "OPT-6.7B", 2))
+"""``tab:quality``'s rows: the checkpoint, its label and the best scalar norm gain (``ppl_opt.BEST_GAIN``)."""
+CERTIFIED_CELL = "smooth-certified-a0.6-p11"
+"""``ppl_opt.py``'s cell of the certified model (alpha 0.6, 11-bit probabilities)."""
+
+
+def scalar_cell(gain) -> str:
+    return f"scalar-g{gain:g}-p11"
+
+
+def tab_quality(ctx: Ctx) -> Table:
+    """``tab:quality``: the fp32 perplexity, the scalar-gain graph's ratio, the certified model's perplexity and
+    ratio and its top-1 agreement, on the whole WikiText-2 test split at 2,048 tokens (calibration draw 0 of the
+    train split)."""
+    tb = Table("tab_quality", "tab:quality", "quality tier, ppl_opt.py: test split, 2,048-token windows, calibration "
+               f"on four train windows (draw 0); cells fp32, scalar-g<gain>-p11 and {CERTIFIED_CELL}")
+    for model, label, gain in QUALITY:
+        ref, sc, ce = (ctx.run.ppl(model, c) for c in ("fp32", scalar_cell(gain), CERTIFIED_CELL))
+        tb.rows.append(" & ".join([
+            label, tb.put(label, "fp32", ref and ref.d["ppl"], ref, lambda v: f.fixed(v, 2)),
+            tb.put(label, "scalar gain", sc and sc.d["ratio"], sc, lambda v: rf"$\times${v:.3f}"),
+            (f"{f.fixed(ce.d['ppl'], 2)} ($\\times${ce.d['ratio']:.3f})" if ce else f.DASH),
+            tb.put(label, "top-1", ce and ce.d.get("top1"), ce, lambda v: f.fixed(v, 2))]) + r" \\")
+        tb.put(label, "certified ppl", ce and ce.d["ppl"], ce)
+        tb.put(label, "certified ratio", ce and ce.d["ratio"], ce)
+    return tb
+
+
+# ================================================================================================ app_params.tex
+def _gkr_log2(n: int, log2p: float) -> float:
+    """``log2`` of ``(1 + sum_{k=1}^{n-1} (3k + 2)) / p^8``, one GKR instance of ``2^n`` leaves (Theorem thm:v1)."""
+    return math.log2(1 + sum(3 * k + 2 for k in range(1, n))) - 8 * log2p
+
+
+def params_values(policy: str, v1: dict | None, model: str = "llama2-7b", amortise=(100, 1000)) -> dict:
+    """``tab:params``'s values from the library (the shapes of ``model`` with the last block pruned and the plan
+    ``policy``), as ``costs/params_table.py`` computes them; V1's counts ``v1`` (``n_leaves``, ``n_instances``,
+    ``table``, ``lmax`` of a full-model record at 2,048 tokens) give the V1 rows."""
+    from experiments.costs.setup_bytes import plan_publics, setup_model
+    from pvi.commit import setup_proof as sp
+    from pvi.commit.cost import decoder_shapes
+    from pvi.commit.plans import column_bits, plan_commitment
+    from pvi.core.field import P
+    from pvi.models.decoder import CONFIGS
+    from pvi.v0.params import params_for
+
+    log2p = math.log2(P)
+    shapes = decoder_shapes(CONFIGS[model], prune_last=True)
+    plan = plan_commitment(shapes, policy, rate=4)
+    coded = {m.name: m for m in plan.coded}
+    rows = {g: sum(coded[m].n_rows for m in members) for g, members in plan.groups}
+    out = {"log2p": log2p, "ops": len(shapes), "coded": len(coded), "trees": len(rows)}
+    for fs in (False, True):
+        p = params_for(128, len(shapes), rate=4, plan=plan, fiat_shamir=fs)
+        cols = dict(p.group_columns)
+        out["fs" if fs else "int"] = {"beta": column_bits(128, len(shapes), fs), "r": p.reps,
+                                      "freivalds_log2": -p.reps * log2p, "t_min": min(cols.values()),
+                                      "columns_bytes": sum(4 * cols[g] * rows[g] for g in rows)}
+    out["ext_log2"] = 8 * log2p
+    if v1:
+        out["lookup_log2"] = math.log2(v1["n_leaves"] + v1["table"]) - math.log2(P ** 8 - P ** 2)
+        out["gkr_log2"] = math.log2(v1["n_instances"]) + _gkr_log2(v1["lmax"], log2p)
+    publics, groups = plan_publics(plan)
+    qbits = column_bits(128, len(shapes), False)
+    out["beta0"] = 128 + 64 + math.log2(2 * len(coded))
+    for a in amortise:
+        p = sp.setup_params(publics, groups, 128, qbits, amortise=a)
+        e = dict(p.e)
+        fracs = set()
+        for g, members in plan.groups:
+            m0 = coded[members[0]]
+            frac = 2 * e[members[0]] / max(1, m0.n_points - m0.row_length)
+            fracs.add(round(math.log2(frac)) if frac > 0 else None)
+        size = setup_model(shapes, policy, 128, a)
+        out[a] = {"s": p.s, "f": sorted(fracs, key=lambda v: (v is None, v)), "t0": sorted(dict(p.t0).values()),
+                  "setup_bytes": size["setup_MB"] * 1e6,
+                  "untrusted_bytes": size["query_columns_MB_untrusted"] * 1e6}
+    return out
+
+
+def params_v1_counts(run: Run, model: str = "llama2-7b") -> tuple[dict | None, Rec | None]:
+    """V1's counts of the full ``model`` at 2,048 tokens from the v1 tier (mode C, else Kpre)."""
+    for mode in ("C", "Kpre"):
+        r = v1_cell(run, model, 2048, mode)
+        if r and r.d.get("layers") == FULL_LAYERS[model] and "n_leaves" in r.d:
+            return {k: r.d[k] for k in ("n_leaves", "n_instances", "table", "lmax")}, r
+    return None, None
+
+
+def tab_params(ctx: Ctx) -> Table:
+    """``tab:params``: every term of the concrete security of Llama-2-7B at lambda 128 under the run's plan, from
+    the library; V1's lookup and GKR terms from the v1 tier's full-model cell."""
+    counts, rec = params_v1_counts(ctx.run)
+    tb = Table("tab_params", "tab:params",
+               f"the library's parameters (pvi.v0.params.params_for, pvi.commit.setup_proof.setup_params, "
+               f"costs/setup_bytes.setup_model) for Llama-2-7B under the plan {ctx.policy}, lambda 128; V1's counts "
+               f"from {rec.source if rec else 'no v1-tier record (missing)'}")
+    v = params_values(ctx.policy, counts) if ctx.byte_model else None
+    src = f"library ({ctx.policy})"
+
+    def g(path, fmt=str):
+        node = v
+        for k in path:
+            node = None if node is None else node.get(k) if isinstance(node, dict) else None
+        return tb.put("tab:params", "/".join(map(str, path)), node, src, fmt)
+
+    def pair(path_a, path_b, fmt):
+        return f"{g(path_a, fmt)} / {g(path_b, fmt)}"
+
+    def lg(x):
+        return f"$2^{{{x:.1f}}}$"
+
+    t0 = [v and v.get(a, {}).get("t0") for a in (100, 1000)] if v else [None, None]
+    tb.put("tab:params", "t0", t0[0] and t0[1] and (t0[0], t0[1]), src)
+    t0s = " / ".join(f.rng(t[0], t[-1], f.tokens) if t else f.DASH for t in t0)
+    fr = [v and v.get(a, {}).get("f") for a in (100, 1000)] if v else [None, None]
+    fexp = [x[0] if x and len(x) == 1 and x[0] is not None else None for x in fr]
+    tb.put("tab:params", "f", fexp[0] is not None and fexp[1] is not None and tuple(fexp) or None, src)
+    radius = (f"$f=2^{{{fexp[0]}}}$ / $2^{{{fexp[1]}}}$$^c$" if None not in fexp else f.DASH)
+    lookup = tb.put("tab:params", "lookup", v and v.get("lookup_log2"), rec or src, lambda x: f"$\\le2^{{{x:.1f}}}{{}}^b$")
+    gkr = tb.put("tab:params", "gkr", v and v.get("gkr_log2"), rec or src, lambda x: f"$\\le2^{{{x:.1f}}}{{}}^b$")
+    tb.rows += [
+        r"\multicolumn{2}{@{}l}{\emph{Per query, v0 (Theorem~\ref{thm:sound}, Section~\ref{sec:fs})}} \\",
+        rf"Field $\F$, $p=15\cdot2^{{27}}+1$ & $\log_2p\approx{g(('log2p',), lambda x: f'{x:.1f}')}$ \\",
+        rf"Weight operations $n_{{\mathrm{{op}}}}\ge|\mathcal J|$ & {g(('ops',))} \\",
+        r"Target $\beta=\lambda+\log_2(2n_{\mathrm{op}})$, plus 64 under Fiat--Shamir & "
+        + pair(("int", "beta"), ("fs", "beta"), lambda x: f"{x:.1f}") + r" \\",
+        r"Freivalds vectors $r=\lceil\beta/\log_2p\rceil$ & " + pair(("int", "r"), ("fs", "r"), str) + r" \\",
+        r"Freivalds term $p^{-r}$ per matrix & " + pair(("int", "freivalds_log2"), ("fs", "freivalds_log2"), lg)
+        + r" \\",
+        r"Columns $t_j$: least $t$ with $\prod_{i<t}\frac{k_j-1-i}{n_j-i}\le2^{-\beta}$ &",
+        "  " + pair(("int", "t_min"), ("fs", "t_min"), str) + r"$^a$ \\",
+        r"Opened columns per query & " + pair(("int", "columns_bytes"), ("fs", "columns_bytes"),
+                                              lambda x: f.fixed(x / 1e6, 1)) + r"\,MB \\",
+        r"Random-oracle queries $Q$ (64 bits added to $\beta$ and $\beta_0$) & -- / $\le2^{64}$ \\",
+        r"SHA-256 Merkle trees, 32-byte roots; SHAKE-256 transcript, 256-bit keys &",
+        r"  $O(Q^22^{-256})$ \\",
+        r"Total: $\varepsilon_{\sC}$ / $Q\varepsilon_{\sC}$, plus collisions for $Q\le2^{63}$ & $\le2^{-128}$ \\",
+        r"\midrule",
+        r"\multicolumn{2}{@{}l}{\emph{V1 (Theorem~\ref{thm:v1})}} \\",
+        r"Extension $\Fext=\F[\xi]/(\xi^8-11)$; Fiat--Shamir needs degree $\ge7$ &",
+        f"  $|\\Fext|\\approx2^{{{g(('ext_log2',), lambda x: f'{x:.1f}')}}}$ \\\\",
+        rf"Lookup term $(\Nleaf+|\Vtab|)/(p^8-p^2)$ & {lookup} \\",
+        rf"GKR terms $\sum_\gamma\varepsilon_{{\mathrm{{GKR}}}}(n_\gamma)$ & {gkr} \\",
+        r"Folds: 8 base-field rows per cut operation & $t_j$ unchanged \\",
+        r"\midrule",
+        r"\multicolumn{2}{@{}l}{\emph{Setup proof (Theorem~\ref{thm:untrusted})}} \\",
+        rf"Target $\beta_0=\lambda+64+\log_2(2|\mathcal J_0|)$, $|\mathcal J_0|={g(('coded',))}$ coded & "
+        + g(("beta0",), lambda x: f"{x:.1f}") + r" \\",
+        r"Combinations $s=\lceil(\beta_0+\log_2\max_jn_j)/\log_2p\rceil$ & " + g((100, "s")) + r" \\",
+        r"Radius $e_j=\lfloor f(n_j-k_j)/2\rfloor$, $f\in\{2^0,\dots,2^{-10}\}$ minimising",
+        rf"  $t^0_j/a+t_j$ & {radius} \\",
+        r"Setup columns $t^0_j$: least with $\prod_{i<t^0_j}\frac{n_j-e_j-1-i}{n_j-i}\le2^{-\beta_0}$ &",
+        f"  {t0s}$^c$ \\\\",
+        r"Opened columns per query ($t_j$ with $k_j+e_j$ for $k_j$) & "
+        + pair((100, "untrusted_bytes"), (1000, "untrusted_bytes"), lambda x: f.fixed(x / 1e6, 1)) + r"\,MB$^c$ \\",
+        r"Setup proof & " + pair((100, "setup_bytes"), (1000, "setup_bytes"), lambda x: f.fixed(x / 1e9, 1))
+        + r"\,GB$^c$ \\",
+        r"Total $\varepsilon_0$ & $\le2^{-128}+O(Q^22^{-256})$ \\"]
+    return tb
+
+
+# ================================================================================================ ext_attack.tex
+INRANGE = (("OPT-1.3B", "opt-1.3b", (6, 12, 18, 23)), ("OPT-6.7B", "opt-6.7b", (8, 16, 24, 31)))
+"""``tab:inrange``'s blocks: the model, its documents' name and the attacked layers."""
+
+
+def inrange_cell(doc: Rec | None, layer: int, rng: str) -> dict | None:
+    """``{changed, k_median, k_max, p_uniform, p_contribution}`` of one layer and range of an ``inrange_llm.py``
+    document (medians over the prompts whose next token changed)."""
+    if doc is None:
+        return None
+    rs = [r for r in doc.d.get("records", []) if r.get("layer") == layer and r.get("range") == rng]
+    if not rs:
+        return None
+    ok = [r for r in rs if r.get("success")]
+    med = lambda k: statistics.median([r[k] for r in ok]) if ok else None     # noqa: E731
+    return {"changed": len(ok), "prompts": len(rs), "k_median": med("k"),
+            "k_max": max(r["k"] for r in ok) if ok else None, "p_uniform": med("p_uniform"),
+            "p_contribution": med("p_contribution"), "k_all": [r["k"] for r in ok],
+            "p_uniform_all": [r["p_uniform"] for r in ok]}
+
+
+def tab_inrange(ctx: Ctx) -> Table:
+    """``tab:inrange``: in-range edits on OPT-1.3B and OPT-6.7B (``inrange_llm.py``): prompts whose next token
+    changed, the median and largest number of edited neurons, the median detection per path under uniform and
+    contribution-weighted sampling, for edits to either bound of the natural maximum or of the 99.9th percentile,
+    and edits that only lower activations."""
+    tb = Table("tab_inrange", "tab:inrange", "attack tier, inrange_llm.py documents (attack/inrange_llm_<model>_"
+               "{any,down}.json); medians over the prompts whose next token changed; fp32")
+    for i, (label, key, layers) in enumerate(INRANGE):
+        if i:
+            tb.rows.append(r"\midrule")
+        any_, down = ctx.run.file(f"inrange_llm_{key}_any.json"), ctx.run.file(f"inrange_llm_{key}_down.json")
+        first = True
+        for kind, doc, rng in (("any, max range", any_, "max"), (r"any, 99.9\% range", any_, "p999"),
+                               ("down only", down, "max")):
+            for j, layer in enumerate(layers):
+                c = inrange_cell(doc, layer, rng) or {}
+                row = f"{label} {kind} {layer}"
+                tb.rows.append(" & ".join([
+                    label if first else "", kind if j == 0 else "", str(layer),
+                    tb.put(row, "changed", c.get("changed"), doc),
+                    tb.put(row, "k med.", c.get("k_median"), doc, lambda v: f"{v:g}"),
+                    tb.put(row, "k max", c.get("k_max"), doc),
+                    tb.put(row, "uniform", c.get("p_uniform"), doc, f.sci),
+                    tb.put(row, "contribution", c.get("p_contribution"), doc, lambda v: f.sig(v, 2))]) + r" \\")
+                first = False
+    return tb
+
+
+# ================================================================================================ ext_defence.tex
+SETUP_MODELS = (("gpt2", "GPT-2"), ("llama2-7b", "Llama-2-7B"), ("opt-6.7b", "OPT-6.7B"), ("llama2-13b", "Llama-2-13B"))
+
+
+def setup_values(policy: str) -> dict:
+    """``{model: {a: setup_model(...)}}`` of ``costs/setup_bytes.py`` for ``tab:setup``'s models."""
+    from experiments.costs.setup_bytes import setup_model
+    from pvi.commit.cost import decoder_shapes
+    from pvi.models.decoder import CONFIGS
+    out = {}
+    for m, _ in SETUP_MODELS:
+        shapes = decoder_shapes(CONFIGS[m], prune_last=True)
+        out[m] = {a: setup_model(shapes, policy, 128, a) for a in (100, 1000)}
+    return out
+
+
+def tab_setup(ctx: Ctx) -> Table:
+    """``tab:setup``: the one-time setup proof at ``a = 100`` and ``1,000`` amortised queries and the opened columns
+    per query, honest and untrusted (the byte model of ``costs/setup_bytes.py``, interactive queries; the setup
+    tier measures the times, which the text's ``Setup...`` macros carry)."""
+    tb = Table("tab_setup", "tab:setup", f"the byte model of costs/setup_bytes.py (setup_model) under the plan "
+               f"{ctx.policy}, lambda 128, interactive queries")
+    v = setup_values(ctx.policy) if ctx.byte_model else {}
+    src = f"costs/setup_bytes.setup_model ({ctx.policy})"
+    mb2 = lambda x: f"{x:.2f}" if x < 10 else f"{x:.1f}"     # noqa: E731
+    for m, label in SETUP_MODELS:
+        s = v.get(m, {})
+        a, c = s.get(100, {}), s.get(1000, {})
+        get = lambda d, k, scale=1.0: None if k not in d else d[k] * scale    # noqa: E731
+        tb.rows.append(" & ".join([
+            label, tb.put(label, "setup a=100", get(a, "setup_MB", 1e6), src, f.b),
+            tb.put(label, "setup a=1000", get(c, "setup_MB", 1e6), src, f.b),
+            tb.put(label, "honest", get(a, "query_columns_MB_honest"), src, mb2),
+            f"{tb.put(label, 'untrusted a=100', get(a, 'query_columns_MB_untrusted'), src, mb2)} / "
+            f"{tb.put(label, 'untrusted a=1000', get(c, 'query_columns_MB_untrusted'), src, mb2)}"]) + r" \\")
+    return tb
+
+
+# ================================================================================================ ext_evaluation.tex
+IMPROVE = (
+    (r"Opening and fold on int8 GEMMs (prover, $\sC$, $T{=}64$)",
+     (("llama2-7b", 1), ("llama2-7b", 4), ("llama2-13b", 1), ("gpt2", 12)), "open"),
+    ("Weight products on int8 GEMMs (forward pass)", (("llama2-7b", 2),), "forward"),
+    ("Threaded assembly of the encoded claims (encoder)", (("opt-1.3b", 24), ("llama2-7b", 2)), "encode"),
+    ("Fused exact attention in the prover (forward pass)", (("opt-1.3b", 12), ("llama2-7b", 2)), "attn"),
+    (r"GPU claim decoder and fused attention (GPU verifier, $\Kpre$)", (("opt-1.3b", 12), ("llama2-7b", 2)), "gpuv"),
+    (r"Native exact kernels for every phase (CPU verifier, $\Kpre$)", (("llama2-7b", 2),), "cpuv"))
+"""``tab:eval-improve``'s groups: heading, (model, blocks) rows and the A/B."""
+
+
+def improve_pair(run: Run, kind: str, model: str, layers: int):
+    """``(before, after, record before, record after)`` seconds of one ``tab:eval-improve`` row."""
+    if kind == "open":
+        a, b = (run.first("open_ab", "improve", model=model, layers=layers, variant=v) for v in ("float64", "int8"))
+        return a and a.d["prove_s"], b and b.d["prove_s"], a, b
+    if kind == "forward":
+        a, b = (run.first("forward_ab", "improve", model=model, layers=layers, variant=v) for v in ("float32", "int8"))
+        return a and a.d["prove_forward"], b and b.d["prove_forward"], a, b
+    if kind == "encode":
+        a, b = (run.first("encode_ab", "improve", model=model, layers=layers, variant=v)
+                for v in ("one_thread", "threaded"))
+        return a and a.d["encode_s"], b and b.d["encode_s"], a, b
+    vdev = "cpu" if kind == "cpuv" else "cuda"
+    a, b = (run.perf("improve", model, 2048, "Kpre", vdev=vdev, layers=layers, label=f"{kind}-{w}")
+            for w in ("before", "after"))
+    if kind == "attn":
+        return (a and a.d["timings"].get("prove_forward"), b and b.d["timings"].get("prove_forward"), a, b)
+    return a and a.d["verify_s"], b and b.d["verify_s"], a, b
+
+
+def tab_eval_improve(ctx: Ctx) -> Table:
+    """``tab:eval-improve``: each implementation improvement against the code path it replaces, on the same queries
+    (the improve tier; the options of ``pvi.options`` select the path)."""
+    tb = Table("tab_eval_improve", "tab:eval-improve", f"{protocol(ctx)}; improve tier: open_ab.py, forward_ab.py, "
+               "encode_ab.py and perf.py with the labels <row>-before / <row>-after")
+    for head, rows, kind in IMPROVE:
+        tb.rows.append(rf"\multicolumn{{4}}{{@{{}}l}}{{\emph{{{head}}}}} \\")
+        for model, layers in rows:
+            before, after, ra, rb = improve_pair(ctx.run, kind, model, layers)
+            row = f"{kind} {NAME[model]} {layers}/{FULL_LAYERS[model]}"
+            tb.rows.append(" & ".join([
+                f"{NAME[model]}, {layers}/{FULL_LAYERS[model]}", tb.put(row, "before", before, ra, f.t),
+                tb.put(row, "after", after, rb, f.t),
+                tb.put(row, "gain", before / after if before and after else None, rb, lambda v: f.x(v, 1))])
+                + r" \\")
+    return tb
+
+
+LONG = (2048, 4096, 8192, 16384)
+"""``tab:eval-long``'s prompt lengths."""
+
+
+def long_point(run: Run, seq: int, n_layers: int = 32) -> dict:
+    """The long tier at one prompt length: the CPU verifier and the proof of Llama-2-7B's shapes on 2 and 3 blocks,
+    extrapolated to the full model as the 2-block cell plus ``n_layers - 2`` blocks of the 3-block cell's
+    increment; the same for each re-execution variant, and the fastest exact one."""
+    two = run.perf("long", "llama2-7b", seq, "Kpre", vdev="cpu", layers=2, label="long")
+    three = run.perf("long", "llama2-7b", seq, "Kpre", vdev="cpu", layers=3, label="long")
+    out = {"two": two, "three": three}
+    if two and three:
+        k = n_layers - 2
+        out["verify_block"] = three.d["verify_s"] - two.d["verify_s"]
+        out["bytes_block"] = three.d["proof_bytes"] - two.d["proof_bytes"]
+        out["verify"] = two.d["verify_s"] + k * out["verify_block"]
+        out["bytes"] = two.d["proof_bytes"] + k * out["bytes_block"]
+    best = None
+    for v in EXACT:
+        ms, r = run.reexec_blocks("long", "llama2-7b", seq, "cpu", v)
+        if "2" in ms and "3" in ms:
+            full = ms["2"] + (n_layers - 2) * (ms["3"] - ms["2"])
+            if best is None or full < best[0]:
+                best = (full, v, r)
+    out["reexec"] = best
+    return out
+
+
+def tab_eval_long(ctx: Ctx) -> Table:
+    """``tab:eval-long``: long prompts on the full Llama-2-7B, extrapolated from 2 and 3 blocks: the CPU verifier
+    (Kpre, Fiat--Shamir) against the fastest exact re-execution on the same 8 threads, and the proof."""
+    tb = Table("tab_eval_long", "tab:eval-long", f"{protocol(ctx)}; long tier: perf.py --layers 2 and 3 (label "
+               "long), reexec.py --layers 2 3; full model = 2 blocks + 30 x (3 blocks - 2 blocks); re-execution: "
+               "the fastest exact variant at each length")
+    for seq in LONG:
+        p = long_point(ctx.run, seq)
+        rx = p["reexec"]
+        row = f"T={seq}"
+        ratio = rx[0] / p["verify"] if rx and p.get("verify") else None
+        tb.rows.append(" & ".join([
+            f.tokens(seq), tb.put(row, "verifier", p.get("verify"), p["three"], lambda v: f.sig(v, 3)),
+            tb.put(row, "re-execution", rx and rx[0], rx and rx[2], lambda v: f.fixed(v, 1)),
+            tb.put(row, "ratio", ratio, p["three"], lambda v: f.x(v, 1)),
+            tb.put(row, "proof GB", p.get("bytes"), p["three"], lambda v: f.fixed(v / 1e9, 1))]) + r" \\")
+    return tb
+
+
+def real_pair(run: Run, model: str, seq: int, mode: str, checkpoint: str):
+    """The real tier's V1 records of one cell: real weights and the random-weight twin."""
+    real = run.v1("real", model, seq, mode, vdev="cpu", label="real", real=checkpoint)
+    rnd = run.v1("real", model, seq, mode, vdev="cpu", label="real-random", real=None)
+    return real, rnd
+
+
+def tab_eval_real(ctx: Ctx) -> Table:
+    """``tab:eval-real``: the certified OPT-1.3B (full model, last block pruned) against its random-weight twin:
+    v0's and V1's proofs and v0's prover and CPU verifier on the same queries (``v1_bytes.py --full``'s timed v0
+    queries)."""
+    tb = Table("tab_eval_real", "tab:eval-real", f"{protocol(ctx)}; real tier: v1_bytes.py --full on the certified "
+               "facebook/opt-1.3b (label real) and its random twin (label real-random); prove/verify: v0's timed "
+               "queries")
+    for mode in ("C", "Kpre"):
+        for seq in (64, 2048):
+            real, rnd = real_pair(ctx.run, "opt-1.3b", seq, mode, "facebook/opt-1.3b")
+            row = f"{mode} T={seq}"
+            tim = [v1_timed(r, "v0") for r in (real, rnd)]
+            cells = [MODE[mode], f.tokens(seq)]
+            for key, fmt in (("v0_total", lambda v: f.sig(v / 1e6, 4)), ("v1_total", lambda v: f.sig(v / 1e6, 4))):
+                cells.append(" / ".join(tb.put(row, f"{key} {w}", r and r.d.get(key), r, fmt)
+                                        for w, r in (("real", real), ("random", rnd))))
+            for i, name in ((0, "prove"), (1, "verify")):
+                cells.append(" / ".join(tb.put(row, f"{name} {w}", t[i], r, lambda v: f.fixed(v, 2))
+                                        for w, t, r in (("real", tim[0], real), ("random", tim[1], rnd))))
+            tb.rows.append(" & ".join(cells) + r" \\")
+    return tb
+
+
+REEXEC_GPU = ("opt-1.3b", "opt-6.7b", "llama2-7b", "llama2-13b", "qwen3-4b")
+
+
+def tab_eval_reexec(ctx: Ctx) -> Table:
+    """``tab:eval-reexec``: re-executing the full model on the GPU (the integer forward pass on int8 tensor cores /
+    the fp16 decoder) and on the CPU (Llama-2-7B: our Kpre verifier, fp32 and the faster integer re-execution)."""
+    run = ctx.run
+    tb = Table("tab_eval_reexec", "tab:eval-reexec", f"{protocol(ctx)}; gpuv tier: reexec.py --device cuda (int, "
+               "float = fp16), full models measured; cpuv tier: perf.py Kpre and reexec.py on 8 threads")
+    tb.rows.append(r"\multicolumn{4}{@{}l}{\emph{GPU: integer forward pass / fp16 decoder}} \\")
+    for m in REEXEC_GPU:
+        cells = [NAME[m]]
+        for seq in (64, 512, 2048):
+            g = run.reexec("gpuv", m, seq, "cuda", ("int", "float"))
+            i, fl = g.get("int"), g.get("float")
+            a = tb.put(f"{m} {seq}", "GPU int", i and i[0], i and i[1], lambda v: f.fixed(v, 2))
+            c = tb.put(f"{m} {seq}", "GPU fp16", fl and fl[0], fl and fl[1], lambda v: f.sig(v, 2))
+            cells.append(f.DASH if i is None and fl is None else f"{a} / {c}")
+        tb.rows.append(" & ".join(cells) + r" \\")
+    tb.rows += [r"\midrule", r"\multicolumn{4}{@{}l}{\emph{CPU: Llama-2-7B}} \\"]
+    ver = [run.perf("cpuv", "llama2-7b", s, "Kpre", vdev="cpu", label="cpuv") for s in (64, 2048)]
+    vals = [tb.put(f"cpu {s}", "Kpre verifier", r and r.d["verify_s"], r, lambda v: f.fixed(v, 1))
+            for s, r in zip((64, 2048), ver)]
+    tb.rows.append(" & ".join([r"our $\Kpre$ verifier", vals[0], "--", vals[1]]) + r" \\")
+    for label, variants in (("fp32 re-execution", ("float",)), ("integer re-execution", ("int", "int_fp32gemm"))):
+        vals = []
+        for s in (64, 2048):
+            got = run.reexec("cpuv", "llama2-7b", s, "cpu", variants)
+            best = min(got.values(), key=lambda v: v[0]) if got else None
+            vals.append(tb.put(f"cpu {s}", label, best and best[0], best and best[1], lambda v: f.fixed(v, 1)))
+        tb.rows.append(" & ".join([label, vals[0], "--", vals[1]]) + r" \\")
+    return tb
+
+
+COMPARE_V1 = (("zkGPT", ("zkGPT", "GPT-2", ""), "GPT-2 (64)", "gpt2", 64),
+              ("DeepProve", ("DeepProve", "GPT-2", "64"), "GPT-2 (64)", "gpt2", 64),
+              ("DeepProve", ("DeepProve", "GPT-2", "512"), "GPT-2 (512)", "gpt2", 512),
+              ("zkLLM", ("zkLLM", "OPT-125M", "2048"), "OPT-125M (2{,}048)", "opt-125m", 2048),
+              ("zkLLM", ("zkLLM", "OPT-1.3B", "2048"), "OPT-1.3B (2{,}048)", "opt-1.3b", 2048),
+              ("zkLLM", ("zkLLM", "Llama-2-7B", "2048"), "Llama-2-7B (2{,}048)", "llama2-7b", 2048),
+              ("zkLLM", ("zkLLM", "Llama-2-13B", "2048"), "Llama-2-13B (2{,}048)", "llama2-13b", 2048))
+
+
+def tab_eval_compare_v1(ctx: Ctx) -> Table:
+    """``tab:eval-compare-v1``: V1's proof against the published systems (mode C, the full model, Fiat--Shamir; v0
+    on the same query)."""
+    tb = Table("tab_eval_compare_v1", "tab:eval-compare-v1", f"{protocol(ctx)}; v1 tier, mode C, full models only "
+               "(v0 and V1 on the same query); theirs: reported_curated.csv")
+    for system, key, label, m, seq in COMPARE_V1:
+        r = v1_cell(ctx.run, m, seq, "C")
+        if r and r.d.get("layers") != FULL_LAYERS[m]:
+            r = None
+        lit = ctx.lit.get(key) or {}
+        theirs = f.to_float(lit.get("proof_bytes"))
+        tb.rows.append(" & ".join([system, label, f.b(theirs) if theirs else f.DASH,
+                                   tb.put(label, "ours (v0)", r and r.d["v0_total"], r, f.b),
+                                   tb.put(label, "V1", r and r.d["v1_total"], r, f.b)]) + r" \\")
+    return tb
+
+
+# ================================================================================================ ext_v1.tex
+def tab_v1(ctx: Ctx) -> Table:
+    """``tab:v1``: V1's and v0's prover and CPU verifier on the timed cells of ``tab:eval-v1``, with the GKR's share
+    of V1's prover (median of ``prove_gkr``)."""
+    tb = Table("tab_v1", "tab:v1", f"{protocol(ctx, 'V1 with its optimised verifier')}; v1 tier, timed queries")
+    for seq, m in V1_ROWS[1:]:
+        for i, mode in enumerate(("C", "Kpre")):
+            r = v1_cell(ctx.run, m, seq, mode)
+            row = f"{NAME[m]} T={seq} {mode}"
+            p0, v0 = v1_timed(r, "v0")
+            p1, v1 = v1_timed(r, "v1", "optimised")
+            q = ((r.d.get("timed") or {}).get("v1_paths") or {}).get("optimised") if r else None
+            gkr = (q or {}).get("timings", {}).get("prove_gkr") if q else None
+            two = lambda v: f.fixed(v, 2)     # noqa: E731
+            tb.rows.append(" & ".join([NAME[m] if i == 0 else "", str(seq) if i == 0 else "", MODE[mode],
+                                       tb.put(row, "v0 prover", p0, r, two), tb.put(row, "V1 prover", p1, r, two),
+                                       tb.put(row, "GKR", gkr, r, two), tb.put(row, "v0 verifier", v0, r, two),
+                                       tb.put(row, "V1 verifier", v1, r, two)]) + r" \\")
+    return tb
+
+
+# ================================================================================================ ext_generation.tex
+GEN_MODELS = ("llama2-7b", "qwen3-4b")
+GEN_G = (64, 256)
+"""The generation cells of the final run (the gen tier: a 512-token prompt)."""
+
+
+def tab_gen(ctx: Ctx) -> Table:
+    """``tab:gen``: a G-token greedy response as one prefill: prover, verifier and proof in modes C and Kpre."""
+    tb = Table("tab_gen", "tab:gen", f"{protocol(ctx)}; gen tier (gen_bench.py, label gen): 512-token prompt, greedy, "
+               "random weights; medians over the timed queries; the verifier's time includes the token rule")
+    for m in GEN_MODELS:
+        for j, g in enumerate(GEN_G):
+            cells = [NAME[m] if j == 0 else "", str(g)]
+            for mode in ("C", "Kpre"):
+                r = ctx.run.gen(m, mode, "greedy", g)
+                row = f"{NAME[m]} G={g} {mode}"
+                cells += [tb.put(row, "P", r and r.d["prove_s"], r, lambda v: f.fixed(v, 2)),
+                          tb.put(row, "V", r and r.d["verify_s"], r, lambda v: f.fixed(v, 2)),
+                          tb.put(row, "MB", r and r.d["proof_bytes"], r, lambda v: f.sig(v / 1e6, 3))]
+            tb.rows.append(" & ".join(cells) + r" \\")
+    return tb
+
+
+def tab_gen_full(ctx: Ctx) -> Table:
+    """``tab:gen-full``: every generation cell of the final run, greedy and sampled (the client's seed), with the
+    proof per generated token."""
+    tb = Table("tab_gen_full", "tab:gen-full", f"{protocol(ctx)}; gen tier (gen_bench.py, label gen): 512-token "
+               "prompt, random weights, 3 timed queries per cell; rows ', sampled': the integer sampler")
+    for i, m in enumerate(GEN_MODELS):
+        if i:
+            tb.rows.append(r"\midrule")
+        for mode in ("C", "Kpre"):
+            for decode in ("greedy", "sample"):
+                for j, g in enumerate(GEN_G):
+                    r = ctx.run.gen(m, mode, decode, g)
+                    row = f"{NAME[m]} {mode} {decode} G={g}"
+                    label = f"{NAME[m]}, {MODE[mode]}" + (", sampled" if decode == "sample" else "")
+                    tb.rows.append(" & ".join([
+                        label if j == 0 else "", str(g),
+                        tb.put(row, "prover", r and r.d["prove_s"], r, lambda v: f.fixed(v, 2)),
+                        tb.put(row, "verifier", r and r.d["verify_s"], r, lambda v: f.fixed(v, 2)),
+                        tb.put(row, "proof MB", r and r.d["proof_bytes"], r, lambda v: f.sig(v / 1e6, 3)),
+                        tb.put(row, "MB/token", r and r.d["proof_mb_per_token"], r,
+                               lambda v: f.fixed(v, 2) if v < 10 else f.sig(v, 3))]) + r" \\")
+    return tb
+
+
+ZEROSHOT = (("lambada_openai", "LAMBADA"), ("hellaswag", "HellaSwag"), ("piqa", "PIQA"), ("arc_easy", "ARC-e"),
+            ("arc_challenge", "ARC-c"), ("winogrande", "WinoGrande"))
+ZEROSHOT_MODELS = ("facebook/opt-125m", "facebook/opt-1.3b", "facebook/opt-6.7b")
+
+
+def zeroshot_cells(run: Run, model: str, recipe: str = "certified") -> dict:
+    """``{task: (fp16 acc, int - fp16, 95% interval, same picks, int record)}`` of ``zeroshot.py`` (accuracy)."""
+    out = {}
+    for task, _ in ZEROSHOT:
+        ref, got = run.zeroshot(model, task, "ref"), run.zeroshot(model, task, "int", recipe)
+        if ref is None or got is None:
+            out[task] = (None, None, None, None, got or ref)
+            continue
+        out[task] = (ref.d["acc"], got.d.get("diff_acc", got.d["acc"] - ref.d["acc"]), got.d.get("diff_acc_ci95"),
+                     got.d.get("same_pick"), got)
+    return out
+
+
+def tab_zeroshot(ctx: Ctx) -> Table:
+    """``tab:zeroshot``: the certified OPT models' zero-shot accuracy (%): fp16, and integer minus fp16 with its 95%
+    paired bootstrap interval; the mean over the six tasks."""
+    tb = Table("tab_zeroshot", "tab:zeroshot", "quality tier, zeroshot.py (the certified recipe; accuracy, acc): "
+               "fp16 and integer minus fp16 with the paired bootstrap interval over documents")
+    per = {m: zeroshot_cells(ctx.run, m) for m in ZEROSHOT_MODELS}
+    for task, label in ZEROSHOT:
+        cells = [label]
+        for m in ZEROSHOT_MODELS:
+            acc, diff, ci, _, r = per[m][task]
+            row = f"{m} {task}"
+            a = tb.put(row, "fp16", acc, r, lambda v: f.fixed(100 * v, 1))
+            d = tb.put(row, "delta", diff, r, lambda v: f.signed(100 * v, 1))
+            interval = (f" {{\\scriptsize[{f.signed(100 * ci[0], 1)}, {f.signed(100 * ci[1], 1)}]}}"
+                        if ci and diff is not None else "")
+            cells += [a, d + interval]
+        tb.rows.append(" & ".join(cells) + r" \\")
+    tb.rows.append(r"\midrule")
+    cells = ["Mean"]
+    for m in ZEROSHOT_MODELS:
+        accs = [per[m][t][0] for t, _ in ZEROSHOT]
+        diffs = [per[m][t][1] for t, _ in ZEROSHOT]
+        ok = None not in accs and None not in diffs
+        cells += [tb.put(f"{m} mean", "fp16", statistics.mean(accs) if ok else None, "mean of the six tasks",
+                         lambda v: f.fixed(100 * v, 1)),
+                  tb.put(f"{m} mean", "delta", statistics.mean(diffs) if ok else None, "mean of the six tasks",
+                         lambda v: f.signed(100 * v, 2))]
+    tb.rows.append(" & ".join(cells) + r" \\")
+    return tb
+
+
+BUILDERS = (tab_eval_llm, tab_eval_v1, tab_options, tab_eval_compare, tab_quality, tab_params, tab_inrange, tab_setup,
+            tab_eval_improve, tab_eval_long, tab_eval_real, tab_eval_reexec, tab_eval_compare_v1, tab_v1, tab_gen,
+            tab_gen_full, tab_zeroshot)
+"""Every table builder, in the paper's order."""
+TABLE_FILES = tuple(b.__name__ for b in BUILDERS)
+"""The tables' file names (``<name>.tex``), as ``paper_sp2027/main.tex`` lists them."""
+
+
+def build_all(ctx: Ctx, problems: list | None = None) -> list[Table]:
+    """Every table.  A builder that fails on a malformed record is a ``PARSE`` problem and leaves its table empty
+    (every cell missing)."""
+    out = []
+    for b in BUILDERS:
+        try:
+            out.append(b(ctx))
+        except (KeyError, TypeError, ValueError, ZeroDivisionError, AttributeError, IndexError) as e:
+            if problems is None:
+                raise
+            problems.append(f"PARSE {b.__name__}: {type(e).__name__}: {e}")
+            label = "tab:" + b.__name__[4:].replace("_", "-")
+            out.append(Table(b.__name__, label, f"the builder failed: {type(e).__name__}: {e}",
+                             missing=[f"the builder failed: {e}"]))
+    return out

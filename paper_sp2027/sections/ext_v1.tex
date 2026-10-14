@@ -148,47 +148,42 @@ Table~\ref{tab:v1} adds the share of V1's prover time spent in the GKR.
     \cmidrule(lr){4-6}\cmidrule(lr){7-8}
     Model & $T$ & & v0 & V1 & of which GKR & v0 & V1 \\
     \midrule
-    GPT-2      &  512 & $\sC$   & 0.25 & 1.38 & 0.88 & 0.73 & 1.64 \\
-               &      & $\Kpre$ & 0.15 & 1.25 & 0.85 & 0.58 & 1.65 \\
-    OPT-125M   & 2048 & $\sC$   & 0.50 & 4.85 & 3.58 & 2.96 & 4.86 \\
-               &      & $\Kpre$ & 0.39 & 4.52 & 3.40 & 2.55 & 4.85 \\
-    Llama-2-7B & 2048 & $\sC$   & \multicolumn{5}{c}{\emph{L40S only}} \\
-               &      & $\Kpre$ & 0.32 & 3.44 & 2.17 & 2.32 & 3.67 \\
+    \pvitable{tab_v1}
     \bottomrule
   \end{tabular}
 \end{table}
 
-\para{Proof size.} At 2{,}048 tokens V1 is 2.03--2.29$\times$ smaller on every build with more than
-one block; the full OPT-1.3B proof drops from 2.07 to 0.96\,GB in mode $\sC$ and from 2.02 to
-0.91\,GB in $\Kpre$. The values shrink 2.2--2.3$\times$: an int8 value costs about 7 bits and a
+\para{Proof size.} At 2{,}048 tokens V1 is \VOneRatioRandomExact{}$\times$ smaller on every build with more than
+one block; the full OPT-1.3B proof drops from \VOneOptMCVZeroGB{} to \VOneOptMCVOneGB{}\,GB in mode $\sC$ and from \VOneOptMKVZeroGB{} to
+\VOneOptMKVOneGB{}\,GB in $\Kpre$. The values shrink \VOneValuesRatio{}$\times$: an int8 value costs about 7 bits and a
 residual increment about 12, against 16--19 bits for a claim. The parts that do not grow with the
 prompt grow instead: eight folded rows instead of $r$, $y$ over $\Fext$ for transposed matrices,
 and the new multiplicities and GKR transcripts (under 1\,MB in every measured build). GPT-2 at 64
-tokens thus gains only 1.28$\times$ ($\sC$) and 1.46$\times$ ($\Kpre$), and one Llama-2-13B block,
-the pruned last block in which only keys and values span all positions, 1.81$\times$ in $\sC$.
+tokens thus gains only \VOneRatioShortC{}$\times$ ($\sC$) and \VOneRatioShortK{}$\times$ ($\Kpre$), and one Llama-2-13B block,
+the pruned last block in which only keys and values span all positions, \VOneRatioLargeC{}$\times$ in $\sC$.
 V1's sizes come from an exact byte accounting that equals real queries to the byte except for the
 Merkle multiproofs, whose size depends on the drawn columns; the timed full V1 queries agree with
-it within 0.3\%. The byte model predicts 2.24$\times$ (6.63 to 2.97\,GB) for the full Llama-2-7B at
+it within 0.3\%. The byte model predicts \VOneLlamaCRatio{}$\times$ (\VOneLlamaCVZeroGB{} to \VOneLlamaCVOneGB{}\,GB) for the full Llama-2-7B at
 2{,}048 tokens in $\sC$ \todo{L40S: V1 on full Llama-2-7B, Llama-2-13B, OPT-6.7B, Qwen3-4B at
 2,048}; with real weights the estimate of our V1 specification is 1.78--1.85$\times$ at 2{,}048
-tokens, and the real OPT-6.7B measures 1.73$\times$ in $\Kpre$ (4.65 to 2.68\,GB, with 224{,}670
+tokens, and the real OPT-6.7B measures \VOneRatioRealOptLExact{}$\times$ in $\Kpre$ (\VOneRealOptLVZeroGB{} to \VOneRealOptLVOneGB{}\,GB, with \VOneRealOptLExceptions{}
 exceptions). On the smoothed real OPT-125M at 512 tokens, the measured gain is 1.68$\times$ in
-$\sC$ and 1.77$\times$ in $\Kpre$, and on OPT-1.3B at 64 tokens 1.12$\times$ and 1.28$\times$
-(random weights: 1.24$\times$ and 1.53$\times$), because real weights shrink v0's claims more than
+$\sC$ and 1.77$\times$ in $\Kpre$, and on OPT-1.3B at 64 tokens \VOneRealOptMShortC{}$\times$ and \VOneRealOptMShortK{}$\times$
+(random weights: \VOneRandomOptMShortC{}$\times$ and \VOneRandomOptMShortK{}$\times$), because real weights shrink v0's claims more than
 V1's values; real OPT weights also have residual multipliers
 above $2^{29}$, whose operations stay clear (P3).
 
 \para{Prover and verifier.} With the GKR on the GPU and instances of at most $2^{24}$ leaves, the
-prover pays about 22\,ns per cut claim end to end, 63--75\% of its time. At 2{,}048 tokens it takes
-3.4--4.9\,s, 9.7--11.6$\times$ the time of v0's prover, whose int8 forward pass is fast on this
-card. The CPU verifier takes 1.6--1.9$\times$ the earlier v0 verifier's time at 2{,}048 tokens and
-2.2--2.8$\times$ for GPT-2 at 512 tokens, mostly for the final check's two exact products per claim,
+prover pays about \VOneNsPerClaim{}\,ns per cut claim end to end, \VOneProverShare{}\% of its time. At 2{,}048 tokens it takes
+\VOneProverLong{}\,s, \VOneProverRatioLong{}$\times$ the time of v0's prover, whose int8 forward pass is fast on this
+card. The CPU verifier takes \VOneVerifyRatioLong{}$\times$ the earlier v0 verifier's time at 2{,}048 tokens and
+\VOneVerifyRatioMedium{}$\times$ for GPT-2 at 512 tokens, mostly for the final check's two exact products per claim,
 $L_\ell e$ and $W_\ell e$. Against v0's final native verifier, on Llama-2-7B in $\Kpre$ at 2{,}048
 tokens (8 Xeon threads, Fiat--Shamir), V1 takes 1.44\,s per block with the batched GKR check and
-a native kernel for the final check's products (2.49\,s before), so about 45.4\,s for the full model
-against v0's 19.6\,s. Llama-2-7B in mode $\sC$ does not fit on the 11\,GB card with the GKR \todo{L40S: V1
+a native kernel for the final check's products (2.49\,s before), so about \VOneVerifyLlama{}\,s for the full model
+against v0's \VOneVZeroVerifyLlama{}\,s. Llama-2-7B in mode $\sC$ does not fit on the 11\,GB card with the GKR \todo{L40S: V1
 timings incl.\ Llama-2-7B in $\sC$, full OPT-1.3B; vs.\ zkLLM prover}. V1 thus trades prover time
-for a proof 2.0--2.3$\times$ smaller with random weights, which pays off where moving and storing
+for a proof \VOneRatioRandom{}$\times$ smaller with random weights, which pays off where moving and storing
 bytes costs more than seconds of GPU time.
 
 % ---- E5 -------------------------------------------------------------------------------
@@ -198,7 +193,7 @@ Mode $\sK$ and the streaming GPU verifier do not support V1 yet \todo{GPU verifi
 assumes one requantisation multiplier per operation, so per-row weight scales
 (Section~\ref{sec:quality}) need more widths, and CNNs that fuse ReLU into the requantisation are
 not covered. By the byte model the full Llama-2-7B proof still reaches the size of its int8 weights
-at about 4{,}500 tokens instead of about 2{,}050, and the sent values, like the claims, reveal
+at about \BreakevenTokensVOne{} tokens instead of about \BreakevenTokensAlt{}, and the sent values, like the claims, reveal
 information about the weights.
 
 % ---- E6 -------------------------------------------------------------------------------

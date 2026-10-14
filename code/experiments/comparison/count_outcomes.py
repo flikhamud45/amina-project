@@ -17,9 +17,9 @@ final run's root (``\\FinalNHonest``, ...).
 ``--platform`` takes one platform or a comma-separated list, whose counts are added (a cell finished in a later
 platform's root replaces the same cell of an earlier one, as in the tables).  A listed platform that has no raw root
 yet (a run still to come) is skipped with a warning: the counts are then partial.  ``--definition`` counts only the
-defining cells of the base implementation (``experiments.paper.assets.definition_tagsets()``, from its
-``OPTIMISED``: no cells of the uncompressed proofs, stand-ins or by-products of those roots); ``--require-tag TAG``
-only the cells whose name carries TAG.
+defining defence and tamper cells under the plan ``--policy`` (``experiments.paper.bench.definition_tagsets``: no
+cells of the uncompressed proofs, stand-ins or by-products of those roots); ``--require-tag TAG`` only the cells
+whose name carries TAG.
 
 Honest queries: every ``accepted`` record of a defence cell (the batched image and language-model queries included).
 Attacks: every ``rejected`` record of the tamper cells and every ``tamper_rejected`` record (the one tampered query of
@@ -79,8 +79,7 @@ def finished_cells(root: Path) -> set:
 
 def count(root: Path, policy: str = PAPER_POLICY, tags=(), definition=None, skip=frozenset()) -> dict:
     """``tags``: count only the cells whose name carries all of them.  ``definition``: {(suite, mode): {tag
-    sets}} (``experiments.paper.assets.definition_tagsets()``): count only the defining defence and tamper cells of the
-    base implementation.  ``skip``: (suite, model, cell) of finished cells not to count (a later run holds
+    sets}} (``experiments.paper.bench.definition_tagsets``): count only the defining defence and tamper cells.  ``skip``: (suite, model, cell) of finished cells not to count (a later run holds
     them: :func:`count_runs`)."""
     c = {k: Counter() for k in KINDS}
     records, rejected = 0, []
@@ -124,7 +123,7 @@ def count(root: Path, policy: str = PAPER_POLICY, tags=(), definition=None, skip
 
 def count_runs(roots: list[Path], policy: str = PAPER_POLICY, tags=(), definition=None) -> dict:
     """Several runs' counts, added up, where a cell finished in a later root replaces the same cell of an earlier
-    one (as ``experiments.paper.assets`` merges their tables: a re-measured cell would otherwise count twice).
+    one (a re-measured cell would otherwise count twice).
     Honest rejections (.rejected-* files) always count."""
     out, later = [], set()
     for root in reversed(roots):
@@ -216,8 +215,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also count apart the attacks on cells built under this commitment plan (default cnn18c; "
                          "the stored runs of the base implementation: auto, the planning rule)")
     ap.add_argument("--definition", action="store_true",
-                    help="count only the defining defence and tamper cells of the base implementation "
-                         "(experiments.paper.assets.OPTIMISED), without by-products and stand-ins")
+                    help="count only the defining defence and tamper cells under --policy "
+                         "(experiments.paper.bench.definition_tagsets), without by-products and stand-ins")
     ap.add_argument("--require-tag", action="append", default=[], metavar="TAG",
                     help="count only the cells whose name carries this tag (repeatable; e.g. wire: the cells in the "
                          "compact encoding only)")
@@ -240,8 +239,8 @@ def main() -> None:
         raise SystemExit(f"none of {names} has a raw root yet")
     definition = None
     if args.definition:
-        from experiments.paper import assets   # the one definition of the base implementation's cells
-        definition = assets.definition_tagsets()
+        from experiments.paper import bench    # the one definition of the cost tables' cells
+        definition = bench.definition_tagsets(args.policy)
     c = count_runs(roots, args.policy, args.require_tag, definition)
     label = (" + ".join(r.name for r in roots)
              + (f" (cells tagged {', '.join(args.require_tag)})" if args.require_tag else "")

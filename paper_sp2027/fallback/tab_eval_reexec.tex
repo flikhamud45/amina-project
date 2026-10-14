@@ -1,0 +1,12 @@
+% fallback: the body rows of the paper before the final run (code/experiments/paper/numbers.py writes generated/tab_eval_reexec.tex)
+    \multicolumn{4}{@{}l}{\emph{GPU: integer forward pass / fp16 decoder}} \\
+    OPT-1.3B & -- & -- & 0.94 / 0.11 \\
+    OPT-6.7B & 0.17 / 0.035 & 0.41 / 0.16 & 1.94 / 0.39 \\
+    Llama-2-7B & 0.16 / 0.037 & 0.35 / 0.18 & 2.08 / 0.57 \\
+    Llama-2-13B & 0.14 / 0.08 & 0.62 / 0.34 & 3.46 / 0.82 \\
+    Qwen3-4B & 0.17 / 0.03 & 0.45 / 0.09 & 1.92 / 0.37 \\
+    \midrule
+    \multicolumn{4}{@{}l}{\emph{CPU: Llama-2-7B}} \\
+    our $\Kpre$ verifier & 1.0 & -- & 18.5 \\
+    fp32 re-execution & 4.5 & -- & 93.2 \\
+    integer re-execution & 4.1 & -- & 141.6 \\

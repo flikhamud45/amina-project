@@ -1,0 +1,19 @@
+% fallback: the body rows of the paper before the final run (code/experiments/paper/numbers.py writes generated/tab_eval_improve.tex)
+    \multicolumn{4}{@{}l}{\emph{Opening and fold on int8 GEMMs (prover, $\sC$, $T{=}64$)}} \\
+    Llama-2-7B, 1/32 & 277\,ms & 64\,ms & 4.3$\times$ \\
+    Llama-2-7B, 4/32 & 653\,ms & 175\,ms & 3.7$\times$ \\
+    Llama-2-13B, 1/40 & 276\,ms & 63\,ms & 4.3$\times$ \\
+    GPT-2, 12/12 & 173\,ms & 154\,ms & 1.1$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Weight products on int8 GEMMs (forward pass)}} \\
+    Llama-2-7B, 2/32 & 169\,ms & 87\,ms & 1.9$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Threaded assembly of the encoded claims (encoder)}} \\
+    OPT-1.3B, 24/24 & 3.28\,s & 1.54\,s & 2.1$\times$ \\
+    Llama-2-7B, 2/32 & 0.542\,s & 0.238\,s & 2.3$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Fused exact attention in the prover (forward pass)}} \\
+    OPT-1.3B, 12/24 & 0.538\,s & 0.332\,s & 1.6$\times$ \\
+    Llama-2-7B, 2/32 & 0.163\,s & 0.140\,s & 1.2$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{GPU claim decoder and fused attention (GPU verifier, $\Kpre$)}} \\
+    OPT-1.3B, 12/24 & 1.43\,s & 0.53\,s & 2.7$\times$ \\
+    Llama-2-7B, 2/32 & 0.36\,s & 0.18\,s & 2.0$\times$ \\
+    \multicolumn{4}{@{}l}{\emph{Native exact kernels for every phase (CPU verifier, $\Kpre$)}} \\
+    Llama-2-7B, 2/32 & 3.37\,s & 0.74\,s & 4.6$\times$ \\

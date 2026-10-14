@@ -90,9 +90,9 @@ $[-2.47,11.78]$, a token whose temperature-scaled logit is more than about 14.25
 is never drawn; exact sampling draws it with probability below $e^{-14.25}<6.5\cdot10^{-7}$. Over
 a vocabulary of $V$ tokens the excluded probability is thus below $(V-1)e^{-14.25}$: about 0.02 for Llama-2
 (32{,}000 tokens), 0.03 for GPT-2 and OPT (about 50{,}000) and 0.1 for Qwen3 (151{,}936).
-Computed exactly from the integer OPT-1.3B's logits at 512 WikiText-2 positions, the sampler's
-total-variation distance to $\mathrm{softmax}(cz/\tau)$ at $\tau=1$ has median 0.0063 with
-$k=50$ and 0.020 with $k=0$, against 0.087 between the integer and the fp32 model's next-token
+Computed exactly from the integer OPT-1.3B's logits at \TvPositions{} WikiText-2 positions, the sampler's
+total-variation distance to $\mathrm{softmax}(cz/\tau)$ at $\tau=1$ has median \TvTopK{} with
+$k=50$ and \TvFull{} with $k=0$, against \TvModel{} between the integer and the fp32 model's next-token
 distributions. It comes from the rounding of $a$ and, with $k=0$, from the bounded upper tail of
 $\Gamma$, which under-samples tokens 8 to 12 nats below a crowded top; a table of $2^{20}$ entries
-would lower it to 0.0022. Nucleus (top-$p$) sampling is not implemented.
+would lower it to \TvTwenty{}. Nucleus (top-$p$) sampling is not implemented.
