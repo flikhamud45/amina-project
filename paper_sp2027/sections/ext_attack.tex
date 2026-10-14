@@ -1,49 +1,6 @@
-% =====================================================================================
-% sections/ext_attack.tex: material cut from sections/attack.tex (extended version only).
-% Appendix-ready: \subsection headings only; place it after appendix_attack.tex, which stays
-% unchanged and holds the full statements, proofs, remarks and Table tab:aligned.
-% Where each block came from (the draft of sections/attack.tex of 2026-10-10, before the cut):
-%   "The Verifier Model: Remarks"  <- Sec. 3.3, paragraphs "Model", "Honest recomputation hides
-%       the edit", the discussion after Theorem thm:guess and "What reading the values buys";
-%       Sec. 3.4, paragraph "What the dichotomy means" (sentences dropped from the body). The
-%       remark on SNARK-assisted verifiers expands the body's one-line exclusion (decision 6).
-%   "Measured Attacks: Details"  <- Sec. 3.2 (how the edit is found), Sec. 3.5 paragraphs
-%       "Reproduction", "MNIST", "Other samplers", "Larger models", "A real LLM" (every number
-%       dropped from the body, unchanged).
-%   "Systematisation: Full Entries and Derivations"  <- Table tab:sok cells and footnotes
-%       shortened in the body, the paragraph "What the table shows" at full length, and the
-%       derivation of every acceptance number. The formulas were recomputed with Python on
-%       2026-10-10 and match the draft: (1-1/N)^s; s_40 = ceil(40 ln 2 / -ln(1-1/N));
-%       SLP 1-3/161, ceil(ln 0.5 / ln(158/161)) = 37, ceil(ln 0.05 / ln(158/161)) = 160,
-%       1-5/45; CommitLLM 1-10/80 and 1-0.05*10/80 = 99.375%.
-%   "Disclosure"  <- Sec. 3.6, paragraph "Ethics and responsible disclosure" (sentences dropped).
-% Full text of the todos shortened in the body (for the authors; not typeset):
-%   G1e: tamper locator: top-q hit rate of a locator that ranks sites from the forged trace alone,
-%     i.e. the empirical G_q of our greedy attack and of a randomised one, MNIST MLP, q in 1..64.
-%   G3 (footnote): repeat with ranges calibrated on the training split; report separately the
-%     plans whose edited values, and whose every claimed value, are in range.
-%   G3 (samplers): adaptive game: per-path detection of the best value-aware sampler and of the
-%     LP-optimal sampler mixture against range-respecting edits with held-out ranges, MNIST MLP
-%     and CNN heads, with the paths needed for 2^-40.
-%   L40S / G3.5: next-token attack on OPT-6.7B with values kept within ranges calibrated on
-%     WikiText-2 training text, if run.
-%   Disclosure: notices scheduled for 15 Oct 2026 (Anchuri et al., TensorCommitments) and
-%     19 Oct 2026 (CommitLLM, NanoZK, SLP, SPEX); remove SPEX from the body and Table tab:sok if
-%     its optional notice is not sent. Replies: if none, "We had received no reply by 2 Nov 2026."
-% Labels defined: ext:attack-model, ext:attack-measure, ext:attack-sok, tab:sok-derivation,
-%   ext:attack-disclosure, ext:attack-bound (the body does not reference them).
-% Labels used: def:spot, thm:guess, thm:dich, sec:break, tab:sok (attack.tex); lem:product,
-%   cor:surprise, prop:worst, rem:merkle, tab:aligned (appendix_attack.tex); sec:defence,
-%   sec:related. Citations: anchuri2026verifiable, chew1967, kadane1971, fang2023pol.
-% H5 pass (2026-10-11): cut C4 (paragraph "MNIST, further results"), cut P2 (the Proof-of-Learning
-%   entry) and TH-d Sec. 3.2(c) (the refereed variant of Anchuri et al.; key anchuri2026full) in
-%   "Systematisation"; TH-a Part B5 (with the fixes of th_a_check.md) in "The two regimes".
-% =====================================================================================
-
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
 \providecommand{\todo}[1]{\textbf{[TODO: #1]}}
 
-% -------------------------------------------------------------------------------------
 \subsection{The Verifier Model: Remarks}
 \label{ext:attack-model}
 
@@ -105,7 +62,6 @@ Proposition~\ref{prop:worst} needs no further ingredient. For an unsalted Merkle
 weights on inputs that are always zero keep each opening from revealing other rows, at an additive
 cost in the hash length (Remark~\ref{rem:merkle}).
 
-% -------------------------------------------------------------------------------------
 \subsection{Measured Attacks: Details}
 \label{ext:attack-measure}
 
@@ -123,7 +79,6 @@ differently. The forgeries that Anchuri et al.\ consider are their substitute mo
 and~F and Section~7.2 of~\cite{anchuri2026verifiable}); on the MLP they corrupt hundreds of its 778
 trace nodes.
 
-% Moved from the body's paragraph "MNIST" by the H5 pass (cut C4 of REVIEW2.md); unchanged.
 \para{MNIST, further results.} One tampered neuron passes 250 paths 61\% of the time. Keeping each
 tampered value below its neuron's 95th percentile takes about \MnistStealthNeurons{} neurons and passes \MnistStealthPass{}\% of the
 time under uniform sampling. With percentiles from \StealthCalib{} training images and \LocatorQueries{} disjoint test
@@ -153,7 +108,6 @@ path protocol, detection depends only on how many sites are edited, not on what 
 Table~\ref{tab:aligned} gives the paths needed for $k$ edited neurons in two instruction-tuned
 models.
 
-% -------------------------------------------------------------------------------------
 \subsection{Systematisation: Full Entries and Derivations}
 \label{ext:attack-sok}
 
@@ -229,7 +183,6 @@ answer with honestly recomputed fingerprints lies outside what they claim.
 neuron of a given FFN layer and picks it uniformly, so it detects the edit with probability at most
 $1/d_{\mathrm{ff}}$, and the formula with $N=d_{\mathrm{ff}}$ bounds the paths needed from below.
 
-% -------------------------------------------------------------------------------------
 \subsection{Disclosure}
 \label{ext:attack-disclosure}
 
@@ -239,13 +192,6 @@ guarantee, we report the acceptance probability that follows from its own formul
 it broken. We say that a stated guarantee is not met only for the path protocol's full-soundness
 claim for binary classifiers and for the soundness goal of TensorCommitments.
 
-% -------------------------------------------------------------------------------------
-% Appended by the second trimming pass of sections/attack.tex (2026-10-10). Sources: Sec. 3.3,
-%   the sentence after Definition def:spot on the reference oracle (its last clause) and the
-%   paragraph after the proof of Theorem thm:guess (the posterior formula, shortened in the body);
-%   Sec. 3.4, paragraph "What the bounds mean" (the contrast with PCPs of proximity and holographic
-%   proofs, which the body now states only in the Introduction and Related Work). Citations used:
-%   bghsv2006robust, bfls1991 (both cited in intro.tex).
 \subsection{The Lower Bound: Further Remarks}
 \label{ext:attack-bound}
 
@@ -265,7 +211,6 @@ of holographic proofs~\cite{bghsv2006robust,bfls1991} read only part of their in
 of its input, the trace. Honest recomputation moves the change from the trace into the weights, so
 reading the whole trace does not help, and the model, not the trace, must be encoded.
 
-% Added 2026-10-10 (plan G3.5; experiments/2_attack/inrange_llm.py, artifacts/results/inrange_llm_opt-1.3b_*.json).
 \subsection{In-Range Edits on OPT-1.3B and OPT-6.7B}
 \label{ext:attack-inrange}
 Per-neuron ranges are the minimum (0, after ReLU) and the maximum, or the 99.9th percentile, of each FFN
@@ -316,4 +261,3 @@ against the sampler's own detection, the two replies that brought the MNIST mixt
 are therefore not upper bounds on what a value-aware sampler achieves against an adaptive adversary on this
 model; they show that the fixed edits of Table~\ref{tab:inrange} are caught by contribution weighting wherever
 zeroing does not suffice.
-

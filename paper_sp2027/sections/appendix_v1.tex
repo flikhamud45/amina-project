@@ -1,21 +1,3 @@
-% =====================================================================================
-% sections/appendix_v1.tex: full proof of Theorem thm:v1 (V1 soundness), IEEEtran compsoc
-%
-% Sources used (paths relative to session 4aa2c028's scratchpad):
-%   sp2027_research/v1_design/V1_SPEC.md  Sec. 2 (notation, windows, cut rules, leaves, table,
-%     instance layout, the fractional-sum GKR of Sec. 2.4.1, the checks of Sec. 2.5) and Sec. 3
-%     (Theorem 1, Lemma 0, Lemma 1, proof steps 1-7, the remarks)
-%   wt_sp2027/docs/improvements/C2_v1_proof_size.md  Secs. 3-4 and 9 (checks as implemented,
-%     the soundness steps, the review's fixes: P1 clamp within int8, P4 in Kpre, fold aliases,
-%     the input range check, the exception bin outside P5; P4 in mode C)
-%   sections/defence.tex  (Theorem thm:sound, its notation J, k_j, n_j, t_j and the product form
-%     of the column term; the Kpre reuse bound; the Fiat-Shamir argument of sec:fs)
-% Labels referenced: thm:v1, lem:v1-logup, sec:v1 (sections/v1.tex); thm:sound, sec:fs,
-% sec:setup-proof (sections/defence.tex).
-% Labels defined here: app:v1, lem:v1-window, lem:v1-nowrap, lem:v1-gkr, lem:v1-final.
-% Uses the macros of sections/v1.tex (re-provided below so that this file also compiles alone).
-% =====================================================================================
-
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
 \providecommand{\sC}{\mathsf{C}}
 \providecommand{\T}{\top}

@@ -1,24 +1,3 @@
-% =====================================================================================
-% sections/appendix_short.tex: the submission appendix (CUT_PLAN.md Sec. 4; submission only).
-% Sources: appendix_attack.tex, appendix_defence.tex, appendix_v1.tex (compressed; the extended
-%   version keeps them in full). The concrete-security table (app:params, tab:params) is
-%   \input from sections/app_params.tex.
-% Labels defined: app:attack, def:H, thm:guess-full, lem:product, cor:surprise, prop:worst,
-%   prop:blind, prop:amp, rem:merkle, rem:pointer, rem:scope, app:defence, app:semantics,
-%   app:sound, app:untrusted, fact:ext, thm:untrusted, app:v1, lem:v1-window, lem:v1-nowrap,
-%   lem:v1-gkr, lem:v1-final. Not defined: tab:aligned (the body no longer cites it).
-% H5 pass (2026-10-11, REVIEW2.md cut P1): Fact fact:ext, the four steps of the setup proof and the
-%   statement of Theorem thm:untrusted moved here from the body (defence.tex) in place of the proof
-%   idea of app:untrusted, which the extended version keeps in full (appendix_defence.tex). N5:
-%   BCIKS20 cited as Thm. 1.6 of the full version (drafts/th_d_citations.md, Sec. 1.2(d)).
-%   TH-a (block mixing) is in the extended version only (appendix_attack.tex), since no appendix
-%   text of the same size could make room for it here.
-% Trim of 2026-10-10: proofs that repeated the body's proof sketches now refer to them; the
-%   Ligero radius remark (Lemma 4.2), the caching/path detail of rem:scope (stated in attack.tex)
-%   and the split-commitment remark stay in the full appendices only.
-% Macros and theorem environments: main.tex.
-% =====================================================================================
-
 \section{Spot-Checking: Statements and Proofs}
 \label{app:attack}
 
@@ -149,7 +128,6 @@ width at least $N$ and one further hidden layer. In a transformer the LayerNorm 
 blocks the 0/1 patterns; we do not claim the embedding. (v)~Joint statistics are not covered.
 \end{remark}
 
-% -------------------------------------------------------------------------------------
 \section{The Defence: Semantics, Proofs and Parameters}
 \label{app:defence}
 

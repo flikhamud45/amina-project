@@ -1,14 +1,8 @@
 % =====================================================================================
-% main.tex: IEEE S&P 2027 submission draft, "Certified but Compromised" (working title).
-% Build: tectonic main.tex (the submission: body + short appendix, 18 pages) and tectonic main_ext.tex (the
-% extended version for the anonymous artifact repository: the same body, the full appendices and the material
-% moved out of the body).
-% Sections live in sections/*.tex; each one \providecommand's the macros it needs, so the
-% definitions below take precedence. Bibliography: references.bib (copied unchanged from
-% report/references.bib) and extra.bib (entries added for this draft; % [U] marks unverified ones).
-% H5 pass (2026-10-11, REVIEW2.md N13): the abstract no longer calls the 512-token real-weight figure
-% "long-prompt" (2.0-2.3x at 2,048 tokens with random weights, F3a todo) and labels the 4.6x as
-% interactive and extrapolated (RX todo). See paper_sp2027/H5_PASS.md.
+% main.tex: the submission (the body and a short appendix); main_ext.tex is the extended version (the same body,
+% the full appendices and the material moved out of the body). Build: latexmk -pdf main.tex (or tectonic main.tex).
+% Sections live in sections/*.tex; each one \providecommand's the macros it needs, so the definitions below take
+% precedence. Bibliography: references.bib and extra.bib.
 % =====================================================================================
 \documentclass[conference,compsoc]{IEEEtran}
 

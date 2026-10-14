@@ -1,12 +1,3 @@
-% =====================================================================================
-% sections/evaluation.tex: Evaluation. Every measured number is a macro or a table body that
-% code/experiments/paper/numbers.py writes from one run of the run package (fallback/ until then);
-% the material of the extended version is in sections/ext_evaluation.tex.
-% Labels defined: sec:results, sec:eval-setup, sec:eval-cost, sec:eval-v1, sec:eval-reexec,
-%   sec:eval-compare, tab:eval-llm, tab:eval-v1, tab:options, fig:breakeven, tab:eval-compare.
-% Labels used: sec:break, sec:defence, sec:v1, sec:quality (quality.tex), tab:sok; cite fullversion.
-% =====================================================================================
-
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
 \providecommand{\sC}{\mathsf{C}}
 \providecommand{\sK}{\mathsf{K}}
@@ -21,7 +12,6 @@ We measure the cost of the defence (Section~\ref{sec:eval-cost}), V1 against v0
 published systems (Section~\ref{sec:eval-compare}) and the quality of the certified model
 (Section~\ref{sec:quality}).
 
-% -------------------------------------------------------------------------------------
 \subsection{Setup}
 \label{sec:eval-setup}
 
@@ -53,7 +43,6 @@ verifier accepted all \FinalNHonest{} honest queries and rejected all \FinalNAtt
 value or neuron, perturbed weights, substitute models, forgeries that pass all checks but one):
 Freivalds' check rejected \FinalNFreivalds{}, the column check \FinalNColumnsCode{}, the Merkle check \FinalNColumnsMerkle{} and the range check \FinalNRange{}\TodoCounts{}.
 
-% -------------------------------------------------------------------------------------
 \subsection{Cost of the Defence}
 \label{sec:eval-cost}
 
@@ -95,7 +84,6 @@ exact int8 GEMMs for the opening and the fold make the prover \ImproveOpenRange{
 Llama-2 blocks, and a GPU claim decoder with a fused exact attention kernel makes the GPU verifier
 \ImproveGpuvRange{}$\times$ faster at 2{,}048 tokens.
 
-% -------------------------------------------------------------------------------------
 \subsection{V1 Against v0}
 \label{sec:eval-v1}
 
@@ -134,8 +122,6 @@ it the GKR). The CPU verifier takes \VOneVerifyRatioLong{}$\times$ v0's time at 
 full Llama-2-7B in $\Kpre$ at 2{,}048 tokens, V1's verifier, with native kernels for its final check,
 takes \VOneVerifyLlama{}\,s and v0's \VOneVZeroVerifyLlama{}\,s, \VOneVerifyRatioLlama{}$\times$\TodoVOneTimings{}.
 
-
-% -------------------------------------------------------------------------------------
 \subsection{Verification Against Re-Execution}
 \label{sec:eval-reexec}
 
@@ -207,7 +193,6 @@ On the \PlatformGpu{}, our streaming GPU verifier checks a 2{,}048-token OPT-1.3
 verification beats re-execution on a GPU; the GPU verifier suits an auditor or gateway that checks a
 provider without holding the weights.
 
-% -------------------------------------------------------------------------------------
 \subsection{Comparison with Published Systems}
 \label{sec:eval-compare}
 

@@ -1,25 +1,3 @@
-% =====================================================================================
-% sections/defence.tex: the defence (Section 4), condensed for the 13-page body (CUT_PLAN.md).
-% Sources: the previous draft of this file (course paper Secs. 3.1, 3.4-3.6; plan items A1, A2,
-%   D1-D7; code/src/pvi/). Removed detail, Table tab:setup and Fig. fig:protocol:
-%   sections/ext_defence.tex. Second trimming pass (2026-10-10): sentences already covered in
-%   ext_defence.tex (int8 sum bounds, stacking, re-encoding queries, FRI/BaseFold, weight leak) cut.
-% H5 pass (2026-10-11, REVIEW2.md cut P1): the subsection "Untrusted Commitments" is demoted to the
-%   paragraph "Untrusted commitments" at the end of Sec. 4.4, which keeps the label sec:setup-proof.
-%   Fact fact:ext and Theorem thm:untrusted (statements) moved to appendix_short.tex (submission)
-%   and appendix_defence.tex (extended version); the split-commitment display eq:split, the
-%   extension-field paragraph, the four steps of the setup proof and the proof sketch moved to
-%   appendix_defence.tex. TH-c's remark (drafts/th_c_setup_forced.tex, Block 3, variant A) is the
-%   "forced" sentence of that paragraph. Cut C6: "A sponge transcript" folded into the binding
-%   paragraph (its Merkle--Damgard remark moved to ext_defence.tex). N6: the round-by-round error is
-%   a maximum; the parameters keep the union bound (TH-d, Sec. 5.2(a), condensed).
-% Labels defined: sec:defence, sec:intmodel, sec:commit, sec:protocol, sec:fs, sec:setup-proof,
-%   eq:weightop, eq:freivalds, thm:sound.
-% Labels used: thm:dich, thm:untrusted, sec:threat, sec:quality, sec:gen, sec:v1, app:defence,
-%   app:semantics, app:sound, app:untrusted. Cites fullversion, ligero, brakedown, fri2018, stir,
-%   whir, basefold.
-% =====================================================================================
-
 \providecommand{\F}{\mathbb{F}_p}
 \providecommand{\enc}{\mathrm{Enc}}
 \providecommand{\T}{\top}
@@ -53,7 +31,6 @@ weights~\cite{slalom,commitllm2026}, and the embedding tables, whose rows it loo
 machines and thread counts (OPT-125M also across operating systems and torch versions), and their
 commitments across machines, thread counts and CPU or GPU encoding.
 
-% -------------------------------------------------------------------------------------
 \subsection{The Exact Integer Model}
 \label{sec:intmodel}
 
@@ -81,7 +58,6 @@ every claim with $|z|\ge2^{29}$, and setup checks that honest claims are smaller
 an embedding). A wrong claim and the correct value thus
 differ by less than $2^{30}<p$ and remain distinct in $\F$.
 
-% -------------------------------------------------------------------------------------
 \subsection{Committing to the Weights}
 \label{sec:commit}
 
@@ -96,7 +72,6 @@ the roots, 32 bytes per tree, and the public encoding parameters.
 $A_\ell^\T$, the \emph{transposed layout}) form a \emph{plan}, a public function of the model that
 is part of $C_M$~\cite{fullversion}.
 
-% -------------------------------------------------------------------------------------
 \subsection{The Protocol}
 \label{sec:protocol}
 
@@ -175,7 +150,6 @@ parameters for Llama-2-7B). Each folded row and column mixes all rows of its mat
 attains the upper bound of Theorem~\ref{thm:dich} with $O(\lambda)$ field elements per row instead
 of $k_\ell$ weights.
 
-% -------------------------------------------------------------------------------------
 \subsection{Non-Interactive Proofs}
 \label{sec:fs}
 

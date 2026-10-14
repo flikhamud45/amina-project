@@ -1,22 +1,3 @@
-% =====================================================================================
-% sections/intro.tex: Introduction and Related Work (IEEE S&P 2027 submission, IEEEtran compsoc).
-% Condensed on 2026-10-10 per CUT_PLAN.md (Sec. 4, decisions 3-5); removed detail, with its todos,
-% is in sections/ext_intro.tex. Trimmed again the same day to 1,740 words (Related Work facts
-% restated in Secs. 3, 4 and 8 removed). Sources: the previous intro.tex and the numbers of attack.tex,
-% defence.tex, v1.tex and evaluation.tex. Labels defined: sec:intro, fig:overview, sec:related.
-% Labels used: sec:attack, sec:sampling, thm:guess, thm:dich, sec:sok, tab:sok, sec:defence,
-% sec:setup-proof, sec:gen, sec:v1, sec:results, tab:eval-compare, sec:discussion.
-% New BibTeX keys (reported to the integrator): gpucc, deepbrake, reedweave.
-% H5 pass (2026-10-11, REVIEW2.md): cut C1 (the "A lower bound" paragraph without the restated
-%   verifier model and the PCPP sentence), C2 (one clause per extension), C3 (the folklore/PCPP point
-%   once, in Related Work), P1 (extension 1 and the contributions), TH-a (Part B1 with the
-%   O(lambda + log L) fix; B2 as "tight at every locality"), N7 (intro's "Such tests could shorten
-%   our setup proof" replaced by a pointer to Sec. sec:setup-proof, which carries TH-c's remark),
-%   N13 (interactive/extrapolated label on the 4.6x); todos renamed to their items (F6, A7, RX).
-% H5 review (2026-10-11): Related Work, "Its tight case" -> "The calculation's tight case" (the
-%   inserted thm:guess sentence had made "Its" refer to the trace).
-% =====================================================================================
-
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
 \providecommand{\todo}[1]{\textbf{[TODO: #1]}}
 \providecommand{\sC}{\mathsf{C}}
@@ -131,7 +112,6 @@ Section~\ref{sec:discussion} states whom the protocol serves.
   systems (Section~\ref{sec:results}).
 \end{itemize}
 
-% =====================================================================================
 \section{Related Work}
 \label{sec:related}
 

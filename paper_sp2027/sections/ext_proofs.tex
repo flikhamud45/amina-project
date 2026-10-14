@@ -1,10 +1,3 @@
-% =====================================================================================
-% sections/ext_proofs.tex (extended version only): full proofs of the optimisations the submission relies on
-% (Plan 2 TH-e). From drafts/th_e_proofs.tex after its adversarial check (drafts/th_e_check.md: every
-% statement holds; the fixes are marked % CHECK:). Pending: the team's hand check (TH-f) and the decisions
-% listed in th_e_check.md, 'For the authors to decide'. Note: real_weights.build_opt_from_hf has prune_last
-% since F3a, so the pruning results apply to the real-weight graphs as well.
-% =====================================================================================
 \begingroup\sloppy
 \providecommand{\F}{\mathbb{F}_p}
 \providecommand{\enc}{\mathrm{Enc}}
@@ -27,7 +20,6 @@
 \providecommand{\midrule}{\hline}
 \providecommand{\bottomrule}{\hline}
 
-% -------------------------------------------------------------------------------------
 \section{Proofs of the Optimisations}
 \label{app:opt}
 
@@ -85,7 +77,6 @@ shows that the two notions are equivalent~\cite{holmgren2019rbr}); and
 (R3)~the Fiat--Shamir transformation with the full transcript as the hash input inherits the
 state-restoration error (Theorem~14.3.1; see also~\cite{bcs16}).
 
-% -------------------------------------------------------------------------------------
 \subsection{Last-Block Pruning}
 \label{app:prune}
 
@@ -135,9 +126,6 @@ keys $j\le t$ that the causal mask allows, $e_j$ from the public table and $e_j=
 $S=\sum_je_j$ and $P_j=\lfloor(2P_{\max}e_j+S)/(2S)\rfloor$, with the public constant $P_{\max}$
 (255 in the cost benchmarks, 2{,}047 in the certified models), which is $\lfloor S/(2S)\rfloor=0$ for
 $j>t$.
-% CHECK: "510" generalised to 2 P_max: transformer.py (modified 2026-10-11 01:12, during this check)
-% now has build_decoder(prob_max=...), PROB_MAX = 255 (510 = 2*255), e.g. 2047 for plan F2a. The
-% argument does not depend on the constant.
 The output $\sum_jP_jv_j$, requantised entrywise, therefore depends only on $q_t$ and on
 $(k_j,v_j)_{j\le t}$, through formulas that do not involve $T$. (The implementation chooses between
 an int32 and an int64 path depending on $T$; both compute these integers.)
@@ -164,8 +152,6 @@ Let $n\ge1$ and let $x$ be a query with $T\ge n$ positions.
 $\mathcal G^{(n)}_{\mathrm{pr}}$ equals the corresponding tensor of $\mathcal G^{(n)}$ (in blocks
 $1$ to $L-1$, and $h$, $k$ and $v$ of block $L$) or its slice $S_n$ (the other tensors of block
 $L$, and the final norm); in particular the honest claims of every weight operation of $\mathcal G^{(n)}_{\mathrm{pr}}$
-% CHECK: "and the final norm" added: norm_f lies after block L and is computed at n positions in
-% the pruned graph (the proof of (a) shows it equals S_n(norm_f(r''))).
 are those of $\mathcal G^{(n)}$ or their last $n$ columns.
 (b)~Every weight operation of $\mathcal G^{(n)}_{\mathrm{pr}}$ meets the setup bound of
 Section~\ref{sec:intmodel} if and only if it does in $\mathcal G^{(n)}$.
@@ -218,9 +204,6 @@ graph's plan.
 
 \noindent For V1, the operations of the pruned block that claim $n<T$ columns violate rule~(P2) of
 Section~\ref{sec:v1} and are clear; Theorem~\ref{thm:v1} applies with this cut set.
-% CHECK: was "the single-position operations ... violate (P2)". cut.py tests cols == T, so with
-% n = T (a one-token prompt, T = P + G - 1 = G) the pruned ops span all T positions and may be cut;
-% thm:v1 applies with whatever cut set results either way.
 The real-weight builders (\texttt{pvi.models.hf\_opt.build\_opt\_from\_hf} and
 \texttt{pvi.models.hf\_llama.build\_llama\_from\_hf}) insert the same slices with \texttt{prune\_last}; their
 graphs have the operations and order of \texttt{build\_decoder}'s (\texttt{matches\_benchmark\_graph}),
@@ -228,7 +211,6 @@ and their next-token logits with and without pruning are tested to be equal, so 
 them. A fixed public prefix (\texttt{prefix\_tokens}) enters only as constants of the attention
 operation.
 
-% -------------------------------------------------------------------------------------
 \subsection{Generated Responses: the Token Rule and the Integer Sampler}
 \label{app:gen}
 
@@ -304,8 +286,6 @@ graph $\mathcal G^{(G)}$ in the mode used. Under Fiat--Shamir the bound of Theor
 applies to the statement $(\mathcal G^{(G)},s,\sigma)$; in mode $\Kpre$, a false response among
 $Q_V$ verdicts is accepted with probability at most $Q_V\varepsilon_{\sK}$ if all queries are v0
 queries, and at most the bound of Theorem~\ref{thm:v1kpre} in general.
-% CHECK: was "at most Q_V eps_K (Theorem thm:v1kpre)", which omits the logUp and GKR terms that
-% thm:v1kpre adds for V1 queries (V1 also runs in Kpre with the sampler, run_cut_query).
 With an untrusted commitment, $M^\ast$ of Theorem~\ref{thm:untrusted}
 replaces $M$ in the definition of $y^\ast$, and the bound is that of Theorem~\ref{thm:untrusted}.
 In v0, $\varepsilon$ does not depend on $G$: $\mathcal G^{(G)}$ has the weight operations,
@@ -366,7 +346,6 @@ clear, so the token rule acts on clear claims; ``an output that violates the tok
 Theorem~\ref{thm:v1} is the event of Theorem~\ref{thm:gen}. Convincing a third party that the seed
 was random needs a jointly generated seed, which we do not provide.
 
-% -------------------------------------------------------------------------------------
 \subsection{The Fiat--Shamir Transcript: Tree Absorption and Mode \texorpdfstring{$\Kpre$}{Kpre}}
 \label{app:fstree}
 
@@ -439,8 +418,6 @@ $\varepsilon_{\mathrm{rbr}}=\max_i\varepsilon_i$, and let $\mathrm{FS}(\Pi)$ be 
 form with the transcript above, which absorbs the statement first. For every prover that makes at
 most $Q$ oracle queries and outputs a statement and a proof, the probability that the statement is
 false and the verifier accepts is at most
-% CHECK: Q_V renamed Q_ver here: app:the-conv and cor:v1kpre-fs use Q_V for the number of verdicts
-% (proofs submitted), a different quantity.
 \[
   (Q+k)\,\varepsilon_{\mathrm{rbr}}+N^2\,2^{-256},
 \]
@@ -449,12 +426,6 @@ makes on the proof (leaves, keys and expansions).
 \end{theorem}
 
 \begin{proof}
-% CHECK: the components are now defined by the query's first 32 bytes, not by its role. As drafted,
-% a query K||label whose key K happens to start like a transcript is both an "expansion input" and
-% a "challenge input", and "at most one first unresolved component" (needed for Pr[E_2]) was not
-% justified. Every challenge input starts with sigma_0 (16-byte domain string, 2+5+8 bytes of
-% framing of the record "graph", first byte of the 32-byte digest: _absorb_statement absorbs
-% "graph" first in v0 and V1). E_0 costs N 2^-256; with N(N-1)/2 pairs the total stays N^2 2^-256.
 Consider all oracle queries of the prover and of the verifier, at most $N$, in the order they are
 made. Every challenge input of a query begins with the same 32 bytes $\sigma_0$: the domain string, the
 framing of the first record, \texttt{graph}, and the first byte of the graph digest. (The setup proof's transcript
@@ -483,7 +454,6 @@ and the label of the challenge. Conversely $\tau(w)$ and the label determine $w$
 are the oracle outputs on its chunks. By $\neg E_0$, $K=H_{256}(w)$ differs from $\sigma_0$, so $K$
 is the component of every query $K\|\cdot$; by $\neg E_1$ and $\neg E_2$, no expansion input
 $K\|\cdot$ was queried before $K$ was output, so the expanded challenge is uniform and
-% CHECK: sentence above extended to use E_0 and E_1 explicitly (see the CHECK at the start of the proof).
 independent of all earlier answers; the challenges of one round, drawn under distinct labels from
 the same transcript string, are independent for the same reason.
 As in the reduction behind (R3), the prover's queries thus induce a state-restoration prover for
@@ -494,7 +464,6 @@ inputs are sampled jointly with that challenge; the remaining queries are answer
 randomness that no accepted proof uses. The verifier's own key queries on the final proof add at
 most $k$ moves. By (R2) a false statement is then accepted with probability at most
 $(Q+k)\,\varepsilon_{\mathrm{rbr}}$, which with $\Pr[E_0\cup E_1\cup E_2]$ gives the bound.
-% CHECK: E_0 added to the last line.
 \end{proof}
 
 \begin{corollary}[v0 under Fiat--Shamir]
@@ -508,10 +477,6 @@ these terms and of the per-round errors of Appendix~\ref{app:v1}, $(\Nleaf+|\Vta
 $2/p^8$ and $3/p^8$, where a round holds the challenges drawn from one transcript string: the
 implementation draws $\theta_{k-1}$ and $\eta_k$ of a GKR instance together, and $\alpha$ with the
 vectors $\chi$ of the clear operations.
-% CHECK: "1/p^8" -> "2/p^8". logup_gkr.verify draws mu{k-1} (theta) and lam{k} (eta) from the same
-% transcript state (nothing is absorbed between them), and thm:fstree's proof treats all challenges
-% of one transcript string as one round, so that round errs with <= 1/p^8 + 1/p^8. The maximum
-% (the alpha term, <= 2^-215.3) is unchanged.
 \end{corollary}
 
 \noindent The bound of Section~\ref{sec:fs}, $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$, should be read with
@@ -565,7 +530,6 @@ $\Kpre$ still derives $\alpha$ and the GKR challenges from the transcript
 (\texttt{pvi.v1.protocol.\_query} absorbs the statement, the cut plan's digest, the first message and
 the GKR messages); Corollary~\ref{cor:v1kpre-fs} bounds it.
 
-% -------------------------------------------------------------------------------------
 \subsection{The Compact Encoding of the Proof}
 \label{app:codec}
 
@@ -661,7 +625,6 @@ choices would only make proofs unique, which our soundness notion does not requi
 verifier absorbs what it decodes: a transcript that absorbed bytes other than those decoded, or only
 part of them, would let the decoded message change after the challenge.
 
-% -------------------------------------------------------------------------------------
 \subsection{Two Remarks on the Round-by-Round Argument}
 \label{app:rbr}
 
@@ -698,9 +661,6 @@ Fiat--Shamir from the transcript after it absorbed the fold message's bytes
 round-by-round argument, the state after the folds is doomed if a check that does not read the
 columns fails (a Freivalds check of a clear operation, (F3) or (F4)), or if some committed matrix
 $B$ has, in some plane, a fold or combined claim
-% CHECK: "(F3) or (F4)" added. Without them the set is not closed under the fold message: after a
-% doomed GKR (Step 5) the prover can send only true folds, and then (F3), not a fold mismatch,
-% rejects; that state must be doomed too. A failed column-independent check is left with prob. 0.
 $u\neq w^\T B$ for its combination vector $w$: $\chi_\ell$ for a clear operation and the eq-vector
 for a cut one in the row layout, and $\bar x_\ell$ (V1) or $[X;\mathbf 1]\chi'$ (v0) in the
 transposed layout, where $u$ is the prover's $y$ (V1) or the verifier's $Z\chi'$ (v0). Only
@@ -732,14 +692,8 @@ $N^2\,2^{-256}$ of Theorem~\ref{thm:fstree}, which is about $2^{-128}$ at $Q=2^{
 Fiat--Shamir error at that $Q$ therefore exceeds $2^{-128}$, slightly with the conservative
 parameters ($2^{-128}+2^{-136.8}$) and by a factor of 2 with $\beta=\lambda+65$, and $2^{-128}$
 holds for $Q\le2^{63}$ with either.
-% CHECK: was "therefore about 2^-127": that holds only for beta = lambda + 65. With the parameters
-% kept (beta = 200.82), (Q+k) 2^-beta = 2^-136.8 at Q = 2^64, so the total is 2^-127.997.
-% CHECK (suggestion, no text change): the same "first wrong operation is fixed before any
-% challenge" argument gives p^{-r}, not eps_K = sum_ell p^{-r}, for one query of mode K, and
-% (see the CHECK at thm:v1kpre) Q p^{-r} for Q verdicts of one Kpre key. The draft does not say so.
 \end{remark}
 
-% -------------------------------------------------------------------------------------
 \subsection{V1 in Mode \texorpdfstring{$\Kpre$}{Kpre}}
 \label{app:v1kpre}
 
@@ -784,15 +738,6 @@ columns $\chi_{\ell,s}$, so with probability $p^{-r}$ for all of them.
 Let $Q$ queries use the same secret vectors: any mix of v0 and V1 queries, generation queries
 included, chosen adaptively, with the verdict of each one revealed before the next. The probability
 that some query accepts a false statement is at most
-% CHECK: a doubled backslash before "varepsilon" (a line break, then the letters "varepsilon" in
-% math italics, or an error inside \[...\]) replaced by "\varepsilon" here and in the proof below
-% (5 places).
-% CHECK (suggestion, no text change): the sum over ell is not needed. The verifier evaluates the
-% secret checks in a fixed order and reports only the first failure, so the real run and H can
-% first differ in query i only if the FIRST evaluated secret check with E_c != 0 passes; that check
-% is a function of H's view, so this has probability <= p^{-r}, and the theorem holds with
-% Q p^{-r} in place of Q sum_ell p^{-r} (prop:qtight then matches it to second order). Authors
-% decide; see th_e_check.md, (iv) and (v).
 \[
   \sum_{i\le Q}(\varepsilon^{\mathrm{lu}}_i+\varepsilon^{\mathrm{gkr}}_i)\;+\;Q\sum_\ell p^{-r},
 \]
@@ -869,12 +814,8 @@ most $Q_H$ moves plus $k$ moves per submitted proof. (R2) is stated for one fina
 is a union bound over the moves, each of which leaves a doomed state with probability at most
 $\varepsilon_{\mathrm{pub}}$, and an accepted proof of a false statement needs one such move, so the
 same argument bounds the success with $Q_V$ final proofs by $(Q_H+kQ_V)\,\varepsilon_{\mathrm{pub}}$.
-% CHECK: was "(R2) bounds its success by ...": (R2) as cited (Theorem 31.2.1) concerns one final
-% proof; the extension to Q_V proofs is the move-counting argument, now stated. Check against the
-% book's proof that it is indeed a union bound over moves.
 \end{proof}
 
-% -------------------------------------------------------------------------------------
 \subsection{Reusing the Secret Vectors: the Stateful Verifier of Mode \texorpdfstring{$\Kpre$}{Kpre}}
 \label{app:stateful}
 
@@ -914,11 +855,6 @@ $Q_{\max}$. For Llama-2-7B, with its 226 weight operations, the interactive para
 $\lambda=128$ ($r=5$) give $\varepsilon_{\sK}=226\,p^{-5}=2^{-146.7}$, which keeps
 $Q_V\varepsilon_{\sK}\le2^{-128}$ for $Q_V\le2^{18.7}$ verdicts only, about $4\cdot10^5$. The
 parameters with the 64-bit margin ($r=7$) give $2^{-208.5}$ and $Q_V\le2^{80.5}$.
-% CHECK: numbers recomputed (log2 p = 30.9069): 226 p^-5 = 2^-146.714, Q_V <= 2^18.71 = 4.3e5;
-% 226 p^-7 = 2^-208.528, Q_V <= 2^80.53. Correct as stated.
-% CHECK (suggestion, no text change): with the tighter reuse bound Q p^{-r} (CHECK at thm:v1kpre),
-% the same targets give Q_V <= 2^26.5 (about 9.7e7) at r = 5 and 2^88.3 at r = 7; with lookups=True
-% Llama-2-7B has 225, not 226, ops in eps_K (the embedding is read by the verifier).
 (b)~\emph{Every verdict counts.} $Q_V$ counts the verdicts of every query that uses the key, accepted
 or rejected, v0 or V1, a generated response counting as one, and summed over all verifiers that
 share the key.
@@ -947,14 +883,9 @@ accepted gives no guarantee for its later queries.
 (f)~\emph{Designated verifier.} Proofs of $\Kpre$ convince only the holder of $\chi$.
 \end{remark}
 
-% -------------------------------------------------------------------------------------
 \subsection{Acceptance of Edits of \texorpdfstring{$k$}{k} Neurons by the Path Protocol}
 \label{app:paths}
 
-% CHECK: "opens" replaced by "checks" in this subsection (intro, statement, proof). In RandPathTest
-% (sampling.py) checking a node opens its parents' rows too -- for a dense layer the whole layer --
-% but only the visited node is checked, so every site of the layer is opened by such a path, and
-% "opens each site with probability at most 1/N" was false as worded; "checks" is what is meant.
 The path protocol (Section~\ref{sec:path}) catches an edit only if a path checks one of the sites it
 made inconsistent. This gives an acceptance bound that depends only on the number of such sites,
 not on what the edit does to the output.
@@ -1004,13 +935,9 @@ Theorem~\ref{thm:dich}(a) treat samplers in general.
   $k=1$ is the edit measured on OPT-6.7B, and $k=2$, $6$ and $60$ are the median in-range edit, the
   median lowering-only edit and the largest in-range edit (moves in either direction) measured on
   OPT-1.3B (Section~\ref{sec:break}); $k=16$, and every $k$ for the other models, is illustrative.}
-  % "Largest in-range edit" = 60 is the max of the "any" rows of G3_inrange_attack.md Sec. 3; the
-  % lowering-only edits, also in range, reach 164. The pooled lowering-only median 6 is confirmed from
-  % artifacts/results/inrange_llm_opt-1.3b_down.json (117 successful records per range; 12 Oct).
   \label{tab:paths}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}
-  % python: math.ceil(40*math.log(2)/(-math.log1p(-k/N)))
   \begin{tabular}{@{}lrrrrrr@{}}
     \toprule
     Model & $N$ & $k=1$ & $k=2$ & $k=6$ & $k=16$ & $k=60$ \\
@@ -1030,7 +957,6 @@ Theorem~\ref{thm:dich}(a) treat samplers in general.
   \label{tab:paths-acc}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}
-  % python: (1-k/N)**s
   \begin{tabular}{@{}llrrrrr@{}}
     \toprule
     Model & $s$ & $k=1$ & $k=2$ & $k=6$ & $k=16$ & $k=60$ \\

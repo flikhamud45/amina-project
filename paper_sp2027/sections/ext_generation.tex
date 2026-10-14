@@ -1,26 +1,3 @@
-% =====================================================================================
-% ext_generation.tex: extended version only (not in the submission). Material cut from
-% Section 6 (generation.tex) and from the quality subsection of the evaluation (quality.tex).
-% Where each block comes from:
-%  - "Generated Responses as One Prefill: Details and Full Measurements": generation_quality.tex
-%    Sec. 6.1 (per-prefix comparison, token-rule cost, Kpre online rule, "Tests and cost", the full
-%    Table tab:gen with G = 64 and MB/token); per-prefix position count and the graph change
-%    from docs/improvements/E1_generation.md.
-%  - "The Integer Sampler: Table, Truncation and Tests": generation_quality.tex Sec. 6.2
-%    (table check, "Distribution and tests", stop rules); Gamma's end values and the truncation
-%    bound are computed from Eq. (eq:gumbel-table); nucleus remark from E2_sampling.md.
-%  - "Quality of the Integer Model: Attribution, Smoothing and Published Results":
-%    generation_quality.tex Sec. 6.3 (attribution method, the top half of Table tab:quality,
-%    LayerNorm analysis, smoothing details, per-row scales, CushionCache, SLP, the int8 remark);
-%    rows q/k/v weights and attention-output requantisation, cross-layer equalisation, the raw
-%    robustness range and the per-row top-1 agreement from docs/improvements/F2_quality.md.
-%  - Tables tab:gen and tab:gen-full: the gen tier's cells (code/experiments/paper/tables.py, GEN).
-% Labels defined here (the body must not \ref them): sec:ext-gen, tab:gen, tab:gen-full,
-% sec:ext-sampling, sec:ext-quality, tab:quality-attr.
-% Labels used (body): sec:gen, sec:gen-sampling, sec:quality, tab:quality,
-% eq:gumbel-table, sec:fs, sec:intmodel, thm:sound, sec:v1.
-% =====================================================================================
-
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
 \providecommand{\sC}{\mathsf{C}}
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}

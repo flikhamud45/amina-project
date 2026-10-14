@@ -1,29 +1,3 @@
-% =====================================================================================
-% sections/ext_discussion.tex: material cut from the Discussion and Limitations on 2026-10-10
-% (CUT_PLAN.md, Sec. 4). Extended version only; appendix-ready (\subsection, no \section).
-% Where each block came from (all from the pre-cut sections/discussion.tex unless noted):
-%   "Status of the Measurements"       paragraph "Measurements", unchanged in substance
-%   "Real Weights, Model Quality and V1" paragraphs "Real weights and model quality" and "V1";
-%                                      "halves the proof" reworded per CUT_PLAN.md decision 4
-%   "A Client's Options in Detail"     the long form of the body's "Options for a client"
-%                                      paragraph and Table tab:options; numbers from
-%                                      evaluation.tex (Secs. sec:eval-reexec, sec:eval-compare),
-%                                      attack.tex (Table tab:sok), defence.tex (Sec.
-%                                      sec:setup-proof), intro.tex and ext_intro.tex (gpucc,
-%                                      CommitLLM). Derived by arithmetic only: ceil(11,008/2,048)
-%                                      = 6 queries for the down projection.
-%   "Limitations in Detail"            paragraphs "Proof size and the verifier", "Weights and
-%                                      trust" and "The attack and the theorem" at full length
-% The old Conclusion only summarised the body and is not kept here.
-% Labels defined: ext:disc-status, ext:disc-real, ext:disc-options, ext:disc-limits (the body
-%   does not reference them). Labels used (defined in the body or the full appendices):
-%   tab:eval-llm, tab:eval-v1, tab:eval-reexec, tab:eval-compare, tab:options, tab:sok,
-%   sec:eval-reexec, sec:setup-proof, sec:v1, sec:gen-sampling, sec:quality, rem:scope.
-% H5 review (2026-10-11): "The attack and the theorem" no longer calls the in-range LLM attack
-%   pending (OPT-1.3B is in the body, G3_inrange_attack.md); larger models keep \todo{G3.5-L}.
-%   Also uses sec:break.
-% =====================================================================================
-
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
 \providecommand{\todo}[1]{\textbf{[TODO: #1]}}
 \providecommand{\sC}{\mathsf{C}}

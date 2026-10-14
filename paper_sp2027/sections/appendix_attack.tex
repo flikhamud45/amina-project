@@ -1,26 +1,3 @@
-% =====================================================================================
-% sections/appendix_attack.tex: full statements and proofs for Section sec:attack
-% (input after \appendix; uses the environments and macros set up in sections/attack.tex).
-%
-% Sources used (paths relative to session 4aa2c028's scratchpad):
-%   sp2027_research/attack_theory/PART1_SP.md Sec. 1.2 (appendix LaTeX, with every fix of
-%     theorem_check.md), Sec. 3.4 (instruction-tuned models; shapes from experiments.md)
-%   attack_theory/theorem.md, theorem_check.md, check_guessing_out.json (12 exact toy instances),
-%     check_merkle_leak_out.json (N=16: 0.0625 ideal; 0.125, 0.25, 0.5 for L=0,1,2)
-%   wt_sp2027/report/main.tex Sec. 3.3-3.5 (Freivalds and column checks, parameters)
-%   wt_sp2027/docs/improvements/D4_D5_untrusted_commitment.md (setup proof: k-1 becomes k-1+e)
-% Table tab:aligned recomputed with Python on 2026-10-10 as ceil(40 ln 2 / -ln(1-k/d_ff)); it
-% matches PART1_SP.md Sec. 3.4.
-% Labels defined here: app:attack, def:H, thm:guess-full, lem:notouch, lem:product, cor:surprise,
-% prop:worst, prop:blind, prop:amp, rem:merkle, rem:pointer, rem:scope, tab:aligned, and (H5 pass,
-% TH-a) prop:block, lem:worst-int, cor:block, rem:block-count, rem:block-scope, eq:block-freivalds,
-% eq:block-columns. H5 pass (2026-10-11): prop:amp states the product form of the column term and
-% caps t at k (drafts/th_a_check.md, "The same gap exists in prop:amp and thm:dich(b)").
-% H5 review (2026-10-11): lem:worst-int counts int8 weights down to -128, so the hidden-row bound is
-%   128(1+128c) < 2^29, i.e. c < 2^15 (the draft's 128(1+127c) and c <= 33,000 assumed |w| <= 127).
-% Labels used from other sections: sec:defence, sec:setup-proof.
-% =====================================================================================
-
 \section{Spot-Checking: Full Statements and Proofs}
 \label{app:attack}
 
@@ -242,21 +219,6 @@ $r+t=O(\beta)=O(\lambda+\log L)$ queries of support $N$, since $n\ge2(k-1)$ give
 \noindent Part~(a) is the one-sided randomised query complexity of $\mathrm{OR}_N$ with $d$-row
 queries, placed inside a network; equivalently, an input oracle at relative distance $1/N$ from the
 language cannot be rejected with fewer than $(1-\varepsilon)N/d$ queries~\cite{bghsv2006robust}.
-
-
-% -------------------------------------------------------------------------------------
-% TH-a (drafts/th_a_block_mixing.tex, Part C), placed by the H5 pass (2026-10-11). Every fix of the
-% adversarial check drafts/th_a_check.md is applied: the admissible set limited to integer networks
-% within the range bound (Prop. (i)); folded rows do not depend on salts (Prop. (i)); "the bound of
-% prop:amp" (Prop. (ii)); the cap t <= k (Prop. (iii), and in prop:amp above); the claim range check
-% and the exclusion of lookups (Cor. (a)); the integer hard family as Lemma lem:worst-int, the
-% ideal-oracle model and the counting-convention remark (Cor. (b)); the second byte condition, r = 7
-% under Fiat--Shamir and the salts (Rem. rem:block-count (iii)); redundant column queries in the
-% ideal-oracle model (Rem. rem:block-count (iv)); beta_0 and e_b (Rem. rem:block-scope (ii)); the
-% probability-1 attack on an unchecked block and the corrected last sentence (Rem. rem:block-scope
-% (iv)). Counting convention: one query per folded row and one per opened column, as in prop:amp,
-% so q = ceil(N/d)(r+t). The submission appendix does not carry this material (no appendix text of
-% the same size could make room); the body cites the extended version in one sentence (Sec. 3.4).
 
 \para{Block commitments.} Let a weight layer compute $Z=A[X;\mathbf 1]$ with $A\in\F^{N\times k}$ and
 $k\ge2$, where the layer's integer arithmetic embeds in $\F$ without wrap-around, as in

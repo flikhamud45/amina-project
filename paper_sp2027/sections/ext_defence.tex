@@ -1,33 +1,3 @@
-% =====================================================================================
-% sections/ext_defence.tex: material cut from sections/defence.tex (extended version only).
-% Appendix-ready: \subsection headings only; place it after appendix_defence.tex.
-% Where each block came from (the draft of sections/defence.tex of 2026-10-10, before the cut):
-%   "The Integer Model: Execution Details"  <- Sec. 4.1, paragraphs "Weight operations",
-%       "Operations without weights" and "Exact execution" (im2col and BatchNorm folding, the
-%       requantisation formula, the last-position LM head, int8 inputs, hardware errors).
-%   "Commitment Plans"  <- Sec. 4.2, paragraph "Commitment plans" and the domain separation of
-%       the Merkle trees (six candidate plans, LeNet-5 example, stacking of q/k/v projections).
-%   "The Fiat--Shamir Transcript"  <- Sec. 4.4, paragraph "A sponge transcript" (32-byte keys,
-%       rejection sampling) and the requantisation-multiplier example.
-%   "Untrusted Commitments: Measurements, Trade-off and Scope"  <- Sec. 4.5, paragraphs "The
-%       split-commitment attack" (300-query measurement), "A one-time setup proof" (transposed
-%       matrices), "The trade-off" with Table tab:setup, and "Scope".
-% Second trimming pass of defence.tex (2026-10-10): the body sentences cut there are already covered
-%   here, so nothing was appended: int8 sum bounds (2^14, blocks of 2^16) -> "Execution Details";
-%   stacking in the transposed layout -> "Commitment Plans"; rehashed/re-encoded claims covered by
-%   the factor Q -> "The Fiat--Shamir Transcript"; FRI/BaseFold and the weight leak -> "Scope".
-% Labels defined: tab:setup (moved here from defence.tex), fig:protocol. Labels used: sec:intmodel, sec:fs,
-%   (defence.tex); eq:split, thm:untrusted, rem:forced, app:semantics, app:sound, app:untrusted
-%   (appendix_defence.tex). New BibTeX key: fri2018 (also cited in defence.tex).
-% H5 pass (2026-10-11): TH-c Block 2 ("How much a different test could save") inserted after
-%   Table tab:setup; TH-c Block 5(c) replaces the last sentence of "Scope"; the Merkle--Damgard
-%   remark of the body's former paragraph "A sponge transcript" (cut C6) added to "The Fiat--Shamir
-%   Transcript".
-% H5 review (2026-10-11): Block 2's "lower the error per matrix from 2^-beta_0 to 2^-128" said the
-%   opposite of what it does (2^-128 > 2^-beta_0); now "raise". All Block 2 numbers re-derived with
-%   setup_bytes.py's formulas (code read-only) and confirmed.
-% =====================================================================================
-
 \providecommand{\F}{\mathbb{F}_p}
 \providecommand{\sC}{\mathsf{C}}
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
@@ -67,8 +37,6 @@ layouts. The five weight matrices of LeNet-5, for example, share one tree of $2^
 open 15 columns, instead of 66 in each of five trees. In the transposed layout, operations that
 read the same input, such as the query, key and value projections, are stacked into one matrix.
 
-% Moved from the body's paragraphs "Commitment plans" and "(S3): the column check" by the H5 pass
-% (cut C5 of REVIEW2.md); unchanged.
 \para{The plan and the transposed layout.} Matrices whose codewords have equal length can share a
 tree and a multiproof. Our runs use one plan for every model: each matrix is encoded at
 $n=\max(2^{18},2\,\mathrm{next\_pow2}(k))$ points, so most matrices share a few trees (six for
@@ -144,8 +112,6 @@ for $a=100$, the setup proof of Llama-2-7B takes \SetupProverLlama{} to prove on
   \end{tabular}
 \end{table}
 
-% The breakdown and floors below are those of the byte model of code/experiments/costs/setup_bytes.py
-% (setup_model) under the run's plan, which code/experiments/paper/numbers.py writes as macros.
 \para{How much a different test could save.} For Llama-2-7B at $\lambda=128$, with the radii behind
 Table~\ref{tab:setup}, the setup proof is \SetupMBLlamaA{}\,MB at $a=100$. Of this, \SetupColumnsMBLlamaA{}\,MB (\SetupColumnsShareLlamaA{}\%)
 are opened columns, \SetupCombinedMBLlama{}\,MB (\SetupCombinedShareLlamaA{}\%) are the combined rows $\psi_jA^*_j$, and at most \SetupPathsMBLlamaA{}\,MB
@@ -174,7 +140,6 @@ commitments (Remark~\ref{rem:forced}): a batched proximity proof over the rows i
 FRI~\cite{fri2018} or BaseFold~\cite{basefold} would still open them, and could replace only the
 combined rows, \SetupCombinedShareLlamaA{}\% of the setup proof for Llama-2-7B at $a=100$.
 
-% Moved from defence.tex (Sec. 4.3) for space.
 \subsection{One Query in Mode $\sC$}
 Figure~\ref{fig:protocol} shows the three rounds of one query in mode $\sC$ with an honest commitment.
 \begin{figure}[t]

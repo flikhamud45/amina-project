@@ -3,7 +3,7 @@
 This file describes protocol v0 (Sec. `sec:protocol`, `sec:fs`) and its variant V1 (Sec. `sec:v1`) as the library
 implements them: the parties, the messages in their order, the bytes on the wire, and the parameters. It is a
 reference for checking the implementation against the paper. Every statement names the function that implements
-it; where the code and the paper's text differ, the difference is listed at the end. Integers in byte layouts are
+it. Integers in byte layouts are
 little-endian unless stated otherwise; `p = 15 * 2**27 + 1 = 2013265921` is the BabyBear prime
 (`pvi.core.field.P`), and `F_{p^8} = F_p[x] / (x^8 - 11)` is the extension field of V1 (`pvi.core.extfield`,
 `pvi.core.extfield.D` = 8, `pvi.core.extfield.BETA` = 11). Both parties run in one process; what one party hands the
@@ -472,42 +472,3 @@ commitment; the verifier is unaffected, since it recomputes the leaves of every 
 | setup proof | `beta0 = lambda + 64 + log2(2 J)` (`J` coded matrices); `s = ceil((beta0 + log2 max n) / log2 p)`; radius `e = floor(f (n - m) / 2)`, `f` in `2**0 .. 2**-10` minimising `t0 / amortise + t`; `t0` least with `prod (n-e-1-i)/(n-i) <= 2**-beta0`; per-query `t` least with `prod (m+e-1-i)/(n-i) <= 2**-query_bits` | `pvi.commit.setup_proof.setup_params`, `pvi.commit.setup_proof.survivors`, `pvi.commit.setup_proof.FRACTIONS`, `pvi.commit.setup_proof.params_sound` |
 | V1 | `F_{p^8}`, `alpha` outside `F_p + x F_p`; instances of at most `2**27` leaves | `pvi.core.extfield`, `pvi.v1.cut.LMAX`, `pvi.v0.params.SecurityParams` |
 | transcript | SHAKE-256, 32-byte keys and leaves; SHA-256 Merkle trees with 32-byte roots | `pvi.v0.transcript.Challenger`, `pvi.commit.commitment.HASH_BYTES` |
-
-## Differences from the paper's description
-
-Each item gives the paper's text (file and line in `paper_sp2027/`) and what the code does (file and line under
-`code/`); which side changes is left to a decision.
-
-1. `paper_sp2027/sections/defence.tex:170` sets `beta = lambda + log2(2|J|)` over the committed matrices; the code
-   uses the number of weight operations `n_checks >= |J|` (`src/pvi/v0/params.py:60`, called with the model's op count
-   at `experiments/costs/bench.py:806-809`), as the body of `tab:params` (`paper_sp2027/fallback/tab_params.tex:4-5`)
-   and `paper_sp2027/sections/ext_proofs.tex:720` state.
-2. `paper_sp2027/sections/defence.tex:170-172` says each tree opens the least `t` meeting the column term; this holds
-   under a plan, while the per-op commitment opens `ceil(beta / log2 rate)` columns (`src/pvi/v0/params.py:63-65`).
-3. `paper_sp2027/sections/defence.tex:49-51` says a Kpre verifier holds only the secret vectors and folded rows; with
-   `lookups` (the paper's configuration) it also reads the embedding tables at every query
-   (`src/pvi/v0/verifier.py:413-418`), and V1 evaluates (P4) from its weights (`src/pvi/v1/protocol.py:222-223`, as
-   `paper_sp2027/sections/ext_proofs.tex:754` says).
-4. `paper_sp2027/sections/appendix_v1.tex:63-68` lists (D1), (D2), then (D3) the token rule; the code checks the token
-   rule after decoding and before the derivation and its range checks (`src/pvi/v1/protocol.py:369-387`; v0 alike,
-   `src/pvi/v0/query.py:372-401`), so a query failing both reports `token`.
-5. `paper_sp2027/sections/appendix_v1.tex:82-83` says (F4) is compared by cross-multiplication; the default
-   (optimised) verifier forms both sums by batch inversion (`src/pvi/v1/logup.py:111-117`), the baseline one
-   cross-multiplies (`src/pvi/v1/logup.py:118-120`); the two tests agree when every denominator is non-zero.
-6. `paper_sp2027/sections/v1.tex:143-147` lists the first message, then `alpha`, then the GKR; in mode C the code also
-   draws v0's `chi` of the clear operations with `alpha`, before the GKR (`src/pvi/v1/protocol.py:408-410`), and the
-   fold message carries the clear `u` with the cut folds (`src/pvi/v1/protocol.py:464-469`).
-7. `paper_sp2027/sections/ext_proofs.tex:398-406` lists "the implementation's" labels; it omits the setup proof's
-   transcript (`setup/params`, `setup/graph`, `setup/group/<g>`, `setup/msg/<m>`, challenges `fold/setup/<m>` and
-   `cols/setup/<g>`; `src/pvi/commit/setup_proof.py:147-173`), which shares the domain string `pvi/fullcheck/v3` and
-   starts with `setup/params`, not `graph` (relevant to the `sigma_0` argument at
-   `paper_sp2027/sections/ext_proofs.tex:458-461`).
-8. Code names in `paper_sp2027/sections/ext_proofs.tex` that no longer exist: "code/src/pvi/fullcheck" (line 43; now
-   `code/src/pvi`), `transformer.build_decoder` (93; `pvi.models.decoder.build_decoder`), `protocol.claim_bound`
-   (196; `pvi.v0.params.claim_bound`), `real_weights.build_opt_from_hf` and `real_llama.build_llama_from_hf` (224-225;
-   `pvi.models.hf_opt.build_opt_from_hf`, `pvi.models.hf_llama.build_llama_from_hf`), `_absorb_statement` (358;
-   `pvi.v0.query.absorb_statement`), `cut_protocol.*` (561, 573, 583, 637, 694, 750, 928; `pvi.v1.protocol`),
-   `_field_message` (572; `pvi.v0.query.field_message`), `logup_gkr.Transcript.from_bytes` (574;
-   `pvi.v1.gkr.Transcript.from_bytes`), `_decoded_claims` (582; `pvi.v0.query.decoded_claims`), `_open_message`
-   (583, 694; `pvi.v0.query.open_message`), `protocol._disagrees` (927; `pvi.v0.verifier._disagrees`); and paths to
-   development notes outside the artifact (`docs/improvements/...`, lines 656 and 995).
