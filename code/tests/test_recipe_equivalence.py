@@ -2,10 +2,13 @@
 weights are drawn by Python's ``random`` (independent of the transformers version's initialisation).
 
 * Stored expectations: the certified recipe, the superseded recipes (the scalar norm gain 4; the legacy recipe, alpha
-  0.55 with percentile statistics), the per-row power-of-two weight scales (``row_pow2``) and cross-layer
-  equalisation (``cle_mlp``) build the integer graphs whose fingerprints are stored here -- the graph digest, every
-  weight and bias, the logit scale and the integer logits at every position of a fixed query.  The two variants are
-  those of the extended version's per-row and equalisation numbers.
+  0.55 with percentile statistics), the per-row power-of-two weight scales (``row_pow2``) and the data-free
+  cross-layer equalisation (``cle_mlp = 0``) build the integer graphs whose fingerprints are stored here -- the graph
+  digest, every weight and bias, the logit scale and the integer logits at every position of a fixed query.  The two
+  variants are those of the extended version's per-row and equalisation numbers.  Every statistic of these recipes
+  is a value of the integer graph or of the weights, so the fingerprints are the same on every host; equalisation
+  with ``cle_mlp > 0`` reads the checkpoint's float activations, whose last bits depend on the floating-point
+  library, and has no stored fingerprint.
 * Against the certified path: the variants' options at their defaults give the certified graph; a per-row graph keeps
   the benchmark graph's structure, its vector multipliers take at most ``row_pow2`` values a power of two apart, and
   protocol v0 accepts it and rejects a tampered claim; equalisation changes fc1 and fc2 only.
@@ -34,13 +37,11 @@ CASES = {
     "rows4-legacy-p8": dict(LEGACY, row_pow2=4, prob_max=255),
     "rows4-certified": dict(hf_opt.CERTIFIED_RECIPE, row_pow2=4),
     "cle0r2-legacy-p8": dict(LEGACY, cle_mlp=0.0, cle_ratio=2.0, prob_max=255),
-    "cle0.5r4-certified": dict(hf_opt.CERTIFIED_RECIPE, cle_mlp=0.5, cle_ratio=4.0),
 }
 STORED = {
     "certified": "7393d1e868ea5a4a",
     "certified-p8": "36760eed322a80f1",
     "certified-pruned": "f64507119fe45391",
-    "cle0.5r4-certified": "3e53f2478b33762e",
     "cle0r2-legacy-p8": "5cf71d1dcc8cb3fb",
     "gain4-p8": "14c4789f4a704848",
     "legacy": "f897e8fa946682b1",

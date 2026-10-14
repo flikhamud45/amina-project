@@ -284,7 +284,11 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
       is divided by ``s_j`` (:func:`_cle_scale`: ``a_j`` the channel's largest ``|value|`` at fc2's input in the
       checkpoint on ``calib_ids``, ``r1_j`` and ``r2_j`` the largest ``|.|`` in row ``j`` of the folded fc1 and in
       column ``j`` of fc2, clamped to a factor ``cle_ratio`` around the median) and column ``j`` of fc2 is
-      multiplied by it; ``relu(x / s) = relu(x) / s`` for ``s > 0``, so the float function is unchanged.
+      multiplied by it; ``relu(x / s) = relu(x) / s`` for ``s > 0``, so the float function is unchanged.  With
+      ``cle_mlp > 0`` the graph depends on the checkpoint's float forward pass, whose last bits differ between
+      floating-point libraries and CPUs (a few units of a requantisation multiplier); ``cle_mlp = 0`` (data-free,
+      the extended version's cells) and every other statistic here are values of the integer graph or of the
+      weights, the same on every host.
     """
     cfg = model.config
     assert cfg.do_layer_norm_before, "post-LN OPT-350M is not handled"
