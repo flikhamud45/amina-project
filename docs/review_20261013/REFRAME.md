@@ -119,3 +119,23 @@ committing activations. The window lemmas, the GKR details and the per-phase ver
 3. `tab:quality-attr` (the attribution table of the extended version) has no script in the artifact: the scripts
    that produced it were not carried over. Port them (about a day, plus a run), or drop the table and keep its
    conclusion as a sentence with the Llama attribution that the artifact does reproduce?
+
+## 8. Status on 14 Oct (submission branch `sp2027-artifact`, 826a1be)
+
+- **Exact re-execution** (done in the paper and the pipeline): the baseline of `\CpuRatioN`, `tab:options`, the
+  break-even and the long prompts is the integer forward pass, bit-exact with the claims (the faster of its int8 and
+  exact fp32 GEMM paths). fp32, bf16 and dynamic int8 inference of the same shapes are inexact: the paper reports
+  them next to it (`\CpuInexact*`, `tab:options` note a), never as "exact". Before, fp32 was counted as exact
+  while a faster dynamic-int8 engine was excluded as non-exact. On the earlier Xeon measurements the ratio becomes
+  7.2 (142 s against 19.6 s) instead of 4.7, and the fastest inexact engine (dynamic int8, 56 s) is 2.9 times the
+  verifier's time. Reverting is one line (`experiments/paper/tables.py`, `EXACT`) plus the wording.
+- **Length** (Tectonic, Times): the submission is 19 pages: body 1-13, references 14-15, appendix 16-19. The body
+  meets the 13-page limit; the total is one page over the 18 pages that recent S&P calls allow (check the 2027 call).
+  The 20 remaining `\todo` boxes take part of that space. The reframe (Sec. 5-6) has to fit in the same 13 pages
+  and bring the total to 18: the edits of M10 (V1's details, the improvement table and the setup proof to the
+  extended version) are the room for it.
+- **Every printed number** is now a macro or table cell filled from the run's records (or computed from the code
+  under the run's plan), with the current values as fallback. The reframe's draft abstract above uses macro names
+  of an earlier draft (`\ProofLlamaTwoK`, `\ServeOverhead`, `\VoneRatioReal`, `\BreakEvenGbps`,
+  `\ServeOverheadRange`); the pipeline's names are `\ProofLlamaLongC`, `\ServeLlamaKpreOverUTwo`,
+  `\VOneRatioRealOptL`, `\BreakevenLinkRange` (`paper_sp2027/fallback/numbers.tex` lists them all).
