@@ -85,6 +85,18 @@ def test_kpre_with_the_verifiers_own_embedding_rows(kind):
     assert not cp.run_cut_query(prover, v, _x(), forward_kwargs={"tamper": tamper})["accepted"]
 
 
+
+@pytest.mark.parametrize("kind,mode,policy,fs", [("gpt", "Kpre", None, True), ("opt", "C", "tightc", False),
+                                                 ("qwen", "C", "auto", True)])
+def test_honest_queries_with_the_range_checks_of_a_gpu(kind, mode, policy, fs, monkeypatch):
+    # the range checks deferred as on a GPU (one device boolean each), on the optimised verifier's int8 and int16
+    # cut values, whose residual bounds lie outside those dtypes
+    from pvi.v0 import verifier as v0_verifier
+    g, prover, v = _setup(kind, mode, policy, fs)
+    monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
+    out = cp.run_cut_query(prover, v, _x(), seed=None if fs else 5)
+    assert out["accepted"], out["rejected_at"]
+
 def test_a_generation_graph_and_another_length():
     g, prover, v = _setup("llama", "C", "cnn16c", True, True, gen=True)
     base = build_decoder(_TINY["llama"], calib_tokens=8, seed=1, prune_last=True)

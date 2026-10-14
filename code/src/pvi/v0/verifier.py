@@ -147,11 +147,13 @@ def _defer(device) -> bool:
 
 
 def _outside(a: torch.Tensor, lo: int, hi: int) -> torch.Tensor:
-    """Some entry of ``a`` outside ``[lo, hi]``, as a device boolean (``False`` if ``a`` is empty)."""
+    """Some entry of ``a`` outside ``[lo, hi]``, as a device boolean (``False`` if ``a`` is empty).  The extrema are
+    compared in int64: a bound outside a narrow dtype's range (V1's int8 and int16 cut values against a residual
+    operation's ``R_Delta``) would otherwise be converted to that dtype and wrap."""
     if a.numel() == 0:
         return torch.zeros((), dtype=torch.bool, device=a.device)
     amin, amax = torch.aminmax(a)
-    return (amin < lo) | (amax > hi)
+    return (amin.to(torch.int64) < lo) | (amax.to(torch.int64) > hi)
 
 
 def _check_bounds(a: torch.Tensor, lo: int, hi: int, pending: list) -> bool:

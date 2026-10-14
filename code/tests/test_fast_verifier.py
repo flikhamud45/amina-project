@@ -242,6 +242,14 @@ def test_merkle_worker_processes_fall_back_when_the_pool_breaks(monkeypatch, set
 
 # -- protocol kernels --------------------------------------------------------------------------
 
+
+@pytest.mark.parametrize("dtype", [torch.int8, torch.int16, torch.int32, torch.int64])
+def test_a_deferred_range_check_compares_in_int64(dtype):
+    a = torch.tensor([5, -7, 100], dtype=dtype)
+    wide = -(1 << 29), (1 << 29) - 1
+    assert not bool(v0_verifier._outside(a, *wide)) and not bool(v0_verifier._outside(a, -7, 100))
+    assert bool(v0_verifier._outside(a, -6, 100)) and bool(v0_verifier._outside(a, -7, 99))
+
 @pytest.mark.parametrize("deferred", [False, True])
 def test_range_and_field_checks_match_reference(deferred, monkeypatch):
     monkeypatch.setattr(v0_verifier, "_defer", lambda device: deferred)
