@@ -1,26 +1,27 @@
-"""The models and substitution setups used throughout the study.
+"""The models and substitution setups of the attack experiments.
 
 Anchuri et al. validate other-model soundness by pairing a committed model ``M``
 with a substitute ``M~`` and asking whether ``RandPathTest`` can tell them apart.
-Which pair you choose matters a great deal, so we reproduce all three of the
-settings the paper uses, on MNIST-scale models that a CPU can train in minutes:
+The choice of pair matters a great deal, so all three of the settings they use are
+reproduced here, on MNIST-scale models that train on a CPU:
 
 ``shared_class``
     Section 6.2.  ``M`` and ``M~`` solve *different* classification tasks that
     share exactly one class, and separation is measured on inputs from the shared
-    class.  The paper's instance is dogs-vs-cats against dogs-vs-squirrels,
-    evaluated on dogs; ours is digits ``{0,1,2,3,4}`` against ``{0,5,6,7,8}``,
+    class.  Their instance is dogs-vs-cats against dogs-vs-squirrels, evaluated
+    on dogs; the one here is digits ``{0,1,2,3,4}`` against ``{0,5,6,7,8}``,
     evaluated on zeros.
 
 ``disjoint_data``
     Appendix G.1.  ``M`` and ``M~`` solve the *same* task but are trained on
     disjoint halves of the data.  This is the harder case -- the models are
-    functionally near-identical -- and the paper reports *more* separation here,
-    which is a claim worth re-testing.
+    functionally near-identical -- and Anchuri et al. report *more* separation
+    here, which is a claim worth re-testing.
 
 ``quantised``
-    Section A's motivating scenario: a provider that commits to ``M`` but serves a
-    cheaper variant.  We take ``M`` itself and quantise its weights to 8 bits.
+    The motivating scenario of their Section A: a provider that commits to ``M``
+    but serves a cheaper variant.  The substitute is ``M`` itself with its weights
+    quantised to 8 bits.
     This is the most functionally similar substitute of the three and therefore
     the sternest test of the protocol.
 
@@ -196,7 +197,7 @@ SETUPS: tuple[SubstitutionSetup, ...] = (
         paper_reference="Section 6.2",
         honest=_MLP_SHARED_A,
         substitute=_MLP_SHARED_B,
-        # Queries come from the shared class only, mirroring the paper's use of
+        # Queries come from the shared class only, mirroring Anchuri et al.'s use of
         # dog images for a dogs-vs-cats / dogs-vs-squirrels comparison.
         eval_dataset_kwargs={"name": "mnist", "classes": (0,), "seed": 0},
     ),

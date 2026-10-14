@@ -4,7 +4,7 @@ Slot streams, Rice vectors and 31-bit field elements round trip; the vectorised,
 threaded and torch (GPU prover) paths give the same bytes and values; every malformed input is
 rejected with ``ClaimCodecError`` (truncations, trailing bytes, header fields, padding,
 exceptions) and random corruptions never make the decoder raise anything else.  The host and the
-device encoders give the bytes of the per-op encoder that defined the format
+device encoders give the bytes of the per-op encoder that defines the format
 (``claimcodec_reference``) on every input, threaded or not; the device encoder's kernels grow with
 the widths, not the ops, and it waits for the device four times at most (on a GPU: checked in
 CUDA's sync debug mode).  In parts (a proof of more than ``_ONE_PASS`` values, in parts of ``_CHUNK``;
@@ -293,7 +293,8 @@ def test_trailing_bytes_magic_op_count_and_type_are_rejected(sample):
 def test_a_read_only_buffer_decodes_as_its_bytes(sample):
     # what a device encoder returns: a read-only memoryview of one buffer
     zs, blob, rows, cols = sample
-    assert all(np.array_equal(a, b) for a, b in zip(cc.decode(memoryview(blob), rows, cols), cc.decode(blob, rows, cols)))
+    assert all(np.array_equal(a, b) for a, b in zip(cc.decode(memoryview(blob), rows, cols),
+                                                    cc.decode(blob, rows, cols)))
 
 
 def test_header_fields_are_validated(sample):
@@ -543,7 +544,7 @@ def test_the_device_encoders_kernels_grow_with_the_widths_not_the_ops(claim_sets
     n, cold, widths = counts[0]
     assert n <= 118 + 12 * (widths + 2), counts                  # fixed work, ~10 a packed stream (Rice: 2 more)
     assert cold - n <= 40, counts                                 # the tables: a fixed number of ops, once
-    with opcount.KernelOps() as old:                              # the reference: ~24 aten ops an op
+    with opcount.KernelOps() as old:                              # the reference: ~6 aten ops an op, clones included
         ref.encode([z.clone() for _ in range(16) for z in base])
     assert old.n > 9 * n
 
@@ -584,7 +585,7 @@ def test_a_new_shape_set_releases_the_device_tables_of_the_last(claim_sets):
     assert cc._layout(shapes[0])._dev and not cc._layout(shapes[1])._dev
 
 
-# -- the fused device encoder (codec_kernels, Triton on a GPU) ---------------------------------------------
+# -- the fused device encoder (pvi.kernels.codec_triton, Triton on a GPU) ----------------------------------
 
 def _int32_on_gpu(zs) -> list:
     return [(z if torch.is_tensor(z) else torch.from_numpy(np.asarray(z))).to(torch.int32).cuda() for z in zs]
@@ -596,8 +597,8 @@ def _int32_on_gpu(zs) -> list:
 def test_the_fused_device_encoder_gives_the_reference_bytes(claim_sets, cols, flag_cols, chunk, monkeypatch,
                                                             set_options):
     # launches of one or a few columns, the flag words read a few columns at a time, the plan's windows small or not
-    from pvi.kernels import codec_triton as codec_kernels
-    if not codec_kernels.available("cuda"):
+    from pvi.kernels import codec_triton
+    if not codec_triton.available("cuda"):
         pytest.skip("no Triton")
     set_options(fused_encoder=True)                     # opt-in
     monkeypatch.setattr(cc, "_FUSED_COLS", cols)
@@ -617,7 +618,7 @@ def test_the_fused_encoder_takes_int32_gpu_claims_only(set_options):
     assert not cc._fused_ok([z]) and not cc._fused_ok([z.long().cuda()]) and not cc._fused_ok([])
 
 
-# -- the decoder on a GPU (claimcodec.decode_device) --------------------------------------------------------
+# -- the decoder on a GPU (decode_device) ------------------------------------------------------------------
 
 def _shape(z) -> tuple[int, int]:
     return tuple(int(d) for d in (z.shape if torch.is_tensor(z) else np.asarray(z).shape))
@@ -882,7 +883,7 @@ def test_the_parts_temporaries_are_bounded_by_the_part_not_the_claims(monkeypatc
         results[way + " bytes"] = largest.bytes
     assert results["one pass"] == results["in parts"]
     assert results["one pass bytes"] >= 8 * n          # e.g. the int64 cumulative sums of every claim
-    assert results["in parts bytes"] <= 8 * 2 * chunk + 8 * 8 * 500, results     # ~32 KiB here, not ~2 MiB
+    assert results["in parts bytes"] <= 8 * 2 * chunk + 8 * 8 * 500, results     # ~63 KiB here, against ~2 MB
 
 
 def test_parts_wait_for_the_device_once_a_part(monkeypatch):
@@ -942,8 +943,8 @@ def test_the_gpu_encoder_in_parts_gives_the_reference_bytes_in_bounded_memory(cl
         extra[way] = torch.cuda.max_memory_allocated() - before
     assert blobs["one pass"] == blobs["in parts"] == cc.encode([z.cpu() for z in zs], impl="host")
     assert extra["in parts"] < 100 * 2**20 < 600 * 2**20 < extra["one pass"], extra
-    from pvi.kernels import codec_triton as codec_kernels
-    if codec_kernels.available("cuda"):                          # the fused encoder: the same bytes, less memory
+    from pvi.kernels import codec_triton
+    if codec_triton.available("cuda"):                          # the fused encoder: the same bytes, less memory
         set_options(fused_encoder=True)
         monkeypatch.setattr(cc, "_ONE_PASS", 1 << 27)
         monkeypatch.setattr(cc, "_CHUNK", 1 << 23)

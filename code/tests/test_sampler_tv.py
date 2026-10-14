@@ -1,4 +1,4 @@
-"""The exact output law of the integer Gumbel-max sampler (``experiments/generation/sampler_tv.py``):
+"""The exact output law of the integer Gumbel-max sampler (``experiments.generation.sampler_tv``):
 closed forms on 2- and 8-token toys in exact integer and rational arithmetic, every noise draw of small tables
 enumerated through ``TokenSampler.choose`` itself (ties and top-k included), a Monte Carlo of ``choose``, the FFT
 path against the direct sum, the skipped-tail bound, the distance to softmax falling with the table's width, and a

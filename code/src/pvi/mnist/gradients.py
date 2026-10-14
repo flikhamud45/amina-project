@@ -1,22 +1,27 @@
 """Sensitivity of the output to an internal activation.
 
-Two very different parts of this study need the same quantity ``d y / d a_v``:
+Two very different parts of the attack experiments need the same quantity
+``d y / d a_v``:
 
-* the **attack**, to decide which neuron is cheapest to tamper with, and
-* the **defence**, because the natural reading of the paper's suggestion to
-  "prioritize layers or nodes where activations are statistically more sensitive to
-  tampering" (Section 5.2) is to sample neurons in proportion to their influence.
+* the **attack** (:mod:`pvi.attacks.tamper`), to decide which neuron is cheapest to
+  tamper with, and
+* the **value-aware samplers** (:mod:`pvi.baseline.samplers`), because the natural
+  reading of Anchuri et al.'s suggestion to "prioritize layers or nodes where
+  activations are statistically more sensitive to tampering" (their Section 5.2) is
+  to sample neurons in proportion to their influence.
 
-That the attacker and the defender compute the *same* quantity is not a coincidence
-in the implementation -- it is the crux of the defence analysis, and putting both on
-one code path makes the symmetry impossible to lose sight of.
+That the attacker and the sampler compute the *same* quantity is not a coincidence
+in the implementation -- it is the crux of the sampler analysis
+(:mod:`pvi.baseline.adaptive`), and putting both on one code path makes the
+symmetry impossible to lose sight of.
 
 Gradients are evaluated at a given trace, so the ReLU derivative mask comes from
 that trace's activations. When the trace is adversarial, so is the mask. That is
-the opening the defence analysis exploits.
+an opening for the adversary of :mod:`pvi.baseline.adaptive` against the samplers
+that read the claimed trace.
 
-Scope: fully connected networks. Both of the paper's own gradient-based attacks
-(Section 7.2 and Appendix E) are likewise run on a "simple ANN", and every
+Scope: fully connected networks. Both of Anchuri et al.'s own gradient-based attacks
+(their Section 7.2 and Appendix E) are likewise run on a "simple ANN", and every
 gradient-based experiment here uses the MLP setups.
 """
 
@@ -92,8 +97,8 @@ def saliency(
 
     With no ``target_class`` this is the gradient of the winning logit's margin over
     the runner-up; with one, the margin of that class over the current winner.  Used
-    by the attacker to rank candidate neurons and by the influence-weighted sampler
-    to decide where to look.
+    by the attacker to rank candidate neurons (:mod:`pvi.attacks.tamper`,
+    :mod:`pvi.baseline.adaptive`).
     """
     logits = trace.output
     winner = int(np.argmax(logits))

@@ -1,7 +1,7 @@
 """Merkle-tree vector commitments.
 
 This module implements the vector-commitment primitive specified in Appendix B of
-Anchuri et al., instantiated -- as the authors do -- with a Merkle tree over
+Anchuri et al., instantiated -- as they do -- with a Merkle tree over
 SHA-256 (their Section 8.1: *"a Merkle tree built on row-wise hashes (computed
 using SHA-256)"*).
 
@@ -22,7 +22,7 @@ Design notes
 *Domain separation.*  Leaf, internal-node, padding and root hashes are computed
 under four distinct one-byte tags.  Without this, a Merkle tree is vulnerable to
 the classical second-preimage attack in which an internal node is passed off as a
-leaf.  The paper does not discuss the point; we take the standard precaution.
+leaf.  Anchuri et al. do not discuss the point; the standard precaution is taken.
 
 *Length binding.*  The published commitment is ``H(ROOT_TAG || n || root)`` rather
 than the bare root, so a commitment to a vector of length ``n`` cannot be
@@ -103,12 +103,12 @@ def encode_f32_vector(values: np.ndarray) -> bytes:
 
     The protocol commits to real-valued weights and activations.  Binding is a
     property of the committed *bytes*, so the float-to-bytes map has to be fixed
-    once and for all; we fix it here.
+    once and for all; it is fixed here.
 
-    NaNs are rejected: IEEE-754 admits many NaN bit patterns, so allowing them
-    would silently weaken binding (two "equal" values with different encodings).
-    Honest traces of the networks we study never contain NaNs, and a trace that
-    does is not one the verifier should accept.
+    NaNs (and infinities) are rejected: IEEE-754 admits many NaN bit patterns, so
+    allowing them would silently weaken binding (two "equal" values with different
+    encodings).  Honest traces of the networks here never contain them, and a
+    trace that does is not one the verifier should accept.
     """
     array = np.ascontiguousarray(values, dtype=np.float32)
     if not np.isfinite(array).all():
@@ -159,13 +159,13 @@ class MerkleOpening:
 
 
 class MerkleVectorCommitment:
-    """Merkle-tree instantiation of the vector-commitment syntax of Appendix B.
+    """Merkle-tree instantiation of the vector-commitment syntax of Appendix B of
+    Anchuri et al.
 
-    ``CommitVec`` is deterministic, as required by the paper's
-    ``CommitToModel`` (Definition 4).  The scheme is therefore *not* hiding --
-    which is exactly the paper's position: it explicitly notes (footnote 2) that
-    "cleartext opening" reveals information about the model and that
-    zero-knowledge is left to future work.
+    ``CommitVec`` is deterministic, as required by their ``CommitToModel``
+    (Definition 4).  The scheme is therefore *not* hiding -- which is exactly
+    their position: they note (footnote 2) that "cleartext opening" reveals
+    information about the model and that zero-knowledge is left to future work.
 
     Instances hold the committed vector so that :meth:`open` can be called
     repeatedly; the tree is built once at construction time.
@@ -262,5 +262,5 @@ class MerkleVectorCommitment:
 
         expected = _sha256(_ROOT_TAG, _u64(params.length), node)
         # Constant-time comparison is not security-relevant here (both sides are
-        # public), but costs nothing and keeps the primitive above reproach.
+        # public), but costs nothing.
         return hmac.compare_digest(expected, digest)

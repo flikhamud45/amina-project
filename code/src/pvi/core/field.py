@@ -1,6 +1,6 @@
 """Arithmetic over the BabyBear prime field, ``p = 15 * 2**27 + 1``.
 
-Why this field.  Every value we ever reduce is either a field element
+Why this field.  Every value reduced here is either a field element
 (< 2**31) or a small signed integer (an int8 weight or activation, or an int32
 pre-activation), so a product of two field elements fits in a signed 64-bit
 integer and torch's ``int64`` arithmetic is exact.  The multiplicative group has
@@ -12,7 +12,9 @@ Everything here works on torch tensors on any device and is deterministic:
 the same inputs give bit-identical outputs on CPU and GPU.  Small CPU operands of
 the modular products run the same integer steps in numpy, whose per-call cost is
 a fraction of torch's; on a GPU with int8 tensor cores the verifier's products can
-run as exact int8 GEMMs instead (``int8_*``).
+run as exact int8 GEMMs instead (``int8_*``).  Which of these equivalent paths runs
+is chosen by :mod:`pvi.options` and by the operands; every path returns the same
+canonical residues.
 """
 
 from __future__ import annotations
@@ -70,8 +72,9 @@ def to_field(values: torch.Tensor) -> torch.Tensor:
 
 
 def min_max(a: torch.Tensor) -> tuple[int, int]:
-    """Exact ``(min, max)`` of a non-empty integer tensor: numpy's reductions on the CPU
-    (about 2x torch's there), ``aminmax`` elsewhere (one device-to-host copy)."""
+    """Exact ``(min, max)`` of a non-empty integer tensor: on the CPU one parallel pass of the native kernel
+    (:func:`pvi.kernels.native.min_max`) where it is available, else numpy's reductions (faster than torch's
+    there); ``aminmax`` elsewhere (one device-to-host copy)."""
     if a.device.type == "cpu":
         from pvi.kernels import native as native_kernels  # one parallel pass where the native library is built
         got = native_kernels.min_max(a)
@@ -166,8 +169,8 @@ def small_matmul_mod(small: torch.Tensor, field: torch.Tensor, *, chunk: int = 8
     """``small @ field mod P`` where ``|small| <= 2**8`` and ``field`` is in ``[0, P)``.
 
     Uses float64 matrix products, which are exact while every partial sum stays
-    below ``2**53``: a product is below ``2**39`` and we sum at most ``chunk``
-    (``2**13``) of them before reducing.  This is the workhorse for anything that
+    below ``2**53``: a product is below ``2**39`` and at most ``chunk`` (``2**13``)
+    of them are summed before reducing.  This is the workhorse for anything that
     multiplies an int8 weight matrix by field elements.
     """
     k = small.shape[-1]
@@ -282,10 +285,11 @@ def field_matmul_mod(left: torch.Tensor, right: torch.Tensor, *, right_bound: in
 
 
 # -- the same products in numpy, for small CPU operands ------------------------------------
-# A numpy call costs ~1-2 us against ~4-5 us for a torch call, and a small modular product
-# is ~15 calls of pure overhead.  The steps (exact float64 limb GEMMs, int64 floor-mod) are
-# those above, so the results are the same integers.  numpy's BLAS threads are not bound by
-# torch.set_num_threads, which is one more reason to keep this to small operands.
+# A numpy call has a smaller fixed cost than a torch call, and a small modular product is
+# about fifteen calls whose cost is mostly that overhead.  The steps (exact float64 limb
+# GEMMs, int64 floor-mod) are those above, so the results are the same integers.  numpy's
+# BLAS threads are not bound by torch.set_num_threads, which is one more reason to keep this
+# to small operands.
 
 NP_SMALL = 1 << 16
 """Operand entries (``3 * left + right``) up to which CPU products run in numpy."""

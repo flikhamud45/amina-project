@@ -1,4 +1,5 @@
-"""Sampled generation with a client-chosen seed (plan E2): an exact integer Gumbel-max sampler.
+"""Sampled generation with a client-chosen seed: an exact integer Gumbel-max sampler (the paper's Section
+``sec:gen-sampling``).
 
 Greedy decoding picks the largest logit; sampling at temperature ``tau`` picks ``argmax_v (l_v / tau + g_v)`` with
 independent Gumbel noise ``g_v`` (the Gumbel-max trick).  Here everything is an integer that prover and verifier
@@ -16,7 +17,7 @@ compute identically from public data and the client's seed:
 The seed must come from the client, fresh for each query, and be bound into the transcript (``run_query``'s
 ``sampler``): a prover that could choose the seed could choose among outputs.  The verifier recomputes each
 generated token from the claimed logits before them, which the protocol checks like any other claim, so a
-sampled response is proved exactly as a greedy one is (:meth:`protocol.Verifier.check_tokens`).
+sampled response is proved exactly as a greedy one is (:meth:`pvi.v0.verifier.Verifier.check_tokens`).
 """
 
 from __future__ import annotations
@@ -65,7 +66,8 @@ class TokenSampler:
 
     @classmethod
     def for_temperature(cls, seed: bytes, temperature: float, logit_scale: float, top_k: int = 0) -> "TokenSampler":
-        """The rule for real temperature ``temperature`` and the graph's logit scale (real logit = ``z c``)."""
+        """The rule for real temperature ``temperature`` and the graph's logit scale (real logit = ``z c``):
+        ``a = round(c 2^16 / tau)``, clamped to ``[1, 2^24)``."""
         return cls(seed, max(1, min((1 << 24) - 1, round(logit_scale * (1 << FRAC) / temperature))), top_k)
 
     def digest(self) -> bytes:
@@ -91,8 +93,8 @@ class TokenSampler:
 
 def sample_tokens(graph, prompt: torch.Tensor, steps: int, sampler: TokenSampler) -> torch.Tensor:
     """``prompt [1, P]`` followed by ``steps`` tokens sampled with ``sampler`` from ``graph``'s integer logits (one
-    forward pass per token, as ``transformer.greedy_tokens``); the token appended as position ``P + i`` is chosen
-    from the logits at position ``P + i - 1``, with noise index ``P + i - 1``."""
+    forward pass per token, as :func:`pvi.models.decoder.greedy_tokens`); the token appended as position ``P + i``
+    is chosen from the logits at position ``P + i - 1``, with noise index ``P + i - 1``."""
     x = prompt
     for _ in range(steps):
         env, _ = graph.forward(x, free=True)

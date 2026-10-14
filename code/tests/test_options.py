@@ -62,8 +62,8 @@ def test_every_option_is_read_by_the_library():
 
 
 def test_the_library_reads_no_switch_from_the_environment():
-    """Only the host settings named in the module docstring (compiler, native build folder, Python headers) and the
-    dataset folders are environment variables."""
+    """Only the host settings named in the docstring of :mod:`pvi.options` (compiler, native build folder, Python
+    headers) and the dataset folders are environment variables."""
     allowed = {"PVI_NATIVE_DIR", "PVI_PY_INCLUDE", "PVI_CACHE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT"}
     for p in SRC.rglob("*.py"):
         for name in re.findall(r"environ(?:\.get)?\(?\[?\"(\w+)\"", p.read_text(encoding="utf-8")):

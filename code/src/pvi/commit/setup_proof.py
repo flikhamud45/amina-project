@@ -1,10 +1,11 @@
-"""A one-time public proximity proof for a weight commitment (plan item D4, the trust report's Option B).
+"""The setup proof: a one-time public proximity proof for a weight commitment (Sec. ``sec:setup-proof``,
+Appendix ``app:untrusted``).
 
-Theorem 3.2 assumes the commitment ``C_M`` is computed honestly: each committed matrix's columns under its
-Merkle root are those of the Reed--Solomon encodings of its rows.  A committer can instead bind a matrix ``E``
-that is not a codeword, for example one that encodes model ``A`` on half of the columns and model ``A'`` on the
-rest (the *split commitment*): a prover then answers with either model and passes the per-query column check
-with probability about ``2**-t`` (``tests/test_setup_proof.py``).
+The soundness theorem (Theorem ``thm:sound``) assumes the commitment ``C_M`` is computed honestly: each committed
+matrix's columns under its Merkle root are those of the Reed--Solomon encodings of its rows.  A committer can
+instead bind a matrix ``E`` that is not a codeword, for example one that encodes model ``A`` on half of the
+columns and model ``A'`` on the rest (the *split commitment*, Eq. ``eq:split``): a prover then answers with either
+model and passes the per-query column check with probability about ``2**-t`` (``tests/test_setup_proof.py``).
 
 This module removes the assumption.  Once per model, published with ``C_M``, a non-interactive proof (Fiat--Shamir
 over the graph's digest and the roots) shows that every committed matrix ``E_j`` (``R_j`` encoded rows of message
@@ -16,10 +17,11 @@ length ``m_j`` at ``n_j`` points) is ``e_j``-close to a matrix of codewords, i.e
 2. ``t0`` uniform columns of each tree are drawn; the committer opens them (one multiproof per tree);
 3. the verifier checks the Merkle paths and, for every member, ``Enc(psi_j A_j*)[c] = psi_j E_j[:, c]``.
 
-**Soundness.**  The ``s`` base-field rows checked at the same columns are one uniform combination over
-``K = F_{p^s}`` (Fact 1 of the trust report).  If ``E_j`` is not ``e_j``-close, then by correlated agreement in the
-unique-decoding regime (Ben-Sasson et al. 2020, Thm. 1.6; Ligero's Lemma 4.2 for ``e_j < d_j / 4``) the
-combination ``psi_j E_j`` is ``e_j``-far from every codeword except with probability ``n_j / p^s``; then any
+**Soundness** (Theorem ``thm:untrusted``).  The ``s`` base-field rows checked at the same columns are one uniform
+combination over ``K = F_{p^s}`` (Fact ``fact:ext``).  If ``E_j`` is not ``e_j``-close, then by correlated
+agreement in the unique-decoding regime (Ben-Sasson et al. 2020, Thm. 1.6; Ligero's Lemma 4.2 for
+``e_j < d_j / 4``) the combination ``psi_j E_j`` is ``e_j``-far from every codeword except with probability
+``n_j / p^s``; then any
 message's codeword disagrees with it on more than ``e_j`` columns, and ``t0`` distinct uniform columns all miss
 them with probability at most ``prod_{i < t0} (n_j - e_j - 1 - i) / (n_j - i)``.  With Fiat--Shamir both terms
 are multiplied by the number of random-oracle queries (``2**grinding_bits``).  ``setup_params`` picks ``s`` and
@@ -29,8 +31,9 @@ are multiplied by the number of random-oracle queries (``2**grinding_bits``).  `
 wrong folded row only if all ``t`` columns land among the at most ``m_j - 1 + e_j`` positions where ``Enc(u)``
 agrees with ``u``'s committed combination or ``E_j`` is corrupted: probability
 ``prod_{i<t} (m_j - 1 + e_j - i) / (n_j - i)``, the honest bound with ``m_j`` replaced by ``m_j + e_j``
-(:func:`setup_params` computes it).  The committed model is then ``A*`` (evaluated in the field; see the trust report
-for the semantics when ``A*`` is not int8).
+(:func:`setup_params` computes it).  The committed model is then the model ``M*`` of Theorem ``thm:untrusted``:
+the weights ``A*``, each weight product computed in the field and lifted to ``(-p/2, p/2)``; it is the integer
+model when ``A*`` is int8 and meets the range bound.
 """
 
 from __future__ import annotations
@@ -109,7 +112,7 @@ def setup_params(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPu
     log2(2 J)``, so ``2**grinding_bits`` random-oracle queries succeed with probability at most ``2**-lam``: ``s``
     with ``n / p**s <= 2**-beta``, and ``t0`` columns with ``prod_{i<t0} (n - e - 1 - i) / (n - i) <= 2**-beta``.
     A query's column term per matrix is ``prod_{i<t} (m + e - 1 - i) / (n - i) <= 2**-query_bits`` (the
-    per-op budget of :func:`protocol.params_for`).  A larger radius ``e`` makes the setup proof shorter and every
+    per-op budget of :func:`pvi.v0.params.params_for`).  A larger radius ``e`` makes the setup proof shorter and every
     query longer: each tree takes the radius ``e_j = floor(f (n - m_j) / 2)`` (``f`` in :data:`FRACTIONS`, the
     same for its members) that minimises ``t0 / amortise + t``, its columns' bytes over ``amortise`` queries."""
     beta = lam + grinding_bits + math.log2(2 * max(1, len(publics)))
@@ -136,7 +139,7 @@ def setup_params(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPu
 
 def query_group_columns(params: SetupParams, groups: dict[str, GroupPublic]) -> tuple[tuple[str, int], ...]:
     """The per-query ``(group, t)`` once the setup proof certified the radii, in the groups' order (as
-    ``SecurityParams.group_columns``)."""
+    ``pvi.v0.params.SecurityParams.group_columns``)."""
     t = dict(params.t)
     return tuple((name, t[name]) for name in groups)
 
@@ -187,7 +190,8 @@ def _combine(member: WeightCommitment | TransposedCommitment, psi: torch.Tensor,
 
 def prove_setup(groups: dict[str, GroupCommitment], publics: dict[str, CommitmentPublic], graph_digest: bytes,
                 params: SetupParams, device="cpu") -> SetupProof:
-    """The committer's setup proof for honest group commitments (``GraphCommitment.groups``)."""
+    """The committer's setup proof for honest group commitments
+    (``pvi.v0.graph_commitment.GraphCommitment.groups``)."""
     gp = {name: g.public for name, g in groups.items()}
     ch = _transcript(graph_digest, publics, gp, params)
     psis = _challenges_rows(ch, publics, gp, params)
@@ -226,8 +230,8 @@ def params_sound(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPu
 
 
 def after_setup(params, setup: SetupParams, groups: dict[str, GroupPublic]):
-    """``params`` (``protocol.SecurityParams`` under a commitment plan) for the queries after an untrusted setup:
-    each group opens the setup's per-query ``t`` (computed with ``k + e`` in place of ``k``)."""
+    """``params`` (``pvi.v0.params.SecurityParams`` under a commitment plan) for the queries after an untrusted
+    setup: each group opens the setup's per-query ``t`` (computed with ``k + e`` in place of ``k``)."""
     cols = query_group_columns(setup, groups)
     return dataclasses.replace(params, group_columns=cols, columns=max(t for _, t in cols))
 

@@ -1,4 +1,12 @@
-"""Tests for the whole-network defence on integer CNN graphs (``pvi.fullcheck``)."""
+"""The protocol v0 on integer graphs, and the path-sampling baseline on the same graphs.
+
+The field and the Reed--Solomon code (``pvi.core.field``), the weight commitment and its Merkle multiproofs
+(``pvi.commit.commitment``); queries on quantised CNNs and decoders in modes C, K and Kpre (honest queries
+accepted; tampered claims, a fold forged to pass Freivalds' check, a column forged to pass the code check, an
+aliased claim and a substituted model rejected), Fiat--Shamir challenges bound to the statement, and the
+parameters' soundness target; RandPathTest on the integer graphs (``pvi.baseline.path_int``); the decoder shapes
+of the cost model (``pvi.commit.cost``) and the grouped attention.
+"""
 
 from __future__ import annotations
 
@@ -125,7 +133,7 @@ def test_honest_prover_is_accepted(setup):
 
 def test_integer_model_tracks_float_model(setup):
     model, graph, _, _, _ = setup
-    # accuracy agreement is measured on real data in the benchmark; here the
+    # accuracy agreement on real data is measured by the experiments; here the
     # integer logits must at least track the float ones on random inputs.
     shape = (1, 28, 28) if isinstance(model, LeNet5) else (3, 32, 32)
     xf = torch.randn(16, *shape)
@@ -330,7 +338,7 @@ def test_fiat_shamir_variant_accepts_honest(setup):
     _, graph, prover, verifier, x = setup
     fs = params_for(20, len(graph.mat_ops), fiat_shamir=True)
     v = Verifier(verifier.graph, fs, "C", publics=verifier.publics)
-    # columns grew with the grinding margin; commitments are rate-bound, not t-bound
+    # Fiat-Shamir opens more columns (the grinding margin); the commitments depend on the rate, not on t
     assert run_query(prover, v, x)["accepted"]
 
 
@@ -533,7 +541,7 @@ def test_gpu_decoder_matches_cpu():
     assert all(torch.equal(a[k], b[k].cpu()) for k in a)
 
 
-# -- decoder shapes (used by aggregate.py and the benchmark) ---------------------------------
+# -- decoder shapes of the cost model (used by the cost experiments) -------------------------
 from pvi.commit.cost import decoder_shapes  # noqa: E402
 
 

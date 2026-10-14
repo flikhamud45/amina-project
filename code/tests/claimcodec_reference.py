@@ -1,4 +1,4 @@
-"""The ``PVC3`` encoder as commit 6c2059a wrote it, verbatim: the specification the fast encoders of
+"""The per-op ``PVC3`` encoder that defines the format: the specification the fast encoders of
 ``pvi.v0.claimcodec`` are tested against (same bytes for every input).  Not part of the package."""
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ _PLAN_VALUES = 1 << 16
 
 
 class Unencodable(ValueError):
-    """As ``claimcodec.Unencodable``."""
+    """As ``pvi.v0.claimcodec.Unencodable``."""
 
 
 @functools.lru_cache(maxsize=None)

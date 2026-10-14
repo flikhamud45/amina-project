@@ -1,23 +1,24 @@
 """A compact, lossless wire encoding of the proof (``run_query(wire=True)``).
 
 The protocol counts every claim (a pre-activation ``z``) and every field element as 4 bytes.
-The claims of an int8 model are far below the range check ``|z| < 2**29``: the benchmark's
-random-weight LLM claims need 18-21 signed bits and carry about 17 bits of entropy, embedding
-look-ups 8.  In mode Kpre the proof is only the claims, so their encoding is the proof size.
-Field elements (``u``, the opened columns) are below ``p < 2**31`` and travel at 31 bits
-(:func:`pack_field`).  The claims of a commitment plan's lookup tables are rows of int8 weights
-and travel as their bytes (:func:`pack_rows`), not in ``PVC3``.
+The claims of an int8 model are far below the range check ``|z| < 2**29``: measured on the
+random-weight decoders of the cost benchmarks, they need 18-21 signed bits and carry about 17 bits
+of entropy, embedding look-ups 8.  In mode Kpre the proof is only the claims, so their encoding is
+the proof size.  Field elements (``u``, the opened columns) are below ``p < 2**31`` and travel at
+31 bits (:func:`pack_field`).  The claims of a commitment plan's lookup tables are rows of int8
+weights and travel as their bytes (:func:`pack_rows`), not in ``PVC3``.  The paper's Appendix
+``app:codec`` states the decoders' contract and why the encoding preserves soundness.
 
 Claims: format ``PVC3``
 -----------------------
 A frame of reference whose exceptions carry only their high part (as "NewPFD").  There are no raw
 (int32) ops, since a slot of ``B = 30`` bits is never larger, and the encoder places each segment
-around the rounded median of a sample of its values (smaller than around the mean on the CNNs, the
-same on the decoders; ``PVC2``, an earlier prototype, had raw ops and mean centres, and its magic is
-rejected).  The verifier
-knows every weight op's shape ``[N, M]``: ``N`` from the public graph, ``M`` from the query's shape
-(``Verifier.claim_columns``).  The header repeats ``M``, and the decoder rejects any other before
-it allocates anything, so a malformed input costs it no more memory than the honest claims.
+around the rounded median of a sample of its values (smaller encodings than around the mean on the
+CNNs, the same on the decoders; the magic of ``PVC2``, a format with raw ops and mean centres, is
+rejected).  The verifier knows every weight op's shape ``[N, M]``: ``N`` from the public graph,
+``M`` from the query's shape (``Verifier.claim_columns``).  The header repeats ``M``, and the
+decoder rejects any other before it allocates anything, so a malformed input costs it no more
+memory than the honest claims.
 
 Each op is one *segment*, or two when it is *centred*: a run of integers ``x`` with a width
 ``B <= 30`` and a base ``lo``.  Every value is stored as its ``B``-bit slot ``(x - lo) mod 2**B``;
@@ -52,14 +53,14 @@ decodes the exception list's two Rice vectors while the streams are unpacked: th
 follow from the header, and the second vector's from the bits set in the first one's unary levels.
 
 Encoders.  :func:`encode` plans each op on a sample of its rows and gives the same bytes on a host
-and on a device (the per-op encoder that defined the format is ``tests/claimcodec_reference.py``;
+and on a device (the per-op reference encoder ``tests/claimcodec_reference.py`` defines the format;
 both are tested against it).  The host's runs numpy on ``workers`` threads; a device's runs torch
 where the claims are, with a fixed number of kernels plus about ten per distinct width (not per op)
 and four copies back: every op's statistics at once (one sort), the exceptions' number, the Rice
-parameters' statistics, and the encoding (about 2.3 bytes a claim); its temporaries take about 40
-bytes a claim.  A proof of more than ``_ONE_PASS`` claim values is encoded on its device in parts of
-about ``_CHUNK`` values (:func:`_encode_chunked`: the same bytes, with temporaries bounded by the part
-however many claims there are).
+parameters' statistics, and the encoding (about 2.3 bytes a claim on the random-weight decoders);
+its temporaries take about 40 bytes a claim.  A proof of more than ``_ONE_PASS`` claim values is
+encoded on its device in parts of about ``_CHUNK`` values (:func:`_encode_chunked`: the same bytes,
+with temporaries bounded by the part however many claims there are).
 
 Rice vectors (:func:`_rice_encode`): a byte ``k <= 32``; the ``k``-bit low parts as a slot
 stream; the quotients ``q = v >> k <= 15`` in bit-plane unary: level ``l = 1..15`` holds one bit
@@ -73,14 +74,15 @@ truncated or trailing bytes, non-zero padding, ``k > 32``, exception positions o
 range, and exceptions reaching ``|x| >= 2**30``.  So every segment value is ``|x| < 2**30`` and
 every claim fits in int32.  The range check stays the verifier's (``|z| < 2**29`` in
 ``Verifier.derive``): the codec only guarantees well-formed matrices of the expected shapes.
-The work and the memory are linear in the input and in the claims' size ``sum(N M)``.
+The work and the memory are linear in the input and in the claims' size ``sum(N M)`` (the paper's
+Lemma ``lem:codec-dec``).
 
 Soundness.  Decoding is a deterministic function from bytes to claim matrices (or a rejection),
 applied to what the prover sent before any challenge; with Fiat--Shamir the transcript absorbs
 these bytes, which fixes the claims.  So Freivalds' and the column check's bounds are those of
 the int32 claims.  The encoding is not canonical (other widths give other bytes for the same
 claims): re-encoding is one more way to grind the Fiat--Shamir challenges, which the
-``grinding_bits`` margin already covers.
+``grinding_bits`` margin already covers (the paper's Theorem ``thm:codec``).
 """
 
 from __future__ import annotations
@@ -105,7 +107,7 @@ __all__ = ["ClaimCodecError", "Unencodable", "MAGIC", "BMAX", "encode", "decode"
 MAGIC = b"PVC3"
 BMAX = 30                   # slot widths 0..30
 _X_LIMIT = 1 << 30          # every segment value |x| < 2**30
-_Z_LIMIT = 1 << 29          # the range check (protocol.Z_BOUND): the encoder refuses larger claims
+_Z_LIMIT = 1 << 29          # the range check (pvi.v0.params.Z_BOUND): the encoder refuses larger claims
 _F_CENTRED = 1
 _KMAX = 32                  # Rice low parts
 _QCAP = 15                  # Rice quotients, so Rice values < 2**36
@@ -116,7 +118,7 @@ _PLAN_VALUES = 1 << 16
 _JOB = 1 << 18              # values per job of the host encoder's threads (packing, scanning, statistics)
 _SPLIT = 1 << 16            # exceptions from which the decoder's workers decode both Rice vectors at once
 _ONE_PASS = 1 << 27         # a device's encoder: claim values of one pass (~40 bytes each, ~5 GiB; more: in parts)
-_CHUNK = 1 << 23            # a device's encoder in parts: claim values of a part (~40 bytes each, ~0.4 GiB)
+_CHUNK = 1 << 23            # a device's encoder in parts: claim values of a part (~40 bytes each, ~0.3 GiB)
 _SLAB = 1 << 28             # in parts, the encoding comes back into pinned host slabs of this many bytes
 
 
@@ -433,14 +435,15 @@ def _stream_jobs(buf, offset: int, n: int, k: int, out: np.ndarray, workers: int
     from pvi.kernels import native as native_kernels
     if native_kernels.decode_enabled() and out.flags.c_contiguous:
         return [functools.partial(_unpack_native, w, k, n, out, bases)], offset + nbytes
-    if n < _THREADED:               # one job, the bases in one pass after it (a lane's call costs ~7 us)
+    if n < _THREADED:               # one job, the bases in one pass after it (a call per lane has a fixed cost)
         return [functools.partial(_unpack_stream, w, k, n, out, bases)], offset + nbytes
     return [functools.partial(_unpack_lanes, w, k, n, out, range(i, 32, parts), bases=bases)
             for i in range(parts)], offset + nbytes
 
 
 def _unpack_native(w: np.ndarray, k: int, n: int, out: np.ndarray, bases) -> None:
-    """:func:`_unpack_stream` in one native pass (``native_kernels.unpack_stream``, the same values and checks)."""
+    """:func:`_unpack_stream` in one native pass (:func:`pvi.kernels.native.unpack_stream`, the same values and
+    checks)."""
     from pvi.kernels import native as native_kernels
     if not native_kernels.unpack_stream(w, k, n, out, bases):
         raise ClaimCodecError("non-zero padding in a slot stream")
@@ -452,8 +455,8 @@ def _unpack_stream(w: np.ndarray, k: int, n: int, out: np.ndarray, bases) -> Non
 
 
 def _run(jobs: list, sizes: list[int], workers: int) -> None:
-    """Every job, those of ``sizes >= LEAF_THREAD_BYTES`` on ``workers`` threads (numpy releases the
-    GIL in each pass), the others meanwhile on this one."""
+    """Every job, those of ``sizes >= LEAF_THREAD_BYTES`` (:mod:`pvi.commit.commitment`) on ``workers``
+    threads (numpy releases the GIL in each pass), the others meanwhile on this one."""
     map_threaded(lambda job: job(), jobs, sizes, workers)
 
 
@@ -559,7 +562,7 @@ def _rice_decode(buf, offset: int, n: int) -> tuple[np.ndarray, int]:
 # the estimated bits of every width (:func:`_costs`).  A centred op's row means (all ``N``) are
 # planned the same way, without sampling.  Both encoders compute exactly these integers and do the
 # same float64 arithmetic on them (one row per sample), so they choose the same widths and bases as
-# the per-op encoder that defined the format (``tests/claimcodec_reference.py``) and give its bytes.
+# the per-op reference encoder that defines the format (``tests/claimcodec_reference.py``) and give its bytes.
 #
 # The host's (:func:`_encode_host`, numpy, ``workers`` threads) takes CPU claims; it works in place on
 # scratch buffers (a pass into a fresh large array pays its page faults).  A device's
@@ -567,7 +570,7 @@ def _rice_decode(buf, offset: int, n: int) -> tuple[np.ndarray, int]:
 # the number of distinct widths, not of ops, and four copies back: the statistics of all ops (min/max,
 # medians and histograms: one sort of every sample, then two binary searches per bit length), the
 # exceptions' number, the Rice parameters' statistics, and the encoding (packed words, Rice low parts,
-# unary quotients: ~2.3 bytes a claim).
+# unary quotients: ~2.3 bytes a claim on the random-weight decoders).
 
 _BINS = 64                  # bit lengths of zigzagged deviations: < 34
 _SPAN = 34                  # the bit lengths a zigzagged deviation of two int32 values can have: 0..33
@@ -1536,9 +1539,9 @@ def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
     return _join_pieces([head, *body.views(), *tail])
 
 
-# -- a device's encoder with fused kernels (codec_kernels): the plan of _encode_chunked, then each width's slot
-# stream computed from the claims and packed by one kernel per block of its columns, which also flags its
-# exceptions; their high parts from a second kernel; their Rice vectors as in one pass.  The same bytes.
+# -- a device's encoder with fused kernels (pvi.kernels.codec_triton): the plan of _encode_chunked, then each
+# width's slot stream computed from the claims and packed by one kernel per block of its columns, which also flags
+# its exceptions; their high parts from a second kernel; their Rice vectors as in one pass.  The same bytes.
 
 # The option ``fused_encoder`` (off by default): the same bytes, but not faster than the torch encoder once the result
 # is assembled on threads (full OPT-1.3B at 2,048 tokens on an RTX 2080 Ti: 1.74 against 1.54 s; small proofs pay its
@@ -1558,7 +1561,7 @@ def _fused_ok(zts: list) -> bool:
 
 
 def _encode_fused(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
-    """:func:`_encode_device` with the fused kernels of :mod:`codec_kernels` (its bytes)."""
+    """:func:`_encode_device` with the fused kernels of :mod:`pvi.kernels.codec_triton` (its bytes)."""
     from pvi.kernels import codec_triton as ck
     dev = zts[0].device
     src, head, g, gstart, means = _chunked_plan(zts, lay, tb, centre)
@@ -1758,7 +1761,7 @@ def _patch(x: np.ndarray, gaps: np.ndarray, hz: np.ndarray, segs: list[tuple[int
     the base still pending, range-checked with it.  ``segs`` are ``(start, B, pending base)`` in the
     global order.
     Works in place on ``gaps`` and ``hz`` (few passes and no large temporaries: the exceptions are
-    4-15% of the claims); from ``_THREADED`` exceptions in ``workers`` slices."""
+    4-15% of the claims in the measured proofs); from ``_THREADED`` exceptions in ``workers`` slices."""
     from pvi.kernels import native as native_kernels
     code = native_kernels.patch_exceptions(x, gaps, hz, segs, total) if gaps.size >= _SMALL else None
     if code is not None:                         # one native pass, the same values and the same checks in order
@@ -2000,9 +2003,9 @@ def decode_torch(buf, rows: list[int], cols: list[int], *, dtype: torch.dtype = 
 # ---------------------------------------------------------------------------- the decoder on a GPU
 # :func:`decode` where the claims are needed, for a GPU verifier: the header, every stream's and Rice vector's
 # extent and the exceptions' count are read and checked on the host (as :func:`_decode` does) before the bytes
-# are uploaded once; then the streams are unpacked by :mod:`codec_kernels` (padding checked there), the bases
-# added, the exceptions' Rice vectors decoded, patched in and range-checked, and the row means added, with the
-# host decoder's integers and checks.  The checks' verdicts come back in one copy.
+# are uploaded once; then the streams are unpacked by :mod:`pvi.kernels.codec_triton` (padding checked there),
+# the bases added, the exceptions' Rice vectors decoded, patched in and range-checked, and the row means added,
+# with the host decoder's integers and checks.  The checks' verdicts come back in one copy.
 
 def decode_device_ok(device) -> bool:
     """Whether :func:`decode_device` runs on ``device`` (a CUDA device with Triton)."""

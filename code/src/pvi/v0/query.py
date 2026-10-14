@@ -33,6 +33,10 @@ def phase_done(out: dict, name: str, start) -> None:
 
 
 def absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> None:
+    """The statement, absorbed into the Fiat--Shamir transcript ``ch`` before any prover message: the graph's
+    digest, the parameters and the mode, every weight op's shape and commitment, a commitment plan's col-layout
+    matrices, groups and lookup tables, the embedding ops a verifier with ``lookups`` reads itself, the query
+    ``x`` and, for sampled generation, the sampler (its rule and the client's seed)."""
     p = verifier.params
     ch.absorb(b"graph", verifier._digest or verifier.graph.digest())    # every op and cheap-op constant
     ch.absorb(b"params", struct.pack("<IIIi", p.reps, p.columns, p.rate, p.grinding_bits) + verifier.mode.encode())
@@ -58,7 +62,7 @@ def absorb_statement(ch: Challenger, verifier: Verifier, x: torch.Tensor) -> Non
         ch.absorb(b"lookups", b"".join(struct.pack("<H", len(op.name)) + op.name.encode()
                                        for op in verifier._own_rows()))
     ch.absorb(b"x", _tensor_blob(x.cpu()))
-    if verifier.sampler is not None:              # E2: the client's seed and sampling rule
+    if verifier.sampler is not None:              # sampled generation: the client's seed and sampling rule
         ch.absorb(b"sampler", verifier.sampler.digest())
 
 
@@ -112,7 +116,8 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
     query = passed(x)
     if wire and send is None and prover.lean and prover.device.type != "cpu":
         # a lean GPU prover keeps each claim on its device as int32 (not the host's int64) and encodes
-        # them there: about 2.3 bytes a claim come back instead of 8
+        # them there: only the encoding comes back (about 2.3 bytes a claim on the random-weight decoders),
+        # not 8 bytes a claim
         send = claimcodec.narrow
     sync_device(prover.device)
     c0 = contention.begin()
@@ -149,7 +154,7 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
     c0 = contention.begin()
     t0 = time.perf_counter()
     # Kpre is one message to a designated verifier whose chi and u are its secret key: no challenge reads the
-    # transcript, so there is nothing to absorb (FS1)
+    # transcript, so there is nothing to absorb
     if verifier.params.fiat_shamir and verifier.mode != "Kpre":
         absorb_statement(ch, verifier, x)
         if wire:
@@ -277,7 +282,7 @@ def open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, o
     (``package``: the wire format they travel in).  With ``u_blob`` the opened columns of every tree
     (each weight op's, or each group's: its members' rows side by side) travel 31-bit packed, tree
     after tree in the order of the challenges and column by column, and arrive as the int32 rows
-    ``[t, N]`` of :func:`pipeline.wire_openings` (``None`` if the packed columns are malformed)."""
+    ``[t, N]`` of :func:`pvi.v0.streaming.wire_openings` (``None`` if the packed columns are malformed)."""
     p, t = verifier.params, out["timings"]
     if p.fiat_shamir:
         c0 = contention.begin()
@@ -332,15 +337,17 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
 
     ``wire=True`` sends the proof in the compact encoding of :mod:`pvi.v0.claimcodec`: the
     claims as ``PVC3`` bytes, encoded where the prover keeps them (``prove_encode``), and ``u`` and
-    the opened columns 31-bit packed.  ``sampler`` (a ``token_sampler.TokenSampler``, generation graphs): the
-    response's tokens were sampled with the client's seed, and the token rule checks that sampler's choices
-    instead of the greedy ones (the seed is part of the statement).  The verifier decodes them (``verify_decode``) before it
+    the opened columns 31-bit packed.  The verifier decodes them (``verify_decode``) before it
     checks anything and rejects a malformed message at the check that rejects a malformed message
     of the same kind (``range_or_shape`` for the claims, ``freivalds`` for ``u``, ``columns_shape``
     for the columns) -- so too a prover's values that the encoding cannot carry (a claim outside the
     range check, a looked-up row outside int8, a field element of 32 bits), which travel as no
     bytes; ``bytes`` counts the encoded sizes, and with Fiat--Shamir the transcript absorbs these
-    bytes.  A GPU client uploads the decoded claims as int32 and widens them there."""
+    bytes.  A GPU client uploads the decoded claims as int32 and widens them there.
+
+    ``sampler`` (a :class:`pvi.v0.token_sampler.TokenSampler`, generation graphs): the response's tokens
+    were sampled with the client's seed, and the token rule checks that sampler's choices instead of the
+    greedy ones (the seed is part of the statement)."""
     verifier.sampler = sampler
     try:
         return _run_query(prover, verifier, x, seed, forward_kwargs, wire)

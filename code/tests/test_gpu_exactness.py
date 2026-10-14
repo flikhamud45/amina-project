@@ -1,15 +1,15 @@
 """Exactness of every GPU code path of the defence, at the sizes of the real models.
 
-The three GPU tests in ``test_fullcheck.py`` use tiny graphs (T = 12 tokens, K <= 4608),
+The GPU tests in ``test_fullcheck.py`` use tiny graphs (T = 12 tokens, K <= 4608),
 so they never reach the regimes where a new GPU could behave differently: split-K /
 stream-K GEMM kernels at K = 11,008, the batched P @ V product at T = 2,048 (4 chunks
-of 512 terms, or ONE float32 GEMM on the int32 attention path), every partial sum at its
+of 512 terms, or one float32 GEMM on the int32 attention path), every partial sum at its
 2**24 bound, the prover's weight products and fold/open (int8 tensor cores where ``int8_ok``,
 else float32 and float64), the verifier's int8 tensor-core products, and the Reed--Solomon/NTT
-commitment on the device.  Run this file
-on every new GPU type before any benchmark job (``smoke.sbatch`` does); every test must
-pass with TF32 off (what bench.py uses, except its ``--tf32`` cells tagged ``_tf32``)
-and on (which shows exactness does not depend on the flag).
+commitment on the device.  Run this file on every new GPU type before any benchmark (the
+``smoke`` tier of ``experiments/package/run.sh`` does); every test must pass with TF32 off
+(what ``experiments.costs.bench`` uses, except its ``--tf32`` cells tagged ``_tf32``) and on
+(which shows exactness does not depend on the flag).
 
     PVI_TEST_DEVICE=cuda python -m pytest tests/test_gpu_exactness.py -v   # default: cuda
 """
@@ -51,8 +51,8 @@ SHAPES = [
 
 def _operands(n, k, m, pattern):
     g = torch.Generator().manual_seed(n * 7 + k * 3 + m)
-    if pattern == "max":            # odd values at the bound: each 1,024-term chunk sums to ~16.28 M,
-        # just below 2**24; with 4,096-term chunks float32 would round (see the last test)
+    if pattern == "max":            # odd values at the bound: each 1,024-term chunk sums to ~16.3 M, at
+        # most 1,024 * 127**2 = 16,516,096 < 2**24; with 4,096-term chunks float32 would round (the last test)
         w = (127 - 2 * torch.randint(0, 2, (n, k), generator=g)).to(torch.int8)
         return w, (127 - 2 * torch.randint(0, 2, (k, m), generator=g)).to(torch.float32)
     if pattern == "alternating":    # +-127 in blocks: huge cancellations inside every chunk

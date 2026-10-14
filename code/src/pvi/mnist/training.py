@@ -3,7 +3,7 @@
 Training is ordinary supervised learning and is not part of the protocol; it lives
 here so the protocol modules stay free of PyTorch.  The one requirement the
 protocol does impose is *determinism*: the committed model must be reproducible
-from the recorded seed, or the artefacts we ship cannot be re-derived by a reader.
+from the recorded seed, or the shipped models cannot be re-derived by a reader.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class TrainConfig:
-    """Hyper-parameters.  Defaults are tuned for CPU-only runs of a few minutes."""
+    """Hyper-parameters.  The defaults suit CPU-only training."""
 
     epochs: int = 6
     batch_size: int = 128

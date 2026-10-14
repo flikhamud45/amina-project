@@ -1,6 +1,6 @@
 """Policy ``auto`` (``pvi.commit.plans``): the candidate of fewest non-claim bytes within a setup budget.
 
-    cd code && PYTHONPATH=src python -m pytest tests/test_plan_auto.py -q
+    cd code && PYTHONPATH=src:. python -m pytest tests/test_plan_auto.py -q
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import math
 import pytest
 
 import pvi.v0 as proto
-from pvi.commit import cost as analytic
+from pvi.commit import cost
 from pvi.commit.plans import AUTO_CANDIDATES, AUTO_MIN_BUDGET, auto_budget, auto_policy, plan_commitment, plan_overhead
 from pvi.models.decoder import CONFIGS
 from test_plans import _cnn, _planned, _verifiers  # the plan tests' models and helpers
@@ -20,7 +20,7 @@ from test_plans import _cnn, _planned, _verifiers  # the plan tests' models and 
 @pytest.fixture(scope="module")
 def all_models():
     out = {name: _cnn(name)[0].mat_ops for name in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar")}
-    out.update({name: analytic.decoder_shapes(cfg) for name, cfg in CONFIGS.items()})
+    out.update({name: cost.decoder_shapes(cfg) for name, cfg in CONFIGS.items()})
     return out
 
 
@@ -29,7 +29,7 @@ def _costs(ops):
     out = {}
     for policy in AUTO_CANDIDATES:
         plan = plan_commitment(ops, policy)
-        out[policy] = plan_overhead(ops, plan), analytic.setup_size(ops, plan=plan)["encoded_entries"]
+        out[policy] = plan_overhead(ops, plan), cost.setup_size(ops, plan=plan)["encoded_entries"]
     return out
 
 
@@ -43,7 +43,7 @@ def _argmin(costs, budget):
 def test_auto_is_the_argmin_within_the_budget_for_every_model(all_models):
     for name, ops in all_models.items():
         costs = _costs(ops)
-        paper = analytic.setup_size(ops)["encoded_entries"]
+        paper = cost.setup_size(ops)["encoded_entries"]
         budget = auto_budget(ops)
         assert budget == max(2 * paper, AUTO_MIN_BUDGET)
         plan = plan_commitment(ops, "auto")
@@ -51,13 +51,13 @@ def test_auto_is_the_argmin_within_the_budget_for_every_model(all_models):
         assert plan.requested == "auto"
         assert dataclasses.replace(plan, requested=None) == plan_commitment(ops, plan.policy)
         assert plan_commitment(ops, "auto") == plan                          # deterministic
-        assert analytic.setup_size(ops, plan=plan)["encoded_entries"] <= budget
+        assert cost.setup_size(ops, plan=plan)["encoded_entries"] <= budget
         # an infinite budget: the overall least; a zero budget: the candidate of least setup
         assert plan_commitment(ops, "auto", setup_budget=math.inf).policy == min(costs, key=lambda p: costs[p][0])
         assert plan_commitment(ops, "auto", setup_budget=0).policy == min(costs, key=lambda p: costs[p][1])
         # the default budget is a parameter: halving it never raises the setup
         half = plan_commitment(ops, "auto", setup_budget=budget / 2)
-        assert analytic.setup_size(ops, plan=half)["encoded_entries"] <= max(
+        assert cost.setup_size(ops, plan=half)["encoded_entries"] <= max(
             budget / 2, min(s for _, s in costs.values()))
 
 
@@ -67,22 +67,22 @@ def test_the_overhead_is_the_byte_models_u_columns_and_encoded_paths(all_models)
         for policy in ("per-op", "tightc", "cnn18c", "R64c"):
             plan = plan_commitment(ops, policy)
             params = proto.params_for(128, len(ops), plan=plan)
-            b = analytic.proof_bytes(ops, params, 1, plan=plan)
-            tables = 32 * sum(analytic.expected_lookup_nodes(m.row_length, 1) for m in (plan.tables if plan else ()))
+            b = cost.proof_bytes(ops, params, 1, plan=plan)
+            tables = 32 * sum(cost.expected_lookup_nodes(m.row_length, 1) for m in (plan.tables if plan else ()))
             assert plan_overhead(ops, plan) == pytest.approx(b["u"] + b["columns"] + b["paths"] - tables, rel=1e-12)
 
 
 @pytest.mark.parametrize("model", ["opt-350m", "llama2-7b"])
 def test_a_build_takes_the_whole_models_choice(model):
     cfg = CONFIGS[model]
-    full = analytic.decoder_shapes(cfg)
+    full = cost.decoder_shapes(cfg)
     chosen = auto_policy(full)
     for layers in (1, 2):
-        built = analytic.decoder_shapes(cfg, layers)
+        built = cost.decoder_shapes(cfg, layers)
         plan = plan_commitment(built, "auto", model_ops=full)
         assert plan.policy == chosen and plan.requested == "auto"
         assert dataclasses.replace(plan, requested=None) == plan_commitment(built, chosen, model_ops=full)
-        budget = analytic.setup_size(full, plan=plan_commitment(full, "tightc"))["encoded_entries"]
+        budget = cost.setup_size(full, plan=plan_commitment(full, "tightc"))["encoded_entries"]
         assert plan_commitment(built, "auto", model_ops=full, setup_budget=budget).policy == \
             auto_policy(full, setup_budget=budget)
 
@@ -93,14 +93,15 @@ def test_auto_meets_lambda(all_models):
         for lam in (40, 128):
             for fs in (False, True):
                 params = proto.params_for(lam, len(ops), fiat_shamir=fs, plan=plan)
-                bits = proto.soundness_bits(params, plan.shapes(), "C", columns=plan.matrix_columns(params.group_columns))
+                bits = proto.soundness_bits(params, plan.shapes(), "C",
+                                            columns=plan.matrix_columns(params.group_columns))
                 assert bits >= lam, (name, lam, fs, bits)
 
 
 def test_setup_budget_is_autos_alone():
     with pytest.raises(ValueError, match="setup_budget"):
-        plan_commitment(analytic.decoder_shapes(CONFIGS["gpt2"]), "cnn18c", setup_budget=1)
-    assert plan_commitment([], "auto").requested == "auto"          # bench.py's check of the spelling
+        plan_commitment(cost.decoder_shapes(CONFIGS["gpt2"]), "cnn18c", setup_budget=1)
+    assert plan_commitment([], "auto").requested == "auto"          # experiments.costs.bench's check of the spelling
     with pytest.raises(ValueError, match="auto"):
         plan_commitment([], "Auto")
 
@@ -125,11 +126,12 @@ def test_an_auto_query_is_accepted_and_a_tampered_claim_rejected(kind, fiat_sham
 
 
 def test_perf_writes_chosen_on_every_mode_c_line():
-    """``perf.py``'s ``chosen``: the policy itself when it commits no plan (``per-op``), else the plan's policy
-    (``auto``: the one it picked), so every mode-C line has it."""
+    """``experiments.costs.perf``'s ``chosen``: the policy itself when it commits no plan (``per-op``), else the
+    plan's policy (``auto``: the one it picked), so every mode-C line has it."""
     from experiments.costs import perf
     for policy in ("per-op", "auto", "R16c"):
         plan = _planned("lenet5", policy)[2].plan
         assert perf._chosen(policy, plan) == (policy if plan is None else plan.policy)
     assert _planned("lenet5", "per-op")[2].plan is None and perf._chosen("per-op", None) == "per-op"
-    assert perf._chosen("auto", _planned("lenet5", "auto")[2].plan) == auto_policy(_planned("lenet5", "auto")[0].mat_ops)
+    assert perf._chosen("auto", _planned("lenet5", "auto")[2].plan) == auto_policy(
+        _planned("lenet5", "auto")[0].mat_ops)

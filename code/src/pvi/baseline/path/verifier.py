@@ -1,8 +1,8 @@
-"""The verifier of Figure 4.
+"""The verifier of the path protocol (Figure 4 of Anchuri et al.).
 
-What the verifier holds is deliberately minimal, and matches the paper exactly:
+What the verifier holds is deliberately minimal, and matches Anchuri et al. exactly:
 
-* the **public architecture** -- wiring, depth and layer sizes (Section 5.1);
+* the **public architecture** -- wiring, depth and layer sizes (their Section 5.1);
 * the **digest** ``C_M`` of the model, *not* the model;
 * the query and the protocol parameters.
 

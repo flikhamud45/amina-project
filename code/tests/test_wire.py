@@ -6,7 +6,7 @@ queries are accepted with smaller proofs; tampered claims, forged ``u``, forged 
 columns, forged paths and malformed encodings are rejected at the check that rejects them without
 ``wire``; the Fiat--Shamir transcript absorbs the encoded bytes; the default flow runs none of the
 codec; the security parameters are those of the default flow, which meet ``lambda`` on every model;
-and bench.py records wire cells only under a ``_wire`` tag.
+and ``experiments.costs.bench`` names the cells of a wire run with a ``_wire`` tag.
 """
 
 from __future__ import annotations
@@ -80,7 +80,8 @@ def _setup(graph, mode, fiat_shamir=False, device="cpu"):
     prover = proto.Prover(graph, commitments=coms)
     kw = dict(publics={k: c.public for k, c in coms.items()},
               weights={op.name: (op.weight, op.bias) for op in graph.mat_ops}, device=device)
-    pair = [proto.Verifier(graph.public(), params, mode, **kw), proto.Verifier(graph.public(), params, mode, stream=True, **kw)]
+    pair = [proto.Verifier(graph.public(), params, mode, **kw),
+            proto.Verifier(graph.public(), params, mode, stream=True, **kw)]
     if mode == "Kpre":
         for v in pair:
             v.precompute(proto.Challenger(seed=9))
@@ -292,7 +293,8 @@ def _fold_and_open_attacks(graph):
     return {"u+1": fold(lambda u: (u + (torch.arange(u.numel()).reshape(u.shape) == 0)) % P),
             "u=P": fold(lambda u: torch.where(torch.arange(u.numel()).reshape(u.shape) == 0, P, u)),
             "u narrow": fold(lambda u: u[:, :-1]), "u extra row": fold(lambda u: torch.cat([u, u[:1]])),
-            "opened+1": opening({victim: entry(lambda v: (v + 1) % P)}), "opened=P": opening({victim: entry(lambda v: P)}),
+            "opened+1": opening({victim: entry(lambda v: (v + 1) % P)}),
+            "opened=P": opening({victim: entry(lambda v: P)}),
             "opened narrow": opening({victim: lambda o, pr: (o[:, :-1], pr)}),
             "columns swapped": opening({victim: lambda o, pr: (o[:, [1, 0] + list(range(2, o.shape[1]))], pr)}),
             "path forged": opening({victim: lambda o, pr: (o, [bytes(32)] + pr[1:])}),
@@ -590,8 +592,8 @@ def _cnn_shapes(kind: str, shape: tuple) -> list[tuple[int, int]]:
 
 def test_the_parameters_meet_lambda_on_every_model():
     """``wire`` changes no parameter (``params_for``), and those meet lambda on the benchmark's models,
-    in every mode, interactive and Fiat--Shamir (bench.py: CNNs sized for their own op count,
-    decoders for the full model's)."""
+    in every mode, interactive and Fiat--Shamir (sized as ``experiments.costs.bench`` sizes them: CNNs
+    for their own op count, decoders for the full model's)."""
     mlp = np.load(Path(__file__).resolve().parents[1] / "artifacts" / "models" / "mlp_mnist_full.npz")
     lengths = {"mlp_mnist": [mlp[k].shape[1] + 1 for k in mlp.files if k.endswith(".weight")],
                "lenet5": _cnn_shapes("lenet5", (1, 28, 28)), "vgg16": _cnn_shapes("vgg16", (3, 32, 32)),
@@ -609,7 +611,7 @@ def test_the_parameters_meet_lambda_on_every_model():
                 assert params.reps == math.ceil((lam + math.log2(2 * len(ks)) + (64 if fs else 0)) / LOG2_P)
 
 
-# -- bench.py --------------------------------------------------------------------------------------
+# -- experiments.costs.bench -----------------------------------------------------------------------
 
 def test_bench_wire_cells_carry_a_wire_tag():
     """The compact encoding is the default, and every cell of a run with it is named ``_wire``; ``--no-wire`` gives

@@ -1,4 +1,4 @@
-"""The prover of Figure 4.
+"""The prover of the path protocol (Figure 4 of Anchuri et al.).
 
 An honest prover evaluates ``M`` on the query, commits to the resulting trace, and
 answers the challenge with the openings along the sampled paths.
@@ -73,7 +73,7 @@ class Prover:
         With ``trace=None`` this is the honest prover: it runs ``EvalTrace(M, qry)``
         and commits to the result.  Supplying a ``trace`` models a cheating prover
         that commits to something else; the claimed output is then ``out(trc~)``,
-        as Remark 2 requires.
+        as Remark 2 of Anchuri et al. requires.
         """
         query = np.ascontiguousarray(query, dtype=np.float32)
         if trace is None:
@@ -91,7 +91,7 @@ class Prover:
         """Reconstruct the paths the challenge determines.
 
         Exposed separately because both the prover and the verifier must derive
-        the identical set, and the experiments want to inspect it.
+        the identical set, and the experiments inspect it.
         """
         rng = challenge_rng(challenge)
         return self._sampler.sample_many(

@@ -1,8 +1,7 @@
-"""Driving one full three-round protocol execution.
+"""Driving one full three-round execution of the path protocol.
 
-Almost every experiment does the same thing: pick a query, let the prover speak,
-draw a challenge, let the prover answer, and record the verdict.  Factoring that
-out keeps the experiment code about the experiment.
+An end-to-end run picks a query, lets the prover speak, draws a challenge, lets
+the prover answer, and records the verdict; :func:`run_protocol` does that once.
 """
 
 from __future__ import annotations
@@ -35,9 +34,8 @@ def run_protocol(
         forged trace.
     """
     # Prover and verifier must agree on how the challenge maps to paths, or the
-    # prover will open the wrong rows and every run will reject for the wrong
-    # reason.  Catching the mismatch here rather than as a mysterious rejection
-    # saves a great deal of confusion when swapping in a different sampler.
+    # prover opens the wrong rows and every run rejects for the wrong reason.  The
+    # mismatch is reported here rather than as a rejection.
     if type(prover.sampler) is not type(verifier.sampler):
         raise ValueError(
             f"prover uses {type(prover.sampler).__name__} but verifier uses "

@@ -1,13 +1,14 @@
-"""Non-uniform path sampling: the defence the paper leaves open.
+"""Non-uniform path sampling: the mitigation Anchuri et al. leave open.
 
-Section 5.2 suggests that "adaptive sampling strategies that prioritize layers or
-nodes where activations are statistically more sensitive to tampering" might tighten
-the ``1/N`` bound, and reports "some partial results from this approach".  This
-module builds four concrete readings of that suggestion so they can be measured
-rather than speculated about.
+Their Section 5.2 suggests that "adaptive sampling strategies that prioritize layers
+or nodes where activations are statistically more sensitive to tampering" might
+tighten the ``1/N`` bound, and reports "some partial results from this approach".
+This module builds concrete readings of that suggestion so they can be measured
+rather than speculated about (the paper's Sections ``sec:sampling`` and
+``sec:break``, "Other samplers").
 
-They differ in what information the sampling weights are allowed to depend on, and
-that is the whole story:
+The first four differ in what information the sampling weights are allowed to
+depend on, and that decides how they fare:
 
 :class:`StaticImportanceSampler`
     Weights published alongside ``C_M``, derived from the model only.  Implementable,
@@ -33,11 +34,15 @@ A caveat that decides the matter for the last one: **a real verifier cannot comp
 it.**  Obtaining ``d y / d a_i`` for a whole layer requires every weight of every
 layer above.  The verifier holds a digest of the model and opens a handful of rows;
 if it could form layer-wide gradients it would already hold the model, and could
-simply run the inference itself.  We implement it anyway, as an upper bound on what
-influence-weighting could achieve even given information no verifier has.
+simply run the inference itself.  It is implemented anyway, as an upper bound on
+what influence-weighting could achieve even given information no verifier has.
 
-The implementable contribution samplers read the claimed trace, which is authored
-by the prover; Section 3.2 of the report shows what that costs.
+Two more samplers read the claimed values against their natural range:
+:class:`TailFirstSampler` (values in the upper tail of the neuron's held-out range)
+and :class:`ZeroFirstSampler` (claimed zeros).
+
+The implementable samplers read the claimed trace, which is authored by the
+prover; :mod:`pvi.baseline.adaptive` builds the adversary's reply that exploits it.
 """
 
 from __future__ import annotations
@@ -94,8 +99,9 @@ class StaticImportanceSampler(PathSampler):
 
     Weights are supplied per layer and never depend on the trace, so this sampler is
     in the same class as uniform: the set of checked nodes is independent of what the
-    prover submitted.  That is the class for which the minimax bound (report,
-    Theorem 3.1) applies -- and the bound says no member of it beats uniform.
+    prover submitted.  In that class an adversary who knows the weights edits the
+    least-visited neuron, and since a path's visit probabilities over a dense layer
+    sum to one, no member of the class beats uniform's ``1/N`` against it.
     """
 
     transition_depends_on_source = False
@@ -141,7 +147,8 @@ class LocalContributionSampler(PathSampler):
     It is strong against a tamper that writes a conspicuously large activation --
     such a value dominates the contribution sum and pulls the walk straight onto it.
     It is blind to a claimed activation of exactly zero, which gets transition weight
-    zero; ``plan_adaptive_stealthy_flip`` exploits this and reaches detection 0.
+    zero; :func:`pvi.baseline.adaptive.plan_adaptive_stealthy_flip` exploits this
+    and reaches detection 0.
     """
 
     def __init__(self, network: TracedNetwork) -> None:
@@ -189,9 +196,9 @@ class ZeroAwareContributionSampler(PathSampler):
     ``|w_ij| * (|a~_i| + epsilon)`` instead of ``|w_ij * a~_i|``, so a claimed value
     of exactly zero no longer sends the transition weight to exactly zero.
 
-    Measured on tampered traces (``experiments/3_sampling_fixes/floor_sampler.py``),
-    ``epsilon`` around 1 beats uniform sampling by about 10x on average -- but
-    detection stays at a few percent, far from what a proof needs.
+    Measured on tampered traces of the MNIST MLP (``experiments/attack/floor_sampler.py``;
+    the paper's Section ``sec:break``), ``epsilon = 1`` detects about 10x as often as
+    uniform sampling -- but detection stays at about 2%, far from what a proof needs.
     """
 
     def __init__(self, network: TracedNetwork, *, epsilon: float) -> None:

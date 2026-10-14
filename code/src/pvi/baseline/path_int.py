@@ -1,16 +1,16 @@
-"""Anchuri et al.'s RandPathTest on the same integer CNN graphs (the baseline).
+"""Anchuri et al.'s RandPathTest on the integer graphs of the image models (the baseline).
 
-This lets the original protocol and our defence be measured on identical
-models, inputs and hardware.  It follows Figure 3 of the paper and its neuron
+This lets the path protocol and protocol v0 be measured on identical models,
+inputs and hardware.  It follows Figure 3 of Anchuri et al. and their neuron
 model ``a_j = phi(sum_{i in G_j} w_ij a_i)``:
 
 * a *neuron* is an output of an activation-level operation: a requantised
   (ReLU) layer output, a residual ``add + ReLU`` output, a pooling output, or a
-  final logit.  Pre-activations are never committed -- as in the paper's
-  Section 8 "hybrid" scheme, the check recomputes them from the parents;
+  final logit.  Pre-activations are never committed -- as in their Section 8
+  "hybrid" scheme, the check recomputes them from the parents;
 * the prover Merkle-commits the trace, one leaf per *row* (the channel vector at
-  one spatial position, or a whole vector for dense layers), as in Section 8;
-  flatten is a view, not a separate tensor;
+  one spatial position, or a whole vector for dense layers), as in their
+  Section 8; flatten is a view, not a separate tensor;
 * the verifier holds a commitment ``C_M`` to the weights (one leaf per output
   row of every weight matrix);
 * one path runs from a uniformly random output node back to the input.  At each
@@ -25,7 +25,9 @@ is the attack) fails only its own check, so that probability *is* the per-path
 detection probability; ``tests/test_fullcheck.py`` checks it by Monte Carlo.
 ``shared_path_bytes`` measures the cost of ``k`` paths *with openings shared*
 between paths (a row or weight row is sent once per proof, however many paths
-touch it), which is capped by opening everything.
+touch it), which is capped by opening everything; ``paths_for`` gives the number of
+paths for a soundness level.  ``experiments/costs/bench.py`` (suite ``cnn``) uses
+them for the path test on the image models.
 """
 
 from __future__ import annotations

@@ -1,18 +1,21 @@
-"""The windowed logUp argument of V1 (``V1_SPEC.md`` Sec. 2.2-2.5): the table, the multiplicities, the leaves of a
-GKR instance, the padding indicator, and the final identity (checks D5 ``cut_multiplicities``, C1/M2 ``cut_gkr``
-and F4 ``cut_logup``).
+"""The windowed logUp argument of V1: the table, the multiplicities, the leaves of a GKR instance, the padding
+indicator and the logUp identity, with the checks (D5) ``cut_multiplicities``, (G) ``cut_gkr`` and (F4)
+``cut_logup``.
 
-A cut entry with residue ``delta`` and window width ``W`` is the leaf ``v = delta + x W`` of ``F = F_{p^8}``
-(:mod:`extfield`).  It lies in the table ``T = {t + x w : w in widths, 0 <= t < w}`` iff ``0 <= delta < W``
-(``1`` and ``x`` are independent over ``F_p``; an honest input bounds ``|delta| < 2^30 + 2^16``, so a negative
-``delta`` maps to ``p + delta > 2^16 >= W``).  The prover sends integer
-multiplicities ``m_t`` and proves, with one fractional-sum GKR per instance (:mod:`logup_gkr`), the roots of
-``sum_i 1 / (alpha - v_i)``; the verifier checks ``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)``.
+A cut entry with residue ``delta`` and window width ``W`` is the leaf ``v = delta + xi W`` of the extension field
+``F_{p^8} = F_p[xi]/(xi^8 - 11)`` (:mod:`pvi.core.extfield`).  It lies in the table
+``T = {t + xi w : w in widths, 0 <= t < w}`` if and only if ``delta mod p`` lies in ``[0, W)``, since ``1`` and
+``xi`` are linearly independent over ``F_p``.  For a cut operation with the honest input, (P3), (P4), (D1) and
+(D4) bound ``|delta| < 2^30 + 2^16``, so a negative ``delta`` maps to ``p + delta > 2^16 >= W`` and no residue
+wraps around into the table (the no-wrap lemma of the V1 appendix).  The prover sends integer multiplicities
+``m_t`` (the paper's ``mu_tau``) and proves the roots of ``sum_i 1 / (alpha - v_i)`` with one fractional-sum GKR per
+instance (:mod:`pvi.v1.gkr`); the verifier checks ``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)`` over the
+instances ``beta``.
 
-Because a proof can hold more than ``p`` leaves, plain logUp would let ``p`` copies of an off-table value cancel.
-**Lemma 1** (``V1_SPEC.md`` Sec. 3, tested by brute force on a small field): if ``0 <= m_t < p`` and
-``sum_t m_t = N`` as integers, the identity of rational functions forces every leaf into the table.  So
-:func:`multiplicities_ok` checks both conditions; both are load-bearing.
+A proof can hold more than ``p`` leaves, and plain logUp would let ``p`` copies of an off-table value cancel.  The
+integer-multiplicity lemma of the paper (tested by exhaustive search on a small field): if ``0 <= m_t < p`` and
+``sum_t m_t = N`` as integers, the identity of rational functions forces every leaf into the table.
+:func:`multiplicities_ok` therefore checks both conditions; the soundness proof needs both.
 """
 
 from __future__ import annotations
@@ -53,7 +56,7 @@ def multiplicities(delta: torch.Tensor, width: torch.Tensor, offsets: dict[int, 
 
 
 def multiplicities_ok(m: torch.Tensor, size: int, total: int) -> bool:
-    """Check D5: ``size`` counts, each ``0 <= m_t < p``, summing to ``total`` as integers."""
+    """Check (D5): ``size`` counts, each ``0 <= m_t < p``, summing to ``total`` as integers."""
     if tuple(m.shape) != (size,) or m.dtype not in (torch.int32, torch.int64):
         return False
     m = m.to(torch.int64)
@@ -64,8 +67,8 @@ def multiplicities_ok(m: torch.Tensor, size: int, total: int) -> bool:
 
 def leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, alpha: torch.Tensor):
     """The leaf layer ``(p, q)`` ``[2^n, 8]`` of an instance whose real entries are ``delta``, ``width``
-    ``[R, T]`` (its ops stacked by rows): leaf ``row 2^n_col + col`` is ``(1, alpha - (delta + x width))`` for
-    ``row < R``, ``col < T`` and ``(0, 1)`` elsewhere."""
+    ``[R, T]`` (its operations stacked by rows): leaf ``row 2^n_col + col`` is ``(1, alpha - (delta + xi width))``
+    for ``row < R``, ``col < T``, and ``(0, 1)`` elsewhere."""
     rows, cols = delta.shape
     if cols > 1 << n_col or rows > 1 << (n - n_col):
         raise ValueError("the entries do not fit the instance")
@@ -94,12 +97,12 @@ def table_fraction(m: torch.Tensor, alpha: torch.Tensor, tau: torch.Tensor) -> t
 
 
 def logup_ok(roots, m: torch.Tensor, alpha: torch.Tensor, tau: torch.Tensor, *, batched: bool | None = None) -> bool:
-    """Check F4: ``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)`` (every ``q0`` is non-zero, which
-    :func:`verify_instances` has checked; every ``alpha - tau_t`` is, since ``alpha`` is outside ``F_p + x F_p``).
-    ``batched`` (default: the optimised verifier, option ``v1_verifier``): both sums with batch inversion
-    (:func:`extfield.inv_many`) and compared; else by cross-multiplication of the two fraction trees.  With every
-    denominator non-zero the two are the same test (``a/b = c/d`` iff ``a d = c b``); a zero denominator, which the
-    callers exclude, takes the cross-multiplication."""
+    """Check (F4): ``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)`` (every ``q0`` is non-zero, which
+    :func:`verify_instances` has checked, and so is every ``alpha - tau_t``, since ``alpha`` lies outside
+    ``F_p + xi F_p``).  ``batched`` (default: the optimised verifier, option ``v1_verifier``): both sums are formed
+    with batch inversion (:func:`pvi.core.extfield.inv_many`) and compared; otherwise by cross-multiplication of the
+    two fraction trees.  With every denominator non-zero the two are the same test (``a/b = c/d`` iff
+    ``a d = c b``); a zero denominator, which the callers exclude, takes the cross-multiplication."""
     if not roots:
         return not bool(m.any())
     if batched is None:
@@ -118,15 +121,15 @@ def logup_ok(roots, m: torch.Tensor, alpha: torch.Tensor, tau: torch.Tensor, *, 
 
 
 def prove_instances(instances, ch, prefix: str = "cut/") -> list:
-    """One :func:`logup_gkr.prove` per instance ``(p, q)``, in order, under the labels ``prefix + f"{beta}/"``."""
+    """One :func:`pvi.v1.gkr.prove` per instance ``(p, q)``, in order, under the labels ``prefix + f"{beta}/"``."""
     return [gkr.prove(p, q, ch, f"{prefix}{b}/") for b, (p, q) in enumerate(instances)]
 
 
 def verify_instances(trs, ns, ch, prefix: str = "cut/", *, batched: bool | None = None):
-    """The outputs of :func:`logup_gkr.verify` for every instance (``ns``: their variable counts), or ``None`` if
-    one fails, has another size, or has a zero root denominator (check ``cut_gkr``).  ``batched`` (default: the
-    optimised verifier): every instance's round chains in one pass (:func:`logup_gkr.verify_batch`, the same
-    challenges, outputs and verdict); else instance by instance."""
+    """The outputs of :func:`pvi.v1.gkr.verify` for every instance (``ns``: their variable counts), or ``None`` if
+    one fails, has another size, or has a zero root denominator (check (G), ``cut_gkr``).  ``batched`` (default: the
+    optimised verifier): every instance's round chains in one pass (:func:`pvi.v1.gkr.verify_batch`, with the same
+    challenges, outputs and verdict); otherwise instance by instance."""
     if len(trs) != len(ns):
         return None
     if batched is None:

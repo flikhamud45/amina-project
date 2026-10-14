@@ -1,5 +1,5 @@
-"""pvi.models.hf_llama (plan 2, F2b-Q): integer Llama / Qwen3 decoders from real weights, on tiny randomly
-initialised Hugging Face models (no download).
+"""``pvi.models.hf_llama``: integer Llama / Qwen3 decoders from real weights, on tiny randomly initialised Hugging
+Face models (no download).
 
 The models have 2 blocks, d = 64 and grouped-query attention (Llama: 4 query heads over 2 key/value heads, head_dim
 16; Qwen3: 8 over 2, head_dim 16, so the query width 128 differs from d as in Qwen3-0.6B), random RMSNorm and q/k-norm
@@ -412,9 +412,10 @@ def _attention_ops(graph) -> list:
 
 def _glued(graph: IntGraph) -> IntGraph:
     """A prefixed graph's ops, weights and constants as a graph of ``[prefix | query]``: RoPE at the positions of
-    the joint sequence (no offset), and plain causal attention over the joint sequence (``transformer.integer_attention``)
-    whose first ``P`` keys and values are replaced by the prefix's int8 constants. The prefix positions' other values
-    are computed from the prefix tokens and only feed the keys and values that are replaced."""
+    the joint sequence (no offset), and plain causal attention over the joint sequence
+    (``pvi.models.decoder.integer_attention``) whose first ``P`` keys and values are replaced by the prefix's int8
+    constants. The prefix positions' other values are computed from the prefix tokens and only feed the keys and
+    values that are replaced."""
     n = graph.meta["prefix_len"]
     ops = []
     for op in graph.ops:
@@ -431,8 +432,8 @@ def _glued(graph: IntGraph) -> IntGraph:
         elif isinstance(op, CheapOp) and op.note == "attention":
             def fn(q, k, v, d=_defaults(op.fn)):
                 kp, vp = (c.to(torch.int64).expand(k.shape[0], -1, -1) for c in (d["k_prefix"], d["v_prefix"]))
-                return integer_attention(q, torch.cat([kp, k[:, n:]], 1), torch.cat([vp, v[:, n:]], 1), d["m_s"], d["m_o"],
-                                  d["heads"], d["kv_heads"], d["dh"], d["pmax"])
+                return integer_attention(q, torch.cat([kp, k[:, n:]], 1), torch.cat([vp, v[:, n:]], 1), d["m_s"],
+                                         d["m_o"], d["heads"], d["kv_heads"], d["dh"], d["pmax"])
             op = dataclasses.replace(op, fn=fn)
         ops.append(op)
     return IntGraph(ops, graph.input_name, graph.output_name)
@@ -529,7 +530,8 @@ def test_a_prefixed_graph_is_deterministic_and_independent_of_the_attention_path
     assert again.digest() == graph.digest() and again.meta == graph.meta
     assert all(torch.equal(a, c) for p, q in zip(info["prefix_kv"], info2["prefix_kv"]) for a, c in zip(p, q))
     # the integer int64 attention path (int64 scores and gaps, last-rows causal mask) gives the same integers as the
-    # default int32 path; the GPU's integers are compared with the CPU's by ppl_llama.py --check --prefix
+    # default int32 path; the GPU's integers are compared with the CPU's by
+    # ``python -m experiments.quality.ppl_llama --check``
     monkeypatch.setattr(tr, "_int32_scores", lambda *a: False)
     env3, claims3 = graph.forward(x)
     assert torch.equal(env3[graph.output_name], env1[graph.output_name])
@@ -716,13 +718,13 @@ def test_glu_smooth_is_exact_in_real_numbers_and_keeps_the_structure(kind):
     v.precompute(Challenger(seed=3))
     assert run_query(Prover(graph), v, x[:1, :16], seed=0)["accepted"]
     off, _ = rl.build_llama_from_hf(model, calib, **SMOOTH)
-    assert off.digest() == base.digest() != graph.digest()           # off by default: the old graph
+    assert off.digest() == base.digest() != graph.digest()           # off by default: the graph without the balance
 
 
 def test_glu_smooth_box_keeps_both_weight_scales():
     """``_glu_smooth``'s box on a dead channel (gate about 0, so its product is about 0 and the plain balance gives it
-    a factor near 0): up's largest row as quantised (input scale folded) and the down
-    projection's largest column do not grow, so no row takes over up's int8 scale (job 1012500's overflow)."""
+    a factor near 0): up's largest row as quantised (input scale folded) and the down projection's largest column do
+    not grow, so no row takes over up's int8 scale."""
     gen = torch.Generator().manual_seed(5)
     d, ff = 16, 24
     h = torch.randint(-127, 128, (64, d), generator=gen).to(torch.int64)

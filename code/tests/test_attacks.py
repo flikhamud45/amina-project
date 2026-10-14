@@ -1,4 +1,11 @@
-"""Tests for the trace-tampering attack and the backdoor built on it."""
+"""The trace-tampering attack on the path protocol (``pvi.attacks``) and the backdoor built on it.
+
+A single-neuron edit, honestly propagated, leaves exactly one inconsistent node and is accepted with
+probability ``1 - 1/N`` (``N`` the layer's width), in the analysis and in the running protocol; it
+changes the prediction; the stealthy plan keeps every edited value within the calibrated activation
+envelope; the backdoor serves the honest trace bit for bit on clean inputs; and the forging attacks of
+Anchuri et al. are detected.
+"""
 
 from __future__ import annotations
 
@@ -169,12 +176,12 @@ def test_backdoor_clean_traces_are_always_accepted(mlp_net, query_for, protocol_
 
 
 # --------------------------------------------------------------------------- #
-# Baselines from the paper
+# The adversaries of Anchuri et al.
 # --------------------------------------------------------------------------- #
 
 
 def test_paper_forging_attacks_are_detected(mlp_net, query_for):
-    """Reproduces the paper's negative result: forging a trace fails."""
+    """Reproduces the negative result of Anchuri et al.: forging a trace by inverse transform fails."""
     query = query_for(mlp_net)
     honest = mlp_net.eval_trace(query)
     target = logit_swap_target(honest.output)

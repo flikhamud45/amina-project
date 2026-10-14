@@ -1,12 +1,13 @@
-"""The windowed logUp argument of V1 (``pvi.v1.logup``; ``V1_SPEC.md`` tests T3 and kill criterion K1).
+"""The windowed logUp argument of V1 (``pvi.v1.logup``).
 
-* A two-instance toy end to end: the honest proof passes D5, every GKR, the final claims (``P_hat = I``,
-  ``Q_hat = alpha I - sum eq v + (1 - I)``) and F4.
-* Multiplicities: a count ``>= p`` with compensating counts, and a total off by one, fail D5; a count moved
-  between bins fails F4; an off-table leaf with counts that still sum to ``N`` fails F4.
-* Lemma 1 by brute force on ``F_49 = F_7[x] / (x^2 - 3)``: whenever ``0 <= m_t < 7`` and ``sum m = N``, the
-  rational identity holds only if every leaf is in the table; dropping either condition admits an off-table leaf.
-* K1 (``PVI_SLOW=1``): an ``n = 20`` instance, honest accepted, every element tampered rejected.
+* A two-instance toy end to end: the honest proof passes (D5), every GKR, the final claims (``P_hat = I``,
+  ``Q_hat = alpha I - sum eq v + (1 - I)``) and (F4).
+* Multiplicities: a count ``>= p`` with compensating counts, and a total off by one, fail (D5); a count moved
+  between bins fails (F4); an off-table leaf with counts that still sum to ``N`` fails (F4).
+* The integer-multiplicities lemma (lem:v1-logup) by brute force on ``F_49 = F_7[x] / (x^2 - 3)``: whenever
+  ``0 <= m_t < 7`` and ``sum m = N``, the rational identity holds only if every leaf is in the table; dropping
+  either condition admits an off-table leaf.
+* A large instance (``n = 20``, run with ``PVI_SLOW=1``): honest accepted, every element tampered rejected.
 """
 
 from __future__ import annotations
@@ -135,7 +136,7 @@ def test_an_off_table_leaf_is_caught():
         assert v["mult"] and v["gkr"] and v["final"] and not v["logup"]
 
 
-# ------------------------------------------------------------------ Lemma 1 on F_49 = F_7[x]/(x^2 - 3)
+# ------------------------------------------------------------------ lem:v1-logup on F_49 = F_7[x]/(x^2 - 3)
 Q7 = 7
 
 
@@ -164,7 +165,8 @@ def test_lemma_1_by_brute_force():
         return ~np.any(np.einsum("...v,xvc->...xc", d % Q7, inv) % Q7, axis=(-1, -2))
 
     for n in range(1, 10):
-        cs = np.array([np.bincount(c, minlength=len(univ)) for c in itertools.combinations_with_replacement(range(len(univ)), n)])
+        cs = np.array([np.bincount(c, minlength=len(univ))
+                       for c in itertools.combinations_with_replacement(range(len(univ)), n)])
         ms = np.array([m for m in itertools.product(range(Q7), repeat=len(table)) if sum(m) == n])
         if not ms.size:
             continue
@@ -181,8 +183,8 @@ def test_lemma_1_by_brute_force():
     assert identity(seven)                               # m = 0, sum m != N: the identity holds
 
 
-@pytest.mark.skipif(os.environ.get("PVI_SLOW") != "1", reason="K1: about a minute on a laptop (PVI_SLOW=1)")
-def test_k1_a_large_instance_accepts_honest_and_rejects_every_tamper():
+@pytest.mark.skipif(os.environ.get("PVI_SLOW") != "1", reason="about a minute on a laptop CPU (PVI_SLOW=1)")
+def test_a_large_instance_accepts_honest_and_rejects_every_tamper():
     n = 20
     g = torch.Generator().manual_seed(0)
     p = torch.zeros(1 << n, ef.D, dtype=torch.int64)

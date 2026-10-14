@@ -1,8 +1,9 @@
 """The extension field ``F = F_{p^8} = F_p[x] / (x^8 - 11)`` over BabyBear, on torch int64 tensors ``[..., 8]``.
 
 Every challenge of V1's lookup argument (the logUp point ``alpha``, the GKR's sum-check and folding challenges)
-lives in ``F``: its ``p^8 ~ 2^247`` elements keep each Schwartz--Zippel term far below ``2^-128`` even under
-Fiat--Shamir, where the 31-bit base field would not (``docs/improvements/C2_v1_proof_size.md``).  ``x^8 - 11`` is
+lives in ``F``.  Under Fiat--Shamir the 64 extra bits of Sec. ``sec:fs`` require an extension of BabyBear of degree
+at least 7; the ``p^8 ~ 2^247`` elements of ``F`` keep each Schwartz--Zippel term far below ``2^-128``, and
+interactive runs use the same field.  ``x^8 - 11`` is
 irreducible over ``F_p`` by the criterion for binomials (Lidl and Niederreiter, Thm. 3.75): 11 is a quadratic
 non-residue mod ``p``, so its order has the full 2-adic part of ``p - 1``, and ``p = 1 mod 4`` (both checked by
 ``tests/test_extfield.py``).
@@ -105,7 +106,8 @@ def frobenius(a: torch.Tensor, i: int = 1) -> torch.Tensor:
 
 def inv(a: torch.Tensor) -> torch.Tensor:
     """``a^-1`` (0 maps to 0) through the norm: ``b = a^(p + p^2 + ... + p^7)`` is a product of Frobenius images,
-    ``N(a) = a b`` lies in ``F_p``, and ``a^-1 = b / N(a)``: six products and one base-field inversion."""
+    ``N(a) = a b`` lies in ``F_p``, and ``a^-1 = b / N(a)``: seven products (six for ``b``, one for ``N(a)``) and
+    one base-field inversion per element."""
     b = frobenius(a, 1)
     for i in range(2, D):
         b = mul(b, frobenius(a, i))
@@ -137,7 +139,7 @@ def batch_inv(a: torch.Tensor) -> torch.Tensor:
 
 
 def inv_many(a: torch.Tensor) -> torch.Tensor:
-    """:func:`batch_inv` vectorised (V-V1N part 3): the inverses of the rows of ``a`` ``[n, 8]`` (all non-zero) with
+    """:func:`batch_inv` vectorised: the inverses of the rows of ``a`` ``[n, 8]`` (all non-zero) with
     one :func:`inv`, by Montgomery's trick on a product tree: ``n - 1`` products up (odd levels padded with 1), the
     root's inverse, then each node's inverse times its sibling gives its children's (``2 (n - 1)`` products), in
     ``log2 n`` batched steps each way."""
@@ -274,14 +276,14 @@ def small_times(mat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
 
 
 def pack(a: torch.Tensor) -> bytes:
-    """The coefficients of ``a`` ``[..., 8]`` in 31-bit packing (``claimcodec.pack_field``)."""
+    """The coefficients of ``a`` ``[..., 8]`` in 31-bit packing (:func:`pvi.v0.claimcodec.pack_field`)."""
     from pvi.v0.claimcodec import pack_field
     return pack_field([a.reshape(-1)])
 
 
 def unpack(buf, count: int) -> torch.Tensor:
-    """``count`` elements of ``F`` from :func:`pack`'s bytes (raises ``claimcodec.ClaimCodecError`` on other bytes
-    or on a coefficient outside ``[0, p)``)."""
+    """``count`` elements of ``F`` from :func:`pack`'s bytes (raises ``pvi.v0.claimcodec.ClaimCodecError`` on other
+    bytes or on a coefficient outside ``[0, p)``)."""
     from pvi.v0.claimcodec import ClaimCodecError, unpack_field
     out = torch.from_numpy(unpack_field(buf, count * D).astype("int64")).view(count, D)
     if bool((out >= P).any()):

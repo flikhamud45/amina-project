@@ -1,18 +1,21 @@
-"""The paper's own adversaries, reproduced.
+"""Anchuri et al.'s own adversaries, reproduced.
 
-Anchuri et al. test their protocol against four cheating strategies and report that
-all of them fail:
+Anchuri et al. test their protocol against cheating strategies and report that all
+of them fail; this module reproduces these:
 
-* **Gradient-descent reconstruction** (Section 7.2) -- optimise activations so that
-  a chosen wrong output is backed by a trace consistent with ``M``'s weights.
-* **Inverse transform** (Appendix E) -- back-solve the network layer by layer with a
-  pseudo-inverse.
-* **Logit swap** (Appendix F) -- swap the highest- and lowest-probability outputs,
-  then optimise intermediate activations to match.
+* **Gradient-descent reconstruction** (their Section 7.2) -- optimise activations so
+  that a chosen wrong output is backed by a trace consistent with ``M``'s weights
+  (:func:`gradient_forge`).
+* **Inverse transform** (their Appendix E) -- back-solve the network layer by layer
+  with a pseudo-inverse (:func:`inverse_transform_forge`).
+* **Logit swap** (their Appendix F) -- swap the highest- and lowest-probability
+  outputs (:func:`logit_swap_target`), then optimise one layer's activations to match
+  (:func:`injection_forge`).
 
-Reproducing them serves two purposes.  It confirms our implementation reproduces the
-paper's *negative* results and not merely its positive ones.  And it establishes the
-baseline against which the attack in :mod:`pvi.attacks.tamper` is measured.
+Reproducing them serves two purposes.  It confirms that this implementation
+reproduces Anchuri et al.'s *negative* results and not merely their positive ones.
+And it establishes the baseline against which the attack in
+:mod:`pvi.attacks.tamper` is measured.
 
 A structural remark that the reproduction makes concrete
 --------------------------------------------------------
@@ -27,10 +30,11 @@ What an adversary can control is *where* and *how many* nodes are inconsistent.
 residual at the handful of nodes a path happens to visit.  The right objective is
 therefore to minimise the **support** of the inconsistency, not its magnitude.
 
-Every attack in this module minimises magnitude, which is what the paper measures.
-Each therefore ends up with inconsistency spread across most of the trace, and is
-detected essentially always.  We record both quantities -- the paper's separation
-value and the support -- so the two objectives can be compared directly.
+Every attack in this module minimises magnitude, which is what Anchuri et al.
+measure.  Each therefore ends up with inconsistency spread across most of the trace,
+and is detected essentially always.  :class:`ForgeryResult` records the support (the
+number of inconsistent nodes out of all nodes) and the exact acceptance probability,
+so that the two objectives can be compared directly.
 """
 
 from __future__ import annotations
@@ -91,7 +95,7 @@ def _summarise(
 
 
 def logit_swap_target(honest_output: np.ndarray) -> np.ndarray:
-    """Appendix F: swap the highest- and lowest-scoring outputs.
+    """Appendix F of Anchuri et al.: swap the highest- and lowest-scoring outputs.
 
     The adversary's goal here is not a *particular* wrong answer but the maximally
     wrong one, which is the harshest case for the protocol.
@@ -112,7 +116,7 @@ def _require_dense(network: TracedNetwork) -> None:
         if not isinstance(layer, DenseLayer):
             raise TypeError(
                 "the gradient-based attacks are implemented for fully connected "
-                f"networks, as in the paper's Sections 7.2 and E; got {type(layer).__name__}"
+                f"networks, as in Sections 7.2 and E of Anchuri et al.; got {type(layer).__name__}"
             )
 
 
@@ -150,15 +154,16 @@ def gradient_forge(
 ) -> ForgeryResult:
     """Optimise every interior activation to make a wrong output look consistent.
 
-    This is deliberately *more* generous to the adversary than the paper's own
-    version, which optimises only the input (Section 7.2) or a single injection
-    point (Appendix F).  Here the entire interior of the trace is free; the input is
-    pinned to ``qry`` because the verifier anchors it, and the output is pinned to
-    the adversary's target because that is the point of the attack.
+    This is deliberately *more* generous to the adversary than Anchuri et al.'s
+    version, which optimises only the input (their Section 7.2) or a single
+    injection point (their Appendix F).  Here the entire interior of the trace is
+    free; the input is pinned to ``qry`` because the verifier anchors it, and the
+    output is pinned to the adversary's target because that is the point of the
+    attack.
 
-    The objective is the total squared local-consistency violation -- exactly what
-    the paper's separation value measures.  If gradient descent cannot drive it
-    below the verifier's tolerance, the paper's conclusion is reproduced.
+    The objective is the mean squared local-consistency violation, summed over the
+    layers -- what Anchuri et al.'s separation value measures.  If gradient descent
+    cannot drive it below the verifier's tolerance, their conclusion is reproduced.
     """
     _require_dense(network)
     protocol = params or ProtocolParams()
@@ -171,7 +176,7 @@ def gradient_forge(
     fixed_output = torch.from_numpy(np.ascontiguousarray(target_output, dtype=np.float32))
 
     # Initialise the free interior activations at the honest trace: the best
-    # starting point the adversary has, and the one the paper's setup implies.
+    # starting point the adversary has, and the one Anchuri et al.'s setup implies.
     free = [
         torch.nn.Parameter(torch.from_numpy(np.ascontiguousarray(honest[i])).clone())
         for i in range(1, len(architecture) - 1)
@@ -217,7 +222,7 @@ def injection_forge(
     weight_decay: float = 1e-3,
     params: ProtocolParams | None = None,
 ) -> ForgeryResult:
-    """Appendix F's structure: optimise one layer's activations, propagate honestly.
+    """The structure of Anchuri et al.'s Appendix F: optimise one layer's activations, propagate honestly.
 
     The adversary replaces the activations of ``injection_layer`` and then lets the
     real model carry them forward, so every layer *above* the injection point is
@@ -277,10 +282,10 @@ def inverse_transform_forge(
     *,
     params: ProtocolParams | None = None,
 ) -> ForgeryResult:
-    """Appendix E: back-solve the network from the target output down to the input.
+    """Appendix E of Anchuri et al.: back-solve the network from the target output down to the input.
 
     Starting at the desired output, invert each layer's affine map to obtain the
-    activations below it.  As the paper notes, ReLU destroys information at negative
+    activations below it.  As Anchuri et al. note, ReLU destroys information at negative
     pre-activations, so the inversion is only a pseudo-inverse and error accumulates
     downwards.  The input layer is then pinned back to ``qry``, since the verifier
     anchors it -- which is where the accumulated error surfaces.
@@ -297,8 +302,8 @@ def inverse_transform_forge(
         weight, bias = network.parameters[layer.name]
         above = activations[0]
         # Undo the activation function.  ReLU is not injective at zero; the
-        # standard choice -- and the one the paper's setup implies -- is to take the
-        # boundary value, which is the least-norm pre-image.
+        # standard choice -- and the one Anchuri et al.'s setup implies -- is to take
+        # the boundary value, which is the least-norm pre-image.
         pre_activation = above if layer.activation == "identity" else np.maximum(above, 0.0)
         below = np.linalg.pinv(weight.astype(np.float64)) @ (pre_activation - bias.astype(np.float64))
         if layer_index > 1:

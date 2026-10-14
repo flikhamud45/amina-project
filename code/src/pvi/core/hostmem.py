@@ -1,8 +1,9 @@
 """Pinned host memory, within what the driver grants.
 
-On the L40S nodes (driver 535 and 580, kernel 6.11) ``cudaHostAlloc`` refuses any single allocation of
-more than 2 GiB with ``invalid argument`` (``cudaHostRegister`` refuses even 1 GiB), whatever
-``RLIMIT_MEMLOCK`` is; many smaller pinned allocations, 48 GiB in all, are granted.  torch's pinned
+On the NVIDIA L40S machines of the measurements (drivers 535 and 580, Linux kernel 6.11)
+``cudaHostAlloc`` refuses any single allocation of more than 2 GiB with ``invalid argument``
+(``cudaHostRegister`` refuses even 1 GiB), whatever ``RLIMIT_MEMLOCK`` is; many smaller pinned
+allocations, 48 GiB in all, are granted.  torch's pinned
 allocator rounds a request up to a power of two, so every request of at most ``PIN_MAX`` bytes is
 granted.  A larger buffer is taken from pageable memory instead: the same values, and a copy from or to
 it is still correct, but it waits for the device (a pageable host-to-device copy also returns only once

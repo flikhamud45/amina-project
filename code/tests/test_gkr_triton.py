@@ -1,6 +1,6 @@
 """The Triton GKR prover (``pvi.v1.gkr_triton``) gives the eager prover's transcript byte for byte
-(``V1_SPEC.md`` test T2 on the GPU), from uploaded leaves and from leaves built on the device; skipped without CUDA
-and Triton."""
+(``tests/test_logup_gkr.py`` on the GPU), from uploaded leaves and from leaves built on the device; skipped
+without CUDA and Triton."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ from pvi.core.field import P
 from pvi.v1 import gkr, logup
 from pvi.v1 import gkr_triton as gt
 
-pytestmark = pytest.mark.skipif(not (torch.cuda.is_available() and gt.available("cuda")), reason="needs CUDA and Triton")
+pytestmark = pytest.mark.skipif(not (torch.cuda.is_available() and gt.available("cuda")),
+                                reason="needs CUDA and Triton")
 
 
 def _ch():

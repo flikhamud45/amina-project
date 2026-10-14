@@ -1,8 +1,8 @@
 """The GPU verifier's code paths give the integers and verdicts of the reference code.
 
-* The int32 attention (``transformer._attention_core``) against ``reference.attention_heads``, on
-  both sides of its fallback conditions, and its exp look-up table against the formula.
-* The int8 GEMM products (``field.int8_*``) against ``reference.field_matmul_mod`` on edge values
+* The int32 attention (``pvi.models.decoder._attention_core``) against ``reference.attention_heads``,
+  on both sides of its fallback conditions, and its exp look-up table against the formula.
+* The int8 GEMM products (``pvi.core.field.int8_*``) against ``reference.field_matmul_mod`` on edge values
   (every int32, blocks straddling ``2**16`` terms), in their float64 emulation on the CPU and with
   ``torch._int_mm`` on a GPU, and the fallbacks when an int8 GEMM is missing, inexact or fails.
 * A GPU verifier's device-resident constants (``IntGraph.with_constants_on``): the prover's graph
@@ -106,7 +106,7 @@ def test_the_exp_lut_matches_the_formula_on_every_gap(m_s):
 
 
 def test_a_row_of_probabilities_sums_to_at_most_255_plus_half_t():
-    # the bound that makes ONE float32 P V GEMM exact: (255 + T/2) * 128 < 2**24 for T < 2**15
+    # the bound that makes one float32 P V GEMM exact: (255 + T/2) * 128 < 2**24 for T < 2**15
     g = torch.Generator().manual_seed(3)
     for t in (1, 5, 300, 4096):
         e = _rand(g, 0, (1 << 15) + 1, (50, t))
@@ -140,7 +140,7 @@ def test_grouped_attention_matches_the_reference_on_both_paths(hq, hkv, m_s, dev
         assert torch.equal(got, want), budget
 
 
-# -- the fused attention kernel (attention_kernels, Triton) ----------------------------------------------------
+# -- the fused attention kernel (pvi.kernels.attention_triton, Triton) -------------------------------------------
 
 @cuda_only
 @pytest.mark.parametrize("hq,hkv,t,tq,dh", [(4, 4, 64, 64, 64), (8, 2, 300, 300, 128), (4, 4, 2048, 2048, 128),
@@ -168,7 +168,7 @@ def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, t
     want = tr._attention_core(q, k, v, lut, tr._causal_notmask(t, rep, "cuda", tq), pmax)
     got = attention_kernels.attention_core(q, k, v, lut, tq, pmax)
     assert torch.equal(got, want)
-    # strided inputs, as transformer.integer_attention passes them (a transposed [B, T, H, dh] view)
+    # strided inputs, as pvi.models.decoder.integer_attention passes them (a transposed [B, T, H, dh] view)
     qs = q.transpose(1, 2).contiguous().transpose(1, 2)
     assert torch.equal(attention_kernels.attention_core(qs, k.transpose(1, 2).contiguous().transpose(1, 2), v, lut, tq,
                                                         pmax), want)
@@ -431,7 +431,7 @@ def test_an_exception_after_an_out_of_range_claim_is_its_rejection(deferred, mon
 
 
 def _wide_input_verifier(mode="Kpre"):
-    """One linear op whose input is NOT int8-valued (|x| up to 300)."""
+    """One linear op whose input is not int8-valued (|x| up to 300)."""
     g = torch.Generator().manual_seed(6)
     w = _rand(g, -127, 128, (5, 16)).to(torch.int8)
     b = _rand(g, -1000, 1000, (5,))
@@ -551,7 +551,7 @@ def _same_outcome(prover, pair, x, seed, **kw):
     assert b["bytes"]["claims"] == a["bytes"]["claims"]
     if a["accepted"]:
         assert b["bytes"] == a["bytes"]
-    else:        # the streaming verifier also received the messages run_query no longer asks for
+    else:        # the streaming verifier also received the messages run_query does not ask for after a rejection
         assert all(a["bytes"][k] in (0, b["bytes"][k]) for k in a["bytes"]), (a["bytes"], b["bytes"])
     assert "verify_total" in b["timings"]
     return a

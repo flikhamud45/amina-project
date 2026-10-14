@@ -1,5 +1,5 @@
 """The verifier's randomness: interactive draws, or a Fiat--Shamir transcript (SHAKE-256 over every
-message, large messages absorbed as a one-level tree)."""
+message, large messages absorbed as a one-level tree; the paper's Section ``sec:fs``)."""
 
 from __future__ import annotations
 
@@ -113,10 +113,10 @@ class Challenger:
         return torch.from_numpy(np.concatenate(parts)[:n].reshape(reps, n_rows).copy())
 
     def ext(self, name: str, count: int = 1, *, nonbase: bool = False) -> torch.Tensor:
-        """``count`` uniform elements of ``F_{p^8}`` (``extfield``) ``[count, 8]``, by the rejection sampling of
-        :meth:`folding`; with ``nonbase``, an element in ``F_p + x F_p`` (its coefficients 2..7 all zero, probability
-        ``p^-6``) is drawn again.  For V1's optimised verifier (:mod:`pvi.options`) one element (V1's GKR rounds) is
-        drawn by :meth:`_ext_one`: the same bytes, words and choice, without numpy."""
+        """``count`` uniform elements of ``F_{p^8}`` (:mod:`pvi.core.extfield`) ``[count, 8]``, by the rejection
+        sampling of :meth:`folding`; with ``nonbase``, an element in ``F_p + x F_p`` (its coefficients 2..7 all
+        zero, probability ``p^-6``) is drawn again.  For V1's optimised verifier (:mod:`pvi.options`) one element
+        (V1's GKR rounds) is drawn by :meth:`_ext_one`: the same bytes, words and choice, without numpy."""
         key = self._key("ext/" + name)
         if count == 1 and options.current().v1_verifier == "optimised":
             return self._ext_one(key, name, nonbase)
@@ -136,7 +136,7 @@ class Challenger:
             block += 1
 
     def _ext_draw(self, key: bytes, name: str, count: int, nonbase: bool) -> torch.Tensor:
-        """:meth:`ext`'s rejection sampling from ``key`` (today's code; every ``count``)."""
+        """:meth:`ext`'s rejection sampling from ``key``, for every ``count``."""
         out, block = [], 0
         while len(out) < count:
             words = np.frombuffer(self._stream(key, f"ext/{name}/{block}", 4 * 8 * (count - len(out) + 2) * 2),

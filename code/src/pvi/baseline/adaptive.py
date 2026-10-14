@@ -1,18 +1,16 @@
 """The adversary's reply to a non-uniform sampler.
 
-The defences in :mod:`pvi.baseline.samplers` all concentrate the verifier's
-attention somewhere.  Concentrating attention necessarily takes it away from
-somewhere else, and the adversary only needs one place to hide.
+The value-aware samplers of :mod:`pvi.baseline.samplers` all concentrate the
+verifier's attention somewhere.  Concentrating attention necessarily takes it away
+from somewhere else, and the adversary only needs one place to hide.
 
 Kerckhoffs applies: the sampling rule is part of the protocol, so the adversary
 knows it.  The search below evaluates, for up to ``candidate_neurons`` neurons (the
 most and least salient, and an even spread across the layer), the *exact* probability
-that the resulting trace is accepted under the defence in force, and keeps the best.
-Restricting the candidates can only weaken the adversary, so the resulting numbers
-remain an upper bound on the defence's worth.
-
-This is the concrete form of the concern that motivated the defence in the first
-place: whether an attacker can arrange to be examined where it is safe.  It can.
+that the resulting trace is accepted under the sampler in force
+(:func:`pvi.baseline.analysis.acceptance_probability`), and keeps the best.
+Restricting the candidates can only weaken the adversary, so the resulting detection
+rates remain upper bounds on what the sampler achieves against the best attack.
 """
 
 from __future__ import annotations
@@ -57,11 +55,10 @@ def plan_evasive_flip(
     """Choose the tamper that the given sampler is least likely to look at.
 
     Candidates are drawn from three places, because the neuron that best evades a
-    defence is generally *not* the one that flips the output most cheaply:
+    sampler is generally *not* the one that flips the output most cheaply:
 
     * the most influential neurons -- these flip the output easily;
-    * the least influential -- these are where importance-weighted samplers rarely
-      look;
+    * the least influential -- where importance-weighted samplers rarely look;
     * a spread across the layer, so the search is not confined to the tails.
 
     Each candidate is fully evaluated: find the smallest value that flips the
@@ -134,10 +131,10 @@ def plan_adaptive_stealthy_flip(
 ) -> EvasionSearch:
     """In-distribution values *and* low exposure to the sampler in force.
 
-    The stealthy planner of :mod:`pvi.attacks.tamper` ranks neurons by how much
-    room their envelope gives -- which, against a contribution-weighted sampler,
-    is precisely the wrong ranking: a neuron with a large activation and large
-    outgoing weights is both useful and conspicuous.
+    The stealthy planner :func:`pvi.attacks.tamper.plan_stealthy_flip` ranks neurons
+    by how much room their envelope gives -- which, against a contribution-weighted
+    sampler, is precisely the wrong ranking: a neuron with a large activation and
+    large outgoing weights is both useful and conspicuous.
 
     Here each neuron is scored by *benefit per unit of exposure*:
 
@@ -145,11 +142,11 @@ def plan_adaptive_stealthy_flip(
         ``exposure_i = |proposed_i| * sum_j |w_ij|``
 
     the second being the contribution mass a contribution-weighted walk would
-    assign it.  Neurons are added greedily until the output flips.  Three rankings
-    are tried -- benefit, benefit/exposure, and least exposure -- and whichever
-    yields the highest *exact* acceptance under ``sampler`` is returned, so the
-    reported figure is the best of the adversary's options rather than the first
-    that happened to work.
+    assign it.  Neurons are added greedily, in the order of a ranking, until the
+    output reaches the runner-up class.  Three rankings are tried -- benefit,
+    benefit/exposure, and least exposure -- and whichever yields the highest
+    *exact* acceptance under ``sampler`` is returned, so the result is the best of
+    the adversary's options rather than the first that happened to work.
     """
     params = params or ProtocolParams()
     architecture = network.architecture

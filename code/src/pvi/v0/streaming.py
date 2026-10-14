@@ -1,5 +1,5 @@
 """How the proof reaches a GPU client: the wire formats and claim uploads of the streaming
-verifier (``Verifier(stream=True)``, whose checks are :meth:`protocol.Verifier.verify_streaming`).
+verifier (``Verifier(stream=True)``, whose checks are :meth:`pvi.v0.verifier.Verifier.verify_streaming`).
 
 * The claims travel as int32 (:func:`wire_claim`: the 4 bytes per value the proof size
   already counts), narrowed on the prover's device and received into pinned host memory; a
@@ -25,7 +25,8 @@ from pvi.core.field import min_max
 __all__ = ["AHEAD", "ClaimUploads", "wire_claim", "wire_openings", "wire_rows"]
 
 AHEAD = 16
-"""Weight ops whose claims are uploaded ahead of derive (about two transformer blocks)."""
+"""Weight ops whose claims are uploaded ahead of derive (two to three decoder blocks, of six or seven weight ops
+each)."""
 _INT32 = (-(1 << 31), (1 << 31) - 1)
 _INT8 = (-128, 127)
 

@@ -1,9 +1,9 @@
 """Pinned host memory within the driver's limit (``pvi.core.hostmem``).
 
-The L40S nodes refuse a single pinned allocation of more than 2 GiB; above ``PIN_MAX`` the defence takes
-pageable memory instead.  These tests force every buffer above the limit (``PIN_MAX = 0``) and check that
-nothing but the memory changes: the encoder's bytes, the decoder's values and the verdicts, labels and proof
-sizes of wire queries with the batched and the streaming verifier on a GPU.
+A CUDA driver may refuse a single pinned allocation of more than 2 GiB (observed on hosts with L40S GPUs);
+above ``PIN_MAX`` the defence takes pageable memory instead.  These tests force every buffer above the limit
+(``PIN_MAX = 0``) and check that nothing but the memory changes: the encoder's bytes, the decoder's values and
+the verdicts, labels and proof sizes of wire queries with the batched and the streaming verifier on a GPU.
 """
 
 from __future__ import annotations

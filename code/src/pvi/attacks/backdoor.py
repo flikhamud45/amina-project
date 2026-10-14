@@ -11,8 +11,8 @@ Turning it into a *backdoor* costs nothing extra and removes even that ``1/N``:
   changing the answer at a detection probability of ``1/N`` per path.
 
 So the served model agrees with the committed model everywhere except on a set the
-adversary chose and the verifier has no reason to query.  This is the adversary the
-paper's threat model does not reach.  Its Definition 1 quantifies over
+adversary chose and the verifier has no reason to query.  This is the adversary that
+Anchuri et al.'s threat model does not reach.  Their Definition 1 quantifies over
 ``qry <- D_query``: soundness is a statement about the *query distribution*, and a
 backdoor lives off-distribution by construction.
 
@@ -97,7 +97,8 @@ def calibrate_activation_ceilings(
     cautious deployment might add.  Capping the forged value at a high percentile of
     the neuron's natural range removes that signal.
 
-    Used with ``plan_stealthy_flip(ceilings=...)``.
+    Used with :func:`pvi.attacks.tamper.plan_stealthy_flip` (``ceilings=...``) and
+    :func:`pvi.baseline.adaptive.plan_adaptive_stealthy_flip`.
     """
     if not 0.0 < percentile <= 100.0:
         raise ValueError(f"percentile must be in (0, 100], got {percentile}")

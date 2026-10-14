@@ -1,6 +1,6 @@
 """The verifier in modes C, K and Kpre: derive every weight op's input from the claims, Freivalds' check
-of every weight op, and in mode C the column checks against the commitment; its streaming form
-checks messages as they arrive."""
+of every weight op, and in mode C the column checks against the commitment; its streaming form, for a
+GPU client, checks each weight op as soon as its claim is on the device."""
 
 from __future__ import annotations
 
@@ -248,16 +248,19 @@ def _upload_rows(rows: dict[str, np.ndarray], device) -> dict[str, torch.Tensor]
 
 @dataclass
 class Verifier:
+    """The verifier of protocol v0 for the public ``graph`` and ``params``, in ``mode`` ``"C"`` (it holds
+    the commitment's ``publics``, and under a commitment plan its ``groups`` and ``tables``), ``"K"`` or
+    ``"Kpre"`` (it holds the ``weights``)."""
     graph: IntGraph
     params: SecurityParams
     mode: str = "C"
     publics: dict[str, CommitmentPublic] = field(default_factory=dict)
     weights: dict[str, tuple[torch.Tensor, torch.Tensor | None]] = field(default_factory=dict)
     lean: bool = False       # free every recomputed tensor once no later op reads it
-    device: str = "cpu"      # "cuda": a client on a GPU, the _gpuv cells (Merkle hashing stays on the CPU)
+    device: str = "cpu"      # "cuda": a client on a GPU (Merkle hashing stays on the CPU)
     stream: bool = False     # run_query checks with verify_streaming (the same verdicts and labels)
     groups: dict[str, GroupPublic] = field(default_factory=dict)   # a commitment plan's trees (mode C)
-    tables: dict[str, TablePublic] = field(default_factory=dict)   # a plan's lookup tables (mode C; kept in graph order)
+    tables: dict[str, TablePublic] = field(default_factory=dict)   # a plan's lookup tables (mode C, graph order)
     lookups: bool = False    # modes K and Kpre: the verifier reads the embedding rows itself (none are sent)
     _pre: dict = field(default_factory=dict)
     _wdev: dict = field(default_factory=dict)   # modes K and Kpre on a GPU: the weights they read stay there
@@ -266,8 +269,8 @@ class Verifier:
     _consts: list = field(default_factory=list)  # a GPU client: the cheap ops' constants (source, copy, versions)
     _columns: dict = field(default_factory=dict)  # query shape -> claim_columns
     _digest: bytes = b""                          # the public graph's digest, once (Fiat--Shamir absorbs it)
-    _cut_plan: object = None                      # V1: the query's cut.CutPlan (set by cut_protocol, per query)
-    sampler: object = None                        # E2: the query's token_sampler.TokenSampler (set by run_query)
+    _cut_plan: object = None                      # V1: the query's cut.CutPlan (set per query by pvi.v1.protocol)
+    sampler: object = None                        # sampled generation: the query's TokenSampler (set by run_query)
 
     def __post_init__(self) -> None:
         if self.groups or self.tables:
@@ -361,9 +364,9 @@ class Verifier:
 
     def _fold_local(self, op: MatOp, chi: torch.Tensor) -> torch.Tensor:
         """``u = chi A`` (``[r, K]``, canonical) of op's int8 weights (with the option ``int8_fold`` off, the float64
-        path alone): on a CPU the native exact field product (``native_kernels.field_matmul``, the weights read as int32,
-        no transposed int64 copy), on a GPU int8 GEMMs (``weight_matmul_mod``), else the float64 limb products; all
-        give the canonical residue of the same integers."""
+        path alone): on a CPU the native exact field product (:func:`pvi.kernels.native.field_matmul`, the weights
+        read as int32, no transposed int64 copy), on a GPU int8 GEMMs (:func:`pvi.core.field.int8_weight_matmul`),
+        else the float64 limb products; all give the canonical residue of the same integers."""
         w, b = self._weights_on(op, chi.device)
         u = None
         if options.current().int8_fold and w.dtype == torch.int8:
@@ -439,7 +442,7 @@ class Verifier:
 
     def check_tokens(self, x: torch.Tensor, claims: dict) -> bool:
         """The token rule of a graph with its logits at ``n = meta["lm_positions"] > 1`` positions
-        (:func:`transformer.with_lm_positions`): its queries are a prompt and the ``n - 1`` tokens
+        (:func:`pvi.models.decoder.with_lm_positions`): its queries are a prompt and the ``n - 1`` tokens
         generated after it, so each of the first ``n - 1`` columns of the claimed logits must have its
         first largest entry at the next input token.  The claims are then checked as any others: a
         wrong token needs wrong logits.  A query shorter than ``n`` positions is rejected (its tokens
@@ -453,7 +456,7 @@ class Verifier:
         z = claims.get(head.name)
         if not torch.is_tensor(z) or tuple(z.shape) != (head.n_rows, x.shape[0] * n):
             return True
-        if self.sampler is not None:      # E2: each token is the seeded sampler's choice from the logits before it
+        if self.sampler is not None:      # each token is the seeded sampler's choice from the logits before it
             if x.shape[0] != 1:
                 return False
             t = x.shape[1]
@@ -527,8 +530,8 @@ class Verifier:
                         z = None if m is None else self._own_claim(op, xin, dtype)
                     else:
                         z = claims.get(op.name)
-                    # V1 (V-V1N part 4): a cut op's sent values may also be int8 or int16 (cut_protocol keeps them
-                    # so once they are in range); they are range-checked below and widened for their readers
+                    # V1: a cut op's sent values may also be int8 or int16 (pvi.v1.protocol keeps them so once
+                    # they are in range); they are range-checked below and widened for their readers
                     if z is None or m is None or tuple(z.shape) != (op.n_rows, m) or (
                             z.dtype != dtype and not (op.name in cut_ops and z.dtype in CUT_NARROW)):
                         return None
@@ -566,9 +569,9 @@ class Verifier:
         return inputs, pending, ranged
 
     # -- the checks ---------------------------------------------------------------------
-    # The checks of different weight ops are independent, and a transformer repeats a few
+    # The checks of different weight ops are independent, and a decoder repeats a few
     # shapes in every block, so same-shape ops are checked with ONE batched product instead
-    # of ~15 small torch calls each.  Each op's result is the same integers as its own
+    # of a series of small torch calls each.  Each op's result is the same integers as its own
     # product, and the verdict (and any exception) is that of checking op by op in order.
 
     def _kept_or_built(self, key, tensors: list, build):
@@ -769,7 +772,7 @@ class Verifier:
 
     def column_operands(self, claims, inputs, chis, us) -> tuple[dict, dict]:
         """The two sides of every committed matrix's code check, by matrix name: a row matrix's
-        ``chi`` and ``u`` (``chis``, ``us``: every weight op's for the report's commitment), and a
+        ``chi`` and ``u`` (``chis``, ``us``: every weight op's under the per-op commitment), and a
         col-layout matrix's ``w = chi' [X ; 1]^T`` and ``z = chi' Z^T`` (``Z``: its ops' claims
         stacked, ``X`` their input), which the verifier computes itself from the ``claims`` and
         ``inputs`` derive() accepted -- exactly, same-shape products batched."""
@@ -801,7 +804,7 @@ class Verifier:
                     out[n] = torch.cat([wn, chis[n].sum(1, keepdim=True) % P], 1) if stacked[n][0].has_bias else wn
         return out
 
-    # A column check opens trees: each weight op's own (the paper), or each group's of a commitment
+    # A column check opens trees: each weight op's own (the per-op commitment), or each group's of a commitment
     # plan, whose opening stacks its members' columns and whose index set they share.  Every member
     # is then checked against its own codeword -- a row matrix's Enc(u), a col matrix's Enc(z) --
     # exactly as a matrix on its own tree, and the verdict is that of checking tree by tree.
@@ -940,11 +943,11 @@ class Verifier:
         """``None`` if every opened column is consistent, else the failing check: the verdict
         (and any exception) of checking tree by tree -- shape, then code (of every member), then
         Merkle.  ``chis`` and ``us``: the two sides of every matrix's code check
-        (:meth:`column_operands`; each op's ``chi`` and ``u`` for the report's commitment).  The code
+        (:meth:`column_operands`; each op's ``chi`` and ``u`` under the per-op commitment).  The code
         checks are queued first (on a GPU they run there while the host checks the Merkle paths)
         and come back with one copy.  With ``wire`` the openings are the int32 rows ``[t, N]`` of
-        :func:`pipeline.wire_openings` (``None``: not representable), which the checks take as they
-        are."""
+        :func:`pvi.v0.streaming.wire_openings` (``None``: not representable), which the checks take as
+        they are."""
         units = self._column_units()
         n_ok, exc = _leading_passes(units, lambda unit: self._columns_shape_ok(unit, us, cols, openings, wire=wire))
         good = units[:n_ok]
@@ -970,18 +973,19 @@ class Verifier:
                          cols: dict | None = None, openings: dict | None = None,
                          table_proofs: dict | None = None) -> str | None:
         """``None`` to accept, else the check that rejects, with ``run_query``'s labels: the verdict
-        of :meth:`check_tokens` (``"token"``), :meth:`derive`, :meth:`check_lookups` (``table_proofs``: the multiproofs of a plan's lookup
-        tables), :meth:`check_products` and (with ``openings``) :meth:`check_columns` on these
-        messages.  ``claims`` from :func:`pipeline.wire_claim` (a lookup table's from
-        :func:`pipeline.wire_rows`), ``openings`` from :func:`pipeline.wire_openings`.  In mode C the
-        opened columns are part of the proof: without them every column check would be skipped, so a
-        call without ``openings`` is refused rather than accepted on Freivalds' check alone."""
+        of :meth:`check_tokens` (``"token"``), :meth:`derive`, :meth:`check_lookups` (``table_proofs``: the
+        multiproofs of a plan's lookup tables), :meth:`check_products` and (with ``openings``)
+        :meth:`check_columns` on these messages.  ``claims`` from :func:`pvi.v0.streaming.wire_claim` (a
+        lookup table's from :func:`pvi.v0.streaming.wire_rows`), ``openings`` from
+        :func:`pvi.v0.streaming.wire_openings`.  In mode C the opened columns are part of the proof:
+        without them every column check would be skipped, so a call without ``openings`` is refused
+        rather than accepted on Freivalds' check alone."""
         if self.mode == "C" and openings is None:
             raise ValueError("mode C: verify_streaming needs the opened columns (openings)")
         if not self.check_tokens(x, claims):
             return "token"
         reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=True)
-        if reason is _NOT_INT8:        # (the graphs here clamp every weight op's input to int8)
+        if reason is _NOT_INT8:        # (the graphs of this artifact clamp every weight op's input to int8)
             reason = self._streamed(x, claims, chis, us, cols, openings, table_proofs, int8=False)
         return reason
 

@@ -1,6 +1,6 @@
-"""Tests for the layered-DAG model.
+"""The layered-DAG model of the path protocol's networks (``pvi.mnist.architecture``, ``pvi.mnist.network``).
 
-The single most important invariant in the whole codebase is checked here: for
+The central invariant of the path protocol is checked here: for
 every neuron of every layer, the *vectorised* forward pass and the *per-neuron*
 local relation must agree.  The prover uses the former to build the trace and the
 verifier uses the latter to check it, so any disagreement would show up as a

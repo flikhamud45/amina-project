@@ -1,9 +1,9 @@
 """A real Llama-family checkpoint's graph end to end, on a tiny random Llama (no download):
 ``experiments.common.checkpoints.real_graph``'s Llama branch is ``build_llama_from_hf(**MAIN_RECIPE)`` with the
-calibration's prefix, keeps the benchmark structure (``v1_bytes``' shape check), and its graph serves
-``generation/gen_bench.py --real``'s generated responses: ``with_lm_positions``, greedy and sampled tokens (the
-sampler's weight from the LM head's real logit scale), proved and verified in modes C and Kpre, and a wrong token
-rejected."""
+calibration's prefix, keeps the benchmark structure (``experiments.v1.v1_bytes.shape_check``), and its graph serves
+the generated responses of ``python -m experiments.generation.gen_bench --real``: ``with_lm_positions``, greedy and
+sampled tokens (the sampler's weight from the LM head's real logit scale), proved and verified in modes C and Kpre,
+and a wrong token rejected."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -46,7 +46,8 @@ def test_the_llama_branch_is_the_main_recipe_with_the_prefix(built):
 
 
 def test_the_shape_check_takes_the_llama_head_as_built(built):
-    """v1_bytes' shape check: a real Llama head has the benchmark's row length (no folded bias, unlike OPT's)."""
+    """``experiments.v1.v1_bytes.shape_check``: a real Llama head has the benchmark's row length (no folded bias,
+    unlike OPT's)."""
     model, calib, graph, info = built
     cfg = rl.config_of(model.config, "tiny")
     res = v1b.shape_check(graph, cfg, cfg.n_layers, True, True, calib[:1, :16])
@@ -54,10 +55,10 @@ def test_the_shape_check_takes_the_llama_head_as_built(built):
 
 
 def test_forged_logits_of_a_sampled_response_are_caught_by_the_weight_check(built):
-    """gen_bench's forged_logits tamper with the real logit scale's sampler: the margin is sized from that sampler's
-    weight ``a`` (not ``--sampler-a``), so the forgery makes the rule choose the wrong token and only Freivalds'
-    check catches it (with a margin sized from ``--sampler-a = 4096`` the noise can still outweigh the forged logit,
-    and the token check catches it instead)."""
+    """``experiments.generation.gen_bench``'s ``forged_logits`` tamper with the real logit scale's sampler: the margin
+    is sized from that sampler's weight ``a`` (not ``--sampler-a``), so the forgery makes the rule choose the wrong
+    token and only Freivalds' check catches it (with a margin sized from ``--sampler-a = 4096`` the noise can still
+    outweigh the forged logit, and the token check catches it instead)."""
     model, calib, graph, info = built
     sampler = TokenSampler.for_temperature(b"\x09" * 32, 1.0, float(info["logit_scale"]))
     assert gb.forge_margin("sample", sampler) * sampler.a >= 1 << 21

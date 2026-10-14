@@ -5,10 +5,10 @@ The protocol implementation deliberately does not depend on PyTorch: a
 :class:`~pvi.mnist.architecture.Architecture` and a set of NumPy parameter arrays.
 PyTorch appears only here, to *fit* those parameters.
 
-Layer-for-layer correspondence with the architecture is exact, and the test suite
-asserts that the traced network and the PyTorch module agree numerically on real
-inputs.  Without that check it would be possible to train one model and commit to
-the trace of a subtly different one.
+Layer-for-layer correspondence with the architecture is exact, and the tests
+(``tests/test_torch_bridge.py``) assert that the traced network and the PyTorch
+module agree numerically on real inputs.  Without that check it would be possible
+to train one model and commit to the trace of a subtly different one.
 """
 
 from __future__ import annotations
@@ -42,10 +42,11 @@ def mlp_architecture(
 ) -> Architecture:
     """A fully connected ReLU network with a linear output layer.
 
-    This is the workhorse of the study.  Its dense parent sets mean a path step
-    selects a uniformly random neuron of the layer below, which makes the
-    per-path detection probability exactly ``1 / width`` and lets the analytic and
-    empirical numbers be compared without any modelling slack.
+    This is the main model of the attack experiments.  Its dense parent sets mean
+    a path step selects a uniformly random neuron of the layer below, which makes
+    the per-path detection probability of a single-node tamper exactly
+    ``1 / width`` and lets the analytic and empirical numbers be compared without
+    any modelling slack.
     """
     if not hidden_widths:
         raise ValueError("an MLP needs at least one hidden layer")
@@ -81,7 +82,7 @@ def small_cnn_architecture(
 ) -> Architecture:
     """A compact ``conv -> pool`` stack followed by two dense layers.
 
-    Included because the paper's own classifier experiments use a convolutional
+    Included because Anchuri et al.'s own classifier experiments use a convolutional
     network (ResNet-18).  It exercises the local, weight-sharing parent sets that
     convolutions induce, which behave quite differently from dense layers under
     path sampling.

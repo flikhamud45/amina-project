@@ -8,10 +8,10 @@ exactly the position-binding property of the vector commitment.
 
 Commitment granularity
 ----------------------
-The authors do not commit one leaf per scalar.  Section 8.1 describes "a Merkle
-tree built on row-wise hashes": for a matrix-multiplication layer they commit the
-input activation *matrix* and open "the relevant row and the corresponding Merkle
-path for each layer".  We follow that:
+Anchuri et al. do not commit one leaf per scalar.  Their Section 8.1 describes "a
+Merkle tree built on row-wise hashes": for a matrix-multiplication layer they commit
+the input activation *matrix* and open "the relevant row and the corresponding Merkle
+path for each layer".  This implementation follows that:
 
 * ``C_M`` has one leaf per **weight row** -- a dense neuron's incoming weights and
   bias, or a convolution's output-channel kernel and bias.  Checking a node

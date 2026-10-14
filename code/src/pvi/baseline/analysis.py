@@ -5,10 +5,10 @@ the nodes a path visits.  So for a *fixed* trace, acceptance is decided entirely
 two things: which nodes are locally inconsistent, and how likely a path is to visit
 one of them.  Both are computable exactly, without sampling.
 
-That makes this module the main validation instrument of the study:
+That makes this module the validation instrument of the attack experiments:
 
-* it turns "the protocol accepted 2 of 3000 runs" into a prediction that can be
-  checked against theory, and
+* it turns an observed acceptance rate of end-to-end protocol runs into a
+  prediction that can be checked against it, and
 * it lets the attack be reasoned about analytically -- for a trace inconsistent at
   a single node ``v``, the acceptance probability is exactly ``1 - Pr[path visits v]``,
   with no Monte-Carlo error in the way.
@@ -119,8 +119,8 @@ def acceptance_probability(
     The recursion is exact for any layered architecture and any sampler.  It does
     *not* assume the per-layer visit distribution is uniform -- false for
     convolutions and deliberately false for the importance-weighted samplers in
-    ``pvi.defences`` -- and it does not assume checks at different layers are
-    independent, which they are not once parent sets are local.
+    :mod:`pvi.baseline.samplers` -- and it does not assume checks at different
+    layers are independent, which they are not once parent sets are local.
     """
     from pvi.baseline.path.sampling import UniformPathSampler, as_distribution
 
@@ -141,7 +141,8 @@ def acceptance_probability(
         # for samplers that score the layer below without reference to which node is
         # asking, every neuron also shares the same transition distribution.  The
         # inner sum is then one dot product for the whole layer rather than one per
-        # neuron -- which is what makes the adaptive-adversary search tractable.
+        # neuron -- which is what makes the adaptive-adversary search
+        # (:mod:`pvi.baseline.adaptive`) tractable.
         dense = isinstance(layer, DenseLayer)
         if dense and not sampler.transition_depends_on_source:
             parent_idx = np.arange(architecture[layer_index - 1].n_neurons)

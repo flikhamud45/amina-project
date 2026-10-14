@@ -1,4 +1,5 @@
-"""Adversaries against the sampling-based proof-of-inference protocol."""
+"""Adversaries against the path protocol of Anchuri et al. (RandPathTest) on the float MNIST networks: the
+single-neuron tamper, the backdoor built on it, and Anchuri et al.'s own forging attacks."""
 
 from pvi.attacks.backdoor import BackdoorAdversary, PatchTrigger, calibrate_activation_ceilings
 from pvi.attacks.baselines import gradient_forge, injection_forge, inverse_transform_forge, logit_swap_target

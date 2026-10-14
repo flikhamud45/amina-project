@@ -7,10 +7,11 @@
 * ``resnet18_cifar`` -- the CIFAR-10 ResNet-18 (3x3 stem), as in ZKML, ZENO,
                      Bionetta and EZKL.
 * ``resnet18_224``   -- torchvision's ImageNet-shaped ResNet-18 (7x7 stem, 224x224),
-                     with a 2-way head: Anchuri et al.'s dogs-vs-cats classifier.
+                     with a 2-way head: Anchuri et al.'s dogs-vs-cats classifier (``MODEL_SPECS``'
+                     ``resnet18_224_squirrel``: the same architecture on dogs vs. squirrels).
 
 BatchNorm is used for training and folded into the preceding convolution
-before quantisation, which is also what zkCNN and ZKML do.
+before quantisation (:func:`pvi.models.quantize.fold_bn`), which is also what zkCNN and ZKML do.
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
 """CPU stand-ins for the Triton kernels of ``pvi.v1.gkr_triton`` (for tests on hosts without CUDA/Triton).
 
-Each kernel's job is restated with ``extfield`` on canonical values: the planes ``[8, n]`` hold Montgomery values
-``v R mod p`` (``R = 2^32``), converted with ``R^-1`` on the way in and ``R`` on the way out.  A partial-sum kernel puts
-its whole sum in block 0 (the host sums the blocks).  ``install(module)`` swaps these into the module, so its host code
--- the round logic, the bottom-layer path, the transcript -- runs unchanged on the CPU.
+Each kernel's job is restated with ``pvi.core.extfield`` on canonical values: the planes ``[8, n]`` hold Montgomery
+values ``v R mod p`` (``R = 2^32``), converted with ``R^-1`` on the way in and ``R`` on the way out.  A partial-sum
+kernel puts its whole sum in block 0 (the host sums the blocks).  ``install(module)`` swaps these into the module, so
+its host code -- the round logic, the bottom-layer path, the transcript -- runs unchanged on the CPU.
 """
 
 from __future__ import annotations

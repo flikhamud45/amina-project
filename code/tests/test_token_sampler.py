@@ -1,5 +1,5 @@
-"""Sampled generation with a client-chosen seed (``pvi.v0.token_sampler``, plan E2): the public Gumbel table,
-the sampler's choices, and sampled responses proved and checked end to end."""
+"""Sampled generation with a client-chosen seed (``pvi.v0.token_sampler``): the public Gumbel table, the sampler's
+choices, and sampled responses proved and checked end to end."""
 
 from __future__ import annotations
 

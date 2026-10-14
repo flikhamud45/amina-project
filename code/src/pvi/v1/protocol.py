@@ -1,26 +1,29 @@
-"""V1's query (``V1_SPEC.md`` Sec. 2.4-2.6): the int8 cut, proved with a windowed logUp-GKR and no new commitment.
+"""V1's query: the cut operations' requantised values, proved with a windowed logUp-GKR and no new commitment.
 
-The messages, in order (each absorbed before the next challenge under Fiat--Shamir):
+The messages, in order (under Fiat-Shamir each is absorbed before the next challenge is drawn):
 
-* **M1** the values frame (``PVC3``: the sent requantised values ``s`` of the cut ops, the claims ``Z`` of the clear
-  ones, a plan's lookup rows as today), the exceptions frame ``PVX1`` (every clamped entry outside its normal window,
-  with its exact ``Z``) and the multiplicities ``m`` of the table (``PVC3`` of one row);
-* **C1** the logUp point ``alpha`` in ``F_{p^8}`` outside ``F_p + x F_p``, and today's ``chi`` of the clear ops;
-* **M2** one fractional-sum GKR per instance (:mod:`logup_gkr`), round by round;
-* **M3** the folds at each instance's point: mode C ``u = chi^T A`` (8 base planes) for a cut row-layout op,
-  ``y = A xbar`` for a cut col matrix; Kpre ``y = A xbar`` for every cut op; today's ``u`` of the clear ops;
-* **C2/M4** the column indices and the openings, as today (mode C).
+* the values frame (``PVC3``: the sent values ``s`` of the cut operations, the claims ``Z`` of the clear ones, and
+  the lookup rows of a commitment plan, as in v0), the exceptions frame ``PVX1`` (every clamped entry outside its
+  normal window, with its exact ``Z``) and the table's multiplicities ``m`` (``PVC3`` of one row);
+* the logUp point ``alpha``, in ``F_{p^8}`` outside ``F_p + xi F_p``, and in mode C v0's fold challenges ``chi`` of
+  the clear operations;
+* one fractional-sum GKR transcript per instance (:mod:`pvi.v1.gkr`), round by round;
+* the folds at each instance's final point: in mode C ``u = chi^T A`` (8 base-field planes) for a cut operation in
+  the row layout and ``y = A xbar`` for a cut transposed matrix, in Kpre ``y = A xbar`` for every cut operation;
+  and v0's folded rows ``u`` of the clear operations;
+* in mode C, the column indices and the openings, as in v0.
 
-The verifier's checks, with their rejection labels: ``range_or_shape`` (decode and derive, the cut ops' values in
-their ranges), ``token``, the lookup checks, ``cut_exception``, ``cut_multiplicities``, ``cut_gkr``, ``freivalds``
-(the clear row ops), ``kpre_y``, ``cut_final``, ``cut_logup``, then the column checks.  The verifier here is the
-non-streaming one (CPU or GPU tensors, the GKR and the final checks on the CPU); mode K and the streaming
-verifier are not supported (``NotImplementedError``).
+The verifier's checks, in order, with their rejection labels: (D1) and (D2) ``range_or_shape`` (decoding and the
+derivation, with the cut operations' values and inputs in their ranges), (D3) ``token``, the lookup checks, (D4)
+``cut_exception``, (D5) ``cut_multiplicities``, (G) ``cut_gkr``, (F1) ``freivalds`` (the clear operations), (F2)
+``kpre_y``, (F3) ``cut_final``, (F4) ``cut_logup``, then the column checks (C).  The verifier here is the
+non-streaming one (CPU or GPU tensors, with the GKR and the final checks on the CPU); mode K and the streaming
+verifier do not support V1 (``NotImplementedError``).
 
-Interactive challenges are the verifier's own (a CSPRNG at the moment each is drawn); since both parties run in one
-process, the GKR's round challenges are drawn when the prover asks for them, after its message, and the verifier
-checks against the ones it drew (:class:`_Recorder`, :class:`_Replayer`).  Under Fiat--Shamir the prover runs the
-GKR on a fork of the transcript and the verifier re-derives every challenge from its own.
+Interactive challenges are the verifier's own (drawn from a CSPRNG at the moment each is needed).  Since both
+parties run in one process, the GKR's round challenges are drawn when the prover asks for them, after its message,
+and the verifier checks against the ones it drew (:class:`_Recorder`, :class:`_Replayer`).  Under Fiat-Shamir the
+prover runs the GKR on a fork of the transcript and the verifier re-derives every challenge from its own.
 """
 
 from __future__ import annotations
@@ -50,14 +53,15 @@ __all__ = ["run_cut_query", "cut_proof_bytes", "cut_plan", "pack_exceptions", "u
 
 EXC_MAGIC = b"PVX1"
 _FINAL_ROWS = 256
-"""Rows of a cut op per block of the final check (``[L ; W]`` of 256 rows x 2,048 columns: 8 MB of float64)."""
+"""Rows of a cut operation per block of the baseline final check (at ``T = 2,048``, ``[L ; W]`` of 256 rows is 8 MB
+of float64)."""
 
 
 # ------------------------------------------------------------------ plans and the exceptions frame
 def cut_plan(graph, columns, T: int, matrices, lmax: int, weights: dict | None = None) -> cutmod.CutPlan:
-    """The query's cut plan; ``matrices``: a ``CommitmentPlan`` (the prover's), the verifier's ``publics`` (a dict
-    of ``CommitmentPublic``: its col matrices carry ``members``), or ``None``; ``weights``: a K or Kpre verifier's
-    (P4)."""
+    """The query's cut plan.  ``matrices``: a ``CommitmentPlan`` (the prover's), the verifier's ``publics`` (a dict
+    of ``CommitmentPublic``, whose transposed matrices carry ``members``), or ``None``; ``weights``: a mode K or Kpre
+    verifier's, for (P4)."""
     return cutmod.CutPlan.from_graph(graph, columns, T, _cols_of(matrices), lmax=lmax, weights=weights)
 
 
@@ -70,8 +74,8 @@ def _cols_of(matrices):
 
 
 def pack_exceptions(plan: cutmod.CutPlan, exc: dict) -> bytes:
-    """``PVX1``: the magic, every cut op's exception count (u32, plan order), then per op its flat indices (u32,
-    ascending) and exact claims (i32)."""
+    """``PVX1``: the magic, every cut operation's exception count (u32, in plan order), then per operation its flat
+    indices (u32, ascending) and exact claims (i32)."""
     counts = [int(exc[o.name][0].numel()) for o in plan.ops]
     parts = [EXC_MAGIC, struct.pack(f"<{len(counts)}I", *counts)]
     for o in plan.ops:
@@ -83,7 +87,7 @@ def pack_exceptions(plan: cutmod.CutPlan, exc: dict) -> bytes:
 
 def unpack_exceptions(buf, plan: cutmod.CutPlan) -> dict | None:
     """The exceptions of :func:`pack_exceptions`'s bytes as ``{op: (idx, z)}`` int64 tensors, or ``None`` if the
-    bytes are not such a frame for ``plan`` (lengths; every count at most the op's entries)."""
+    bytes are not such a frame for ``plan`` (lengths; every count at most the operation's entries)."""
     buf = bytes(buf)
     n = len(plan.ops)
     head = 4 + 4 * n
@@ -102,8 +106,8 @@ def unpack_exceptions(buf, plan: cutmod.CutPlan) -> dict | None:
 
 
 def exceptions_ok(plan: cutmod.CutPlan, exc: dict, values: dict) -> bool:
-    """Check D4 (``cut_exception``): only requant ops list exceptions, at strictly increasing indices inside the op,
-    each ``|z| < 2^29`` with ``requant(z)`` equal to the sent value there."""
+    """Check (D4) (``cut_exception``): only requantisations list exceptions, at strictly increasing indices inside
+    the operation, each with ``|z| < 2^29`` and ``rq(z)`` equal to the sent value there."""
     for o in plan.ops:
         idx, z = exc[o.name]
         if not idx.numel():
@@ -156,20 +160,21 @@ class _Replayer:
 
 # ------------------------------------------------------------------ algebra helpers
 def _planes(v: torch.Tensor) -> torch.Tensor:
-    """An F vector ``[n, 8]`` as its 8 base planes ``[8, n]``."""
+    """A vector over ``F_{p^8}`` ``[n, 8]`` as its 8 base-field planes ``[8, n]``."""
     return v.T.contiguous()
 
 
 def _dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """``sum_i a_i b_i`` in F for ``a, b`` ``[n, 8]`` (one 8 x 8 exact product, ``extfield.inner``)."""
+    """``sum_i a_i b_i`` in ``F_{p^8}`` for ``a, b`` ``[n, 8]`` (one exact 8 x 8 product,
+    ``pvi.core.extfield.inner``)."""
     return ef.inner(a.cpu(), b.cpu())
 
 
 def _xbar(op, xin: torch.Tensor, e: torch.Tensor, cache: dict | None = None) -> torch.Tensor:
-    """``[X ; 1] e`` ``[K (+1), 8]`` of a linear op's input ``xin`` (its ``[M, K]`` rows) at the column point ``e``:
-    the product by value of the optimised verifier (:func:`products.xbar`, the same integers) when the input is small,
-    else ``extfield.int_times`` for entries below ``2^31`` and the general product otherwise; ops reading
-    the same input at the same point (q, k, v; gate, up) share it through ``cache``."""
+    """``[X ; 1] e`` ``[K (+1), 8]`` of a linear operation's input ``xin`` (its ``[M, K]`` rows) at the column point
+    ``e``: the product by value of the optimised verifier (:func:`pvi.v1.products.xbar`, the same integers) when the
+    input is small, else ``pvi.core.extfield.int_times`` for entries below ``2^31`` and the general product otherwise;
+    operations reading the same input at the same point (q, k, v; gate, up) share it through ``cache``."""
     key = (xin.data_ptr(), tuple(xin.shape), id(e))
     if cache is not None and key in cache:
         out = cache[key]
@@ -196,7 +201,8 @@ def _points(plan: cutmod.CutPlan, beta: int, rho: torch.Tensor):
 def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
                   forward_kwargs: dict | None = None, cheat: dict | None = None, sampler=None) -> dict:
     """One V1 query (always on the wire: ``PVC3`` values, packed field elements).  Returns what
-    :func:`protocol.run_query` returns, with the cut's bytes (``cut_exc``, ``cut_mult``, ``cut_gkr``) and timings.
+    :func:`pvi.v0.query.run_query` returns, with the cut's bytes (``cut_exc``, ``cut_mult``, ``cut_gkr``) and
+    timings.
 
     ``cheat`` (tests only) makes the prover dishonest at one message: ``"witness"(values, witness, exc, mult)``
     edits its sent values, leaves, exceptions or counts in place; ``"gkr"(blobs)``, ``"fold"(parts)`` return
@@ -232,10 +238,11 @@ def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: 
 
 def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None) -> dict:
     """V1's proof bytes on the query ``x``, message by message, without running the GKR, the folds or the openings
-    (for models whose GKR the eager prover cannot hold).  M1 is produced and encoded exactly as in
-    :func:`run_cut_query`; the GKR transcripts, the fold message and the opened columns have sizes fixed by the cut
-    plan and the parameters; the multiproofs are sized (``commitment.multiproof_size``) at columns drawn as a query
-    draws them.  ``tests/test_cut_protocol.py`` checks every size but the paths against a real query."""
+    (for models whose GKR the eager prover cannot hold).  The values, the exceptions and the multiplicities are
+    produced and encoded exactly as in :func:`run_cut_query`; the GKR transcripts, the fold message and the opened
+    columns have sizes fixed by the cut plan and the parameters; the multiproofs are sized
+    (``pvi.commit.commitment.multiproof_size``) at columns drawn as a query draws them.
+    ``tests/test_cut_protocol.py`` checks every size except that of the paths against a real query."""
     p = verifier.params
     T = x.shape[1]
     plan = cut_plan(verifier.graph, verifier.claim_columns(x), T, verifier.publics if verifier.groups else None,
@@ -260,7 +267,8 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
         for k, z in zs.items():
             if k in sent and k not in values:
                 values[k] = z
-        rows = (encoded_message(claimcodec.pack_rows, [values[name] for name in verifier.tables]) if verifier.tables else b"")
+        rows = (encoded_message(claimcodec.pack_rows, [values[name] for name in verifier.tables])
+                if verifier.tables else b"")
         blob = encoded_message(claimcodec.encode, [values[op.name] for op in prover.graph.mat_ops
                                             if op.name in sent and op.name not in verifier.tables])
         proofs = prover.open_tables() if verifier.tables else {}
@@ -276,8 +284,8 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
         if verifier.mode == "C":
             cols = verifier.column_challenges(Challenger(seed=seed))
             units = verifier._column_units()
-            out["columns"] = claimcodec.field_size(sum(len(cols[name]) * sum(verifier.publics[m].n_rows for m in members)
-                                                       for name, members in units))
+            out["columns"] = claimcodec.field_size(sum(
+                len(cols[name]) * sum(verifier.publics[m].n_rows for m in members) for name, members in units))
             out["paths"] += HASH_BYTES * sum(multiproof_size(cols[name].tolist(), verifier._tree(name).depth)
                                              for name, _ in units)
         out["n_leaves"], out["n_instances"], out["table"] = plan.n_leaves(), len(plan.instances), plan.table_size()
@@ -304,11 +312,11 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     p = verifier.params
     tau, offsets = plan.table()
     cut_names = plan.names()
-    # ---------------------------------------------------------------- M1 (prover)
+    # ---------------------------------------------------------------- the values, exceptions, multiplicities (prover)
     query = passed(x)
     sync_device(prover.device)
     with _timed(out, "prove_forward"):
-        # as run_query's wire path: a lean GPU prover keeps each claim as int32 (``claimcodec.narrow``)
+        # as in the wire path of pvi.v0.query.run_query: a lean GPU prover keeps each claim as int32 (claimcodec.narrow)
         narrow = claimcodec.narrow if prover.lean and prover.device.type != "cpu" else None
         zs = prover.claims(query, send=narrow, to_host=False, **forward_kwargs)
         sync_device(prover.device)
@@ -316,11 +324,11 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     mult = torch.zeros(plan.table_size(), dtype=torch.int64, device=prover.device)
     with _timed(out, "prove_cut_split"):
         sent_vals = {}
-        for o in plan.ops:                  # on the prover's device (a lean prover's host claims go up op by op)
+        for o in plan.ops:                  # on the prover's device (a lean prover's host claims go up one by one)
             s, d, w, idx, ez, counts = cutmod.split_counts(zs[o.name].to(prover.device), o, offsets,
                                                            plan.table_size())
             mult += counts
-            witness[o.name] = (d.to(torch.int32).cpu(), w.to(torch.int32).cpu())     # |delta|, W < 2^17
+            witness[o.name] = (d.to(torch.int32).cpu(), w.to(torch.int32).cpu())     # 0 <= delta < W <= 2^16
             exc[o.name] = (idx.cpu(), ez.cpu())
             # where the prover keeps its claims (a lean one: the host, int32), so the encoder sees them all alike
             sent_vals[o.name] = s.to(zs[o.name].device, zs[o.name].dtype)
@@ -356,8 +364,8 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
             ch.absorb_large(b"cut/exc", exc_blob)
             ch.absorb_large(b"cut/mult", mult_blob)
 
-    # ---------------------------------------------------------------- M1 (verifier)
-    narrow = products.optimised()            # the cut ops' values kept as int8 (int16) once in range
+    # ---------------------------------------------------------------- the values, exceptions, multiplicities (verifier)
+    narrow = products.optimised()            # the cut operations' values kept as int8 (int16) once in range
     claims_v = decoded_claims(verifier, blob, rows, x, out, torch.int32 if narrow else torch.int64)
     if claims_v is None:
         return "range_or_shape"
@@ -396,7 +404,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     if mult_v is None or not logup.multiplicities_ok(mult_v, plan.table_size(), plan.n_leaves()):
         return "cut_multiplicities"
 
-    # ---------------------------------------------------------------- C1, M2
+    # ---------------------------------------------------------------- the logUp point and the GKR transcripts
     alpha = ch.ext("cut/alpha", nonbase=True)[0]
     chis = ({name: chi.to(vdev) for name, chi in verifier.fold_challenges(ch, x).items()}
             if verifier.mode == "C" else {})
@@ -406,7 +414,9 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         from pvi.v1 import gkr_triton
         on_gpu = gkr_triton.available(prover.device)
     if on_gpu:
-        torch.cuda.empty_cache()                       # the forward pass's cached blocks: the GKR needs ~160 B/leaf
+        # free the forward pass's cached blocks: the Triton GKR's fraction tree alone takes up to 128 bytes per leaf
+        # (numerators and denominators as 8 int32 planes each, over all its layers)
+        torch.cuda.empty_cache()
     with _timed(out, "prove_gkr"):
         trs = []
         for b, names in enumerate(plan.instances):
@@ -436,7 +446,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     if outs is None:
         return "cut_gkr"
 
-    # ---------------------------------------------------------------- M3 (prover)
+    # ---------------------------------------------------------------- the folds (prover)
     clear_rows = verifier._row_ops()
     col_cut = _cut_col_matrices(verifier, plan)
     with _timed(out, "prove_fold"):
@@ -459,12 +469,12 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         fold_blob = encoded_message(claimcodec.pack_field, parts)
     out["bytes"]["u"] = len(fold_blob)
 
-    # ---------------------------------------------------------------- M3 (verifier)
+    # ---------------------------------------------------------------- the folds (verifier)
     shapes = ([(p.reps, op.row_length) for op in clear_rows] if verifier.mode == "C" else [])
     shapes += [(8, _fold_len(verifier, plan, key, members)) for key, members in items]
     got = field_message(fold_blob, shapes, out, torch.int64)
     if got is None or not all(in_field(t) for t in got[len(order) if verifier.mode == "C" else 0:]):
-        # malformed, or a cut fold outside [0, p) (the clear ops' u are checked by freivalds): canonical encodings
+        # malformed, or a cut fold outside [0, p) (the clear operations' u are checked by (F1)): canonical encodings
         return "freivalds" if verifier.mode == "C" and clear_rows and got is None else "cut_final"
     us = {n: u.to(vdev) for n, u in zip(order, got[:len(order)])}
     cut_folds = dict(zip((key for key, _ in items), got[len(order):]))
@@ -507,7 +517,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     if verifier.mode != "C":
         return None
 
-    # ---------------------------------------------------------------- columns
+    # ---------------------------------------------------------------- the columns
     for key, members in items:
         planes = cut_folds[key].to(vdev)
         if plan.op(members[0]).layout == "row":
@@ -526,13 +536,13 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
 
 
 def _narrowed(plan, claims: dict) -> dict:
-    """V-V1N part 4: the decoded claims (int32) as the verifier keeps them: a cut op's sent values, when every one is
-    in the op's public range (a requant op's clamp, a residual op's ``R_Delta``; one exact min/max), in the narrowest
-    of int8 and int16 that holds them (a requant op's always fit int8); every other claim widened to int64 as the
-    decoder does.  A cut op with a value out of range, or one needing more than 16 bits, stays int64, so derive's
-    range check rejects it with the same label at the same point.  Derive then reads the narrow values, range-checks
-    them again and widens only the tensor their readers take; the exceptions and the final check read them as
-    they are."""
+    """The decoded claims (int32) as the optimised verifier keeps them: a cut operation's sent values, when every one
+    lies in the operation's public range (a requantisation's clamp, a residual operation's ``R_Delta``; one exact
+    min/max), in the narrowest of int8 and int16 that holds them (a requantisation's always fit int8); every other
+    claim widened to int64 as the decoder does.  A cut operation with a value out of range, or one needing more than
+    16 bits, stays int64, so that the range check (D1) of the derivation rejects it with the same label at the same
+    point.  The derivation then reads the narrow values, range-checks them again and widens only the tensor their
+    readers take; the exceptions and the final check read them as they are."""
     cut = {o.name: o for o in plan.ops}
     out = {}
     for name, z in claims.items():
@@ -550,7 +560,7 @@ def _narrowed(plan, claims: dict) -> dict:
 
 
 def _cut_col_matrices(verifier: Verifier, plan) -> dict:
-    """Mode C: the cut col matrices ``{name: members}``, in plan order."""
+    """Mode C: the cut transposed matrices ``{name: members}``, in plan order."""
     out = {}
     for o in plan.ops:
         if o.layout == "col":
@@ -559,8 +569,9 @@ def _cut_col_matrices(verifier: Verifier, plan) -> dict:
 
 
 def _fold_items(verifier: Verifier, plan, col_cut: dict) -> list[tuple[str, list[str]]]:
-    """The cut part of M3 in order: ``(key, members)``: a row op's ``u`` (mode C), a col matrix's ``y`` (its members'
-    rows together), every op's ``y`` (Kpre)."""
+    """The cut part of the fold message, in order, as ``(key, members)``: in mode C, the ``u`` of an operation in the
+    row layout and the ``y`` of a transposed matrix (its members' rows together); in Kpre, every operation's
+    ``y``."""
     items, seen = [], set()
     for o in plan.ops:
         if verifier.mode == "C" and o.layout == "col":
@@ -580,7 +591,8 @@ def _fold_len(verifier: Verifier, plan, key: str, members: list[str]) -> int:
 
 
 def _kpre_y_ok(verifier: Verifier, plan, ys: dict, xbars: dict) -> bool:
-    """Check F2 (``kpre_y``): ``chi_s y = u_s xbar`` in F for every cut op and every secret row."""
+    """Check (F2) (``kpre_y``): ``chi_s^T y = u_s xbar`` in ``F_{p^8}`` for every cut operation and every secret
+    vector ``chi_s`` with its folded row ``u_s``."""
     for o in plan.ops:
         chi_s, u_s = (t.cpu() for t in verifier._pre[o.name])
         y, xb = ys[o.name], xbars[o.name]
@@ -592,9 +604,9 @@ def _kpre_y_ok(verifier: Verifier, plan, ys: dict, xbars: dict) -> bool:
 
 
 def _lw_e_old(vals: torch.Tensor, idx: torch.Tensor, z: torch.Tensor, o, e: torch.Tensor, T: int):
-    """The baseline ``(L e, W e)`` ``[N, 8]`` of a cut op (also for spans past ``products.SPAN``):
-    ``[L ; W]`` gathered in float64 from the window table, one exact GEMM with ``e``'s limbs (``|L| < 2^29 + 2^16 <
-    2^30``, ``W <= 2^16``), in row blocks of :data:`_FINAL_ROWS`."""
+    """The baseline ``(L e, W e)`` ``[N, 8]`` of a cut operation (also for spans past ``pvi.v1.products.SPAN``):
+    ``[L ; W]`` gathered in float64 from the window table, one exact GEMM with ``e``'s limbs (by (D1), (D4) and (P3),
+    ``|L| < 2^29 + 2^16 < 2^30`` and ``W <= 2^16``), in row blocks of :data:`_FINAL_ROWS`."""
     le_parts, we_parts = [], []
     for r0 in range(0, o.n_rows, _FINAL_ROWS):      # row blocks: the window matrix stays in cache
         r1 = min(o.n_rows, r0 + _FINAL_ROWS)
@@ -611,11 +623,12 @@ def _lw_e_old(vals: torch.Tensor, idx: torch.Tensor, z: torch.Tensor, o, e: torc
 
 def _final_claims(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points):
     """Per instance, in order (a generator): ``(I(rho), q)``, the leaf layer's extensions at the GKR's final point
-    computed from the sent values, the exceptions and the folds, which check F3 compares with ``(P_hat, Q_hat)``:
-    ``q = alpha I - sum_l (S_l - chi (L e) + x chi (W e)) + (1 - I)``.  ``L e`` and ``W e`` ``[N, 8]`` are the
-    optimised verifier's products by value (:func:`products.lw_times`, the same integers), or :func:`_lw_e_old` for
-    the baseline verifier and for a residual op whose values span past ``products.SPAN``; then ``chi (L e)`` and
-    ``chi (W e)`` are inner products."""
+    computed from the sent values, the exceptions and the folds, which check (F3) compares with ``(P_hat, Q_hat)``:
+    ``q = alpha I - sum_l (S_l - chi (L e) + xi chi (W e)) + (1 - I)``, where ``S_l`` is ``u_l xbar_l`` in the row
+    layout of mode C and ``chi^T y_l`` otherwise.  ``L e`` and ``W e`` ``[N, 8]`` are the optimised verifier's
+    products by value (:func:`pvi.v1.products.lw_times`, the same integers), or :func:`_lw_e_old` for the baseline
+    verifier and for a residual operation whose values span past ``pvi.v1.products.SPAN``; ``chi (L e)`` and
+    ``chi (W e)`` are then inner products."""
     us_row = {}
     for key, members in items:
         o = plan.op(members[0])
@@ -641,9 +654,9 @@ def _final_claims(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys
 
 
 def _final_ok(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points) -> bool:
-    """Check F3 (``cut_final``): every instance's final claims are the leaf layer's extensions computed from the
-    sent values, the exceptions and the folds (:func:`_final_claims`), instance by instance up to the first that
-    is not."""
+    """Check (F3) (``cut_final``): every instance's final claims are the leaf layer's extensions computed from the
+    sent values, the exceptions and the folds (:func:`_final_claims`), instance by instance up to the first that is
+    not."""
     claims = _final_claims(verifier, plan, outs, alpha, values, exc, cut_folds, items, ys, xbars, points)
     for (i_b, want_q), (_, _, _, p_hat, q_hat) in zip(claims, outs):
         if not (ef.equal(p_hat, i_b) and ef.equal(q_hat, want_q)):

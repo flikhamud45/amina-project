@@ -1,32 +1,92 @@
 # `pvi`: the library
 
-| Module | What it implements | Paper |
-|---|---|---|
-| `nn/` | a network as a layered DAG: parent sets `G_j`, execution traces, the local relation `a_j = φ(Σ w_ij a_i)`; dense and convolutional layers; gradients | Sec. 3.2 |
-| `commitments/merkle.py` | Merkle vector commitment with position-bound openings | Sec. 3.2 |
-| `protocol/` | the path protocol of Anchuri et al.: `RandPathTest` path sampling, prover, verifier, commitments to the model and the trace | Sec. 3.2, 4.2 |
-| `attacks/` | the forgeries of Anchuri et al. (`baselines.py`), our single-neuron and stealthy tampering (`tamper.py`), and the trigger backdoor (`backdoor.py`) | Sec. 3.2, 4.2 |
-| `defences/` | the alternative path samplers (`sampling.py`) and the attacker that adapts to them (`adaptive.py`) | Sec. 3.3, 4.2 |
-| `experiments/analysis.py` | the exact probability that the path test accepts a given trace, under any sampler (a dynamic program over paths) | Sec. 4.2 |
-| `fullcheck/` | **our protocol**, basic and optimised: see below | Sec. 3.4–3.6, 4 |
-| `data.py`, `training.py`, `zoo.py`, `results.py` | MNIST loading, seeded training, the models and substitution settings, JSON output | |
+`pvi` implements both halves of the paper: the spot-checking verifiers that the attack breaks, and the fully sound
+defence, protocol v0 and its variant V1. The experiment scripts (`code/experiments/`) and the tests (`code/tests/`)
+import it; install it with `pip install -e .` from `code/`, or put `code/src` on `PYTHONPATH`. Each module's
+docstring states its exact semantics, bounds and soundness arguments; this file describes the package layout.
 
-`fullcheck/` (PyTorch; GPU optional):
+**`pvi.core`: integer arithmetic and integer computation graphs.** `field` implements the BabyBear prime field
+`p = 15 * 2**27 + 1`: reduction, the number-theoretic transform, Reed-Solomon encoding, and exact modular matrix
+products as float64 limb GEMMs, as their numpy form for small CPU operands, or as int8 GEMMs on GPU tensor cores.
+Every path returns the same canonical residues. `extfield` implements the degree-8 extension `F_p[x] / (x^8 - 11)`,
+from which V1 draws its challenges. `graph` defines the certified integer model of Sec. `sec:intmodel` as an
+ordered graph of weight operations (`MatOp`, a product with a committed matrix, computed exactly on any device) and
+cheap operations (`CheapOp`, recomputed by the verifier). Each cheap operation is a registered kind with a semantics
+version and explicit constants (`op_kind`, `OpFn`). The graph digest, a SHA-256 hash of the canonical description of
+the public graph, is the statement that Fiat-Shamir absorbs (Sec. `sec:fs`). `contention` records, around each timed
+phase, evidence that the phase ran on a quiet machine, and changes no timing, verdict or proof byte. `hostmem`
+allocates pinned host memory within the limits that the CUDA driver grants.
 
-| File | Contents |
-|---|---|
-| `field.py` | BabyBear field arithmetic, NTT and Reed–Solomon encoding, exact modular matrix products (on a GPU with int8 tensor cores, also as exact int8 GEMMs: `int8_*`) |
-| `commitment.py` | Merkle trees with multiproofs; the weight commitment (rows encoded, Merkle root over columns) and its column openings; the transposed and grouped commitments of the plans, and lookup tables (a tree over an embedding's rows) |
-| `graph.py` | integer computation graphs: weight operations (`MatOp`) and verifier-recomputed operations (`CheapOp`), exact GPU matrix products; the lean forward pass (dead tensors freed, claims streamed to the host); `PVI_LEGACY_WEIGHT_KEY=1` restores the weight cache of the earlier run `raw/`, for the benchmark's `_nofix` controls |
-| `quantize.py`, `models.py`, `datasets.py` | float CNN → int8 graph (per-channel weights, BatchNorm folded); the benchmarked CNNs and their data |
-| `transformer.py` | integer GPT-2/OPT/Llama/Qwen decoders (norms, GELU/SiLU tables, RoPE, integer softmax, causal attention); optionally the last block at the last position (`prune_last`) |
-| `protocol.py` | security parameters from λ (`params_for`), prover, verifier (modes C, K, Kpre; interactive or Fiat–Shamir; `lean=True` for the language models; `device="cuda"` for a verifier on a GPU (Table 3's GPU column), with Merkle hashing on the CPU, and `stream=True` for its streaming checks; a plan's col layouts and lookup tables; in K and Kpre optionally the verifier's own embedding rows, `lookups`), `run_query` |
-| `plans.py` | commitment plans for mode C (`policy=`): exact `t`, Merkle trees shared by matrices of one codeword length, per-op codeword lengths and layouts |
-| `pipeline.py` | the wire formats and claim uploads of the streaming GPU verifier |
-| `claimcodec.py` | the compact, lossless encoding of the proof (`run_query(wire=True)`) |
-| `contention.py` | measurement only: the evidence that a timed phase ran on a quiet machine (this process's run-queue wait and on-CPU time from `/proc/self/task/*/schedstat`, context switches, the load average), which `protocol.py` and `bench.py` record as each timing row's `contention` field; it changes no timing, verdict or proof byte |
-| `hostmem.py` | pinned host memory within what the driver grants: no single pinned allocation above 2 GiB (`PIN_MAX`; the L40S nodes' driver refuses more), pageable memory above that (the same values; copies to and from it wait for the device) |
-| `reference.py`, `opcount.py` | the straightforward code the verifier's fast routines are tested against; counting launched work (tests and benchmarks only) |
-| `sampling.py` | the original path test on the same integer graphs (the like-for-like baseline), with exact per-neuron detection |
-| `analytic.py` | decoder weight-op shapes and claim columns, without building the model; the expected multiproof size (for the records of `raw/`, which sent one path per column) and its analogue for a lookup table's rows (`expected_lookup_nodes`); a query's proof bytes (`proof_bytes`) and the commitment's setup size (`setup_size`) from the shapes alone, under the basic protocol's parameters or a commitment plan, in the default form or with `--wire` (the setup budget of `plans.py`'s `auto`, `bench.py`'s setup records, `6_improvements/plan_bytes.py` and `wire.py`) |
-| `real_weights.py` | integer OPT decoders built from real Hugging Face checkpoints (the same ops and shapes as `build_decoder`, LayerNorm folded into the next matrix; `prune_last` as there, with the constants of the unpruned graph), for the int8 perplexities of Sec. 4.1 (`experiments/2_attack/real_weights_ppl.py`) and the real-weight protocol runs (`experiments/6_improvements/perf.py --real`, `experiments/8_v1/v1_bytes.py --real`) |
+**`pvi.commit`: the commitment to the weights (Sec. `sec:commit`).** `commitment` implements SHA-256 Merkle trees with
+multiproofs and the Reed-Solomon column commitment of a matrix `[W | b]`: its rows are encoded and a Merkle tree binds
+its columns, and the prover recomputes an opened column from the weights. It also implements the transposed and
+grouped commitments of a commitment plan, and lookup tables, which are Merkle trees over an embedding's rows. `plans`
+computes the commitment plan of mode C: each weight operation's layout (row, col or lookup) and codeword length, the
+Merkle trees that matrices share, and the exact number of columns each tree opens. The plan follows a policy:
+`cnn18c` is the paper's configuration, and `per-op` (no plan, one tree per weight operation) is the library default.
+`setup_proof` implements the parameters, prover and verifier of the setup proof, which certifies an untrusted
+commitment (Sec. `sec:setup-proof`, Theorem `thm:untrusted`). `setup_cache` stores the prover's Merkle leaves, so
+that a later process can rebuild the same trees, after a spot check against the weights, without re-encoding the
+model. `cost` lists the weight-operation shapes of a decoder without building it, and gives the byte model of a
+query's proof and of the commitment's setup for models too large to run.
+
+**`pvi.v0`: protocol v0 (Sec. `sec:protocol`) and its non-interactive form (Sec. `sec:fs`).** `params` derives the
+security parameters from the level `lambda` (the Freivalds repetitions `r` and the opened columns `t`) and computes
+the soundness bound they give. `transcript` provides the verifier's randomness: interactive draws, or a Fiat-Shamir
+transcript, a domain-separated SHAKE-256 sponge over labelled, length-prefixed messages that absorbs large messages
+as a one-level tree. `graph_commitment` commits a graph's weights per operation or under a plan (`commit_graph`).
+`prover` computes the claims, the folded rows and the opened columns. `verifier` checks a proof in mode C, K or Kpre
+on the CPU or a GPU, optionally in a streaming form; `streaming` holds that form's wire formats and claim uploads.
+`query` runs one query end to end (`run_query`), with the absorption of the statement, the byte counts and the
+timings. `claimcodec` is the compact, lossless wire encoding of the claims (`PVC3`) and of field elements.
+`token_sampler` is the exact integer Gumbel-max sampler for generation with a seed chosen by the client
+(Sec. `sec:gen-sampling`).
+
+**`pvi.v1`: the V1 variant (Sec. `sec:v1`, Appendix `app:v1`).** For each cut weight operation, the prover sends the
+requantised int8 values instead of the int32 claims. It proves with a windowed logUp argument that each value lies
+in its window, and it proves the logUp sum with a fractional-sum GKR over the extension field. V1 needs no
+commitment beyond v0's. `cut` decides which operations are cut by the rules (P1)-(P5), and fixes their windows and
+the GKR instances. `logup` builds the table, the multiplicities, the leaves of an instance and the final identity.
+`gkr` implements the fractional-sum GKR prover and verifier. `gkr_triton` is the same prover in Triton, and its
+transcript is byte-identical. `products` computes by value the products that the verifier's final check needs.
+`protocol` runs a V1 query and implements the verifier's checks: (D1)-(D5), the GKR checks and (F1)-(F4).
+
+**`pvi.models`: the integer models.** `decoder` builds random-weight integer decoders with the shapes of GPT-2,
+OPT, Llama-2 and Qwen3 (`build_decoder`, `CONFIGS`), on which the cost measurements run, optionally with the last
+block evaluated at the last position only (except its keys and values). `hf_opt` and `hf_llama` build the certified
+integer models from Hugging Face checkpoints (OPT, and Llama and Qwen3). These models have the same graph as
+`decoder` and different constants (Sec. `sec:quality`). `cnn` defines the float image classifiers of the comparison
+benchmark. `quantize` converts a float CNN into an int8 integer graph, with per-channel weights and BatchNorm
+folded. `datasets` loads the image datasets of the benchmark.
+
+**`pvi.kernels`: accelerated exact kernels.** `native` holds C++/OpenMP kernels for a CPU verifier and for integer
+re-execution: causal attention, the cheap operations, the int8 GEMM, field products, decoding of the claim encoding,
+and V1's window-table products. The library is compiled once per host and loaded with ctypes. `attention_triton` is
+the fused exact causal attention on a GPU. `codec_triton` holds the fused kernels of the claim encoder on a GPU.
+Each kernel computes the same integers as the torch code it replaces. Without a compiler or Triton, or with its
+option off, the torch path runs.
+
+**`pvi.baseline`: the spot-checking verifiers that the attack targets (Sec. `sec:path`, `sec:sampling`).** `path` is
+the path protocol of Anchuri et al. on float MLPs: commitments to the model and to the trace, messages, prover,
+verifier and the `RandPathTest` path sampler. `path_int` runs the same test on the integer CNN graphs of
+`pvi.models`, as the like-for-like baseline of the benchmark, with exact per-neuron detection probabilities.
+`samplers` implements the value-aware path samplers, and `adaptive` implements the adversary that adapts to them.
+`analysis` computes the exact probability that the path test accepts a given trace under any sampler.
+
+**`pvi.attacks`: the attacks on the path test (Sec. `sec:path`, `sec:break`).** `tamper` implements single-neuron
+trace tampering, and `backdoor` implements the trigger backdoor that the path test certifies. `baselines` reproduces
+the forgeries with which Anchuri et al. evaluate their protocol (gradient-descent reconstruction, layer injection,
+inverse transform and logit swap), which the path test rejects.
+
+**`pvi.mnist`: the MNIST networks of the attack experiments.** `architecture` represents a network as the layered
+DAG of the path protocol (parent sets `G_j`, the local relation `a_j = phi(sum w_ij a_i)`), and `network` represents
+its execution traces. `data` loads MNIST and its class subsets, and `training` provides seeded training through
+`models`, the PyTorch bridge. `gradients` computes the output's sensitivity to an internal activation. `zoo` defines
+the models and the model-substitution settings.
+
+**`pvi.options`: the implementation options.** Each option chooses one of several equivalent code paths: native or
+torch kernels, the fused GPU kernels, GPU or host decoding, int8 GEMMs, the hash threads of the tree absorption, and
+V1's optimised or baseline verifier. Every path gives the same integers, bytes and verdicts, and only time and memory
+change. An option is set for the process (`options.configure`) or for a block (`with options.using(...)`). Every
+script exposes each option as a command-line flag and records `options.describe()`. Three environment variables
+name places on the host and select no code path: `CXX`, `PVI_NATIVE_DIR` and `PVI_PY_INCLUDE`.

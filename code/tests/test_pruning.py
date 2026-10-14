@@ -1,9 +1,9 @@
 """Last-block pruning: ``build_decoder(..., prune_last=True)`` builds the last block at the last position
 (k and v at every position, which its one query row attends to), with the logits of the whole block.
 
-Its pieces: attention of the queries of the last positions (``transformer.integer_attention``,
-``_attention_heads``: the last rows of the causal mask), RoPE at an offset, and the shapes of the
-pruned graph (``analytic.decoder_shapes`` / ``decoder_claim_columns(..., prune_last=True)``).  The
+Its pieces: attention of the queries of the last positions (``pvi.models.decoder.integer_attention``,
+``_attention_heads``: the last rows of the causal mask), RoPE at an offset, and the shapes of the pruned graph
+(``pvi.commit.cost.decoder_shapes`` / ``decoder_claim_columns(..., prune_last=True)``).  The
 protocol runs pruned decoders in ``tests/test_plans.py`` (every plan, the forgeries, the GPU forms, the
 byte model) and ``tests/test_lookups.py``.
 """
@@ -17,7 +17,7 @@ import torch
 
 import pvi.v0 as proto
 import reference as ref
-from pvi.commit import cost as analytic
+from pvi.commit import cost
 from pvi.models import decoder as tr
 from pvi.models.decoder import CONFIGS, build_decoder
 from test_plans import _TINY, _planned, _verifiers  # the plan tests' tiny decoders and helpers
@@ -40,10 +40,10 @@ def test_a_pruned_decoder_gives_the_same_logits(kind):
         x = torch.randint(0, cfg.vocab, (1, t), generator=torch.Generator().manual_seed(t))
         (env_a, claims_a), (env_b, claims_b) = full.forward(x), pruned.forward(x)
         assert torch.equal(env_a[full.output_name], env_b[pruned.output_name])
-        cols = analytic.decoder_claim_columns(cfg, t, layers, prune_last=True)
+        cols = cost.decoder_claim_columns(cfg, t, layers, prune_last=True)
         assert [z.shape for z in claims_b.values()] == [(s.n_rows, cols[s.name])
-                                                        for s in analytic.decoder_shapes(cfg, layers, True)]
-        assert [s.row_length for s in analytic.decoder_shapes(cfg, layers, True)] == [
+                                                        for s in cost.decoder_shapes(cfg, layers, True)]
+        assert [s.row_length for s in cost.decoder_shapes(cfg, layers, True)] == [
             op.row_length for op in pruned.mat_ops]
         assert (sum(z.numel() for z in claims_b.values()) < sum(z.numel() for z in claims_a.values())) == (t > 1)
         assert pruned.claim_columns(x) == [z.shape[1] for z in claims_b.values()]
@@ -52,15 +52,17 @@ def test_a_pruned_decoder_gives_the_same_logits(kind):
 def test_the_pruned_shapes_read_the_last_position_in_the_last_block_only():
     cfg = CONFIGS["llama2-7b"]
     for layers in (1, 2, None):
-        shapes = analytic.decoder_shapes(cfg, layers, prune_last=True)
+        shapes = cost.decoder_shapes(cfg, layers, prune_last=True)
         last = (layers or cfg.n_layers) - 1
         reads = {s.name: s.input for s in shapes}
         assert reads[f"q{last}"] == f"attn_last{last}" and reads[f"k{last}"] == reads[f"v{last}"] == f"attn_in{last}"
         assert all(reads[f"q{i}"] == reads[f"k{i}"] for i in range(last))
-        cols = analytic.decoder_claim_columns(cfg, 64, layers, prune_last=True)
-        assert {n for n, c in cols.items() if c == 1} == {f"{p}{last}" for p in ("q", "o", "gate", "up", "down")} | {"head"}
-        unpruned = analytic.decoder_shapes(cfg, layers)
-        assert [(s.name, s.n_rows, s.row_length) for s in shapes] == [(s.name, s.n_rows, s.row_length) for s in unpruned]
+        cols = cost.decoder_claim_columns(cfg, 64, layers, prune_last=True)
+        assert {n for n, c in cols.items() if c == 1} == ({f"{p}{last}" for p in ("q", "o", "gate", "up", "down")}
+                                                          | {"head"})
+        unpruned = cost.decoder_shapes(cfg, layers)
+        assert [(s.name, s.n_rows, s.row_length) for s in shapes] == [(s.name, s.n_rows, s.row_length)
+                                                                       for s in unpruned]
 
 
 @pytest.mark.parametrize("m_s", [1 << 20, 1000])          # the int32 path and its int64 fallback

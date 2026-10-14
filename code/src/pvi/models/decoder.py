@@ -4,7 +4,9 @@ These are used for *cost* measurements on the language models the literature
 benchmarks.  Weights are random int8 -- the prover's and verifier's work, and
 the proof size, depend only on the shapes, never on the weight values (the same
 methodology Slalom used for its untrained ResNets).  Because the pretrained
-checkpoints are not used, no fidelity (perplexity) claim is made for them.
+checkpoints are not used, no fidelity (perplexity) claim is made for them; the certified
+models built from the checkpoints, with the same graph, are :mod:`pvi.models.hf_opt` and
+:mod:`pvi.models.hf_llama`.
 
 Integer semantics (both parties compute these identically):
 
@@ -48,19 +50,20 @@ ATTN_BYTES = 1 << 27
 """Budget for one ``[B, heads, T, T]`` score tensor (heads are grouped to fit): int32 scores
 on the int32 path of :func:`_attention_heads`, int64 ones on its fallback."""
 EXP_TABLE = torch.tensor([round((1 << 15) * math.exp(-i / 16.0)) for i in range(256)], dtype=torch.int64)
+"""The softmax's exponential: ``EXP_TABLE[i] = round(2**15 exp(-i / 16))``, a score gap of ``i`` sixteenths of a nat."""
 _EXP_ZERO = 178
-PROB_MAX = 255
-"""The attention probabilities' scale: ``p = round(PROB_MAX e / tot)``, 0..PROB_MAX (8 bits).  A graph may use another
-``pmax`` (Plan 2 F2a: 2047, 11 bits, which keeps a long row's probability mass; ``build_decoder(prob_max=...)``); it is a
-public constant of the attention op, bound by the graph digest whenever it differs from this default."""
-CERTIFIED_PROB_MAX = 2047
-"""The scale of the certified models built from real checkpoints (``real_weights.build_opt_from_hf``,
-``real_llama.build_llama_from_hf``): 11-bit probabilities, adopted by Plan 2 F2a's rule (the 8-bit cost at 2,048
-tokens on the full WikiText-2 test set was 2.4% on OPT-6.7B and 5.5% on OPT-1.3B, above the 1% threshold; 11 bits
-reach the ideal softmax).  The random-weight benchmark graphs keep :data:`PROB_MAX` (same shapes, same costs), so
-the stored benchmark records stay valid."""
 """``EXP_TABLE[i] == 0`` exactly for ``i >= _EXP_ZERO``."""
 assert int(EXP_TABLE[_EXP_ZERO - 1]) > 0 and not bool(EXP_TABLE[_EXP_ZERO:].any())
+PROB_MAX = 255
+"""The attention probabilities' scale: ``p = round(PROB_MAX e / tot)``, 0..PROB_MAX (8 bits).  A graph may use another
+``pmax`` (``build_decoder(prob_max=...)``, at most 2047; e.g. :data:`CERTIFIED_PROB_MAX`, 11 bits, which keeps more
+of a long row's probability mass); it is a public constant of the attention op, which the graph digest binds."""
+CERTIFIED_PROB_MAX = 2047
+"""The probabilities' scale of the certified models built from real checkpoints
+(:func:`pvi.models.hf_opt.build_opt_from_hf`, :func:`pvi.models.hf_llama.build_llama_from_hf`): 11 bits.  Measured on
+the full WikiText-2 (raw) test split in 2,048-token windows, 8-bit probabilities raise the perplexity by 2.4% on
+OPT-6.7B and by 5.5% on OPT-1.3B, while 11-bit ones reach the perplexity of the exact softmax.  The random-weight
+benchmark graphs keep :data:`PROB_MAX`: the scale changes no shape, so neither the proof's size nor its cost."""
 _MASKED = -(1 << 30)
 """The int32 path's score of a masked entry: below every real score (``|s| <= 2**21``)."""
 _LUT_MAX = 1 << 22
@@ -102,7 +105,7 @@ CONFIGS = {
     "qwen3-4b": DecoderConfig("qwen3-4b", 2560, 36, 32, 8, 128, 9728, 151936, norm="rmsnorm",
                               mlp="swiglu", pos="rope", rope_theta=1e6, bias=False, tied=True,
                               qk_norm=True, max_pos=40960),
-    # the real-weight quality ladder (plan 2, F2b-Q/F2b-L; real_llama.py): Qwen3-0.6B/1.7B-Base and TinyLlama_v1.1
+    # shapes of real checkpoints of the quality study (pvi.models.hf_llama): Qwen3-0.6B/1.7B-Base and TinyLlama_v1.1
     "qwen3-0.6b": DecoderConfig("qwen3-0.6b", 1024, 28, 16, 8, 128, 3072, 151936, norm="rmsnorm",
                                 mlp="swiglu", pos="rope", rope_theta=1e6, bias=False, tied=True,
                                 qk_norm=True, max_pos=32768),
@@ -111,7 +114,8 @@ CONFIGS = {
                                 qk_norm=True, max_pos=32768),
     "tinyllama-1.1b": DecoderConfig("tinyllama-1.1b", 2048, 22, 32, 4, 64, 5632, 32000, norm="rmsnorm",
                                     mlp="swiglu", pos="rope", bias=False, tied=False, max_pos=2048),
-    # the largest shapes of the sampled/zk literature (the report builds them with 1 and 2 blocks only)
+    # the largest shapes of the sampled and zero-knowledge literature (build_decoder(..., n_layers=) builds a few
+    # of their blocks; decoder_param_count gives the full model's size)
     "opt-30b": DecoderConfig("opt-30b", 7168, 48, 56, 56, 128, 28672, 50272, mlp="relu"),
     "opt-66b": DecoderConfig("opt-66b", 9216, 64, 72, 72, 128, 36864, 50272, mlp="relu"),
     "llama2-70b": DecoderConfig("llama2-70b", 8192, 80, 64, 8, 128, 28672, 32000, norm="rmsnorm",
@@ -136,18 +140,18 @@ def decoder_param_count(cfg: DecoderConfig) -> int:
 
 
 # The cheap ops below compute the integers of the straightforward formulas (kept in
-# ``reference.py``) with fewer passes: fused multiply-adds, in-place steps on fresh
-# tensors, flat gathers and cached tables.  Integer arithmetic is exact (int64 wraps
-# identically in any order), so every output is the same tensor.
+# ``tests/reference.py``, which the tests compare against) with fewer passes: fused
+# multiply-adds, in-place steps on fresh tensors, flat gathers and cached tables.  Integer
+# arithmetic is exact (int64 wraps identically in any order), so every output is the same tensor.
 
 def _isqrt(s: torch.Tensor) -> torch.Tensor:
     """``max(1, floor(sqrt(s)))``: a float64 root, then one integer correction each way.
 
     The (tiny, one entry per row) CPU tensors go through numpy: the same correctly rounded
-    IEEE root and the same corrections, at a third of the call cost.  A negative ``s`` (an
+    IEEE root and the same corrections, at a fraction of the call cost.  A negative ``s`` (an
     int64 sum of squares that wrapped, which only adversarial claims reach) takes the torch
-    steps, those of ``reference.isqrt``: its root is NaN, which numpy would warn about and
-    cast to an integer by its own rules."""
+    steps, those of ``tests/reference.py``'s ``isqrt``: its root is NaN, which numpy would warn
+    about and cast to an integer by its own rules."""
     n = s.numpy() if s.device.type == "cpu" and s.dtype == torch.int64 else None
     if n is not None and (n.size == 0 or n.min() >= 0):
         r = np.floor(np.sqrt(n.astype(np.float64))).astype(np.int64)
@@ -312,7 +316,7 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1, pmax: int = PROB_MAX) -> t
     key/value head stacked along the rows (grouped-query attention), where every row is the same dot
     products and the same row-wise softmax as with ``k, v`` repeated.
     Runs in int32 (:func:`_attention_core`) where :func:`_int32_scores` allows, else in
-    int64; both give the integers of ``reference.attention_heads(..., m_o=None, pmax)``."""
+    int64; both give the integers of ``tests/reference.py``'s ``attention_heads(..., m_o=None, pmax)``."""
     t, dh = k.shape[2], k.shape[3]
     dev = str(q.device)
     if _int32_scores(m_s, dh, t):
@@ -327,7 +331,7 @@ def _attention_heads(q, k, v, m_s: int, rep: int = 1, pmax: int = PROB_MAX) -> t
 
 
 def integer_attention(q, k, v, m_s: int, m_o: int | None, n_heads: int, n_kv: int, dh: int,
-               pmax: int = PROB_MAX) -> torch.Tensor:
+                      pmax: int = PROB_MAX) -> torch.Tensor:
     """Integer causal attention.  q ``[B,Tq,Hq*dh]`` (the queries of the last ``Tq <= T`` positions),
     k/v ``[B,T,Hkv*dh]`` -> ``[B,Tq,Hq*dh]``.
 
@@ -386,7 +390,7 @@ def _last_positions(a: torch.Tensor, n: int) -> torch.Tensor:
     return a[:, -n:, :].contiguous()
 
 
-# ------------------------------------------------------------------- the decoders' cheap ops (graph.op_kind)
+# ------------------------------------------------------------- the decoders' cheap ops (pvi.core.graph.op_kind)
 @op_kind("last_position/1")
 def last_position_op(a: torch.Tensor) -> torch.Tensor:
     """``[B, T, d] -> [B, 1, d]``: the last position."""
@@ -439,8 +443,8 @@ def rope_tail_op(a: torch.Tensor, x: torch.Tensor, *, heads: int, dh: int, theta
 @op_kind("attention/1")
 def attention_op(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, m_s: int, m_o: int, heads: int,
                  kv_heads: int, dh: int, pmax: int) -> torch.Tensor:
-    """Integer causal attention (:func:`integer_attention`) with the scores' and the output's multipliers and ``pmax``-level
-    probabilities."""
+    """Integer causal attention (:func:`integer_attention`) with the scores' and the output's multipliers and
+    ``pmax``-level probabilities."""
     return integer_attention(q, k, v, m_s, m_o, heads, kv_heads, dh, pmax)
 
 
@@ -451,7 +455,8 @@ def lut_op(a: torch.Tensor, *, table: torch.Tensor) -> torch.Tensor:
 
 
 def with_lm_positions(graph: IntGraph, n: int) -> IntGraph:
-    """``graph`` (a decoder of :func:`build_decoder` or ``real_weights``) with its logits at the last
+    """``graph`` (a decoder of :func:`build_decoder`, :func:`pvi.models.hf_opt.build_opt_from_hf` or
+    :func:`pvi.models.hf_llama.build_llama_from_hf`) with its logits at the last
     ``n`` positions instead of the last one: every "last position" slice -- before the LM head, and in
     a pruned last block -- takes the last ``n``.  The ops, weights and multipliers are ``graph``'s.
 
@@ -459,7 +464,7 @@ def with_lm_positions(graph: IntGraph, n: int) -> IntGraph:
     at position ``T - n + j`` are those that ``graph`` gives on the prefix ``x[:, :T - n + j + 1]``.  A
     query is then a prompt followed by the ``n - 1`` tokens generated after it, proved as one prefill:
     ``meta["lm_positions"] = n`` makes the verifier check that each of those tokens is the greedy choice
-    of the logits before it (:meth:`protocol.Verifier.check_tokens`), and the last logits give token
+    of the logits before it (:meth:`pvi.v0.verifier.Verifier.check_tokens`), and the last logits give token
     ``n``."""
     if n < 1:
         raise ValueError("at least one position")
@@ -523,7 +528,7 @@ class _Builder:
         return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note, params=params or {}))
 
     def requant(self, prefix, inputs, note, **params):
-        """A requantising consumer of a weight op (:func:`graph.requant_fn`, so V1 can cut it)."""
+        """A requantising consumer of a weight op (:func:`pvi.core.graph.requant_fn`, so V1 can cut it)."""
         return self.cheap(prefix, inputs, requant_fn(params), note, {"requant": params})
 
     def last(self, name, *, calibrate_all=False):
@@ -563,8 +568,9 @@ def build_decoder(cfg: DecoderConfig, *, n_layers: int | None = None, calib_toke
     -- k and v at every position, which its one query row attends to -- since only that position
     reaches the logits; those ops claim one column instead of ``T``.  The pruned block is
     calibrated on every position (:meth:`_Builder.last`), so the graph has the weights and
-    multipliers of the graph without pruning, and gives the same logits (tested).  ``prob_max``: the attention
-    probabilities' scale (:data:`PROB_MAX`); the output multiplier is calibrated on the raw ``P V`` at that scale.
+    multipliers of the graph without pruning, and gives the same logits (``tests/test_pruning.py``).  ``prob_max``:
+    the attention probabilities' scale (:data:`PROB_MAX`); the output multiplier is calibrated on the raw ``P V`` at
+    that scale.
     """
     assert 1 <= prob_max <= 2047, prob_max         # the kernels' exactness bounds (_int32_scores, P V < 2**24)
     layers = cfg.n_layers if n_layers is None else n_layers

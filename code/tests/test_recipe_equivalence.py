@@ -1,12 +1,11 @@
 """The OPT recipes and the extended version's variants of ``pvi.models.hf_opt.build_opt_from_hf`` on a tiny OPT whose
 weights are drawn by Python's ``random`` (independent of the transformers version's initialisation).
 
-* Stored expectations: the certified recipe, the earlier recipes (norm gain 4; alpha 0.55 with percentile
-  statistics), the per-row power-of-two weight scales (``row_pow2``) and cross-layer equalisation (``cle_mlp``) build
-  the integer graphs whose fingerprints are stored here -- the graph digest, every weight and bias, the logit scale
-  and the integer logits at every position of a fixed query.  The variants' values were checked equal, integer for
-  integer, to those of the recipe-search builder they come from (the source of the extended version's per-row and
-  equalisation numbers) before it was merged into ``hf_opt``.
+* Stored expectations: the certified recipe, the superseded recipes (the scalar norm gain 4; the legacy recipe, alpha
+  0.55 with percentile statistics), the per-row power-of-two weight scales (``row_pow2``) and cross-layer
+  equalisation (``cle_mlp``) build the integer graphs whose fingerprints are stored here -- the graph digest, every
+  weight and bias, the logit scale and the integer logits at every position of a fixed query.  The two variants are
+  those of the extended version's per-row and equalisation numbers.
 * Against the certified path: the variants' options at their defaults give the certified graph; a per-row graph keeps
   the benchmark graph's structure, its vector multipliers take at most ``row_pow2`` values a power of two apart, and
   protocol v0 accepts it and rejects a tampered claim; equalisation changes fc1 and fc2 only.

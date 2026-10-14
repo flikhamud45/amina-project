@@ -1,10 +1,10 @@
 """The straightforward definitions the fast verifier routines are tested against.
 
 The verifier's modular products, codeword evaluation, right-hand sides, range checks,
-leaf hashing, checks and cheap operations were rewritten for speed (fewer passes,
-batched products, numpy for small operands).  This module keeps the code they replaced
-as the specification (attention without grouping the heads, which gives the same
-integers): ``tests/test_fast_verifier.py`` checks that every fast routine returns the
+leaf hashing, checks and cheap operations are implemented for speed (fewer passes,
+batched products, numpy for small operands).  This module states each of them in its
+direct form, as the specification (attention without grouping the heads, which gives the
+same integers): ``tests/test_fast_verifier.py`` checks that every fast routine returns the
 same integers, and the checks the same verdicts, on edge values and on real graphs.
 Nothing in the protocol calls it.
 """
@@ -129,7 +129,7 @@ def column_operands(verifier, claims, inputs, chis, us) -> tuple[dict, dict]:
 
 
 def _as_columns(openings: dict) -> dict:
-    """Wire openings (the int32 rows ``[t, N]`` of ``pipeline.wire_openings``) as the int64 columns
+    """Wire openings (the int32 rows ``[t, N]`` of ``pvi.v0.streaming.wire_openings``) as the int64 columns
     ``[N, t]`` they hold; ``None`` (not representable) as an empty, malformed opening, and anything
     but a pair unchanged."""
     out = {}

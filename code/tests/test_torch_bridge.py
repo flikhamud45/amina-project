@@ -1,9 +1,9 @@
-"""The PyTorch module and the traced network must compute the same function.
+"""The PyTorch module and the traced NumPy network of ``pvi.mnist`` compute the same function: the same outputs and
+predictions, the extracted parameters equal to the module's, the trace's final layer equal to the output, saving and
+loading round-trip, and extra parameters refused.
 
-Training happens in PyTorch; committing and tracing happen in NumPy.  If the two
-drifted apart, we would be training one model and publishing a commitment to
-another -- a silent, and rather embarrassing, form of exactly the substitution the
-protocol is meant to detect.
+Training runs in PyTorch; committing and tracing run in NumPy.  If the two differed, the trained model and the
+committed one would be different models -- the substitution the protocol is meant to detect.
 """
 
 from __future__ import annotations

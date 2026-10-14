@@ -5,8 +5,9 @@ weight matrix ``A`` (with the bias as its last column) learn ``u = chi^T A`` for
 a challenge ``chi`` of its choice, without ever seeing ``A``:
 
 1. The committer Reed--Solomon encodes every row of ``A`` (length ``k``) into a
-   codeword of length ``n = rate * next_pow2(k)`` and Merkle-commits the
-   *columns* of the encoded matrix ``E``.
+   codeword of length ``n`` (``rate * next_pow2(k)`` for the per-op commitment; a
+   commitment plan, :mod:`pvi.commit.plans`, chooses other lengths) and
+   Merkle-commits the *columns* of the encoded matrix ``E``.
 2. At query time the prover sends ``u``.  The verifier re-encodes ``u`` itself
    and spot-checks ``t`` random columns: each must satisfy
    ``<chi, E[:, c]> == Enc(u)[c]``.
@@ -16,9 +17,10 @@ gives a codeword that differs from ``Enc(chi^T A)`` in at least ``n - k + 1``
 positions, so each random column catches it with probability at least
 ``(n - k + 1) / n``; ``t`` distinct columns leave it at most ``((k-1)/n)**t``.
 
-As in the base protocol, the committed model is the agreed ground truth (the
-paper's ``C_M``), so the committer is honest and no proximity test is needed
-(report, Theorem 3.2).
+The soundness theorem (Theorem ``thm:sound``) takes the commitment ``C_M`` to be
+computed honestly from the weights, so no proximity test is part of a query; a
+commitment from an untrusted committer is certified once by the setup proof
+(:mod:`pvi.commit.setup_proof`, Theorem ``thm:untrusted``).
 
 The prover does not keep the encoded matrix.  An opened column is recomputed
 from the weights with one small matrix product (``A @ V[:, C]`` for the
@@ -114,9 +116,8 @@ def row_leaves(tag: bytes, indices: list[int], rows: np.ndarray) -> dict[int, by
 
 LEAF_THREAD_BYTES = 1 << 14
 """Columns of at least this many bytes are hashed on threads (:func:`map_threaded`): ``hashlib``
-releases the GIL while it hashes more than 2 KiB, but below ~16 KiB per column the threads'
-overhead outweighs the gain (laptop: 4 threads are 1.6x faster at 16 KiB, 2.9x at 125 KiB,
-and slower at 12 KiB)."""
+releases the GIL while it hashes more than 2 KiB, but below about 16 KiB per column the threads'
+overhead outweighs the gain (an empirical threshold: it changes the speed only, never a digest)."""
 _THREAD_POOLS: dict = {}
 
 
@@ -231,8 +232,8 @@ def verify_multiproofs(jobs: list, workers: int = 1) -> list[tuple[bool, Excepti
     proof)`` job, in order.
 
     SHA-256 of a 72-byte node holds the GIL, so threads cannot share this work.  With the option
-    ``merkle_processes`` (:mod:`pvi.options`; off by default), ``workers > 1`` and enough hashes, the jobs go to ``workers``
-    worker processes in batches balanced by proof length.  A batch that does not reach a
+    ``merkle_processes`` (:mod:`pvi.options`; off by default), ``workers > 1`` and enough hashes, the jobs go
+    to ``workers`` worker processes in batches balanced by proof length.  A batch that does not reach a
     worker or come back (a proof entry that cannot be pickled, a pool that broke) is checked
     in this process instead, so every result is the same function of the same job.
     """
@@ -299,7 +300,8 @@ def codeword_at(u: torch.Tensor, n_points: int, columns: torch.Tensor) -> torch.
     ceil(k / S)``), ``Enc(u)[c] = sum_a w**(a S c) sum_b u[a S + b] w**(b c)``.  The inner
     sums are one limb product with an ``S x t`` table of powers, the outer sum an
     elementwise product with a ``G' x t`` table: ``(S + G') t`` table entries instead of
-    the ``k t`` of the Vandermonde block (69x fewer for GPT-2's embedding).
+    the ``k t`` of the Vandermonde block (for GPT-2's embedding, ``k = 50257``, ``S = 256`` and
+    ``G' = 197``: about 111x fewer).
     """
     r, k = u.shape[-2], u.shape[-1]
     s = 1 << (max(k, 1).bit_length() + 1) // 2          # a power of two >= sqrt(k)

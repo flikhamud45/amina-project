@@ -1,12 +1,12 @@
 """The attention probabilities' scale ``pmax``: ``p = round(pmax e / tot)``, 0..pmax.
 
-The random-weight benchmark graphs use :data:`decoder.PROB_MAX` = 255 (8 bits); the certified models use
-:data:`decoder.CERTIFIED_PROB_MAX` = 2047 (11 bits), which keeps a long row's probability mass. Here: every torch path
-of :func:`decoder.integer_attention` gives ``reference.attention``'s integers at both scales (the int32 path, the int64
-fallback, grouped-query attention, queries of the last positions only, the output requantisation);
-``build_decoder(prob_max=255)`` is the default graph, digest included, and another scale is bound by the digest; the
-probability-mass diagnostic (``hf_opt.attention_mass``) reads the probabilities the reference computes; and a 2047
-decoder is proved and its tampered claims rejected like any other.
+The random-weight benchmark graphs use :data:`pvi.models.decoder.PROB_MAX` = 255 (8 bits); the certified models use
+:data:`pvi.models.decoder.CERTIFIED_PROB_MAX` = 2047 (11 bits), which keeps a long row's probability mass. Checked:
+every torch path of :func:`pvi.models.decoder.integer_attention` gives ``reference.attention``'s integers at both
+scales (the int32 path, the int64 fallback, grouped-query attention, queries of the last positions only, the output
+requantisation); ``build_decoder(prob_max=255)`` is the default graph, digest included, and another scale is bound by
+the digest; the probability-mass diagnostic (``pvi.models.hf_opt.attention_mass``) reads the probabilities the
+reference computes; and a 2047 decoder is proved and its tampered claims rejected like any other.
 """
 
 from __future__ import annotations

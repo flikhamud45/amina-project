@@ -1,13 +1,14 @@
-"""Wire messages of the three-round protocol of Definition 4.
+"""Wire messages of the three-round protocol (Definition 4 of Anchuri et al.).
 
-Round 1 (prover): the claimed output and a commitment to the trace.
+Round 1 (prover): the claimed output and a commitment to the trace (:class:`Round1`).
 Round 2 (verifier): a random challenge ``rho``.
-Round 3 (prover): the openings the challenge asks for.
+Round 3 (prover): the openings the challenge asks for (:class:`Round2`, the prover's
+second message).
 
 Keeping the messages as explicit data classes rather than passing objects around
 makes it structurally impossible for the verifier to read something the prover did
-not actually send -- which, in a study whose whole point is what a verifier can
-and cannot see, is worth the small amount of ceremony.
+not actually send -- which, when the question is what a verifier can and cannot
+see, is worth the small amount of ceremony.
 """
 
 from __future__ import annotations

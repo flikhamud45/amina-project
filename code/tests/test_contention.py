@@ -2,11 +2,12 @@
 
 The run-queue wait and on-CPU time of the process's threads (``/proc/self/task/*/schedstat``), the load
 average at a phase's start and end and the context switches are recorded next to each timed phase of
-``run_query``, the commitment, the build and the Kpre precomputation, and ``bench.py`` writes them as a
-new ``contention`` field of the timing rows.  These tests check the arithmetic on a fake ``/proc``, that
-nothing breaks without ``/proc`` (Windows, macOS), that the verdicts, labels and bytes of a query do not
-depend on the logging, and that the readers of the raw records (aggregate.py, fingerprint_check.py,
-count_outcomes.py) give exactly what they gave without the field.
+``run_query``, the commitment, the build and the Kpre precomputation, and ``experiments.costs.bench``
+writes them as the ``contention`` field of the timing rows.  These tests check the arithmetic on a fake
+``/proc``, that nothing breaks without ``/proc`` (Windows, macOS), that the verdicts, labels and bytes of a
+query do not depend on the logging, and that the readers of the raw records (``aggregate``,
+``fingerprint_check`` and ``count_outcomes`` of ``experiments.comparison``) give exactly what they give
+on the same records without the field.
 """
 
 from __future__ import annotations
@@ -174,7 +175,7 @@ def test_a_tampered_query_is_rejected_at_the_same_check(monkeypatch):
         assert res["bytes"] == off["bytes"]
 
 
-# ---------------------------------------------------------------- bench.py records and their readers
+# ---------------------------------------------------------------- experiments.costs.bench records and their readers
 def _bench_run(monkeypatch, root: Path):
     from experiments.common import models
     from experiments.costs import bench
@@ -194,7 +195,7 @@ def _bench_run(monkeypatch, root: Path):
 
 
 def _strip(root: Path, out: Path) -> None:
-    """A copy of the raw tree without the new field."""
+    """A copy of the raw tree without the ``contention`` field."""
     for p in root.rglob("*"):
         q = out / p.relative_to(root)
         if p.is_dir():
@@ -218,7 +219,7 @@ def test_bench_writes_the_field_on_every_timing_row_and_the_readers_ignore_it(mo
     names = {r["metric"] for r in timed if "contention" in r}
     assert {"commit_total", "build_graph", "verifier_precompute", "prove_encode", "verify_decode"} <= names
     assert any(r.get("batch") == 2 and "contention" in r for r in timed)
-    # aggregate.py: the same summary and full-model rows as without the field
+    # experiments.comparison.aggregate: the same summary and full-model rows as without the field
     stripped = tmp_path / "raw_stripped"
     _strip(root, stripped)
     from experiments.comparison import aggregate as agg
@@ -232,7 +233,7 @@ def test_bench_writes_the_field_on_every_timing_row_and_the_readers_ignore_it(mo
     assert out["with"] == out["without"] and out["with"][0]
     assert (tmp_path / "tables_with" / "measured_summary.csv").read_bytes() == \
         (tmp_path / "tables_without" / "measured_summary.csv").read_bytes()
-    # fingerprint_check.py and count_outcomes.py: the same facts, and the check passes
+    # fingerprint_check and count_outcomes: the same facts, and the check passes
     from experiments.comparison import fingerprint_check as fp
     a, b = fp.load(root), fp.load(stripped)
     assert {k: dict(v) for k, v in a.items()} == {k: dict(v) for k, v in b.items()} and a
@@ -248,12 +249,12 @@ def test_bench_writes_the_field_on_every_timing_row_and_the_readers_ignore_it(mo
 
 
 def test_records_without_the_field_still_read(monkeypatch, tmp_path):
-    """The earlier roots (no ``contention`` anywhere) and a root mixing old and new cells aggregate as before."""
+    """A root without ``contention`` anywhere and a root mixing cells with and without it give the same summary."""
     root = tmp_path / "raw_mixed"
     _bench_run(monkeypatch, root)
     stripped = tmp_path / "raw_old"
     _strip(root, stripped)
-    one = next(stripped.rglob("defence_*lookups.jsonl"))       # one old-style cell among new ones
+    one = next(stripped.rglob("defence_*lookups.jsonl"))       # one cell without the field among cells with it
     target = root / one.relative_to(stripped)
     target.write_bytes(one.read_bytes())
     from experiments.comparison import aggregate as agg

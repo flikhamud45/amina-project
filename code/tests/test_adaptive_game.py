@@ -1,7 +1,7 @@
 """The vectorised ``fast_acceptance`` of the adaptive game equals ``acceptance_probability`` to 1e-9.
 
 The adaptive game (``experiments/attack/adaptive_game.py``) replaces the per-neuron acceptance
-recursion with a matrix-form evaluation so that its sweep of about a million evaluations is
+recursion with a matrix-form evaluation so that its sweep over queries, plans, caps and samplers is
 tractable; its numbers are valid only if the two agree everywhere to within ``1e-9``.  This test
 checks that on the MNIST MLP, for every sampler of the game's family and for a range of forged
 traces: honest, single-neuron flips in each hidden layer, a multi-neuron zeroing plan and a stealthy

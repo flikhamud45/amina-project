@@ -1,10 +1,10 @@
-"""Counting the work a computation launches, for the tests' bounds and the benchmarks' reports.
+"""Counting the work a computation launches, for the bounds of ``tests/test_claimcodec.py``.
 
 :class:`KernelOps` counts the aten ops that launch work on a device (views and ``detach`` launch
 none), on any device: on CPU tensors the same ops run as on a GPU, so a count there is the count of
 a GPU's kernel launches up to ops that one aten op splits into several kernels.  :func:`codec_waits`
-counts the device encoder's waits for its device (``claimcodec._d2h`` and ``claimcodec._nonzero_dev``,
-its only host round trips).  Neither changes what it counts.
+counts the device encoder's waits for its device (``pvi.v0.claimcodec._d2h`` and
+``pvi.v0.claimcodec._nonzero_dev``, its only host round trips).  Neither changes what it counts.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ class KernelOps(TorchDispatchMode):
 
 @contextlib.contextmanager
 def codec_waits(codec=None):
-    """In its body, the calls of ``codec._d2h`` and ``codec._nonzero_dev`` (``codec``: a ``claimcodec``
-    module, default this package's), as ``{name: count}``; the functions are restored after it."""
+    """In its body, the calls of ``codec._d2h`` and ``codec._nonzero_dev`` (``codec``: a claim codec
+    module, default ``pvi.v0.claimcodec``), as ``{name: count}``; the functions are restored after it."""
     if codec is None:
         from pvi.v0 import claimcodec as codec
     waits = {"_d2h": 0, "_nonzero_dev": 0}

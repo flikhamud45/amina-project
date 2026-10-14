@@ -1,4 +1,4 @@
-"""The fractional-sum GKR of V1's logUp argument (``pvi.v1.gkr``), eager (``V1_SPEC.md`` test T2).
+"""The fractional-sum GKR of V1's logUp argument (``pvi.v1.gkr``), the eager prover and verifier.
 
 For ``n = 1 .. 14`` and random dense lengths (real leaves ``(1, alpha - v)``, padding ``(0, 1)``): the honest
 transcript is accepted, its root is the sum of the leaves' fractions and its final claims are the leaf layer's

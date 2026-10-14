@@ -1,5 +1,8 @@
-"""V1's cut (``pvi.v1.cut``) and the requantising ops it reads (``graph.requant_fn``): ``V1_SPEC.md`` tests
-T0 (windows) and T9 (the builders' graphs are unchanged in value), and the cut plan's rules P1-P5.
+"""V1's cut (``pvi.v1.cut``) and the requantising ops it reads (``pvi.core.graph.requant_fn``).
+
+The windows of the requantisations and residual shifts (exhaustively, at the edges of the claim range, and
+the honest split into sent values, residues and exceptions); the builders' graphs compute the same integers
+with their requantisations as registered functions; and the cut plan follows its rules (P1)-(P5).
 """
 
 from __future__ import annotations
@@ -79,7 +82,7 @@ def test_honest_split_and_public_windows(m, kind):
     assert torch.equal(exc_z, z.reshape(-1)[idx]) and bool((idx[1:] > idx[:-1]).all())
     lower, w2 = cut.public_lw(s, idx, exc_z, op)
     assert torch.equal(z - lower, delta) and torch.equal(w2, width)
-    # Lemma 0: another sent value puts the entry outside its window
+    # the windows lemma (lem:v1-window): another sent value puts the entry outside its window
     lower, w3 = cut.public_lw(s + 1, idx, exc_z, op)
     moved = torch.ones_like(s, dtype=torch.bool).reshape(-1)
     moved[idx] = False
@@ -87,7 +90,7 @@ def test_honest_split_and_public_windows(m, kind):
     assert not bool(((0 <= d3) & (d3 < w3.reshape(-1)[moved])).any())
 
 
-def test_requant_fn_matches_the_old_closures_and_survives_device_copies():
+def test_requant_fn_matches_plain_functions_and_survives_device_copies():
     g = torch.Generator().manual_seed(3)
     a = torch.randint(-(1 << 20), 1 << 20, (2, 5, 7), generator=g)
     r = torch.randint(-(1 << 21), 1 << 21, (2, 5, 7), generator=g)
@@ -175,7 +178,8 @@ def test_the_cut_set_of_a_decoder(kind):
     for b in range(len(small.instances)):
         ops = small.instance_ops(b)
         assert len(ops) == 1 or small.rows(b) * 9 <= 1 << 10
-    assert small.digest() != plan.digest() and plan.digest() == cut.CutPlan.from_graph(graph, _columns(graph, x), 9).digest()
+    assert small.digest() != plan.digest() and plan.digest() == cut.CutPlan.from_graph(
+        graph, _columns(graph, x), 9).digest()
 
 
 def test_pruned_and_generation_ops_stay_clear():
@@ -196,7 +200,8 @@ def test_pruned_and_generation_ops_stay_clear():
 def test_window_and_count_rules():
     graph = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)
     ops = list(graph.ops)
-    i = next(k for k, op in enumerate(ops) if isinstance(op, CheapOp) and op.params.get("requant", {}).get("kind") == "requant")
+    i = next(k for k, op in enumerate(ops)
+             if isinstance(op, CheapOp) and op.params.get("requant", {}).get("kind") == "requant")
     p = dict(ops[i].params["requant"], mult=(1 << 29) + 1)                     # floor(2^30 / m) = 1: P3 fails
     ops[i] = dataclasses.replace(ops[i], fn=requant_fn(p), params={"requant": p})
     g2 = dataclasses.replace(graph, ops=ops)
@@ -241,8 +246,8 @@ def test_col_matrices_are_cut_whole(policy):
 
 
 def test_p4_from_a_verifiers_weights_and_the_int8_clamp():
-    # review fixes: a K/Kpre verifier's public graph has no weights, so P4 is evaluated from the weights it holds;
-    # a requant op whose clamp is wider than int8 is never cut (the proof's |L| < 2^29 + 2^16)
+    # a K/Kpre verifier's public graph has no weights, so P4 is evaluated from the weights it holds; a requant op
+    # whose clamp is wider than int8 is never cut (P1; the no-wrap-around lemma's |L| < 2^29 + 2^16)
     graph = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)
     pub = graph.public()
     names = cut.CutPlan.from_graph(pub, None, 9).names()
@@ -253,7 +258,8 @@ def test_p4_from_a_verifiers_weights_and_the_int8_clamp():
     weights[victim] = (op.weight, torch.full((op.n_rows,), cut.CLAIM_LIMIT, dtype=torch.int64))   # |z| >= 2^29
     assert victim not in cut.CutPlan.from_graph(pub, None, 9, weights=weights).names()
     ops = list(graph.ops)
-    i = next(k for k, o in enumerate(ops) if isinstance(o, CheapOp) and o.params.get("requant", {}).get("kind") == "requant")
+    i = next(k for k, o in enumerate(ops)
+             if isinstance(o, CheapOp) and o.params.get("requant", {}).get("kind") == "requant")
     p = dict(ops[i].params["requant"], lo=-1000)
     ops[i] = dataclasses.replace(ops[i], fn=requant_fn(p), params={"requant": p})
     assert ops[i].inputs[0][:-2] not in cut.CutPlan.from_graph(dataclasses.replace(graph, ops=ops), None, 9).names()

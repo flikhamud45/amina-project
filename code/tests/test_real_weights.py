@@ -3,9 +3,10 @@
 Also the real graph with its last block pruned (``build_opt_from_hf(..., prune_last=True)``): the weights and
 constants of the graph without pruning, the same next-token logits, the shapes of ``build_decoder(...,
 prune_last=True)``, accepted by v0 (modes C and Kpre) and V1 (the cut protocol), tampering rejected, the byte
-accounting exact; and the real-weight cells of the experiment scripts (``v1/v1_bytes.py --real`` with the certified
-and the legacy recipe, ``--codec-only``, several V1 verifiers, ``costs/perf.py --real``) on it, with the checkpoint
-and WikiText-2 loaders of ``experiments.common.checkpoints`` replaced by the tiny model and random windows.
+accounting exact; and the real-weight cells of the experiment scripts (``experiments.v1.v1_bytes --real`` with the
+certified and the legacy recipe, ``--codec-only``, several V1 verifiers, ``experiments.costs.perf --real``) on it,
+with the checkpoint and WikiText-2 loaders of ``experiments.common.checkpoints`` replaced by the tiny model and random
+windows.
 """
 
 import dataclasses
@@ -19,7 +20,7 @@ transformers = pytest.importorskip("transformers")
 
 import pvi.v0 as proto  # noqa: E402
 from experiments.common import checkpoints  # noqa: E402
-from pvi.commit import cost as analytic  # noqa: E402
+from pvi.commit import cost  # noqa: E402
 from pvi.core.graph import CheapOp, MatOp  # noqa: E402
 from pvi.models import decoder as transformer  # noqa: E402
 from pvi.models.decoder import DecoderConfig  # noqa: E402
@@ -163,8 +164,8 @@ def test_a_pruned_real_graph_has_the_constants_and_logits_of_the_whole_one(tiny_
             (env_w, claims_w), (env_p, claims_p) = whole.forward(x), pruned.forward(x)
             assert torch.equal(env_w[whole.output_name], env_p[pruned.output_name])
             assert torch.equal(real_logits(whole, info_w, x), real_logits(pruned, info_p, x))
-            cols = analytic.decoder_claim_columns(_TINY_CFG, t, prune_last=True)
-            shapes = analytic.decoder_shapes(_TINY_CFG, prune_last=True)
+            cols = cost.decoder_claim_columns(_TINY_CFG, t, prune_last=True)
+            shapes = cost.decoder_shapes(_TINY_CFG, prune_last=True)
             assert [z.shape for z in claims_p.values()] == [(s.n_rows, cols[s.name]) for s in shapes]
             assert pruned.claim_columns(x) == list(cols.values())
             assert (sum(z.numel() for z in claims_p.values()) < sum(z.numel() for z in claims_w.values())) == (t > 1)
@@ -187,7 +188,7 @@ _PRUNED: dict = {}
 
 
 def _pruned_setup(model, ids, mode: str):
-    """The paper's smoothed graph with its last block pruned, a prover and a verifier for ``mode`` (C: the auto
+    """The smoothed graph of ``_SMOOTH`` with its last block pruned, a prover and a verifier for ``mode`` (C: the auto
     commitment plan, with lookup tables and col matrices; Kpre: precomputed secret rows), cut-ready parameters."""
     if mode in _PRUNED:
         return _PRUNED[mode]
@@ -262,8 +263,8 @@ def test_a_pruned_real_graph_is_accepted_by_v0_and_v1_and_rejects_tampering(tiny
 @pytest.mark.parametrize("mode", ["C", "Kpre"])
 def test_the_byte_accounting_is_exact_on_a_pruned_real_graph(tiny_opt, mode):
     """The byte accounting on real weights: v0's claims (unencoded; on the wire their ``PVC3`` size is measured, not
-    modelled), ``u`` and opened columns are ``analytic.proof_bytes`` of the graph's weight ops, and V1's every message
-    but the multiproofs is ``cut_proof_bytes``."""
+    modelled), ``u`` and opened columns are ``pvi.commit.cost.proof_bytes`` of the graph's weight ops, and V1's every
+    message but the multiproofs is ``pvi.v1.protocol.cut_proof_bytes``."""
     model, _, _, ids = tiny_opt
     graph, prover, v = _pruned_setup(model, ids, mode)
     x = ids[:, :16]
@@ -272,7 +273,7 @@ def test_the_byte_accounting_is_exact_on_a_pruned_real_graph(tiny_opt, mode):
     for wire in (False, True):
         got = proto.run_query(prover, v, x, seed=7, wire=wire)
         assert got["accepted"]
-        want = analytic.proof_bytes(graph.mat_ops, v.params, cols, plan=plan, mode=mode,
+        want = cost.proof_bytes(graph.mat_ops, v.params, cols, plan=plan, mode=mode,
                                     wire_claims=got["bytes"]["claims"] if wire else None,
                                     table_ids=dict(prover._looked_up))
         keys = ("u", "columns") if wire else ("claims", "u", "columns")
@@ -357,8 +358,8 @@ def test_v1_bytes_refuses_settings_that_do_not_go_together(fake_checkpoint, monk
 def test_v1_bytes_fails_when_the_accounting_disagrees(fake_checkpoint, monkeypatch, capsys):
     """The accounting check is not vacuous: a byte model off by one ``u`` byte fails the line and the exit status."""
     from experiments.v1 import v1_bytes
-    honest = analytic.proof_bytes
-    monkeypatch.setattr(analytic, "proof_bytes", lambda *a, **kw: dict(honest(*a, **kw), u=honest(*a, **kw)["u"] + 1))
+    honest = cost.proof_bytes
+    monkeypatch.setattr(cost, "proof_bytes", lambda *a, **kw: dict(honest(*a, **kw), u=honest(*a, **kw)["u"] + 1))
     status, rows = _run(v1_bytes, monkeypatch, capsys, "--model", "opt-tiny", "--real", "tiny", "--seq", "16",
                         "--modes", "Kpre")
     assert status == 1
@@ -375,8 +376,8 @@ def test_v1_bytes_codec_only_profiles_every_block(fake_checkpoint, monkeypatch, 
     (r,) = rows
     assert r["codec_only"] and [b["block"] for b in r["blocks"]] == ["embed", 0, 1, "head"]
     assert (r["recipe"], r["smooth"], r["calib_seq"]) == ("legacy", 0.55, 16)
-    cols = analytic.decoder_claim_columns(_TINY_CFG, 16, prune_last=True)
-    rows_of = {s.name: s.n_rows for s in analytic.decoder_shapes(_TINY_CFG, prune_last=True)}
+    cols = cost.decoder_claim_columns(_TINY_CFG, 16, prune_last=True)
+    rows_of = {s.name: s.n_rows for s in cost.decoder_shapes(_TINY_CFG, prune_last=True)}
     assert r["total"]["claims"] == sum(rows_of[k] * c for k, c in cols.items())
     assert r["blocks"][2]["claims"] == sum(rows_of[k] * cols[k] for k in ("q1", "k1", "v1", "o1", "fc11", "fc21"))
     assert 0 < r["total"]["v1_values"] < r["total"]["v0_claims"] < r["total"]["raw"]

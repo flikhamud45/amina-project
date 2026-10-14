@@ -1,8 +1,8 @@
 """Integer OPT decoders built from *real* pretrained weights: the certified OPT models (Sec. ``sec:quality``).
 
-``decoder.build_decoder`` measures cost with random int8 weights, which is sound because the prover's and
-verifier's work depend only on the shapes. It says nothing about whether the int8 model we prove is any *good*.
-This module answers that for OPT: it builds the same integer graph -- the same op kinds, in the same order, with
+:func:`pvi.models.decoder.build_decoder` measures cost with random int8 weights, which is sound because the prover's
+and verifier's work depend only on the shapes. It says nothing about the quality of the int8 model the defence
+proves. This module answers that for OPT: it builds the same integer graph -- the same op kinds, in the same order, with
 the same matrix shapes -- from a Hugging Face checkpoint, so its perplexity is the perplexity of the model the
 defence actually proves.
 
@@ -22,17 +22,17 @@ What changes relative to ``build_decoder`` is only the *constants*:
 One structural difference, stated rather than hidden: folding the *final* LayerNorm
 leaves a bias ``W beta`` on the LM head, and the benchmark graph's LM head has no
 bias slot. The real-weight graph therefore has one extra column per vocabulary row
-(``row_length`` d+1 instead of d) -- about 0.02% of OPT-6.7B's proof. Every other
+(``row_length`` d+1 instead of d): the LM head's rows grow by ``1/d``, 0.02% at OPT-6.7B's d = 4096. Every other
 op matches ``build_decoder`` one for one; ``matches_benchmark_graph`` checks it.
 
 Activations stay per-tensor int8, as proved. The norm's gain G is a public constant:
-the benchmark's G = 32 clips OPT's outlier features (perplexity in the hundreds to tens
-of thousands); G = 2-4 does not, at the same cost.
+the benchmark's G = 32 clips OPT's outlier features; the best scalar gains are 4, 3 and 2 for OPT-125M,
+OPT-1.3B and OPT-6.7B (``sec:ext-quality``), at the same cost.
 
 ``prune_last`` (opt-in, as ``build_decoder(..., prune_last=True)``) builds the last block at the
 last position only, but for its keys and values; the pruned block is calibrated on every position,
 so the graph has the weights, gains and multipliers of the graph without pruning and gives the same
-next-token logits (tested).
+next-token logits (``tests/test_pruning.py``).
 
 Two non-default options of :func:`build_opt_from_hf` build the variants of the extended version's quality section
 (``sec:ext-quality``), each a change of constants or of the offline weight quantisation only: per-row power-of-two
@@ -48,12 +48,12 @@ import torch
 
 from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, OpFn, identity_op, op_fn, requant_fn, requant_op,
                             residual_op)
-from pvi.models.decoder import (EXP_TABLE, CERTIFIED_PROB_MAX, CONFIGS, RES_MAX, SHIFT, DecoderConfig, integer_attention,
-                                _isqrt, attention_op, build_decoder, last_position_op, lut_op, norm_op, positions_op,
-                                scale_op)
+from pvi.models.decoder import (EXP_TABLE, CERTIFIED_PROB_MAX, CONFIGS, RES_MAX, SHIFT, DecoderConfig,
+                                integer_attention, _isqrt, attention_op, build_decoder, last_position_op, lut_op,
+                                norm_op, positions_op, scale_op)
 
-__all__ = ["CERTIFIED_RECIPE", "LEGACY_RECIPE", "build_opt_from_hf", "is_pruned", "matches_benchmark_graph", "real_logits", "every_position",
-           "attention_mass", "probability_mass"]
+__all__ = ["CERTIFIED_RECIPE", "LEGACY_RECIPE", "build_opt_from_hf", "is_pruned", "matches_benchmark_graph",
+           "real_logits", "every_position", "attention_mass", "probability_mass"]
 
 _RELU = torch.tensor([max(0, x) for x in range(-128, 128)], dtype=torch.int64)
 
@@ -67,7 +67,7 @@ def _mult(s_in, s_out):
 
 
 class _RealBuilder:
-    """Like ``decoder._Builder``, but every tensor carries its real scale."""
+    """Like ``pvi.models.decoder._Builder``, but every tensor carries its real scale."""
 
     def __init__(self, tokens: torch.Tensor, pct: float, norm_gain: float, smooth: float | None = None,
                  smooth_pct: float = 99.9, row_pow2: int = 0) -> None:
@@ -126,8 +126,9 @@ class _RealBuilder:
         return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note, params=params or {}), scale)
 
     def requant(self, prefix, inputs, scale, note, **params):
-        """A requantising consumer of a weight op (:func:`graph.requant_fn`, so V1 can cut it).  A vector multiplier
-        (per-row weight scales) takes the same op kinds with a vector constant; V1 does not cut such an op."""
+        """A requantising consumer of a weight op (:func:`pvi.core.graph.requant_fn`, so V1 can cut it).  A vector
+        multiplier (per-row weight scales) takes the same op kinds with a vector constant; V1 does not cut such
+        an op."""
         mult = params["mult"]
         if torch.is_tensor(mult):
             if params["kind"] == "requant":
@@ -138,7 +139,7 @@ class _RealBuilder:
         return self.cheap(prefix, inputs, requant_fn(params), scale, note, {"requant": params})
 
     def last(self, name):
-        """The last position of ``name``, calibrated on every position (``decoder._Builder.last(...,
+        """The last position of ``name``, calibrated on every position (``pvi.models.decoder._Builder.last(...,
         calibrate_all=True)``): the op takes the last position, while the calibration keeps every position and
         ``name``'s real scale, so the ops after it get the percentiles, gains and multipliers of the graph
         without it."""
@@ -150,7 +151,7 @@ class _RealBuilder:
 
     def release(self, keep) -> None:
         """Drop every calibration tensor but the tokens and ``keep`` (the residual stream between blocks): no
-        later op reads them, so no constant changes, and a 2,048-token calibration of OPT-6.7B holds one block's
+        later op reads them, so no constant changes, and a 2,048-token calibration window of OPT-6.7B holds one block's
         tensors (25 int64 tensors of ``T x d``: 1.7 GB) instead of all 32 blocks' (54 GB)."""
         self.env = {k: self.env[k] for k in ("x", *keep)}
 
@@ -257,7 +258,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
       +-127/norm_gain standard deviations (``build_decoder`` uses 32);
     * ``smooth`` (alpha; None: one scalar gain): SmoothQuant through the norm's gain vector, with
       ``smooth_pct`` the percentile of each channel's normalised magnitude (100: its maximum);
-    * ``prob_max``: the attention probabilities' scale (``decoder.PROB_MAX`` = 255: 8 bits; the default,
+    * ``prob_max``: the attention probabilities' scale (:data:`pvi.models.decoder.PROB_MAX` = 255: 8 bits; the default,
       :data:`CERTIFIED_PROB_MAX` = 2047: 11 bits), whose output multiplier is calibrated at that scale;
     * the embed-to-residual multiplier is chosen so the embedding keeps full int8
       resolution (``build_decoder`` uses 8).
@@ -269,7 +270,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     ``build_decoder(..., prune_last=True)``: a "last position" op before q and one before the first
     residual add).  The calibration still sees every position wherever the graph without pruning does
     (:meth:`_RealBuilder.last`), so every weight, norm gain and multiplier is that graph's, and the
-    next-token logits are its integers (tested).
+    next-token logits are its integers (``tests/test_pruning.py``).
 
     Two variants of the extended version (``sec:ext-quality``), off by default:
 
@@ -278,7 +279,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
       ``0 <= e < n`` and ``s`` the matrix's largest row scale, and the requantisation or residual add that reads
       such an op takes a vector multiplier with at most ``n`` distinct values (params ``{"vec_requant": ...}``).
       Protocol v0 recomputes it like any other cheap op; V1's cut needs one multiplier per op
-      (:func:`graph.requant_fn`), so these graphs are v0 only.
+      (:func:`pvi.core.graph.requant_fn`), so these graphs are v0 only.
     * ``cle_mlp`` (alpha; None: off): cross-layer equalisation between fc1 and fc2.  Channel ``j`` of fc1's output
       is divided by ``s_j`` (:func:`_cle_scale`: ``a_j`` the channel's largest ``|value|`` at fc2's input in the
       checkpoint on ``calib_ids``, ``r1_j`` and ``r2_j`` the largest ``|.|`` in row ``j`` of the folded fc1 and in
@@ -289,6 +290,7 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     assert cfg.do_layer_norm_before, "post-LN OPT-350M is not handled"
     assert cfg.word_embed_proj_dim == cfg.hidden_size, "project_in/out OPT-350M is not handled"
     assert row_pow2 >= 0
+    assert 1 <= prob_max <= 2047, prob_max            # the bound of the exact int32 attention
     dec = model.model.decoder
     d, n_heads = cfg.hidden_size, cfg.num_attention_heads
     dh = d // n_heads
@@ -393,7 +395,7 @@ def real_logits(graph: IntGraph, info: dict, ids: torch.Tensor, *, all_positions
     slices of its last block are skipped as well, so in that block position t's query row
     attends to the keys 0..t and its residual add reads position t -- the integers the pruned
     graph gives on the prefix 0..t, as one query per prefix would.  The result is that of the
-    graph without pruning, whose constants the pruned graph shares (tested).
+    graph without pruning, whose constants the pruned graph shares (``tests/test_pruning.py``).
     """
     if all_positions:
         graph = every_position(graph)
@@ -408,7 +410,8 @@ def attention_mass(q: torch.Tensor, k: torch.Tensor, *, m_s: int, heads: int, kv
     of a diffuse row: at most ``2 pmax`` keys of a row get ``p_j > 0``; a short row, whose probabilities round half
     up, may keep slightly more than all of it (``sum_j p_j <= pmax + T/2``).  ``q [B, Tq, heads dh]`` holds the queries
     of the last ``Tq`` positions, ``k [B, T, kv_heads dh]``.  The scores are exact float32 products of int8 values
-    (``|s| <= 127^2 dh < 2^24`` for ``dh <= 1040``), the rest the integers of ``decoder.integer_attention``."""
+    (``|s| <= 127^2 dh < 2^24`` for ``dh <= 1040``), the rest the integers of
+    :func:`pvi.models.decoder.integer_attention`."""
     b, tq, _ = q.shape
     t = k.shape[1]
     assert dh <= 1040

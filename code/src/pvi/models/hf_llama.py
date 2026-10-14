@@ -1,10 +1,11 @@
-"""Integer RMSNorm / RoPE / SwiGLU / GQA decoders built from *real* pretrained weights (plan 2, item F2b-Q).
+"""Integer RMSNorm / RoPE / SwiGLU / GQA decoders built from *real* pretrained weights: the Llama-family and Qwen3
+models of Sec. ``sec:quality``.
 
-``real_weights.build_opt_from_hf`` does this for OPT; this module does it for the Llama family (Hugging Face
-``LlamaForCausalLM``: TinyLlama, Llama-2) and for Qwen3 (``Qwen3ForCausalLM``: Qwen3-0.6B/1.7B/4B-Base). The graph
-is ``transformer.build_decoder``'s for the same shape -- the same op kinds, in the same order, with the same names,
-wiring and matrix shapes, so the cost tables measured on random weights apply to it -- and only the *constants*
-change (``matches_benchmark_graph`` checks it; the diff is empty, see below):
+:func:`pvi.models.hf_opt.build_opt_from_hf` does this for OPT; this module does it for the Llama family (Hugging
+Face ``LlamaForCausalLM``: TinyLlama, OpenLLaMA, Llama-2) and for Qwen3 (``Qwen3ForCausalLM``:
+Qwen3-0.6B/1.7B/4B-Base). The graph is :func:`pvi.models.decoder.build_decoder`'s for the same shape -- the same op
+kinds, in the same order, with the same names, wiring and matrix shapes, so the cost tables measured on random weights
+apply to it -- and only the *constants* change (``matches_benchmark_graph`` checks it; the diff is empty, see below):
 
 * **Weights** are the real ones, quantised per tensor to int8 (one scale per matrix, ``s_w = max|W| / 127``).
 * **RMSNorm gain gamma is folded** into the matrices the norm feeds (``W' = W diag(gamma)``); RMSNorm has no shift,
@@ -23,16 +24,17 @@ change (``matches_benchmark_graph`` checks it; the diff is empty, see below):
   k (Qwen3-0.6B's layer-0 k norm: 96.5 on a channel where q's is 0.003), so ``qk_balance`` (default) gives each RoPE
   pair a factor ``c_p`` in q's gains and ``1/c_p`` in k's (:meth:`_Builder.qk_balance`): the scores are unchanged in
   real numbers, and k's int8 range is no longer set by a channel q ignores.
-* **RoPE** uses the graph's Q14 tables (``transformer._rope``). Hugging Face's ``rotate_half`` gives
+* **RoPE** uses the graph's Q14 tables (``pvi.models.decoder._rope``). Hugging Face's ``rotate_half`` gives
   ``[x1 cos - x2 sin | x2 cos + x1 sin]`` with the frequencies ``theta^(-2i/head_dim)`` -- the convention of
-  ``_rope`` (``x [cos | cos] + [x2 | x1] [-sin | sin]``; tested on random values). The rotation preserves each
-  pair's norm, so the scale before RoPE is set from the pairs' norms, which then never clip at 127.
+  ``_rope`` (``x [cos | cos] + [x2 | x1] [-sin | sin]``; ``tests/test_real_llama.py`` compares them on random
+  values). The rotation preserves each pair's norm, so the scale before RoPE is set from the pairs' norms, which
+  then never clip at 127.
 * **GQA**: query head ``j`` reads key/value head ``j // (n_heads / n_kv)``, Hugging Face's ``repeat_kv``
-  (``repeat_interleave``), which is ``transformer.integer_attention``'s grouping.
+  (``repeat_interleave``), which is :func:`pvi.models.decoder.integer_attention`'s grouping.
 * **SwiGLU**: the SiLU table is built from the gate's real scale ``s_g`` (entry ``x`` is
   ``round(silu(x s_g) / s_a)``, ``s_a = max_x |silu(x s_g)| / 127`` over the table's 256 inputs, which is
   ``silu(127 s_g) / 127`` unless ``s_g`` is tiny), and the product ``act x up`` is requantised
-  (``graph.requant_mul``) with the multiplier ``round(2^30 s_a s_u / s_p)`` from real scales.
+  (:func:`pvi.core.graph.requant_mul`) with the multiplier ``round(2^30 s_a s_u / s_p)`` from real scales.
 * **Requantisation multipliers come from true scales** (as in ``build_opt_from_hf``), and the residual stream's
   scale is set so the fp checkpoint's hidden states never clip at ``RES_MAX`` on the calibration windows.
 * **Heads**: tied (Qwen3) and untied (Llama) LM heads are both a separate weight op ``W_head diag(gamma_final)``, as
@@ -48,20 +50,21 @@ independent). :func:`real_logits` concatenates them; :func:`residual_states` and
 residual stream at every block boundary for the per-block cosine against the checkpoint.
 
 Activations stay per-tensor int8 with static scales, as proved. Qwen and Llama carry massive activations at the
-down projection's input; whether static per-tensor scales survive them is what ``experiments/9_quality/
-ppl_llama.py`` measures (``pct_glu`` is the product's clipping percentile). The opt-in ``glu_exp`` (plan F2b-Q's
-outlier handling) gives each token of that product its own power-of-two exponent instead, with the matching shift in
+down projection's input; ``experiments/quality/ppl_llama.py`` measures whether static per-tensor scales survive
+them (``pct_glu`` is the product's clipping percentile). The opt-in ``glu_exp`` (an outlier handling outside the
+main recipe) gives each token of that product its own power-of-two exponent instead, with the matching shift in
 the next residual add; it is the one option that changes the graph's structure (two ops per block).
 
-The opt-in fixed prefix (``prefix_tokens``, plan F2b-Q's cheaper alternative, after PrefixQuant, Chen et al. 2024,
-arXiv:2410.05265) keeps the structure: the massive activations of these models sit at the initial token (the
-attention sink) and at the first occurrences of a few delimiter tokens. A fixed public prefix of ``P`` tokens is run
-once through the fp checkpoint; its keys and values per layer (Hugging Face's KV cache: after the k norm and RoPE at
-the positions ``0 .. P-1``) become int8 constants on the scales of that layer's computed k and v, default arguments
-of the attention op (:func:`prefix_attention` prepends them; every query attends to the whole prefix), so the graph
-digest binds them. The query's RoPE positions start at ``P``. Every scale is calibrated on the query positions only
-(the fp residual maximum behind ``s_res`` too), so the prefix's outliers never set one. The weight ops, their shapes
-and claim columns are the benchmark graph's (the structural diff stays empty); the prefix adds no claim.
+The fixed prefix (``prefix_tokens``, opt-in in the builder and part of the main recipe, :data:`MAIN_RECIPE`; after
+PrefixQuant, Chen et al. 2024, arXiv:2410.05265) keeps the structure: the massive activations of these models sit at
+the initial token (the attention sink) and at the first occurrences of a few delimiter tokens. A fixed public prefix
+of ``P`` tokens is run once through the fp checkpoint; its keys and values per layer (Hugging Face's KV cache: after
+the k norm and RoPE at the positions ``0 .. P-1``) become int8 constants on the scales of that layer's computed k and
+v, default arguments of the attention op (:func:`prefix_attention` prepends them; every query attends to the whole
+prefix), so the graph digest binds them. The query's RoPE positions start at ``P``. Every scale is calibrated on the
+query positions only (the fp residual maximum behind ``s_res`` too), so the prefix's outliers never set one. The
+weight ops, their shapes and claim columns are the benchmark graph's (the structural diff stays empty); the prefix
+adds no claim.
 :func:`prefixquant_tokens` is PrefixQuant's rule for choosing the prefix.
 """
 
@@ -149,11 +152,11 @@ def residual_exp(r: torch.Tensor, z: torch.Tensor, a: torch.Tensor, b: torch.Ten
 
 def prefix_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, kp: torch.Tensor, vp: torch.Tensor, m_s: int,
                      m_o: int | None, n_heads: int, n_kv: int, dh: int, pmax: int = PROB_MAX) -> torch.Tensor:
-    """``transformer.integer_attention`` with a fixed prefix: the public int8 keys and values ``kp, vp [1, P, Hkv dh]`` of
-    the positions ``0 .. P-1`` in front of the query's ``k, v [B, T, Hkv dh]`` (positions ``P .. P+T-1``).
-    ``integer_attention`` takes ``q``'s ``Tq`` rows as the queries of the last ``Tq`` of the ``P + T`` positions, so every
-    query attends to the whole prefix and causally to the query's own positions. Exact integers on any device (the
-    constants are copied to ``k``'s device and type)."""
+    """:func:`pvi.models.decoder.integer_attention` with a fixed prefix: the public int8 keys and values
+    ``kp, vp [1, P, Hkv dh]`` of the positions ``0 .. P-1`` in front of the query's ``k, v [B, T, Hkv dh]`` (positions
+    ``P .. P+T-1``). ``integer_attention`` takes ``q``'s ``Tq`` rows as the queries of the last ``Tq`` of the ``P + T``
+    positions, so every query attends to the whole prefix and causally to the query's own positions. Exact integers
+    on any device (the constants are copied to ``k``'s device and type)."""
     b = k.shape[0]
     k = torch.cat([kp.to(device=k.device, dtype=k.dtype).expand(b, -1, -1), k], 1)
     v = torch.cat([vp.to(device=v.device, dtype=v.dtype).expand(b, -1, -1), v], 1)
@@ -195,9 +198,9 @@ def _pair_norms(real: torch.Tensor, dh: int) -> torch.Tensor:
 
 
 class _Builder:
-    """Like ``transformer._Builder``, but every tensor carries its real scale (``real_weights._RealBuilder``'s
-    arithmetic for the weight ops, requantisations and residual adds, extended to RMSNorm, q/k norm, RoPE and
-    SwiGLU)."""
+    """Like ``pvi.models.decoder._Builder``, but every tensor carries its real scale
+    (``pvi.models.hf_opt._RealBuilder``'s arithmetic for the weight ops, requantisations and residual adds, extended
+    to RMSNorm, q/k norm, RoPE and SwiGLU)."""
 
     prob_max = PROB_MAX     # the attention probabilities' scale (build_llama_from_hf(prob_max=...))
     prefix_len = 0          # P of a fixed prefix (build_llama_from_hf(prefix_tokens=...)): the query starts at P
@@ -256,11 +259,11 @@ class _Builder:
         return self._run(CheapOp(n, tuple(inputs), n + ".y", fn=fn, note=note, params=params or {}), scale)
 
     def requant(self, prefix, inputs, scale, note, **params):
-        """A requantising consumer of a weight op (:func:`graph.requant_fn`, so V1 can cut it)."""
+        """A requantising consumer of a weight op (:func:`pvi.core.graph.requant_fn`, so V1 can cut it)."""
         return self.cheap(prefix, inputs, requant_fn(params), scale, note, {"requant": params})
 
     def last(self, name, *, calibrate_all=False):
-        """``transformer._Builder.last``: the last position of ``name``; with ``calibrate_all`` the calibration
+        """``pvi.models.decoder._Builder.last``: the last position of ``name``; with ``calibrate_all`` the calibration
         keeps every position (the op itself takes the last), so the ops after it get the multipliers of the graph
         without pruning."""
         if not calibrate_all:
@@ -389,7 +392,7 @@ class _Builder:
             raw = prefix_attention(self.env[q], self.env[k], self.env[v], kp, vp, m_s, None, hq, hkv, dh, P)
         else:
             raw = integer_attention(self.env[q], self.env[k], self.env[v], m_s, None, hq, hkv, dh, P)
-        s_raw = sv / float(P)    # probabilities 0..P x int8 values (transformer.PROB_MAX = 255; F2a's P_MAX)
+        s_raw = sv / float(P)    # probabilities 0..P x int8 values (PROB_MAX = 255: 8 bits; CERTIFIED_PROB_MAX = 2047)
         top = _top(raw.abs().reshape(-1, raw.shape[-1]).double(), self.pct_att) * s_raw
         del raw
         s_att = max(top, 1e-12) / INT8_MAX
@@ -463,19 +466,22 @@ def _head_eq(h_int: torch.Tensor, s_in, w: torch.Tensor, b: torch.Tensor | None,
 
 
 MAIN_RECIPE = dict(smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99, glu_smooth=0.2)
-"""The main algorithm's integer recipe for Llama-family checkpoints (F2b-Q doc Sec. 13.9; F2b-L): smoothing through
-the norms' gains at alpha 0.55 with the 99.9th-percentile channel statistic, requantisation at the 99.99th
-percentile, the SwiGLU product balance at 0.2; with ``prefix_tokens`` from PrefixQuant's rule on the calibration
-windows (``ppl_llama.prefix_of("auto", ...)``) and four 2,048-token train windows as calibration. All constants: the
-graph keeps the benchmark's structure. It gave OpenLLaMA-7B x1.073 and TinyLlama (at alpha 0.75) x1.122 at 2,048
-tokens; ``qk_balance`` (default on) adds Qwen3's q/k balance. The per-token exponent (``glu_exp``) is not part of it."""
+"""The main recipe for Llama-family and Qwen3 checkpoints (Sec. ``sec:quality``): SmoothQuant through the norms'
+gains at alpha 0.55 with the 99.9th-percentile channel statistic, requantisation at the 99.99th percentile, the
+SwiGLU product balance (``glu_smooth``) at 0.2; with ``prefix_tokens`` from PrefixQuant's rule on the calibration
+windows (:func:`prefixquant_tokens`) and four 2,048-token windows of the WikiText-2 train split as calibration
+(``experiments.common.checkpoints.llama_calibration``). Constants only: the graph keeps the benchmark's structure.
+``qk_balance`` (on by default) adds Qwen3's q/k balance; the per-token exponent (``glu_exp``) is not part of it.
+The alpha and the product balance per checkpoint are :data:`MAIN_SETTINGS` (:func:`main_recipe`)."""
 
 MAIN_SETTINGS = {"open_llama_7b_v2": (0.55, 0.2), "Llama-2-7b-hf": (0.55, 0.2), "Llama-2-13b-hf": (0.6, 0.2),
                  "TinyLlama_v1.1": (0.75, 0.2), "Qwen3-1.7B-Base": (0.45, 0.3), "Qwen3-4B-Base": (0.45, 0.5)}
 """The main recipe's smoothing alpha and SwiGLU product balance per checkpoint, chosen per model on the 2,048-token
-test windows: the settings of the reported ratios (OpenLLaMA-7B x1.073, TinyLlama x1.122, Qwen3-1.7B x1.40, Qwen3-4B
-x5.3).  Llama-2-7B takes :data:`MAIN_RECIPE`'s (OpenLLaMA-7B's, a model of the same shapes) and Llama-2-13B
-0.6; any other checkpoint :data:`MAIN_RECIPE`'s."""
+windows of the WikiText-2 (raw) test split.  At these settings the measured perplexity ratios to fp32 on every such
+window (``experiments/quality/ppl_llama.py``, calibration as in :data:`MAIN_RECIPE`) are x1.073 for OpenLLaMA-7B,
+x1.122 for TinyLlama, x1.40 for Qwen3-1.7B and x5.3 for Qwen3-4B.  Llama-2-7B takes :data:`MAIN_RECIPE`'s
+(OpenLLaMA-7B's, a model of the same shapes) and Llama-2-13B 0.6; any other checkpoint :data:`MAIN_RECIPE`'s."""
+
 
 def main_recipe(name: str, alpha: float | None = None, glu_smooth: float | None = None) -> dict:
     """:data:`MAIN_RECIPE` with the smoothing alpha and the SwiGLU product balance of the checkpoint ``name`` (a Hugging
@@ -498,7 +504,7 @@ def _glu_smooth(h_int: torch.Tensor, s_in, wg: torch.Tensor, wu: torch.Tensor, w
     unchanged; the product's one int8 scale is then no longer set by its few largest channels. The box keeps both
     weight matrices' per-tensor int8 scales from growing: without it one up row (a channel with a tiny product, so a
     small ``g_j``) can grow up to 256 times, set up's scale and round the other rows to zero, and the product's
-    calibration percentile then is 0 (job 1012500's overflow)."""
+    calibration percentile is then 0 (no requantisation multiplier exists: :meth:`_Builder.swiglu` raises)."""
     x = _rows(h_int.reshape(-1, h_int.shape[-1]), _ROWS_NORM).double().cpu()
     s = s_in.double().cpu()[None, :] if torch.is_tensor(s_in) else float(s_in)
     a = torch.nn.functional.silu(x @ (wg.double() * s).T) * (x @ (wu.double() * s).T)
@@ -592,7 +598,7 @@ def prefixquant_tokens(model, calib_ids: torch.Tensor, *, eta: float = 64.0,
     (:func:`_prefixquant_select`): the high-frequency outlier tokens, then the BOS token (their "[BOS] last, for
     consistency"; ``bos`` defaults to the configuration's ``bos_token_id``: ``<s>`` for Llama, ``<|endoftext|>``
     for Qwen3). A model whose only outlier is the initial token gets ``[bos]`` (their Llama-3-8B and Qwen-2-7B
-    prefix); Llama-2-7B got ``. \\n [BOS]``. Returns the token ids and the statistics behind them."""
+    prefix); Llama-2-7B's is ``. \\n [BOS]``. Returns the token ids and the statistics behind them."""
     bos = model.config.bos_token_id if bos is None else bos
     if bos is None:
         raise ValueError("the model has no bos_token_id: give the prefix's token ids")
@@ -661,26 +667,29 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
       massive activations at the down projection's input. Both are cheap ops the verifier recomputes; the graph
       then differs from the benchmark's in exactly these two ops per block (their notes, and the residual add also
       reads the product's two inputs), and V1 leaves the down projection clear (its reader is no ``requant_fn``).
-    * ``prefix_tokens`` (opt-in, default None = off): a fixed public prefix of ``P`` token ids (e.g. the BOS alone,
-      or :func:`prefixquant_tokens`) in front of every query. Its keys and values per layer (:func:`prefix_kv`, the
-      fp checkpoint's) become int8 constants of the attention op on that layer's k and v scales, the query's RoPE
-      positions start at ``P``, and every scale -- ``s_res`` from the fp residual maximum included -- is calibrated
-      on the query positions only (the calibration windows run after the prefix). The structure, the weight ops and
-      the claim columns are the benchmark graph's; ``graph.meta`` records ``prefix_len`` and ``prefix_tokens``.
-    * ``glu_smooth`` (opt-in, an alpha such as 0.5): SmoothQuant's balance for the down projection's input, folded
-      through the up projection (:func:`_glu_smooth`): up's row ``j`` / ``g_j``, the down projection's column ``j``
-      * ``g_j``. Constants only (the structure is the benchmark graph's); ``info["glu_smooth_g"]`` keeps the factors.
+    * ``prefix_tokens`` (default None = off; the main recipe's comes from :func:`prefixquant_tokens`): a fixed
+      public prefix of ``P`` token ids (e.g. the BOS alone) in front of every query.
+      Its keys and values per layer (:func:`prefix_kv`, the fp checkpoint's) become int8 constants of the attention
+      op on that layer's k and v scales, the query's RoPE positions start at ``P``, and every scale -- ``s_res``
+      from the fp residual maximum included -- is calibrated on the query positions only (the calibration windows
+      run after the prefix). The structure, the weight ops and the claim columns are the benchmark graph's;
+      ``graph.meta`` records ``prefix_len`` and ``prefix_tokens``.
+    * ``glu_smooth`` (default None = off; an alpha, the main recipe's per checkpoint in :data:`MAIN_SETTINGS`):
+      SmoothQuant's balance for the down projection's input, folded through the up projection
+      (:func:`_glu_smooth`): up's row ``j`` / ``g_j``, the down projection's column ``j`` * ``g_j``. Constants only
+      (the structure is the benchmark graph's); ``info["glu_smooth_g"]`` keeps the factors.
     * ``qk_balance`` (default on; Qwen3 only, no effect on Llama): per RoPE pair, a factor ``c_p`` into the q norm's
       gains and ``1/c_p`` into the k norm's (:meth:`_Builder.qk_balance`), so a channel whose k gain is large and
       whose q gain is near zero no longer sets k's whole int8 range; the scores are unchanged in real numbers.
-      Constants only: the structure is the benchmark graph's. ``False`` gives the graph of before (the attribution
-      of ``experiments/9_quality/llama_attrib.py`` on a tiny Qwen3 with Qwen3-0.6B's layer-0 q/k-norm gains: the
-      k norm alone added 0.90 nats to the attention scores' error without it, about 0.11 with it).
+      Constants only: the structure is the benchmark graph's. ``False`` gives the graph without the balance.
+      Measured by the attribution of ``experiments/quality/llama_attrib.py`` on a tiny Qwen3 with Qwen3-0.6B's
+      layer-0 q/k-norm gains, the k norm alone adds 0.90 nats to the attention scores' error without the balance
+      and about 0.11 with it.
 
     ``device`` is where the integer calibration pass runs (the fp model stays where it is). Returns the graph and
     ``info``: the real scales (``logit_scale``, ``s_residual``), the knobs, the residual tensors at the block
     boundaries (``embed``, ``blocks``) and the ``DecoderConfig`` of the model's shape (``config``); for the
-    op-level attribution (``experiments/9_quality/llama_attrib.py``) ``roles`` (per block ``{role: tensor name}``,
+    op-level attribution (``experiments/quality/llama_attrib.py``) ``roles`` (per block ``{role: tensor name}``,
     the roles of ``ROLES`` and ``in``, the block's input), ``scales`` (every tensor's real scale: a float, or a
     per-channel vector for a smoothed norm and a balanced q/k), ``head_beta`` (per block the head-equalisation
     factors ``(beta_q, beta_k)`` per output row, or None) and ``qk_balance_c`` (per block ``c [head_dim]`` or None);
@@ -780,7 +789,7 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
         h = role["mlp_norm"] = B.norm(r, d, [wg, wu])
         w_down, b_up = mlp.down_proj.weight.detach().float(), bias(mlp.up_proj)
         g = None
-        if glu_smooth is not None:                  # the product's channel j / g_j, the down projection's column j * g_j
+        if glu_smooth is not None:          # the product's channel j / g_j, the down projection's column j * g_j
             g = _glu_smooth(B.env[h], B.scale[h], wg, wu, w_down, glu_smooth)
             wu = (wu.double() / g[:, None]).float()
             w_down = (w_down.double() * g[None, :]).float()

@@ -1,17 +1,17 @@
 """Commitment plans for mode C: each weight op's committed matrix and its layout, its codeword
 length, the Merkle trees the matrices share, and the exact number of columns each tree opens.
 
-In the report every matrix ``A_l = [W_l | b_l]`` (``N_l`` rows of length ``k_l``) is encoded at
-``n_l = rate * next_pow2(k_l)`` under a tree of its own, and every op opens ``t = ceil(beta /
-log2 rate)`` columns, ``beta = lambda + log2(2L)`` (plus the grinding bits under Fiat--Shamir):
-each op's column term ``((k_l-1)/n_l)**t <= rate**-t`` and its Freivalds term ``p**-r`` are
+Without a plan (the policy ``per-op``) every matrix ``A_l = [W_l | b_l]`` (``N_l`` rows of length
+``k_l``) is encoded at ``n_l = rate * next_pow2(k_l)`` under a tree of its own, and every op opens
+``t = ceil(beta / log2 rate)`` columns, ``beta = lambda + log2(2L)`` (plus the grinding bits under
+Fiat--Shamir): each op's column term ``((k_l-1)/n_l)**t <= rate**-t`` and its Freivalds term ``p**-r`` are
 both ``<= 2**-beta``, so the union bound over the ``L`` ops is ``2L 2**-beta = 2**-lambda``.
 A plan keeps exactly that per-op budget and changes four things:
 
 * **exact t**: a tree opens the smallest ``t`` whose exact column error
   :func:`column_error_log2` (``t`` distinct uniform columns all among the at most ``m - 1``
   zeros of a nonzero codeword of message length ``m``) is ``<= 2**-beta`` -- the same bound the
-  report reaches through ``(k-1)/n <= 1/rate``, which the power-of-two padding makes loose;
+  per-op commitment reaches through ``(k-1)/n <= 1/rate``, which the power-of-two padding makes loose;
 * **shared trees**: the matrices of one group (one codeword length) are committed under ONE
   Merkle tree whose leaf ``c`` binds column ``c`` of every member, open one set of ``t_g =
   max t`` indices and send one multiproof.  Each member still gets ``t_g`` distinct uniform
@@ -22,8 +22,8 @@ A plan keeps exactly that per-op budget and changes four things:
 
 Layouts of a weight op ``Z = A [X ; 1]`` (``X``: ``k' x M``, one column per pixel or token):
 
-* ``row`` (the report's): the rows of ``A`` are encoded (message length ``k``), a leaf holds a
-  column of length ``N``.  The prover sends ``u = chi A`` (``chi``: ``r x N``) and the verifier
+* ``row`` (the per-op commitment's): the rows of ``A`` are encoded (message length ``k``), a leaf holds
+  a column of length ``N``.  The prover sends ``u = chi A`` (``chi``: ``r x N``) and the verifier
   checks ``chi Z == u [X ; 1]`` (Freivalds) and ``chi . E[:, c] == Enc(u)[c]``: ``r k + t N``
   field elements.  Its error: ``p**-r + prod_{i<t} (k-1-i)/(n-i)``.
 * ``col``: the rows of ``A^T`` (one per input coordinate, of length ``N``) are encoded, a leaf
@@ -52,10 +52,11 @@ Layouts of a weight op ``Z = A [X ; 1]`` (``X``: ``k' x M``, one column per pixe
   collision (the assumption of every Merkle tree here, not a term of the statistical bound).  The
   tree binds ``W`` alone, so an embedding with a bias (claims ``W[:, j] + b``) keeps the row layout.
 
-Policies (``bench.py --policy``; the plan is public, part of the verifier's key):
+Policies (``--policy`` of the experiment scripts; the plan is public, part of the verifier's key):
 
-* ``paper`` -- no plan: the report's commitment and parameters (the default everywhere);
-* ``tight`` -- the report's codeword lengths (``rate * next_pow2(m)`` for message length ``m``);
+* ``per-op`` -- no plan: one tree per weight op at ``rate * next_pow2(k)``, opening ``t = ceil(beta /
+  log2 rate)`` columns each (the library default of :func:`pvi.v0.graph_commitment.commit_graph`);
+* ``tight`` -- the per-op codeword lengths (``rate * next_pow2(m)`` for message length ``m``);
 * ``cnn<e>`` -- every matrix at ``n = max(2**e, 2 next_pow2(m))``: one length for all but the
   longest messages (a CNN's matrices can then share one tree);
 * ``R<R>`` -- rate ``R`` (a power of two) for every matrix but the embedding tables, which keep
@@ -80,9 +81,9 @@ Policies (``bench.py --policy``; the plan is public, part of the verifier's key)
 * ``auto`` -- one of :data:`AUTO_CANDIDATES` (:func:`auto_policy`): on the whole model's shapes, at
   ``REFERENCE_LAMBDA`` (interactive), the candidate of fewest expected non-claim bytes
   (:func:`plan_overhead`: ``u``, opened columns, the encoded trees' multiproofs) whose setup
-  (``analytic.setup_size``'s encoded entries) is within a budget, by default ``max(2 x the paper's
-  setup, 2**34)``; ties go to the first candidate, and with no candidate within the budget the one of
-  least setup.  The plan is exactly that candidate's (``plan.policy``, which the Fiat--Shamir
+  (:func:`pvi.commit.cost.setup_size`'s encoded entries) is within a budget, by default ``max(2 x the
+  per-op commitment's setup, 2**34)``; ties go to the first candidate, and with no candidate within the budget
+  the one of least setup.  The plan is exactly that candidate's (``plan.policy``, which the Fiat--Shamir
   statement binds through its trees as for the concrete policy), with ``plan.requested = "auto"``.
 
 Every policy opens exact ``t`` and shares trees between the encoded matrices of one length: the
@@ -145,7 +146,7 @@ def exact_columns(k: int, n: int, bits: float) -> int:
 
     The search starts at the ``t`` of the looser bound ``((k-1)/n)**t`` and steps with
     :func:`column_error_log2` itself (strictly decreasing in ``t``), so the result is exactly the
-    smallest ``t`` that :func:`protocol.soundness_bits` accepts."""
+    smallest ``t`` that :func:`pvi.v0.params.soundness_bits` accepts."""
     if k <= 1:
         return 1
     t = min(k, max(1, math.ceil(bits / -math.log2((k - 1) / n))))
@@ -236,7 +237,7 @@ class CommitmentPlan:
 
     def shapes(self) -> list[tuple[int, int]]:
         """``(message length, n)`` per encoded matrix, in matrix order: one check each (as
-        :func:`protocol.soundness_bits` takes them in mode C; a lookup table adds no term)."""
+        :func:`pvi.v0.params.soundness_bits` takes them in mode C; a lookup table adds no term)."""
         return [(m.row_length, m.n_points) for m in self.coded]
 
 
@@ -247,7 +248,7 @@ def _policy(policy: str, rate: int):
     leading zeros)."""
     m = re.fullmatch(r"(?:(tight)|cnn([1-9][0-9]*)|R([1-9][0-9]*))(c?)", policy)
     if m is None:
-        raise ValueError(f"unknown commitment policy {policy!r}: expected paper, auto, tight, cnn<e> or R<rate> "
+        raise ValueError(f"unknown commitment policy {policy!r}: expected per-op, auto, tight, cnn<e> or R<rate> "
                          "(decimal, no leading zero), the last three optionally with the suffix c")
     if m.group(1):
         def length(k, embed):
@@ -390,9 +391,9 @@ def _matrices(ops, policy: str, rate: int, choice: dict) -> list[PlannedMatrix]:
 
 def plan_overhead(model_ops, plan: CommitmentPlan | None, *, rate: int = 4) -> float:
     """The expected non-claim bytes of one query of the whole model ``model_ops`` at
-    ``REFERENCE_LAMBDA`` (interactive), as ``analytic.proof_bytes`` counts them: ``u`` of the row-layout
-    ops, the opened columns and the encoded trees' multiproofs (``plan``: ``None`` for the report's).
-    A ``c`` plan's lookup tables are left out: their multiproofs depend on the prompt, and every ``c``
+    ``REFERENCE_LAMBDA`` (interactive), as :func:`pvi.commit.cost.proof_bytes` counts them: ``u`` of the
+    row-layout ops, the opened columns and the encoded trees' multiproofs (``plan``: ``None`` for the per-op
+    commitment).  A ``c`` plan's lookup tables are left out: their multiproofs depend on the prompt, and every ``c``
     policy looks the same tables up."""
     ops = list(model_ops)
     bits = column_bits(REFERENCE_LAMBDA, len(ops))
@@ -411,10 +412,10 @@ def plan_overhead(model_ops, plan: CommitmentPlan | None, *, rate: int = 4) -> f
 
 
 def auto_budget(model_ops, *, rate: int = 4) -> int:
-    """``auto``'s default setup budget: ``max(2 x the paper's encoded entries, AUTO_MIN_BUDGET)``."""
+    """``auto``'s default setup budget: ``max(2 x the per-op commitment's encoded entries, AUTO_MIN_BUDGET)``."""
     ops = list(model_ops)
-    paper = sum(op.n_rows * rate * next_pow2(op.row_length) for op in ops)
-    return max(2 * paper, AUTO_MIN_BUDGET)
+    per_op = sum(op.n_rows * rate * next_pow2(op.row_length) for op in ops)
+    return max(2 * per_op, AUTO_MIN_BUDGET)
 
 
 def auto_policy(model_ops, *, rate: int = 4, setup_budget: float | None = None) -> str:
@@ -443,8 +444,8 @@ def plan_commitment(ops, policy: str, *, rate: int = 4, model_ops=None,
                     setup_budget: float | None = None) -> CommitmentPlan | None:
     """The plan of ``policy`` for weight ops ``ops`` (objects with ``name``, ``n_rows``,
     ``row_length``, ``layout``, ``inputs`` and ``has_bias``: a graph's ``MatOp``s or
-    ``cost.decoder_shapes``), in their order; ``None`` for ``"per-op"`` (every weight op on a tree of its own).  ``rate`` is the base
-    rate (the report's, 4).
+    :func:`pvi.commit.cost.decoder_shapes`), in their order; ``None`` for ``"per-op"`` (every weight op on a
+    tree of its own).  ``rate`` is the base rate (4 by default, the rate of the per-op commitment).
 
     ``model_ops``: the whole model's ops when ``ops`` are those of a build of a few of its
     decoder blocks.  The layouts are chosen, and the runs split, on the whole model (at its op

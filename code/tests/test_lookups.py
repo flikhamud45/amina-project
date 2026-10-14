@@ -26,7 +26,7 @@ import torch
 
 import pvi.v0 as proto
 import reference as ref
-from pvi.commit import cost as analytic
+from pvi.commit import cost
 from pvi.commit.commitment import MerkleTree, TableCommitment, multiproof_size, table_leaves, verify_multiproof
 from pvi.commit.plans import next_pow2, plan_commitment
 from pvi.core.graph import CheapOp, IntGraph, MatOp, op_fn, requant_op
@@ -86,7 +86,7 @@ def test_the_c_policies_look_up_every_embedding_table(model, prune_last):
     even where the model ties it to the embedding -- keeps an encoded commitment; the row policies
     look nothing up."""
     cfg = CONFIGS[model]
-    ops = analytic.decoder_shapes(cfg, prune_last=prune_last)
+    ops = cost.decoder_shapes(cfg, prune_last=prune_last)
     embeds = [op for op in ops if op.layout == "embed"]
     assert [op.name for op in embeds] == (["embed", "pos"] if cfg.pos == "learned" else ["embed"])
     for policy in ("tightc", "cnn16c", "R64c"):
@@ -182,7 +182,7 @@ def test_the_lookup_tables_accept_honest_rows_and_reject_every_forgery(kind, fia
 @pytest.mark.parametrize("kind", [*KINDS, "gpt-pruned"])
 def test_the_streaming_verifier_receives_the_bytes_counted(kind, monkeypatch):
     """Without wire the claims travel as the streaming verifier receives them: int32, and a lookup
-    table's as its int8 rows (``pipeline.wire_rows``), so ``bytes["claims"]`` is exactly the size of
+    table's as its int8 rows (``pvi.v0.streaming.wire_rows``), so ``bytes["claims"]`` is exactly the size of
     the tensors it is handed (the row policies' and the ``c`` policies')."""
     seen = {}
     real = proto.Verifier.verify_streaming
@@ -520,7 +520,7 @@ def test_the_transcript_of_a_verifier_with_lookups(monkeypatch):
 
 
 def _biased_embedding():
-    """``(graph, x, b)``: an embedding op WITH a bias (its claims ``W[:, ids] + b``), requantised, then a
+    """``(graph, x, b)``: an embedding op with a bias (its claims ``W[:, ids] + b``), requantised, then a
     linear op; and a prompt with a repeated token."""
     g = torch.Generator().manual_seed(0)
     b = torch.randint(-50, 50, (8,), generator=g)
@@ -586,8 +586,8 @@ def test_a_verifier_with_lookups_adds_an_embeddings_bias(mode):
 
 
 def test_the_lookup_byte_model():
-    """``analytic.proof_bytes`` of a plan's tables: their claims a byte each, their multiproofs exact for
-    the ids they look up (``multiproof_size``) or, without ids, the expectation for distinct uniform ids
+    """``pvi.commit.cost.proof_bytes`` of a plan's tables: their claims a byte each, their multiproofs exact
+    for the ids they look up (``multiproof_size``) or, without ids, the expectation for distinct uniform ids
     (``expected_lookup_nodes``, checked against sampling); and the setup's trees and leaves."""
     import random
 
@@ -595,21 +595,21 @@ def test_the_lookup_byte_model():
         n = next_pow2(v)
         rnd = random.Random(v)
         sampled = np.mean([multiproof_size(rnd.sample(range(v), m), n.bit_length() - 1) for _ in range(3000)])
-        assert abs(analytic.expected_lookup_nodes(v, m) - sampled) < 0.02 * sampled + 0.05
-    assert analytic.expected_lookup_nodes(1024, 64) == pytest.approx(analytic.expected_multiproof_nodes(1024, 64))
+        assert abs(cost.expected_lookup_nodes(v, m) - sampled) < 0.02 * sampled + 0.05
+    assert cost.expected_lookup_nodes(1024, 64) == pytest.approx(cost.expected_multiproof_nodes(1024, 64))
     cfg = CONFIGS["gpt2"]
-    ops = analytic.decoder_shapes(cfg, 2)
+    ops = cost.decoder_shapes(cfg, 2)
     plan = plan_commitment(ops, "R16c")
     params = proto.params_for(128, len(ops), plan=plan)
-    b = analytic.proof_bytes(ops, params, 64, plan=plan)
-    exact = analytic.proof_bytes(ops, params, 64, plan=plan, table_ids={"pos": range(64)})
+    b = cost.proof_bytes(ops, params, 64, plan=plan)
+    exact = cost.proof_bytes(ops, params, 64, plan=plan, table_ids={"pos": range(64)})
     row_plan = plan_commitment(ops, "R16")
-    rows = analytic.proof_bytes(ops, proto.params_for(128, len(ops), plan=row_plan), 64, plan=row_plan)
+    rows = cost.proof_bytes(ops, proto.params_for(128, len(ops), plan=row_plan), 64, plan=row_plan)
     embed_claims = sum(op.n_rows * 64 for op in ops if op.layout == "embed")
     assert b["claims"] == rows["claims"] - 3 * embed_claims                  # int8 rows instead of int32
     assert exact["paths"] - b["paths"] == pytest.approx(32 * (multiproof_size(range(64), 10)
-                                                              - analytic.expected_lookup_nodes(1024, 64)))
-    setup = analytic.setup_size(ops, plan=plan)
+                                                              - cost.expected_lookup_nodes(1024, 64)))
+    setup = cost.setup_size(ops, plan=plan)
     trees = {g: plan.matrix(ms[0]).n_points for g, ms in plan.groups}
     assert setup["trees"] == len(trees) + 2 and setup["leaves"] == sum(trees.values()) + 65536 + 1024
 
@@ -653,9 +653,9 @@ def test_bench_names_the_pruned_and_lookup_cells_by_the_settings_that_change_the
 
 
 def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_path):
-    """``bench.py llm --policy R8c --wire``: the tamper cell's single values land on lookup tables too,
-    whose rows they move out of int8 -- values the wire cannot carry, which the prover sends as no bytes
-    and the verifier rejects at ``range_or_shape`` (as without wire): every attack of the cell rejected,
+    """``experiments.costs.bench llm --policy R8c --wire``: the tamper cell's single values land on lookup
+    tables too, whose rows they move out of int8 -- values the wire cannot carry, which the prover sends as no
+    bytes and the verifier rejects at ``range_or_shape`` (as without wire): every attack of the cell rejected,
     none raising."""
     import json
 
@@ -666,7 +666,8 @@ def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_
     monkeypatch.setattr(bench, "RAW", tmp_path)
     args = bench.build_parser().parse_args(["llm", "--model", "tiny-gpt", "--seq", "9", "--builds", "full",
                                             "--modes", "C:int", "--lams", "40", "--queries", "1", "--policy", "R8c",
-                                            "--wire", "--no-prune-last", "--llm-tampers", "34",   # (attack 33 hits a table)
+                                            "--wire", "--no-prune-last",
+                                            "--llm-tampers", "34",                    # (attack 33 hits a table)
                                             "--platform", "test"])
     bench.suite_llm(args, {"device": "cpu", "cpu": "test", "torch_threads": 1})
     cell = tmp_path / "llm" / "tiny-gpt" / "tamper_C_int_lam40_T9_L2_wire_polR8c.jsonl"
@@ -674,5 +675,3 @@ def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_
     attempts = [r for r in rows if r["metric"] == "rejected"]
     assert len(attempts) == 3 * 34 + 3 and all(r["value"] == 1 for r in attempts)
     assert "range_or_shape" in {r["stage"] for r in attempts if r["attack"] == "single_value"}
-
-

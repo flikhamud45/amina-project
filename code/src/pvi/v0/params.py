@@ -17,11 +17,15 @@ Z_BOUND = 1 << 29
 in-range integers with the same residue mod ``p`` are equal, so checking
 ``Z = A X`` mod ``p`` pins down the integer claim the verifier then uses."""
 CUT_NARROW = (torch.int8, torch.int16)
-"""The dtypes besides derive's own in which a V1 query's cut ops may hold their sent values (``cut_protocol``)."""
+"""The dtypes besides derive's own in which a V1 query's cut ops may hold their sent values
+(:mod:`pvi.v1.protocol`)."""
 
 
 @dataclass(frozen=True)
 class SecurityParams:
+    """A query's security parameters: the target level ``lam`` (bits), the Freivalds repetitions ``reps``
+    (``r``), the code's ``rate`` (a weight op's codeword length is ``rate * next_pow2(k)``) and the opened
+    ``columns`` (``t``), Fiat--Shamir with its ``grinding_bits`` margin, and V1's options."""
     lam: float
     reps: int
     rate: int
@@ -34,7 +38,9 @@ class SecurityParams:
     cut: bool = False
     """V1's int8 cut (:mod:`pvi.v1.protocol`): requantised values sent, windows proved by logUp-GKR."""
     cut_lmax: int = 27
-    """V1: the largest GKR instance, ``2**cut_lmax`` leaves (26 on an 11 GB card)."""
+    """V1: the target size of a GKR instance, ``2**cut_lmax`` leaves: units are packed into instances of at most this
+    size, and a unit larger than it is an instance of its own (the default is :data:`pvi.v1.cut.LMAX`; a smaller value
+    bounds the prover's memory)."""
 
     def columns_for(self, group: str) -> int:
         return dict(self.group_columns)[group]
@@ -49,7 +55,7 @@ def params_for(lam: float, n_checks: int, *, rate: int = 4, fiat_shamir: bool = 
     required (security against ``2**grinding_bits`` hash evaluations).  Under a commitment
     ``plan`` (:mod:`pvi.commit.plans`) ``r`` is the same, and each group opens its members'
     largest exact ``t`` for the same per-op budget ``2**-beta``.  With ``cut`` (V1) two more terms share the
-    budget: the logUp point and the GKR instances (``V1_SPEC.md`` Sec. 3), each far below it.
+    budget: the logUp point and the GKR instances (the paper's Theorem ``thm:v1``), each far below it.
     """
     bits = column_bits(lam, n_checks + (2 if cut else 0), fiat_shamir, grinding_bits)
     reps = max(1, math.ceil(bits / LOG2_P))
@@ -65,7 +71,7 @@ def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: 
                    columns: list[int] | None = None) -> float:
     """``-log2`` of the total soundness error: the sum over the checks of ``p**-r`` (Freivalds) plus,
     in mode C, the column term ``prod_{i<t} (m-1-i)/(n-i)``.  ``shapes`` holds ``(m, n)`` per check --
-    each op's ``(k, n)`` for the report's commitment, and one entry per committed matrix of a plan
+    each op's ``(k, n)`` under the per-op commitment, and one entry per committed matrix of a plan
     (``plan.shapes()``: a row matrix checks its op, message length ``k``; a col matrix every op it
     stacks, message length their rows together) -- and ``columns`` each check's ``t`` (default:
     ``params.columns`` for every one).  Under a plan's parameters mode C needs
@@ -91,7 +97,9 @@ def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: 
 
 
 def claim_bound(op: MatOp) -> int:
-    """Largest ``|z|`` an honest execution of ``op`` can produce."""
+    """A bound on the ``|z|`` an honest execution of ``op`` can produce: per output row ``i``,
+    ``(max_input + 1) sum_j |w_ij| + |b_i|`` (every input has ``|x| <= max_input + 1``), and for an
+    embedding op the row's largest ``|w_ij|`` plus ``|b_i|``."""
     w = op.weight.to(torch.int64)
     bound = w.abs().amax(1) if op.layout == "embed" else (op.max_input + 1) * w.abs().sum(1)
     if op.bias is not None:

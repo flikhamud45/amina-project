@@ -1,7 +1,7 @@
 """The verifier's constant-factor speed-ups are bit-exact.
 
-Every fast routine is compared with the straightforward code it replaced, kept in
-``reference``: the modular products (stacked limbs, signed claims,
+Every fast routine is compared with its straightforward definition in
+``tests/reference.py``: the modular products (stacked limbs, signed claims,
 batched blocks, numpy for small operands), the codeword at the opened columns
 (baby-step giant-step), the leaf hashing, the right-hand sides, the range checks,
 the batched product and column checks (same verdicts, same exceptions, on tampered
@@ -535,7 +535,7 @@ def test_derive_is_silent_on_claims_whose_norm_sums_wrap(monkeypatch):
     assert got.keys() == want.keys() and all(torch.equal(got[k], want[k]) for k in got)
 
 
-def test_transformer_ops_match_reference(device):
+def test_decoder_ops_match_the_reference(device):
     from pvi.models import decoder as tr
 
     g = torch.Generator().manual_seed(12)

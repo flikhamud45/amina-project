@@ -1,5 +1,5 @@
-"""``experiments.common.records.git_sha``: the commit a result came from, with and without a ``git`` binary (some compute nodes
-have none), in a plain repository and in a worktree with packed refs."""
+"""``experiments.common.records.git_sha``: the commit a result came from, with and without a ``git`` binary
+(some compute nodes have none), in a plain repository and in a worktree with packed refs."""
 from __future__ import annotations
 
 import shutil

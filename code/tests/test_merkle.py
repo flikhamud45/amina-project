@@ -1,8 +1,9 @@
-"""Tests for the Merkle vector commitment (Appendix B).
+"""The Merkle vector commitment of the path-sampling baseline (``pvi.baseline.path.merkle``, the primitive of
+Appendix B of Anchuri et al.): the canonical float32 encoding, opening and verification at every position, binding,
+and position binding.
 
-Binding and position binding are the only properties the protocol relies on, so
-they get the most attention here -- including the failure modes that a naive
-Merkle implementation gets wrong.
+Binding and position binding are the only properties the path protocol relies on, so most cases target them,
+including the failure modes of a naive Merkle implementation (replayed openings, truncated paths, padding leaves).
 """
 
 from __future__ import annotations

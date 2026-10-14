@@ -1,5 +1,6 @@
-"""Fiat--Shamir hashing at memory speed (plan 2, FS1): the one-level tree absorption of large messages and the
-designated-verifier mode Kpre, which absorbs nothing."""
+"""Fiat--Shamir with tree absorption (``pvi.v0.transcript``): a large message is absorbed as a one-level tree of
+its chunks' digests (equal to its serial definition, binding every chunk, the length and the label), a small one
+directly; the designated-verifier mode Kpre absorbs nothing and keeps its verdicts."""
 import hashlib
 import struct
 

@@ -3,21 +3,26 @@
 A model is a list of operations over named integer tensors (int64 storage,
 small values).  Two kinds matter to the protocol:
 
-* ``MatOp`` -- a product with a committed weight matrix: dense layers,
-  convolutions, embeddings and the LM head.  These are all of the model's heavy
-  compute.  The prover *claims* their outputs (int32 pre-activations) and the
-  verifier checks every one of them with a random linear combination.
+* ``MatOp`` -- a product with a committed weight matrix (a *weight operation*):
+  dense layers, convolutions, embeddings and the LM head.  These are all of the
+  model's heavy compute.  The prover *claims* their outputs (int32
+  pre-activations) and the verifier checks every one of them: Freivalds' check
+  with random linear combinations, or, for an embedding committed as a lookup
+  table, the opening of the looked-up rows.
 * cheap operations -- requantisation, ReLU, pooling, residual additions,
   normalisation, softmax, look-up-table activations, RoPE and attention.  The
   verifier *recomputes* these itself from values it has already checked, so
-  they need no argument at all.
+  they need no argument at all.  Each is a registered kind with explicit
+  constants (:func:`op_kind`, :class:`OpFn`), which the graph digest binds.
 
 Every operation is deterministic integer arithmetic, so the prover's GPU and
 the verifier's CPU produce bit-identical results (tested).  Matrix products
 run as float32 GEMMs over int8-valued operands with the contraction dimension
 chunked so every partial sum stays below ``2**24`` and is therefore exact; a weight
-op on a GPU whose int8 GEMM passes ``field.int8_ok`` runs as int8 GEMMs with int32
-sums instead (:func:`int8_product`), the same integers.
+op on a GPU whose int8 GEMM passes :func:`pvi.core.field.int8_ok` runs as int8 GEMMs
+with int32 sums instead (:func:`int8_product`), and a linear op on the CPU as the
+native exact int8 GEMM (:func:`pvi.kernels.native.int8_matmul`) where it is built:
+the same integers.
 """
 
 from __future__ import annotations
@@ -109,6 +114,8 @@ def op_fn(impl: Callable, **consts) -> OpFn:
 def identity_op(a: torch.Tensor) -> torch.Tensor:
     """The input unchanged (stand-in ops of the float evaluations)."""
     return a
+
+
 _FP32_EXACT = 1 << 24
 
 
@@ -125,10 +132,10 @@ def exact_matmul(w: torch.Tensor, x: torch.Tensor, *, max_w: int = 128, max_x: i
 
 
 def int8_product(w: torch.Tensor, x: torch.Tensor) -> torch.Tensor | None:
-    """Exact ``w @ x`` (int64) for int8 ``w [N, K]`` and ``x [K, M]`` on int8 GEMMs (``field.int8_gemm``):
+    """Exact ``w @ x`` (int64) for int8 ``w [N, K]`` and ``x [K, M]`` on int8 GEMMs (:func:`pvi.core.field.int8_gemm`):
     a block of ``INT8_TERMS`` products, each at most ``2**14`` in magnitude, sums below ``2**30`` in its
     int32 accumulator.  ``None`` when ``torch._int_mm`` cannot take the shapes (``N <= 16`` or ``K`` not a
-    multiple of 8); ``M`` is zero-padded to a multiple of 8."""
+    multiple of 8) or ``M = 0``; ``M`` is zero-padded to a multiple of 8."""
     n, k = w.shape
     m = x.shape[1]
     if n <= 16 or k % 8 or m == 0:
@@ -166,7 +173,7 @@ def requant(z: torch.Tensor, mult: torch.Tensor, shift: int, lo: int, hi: int,
     written into ``out``.
 
     The shift and the clamp run in place on the product.  A CPU verifier's int64 operands go through one native
-    pass (``native_kernels.requant``, the same integers)."""
+    pass (:func:`pvi.kernels.native.requant`, the same integers)."""
     if out is None and native_kernels.cheap_enabled(claim=z):
         got = native_kernels.requant(z, mult, shift, lo, hi)
         if got is not None:
@@ -506,8 +513,8 @@ class IntGraph:
         called with (the requantisation multipliers, norm gains, look-up tables, attention multipliers, a fixed
         prefix's keys and values) -- its input and output names and ``meta``. A graph with other cheap ops or
         constants hashes to other bytes, and the bytes do not depend on where in the code a kind is implemented;
-        Fiat--Shamir absorbs it (``protocol.absorb_statement``), so a transcript is bound to the computation it
-        checks."""
+        Fiat--Shamir absorbs it (:func:`pvi.v0.query.absorb_statement`), so a transcript is bound to the computation
+        it checks."""
         out: list[bytes] = [b"pvi/graph/v2"]
         for op in self.ops:
             if isinstance(op, MatOp):
@@ -563,7 +570,7 @@ class IntGraph:
         is re-propagated honestly from the modified value, which is exactly the
         trace-tampering attack.  ``weights_override`` runs some ops with other
         weights (the model-substitution attack) while claiming the committed model.
-        The lean prover (``Prover(lean=True)``) passes ``free=True``, which drops every
+        The lean prover (``pvi.v0.prover.Prover(lean=True)``) passes ``free=True``, which drops every
         tensor once no later op reads it, and ``claims_device="cpu"``, which moves each
         claim to host memory as soon as it is computed: the same integers, much less
         GPU memory.

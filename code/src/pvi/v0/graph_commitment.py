@@ -44,7 +44,7 @@ def commit_graph(graph: IntGraph, rate: int, device="cpu", *, policy: str = "per
                  model_ops=None, cache=None, cache_checks: int = 4) -> GraphCommitment:
     """Commit every weight op, after checking honest claims fit the range check: on a tree of its
     own at ``rate`` (``policy="per-op"``), or as the commitment plan of ``policy`` lays
-    the ops out (:func:`plans.plan_commitment`, with ``rate`` its base rate; ``model_ops``: the
+    the ops out (:func:`pvi.commit.plans.plan_commitment`, with ``rate`` its base rate; ``model_ops``: the
     whole model's op shapes when ``graph`` is a build of a few of its blocks).
 
     ``cache``: the setup cache's folder (:mod:`pvi.commit.setup_cache`), or ``None`` (the default) for none. On a
@@ -96,7 +96,7 @@ def _commit_fresh(graph: IntGraph, rate: int, device, plan) -> GraphCommitment:
 
 
 def _tree_leaves(coms: GraphCommitment) -> dict[str, list[bytes]]:
-    """``{tree name: its leaf digests}`` of a fresh commitment, for :func:`setup_cache.save`."""
+    """``{tree name: its leaf digests}`` of a fresh commitment, for :func:`pvi.commit.setup_cache.save`."""
     if coms.plan is None:
         return {f"op:{name}": c.tree.levels[0] for name, c in coms.items()}
     out = {f"group:{g}": gc.tree.levels[0] for g, gc in coms.groups.items()}

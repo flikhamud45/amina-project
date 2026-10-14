@@ -34,7 +34,8 @@ BIAS_MAX = 1 << 26
 """Integer biases are kept below ``2**26``: a channel whose folded bias would be
 larger (BatchNorm with a tiny gain) gets a coarser weight scale instead.  With
 |W x| <= 127 * 127 * K this keeps every honest claim well inside the protocol's
-range check (``Z_BOUND = 2**29``; ``commit_graph`` verifies it per row)."""
+range check (:data:`pvi.v0.params.Z_BOUND` ``= 2**29``; :func:`pvi.v0.graph_commitment.commit_graph` checks the
+bound of every row before committing)."""
 
 
 @op_kind("add_relu/1")
@@ -262,8 +263,8 @@ RANDOM_CNNS = ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resne
 
 def random_cnn(name: str) -> tuple[IntGraph, torch.Tensor]:
     """``(graph, query)``: the image model ``name`` with random float weights (seed 0), quantised on 64 random
-    calibration inputs, and one random query (seed 5): the MLP 784-512-256-10, or :func:`models.cnn.build_float_model`
-    with 10 classes (2 for the binary 224-pixel ResNet-18)."""
+    calibration inputs, and one random query (both drawn from seed 5): the MLP 784-512-256-10, or
+    :func:`pvi.models.cnn.build_float_model` with 10 classes (2 for the binary 224-pixel ResNet-18)."""
     from .cnn import build_float_model
     if name not in RANDOM_CNNS:
         raise ValueError(f"unknown image model {name!r}; one of {RANDOM_CNNS}")

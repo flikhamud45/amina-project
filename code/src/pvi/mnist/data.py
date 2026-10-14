@@ -6,10 +6,10 @@ standardising them matters later: the attack's trigger is a small bright patch,
 and an un-shifted input scale makes "bright patch" mean the same thing to the
 reader as it does to the network.
 
-Subset selection supports the paper's model-separation setups.  Section 6.2 trains
-``M`` and ``M~`` on *different* class sets sharing one class; Appendix G.1 trains
-them on the *same* classes but disjoint data.  Both are reproducible here through
-:func:`load_classification`.
+Subset selection supports Anchuri et al.'s model-separation setups.  Their
+Section 6.2 trains ``M`` and ``M~`` on *different* class sets sharing one class;
+their Appendix G.1 trains them on the *same* classes but disjoint data.  Both are
+reproducible here through :func:`load_classification`.
 """
 
 from __future__ import annotations
@@ -90,12 +90,12 @@ def load_classification(
     ----------
     classes:
         Keep only these labels, remapped to ``0..len(classes)-1`` in the order
-        given.  This reproduces the paper's "shared class" construction: two models
+        given.  This reproduces Anchuri et al.'s "shared class" construction: two models
         with the same architecture and output dimension whose training classes
         overlap in exactly one position.
     train_fraction:
         A ``(start, end)`` slice of the *shuffled* training set, so that two models
-        can be trained on provably disjoint data (Appendix G.1's setup).
+        can be trained on provably disjoint data (the setup of their Appendix G.1).
     """
     train_x, train_y, test_x, test_y, shape = load_raw(name, root)
 

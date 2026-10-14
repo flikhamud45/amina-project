@@ -1,4 +1,11 @@
-"""Tests for non-uniform samplers and the sampling theorems of the report (Section 3.2)."""
+"""Non-uniform path samplers (``pvi.baseline.samplers``) and the adaptive adversary against them.
+
+The samplers' distributions are valid and their paths follow real edges; contribution weighting never
+visits a neuron whose claimed activation is zero, and a uniform floor restores its detection; the
+adaptive adversary (``pvi.baseline.adaptive``) is never worse than the naive edit and keeps its values
+in range; the exact acceptance recursion predicts the running protocol under a weighted sampler; and a
+prover and a verifier with different samplers are refused.
+"""
 
 from __future__ import annotations
 

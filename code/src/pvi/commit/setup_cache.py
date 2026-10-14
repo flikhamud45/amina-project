@@ -1,14 +1,14 @@
 """A prover-side cache of the weight commitment's Merkle leaves.
 
 The one-time setup of mode C encodes every row of every weight matrix and hashes every column of every codeword:
-``protocol.commit_graph`` spends almost all its time computing the leaf digests of the commitment's trees (a
-group's leaf ``c`` is the :func:`commitment.group_leaf` of its members' column digests ``c``; a matrix on a tree of
-its own has the :func:`commitment.column_leaf` digests; a lookup table the :func:`commitment.table_leaf` digests of
-its rows). The digests depend only on the committed integers (weights and biases), the tags and the plan's layout,
-so a later process that commits the same matrices under the same plan can read them back and rebuild every tree
-(``MerkleTree(leaves)``, a fraction of a second per tree) instead of encoding the model again. Nothing that
-leaves the prover changes: the roots, the openings and every proof byte are those of a fresh commitment
-(``tests/test_setup_cache.py``).
+:func:`pvi.v0.graph_commitment.commit_graph` spends almost all its time computing the leaf digests of the
+commitment's trees (a group's leaf ``c`` is the :func:`pvi.commit.commitment.group_leaf` of its members' column
+digests ``c``; a matrix on a tree of its own has the :func:`pvi.commit.commitment.column_leaf` digests; a lookup
+table the :func:`pvi.commit.commitment.table_leaf` digests of its rows). The digests depend only on the committed
+integers (weights and biases), the tags and the plan's layout, so a later process that commits the same matrices
+under the same plan can read them back and rebuild every tree (``MerkleTree(leaves)``, a fraction of a second per
+tree) instead of encoding the model again. Nothing that leaves the prover changes: the roots, the openings and
+every proof byte are those of a fresh commitment (``tests/test_setup_cache.py``).
 
 * **Opt-in.** The folder comes from ``commit_graph(cache=...)`` (in the scripts, ``--setup-cache DIR``); ``None``,
   the default, means no cache (the setup proof's timing never uses one).
@@ -17,10 +17,11 @@ leaves the prover changes: the roots, the openings and every proof byte are thos
   weight op in the graph's order, its name (the tag), shapes, and a BLAKE2b-256 of its int8 weights and int64 bias.
   Different weights, biases, calibration, pruning or plan give a different key.
 * **Files.** ``<folder>/<key>.npz``: one ``uint8 [n, 32]`` array per tree and the tree names as JSON, saved with
-  ``numpy.savez`` (no pickle) to a temporary name and renamed into place. A Llama-2-13B commitment under cnn18c is
-  about 51 MB.
-* **Check on reading.** Before trusting a file, :func:`load` recomputes ``checks`` random leaves of every tree from
-  the weights (the encoded columns, exactly as an opening computes them, and their digests) and compares them; any
+  ``numpy.savez`` (no pickle) to a temporary name and renamed into place. A Llama-2-13B commitment under cnn18c
+  (last block pruned) has 1,605,632 leaves, about 51 MB.
+* **Check on reading.** Before trusting a file, ``commit_graph`` recomputes ``cache_checks`` random leaves of every
+  tree from the weights (:func:`check_group`, :func:`check_matrix`, :func:`check_table`: the encoded columns,
+  exactly as an opening computes them, and their digests) and compares them; any
   mismatch, a missing tree or an unreadable file makes it a miss and the commitment is computed afresh (and the file
   rewritten). A wrong leaf could not make a verifier accept anything (it recomputes the leaves of the opened columns
   from their values and checks them against the root), it would only make honest proofs fail; the check keeps that
@@ -61,11 +62,11 @@ def _tensor_digest(t: torch.Tensor | None, dtype) -> bytes:
 
 def key(graph, rate: int, plan) -> str:
     """The cache key (hex) of committing ``graph``'s weight ops at base rate ``rate`` under ``plan`` (``None``: the
-    report's layout, one tree per op)."""
+    per-op commitment, one tree per op)."""
     h = hashlib.blake2b(digest_size=32)
     h.update(VERSION + b"|rate=%d|" % rate)
     if plan is None:
-        h.update(b"plan=paper")
+        h.update(b"plan=paper")             # the per-op commitment's key label: part of every stored key
     else:
         h.update(f"plan={plan.policy}".encode())
         for g, members in plan.groups:
@@ -150,7 +151,7 @@ def check_table(tag: bytes, weight: torch.Tensor, leaves: list[bytes], checks: i
     from pvi.commit.commitment import padding_leaf, table_leaf
     rows = weight.to(torch.int8).T.contiguous().cpu().numpy()
     v = rows.shape[0]
-    if len(leaves) < v or len(leaves) & (len(leaves) - 1):
+    if len(leaves) != 1 << max(0, (v - 1).bit_length()):          # exactly the tree of next_pow2(V) leaves
         return False
     for j in _sample(len(leaves), checks):
         want = table_leaf(tag, j, rows[j]) if j < v else padding_leaf(tag, j)

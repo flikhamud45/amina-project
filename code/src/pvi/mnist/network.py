@@ -94,9 +94,9 @@ class TracedNetwork:
     """``EvalTrace(M, qry)`` together with the per-neuron accessors the protocol needs.
 
     This class is the single source of truth for what the model computes.  The
-    same :meth:`forward_batch` code path produces both the accuracy numbers we
-    report and the activations we commit to, so there is no possibility of the
-    "evaluated model" and the "committed model" drifting apart.
+    same :meth:`forward_batch` code path produces both the reported accuracies and
+    the committed activations, so there is no possibility of the "evaluated model"
+    and the "committed model" drifting apart.
     """
 
     def __init__(self, architecture: Architecture, parameters: ModelParameters) -> None:
@@ -111,7 +111,7 @@ class TracedNetwork:
             if layer.name not in parameters:
                 raise ValueError(f"missing parameters for layer {layer.name}")
             weight, bias = parameters[layer.name]
-            # weight_rows validates the shapes and gives us the committed layout.
+            # weight_rows validates the shapes (and gives the committed layout).
             layer.weight_rows(weight, bias)
             self._params[layer.name] = (
                 np.ascontiguousarray(weight, dtype=np.float32),
@@ -156,9 +156,9 @@ class TracedNetwork:
 
         Memory cost is ``batch x (total trace entries)`` floats, plus the
         im2col workspace convolutions need.  That is fine for the small batches
-        the protocol works with, but it is emphatically not the way to evaluate a
-        60 000-image test set -- use :meth:`outputs`, :meth:`predict` or
-        :meth:`accuracy`, which stream in chunks and keep only the final layer.
+        the protocol works with, but it is not the way to evaluate a whole dataset
+        -- use :meth:`outputs`, :meth:`predict` or :meth:`accuracy`, which stream in
+        chunks and keep only the final layer.
         """
         flat = np.ascontiguousarray(queries, dtype=np.float32).reshape(
             queries.shape[0], -1

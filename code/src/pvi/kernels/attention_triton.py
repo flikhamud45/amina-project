@@ -1,12 +1,13 @@
 """A fused, exact integer causal attention on the GPU (Triton): the integers of
-``transformer._attention_core`` without its ``T x T`` score tensors.
+``pvi.models.decoder._attention_core`` without its ``T x T`` score tensors (option ``fused_attention`` of
+:mod:`pvi.options`, in the prover and the GPU verifier).
 
 ``_attention_core`` computes, for the queries of a group of heads, the scores ``s = q k^T`` (int8 inputs),
 masks the keys after each query, takes each row's gaps ``d = max(s) - s`` to an exp table
 (``e = LUT[min(d, len - 1)]``, 0 for a masked key), the row sums ``tot`` and the probabilities
-``p = floor((tot + 2 pmax e) / (2 tot))`` (0..pmax, 255 by default), and returns ``p v`` (int64).  This kernel computes the same
-integers per block of query rows in three passes over the key blocks up to the block's last query (keys after
-it are all masked and skipped):
+``p = floor((tot + 2 pmax e) / (2 tot))`` (0..pmax, 255 by default), and returns ``p v`` (int64).  This kernel
+computes the same integers per block of query rows in three passes over the key blocks up to the block's last query
+(keys after it are all masked and skipped):
 
 1. the row maxima of the unmasked scores;
 2. ``tot``, the row sums of ``e``;
@@ -17,7 +18,7 @@ fp32, exact while every partial sum is an integer below ``2**24``.  A score is a
 (``dh <= 128``), and every partial sum of a row of ``p v`` is at most ``(sum p) 127 <= (pmax + T/2) 127 <
 2**24`` (``T < 2**15``; the same bound that lets ``_attention_core`` use one float32 GEMM).  The integer steps
 (maximum, gaps, table, sums, floor division) are exact.  So the output is bit-identical (tested against
-``_attention_core`` and ``reference.attention_heads``).
+``_attention_core`` and ``attention_heads`` of ``tests/reference.py``).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ __all__ = ["available", "attention_core"]
 
 
 def available(device) -> bool:
+    """Whether the kernel can run on ``device`` (a CUDA device and Triton)."""
     return triton is not None and torch.device(device).type == "cuda"
 
 
@@ -99,10 +101,10 @@ if triton is not None:
 
 def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int,
                    pmax: int = 255) -> torch.Tensor:
-    """``_attention_core(q, k, v, lut, notmask)`` (raw ``p v``, int64 ``[B, H, R, dh]``) on the GPU for int8-valued
-    ``q [B, H, R, dh]`` (``R = rep * queries`` stacked rows: row ``r`` is the query at position
-    ``T - queries + r % queries``), ``k, v [B, H, T, dh]`` (any integer dtype, any strides) and the int32 table
-    ``lut``; ``dh <= 128`` and ``T < 2**15``."""
+    """``pvi.models.decoder._attention_core(q, k, v, lut, notmask, pmax)`` (raw ``p v``, int64 ``[B, H, R, dh]``) on
+    the GPU for int8-valued ``q [B, H, R, dh]`` (``R = rep * queries`` stacked rows: row ``r`` is the query at
+    position ``T - queries + r % queries``), ``k, v [B, H, T, dh]`` (any integer dtype, any strides) and the int32
+    table ``lut``; ``dh <= 128``, ``T < 2**15`` and ``pmax <= 2047``."""
     bsz, heads, rows, dh = q.shape
     t = k.shape[2]
     out = torch.empty(bsz, heads, rows, dh, dtype=torch.int64, device=q.device)

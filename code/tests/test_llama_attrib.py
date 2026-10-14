@@ -1,6 +1,6 @@
 """``experiments.quality.llama_attrib``: the op-level attribution of the integer Llama / Qwen3 graph against the fp32
-checkpoint, and the q/k-norm balance it led to (``hf_llama``'s ``qk_balance``), on tiny randomly initialised Hugging
-Face models (no download).
+checkpoint, and the q/k-norm balance whose need it shows (``pvi.models.hf_llama``'s ``qk_balance``), on tiny
+randomly initialised Hugging Face models (no download).
 
 The tiny models are ``test_real_llama.py``'s (2 blocks, d = 64, head_dim 16, gains in [0.5, 1.5], weights of std
 0.15; calibration 2 x 32 random tokens, evaluation 4 x 32). Measured on the smoothed recipe (seeds 0 / 1; the
@@ -30,10 +30,10 @@ The realistic case: a tiny Qwen3 with Qwen3-0.6B-Base's real layer-0 q/k-norm ga
 1 block, d = 128, 4 / 2 heads, random weights; calibration 4 x 64, evaluation 2 x 64. Without the balance the
 first block's output falls to a mean cosine 0.872 / 0.783 (seeds 0 / 1, smoothed, teacher-forced; scalar gain 4:
 0.827 / 0.737) -- the shape of the real Qwen3-0.6B-Base's first block (0.889 smoothed, 0.865 scalar, in
-``llama_diag.py``'s diagnosis of the graph before the balance) -- and the attribution puts it on the k norm: it adds
-0.90 / 1.10 nats to the attention scores' error (q norm 0.24 / 0.27, every other op <= 0.15), 31% / 35% of its int8
-outputs are 0. With the balance (the default): k norm 0.11 / 0.14 nats, q norm 0.11 / 0.12, the block's output 0.987
-/ 0.983 (scalar: 0.955 / 0.939, where the norm's gain-4 resolution then dominates: 0.31 nats).
+``experiments.quality.llama_diag``'s diagnosis of the graph built without the balance) -- and the attribution puts it
+on the k norm: it adds 0.90 / 1.10 nats to the attention scores' error (q norm 0.24 / 0.27, every other op <= 0.15),
+31% / 35% of its int8 outputs are 0. With the balance (the default): k norm 0.11 / 0.14 nats, q norm 0.11 / 0.12, the
+block's output 0.987 / 0.983 (scalar: 0.955 / 0.939, where the norm's gain-4 resolution then dominates: 0.31 nats).
 """
 
 from __future__ import annotations
@@ -266,7 +266,7 @@ def test_every_tensor_of_the_smoothed_graph_tracks_the_checkpoint(kind, variant,
         assert max(v for k, v in steps.items() if k != "in") <= 0.08, steps
         assert r["pattern"]["qk"]["score_err_nats"] <= (0.25 if mode == "accumulated" else 0.1), r["pattern"]["qk"]
         assert la.first_flag(r, 0.1, 0.99, 0.1) is None
-    # the accumulated block outputs are llama_diag.py's per-block cosines (hf_llama.block_cosines)
+    # the accumulated block outputs are experiments.quality.llama_diag's per-block cosines (hf_llama.block_cosines)
     if mode == "accumulated":
         prefix = VARIANTS[variant].get("prefix_tokens")
         with torch.no_grad():

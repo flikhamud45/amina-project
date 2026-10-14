@@ -1,10 +1,10 @@
-"""V1's query end to end (``pvi.v1.protocol``; ``V1_SPEC.md`` tests T4 and T5).
+"""V1's query end to end (``pvi.v1.protocol``).
 
-T4: honest queries are accepted in modes C (one tree per op, and commitment plans with col matrices and lookup
+Honest queries are accepted in modes C (one tree per op, and commitment plans with col matrices and lookup
 tables) and Kpre, interactive and under Fiat--Shamir, on GPT-, Llama- (pruned), OPT- and Qwen-shaped decoders and a
-generation graph.  T5: every way a prover can deviate at one message is rejected with its label: the
+generation graph.  Every way a prover can deviate at one message is rejected with its label: the
 trace-tampering attack (``cut_final``), fake or malformed exceptions, bad multiplicities, a tampered GKR, a wrong
-fold, a wrong clear claim.
+fold, a wrong clear claim.  The byte accounting of ``cut_proof_bytes`` is that of a query.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def _x(n=9, seed=2):
     ("gpt", "C", None, False, False), ("gpt", "C", None, True, False), ("llama", "C", "cnn16c", True, True),
     ("opt", "C", "tightc", False, False), ("qwen", "C", "auto", True, False), ("gpt", "Kpre", None, True, False),
     ("llama", "Kpre", None, False, True), ("opt", "Kpre", None, True, True)])
-def test_t4_honest_queries_are_accepted(kind, mode, policy, fs, pruned):
+def test_honest_queries_are_accepted(kind, mode, policy, fs, pruned):
     g, prover, v = _setup(kind, mode, policy, fs, pruned)
     out = cp.run_cut_query(prover, v, _x(), seed=None if fs else 5)
     assert out["accepted"], out["rejected_at"]
@@ -60,7 +60,6 @@ def test_t4_honest_queries_are_accepted(kind, mode, policy, fs, pruned):
     assert v._cut_plan is None                         # the per-query state is cleared
     # a v0 query on the same verifier is unaffected
     assert proto.run_query(prover, v, _x(), wire=True)["accepted"]
-
 
 
 @pytest.mark.parametrize("kind", ["gpt", "llama", "qwen"])
@@ -85,7 +84,8 @@ def test_kpre_with_the_verifiers_own_embedding_rows(kind):
         return z
     assert not cp.run_cut_query(prover, v, _x(), forward_kwargs={"tamper": tamper})["accepted"]
 
-def test_t4_a_generation_graph_and_another_length():
+
+def test_a_generation_graph_and_another_length():
     g, prover, v = _setup("llama", "C", "cnn16c", True, True, gen=True)
     base = build_decoder(_TINY["llama"], calib_tokens=8, seed=1, prune_last=True)
     x = greedy_tokens(base, _x(10, seed=4), 2)                  # a prompt and its 2 greedy tokens
@@ -104,7 +104,7 @@ def test_mode_k_and_streaming_are_not_supported():
         cp.run_cut_query(prover, v2, _x())
 
 
-# ------------------------------------------------------------------ T5: cheats
+# ------------------------------------------------------------------ cheats
 def _first_cut(v, x, kind="requant"):
     plan = cp.cut_plan(v.graph, v.claim_columns(x), x.shape[1], v.publics if v.groups else None, v.params.cut_lmax)
     return plan, next(o for o in plan.ops if o.kind == kind)
@@ -246,7 +246,7 @@ def test_a_wrong_clear_claim_fails_freivalds():
 
 @pytest.mark.parametrize("kind,mode,policy,fs,pruned", [
     ("gpt", "C", None, True, False), ("llama", "C", "cnn16c", True, True), ("opt", "Kpre", None, True, True)])
-def test_t7_the_byte_accounting_is_that_of_a_query(kind, mode, policy, fs, pruned):
+def test_the_byte_accounting_is_that_of_a_query(kind, mode, policy, fs, pruned):
     g, prover, v = _setup(kind, mode, policy, fs, pruned)
     real = cp.run_cut_query(prover, v, _x())
     est = cp.cut_proof_bytes(prover, v, _x(), seed=3)
@@ -294,7 +294,7 @@ def test_v1_with_a_gpu_prover_and_verifier(mode, policy):
 
 @pytest.mark.parametrize("mode", ["C", "Kpre"])
 def test_cut_folds_must_be_canonical_field_elements(mode):
-    # review fix: c + p (< 2^31) is the same field element, but a second encoding of the fold message
+    # c + p (< 2^31) is the same field element, but a second encoding of the fold message
     g, prover, v = _setup("gpt", mode, None, True)
     x = _x()
     n_clear = 0 if mode == "Kpre" else len([op for op in v._row_ops() if op.name not in _first_cut(v, x)[0].names()])
@@ -318,7 +318,8 @@ def test_honest_exceptions_across_row_blocks(mode, monkeypatch):
     monkeypatch.setattr(cp, "_FINAL_ROWS", 7)
     g = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)
     ops = list(g.ops)
-    i = next(k for k, o in enumerate(ops) if isinstance(o, CheapOp) and o.params.get("requant", {}).get("kind") == "requant")
+    i = next(k for k, o in enumerate(ops)
+             if isinstance(o, CheapOp) and o.params.get("requant", {}).get("kind") == "requant")
     p = dict(ops[i].params["requant"])
     p["mult"] = p["mult"] * 8
     ops[i] = dataclasses.replace(ops[i], fn=requant_fn(p), params={"requant": p})

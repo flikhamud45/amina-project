@@ -3,10 +3,10 @@ per-op codeword lengths and, under the policies with the suffix ``c``, per-op la
 layout, with the ops reading one tensor fused, and lookup tables for the embeddings), opt-in by
 policy name (``commit_graph(..., policy=)``, ``params_for(..., plan=)``, a verifier with ``groups``
 and ``tables``), also on decoders built with their last block pruned (``prune_last``).  The default --
-``policy="paper"`` -- is the report's commitment and parameters, which the rest of the suite
-checks bit for bit.
+``policy="per-op"``, no plan: one Merkle tree per weight op -- is the commitment and the
+parameters of protocol v0 that the rest of the suite checks bit for bit.
 
-Every plan must keep the report's guarantee (``soundness_bits >= lambda`` for every model, mode
+Every plan must keep the soundness guarantee (``soundness_bits >= lambda`` for every model, mode
 and challenge kind), honest queries must be accepted, and every forgery must be rejected at the
 check that catches it, by ``run_query``, by the streaming verifier and in the forms a GPU
 verifier runs, interactive and under Fiat--Shamir -- with the proof in its default form and in
@@ -27,7 +27,7 @@ import torch
 
 import pvi.v0 as proto
 import reference as ref
-from pvi.commit import cost as analytic
+from pvi.commit import cost
 from pvi.commit.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
                                    group_leaf, multiproof_size, verify_multiproof)
 from pvi.commit.plans import (MAX_N, REFERENCE_LAMBDA, col_name, column_bits, column_error_log2, exact_columns,
@@ -55,8 +55,9 @@ def device(request):
 
 # -- the commitment layer ---------------------------------------------------------------------------
 
-def _report_leaves(tag, weight, bias, n_points):
-    """The report's ``WeightCommitment.build``, verbatim, for the equality checks."""
+def _per_op_leaves(tag, weight, bias, n_points):
+    """The column digests of the per-op commitment computed directly (the Reed-Solomon codeword of every block of 256
+    rows, then one leaf per column), for the equality checks."""
     n_rows = weight.shape[0]
     cols = np.empty((n_points, n_rows), dtype="<u4")
     for r0 in range(0, n_rows, 256):
@@ -74,9 +75,9 @@ def _matrix(seed, rows, cols, bias=True):
 
 
 @pytest.mark.parametrize("bias", [True, False])
-def test_streamed_column_digests_equal_the_reports(bias):
+def test_streamed_column_digests_equal_the_direct_ones(bias):
     w, b = _matrix(1, 37, 50, bias)
-    ref = _report_leaves(b"m", w, b, 256)
+    ref = _per_op_leaves(b"m", w, b, 256)
     assert column_leaves(b"m", w, b, 256) == ref
     assert column_leaves(b"m", w, b, 256, max_host_bytes=0, row_chunk=5) == ref            # one row block at a time
     assert column_leaves(b"m", w, b, 256, max_host_bytes=4 * 256 * 12, row_chunk=5) == ref  # blocks of 3 chunks
@@ -89,7 +90,7 @@ def test_a_group_tree_binds_every_members_own_column_digests():
     n = 256
     group = GroupCommitment.build(b"g", {name: WeightCommitment.member(name.encode(), w, b, n)   # hashed in blocks
                                          for name, (w, b) in mats.items()}, max_host_bytes=64)
-    own = {name: _report_leaves(name.encode(), w, b, n) for name, (w, b) in mats.items()}
+    own = {name: _per_op_leaves(name.encode(), w, b, n) for name, (w, b) in mats.items()}
     assert group.tree.root == MerkleTree([group_leaf(b"g", c, [own[m][c] for m in mats]) for c in range(n)]).root
     # a member's column digests are those of its own tree at this codeword length
     assert own["a"] == WeightCommitment.build(b"a", *mats["a"], rate=8).tree.levels[0]
@@ -123,12 +124,12 @@ def test_exact_columns_are_the_smallest_that_meet_the_bound():
         assert 1 <= t <= max(k, 1)
         assert t == k or column_error_log2(k, n, t) <= -bits
         assert t == 1 or column_error_log2(k, n, t - 1) > -bits
-        # never more than the report's t = ceil(bits / log2 rate) at the report's lengths
+        # never more than the per-op t = ceil(bits / log2 rate) at the per-op lengths (rate 4)
         assert exact_columns(k, 4 * next_pow2(k), bits) <= math.ceil(bits / 2)
 
 
 def _shapes(*ops):
-    return [analytic.OpShape(*o) for o in ops]
+    return [cost.OpShape(*o) for o in ops]
 
 
 def test_policies_give_their_codeword_lengths():
@@ -164,7 +165,7 @@ def _check_partition(plan, ops, bits):
 
 def test_groups_are_runs_of_one_length_chosen_for_bytes():
     for cfg in (CONFIGS["gpt2"], CONFIGS["llama2-7b"], CONFIGS["qwen3-4b"], CONFIGS["opt-350m"]):
-        ops = analytic.decoder_shapes(cfg)
+        ops = cost.decoder_shapes(cfg)
         bits = column_bits(REFERENCE_LAMBDA, len(ops))
         for policy in ("tight", "cnn16", "R16"):
             plan = plan_commitment(ops, policy)
@@ -184,12 +185,12 @@ def test_a_build_of_a_few_blocks_gets_the_whole_models_groups(model, prune_last)
     """A build's matrices and groups are the whole model's restricted to the built ops -- its blocks
     being the model's last ones (with ``prune_last`` the last is the pruned one), under their names."""
     cfg = CONFIGS[model]
-    full = analytic.decoder_shapes(cfg, prune_last=prune_last)
+    full = cost.decoder_shapes(cfg, prune_last=prune_last)
     for policy in ("tight", "cnn16", "R16", "tightc", "cnn16c", "R16c"):
         whole = plan_commitment(full, policy)
         of = {m: g for g, ms in whole.groups for m in ms}
         for layers in (1, 2):
-            built = analytic.decoder_shapes(cfg, layers, prune_last=prune_last)
+            built = cost.decoder_shapes(cfg, layers, prune_last=prune_last)
             first = next(i for i, op in enumerate(built) if op.name == "q0")
             skip = (len(full) - len(built))                  # the ops of the model's first L - layers blocks
             rename = {op.name: full[i if i < first else i + skip].name for i, op in enumerate(built)}
@@ -233,7 +234,7 @@ def _cnn(name):
 @pytest.fixture(scope="module")
 def all_models():
     out = {name: _cnn(name)[0].mat_ops for name in ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar")}
-    out.update({name: analytic.decoder_shapes(cfg) for name, cfg in CONFIGS.items()})
+    out.update({name: cost.decoder_shapes(cfg) for name, cfg in CONFIGS.items()})
     return out
 
 
@@ -271,7 +272,7 @@ def test_every_plan_meets_lambda_for_every_model_and_mode(policy, all_models):
                     assert column_error_log2(m_len, n, t) <= -bits and params.reps * fld.LOG2_P >= bits
                 assert proto.soundness_bits(params, per_op, "K") >= lam      # (Kpre: the bound of K, Freivalds alone)
                 assert proto.soundness_bits(params, own_rows, "K") >= proto.soundness_bits(params, per_op, "K")
-                if policy == "tight":            # the report's lengths: exact t never opens more
+                if policy == "tight":            # the per-op lengths: exact t never opens more
                     assert max(cols) <= paper.columns
                 with pytest.raises(ValueError, match="columns=plan.matrix_columns"):
                     proto.soundness_bits(params, plan.shapes(), "C")    # would credit every matrix the largest t
@@ -909,7 +910,7 @@ def test_the_fiat_shamir_transcript_absorbs_the_plan(policy, monkeypatch):
 
 def _flip_lowest_bit(packed: bytes, e: int, numel: int) -> bytes:
     """``packed`` (``numel`` field elements at 31 bits) with the lowest bit of element ``e`` flipped:
-    element ``j G + g`` starts at bit ``31 j`` of the words ``g, G + g, ...`` (:func:`claimcodec.pack32`)."""
+    element ``j G + g`` starts at bit ``31 j`` of the words ``g, G + g, ...`` (:func:`pvi.v0.claimcodec.pack32`)."""
     lanes = (numel + 31) // 32
     j, g = divmod(e, lanes)
     word, bit = ((31 * j) >> 5) * lanes + g, (31 * j) & 31
@@ -1119,12 +1120,14 @@ def test_a_verifier_refuses_a_col_key_that_does_not_fit():
         pub, members=(), n_rows=first.n_rows, row_length=first.row_length)})
 
 
-def test_the_default_policy_is_the_reports_commitment():
+def test_the_default_policy_is_the_per_op_commitment():
+    """The default policy (``per-op``, no plan): one tree per weight op over the column digests of its rate-4
+    codeword, and the parameters of ``params_for`` without a plan."""
     graph, x = _model("gpt")
     coms = proto.commit_graph(graph, 4)
     assert isinstance(coms, dict) and coms.plan is None and coms.groups == {} and coms.group_publics == {}
     for op in graph.mat_ops:
-        assert coms[op.name].tree.root == MerkleTree(_report_leaves(op.name.encode(), op.weight, op.bias,
+        assert coms[op.name].tree.root == MerkleTree(_per_op_leaves(op.name.encode(), op.weight, op.bias,
                                                                      4 * next_pow2(op.row_length))).root
     assert coms.publics == {k: c.public for k, c in coms.items()}
     params = proto.params_for(40, len(graph.mat_ops))
@@ -1165,7 +1168,8 @@ def test_random_cnn_queries_are_distinct_and_shaped_as_the_model_s_input():
 
 
 def test_perf_random_init_builds_every_cnn_it_accepts(monkeypatch, capsys):
-    """``perf.py --random-init`` builds every CNN of ``models.quantize.RANDOM_CNNS``: ResNet-18-224 too."""
+    """``experiments.costs.perf --random-init`` builds every CNN of ``pvi.models.quantize.RANDOM_CNNS``:
+    ResNet-18-224 too."""
     import json
     import sys
     from pathlib import Path
@@ -1193,16 +1197,16 @@ def test_the_proof_size_model_is_what_run_query_sends(kind, policy):
     cols = {k: z.shape[1] for k, z in claims.items()}
     base, _, variant = kind.partition("-")
     if base in _TINY:
-        assert list(cols.values()) == list(analytic.decoder_claim_columns(
+        assert list(cols.values()) == list(cost.decoder_claim_columns(
             _TINY[base], x.shape[1], prune_last=variant == "pruned").values())
     ids = _looked_up(graph, x, coms.tables)
     for fs in (False, True):
         params = proto.params_for(40, len(graph.mat_ops), fiat_shamir=fs, plan=coms.plan)
         v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
                            tables=coms.table_publics)
-        want = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, table_ids=ids)
+        want = cost.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, table_ids=ids)
         encoded = _claim_bytes(graph, coms.tables, claims, wire=True)
-        wired = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, wire_claims=encoded,
+        wired = cost.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, wire_claims=encoded,
                                      table_ids=ids)
         assert wired["paths"] == want["paths"] and wired["claims"] == encoded
         paths = []
@@ -1219,14 +1223,14 @@ def test_the_proof_size_model_is_what_run_query_sends(kind, policy):
         for lookups in (False, True):
             own = {op.name for op in graph.mat_ops if lookups and op.layout == "embed"}
             sent = {k: z for k, z in claims.items() if k not in own}
-            k_modes = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre", lookups=lookups)
+            k_modes = cost.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre", lookups=lookups)
             assert k_modes == {"claims": _claim_bytes(graph, (), sent, False), "u": 0, "columns": 0, "paths": 0.0}
-            k_wired = analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre",
+            k_wired = cost.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, mode="Kpre",
                                            wire_claims=_claim_bytes(graph, (), sent, True), lookups=lookups)
             assert k_wired == {"claims": _claim_bytes(graph, (), sent, True), "u": 0, "columns": 0, "paths": 0.0}
     with pytest.raises(ValueError, match="lookups"):
-        analytic.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, lookups=True)
-    setup = analytic.setup_size(graph.mat_ops, plan=coms.plan)
+        cost.proof_bytes(graph.mat_ops, params, cols, plan=coms.plan, lookups=True)
+    setup = cost.setup_size(graph.mat_ops, plan=coms.plan)
     assert setup["encoded_entries"] == sum(c.public.n_rows * c.n_points for c in coms.values())
     assert setup["trees"] == (len(coms.groups) + len(coms.tables) or len(coms))
     assert setup["leaves"] == (sum(g.n_points for g in coms.groups.values()) + sum(

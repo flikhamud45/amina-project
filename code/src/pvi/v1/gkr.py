@@ -1,20 +1,25 @@
-"""The fractional-sum GKR of V1's logUp argument (``V1_SPEC.md`` Sec. 2.4.1; the toy reference
-``sp2027_research/v1_design/scratch/spec_toy.py``).
+"""The fractional-sum GKR protocol of V1's logUp argument: the eager prover and verifiers.
 
-An *instance* has ``2^n`` leaves, each a fraction ``p/q`` over ``F = F_{p^8}`` (:mod:`extfield`): ``(1, alpha - v)``
-for a real leaf of value ``v``, ``(0, 1)`` for padding.  The fraction tree combines children ``2y, 2y + 1`` into
-``(p_L q_R + p_R q_L, q_L q_R)``; the root is the sum of all leaves' fractions.  The prover sends the root's two
-children and then, layer by layer, a sum-check that reduces a claim on layer ``k`` (``P + lambda Q`` at a point)
-to a claim on layer ``k + 1``, binding the point's bits least significant first; the verifier checks each round
-and ends with claims ``(P_hat, Q_hat)`` on the leaf layer's multilinear extensions at a random point ``rho``
-(column bits first, as the caller lays the leaves out), which the caller checks against its own data.
+An *instance* has ``2^n`` leaves, each a fraction ``p/q`` over the extension field
+``F_{p^8} = F_p[xi]/(xi^8 - 11)`` (:mod:`pvi.core.extfield`; the numerators ``p`` and the denominators ``q`` are the
+paper's ``n`` and ``d``): ``(1, alpha - v)`` for a real leaf of value ``v``, ``(0, 1)`` for padding.  The fraction
+tree combines the children ``2y, 2y + 1`` into ``(p_L q_R + p_R q_L, q_L q_R)``, so that the root is the sum of the
+leaves' fractions.  The prover sends the root's two children and then, layer by layer, a sum-check that reduces a
+claim ``P + lambda Q`` on layer ``k`` at a point to claims on layer ``k + 1``, binding the point's bits from the
+least significant one; the verifier checks every round and ends with the claims ``(P_hat, Q_hat)`` on the leaf
+layer's multilinear extensions at a random point ``rho`` (column bits first, as the caller lays the leaves out),
+which the caller checks against its own data (the final check (F3) of :mod:`pvi.v1.protocol`).
 
-Rounds send ``g(0), g(2), g(3)``; ``g(1) = c - g(0)``.  Every message is absorbed before the next challenge (a
-:class:`protocol.Challenger`), interactive or Fiat--Shamir.  ``prove`` and ``verify`` here are the eager reference
-(dense torch tensors); a Triton prover must produce identical transcripts.
+The challenges carry the names of their transcript labels: ``mu_k`` combines the two child values of layer ``k``
+(the paper's ``theta_k``), ``lam_k`` combines the numerator and denominator claims (the paper's ``eta_k``), and
+``r_{k,j}`` is the challenge of round ``j``.  A round sends ``g(0), g(2), g(3)`` of its cubic, and
+``g(1) = c - g(0)``.  Every message is absorbed before the next challenge is drawn (a
+:class:`pvi.v0.transcript.Challenger`, interactive or under Fiat-Shamir).  :func:`prove` and :func:`verify` work on
+dense torch tensors; the Triton prover (:mod:`pvi.v1.gkr_triton`) produces the same transcripts byte for byte.
 
-**Soundness** (standard): a wrong root survives a layer's sum-check with probability at most ``3k/|F|`` over its
-``k`` degree-3 rounds plus ``1/|F|`` for ``lambda`` and ``mu``: ``eps(n) <= (1 + sum_{k<n} (3k + 2)) / p^8``.
+**Soundness** (the fractional-sum GKR lemma of the V1 appendix): a wrong root survives layer ``k`` with probability
+at most ``3k / p^8`` over its ``k`` rounds of degree 3, plus ``1 / p^8`` for each of ``lam_k`` and ``mu_k``, and the
+two children of the root add ``1 / p^8`` for ``mu_0``: ``eps(n) <= (1 + sum_{k<n} (3k + 2)) / p^8``.
 """
 
 from __future__ import annotations
@@ -31,15 +36,15 @@ __all__ = ["Transcript", "fraction_layers", "prove", "verify", "verify_rounds", 
 
 
 def n_elements(n: int) -> int:
-    """Field elements in an instance's transcript: 4 at the top, then per layer ``k < n`` its ``k`` rounds of 3 and
-    4 child values."""
+    """The elements of ``F_{p^8}`` in an instance's transcript, ``4 + sum_{k=1}^{n-1} (3k + 4)``: the 4 children of
+    the root, then for each layer ``1 <= k < n`` its ``k`` rounds of 3 values and its 4 child values."""
     return 4 + sum(3 * k + 4 for k in range(1, n))
 
 
 @dataclass
 class Transcript:
-    """One instance: ``top`` (``[4, 8]``: ``p_1(0), p_1(1), q_1(0), q_1(1)``), per layer ``k = 1 .. n - 1`` its rounds
-    ``[k, 3, 8]`` and the four child values ``[4, 8]``."""
+    """The transcript of one instance: ``top`` (``[4, 8]``: ``p_1(0), p_1(1), q_1(0), q_1(1)``), and for each layer
+    ``k = 1 .. n - 1`` its rounds ``[k, 3, 8]`` and its four child values ``[4, 8]``."""
     n: int
     top: torch.Tensor
     rounds: list = field(default_factory=list)
@@ -57,7 +62,8 @@ class Transcript:
 
     @classmethod
     def from_bytes(cls, buf, n: int) -> "Transcript":
-        """Raises ``claimcodec.ClaimCodecError`` (malformed) or ``ValueError`` (another ``n``)."""
+        """The transcript of :meth:`to_bytes`; raises ``pvi.v0.claimcodec.ClaimCodecError`` (malformed bytes) or
+        ``ValueError`` (an instance of another ``n``)."""
         if len(buf) < 1 or buf[0] != n:
             raise ValueError("an instance of another size")
         flat = ef.unpack(bytes(buf[1:]), n_elements(n))
@@ -142,10 +148,10 @@ def verify(tr: Transcript, ch, label: str):
     extensions at ``rho`` (bit ``i`` of a leaf index against ``rho[i]``), or ``None`` if a round fails.
 
     The challenges depend on the messages only, so they are drawn first, in transcript order; the checks are then
-    vectorised over the ``n - 1`` layers (``V1_SPEC.md`` Sec. 2.4.1, implementation note): within a layer the
-    claim after round ``j`` is affine in the claim before it, ``c' = l_1(r) c + (l_0(r) - l_1(r)) g(0) + l_2(r) g(2)
-    + l_3(r) g(3)``, and each layer starts from the previous layer's child values, so every layer's chain runs at
-    once, ``n - 1`` steps of batched products (layers shorter than ``n - 1`` rounds are padded with identities)."""
+    vectorised over the ``n - 1`` layers: within a layer the claim after round ``j`` is affine in the claim before
+    it, ``c' = l_1(r) c + (l_0(r) - l_1(r)) g(0) + l_2(r) g(2) + l_3(r) g(3)``, and each layer starts from the
+    previous layer's child values, so every layer's chain runs at once, ``n - 1`` steps of batched products (layers
+    shorter than ``n - 1`` rounds are padded with identities)."""
     n = tr.n
     if n < 1 or tuple(tr.top.shape) != (4, ef.D) or len(tr.rounds) != n - 1 or len(tr.vals) != n - 1:
         return None
@@ -245,12 +251,12 @@ def _draw(tr: Transcript, ch, label: str):
 
 
 def verify_batch(trs: list, ch, labels: list):
-    """:func:`verify` of several instances (V-V1N part 3): ``[(p0, q0, rho, P_hat, Q_hat)]``, the same field elements
-    as :func:`verify` gives instance by instance, or ``None`` if any instance is malformed or fails a round.
+    """:func:`verify` of several instances: ``[(p0, q0, rho, P_hat, Q_hat)]``, the same field elements as
+    :func:`verify` gives instance by instance, or ``None`` if any instance is malformed or fails a round.
 
     Every instance's absorptions and challenges come first, in transcript order (instance by instance, each as
-    :func:`verify` draws them; ``ch`` may be a Fiat--Shamir challenger or ``cut_protocol``'s recorders).  Then the
-    affine round chains of **every layer of every instance** run as one batch: the layers are stacked as rows of
+    :func:`verify` draws them; ``ch`` is a challenger or the interactive replayer of :mod:`pvi.v1.protocol`).  Then
+    the affine round chains of **every layer of every instance** run as one batch: the layers are stacked as rows of
     width ``W = max (n - 1)``, a layer's columns past its rounds being identities (``a = 1, b = 0``, eq factor 1),
     exactly as :func:`verify` pads its own ``[L, L]`` grid, so each row computes the integers of :func:`verify`; ``W``
     steps of batched products replace ``sum (n - 1)``.  With one instance or many, the verdict is :func:`verify`'s:
@@ -275,14 +281,14 @@ def verify_batch(trs: list, ch, labels: list):
         for b in deep:
             tr, (mu, lam, rs) = trs[b], drawn[b]
             L = tr.n - 1
-            rows, cols = torch.tril_indices(L, L)                                    # layer k = row + 1: rounds 0 .. k - 1
+            rows, cols = torch.tril_indices(L, L)                           # layer k = row + 1: rounds 0 .. k - 1
             r = one.repeat(L, width, 1)
             r[rows, cols] = rs
             g = torch.zeros(L, width, 3, d, dtype=torch.int64)
             g[rows, cols] = torch.cat([x.to(torch.int64) for x in tr.rounds])
             live = torch.zeros(L, width, dtype=torch.bool)
             live[rows, cols] = True
-            rho = one.repeat(L, width, 1)                                            # rho_k = (mu_{k-1}, r_{k-1, 0 .. k-2})
+            rho = one.repeat(L, width, 1)                                   # rho_k = (mu_{k-1}, r_{k-1, 0 .. k-2})
             rho[:, 0] = mu[:L]
             if L > 1:
                 rho[1:, 1:width] = r[:-1, :width - 1]
@@ -324,7 +330,8 @@ def verify_batch(trs: list, ch, labels: list):
 
 
 def verify_rounds(tr: Transcript, ch, label: str):
-    """:func:`verify` round by round, exactly as ``spec_toy.gkr_verify`` (the reference the tests compare it with)."""
+    """:func:`verify` round by round, in the order of the protocol's description: the reference that the tests
+    compare the vectorised verifiers with."""
     n = tr.n
     p10, p11, q10, q11 = tr.top
     _absorb(ch, label + "top", tr.top)

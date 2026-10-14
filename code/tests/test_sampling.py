@@ -1,4 +1,5 @@
-"""Tests for path sampling."""
+"""The uniform path sampler of the path-sampling baseline (``pvi.baseline.path.sampling``): reproducible from a seed,
+and the input layer is never a checked layer."""
 
 from __future__ import annotations
 

@@ -4,12 +4,13 @@
   width ``2 .. 2^16`` that a multiplier gives (the identity the table products rest on); ``lw_times`` equals the
   baseline ``[L ; W]`` float64 GEMM at random points of ``F_{p^8}``, with exceptions, across the window widths, for
   requant and residual ops, in every value dtype and across row blocks and column chunks; ``xbar`` equals
-  ``extfield.int_times``; spans past :data:`products.SPAN` fall back; the native kernels give the same integers.
-* The final check's extensions (``protocol._final_claims``) and ``_xbar`` are the same field elements under both
-  verifiers at random points, in mode C with row and col layouts, in Kpre, and on a model with many exceptions.
-* ``gkr.verify_batch`` gives ``verify``'s outputs and transcript instance by instance and rejects every tampered
-  coefficient as ``verify`` does; one challenge (``Challenger._ext_one``) is the baseline's, also on crafted streams
-  that hit both rejection rules; ``extfield.inv_many``; the batch-inverted logUp identity's verdict.
+  ``pvi.core.extfield.int_times``; spans past :data:`pvi.v1.products.SPAN` fall back; the native kernels give the
+  same integers.
+* The final check's extensions (``pvi.v1.protocol._final_claims``) and ``_xbar`` are the same field elements under
+  both verifiers at random points, in mode C with row and col layouts, in Kpre, and on a model with many exceptions.
+* ``pvi.v1.gkr.verify_batch`` gives ``verify``'s outputs and transcript instance by instance and rejects every
+  tampered coefficient as ``verify`` does; one challenge (``Challenger._ext_one``) is the baseline's, also on crafted
+  streams that hit both rejection rules; ``extfield.inv_many``; the batch-inverted logUp identity's verdict.
 * The cut ops' values are kept as int8 (requant) and int16 (residual); out-of-range values are rejected with the
   baseline's label, also when the token rule fails first.
 * Every tamper of ``test_cut_protocol`` (and random trace-tampering and single-value ones) gets the same verdict and
@@ -138,7 +139,7 @@ def test_lw_times_across_blocks_chunks_kinds_and_dtypes(dtype, monkeypatch):
                     reason="the native library needs a C++ compiler (Linux)")
 @pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
 def test_native_lw_equals_the_torch_table_products(dtype, set_options):
-    """The native kernel (``native_kernels.lw_affine``, used by ``lw_times`` on a CPU) gives the torch table
+    """The native kernel (``pvi.kernels.native.lw_affine``, used by ``lw_times`` on a CPU) gives the torch table
     products' integers, and declines out-of-range values and malformed operands."""
     from pvi.kernels import native as nk
     g = torch.Generator().manual_seed(5)
@@ -178,8 +179,8 @@ def test_native_lw_equals_the_torch_table_products(dtype, set_options):
                     reason="the native library needs a C++ compiler (Linux)")
 @pytest.mark.parametrize("dtype", [torch.int64, torch.int32, torch.int16, torch.int8])
 def test_native_xbar_equals_int_times(dtype, set_options):
-    """The native ``X^T e`` (``native.xbar``, used by ``products.xbar`` on a CPU) is ``extfield.int_times``'s product,
-    at the int extremes and across column blocks."""
+    """The native ``X^T e`` (``pvi.kernels.native.xbar``, used by ``products.xbar`` on a CPU) is
+    ``extfield.int_times``'s product, at the int extremes and across column blocks."""
     from pvi.kernels import native as nk
     set_options(v1_native=True)
     g = torch.Generator().manual_seed(7)
@@ -332,7 +333,7 @@ def _proved(fs, seed, ns):
     if fs:
         chs = [proto.Challenger(fiat_shamir=True) for _ in range(3)]
         for c in chs:
-            c.absorb(b"statement", b"v1n test")
+            c.absorb(b"statement", b"v1 test")
     else:
         chs = [proto.Challenger(seed=seed) for _ in range(3)]
     trs = [gkr.prove(p, q, chs[0], f"cut/{b}/") for b, (p, q) in enumerate(_instances(seed, ns))]
@@ -548,7 +549,7 @@ def test_every_tamper_has_the_same_label_under_both_verifiers(set_options):
                  query(prover, v), query(prover_k, vk)]
     gen = torch.Generator().manual_seed(8)
     mats = g.mat_ops
-    for i in range(6):                                  # v1_bytes.py's random trace-tampering and single-value ones
+    for i in range(6):                  # experiments.v1.v1_bytes' random trace-tampering and single-value tampers
         c = plan.ops[int(torch.randint(len(plan.ops), (1,), generator=gen))]
         at = int(torch.randint(1 << 30, (1,), generator=gen))
         scenarios.append(query(prover, v, forward_kwargs={"tamper": tamper(c.name, at, (1 + i % 3) * c.widths[1])}))

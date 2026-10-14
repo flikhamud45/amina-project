@@ -1,17 +1,30 @@
-"""A native (C++, OpenMP) exact integer causal attention for a CPU verifier: the integers of
-``transformer._attention_core`` without its ``T x T`` tensors and their dozen element-wise passes.
+"""Native (C++, OpenMP) exact integer kernels of a CPU verifier, each computing the integers of the torch steps it
+replaces in one pass (tested bit for bit against them):
 
-Per (batch, head, query row), on the verifier's threads: the int32 scores against the keys up to the query's
-position, their maximum, ``e = LUT[min(max - s, len - 1)]``, ``tot = sum e``, ``p = floor((tot + 2 pmax e) / (2 tot))``
-and ``p v`` (int64).  Every step is integer arithmetic on the same values as ``_attention_core`` (scores below
-``2**21``, ``tot`` and ``2 pmax e + tot`` below ``2**31``, as ``transformer._int32_scores`` requires), so the result is
-bit-identical (tested).  Query rows are taken eight at a time, so each key and value row is read once per tile of
-rows rather than once per row.
+* the causal attention (:func:`attention_core`, :func:`attention_requant`): the integers of
+  ``pvi.models.decoder._attention_core`` without its ``T x T`` tensors and their dozen element-wise passes;
+* the cheap operations: requantisation, residual addition, table look-ups, norms and RoPE (:func:`requant`,
+  :func:`residual`, :func:`lut`, :func:`norm`, :func:`rope`);
+* the field products ``chi @ Z mod p`` of the checks (:func:`field_matmul`);
+* the claim decoder's slot streams and exceptions (:func:`unpack_stream`, :func:`patch_exceptions`) and the claims'
+  range checks (:func:`min_max`);
+* the exact int8 GEMM of a forward pass on a CPU (:func:`int8_matmul`);
+* V1's window-table products by value (:func:`lw_affine`, :func:`xbar`).
 
-The library is compiled once per host with the C++ compiler in ``$CXX`` (else ``g++``), ``-O3 -march=native
--fopenmp``, into ``$PVI_NATIVE_DIR`` (default ``~/.cache/pvi``) and loaded with ctypes: no Python or torch headers
-are needed.  Without a working compiler, or with the option ``native`` off (:mod:`pvi.options`), :func:`available` is
-false and the torch path is used; the options ``native_*`` turn single kernels off.
+The attention, per (batch, head, query row), on the verifier's threads: the int32 scores against the keys up to the
+query's position, their maximum, ``e = LUT[min(max - s, len - 1)]``, ``tot = sum e``,
+``p = floor((tot + 2 pmax e) / (2 tot))`` and ``p v`` (int64).  Every step is integer arithmetic on the same values as
+``_attention_core`` (scores below ``2**21``, ``tot`` and ``2 pmax e + tot`` below ``2**31``, as
+``pvi.models.decoder._int32_scores`` requires), so the result is bit-identical.  The scalar kernel takes query rows
+eight at a time and the AVX-512 kernel sixteen, so each key and value row is read once per tile of rows rather than
+once per row.
+
+The library is compiled once per host and source on Linux with the C++ compiler in ``$CXX`` (else ``g++``),
+``-O3 -march=native -fopenmp -fwrapv``, into ``$PVI_NATIVE_DIR`` (default ``~/.cache/pvi``,
+:func:`pvi.options.native_dir`) and loaded with ctypes: no Python or torch headers are needed.  On another system,
+without a working compiler, or with the option ``native`` off (:mod:`pvi.options`), :func:`available` is false and
+the torch path is used; the options ``native_avx512``, ``native_cheap``, ``native_decode``, ``native_gemm``,
+``int32_claims``, ``v1_native`` and ``malloc_tune`` turn single kernels or settings off.
 """
 
 from __future__ import annotations
@@ -112,7 +125,7 @@ static void attention_scalar(const int16_t* q, const int16_t* k, const int16_t* 
     }
 }
 
-#if defined(__AVX512BW__)
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
 #include <immintrin.h>
 // The same integers on AVX-512 (vpmaddwd: int16 pairs -> int32 sums), for dh a multiple of 16 up to 128.  Per
 // (batch, head) group: the keys as int16 pairs along dh, transposed to [dh/2][T] (16 keys per vector), and the
@@ -146,9 +159,9 @@ static inline int32_t floordiv_r(int32_t num, int32_t den, double rinv) {
 
 // mo == 0: out [B*H, R, dh] holds P V; mo > 0: out [B, queries, H*rep, dh] holds requant(P V, mo) =
 // clamp((P V mo + 2**29) >> 30, -127, 127), row r of group (b, h) being query head h*rep + r / queries at position
-// r % queries (the final layout of transformer.integer_attention).  ms > 0: e = exp256[min(255, (gap ms + 2**29) >> 30)],
-// which equals lut[min(gap, len - 1)] (the table is non-increasing and zero from _EXP_ZERO on, where lut's last
-// entry lies), without lut's cache misses; ms == 0: the lut.
+// r % queries (the final layout of pvi.models.decoder.integer_attention).  ms > 0: e = exp256[min(255,
+// (gap ms + 2**29) >> 30)], which equals lut[min(gap, len - 1)] (the table is non-increasing and zero from
+// decoder._EXP_ZERO on, where lut's last entry lies), without lut's cache misses; ms == 0: the lut.
 static void attention_avx512(View4 q, View4 k, View4 v, const int32_t* lut, int64_t* out, int64_t bh,
                              int64_t rows, int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t mo,
                              int64_t rep, const int32_t* exp256, int64_t ms, int64_t two_p) {
@@ -327,7 +340,7 @@ extern "C" void pvi_attention(const int16_t* q, const int16_t* k, const int16_t*
 
 // 1 if pvi_attention64 runs here (AVX-512BW), for dh a multiple of 16 up to 128 and T < 2**15
 extern "C" int64_t pvi_has_avx512() {
-#if defined(__AVX512BW__)
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
     return 1;
 #else
     return 0;
@@ -343,7 +356,7 @@ extern "C" void pvi_attention64(const int64_t* q, int64_t q0, int64_t q1, int64_
                                 int64_t queries, int64_t t, int64_t dh, int64_t lut_len, int64_t mo, int64_t rep,
                                 const int32_t* exp256, int64_t ms, int64_t threads, int64_t two_p) {
     omp_set_num_threads((int)threads);
-#if defined(__AVX512BW__)
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
     const int64_t all = INT64_MAX;            // k and v: row r is position r
     attention_avx512(View4{q, q0, q1, q2, q3, heads, qrep, qrep ? queries : all},
                      View4{k, k0, k1, k2, k3, heads, 0, all}, View4{v, v0, v1, v2, v3, heads, 0, all},
@@ -427,8 +440,8 @@ extern "C" void pvi_lut(const int64_t* x, const int64_t* table, int64_t* out, in
     each2d(R, C, sr, sc, [&](int64_t i, int64_t j, int64_t s) { out[i * C + j] = table[clamp64(x[s], -128, 127) + 128]; });
 }
 
-// transformer._norm_int over rows of d (contiguous): returns 1, or 0 (nothing written) when a row's sum of squares
-// wrapped negative, where the torch path's own rules apply.
+// pvi.models.decoder._norm_int over rows of d (contiguous): returns 1, or 0 (nothing written) when a row's sum of
+// squares wrapped negative, where the torch path's own rules apply.
 extern "C" int64_t pvi_norm(const int64_t* x, const int64_t* gain, int64_t* out, int64_t rows, int64_t d,
                             int64_t center, int64_t k, int64_t threads) {
     omp_set_num_threads((int)threads);
@@ -480,7 +493,7 @@ extern "C" int64_t pvi_norm(const int64_t* x, const int64_t* gain, int64_t* out,
     return 1;
 }
 
-// transformer._rope: x [rows = B*T*H, dh] contiguous, position t = (row / heads) % T; cos2, sin2 [T, dh]
+// pvi.models.decoder._rope: x [rows = B*T*H, dh] contiguous, position t = (row / heads) % T; cos2, sin2 [T, dh]
 extern "C" void pvi_rope(const int64_t* x, const int64_t* cos2, const int64_t* sin2, int64_t* out, int64_t rows,
                          int64_t t, int64_t heads, int64_t dh, int64_t threads) {
     omp_set_num_threads((int)threads);
@@ -591,8 +604,9 @@ extern "C" int64_t pvi_field_matmul(const int64_t* chi, int64_t r, int64_t n, co
     return zbytes == 4 ? field_matmul_t(chi, r, n, (const int32_t*)z, m, sr, sc, out, threads)
                        : field_matmul_t(chi, r, n, (const int64_t*)z, m, sr, sc, out, threads);
 }
-// ---- V1's final check by value (buckets.lw_times, V-V1N): per row i of the values s [n, t] (offset by a, in [0, V))
-// at the column point e [t, 8] (canonical), out[i] = (sum_j (s_ij - a) e_j, sum_j C[v] e_j, sum_j D[v] e_j) with
+// ---- the window-table products of V1's final check (F3) by value (pvi.v1.products.lw_times): per row i of the
+// values s [n, t] (offset by a, in [0, V)) at the column point e [t, 8] (canonical),
+// out[i] = (sum_j (s_ij - a) e_j, sum_j C[v] e_j, sum_j D[v] e_j) with
 // v = s_ij - a and the tables cd [V, 2] = (C, D), each reduced mod p ([n, 3, 8] canonical).  A term is below
 // 2^15 * 2^31 (V <= 2^15, C < V, D in {0, 1}) and a row adds at most 2^16 of them before reducing, so int64 never
 // overflows; the integers are those of the torch table products.  Returns 0 if a value lies outside [a, a + V).
@@ -638,9 +652,10 @@ extern "C" int64_t pvi_lw_affine(const void* s, int64_t sbytes, int64_t n, int64
     }
 }
 
-// ---- V1's X^T e by value (buckets.xbar, V-V1N): out[k] = sum_t x[t][k] e[t] mod p ([K, 8] canonical) for an integer
-// input x [T, K] (contiguous rows) with |x| < 2^16 and e [T, 8] canonical.  A term is below 2^47 in absolute value and
-// the accumulators are reduced every 2^15 rows, so int64 never overflows.  Threads own disjoint column blocks.
+// ---- V1's X^T e by value (pvi.v1.products.xbar): out[k] = sum_t x[t][k] e[t] mod p ([K, 8] canonical) for an
+// integer input x [T, K] (contiguous rows) with |x| < 2^16 and e [T, 8] canonical.  A term is below 2^47 in absolute
+// value and the accumulators are reduced every 2^15 rows, so int64 never overflows.  Threads own disjoint column
+// blocks.
 template <typename X>
 static void xbar_t(const X* x, int64_t t, int64_t k, const int64_t* e, int64_t* out) {
     const int64_t KB = 256, RED = 1 << 15;
@@ -679,7 +694,7 @@ extern "C" int64_t pvi_xbar(const void* x, int64_t xbytes, int64_t t, int64_t k,
     }
 }
 
-// ---- the claim decoder's slot streams (claimcodec._unpack_lanes for all 32 lanes) ---------------------------------
+// ---- the claim decoder's slot streams (pvi.v0.claimcodec._unpack_lanes for all 32 lanes) -------------------------
 // w [k, g] uint32: lane j holds the values [j g, (j + 1) g), value c of lane j at bit (j k) of column c.  Writes the
 // n values to out (uint32), each plus the base of its segment (segments [starts[s], ends[s]) in order, bases los[s];
 // uint32 arithmetic wraps); returns 1, or 0 when a padding slot (index >= n) is not zero.
@@ -733,7 +748,7 @@ extern "C" void pvi_minmax(const void* a, int64_t bytes, int64_t n, int64_t* lo,
     if (bytes == 4) minmax_t((const int32_t*)a, n, lo, hi);
     else minmax_t((const int64_t*)a, n, lo, hi);
 }
-// ---- the claim decoder's exceptions (claimcodec._patch): positions, high parts, range checks, in one pass -------
+// ---- the claim decoder's exceptions (pvi.v0.claimcodec._patch): positions, high parts, range checks, in one pass
 // gaps -> positions in place (cumsum(gaps + 1) - 1, int64 wrap-around as numpy's); x[pos] += h 2**B with
 // h = unzigzag(hz + 1), B the width of the segment holding pos (segments: starts in global order, widths, the
 // bases still pending); returns 0, 1 (a position out of range), 2 (a high part >= 2**32) or 3 (a value with
@@ -776,11 +791,12 @@ extern "C" int64_t pvi_patch(int32_t* x, int64_t* gaps, const int64_t* hz, int64
     return bad ? 3 : 0;
 }
 // ---- exact int8 GEMM on the CPU: C [N, M] (int64) = W [N, K] (int8) . X [M, K]^T (int8) ---------------------------
-// The weight products of an integer forward pass on a CPU (MatOp.compute), so that exact re-execution runs at int8
-// speed (plan 2, RX).  W and X are packed as int16 pairs along K (vpmaddwd: pairs of int16 into int32 sums); a tile
-// of 4 rows x 64 columns keeps 16 int32 accumulators and an L2-resident strip of X.  Exact: every pair sum is at most
-// 2 * 128 * 128 = 32,768, so int32 holds the sum over K for K below 2**31 / 2**14 = 131,072 (checked by the caller).
-#if defined(__AVX512BW__)
+// The weight products of an integer forward pass on a CPU (pvi.core.graph.MatOp.compute), so that exact
+// re-execution runs at int8 speed.  W and X are packed as int16 pairs along K (vpmaddwd: pairs of int16 into int32
+// sums); a tile of 4 rows x 64 columns keeps 16 int32 accumulators and an L2-resident strip of X.  Exact: every
+// product is at most 128 * 128 = 2**14 in magnitude, so int32 holds the sum over K for K below 2**31 / 2**14 =
+// 131,072 (checked by int8_matmul).
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
 static void gemm_i8_avx512(const int8_t* w, const int8_t* x, int64_t* c, int64_t n, int64_t m, int64_t k) {
     const int64_t k2 = (k + 1) / 2, mp = (m + 63) & ~(int64_t)63, np = (n + 3) & ~(int64_t)3;
     std::vector<int32_t> xp(k2 * mp, 0), wp(np * k2, 0);
@@ -852,7 +868,7 @@ static void gemm_i8_avx512(const int8_t* w, const int8_t* x, int64_t* c, int64_t
 extern "C" void pvi_gemm_i8(const int8_t* w, const int8_t* x, int64_t* c, int64_t n, int64_t m, int64_t k,
                             int64_t threads) {
     omp_set_num_threads((int)threads);
-#if defined(__AVX512BW__)
+#if defined(__AVX512BW__) && defined(__AVX512DQ__)
     gemm_i8_avx512(w, x, c, n, m, k);
 #else
     gemm_i8_scalar(w, x, c, n, m, k);
@@ -902,7 +918,8 @@ def _build():
         _LIB.pvi_attention.restype = None
         _LIB.pvi_has_avx512.argtypes = []
         _LIB.pvi_has_avx512.restype = ctypes.c_int64
-        _LIB.pvi_attention64.argtypes = ([ctypes.c_void_p] + [ctypes.c_int64] * 5 + [ctypes.c_void_p] + [ctypes.c_int64] * 4
+        _LIB.pvi_attention64.argtypes = ([ctypes.c_void_p] + [ctypes.c_int64] * 5 + [ctypes.c_void_p]
+                                         + [ctypes.c_int64] * 4
                                          + [ctypes.c_void_p] + [ctypes.c_int64] * 4 + [ctypes.c_void_p] * 2
                                          + [ctypes.c_int64] * 9 + [ctypes.c_void_p] + [ctypes.c_int64] * 3)
         _LIB.pvi_attention64.restype = None
@@ -956,9 +973,9 @@ def has_avx512() -> bool:
 
 def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, queries: int, *,
                    exp_table: torch.Tensor | None = None, m_s: int = 0, pmax: int = 255) -> torch.Tensor:
-    """``_attention_core(q, k, v, lut, notmask, pmax)`` (raw ``p v``, int64 ``[B, H, R, dh]``) on the CPU for
-    int8-valued ``q [B, H, R, dh]`` (row ``r``: the query at position ``T - queries + r % queries``), ``k, v [B, H, T,
-    dh]`` and the int32 table ``lut``; probabilities 0..``pmax`` (``pmax <= 2047``)."""
+    """``pvi.models.decoder._attention_core(q, k, v, lut, notmask, pmax)`` (raw ``p v``, int64 ``[B, H, R, dh]``) on
+    the CPU for int8-valued ``q [B, H, R, dh]`` (row ``r``: the query at position ``T - queries + r % queries``),
+    ``k, v [B, H, T, dh]`` and the int32 table ``lut``; probabilities 0..``pmax`` (``pmax <= 2047``)."""
     lib = _library()
     bsz, heads, rows, dh = q.shape
     t = k.shape[2]
@@ -978,7 +995,6 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
     return out
 
 
-
 def attention_requant_ok(dh: int, t: int) -> bool:
     """Whether :func:`attention_requant` runs here (the AVX-512 kernel, ``dh`` a multiple of 16 up to 128)."""
     lib = _library()
@@ -995,9 +1011,10 @@ def _exp32(exp_table, m_s: int):
 def attention_requant(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch.Tensor, m_o: int,
                       n_heads: int, n_kv: int, dh: int, *, exp_table: torch.Tensor | None = None,
                       m_s: int = 0, pmax: int = 255) -> torch.Tensor:
-    """``transformer.integer_attention``'s output, ``[B, Tq, Hq dh]`` int64: the causal attention of int8-valued ``q
-    [B, Tq, Hq dh]`` against ``k, v [B, T, Hkv dh]`` (query head ``j`` reads key/value head ``j // (Hq/Hkv)``)
-    with its output requantised by ``m_o``, in one AVX-512 pass that writes the final layout."""
+    """``pvi.models.decoder.integer_attention``'s output, ``[B, Tq, Hq dh]`` int64: the causal attention of
+    int8-valued ``q [B, Tq, Hq dh]`` against ``k, v [B, T, Hkv dh]`` (query head ``j`` reads key/value head
+    ``j // (Hq/Hkv)``) with its output requantised by ``m_o``, in one AVX-512 pass that writes the final layout
+    (only where :func:`attention_requant_ok`)."""
     b, tq, _ = q.shape
     t = k.shape[1]
     rep = n_heads // n_kv
@@ -1055,7 +1072,8 @@ def _scalar(m) -> int | None:
 
 
 def requant(z: torch.Tensor, mult, shift: int, lo: int, hi: int, b: torch.Tensor | None = None):
-    """``graph.requant(z * b if b else z, mult, shift, lo, hi)``."""
+    """``pvi.core.graph.requant(z, mult, shift, lo, hi)``; with ``b``, ``requant(z * b, mult, shift, lo, hi)``
+    (:func:`pvi.core.graph.requant_mul`)."""
     m, lay = _scalar(mult), _layout(z)
     if m is None or lay is None or (b is not None and (b.shape != z.shape or not b.is_contiguous())):
         return None
@@ -1066,7 +1084,7 @@ def requant(z: torch.Tensor, mult, shift: int, lo: int, hi: int, b: torch.Tensor
 
 
 def residual(a: torch.Tensor, z: torch.Tensor, mult, shift: int, res_max: int):
-    """``graph.residual_add(a, z, mult, shift, res_max)``."""
+    """``pvi.core.graph.residual_add(a, z, mult, shift, res_max)``."""
     m, lay, alay = _scalar(mult), _layout(z), _layout(a)
     if m is None or lay is None or alay is None or a.shape != z.shape:
         return None
@@ -1077,7 +1095,7 @@ def residual(a: torch.Tensor, z: torch.Tensor, mult, shift: int, res_max: int):
 
 
 def lut(x: torch.Tensor, table: torch.Tensor):
-    """``transformer._lut(x, table)`` for a 256-entry table."""
+    """``pvi.models.decoder._lut(x, table)`` for a 256-entry table."""
     lay = _layout(x)
     if lay is None or table.numel() != 256 or table.dtype != torch.int64 or table.device.type != "cpu":
         return None
@@ -1087,7 +1105,7 @@ def lut(x: torch.Tensor, table: torch.Tensor):
 
 
 def norm(x: torch.Tensor, gain: torch.Tensor, center: bool, k: int):
-    """``transformer._norm_int(x, gain, center, k)`` over the last axis."""
+    """``pvi.models.decoder._norm_int(x, gain, center, k)`` over the last axis."""
     d = x.shape[-1]
     if gain.dtype != torch.int64 or gain.device.type != "cpu" or gain.numel() != d or not 1 <= k <= 32:
         return None
@@ -1099,7 +1117,7 @@ def norm(x: torch.Tensor, gain: torch.Tensor, center: bool, k: int):
 
 
 def rope(x: torch.Tensor, cos2: torch.Tensor, sin2: torch.Tensor):
-    """``transformer._rope``'s integers for ``x [B, T, H, dh]`` and its tables ``[1, T, 1, dh]``."""
+    """``pvi.models.decoder._rope``'s integers for ``x [B, T, H, dh]`` and its tables ``[1, T, 1, dh]``."""
     if x.dim() != 4 or not x.is_contiguous() or cos2.device.type != "cpu" or cos2.dtype != torch.int64:
         return None
     _, t, heads, dh = x.shape
@@ -1126,14 +1144,13 @@ def field_matmul(chi: torch.Tensor, z: torch.Tensor):
     return out if ok else None
 
 
-
 def decode_enabled() -> bool:
     """Whether the native claim decoder runs (option ``native_decode`` and the library)."""
     return options.current().native_decode and _library() is not None
 
 
 def unpack_stream(w, k: int, n: int, out, bases) -> bool | None:
-    """``claimcodec._unpack_lanes`` over all 32 lanes of the slot stream ``w`` (numpy uint32 ``[k, g]``) into
+    """``pvi.v0.claimcodec._unpack_lanes`` over all 32 lanes of the slot stream ``w`` (numpy uint32 ``[k, g]``) into
     ``out[:n]`` (numpy uint32) with the segments' ``bases`` added: True, False when a padding slot is not zero,
     None when the native library is not there (the numpy steps then run)."""
     import numpy as np
@@ -1155,8 +1172,8 @@ def unpack_stream(w, k: int, n: int, out, bases) -> bool | None:
 def min_max(a: torch.Tensor):
     """``(min, max)`` of a contiguous CPU int32 or int64 tensor in one parallel pass, or None (the caller's
     reductions then run)."""
-    if not (options.current().native_cheap and a.device.type == "cpu" and a.dtype in (torch.int32, torch.int64) and a.is_contiguous()
-            and a.numel() >= 1 << 16 and _library() is not None):
+    if not (options.current().native_cheap and a.device.type == "cpu" and a.dtype in (torch.int32, torch.int64)
+            and a.is_contiguous() and a.numel() >= 1 << 16 and _library() is not None):
         return None
     lo, hi = ctypes.c_int64(), ctypes.c_int64()
     _LIB.pvi_minmax(a.data_ptr(), a.element_size(), a.numel(), ctypes.byref(lo), ctypes.byref(hi),
@@ -1176,7 +1193,7 @@ def attention_profile(on: bool = True) -> list[float] | None:
 
 
 def patch_exceptions(x, gaps, hz, segs, total: int) -> int | None:
-    """``claimcodec._patch`` in one native pass: 0, or the error code (1 position, 2 high part, 3 range); None
+    """``pvi.v0.claimcodec._patch`` in one native pass: 0, or the error code (1 position, 2 high part, 3 range); None
     without the library (the numpy steps then run).  ``x`` int32, ``gaps`` and ``hz`` int64 numpy arrays (``gaps``
     becomes the positions), ``segs`` ``(start, B, pending base)`` in the global order."""
     import numpy as np
@@ -1198,9 +1215,10 @@ _MALLOC_TUNED = False
 def tune_malloc() -> bool:
     """Keep freed memory in the process (glibc: no mmap for large blocks, trim only above 2 GiB free), once per
     process; True if applied.  A CPU verifier allocates and frees tensors of hundreds of MB per block; by default
-    glibc maps each one afresh and the kernel zeroes its pages on first touch, which cost about a fifth of the
-    verifier's time on Llama-2-7B at 2,048 tokens.  Process-wide (the resident size stays at its peak); with
-    the option ``malloc_tune`` off glibc keeps its defaults."""
+    glibc maps each one afresh and the kernel zeroes its pages on first touch, a large share of a CPU verifier's
+    time on the billion-parameter decoders at long contexts (the option's effect is timed by
+    ``experiments.costs.perf --no-malloc-tune``).  Process-wide (the resident size stays at its peak); with the
+    option ``malloc_tune`` off glibc keeps its defaults."""
     global _MALLOC_TUNED
     if _MALLOC_TUNED:
         return True
@@ -1218,13 +1236,12 @@ def tune_malloc() -> bool:
     return ok
 
 
-
 def int8_matmul(w: torch.Tensor, x: torch.Tensor):
     """``w @ x.T`` exactly, int64 ``[N, M]``, for int8 ``w [N, K]`` and int8 ``x [M, K]`` on the CPU (one native
     pass, int16-pair multiply-adds into int32); None when not applicable (the caller's products then run)."""
-    if not (options.current().native_gemm and w.device.type == "cpu" and x.device.type == "cpu" and w.dtype == torch.int8
-            and x.dtype == torch.int8 and w.dim() == 2 and x.dim() == 2 and w.shape[1] == x.shape[1]
-            and 0 < w.shape[1] < 1 << 17 and _library() is not None):
+    if not (options.current().native_gemm and w.device.type == "cpu" and x.device.type == "cpu"
+            and w.dtype == torch.int8 and x.dtype == torch.int8 and w.dim() == 2 and x.dim() == 2
+            and w.shape[1] == x.shape[1] and 0 < w.shape[1] < 1 << 17 and _library() is not None):
         return None
     w, x = w.contiguous(), x.contiguous()
     out = torch.empty(w.shape[0], x.shape[0], dtype=torch.int64)
@@ -1233,13 +1250,13 @@ def int8_matmul(w: torch.Tensor, x: torch.Tensor):
     return out
 
 
-
 def lw_affine(s: torch.Tensor, a: int, cd: torch.Tensor, e: torch.Tensor):
     """``[n, 3, 8]`` (canonical): per row of the values ``s`` ``[n, t]`` (int8/16/32/64, on the CPU) the sums
     ``sum_j (s_ij - a) e_j``, ``sum_j C(s_ij - a) e_j`` and ``sum_j D(s_ij - a) e_j`` at the column point ``e``
-    ``[t, 8]`` with the tables ``cd`` ``[V, 2]`` (``buckets._affine``'s columns ``C`` and ``D``): the integers of
-    ``buckets.table_times`` (option ``v1_native``).  None when the library is not there,
-    the operands are not of that kind, or a value lies outside ``[a, a + V)`` (the caller's torch path then runs)."""
+    ``[t, 8]`` with the tables ``cd`` ``[V, 2]`` (the columns ``C`` and ``D`` of ``pvi.v1.products._affine``'s
+    table): the integers of :func:`pvi.v1.products.table_times` (option ``v1_native``).  None when the library is not
+    there, the operands are not of that kind, or a value lies outside ``[a, a + V)`` (the caller's torch path then
+    runs)."""
     if not options.current().v1_native or _library() is None:
         return None
     if not (s.device.type == "cpu" and s.dim() == 2 and s.dtype in (torch.int8, torch.int16, torch.int32, torch.int64)
@@ -1260,8 +1277,8 @@ def lw_affine(s: torch.Tensor, a: int, cd: torch.Tensor, e: torch.Tensor):
 def xbar(x: torch.Tensor, e: torch.Tensor):
     """``X^T e`` ``[K, 8]`` (canonical) of an integer input ``x`` ``[T, K]`` (int8/16/32/64, on the CPU, entries below
     ``2^16`` in absolute value, which the caller checks) at the column point ``e`` ``[T, 8]``: the integers of
-    ``buckets.xbar``'s float64 product (option ``v1_native``).  None when the library is not
-    there or the operands are not of that kind (the caller's torch path then runs)."""
+    :func:`pvi.v1.products.xbar`'s float64 product (option ``v1_native``).  None when the library is not there or
+    the operands are not of that kind (the caller's torch path then runs)."""
     if not options.current().v1_native or _library() is None:
         return None
     if not (x.device.type == "cpu" and x.dim() == 2 and x.dtype in (torch.int8, torch.int16, torch.int32, torch.int64)

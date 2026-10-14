@@ -1,9 +1,8 @@
 """The native kernels of the CPU verifier's recomputed operations give the torch ops' integers.
 
 Each case runs the public helper twice, with the native kernels and with the option ``native_cheap`` off (the torch
-steps),
-on contiguous operands and on the transposed claim views that a weight op's fold hands its readers, with values at
-and beyond the ranges the protocol checks (int64 arithmetic wraps the same way in both)."""
+steps), on contiguous operands and on the transposed claim views that a weight op's fold hands its readers, with
+values at and beyond the ranges the protocol checks (int64 arithmetic wraps the same way in both)."""
 import pytest
 import torch
 
@@ -147,7 +146,8 @@ def test_int32_claims_give_the_int64_results(set_options):
                            gr.residual_add(a, view(z64), m, 30, (1 << 22) - 1))
     chi = torch.randint(0, P, (5, 4096), generator=g, dtype=torch.int64)
     assert torch.equal(native_kernels.field_matmul(chi, z32), native_kernels.field_matmul(chi, z64))
-    assert torch.equal(native_kernels.field_matmul(chi[:, :600], z32.T), native_kernels.field_matmul(chi[:, :600], z64.T))
+    assert torch.equal(native_kernels.field_matmul(chi[:, :600], z32.T),
+                       native_kernels.field_matmul(chi[:, :600], z64.T))
     set_options(native_cheap=False)                  # the torch steps widen int32 claims
     assert torch.equal(gr.requant(z32.T, m, 30, -127, 127), gr.requant(z64.T, m, 30, -127, 127))
 
@@ -184,11 +184,11 @@ def test_native_unpack_on_corrupted_proofs_matches_numpy(set_options):
         assert got is None or all(np.array_equal(x, y) for x, y in zip(got, want))
 
 
-
 @pytest.mark.parametrize("hkv,rep,t,tq,dh", [(32, 1, 2048, 2048, 128), (8, 4, 777, 777, 128), (4, 2, 300, 1, 64),
                                              (6, 1, 513, 7, 80)])
 def test_native_attention_on_strided_views(hkv, rep, t, tq, dh):
-    """The attention kernels on the layouts integer_attention passes them: [B, T, H, dh] tensors seen as [B, H, T, dh]."""
+    """The attention kernels on the layouts ``integer_attention`` passes them: [B, T, H, dh] tensors seen as
+    [B, H, T, dh]."""
     g = torch.Generator().manual_seed(t + dh)
     qb = torch.randint(-127, 128, (1, rep * tq, hkv, dh), generator=g, dtype=torch.int64)
     kb = torch.randint(-127, 128, (1, t, hkv, dh), generator=g, dtype=torch.int64)
@@ -218,8 +218,8 @@ def test_min_max_and_the_norm_with_large_denominators(set_options):
                                             (6, 6, 513, 7, 80), (12, 4, 64, 64, 64)])
 @pytest.mark.parametrize("pmax", [255, 2047])
 def test_fused_attention_and_output_requantisation(hq, hkv, t, tq, dh, pmax, monkeypatch, set_options):
-    """transformer.integer_attention on a CPU verifier (one AVX-512 pass that also requantises the output into the final
-    layout) against the per-group path (native attention core, then the torch requantisation)."""
+    """``pvi.models.decoder.integer_attention`` on a CPU verifier (one AVX-512 pass that also requantises the output
+    into the final layout) against the per-group path (native attention core, then the torch requantisation)."""
     g = torch.Generator().manual_seed(hq + t + tq)
     q = torch.randint(-127, 128, (1, tq, hq * dh), generator=g, dtype=torch.int64)
     k = torch.randint(-127, 128, (1, t, hkv * dh), generator=g, dtype=torch.int64)

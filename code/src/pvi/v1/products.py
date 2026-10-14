@@ -1,18 +1,20 @@
 """The products of V1's verifier with the cut's values, computed by value.
 
-The final check (``protocol._final_ok``, check F3 ``cut_final``) needs, for every cut op of an instance, the
-products ``L e`` and ``W e`` ``[N, 8]`` of the op's window matrices with the instance's column point
-``e = eq(r_col)[0:T]`` ``[T, 8]`` in ``F = F_{p^8}`` (:mod:`pvi.core.extfield`): ``L = lo(s)`` and ``W = W(s)`` of the
-sent values ``s`` ``[N, T]`` (:mod:`pvi.v1.cut`), except at the listed exceptions, whose window is their exact claim
-``z`` (``L = z``, ``W = 1``).  ``protocol._xbar`` needs ``X^T e`` ``[K, 8]`` for every cut op's input ``X`` ``[T, K]``
-(int8-valued: derive checks ``|X| <= max_input + 1``).  The baseline verifier (option ``v1_verifier``,
-:mod:`pvi.options`) gathers ``[L ; W]`` in float64 and multiplies it with ``e`` in three 11-bit limbs
-(:func:`cut.public_lw_f64` and :func:`extfield.int_times`: 24 columns, partial sums below ``2^52``).
+The final check (F3) (``pvi.v1.protocol._final_ok``, rejection label ``cut_final``) needs, for every cut operation
+of an instance, the products ``L e`` and ``W e`` ``[N, 8]`` of the operation's window matrices with the instance's
+column point ``e = eq(r_col)[0:T]`` ``[T, 8]`` in ``F_{p^8} = F_p[xi]/(xi^8 - 11)`` (:mod:`pvi.core.extfield`):
+``L = lo(s)`` and ``W = W(s)`` of the sent values ``s`` ``[N, T]`` (:mod:`pvi.v1.cut`), except at the listed
+exceptions, whose window is their exact claim ``z`` (``L = z``, ``W = 1``).  ``pvi.v1.protocol._xbar`` needs
+``X^T e`` ``[K, 8]`` for every cut operation's input ``X`` ``[T, K]`` (small integers: the input range check of (D1)
+bounds ``|X| <= max_input + 1``).  The baseline verifier (option ``v1_verifier`` of :mod:`pvi.options`) gathers
+``[L ; W]`` in float64 and multiplies it with ``e`` in three 11-bit limbs (:func:`pvi.v1.cut.public_lw_f64` and
+:func:`pvi.core.extfield.int_times`: 24 columns, partial sums below ``2^52``).
 
 Both matrices are functions of one small integer per entry: ``L`` and ``W`` of the value ``s`` (an int8 for a
-requant op, ``2^8`` values; a residual op's ``Delta`` spans its own range ``[a, b]``), ``X`` is that integer itself.
-``W(v)`` takes the two values ``w0 = floor(2^sh / m)`` and ``w0 + 1`` (``W(v) = ceil(x + q) - ceil(x)`` with
-``q = 2^sh / m``), so with ``D(v) = W(v) - w0`` in ``{0, 1}`` and ``C(v) = sum_{a <= u < v} D(u)`` in ``[0, v - a]``,
+requantisation, ``2^8`` values; a residual operation's ``Delta`` spans its own range ``[a, b]``), and ``X`` is that
+integer itself.  ``W(v)`` takes the two values ``w0 = floor(2^sh / m)`` and ``w0 + 1``
+(``W(v) = ceil(x + q) - ceil(x)`` with ``q = 2^sh / m``), so with ``D(v) = W(v) - w0`` in ``{0, 1}`` and
+``C(v) = sum_{a <= u < v} D(u)`` in ``[0, v - a]``,
 
     ``lo(v) = lo(a) + w0 (v - a) + C(v)``,   ``W(v) = w0 + D(v)``,
 
@@ -21,7 +23,7 @@ and ``L e = lo(a) (1 . e) + w0 (S - a) e + C(S) e``, ``W e = w0 (1 . e) + D(S) e
 (``torch.nn.functional.embedding``) and multiplied with ``e`` as **one** 31-bit limb per coefficient: 8 columns
 instead of 24, exact over ``2^(22 - bits(V - 1))`` columns at a time.  ``X^T e`` is the same product with the
 identity table, on ``X`` itself.  On a CPU with the native library the three sums come from
-``native.lw_affine`` (one pass over the values with int64 accumulators over the 8 coefficients; option
+``pvi.kernels.native.lw_affine`` (one pass over the values with int64 accumulators over the 8 coefficients; option
 ``v1_native``).  Every path gives the canonical residues of the same integer vectors as the baseline, so the field
 results are bit-identical (``tests/test_v1_products.py``).
 
@@ -30,8 +32,9 @@ added to their row (int64, each term reduced before it is summed).
 
 **Exactness** (every bound is checked by the code or follows from its inputs): ``e`` is canonical, below
 ``p < 2^31``; a float64 product of entries below ``2^k`` with coefficients below ``2^31`` over ``n <= 2^(22 - k)``
-columns has every partial sum an integer below ``2^53``, so it is exact in any summation order (as
-:func:`extfield.int_times`); every other step is int64 arithmetic on reduced values (products below ``2^62``).
+columns has every partial sum an integer below ``2^53``, so it is exact in any summation order (as in
+:func:`pvi.core.extfield.int_times`); every other step is int64 arithmetic on reduced values (products below
+``2^62``).
 """
 
 from __future__ import annotations
@@ -46,7 +49,8 @@ from pvi.core.field import P, min_max
 __all__ = ["optimised", "lw_times", "xbar", "table_times", "SPAN"]
 
 SPAN = 1 << 15
-"""Value spans up to this many values use these products (a residual op's ``Delta`` may span more: the baseline)."""
+"""Value spans up to this many values use these products (a residual operation's ``Delta`` may span more: it then
+takes the baseline products)."""
 _BLOCK_BYTES = 1 << 24
 """Bytes of one row block's gathered table (``[R, T, 3]`` float64)."""
 
@@ -59,8 +63,9 @@ def optimised() -> bool:
 
 def _affine(op, a: int, b: int):
     """``(lo(a), w0, tab [V, 3] float64, lo [V], W [V])``: the table products' decomposition of the windows of the
-    values ``a .. b`` (module docstring): columns ``v - a``, ``C(v)``, ``D(v)``, each in ``[0, V)``; the last 128
-    are cached per ``(m, sh, a, b)`` (at most about 1.3 MB each; the tensors are read, never written)."""
+    values ``a .. b`` (module docstring): columns ``v - a``, ``C(v)``, ``D(v)``, each in ``[0, V)``.  The last 128
+    are cached per ``(m, sh, a, b)`` (each at most about 1.3 MB, at ``V = SPAN``: 24 bytes per value for ``tab`` and
+    16 for ``lo`` and ``W``; the tensors are read, never written)."""
     return _affine_cached(int(op.mult), int(op.sh), int(a), int(b))
 
 
@@ -74,7 +79,7 @@ def _affine_cached(mult: int, sh: int, a: int, b: int):
     v = torch.arange(b - a + 1, dtype=torch.int64)
     c = lo_v - lo_v[0] - w0 * v
     if bool((d < 0).any() or (d > 1).any() or (c < 0).any() or (c > v).any()):
-        raise AssertionError("the windows are not affine plus a 0/1 step")       # (impossible: see the docstring)
+        raise AssertionError("the windows are not affine plus a 0/1 step")       # (impossible: module docstring)
     return int(lo_v[0]), w0, torch.stack([v, c, d], 1).to(torch.float64), lo_v, w_v
 
 
@@ -111,9 +116,9 @@ def table_times(idx: torch.Tensor, tab: torch.Tensor, e: torch.Tensor) -> torch.
 
 
 def _native_lw(s: torch.Tensor, a: int, tab: torch.Tensor, e: torch.Tensor) -> torch.Tensor | None:
-    """The table products' three sums ``[N, 3, 8]`` from the native kernel (``native_kernels.lw_affine``: one pass over
-    the values, int64 accumulators over the 8 coefficients, the same integers), or None (no library, a GPU tensor,
-    option ``v1_native`` off): the torch path then runs."""
+    """The table products' three sums ``[N, 3, 8]`` from the native kernel (``pvi.kernels.native.lw_affine``: one
+    pass over the values, int64 accumulators over the 8 coefficients, the same integers), or ``None`` (no library, a
+    GPU tensor, or option ``v1_native`` off): the torch path then runs."""
     try:
         from pvi.kernels import native as native_kernels
     except ImportError:                                                             # (pragma: no cover)
@@ -128,12 +133,12 @@ def _rows_per_block(t: int, width: int) -> int:
 # ------------------------------------------------------------------ the final check's L e and W e
 def lw_times(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor,
              op, e: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor] | None:
-    """``(L e, W e)`` ``[N, 8]`` each (canonical, on the CPU) of a cut op's range-checked values ``s`` ``[N, T]`` (any
-    integer dtype, on any device) with its exceptions (flat indices ``exc_idx``, ascending, and claims ``exc_z``,
-    checked by ``protocol.exceptions_ok``) at the column point ``e`` ``[T, 8]``: the integers of
-    ``extfield.int_times(cut.public_lw_f64(...), e, 30)``.  ``None`` if the values span more than :data:`SPAN` values
-    (the caller then runs the baseline products).  A requant op's values are in its clamp ``[lo, hi]``
-    (derive checked them); a residual op's span is found here."""
+    """``(L e, W e)`` ``[N, 8]`` each (canonical, on the CPU) of a cut operation's range-checked values ``s``
+    ``[N, T]`` (any integer dtype, on any device) with its exceptions (flat indices ``exc_idx``, ascending, and
+    claims ``exc_z``, checked by (D4) in ``pvi.v1.protocol.exceptions_ok``) at the column point ``e`` ``[T, 8]``: the
+    integers of ``pvi.core.extfield.int_times(pvi.v1.cut.public_lw_f64(...), e, 30)``.  ``None`` if the values span
+    more than :data:`SPAN` values (the caller then runs the baseline products).  A requantisation's values lie in its
+    clamp ``[lo, hi]`` (checked by (D1)); a residual operation's span is found here."""
     n, t = s.shape
     dev = s.device
     if s.numel() == 0:
@@ -157,7 +162,7 @@ def lw_times(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor,
         for r0 in range(0, n, step):
             idx = s[r0:r0 + step].to(torch.int32)
             if a:
-                idx = idx - a                           # out of place: int32 values would be shifted in the caller's tensor
+                idx = idx - a                   # out of place: in place, int32 values would shift the caller's tensor
             g = table_times(idx, tab, e_dev)                                            # [R, 3, 8]
             le[r0:r0 + step] = ((lo_a * je) % P + (w0 * g[:, 0]) % P + g[:, 1]) % P
             we[r0:r0 + step] = ((w0 * je) % P + g[:, 2]) % P
@@ -178,9 +183,9 @@ def lw_times(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor,
 # ------------------------------------------------------------------ X^T e
 def xbar(x: torch.Tensor, e: torch.Tensor) -> torch.Tensor | None:
     """``X^T e`` ``[K, 8]`` (canonical, on the CPU) of an integer input ``x`` ``[T, K]`` (any dtype, any device) at the
-    column point ``e`` ``[T, 8]``: the integers of ``extfield.int_times(x.T, e, 31)``, by one float64 product with
-    ``e`` as one 31-bit limb (or the native kernel).  ``None`` if ``x`` spans more than :data:`SPAN` values or has an
-    entry of ``2^16`` or more in absolute value (the caller then runs the baseline product)."""
+    column point ``e`` ``[T, 8]``: the integers of ``pvi.core.extfield.int_times(x.T, e, 31)``, by one float64 product
+    with ``e`` as one 31-bit limb (or the native kernel).  ``None`` if ``x`` spans more than :data:`SPAN` values or
+    has an entry of ``2^16`` or more in absolute value (the caller then runs the baseline product)."""
     t, k = x.shape
     if x.numel() == 0:
         return torch.zeros(k, D, dtype=torch.int64)

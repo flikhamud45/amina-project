@@ -19,18 +19,19 @@ touched; so the trace violates its local relation at exactly one node, ``v``.  T
 verifier rejects only if its path happens to pass through ``v``, which for a dense
 layer of width ``N`` happens with probability ``1/N``.
 
-This is the ``1/N`` ceiling the paper itself states in Section 5.2 -- "an adversary
-can modify a single node in a layer of size ``N``, and a single random path will
-select that node with probability exactly ``1/N``" -- but leaves as a theoretical
-remark, judging it "not ... a practical limitation" because their experiments show
-detection across all tested paths.  Their experiments only ever test adversaries who
-perturb the whole trace.  This module builds the adversary the remark describes, and
-shows the ceiling is reached in practice.
+This is the ``1/N`` ceiling Anchuri et al. themselves state in their Section 5.2 --
+"an adversary can modify a single node in a layer of size ``N``, and a single random
+path will select that node with probability exactly ``1/N``" -- but leave as a
+theoretical remark, judging it "not ... a practical limitation" because their
+experiments show detection across all tested paths.  Their experiments only ever test
+adversaries who perturb the whole trace.  This module builds the adversary the remark
+describes, and shows the ceiling is reached in practice.
 
-Contrast with the paper's own attacks (:mod:`pvi.attacks.baselines`): those minimise
-the *magnitude* of the inconsistency and end up spreading it over 33-100% of the
-trace, so they are detected always.  This one accepts a large magnitude at one node
-in exchange for a support of size one.
+Contrast with Anchuri et al.'s own attacks (:mod:`pvi.attacks.baselines`): those
+minimise the *magnitude* of the inconsistency and end up spreading it over 33-100% of
+the trace (256 to all 778 nodes of the MNIST MLP, ``experiments/attack/attack_mnist.py``),
+so they are detected always.  This one accepts a large magnitude at one node in
+exchange for a support of size one.
 """
 
 from __future__ import annotations
@@ -156,10 +157,10 @@ def smallest_flipping_value(
     """Least activation value at this neuron that changes the predicted class.
 
     The network is piecewise linear in a single activation, so the predicted class
-    changes at a finite set of breakpoints.  We bracket the first one by geometric
-    search and then bisect.  Working in "smallest value that suffices" terms rather
-    than "some value that works" matters for stealth: the smaller the change, the
-    more plausible the resulting activation looks.
+    changes at a finite set of breakpoints.  The first one in each direction is
+    bracketed by geometric search and then bisected.  Working in "smallest value that
+    suffices" terms rather than "some value that works" matters for stealth: the
+    smaller the change, the more plausible the resulting activation looks.
     """
     original = float(honest[layer_index][neuron])
 
@@ -221,8 +222,8 @@ def plan_single_neuron_flip(
 
     Candidates are ranked by ``|d(margin)/d a_v|`` at the honest trace, so the search
     starts with the neurons that move the decision fastest, and only the top
-    ``candidate_neurons`` are searched exactly.  Among those that work, we keep the
-    one requiring the smallest change.
+    ``candidate_neurons`` are searched exactly.  Among those that work, the one
+    requiring the smallest change is kept.
 
     ``require_nonnegative`` keeps the forged activation a legal ReLU output.
 
@@ -288,8 +289,9 @@ def plan_stealthy_flip(
     This planner removes the signature.  Neurons are ranked by influence and pushed
     only as far as their own envelope allows -- up to ``ceilings`` when that helps
     the runner-up class, down to zero when it does not -- and neurons are added
-    one at a time until the output flips.  The result is the *smallest* set of
-    in-range changes that suffices.
+    one at a time, in the order of that ranking, until the output becomes the
+    runner-up class.  The result is the shortest prefix of the ranking whose
+    in-range changes suffice.
 
     The trade is support for plausibility: ``k`` neurons instead of one, so
     acceptance falls from ``1 - 1/N`` to about ``1 - k/N``.  For the models here ``k``

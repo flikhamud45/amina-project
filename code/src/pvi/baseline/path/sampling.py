@@ -7,11 +7,11 @@ Figure 3 of Anchuri et al.:
       corresponding weights, then sample ``j_{l-1}`` uniformly from ``G_{j_l}``.
 
 :class:`UniformPathSampler` implements exactly that.  The sampler is behind an
-interface because the paper itself raises the alternative -- "adaptive sampling
-strategies that prioritize layers or nodes where activations are statistically
-more sensitive to tampering" (Section 5.2) -- which the defence study
-instantiates.  Keeping the interface here means an alternative sampler drops in
-without touching the prover or the verifier.
+interface because Anchuri et al. themselves raise the alternative -- "adaptive
+sampling strategies that prioritize layers or nodes where activations are
+statistically more sensitive to tampering" (their Section 5.2) -- which
+:mod:`pvi.baseline.samplers` instantiates.  Keeping the interface here means an
+alternative sampler drops in without touching the prover or the verifier.
 
 Determinism
 -----------
@@ -101,14 +101,14 @@ class PathSampler(abc.ABC):
     * where it goes next, over the current node's parent set.
 
     Subclasses supply those; :meth:`sample` and the exact analysis in
-    ``pvi.baseline.analysis`` are both written once against this interface, so
+    :mod:`pvi.baseline.analysis` are both written once against this interface, so
     any new strategy is automatically analysable in closed form rather than only by
     Monte Carlo.
 
-    ``trace`` is threaded through both methods because the alternatives the paper
-    raises -- "adaptive sampling strategies that prioritize layers or nodes where
-    activations are statistically more sensitive to tampering" (Section 5.2) --
-    would use it.  Note what that means: such a sampler lets the *prover*, who
+    ``trace`` is threaded through both methods because the alternatives Anchuri et
+    al. raise -- "adaptive sampling strategies that prioritize layers or nodes where
+    activations are statistically more sensitive to tampering" (their Section 5.2)
+    -- would use it.  Note what that means: such a sampler lets the *prover*, who
     authored the trace, influence where it will be inspected.
     """
 
@@ -186,7 +186,7 @@ def as_distribution(weights: np.ndarray) -> np.ndarray:
 
 
 class UniformPathSampler(PathSampler):
-    """``RandPathTest`` as specified in Figure 3.
+    """``RandPathTest`` as specified in Figure 3 of Anchuri et al.
 
     The output neuron is uniform over the output layer and each subsequent step is
     uniform over the current node's parent set.  For dense layers the parent set is
@@ -195,8 +195,14 @@ class UniformPathSampler(PathSampler):
     over neurons is non-uniform.
 
     Both distributions ignore the trace.  That independence from prover-supplied data
-    is a security property, not an oversight -- and the minimax theorem of the
-    report (Theorem 3.1) shows it is in fact optimal.
+    is a security property, not an oversight: a path visits one neuron per layer, so
+    the visit probabilities of a dense layer of width ``N`` sum to one, and their
+    minimum -- the detection probability of an adversary who edits the least-visited
+    neuron -- is largest, ``1/N``, for the uniform walk.  The paper's Theorem
+    ``thm:guess`` (Section ``sec:sampling``) bounds the detection of an explainable
+    single-site edit by every spot-checking verifier, the trace-dependent samplers
+    included, by the probability of guessing the edited neuron from the verifier's
+    view (under the theorem's condition (H)).
     """
 
     transition_depends_on_source = False

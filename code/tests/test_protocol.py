@@ -1,8 +1,9 @@
-"""End-to-end tests of the three-round protocol (Figure 4).
+"""The three-round path-sampling protocol of Anchuri et al. (their Figure 4; ``pvi.baseline.path``), end to end.
 
-Covers the two properties Definition 4 demands -- correctness and soundness --
-plus the forgery attempts a real adversary would try against the commitment
-layer.
+Checked: the two properties their Definition 4 demands -- correctness (honest provers are accepted) and soundness
+(substitute models and tampered traces are rejected, a single tampered node at the rate the path sampling predicts)
+-- and the forgeries of the commitment layer (claimed outputs, missing or swapped weight openings, forged trace
+openings, a tampered input).
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ def test_honest_prover_is_always_accepted_cnn(cnn_net, query_for, protocol_pair)
 
 
 def test_verifier_arithmetic_stays_in_the_provers_precision(mlp_net, query_for):
-    """Regression test for a precision bug that cost us a wrong result.
+    """The verifier recomputes in the prover's precision.
 
     The prover evaluates layers in float32.  If the verifier adds a float64 bias to
     a float32 dot product, the sum is promoted to float64 -- arithmetic the prover
@@ -59,12 +60,12 @@ def test_verifier_arithmetic_stays_in_the_provers_precision(mlp_net, query_for):
 
 
 def test_zero_tolerance_completeness_is_not_degenerate(mlp_net, query_for, protocol_pair):
-    """The exact-equality test of Figure 3 should fail *sometimes*, not always.
+    """The exact-equality test of Anchuri et al.'s Figure 3 fails *sometimes*, not always.
 
     An honest prover and a careful verifier agree bit-for-bit on most nodes; they
     disagree only where BLAS blocked the matrix product differently.  If this rate
     collapses to zero, the verifier has stopped matching the prover's arithmetic --
-    which is a bug in us, not a finding about the protocol.
+    a defect of the implementation, not a property of the protocol.
     """
     params = ProtocolParams(n_paths=1, abs_tolerance=0.0)
     prover, verifier = protocol_pair(mlp_net, params)
@@ -128,7 +129,7 @@ def test_sampled_paths_follow_real_parent_edges(cnn_net):
 
 
 def test_substitute_model_trace_is_rejected(mlp_arch, mlp_net, query_for, protocol_pair):
-    """Definition 1's other-model soundness: an honest trace of a different model."""
+    """Other-model soundness (Anchuri et al.'s Definition 1): an honest trace of a different model."""
     prover, verifier = protocol_pair(mlp_net)
     substitute = build_network(mlp_arch, seed=99)
     query = query_for(mlp_net)
@@ -162,7 +163,7 @@ def test_substitute_differing_in_one_layer_is_still_rejected(
 
 
 # --------------------------------------------------------------------------- #
-# Single-node tampering: the 1/N bound of Section 5.2
+# Single-node tampering: the 1/N bound of Anchuri et al.'s Section 5.2
 # --------------------------------------------------------------------------- #
 
 

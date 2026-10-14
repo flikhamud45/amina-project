@@ -7,12 +7,13 @@
   ``dogs_cats`` (their ``M``) and ``dogs_squirrels`` (their ``M~``), built from
   ``$PVI_IMAGENET_ROOT`` (default: ``code/data/imagenet``).  That root stores class
   ``i`` of the standard sorted-synset order in folder ``i + 1``; dogs are
-  classes 151-268, cats 281-285 and the fox squirrel 335 (checked by eye).
-  The paper used Kaggle's Animals-10; ImageNet's dog/cat/squirrel classes give
+  classes 151-268, cats 281-285 and the fox squirrel 335 (verified on the images).
+  Anchuri et al. used Kaggle's Animals-10; ImageNet's dog/cat/squirrel classes give
   the same task without an extra download.
 
-Where the datasets live elsewhere (on a cluster, for instance), export ``PVI_CIFAR_ROOT`` and
-``PVI_IMAGENET_ROOT`` before the job; the latter is not read once the ImageNet cache exists.
+The three environment variables name places on the machine, not code paths: ``PVI_CIFAR_ROOT`` and
+``PVI_IMAGENET_ROOT`` where the datasets live elsewhere (the latter is not read once the ImageNet cache exists),
+and ``PVI_CACHE`` the cache's folder (default: ``code/artifacts/cache``).
 
 Images are decoded once and cached as uint8 tensors (256x256 for ImageNet,
 from which training takes random 224 crops and evaluation the centre crop).

@@ -9,7 +9,7 @@ and define the execution trace as the vector of all activations.  ``RandPathTest
 (Figure 3) walks a random path from an output neuron back to the input layer and
 re-evaluates that one relation at each step.
 
-To run the protocol we therefore need three things from every layer, for every
+Running the protocol therefore needs three things from every layer, for every
 individual neuron:
 
 1. its parent set ``G_j``, as indices into the previous layer's activation vector;
@@ -17,24 +17,24 @@ individual neuron:
 3. the local relation itself, so the verifier can recompute ``a_j``.
 
 That is what the classes here provide.  Everything is expressed per-neuron, which
-is what the protocol needs and what makes the trace-tampering analysis in the
-companion attack module exact.
+is what the protocol needs and what makes the trace-tampering analysis
+(:mod:`pvi.attacks.tamper`, :mod:`pvi.baseline.analysis`) exact.
 
 Fused activations
 -----------------
-The paper's relation folds the non-linearity into the neuron: ``a_j`` is the
-*post*-activation value, and there is one trace entry per neuron per layer.  We
-follow that convention, so ``Dense`` and ``Conv2d`` carry their own ``activation``
-rather than appearing as separate ReLU layers.  The final classification layer
-uses ``identity`` so that the trace's output entries are the logits, which is what
-``out(trc)`` reads (Remark 3).
+Anchuri et al.'s relation folds the non-linearity into the neuron: ``a_j`` is the
+*post*-activation value, and there is one trace entry per neuron per layer.  This
+module follows that convention, so ``Dense`` and ``Conv2d`` carry their own
+``activation`` rather than appearing as separate ReLU layers.  The final
+classification layer uses ``identity`` so that the trace's output entries are the
+logits, which is what ``out(trc)`` reads (their Remark 3).
 
 Weight groups
 -------------
 Committing one Merkle leaf per scalar weight would make an opening cost
-``|G_j|`` authentication paths.  The authors instead build the tree "on row-wise
-hashes" (Section 8.1) so that a single opening yields every weight a node needs.
-We model this with *weight groups*: each neuron maps to exactly one group, and the
+``|G_j|`` authentication paths.  Anchuri et al. instead build the tree "on row-wise
+hashes" (their Section 8.1) so that a single opening yields every weight a node
+needs.  This is modelled by *weight groups*: each neuron maps to exactly one group, and the
 group's committed value is the concatenation of that neuron's incoming weights
 with its bias.  For ``Dense`` a group is a row of ``W``; for ``Conv2d``, where
 weights are shared across spatial positions, a group is an output channel's
@@ -43,11 +43,11 @@ kernel.
 Layers without parameters
 -------------------------
 ``MaxPool2d`` has no weights, and its local relation is ``a_j = max_{i in G_j} a_i``
-rather than an affine map followed by ``phi``.  The paper's formalism only spells
-out the affine case, but the protocol needs no more than "a node's value is a
-fixed, publicly known function of its parents", which pooling satisfies.  We note
-this as a (conservative) extension of the paper's presentation; it is required to
-handle the convolutional classifiers the authors themselves evaluate.
+rather than an affine map followed by ``phi``.  Anchuri et al.'s formalism only
+spells out the affine case, but the protocol needs no more than "a node's value is
+a fixed, publicly known function of its parents", which pooling satisfies.  This is
+a (conservative) extension of their presentation; it is required to handle the
+convolutional classifiers they themselves evaluate.
 """
 
 from __future__ import annotations
@@ -330,7 +330,7 @@ class Conv2dLayer(Layer):
     Parent sets are receptive fields, so they are small and *local*: a path step
     from this layer stays inside one ``kernel x kernel`` window.  This locality is
     what makes convolutional layers a poor place to hide a trace tamper and dense
-    layers a good one -- see the attack analysis.
+    layers a good one -- see :mod:`pvi.baseline.analysis`.
     """
 
     name: str
@@ -527,9 +527,9 @@ class MaxPool2dLayer(Layer):
 class Architecture:
     """An ordered stack of layers, starting with an :class:`InputLayer`.
 
-    The architecture is *public*: the paper is explicit that the wiring, the layer
-    count and the layer each neuron belongs to are known to both parties, and that
-    only the weights and activations are committed (Section 5.1).  Consequently
+    The architecture is *public*: Anchuri et al. are explicit that the wiring, the
+    layer count and the layer each neuron belongs to are known to both parties, and
+    that only the weights and activations are committed (their Section 5.1).  Consequently
     both sides agree on what "sample a random parent of neuron ``j``" means, which
     is what lets the verifier reconstruct the prover's path from the challenge
     alone.

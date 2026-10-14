@@ -1,4 +1,4 @@
-"""The serving harness ``experiments/deployment/serve_ab.py``.
+"""The serving harness ``experiments.deployment.serve_ab``.
 
 U1 -- the integer model served without proofs, every claim dropped -- gives exactly the logits the proof claims
 (decoded from the proof's bytes as the verifier decodes them), for a batch proved as one statement and for each prompt

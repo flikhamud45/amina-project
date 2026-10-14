@@ -1,17 +1,15 @@
 """Decoder weight-op shapes, the expected size of a Merkle multiproof, and a query's proof size.
 
-* ``decoder_shapes`` lists the weight ops of a decoder (see
-  ``transformer.build_decoder``) without building it: the benchmark sizes
-  ``(r, t)`` for the full model's op count, and ``aggregate.py`` needs the
-  codeword length of every committed matrix;
+* ``decoder_shapes`` and ``decoder_claim_columns`` list the weight ops of a decoder
+  (:func:`pvi.models.decoder.build_decoder`) and their claim columns without building
+  it: the benchmarks size ``(r, t)`` for the full model's op count from them, and a
+  commitment plan of a few built blocks is chosen on the whole model's shapes;
 * ``expected_multiproof_nodes`` is the exact expected number of hashes in one
-  multiproof for ``t`` distinct uniform columns, which ``aggregate.py`` uses as
-  the Merkle term of LLM runs made before multiproofs (only the earliest run,
-  ``raw/``, which the report does not use; checked by Monte Carlo in
+  multiproof for ``t`` distinct uniform columns (checked by Monte Carlo in
   ``tests/test_fullcheck.py``), and ``expected_lookup_nodes`` its analogue for the
   rows of a lookup table (a tree whose last leaves pad it to a power of two);
 * ``proof_bytes`` and ``setup_size`` give a query's proof bytes and the commitment's size for
-  weight-op shapes alone, under the report's parameters or a commitment plan
+  weight-op shapes alone, under the per-op commitment's parameters or a commitment plan
   (:mod:`pvi.commit.plans`), in the default form or the compact wire encoding, for models too
   large to run (checked against ``run_query`` in ``tests/test_plans.py``).
 """
@@ -47,7 +45,7 @@ class OpShape:
 
 
 def decoder_shapes(cfg, n_layers: int | None = None, prune_last: bool = False) -> list[OpShape]:
-    """Weight-op shapes of a decoder (see ``transformer.build_decoder``) without building it
+    """Weight-op shapes of a decoder (see :func:`pvi.models.decoder.build_decoder`) without building it
     (``prune_last``: its last block's q reads the last position alone, k and v every position)."""
     L = cfg.n_layers if n_layers is None else n_layers
     d, dh, hq, hkv, f = cfg.d_model, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads, cfg.d_ff
@@ -79,7 +77,7 @@ def decoder_shapes(cfg, n_layers: int | None = None, prune_last: bool = False) -
 
 def decoder_claim_columns(cfg, seq: int, n_layers: int | None = None, prune_last: bool = False) -> dict[str, int]:
     """Each weight op's claim columns for a prompt of ``seq`` tokens, keyed as :func:`decoder_shapes`:
-    ``seq``, but 1 for the LM head and OPT-350M's project_out, which read the last position only, and
+    ``seq``, but 1 for the LM head and OPT-350M's ``proj_out``, which read the last position only, and
     with ``prune_last`` for every op of the last block but k and v."""
     last = (cfg.n_layers if n_layers is None else n_layers) - 1
     pruned = {f"{p}{last}" for p in ("q", "o", "gate", "up", "down", "fc1", "fc2")} if prune_last else set()
@@ -137,7 +135,7 @@ def expected_lookup_nodes(v: int, m: int) -> float:
 
 def _matrices(ops, plan, rate: int) -> list[tuple[str, int, int]]:
     """``(name, rows, codeword length)`` of every encoded matrix of ``ops``: each op's own (the
-    report), or the plan's matrices of ``ops``."""
+    per-op commitment, ``plan=None``), or the plan's matrices of ``ops``."""
     if plan is None:
         return [(op.name, op.n_rows, rate * next_pow2(op.row_length)) for op in ops]
     names = {op.name for op in ops}
@@ -167,7 +165,7 @@ def proof_bytes(ops, params, claim_columns, *, plan=None, rate: int = 4, mode: s
     weight-op shapes (``decoder_shapes`` or a graph's ``MatOp``s), whose claims have
     ``claim_columns`` columns (an int for all of them, e.g. the prompt length of a decoder, or
     ``{name: columns}``); ``plan``: a commitment plan (its groups restricted to ``ops``), else the
-    report's trees at ``rate``; under a plan ``u`` is that of its row-layout ops, and a tree opens
+    per-op commitment's trees at ``rate``; under a plan ``u`` is that of its row-layout ops, and a tree opens
     the rows of its matrices (a col-layout one's: ``k``).  A lookup table's claims (mode C, under a
     plan) are its looked-up rows, a byte per entry, and its multiproof counts with the paths: exact
     for the ids ``table_ids[name]`` it looks up, else the expectation for distinct uniform ids
@@ -175,7 +173,7 @@ def proof_bytes(ops, params, claim_columns, *, plan=None, rate: int = 4, mode: s
     for the embedding ops (the verifier reads their rows).  ``wire_claims``: the size of the claims
     in the compact wire encoding (``PVC3``, which depends on their values: measured, with a plan's
     table rows as int8 bytes), for the proof of ``run_query(wire=True)``, whose ``u`` and opened
-    columns travel as two runs of 31-bit field elements (:func:`claimcodec.field_size`)."""
+    columns travel as two runs of 31-bit field elements (:func:`pvi.v0.claimcodec.field_size`)."""
     if lookups and mode == "C":
         raise ValueError("lookups are modes K and Kpre's; mode C looks rows up in a plan's tables")
 

@@ -1,28 +1,37 @@
-"""V1's int8 cut (``V1_SPEC.md`` Sec. 2.1-2.3): which weight ops are cut, their windows, and the GKR instances.
+"""V1's cut: which weight operations are cut, their windows, and the GKR instances.
 
-A weight op ``l`` whose output ``Z = A [X; 1]`` only feeds a requantisation is *cut*: the prover sends the
-requantised values ``s = requant(Z)`` (int8, or the residual's shifted ``Delta``) instead of the int32 ``Z``, and
-proves with the windowed logUp of :mod:`logup` that every entry lies in its window,
-``lo(s) <= Z < lo(s) + W(s)`` with ``lo(v) = ceil((v 2^30 - 2^29) / m)`` the smallest ``z`` with
-``shift(z) = (z m + 2^29) >> 30 = v``.  Clamped entries (``a = +-127`` with ``Z`` outside the normal window) are
-*exceptions*: the prover lists their exact ``Z`` and their window is that single value (width 1).
+A weight operation ``l`` whose output ``Z = A [X; 1]`` is read only by a requantisation is *cut*: the prover sends
+the requantised values ``s`` (the int8 ``a = rq(Z)`` of a requantisation, or the ``Delta = shift(Z)`` that a
+residual addition adds) instead of the claims ``Z``, and proves with the windowed logUp of :mod:`pvi.v1.logup` that
+every entry lies in its window, ``lo(s) <= Z < lo(s) + W(s)``.  Here ``shift(z) = (m z + 2^(sh-1)) >> sh`` with the
+public multiplier ``m`` and shift ``sh`` (30 in the paper), ``lo(v) = ceil((v 2^sh - 2^(sh-1)) / m)`` is the smallest
+``z`` with ``shift(z) = v``, and ``W(v) = lo(v + 1) - lo(v)``.  A clamped entry (``a = +-127`` with ``Z`` outside the
+window of ``a``) is an *exception*: the prover lists its exact ``Z``, and its window is that single value (width 1).
 
-The cut set is a public function of the graph, the commitment plan and the query's columns (:meth:`CutPlan.from_graph`):
+The cut set is a public function of the graph, the commitment plan and the query's column counts
+(:meth:`CutPlan.from_graph`), absorbed into the statement through :meth:`CutPlan.digest`.  An operation is cut if it
+satisfies the plan rules:
 
-* **P1** the op is a linear weight op (not an embedding) whose output is read by exactly one cheap op, built by
-  :func:`graph.requant_fn` with ``params["requant"]`` (``kind`` ``requant`` or ``residual``; a residual reads it
-  as its second input only);
-* **P2** it claims ``T`` columns (the pruned block's one-column ops and generation's head-side ops stay clear);
-* **P3** its windows have ``2 <= floor(2^30 / m)`` and ``ceil(2^30 / m) <= 2^16``;
-* **P4** honest claims are below ``2^29`` (``protocol.commit_graph`` enforces it for every committed op; checked
-  here when the graph carries weights);
-* **P5** per window width, the cut entries with that width number fewer than ``2^29`` (honest multiplicities stay
-  below ``p``); else the largest ops with it are made clear;
-* under a commitment plan, a col-layout matrix is cut only with all its members.
+* (P1) it is a linear weight operation (not an embedding, and not the one that computes the graph's output) whose
+  output is read by exactly one cheap operation built by :func:`pvi.core.graph.requant_fn` with
+  ``params["requant"]``: a requantisation (``kind`` ``"requant"``) whose clamp lies within ``[-128, 127]``, or a
+  residual addition (``kind`` ``"residual"``) that reads it as its second input only;
+* (P2) it claims all ``T`` columns (the single-column operations of the pruned last block and the head-side
+  operations of a generation query stay clear);
+* (P3) its window widths lie in ``[2, 2^16]``: ``floor(2^sh / m) >= 2`` and ``ceil(2^sh / m) <= 2^16``;
+* (P4) its honest claims are below ``2^29`` in magnitude (``pvi.v0.graph_commitment.commit_graph`` refuses every
+  committed operation that fails it; it is evaluated here when the graph, or a mode K or Kpre verifier, holds the
+  weights);
+* (P5) each window width is shared by fewer than ``2^29`` cut entries, so that honest multiplicities stay below
+  ``p``; while a width is shared by more, the operation with the most rows among those with that width is made
+  clear;
+* under a commitment plan, the members of a transposed (``col``) matrix are cut together or not at all.
 
-**Instances.** Units are the committed matrices in graph order (in Kpre every cut op); an instance is a maximal
-run of consecutive units with at most ``2^lmax`` entries.  Its ops are stacked by rows; leaf
-``row 2^n_col + col`` (``n_col = ceil(log2 T)``).
+**Instances.** The units are, in graph order, the transposed matrices (with all their members) and the other cut
+operations one by one (in Kpre, which has no commitment plan, every cut operation); consecutive units are packed
+greedily into instances of at most ``2^lmax`` entries (a larger unit forms an instance of its own).  An instance
+stacks its operations by rows; the entry in row ``row`` and column ``col`` is the leaf ``row 2^n_col + col``, with
+``n_col = ceil(log2 T)``.
 """
 
 from __future__ import annotations
@@ -42,9 +51,9 @@ __all__ = ["CutOp", "CutPlan", "lo", "windows", "shift", "requant_values", "spli
            "delta_range",
            "instance_bits", "LMAX", "CLAIM_LIMIT"]
 
-LMAX = 27
-CLAIM_LIMIT = 1 << 29                 # protocol.Z_BOUND
-_COUNT_LIMIT = 1 << 29                # P5
+LMAX = 27                             # the default instance bound: at most 2^27 leaves
+CLAIM_LIMIT = 1 << 29                 # pvi.v0.params.Z_BOUND: the claim bound of (D1) and (P4)
+_COUNT_LIMIT = 1 << 29                # (P5)
 _VERSION = b"pvi/cut/v1"
 
 
@@ -60,13 +69,15 @@ def lo(v: torch.Tensor, m: int, sh: int = 30) -> torch.Tensor:
 
 
 _TABLE_SPAN = 1 << 20
+"""Values spanning at most this many integers take their windows from a table of ``lo`` over their range."""
 
 
-def windows(s: torch.Tensor, m: int, sh: int = 30, span: tuple[int, int] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-    """``(L, W)``: ``lo(s)`` and ``lo(s + 1) - lo(s)``, the window of the values ``s``.  Values spanning at most
-    ``2^20`` (every requant op's int8 values; most residual ops' Delta) are looked up in a table of ``lo`` over their
-    range instead of dividing per entry: the same integers.  ``span``: bounds the values are known to lie in (a
-    requant op's clamp), which saves finding them."""
+def windows(s: torch.Tensor, m: int, sh: int = 30,
+            span: tuple[int, int] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(L, W)``: ``lo(s)`` and ``lo(s + 1) - lo(s)``, the windows of the values ``s``.  Values spanning at most
+    ``2^20`` integers (a requantisation's int8 values, and typically a residual operation's ``Delta``) are looked up
+    in a table of ``lo`` over their range instead of being divided entry by entry: the same integers.  ``span``:
+    bounds the values are known to lie in (a requantisation's clamp), which saves finding them."""
     if s.numel():
         a, b = span if span is not None else (int(v) for v in torch.aminmax(s))
         if b - a <= _TABLE_SPAN:
@@ -79,7 +90,8 @@ def windows(s: torch.Tensor, m: int, sh: int = 30, span: tuple[int, int] | None 
 
 
 def delta_range(m: int, sh: int = 30) -> tuple[int, int]:
-    """``R_Delta``: the shifted values of claims in ``(-2^29, 2^29)``."""
+    """``R_Delta = [shift(1 - 2^29), shift(2^29 - 1)]``: the shifted values of claims in ``(-2^29, 2^29)``, the
+    range that (D1) checks for a residual operation's sent values."""
     t = torch.tensor([1 - CLAIM_LIMIT, CLAIM_LIMIT - 1])
     a, b = shift(t, m, sh).tolist()
     return a, b
@@ -87,9 +99,10 @@ def delta_range(m: int, sh: int = 30) -> tuple[int, int]:
 
 @dataclass(frozen=True)
 class CutOp:
-    """One cut weight op: ``N x (K + 1)`` (``has_bias``), requantised by ``consumer`` (``kind``, multiplier
-    ``mult``, shift ``sh``, clamp ``[lo_, hi]`` for requant); entries ``N T`` at rows ``row_offset ..`` of
-    ``instance``; committed in ``matrix`` (layout ``row`` or ``col``; ``row`` without a plan)."""
+    """One cut operation: an ``N x K`` matrix (``N x (K + 1)`` with ``has_bias``) whose output the cheap operation
+    ``consumer`` requantises (``kind``, multiplier ``mult``, shift ``sh``, and for a requantisation the clamp
+    ``[lo_, hi]``); its ``N T`` entries occupy the rows from ``row_offset`` of instance ``instance``; it is committed
+    in ``matrix``, with layout ``"row"`` or the transposed ``"col"`` (``"row"`` without a commitment plan)."""
     name: str
     kind: str
     mult: int
@@ -107,28 +120,32 @@ class CutOp:
 
     @property
     def widths(self) -> tuple[int, int]:
-        """``(floor(2^sh / m), ceil(2^sh / m))``: the normal windows' widths."""
+        """``(floor(2^sh / m), ceil(2^sh / m))``: the widths of the normal windows."""
         return (1 << self.sh) // self.mult, -(-(1 << self.sh) // self.mult)
 
 
 @dataclass(frozen=True)
 class CutPlan:
+    """The cut plan of one query: ``T`` columns, the instance bound ``lmax``, the cut operations in row order, the
+    table's widths and every instance's operation names."""
     T: int
     lmax: int
     ops: tuple[CutOp, ...]
     widths: tuple[int, ...]                       # the table's widths, ascending, with 1
-    instances: tuple[tuple[str, ...], ...]       # op names per instance, in row order
+    instances: tuple[tuple[str, ...], ...]       # operation names per instance, in row order
 
     # -------------------------------------------------------------- construction
     @classmethod
     def from_graph(cls, graph: IntGraph, columns: list[int] | None, T: int, plan=None, *,
                    lmax: int = LMAX, weights: dict | None = None) -> "CutPlan":
-        """The cut plan of ``graph`` on a query of ``T`` tokens (``columns``: every weight op's column count, in
-        op order, as ``IntGraph.claim_columns`` gives them; ``None`` takes ``T`` for every op) under the commitment
-        plan ``plan``: a ``plans.CommitmentPlan``, or its col matrices as ``{name: members}`` (what a verifier's
-        publics give), or ``None`` (Kpre, or one tree per op).  ``weights`` (``{op: (W, b)}``, a K or Kpre verifier's):
-        P4 is evaluated from them when the graph is a public one (no weights in its ops); in mode C the verifier holds
-        no weights and P4 is the commitment's (``protocol.commit_graph`` refuses any op that fails it)."""
+        """The cut plan of ``graph`` on a query of ``T`` tokens.  ``columns``: every weight operation's column count,
+        in operation order, as ``claim_columns`` of the graph or of the verifier gives them (``None``: ``T`` for
+        every operation).  ``plan``: the commitment plan, as a :class:`pvi.commit.plans.CommitmentPlan` or as its
+        transposed matrices ``{name: members}`` (what a verifier's public data give), or ``None`` (Kpre, or one tree
+        per operation).  ``weights`` (``{op: (W, b)}``, a mode K or Kpre verifier's): (P4) is evaluated from them
+        when the graph is a public one, without weights in its operations; in mode C the verifier holds no weights
+        and (P4) is a property of the commitment (``pvi.v0.graph_commitment.commit_graph`` refuses every operation
+        that fails it)."""
         col_of = _col_matrices(plan)
         mats = graph.mat_ops
         cols = dict(zip((op.name for op in mats), columns if columns is not None else [T] * len(mats)))
@@ -136,21 +153,23 @@ class CutPlan:
         cand: dict[str, tuple[MatOp, CheapOp, dict]] = {}
         for op in mats:
             c = _consumer(op, readers, graph)
-            if c is None or cols.get(op.name) != T:                                     # P1, P2
+            if c is None or cols.get(op.name) != T:                                     # (P1), (P2)
                 continue
             params = c.params["requant"]
             m, sh = int(params["mult"]), int(params["shift"])
-            if m <= 0 or (1 << sh) // m < 2 or -(-(1 << sh) // m) > 1 << 16:          # P3
+            if m <= 0 or (1 << sh) // m < 2 or -(-(1 << sh) // m) > 1 << 16:          # (P3)
                 continue
+            # (P1): with (P3), a clamp within int8 keeps |lo(s)| <= 129 * 2^16 (the no-wrap lemma's |L| < 2^29 + 2^16)
             if params["kind"] == "requant" and not -128 <= int(params["lo"]) <= int(params["hi"]) <= 127:
-                continue                       # int8 values: |lo(s)| <= 129 * 2^16 (the proof's |L| < 2^29 + 2^16)
+                continue
             w_b = (op.weight, op.bias) if op.weight is not None else (weights or {}).get(op.name)
-            if w_b is not None and _claim_bound(op, *w_b) >= CLAIM_LIMIT:              # P4
+            if w_b is not None and _claim_bound(op, *w_b) >= CLAIM_LIMIT:              # (P4)
                 continue
             cand[op.name] = (op, c, params)
 
         def closed(names):
-            """Drop the members of col matrices not cut with all their members, until stable."""
+            """Drop the members of every transposed matrix that is not cut with all its members, until every such
+            matrix is cut whole or not at all."""
             names = dict(names)
             while True:
                 drop = {o for members in col_of.values() if any(o not in names for o in members)
@@ -161,7 +180,7 @@ class CutPlan:
                     del names[o]
 
         cand = closed(cand)
-        while True:                                                                    # P5
+        while True:                                                                    # (P5)
             count: dict[int, int] = {}
             for op, c, params in cand.values():
                 for w in set(_widths(params)):
@@ -175,7 +194,7 @@ class CutPlan:
             del cand[worst]
             cand = closed(cand)
 
-        # units in graph order, then instances
+        # the units in graph order, then the instances
         units, placed = [], set()
         for op in mats:
             if op.name not in cand or op.name in placed:
@@ -245,12 +264,12 @@ class CutPlan:
         return sum(self.widths)
 
     def table(self) -> tuple[torch.Tensor, dict[int, int]]:
-        """The table values ``[|T|, 8]`` and each width's offset (:func:`logup.table`)."""
+        """The table values ``[|T|, 8]`` and each width's offset (:func:`pvi.v1.logup.table`)."""
         return logup.table(self.widths)
 
     def digest(self) -> bytes:
-        """What the transcript absorbs as ``b"cut"``: the version, ``F``'s parameters, ``lmax``, ``T``, the table's
-        widths and every cut op with its placement."""
+        """What the transcript absorbs as ``b"cut"``: the version, the extension field's parameters, ``lmax``,
+        ``T``, the table's widths and every cut operation with its placement."""
         out = [_VERSION]
         canonical([ef.D, ef.BETA, self.lmax, self.T, list(self.widths),
                     [[o.name, o.kind, o.mult, o.sh, o.lo_, o.hi, o.n_rows, o.n_in, o.has_bias, o.consumer, o.instance,
@@ -260,7 +279,7 @@ class CutPlan:
 
 
 def _col_matrices(plan) -> dict[str, tuple[str, ...]]:
-    """``{col matrix: its members}`` of a commitment plan, of such a dict, or of ``None``."""
+    """``{transposed matrix: its members}`` of a commitment plan, of such a dict, or of ``None``."""
     if plan is None:
         return {}
     if hasattr(plan, "matrices"):
@@ -274,7 +293,7 @@ def _widths(params: dict) -> tuple[int, int]:
 
 
 def _claim_bound(op: MatOp, weight: torch.Tensor, bias: torch.Tensor | None) -> int:
-    """``protocol.claim_bound`` for a linear op with these weights: the largest honest ``|z|``."""
+    """``pvi.v0.params.claim_bound`` of a linear operation with these weights: the largest honest ``|z|``."""
     w = weight.to(torch.int64)
     bound = (op.max_input + 1) * w.abs().sum(1)
     if bias is not None:
@@ -283,7 +302,8 @@ def _claim_bound(op: MatOp, weight: torch.Tensor, bias: torch.Tensor | None) -> 
 
 
 def _consumer(op: MatOp, readers: dict, graph: IntGraph) -> CheapOp | None:
-    """P1: the one requantising reader of ``op``'s output, built by ``graph.requant_fn``, else ``None``."""
+    """(P1): the one requantising reader of ``op``'s output, built by :func:`pvi.core.graph.requant_fn`, else
+    ``None``."""
     if op.layout != "linear" or op.output == graph.output_name:
         return None
     rs = readers.get(op.output, [])
@@ -304,16 +324,17 @@ def _consumer(op: MatOp, readers: dict, graph: IntGraph) -> CheapOp | None:
 
 # ------------------------------------------------------------------ the witness and the public windows
 def requant_values(z: torch.Tensor, op: CutOp) -> torch.Tensor:
-    """``s``: ``clamp(shift(z), lo, hi)`` for a requant op, ``shift(z)`` (Delta) for a residual."""
+    """``s``: ``clamp(shift(z), lo, hi)`` for a requantisation, ``shift(z)`` (``Delta``) for a residual
+    addition."""
     s = shift(z, op.mult, op.sh)
     return s.clamp(op.lo_, op.hi) if op.kind == "requant" else s
 
 
 def split(z: torch.Tensor, op: CutOp):
-    """The prover's view of an op's claims ``z`` ``[N, T]``: ``(s, delta, width, exc_idx, exc_z)``: the sent
+    """The prover's view of an operation's claims ``z`` ``[N, T]``: ``(s, delta, width, exc_idx, exc_z)``, the sent
     values, every entry's residue ``z - L`` and window width (``0 <= delta < width``), and the exceptions (flat
-    indices in row-major order, ascending, and their ``z``): requant entries whose ``z`` is outside the normal
-    window of their clamped value."""
+    indices in row-major order, ascending, and their ``z``): the entries of a requantisation whose ``z`` lies outside
+    the normal window of their clamped value."""
     z = z.to(torch.int64)
     s = requant_values(z, op)
     lower, width = windows(s, op.mult, op.sh)
@@ -326,8 +347,8 @@ def split(z: torch.Tensor, op: CutOp):
 
 
 def split_counts(z: torch.Tensor, op: CutOp, offsets: dict[int, int], size: int):
-    """:func:`split` on ``z``'s device, plus the op's honest table counts ``[size]`` (int64, same device): the key of
-    an entry is ``delta`` plus the table offset of its width, one of the op's two normal widths or 1."""
+    """:func:`split` on ``z``'s device, and the operation's honest table counts ``[size]`` (int64, same device): the
+    key of an entry is ``delta`` plus the table offset of its width, one of the two normal widths or 1."""
     s, delta, width, idx, exc_z = split(z, op)
     w_lo, w_hi = op.widths
     off = torch.where(width == 1, offsets[1], torch.where(width == w_lo, offsets[w_lo], offsets[w_hi]))
@@ -337,7 +358,8 @@ def split_counts(z: torch.Tensor, op: CutOp, offsets: dict[int, int], size: int)
 
 def public_lw_f64(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, op: CutOp) -> torch.Tensor:
     """:func:`public_lw` for range-checked values, as one float64 matrix ``[L ; W]`` ``[2N, T]`` (exact: every entry
-    below ``2^31``), gathered from the window table directly in float64 (what the final check multiplies)."""
+    is below ``2^31``), gathered from the window table directly in float64 (what the baseline final check (F3)
+    multiplies)."""
     if s.numel() == 0:
         return torch.zeros(2 * s.shape[0], s.shape[1], dtype=torch.float64, device=s.device)
     a, b = (op.lo_, op.hi) if op.kind == "requant" else (int(v) for v in torch.aminmax(s))
@@ -357,8 +379,9 @@ def public_lw_f64(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, o
 
 
 def public_lw(s: torch.Tensor, exc_idx: torch.Tensor, exc_z: torch.Tensor, op: CutOp, *, in_range: bool = False):
-    """The verifier's ``(L, W)`` from the sent values and the listed exceptions (already checked).  ``in_range``:
-    the values are known to be in the op's range (derive checked them), so a requant op's table spans its clamp."""
+    """The verifier's ``(L, W)`` from the sent values and the listed exceptions (already checked by (D4)).
+    ``in_range``: the values are known to lie in the operation's range (checked by (D1)), so a requantisation's
+    table spans its clamp."""
     span = (op.lo_, op.hi) if in_range and op.kind == "requant" else None
     lower, width = windows(s, op.mult, op.sh, span)
     if exc_idx.numel():

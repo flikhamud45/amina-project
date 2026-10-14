@@ -1,28 +1,29 @@
-"""Fused GPU kernels of the claim codec (Triton), for the device encoder of :mod:`claimcodec`.
+"""Fused GPU kernels of the claim codec (Triton), for the device encoder and decoder of :mod:`pvi.v0.claimcodec`.
 
 The encoding's body is one slot stream per width ``B`` over the *global order* of the values (by width,
-then segment order; a segment is an op's values, a centred op's residuals or its row means).  The device
-encoder of :mod:`claimcodec` built each stream with about ten torch kernels per width plus index tables of
-several bytes a value, in parts of ``_CHUNK`` values.  Here one kernel per width reads every value of a
-block of the stream's columns straight from the claims, through a table of the stream's segments:
+then segment order; a segment is an op's values, a centred op's residuals or its row means).  The torch device
+encoder of :mod:`pvi.v0.claimcodec` builds each stream with about ten torch kernels per width plus index tables of
+several bytes a value, in parts of ``_CHUNK`` values.  Here (option ``fused_encoder`` of :mod:`pvi.options`) one
+kernel per width reads every value of a block of the stream's columns straight from the claims, through a table of
+the stream's segments:
 
 * the value at stream position ``v`` is found by a binary search of the segment starts, read from its op's
   claims (an int32 pointer per segment), minus its row's mean for a residual, minus the segment's base;
 * its slot ``(x - lo) mod 2**B`` goes into lane ``v // G`` of column ``v % G`` (``G = ceil(n / 32)``): the
   ``B`` little-endian words of a column hold its 32 lanes' slots at bits ``[j B, j B + B)``, exactly as
-  :func:`claimcodec.pack32`;
+  :func:`pvi.v0.claimcodec.pack32`;
 * a value outside ``[lo, lo + 2**B)`` is an exception: bit ``j`` of the column's flag word.
 
 A second kernel recomputes the high parts ``(x - lo) >> B`` of the flagged positions.  The values, slots and
 words are the integers of the torch encoder, so the bytes are the same (tested against it).
 
-The decoder's kernel is the inverse: each program reads the words of a block of columns of a ``B``-bit stream
-(``B <= 32``: also a Rice vector's low parts) and writes its 32 lanes' values in place, flagging an error if a
-padding slot (a lane position at or past ``n``) is not zero.  Every offset and length is checked on the host
-before the kernel reads anything (:func:`claimcodec.decode_device`).
+The decoder's kernel (option ``gpu_decode``) is the inverse: each program reads the words of a block of columns of
+a ``B``-bit stream (``B <= 32``: also a Rice vector's low parts) and writes its 32 lanes' values in place, flagging
+an error if a padding slot (a lane position at or past ``n``) is not zero.  Every offset and length is checked on
+the host before the kernel reads anything (:func:`pvi.v0.claimcodec.decode_device`).
 
-Triton builds a small C launcher on first use; on hosts without the Python headers, ``PVI_PY_INCLUDE`` names
-a directory holding a copy of them (``docs/improvements/I_server_setup.md``).
+Triton builds a small C launcher on first use; on hosts without the Python headers, ``$PVI_PY_INCLUDE`` names
+a directory holding a copy of them (:func:`pvi.options.python_include`).
 """
 
 from __future__ import annotations

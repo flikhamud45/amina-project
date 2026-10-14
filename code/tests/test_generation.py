@@ -1,4 +1,4 @@
-"""A generated response proved as one prefill: ``transformer.with_lm_positions`` and the token rule
+"""A generated response proved as one prefill: ``pvi.models.decoder.with_lm_positions`` and the token rule
 (``Verifier.check_tokens``).
 
 A decoder with its logits at the last ``n`` positions gives at each of them the logits of the prefix
