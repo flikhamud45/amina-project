@@ -47,7 +47,8 @@ exit status is 1 on either, and with ``--strict`` also on any missing cell, macr
 do not change it: one quantity measured by two jobs differs by more than 10% (:data:`TWO_JOBS`), the records' mode-C
 plan is not ``--policy``.  ``--rehearsal``: a rehearsal's folder (small models; no cell of the paper is expected):
 every tier must have at least one record of each kind it writes (:data:`experiments.paper.records.REHEARSAL_KINDS`),
-every builder runs on what is there, and the checks apply.
+every builder runs on what is there, and the checks apply, except those of what the text states about the final values
+(the sign of a loss), which are warnings.
 """
 from __future__ import annotations
 
@@ -363,6 +364,14 @@ def two_jobs(tables: dict, macros: dict) -> list[str]:
     return out
 
 
+def demote_text_claims(failed: list[str]) -> tuple[list[str], list[str]]:
+    """``(failed, warnings)`` of a rehearsal: its small cells need not bear out what the text states about the final
+    values (:data:`experiments.paper.macros.TEXT_CLAIM`), so those checks become warnings; every other check stays."""
+    claims = [x for x in failed if x.startswith(M.TEXT_CLAIM)]
+    return ([x for x in failed if not x.startswith(M.TEXT_CLAIM)],
+            [x.replace("CHECK FAILED", "WARNING (rehearsal)", 1) for x in claims])
+
+
 def folder_files(folder: Path) -> tuple[dict, dict]:
     """``({table file: body}, {macro: printed value})`` of a folder of the paper's files (``generated/``,
     ``fallback/``)."""
@@ -397,6 +406,9 @@ def build(args) -> int:
         failed += [x.replace("CHECK FAILED", "CHECK FAILED fallback:", 1)
                    for x in same_value(*folder_files(PAPER / "fallback"))]
     warnings += two_jobs(texts, values)
+    if args.rehearsal:
+        failed, demoted = demote_text_claims(failed)
+        warnings += demoted
     warnings += [f"WARNING {Path(r.path).name}:{r.line}: reexec.py's {r.d['variant']} is not recorded as bit-exact "
                  "with the integer reference: not an exact re-execution" for r in run.kind("reexec")
                  if r.d.get("variant") in T.CHECKED_EXACT and not T.exact_record(r.d["variant"], r)]

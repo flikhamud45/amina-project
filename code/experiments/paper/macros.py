@@ -1288,10 +1288,13 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
 
 FAMILIES = (platform, cpu_client, kpre_client, defence_cost, batching, serving, v1_numbers, comparison, improvements,
             real_weights, long_prompts, quality, sampler, attack, setup_and_params, setup_proof, generation)
+TEXT_CLAIM = "CHECK FAILED text:"
+"""The prefix of a check of what the text states about a value (not of a record's correctness): a rehearsal's small
+cells need not bear it out, so ``numbers.py --rehearsal`` reports it as a warning."""
 LOSSES = ("ZeroshotMeanOptS", "ZeroshotMeanOptM", "ZeroshotLambadaOptS", "ZeroshotLambadaOptM", "ZeroshotLambadaOptL",
           "ZeroshotLegacyMean")
 """Macros printed without their sign that the text calls a loss of accuracy (``quality.tex``,
-``ext_generation.tex``): each must be negative (integer minus fp16), or the build is a ``CHECK FAILED``."""
+``ext_generation.tex``): each must be negative (integer minus fp16), or the build fails (:data:`TEXT_CLAIM`)."""
 
 
 def build(ctx: T.Ctx, problems: list) -> tuple[dict[str, Macro], dict | None]:
@@ -1307,7 +1310,7 @@ def build(ctx: T.Ctx, problems: list) -> tuple[dict[str, Macro], dict | None]:
     for name in LOSSES:
         raw = c.m[name].raw if name in c.m else None
         if raw is not None and raw >= 0:
-            problems.append(f"CHECK FAILED {name}: {100 * raw:+.2f} points, which the text calls a loss")
+            problems.append(f"{TEXT_CLAIM} {name} is {100 * raw:+.2f} points, which the text calls a loss")
     for name in names():
         c.m.setdefault(name, Macro(name, None, None, ""))
     return c.m, be

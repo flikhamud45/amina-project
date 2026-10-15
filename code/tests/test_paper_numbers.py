@@ -42,6 +42,14 @@ RESULTS = CODE / "artifacts" / "results"
 ENV = {"gpu": "NVIDIA L40S", "cpu": "AMD EPYC 9334 32-Core Processor", "git": "abc1234", "argv": []}
 
 
+def test_a_rehearsal_reports_only_the_texts_claims_as_warnings():
+    failed = ["CHECK FAILED sp-setup-gpt2-1.out:3: setup proof rejected",
+              f"{M.TEXT_CLAIM} ZeroshotLambadaOptS is +0.00 points, which the text calls a loss"]
+    kept, warned = N.demote_text_claims(failed)
+    assert kept == failed[:1]
+    assert warned == ["WARNING (rehearsal) text: ZeroshotLambadaOptS is +0.00 points, which the text calls a loss"]
+
+
 # ------------------------------------------------------------------------------------------------ the records
 def _env(argv=()):
     return dict(ENV, argv=list(argv))
