@@ -19,7 +19,7 @@ python3.12 -m venv .venv
 .venv/bin/pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 .venv/bin/pip install -r code/requirements.txt -r code/requirements-llm.txt
 export SBATCH_PARTITION=<the L40S partition> SBATCH_GRES=gpu:l40s:1     # or add --local to every run.sh call
-export HF_HOME=<node-local folder with about 60 GB free>
+export HF_HOME=<node-local folder with about 100 GB free>
 export CXX=$(command -v g++)                                            # g++ 9 or later
 ```
 
@@ -55,11 +55,17 @@ ls artifacts/models/cnn/*.pt      # six models
 exit
 ```
 
-If you have the Llama-2 licence, the jobs must see your Hugging Face token on whichever node they land: a login
-stored under a node-local `HF_HOME` is not visible elsewhere, so `export HF_TOKEN=<your token>` in the shell that runs
-`run.sh` (the jobs inherit it). Then check on the same node that the token can fetch the gated checkpoint (the
-rehearsal does not download it; the full run does):
-`.venv/bin/huggingface-cli download meta-llama/Llama-2-7b-hf config.json`.
+The run includes the Llama-2 cells, under your own Llama-2 licence: your Hugging Face account needs access to both
+`meta-llama/Llama-2-7b-hf` and `meta-llama/Llama-2-13b-hf` (each repository has its own gate). The two checkpoints
+add 40 GB to the 47 GB of the other models, hence the 100 GB of `HF_HOME` (please check with `df -h` on an L40S
+node). The jobs must see your Hugging Face token on whichever node they land: a login stored under a node-local
+`HF_HOME` is not visible elsewhere, so `export HF_TOKEN=<your token>` in the shell that runs `run.sh` (the jobs
+inherit it). Then check on the same node that the token can fetch both gated repositories (the rehearsal downloads
+only the 7B configuration and tokenizer; the full run downloads both checkpoints):
+
+```bash
+for m in Llama-2-7b-hf Llama-2-13b-hf; do .venv/bin/huggingface-cli download meta-llama/$m config.json; done
+```
 
 ## 2. Smoke (up to an hour)
 
@@ -78,8 +84,8 @@ again.
 
 ## 3. Rehearsal (about three hours, small cells of every script)
 
-From the repository root (`--llama-licence` only if your Hugging Face account has the Llama-2 licence; otherwise
-leave it out). The rehearsal's timings are not used, so its jobs share nodes (`--no-exclusive`); by default every job
+From the repository root, with `HF_TOKEN` exported (`--llama-licence` runs one job that reads the gated
+repository from a compute node). The rehearsal's timings are not used, so its jobs share nodes (`--no-exclusive`); by default every job
 waits for a whole node, which on an 8-GPU node can take long:
 
 ```bash
