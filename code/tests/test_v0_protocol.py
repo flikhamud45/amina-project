@@ -15,6 +15,7 @@ import math
 import pytest
 import torch
 
+import shapes
 from pvi.commit.commitment import MerkleTree, WeightCommitment, column_leaf
 from pvi.core import field as fld
 from pvi.core.graph import CheapOp, MatOp, exact_matmul
@@ -351,16 +352,9 @@ def test_params_meet_their_target():
 
 
 # -- integer transformers -------------------------------------------------------------
-from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder, decoder_param_count  # noqa: E402
+from pvi.models.decoder import CONFIGS, build_decoder, decoder_param_count  # noqa: E402
 
-_TINY = {
-    "gpt": DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64),
-    "opt": DecoderConfig("tiny-opt", 64, 2, 4, 4, 16, 128, 97, mlp="relu", max_pos=64),
-    "llama": DecoderConfig("tiny-llama", 64, 2, 4, 4, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
-                           pos="rope", bias=False, tied=False),
-    "qwen": DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
-                          pos="rope", rope_theta=1e6, bias=False, qk_norm=True),
-}
+_TINY = {"gpt": shapes.GPT, "opt": shapes.OPT, "llama": shapes.LLAMA, "qwen": shapes.QWEN}
 
 
 @pytest.mark.parametrize("family", list(_TINY))

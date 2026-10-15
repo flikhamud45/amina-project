@@ -1084,14 +1084,6 @@ def _one(device) -> torch.Tensor:
     return t
 
 
-def _eq_table(rho_mont: list[list[int]], device) -> torch.Tensor:
-    """``eq(rho, bits(y))`` ``[8, 2^k]``, bit ``i`` of ``y`` against ``rho[i]`` (as ``pvi.core.extfield.eq_table``)."""
-    t = _one(device)
-    for r in rho_mont:
-        t = _eq_step(t, r, 0)
-    return t
-
-
 def _suffix_tables(rho_mont: list[list[int]], device) -> list[torch.Tensor]:
     """``[eq_table(rho[j+1:]) for j < k]``, built from the last one by prepending one low bit at a time."""
     k = len(rho_mont)

@@ -21,10 +21,11 @@ import pytest
 import torch
 
 import pvi.v0 as proto
+import shapes
 from pvi.commit.cost import decoder_shapes
 from pvi.core.field import LOG2_P, P
 from pvi.models.cnn import build_float_model
-from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
+from pvi.models.decoder import CONFIGS, build_decoder
 from pvi.models.quantize import quantize_input, quantize_model
 from pvi.v0 import claimcodec as cc
 from pvi.v0 import verifier as v0_verifier
@@ -47,13 +48,7 @@ def _plain(zs) -> bytes:
 
 # -- the protocol with wire=True -------------------------------------------------------------------
 
-_TINY = {
-    "gpt2": DecoderConfig("tiny-gpt2", 64, 2, 4, 4, 16, 256, 97),
-    "llama": DecoderConfig("tiny-llama", 64, 2, 4, 4, 16, 160, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
-                           bias=False, tied=False),
-    "qwen": DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
-                          rope_theta=1e6, bias=False, qk_norm=True),
-}
+_TINY = {"gpt2": shapes.GPT2, "llama": shapes.LLAMA, "qwen": shapes.QWEN}
 KINDS = ["lenet5", *_TINY]
 SETTINGS = [("C", False), ("C", True), ("K", False), ("K", True), ("Kpre", False), ("Kpre", True)]
 _GRAPHS: dict = {}
@@ -230,8 +225,7 @@ def test_the_verifier_knows_every_claims_shape_from_the_query(kind, monkeypatch)
         graph = quantize_model(build_float_model(kind, 10).eval(), torch.randn(4, 3, 32, 32))
         xs = [quantize_input(graph, torch.randn(b, 3, 32, 32)) for b in (1, 2)]
     elif kind == "opt":                    # OPT-350M's project-in and learned positions
-        graph = build_decoder(DecoderConfig("tiny-opt", 64, 2, 4, 4, 16, 128, 97, mlp="relu", max_pos=64,
-                                            embed_dim=32), calib_tokens=12, seed=3)
+        graph = build_decoder(shapes.OPT_PROJ, calib_tokens=12, seed=3)
         xs = [torch.randint(0, 97, (1, t)) for t in (1, 9)]
     else:
         graph, x = _graph(kind)

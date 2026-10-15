@@ -39,7 +39,7 @@ import statistics
 from dataclasses import dataclass, field
 
 from experiments.paper import format as f
-from experiments.paper.bench import Bench
+from experiments.paper.bench import DEFAULT_POLICY, Bench
 from experiments.paper.records import Rec, Run, v1_timed
 
 NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-1.3b": "OPT-1.3B", "opt-6.7b": "OPT-6.7B",
@@ -47,15 +47,19 @@ NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-1.3b": "OPT-1.3B", "opt-6.
 FULL_LAYERS = {"gpt2": 12, "opt-125m": 12, "opt-1.3b": 24, "opt-6.7b": 32, "llama2-7b": 32, "qwen3-4b": 36,
                "llama2-13b": 40}
 """The decoder blocks of the paper's models (``pvi.models.decoder.CONFIGS``)."""
-EXACT = ("int", "int_fp32gemm")
-"""``reexec.py``'s exact variants: the integer forward pass, bit-exact with the claims, with int8 GEMMs or with exact
-fp32 GEMMs.  Exact re-execution is the faster of the two, computing only what the pruned graph computes; it is the
-only re-execution that checks what the verifier checks."""
+EXACT = ("int", "int_fp32gemm", "int_mm")
+"""``reexec.py``'s exact variants: the integer forward pass, bit-exact with the claims, with its native int8 GEMMs,
+with exact fp32 GEMMs, or with its int8 GEMMs through ``torch._int_mm`` (oneDNN).  Exact re-execution is the fastest
+of them, computing only what the pruned graph computes; it is the only re-execution that checks what the verifier
+checks."""
+CHECKED_EXACT = ("int_mm",)
+"""The exact variants that count as exact only when their record says so: ``exact`` true when the run found their
+logits equal to the integer reference's bit for bit (:func:`exact_record`)."""
 INEXACT = ("float", "bf16", "dynint8")
 """``reexec.py``'s inexact variants: a floating-point decoder of the same shapes in fp32 and bf16, and torch's dynamic
 int8 engine; what an off-the-shelf stack would run, not bit-exact with the provider's model."""
-REEXEC_NAME = {"int": "int8 GEMMs", "int_fp32gemm": "exact fp32 GEMMs", "float": "fp32", "bf16": "bf16",
-               "dynint8": "dynamic int8"}
+REEXEC_NAME = {"int": "int8 GEMMs", "int_fp32gemm": "exact fp32 GEMMs", "int_mm": "oneDNN int8 GEMMs",
+               "float": "fp32", "bf16": "bf16", "dynint8": "dynamic int8"}
 MODE = {"C": r"$\sC$", "Kpre": r"$\Kpre$"}
 
 
@@ -99,7 +103,7 @@ class Ctx:
     run: Run
     bench: Bench
     lit: dict
-    policy: str = "cnn18c"
+    policy: str = DEFAULT_POLICY
     platform: str = ""
     byte_model: bool = True
 
@@ -111,14 +115,16 @@ def protocol(ctx: Ctx, extra: str = "") -> str:
             + (f"; {extra}" if extra else ""))
 
 
-def _two(a, b, fmt) -> str:
-    return f.DASH if a is None and b is None else f"{f.DASH if a is None else fmt(a)} / {f.DASH if b is None else fmt(b)}"
+def exact_record(variant: str, rec: Rec | None) -> bool:
+    """Whether a re-execution record of ``variant`` may stand for exact re-execution: always for the integer forward
+    pass's own GEMM paths, and for a :data:`CHECKED_EXACT` variant only when the record's ``exact`` is true."""
+    return variant not in CHECKED_EXACT or bool(rec is not None and rec.d.get("exact") is True)
 
 
 def fastest(run: Run, tier: str, model: str, seq: int, variants=EXACT):
     """``(seconds, variant, record)`` of the fastest of ``variants`` (default: exact re-execution) on the CPU, or
-    ``(None, None, None)``."""
-    got = run.reexec(tier, model, seq, "cpu", variants)
+    ``(None, None, None)``; a :data:`CHECKED_EXACT` variant whose record does not say it was exact is left out."""
+    got = run.reexec(tier, model, seq, "cpu", variants, keep=exact_record)
     if not got:
         return None, None, None
     v, (s, r) = min(got.items(), key=lambda kv: kv[1][0])
@@ -133,8 +139,7 @@ LLM_ROWS = {64: ("gpt2", "qwen3-4b", "llama2-7b", "llama2-13b"),
 
 def tab_eval_llm(ctx: Ctx) -> Table:
     """``tab:eval-llm``: per model and prompt length, mode C's prover, CPU and GPU verifier and proof, and Kpre's CPU
-    verifier and proof, all of the final code (one column per metric: the paper's header must drop the split into
-    base and new columns)."""
+    verifier and proof, all of the final code (one column per metric)."""
     tb = Table("tab_eval_llm", "tab:eval-llm",
                f"{protocol(ctx)}; bench tables {ctx.bench.name}\n"
                "columns: Model & Params & C prove & C CPU verify & C GPU verify (streaming) & C proof & "
@@ -249,9 +254,9 @@ def tab_eval_v1(ctx: Ctx) -> Table:
 
 
 def tab_options(ctx: Ctx) -> Table:
-    """``tab:options``: a client's options for one Llama-2-7B prompt: exact re-execution on the CPU (the faster of
-    the integer forward pass's two GEMM paths) and on the GPU (the integer forward pass on int8 tensor cores), the published options, and our modes C
-    and Kpre and V1 (the CPU verifier: bytes and time)."""
+    """``tab:options``: a client's options for one Llama-2-7B prompt: exact re-execution on the CPU (the fastest of
+    the integer forward pass's exact variants, :data:`EXACT`) and on the GPU (the integer forward pass on int8 tensor
+    cores), the published options, and our modes C and Kpre and V1 (the CPU verifier: bytes and time)."""
     run, m = ctx.run, "llama2-7b"
     tb = Table("tab_options", "tab:options",
                f"{protocol(ctx)}; cpuv tier (perf.py --verifier-device cpu, reexec.py on 8 threads, V1's optimised "
@@ -505,8 +510,12 @@ def tab_params(ctx: Ctx) -> Table:
     fexp = [x[0] if x and len(x) == 1 and x[0] is not None else None for x in fr]
     tb.put("tab:params", "f", fexp[0] is not None and fexp[1] is not None and tuple(fexp) or None, src)
     radius = (f"$f=2^{{{fexp[0]}}}$ / $2^{{{fexp[1]}}}$$^c$" if None not in fexp else f.DASH)
-    lookup = tb.put("tab:params", "lookup", v and v.get("lookup_log2"), rec or src, lambda x: f"$\\le2^{{{x:.1f}}}{{}}^b$")
-    gkr = tb.put("tab:params", "gkr", v and v.get("gkr_log2"), rec or src, lambda x: f"$\\le2^{{{x:.1f}}}{{}}^b$")
+
+    def le(x):                     # a bound 2^x: the exponent rounded up, so that the printed bound holds
+        return f"$\\le2^{{{math.ceil(x * 10 - 1e-9) / 10:.1f}}}{{}}^b$"
+
+    lookup = tb.put("tab:params", "lookup", v and v.get("lookup_log2"), rec or src, le)
+    gkr = tb.put("tab:params", "gkr", v and v.get("gkr_log2"), rec or src, le)
     tb.rows += [
         r"\multicolumn{2}{@{}l}{\emph{Per query, v0 (Theorem~\ref{thm:sound}, Section~\ref{sec:fs})}} \\",
         rf"Field $\F$, $p=15\cdot2^{{27}}+1$ & $\log_2p\approx{g(('log2p',), lambda x: f'{x:.1f}')}$ \\",
@@ -526,7 +535,7 @@ def tab_params(ctx: Ctx) -> Table:
         r"Total: $\varepsilon_{\sC}$ / $Q\varepsilon_{\sC}$, plus collisions for $Q\le2^{63}$ & $\le2^{-128}$ \\",
         r"\midrule",
         r"\multicolumn{2}{@{}l}{\emph{V1 (Theorem~\ref{thm:v1})}} \\",
-        r"Extension $\Fext=\F[\xi]/(\xi^8-11)$; Fiat--Shamir needs degree $\ge7$ &",
+        r"Extension $\Fext=\F[\xi]/(\xi^8-11)$; Fiat--Shamir needs degree $\ge8$ for the lookup term &",
         f"  $|\\Fext|\\approx2^{{{g(('ext_log2',), lambda x: f'{x:.1f}')}}}$ \\\\",
         rf"Lookup term $(\Nleaf+|\Vtab|)/(p^8-p^2)$ & {lookup} \\",
         rf"GKR terms $\sum_\gamma\varepsilon_{{\mathrm{{GKR}}}}(n_\gamma)$ & {gkr} \\",
@@ -697,7 +706,7 @@ def long_point(run: Run, seq: int, n_layers: int = 32) -> dict:
         out["bytes"] = two.d["proof_bytes"] + k * out["bytes_block"]
     best = None
     for v in EXACT:
-        ms, r = run.reexec_blocks("long", "llama2-7b", seq, "cpu", v)
+        ms, r = run.reexec_blocks("long", "llama2-7b", seq, "cpu", v, keep=exact_record)
         if "2" in ms and "3" in ms:
             full = ms["2"] + (n_layers - 2) * (ms["3"] - ms["2"])
             if best is None or full < best[0]:
@@ -711,7 +720,7 @@ def tab_eval_long(ctx: Ctx) -> Table:
     (Kpre, Fiat--Shamir) against exact re-execution on the same 8 threads, and the proof."""
     tb = Table("tab_eval_long", "tab:eval-long", f"{protocol(ctx)}; long tier: perf.py --layers 2 and 3 (label "
                "long), reexec.py --layers 2 3; full model = 2 blocks + 30 x (3 blocks - 2 blocks); re-execution: "
-               "the integer forward pass")
+               "the fastest exact variant of the integer forward pass")
     for seq in LONG:
         p = long_point(ctx.run, seq)
         rx = p["reexec"]
@@ -719,7 +728,7 @@ def tab_eval_long(ctx: Ctx) -> Table:
         ratio = rx[0] / p["verify"] if rx and p.get("verify") else None
         tb.rows.append(" & ".join([
             f.tokens(seq), tb.put(row, "verifier", p.get("verify"), p["three"], lambda v: f.sig(v, 3)),
-            tb.put(row, "re-execution", rx and rx[0], rx and rx[2], lambda v: f.fixed(v, 1)),
+            tb.put(row, "re-execution", rx and rx[0], rx and rx[2], lambda v: f.num(v, 1)),
             tb.put(row, "ratio", ratio, p["three"], lambda v: f.x(v, 1)),
             tb.put(row, "proof GB", p.get("bytes"), p["three"], lambda v: f.fixed(v / 1e9, 1))]) + r" \\")
     return tb
@@ -760,7 +769,8 @@ REEXEC_GPU = ("opt-1.3b", "opt-6.7b", "llama2-7b", "llama2-13b", "qwen3-4b")
 
 def tab_eval_reexec(ctx: Ctx) -> Table:
     """``tab:eval-reexec``: re-executing the full model on the GPU (the integer forward pass on int8 tensor cores /
-    the fp16 decoder) and on the CPU (Llama-2-7B: our Kpre verifier, fp32 and the faster integer re-execution)."""
+    the fp16 decoder) and on the CPU (Llama-2-7B: our Kpre verifier, fp32 and exact re-execution, the fastest of
+    :data:`EXACT`)."""
     run = ctx.run
     tb = Table("tab_eval_reexec", "tab:eval-reexec", f"{protocol(ctx)}; gpuv tier: reexec.py --device cuda (int, "
                "float = fp16), full models measured; cpuv tier: perf.py Kpre and reexec.py on 8 threads")
@@ -779,10 +789,10 @@ def tab_eval_reexec(ctx: Ctx) -> Table:
     vals = [tb.put(f"cpu {s}", "Kpre verifier", r and r.d["verify_s"], r, lambda v: f.fixed(v, 1))
             for s, r in zip((64, 2048), ver)]
     tb.rows.append(" & ".join([r"our $\Kpre$ verifier", vals[0], "--", vals[1]]) + r" \\")
-    for label, variants in (("fp32 re-execution", ("float",)), ("integer re-execution", ("int", "int_fp32gemm"))):
+    for label, variants in (("fp32 re-execution", ("float",)), ("integer re-execution", EXACT)):
         vals = []
         for s in (64, 2048):
-            got = run.reexec("cpuv", "llama2-7b", s, "cpu", variants)
+            got = run.reexec("cpuv", "llama2-7b", s, "cpu", variants, keep=exact_record)
             best = min(got.values(), key=lambda v: v[0]) if got else None
             vals.append(tb.put(f"cpu {s}", label, best and best[0], best and best[1], lambda v: f.fixed(v, 1)))
         tb.rows.append(" & ".join([label, vals[0], "--", vals[1]]) + r" \\")
@@ -794,8 +804,9 @@ COMPARE_V1 = (("zkGPT", ("zkGPT", "GPT-2", ""), "GPT-2 (64)", "gpt2", 64),
               ("DeepProve", ("DeepProve", "GPT-2", "512"), "GPT-2 (512)", "gpt2", 512),
               ("zkLLM", ("zkLLM", "OPT-125M", "2048"), "OPT-125M (2{,}048)", "opt-125m", 2048),
               ("zkLLM", ("zkLLM", "OPT-1.3B", "2048"), "OPT-1.3B (2{,}048)", "opt-1.3b", 2048),
-              ("zkLLM", ("zkLLM", "Llama-2-7B", "2048"), "Llama-2-7B (2{,}048)", "llama2-7b", 2048),
-              ("zkLLM", ("zkLLM", "Llama-2-13B", "2048"), "Llama-2-13B (2{,}048)", "llama2-13b", 2048))
+              ("zkLLM", ("zkLLM", "Llama-2-7B", "2048"), "Llama-2-7B (2{,}048)", "llama2-7b", 2048))
+"""``tab:eval-compare-v1``'s rows: (system, its row in ``reported_curated.csv``, the model label, ours).  Every row is
+a full model of the v1 tier (Llama-2-13B's V1 cell is a build of 2 of its 40 blocks, so it has no row)."""
 
 
 def tab_eval_compare_v1(ctx: Ctx) -> Table:

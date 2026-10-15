@@ -555,7 +555,9 @@ that the verifier decodes (\texttt{\_claims\_message} and \texttt{decoded\_claim
 Each decoder is a deterministic function $\mathrm{Dec}_i(b;c)$ of the bytes $b$ and of a public
 context $c$ that is fixed before $b$ is sent: the graph, the query's shape, the parameters, the
 commitment plan and the cut plan. It returns either a message of the shapes that $c$ prescribes or
-a rejection. Decoded claims are integers with $|z|<2^{30}$, decoded field-packed values lie in
+a rejection. Every value decoded from a frame (a base plus a slot, or an exception) is an integer
+with $|x|<2^{30}$; a decoded claim is one such value or, for an operation coded around its row means,
+the sum of two, so $|z|<2^{31}$ and it fits in int32. Decoded field-packed values lie in
 $[0,2^{31})$, and decoded rows lie in $[-128,127]$. Moreover the codec is designed so that
 $\mathrm{Dec}_i(\mathrm{Enc}_i(m);c)=m$ for every honest message $m$ (completeness; tested, not
 proved here, and not used for soundness).
@@ -573,7 +575,9 @@ rejection is reported as \texttt{ClaimCodecError}, \texttt{ValueError} or \textt
 \texttt{run\_query} and \texttt{run\_cut\_query} turn into the rejection labels
 \texttt{range\_or\_shape}, \texttt{freivalds}, \texttt{columns\_shape}, \texttt{cut\_exception},
 \texttt{cut\_multiplicities}, \texttt{cut\_gkr} and \texttt{cut\_final}. The value ranges follow from
-these rules. That every input is either decoded or rejected, with no other exception, is the
+these rules; the decoder does not check the sum of a row mean and a value again, since the
+verifier's later range checks (claims with $|z|<2^{29}$, Section~\ref{sec:intmodel}; multiplicities
+below $p$) reject larger values. That every input is either decoded or rejected, with no other exception, is the
 documented contract of the decoders, which \texttt{tests/test\_claimcodec.py} checks with random
 corruptions, together with the round trip and with the GPU decoder rejecting exactly what the host
 decoder rejects. Soundness uses only determinism and that no query is accepted without a successful
@@ -708,7 +712,7 @@ $\chi_\ell$ and $u_\ell$ (\texttt{pvi.v1.protocol.\_kpre\_y\_ok} reads \texttt{V
 $y_\ell$ is the prover's fold and $\bar x_\ell=\hat X_\ell e$. To keep $\chi$ for the secret
 vectors, we write $\omega_\ell$ for the eq-vector of Section~\ref{sec:v1} (its $\chi_\ell$), so that
 check~(F3) uses $S_\ell=\omega_\ell^\T y_\ell$. In $\Kpre$ the verifier evaluates rule~(P4) of the
-cut set from its own weights (\texttt{CutPlan.from\_graph} with \texttt{weights}).
+cut set from the weights when it derives its key (\texttt{CutPlan.from\_graph} with \texttt{weights}).
 
 \para{Secret checks and their errors.} Call (F1), (F2) and v0's Freivalds check the \emph{secret
 checks}. The \emph{error} of a secret check $c$ of operation $\ell$ in a query is

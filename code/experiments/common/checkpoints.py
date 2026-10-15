@@ -7,15 +7,18 @@ Two tokenisations of the test split are in use, each kept as the experiments tha
 the certified recipes calibrate on the train split (:func:`certified_calibration`, :func:`llama_calibration`), and
 :func:`load_windows` takes its calibration windows from the end of the test split, disjoint from the evaluation
 windows at its start.
+
+Every checkpoint and WikiText-2 file is the snapshot of the Hugging Face cache (``HF_HOME``) that the hub resolves
+for the repository's main branch; :data:`SOURCES` keeps the revision of each one loaded, for the records.
 """
 
 from __future__ import annotations
 
-import glob
 import hashlib
 import json
 import math
 import os
+import re
 from types import SimpleNamespace
 
 import torch
@@ -25,12 +28,11 @@ from pvi.models.hf_opt import CERTIFIED_RECIPE, LEGACY_RECIPE
 
 __all__ = ["wikitext", "windows", "load_windows", "certified_calibration", "is_opt", "load_opt", "load_llama",
            "smoke_model", "token_ids", "prefix_of", "llama_calibration", "load_real", "real_graph", "recipe_name",
-           "graph_report", "weights_sha", "Scorer", "SMOOTH", "OPT_RECIPES"]
+           "graph_report", "weights_sha", "Scorer", "SMOOTH", "OPT_RECIPES", "SOURCES"]
 
 _SPLITS = {"test": "wikitext-2-raw-v1/test-00000-of-00001.parquet",
            "validation": "wikitext-2-raw-v1/validation-00000-of-00001.parquet",
            "train": "wikitext-2-raw-v1/train-00000-of-00001.parquet"}
-_CACHED = os.path.expanduser("~/.cache/huggingface/hub/datasets--Salesforce--wikitext/snapshots/*/")
 CALIB_CHARS = 4_000_000
 """The certified recipes calibrate on windows of the first 4,000,000 characters of the train split."""
 SMOOTH = dict(smooth_pct=99.9, pct=99.99, pct_att=99.99)
@@ -39,6 +41,18 @@ norm gains, 99.99th-percentile clipping; norm gain 4 either way."""
 OPT_RECIPES = {"certified": dict(CERTIFIED_RECIPE), "legacy": dict(LEGACY_RECIPE)}
 """The integer OPT recipes the experiments take by name (``--recipe``): ``certified`` (``hf_opt.CERTIFIED_RECIPE``)
 and ``legacy``, the percentile recipe (``hf_opt.LEGACY_RECIPE``)."""
+SOURCES: dict[str, str] = {}
+"""The revision of every checkpoint and WikiText-2 file this process has loaded from the Hugging Face cache:
+``{repository, or repository/file: the snapshot's commit hash}`` (:func:`experiments.common.records.environment`
+records it)."""
+
+
+def _snapshot(name: str, path: str) -> str:
+    """``path``, a folder or file of the Hugging Face cache, with its snapshot noted in :data:`SOURCES` for ``name``."""
+    m = re.search(r"[\\/]snapshots[\\/]([0-9a-f]{40})(?:[\\/]|$)", str(path))
+    if m:
+        SOURCES[name] = m.group(1)
+    return path
 
 
 # ------------------------------------------------------------------ WikiText-2
@@ -47,11 +61,12 @@ def _parquet(split: str, path: str | None = None) -> str:
         return path
     if split not in _SPLITS:
         raise ValueError(f"WikiText-2 has the splits {', '.join(_SPLITS)}, not {split!r}")
-    hits = glob.glob(_CACHED + _SPLITS[split])
-    if hits:
-        return hits[0]
-    from huggingface_hub import hf_hub_download
-    return hf_hub_download(repo_id="Salesforce/wikitext", filename=_SPLITS[split], repo_type="dataset")
+    from huggingface_hub import hf_hub_download, try_to_load_from_cache
+    repo, file = "Salesforce/wikitext", _SPLITS[split]
+    hit = try_to_load_from_cache(repo, file, repo_type="dataset")     # the cache's main revision, no download
+    if not isinstance(hit, str):
+        hit = hf_hub_download(repo_id=repo, filename=file, repo_type="dataset")
+    return _snapshot(f"{repo}/{file}", hit)
 
 
 def wikitext(split: str, path: str | None = None, sep: str = "\n\n") -> str:
@@ -114,7 +129,7 @@ def load_opt(name: str):
     ``weights_only=True`` (no pickle code runs) and assigned to a model built on the meta device (no second copy)."""
     from huggingface_hub import snapshot_download
     from transformers import AutoConfig, AutoTokenizer, OPTForCausalLM
-    path = snapshot_download(name, allow_patterns=["*.json", "*.bin", "*.txt"])
+    path = _snapshot(name, snapshot_download(name, allow_patterns=["*.json", "*.bin", "*.txt"]))
     cfg = AutoConfig.from_pretrained(path)
     with torch.device("meta"):
         model = OPTForCausalLM(cfg)
@@ -142,10 +157,10 @@ def load_llama(name: str, dtype: torch.dtype = torch.float32):
     from huggingface_hub import snapshot_download
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
     meta = ["*.json", "*.model", "*.txt"]
-    path = snapshot_download(name, allow_patterns=meta + ["*.safetensors"])
+    path = _snapshot(name, snapshot_download(name, allow_patterns=meta + ["*.safetensors"]))
     shards = _shards(path, "model.safetensors")
     if not shards:
-        path = snapshot_download(name, allow_patterns=meta + ["*.bin"])
+        path = _snapshot(name, snapshot_download(name, allow_patterns=meta + ["*.bin"]))
         shards = _shards(path, "pytorch_model.bin")
     cfg = AutoConfig.from_pretrained(path)
     with torch.device("meta"):
@@ -177,7 +192,7 @@ def smoke_model(name: str, seed: int = 0):
     weights of std 0.15) and ``name``'s tokenizer: only the configuration and the tokenizer are downloaded."""
     from huggingface_hub import snapshot_download
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-    path = snapshot_download(name, allow_patterns=["*.json", "*.model", "*.txt"])
+    path = _snapshot(name, snapshot_download(name, allow_patterns=["*.json", "*.model", "*.txt"]))
     cfg = AutoConfig.from_pretrained(path).to_dict()
     cfg.pop("layer_types", None)
     cfg.update(hidden_size=64, intermediate_size=160, num_hidden_layers=2, num_attention_heads=4,

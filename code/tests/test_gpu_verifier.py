@@ -29,10 +29,11 @@ import torch
 
 import pvi.v0 as proto
 import reference as ref
+import shapes
 from pvi.core import field as fld
 from pvi.core.graph import CheapOp, IntGraph, MatOp, OpFn, op_fn, op_kind
 from pvi.models import decoder as tr
-from pvi.models.decoder import DecoderConfig, build_decoder
+from pvi.models.decoder import build_decoder
 from pvi.v0 import query as v0_query
 from pvi.v0 import streaming as pipeline
 from pvi.v0 import verifier as v0_verifier
@@ -308,13 +309,7 @@ def test_int8_gemm_is_checked_once_per_gpu_and_falls_back_when_it_fails(monkeypa
 
 # -- a GPU verifier's constants ---------------------------------------------------------------
 
-_TINY = {
-    "gpt2": DecoderConfig("tiny-gpt2", 64, 2, 4, 4, 16, 256, 97),
-    "llama": DecoderConfig("tiny-llama", 64, 2, 4, 4, 16, 160, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
-                           bias=False, tied=False),
-    "qwen": DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu", pos="rope",
-                          rope_theta=1e6, bias=False, qk_norm=True),
-}
+_TINY = {"gpt2": shapes.GPT2, "llama": shapes.LLAMA, "qwen": shapes.QWEN}
 
 
 def _decoder(kind="qwen"):

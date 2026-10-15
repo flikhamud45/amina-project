@@ -27,9 +27,9 @@ query and \ProofLlamaLongC{} at 2{,}048 tokens\TodoProofIntro{}, against 183\,kB
 \VOneOptMCVOneGB{}\,GB), \VOneRealOptMLongC{}$\times$ on the certified OPT-1.3B in mode $\sC$ and \VOneRatioRealOptLExact{}$\times$ on the
 real OPT-6.7B in $\Kpre$ at 2{,}048 tokens, at the price of a GKR in the prover whose work grows with the
 number of results (OPT-125M at 2{,}048 tokens: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s) and a slower CPU
-verifier: \VOneVerifyRatioLlama{}$\times$ v0's on the full Llama-2-7B at 2{,}048 tokens (\VOneVerifyLlama{} against \VOneVZeroVerifyLlama{}\,s)\TodoVOneIntro{}. The verifier recomputes attention, so its cost grows with the square of the prompt
-length. With eight CPU threads and native exact kernels, a client that holds the weights verifies a
-64-token query of the full Llama-2-7B in \CpuVerifyShort{}\,s, against \CpuReexecShort{}\,s for exact re-execution
+verifier: \VOneVerifyRatioLlama{}$\times$ v0's on the full Llama-2-7B at 2{,}048 tokens (\VOneVerifyLlama{}\,s, against v0's on the same queries)\TodoVOneIntro{}. The verifier recomputes attention, so its cost grows with the square of the prompt
+length. With eight CPU threads and native exact kernels, a client that could keep the weights but
+keeps a $\Kpre$ key derived from them instead verifies a 64-token query of the full Llama-2-7B in \CpuVerifyShort{}\,s, against \CpuReexecShort{}\,s for exact re-execution
 on the same threads, and a 2{,}048-token query in \CpuVerifyLong{}\,s, against \CpuReexecLong{}\,s (Fiat--Shamir). Our GPU
 claim decoder and fused exact attention kernel make the streaming GPU verifier
 \ImproveGpuvOptM{}$\times$ faster on OPT-1.3B blocks at that length. The protocol is not
@@ -125,8 +125,9 @@ needs a larger error per matrix, a larger radius (which costs every query), a we
 different commitment, which we leave to future work.
 
 \para{Where we fit.} We keep the setting of Anchuri et al., a client that holds only a commitment
-to the weights, and replace the sampled check, which needs $(1-\varepsilon)N$ paths per layer for
-soundness $1-\varepsilon$ (Theorem~\ref{thm:dich}), with a check of every weight operation. Each of
+to the weights, and replace the sampled check, which needs at least $(1-\varepsilon)N$ paths per layer
+for soundness error $\varepsilon$ (Theorem~\ref{thm:dich}; about $27.7N$ for $2^{-40}$ with independent
+paths), with a check of every weight operation. Each of
 the fully sound protocols above that avoids a SNARK needs more than a cryptographic commitment:
 Slalom an enclave, a GPU confidential-computing deployment trusted GPU hardware, Maverick an
 encoded copy of the weights, CommitLLM a secret derived from them, and Gupta et al.\ public data

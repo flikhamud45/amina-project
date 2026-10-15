@@ -8,8 +8,8 @@ prints before the final run, otherwise. Nothing here runs a model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:zeroshot` | `numbers.py` (`tables.py`) | `python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
-| Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the quality, attack and sampler numbers, ... (about 300 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
+| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:zeroshot` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
+| Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the quality, attack and sampler numbers, ... (about 440 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
 | `fig:breakeven` (once its inputs are all in the run); `fig:overview`, `fig:protocol` with `--schematics` | `figures.py` | the same | `paper_sp2027/figures/*.pdf` |
 | Every value with its source record; per table the cells filled and missing; the checks | `numbers.py` | the same (`--check`: report only) | `generated/cells.csv`, `generated/coverage.txt` |
 
@@ -25,7 +25,8 @@ and its kind from its fields (`perf`, `v1`, `reexec`, `serve`, `gen`, `setup`, `
 `llama_attrib`, `bench_env`, `path_bound`, `inrange`, `tv`, ...). `Run` selects the record of one cell by every
 setting that distinguishes the package's jobs: the tier, the model, the prompt length, the mode, the blocks, the
 verifier device (a V1 record's from its command line), the label and real or random weights; of several matching
-records the latest job's. `checks` lists a record's failed correctness checks.
+records the latest job's (for re-execution, the fastest of one variant's records). `checks` lists a record's failed
+correctness checks.
 
 ### `bench.py`
 The benchmark's cells, from `artifacts/comparison/tables_<name>/` (`comparison/aggregate.py --platform <name>`):
@@ -39,13 +40,16 @@ The paper's number formats (times, bytes, ratios, ranges, token and parameter co
 numbers, the factor against a published system) and `macro_name`.
 
 ### `tables.py`
-One builder per table, each in the paper's layout (the same columns and rows as the paper's table, except
-`tab:eval-llm`, which loses its split into base and new columns: one column per metric, all from the final code),
-and each cell recorded with its source for `cells.csv`. Every table's header comment states the run's protocol
-settings and sources, so that its caption can be made true. `tab:params` and `tab:setup` follow from the library's
-parameters and the setup proof's byte model (`costs/setup_bytes.py`), with V1's counts from the v1 tier; the
-generation tables take the gen tier's cells (Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled;
-GPT-2 after a 64-token prompt, greedy), selected by the prompt's length as well.
+One builder per table, each in the paper's layout (the same columns and rows as the paper's table), and each cell
+recorded with its source for `cells.csv`. Every table's header comment states the run's protocol settings and
+sources, so that its caption can be made true. Exact re-execution (`tab:options`, `tab:eval-reexec`,
+`tab:eval-long`) is the fastest of `EXACT`, the integer forward pass with its native int8 GEMMs (`int`), exact fp32
+GEMMs (`int_fp32gemm`) or `torch._int_mm` (`int_mm`, counted only when its record's `exact` is true: its logits
+equal the integer reference's bit for bit in the same run). `tab:params` and `tab:setup` follow from the library's
+parameters and the setup proof's byte model (`costs/setup_bytes.py`; the per-query columns of interactive queries,
+as the setup tier measures them), with V1's counts from the v1 tier; `tab:eval-compare-v1` has a row per full model
+of the v1 tier; the generation tables take the gen tier's cells (Llama-2-7B and Qwen3-4B after a 512-token prompt,
+greedy and sampled; GPT-2 after a 64-token prompt, greedy), selected by the prompt's length as well.
 
 ### `macros.py`
 The text numbers, by family (the platform and the plan, the CPU client, the outcome counts, the cost of the defence,
@@ -54,13 +58,18 @@ sampler, the attack, the security parameters, the setup proof, generation, the b
 (`\PlatformGpu`, `\PlatformCpu`, `\PlanLogPoints`) come from the records' `env` and `--policy`, so the captions and the
 sentences that say how a number was measured state the run's settings. Values that follow from the code alone are
 computed from the library under `--policy`: the setup proof's size, breakdown and radii (`costs/setup_bytes.py`'s byte
-model), the split commitment's columns per query, and V1's cut of the largest model from its shapes
-(`tables.v1_shape_model`; the leaves, instances and soundness terms at the run's `lmax`). The abstract's N
-(`\CpuRatioN`) is one value: exact re-execution (the integer forward pass, bit-exact with the claims: the
-faster of `int` and `int_fp32gemm`, computing only what the pruned graph computes) over the Kpre CPU
-verifier, both on 8 threads, for the full Llama-2-7B at 2,048 tokens (cpuv tier), rounded down to one decimal. The
-break-even reuses `deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and
-its byte model. The `Todo...` macros carry the `\todo` markers of numbers that the run fills (empty once generated).
+model), the split commitment's columns per query, V1's cut of the largest model from its shapes
+(`tables.v1_shape_model`; the leaves, instances and soundness terms at the run's `lmax`), and what a Kpre client of
+Llama-2-7B stores (`\KpreKeyMB`, `\KpreEmbedMB`, `\KpreStoreGB`: the secret vectors and folded rows at the
+Fiat-Shamir repetition count, and the int8 embedding table). The abstract's N (`\CpuRatioN`, and `\CpuRatio` in the
+body) is one value: exact re-execution (the integer forward pass, bit-exact with the claims: the fastest of
+`tables.EXACT`, computing only what the pruned graph computes) over the Kpre CPU verifier, both on 8 threads, for
+the full Llama-2-7B at 2,048 tokens (cpuv tier), rounded down to one decimal. V1's headline range
+(`\VOneRatioRandom`) takes the full models of the v1 tier at 2,048 tokens. `\RealAcceptedClause` names the full
+real-weight models whose every honest Kpre query at 2,048 tokens the real tier accepted. The break-even reuses
+`deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and its byte model. A
+number the text states as a bound ("at most", "up to", "within", "less than") is rounded up, one stated as "at
+least" down. The `Todo...` macros carry the `\todo` markers of numbers that the run fills (empty once generated).
 
 ### `figures.py`
 `fig:overview` and `fig:protocol` (schematics, from code; laid out for the pinned matplotlib of `requirements.txt`,
@@ -69,10 +78,13 @@ with layout checks) and `fig:breakeven` (from the break-even's crossovers, drawn
 ### `numbers.py`
 The command: read, check, build, write. Options: `--logs` (default `../logs/<platform>`), `--platform` (default
 `final`), `--bench` (the folder of `tables_<name>/` and `raw_<name>/`, default `artifacts/comparison`), `--policy`
-(mode C's plan, default `cnn18c`), `--out` (default `paper_sp2027/generated`), `--figures` (default
+(mode C's plan; default the plan the records name, a mode-C record's `policy` or the benchmark tables' `pol<plan>`,
+else `bench.DEFAULT_POLICY`, `cnn18c`), `--out` (default `paper_sp2027/generated`), `--figures` (default
 `paper_sp2027/figures`; `''` for none) and `--schematics`, `--expect <dry-run listing>`, `--check`, `--strict`,
 `--rehearsal`, `--no-byte-model` (skips `tab:params`, `tab:setup` and the break-even, which take several minutes on a
-laptop CPU), `--verbose`.
+laptop CPU), `--verbose`. `SAME_VALUE` pairs each table cell with the macro that prints the same value of the same
+record, `TWO_JOBS` each quantity that two jobs measure (the serving harness's prover and the benchmark's, the
+benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and perf.py's).
 
 ## The checks
 
@@ -81,15 +93,20 @@ laptop CPU), `--verbose`.
   (`serve_ab.py`'s `ok`), a setup proof rejected (`setup_timing.py`), the two paths of an implementation A/B that
   disagree, a smoke log without `SMOKE OK` or with int8 GEMMs that are not exact, a `FAILED` line of a script,
   records of more than one GPU or CPU model, an honest query rejected or an attack accepted in the benchmark's
-  outcome counts.
+  outcome counts, a table cell that disagrees with the macro printing the same value (`SAME_VALUE`, beyond one unit
+  of the coarser rounding), in the files written and in `paper_sp2027/fallback/` (`CHECK FAILED fallback:`).
 * `PARSE`: a log line that starts with `{` and does not parse, or is not a record of a known kind; a table or macro
-  family that cannot read a record.
+  family that cannot read a record; an `--expect` listing that does not end with run.sh's summary line
+  (`# <tiers>: N jobs, ...`) for the N jobs it lists (a dry run that stopped early, e.g. at a tier's check of
+  `HF_HOME`).
 * `--strict`: also any table cell, macro or (with `--expect`) job without results.
 * `--rehearsal`: every tier has at least one record of each kind it writes (`records.REHEARSAL_KINDS`), and no table
   cell is expected.
 
-The exit status is 1 on any of these. `coverage.txt` lists them, the records per tier and kind, and per table the
-cells filled and missing (`--verbose`: each missing cell and macro).
+The exit status is 1 on any of these. `WARNING` lines leave it unchanged: two jobs' values of one quantity more than
+10% apart (`TWO_JOBS`), records that name another mode-C plan than `--policy` (or several), an `int_mm`
+re-execution that is not recorded as bit-exact (it is then no exact baseline). `coverage.txt` lists them all, the
+records per tier and kind, and per table the cells filled and missing (`--verbose`: each missing cell and macro).
 
 ## The fallback
 
@@ -98,21 +115,35 @@ cells filled and missing (`--verbose`: each missing cell and macro).
 with TeX's primitive `\input` (expandable, so a table body may start with `\multicolumn` and the paper's
 `\bottomrule` may follow it). Each table of the paper reads its body rows with `\pvitable{<table>}` between its
 `\midrule` and `\bottomrule`, and the text writes each number as its macro (`\CpuRatioN{}`). `fallback/` holds each
-table's body rows as the paper printed them and each macro's printed value, `\todo` markers included, so the paper
-reads as before until the run's files are generated; `numbers.py` writes the same file names and the same macros.
-A number that the run lacks prints as a visible `\todo`.
+table's body rows and each macro's printed value before the final run, `\todo` markers included; `numbers.py`
+writes the same file names and the same macros. A number that the run lacks prints as a visible `\todo`.
+
+The fallback follows the definitions of the final run: exact re-execution is the fastest exact variant of the
+integer forward pass, the Kpre CPU times are under Fiat-Shamir, the integer OPT models are the certified recipe's.
+Its values come from the stored records (`artifacts/results/`, the benchmark tables
+`artifacts/comparison/tables_l40s_improved*/` under the plan `auto`) and from the development runs that measured
+the run package's cells on an RTX 2080 Ti and 8 threads of a Xeon Silver 4114, in the format the builders print; a
+value whose setting differs from the one the paper states (an interactive cell where the text says Fiat-Shamir, the
+legacy recipe's sampler distances) prints as `\todo{<tier>}`. `figures/ev_breakeven.pdf` and the fallback's
+`\Breakeven...` macros follow from the same inputs, `deployment/ev_inputs.json`, through
+`deployment/ev_breakeven.py`'s formulas and drawing (the drawing that `figures.breakeven` uses for the run). The test
+`test_the_fallback_tables_agree_with_their_macros` (and `numbers.py` on every run) checks that each fallback cell
+agrees with the macro that prints the same value.
 
 ## Reproducing the paper's numbers
 
 After the run (`experiments/package/README.md`, Sec. 7):
 
 ```bash
+# from the repository root, with HF_HOME exported as for the run (package README, Sec. 2)
 bash code/experiments/package/run.sh --platform final --dry-run --optional --llama-licence all \
-    > logs/final/dryrun.txt                                               # every job of the run (repository root)
+    > logs/final/dryrun.txt                       # every job of the run; must end with '# <tiers>: N jobs, ...'
 cd code
-python -m experiments.comparison.aggregate --platform final              # raw_final/ -> tables_final/
-python -m experiments.paper.numbers --logs ../logs/final --platform final --check --expect ../logs/final/dryrun.txt
-python -m experiments.paper.numbers --logs ../logs/final --platform final  # -> paper_sp2027/generated/
+export PYTHONPATH=src:.                           # the library (src) and the experiments
+../.venv/bin/python -m experiments.comparison.aggregate --platform final             # raw_final/ -> tables_final/
+../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --check \
+    --expect ../logs/final/dryrun.txt
+../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final  # -> paper_sp2027/generated/
 cd ../paper_sp2027 && latexmk -pdf main.tex && latexmk -pdf main_ext.tex  # or: tectonic main.tex
 ```
 
@@ -122,9 +153,13 @@ its fallback values.
 
 On a laptop (no run): `tests/test_paper_numbers.py` writes synthetic records of every kind, as the scripts write
 them, and checks the selection of each table and macro, the checks and the files; the attack tier's stored
-documents (`artifacts/results/`) regenerate the fallback's `tab:inrange` and its text numbers:
+documents (`artifacts/results/`) regenerate the fallback's `tab:inrange` and its text numbers, and every fallback
+cell agrees with its macro. `PVI_SLOW=1` adds the check that the library's setup proof gives the fallback's
+setup-proof values (`test_the_setup_proof_from_the_library_gives_the_fallback`, about ten minutes on a laptop CPU);
+without it that test is skipped:
 
 ```bash
 cd code
-PYTHONPATH="src;." python -m pytest -q tests/test_paper_numbers.py tests/test_comparison_tables.py
+PYTHONPATH="src;." python -m pytest -q tests/test_paper_numbers.py tests/test_comparison_tables.py  # Windows
+PVI_SLOW=1 PYTHONPATH=src:. ../.venv/bin/python -m pytest -q tests/test_paper_numbers.py      # the slow check too
 ```

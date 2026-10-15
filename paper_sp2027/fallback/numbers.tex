@@ -1,4 +1,6 @@
 % fallback: the text numbers the paper prints before the final run (code/experiments/paper/numbers.py writes generated/numbers.tex)
+% A value measured in another setting than the paper states (interactive cells where the text says Fiat-Shamir, the legacy recipe for the certified model) prints as \todo{<tier>}.
+% \GameCaps*, \GameLayer*, \GameThreshold and \GameUniform*: the attack tier's adaptive_game_opt-1.3b.json, which code/artifacts/results does not store.
 \newcommand{\AttackOptLBackdoorBack}{40/40}
 \newcommand{\AttackOptLBackdoorHacked}{0/40}
 \newcommand{\AttackOptLPaths}{454{,}248}
@@ -19,7 +21,7 @@
 \newcommand{\BreakevenTokens}{2{,}100}
 \newcommand{\BreakevenTokensVOne}{4{,}900}
 \newcommand{\BreakevenVOneFaster}{1.1}
-\newcommand{\ClaimsShareLlama}{98}
+\newcommand{\ClaimsShareLlama}{\todo{bench tier}}
 \newcommand{\CleWith}{67.8}
 \newcommand{\CleWithout}{66.6}
 \newcommand{\CnnAccuracyChange}{0.4}
@@ -28,10 +30,10 @@
 \newcommand{\CnnPathMax}{1/512}
 \newcommand{\CnnPathsRange}{2{,}316--14{,}182}
 \newcommand{\CnnPathsResNet}{14{,}182}
-\newcommand{\CnnProofRatio}{1.3--9.3}
-\newcommand{\CnnProveRange}{3.8--22.9}
-\newcommand{\CnnVerifyRange}{1.7--64.8}
-\newcommand{\ColumnsLlamaShort}{124.7\,MB}
+\newcommand{\CnnProofRatio}{1.0--7.2}
+\newcommand{\CnnProveRange}{4.0--28.8}
+\newcommand{\CnnVerifyRange}{1.9--81.4}
+\newcommand{\ColumnsLlamaShort}{\todo{bench tier}}
 \newcommand{\CompareMaverick}{3.0}
 \newcommand{\CompareProofMax}{56{,}000}
 \newcommand{\CompareProverMax}{32{,}000}
@@ -43,9 +45,9 @@
 \newcommand{\CompareVerifierSlowerRows}{two rows}
 \newcommand{\CpuBfLong}{\todo{cpuv tier}}
 \newcommand{\CpuBfShort}{\todo{cpuv tier}}
-\newcommand{\CpuDeriveShareLong}{70}
-\newcommand{\CpuFloatLong}{93}
-\newcommand{\CpuFloatShort}{4.5}
+\newcommand{\CpuDeriveShareLong}{\todo{cpuv tier}}
+\newcommand{\CpuFloatLong}{93.2}
+\newcommand{\CpuFloatShort}{4.53}
 \newcommand{\CpuInexactLong}{56}
 \newcommand{\CpuInexactName}{dynamic int8}
 \newcommand{\CpuRatio}{7.2}
@@ -53,8 +55,8 @@
 \newcommand{\CpuRatioN}{7.2}
 \newcommand{\CpuRatioShort}{2.9}
 \newcommand{\CpuReexecLong}{142}
-\newcommand{\CpuReexecName}{int8 GEMMs}
-\newcommand{\CpuReexecShort}{4.1}
+\newcommand{\CpuReexecName}{exact fp32 GEMMs}
+\newcommand{\CpuReexecShort}{4.08}
 \newcommand{\CpuVerifyLong}{19.6}
 \newcommand{\CpuVerifyShort}{1.4}
 \newcommand{\CrossoverGptMediumC}{0.17}
@@ -96,7 +98,7 @@
 \newcommand{\GenLlamaVerifyC}{\todo{gen tier}}
 \newcommand{\GenLlamaVerifyK}{\todo{gen tier}}
 \newcommand{\GenPerPrefixTB}{1.3}
-\newcommand{\GenPrefillGB}{3.3}
+\newcommand{\GenPrefillGB}{3.4}
 \newcommand{\GenQwenProofC}{\todo{gen tier}}
 \newcommand{\GenQwenProofK}{\todo{gen tier}}
 \newcommand{\GenQwenProveC}{\todo{gen tier}}
@@ -111,9 +113,9 @@
 \newcommand{\GpuFloatLong}{0.64}
 \newcommand{\GpuFloatShort}{0.034}
 \newcommand{\GpuIntLong}{1.65}
-\newcommand{\GpuIntShort}{0.15}
-\newcommand{\GpuVerifyFactor}{10--15}
-\newcommand{\ImproveCpuv}{4.6}
+\newcommand{\GpuIntShort}{0.145}
+\newcommand{\GpuVerifyFactor}{\todo{bench tier}}
+\newcommand{\ImproveCpuv}{\todo{improve tier}}
 \newcommand{\ImproveEncodeRange}{2.1--2.3}
 \newcommand{\ImproveFusedEncoder}{1.74}
 \newcommand{\ImproveGpuvOptM}{2.7}
@@ -132,13 +134,16 @@
 \newcommand{\InrangeKMedian}{2}
 \newcommand{\InrangeOptLChanged}{all 40}
 \newcommand{\InrangeOptLKRange}{1--22}
-\newcommand{\InrangeOptLPMedianMax}{$1.3\cdot10^{-3}$}
-\newcommand{\InrangePMax}{$7.3\cdot10^{-3}$}
-\newcommand{\InrangePMedianMax}{$7.9\cdot10^{-4}$}
+\newcommand{\InrangeOptLPMedianMax}{$1.4\cdot10^{-3}$}
+\newcommand{\InrangePMax}{$7.4\cdot10^{-3}$}
+\newcommand{\InrangePMedianMax}{$8.0\cdot10^{-4}$}
 \newcommand{\InrangePathsOptL}{12{,}600--454{,}000}
-\newcommand{\InrangePathsOptM}{19{,}000--227{,}000}
+\newcommand{\InrangePathsOptM}{18{,}900--227{,}000}
 \newcommand{\InrangePrompts}{40}
+\newcommand{\KpreEmbedMB}{131}
 \newcommand{\KpreKeyLlama}{12.7}
+\newcommand{\KpreKeyMB}{71}
+\newcommand{\KpreStoreGB}{0.2}
 \newcommand{\LegacySmallHi}{1.05}
 \newcommand{\LegacySmallLo}{1.03}
 \newcommand{\LenetProof}{63.3}
@@ -155,9 +160,9 @@
 \newcommand{\LocatorQueries}{40}
 \newcommand{\LocatorTwo}{95}
 \newcommand{\LongBytesPerBlock}{0.83}
-\newcommand{\LongFitResidual}{3}
+\newcommand{\LongFitResidual}{4}
 \newcommand{\LongProofLong}{51}
-\newcommand{\LongRatioLong}{2}
+\newcommand{\LongRatioLong}{3}
 \newcommand{\MixtureLayerOne}{3.1}
 \newcommand{\MixtureLayerTwo}{9.7}
 \newcommand{\MnistBackdoorPass}{99.96}
@@ -185,12 +190,12 @@
 \newcommand{\PlatformGpu}{NVIDIA L40S}
 \newcommand{\ProfileCopies}{32}
 \newcommand{\ProfileIntMM}{4.4}
-\newcommand{\ProofLlamaLongC}{6.6\,GB}
-\newcommand{\ProofLlamaLongCExact}{6.57\,GB}
+\newcommand{\ProofLlamaLongC}{\todo{bench tier}}
+\newcommand{\ProofLlamaLongCExact}{\todo{bench tier}}
 \newcommand{\ProofLlamaLongK}{6.4\,GB}
-\newcommand{\ProofLlamaShortC}{325\,MB}
-\newcommand{\ProofOptLLong}{5.5\,GB}
-\newcommand{\ProofRatioLlamaShort}{21}
+\newcommand{\ProofLlamaShortC}{\todo{bench tier}}
+\newcommand{\ProofOptLLong}{\todo{bench tier}}
+\newcommand{\ProofRatioLlamaShort}{\todo{bench tier}}
 \newcommand{\QualityAlphaCostOptL}{\todo{quality tier}}
 \newcommand{\QualityAlphaGapOptM}{0.000}
 \newcommand{\QualityAlphaGapOptS}{0.000}
@@ -208,7 +213,7 @@
 \newcommand{\QualityMissOptS}{0.016}
 \newcommand{\QualityProbCost}{2--23}
 \newcommand{\QualityRatioOptL}{1.008}
-\newcommand{\QualityRatioOptM}{1.026}
+\newcommand{\QualityRatioOptM}{1.027}
 \newcommand{\QualityRatioOptS}{1.076}
 \newcommand{\QualityRefOptL}{10.86}
 \newcommand{\QualityRefOptM}{14.62}
@@ -228,6 +233,7 @@
 \newcommand{\ReachNeurons}{16{,}384}
 \newcommand{\ReachTokens}{6{,}187}
 \newcommand{\ReachVocab}{50{,}272}
+\newcommand{\RealAcceptedClause}{the full real OPT-6.7B is accepted}
 \newcommand{\RealLlamaAccepted}{\todo{real tier}}
 \newcommand{\RealLlamaProof}{\todo{real tier}}
 \newcommand{\RealLlamaQueries}{\todo{real tier}}
@@ -246,14 +252,14 @@
 \newcommand{\RealOptLRecompute}{11.4}
 \newcommand{\RealOptLTampers}{9}
 \newcommand{\RealOptLTampersRejected}{9}
-\newcommand{\RealOptLTimeWithin}{6}
+\newcommand{\RealOptLTimeWithin}{7}
 \newcommand{\RealOptLVOneLarger}{10}
 \newcommand{\RealOptLVZeroSmaller}{15}
 \newcommand{\RealOptLVerify}{20.2}
 \newcommand{\RealOptMKLongRandom}{2.01}
 \newcommand{\RealOptMKLongReal}{1.66}
 \newcommand{\RealProofSmaller}{9--17}
-\newcommand{\RealProveWithin}{9}
+\newcommand{\RealProveWithin}{10}
 \newcommand{\RealVerifyWithin}{6}
 \newcommand{\ReproCaught}{99.8--100}
 \newcommand{\ReproQueries}{150}
@@ -299,7 +305,7 @@
 \newcommand{\SetupColumnsShareLlamaB}{99.3}
 \newcommand{\SetupCombinedMBLlama}{51.6}
 \newcommand{\SetupCombinedShareLlamaA}{2.2}
-\newcommand{\SetupCombinedShareLlamaB}{0.5}
+\newcommand{\SetupCombinedShareLlamaB}{0.6}
 \newcommand{\SetupGBLlamaA}{2.4}
 \newcommand{\SetupGBLlamaB}{9.8}
 \newcommand{\SetupHonestMBLlama}{65.6}
@@ -332,7 +338,7 @@
 \newcommand{\StealthExceed}{5}
 \newcommand{\StealthNeurons}{5.1}
 \newcommand{\StealthPass}{99.0}
-\newcommand{\TinyLlamaRatio}{1.12}
+\newcommand{\TinyLlamaRatio}{1.13}
 \newcommand{\TodoCompareRange}{ \todo{L40S: final range; the current one is from the pre-improvement L40S run}}
 \newcommand{\TodoCounts}{ \todo{L40S: counts with the final code}}
 \newcommand{\TodoCpuRatioIntro}{ \todo{EPYC: the same ratio on the final CPU}}
@@ -343,16 +349,16 @@
 \newcommand{\TodoServing}{ \todo{L40S: serving tier}}
 \newcommand{\TodoServingExt}{ \todo{L40S: prover against unverified fp16 and int8 inference, same GPU}}
 \newcommand{\TodoVOneIntro}{ \todo{L40S}}
-\newcommand{\TodoVOneTimings}{ \todo{F6: V1 timings, incl.\ Llama-2-7B in $\sC$ (over 11\,GB)}}
-\newcommand{\TodoZkllmFactor}{ \todo{F6: final factor}}
-\newcommand{\TransferLlamaLong}{5.3}
+\newcommand{\TodoVOneTimings}{ \todo{V1 timings, incl.\ Llama-2-7B in $\sC$ (over 11\,GB)}}
+\newcommand{\TodoZkllmFactor}{ \todo{final factor}}
+\newcommand{\TransferLlamaLong}{\todo{bench tier}}
 \newcommand{\TreeKBLlama}{50}
 \newcommand{\TreeLeavesLlama}{1{,}600}
-\newcommand{\TvFull}{0.020}
-\newcommand{\TvModel}{0.087}
+\newcommand{\TvFull}{\todo{tv tier}}
+\newcommand{\TvModel}{\todo{tv tier}}
 \newcommand{\TvPositions}{512}
-\newcommand{\TvTopK}{0.0063}
-\newcommand{\TvTwenty}{0.0022}
+\newcommand{\TvTopK}{\todo{tv tier}}
+\newcommand{\TvTwenty}{\todo{tv tier}}
 \newcommand{\VOneAccountingWithin}{0.3}
 \newcommand{\VOneDownClaims}{2.6\cdot10^{8}}
 \newcommand{\VOneExtrasMax}{1}
@@ -360,10 +366,10 @@
 \newcommand{\VOneLargeGkrLog}{-231.9}
 \newcommand{\VOneLargeInstances}{39}
 \newcommand{\VOneLargeLeaves}{4.3\cdot10^{9}}
-\newcommand{\VOneLargeLookupLog}{-215.3}
-\newcommand{\VOneLlamaCRatio}{2.24}
-\newcommand{\VOneLlamaCVOneGB}{2.97}
-\newcommand{\VOneLlamaCVZeroGB}{6.63}
+\newcommand{\VOneLargeLookupLog}{-215.2}
+\newcommand{\VOneLlamaCRatio}{\todo{v1 tier}}
+\newcommand{\VOneLlamaCVOneGB}{\todo{v1 tier}}
+\newcommand{\VOneLlamaCVZeroGB}{\todo{v1 tier}}
 \newcommand{\VOneNsPerClaim}{22}
 \newcommand{\VOneOptMCVOneGB}{0.96}
 \newcommand{\VOneOptMCVZeroGB}{2.07}
@@ -385,8 +391,8 @@
 \newcommand{\VOneRatioGptMedium}{1.94--2.06}
 \newcommand{\VOneRatioLargeC}{1.81}
 \newcommand{\VOneRatioLlama}{2.3}
-\newcommand{\VOneRatioRandom}{2.0--2.3}
-\newcommand{\VOneRatioRandomExact}{2.03--2.29}
+\newcommand{\VOneRatioRandom}{2.0--2.2}
+\newcommand{\VOneRatioRandomExact}{2.03--2.22}
 \newcommand{\VOneRatioRealOptL}{1.7}
 \newcommand{\VOneRatioRealOptLExact}{1.73}
 \newcommand{\VOneRatioShort}{1.28--1.46}
@@ -406,15 +412,15 @@
 \newcommand{\VOneRealOptMShortExceptionsMB}{0.02}
 \newcommand{\VOneRealOptMShortK}{1.28}
 \newcommand{\VOneVZeroVerifyLlama}{19.6}
-\newcommand{\VOneValuesRatio}{2.2--2.3}
+\newcommand{\VOneValuesRatio}{2.1--2.3}
 \newcommand{\VOneVerifyLlama}{45.4}
 \newcommand{\VOneVerifyLlamaBaseline}{\todo{cpuv tier}}
 \newcommand{\VOneVerifyRatioLlama}{2.3}
 \newcommand{\VOneVerifyRatioLong}{1.6--1.9}
 \newcommand{\VOneVerifyRatioMedium}{2.2--2.8}
-\newcommand{\VerifyLlamaShortCCpu}{1.0\,s}
-\newcommand{\VerifyLlamaShortCGpu}{431\,ms}
-\newcommand{\VerifyOptLLong}{46.5\,s}
+\newcommand{\VerifyLlamaShortCCpu}{\todo{bench tier}}
+\newcommand{\VerifyLlamaShortCGpu}{\todo{bench tier}}
+\newcommand{\VerifyOptLLong}{\todo{bench tier}}
 \newcommand{\WeightsLlama}{6.7\,GB}
 \newcommand{\WeightsLlamaGB}{6.74}
 \newcommand{\WidthLlama}{11{,}008}

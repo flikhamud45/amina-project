@@ -6,12 +6,17 @@
   never fills a random-weight cell, a baseline-verifier or GPU-verifier V1 record never fills the optimised CPU
   column, an alpha-0.55 quality cell never fills the certified row, and the abstract's N is the 2,048-token ratio.
 * ``--strict`` fails on a missing cell, a failed check or an unparsable line gives exit status 1, and a dry-run
-  listing gives the job coverage.
+  listing gives the job coverage (an incomplete listing is refused).
+* Exact re-execution is the fastest exact variant; mode C's plan comes from the records; the bounds round up.
 * A document named by another model (a rehearsal's OPT-125M) counts for its tier and kind and fills no table cell or
   text number.
 * The paper's wiring: the generated files and ``paper_sp2027/fallback/`` have the same names and macro sets, every
-  macro the paper uses is defined, and the stored attack documents regenerate the fallback's ``tab:inrange`` and its
+  macro the paper uses is defined, every table cell agrees with the macro that prints the same value (in the written
+  files and in the fallback), and the stored attack documents regenerate the fallback's ``tab:inrange`` and its
   text numbers.
+
+``PVI_SLOW=1`` also runs the check that the library's setup proof gives the fallback's setup-proof values (about ten
+minutes on a laptop CPU).
 """
 from __future__ import annotations
 
@@ -207,6 +212,8 @@ def _logs(tmp: Path) -> Path:
                                              v1("opt-125m", 2048, "Kpre", 12, 3.439e8, 1.667e8)])
     _write(logs, "sp-v1-llama7-2048-7.out", [v1(m, 2048, "C", 32, 6.63e9, 2.97e9), v1(m, 2048, "Kpre", 32, 6.43e9,
                                                                                          2.8e9)])
+    # Llama-2-13B on 2 of its 40 blocks: tab:eval-v1's row, never in the full models' range (VOneRatioRandom)
+    _write(logs, "sp-v1-llama13-2k-2-47.out", [v1("llama2-13b", 2048, "C", 2, 1.0e8, 5.5e7)])
     # the GPU verifier's V1 cell of the gpuv tier: never a tab:eval-v1 or tab:options cell
     _write(logs, "sp-g-v1-llama2-7b-8.out", [v1(m, 2048, "Kpre", 32, 6.43e9, 1.0e9, label="gpuv-v1",
                                                 argv=["--verifier-device", "cuda"], opt=(1.0, 1.0))])
@@ -369,6 +376,16 @@ def test_the_formats():
     assert F.factor(88.3, 0.02)[0] == r"4{,}415$\times\downarrow$" and F.factor(1, 2)[0] == r"2.0$\times\uparrow$"
     assert F.macro_name("Crossover", "gpt2", 512, "Kpre") == "CrossoverGptTwoFiveOneTwoKpre"
     assert F.params(6.738e9) == "6.7B" and F.tokens(2048) == "2{,}048"
+    # the unit is chosen after rounding: no "1000 ms", "100.0 s", "1000 MB" or "100.0 MB"
+    assert (F.t(0.9996), F.t(99.97), F.t(0.0994), F.t(0.09996)) == (r"1.0\,s", r"1.7\,min", r"99.4\,ms", r"100\,ms")
+    assert (F.b(999.7e6), F.b(99.97e6), F.b(960e6), F.b(999.7), F.b(500)) == (
+        r"1.0\,GB", r"100\,MB", r"960\,MB", r"1.0\,kB", r"500\,B")
+    # bounds: "at most" and "up to" round up, "at least" rounds down
+    assert (M.ceil_sci(7.9346e-4), M.ceil_sci(9.95e-4), M.ceil_sci(8.0e-4)) == (
+        r"$8.0\cdot10^{-4}$", r"$1.0\cdot10^{-3}$", r"$8.0\cdot10^{-4}$")
+    assert (M.ceil_about(55_899), M.ceil_about(56_000), M.floor_sig(55.97), M.floor_sig(56.0)) == (
+        "56{,}000", "56{,}000", "55.9", "56")
+    assert M.ceil_pct(0.0949) == "10" and M.ceil_fixed(1.0264, 3) == "1.027"
 
 
 # ------------------------------------------------------------------------------------------------ selection
@@ -483,6 +500,13 @@ def test_the_settings_and_the_further_text_numbers(run_dir):
         ("5.35", "17", "21", "20")
     assert v["RealLlamaShortSmaller"] == "11--15" and v["RealLlamaShortVerifyWithin"] == "10"
     assert v["VOneRealLlamaRatio"] == "2.02"
+    assert v["RealAcceptedClause"] == "the full real Llama-2-7B is accepted"
+    assert M.accepted_clause(["OPT-6.7B", "Llama-2-7B"]) == "the full real OPT-6.7B and Llama-2-7B are accepted"
+    # V1's range over the full models only: OPT-125M and Llama-2-7B (2.03 to 2.30), not the 2-block Llama-2-13B
+    assert v["VOneRatioRandom"] == "2.0--2.3" and v["VOneRatioRandomExact"] == "2.03--2.30"
+    assert v["VOneRatioLargeC"] == "1.82"
+    # the Kpre client's storage, from the shapes: r = 7 vectors and folded rows, and the int8 embedding table
+    assert (v["KpreKeyMB"], v["KpreEmbedMB"], v["KpreStoreGB"]) == ("71", "131", "0.2")
     # quality: the recipe studies
     assert v["QualityLegacyOptS"] == "2.0" and v["QualityAlphaGapOptM"] == "0.000" and v["QualityAlphaGapOptS"] is None
     assert v["QualityAlphaValGapOptM"] == "0.001" and v["QualityAlphaCostOptL"] == "0.002"
@@ -514,6 +538,49 @@ def test_the_models_from_the_library():
     assert shape["n_leaves"] == v1("llama2-7b", 2048, "C", 32, 1, 1)["n_leaves"] == 2_714_763_264
     assert shape["max_bits"] <= 27 and shape["lookup_log2"] < -215 and shape["gkr_log2"] < -230
     assert T.v1_shape_model("llama2-13b", 2048, 26, "cnn18c")["n_instances"] == 79
+    # the Kpre client of Llama-2-7B: r = 7 secret vectors and folded rows of its 225 linear operations (4-byte field
+    # elements) and its int8 embedding table
+    assert M.kpre_storage() == {"key": 7 * 4 * 2_534_656, "embed": 32_000 * 4_096, "reps": 7}
+    # the prefill computes the LM head and the pruned last block's query, output projection and MLP at every position
+    assert M.prefill_extra_claims("llama2-7b") == (32_000 + 2 * 4_096 + 2 * 11_008 + 4_096, 1_325_568)
+
+
+def _reexec_run(*rows):
+    return R.Run([R.Rec("cpuv", "c-rx-llama2-7b", str(i), f"sp-c-rx-llama2-7b-{i}.out", 1, "reexec",
+                        dict(reexec("llama2-7b", 2048, v, t), **extra)) for i, (v, t, extra) in enumerate(rows, 1)])
+
+
+def test_exact_reexecution_is_the_fastest_exact_variant():
+    """Exact re-execution is the fastest of the integer forward pass's exact variants (tables.EXACT); the oneDNN
+    variant counts only when its record says its logits equal the integer reference's bit for bit."""
+    assert T.EXACT == ("int", "int_fp32gemm", "int_mm") and "float" not in T.EXACT
+    base = (("int", 179.4, {}), ("int_fp32gemm", 141.6, {}), ("float", 93.2, {}))
+    assert T.fastest(_reexec_run(*base), "cpuv", "llama2-7b", 2048)[:2] == (141.6, "int_fp32gemm")
+    for extra, want in (({}, "int_fp32gemm"), ({"exact": False}, "int_fp32gemm"), ({"exact": True}, "int_mm")):
+        run = _reexec_run(*base, ("int_mm", 60.0, extra))
+        assert T.fastest(run, "cpuv", "llama2-7b", 2048)[1] == want
+    # a faster int_mm record that was not exact never hides an exact one
+    run = _reexec_run(*base, ("int_mm", 50.0, {"exact": False}), ("int_mm", 60.0, {"exact": True}))
+    assert T.fastest(run, "cpuv", "llama2-7b", 2048)[:2] == (60.0, "int_mm")
+    assert T.REEXEC_NAME["int_mm"] == "oneDNN int8 GEMMs"
+
+
+def test_the_plan_comes_from_the_records(tmp_path):
+    """Mode C's plan: --policy, else the one plan the records name (a mode-C record's policy, the benchmark tables'
+    pol<plan> tags), else the paper's; a plan the records do not name is a WARNING.  The paper's plan has one
+    torch-free copy, which the run package and the experiments' defaults equal."""
+    from experiments.common import cli
+    from experiments.comparison import count_outcomes as co
+    rec = R.Rec("cpuv", "c-llama2-7b-64", "1", "x", 1, "perf", perf("llama2-7b", 64, "C", 1.9, 3.25e8))
+    assert N.record_plans(R.Run([rec]), B.Bench(None)) == {"cnn18c"}
+    assert N.record_plans(R.Run([]), B.Bench(CODE / "artifacts" / "comparison" / "tables_l40s_improved2")) == {"auto"}
+    assert N.choose_plan(None, {"auto"}) == ("auto", []) and N.choose_plan(None, set()) == (B.DEFAULT_POLICY, [])
+    chosen, warn = N.choose_plan("cnn18c", {"auto"})
+    assert chosen == "cnn18c" and "WARNING plan" in warn[0]
+    assert N.choose_plan(None, {"auto", "cnn18c"})[1]
+    run_sh = (CODE / "experiments" / "package" / "run.sh").read_text(encoding="utf-8")
+    assert re.search(r"^POL=(\S+)", run_sh, re.M).group(1) == B.DEFAULT_POLICY == cli.PAPER.policy
+    assert co.PAPER_POLICY == T.Ctx.policy == B.DEFAULT_POLICY
 
 
 def _setup_size(setup, columns, combined, at_lam, untrusted=79.4, factor=1.21):
@@ -545,8 +612,9 @@ def test_the_setup_proof_from_a_synthetic_byte_model(monkeypatch):
     monkeypatch.setattr(T, "setup_of", setup_of)
     monkeypatch.setattr(T, "params_values", lambda pol, v1: {"int": {"t_min": 23}, "fs": {"t_min": 25}, "trees": 7})
     monkeypatch.setattr(M, "split_factor", lambda m, pol: 4.46 if m == "llama2-7b" else 4.0)
+    # the per-query columns are interactive, so their growth is taken over the interactive 2,048-token proof
     bench = NS(name="stub", llm_cost=lambda m, s, k: {"bytes": 6.6e9, "cell": "c"} if (m, s, k) == (
-        "llama2-7b", 2048, "c_cpu") else None)
+        "llama2-7b", 2048, "c_cpu_int") else None)
     c = M.Collector()
     M.setup_proof(c, T.Ctx(R.Run([]), bench, {}, "cnn18c", byte_model=True))
     v = {k: x.value for k, x in c.m.items()}
@@ -607,10 +675,13 @@ def test_the_stored_attack_documents_regenerate_the_fallback(run_dir):
             "StealthNeurons", "StealthPass", "ReproRuns", "ReproCaught", "ReproZeroTolerance", "ReproQueries",
             "ReachTokens", "InrangeCalibTokens",
             "InrangeChanged", "InrangeKMedian", "InrangeKMax", "InrangePMedianMax", "InrangePMax", "InrangeDown",
-            "InrangeDownKMedian", "InrangeOptLPMedianMax", "InrangeOptLKRange", "TvTopK", "TvFull", "TvModel",
-            "TvTwenty", "TvPositions", "ZeroingZeroShare", "MnistStealthPass", "MnistStealthNeurons", "StealthExceed",
+            "InrangeDownKMedian", "InrangeOptLPMedianMax", "InrangeOptLKRange", "InrangePathsOptM", "InrangePathsOptL",
+            "TvPositions", "ZeroingZeroShare", "MnistStealthPass", "MnistStealthNeurons", "StealthExceed",
             "InrangeDownLast", "InrangeOptLChanged")
     assert {k: m[k].value for k in same} == {k: values[k] for k in same}
+    # the stored sampler document is the legacy recipe's: the certified model's distances wait for the tv tier
+    assert m["TvTopK"].value == "0.0063" and all(values[k] == r"\todo{tv tier}"
+                                                  for k in ("TvTopK", "TvFull", "TvModel", "TvTwenty"))
 
 
 # ------------------------------------------------------------------------------------------------ the command
@@ -627,6 +698,8 @@ def test_the_command_writes_every_file_and_strict_fails_on_a_missing_cell(run_di
     rows = list(csv.DictReader(open(out / "cells.csv", encoding="utf-8")))
     assert any(r["table"] == "tab:options" and r["source"].startswith("sp-c-") for r in rows)
     assert "tab:eval-llm" in (out / "coverage.txt").read_text(encoding="utf-8")
+    tables, macros = N.folder_files(out)                     # the written cells agree with the written macros
+    assert len(tables) == len(T.TABLE_FILES) and macros["CpuReexecLong"] == "142" and N.same_value(tables, macros) == []
     capsys.readouterr()
     assert N.main(_args(tmp, logs, "--strict", "--check")) == 1           # most cells are missing in this run
     assert "STRICT:" in capsys.readouterr().out
@@ -659,11 +732,19 @@ def test_job_coverage_from_a_dry_run_listing(run_dir):
         'sbatch -o logs/x/%x-%j.out -J sp-a-opt67 --wrap "mkdir -p /r/logs/x/attack && python -m a --out '
         '/r/logs/x/attack/real_llm_attack.json && python -m a --out /r/logs/x/attack/real_llm_attack_auto.json"\n'
         'sbatch -o logs/x/%x-%j.out -J sp-a-game-opt13 --wrap "python -m g --out '
-        '/r/logs/x/attack/adaptive_game_opt-1.3b.json"\n# tier ...\n', encoding="utf-8")
+        '/r/logs/x/attack/adaptive_game_opt-1.3b.json"\n# tier attack: 2 jobs, job limits 9 h, estimate 4-6 h\n'
+        '# cpuv bench attack: 6 jobs, job limits 12 h\n', encoding="utf-8")
     jobs = N.expected_jobs(listing)
     assert jobs["sp-a-opt67"] == ["real_llm_attack.json", "real_llm_attack_auto.json"]
     recs = R.read_logs(logs, [])
     assert N.job_coverage(jobs, logs, recs) == ["sp-c-qwen3-4b-64", "sp-b-k-lenet5", "sp-a-game-opt13"]
+    # a dry run that stopped early (no summary line, or a summary of other jobs) is refused, and --expect fails
+    lines = listing.read_text(encoding="utf-8").splitlines()
+    for bad in (lines[:-2], lines[:3] + lines[-1:]):
+        listing.write_text("\n".join(bad) + "\n", encoding="utf-8")
+        with pytest.raises(ValueError):
+            N.expected_jobs(listing)
+    assert N.main(_args(tmp, logs, "--check", "--expect", str(listing))) == 1
 
 
 def test_the_rehearsal_needs_every_tier(run_dir, capsys):
@@ -740,6 +821,26 @@ def test_the_paper_inputs_every_table_and_defines_every_macro():
     assert defined == set(M.names())
     macros_used = set(re.findall(r"\\([A-Z][A-Za-z]+)\{\}", tex))
     assert macros_used - defined == set() and len(macros_used & defined) > 250
+
+
+def test_the_fallback_tables_agree_with_their_macros():
+    """Every cell of ``paper_sp2027/fallback/`` that prints the same value of the same record as a macro
+    (``numbers.SAME_VALUE``) agrees with the fallback's macro up to their rounding, and a changed cell or macro is
+    caught; one quantity from two jobs (``numbers.TWO_JOBS``) only warns."""
+    tables, macros = N.folder_files(PAPER / "fallback")
+    assert N.same_value(tables, macros) == []
+    compared = [s for s in N.SAME_VALUE if N.printed(N._cell(tables, s), s[5], s[6]) is not None
+                and N.printed(macros.get(s[7]), 0, s[8]) is not None]
+    assert len(compared) >= 60
+    assert all(N._cell(tables, s) is not None for s in N.SAME_VALUE)        # every pair names a cell of the fallback
+    broken = dict(tables, tab_options=tables["tab_options"].replace(r"& 142\,s &", r"& 93\,s &"))
+    assert [x for x in N.same_value(broken, macros) if "CpuReexecLong" in x]
+    assert len(N.same_value(tables, dict(macros, CpuVerifyLong="18.5"))) == 2    # tab:options and tab:eval-reexec
+    assert N.two_jobs(tables, macros) == []
+    assert N.two_jobs(tables, dict(macros, VOneVZeroVerifyLlama="25.0"))
+    assert N.printed(r"2.9--3.5$\times$") == (2.9, 3.5, pytest.approx(0.1))
+    assert N.printed(r"\textbf{17.6\,s (46$\times\downarrow$)}", 1) == (46.0, 46.0, 1.0)
+    assert N.printed(r"431\,ms")[0] == pytest.approx(0.431) and N.printed(r"\todo{bench tier}") is None
 
 
 def test_the_definition_of_the_cells():

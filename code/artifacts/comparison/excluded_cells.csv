@@ -1,6 +1,6 @@
-# Values withheld from the report although their cell is stored: the paper omits them (paper_assets.OMIT_UNMEASURED)
-# unless l40s_improved3 re-measured the cell.  Read by paper_assets.py (llm_cost, Measured.cost) and
-# text_numbers.py (setup times).  The raw records stay in raw_l40s_improved2/.
+# Values withheld from the numbers printed before the final run although their cell is stored: those numbers leave
+# them out unless l40s_improved3 re-measured the cell.  Read by no script of this artifact; kept as the record of the
+# withheld values.  The raw records stay in raw_l40s_improved2/.
 # Why: in the second L40S batch two nodes (n-801, n-804) had slow periods (other users' load; the jobs' threads were
 # not pinned), which inflated CPU-side stages (proof encoding and decoding, the commitment) up to ~100x.  Bytes and
 # verdicts are unaffected.  A value is listed if its cell ran on n-801/n-804 and it is more than 1.5x the sum of its

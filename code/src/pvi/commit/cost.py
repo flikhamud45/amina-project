@@ -6,7 +6,7 @@
   commitment plan of a few built blocks is chosen on the whole model's shapes;
 * ``expected_multiproof_nodes`` is the exact expected number of hashes in one
   multiproof for ``t`` distinct uniform columns (checked by Monte Carlo in
-  ``tests/test_fullcheck.py``), and ``expected_lookup_nodes`` its analogue for the
+  ``tests/test_v0_protocol.py``), and ``expected_lookup_nodes`` its analogue for the
   rows of a lookup table (a tree whose last leaves pad it to a power of two);
 * ``proof_bytes`` and ``setup_size`` give a query's proof bytes and the commitment's size for
   weight-op shapes alone, under the per-op commitment's parameters or a commitment plan

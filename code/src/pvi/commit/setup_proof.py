@@ -31,9 +31,10 @@ are multiplied by the number of random-oracle queries (``2**grinding_bits``).  `
 wrong folded row only if all ``t`` columns land among the at most ``m_j - 1 + e_j`` positions where ``Enc(u)``
 agrees with ``u``'s committed combination or ``E_j`` is corrupted: probability
 ``prod_{i<t} (m_j - 1 + e_j - i) / (n_j - i)``, the honest bound with ``m_j`` replaced by ``m_j + e_j``
-(:func:`setup_params` computes it).  The committed model is then the model ``M*`` of Theorem ``thm:untrusted``:
-the weights ``A*``, each weight product computed in the field and lifted to ``(-p/2, p/2)``; it is the integer
-model when ``A*`` is int8 and meets the range bound.
+(:func:`setup_params` sizes ``t`` by it, and a verifier derives ``t`` from the certified radii,
+:func:`after_setup`).  The committed model is then the model ``M*`` of Theorem ``thm:untrusted``: the weights
+``A*``, each weight product computed in the field and lifted to ``(-p/2, p/2)``; it is the integer model when ``A*``
+is int8 and meets the range bound.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ from dataclasses import dataclass
 
 import torch
 
-from pvi.commit.commitment import (CommitmentPublic, GroupCommitment, GroupPublic, TransposedCommitment,
+from pvi.commit.commitment import (HASH_BYTES, CommitmentPublic, GroupCommitment, GroupPublic, TransposedCommitment,
                                    WeightCommitment, codeword_at, column_leaf, group_leaf, verify_multiproof)
 from pvi.core.field import LOG2_P, P, field_matmul_mod, to_field, weight_matmul_mod
 
@@ -57,7 +58,8 @@ __all__ = ["SetupParams", "SetupProof", "survivors", "setup_params", "query_grou
 class SetupParams:
     """``s`` base-field rows per combination; per committed matrix its closeness radius ``e``; per tree the
     columns ``t0`` the setup proof opens and the columns ``t`` each query then opens; the security level and
-    grinding bits the setup proof was sized for."""
+    grinding bits the setup proof was sized for.  ``t`` is the committer's account of the query cost: the setup
+    proof does not bind it, and a verifier derives each tree's ``t`` from the radii (:func:`query_group_columns`)."""
     s: int
     e: tuple[tuple[str, int], ...]
     t0: tuple[tuple[str, int], ...]
@@ -137,15 +139,24 @@ def setup_params(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPu
                        grinding_bits)
 
 
-def query_group_columns(params: SetupParams, groups: dict[str, GroupPublic]) -> tuple[tuple[str, int], ...]:
+def query_group_columns(params: SetupParams, publics: dict[str, CommitmentPublic], groups: dict[str, GroupPublic],
+                        query_bits: float) -> tuple[tuple[str, int], ...]:
     """The per-query ``(group, t)`` once the setup proof certified the radii, in the groups' order (as
-    ``pvi.v0.params.SecurityParams.group_columns``)."""
-    t = dict(params.t)
-    return tuple((name, t[name]) for name in groups)
+    ``pvi.v0.params.SecurityParams.group_columns``): per tree the largest over its members of the least ``t`` with
+    ``prod_{i<t} (m + e - 1 - i) / (n - i) <= 2**-query_bits``, the rule of :func:`setup_params`.  It is computed
+    from the radii ``params.e``, which the setup proof binds, and the verifier's own ``query_bits``; ``params.t``
+    is not read."""
+    e = dict(params.e)
+    return tuple((name, max(survivors(publics[m].row_length + e[m] - 1, publics[m].n_points, query_bits)
+                            for m in g.members)) for name, g in groups.items())
 
 
 def _transcript(graph_digest: bytes, publics: dict[str, CommitmentPublic], groups: dict[str, GroupPublic],
                 params: SetupParams):
+    """The setup proof's Fiat--Shamir transcript once it has absorbed the statement: ``s``, ``lam``, the grinding
+    bits, the graph digest and per tree its root, ``n``, ``t0`` and its members' shapes and radii.  The per-query
+    ``t`` is not absorbed: it is no part of the statement, and a verifier derives it from the radii
+    (:func:`after_setup`)."""
     from pvi.v0.transcript import Challenger
     ch = Challenger(fiat_shamir=True)
     ch.absorb(b"setup/params", struct.pack("<IdI", params.s, params.lam, params.grinding_bits))
@@ -209,7 +220,9 @@ def params_sound(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPu
     """Whether ``params`` meet the rule of the setup theorem at level ``lam``: at least ``lam`` bits and 64 grinding
     bits, ``s`` with ``n / p**s <= 2**-beta``, every radius below the unique-decoding radius, and every tree's ``t0``
     at least the least ``t`` with ``prod_{i<t} (n - e - 1 - i) / (n - i) <= 2**-beta`` for each of its members. The
-    radii themselves (a cost trade-off) are the committer's choice; any choice that passes is sound."""
+    radii and ``t0`` (a cost trade-off) are the committer's choice, and any choice that passes is sound for the
+    setup proof; ``params.t`` is not checked, since the per-query ``t`` is fixed by the rule of
+    :func:`query_group_columns`, which :func:`after_setup` applies."""
     if params.lam < lam or params.grinding_bits < 64:
         return False
     beta = params.lam + params.grinding_bits + math.log2(2 * max(1, len(publics)))
@@ -229,17 +242,25 @@ def params_sound(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPu
     return True
 
 
-def after_setup(params, setup: SetupParams, groups: dict[str, GroupPublic]):
+def after_setup(params, setup: SetupParams, publics: dict[str, CommitmentPublic], groups: dict[str, GroupPublic],
+                query_bits: float):
     """``params`` (``pvi.v0.params.SecurityParams`` under a commitment plan) for the queries after an untrusted
-    setup: each group opens the setup's per-query ``t`` (computed with ``k + e`` in place of ``k``)."""
-    cols = query_group_columns(setup, groups)
+    setup: each group opens the per-query ``t`` of :func:`query_group_columns` (computed with ``k + e`` in place of
+    ``k``), and never fewer columns than ``params`` give it.  ``query_bits`` is the verifier's own per-op budget,
+    ``pvi.commit.plans.column_bits(lam, n_checks, fiat_shamir, grinding_bits)`` as for ``params``; the ``t`` that
+    ``setup`` carries is not read."""
+    base = dict(params.group_columns)
+    cols = tuple((name, max(t, base.get(name, 0)))
+                 for name, t in query_group_columns(setup, publics, groups, query_bits))
     return dataclasses.replace(params, group_columns=cols, columns=max(t for _, t in cols))
 
 
 def verify_setup(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPublic], graph_digest: bytes,
                  params: SetupParams, proof: SetupProof, *, lam: float = 128.0) -> bool:
     """Whether ``proof`` shows every committed matrix of ``groups`` ``e_j``-close (see the module docstring), under
-    parameters that meet the theorem's rule at the verifier's level ``lam`` (:func:`params_sound`)."""
+    parameters that meet the theorem's rule at the verifier's level ``lam`` (:func:`params_sound`).  The messages,
+    the opened columns and the multiproofs are type-checked: a malformed one is a rejection, not an exception.  The
+    queries after it open the columns of :func:`after_setup`."""
     if not params_sound(publics, groups, params, lam):
         return False
     ch = _transcript(graph_digest, publics, groups, params)
@@ -274,6 +295,9 @@ def verify_setup(publics: dict[str, CommitmentPublic], groups: dict[str, GroupPu
             rows_u32 = e.T.contiguous().numpy().astype("<u4")
             digests.append({int(c): column_leaf(pub.tag, int(c), rows_u32[j]) for j, c in enumerate(cols.tolist())})
         leaves = {int(c): group_leaf(g.tag, int(c), [d[int(c)] for d in digests]) for c in cols.tolist()}
-        if not verify_multiproof(g.root, int(math.log2(g.n_points)), leaves, mp):
+        depth = int(math.log2(g.n_points))
+        if (not isinstance(mp, (list, tuple)) or len(mp) > len(leaves) * depth
+                or not all(isinstance(h, bytes) and len(h) == HASH_BYTES for h in mp)
+                or not verify_multiproof(g.root, depth, leaves, list(mp))):
             return False
     return True

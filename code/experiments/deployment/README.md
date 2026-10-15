@@ -14,7 +14,7 @@ measured inputs and the byte model.
 | `ext:disc-options`: serving with the exact model and proving later, on request, with the same proof; "the integer engine's cost over fp16 serving (4-10x on OPT-1.3B)"; batches of B prompts in one mode-C proof | `serve_ab.py` | as above | `row: "on_request"` lines: `serve_over_u2`, `later_proof` (byte-identical, `deterministic`); `batch_proof: "joint"` lines: `proof_mb_per_token` |
 | `fig:breakeven`; Sec. `sec:discussion`, "Who the protocol serves": "below about 22 queries of 64 tokens", "at 2,048 tokens the weights are only 1.0x the size of one proof, or 2.3x with V1" (`\BreakevenQueriesLong`, `\BreakevenQueriesVOne`: the weights over one proof), "links faster than 0.42-0.59 Gb/s (V1: 0.23 Gb/s)" | `ev_breakeven.py` | `python -m experiments.deployment.ev_breakeven --figure ../paper_sp2027/figures/ev_breakeven.pdf` | `artifacts/results/ev_breakeven.{json,tex,pdf}` and the figure: `panel1` (`Q_star`), `panel2` (`L_star_gbps`) |
 | `ext:disc-real`, "V1": V1's client "faster than v0 on links slower than about 1.1 Gb/s" | `ev_breakeven.py` | the same | `v1_against_v0` (`v1_faster_below_gbps`) |
-| Sec. `sec:discussion`, "Proof size": one Llama-2-7B proof "reaches the size of the int8 weights at about 2,100 tokens without V1 and, by the byte model, at about 4,500 with it" | `ev_breakeven.py` | the same | `prompt_crossover` (`tokens`: 2,111 without V1 and 4,854 with it under Fiat-Shamir; see the note below) |
+| Sec. `sec:discussion`, "Proof size" (also `ext:disc-limits` and `ext_v1.tex`): one Llama-2-7B proof "reaches the size of the int8 weights at about `\BreakevenTokens` tokens without V1 and, by the byte model, at about `\BreakevenTokensVOne` with it" (fallback 2,100 and 4,900) | `ev_breakeven.py` | the same | `prompt_crossover` (`tokens`: 2,111 without V1 and 4,854 with it under Fiat-Shamir; see the note below) |
 
 Run every command from `code/` with the checkout's library first on the path (`PYTHONPATH=src:.` on Linux,
 `PYTHONPATH="src;."` on Windows). `python -m experiments.deployment.<script> --help` lists every option.
@@ -105,8 +105,8 @@ Mode C's fixed part is not an input: the byte model gives it for the plan, the s
 #### A note on the paper's prompt-length crossovers
 
 From these inputs the byte model puts one v0 proof at the size of the weights at 2,111 tokens (Fiat-Shamir; 2,122
-interactive), the body's "about 2,100" (the extended version's `ext:disc-limits` says "about 2,050"), and one V1 proof
-at 4,854 tokens, not the text's "about 4,500".
+interactive) and one V1 proof at 4,854 tokens; `\BreakevenTokens` and `\BreakevenTokensVOne` round them to two
+significant digits, 2,100 and 4,900.
 
 ## Reproducing the paper's numbers
 

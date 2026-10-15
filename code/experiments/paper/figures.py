@@ -227,8 +227,18 @@ def schematics(out: Path) -> list[Path]:
 
 
 def breakeven(crossovers: dict, out: Path) -> Path:
-    """``fig:breakeven`` from :func:`experiments.paper.macros.breakeven`'s crossovers of the run."""
+    """``fig:breakeven`` from :func:`experiments.paper.macros.breakeven`'s crossovers of the run (the PDF dated at
+    the epoch, ``SOURCE_DATE_EPOCH=0``, so that it carries neither the time nor the time zone of its drawing)."""
+    import os
     from experiments.deployment import ev_breakeven as ev
     path = out / "ev_breakeven.pdf"
-    ev.draw(crossovers, {"reexec_s": {"2048": {"exact": crossovers["reexec_s"]}}}, [str(path)])
+    before = os.environ.get("SOURCE_DATE_EPOCH")
+    os.environ["SOURCE_DATE_EPOCH"] = "0"
+    try:
+        ev.draw(crossovers, {"reexec_s": {"2048": {"exact": crossovers["reexec_s"]}}}, [str(path)])
+    finally:
+        if before is None:
+            del os.environ["SOURCE_DATE_EPOCH"]
+        else:
+            os.environ["SOURCE_DATE_EPOCH"] = before
     return path

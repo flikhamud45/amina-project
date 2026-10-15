@@ -51,7 +51,9 @@ VERIFY = ("verify_decode", "verify_derive", "verify_lookups", "verify_fold", "ve
 OVERLAPPED = ("verify_derive", "verify_lookups", "verify_products", "verify_columns", "verify_upload")
 """The verify phases that the streaming verifier's ``verify_total`` covers (never counted with it)."""
 DEFAULT_POLICY = "cnn18c"
-"""Mode C's commitment plan of the final run (``experiments.common.cli.PAPER.policy``)."""
+"""Mode C's commitment plan of the final run: the torch-free copy of ``experiments.common.cli.PAPER.policy``, which
+``paper/tables.py``, ``paper/numbers.py`` and ``comparison/count_outcomes.py`` read (``tests/test_paper_numbers.py``
+checks that it equals ``cli.PAPER.policy`` and run.sh's ``POL`` default)."""
 
 
 @dataclass(frozen=True)

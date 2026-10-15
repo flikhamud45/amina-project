@@ -316,6 +316,49 @@ def test_an_id_outside_the_table_is_a_malformed_query():
             assert v.derive(x_long, claims) is None
 
 
+@pytest.mark.parametrize("deferred", [False, True])
+def test_an_id_outside_the_vocabulary_is_a_malformed_query_without_lookups_too(deferred, monkeypatch):
+    """Per-op mode C, and modes K and Kpre without ``lookups``, check an embedding op with Freivalds, not as a
+    table: derive range-checks its ids all the same, so a negative id (which a gather wraps to another row) and an
+    id past the last row are rejected at ``range_or_shape``, never accepted or raised (the deferred checks of a
+    device too, whose gathers read the ids clamped)."""
+    if deferred:
+        monkeypatch.setattr(v0_verifier, "_defer", lambda device: True)
+
+    class Clamping(proto.Prover):
+        """Answers a query with the claims of its ids clamped to the vocabulary."""
+
+        def claims(self, x, **kw):
+            return super().claims(x.clamp(0, vocab - 1), **kw)
+
+    for kind in ("gpt", "llama"):
+        graph, _, _ = _planned(kind, "R8c")
+        vocab = next(op for op in graph.mat_ops if op.layout == "embed").n_in
+        weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
+        params = proto.params_for(40, len(graph.mat_ops))
+        coms = proto.commit_graph(graph, params.rate)                     # one tree per op, no table
+        verifiers = [proto.Verifier(graph.public(), params, "C", publics={k: c.public for k, c in coms.items()},
+                                    stream=s) for s in (False, True)]
+        for mode in ("K", "Kpre"):
+            for s in (False, True):
+                v = proto.Verifier(graph.public(), params, mode, weights=weights, stream=s)
+                if mode == "Kpre":
+                    v.precompute(proto.Challenger(seed=3))
+                verifiers.append(v)
+        x = _query(kind)
+        assert all(proto.run_query(Clamping(graph, commitments=coms), v, x, seed=1)["accepted"] for v in verifiers)
+        for bad_id in (-1, vocab):
+            bad = x.clone()
+            bad[0, 3] = bad_id
+            provers = [Clamping(graph, commitments=coms)]
+            if bad_id < 0:                  # the honest prover's gather wraps it, as the verifier's would
+                provers.append(proto.Prover(graph, commitments=coms))
+            for v in verifiers:
+                for prover in provers:
+                    res = proto.run_query(prover, v, bad, seed=1)
+                    assert res["rejected_at"] == "range_or_shape", (kind, bad_id, v.mode, v.stream)
+
+
 @pytest.mark.parametrize("fiat_shamir", [False, True])
 def test_malformed_lookup_rows_on_the_wire_are_rejected(fiat_shamir, monkeypatch):
     graph, _, coms = _planned("opt", "R8c")
@@ -662,15 +705,16 @@ def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_
     from experiments.common import models
     from experiments.costs import bench
 
-    monkeypatch.setitem(models.TINY, "tiny-gpt", _TINY["gpt"])
+    gpt = _TINY["gpt"]
+    monkeypatch.setitem(models.TINY, gpt.name, gpt)
     monkeypatch.setattr(bench, "RAW", tmp_path)
-    args = bench.build_parser().parse_args(["llm", "--model", "tiny-gpt", "--seq", "9", "--builds", "full",
+    args = bench.build_parser().parse_args(["llm", "--model", gpt.name, "--seq", "9", "--builds", "full",
                                             "--modes", "C:int", "--lams", "40", "--queries", "1", "--policy", "R8c",
                                             "--wire", "--no-prune-last",
                                             "--llm-tampers", "34",                    # (attack 33 hits a table)
                                             "--platform", "test"])
     bench.suite_llm(args, {"device": "cpu", "cpu": "test", "torch_threads": 1})
-    cell = tmp_path / "llm" / "tiny-gpt" / "tamper_C_int_lam40_T9_L2_wire_polR8c.jsonl"
+    cell = tmp_path / "llm" / gpt.name / "tamper_C_int_lam40_T9_L2_wire_polR8c.jsonl"
     rows = [json.loads(line) for line in cell.read_text().splitlines()]
     attempts = [r for r in rows if r["metric"] == "rejected"]
     assert len(attempts) == 3 * 34 + 3 and all(r["value"] == 1 for r in attempts)

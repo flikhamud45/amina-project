@@ -1,6 +1,6 @@
 """Exactness of every GPU code path of the defence, at the sizes of the real models.
 
-The GPU tests in ``test_fullcheck.py`` use tiny graphs (T = 12 tokens, K <= 4608),
+The GPU tests in ``test_v0_protocol.py`` use tiny graphs (T = 12 tokens, K <= 4608),
 so they never reach the regimes where a new GPU could behave differently: split-K /
 stream-K GEMM kernels at K = 11,008, the batched P @ V product at T = 2,048 (4 chunks
 of 512 terms, or one float32 GEMM on the int32 attention path), every partial sum at its

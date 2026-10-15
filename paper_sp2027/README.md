@@ -4,7 +4,7 @@
 |---|---|
 | `main.tex` | the submission (IEEE S&P, `IEEEtran`): the body and a short appendix |
 | `main_ext.tex` | the extended version: the same body with every proof and the material moved out of the body |
-| `sections/*.tex` | the sections, input by `main.tex` (the `ext_*` and `appendix_*` files by the extended version) |
+| `sections/*.tex` | the body sections, input by both; `appendix_short` (submission only), the other `appendix_*` and `ext_*` (extended version only), `app_params` (both: directly in the extended version, through `appendix_short` in the submission) |
 | `references.bib`, `extra.bib` | the bibliography |
 | `figures/` | the figures; `ev_breakeven.pdf` is drawn from the run's records, the schematics from code (`code/experiments/paper/figures.py`) |
 | `fallback/` | every table body and every measured number of the text as printed before the final run |

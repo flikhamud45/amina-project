@@ -25,6 +25,7 @@ import torch
 
 import claimcodec_reference as ref
 import opcount as opcount
+import shapes
 from pvi import options
 from pvi.commit import commitment
 from pvi.core.field import P
@@ -161,7 +162,7 @@ def test_numpy_torch_and_decoded_forms_agree():
 
 
 def test_decoder_claims_shrink_and_round_trip():
-    cfg = DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64)
+    cfg = shapes.GPT
     graph = build_decoder(cfg, calib_tokens=16, seed=3)
     tokens = torch.randint(0, cfg.vocab, (1, 16), generator=torch.Generator().manual_seed(5))
     _, claims = graph.forward(tokens)
@@ -368,6 +369,30 @@ def test_exceptions_are_range_checked():
             cc.decode(_one_exception(h, b), [1], [1])
 
 
+def _centred(mean: int, lo: int) -> bytes:
+    """One centred op of 2 x 3 claims at width 0, no exception: every row mean ``mean``, every residual ``lo``."""
+    head = (cc.MAGIC + struct.pack("<I", 1) + struct.pack("<IB", 3, cc._F_CENTRED) + struct.pack("<Bi", 0, mean)
+            + struct.pack("<Bi", 0, lo))
+    return head + bytes(-len(head) % 4) + struct.pack("<I", 0)
+
+
+def test_a_centred_op_decodes_to_claims_below_two_to_the_31():
+    """Every segment value is ``|x| < 2**30``, so a centred op's claim, a row mean plus a residual, is
+    ``|z| < 2**31`` and fits in int32: the extremes ``+-(2**31 - 2)`` decode exactly (the range check
+    ``|z| < 2**29`` is derive's), and a segment value reaching ``2**30`` is refused."""
+    top = (1 << 30) - 1
+    for s in (1, -1):
+        blob = _centred(s * top, s * top)
+        z = cc.decode(blob, [2], [3])[0]
+        assert z.dtype == np.int32 and (z == s * 2 * top).all() and 2 * top >= Z_BOUND
+        assert torch.equal(cc.decode_torch(blob, [2], [3])[0], torch.full((2, 3), s * 2 * top))
+        if torch.cuda.is_available() and cc.decode_device_ok("cuda"):
+            assert (cc.decode_device(blob, [2], [3], "cuda")[0].cpu() == s * 2 * top).all()
+    for mean, lo in ((1 << 30, 0), (0, 1 << 30), (-(1 << 30), 0), (0, -(1 << 30))):
+        with pytest.raises(cc.ClaimCodecError):
+            cc.decode(_centred(mean, lo), [2], [3])
+
+
 def test_exception_positions_are_checked():
     ok = _one_exception(5, 0)
     tail = struct.pack("<I", 1) + cc._rice_encode(np.array([0])) + cc._rice_encode(np.array([9]))
@@ -420,9 +445,9 @@ def _claim_sets() -> dict:
     many = [normal((int(rng.integers(1, 90)), int(rng.integers(1, 12))), float(rng.choice([1e2, 1e4])))
             for _ in range(60)]
     sets["many_ops"] = many * 5                                   # 300 ops, few widths
-    for kind, cfg in (("gpt", DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64)),
-                      ("qwen", DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
-                                             pos="rope", bias=False, qk_norm=True))):
+    for kind, cfg in (("gpt", shapes.GPT),
+                      ("qwen", DecoderConfig("tiny-qwen-theta1e4", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm",
+                                             mlp="swiglu", pos="rope", bias=False, qk_norm=True))):
         graph = build_decoder(cfg, calib_tokens=16, seed=3)
         tokens = torch.randint(0, cfg.vocab, (1, 16), generator=torch.Generator().manual_seed(5))
         _, claims = graph.forward(tokens)

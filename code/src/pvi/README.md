@@ -89,5 +89,7 @@ the models and the model-substitution settings.
 torch kernels, the fused GPU kernels, GPU or host decoding, int8 GEMMs, the hash threads of the tree absorption, and
 V1's optimised or baseline verifier. Every path gives the same integers, bytes and verdicts, and only time and memory
 change. An option is set for the process (`options.configure`) or for a block (`with options.using(...)`). Every
-script exposes each option as a command-line flag and records `options.describe()`. Three environment variables
-name places on the host and select no code path: `CXX`, `PVI_NATIVE_DIR` and `PVI_PY_INCLUDE`.
+script exposes each option as a command-line flag and records `options.describe()`. Six environment variables
+name places on the host and select no code path: `CXX`, `PVI_NATIVE_DIR` and `PVI_PY_INCLUDE` (the native and Triton
+kernels' compiler, build folder and Python headers), and `PVI_CACHE`, `PVI_CIFAR_ROOT` and `PVI_IMAGENET_ROOT`
+(`pvi.models.datasets`: the dataset cache and the CIFAR-10 and ImageNet folders).

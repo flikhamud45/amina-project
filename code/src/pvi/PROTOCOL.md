@@ -18,7 +18,7 @@ other is a copy (`pvi.v0.query.passed`), or, with the compact encoding, bytes th
 | all modes | the integer graph with its weights (`pvi.core.graph.IntGraph`), `pvi.v0.prover.Prover` | the public graph (`pvi.core.graph.IntGraph.public`: the same ops without weights), the parameters (`pvi.v0.params.SecurityParams`), the query `x` |
 | mode C | the commitment (`pvi.v0.graph_commitment.GraphCommitment`, from `pvi.v0.graph_commitment.commit_graph`) | `C_M`: per committed matrix a `pvi.commit.commitment.CommitmentPublic` (tag, root, shape, codeword length, members), under a plan the trees (`pvi.commit.commitment.GroupPublic`) and lookup tables (`pvi.commit.commitment.TablePublic`) |
 | mode K | the same | the weights `{op: (W, b)}` (`pvi.v0.verifier.Verifier.weights`) |
-| mode Kpre | the same | the weights, from which `pvi.v0.verifier.Verifier.precompute` fixes a secret `chi` per weight op checked with Freivalds and its fold `u = chi [W \| b]` once, with an interactive challenger (a Fiat--Shamir one is refused); with `lookups` the verifier reads the embedding rows from its weights at every query (`pvi.v0.verifier.Verifier._own_claim`), and V1 evaluates rule (P4) from them |
+| mode Kpre | the same | the weights, from which `pvi.v0.verifier.Verifier.precompute` fixes a secret `chi` per weight op checked with Freivalds and its fold `u = chi [W \| b]` once, with an interactive challenger (a Fiat-Shamir one is refused); with `lookups` the verifier reads the embedding rows from its weights at every query (`pvi.v0.verifier.Verifier._own_claim`), and V1 evaluates rule (P4) from them |
 
 `pvi.v0.verifier.Verifier.__post_init__` validates a plan's key (`pvi.v0.verifier.Verifier._check_plan`: every
 weight op checked by exactly one committed matrix or table of its shape, every encoded matrix in exactly one group
@@ -125,8 +125,9 @@ In mode K steps 3 to 5 are replaced by the verifier's own fold (`pvi.v0.verifier
 `SHA-256("test-seed/<seed>/<count>/<label>")`. No key depends on the transcript, and v0 absorbs nothing
 interactively.
 
-**Fiat--Shamir.** The transcript is a SHAKE-256 sponge initialised with the 16 bytes `pvi/fullcheck/v3`
-(`pvi.v0.transcript.Challenger`). A direct absorption (`pvi.v0.transcript.Challenger.absorb`) appends
+**Fiat-Shamir.** The transcript is a SHAKE-256 sponge initialised with the 16 bytes `pvi/fullcheck/v3`
+(`pvi.v0.transcript.Challenger`), a fixed domain separator kept from an earlier module name (changing it would
+change every Fiat-Shamir transcript). A direct absorption (`pvi.v0.transcript.Challenger.absorb`) appends
 `len(label)` (2 bytes big-endian) `|| label || len(message)` (8 bytes big-endian) `|| message`. A large absorption
 (`pvi.v0.transcript.Challenger.absorb_large`) is direct below `2**24` bytes; from `2**24` bytes the message is cut
 into chunks of `2**22` bytes, leaf `j = SHAKE-256("pvi/leaf/v1" || len(label) (2 bytes) || label || j (8 bytes
@@ -147,12 +148,12 @@ is not absorbed into the transcript itself.
   largest multiple of `n` not above `2**64`, reduced mod `n`, repeats discarded, until `t` distinct indices; the set
   is sorted.
 
-**Absorption order of one v0 query under Fiat--Shamir** (`pvi.v0.query.absorb_statement`, then the messages):
+**Absorption order of one v0 query under Fiat-Shamir** (`pvi.v0.query.absorb_statement`, then the messages):
 
 | Label | Content |
 |---|---|
 | `graph` | `pvi.core.graph.IntGraph.digest` (32 bytes) |
-| `params` | `r`, `t`, `rate`, `grinding_bits` as `<IIIi` (under a plan `t` is the largest group's and `rate` is 0), then the mode (`C` or `K`) as ASCII |
+| `params` | `r`, `t`, `rate`, `grinding_bits` as `<IIIi` (under a plan `t` is the largest group's and `rate` is 0), then the mode (`C`, `K`, or `Kpre` in V1) as ASCII |
 | `op/<name>` | per weight op in graph order: `n_rows`, `row_length` (`<QQ`), and if the op has a public of its own, `tag || root || n_points (<Q)` (a group member's root is empty) |
 | `col/<name>` | per col matrix: `n_rows`, `row_length`, `n_points`, `len(tag)` (`<QQQH`), `tag`, then each member as `<H` length and name |
 | `group/<name>` | per tree of a plan: `len(tag)` (`<H`), `tag`, `root`, `n_points`, `t_g`, member count (`<QQQ`), each member as `<H` length and name |
@@ -191,8 +192,8 @@ The verifier, in this order:
 3. derives every weight op's input (`pvi.v0.verifier.Verifier.derive`, `pvi.v0.verifier.Verifier._derive`): it runs
    the ops in order, recomputing every cheap op from `x` and the claims (recomputation, (S1)); for each weight op it
    requires a claim of shape `[N, M]`, the range check `1 - 2**29 <= z <= 2**29 - 1`
-   (`pvi.v0.params.Z_BOUND`), for a lookup table's claim `-128 <= z <= 127`, and for an op that looks rows up ids in
-   `[0, V)`; then `pvi.core.graph.MatOp.fold` turns the claim into the op's output tensor. Any failure is
+   (`pvi.v0.params.Z_BOUND`), for a lookup table's claim `-128 <= z <= 127`, and for every embedding op (a lookup table,
+   the verifier's own rows, or one checked with Freivalds) ids in `[0, V)`; then `pvi.core.graph.MatOp.fold` turns the claim into the op's output tensor. Any failure is
    `range_or_shape`;
 4. checks every lookup table (`pvi.v0.verifier.Verifier.check_lookups`): equal ids carry equal columns
    (`lookup_consistency`), and the rows of the distinct ids with the table's multiproof give its root
@@ -270,7 +271,10 @@ sample of rows (at most 256 rows or about `2**16` values) by an estimate of the 
 give the bytes of the reference encoder `tests/claimcodec_reference.py`. The decoder (`pvi.v0.claimcodec.decode`)
 rejects with `pvi.v0.claimcodec.ClaimCodecError` a bad magic or op count, an `M` other than the expected one (before
 allocating), other flag bits, `B > 30`, a base outside `(-2**30, 2**30 - 2**B]`, truncated or trailing bytes,
-non-zero padding, `k > 32`, exception positions out of order or range, and values reaching `|x| >= 2**30`.
+non-zero padding, `k > 32`, exception positions out of order or range, and segment values (a base plus a slot, or
+an exception) reaching `|x| >= 2**30`. A decoded claim is a segment value, or for a centred op a row mean plus a
+residual, so `|z| < 2**31`: every claim fits int32, and the derivation's range check (section 2.3) bounds it by
+`2**29`.
 
 ### 3.2 Field elements: `F31` (`pvi.v0.claimcodec.pack_field`)
 
@@ -327,7 +331,7 @@ checked against its SHA-256 (`pvi.v0.token_sampler.gumbel_table`). The token is 
 `a z_v + G[v]` (int64) among the `top_k` largest `z` (ties to the smaller index; all if 0)
 (`pvi.v0.token_sampler.TokenSampler.choose`). The token appended at position `P + i` is chosen from the logits and
 noise index of position `P + i - 1`. `run_query(sampler=...)` sets the sampler on the verifier, and under
-Fiat--Shamir the statement absorbs `sampler` = `"pvi/sampler/v1" || a || top_k (<II) || seed`.
+Fiat-Shamir the statement absorbs `sampler` = `"pvi/sampler/v1" || a || top_k (<II) || seed`.
 
 ## 5. V1
 
@@ -367,12 +371,12 @@ instances.
 | 1 | P -> V | the exceptions | `PVX1` (`pvi.v1.protocol.pack_exceptions`): `b"PVX1"`, per cut op (plan order) its count (u32), then per op its flat row-major indices (u32, ascending) and exact claims (i32) |
 | 1 | P -> V | the multiplicities `m_t` | `PVC3` of one op `[1, |table|]` |
 | 2 | V -> P | `alpha` in `F_{p^8}` outside `F_p + x F_p` (`ext/cut/alpha`, `nonbase`); in mode C v0's `chi` of the clear row-layout ops and clear col matrices | |
-| 3 | P <-> V | per instance `b`, the fractional-sum GKR (`pvi.v1.gkr.prove`, or `pvi.v1.gkr_triton` with the same bytes) | `u8 n` then `F31` of the `8 n_elements(n)` coefficients (`pvi.v1.gkr.Transcript.to_bytes`, `pvi.v1.gkr.n_elements(n) = 4 + sum_{k<n} (3k + 4)`) |
+| 3 | P <-> V | per instance `b`, the fractional-sum GKR (`pvi.v1.gkr.prove`, or `pvi.v1.gkr_triton` with the same bytes) | `u8 n` then `F31` of the `8 n_elements(n)` coefficients (`pvi.v1.gkr.Transcript.to_bytes`, `pvi.v1.gkr.n_elements(n) = 4 + sum_{k=1}^{n-1} (3k + 4)`) |
 | 4 | P -> V | the folds: in mode C v0's `u` of the clear row ops, then per fold item (`pvi.v1.protocol._fold_items`): a cut row-layout op's `u = chi^T A` as 8 base-field planes `[8, k]`, a cut col matrix's `y = A xbar` `[8, sum N]`; in Kpre every cut op's `y` `[8, N]` | one `F31` frame |
 | 5 | V -> P | mode C: the column indices of every tree | |
 | 6 | P -> V | mode C: the openings | as v0 |
 
-Under Fiat--Shamir the transcript absorbs the statement (`pvi.v0.query.absorb_statement`, also in Kpre), `cut`
+Under Fiat-Shamir the transcript absorbs the statement (`pvi.v0.query.absorb_statement`, also in Kpre), `cut`
 (the plan digest), `claims/PVC3`, `rows/I8`, `lookup/<name>`, `cut/exc` and `cut/mult` (large), before `alpha` and
 `chi`. The GKR of instance `b` absorbs `cut/<b>/top` (the root's four children), draws `cut/<b>/mu0`, and for each
 layer `k = 1 .. n-1` draws `cut/<b>/lam<k>`, then per round `j` absorbs `cut/<b>/g<k>.<j>` (`g(0), g(2), g(3)`)
@@ -427,7 +431,7 @@ part without running the GKR, the folds or the openings.
 ## 6. The setup proof and the setup cache
 
 **Setup proof** (`pvi.commit.setup_proof`, for the trees of a commitment plan; always non-interactive). Its
-transcript is a separate Fiat--Shamir `pvi.v0.transcript.Challenger` (`pvi.commit.setup_proof._transcript`): it
+transcript is a separate Fiat-Shamir `pvi.v0.transcript.Challenger` (`pvi.commit.setup_proof._transcript`): it
 absorbs `setup/params` (`s`, `lambda` as float64, the grinding bits: `<IdI`), `setup/graph` (the graph digest) and
 per group `setup/group/<g>` (tag, root, `n`, `t0`, member count, and per member its tag, `n_rows`, `row_length`,
 `n_points` and radius `e`). Then:
@@ -437,14 +441,19 @@ per group `setup/group/<g>` (tag, root, `n`, `t0`, member count, and per member 
    (shape `<II` and int64 values);
 3. the verifier draws `t0_g` columns per tree (`cols/setup/<g>`); the committer opens them with one multiproof
    (`pvi.commit.setup_proof.prove_setup`);
-4. `pvi.commit.setup_proof.verify_setup` checks the parameters (`pvi.commit.setup_proof.params_sound`), every message
-   (int64, shape `(s, m_j)`, in `[0, p)`), every opening (the indices equal the derived ones, int64, shape, in
-   `[0, p)`), per member `Enc(psi_j A*_j)[c] == psi_j E_j[:, c]`, and the multiproof of the recomputed group leaves.
+4. `pvi.commit.setup_proof.verify_setup` checks the parameters (`pvi.commit.setup_proof.params_sound`: lambda, the
+   grinding bits, `s`, the radii and `t0`; not the per-query `t`), every message (int64, shape `(s, m_j)`, in
+   `[0, p)`), every opening (the indices equal the derived ones, int64, shape, in `[0, p)`), per member
+   `Enc(psi_j A*_j)[c] == psi_j E_j[:, c]`, and the multiproof (a list of at most `t0 x depth` 32-byte hashes) of
+   the recomputed group leaves; a malformed message, opening or multiproof is a rejection.
 
-After an accepted setup proof, queries open the per-query `t` of `pvi.commit.setup_proof.setup_params` (computed with
-`k + e` in place of `k`), installed by `pvi.commit.setup_proof.after_setup`. Its size
-(`pvi.commit.setup_proof.SetupProof.nbytes`, `experiments.costs.setup_bytes`) counts 4 bytes per field element and
-32 per hash; the code defines no byte encoding of it.
+After an accepted setup proof, each tree opens per query the `t` of `pvi.commit.setup_proof.query_group_columns`:
+the largest over its members of the least `t` with `prod (m+e-1-i)/(n-i) <= 2**-query_bits` (the honest rule with
+`k + e` in place of `k`), computed from the certified radii `e` and the verifier's own per-op budget `query_bits`,
+and never fewer columns than without the setup proof (`pvi.commit.setup_proof.after_setup` installs it). The `t`
+that the setup parameters carry is the committer's account of the query cost: it is neither absorbed nor read.
+The setup proof's size (`pvi.commit.setup_proof.SetupProof.nbytes`, `experiments.costs.setup_bytes`) counts 4 bytes
+per field element and 32 per hash; the code defines no byte encoding of it.
 
 **Setup cache** (`pvi.commit.setup_cache`, opt-in: `commit_graph(cache=DIR)`). It stores the prover's leaf digests
 of every tree (`op:<name>`, `group:<g>`, `table:<t>`) in `<DIR>/<key>.npz`; the key
@@ -461,14 +470,14 @@ commitment; the verifier is unaffected, since it recomputes the leaves of every 
 | Quantity | Rule in the code | Function |
 |---|---|---|
 | field | `p = 15 * 2**27 + 1`, `log2 p ~ 30.907`; NTT lengths up to `2**27` | `pvi.core.field.P`, `pvi.core.field.LOG2_P`, `pvi.core.field.TWO_ADICITY` |
-| `n_checks` | the number of weight ops of the whole model (each member of a col matrix and each embedding counted), passed by the scripts (e.g. `len(decoder_shapes(cfg))`, 226 for Llama-2-7B) | `pvi.commit.cost.decoder_shapes`, `experiments/costs/bench.py:806-809` |
-| `beta` | `lambda + log2(2 max(1, n_checks))`, plus `grinding_bits` = 64 under Fiat--Shamir; V1 adds 2 to `n_checks` | `pvi.commit.plans.column_bits`, `pvi.v0.params.params_for` |
-| `r` | `max(1, ceil(beta / log2 p))` (Llama-2-7B at `lambda` = 128: 5 interactive, 7 Fiat--Shamir) | `pvi.v0.params.params_for` |
+| `n_checks` | the number of weight ops of the whole model (each member of a col matrix and each embedding counted), passed by the scripts (e.g. `len(decoder_shapes(cfg))`, 226 for Llama-2-7B) | `pvi.commit.cost.decoder_shapes`, `experiments/costs/bench.py` (the decoder cells' `params_for`) |
+| `beta` | `lambda + log2(2 max(1, n_checks))`, plus `grinding_bits` = 64 under Fiat-Shamir; V1 adds 2 to `n_checks` | `pvi.commit.plans.column_bits`, `pvi.v0.params.params_for` |
+| `r` | `max(1, ceil(beta / log2 p))` (Llama-2-7B at `lambda` = 128: 5 interactive, 7 Fiat-Shamir) | `pvi.v0.params.params_for` |
 | `t`, per-op commitment | `max(1, ceil(beta / log2 rate))` for every op | `pvi.v0.params.params_for` |
-| `t_g`, plan | the largest over the group's members of the least `t` with `prod_{i<t} (m-1-i)/(n-i) <= 2**-beta` (Llama-2-7B, `cnn18c`: 23 to 46 interactive, 34 to 67 Fiat--Shamir) | `pvi.commit.plans.CommitmentPlan.group_columns`, `pvi.commit.plans.exact_columns`, `pvi.commit.plans.column_error_log2` |
+| `t_g`, plan | the largest over the group's members of the least `t` with `prod_{i<t} (m-1-i)/(n-i) <= 2**-beta` (Llama-2-7B, `cnn18c`: 23 to 46 interactive, 34 to 67 Fiat-Shamir) | `pvi.commit.plans.CommitmentPlan.group_columns`, `pvi.commit.plans.exact_columns`, `pvi.commit.plans.column_error_log2` |
 | plan layouts and groups | chosen once at `lambda` = 128, interactive, on the whole model | `pvi.commit.plans.REFERENCE_LAMBDA`, `pvi.commit.plans.plan_commitment` |
-| reported bound | `-log2 sum_j (p**-r + column term)`, less the grinding bits under Fiat--Shamir | `pvi.v0.params.soundness_bits` |
+| reported bound | `-log2 sum_j (p**-r + column term)`, less the grinding bits under Fiat-Shamir | `pvi.v0.params.soundness_bits` |
 | claim range | `|z| < 2**29` | `pvi.v0.params.Z_BOUND`, `pvi.v0.params.claim_bound` |
-| setup proof | `beta0 = lambda + 64 + log2(2 J)` (`J` coded matrices); `s = ceil((beta0 + log2 max n) / log2 p)`; radius `e = floor(f (n - m) / 2)`, `f` in `2**0 .. 2**-10` minimising `t0 / amortise + t`; `t0` least with `prod (n-e-1-i)/(n-i) <= 2**-beta0`; per-query `t` least with `prod (m+e-1-i)/(n-i) <= 2**-query_bits` | `pvi.commit.setup_proof.setup_params`, `pvi.commit.setup_proof.survivors`, `pvi.commit.setup_proof.FRACTIONS`, `pvi.commit.setup_proof.params_sound` |
+| setup proof | `beta0 = lambda + 64 + log2(2 J)` (`J` coded matrices); `s = ceil((beta0 + log2 max n) / log2 p)`; radius `e = floor(f (n - m) / 2)`, `f` in `2**0 .. 2**-10` minimising `t0 / amortise + t`; `t0` least with `prod (n-e-1-i)/(n-i) <= 2**-beta0`; per-query `t` least with `prod (m+e-1-i)/(n-i) <= 2**-query_bits`, derived by the verifier | `pvi.commit.setup_proof.setup_params`, `pvi.commit.setup_proof.survivors`, `pvi.commit.setup_proof.FRACTIONS`, `pvi.commit.setup_proof.params_sound`, `pvi.commit.setup_proof.query_group_columns`, `pvi.commit.setup_proof.after_setup` |
 | V1 | `F_{p^8}`, `alpha` outside `F_p + x F_p`; instances of at most `2**27` leaves | `pvi.core.extfield`, `pvi.v1.cut.LMAX`, `pvi.v0.params.SecurityParams` |
 | transcript | SHAKE-256, 32-byte keys and leaves; SHA-256 Merkle trees with 32-byte roots | `pvi.v0.transcript.Challenger`, `pvi.commit.commitment.HASH_BYTES` |

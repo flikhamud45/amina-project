@@ -26,7 +26,9 @@ inference lets the client check each answer. This code
 
 ## Installation
 
-Python 3.10 or later (the results: 3.12), PyTorch 2.5.1. On a CUDA machine install the matching build first:
+Python 3.11 or 3.12 (the results: 3.12), PyTorch 2.5.1: the pinned requirements need it (NumPy 2.5.2 needs Python
+3.11 or later, and PyTorch 2.5.1 ships wheels up to 3.12); the library alone, installed with `pip install -e code`
+and the ranges of `pyproject.toml`, also runs on 3.10. On a CUDA machine install the matching build first:
 
 ```bash
 python3.12 -m venv .venv
@@ -45,12 +47,13 @@ the Llama-2 checkpoints need your own licence and login.
 
 ```bash
 cd code
-PYTHONPATH=src:. python -m pytest -q                      # CPU; GPU tests skip without a GPU
-PVI_TEST_DEVICE=cuda PYTHONPATH=src:. python -m pytest -q # on a GPU machine: the GPU kernels and verifier too
+PYTHONPATH=src:. ../.venv/bin/python -m pytest -q                       # CPU; GPU tests skip without a GPU
+PVI_TEST_DEVICE=cuda PYTHONPATH=src:. ../.venv/bin/python -m pytest -q  # on a GPU machine: the GPU kernels too
 ```
 
 The full suite takes about 80 minutes with 8 CPU threads and a GPU.
-`python tools/gen_gkr_triton.py --check` confirms that the Triton GKR prover is its generator's output.
+`../.venv/bin/python tools/gen_gkr_triton.py --check` (from `code/`) confirms that the Triton GKR prover is its
+generator's output.
 
 ## Reproducing the paper
 
@@ -68,5 +71,5 @@ options in force.
 
 ## Licence
 
-MIT (see `pyproject.toml`). The stored model weights are trained by `experiments/attack/train_mnist.py`; real
+MIT (see [`LICENSE`](LICENSE)). The stored model weights are trained by `experiments/attack/train_mnist.py`; real
 checkpoints are not redistributed.

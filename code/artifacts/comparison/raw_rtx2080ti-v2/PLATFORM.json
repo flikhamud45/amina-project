@@ -8,6 +8,6 @@
  "gpu_total_memory": 11347623936,
  "driver": "575.64.03",
  "created": 1790575743.2691758,
- "note": "An RTX 2080 Ti partition of a SLURM cluster; the records of the report's numbers: 29 jobs of strong_gpu.sh must at commit 9401431; ab-opt13 was not run. Frozen: no new records.",
+ "note": "An RTX 2080 Ti partition of a SLURM cluster; 29 jobs of the benchmark's tier must at commit 9401431; ab-opt13 was not run. Frozen: no new records.",
  "frozen": true
 }

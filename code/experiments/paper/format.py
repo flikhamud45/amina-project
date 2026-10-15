@@ -53,12 +53,14 @@ def sig(v, digits: int = 3) -> str:
 
 
 def t(sec) -> str:
-    """Seconds as the paper's tables print them: 76.1\\,ms, 712\\,ms, 1.8\\,s, 27.4\\,s, 2.9\\,min."""
+    """Seconds as the paper's tables print them: 76.1\\,ms, 712\\,ms, 1.8\\,s, 27.4\\,s, 2.9\\,min.  The unit is chosen
+    after rounding to the printed precision, so that a value just below a unit's boundary takes the larger unit
+    (0.9996 s prints as 1.0\\,s, not 1000\\,ms)."""
     if _missing(sec):
         return DASH
-    if sec < 1:
+    if sec < 1 and round(sec * 1e3) < 1000:
         return f"{sec * 1e3:.0f}\\,ms" if sec >= 0.0995 else f"{sec * 1e3:.1f}\\,ms"
-    if sec < 100:
+    if round(sec, 1) < 100:
         return f"{sec:.1f}\\,s"
     return f"{sec / 60:.1f}\\,min"
 
@@ -69,14 +71,19 @@ def secs(sec, digits: int = 3) -> str:
 
 
 def b(n) -> str:
-    """Bytes as the paper's tables print them: 63.3\\,kB, 14.8\\,MB, 325\\,MB, 6.6\\,GB."""
+    """Bytes as the paper's tables print them: 63.3\\,kB, 14.8\\,MB, 325\\,MB, 6.6\\,GB.  The unit is chosen after
+    rounding to the printed precision (999.7\\,MB prints as 1.0\\,GB)."""
     if _missing(n):
         return DASH
-    for unit, k in (("GB", 1e9), ("MB", 1e6), ("kB", 1e3)):
-        if n >= k:
-            v = n / k
-            return (f"{v:.1f}" if v < 100 else f"{v:.0f}") + f"\\,{unit}"
-    return f"{n:.0f}\\,B"
+    units = (("B", 1.0), ("kB", 1e3), ("MB", 1e6), ("GB", 1e9))
+    i = max(j for j, (_, k) in enumerate(units) if n >= k or j == 0)
+    if i < len(units) - 1 and round(n / units[i][1]) >= 1000:      # 999.7 MB: the next unit
+        i += 1
+    unit, k = units[i]
+    v = n / k
+    if unit == "B":
+        return f"{v:.0f}\\,B"
+    return (f"{v:.1f}" if round(v, 1) < 100 else f"{v:.0f}") + f"\\,{unit}"
 
 
 def mb(n, decimals: int = 1) -> str:

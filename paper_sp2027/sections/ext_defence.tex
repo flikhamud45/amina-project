@@ -88,14 +88,14 @@ Theorem~\ref{thm:untrusted} has $k_j+e_j$ in place of $k_j$. Each tree takes the
 fractions $2^0,\dots,2^{-10}$ of the unique-decoding radius, that minimises $t^0_j/a+t_j$ over $a$
 amortised queries (Table~\ref{tab:setup}; the parameters are derived in
 Appendix~\ref{app:untrusted}). At $a=1{,}000$, Llama-2-7B pays \SetupGBLlamaB{}\,GB once and \SetupQueryGrowthLlamaB{}\% more column
-bytes per query; at 2{,}048 tokens the change per query is below \SetupQueryShareLlamaB{}\% of the proof. Our
+bytes per interactive query; at 2{,}048 tokens the change per interactive query is below \SetupQueryShareLlamaB{}\% of the proof. Our
 implementation covers commitment plans, including shared trees and transposed matrices. With radii
 for $a=100$, the setup proof of Llama-2-7B takes \SetupProverLlama{} to prove on the \PlatformGpu{} and
 \SetupVerifierLlama{} to verify on 8 threads of the \PlatformCpu{}, and GPT-2's \SetupProverGpt{} and \SetupVerifierGpt{}.
 
 \begin{table}[t]
   \caption{Untrusted commitments at $\lambda=128$: the one-time setup proof and the opened columns
-  per query, with setup parameters amortised over $a=100$ or $1{,}000$ queries (the byte model;
+  per interactive query, with setup parameters amortised over $a=100$ or $1{,}000$ queries (the byte model;
   interactive queries, 4 bytes per field element; the plan of mode $\sC$, codewords of at least
   $2^{\PlanLogPoints{}}$ points)}
   \label{tab:setup}

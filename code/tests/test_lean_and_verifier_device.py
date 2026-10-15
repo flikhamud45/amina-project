@@ -4,7 +4,8 @@ on tiny decoders; the parameter counts of the larger decoder configs."""
 import pytest
 import torch
 
-from pvi.models.decoder import DecoderConfig, build_decoder
+import shapes
+from pvi.models.decoder import build_decoder
 from pvi.v0.graph_commitment import commit_graph
 from pvi.v0.params import params_for
 from pvi.v0.prover import Prover
@@ -12,13 +13,7 @@ from pvi.v0.query import run_query
 from pvi.v0.transcript import Challenger
 from pvi.v0.verifier import Verifier
 
-_TINY = {
-    "gpt": DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64),
-    "llama": DecoderConfig("tiny-llama", 64, 2, 4, 4, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
-                           pos="rope", bias=False, tied=False),
-    "qwen": DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
-                          pos="rope", rope_theta=1e6, bias=False, qk_norm=True),
-}
+_TINY = {"gpt": shapes.GPT, "llama": shapes.LLAMA, "qwen": shapes.QWEN}
 DEVICES = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
 
 

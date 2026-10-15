@@ -27,6 +27,7 @@ import torch
 
 import pvi.v0 as proto
 import reference as ref
+import shapes
 from pvi.commit import cost
 from pvi.commit.commitment import (GroupCommitment, MerkleTree, WeightCommitment, column_leaf, column_leaves,
                                    group_leaf, multiproof_size, verify_multiproof)
@@ -34,7 +35,7 @@ from pvi.commit.plans import (MAX_N, REFERENCE_LAMBDA, col_name, column_bits, co
                               next_pow2, plan_commitment)
 from pvi.core import field as fld
 from pvi.models.cnn import build_float_model
-from pvi.models.decoder import CONFIGS, DecoderConfig, build_decoder
+from pvi.models.decoder import CONFIGS, build_decoder
 from pvi.models.quantize import quantize_input, quantize_model
 from pvi.v0 import claimcodec as cc
 from pvi.v0 import query as v0_query
@@ -282,14 +283,7 @@ def test_every_plan_meets_lambda_for_every_model_and_mode(policy, all_models):
 
 # -- the protocol with a plan ---------------------------------------------------------------------------
 
-_TINY = {
-    "gpt": DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64),
-    "llama": DecoderConfig("tiny-llama", 64, 2, 4, 4, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
-                           pos="rope", bias=False, tied=False),
-    "opt": DecoderConfig("tiny-opt", 64, 2, 4, 4, 16, 128, 97, mlp="relu", max_pos=64, embed_dim=32),
-    "qwen": DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu",       # GQA, q/k norm
-                          pos="rope", rope_theta=1e6, bias=False, qk_norm=True),
-}
+_TINY = {"gpt": shapes.GPT, "llama": shapes.LLAMA, "opt": shapes.OPT_PROJ, "qwen": shapes.QWEN}
 
 
 def _model(kind):

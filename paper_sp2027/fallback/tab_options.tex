@@ -1,9 +1,9 @@
 % fallback: the body rows of the paper before the final run (code/experiments/paper/numbers.py writes generated/tab_options.tex)
-    Re-exec., CPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 4.1\,s & 93\,s & exact \\
-    Re-exec., GPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 0.15\,s & 1.65\,s & exact \\
+    Re-exec., CPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 4.08\,s & 142\,s & exact \\
+    Re-exec., GPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 0.145\,s & 1.65\,s & exact \\
     GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\
     CommitLLM$^e$ & key & \multicolumn{2}{c}{144\,kB per token} & \multicolumn{2}{c}{0.66\,ms per token} & sampled$^b$ \\
     zkLLM~\cite{zkllm} & comm. & -- & 183\,kB & -- & 2.36\,s & full, ZK \\
-    Ours, $\sC$ & roots & 325\,MB & 6.6\,GB & 1.0\,s & -- & full \\
-    Ours, $\Kpre$ & key & 196\,MB & 6.4\,GB & 1.0\,s & 18.5\,s & full$^c$ \\
+    Ours, $\sC$ & roots & \multicolumn{4}{c}{\todo{cpuv tier}} & full \\
+    Ours, $\Kpre$ & key & 196\,MB & 6.4\,GB & 1.4\,s & 19.6\,s & full$^c$ \\
     \quad with V1$^d$ & key & -- & 2.8\,GB & -- & 45.4\,s & full \\

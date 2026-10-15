@@ -29,7 +29,7 @@ from pvi.v1 import protocol as cp  # noqa: E402
 
 _SMOOTH = dict(norm_gain=4, smooth=0.55, **checkpoints.SMOOTH)
 """The legacy recipe with SmoothQuant alpha 0.55 (``--recipe legacy --smooth 0.55``)."""
-_TINY_CFG = DecoderConfig("tiny-opt", 32, 2, 4, 4, 8, 64, 97, mlp="relu", max_pos=64)
+_TINY_CFG = DecoderConfig("tiny-opt-32", 32, 2, 4, 4, 8, 64, 97, mlp="relu", max_pos=64)
 """The ``build_decoder`` shapes of the tiny OPT below."""
 
 

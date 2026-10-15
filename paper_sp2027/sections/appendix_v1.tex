@@ -277,7 +277,7 @@ nonzero in a window of width 1. Either way Step~3 applies. (ii)~\emph{Residual o
 $\Delta$ is unclamped, so its windows are those of $\Vshift_\ell$; the verifier applies the clamp
 of the sum itself in (D2). (iii)~\emph{Input bounds.} The proof does not use the input range check
 of (D1), because Step~1 works with the honest input of $\ell^\ast$; the check is defence in depth.
-(iv)~\emph{The claim bound (P4).} In $\Kpre$ the verifier evaluates (P4) from its own weights. In
+(iv)~\emph{The claim bound (P4).} In $\Kpre$ the verifier evaluates (P4) from the weights when it derives its key. In
 mode $\sC$ it holds no weights, and (P4) is a property of the committed model, checked when the
 honest commitment is computed, as is v0's claim range. With an untrusted commitment
 (Section~\ref{sec:setup-proof}) the bound must be published with the model. (v)~\emph{Completeness.}

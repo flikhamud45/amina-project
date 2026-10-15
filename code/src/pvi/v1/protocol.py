@@ -242,7 +242,7 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
     produced and encoded exactly as in :func:`run_cut_query`; the GKR transcripts, the fold message and the opened
     columns have sizes fixed by the cut plan and the parameters; the multiproofs are sized
     (``pvi.commit.commitment.multiproof_size``) at columns drawn as a query draws them.
-    ``tests/test_cut_protocol.py`` checks every size except that of the paths against a real query."""
+    ``tests/test_v1_protocol.py`` checks every size except that of the paths against a real query."""
     p = verifier.params
     T = x.shape[1]
     plan = cut_plan(verifier.graph, verifier.claim_columns(x), T, verifier.publics if verifier.groups else None,

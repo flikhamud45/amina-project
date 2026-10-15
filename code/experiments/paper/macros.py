@@ -11,10 +11,12 @@ The families, with the record each number comes from:
 * the platform (the records' ``env``: the GPU that proves and verifies, the CPU of the CPU verifier) and mode C's
   plan (``--policy``), which the captions and the sentences on how a number was measured state;
 * the CPU client (``cpuv`` tier): ``CpuRatioN`` is the abstract's "at least N times": exact re-execution (the
-  integer forward pass, bit-exact with the claims, the faster of its two GEMM paths, :data:`tables.EXACT`, computing
+  integer forward pass, bit-exact with the claims, the fastest of its exact variants, :data:`tables.EXACT`, computing
   only what the pruned graph computes) over the Kpre CPU verifier on the same 8 threads, for the full Llama-2-7B at
-  2,048 tokens, one value (rounded down to one decimal); ``CpuRatio`` the same ratio rounded, ``CpuRatioShort`` at 64
-  tokens; ``CpuInexact*`` the fastest inexact engine (:data:`tables.INEXACT`) against the same verifier;
+  2,048 tokens, one value (rounded down to one decimal); ``CpuRatio`` the same ratio (also rounded down, so that the
+  abstract and the body print one number), ``CpuRatioShort`` at 64 tokens; ``CpuInexact*`` the fastest inexact engine
+  (:data:`tables.INEXACT`) against the same verifier; ``KpreKeyMB``, ``KpreEmbedMB`` and ``KpreStoreGB`` what a Kpre
+  client of Llama-2-7B stores, from the shapes (:func:`kpre_storage`);
 * the outcome counts (``bench`` and ``batch`` tiers, ``comparison/count_outcomes.py`` over ``raw_<platform>/``);
 * the cost of the defence, batches against one opening, V1, serving, the comparison with published systems,
   re-execution, real weights, long prompts, the improvements, generation (their tiers' records, through the table
@@ -25,6 +27,10 @@ The families, with the record each number comes from:
 * values that follow from the code alone, under the run's plan: the security parameters, the setup proof's size,
   breakdown and radii (``costs/setup_bytes.py``), the split commitment's columns per query, and V1's cut of a model
   from its shapes (:func:`experiments.paper.tables.v1_shape_model`).
+
+A number that the text states as a bound ("at most", "up to", "within", "less than") is rounded up (:func:`ceil_pct`,
+:func:`ceil_fixed`, :func:`ceil_sig`, :func:`ceil_about`, :func:`ceil_sci`), one stated as "at least" is rounded down
+(:func:`floor_sig`), so that the printed bound holds for the measured value.
 """
 from __future__ import annotations
 
@@ -92,6 +98,36 @@ def ceil_sig(v: float, digits: int = 2) -> str:
     return f.sig(math.ceil(v * 10 ** decimals - 1e-9) / 10 ** decimals, digits + 1)
 
 
+def floor_sig(v: float, digits: int = 3) -> str:
+    """``v`` rounded down to ``digits`` significant digits, for "at least N": 55.97 -> ``55.9``."""
+    if v <= 0:
+        return f.sig(v, digits)
+    unit = 10.0 ** (math.floor(math.log10(v)) - digits + 1)
+    return f.sig(math.floor(v / unit + 1e-9) * unit, digits)
+
+
+def ceil_about(v: float, digits: int = 2) -> str:
+    """``v`` rounded up to ``digits`` significant figures, for "up to N": 55,899 -> ``56{,}000``."""
+    if v <= 0:
+        return f.about(v, digits)
+    exp = math.floor(math.log10(v)) - digits + 1
+    q = math.ceil(v / 10.0 ** exp - 1e-9) * 10.0 ** exp
+    return f.num(q, max(0, -exp))
+
+
+def ceil_sci(v: float, digits: int = 2) -> str:
+    """Scientific notation with the mantissa rounded up to ``digits`` significant digits, for a bound ("at most",
+    "up to"): 7.9346e-4 -> ``$8.0\\cdot10^{-4}$``."""
+    if v <= 0:
+        return f.sci(v, digits)
+    exp = math.floor(math.log10(v))
+    k = 10 ** (digits - 1)
+    mant = math.ceil(v / 10.0 ** exp * k - 1e-9) / k
+    if mant >= 10:
+        mant, exp = mant / 10, exp + 1
+    return f"${mant:.{digits - 1}f}\\cdot10^{{{exp}}}$"
+
+
 def _range(c: Collector, name: str, vals, src, fmt) -> None:
     """A ``lo--hi`` macro over ``vals`` (None if any is missing)."""
     ok = None if not vals or any(v is None for v in vals) else (min(vals), max(vals))
@@ -139,7 +175,7 @@ def cpu_client(c: Collector, ctx: T.Ctx) -> None:
     rx = {s: T.fastest(run, "cpuv", m, s) for s in (64, 2048)}
     ratio = {s: rx[s][0] / k[s].d["verify_s"] if k[s] and rx[s][0] else None for s in (64, 2048)}
     c.put("CpuRatioN", ratio[2048], k[2048], _floor1)
-    c.put("CpuRatio", ratio[2048], k[2048], lambda v: f"{v:.1f}")
+    c.put("CpuRatio", ratio[2048], k[2048], _floor1)        # the same ratio, printed as the abstract prints it
     c.put("CpuRatioShort", ratio[64], k[64], lambda v: f"{v:.1f}")
     c.put("CpuReexecName", rx[2048][1], rx[2048][2], lambda v: T.REEXEC_NAME[v])
     tm = (k[2048].d.get("timings") or {}) if k[2048] else {}
@@ -149,7 +185,7 @@ def cpu_client(c: Collector, ctx: T.Ctx) -> None:
     c.put("CpuReexecShort", rx[64][0], rx[64][2], f.sig)
     inexact = T.fastest(run, "cpuv", m, 2048, T.INEXACT)
     c.put("CpuInexactName", inexact[1], inexact[2], lambda v: T.REEXEC_NAME[v])
-    c.put("CpuInexactLong", inexact[0], inexact[2], f.sig)
+    c.put("CpuInexactLong", inexact[0], inexact[2], floor_sig)             # "takes at least N s"
     c.put("CpuRatioInexact", inexact[0] / k[2048].d["verify_s"] if k[2048] and inexact[0] else None, k[2048],
           lambda v: f"{v:.1f}")
     for s, name in ((64, "Short"), (2048, "Long")):
@@ -170,6 +206,35 @@ def cpu_client(c: Collector, ctx: T.Ctx) -> None:
     fl = run.reexec("gpuv", "opt-1.3b", 2048, "cuda", ("float",)).get("float")
     c.put("OptMGpuFloat", fl and fl[0], fl and fl[1], lambda v: f.sig(v, 2))
     c.todo("TodoGpuOneGpu")
+
+
+FIELD_BYTES = 4
+"""The bytes of one element of the base field (``p = 15 * 2^27 + 1 < 2^31``)."""
+
+
+def kpre_storage(model: str = "llama2-7b", lam: int = 128) -> dict:
+    """What a Kpre client of ``model`` stores, from the shapes alone (last block pruned): its key, the secret
+    vectors ``chi`` (``r x N`` per weight operation) and their folded rows ``u = chi A`` (``r x k``, one more column
+    with a bias), ``r`` the Freivalds repetitions of the paper's configuration (lambda 128, Fiat--Shamir), as
+    :meth:`pvi.v0.verifier.Verifier.precompute` keeps them (one field element in :data:`FIELD_BYTES`); and the int8
+    embedding table whose rows it looks up itself.  In bytes, with ``r``."""
+    from pvi.commit.cost import decoder_shapes
+    from pvi.models.decoder import CONFIGS
+    from pvi.v0.params import params_for
+    ops = decoder_shapes(CONFIGS[model], prune_last=True)
+    reps = params_for(lam, len(ops), rate=4, fiat_shamir=True).reps
+    key = sum(o.n_rows + o.row_length + int(o.has_bias) for o in ops if o.layout != "embed") * reps * FIELD_BYTES
+    embed = sum(o.n_rows * o.row_length for o in ops if o.layout == "embed")
+    return {"key": key, "embed": embed, "reps": reps}
+
+
+def kpre_client(c: Collector, ctx: T.Ctx) -> None:
+    """The Kpre client's storage for Llama-2-7B (:func:`kpre_storage`; no run needed)."""
+    s = kpre_storage()
+    src = f"kpre_storage(llama2-7b): r = {s['reps']} (lambda 128, Fiat--Shamir)"
+    c.put("KpreKeyMB", s["key"], src, lambda v: f"{v / 1e6:.0f}")
+    c.put("KpreEmbedMB", s["embed"], src, lambda v: f"{v / 1e6:.0f}")
+    c.put("KpreStoreGB", s["key"] + s["embed"], src, lambda v: f"{v / 1e9:.1f}")
 
 
 # ================================================================================================ outcome counts
@@ -321,13 +386,14 @@ def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
     cell = lambda m, s, mode: T.v1_cell(run, m, s, mode)     # noqa: E731
     ratio = lambda r: r and r.d["v0_total"] / r.d["v1_total"]   # noqa: E731
     long_ = [cell(m, 2048, mode) for _, m in T.V1_ROWS if _ == 2048 for mode in ("C", "Kpre")]
-    multi = [r for r in long_ if r and r.d.get("layers", 0) > 1]
-    rs = [ratio(r) for r in multi] or [None]
-    _range(c, "VOneRatioRandom", rs, "v1 tier, 2,048 tokens, builds of more than one block", lambda v: f"{v:.1f}")
-    _range(c, "VOneRatioRandomExact", rs, "v1 tier, 2,048 tokens, builds of more than one block", lambda v: f"{v:.2f}")
-    vals = [r.d["v0_bytes"]["claims"] / r.d["v1_bytes"]["claims"] for r in multi
+    full = [r for r in long_ if r and r.d.get("layers") == T.FULL_LAYERS[r.d["model"]]]      # full models only
+    rs = [ratio(r) for r in full] or [None]
+    _range(c, "VOneRatioRandom", rs, "v1 tier, 2,048 tokens, full models", lambda v: f"{v:.1f}")
+    _range(c, "VOneRatioRandomExact", rs, "v1 tier, 2,048 tokens, full models", lambda v: f"{v:.2f}")
+    vals = [r.d["v0_bytes"]["claims"] / r.d["v1_bytes"]["claims"] for r in full
             if r.d.get("v0_bytes", {}).get("claims") and r.d.get("v1_bytes", {}).get("claims")] or [None]
-    _range(c, "VOneValuesRatio", vals, "v1 tier, claims against V1's values", lambda v: f"{v:.1f}")
+    _range(c, "VOneValuesRatio", vals, "v1 tier, 2,048 tokens, full models: claims against V1's values",
+           lambda v: f"{v:.1f}")
     real = run.v1("real", "opt-6.7b", 2048, "Kpre", vdev="cpu", label="real", real="facebook/opt-6.7b")
     c.put("VOneRatioRealOptL", ratio(real), real, lambda v: f"{v:.1f}")
     c.put("VOneRatioRealOptLExact", ratio(real), real, lambda v: f"{v:.2f}")
@@ -450,11 +516,11 @@ def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
     lmax = counts_["lmax"] if counts_ else LMAX
     big = T.v1_shape_model("llama2-13b", 2048, lmax, ctx.policy)
     src = f"v1_shape_model(llama2-13b, 2,048 tokens, lmax {lmax}, plan {ctx.policy})"
-    c.put("VOneLargeLeaves", big["n_leaves"], src, lambda v: f.sci(v).strip("$"))
+    c.put("VOneLargeLeaves", big["n_leaves"], src, lambda v: ceil_sci(v).strip("$"))           # "up to N leaves"
     c.put("VOneLargeInstances", big["n_instances"], src)
     c.put("VOneLargeBits", big["max_bits"], src)
     c.put("VOneLargeGkrLog", big["gkr_log2"], src, lambda v: f"{v:.1f}")
-    c.put("VOneLargeLookupLog", big["lookup_log2"], src, lambda v: f"{v:.1f}")
+    c.put("VOneLargeLookupLog", big["lookup_log2"], src, lambda v: ceil_fixed(v, 1))      # "at most 2^x"
     for m, name in (("opt-125m", "OptS"), ("opt-1.3b", "OptM")):
         r = cell(m, 2048, "C")
         c.put(f"CompareVOne{name}", r and r.d["v0_total"], r, lambda v: f.mb(v))
@@ -497,7 +563,7 @@ def comparison(c: Collector, ctx: T.Ctx) -> None:
           lambda v: f"{v:.0f}")
     c.put("CompareProverMax", max(known) if known and None not in prover else None, ctx.bench.name, f.about)
     known = [v for v in proof if v is not None]
-    c.put("CompareProofMax", max(known) if known and None not in proof else None, ctx.bench.name, f.about)
+    c.put("CompareProofMax", max(known) if known and None not in proof else None, ctx.bench.name, ceil_about)
     c.put("CompareVerifierSlowerRows", None if None in slower else sum(slower), ctx.bench.name, rows_text)
     c.todo("TodoCompareRange")
     z = (ctx.lit.get(("zkLLM", "OPT-1.3B", "2048")) or {}).get("proof_bytes")
@@ -573,8 +639,8 @@ def real_weights(c: Collector, ctx: T.Ctx) -> None:
             verify.append(abs(v_r / v_n - 1) if v_r and v_n else None)
             smaller.append(1 - real.d["v0_total"] / rnd.d["v0_total"] if real and rnd else None)
     src = "real tier, OPT-1.3B (label real against real-random)"
-    c.put("RealProveWithin", None if None in prove else max(prove), src, f.pct)
-    c.put("RealVerifyWithin", None if None in verify else max(verify), src, f.pct)
+    c.put("RealProveWithin", None if None in prove else max(prove), src, ceil_pct)
+    c.put("RealVerifyWithin", None if None in verify else max(verify), src, ceil_pct)
     _range(c, "RealProofSmaller", smaller, src, f.pct)
     real, rnd = T.real_pair(run, "opt-1.3b", 2048, "Kpre", "facebook/opt-1.3b")
     c.put("RealOptMKLongReal", real and real.d["v0_total"], real, lambda v: f"{v / 1e9:.2f}")
@@ -633,12 +699,22 @@ def real_weights(c: Collector, ctx: T.Ctx) -> None:
     c.put("RndOptLVOneRatio", v1r and v1r.d["v0_total"] / v1r.d["v1_total"], v1r, lambda v: f"{v:.2f}")
     within = [abs(a / b - 1) for a, b in ((r and r.d["prove_s"], n and n.d["prove_s"]),
                                            (r and r.d["verify_s"], n and n.d["verify_s"])) if a and b]
-    c.put("RealOptLTimeWithin", max(within) if len(within) == 2 else None, "real tier, OPT-6.7B", f.pct)
+    c.put("RealOptLTimeWithin", max(within) if len(within) == 2 else None, "real tier, OPT-6.7B", ceil_pct)
     c.put("RealOptLVZeroSmaller", r and n and 1 - r.d["proof_bytes"] / n.d["proof_bytes"], "real tier, OPT-6.7B",
           f.pct)
     v1real = run.v1("real", "opt-6.7b", 2048, "Kpre", vdev="cpu", label="real", real="facebook/opt-6.7b")
     c.put("RealOptLVOneLarger", v1real and v1r and v1real.d["v1_total"] / v1r.d["v1_total"] - 1,
           "real tier, OPT-6.7B", f.pct)
+    # the full real-weight models whose every honest Kpre query at 2,048 tokens the real tier accepted
+    names = [T.NAME[m] for m, rec in (("opt-6.7b", r), ("llama2-7b", lr))
+             if rec and rec.d.get("queries") and rec.d.get("accepted") == rec.d["queries"]]
+    c.put("RealAcceptedClause", names, "real tier, Kpre, 2,048 tokens (labels real)", accepted_clause)
+
+
+def accepted_clause(names: list) -> str:
+    """The text's clause on the full real-weight models accepted: ``the full real OPT-6.7B is accepted``, ``the full
+    real OPT-6.7B and Llama-2-7B are accepted``."""
+    return f"the full real {' and '.join(names)} " + ("is" if len(names) == 1 else "are") + " accepted"
 
 
 # ================================================================================================ long prompts
@@ -720,12 +796,12 @@ def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
 
 # ================================================================================================ quality
 OPTS = (("facebook/opt-125m", "OptS", 4), ("facebook/opt-1.3b", "OptM", 3), ("facebook/opt-6.7b", "OptL", 2))
-LLAMAS = (("openlm-research/open_llama_7b_v2", "LlamaOpen", "main-a0.55-glus0.2", 3),
-          ("TinyLlama/TinyLlama_v1.1", "TinyLlama", "main-a0.75-glus0.2", 2),
-          ("Qwen/Qwen3-1.7B-Base", "QwenM", "main-a0.45-glus0.3", 2),
-          ("Qwen/Qwen3-4B-Base", "QwenL", "main-a0.45-glus0.5", 1))
-"""The Llama-family checkpoints of the text, their ``ppl_llama.py`` main cell (``ppl_llama.MAIN_SETTINGS``) and the
-decimals the text prints."""
+LLAMAS = (("openlm-research/open_llama_7b_v2", "LlamaOpen", "main-a0.55-glus0.2", 3, True),
+          ("TinyLlama/TinyLlama_v1.1", "TinyLlama", "main-a0.75-glus0.2", 2, True),
+          ("Qwen/Qwen3-1.7B-Base", "QwenM", "main-a0.45-glus0.3", 2, True),
+          ("Qwen/Qwen3-4B-Base", "QwenL", "main-a0.45-glus0.5", 1, False))
+"""The Llama-family checkpoints of the text, their ``ppl_llama.py`` main cell (``ppl_llama.MAIN_SETTINGS``), the
+decimals the text prints and whether the text states the ratio as a bound ("within"; rounded up)."""
 ALPHAS_TEST = (0.3, 0.4, 0.5, 0.6, 0.7)
 ALPHAS_VALIDATION = (0.5, 0.6, 0.7)
 """The smoothing alphas of the quality tier's alpha studies on the test split (``q-opt13-recipes``,
@@ -743,7 +819,7 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
         sc = run.ppl(model, T.scalar_cell(gain))
         ce = run.ppl(model, T.CERTIFIED_CELL)
         c.put(f"QualityRef{name}", ref and ref.d["ppl"], ref, lambda v: f"{v:.2f}")
-        c.put(f"QualityRatio{name}", ce and ce.d["ratio"], ce, lambda v: f"{v:.3f}")
+        c.put(f"QualityRatio{name}", ce and ce.d["ratio"], ce, lambda v: ceil_fixed(v, 3))    # "within factors of"
         c.put(f"QualityScalar{name}", sc and sc.d["ratio"], sc, lambda v: f"{v:.2f}")
         c.put(f"QualityScalarExcess{name}", sc and sc.d["ratio"] - 1, sc, f.pct)
         ci = ce and ce.d.get("ratio_ci95")
@@ -765,7 +841,7 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
     c.put("QualityLegacyHi", max(lr) if len(lr) == 3 else None, legacy[0], lambda v: f"{v:.2f}")
     draws = [run.ppl("facebook/opt-1.3b", T.CERTIFIED_CELL, draw=d) for d in (0, 1)]
     dr = [r.d["ratio"] for r in draws if r]
-    c.put("QualityDrawSpread", max(dr) - min(dr) if len(dr) == 2 else None, draws[1], lambda v: f"{v:.3f}")
+    c.put("QualityDrawSpread", max(dr) - min(dr) if len(dr) == 2 else None, draws[1], lambda v: ceil_fixed(v, 3))
     old = run.ppl("facebook/opt-125m", "smooth-legacy-a0.55-p11")
     c.put("QualityLegacyOptS", old and old.d["ratio"], old, lambda v: f"{v:.1f}")
     # the certified recipe's alpha against its neighbours: on the test split (where it was chosen) and on the
@@ -800,9 +876,10 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
     base = run.ppl("facebook/opt-125m", "smooth-legacy-a0.55-p8", calibration="test-end", seq=128)
     c.put("CleWith", cle and cle.d["ppl"], cle, lambda v: f"{v:.1f}")
     c.put("CleWithout", base and base.d["ppl"], base, lambda v: f"{v:.1f}")
-    for model, name, cell, dec in LLAMAS:
+    for model, name, cell, dec, bound in LLAMAS:
         r = run.ppl(model, cell)
-        c.put(f"{name}Ratio", r and r.d["ratio"], r, lambda v, dec=dec: f"{v:.{dec}f}")
+        c.put(f"{name}Ratio", r and r.d["ratio"], r,
+              (lambda v, dec=dec: ceil_fixed(v, dec)) if bound else (lambda v, dec=dec: f"{v:.{dec}f}"))
     for model, name, cell in (("Qwen/Qwen3-1.7B-Base", "QwenMExpRatio", "main-a0.45-glus0.4-exp8"),
                               ("Qwen/Qwen3-4B-Base", "QwenLExpRatio", "main-a0.45-glus0.5-exp8")):
         r = run.ppl(model, cell)
@@ -920,7 +997,8 @@ def attack(c: Collector, ctx: T.Ctx) -> None:
     for li, name in (("1", "One"), ("2", "Two")):
         caps = (layers.get(li) or {}).get("caps") or {}
         mix = [(v.get("mixture") or {}).get("detection_per_path") for k, v in caps.items() if k != "inf"]
-        c.put(f"MixtureLayer{name}", max(mix) if mix and None not in mix else None, ag, lambda v: f"{100 * v:.1f}")
+        c.put(f"MixtureLayer{name}", max(mix) if mix and None not in mix else None, ag,
+              lambda v: ceil_fixed(100 * v, 1))                                            # "detects at most"
         g1 = (((caps.get("inf") or {}).get("G1e") or {}).get("greedy") or {}).get("top_q_hit_rate") or {}
         c.put(f"Locator{name}", g1.get("1"), ag, f.pct)
     cfg = (ag.d.get("config") or {}) if ag else {}
@@ -984,9 +1062,9 @@ def inrange(c: Collector, ctx: T.Ctx) -> None:
     ks = [k for x in cells if x for k in x["k_all"]]
     c.put("InrangeKMedian", statistics.median(ks) if ok and ks else None, any_, lambda v: f"{v:g}")
     c.put("InrangeKMax", max(ks) if ok and ks else None, any_)
-    c.put("InrangePMedianMax", max(x["p_uniform"] for x in cells) if ok else None, any_, f.sci)
+    c.put("InrangePMedianMax", max(x["p_uniform"] for x in cells) if ok else None, any_, ceil_sci)   # "at most"
     ps = [p for x in cells if x for p in x["p_uniform_all"]]
-    c.put("InrangePMax", max(ps) if ok and ps else None, any_, f.sci)
+    c.put("InrangePMax", max(ps) if ok and ps else None, any_, ceil_sci)
     dc = [T.inrange_cell(down, layer, "max") for layer in layers]
     c.put("InrangeDown", [x["changed"] for x in dc] if all(dc) else None, down,
           lambda v: ", ".join(map(str, v[:-1])) + f" and {v[-1]}")
@@ -1002,7 +1080,7 @@ def inrange(c: Collector, ctx: T.Ctx) -> None:
     ok67 = all(c67)
     c.put("InrangeOptLChanged", (min(x["changed"] for x in c67), max(x["prompts"] for x in c67)) if ok67 else None,
           a67, all_of)
-    c.put("InrangeOptLPMedianMax", max(x["p_uniform"] for x in c67) if ok67 else None, a67, f.sci)
+    c.put("InrangeOptLPMedianMax", max(x["p_uniform"] for x in c67) if ok67 else None, a67, ceil_sci)
     _range(c, "InrangeOptLKRange", [x["k_median"] for x in c67] if ok67 else [None], a67, lambda v: f"{v:g}")
     d67c = [T.inrange_cell(d67, layer, "max") for layer in l67]
     paths = [_paths(x["p_uniform"]) for x in c67 + d67c] if ok67 and all(d67c) else [None]
@@ -1038,7 +1116,7 @@ def setup_and_params(c: Collector, ctx: T.Ctx) -> None:
     c.put("ParamsLeaves", counts_ and counts_["n_leaves"], rec, lambda v: f.sci(v).strip("$"))
     c.put("ParamsInstances", counts_ and counts_["n_instances"], rec)
     c.put("ParamsLmax", counts_ and counts_["lmax"], rec)
-    c.put("ParamsTable", counts_ and counts_["table"], rec, lambda v: f.sci(v).strip("$"))
+    c.put("ParamsTable", counts_ and counts_["table"], rec, lambda v: ceil_sci(v).strip("$"))      # "at most N"
     from pvi.v1.cut import LMAX
     n = counts_["lmax"] if counts_ else LMAX
     c.put("GkrTranscriptBits", n, rec or "pvi.v1.cut.LMAX")
@@ -1083,9 +1161,12 @@ def setup_proof(c: Collector, ctx: T.Ctx) -> None:
     commitment's columns per query and the column bytes that testing at every query would take, the setup proof's size,
     its breakdown and its radii, and the quantities of the remark on other proximity tests (``rem:forced``), all from
     the library under the run's plan (``costs/setup_bytes.py``; ``A``: ``a = 100`` amortised queries, ``B``:
-    ``1,000``); the per-query growth over the run's 2,048-token Llama-2-7B proof."""
+    ``1,000``); the per-query growth over the run's 2,048-token Llama-2-7B proof.  The per-query columns are those
+    of interactive queries, as the setup tier measures them (``setup_timing.py`` without ``--fs``), so their growth is
+    taken over the interactive mode-C proof (the zkLLM comparison's cell)."""
     on, pol = ctx.byte_model, ctx.policy
-    src = f"the library under the plan {pol}"
+    src = f"the library under the plan {pol}, interactive queries"
+    proof = ctx.bench.llm_cost("llama2-7b", 2048, "c_cpu_int") or ctx.bench.llm_cost("llama2-7b", 2048, "c_gpu_int")
     v = T.params_values(pol, None) if on else None
     c.put("ParamsColumnsMinInt", v and v["int"]["t_min"], src)
     c.put("ParamsColumnsMinFs", v and v["fs"]["t_min"], src)
@@ -1104,7 +1185,8 @@ def setup_proof(c: Collector, ctx: T.Ctx) -> None:
         c.put(f"SetupUntrustedMBLlama{w}", mb("query_columns_MB_untrusted"), src, lambda x: f"{x:.1f}")
         c.put(f"SetupColumnsMBLlama{w}", mb("columns_MB"), src, lambda x: f.num(x, 1))
         c.put(f"SetupColumnsShareLlama{w}", s and s["columns_MB"] / s["setup_MB"], src, lambda x: f.pct(x, 1))
-        c.put(f"SetupCombinedShareLlama{w}", s and s["combined_rows_MB"] / s["setup_MB"], src, lambda x: f.pct(x, 1))
+        c.put(f"SetupCombinedShareLlama{w}", s and s["combined_rows_MB"] / s["setup_MB"], src,
+              lambda x: ceil_fixed(100 * x, 1))                                            # "saves at most"
         c.put(f"SetupPathsMBLlama{w}", mb("paths_MB_bound"), src, lambda x: ceil_fixed(x, 1))
         c.put(f"SetupPathsShareLlama{w}", s and s["paths_MB_bound"] / s["setup_MB"], src, lambda x: f.pct(x, 2))
         c.put(f"SetupNonColumnsShareLlama{w}", s and 1 - s["columns_MB"] / s["setup_MB"], src, lambda x: f.pct(x, 1))
@@ -1116,7 +1198,6 @@ def setup_proof(c: Collector, ctx: T.Ctx) -> None:
         _range(c, f"SetupReplacementExcess{w}", excess, src, lambda x: f.pct(x, 1))
         growth = s and s["query_factor"] - 1
         c.put(f"SetupQueryGrowthLlama{w}", growth, src, f.pct)
-        proof = ctx.bench.llm_cost("llama2-7b", 2048, "c_cpu")
         extra = s and proof and proof["bytes"] and (s["query_columns_MB_untrusted"] - s["query_columns_MB_honest"]) \
             * 1e6 / proof["bytes"]
         c.put(f"SetupQueryShareLlama{w}", extra, proof and f"{src}; {ctx.bench.name} {proof['cell']}",
@@ -1141,12 +1222,29 @@ GEN_P, GEN_G = 512, 512
 """The prompt and response of the text's per-prefix comparison (Sec. ``sec:gen-prefill``)."""
 
 
+def prefill_extra_claims(model: str, seq: int = 2048) -> tuple[int, int]:
+    """``(once, every)``: the weight operations' claims per position that a next-token query computes at the last
+    position only (the LM head and the pruned last block's query, output projection and MLP) and at every position
+    (``pvi.commit.cost.decoder_claim_columns``)."""
+    from pvi.commit.cost import decoder_claim_columns, decoder_shapes
+    from pvi.models.decoder import CONFIGS
+    cfg = CONFIGS[model]
+    cols = decoder_claim_columns(cfg, seq, prune_last=True)
+    ops = decoder_shapes(cfg, prune_last=True)
+    once = sum(o.n_rows for o in ops if o.layout != "embed" and cols[o.name] != seq)
+    every = sum(o.n_rows for o in ops if o.layout != "embed" and cols[o.name] == seq)
+    return once, every
+
+
 def generation(c: Collector, ctx: T.Ctx) -> None:
     """A generated response as one prefill (the gen tier): GPT-2's prover per generated token (the comparison with
     zkAgent), the 256-token greedy responses of Llama-2-7B and Qwen3-4B after a 512-token prompt, the proof per token
     and the cost of sampling against greedy decoding; and the proofs of per-prefix queries against one prefill for
     Llama-2-7B with ``P = G = 512`` (mode C: the cpuv tier's claims per position at 64 and 2,048 tokens, linear in
-    the positions, plus the fixed part of the byte model under the run's plan)."""
+    the positions, plus the fixed part of the byte model under the run's plan).  The prefill also computes the LM head
+    and the pruned last block's operations at the ``G - 1`` positions before the last, which a next-token query
+    computes at the last position only: their claims are added at the bytes per claim of the per-position
+    operations (:func:`prefill_extra_claims`)."""
     run = ctx.run
     g = run.gen("gpt2", "C", "greedy", 256, prompt=64)
     c.put("GenGptProveC", g and g.d["prove_s"], g, lambda v: f"{v:.2f}")
@@ -1180,15 +1278,20 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
         def proof(t):
             return claims[64] + per_pos * (t - 64) + fixed
 
-        single = proof(GEN_P + GEN_G - 1)
+        last, every = prefill_extra_claims("llama2-7b")
+        single = proof(GEN_P + GEN_G - 1) + (GEN_G - 1) * last * per_pos / every
         prefixes = sum(proof(GEN_P + i - 1) for i in range(1, GEN_G + 1))
     src = "cpuv tier's mode-C claims of Llama-2-7B at 64 and 2,048 tokens and the byte model's fixed part"
     c.put("GenPrefillGB", single, src, lambda v: f"{v / 1e9:.1f}")
     c.put("GenPerPrefixTB", prefixes, src, lambda v: f"{v / 1e12:.1f}")
 
 
-FAMILIES = (platform, cpu_client, defence_cost, batching, serving, v1_numbers, comparison, improvements, real_weights,
-            long_prompts, quality, sampler, attack, setup_and_params, setup_proof, generation)
+FAMILIES = (platform, cpu_client, kpre_client, defence_cost, batching, serving, v1_numbers, comparison, improvements,
+            real_weights, long_prompts, quality, sampler, attack, setup_and_params, setup_proof, generation)
+LOSSES = ("ZeroshotMeanOptS", "ZeroshotMeanOptM", "ZeroshotLambadaOptS", "ZeroshotLambadaOptM", "ZeroshotLambadaOptL",
+          "ZeroshotLegacyMean")
+"""Macros printed without their sign that the text calls a loss of accuracy (``quality.tex``,
+``ext_generation.tex``): each must be negative (integer minus fp16), or the build is a ``CHECK FAILED``."""
 
 
 def build(ctx: T.Ctx, problems: list) -> tuple[dict[str, Macro], dict | None]:
@@ -1201,6 +1304,10 @@ def build(ctx: T.Ctx, problems: list) -> tuple[dict[str, Macro], dict | None]:
             be = got if fam is breakeven else be
         except (KeyError, TypeError, ValueError, ZeroDivisionError, AttributeError, IndexError) as e:
             problems.append(f"PARSE macros {fam.__name__}: {type(e).__name__}: {e}")
+    for name in LOSSES:
+        raw = c.m[name].raw if name in c.m else None
+        if raw is not None and raw >= 0:
+            problems.append(f"CHECK FAILED {name}: {100 * raw:+.2f} points, which the text calls a loss")
     for name in names():
         c.m.setdefault(name, Macro(name, None, None, ""))
     return c.m, be

@@ -35,14 +35,14 @@ has `schedstat`. The aggregates and the paper's generators ignore these fields. 
 The record counts below are those printed by `count_outcomes.py --platform <platform>` (they exclude
 the one `env` record per cell).
 
-| Root | Records | Protocol | Hardware | Code | Used in the paper |
+| Root | Records | Protocol | Hardware | Code | Values printed before the final run |
 |---|---:|---|---|---|---|
-| `raw_l40s/` | 123,832 | basic | NVIDIA L40S (48 GB) prover, 8 threads of an AMD EPYC 9334 verifier; nodes n-801 to n-804 | `9401431` | the basic protocol: hollow points of Fig. 3, the basic side of Sec. 4.5, the basic counts of Sec. 4.3, the path protocol's detection and bytes (Sec. 4.2) |
-| `raw_l40s_improved/` | 68,363 | basic proofs with the released code, and optimised variants | as `raw_l40s/`; nodes n-801, n-803, n-804 | `c8be5eb` | optimised cells not repeated in `raw_l40s_improved2/` (e.g. Table 1's Maverick row, without the compact encoding), and the basic proof format with the streaming GPU verifier at 2,048 tokens (Sec. 4.5) |
-| `raw_l40s_improved2/` | 83,896 | optimised, and GPT-2's basic proofs with the released code | as `raw_l40s/`; nodes n-801, n-803, n-804, n-805 | `366e3d4`, `c2bdc49` | the optimised protocol: Tables 1–3, Fig. 4, the filled points of Fig. 3, the optimised counts of Sec. 4.3, Sec. 4.5 |
-| `raw_l40s_improved3/` | 1,600 | optimised: the re-measurement of the cells of `raw_l40s_improved2/` whose timings are withheld (the cells it finished; the paper did not wait for the rest) | as `raw_l40s/`; nodes n-803, n-805 (n-801 and n-804 excluded) | `7016557` | replaces the same cells of `raw_l40s_improved2/`; in the paper, the withheld values it re-measured (OPT-6.7B's GPU verifier and Llama-2-13B's Kpre CPU verifier at 2,048 tokens, Table 3) |
+| `raw_l40s/` | 123,832 | basic | NVIDIA L40S (48 GB) prover, 8 threads of an AMD EPYC 9334 verifier; nodes n-801 to n-804 | `9401431` | the image models' attack cells (`attack_float`, `sampling`) behind `sec:break`'s single-neuron flip and the path test's detection and paths (`\CnnPathMax`, `\CnnPathsRange`, ...); the reference root of `app:eval-setup`'s hardware independence |
+| `raw_l40s_improved/` | 68,363 | basic proofs with the released code, and optimised variants | as `raw_l40s/`; nodes n-801, n-803, n-804 | `c8be5eb` | optimised cells not repeated in `raw_l40s_improved2/` (e.g. `tab:eval-compare`'s Maverick row, without the compact encoding) |
+| `raw_l40s_improved2/` | 83,896 | optimised, and GPT-2's basic proofs with the released code | as `raw_l40s/`; nodes n-801, n-803, n-804, n-805 | `366e3d4`, `c2bdc49` | the optimised protocol: `tab:eval-llm`, the "ours" columns of `tab:eval-compare`, the outcome counts of `sec:eval-setup` |
+| `raw_l40s_improved3/` | 1,600 | optimised: the re-measurement of the cells of `raw_l40s_improved2/` whose timings are withheld (the cells it finished) | as `raw_l40s/`; nodes n-803, n-805 (n-801 and n-804 excluded) | `7016557` | replaces the same cells of `raw_l40s_improved2/`: the withheld values it re-measured (OPT-6.7B's GPU verifier and Llama-2-13B's Kpre CPU verifier at 2,048 tokens, `tab:eval-llm`) |
 | `raw_l40s_improved2_thr1/` | 6,104 | optimised, one verifier thread | as `raw_l40s/`; node n-805 | `366e3d4` | not used |
-| `raw_rtx2080ti-v2/` | 78,266 | basic | NVIDIA RTX 2080 Ti (11 GB) prover, 8 threads of an Intel Xeon Silver 4114 verifier; nodes s-004, s-005 | `9401431` | Sec. 4.1: its 1,978 hardware-independent values equal those of `raw_l40s/` |
+| `raw_rtx2080ti-v2/` | 78,266 | basic | NVIDIA RTX 2080 Ti (11 GB) prover, 8 threads of an Intel Xeon Silver 4114 verifier; nodes s-004, s-005 | `9401431` | `app:eval-setup` ("Proof sizes do not depend on the hardware"): its 1,978 hardware-independent values equal those of `raw_l40s/` |
 | `raw/` | 59,547 | basic (an earlier version of the code) | as `raw_rtx2080ti-v2/` | several earlier commits | not used; the reference of an earlier smoke test's fingerprint check |
 
 `raw_l40s/`, `raw_l40s_improved/`, `raw_rtx2080ti-v2/` and `raw/` are frozen. A new measurement uses
@@ -51,10 +51,9 @@ a new platform name (`python -m experiments.costs.bench ... --platform <name>`, 
 
 ### `raw_l40s/`: the basic protocol
 
-Every job of the `must` (later renamed `report-must`), `should` and `nice` tiers of the benchmark's tier
-script of that time (its cells are those of `experiments/costs/bench.py`; the run package
-`experiments/package/run.sh` replaces the script) on the L40S partition of a SLURM cluster, with platform `l40s`: 61 SLURM
-jobs with records (946078–947808; jobs pre-empted by
+Every job of the `must`, `should` and `nice` tiers of the benchmark's tier script, which is not part of this
+artifact (its cells are those of `experiments/costs/bench.py`, and the run package `experiments/package/run.sh` runs
+them), on the L40S partition of a SLURM cluster, with platform `l40s`: 61 SLURM jobs with records (jobs pre-empted by
 the partition were resubmitted by re-running their tier). The one L40S node with a different CPU
 (t-806) was excluded. Every decoder up to 13B parameters is built at full depth (`--lean`) at up to
 2,048 tokens, Llama-2-7B also at 4,096. The 30–70B shapes (OPT-30B, OPT-66B, Llama-2-70B) are built
@@ -62,7 +61,8 @@ with 1 and 2 blocks only; the full Llama-2-70B build (64.2 GiB of int8 weights) 
 skipped with a `SKIP` line. Besides the headline cells the root holds variants of the same protocol:
 `_gpuv` (the verifier on the GPU), `_batch` (8 and 32 prompts per proof; 8 to 256 images for the CNNs,
 8 to 128 for the 224-pixel ResNet), `_thr1` (one verifier thread), and the controls `_thr12`, `_tf32`,
-`_nolean` and `_nofix` (the weight cache of `raw/`, `PVI_LEGACY_WEIGHT_KEY=1`). `count_outcomes.py
+`_nolean` and `_nofix` (the weight cache of `raw/`, which the code of commit `9401431` restored on request and the
+current code no longer has). `count_outcomes.py
 --platform l40s` counts every cell: 8,709 honest queries accepted and 2,895 attacks rejected (2,091 on
 image models, 804 on language models).
 
@@ -77,8 +77,8 @@ same model and setting. The cells of the final run are defined in `experiments/p
 `python -m experiments.comparison.count_outcomes --platform l40s_improved,l40s_improved2,l40s_improved3` reads the
 three batches with the same precedence.
 
-* **`raw_l40s_improved/`** (platform `l40s_improved`): 26 benchmark jobs (SLURM 958571–958596; their
-  cells are those of [`experiments/costs/bench.py`](../../experiments/costs/README.md)) and
+* **`raw_l40s_improved/`** (platform `l40s_improved`): 26 benchmark jobs (their cells are those of
+  [`experiments/costs/bench.py`](../../experiments/costs/README.md)) and
   one job that ran the test suite on the L40S. Its untagged cells are the basic protocol run by the
   released code: `python -m experiments.comparison.fingerprint_check artifacts/comparison/raw_l40s
   artifacts/comparison/raw_l40s_improved`
@@ -87,17 +87,16 @@ three batches with the same precedence.
   the optimised options: `_polauto` (the planning rule), `_wire` (the compact encoding), `_prune`,
   `_lookups`, `_thr1` (Qwen3-4B in Maverick's setting, one verifier thread) and `_gpuv_stream` (the
   streaming GPU verifier). Over all its cells: 4,380 honest queries accepted and 4,973 attacks rejected.
-* **`raw_l40s_improved2/`** (platform `l40s_improved2`): 79 SLURM jobs (965320–968132) that complete
-  the definition's cells for every model of Tables 2–3 (and the 30–70B shapes, with 1 and 2 blocks),
+* **`raw_l40s_improved2/`** (platform `l40s_improved2`): 79 SLURM jobs that complete the definition's cells
+  for every model of `tab:eval-llm` and `tab:eval-compare` (and the 30–70B shapes, with 1 and 2 blocks),
   with the streaming GPU verifier at 64 and 2,048 tokens, and that re-measure GPT-2's basic proofs
   with the released code. Over all its cells: 5,088 honest queries accepted and 2,518 attacks rejected.
 * **`raw_l40s_improved3/`** (platform `l40s_improved3`): the re-measurement of the second batch's jobs
   whose timings `excluded_cells.csv` withholds (below), each re-run whole, on the L40S nodes other than
   n-801 and n-804, at commit `7016557` (`c2bdc49` plus the contention evidence: every proof byte,
-  verdict and cell name is `c2bdc49`'s): 10 SLURM jobs (969059–969068), the 8 with a withheld value
-  the paper would print and 2 whose only withheld value is a setup time. **Incomplete:** the paper was
-  finalised without waiting for the remaining jobs, and the root holds the 22 cells finished by then,
-  copied from the run's root (cells with a `.done` marker only): the jobs
+  verdict and cell name is `c2bdc49`'s): 10 SLURM jobs, the 8 with a withheld value the paper would print
+  and 2 whose only withheld value is a setup time. **Incomplete:** the root holds the 22 cells that had
+  finished when it was copied from the run's root (cells with a `.done` marker only): the jobs
   `o2-llama13-2k-k`, `o2-opt13b-2k-k` and `o2-opt67-2k-cg` in full, the 1- and 2-block cells of
   `o2-llama13-2k-c`, `o2-llama7-2k-c` and `o2-opt13b-2k-c`, and the full-depth commitments of
   `o2-llama7-2k-c` and `o2-llama13-2k-cg`. No timed phase longer than 1 s waited on the run queue
@@ -106,10 +105,10 @@ three batches with the same precedence.
   shared hardware-independent values equal. Over its cells: 90 honest queries accepted and 13
   attacks rejected.
 * **`raw_l40s_improved2_thr1/`**: LeNet-5 and VGG-16 in mode C under the optimised protocol with one
-  verifier thread (SLURM 965522–965523), for a single-core comparison with zkCNN's verifier. The
-  paper does not use it: Table 1 compares our 8-thread verifier and says so.
+  verifier thread (2 SLURM jobs), for a single-core comparison with zkCNN's verifier. The paper does not
+  use it: `tab:eval-compare` compares the 8-thread verifier and says so.
 
-The paper's soundness counts for the optimised protocol (Sec. 4.3) count only the definition's cells
+The outcome counts of `sec:eval-setup` printed before the final run count only the definition's cells
 of the batches (a cell of `raw_l40s_improved3/` replaces the same cell of `raw_l40s_improved2/`, the
 same seeded instances, so the totals are those of the first two batches):
 
@@ -132,17 +131,16 @@ the final run leave these values out; no script of the artifact reads the file. 
 re-measured on the other nodes as platform `l40s_improved3` (above); the exclusion is per platform, so a
 value re-measured there replaces the withheld one and is shown in the paper. 6 of the 17 values were
 re-measured: OPT-6.7B's prover, verifier and commitment with the streaming GPU verifier, Llama-2-7B's
-commitment and the Kpre CPU verifiers of Llama-2-13B and OPT-13B, all at 2,048 tokens. The paper was
-finalised without waiting for the other 11: the withheld timings the third batch did not re-measure are
-omitted from the paper, not filled in (`--` in Table 3; the Table 1 rows that need one are dropped, and
-Fig. 4 draws no point for them), as are the two optional cells that were not run (the streaming GPU
-verifier of Qwen3-4B and Llama-2-13B at 64 tokens): 10 numbers in all.
+commitment and the Kpre CPU verifiers of Llama-2-13B and OPT-13B, all at 2,048 tokens. The other 11 were
+not re-measured: the values printed before the final run leave them out rather than fill them in (`--` in
+`tab:eval-llm`, `\todo` in `tab:eval-compare`), as they do the two optional cells that were not run (the
+streaming GPU verifier of Qwen3-4B and Llama-2-13B at 64 tokens): 10 numbers in all.
 
 ### `raw_rtx2080ti-v2/`: the second platform
 
-The `must` tier of the benchmark's tier script of that time without `ab-opt13` (a non-lean OPT-1.3B control at 2,048 tokens,
-about 27 GiB, too large for the card): 29 SLURM jobs (945088–945116) on the RTX 2080 Ti
-partition of a SLURM cluster, with platform `rtx2080ti-v2`. Every decoder is built at full depth except Llama-2-13B,
+The `must` tier of the same tier script without `ab-opt13` (a non-lean OPT-1.3B control at 2,048 tokens,
+about 27 GiB, too large for the card): 29 SLURM jobs on the RTX 2080 Ti partition of a SLURM cluster, with
+platform `rtx2080ti-v2`. Every decoder is built at full depth except Llama-2-13B,
 whose 12.1 GiB of int8 weights exceed the card. `count_outcomes.py --platform rtx2080ti-v2`: 5,547
 honest queries accepted, 2,456 attacks rejected. It lacks cells that the paper's tables draw (e.g. OPT-13B at
 2,048 tokens), so no value of the paper comes from it.

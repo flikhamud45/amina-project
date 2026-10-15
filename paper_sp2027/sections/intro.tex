@@ -9,7 +9,7 @@
 Open-weight language models are often served by a provider the client does not control. The provider
 may serve a cheaper model, or alter the computation on chosen queries to return answers of its
 choice. We target a client that has no GPU, does not store the weights, and holds only the 32-byte
-Merkle roots of the weights (mode~$\sC$) or a small secret key precomputed once from the weights
+Merkle roots of the weights (mode~$\sC$) or a \KpreStoreGB{}\,GB secret key derived once from the weights
 (mode~$\Kpre$). In a \emph{proof of inference}, the provider sends a proof with each answer, and
 the client's check fails with high probability unless the agreed model computed the answer on this
 input. The agreed model is an exact int8 network derived from the public
@@ -56,9 +56,10 @@ trace of a model that differs from the committed one in one weight row. If the o
 information about the edit's location, a verifier with $q$ queries per layer to a commitment whose
 symbols each depend on at most $d$ rows rejects the forgery at most as often as it could guess the
 edited site in $qd$ tries, even if it is adaptive and reads the whole trace
-(Theorem~\ref{thm:guess}). For every such verifier, some ReLU network with a hidden layer of width
+(Theorem~\ref{thm:guess}). For every such verifier, some ReLU MLP with a hidden layer of width
 $N$ admits a single-neuron forgery, with every value in its natural range, that passes with
-probability at least $1-qd/N$. Conversely, symbols that mix all rows, such as Reed--Solomon
+probability at least $1-qd/N$; for transformers our evidence is the measured edits above
+(Remark~\ref{rem:scope}). Conversely, symbols that mix all rows, such as Reed--Solomon
 columns, reach $2^{-\lambda}$ with $O(\lambda)$ queries per layer (Theorem~\ref{thm:dich}), and
 symbols that mix blocks of $d$ rows with $O(\lambda+\log L)$ queries per block for $L$ layers
 (Section~\ref{sec:dichotomy}). Of
@@ -97,7 +98,6 @@ mode~$\Kpre$ verifies a 2{,}048-token Llama-2-7B prompt \CpuRatio{}$\times$ fast
 re-execution, the integer forward pass, on the same CPU (non-interactive, full model); on a GPU, re-execution is
 faster\TodoCpuRatioIntro{}. The protocol is not zero-knowledge, so it targets open-weight models, as do
 CommitLLM~\cite{commitllm2026} and Gupta et al.~\cite{gupta2026private}.
-Section~\ref{sec:discussion} states whom the protocol serves.
 
 \para{Contributions.}
 \begin{itemize}
@@ -125,16 +125,16 @@ kilobyte to tens of megabytes, and many hide the weights, but their provers are 
 one pass, as we do. V1 borrows the logUp-GKR~\cite{papini2023logupgkr} that such systems use, but
 commits no activation.
 
-\para{Spot-checking and sampling.} Table~\ref{tab:sok} describes the sampling schemes that our
-theorem
-covers~\cite{anchuri2026verifiable,slp,commitllm2026,tensorcommitments,nanozk,spex,immaculate,toploc,svip}.
+\para{Spot-checking and sampling.} Table~\ref{tab:sok} describes sampling schemes whose verifiers
+fall in the class of
+Definition~\ref{def:spot}~\cite{anchuri2026verifiable,slp,commitllm2026,tensorcommitments,nanozk,spex,immaculate,toploc,svip}.
 Optimistic schemes~\cite{verde,opml,tao} accept an answer unless a party that re-runs the model
 disputes it, so they need an honest party that re-runs every query. The calculation behind the
-edit-then-recompute attack is classical. It underlies proofs of retrievability and data
+edit-then-recompute attack is classical: it underlies proofs of retrievability and data
 possession~\cite{juels2007por,ateniese2007pdp}, spot-checkers~\cite{ergun2000spotcheckers} and PCPs
 of proximity, which certify only closeness, whereas holographic proofs encode their
 input~\cite{bghsv2006robust,bfls1991,chiesa2020fractal}. Theorem~\ref{thm:guess} formalises this
-folklore calculation for adaptive, value-aware verifiers that, unlike those of PCPs of proximity,
+calculation for adaptive, value-aware verifiers that, unlike those of PCPs of proximity,
 read the whole trace: honest recomputation moves the change into the weights, so the model, not
 the trace, must be encoded. The calculation's tight case is the search for a hidden
 object~\cite{chew1967,kadane1971}.
@@ -160,7 +160,7 @@ ReedWeave~\cite{reedweave} and BaseFold~\cite{basefold} fold codewords for faste
 Section~\ref{sec:setup-proof} bounds what such tests can save on our commitment.
 
 \para{Where we fit.} We keep the client of Anchuri et al., which holds only a weight commitment, and
-replace sampling, which needs $(1-\varepsilon)N$ paths per layer for soundness $1-\varepsilon$, with
+replace sampling, which needs at least $(1-\varepsilon)N$ paths per layer for soundness error $\varepsilon$, with
 a check of every weight operation. Each fully sound protocol above that avoids a SNARK needs more
 than a commitment: trusted hardware, a stored encoded copy of the weights, a weight-derived secret
 or data generated with secret randomness. To our knowledge, ours is the first Freivalds-based proof

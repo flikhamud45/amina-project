@@ -44,12 +44,11 @@ from collections import Counter
 from pathlib import Path
 
 from experiments.common.paths import BENCH
+from experiments.paper.bench import DEFAULT_POLICY as PAPER_POLICY
 
 SUITES = ("cnn", "llm")
 PLUS_ONE = "one pre-activation +1"   # the attack of every LLM defence cell (no 'attack' field)
 KINDS = ("honest", "attacks", "stages", "by_type", "policy", "partial")
-PAPER_POLICY = "cnn18c"
-"""The paper's commitment plan (``experiments.common.cli.PAPER.policy``): the default of ``--policy``."""
 
 BASE_PART = re.compile(r"^(int|fs|lam\d+|rate\d+|T\d+|L\d+)$")
 
@@ -212,8 +211,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--base", type=Path, default=BENCH,
                     help="the folder holding the raw roots (default artifacts/comparison)")
     ap.add_argument("--policy", default=PAPER_POLICY,
-                    help="also count apart the attacks on cells built under this commitment plan (default cnn18c; "
-                         "the stored runs of the base implementation: auto, the planning rule)")
+                    help=f"also count apart the attacks on cells built under this commitment plan (default "
+                         f"{PAPER_POLICY}, the paper's: experiments.paper.bench.DEFAULT_POLICY; the stored runs of the "
+                         "base implementation: auto, the planning rule)")
     ap.add_argument("--definition", action="store_true",
                     help="count only the defining defence and tamper cells under --policy "
                          "(experiments.paper.bench.definition_tagsets), without by-products and stand-ins")

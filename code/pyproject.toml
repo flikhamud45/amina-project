@@ -34,7 +34,7 @@ line-length = 120
 src = ["src", "tests", "."]
 
 [tool.ruff.lint]
-select = ["E9", "F"]
+select = ["E9", "F", "PLE2510", "PLE2512", "PLE2513", "PLE2514", "PLE2515"]   # syntax, pyflakes, control characters
 
 [tool.ruff.lint.isort]
 known-first-party = ["pvi"]

@@ -14,8 +14,10 @@
 measured proofs list at most \VOneRandomExceptionsMax{}. Residual operations clamp only after the addition
 and have no exceptions.
 
-\para{Field.} Under Fiat--Shamir, the 64 extra bits of Section~\ref{sec:fs} require the challenges
-of the lookup to come from an extension of BabyBear of degree at least 7. We use $\Fext =
+\para{Field.} Under Fiat--Shamir, with the 64 extra bits of Section~\ref{sec:fs} in $\beta$, the
+lookup term of Theorem~\ref{thm:v1}, about $(\Nleaf+|\Vtab|)/p^d$ over an extension of BabyBear of
+degree $d$, stays below $2^{-\beta}$ on our largest queries only from $d=8$ (Table~\ref{tab:params}).
+We use $\Fext =
 \F[\xi]/(\xi^8 - 11)$, a field because 11 is a quadratic non-residue modulo $p$ and $p \equiv 1
 \pmod 4$, and we use it in interactive runs as well.
 
@@ -88,7 +90,7 @@ also accepts the sampled generation of Section~\ref{sec:gen}, since the LM head 
 An earlier version of the implementation lacked five of the properties stated in
 Section~\ref{sec:v1} and in the checks of the soundness proof. None of the gaps allowed a forgery
 against the models we evaluate. Two allowed forgeries on other models: the $\Kpre$ verifier never
-evaluated (P4), as its public graph has no weights (it now uses its own weights), and a clamp wider
+evaluated (P4), as its public graph has no weights (it now evaluates it from the weights when it derives its key), and a clamp wider
 than int8 broke the bound on $|L|$ (now excluded by (P1)). Two concerned hygiene: folds were
 accepted with coefficients in $[p, 2^{31})$ (an alias, not a forgery), and a defence-in-depth range
 check on the inputs of cut operations was missing; both are now enforced. The fifth limits
@@ -123,14 +125,14 @@ Table~\ref{tab:v1} adds the share of V1's prover time spent in the GKR.
   \end{tabular}
 \end{table}
 
-\para{Proof size.} At 2{,}048 tokens V1 is \VOneRatioRandomExact{}$\times$ smaller on every build with more than
-one block; the full OPT-1.3B proof drops from \VOneOptMCVZeroGB{} to \VOneOptMCVOneGB{}\,GB in mode $\sC$ and from \VOneOptMKVZeroGB{} to
+\para{Proof size.} At 2{,}048 tokens V1 is \VOneRatioRandomExact{}$\times$ smaller on every full
+model; the full OPT-1.3B proof drops from \VOneOptMCVZeroGB{} to \VOneOptMCVOneGB{}\,GB in mode $\sC$ and from \VOneOptMKVZeroGB{} to
 \VOneOptMKVOneGB{}\,GB in $\Kpre$. The values shrink \VOneValuesRatio{}$\times$: an int8 value, and a residual increment,
 compress to fewer bits than a claim. The parts that do not grow with the
 prompt grow instead: eight folded rows instead of $r$, $y$ over $\Fext$ for transposed matrices,
 and the new multiplicities and GKR transcripts (at most \VOneExtrasMax{}\,MB in every measured build). GPT-2 at 64
 tokens thus gains only \VOneRatioShortC{}$\times$ ($\sC$) and \VOneRatioShortK{}$\times$ ($\Kpre$), and the Llama-2-13B build of
-Table~\ref{tab:eval-v1}, whose pruned last block has only keys and values that span all positions, \VOneRatioLargeC{}$\times$ in $\sC$.
+Table~\ref{tab:eval-v1}, whose opened columns are a larger share of its proof, \VOneRatioLargeC{}$\times$ in $\sC$.
 V1's sizes come from an exact byte accounting that equals real queries to the byte except for the
 Merkle multiproofs, whose size depends on the drawn columns; the timed full V1 queries agree with
 it within \VOneAccountingWithin{}\%. The full Llama-2-7B at 2{,}048 tokens in $\sC$ gains \VOneLlamaCRatio{}$\times$

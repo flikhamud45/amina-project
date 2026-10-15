@@ -35,7 +35,9 @@ class Challenger:
     (the graph's digest, parameters, commitments, input) and of every prover message so far:
     each challenge absorbs its label into a copy of the transcript and reads 32 bytes, so the
     challenges are random-oracle outputs of prefix-free inputs without a length-extension argument.
-    ``seed`` makes interactive keys reproducible (tests only).
+    ``seed`` makes interactive keys reproducible (tests only).  The transcript starts from the domain
+    separator ``pvi/fullcheck/v3``, a fixed string kept from an earlier module name: it is part of every
+    transcript, so changing it would change every Fiat--Shamir challenge.
     """
 
     def __init__(self, *, fiat_shamir: bool = False, seed: int | None = None) -> None:

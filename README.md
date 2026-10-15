@@ -14,8 +14,8 @@ number of the paper, and the pipeline from that run's records to the paper's tab
 2. **Run every experiment on one machine**: [`code/experiments/package/README.md`](code/experiments/package/README.md).
    One command submits every job; a dry run lists them, and a rehearsal runs every script of each tier on small cells.
 3. **From the run's records to the paper**: [`code/experiments/paper/README.md`](code/experiments/paper/README.md).
-   `python -m experiments.paper.numbers` checks the records and writes every table body and text number into
-   `paper_sp2027/generated/`.
+   `experiments.paper.numbers` (run as that README shows) checks the records and writes every table body and text
+   number into `paper_sp2027/generated/`.
 4. **Build the paper**: [`paper_sp2027/README.md`](paper_sp2027/README.md).
 
 Each experiment can also be run on its own: every folder of [`code/experiments/`](code/experiments/README.md) maps

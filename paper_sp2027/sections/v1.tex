@@ -59,8 +59,8 @@ in the committed weights, V1 reduces to a range check on a linear image of $A_\e
 \subsection{A Windowed LogUp with Integer Multiplicities}
 
 We prove all range memberships at once with a logUp lookup argument~\cite{haboeck2022logup}
-over the field $\Fext = \F[\xi]/(\xi^8 - 11)$, as Fiat--Shamir (Section~\ref{sec:fs}) needs degree
-at least 7. Entry $(i,j)$ becomes the leaf $v_{ij} = \delta_{ij} + \xi\,W_{ij}$, and the table is
+over the field $\Fext = \F[\xi]/(\xi^8 - 11)$ of degree 8, the least for which the lookup's error
+stays below $2^{-\beta}$ under Fiat--Shamir (Table~\ref{tab:params}). Entry $(i,j)$ becomes the leaf $v_{ij} = \delta_{ij} + \xi\,W_{ij}$, and the table is
 $\Vtab = \{ t + \xi w : w \in \mathcal W, 0 \le t < w \}$, where $\mathcal W$ holds the width 1 and
 the two widths of each cut operation. As $1$ and $\xi$ are linearly independent over $\F$, a leaf
 lies in $\Vtab$ exactly when $\delta_{ij} \bmod p \in [0, W_{ij})$, so one table serves every

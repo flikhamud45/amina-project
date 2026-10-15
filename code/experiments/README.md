@@ -30,8 +30,8 @@ python -m experiments.costs.perf --help
 python -m experiments.costs.perf --model gpt2 --layers 2 --seq 64 --modes C Kpre --queries 3 --device cpu
 ```
 
-Every script takes every parameter as a flag; `--help` lists them with their defaults. The defaults are the
-configuration of the paper's measured results:
+Every script takes every parameter as a flag, and `--help` lists them. The defaults are the configuration of the
+paper's measured results (the protocol's: `experiments.common.cli.PAPER`):
 
 * **Protocol** (`experiments.common.cli`): mode C's commitment plan `cnn18c` (`--policy`), Fiat-Shamir
   (`--no-fs`: interactive), the compact wire encoding (`--no-wire`), the lean prover (`--no-lean`), the last decoder

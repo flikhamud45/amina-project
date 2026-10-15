@@ -12,17 +12,12 @@ import pytest
 import torch
 
 import pvi.v0 as proto
+import shapes
 from pvi.commit import setup_cache
 from pvi.commit.plans import plan_commitment
-from pvi.models.decoder import DecoderConfig, build_decoder
+from pvi.models.decoder import build_decoder
 
-_TINY = {
-    "gpt": DecoderConfig("tiny-gpt", 64, 2, 4, 4, 16, 128, 97, max_pos=64),
-    "llama": DecoderConfig("tiny-llama", 64, 2, 4, 4, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
-                           pos="rope", bias=False, tied=False),
-    "qwen": DecoderConfig("tiny-qwen", 64, 2, 8, 2, 16, 160, 97, norm="rmsnorm", mlp="swiglu",
-                          pos="rope", rope_theta=1e6, bias=False, qk_norm=True),
-}
+_TINY = {"gpt": shapes.GPT, "llama": shapes.LLAMA, "qwen": shapes.QWEN}
 
 
 def _model(kind):

@@ -10,7 +10,14 @@
   benchmark cells are those a table compares with an interactive system, every mode-C cell takes ``--policy``, the
   headline cells time 5 queries, every job is chained after the previous one and the jobs after smoke wait for it,
   every tier submits jobs, the cells behind the text's generation and recipe numbers are there, and the rehearsal
-  submits small cells only, which run every script of every tier on the paths the full cells take.
+  submits small cells only, which run every script of every tier on the paths the full cells take; every CPU-timing
+  cell requires the native kernels and is pinned to one NUMA node, and the dry run lists every job even on a host
+  without the run's settings;
+* the package's submission against stand-ins for SLURM: a queued job of the same platform is not submitted again and
+  the chain and the smoke gate pass through it, and nothing is submitted when the partition lacks the memory, the
+  compiler is missing or the bench tier's models and datasets are; ``bench.py`` itself stops without the
+  substitute model; ``experiments/package/pin.py`` picks one thread of each core of one NUMA node, and every
+  record keeps the affinity, the library versions and the checkpoints' revisions.
 
 The smoke tier runs this file on the final platform.
 """
@@ -29,6 +36,7 @@ import torch
 
 from experiments.costs import perf, setup_timing
 from experiments.generation import gen_bench
+from experiments.package import pin
 from experiments.paper.records import tier_of
 from experiments.reexec import h2d_bandwidth, reexec
 
@@ -103,15 +111,28 @@ def test_perf_spread_is_each_querys_own_totals():
 
 
 # ------------------------------------------------------------------------------------------ the package
-def _dry(*flags) -> list[str]:
+HOST_VARIABLES = {"PVI_NATIVE_DIR", "PVI_PY_INCLUDE", "PVI_TEST_DEVICE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT",
+                  "PVI_CACHE"}
+"""The ``PVI_`` variables a job may carry: places on the host (and the smoke's test device), never a switch."""
+CPU_TIERS = ("cpuv", "v1", "bench", "batch", "gen", "real", "setup", "improve", "long")
+"""The tiers with CPU-timing jobs (pinned to 8 cores of one NUMA node); the others have none."""
+
+
+def _bash() -> str:
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("no bash")
-    env = {**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}
-    out = subprocess.run([bash, str(RUN), "--platform", "final", "--dry-run", "--optional", "--llama-licence",
+    return bash
+
+
+def _dry(*flags, env: dict | None = None, out: list | None = None) -> list[str]:
+    env = {**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"} if env is None else env
+    run = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--optional", "--llama-licence",
                           *flags, "all"], cwd=REPO, env=env, capture_output=True, text=True, timeout=120)
-    assert out.returncode == 0, out.stderr
-    return [line for line in out.stdout.splitlines() if line.startswith("sbatch")]
+    assert run.returncode == 0, run.stderr
+    if out is not None:
+        out.append(run)
+    return [line for line in run.stdout.splitlines() if line.startswith("sbatch")]
 
 
 def _job(line: str) -> str:
@@ -134,9 +155,192 @@ def test_the_package_runs_fiat_shamir_and_the_policy_everywhere():
             if re.search(r"\bC:", modes):
                 assert "--policy cnn18c" in line, job
             assert "--platform final" in line, job
-        assert "--exclusive" in line and "--dependency=" in line, job
-        switches = set(re.findall(r"PVI_[A-Z_]+", line)) - {"PVI_NATIVE_DIR", "PVI_TEST_DEVICE"}
+        assert "--exclusive" in line and "--dependency=" in line and "--comment=final" in line, job
+        switches = set(re.findall(r"\bPVI_[A-Z_]+", line)) - HOST_VARIABLES
         assert not switches, (job, switches)            # the options are flags; only host locations stay variables
+
+
+def test_every_cpu_timing_cell_requires_the_native_kernels_and_is_pinned():
+    """A cell that times the CPU verifier or a re-execution on the CPU passes --require-native (it stops instead of
+    timing the torch path) and starts by pinning itself to 8 cores of one NUMA node; the CPU re-execution includes
+    the int8 GEMMs of torch._int_mm; the GPU, serving, quality, tv and attack jobs are not pinned."""
+    pinned = 0
+    for line in _dry():
+        job, cmd = _job(line), line.split("--wrap", 1)[1]
+        cpu_verifier = re.search(r"costs\.perf|v1\.v1_bytes|generation\.gen_bench|costs\.bench", cmd) \
+            and "--verifier-device cuda" not in cmd and "--codec-only" not in cmd
+        cpu_reexec = "reexec.reexec" in cmd and "--device cpu" in cmd
+        if (cpu_verifier or cpu_reexec) and job != "sp-smoke":
+            assert "--require-native" in cmd and "-m experiments.package.pin --cores 8 --pid $$ && " in cmd, job
+        if cpu_reexec:                  # glibc's allocator defaults, or the like-for-like row with the verifier's
+            assert " int_mm " in cmd and ("--no-malloc-tune" in cmd or "--malloc-tune" in cmd), job
+            assert "MALLOC_" not in cmd, job                    # the allocator setting is a flag, not a variable
+        if "experiments.package.pin" in cmd:
+            pinned += 1
+            assert tier_of(job[len("sp-"):]) in CPU_TIERS, job
+    assert pinned > 50
+
+
+def test_the_dry_run_lists_every_job_without_the_hosts_settings():
+    """Without HF_HOME, CXX and the interpreter the dry run still lists every job (to the summary line) and names
+    what the run would refuse."""
+    env = {k: v for k, v in os.environ.items() if k not in ("HF_HOME", "CXX", "HF_TOKEN")}
+    runs: list = []
+    lines = _dry("--python", "/no/python", env=env, out=runs)
+    assert len(lines) == len(_dry()) and runs[0].stdout.splitlines()[-1].startswith("# smoke cpuv ")
+    for text in ("export HF_HOME=", "export CXX=", "--no-native-ok", "is not an interpreter", "HF_TOKEN"):
+        assert text in runs[0].stderr, text
+
+
+def test_the_help_prints_the_whole_header():
+    out = subprocess.run([_bash(), str(RUN), "--help"], cwd=REPO, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.rstrip().endswith("is the runner's guide."), out.stdout[-300:]
+    assert "--no-pin" in out.stdout and "--no-native-ok" in out.stdout
+
+
+FAKE = {"squeue": '#!/bin/bash\n[ -z "${FAKE_QUEUE:-}" ] || printf \'%s\\n\' "$FAKE_QUEUE"\n',
+        "sbatch": '#!/bin/bash\necho "$*" >> "$FAKE_LOG"\ncat > /dev/null\nwc -l < "$FAKE_LOG" | tr -d " "\n',
+        "sinfo": '#!/bin/bash\nprintf \'%s\\n\' $FAKE_MEM\n',
+        "fakepy": "#!/bin/bash\nexit 0\n"}
+"""Stand-ins for SLURM's commands and the interpreter: ``squeue`` lists ``$FAKE_QUEUE`` (``name|platform|id``
+lines), ``sbatch`` appends its arguments to ``$FAKE_LOG`` and answers with its line number as the job id, ``sinfo``
+gives each node's memory in MB (``$FAKE_MEM``)."""
+
+
+def _submit(tmp_path, *argv, queue: str = "", mem: str = "1031000", cxx: bool = True):
+    """``run.sh argv`` from a copy of the package under ``tmp_path``, submitting to :data:`FAKE`'s SLURM:
+    ``(exit status, stdout, stderr, [sbatch's arguments of each job])``."""
+    bash = _bash()
+    root, bin_ = tmp_path / "root", tmp_path / "bin"
+    (root / RUN).parent.mkdir(parents=True)
+    shutil.copy(REPO / RUN, root / RUN)
+    bin_.mkdir()
+    for name, text in FAKE.items():
+        (bin_ / name).write_text(text, newline="\n")
+        (bin_ / name).chmod(0o755)
+    log = tmp_path / "sbatch.log"
+    log.touch()
+    py = (bin_ / "fakepy").as_posix()
+    env = {k: v for k, v in os.environ.items() if k not in ("PVI_CACHE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT")}
+    env.update(PATH=f"{bin_}{os.pathsep}{os.environ['PATH']}", FAKE_QUEUE=queue, FAKE_MEM=mem, FAKE_LOG=log.as_posix(),
+               CXX=py if cxx else "", HF_HOME=(tmp_path / "hf").as_posix())
+    out = subprocess.run([bash, str(RUN), "--python", py, *argv], cwd=root, env=env, capture_output=True, text=True,
+                         timeout=120)
+    return out.returncode, out.stdout, out.stderr, log.read_text().splitlines()
+
+
+def test_a_queued_job_of_the_same_platform_is_skipped_and_the_chain_and_gate_pass_through_it(tmp_path):
+    queue = "sp-smoke|smoke|901\nsp-c-gpt2-64|rehearsal|902\nsp-other|(null)|903"
+    status, out, err, jobs = _submit(tmp_path, "--platform", "rehearsal", "--rehearsal", "--no-exclusive", "smoke",
+                                     "cpuv", queue=queue)
+    assert status == 0, err
+    names = [_job(" " + j) for j in jobs]
+    assert names == ["sp-smoke", "sp-c-rx-gpt2", "sp-c-v1-gpt2-64"]     # another platform's sp-smoke is not this one
+    assert all("--comment=rehearsal" in j and "--exclusive" not in j for j in jobs)
+    assert "--dependency=afterok:1,afterany:902,singleton" in jobs[1]    # after the smoke's success and the queued job
+    assert "--dependency=afterany:2,singleton" in jobs[2]
+    assert "skip sp-c-gpt2-64: already queued (job 902)" in out and "# 1 jobs already queued" in out
+
+
+def test_a_queued_smoke_still_gates_the_run(tmp_path):
+    status, out, err, jobs = _submit(tmp_path, "--platform", "final", "smoke", "cpuv", queue="sp-smoke|final|901")
+    assert status == 0, err
+    assert len(jobs) == 13 and "--dependency=afterok:901,singleton" in jobs[0], jobs[0]
+
+
+def test_nothing_is_submitted_when_the_partition_lacks_the_memory_or_the_compiler(tmp_path):
+    status, _, err, jobs = _submit(tmp_path / "a", "--platform", "final", "smoke", "cpuv", mem="64000 131000")
+    assert status == 2 and not jobs and "pass --mem-max 127" in err, err
+    status, _, err, jobs = _submit(tmp_path / "b", "--platform", "final", "--rehearsal", "smoke", mem="64000 131000")
+    assert status == 0 and len(jobs) == 1, err                          # the rehearsal asks for 64 GB at most
+    status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "smoke", cxx=False)
+    assert status == 2 and not jobs and "--no-native-ok" in err, err
+    status, _, err, jobs = _submit(tmp_path / "d", "--platform", "final", "--no-native-ok", "smoke", cxx=False)
+    assert status == 0 and len(jobs) == 1, err
+
+
+def test_the_bench_tier_needs_the_substitute_model_and_the_imagenet_layout(tmp_path):
+    status, _, err, jobs = _submit(tmp_path, "--platform", "final", "bench")
+    assert status == 2 and not jobs
+    for text in ("resnet18_224_squirrel.pt", "ImageNet(dogs_cats: no ", "/train/152", "ImageNet(dogs_squirrels",
+                 "README.md, Sec. 1"):
+        assert text in err, (text, err)
+
+
+def test_bench_stops_before_the_image_cells_without_the_substitute_model(tmp_path, monkeypatch):
+    from experiments.costs import bench
+    monkeypatch.setattr(bench, "RAW", tmp_path / "raw")
+    monkeypatch.setattr(bench, "CNN_MODELS", tmp_path / "models")
+    args = bench.build_parser().parse_args(["cnn", "--model", "resnet18_224", "--platform", "t", "--tampers", "3"])
+    with pytest.raises(SystemExit, match="resnet18_224_squirrel"):
+        bench.suite_cnn(args, {"device": "cpu"})
+
+
+def _topology(root, nodes: dict, siblings: int) -> str:
+    """A kernel topology under ``root``: ``nodes`` ``{node: [cpus]}``, CPU ``c`` on core ``c % siblings``."""
+    for n, cpus in nodes.items():
+        (root / "node" / f"node{n}").mkdir(parents=True)
+        (root / "node" / f"node{n}" / "cpulist").write_text(pin.compact(cpus) + "\n")
+        for c in cpus:
+            topo = root / "cpu" / f"cpu{c}" / "topology"
+            topo.mkdir(parents=True)
+            (topo / "physical_package_id").write_text("0\n")
+            (topo / "core_id").write_text(f"{c % siblings}\n")
+    return str(root)
+
+
+def test_pin_takes_one_thread_of_each_core_of_the_lowest_node_that_has_enough(tmp_path):
+    assert pin.parse_list("0-3,8,10-11\n") == [0, 1, 2, 3, 8, 10, 11] and pin.compact([11, 0, 1, 2, 3, 8, 10]) \
+        == "0-3,8,10-11"
+    # two nodes of 4 cores with 2 hardware threads each (CPU c and c + 8 share a core)
+    root = _topology(tmp_path / "sys", {0: [0, 1, 2, 3, 8, 9, 10, 11], 1: [4, 5, 6, 7, 12, 13, 14, 15]}, 8)
+    assert pin.choose(4, range(16), root) == (0, [0, 1, 2, 3])
+    assert pin.choose(4, [4, 5, 6, 7, 12, 13, 14, 15], root) == (1, [4, 5, 6, 7])
+    assert pin.choose(2, [8, 9, 0], root) == (0, [0, 9])
+    assert pin.choose(4, [0, 8, 1, 9, 2, 10, 4, 5], root) is None       # 3 cores on node 0, 2 on node 1
+    assert pin.nodes_of([3, 12], root) == [0, 1]
+    assert pin.choose(2, [5, 6, 7], str(tmp_path / "none")) == (0, [5, 6])   # no topology: each CPU a core
+    assert pin.choose(4, range(16), root, prefer=1) == (1, [4, 5, 6, 7])          # the GPU's node first
+    assert pin.choose(4, [0, 1, 2, 3, 4], root, prefer=1) == (0, [0, 1, 2, 3])    # unless it lacks the cores
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a PCI address holds ':', which a Windows file name cannot")
+def test_pin_reads_the_gpus_numa_node_from_its_pci_address(tmp_path):
+    dev = tmp_path / "pci" / "0000:41:00.0"
+    dev.mkdir(parents=True)
+    (dev / "numa_node").write_text("3\n")
+    assert pin.pci_node("00000000:41:00.0", str(tmp_path / "pci")) == 3
+    (dev / "numa_node").write_text("-1\n")
+    assert pin.pci_node("00000000:41:00.0", str(tmp_path / "pci")) is None
+    assert pin.pci_node("00000000:42:00.0", str(tmp_path / "pci")) is None
+
+
+def test_pin_sets_the_affinity_of_the_given_process(monkeypatch, capsys):
+    got = {}
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: set(range(16)), raising=False)
+    monkeypatch.setattr(os, "sched_setaffinity", lambda pid, cpus: got.update({pid: list(cpus)}), raising=False)
+    monkeypatch.setattr(pin, "gpu_bus_ids", lambda: ["00000000:41:00.0"])
+    monkeypatch.setattr(pin, "pci_node", lambda bus_id: 2)
+    monkeypatch.setattr(pin, "choose", lambda n, allowed, prefer=None: (prefer, list(range(16, 16 + n))))
+    assert pin.main(["--cores", "8", "--pid", "4242"]) == 0
+    assert got == {4242: list(range(16, 24))}
+    assert "pinned to CPUs 16-23 (8 cores of NUMA node 2; the GPU's node)" in capsys.readouterr().out
+    monkeypatch.setattr(pin, "choose", lambda n, allowed, prefer=None: None)
+    assert pin.main(["--pid", "4242"]) == 0 and "not pinned" in capsys.readouterr().out
+
+
+def test_records_keep_the_affinity_library_versions_and_checkpoint_revisions(monkeypatch):
+    from experiments.common import checkpoints, records
+    monkeypatch.setattr(checkpoints, "SOURCES", {})
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    checkpoints._snapshot("org/model", f"/hf/hub/models--org--model/snapshots/{sha}")
+    checkpoints._snapshot("org/local", "/somewhere/else")
+    env = records.environment("cpu")
+    assert env["sources"]["org/model"] == sha and "org/local" not in env["sources"]
+    assert {"numpy", "transformers", "triton"} <= set(env["versions"]) and isinstance(env["env_vars"], dict)
+    if hasattr(os, "sched_getaffinity"):
+        assert env["cpu_affinity_list"] == pin.compact(os.sched_getaffinity(0))
+        assert env["cpu_affinity"] == len(os.sched_getaffinity(0)) and isinstance(env["cpu_numa_nodes"], list)
 
 
 def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_job():
@@ -150,6 +354,8 @@ def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_j
             assert "--reps 5" in line, job
         if job.startswith("sp-serve-"):
             assert "--reps 10" in line, job
+    missing = [t for t in re.findall(r"\btests/\w+\.py", lines[0]) if not (CODE / t).is_file()]
+    assert jobs[0] == "sp-smoke" and not missing, missing           # every test file the smoke runs exists
     deps = [re.search(r"--dependency=(\S+)", line).group(1) for line in lines]
     assert deps[0] == "singleton" and deps[1].startswith("afterok:DRY1,")       # nothing before smoke succeeds
     assert all(d.startswith("afterany:DRY") for d in deps[2:]), deps

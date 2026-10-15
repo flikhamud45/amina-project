@@ -6,6 +6,6 @@
   "node",
   "node"
  ],
- "note": "An RTX 2080 Ti partition of a SLURM cluster; the records of the report as submitted (commit 336a03c). Frozen: no new records.",
+ "note": "An RTX 2080 Ti partition of a SLURM cluster; the records of an earlier version of the code (commit 336a03c). Frozen: no new records.",
  "frozen": true
 }

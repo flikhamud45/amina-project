@@ -22,7 +22,7 @@ model ``a_j = phi(sum_{i in G_j} w_ij a_i)``:
 ``visit_probabilities`` computes, exactly, the probability that one path visits
 each neuron.  A single tampered neuron (honestly re-propagated above it, which
 is the attack) fails only its own check, so that probability *is* the per-path
-detection probability; ``tests/test_fullcheck.py`` checks it by Monte Carlo.
+detection probability; ``tests/test_v0_protocol.py`` checks it by Monte Carlo.
 ``shared_path_bytes`` measures the cost of ``k`` paths *with openings shared*
 between paths (a row or weight row is sent once per proof, however many paths
 touch it), which is capped by opening everything; ``paths_for`` gives the number of

@@ -17,19 +17,21 @@
 
 Theorem~\ref{thm:dich} leaves one way to reach soundness $2^{-\lambda}$ well below the cost of
 re-execution: the verifier must touch every row, through checks that each mix many rows of a weight
-matrix. Our defence applies the evaluation protocol of a linear-code polynomial commitment, as in
-Ligero and Brakedown~\cite{ligero,brakedown}, to every matrix product: Freivalds'
+matrix. Our defence applies the evaluation protocol of a linear-code polynomial
+commitment~\cite{ligero,brakedown} to every matrix product: Freivalds'
 algorithm~\cite{freivalds1977} tests random combinations of all neurons of each weight operation,
 and a client without the weights checks each combination against a Reed--Solomon-encoded,
 Merkle-committed copy of them. The commitment's testing phase is amortised into a one-time setup
 proof (Section~\ref{sec:setup-proof}). The provider (prover) may deviate arbitrarily. In mode
 $\sC$ the client (verifier) holds only a commitment $C_M$ to the weights, as in the path
-protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights, and in mode $\Kpre$
-secret Freivalds vectors and their folded rows, precomputed once per model from the
-weights~\cite{slalom,commitllm2026}, and the embedding tables, whose rows it looks up itself. For open weights anyone can recompute $C_M$
-(Section~\ref{sec:threat}); the integer OPT-125M and OPT-1.3B are reproduced bit for bit across
-machines and thread counts (OPT-125M also across operating systems and torch versions), and their
-commitments across machines, thread counts and CPU or GPU encoding.
+protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights. In mode $\Kpre$ it needs
+them once, to derive a key~\cite{slalom,commitllm2026} that it stores instead (\KpreStoreGB{}\,GB for
+Llama-2-7B): secret Freivalds vectors with their folded rows (\KpreKeyMB{}\,MB) and the embedding
+tables (\KpreEmbedMB{}\,MB), whose rows it looks up itself. We compare it with re-execution for a
+client that could also keep the weights. For open weights anyone can recompute $C_M$
+(Section~\ref{sec:threat}); the certified OPT-125M and OPT-1.3B and their commitments are reproduced
+bit for bit across Linux machines and 1 to 8 threads, OPT-1.3B's commitment also across CPU and GPU
+encoding (OPT-125M's earlier recipe also across operating systems and torch versions).
 
 \subsection{The Exact Integer Model}
 \label{sec:intmodel}
@@ -178,8 +180,10 @@ for $Q\le2^{64}$ and raises $r$ to 7 at $\lambda=128$. Meeting $Q\varepsilon_{\m
 2^{-\lambda}$ alone would save the $\log_2(2n_{\mathrm{op}})$ bits of the union bound in $\beta$ and
 leave $r=7$.
 
-\para{Untrusted commitments.}\label{sec:setup-proof} Theorem~\ref{thm:sound} assumes an honest
-$C_M$. A Merkle root can bind any matrix $E_j$, not only a matrix of codewords, which is why
+\subsection{Untrusted Commitments}
+\label{sec:setup-proof}
+
+Theorem~\ref{thm:sound} assumes an honest $C_M$. A Merkle root can bind any matrix $E_j$, not only a matrix of codewords, which is why
 linear-code polynomial commitments pair each evaluation with a testing phase~\cite{ligero,brakedown}:
 a committer can bind the encoded columns of two models that differ in matrix $j$ on complementary
 halves of the positions of $j$'s tree, and a prover that computes with the second passes the
@@ -192,11 +196,10 @@ $A^*$, except with the error of Theorem~\ref{thm:sound} with $k_j+e_j$ in place 
 (Theorem~\ref{thm:untrusted}, Appendix~\ref{app:untrusted}); without the weights or a range proof,
 the client learns only that the provider is bound to this one model. For Llama-2-7B at $\lambda=128$ the
 setup proof is \SetupGBLlamaA{}\,GB with radii chosen for $a=100$ amortised queries, or \SetupGBLlamaB{}\,GB for
-$a=1{,}000$, and the opened columns per query grow from \SetupHonestMBLlama{} to \SetupUntrustedMBLlamaA{} or \SetupUntrustedMBLlamaB{}\,MB, less than
+$a=1{,}000$, and the opened columns per interactive query grow from \SetupHonestMBLlama{} to \SetupUntrustedMBLlamaA{} or \SetupUntrustedMBLlamaB{}\,MB, less than
 \SetupQueryShareLlamaA{}\% of the proof at 2{,}048 tokens. Proving it takes \SetupProverLlama{} on the
 \PlatformGpu{} and verifying it \SetupVerifierLlama{} on 8 threads of the \PlatformCpu{}. For column-hash commitments these
 setup columns are forced: with fewer than $t^0_j$ columns of $j$'s tree, no complete test that sees
 only columns certifies radius $e_j$ at our error~\cite{fullversion}. FRI-, STIR-, WHIR- or
 BaseFold-style tests~\cite{fri2018,stir,whir,basefold} could shrink only the combined rows, \SetupCombinedShareLlamaA{}\%
-of the setup proof at $a=100$ and \SetupCombinedShareLlamaB{}\% at $a=1{,}000$. For open weights, recomputing $C_M$ is
-cheaper than a setup proof and also settles which model is committed.
+of the setup proof at $a=100$ and \SetupCombinedShareLlamaB{}\% at $a=1{,}000$.

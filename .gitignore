@@ -24,6 +24,8 @@ dist/
 # zkLLM's per-binary timings are records, not build logs
 !code/artifacts/results/zkllm_l40s/*/bin_times.log
 *.out
+# The final run's stored records, job logs included
+!code/artifacts/final/**
 *.bbl
 *.blg
 *.xdv

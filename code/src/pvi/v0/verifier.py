@@ -68,8 +68,8 @@ def _rhs(op: MatOp, u: torch.Tensor, xin: torch.Tensor) -> torch.Tensor:
     straightforward product, so both are exact on the same inputs.
     """
     k = op.n_in
-    if op.layout == "embed":
-        out = u[:, xin.reshape(-1)]
+    if op.layout == "embed":            # the ids clamped to the table: derive rejects a query with any other
+        out = u[:, xin.reshape(-1).clamp(0, k - 1)]
     elif op.layout == "linear":
         out = torch.remainder(exact_gemm_i64(u[:, :k].to(torch.float64), xin.reshape(-1, k).T, _RHS_CHUNK), P)
     elif k > _RHS_CHUNK:
@@ -544,7 +544,8 @@ class Verifier:
                             lo, hi = (c.lo_, c.hi) if c.kind == "requant" else cut_delta_range(c.mult, c.sh)
                         if not _check_bounds(z, lo, hi, pending):
                             return None
-                    if op.name in looked and not _check_bounds(xin, 0, op.n_in - 1, pending):   # ids of the table
+                    if ((op.name in looked or op.layout == "embed")                   # the ids of every embedding
+                            and not _check_bounds(xin, 0, op.n_in - 1, pending)):
                         return None
                     if op.name in cut_ops and not _check_bounds(xin, -op.max_input - 1, op.max_input + 1, pending):
                         return None              # V1: the input of a cut op within the claim bound's (defence in depth)

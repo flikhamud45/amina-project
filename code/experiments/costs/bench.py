@@ -416,6 +416,14 @@ def suite_cnn(args, env) -> None:
 
     device = torch.device(env["device"])
     name = args.model
+    modes = _modes(args, (("C", "int"), ("C", "fs"), ("K", "int"), ("Kpre", "int")))
+    rate = args.rate
+    tamper_cell = f"tamper_C_int_lam{args.tamper_lam}" + (f"_rate{rate}" if rate != cli.RATE else "")
+    substitute = CNN_MODELS / "resnet18_224_squirrel.pt"
+    if (name == "resnet18_224" and args.tampers and any(m == "C" for m, _ in modes) and not substitute.exists()
+            and not is_done(args, "cnn", name, tamper_cell)):
+        raise SystemExit(f"{substitute} is missing: the attacks on resnet18_224 include Anchuri et al.'s substitute "
+                         "model (python -m experiments.costs.train_cnn --model resnet18_224_squirrel)")
     model, data = trained_mlp() if name == "mlp_mnist" else trained_cnn(name)
     graph = quantize_model(model, data["train_x"])
     mats = graph.mat_ops
@@ -423,7 +431,6 @@ def suite_cnn(args, env) -> None:
     model_f = model.float().to(device)
     xs, _ = next(test_batches(data, max([args.queries + 64, *args.cnn_batches])))
     q_inputs = quantize_input(graph, xs)          # int8 queries, one per trial
-    rate = args.rate
 
     # ---- model facts and fidelity ------------------------------------------------
     cell = "facts"
@@ -513,7 +520,6 @@ def suite_cnn(args, env) -> None:
     # ---- protocol v0: commitment, honest queries, every mode and security level ----------
     # The commitment is one-time and takes seconds for these models, so it is always rebuilt (the Merkle roots are
     # deterministic).
-    modes = _modes(args, (("C", "int"), ("C", "fs"), ("K", "int"), ("Kpre", "int")))
     records.reset_peaks(device)
     commit_cs: dict = {}
     coms, commit_s = _commit(args, graph, device, cs=commit_cs)
@@ -567,8 +573,7 @@ def suite_cnn(args, env) -> None:
             r.done()
 
     # ---- soundness experiments: every attack must be rejected (--tampers 0: none) ------------
-    lam = args.tamper_lam
-    cell = f"tamper_C_int_lam{lam}" + (f"_rate{rate}" if rate != cli.RATE else "")
+    lam, cell = args.tamper_lam, tamper_cell
     if args.tampers and any(m == "C" for m, _ in modes) and not is_done(args, "cnn", name, cell):
         params = params_for(lam, len(mats), rate=rate, plan=coms.plan)
         v = _verifier(args, graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
@@ -623,7 +628,7 @@ def suite_cnn(args, env) -> None:
                 other[op.name] = MatOp(op.name, op.inputs, op.output, weight=w.clamp(-127, 127).to(torch.int8),
                                        bias=op.bias, layout=op.layout, conv=op.conv)
             attempt("substituted_model_1pct", i, forward_kwargs={"weights_override": other})
-        if name == "resnet18_224" and (CNN_MODELS / "resnet18_224_squirrel.pt").exists():
+        if name == "resnet18_224":                  # (checked above: the substitute model exists)
             m2, d2 = trained_cnn("resnet18_224_squirrel")
             g2 = quantize_model(m2, d2["train_x"])
             other = {a.name: b_ for a, b_ in zip(mats, g2.mat_ops)}
@@ -882,7 +887,7 @@ def suite_llm(args, env) -> None:
                     res = _query(args, prover, v, x0, forward_kwargs=kw)
                     r.rec("rejected", int(not res["accepted"]), "", i, attack=kind, stage=res["rejected_at"])
 
-                def t_logit(o, z):
+                def t_logit(o, z):      # column 0: the LM head's only position (with --gen G, the first of G)
                     if o.name == mats[-1].name:
                         z = z.clone()
                         k = int(z[:, 0].argmin())

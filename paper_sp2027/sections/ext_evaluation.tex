@@ -61,10 +61,10 @@ the proof, which V1 makes smaller. On a CPU, native exact kernels for every phas
 \subsection{Memory and Untrusted Commitments}
 \label{app:eval-untrusted}
 
-\todo{F4: peak GPU and host memory of the prover and the verifier per cell of
+\todo{peak GPU and host memory of the prover and the verifier per cell of
 Table~\ref{tab:eval-llm}}. Without the honest-commitment assumption
 (Section~\ref{sec:setup-proof}), Llama-2-7B needs a one-time setup proof of \SetupGBLlamaA{}\,GB (or \SetupGBLlamaB{}\,GB),
-which raises its per-query column bytes from \SetupHonestMBLlama{} to \SetupUntrustedMBLlamaA{}\,MB (or \SetupUntrustedMBLlamaB{}\,MB), less than \SetupQueryShareLlamaA{}\% of the
+which raises its column bytes per interactive query from \SetupHonestMBLlama{} to \SetupUntrustedMBLlamaA{}\,MB (or \SetupUntrustedMBLlamaB{}\,MB), less than \SetupQueryShareLlamaA{}\% of the
 proof at 2{,}048 tokens (Table~\ref{tab:setup}).
 
 \subsection{Real Weights}
@@ -102,8 +102,8 @@ In mode $\sC$ at 64 tokens, real weights cause \VOneRealOptMShortExceptions{} V1
 \VOneRealOptMShortExceptionsMB{}\,MB.
 
 The full real OPT-6.7B (32 blocks) runs end to end in $\Kpre$ at 2{,}048 tokens: \RealOptLAccepted{} of \RealOptLQueries{} queries accepted and \RealOptLTampersRejected{} of \RealOptLTampers{} tampers rejected
-(by Freivalds' check), with a \RealOptLProof{}\,GB proof (with embedding lookups), \RealOptLProve{}\,s to prove and \RealOptLVerify{}\,s to verify (decoding \RealOptLDecode{}\,s,
-recomputation \RealOptLRecompute{}\,s, products \RealOptLProducts{}\,s) on 8 threads of the \PlatformCpu{}. Without lookups, its V1 proof is \VOneRealOptLVOneGB{}\,GB against
+with a \RealOptLProof{}\,GB proof (with embedding lookups), \RealOptLProve{}\,s to prove and \RealOptLVerify{}\,s to verify (decoding \RealOptLDecode{}\,s,
+recomputation \RealOptLRecompute{}\,s, products \RealOptLProducts{}\,s) on 8 threads of the \PlatformCpu{}. Its V1 proof is \VOneRealOptLVOneGB{}\,GB against
 \VOneRealOptLVZeroGB{}\,GB for v0 (\VOneRatioRealOptLExact{}$\times$), with \VOneRealOptLExceptions{} exceptions (\VOneRealOptLExceptionsMB{}\,MB). Its random-weight twin takes \RndOptLProve{}\,s to prove
 and \RndOptLVerify{}\,s to verify, with a \RndOptLProof{}\,GB v0 proof and V1 \RndOptLVOneRatio{}$\times$ smaller: real weights are within \RealOptLTimeWithin{}\% in time,
 \RealOptLVZeroSmaller{}\% smaller in v0 and \RealOptLVOneLarger{}\% larger in V1.
@@ -177,8 +177,8 @@ $\sC$), \CrossoverOptSLongK{}\,Gb/s (OPT-125M, 2{,}048 tokens, $\Kpre$) and \Cro
   \end{tabular}
 \end{table}
 
-A CPU client that holds the weights beats exact (integer) re-execution at both measured lengths
-(Table~\ref{tab:eval-reexec}). Since the claims of about $\lceil k/T\rceil$ queries of $T$ tokens
+A CPU client that could keep the weights beats exact (integer) re-execution at both measured lengths
+by keeping a $\Kpre$ key instead (Table~\ref{tab:eval-reexec}). Since the claims of about $\lceil k/T\rceil$ queries of $T$ tokens
 reveal a weight matrix with rows of length $k$, mode $\sC$ suits open-weight models served by an
 untrusted provider. Our streaming GPU verifier checks a 2{,}048-token OPT-1.3B query in $\Kpre$ in
 \OptMGpuVerify{}\,s on the \PlatformGpu{}, against the 0.90\,s that zkLLM reports on an A100.

@@ -7,7 +7,8 @@
   that computes with ``A'`` passes a query exactly when all of the tree's ``t`` opened columns avoid ``A``'s
   half: about ``2**-t`` per query, measured here with a small ``t``.  **With** it, the committer's setup proof is
   rejected (its combinations of ``A``'s rows disagree with ``A'``'s columns).
-* The per-query column counts after a setup proof are those of the untrusted bound: ``m + e`` for ``m``.
+* The per-query column counts after a setup proof are those of the untrusted bound (``m + e`` for ``m``), which the
+  verifier derives from the certified radii: a lower ``t`` published with the parameters is not installed.
 """
 
 from __future__ import annotations
@@ -43,9 +44,11 @@ def test_an_honest_commitment_passes_its_setup_proof(kind, policy):
     proof = sp.prove_setup(coms.groups, coms.publics, graph.digest(), params)
     assert sp.verify_setup(coms.publics, coms.group_publics, graph.digest(), params, proof)
     assert proof.nbytes() > 0 and params.s >= 7
-    # every query then opens at least the honest bound's columns (m + e for m)
+    # every query then opens at least the honest bound's columns: the t derived from the radii (m + e for m), which
+    # is the t setup_params sized
     honest = dict(proto.params_for(128, len(graph.mat_ops), plan=coms.plan).group_columns)
-    assert all(t >= honest[g] for g, t in sp.query_group_columns(params, coms.group_publics))
+    derived = sp.query_group_columns(params, coms.publics, coms.group_publics, column_bits(128, len(graph.mat_ops)))
+    assert all(t >= honest[g] for g, t in derived) and dict(derived) == dict(params.t)
 
 
 def test_a_tampered_setup_proof_is_rejected():
@@ -63,10 +66,18 @@ def test_a_tampered_setup_proof_is_rejected():
 
     name = next(iter(proof.messages))
     tree = next(iter(proof.openings))
+
+    def multiproof_as(fn):
+        return changed(lambda p: p.openings.__setitem__(tree, (*p.openings[tree][:2], fn(p.openings[tree][2]))))
+
     bad = [changed(lambda p: p.messages[name].__setitem__((0, 0), (p.messages[name][0, 0] + 1) % P)),
            changed(lambda p: p.openings[tree][1].__setitem__((0, 0), (p.openings[tree][1][0, 0] + 1) % P)),
            changed(lambda p: p.openings[tree][2].pop()),
-           changed(lambda p: p.messages.pop(name))]
+           changed(lambda p: p.messages.pop(name)),
+           # a multiproof that is no list of 32-byte hashes: a rejection, not a TypeError
+           multiproof_as(lambda mp: [0] * len(mp)),
+           multiproof_as(lambda mp: [h[:31] for h in mp]),
+           multiproof_as(lambda mp: None)]
     for p in bad:
         assert not sp.verify_setup(publics, groups, digest, params, p)
     other = build_decoder(_TINY["qwen"], calib_tokens=8, seed=2, prune_last=True).digest()
@@ -167,13 +178,21 @@ def test_the_verifier_refuses_parameters_below_the_theorem_s_rule():
         proof = sp.prove_setup(coms.groups, coms.publics, graph.digest(), p)
         assert not sp.verify_setup(coms.publics, coms.group_publics, graph.digest(), p, proof)
     assert sp.params_sound(coms.publics, coms.group_publics, params, 128)
+    # a per-query t below the rule (one column per tree): the setup proof does not bind t, and the queries after it
+    # open the t the verifier derives from the certified radii, not the one the committer published
+    low = dataclasses.replace(params, t=tuple((g, 1) for g, _ in params.t))
+    base = proto.params_for(128, len(graph.mat_ops), plan=coms.plan)
+    qb = column_bits(128, len(graph.mat_ops))
+    after = sp.after_setup(base, low, coms.publics, coms.group_publics, qb)
+    assert dict(after.group_columns) == dict(params.t) and min(t for _, t in after.group_columns) > 1
+    assert after == sp.after_setup(base, params, coms.publics, coms.group_publics, qb)
 
 
 def test_queries_after_an_untrusted_setup_open_its_columns_and_still_catch_a_tamper():
     graph, coms = _committed("gpt", "auto")
     setup = _params(graph, coms)
     base = proto.params_for(128, len(graph.mat_ops), plan=coms.plan)
-    params = sp.after_setup(base, setup, coms.group_publics)
+    params = sp.after_setup(base, setup, coms.publics, coms.group_publics, column_bits(128, len(graph.mat_ops)))
     assert all(t >= dict(base.group_columns)[g] for g, t in params.group_columns)
     v = proto.Verifier(graph.public(), params, "C", publics=coms.publics, groups=coms.group_publics,
                        tables=coms.table_publics)

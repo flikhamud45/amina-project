@@ -13,7 +13,7 @@
   streams that hit both rejection rules; ``extfield.inv_many``; the batch-inverted logUp identity's verdict.
 * The cut ops' values are kept as int8 (requant) and int16 (residual); out-of-range values are rejected with the
   baseline's label, also when the token rule fails first.
-* Every tamper of ``test_cut_protocol`` (and random trace-tampering and single-value ones) gets the same verdict and
+* Every tamper of ``test_v1_protocol`` (and random trace-tampering and single-value ones) gets the same verdict and
   label under both verifiers.
 """
 
@@ -25,7 +25,7 @@ import pytest
 import torch
 
 import pvi.v0 as proto
-import test_cut_protocol as tcp
+import test_v1_protocol as tcp
 from pvi.core import extfield as ef
 from pvi.core.field import P
 from pvi.models.decoder import build_decoder
@@ -218,7 +218,7 @@ def test_xbar_equals_int_times(monkeypatch):
 
 # ------------------------------------------------------------------ the final check, end to end
 def _clamping_gpt(mode):
-    """``test_cut_protocol``'s model that clamps often (a requant multiplier 8x): many exceptions."""
+    """``test_v1_protocol``'s model that clamps often (a requant multiplier 8x): many exceptions."""
     from pvi.core.graph import CheapOp, requant_fn
     g = build_decoder(_TINY["gpt"], calib_tokens=8, seed=1)
     ops = list(g.ops)

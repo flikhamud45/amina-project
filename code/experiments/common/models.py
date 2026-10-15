@@ -22,7 +22,7 @@ TINY = {
     "small-llama": DecoderConfig("small-llama", 256, 4, 8, 4, 32, 688, 4096, norm="rmsnorm", mlp="swiglu",
                                  pos="rope", bias=False, tied=False),
 }
-"""Small decoder shapes for a laptop, the tests and the rehearsals (``tiny-*`` as the test suites build them)."""
+"""Small decoder shapes for a laptop and the rehearsals; the test suites define their own in ``tests/shapes.py``."""
 
 
 def decoder_config(name: str) -> DecoderConfig:

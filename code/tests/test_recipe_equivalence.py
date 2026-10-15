@@ -118,9 +118,9 @@ def test_the_variants_off_are_the_certified_graph(setup):
 
 def _config(model) -> DecoderConfig:
     c = model.config
-    return DecoderConfig("tiny-opt", c.hidden_size, c.num_hidden_layers, c.num_attention_heads, c.num_attention_heads,
-                         c.hidden_size // c.num_attention_heads, c.ffn_dim, c.vocab_size, mlp="relu",
-                         max_pos=c.max_position_embeddings)
+    return DecoderConfig("tiny-opt-hf", c.hidden_size, c.num_hidden_layers, c.num_attention_heads,
+                         c.num_attention_heads, c.hidden_size // c.num_attention_heads, c.ffn_dim, c.vocab_size,
+                         mlp="relu", max_pos=c.max_position_embeddings)
 
 
 @pytest.mark.parametrize("buckets", [2, 4])

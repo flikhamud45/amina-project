@@ -15,7 +15,7 @@ implementation improvement is measured against the code path it replaces on the 
 (Appendix~\ref{app:eval-improve}). Models are measured in full, except where a table gives a build of
 $b$ of $L$ blocks and the long prompts of Appendix~\ref{app:eval-long}, which extrapolate 2- and
 3-block builds; the security parameters, the setup proof's size and the per-prefix comparison of
-Section~\ref{sec:gen} follow from the byte model. Peak memory is not yet reported \todo{F4: peak memory}.
+Section~\ref{sec:gen} follow from the byte model. Peak memory is not yet reported \todo{peak memory}.
 
 \subsection{Real Weights, Model Quality and V1}
 \label{ext:disc-real}
@@ -27,10 +27,10 @@ certified OPT-1.3B, real claims compress better than random ones: v0's proof is 
 space, so V1 shrinks the proof by \VOneRealOptMLongC{}$\times$ in mode $\sC$ at 2{,}048 tokens against \VOneRandomOptMLongC{}$\times$
 with random weights; some residual operations of real OPT weights also have multipliers above $2^{29}$
 and stay clear under (P3). The prover's and the verifier's times are within \RealProveWithin{}\% and
-\RealVerifyWithin{}\% of random weights' (Appendix~\ref{app:eval-real}). The full real OPT-6.7B runs end to end in
-$\Kpre$ at 2{,}048 tokens, and so does the full real Llama-2-7B (whose cells need the Llama-2 licence)
-with the main recipe of Section~\ref{sec:quality}: \RealLlamaAccepted{} of \RealLlamaQueries{} queries accepted, \RealLlamaTampersRejected{} of \RealLlamaTampers{} tampers
-rejected, a \RealLlamaProof{}\,GB proof (\RealLlamaSmaller{}\% smaller than with random weights) checked in \RealLlamaVerify{}\,s on 8 threads of the
+\RealVerifyWithin{}\% of random weights' (Appendix~\ref{app:eval-real}). In $\Kpre$ at 2{,}048 tokens
+\RealAcceptedClause{}, and every tamper rejected. For the full real Llama-2-7B, with the main recipe of
+Section~\ref{sec:quality}, \RealLlamaAccepted{} of \RealLlamaQueries{} queries are accepted and \RealLlamaTampersRejected{} of \RealLlamaTampers{} tampers
+rejected, with a \RealLlamaProof{}\,GB proof (\RealLlamaSmaller{}\% smaller than with random weights) checked in \RealLlamaVerify{}\,s on 8 threads of the
 \PlatformCpu{} (\RndLlamaVerify{}\,s with random weights). At 64 tokens both modes accept every query and reject every
 tamper, with proofs \RealLlamaShortSmaller{}\% smaller and the verifier within \RealLlamaShortVerifyWithin{}\% of random weights; V1 makes
 its 2{,}048-token proof \VOneRealLlamaRatio{}$\times$ smaller (\VOneRatioLlama{}$\times$ with random weights). With smoothing through the norm's gains, the certified OPT-125M,
@@ -55,7 +55,7 @@ verification), V1 is nevertheless faster than v0 on links slower than about \Bre
 re-execution down to \BreakevenLinkVOne{}\,Gb/s, against \BreakevenLinkLong{}\,Gb/s for v0. Llama-2-13B at 2{,}048 tokens is
 measured as the build of Table~\ref{tab:eval-v1}. Mode $\sK$ and the streaming GPU verifier do not
 support V1 yet, and V1 assumes one requantisation multiplier per operation, which excludes
-per-row weight scales ($\times\RowScalesLo{}$--$\RowScalesHi{}$ on OPT-125M at 128 tokens, no gain at 2{,}048).
+per-row weight scales ($\times\RowScalesLo{}$--$\RowScalesHi{}$ on OPT-125M at 128 tokens).
 
 \subsection{A Client's Options in Detail}
 \label{ext:disc-options}
@@ -67,10 +67,10 @@ We add the details behind each row.
 query. The integer forward pass is bit-identical to the claims and so a complete check; it took
 \CpuReexecShort{}\,s at 64 tokens and \CpuReexecLong{}\,s at 2{,}048 tokens on 8 threads of an \PlatformCpu{}, and \GpuIntShort{} and
 \GpuIntLong{}\,s on an \PlatformGpu{} with int8 tensor cores (Table~\ref{tab:options}). Floating-point
-re-execution is faster on a GPU and for long prompts (fp32 on the CPU: \CpuFloatShort{} and \CpuFloatLong{}\,s; fp16 on the
-GPU: \GpuFloatShort{} and \GpuFloatLong{}\,s) but cannot confirm an exact answer. A CPU client that holds the weights can
-instead run our $\Kpre$ verifier, which takes \CpuVerifyShort{} and \CpuVerifyLong{}\,s, \CpuRatioShort{}$\times$ and \CpuRatio{}$\times$ faster
-than exact re-execution.
+re-execution (fp32 on the CPU: \CpuFloatShort{} and \CpuFloatLong{}\,s; fp16 on the
+GPU: \GpuFloatShort{} and \GpuFloatLong{}\,s) cannot confirm an exact answer. A CPU client that could keep the weights can
+instead keep a key derived from them (mode $\Kpre$) and run our verifier, which takes \CpuVerifyShort{} and \CpuVerifyLong{}\,s,
+\CpuRatioShort{}$\times$ and \CpuRatio{}$\times$ faster than exact re-execution.
 On a GPU, re-execution wins: our streaming GPU verifier takes \OptMGpuVerify{}\,s for OPT-1.3B in $\Kpre$ at 2{,}048
 tokens, against \OptMGpuFloat{}\,s for fp16 re-execution on the same GPU (Section~\ref{sec:eval-reexec}).
 
@@ -101,11 +101,12 @@ also proves the operations without weights and hides the weights (Table~\ref{tab
 proof is \ProofLlamaShortC{}, about \ProofRatioLlamaShort{}$\times$ smaller than the int8 weights, and is checked in \VerifyLlamaShortCCpu{} on 8
 threads of the \PlatformCpu{} or \VerifyLlamaShortCGpu{} on the \PlatformGpu{}. Of it, \ColumnsLlamaShort{} are opened columns, which do not shrink with
 shorter prompts. At 2{,}048 tokens the proof is \ProofLlamaLongC{} (\ProofLlamaLongK{} in $\Kpre$), about the size of the
-weights, and takes \TransferLlamaLong{}\,s to transfer at 10\,Gb/s \todo{F7: transfer times}. A client that sends
+weights, and takes \TransferLlamaLong{}\,s to transfer at 10\,Gb/s \todo{transfer times}. A client that sends
 more than about \BreakevenQueriesShort{} short prompts therefore receives more bytes than a download of the
 weights, which are only \BreakevenQueriesLong{}$\times$ the size of one long prompt's proof, and the protocol pays off only for a client that cannot store or run the model, or
-will not (Figure~\ref{fig:breakeven}). A $\Kpre$ client holds the weights and computes its key once
-(\KpreKeyLlama{}\,s for Llama-2-7B on 8 threads of the \PlatformCpu{}). A provider may also serve with the exact model and prove
+will not (Figure~\ref{fig:breakeven}). A $\Kpre$ client needs the weights once, to compute its key
+(\KpreKeyLlama{}\,s for Llama-2-7B on 8 threads of the \PlatformCpu{}), and then keeps \KpreStoreGB{}\,GB instead of them:
+\KpreKeyMB{}\,MB of secret vectors and folded rows and the \KpreEmbedMB{}\,MB embedding table. A provider may also serve with the exact model and prove
 later, on request, with the same proof; it then still pays the integer engine's cost over fp16
 serving (\ServeOptMUOneOverUTwo{}$\times$ on OPT-1.3B), and only the queries it proves are checked. On the \PlatformGpu{}, proving a 2{,}048-token OPT-1.3B prompt costs
 \ServeOptMOverUOneRange{}$\times$ our exact forward pass and \ServeOptMOverUTwoRange{}$\times$ an fp16 one\TodoServingExt{}. Sending one opening and one fold for a batch of
@@ -125,8 +126,8 @@ with it. Only committing the activations and proving the operations without weig
 does, would remove this growth; we leave it to future work. The verifier recomputes attention, so
 its cost grows with the square of the prompt length; at 2{,}048 tokens the operations without
 weights take about \CpuDeriveShareLong{}\% of the CPU verifier's time on the full Llama-2-7B even with the native
-kernels. A CPU client that holds the weights still saves time over exact
-re-execution (\CpuRatioShort{}$\times$ at 64 tokens and \CpuRatio{}$\times$ at 2{,}048, Section~\ref{sec:eval-reexec}),
+kernels. A CPU client that could keep the weights still saves time over exact re-execution by
+keeping a $\Kpre$ key instead (\CpuRatioShort{}$\times$ at 64 tokens and \CpuRatio{}$\times$ at 2{,}048, Section~\ref{sec:eval-reexec}),
 but on a GPU re-execution is faster than our verifier. The case for the protocol is
 therefore a client that does not hold the weights or the hardware to run them, not a faster way to
 compute an answer.

@@ -22,9 +22,9 @@ has no error-correcting encoding, so a changed value is visible at one site only
 \para{Adversary.} The provider may deviate arbitrarily but keeps the committed weights. It knows
 the sampling rule, even one that adapts to the claimed values, but not the verifier's coins, and
 chooses which queries to tamper with. As in~\cite{anchuri2026verifiable}, $C_M$ is computed
-honestly; for our defence, anyone can recompute it from the public fp16 checkpoint with a
-deterministic, public quantisation recipe and fixed calibration data (Section~\ref{sec:setup-proof}
-treats the other case). The statement binds token ids: the client tokenises its text with the model's
+honestly. For open weights, the client trusts any one party that recomputed it from the public
+checkpoint and recipe, or recomputes it once itself without keeping the checkpoint;
+Section~\ref{sec:setup-proof} treats the other case. The statement binds token ids: the client tokenises its text with the model's
 public tokenizer, and a system prompt that the provider prepends is part of $x$, which the client
 receives and the proof covers; a hidden system prompt is beyond what any verifier can certify.
 
@@ -145,8 +145,7 @@ the instance of~(a) embeds in a transformer (Remark~\ref{rem:scope}). Both bound
 locality: opening $q$ uniform blocks of $d$ rows attains the bound $1-qd/N$ of~(a) ($d\mid N$) but
 downloads the rows, while the checks of Section~\ref{sec:defence}, run on each block of $d$ rows encoded and
 committed on its own, keep the error of $d=N$ with $O(\lambda+\log L)$ queries per block, counting
-one per folded row and per opened column~\cite{fullversion}. Each answer is then a folded row or a
-block column, not $d$ rows of weights.
+one per folded row and per opened column~\cite{fullversion}.
 
 \subsection{Measured Attacks}
 \label{sec:break}
@@ -277,9 +276,10 @@ dog-vs-cat ResNet-18. TensorCommitments' stated goal of negligible soundness is 
 layer selection, which the provider can compute. Selection by value is evaded by edits that write
 common values (our zeroing attack; blindfolded updates~\cite{fang2023pol}).
 
-\para{Ethics and responsible disclosure.} Our attack targets verification protocols, not deployed
-services; all experiments used our own code and hardware, public datasets and
-open-weight models. Before submission we wrote to the authors of the path protocol,
+\para{Ethics and responsible disclosure.} The schemes we attack are research protocols with no known
+deployment; our defence (Section~\ref{sec:defence}) mitigates the attack, and higher audit rates do
+so only by opening nearly every row (Theorem~\ref{thm:dich}). All experiments used our own code and
+hardware, public datasets and open-weight models. Before submission we wrote to the authors of the path protocol,
 TensorCommitments, CommitLLM, NanoZK, SLP and SPEX \todo{dates (15/19 Oct); drop SPEX here and in
 Table~\ref{tab:sok} if not notified}, describing our findings, their assumptions and
 what we do not claim, and offering our draft and code. \todo{replies; if

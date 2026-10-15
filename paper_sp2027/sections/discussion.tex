@@ -11,7 +11,7 @@ the weights nor a GPU and will not trust hardware, and a gateway or auditor with
 client with the weights and a GPU should re-execute. The regime is narrow
 (Figure~\ref{fig:breakeven}; Llama-2-7B, Fiat--Shamir). Below about \BreakevenQueriesShort{} queries of 64 tokens,
 mode-$\sC$ proofs cost the client fewer bytes than one download of the int8 weights; at 2{,}048
-tokens the weights are only \BreakevenQueriesLong{}$\times$ the size of one proof, or \BreakevenQueriesVOne{}$\times$ with V1. A $\Kpre$ client that keeps the weights
+tokens the weights are only \BreakevenQueriesLong{}$\times$ the size of one proof, or \BreakevenQueriesVOne{}$\times$ with V1. A $\Kpre$ client that could keep the weights
 verifies faster than exact re-execution on its CPU only on links faster than
 \BreakevenLinkRange{}\,Gb/s (V1: \BreakevenLinkVOne{}\,Gb/s).
 
@@ -22,10 +22,10 @@ the byte model, at about \BreakevenTokensVOne{} with it. Committing the activati
 \para{Weights and trust.} The protocol is not zero-knowledge: the claims of about
 $\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$. It therefore targets
 open-weight models. For private weights it shares the limitation that Hollow-LLM shows for
-zkSNARKs~\cite{hollowllm}. The setup proof of Llama-2-7B takes \SetupProverLlama{} to prove and \SetupVerifierLlama{} to verify.
+zkSNARKs~\cite{hollowllm}.
 
-\para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens, and Llama-2-7B's shapes
-up to 16{,}384, where the CPU verifier is still about \LongRatioLong{}$\times$ faster than exact re-execution (\CpuRatio{}$\times$
+\para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens and, extrapolated from 2- and
+3-block builds, Llama-2-7B's shapes up to 16{,}384, where the CPU verifier is still about \LongRatioLong{}$\times$ faster than exact re-execution (\CpuRatio{}$\times$
 at 2{,}048, both non-interactive) and the proof reaches about \LongProofLong{}\,GB~\cite{fullversion}; mixture-of-experts models are
 untested. Costs use random weights, which real OPT weights match
 (Section~\ref{sec:eval-setup}). The certified OPT models stay close to the floating-point model at 2{,}048 tokens
@@ -33,10 +33,8 @@ untested. Costs use random weights, which real OPT weights match
 integer Qwen3-4B does not ($\times$\QwenLRatio{}).
 
 \para{The attack and the bound.} Condition (H) holds for random ensembles with independent rows
-and on the constructed worst case, not on trained networks, where we report the best attacks found.
-On OPT-1.3B and OPT-6.7B, edits that keep every value inside ranges calibrated on held-out text still
-succeed, and those that only lower activations also evade contribution weighting
-(Section~\ref{sec:break}).
+and on the constructed worst case, not on trained networks, where our evidence is the best attacks
+found, including in-range edits of OPT-1.3B and OPT-6.7B (Section~\ref{sec:break}).
 
 \section{Conclusion}
 \label{sec:conclusion}

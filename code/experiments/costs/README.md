@@ -9,19 +9,19 @@ scripts compute byte models from the public shapes or train the image models.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| `tab:eval-llm` (prove, CPU and GPU verify, proof; modes C and Kpre), `tab:eval-compare` ("ours") | `bench.py` | `python -m experiments.costs.bench llm --model llama2-7b --seq 64 --builds full --modes C:fs --lams 128 --queries 5 --llm-tampers 30 --platform <name>` (and the other jobs of `package/bench_tiers.sh must`) | `artifacts/comparison/raw_<name>/`, tables by `comparison/aggregate.py` |
+| `tab:eval-llm` (prove, CPU and GPU verify, proof; modes C and Kpre), `tab:eval-compare` ("ours") | `bench.py` | `python -m experiments.costs.bench llm --model llama2-7b --seq 64 --builds full --modes C:fs --lams 128 --queries 5 --llm-tampers 30 --platform <name>` (and the other jobs of the run package's `bench` tier: `bash code/experiments/package/run.sh --platform <name> --dry-run bench`) | `artifacts/comparison/raw_<name>/`, tables by `comparison/aggregate.py` |
 | Sec. `sec:eval-setup`: "accepted all 3,792 honest queries and rejected all 2,512 attacks", with the check that rejected each | `bench.py` (defence and tamper cells) | as above; then `python -m experiments.comparison.count_outcomes --platform <name>` | `raw_<name>/`, counts |
 | Sec. `sec:break`: one penultimate neuron flips every test query of each image model; the path test detects it with probability 1/84 to 1/512; `app:eval-attack`: 305,193 paths for `1 - 2^-40` | `bench.py cnn` (cells `attack_float`, `sampling`) | `python -m experiments.costs.bench cnn --model resnet18_224 --tampers 60 --platform <name>` | `raw_<name>/cnn/<model>/{attack_float,sampling}*.jsonl` |
 | `tab:gen` (the stored generated-response cells) | `bench.py --gen` | `python -m experiments.costs.bench llm --model gpt2 --seq 64 --gen 256 --builds full --modes C:int --platform <name>` | `raw_<name>/llm/gpt2/*_gen256*` (the final run uses `generation/gen_bench.py`) |
 | `tab:options` (CPU verifier against re-execution), `tab:eval-reexec`'s verifier row, peak memory | `perf.py` (tier `cpuv`) | `python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes Kpre C --queries 5 --verifier-device cpu --label cpuv` | stdout, one JSON line per mode |
-| `tab:eval-llm`'s new GPU-verifier column | `perf.py` (tier `gpuv`) | `python -m experiments.costs.perf --model opt-1.3b --seq 2048 --modes Kpre --queries 3 --verifier-device cuda --stream --label gpuv` | stdout |
+| `tab:eval-llm`'s GPU-verifier column | `perf.py` (tier `gpuv`) | `python -m experiments.costs.perf --model opt-1.3b --seq 2048 --modes Kpre --queries 3 --verifier-device cuda --stream --label gpuv` | stdout |
 | `tab:eval-real` (real weights against random twins) | `perf.py --real` (tier `real`) | `python -m experiments.costs.perf --model opt-1.3b --real facebook/opt-1.3b --seq 2048 --modes Kpre C --queries 3 --tampers 3 --label real` and the same without `--real` (`--label real-random`) | stdout |
 | `tab:eval-long` (2,048 to 16,384 tokens) | `perf.py` (tier `long`) | `python -m experiments.costs.perf --model llama2-7b --layers 2 --seq 8192 --modes Kpre --queries 3 --verifier-device cpu --label long` (2 and 3 blocks at every length) | stdout |
 | `tab:eval-improve` rows of the prover's attention and of the GPU and CPU verifiers | `perf.py` with implementation options | `experiments/improvements/README.md` | stdout |
 | `tab:setup`; the setup-proof breakdown after it (`ext_defence.tex`); `tab:params`' setup-proof size and untrusted columns | `setup_bytes.py` | `python -m experiments.costs.setup_bytes` | stdout, one JSON line per model and `a` |
 | the setup proof's prover and verifier times (`ext_defence.tex`, after `tab:setup`) | `setup_timing.py` (tier `setup`) | `python -m experiments.costs.setup_timing --model llama2-7b --amortise 100 --label setup`; `... --model gpt2 --amortise 100 1000 --reps 3` | stdout |
 | `tab:params` (`app_params.tex`) | `params_table.py` | `python -m experiments.costs.params_table --tex` | stdout |
-| "16--19 bits for a claim" (`ext_v1.tex`, Sec. on V1's proof size) | `wire.py` | `python -m experiments.costs.wire --mnist <dir> lenet5 vgg16 resnet18_cifar mlp_mnist gpt2:64 gpt2:512 qwen3-4b:8:1,2,4,8 llama2-7b:64:1,2`; stored: `python -m experiments.costs.wire --out artifacts/results/development/wire_laptop.json --summary` | `artifacts/results/development/wire.json` |
+| "16–19 bits for a claim" (`ext_v1.tex`, Sec. on V1's proof size) | `wire.py` | `python -m experiments.costs.wire --mnist <dir> lenet5 vgg16 resnet18_cifar mlp_mnist gpt2:64 gpt2:512 qwen3-4b:8:1,2,4,8 llama2-7b:64:1,2`; stored: `python -m experiments.costs.wire --out artifacts/results/development/wire_laptop.json --summary` | `artifacts/results/development/wire.json` |
 | the trained image models of the benchmark | `train_cnn.py` | `python -m experiments.costs.train_cnn --model lenet5 --device cuda` (and `vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel`) | `artifacts/models/cnn/<model>.{pt,json}` |
 
 Run every command from `code/` with the checkout's library first on the path (`PYTHONPATH=src:.` on Linux,
@@ -122,7 +122,7 @@ as text lines. Seconds on a laptop.
 
 ### `wire.py`
 
-The compact encoding of the proof against the uncoded one: bits per claim (the "16--19 bits" of `ext_v1.tex`), proof
+The compact encoding of the proof against the uncoded one: bits per claim (the "16–19 bits" of `ext_v1.tex`), proof
 bytes per part with and without the encoding, verifier and prover times, and the codec's throughput, on image models
 (random weights, MNIST digits from `--mnist`, read without downloading; `mlp_mnist`: the trained MLP) and decoders
 (`decoder:tokens[:blocks]`). Mode C is sized under the per-op commitment (the plan does not change the encoding's

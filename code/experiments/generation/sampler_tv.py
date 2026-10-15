@@ -114,7 +114,8 @@ LEGACY_SMOOTH = 0.55
 DIRECT_BUDGET = 6e7          # occupied levels x grid points below which LM is summed directly (no FFT rounding)
 FFT_CHUNK = 1 << 20          # complex entries per FFT block (16 MiB): bounds the FFT path's working memory
 EXP_FLOOR = -746.0           # exp(x) is 0.0 in float64 below about -745.13
-MC_TAG = b"pvi/e2b/mc"
+MC_TAG = b"pvi/e2b/mc"     # a fixed domain separator kept from an earlier experiment name: it seeds the Monte Carlo
+                           # draws, so changing it changes every estimate
 
 
 # ------------------------------------------------------------------ the table

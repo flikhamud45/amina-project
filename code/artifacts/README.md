@@ -11,7 +11,9 @@ Every measured number of the paper comes from one run of the run package
 records of its `bench` and `batch` tiers, written by `costs/bench.py --platform final`) and `comparison/tables_final/`
 (`python -m experiments.comparison.aggregate --platform final`); every benchmark number of the paper, the outcome
 counts included, comes from those two folders, and every other measured number from the run's job logs
-(`logs/final/`, outside `code/`; [`experiments/paper/README.md`](../experiments/paper/README.md)). The published
+(`logs/final/` at the repository root while the run writes them, stored afterwards as `final/`;
+[`experiments/paper/README.md`](../experiments/paper/README.md)). [The final run's
+records](#the-final-runs-records) says what the artifact keeps of them. The published
 systems' values come from `comparison/tables/reported_curated.csv`, and `tab:params` and `tab:setup` from the
 library's parameters. The paper's generator reads none of the stored roots below. The stored files serve as inputs
 that scripts need (the MNIST networks, the literature catalogue), as the records behind the values the paper prints
@@ -32,8 +34,10 @@ writes files of that format.
 | `comparison/` | the benchmark's raw roots `raw_<platform>/`, their tables `tables_<platform>/`, `tables/`, `literature/`, `excluded_cells.csv`; described in [`comparison/README.md`](comparison/README.md) | `costs/bench.py`, `comparison/aggregate.py`, `comparison/literature.py`, `attack/path_test_bound.py` | `experiments/comparison/`, `experiments/paper/`, `tests/test_comparison_tables.py`, `tests/test_paper_numbers.py` |
 | `results/` | the attack's documents, the sampler's distances, the quality records, development measurements, zkLLM's demo on an L40S | the scripts of `experiments/attack/`, `generation/`, `quality/`, `costs/`, `deployment/`, `v1/` | `tests/test_paper_numbers.py` (the fallback) |
 | `cache/` | not in the repository: the dataset cache of `pvi.models.datasets` (`PVI_CACHE`) | `pvi.models.datasets` | `costs/bench.py` (image models) |
+| `final/` | added after the final run: its job logs, documents and dry-run listing, and the machine's description ([below](#the-final-runs-records)) | `experiments/package/run.sh` (a copy of `logs/final/`) | `experiments/paper/numbers.py --logs artifacts/final` |
 
-`.gitignore` excludes `models/cnn/` and `cache/`; everything else listed here is committed.
+`.gitignore` excludes `models/cnn/` and `cache/`; everything else listed here is committed (`final/` once the run
+is done).
 
 ## `models/`: the MNIST networks
 
@@ -97,13 +101,13 @@ The other files of `comparison/`:
 
 | Path | Holds | Written by | Provenance | Read by |
 |---|---|---|---|---|
-| `tables_<platform>/measured_summary.csv`, `llm_full_model.csv`, `llm_extrapolation_check.csv` (for `l40s`, `l40s_improved`, `l40s_improved2`, `l40s_improved2_thr1`, `l40s_improved3`, `rtx2080ti-v2`) | per cell and metric the median and mean; the full-model cost of each language model (measured, or extrapolated from 1- and 2-block builds); every full build against its extrapolation | `python -m experiments.comparison.aggregate --platform <platform>` (rebuilds all three byte for byte from the stored root) | rows carry `prover_hw` and `verifier_hw`; `measured_summary.csv` also `git_sha` (the root's commits) | nothing in `code/`; `experiments/paper/` reads `tables_final/` |
+| `tables_<platform>/measured_summary.csv` (`l40s`, `l40s_improved`, `l40s_improved2`, `l40s_improved2_thr1`, `l40s_improved3`, `rtx2080ti-v2`), `llm_full_model.csv` (all but `l40s_improved2_thr1`, which holds no language model), `llm_extrapolation_check.csv` (`l40s`, `l40s_improved2`, `l40s_improved3`, `rtx2080ti-v2`: the roots with a full build that has 1- and 2-block twins) | per cell and metric the median and mean; the full-model cost of each language model (measured, or extrapolated from 1- and 2-block builds); every full build against its extrapolation | `python -m experiments.comparison.aggregate --platform <platform>` (rebuilds a root's files byte for byte from the stored root) | rows carry `prover_hw` and `verifier_hw`; `measured_summary.csv` also `git_sha` (the root's commits) | nothing in `code/`; `experiments/paper/` reads `tables_final/` |
 | `tables_<platform>/llm_extrapolation_validation.csv` (`l40s`, `l40s_improved2`, `l40s_improved3`, `rtx2080ti-v2`) | a line fitted through every block count of each full build | a script that is not part of this artifact | `prover_hw` only; provenance not recorded in the file otherwise | nothing |
 | `tables/reported_curated.csv` | the 41 published results the paper compares with, in seconds and bytes, each linked to its catalogue row | `python -m experiments.comparison.literature` (rebuilds it byte for byte) | per row: the system's own hardware, the source location and a verbatim snippet | `experiments/paper/bench.py` (`literature()`: `tab:eval-compare`, `tab:eval-compare-v1` and the comparison's text numbers), `tests/test_paper_numbers.py` |
 | `literature/reported_benchmarks.csv` | 413 published measurements of 32 systems, each with its table or page and a verbatim snippet | no script: the catalogue of the literature search | per row: venue, URL, hardware, source location, snippet | `experiments/comparison/literature.py` |
 | `tables/analytic.csv` | the path test's paths for `2^-40` and the bytes of opening the fp16 model and trace, Llama-2-7B at 64 tokens | `python -m experiments.attack.path_test_bound` (rebuilds it byte for byte) | provenance not recorded in the file (shapes only, no hardware) | `tests/test_paper_numbers.py` (as the attack tier's `analytic.csv`; fallback `\PathsLlama` 305,193); the paper reads the run's `logs/<name>/attack/analytic.csv` |
 | `tables/measured_summary.csv`, `tables/llm_full_model.csv` | the tables of `raw/` | an aggregation of `raw/` that `comparison/aggregate.py` of this checkout does not reproduce (it gives 6,174 and 944 rows against the stored 6,218 and 980) | rows carry `prover_hw`, `verifier_hw`; `measured_summary.csv` the commits of `raw/` | nothing |
-| `excluded_cells.csv` | 17 timings of `raw_l40s_improved2/` withheld from the paper (cells slowed by other load on two nodes) and the rule that selected them (in its header) | no script of this artifact | provenance not recorded in the file (the selection rule only) | no script of `code/`; its header names `paper_assets.py` and `text_numbers.py`, which are not part of this artifact |
+| `excluded_cells.csv` | 17 timings of `raw_l40s_improved2/` withheld from the values printed before the final run (cells slowed by other load on two nodes) and the rule that selected them (in its header) | no script of this artifact | provenance not recorded in the file (the selection rule only) | no script of `code/`: the record of the withheld values |
 
 ## `results/`: the stored outputs of the other experiments
 
@@ -189,5 +193,24 @@ is written by `summarise.py --csv`. The paper does not use these runs, and no sc
 ### Written by a run, not stored
 
 `results/adaptive_game_opt-1.3b.json` (`attack/adaptive_game_llm.py`), `results/ev_breakeven.{json,tex,pdf}`
-(`deployment/ev_breakeven.py`), `results/development/wire.json` (`costs/wire.py` without `--out`), `models/cnn/`,
-`cache/`, and the final run's `comparison/raw_final/` and `comparison/tables_final/`.
+(`deployment/ev_breakeven.py`), `results/development/wire.json` (`costs/wire.py` without `--out`), `models/cnn/` and
+`cache/`.
+
+## The final run's records
+
+The run writes its job logs and documents to `logs/final/` at the repository root and the benchmark's records to
+`comparison/raw_final/`. Once it is done, the artifact stores everything the paper's numbers are read from:
+
+* `comparison/raw_final/` as the run wrote it, and `comparison/tables_final/`
+  (`python -m experiments.comparison.aggregate --platform final`);
+* `final/`: a copy of `logs/final/` without its caches (`triton/`, `native/`, `setup_cache/`, `ref_*.pt`), that is
+  every job log `sp-<cell>-<job id>.out` (the records are its lines that start with `{`), the attack tier's
+  `attack/` documents, the tv tier's `sampler_tv_*.json`, the dry-run listing `dryrun.txt`, and the machine's
+  description `env-*.txt` (`experiments/package/README.md`, Sec. 6).
+
+From `code/`, `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs artifacts/final --platform final
+--check --expect artifacts/final/dryrun.txt` checks the
+stored records, and without `--check` writes every table body and text number of the paper from them
+([`experiments/paper/README.md`](../experiments/paper/README.md)). The logs record the run machine's host name and
+the records its checkout's absolute paths, so the private rewrite rules of `tools/export_anonymous.py` must name both
+before the anonymous snapshot is exported.

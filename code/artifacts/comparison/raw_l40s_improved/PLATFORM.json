@@ -9,5 +9,5 @@
  "driver": "535.183.01",
  "created": 1790864357.4107752,
  "frozen": true,
- "note": "improve-results (c8be5eb) on L40S nodes (AMD EPYC 9334 verifier; one node with another CPU excluded), the 'L40S runs needed' list of IMPROVEMENTS.md, 27 SLURM jobs on 2026-10-01; frozen, no new records."
+ "note": "The optimised protocol's first batch (commit c8be5eb) on L40S nodes (AMD EPYC 9334 verifier; one node with another CPU excluded), 27 SLURM jobs; frozen, no new records."
 }

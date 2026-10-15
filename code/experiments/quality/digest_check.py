@@ -1,6 +1,7 @@
-"""The reproducible build of the certified commitment (Sec. ``sec:defence`` overview: "the integer OPT-125M and
-OPT-1.3B are reproduced bit for bit across machines and thread counts ..., and their commitments across machines,
-thread counts and CPU or GPU encoding").
+"""The reproducible build of the certified commitment (Sec. ``sec:defence`` overview: "the certified OPT-125M and
+OPT-1.3B and their commitments are reproduced bit for bit across Linux machines and 1 to 8 threads, OPT-1.3B's
+commitment also across CPU and GPU encoding (OPT-125M's earlier recipe also across operating systems and torch
+versions)").
 
 Builds the certified integer OPT graph from a Hugging Face checkpoint on the CPU with ``--threads`` threads --
 ``--recipe certified`` (the default: ``hf_opt.CERTIFIED_RECIPE`` calibrated on ``checkpoints.certified_calibration``,

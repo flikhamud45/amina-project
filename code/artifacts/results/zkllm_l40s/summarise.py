@@ -1,4 +1,4 @@
-"""Summarise one zkLLM run of zkllm.sbatch (not used in the final report): per-stage times (script
+"""Summarise one zkLLM run of zkllm.sbatch (not used by the paper): per-stage times (script
 wall incl. model load; binary alone, from the run's bin_times.log, written by the shims of
 install_timing_shims.sh).
 Usage: summarise.py <run dir> <layers per model>      # print the run's figures
@@ -69,7 +69,7 @@ def report(R: Path, L: int) -> None:
             if k not in ("ppgen", "commit-param"): per_layer += st.median(ts)
         print(f"per-layer proving, binaries that ran (median): {per_layer:.2f} s")
         full = per_layer_s(R)
-        print(f"per-layer proving, second skip counted twice (the report's figure): {full:.2f} s"
+        print(f"per-layer proving, second skip counted twice (the README's figure): {full:.2f} s"
               f"  -> x{L} layers = {full*L:.0f} s")
     else:
         print(f"binary times: not stored (no {log.name} in this run dir)")

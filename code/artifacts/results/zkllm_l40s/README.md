@@ -1,13 +1,11 @@
-# zkLLM's public code on our GPU (not used in the final paper)
+# zkLLM's public demo on an L40S node (not used by the paper)
 
-To compare provers on the same hardware, we ran zkLLM's public demo (commit `993311e` of its
-repository, unchanged) on one of our L40S nodes (L40S prover, AMD EPYC 9334 host; a SLURM
-cluster) for Llama-2-7B and Llama-2-13B at 2,048 tokens: about 844 s for Llama-2-7B, and 2.5x the
-7B figure per layer for Llama-2-13B. The final paper does not use these runs: they were to be compared
-with our Llama-2-7B prover at 2,048 tokens, whose timing is withheld
-([`artifacts/comparison/README.md`](../../comparison/README.md#withheld-timings-excluded_cellscsv)) and
-was not re-measured, so that comparison (a Table 1 row, its note and a sentence of Sec. 4.6 in earlier versions of the paper)
-was dropped. The runs are kept as they were measured.
+zkLLM's public demo (commit `993311e` of its repository, unchanged), run on an L40S node of a SLURM cluster (L40S
+prover, AMD EPYC 9334 host) for Llama-2-7B and Llama-2-13B at 2,048 tokens: about 844 s for Llama-2-7B, and 2.5x the
+7B figure per layer for Llama-2-13B. The paper does not use these runs. They time zkLLM's prover on the hardware of
+the stored benchmark roots, next to their Llama-2-7B prover at 2,048 tokens, whose timing is withheld
+([`artifacts/comparison/README.md`](../../comparison/README.md#withheld-timings-excluded_cellscsv)); the paper
+compares with zkLLM's published numbers instead (`tab:eval-compare`). The runs are kept as they were measured.
 
 ## Reproduce the numbers from the stored runs (no GPU)
 

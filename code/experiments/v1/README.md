@@ -7,7 +7,7 @@ prover's and the verifier's times, the verifier's two implementations phase by p
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| `tab:eval-v1` (V1 and v0 proofs, ratio, prover and verifier times); the abstract's and Sec. `sec:eval-v1`'s "2.0--2.3x smaller at 2,048 tokens with random weights"; the extended version's `tab:v1` (the GKR's share of the prover) | `v1_bytes.py` (tier `v1`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre C --full --reps 5` (and GPT-2 at 64 and 512, OPT-125M, OPT-1.3B, OPT-6.7B at 64 and 2,048, Llama-2-13B, Qwen3-4B) | stdout, one JSON line per mode |
+| `tab:eval-v1` (V1 and v0 proofs, ratio, prover and verifier times); the abstract's and Sec. `sec:eval-v1`'s "2.0–2.3x smaller at 2,048 tokens with random weights"; the extended version's `tab:v1` (the GKR's share of the prover) | `v1_bytes.py` (tier `v1`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre C --full --reps 5` (and GPT-2 at 64 and 512, OPT-125M, OPT-1.3B, OPT-6.7B at 64 and 2,048, Llama-2-13B, Qwen3-4B) | stdout, one JSON line per mode |
 | `tab:options`' V1 columns (V1's byte ratio and its CPU verifier against v0's); the body's "45.4 s against v0's 19.6 s" for the full Llama-2-7B; the extended version's "1.44 s per block (2.49 s before)" | `v1_bytes.py --v1-verifier optimised baseline` (tier `cpuv`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 5 --v1-verifier optimised baseline --label cpuv-v1` (and `--seq 64`, Qwen3-4B) | stdout (`timed.v1_paths`) |
 | where the V1 verifier's time goes (the per-phase breakdown behind the numbers above) | `v1_phases.py` | `python -m experiments.v1.v1_phases --model llama2-7b --layers 2 --seq 2048 --mode Kpre --reps 3 --device cuda` | stdout, one JSON line per verifier and a table |
 | V1 with the GPU verifier at 2,048 tokens (tier `gpuv`) | `v1_bytes.py --verifier-device cuda` | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 3 --verifier-device cuda --label gpuv-v1` | stdout |
@@ -75,7 +75,7 @@ two Llama-2-7B blocks at 2,048 tokens; the laptop check below takes seconds.
 ### `gkr_bench.py`
 
 One GKR instance of `2^n` leaves per size, laid out as V1's operations lay them out (`--T` positions per row), proved
-by the Triton prover (`pvi.v1.gkr_triton.prove_leaves`) under Fiat--Shamir: the fastest of `--reps` proofs after an
+by the Triton prover (`pvi.v1.gkr_triton.prove_leaves`) under Fiat-Shamir: the fastest of `--reps` proofs after an
 untimed one (`s`, `ns_per_leaf`), the first proof (`first_s`, which compiles the kernels) and the peak GPU memory.
 `--check n` compares the transcript with the PyTorch prover's byte for byte (small `n`); `--gkr-profile` adds one more
 proof with every phase synchronised and timed (`profile`). Needs a GPU with Triton (exit status 2 without one);
@@ -110,5 +110,5 @@ python -m experiments.v1.v1_phases --small 128 4 32 344 512 --layers 2 --seq 64 
 python -m experiments.v1.v1_phases --micro 256 128 --reps 2 --threads 2
 ```
 
-`tests/test_real_weights.py` runs `v1_bytes.py --real` (both recipes, both verifiers, `--codec-only`) on a tiny random
+`tests/test_hf_opt.py` runs `v1_bytes.py --real` (both recipes, both verifiers, `--codec-only`) on a tiny random
 OPT, and `tests/test_real_llama_end_to_end.py` its shape check on a tiny random Llama.

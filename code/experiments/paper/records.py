@@ -237,6 +237,12 @@ def checks(r: Rec) -> list[str]:
         bad.append(f"V1 queries accepted: {d.get('accepted')} of {d.get('queries')}")
     elif r.kind == "gkr" and d.get("same_transcript") is False:
         bad.append("the Triton and PyTorch GKR transcripts differ")
+    # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose)
+    on_cpu = str(d.get("verifier_device") or d.get("device") or "cpu").startswith("cpu")
+    if (r.tier in ("cpuv", "long", "real", "v1") and r.kind in ("perf", "v1", "reexec", "gen") and on_cpu
+            and not d.get("codec_only")
+            and ((d.get("env") or {}).get("implementation") or {}).get("native") is False):
+        bad.append("the native CPU kernels were not used")
     return bad
 
 
@@ -278,7 +284,8 @@ class Run:
     Every selector keys on the settings that distinguish the package's jobs, so that a record never fills a cell of
     another configuration: the tier, the model, the prompt length, the mode, the blocks (``layers``; None: the full
     model), the verifier device, the label and real or random weights (``real``: None for random weights, else the
-    checkpoint).  Of several matching records (a tier run again) the latest job's is used.
+    checkpoint).  Of several matching records (a tier run again) the latest job's is used; of several re-execution
+    records of one variant (e.g. two allocator settings), the fastest.
     """
 
     def __init__(self, recs: list[Rec], files: list[Rec] | None = None) -> None:
@@ -333,15 +340,16 @@ class Run:
         return self._last([r for r in self.kind("v1", tier) if ok(r)])
 
     # ---------------------------------------------------------------- re-execution (reexec.py)
-    def reexec(self, tier, model, seq, device, variants) -> dict:
+    def reexec(self, tier, model, seq, device, variants, keep=None) -> dict:
         """``{variant: (seconds, record)}``: each variant's full model measured at full depth (no extrapolation);
-        of several records (e.g. two allocator settings), the faster."""
+        of several records (e.g. two allocator settings), the faster; ``keep(variant, record)``: the records that may
+        stand for their variant (default all)."""
         out = {}
         for r in self.kind("reexec", tier):
             d = r.d
             if d.get("model") != model or d.get("seq") != seq or not str(d.get("device", "")).startswith(device):
                 continue
-            if d.get("variant") not in variants:
+            if d.get("variant") not in variants or (keep is not None and not keep(d["variant"], r)):
                 continue
             v = (d.get("measured_s") or {}).get(str(d.get("n_layers")))
             if v is None:
@@ -350,10 +358,12 @@ class Run:
                 out[d["variant"]] = (v, r)
         return out
 
-    def reexec_blocks(self, tier, model, seq, device, variant) -> tuple[dict, Rec | None]:
-        """``(measured_s by block count, record)`` of one variant (the long tier's 2- and 3-block builds)."""
+    def reexec_blocks(self, tier, model, seq, device, variant, keep=None) -> tuple[dict, Rec | None]:
+        """``(measured_s by block count, record)`` of one variant (the long tier's 2- and 3-block builds; ``keep`` as
+        in :meth:`reexec`)."""
         r = self._last([r for r in self.kind("reexec", tier) if r.d.get("model") == model and r.d.get("seq") == seq
-                        and str(r.d.get("device", "")).startswith(device) and r.d.get("variant") == variant])
+                        and str(r.d.get("device", "")).startswith(device) and r.d.get("variant") == variant
+                        and (keep is None or keep(variant, r))])
         return ((r.d.get("measured_s") or {}) if r else {}), r
 
     # ---------------------------------------------------------------- the other scripts

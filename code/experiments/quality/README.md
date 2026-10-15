@@ -10,12 +10,12 @@ Llama-family scripts use `pvi.models.hf_llama`.
 | Paper result | Script | Command (from code/) | Output |
 |---|---|---|---|
 | `tab:quality`, OPT rows: fp32 27.66 / 14.62 / 10.86; scalar gain x1.166 / x1.096 / x1.696; certified 29.75 (x1.076) / 15.01 (x1.026) / 10.94 (x1.008), intervals [1.073, 1.079], [1.024, 1.028], [1.007, 1.008]; top-1 0.82 / 0.90 / 0.93 | `ppl_opt.py` | `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --out ppl_opt-1.3b.jsonl` (and `facebook/opt-125m`, `facebook/opt-6.7b --ref-device cpu`) | stdout, `--out` (cells `scalar-g<gain>-p11`, `smooth-certified-a0.6-p11`: `ratio`, `ratio_ci95`, `top1`) |
-| Sec. `sec:quality`: "8-bit attention probabilities cost another 2--23%, since a rounded row keeps as little as 56% of its mass; ... 11-bit probabilities (97.5% of the mass)" | `ppl_opt.py` | the same runs (`--pbits 8 11`, the default) | cells `...-p8` against `...-p11`; `mass_min` |
-| Ext. `sec:ext-quality`: the first recipe "transferred badly (x1.14--1.25 on OPT-1.3B depending on the calibration windows, about x2.0 on OPT-125M)" (`\QualityLegacyLo`, `\QualityLegacyHi`, `\QualityLegacyOptS`) | `ppl_opt.py` | `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --recipe legacy --graphs smooth --pbits 11 --draws 0 1 2` (OPT-125M: `--model facebook/opt-125m --recipe legacy --graphs smooth --pbits 11`; jobs `q-opt13-recipes`, `q-opt125-recipes`) | cells `smooth-legacy-a0.55-p11` per `draw` |
+| Sec. `sec:quality`: "8-bit attention probabilities cost another 2–23%, since a rounded row keeps as little as 56% of its mass; ... 11-bit probabilities (97.5% of the mass)" | `ppl_opt.py` | the same runs (`--pbits 8 11`, the default) | cells `...-p8` against `...-p11`; `mass_min` |
+| Ext. `sec:ext-quality`: the first recipe "transferred badly (x1.14–1.25 on OPT-1.3B depending on the calibration windows, about x2.0 on OPT-125M)" (`\QualityLegacyLo`, `\QualityLegacyHi`, `\QualityLegacyOptS`) | `ppl_opt.py` | `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --recipe legacy --graphs smooth --pbits 11 --draws 0 1 2` (OPT-125M: `--model facebook/opt-125m --recipe legacy --graphs smooth --pbits 11`; jobs `q-opt13-recipes`, `q-opt125-recipes`) | cells `smooth-legacy-a0.55-p11` per `draw` |
 | Ext. `sec:ext-quality`: smooth-max "is stable across calibration windows (OPT-1.3B within 0.003 over two draws)" (`\QualityDrawSpread`); Sec. `sec:quality`: "stable across calibration windows to +-0.003"; Ext. `sec:ext-quality`: "The certified recipe's alpha = 0.6 was chosen on the test split: over alpha in {0.3, ..., 0.7} its ratio is within 0.000 of the best on OPT-125M and within 0.000 on OPT-1.3B" (`\QualityAlphaGapOptS`, `\QualityAlphaGapOptM`) | `ppl_opt.py` | `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11 --draws 0 1` (and `--model facebook/opt-125m` with draw 0; jobs `q-opt13-recipes`, `q-opt125-recipes`) | cells `smooth-certified-a<alpha>-p11` (`split: test`) |
-| Ext. `sec:ext-quality`: the first recipe "on 128-token windows calibrated on the test split gave x1.03--1.05 on OPT-125M" | `ppl_opt.py` | `python -m experiments.quality.ppl_opt --model facebook/opt-125m --calibration test-end --seq 128 --windows 16 --recipe legacy --graphs scalar smooth --alphas 0.55 0.5 --pbits 8` | cells `smooth-legacy-a0.55-p8`, `smooth-legacy-a0.5-p8` |
+| Ext. `sec:ext-quality`: the first recipe "on 128-token windows calibrated on the test split gave x1.03–1.05 on OPT-125M" | `ppl_opt.py` | `python -m experiments.quality.ppl_opt --model facebook/opt-125m --calibration test-end --seq 128 --windows 16 --recipe legacy --graphs scalar smooth --alphas 0.55 0.5 --pbits 8` | cells `smooth-legacy-a0.55-p8`, `smooth-legacy-a0.5-p8` |
 | Ext. `sec:ext-quality`: "Cross-layer equalisation did not help on top of smoothing (67.8 against 66.6 at 128 tokens)" | `ppl_opt.py` | the previous command with `--graphs smooth --alphas 0.55 --cle-mlp 0 --cle-ratio 2`, and without `--cle-mlp` | cells `smooth-legacy-a0.55-cle0r2-p8` and `smooth-legacy-a0.55-p8` (`ppl`) |
-| Ext. `sec:ext-quality` and `ext_discussion`: "Per-row power-of-two weight scales (four per matrix) on top of smoothing reach x1.00--1.01 on OPT-125M at 128 tokens, with top-1 agreement 0.87 to 0.88, but do not help at 2,048 tokens" | `ppl_opt.py` | 128 tokens: the 128-token command with `--graphs rows --alphas 0.55`; 2,048 tokens: `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --recipe legacy --graphs smooth rows --draws 0 1 2` | cells `rows4-legacy-a0.55-p8` / `-p11` |
+| Ext. `sec:ext-quality` and `ext_discussion`: "Per-row power-of-two weight scales (four per matrix) on top of smoothing reach x1.00–1.01 on OPT-125M at 128 tokens, with top-1 agreement 0.87 to 0.88, but do not help at 2,048 tokens" | `ppl_opt.py` | 128 tokens: the 128-token command with `--graphs rows --alphas 0.55`; 2,048 tokens: `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --recipe legacy --graphs smooth rows --draws 0 1 2` | cells `rows4-legacy-a0.55-p8` / `-p11` |
 | Ext. `sec:ext-quality`: "On the validation split, which no choice used, it is within ... and ... of the best of alpha in {0.5, 0.6, 0.7} on OPT-125M and OPT-1.3B, and costs OPT-6.7B ... against alpha = 0.5" (`\QualityAlphaValGapOptS`, `\QualityAlphaValGapOptM`, `\QualityAlphaCostOptL`; the final run fills them) | `ppl_opt.py` | `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --split validation --graphs smooth --alphas 0.5 0.6 0.7 --pbits 11` (and OPT-125M: job `q-opt-validation`); OPT-6.7B: `python -m experiments.quality.ppl_opt --model facebook/opt-6.7b --device cuda --split validation --graphs smooth --alphas 0.5 0.6 --pbits 11 --ref-device cpu` (job `q-opt67-validation`) | records with `split: validation` |
 | `tab:zeroshot`; Sec. `sec:quality`: "the certified OPT-125M and OPT-1.3B lose 1.0 and 0.8 points of accuracy on average, and OPT-6.7B matches fp16 (+0.06); LAMBADA ... loses the most (3.1, 2.0 and 0.5 points)" | `zeroshot.py` | `python -m experiments.quality.zeroshot --model facebook/opt-1.3b --device cuda --out zeroshot_opt-1.3b.jsonl` (OPT-6.7B: see below) | stdout, `--out` (`variant: ref` / `int`, `acc`, `acc_norm`, `diff_acc`, `diff_acc_ci95`, `same_pick`) |
 | Ext. `sec:ext-quality`: with the first recipe "the mean zero-shot loss of OPT-1.3B was 2.8 points (0.8 with the certified recipe)" | `zeroshot.py` | `python -m experiments.quality.zeroshot --model facebook/opt-1.3b --device cuda --recipe legacy` | as above |
@@ -140,15 +140,16 @@ takes the BOS's place), only the windows' own tokens are scored, and the fp32 re
 ### `ppl_llama.py`
 
 The perplexity of an integer Llama or Qwen3 model against its fp32 checkpoint. Inputs: a Hugging Face checkpoint
-(`--model`; Llama-2 needs your own licence and Hugging Face login; `--config` names the benchmark configuration of its
-shape, by default from the model's name), the WikiText-2 parquets (downloaded from the hub). Every `--seq`-token test
-window (2,048 by default; 160 windows for OpenLLaMA-7B; `--windows` keeps the first ones) is scored at every
-position in one pass with the lean forward (`hf_llama.lean_logits`, the LM head on `--chunk` positions at a time).
-Calibration draw `d` (`--draws`) is `--calib-windows` (4) windows of `--calib-seq` (default `--seq`) tokens from
-window `4d` of the train split on; draw 0 is `checkpoints.llama_calibration`, so for OpenLLaMA-7B and Llama-2-7B
-(whose settings are `MAIN_RECIPE`'s) the default main cell is the graph of the real-weight cost cells
-(`checkpoints.real_graph`, unpruned). The prefix (`--prefix`, default `auto`: PrefixQuant's rule on the first draw's
-calibration windows; `bos`; comma-separated token ids; `none`) is chosen once per run.
+(`--model`; Llama-2 needs your own licence and a Hugging Face token: `export HF_TOKEN`, which sbatch passes to the
+jobs; `--config` names the benchmark configuration of its shape, by default from the model's name), the WikiText-2
+parquets (downloaded from the hub). Every `--seq`-token test window (2,048 by default; 160 windows for OpenLLaMA-7B;
+`--windows` keeps the first ones) is scored at every position in one pass with the lean forward
+(`hf_llama.lean_logits`, the LM head on `--chunk` positions at a time). Calibration draw `d` (`--draws`) is
+`--calib-windows` (4) windows of `--calib-seq` (default `--seq`) tokens from window `4d` of the train split on; draw
+0 is `checkpoints.llama_calibration`, so for OpenLLaMA-7B and Llama-2-7B (whose settings are `MAIN_RECIPE`'s) the
+default main cell is the graph of the real-weight cost cells (`checkpoints.real_graph`, unpruned). The prefix
+(`--prefix`, default `auto`: PrefixQuant's rule on the first draw's calibration windows; `bos`; comma-separated
+token ids; `none`) is chosen once per run.
 
 Cells (`--graphs`, in that order, for every draw): `main` (default; per `--alphas` and `--glu-smooths`, default the
 checkpoint's), `smooth` (the same without the product balance, per `--alphas`), `scalar` (one norm gain per
@@ -222,9 +223,12 @@ q/k-norm gains). Output: one JSON line per (mode, block) on stdout and `--out`, 
 
 ### Reproducing the paper's numbers
 
-The run package's `quality` tier (`bash code/experiments/package/run.sh --platform <name> quality`; with your own Llama-2 licence and
-Hugging Face login, `--llama-licence`, and `HF_HOME` on a disk with about 60 GB free) runs every command of
-the table above, and the Llama-2 rows:
+The run package's `quality` tier (`bash code/experiments/package/run.sh --platform <name> quality`; with your own
+Llama-2 licence and a Hugging Face token (`export HF_TOKEN`; sbatch passes it to the jobs), `--llama-licence`, and
+`HF_HOME` on a disk with about 60 GB free) runs every command of the table above, and the Llama-2 rows; its jobs
+q-qwen4 and q-openllama7 keep their fp32 CPU reference in `logs/<name>/ref_*.pt` (`--ref-cache`), and with
+`--llama-licence` the rehearsal also runs the Llama-2-7B smoke model (job q-llama-access), which reads the gated
+repository from a compute node:
 
     python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --graphs main smooth --alphas 0.55 0.65 \
         --structure --device cuda --calib-device cpu --threads 8

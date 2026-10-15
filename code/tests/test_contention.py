@@ -181,15 +181,16 @@ def _bench_run(monkeypatch, root: Path):
     from experiments.costs import bench
     from test_plans import _TINY
 
-    monkeypatch.setitem(models.TINY, "tiny-gpt", _TINY["gpt"])
+    gpt = _TINY["gpt"]
+    monkeypatch.setitem(models.TINY, gpt.name, gpt)
     monkeypatch.setattr(bench, "RAW", root)
     env = {"device": "cpu", "cpu": "test", "torch_threads": 1}
     bench.suite_llm(bench.build_parser().parse_args(
-        ["llm", "--model", "tiny-gpt", "--seq", "9", "--builds", "1,full", "--modes", "C:int,C:fs", "--lams", "40",
+        ["llm", "--model", gpt.name, "--seq", "9", "--builds", "1,full", "--modes", "C:int,C:fs", "--lams", "40",
          "--queries", "2", "--policy", "R8c", "--wire", "--no-prune-last", "--llm-tampers", "1", "--batches", "2",
          "--platform", "test"]), env)
     bench.suite_llm(bench.build_parser().parse_args(
-        ["llm", "--model", "tiny-gpt", "--seq", "9", "--builds", "full", "--modes", "Kpre:int", "--lams", "40",
+        ["llm", "--model", gpt.name, "--seq", "9", "--builds", "full", "--modes", "Kpre:int", "--lams", "40",
          "--queries", "2", "--lookups", "--wire", "--no-prune-last", "--platform", "test"]), env)
     return bench
 

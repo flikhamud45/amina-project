@@ -1,11 +1,13 @@
 """Run records: the environment of a run, peak memory, timing, and writing results.
 
 Every timed script prints one JSON object per line (:func:`emit`) and starts it with :func:`environment`, so that a
-record says which commit, host, GPU, library versions and implementation options produced it.
+record says which commit, host, CPUs, GPU, library versions, checkpoint revisions and implementation options
+produced it.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import platform
@@ -104,11 +106,38 @@ def _gpu_driver() -> str | None:
         return None
 
 
+LIBRARIES = ("numpy", "scipy", "transformers", "tokenizers", "huggingface_hub", "safetensors", "pyarrow", "triton",
+             "torchvision")
+"""The libraries besides torch whose versions a record keeps (``None``: not installed)."""
+VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "NVIDIA_TF32_OVERRIDE", "PYTORCH_CUDA_ALLOC_CONF",
+             "MALLOC_MMAP_MAX_", "MALLOC_TRIM_THRESHOLD_", "MALLOC_TOP_PAD_")
+"""The environment variables of the thread pools, the allocators and cuBLAS that a record keeps when they are set
+(recorded only; the library reads none of them)."""
+
+
+@functools.lru_cache(maxsize=None)
+def _versions() -> dict:
+    from importlib import metadata
+    out = {}
+    for name in LIBRARIES:
+        try:
+            out[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            out[name] = None
+    return out
+
+
 def environment(device=None) -> dict:
     """The run's environment for a record: the commit (and whether the checkout has uncommitted changes), the
-    host, CPU and threads, the GPU and its driver, the Python, torch and CUDA versions, the scheduler's job and
-    the implementation options with what this host runs (:func:`pvi.options.describe`)."""
+    host, CPU and threads, the CPUs the process may run on (their number ``cpu_affinity``, their list
+    ``cpu_affinity_list`` and their NUMA nodes ``cpu_numa_nodes``; ``run.sh`` pins its CPU-timing jobs,
+    :mod:`experiments.package.pin`),
+    the GPU and its driver, the Python, torch and CUDA versions and those of :data:`LIBRARIES` (``versions``), the
+    variables of :data:`VARIABLES` that are set (``env_vars``), the revision of every checkpoint and dataset file
+    loaded so far (``sources``, :data:`experiments.common.checkpoints.SOURCES`), the scheduler's job and the
+    implementation options with what this host runs (:func:`pvi.options.describe`)."""
     from experiments.common.paths import CODE
+    from experiments.package import pin
     import pvi
     cuda = torch.cuda.is_available()
     out = {"git": git_sha(CODE), "git_dirty": _git_dirty(CODE), "host": socket.gethostname(), "cpu": _cpu_name(),
@@ -116,14 +145,20 @@ def environment(device=None) -> dict:
            "gpu": torch.cuda.get_device_name(0) if cuda else None,
            "gpu_total_memory": torch.cuda.get_device_properties(0).total_memory if cuda else None,
            "driver": _gpu_driver() if cuda else None, "python": platform.python_version(), "torch": torch.__version__,
-           "cuda": torch.version.cuda, "tf32_matmul": torch.backends.cuda.matmul.allow_tf32,
+           "cuda": torch.version.cuda, "versions": dict(_versions()),
+           "env_vars": {k: os.environ[k] for k in VARIABLES if k in os.environ},
+           "tf32_matmul": torch.backends.cuda.matmul.allow_tf32,
            "pvi": str(Path(pvi.__file__).resolve().parent), "argv": sys.argv[1:],
            "slurm_job": os.environ.get("SLURM_JOB_ID"), "schedstat": contention.available(),
            "implementation": options.describe(device)}
     try:
-        out["cpu_affinity"] = len(os.sched_getaffinity(0))
+        cpus = os.sched_getaffinity(0)
+        out.update(cpu_affinity=len(cpus), cpu_affinity_list=pin.compact(cpus), cpu_numa_nodes=pin.nodes_of(cpus))
     except (AttributeError, OSError):
         pass
+    ck = sys.modules.get("experiments.common.checkpoints")
+    if ck is not None and ck.SOURCES:
+        out["sources"] = dict(ck.SOURCES)
     return out
 
 
