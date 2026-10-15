@@ -715,10 +715,11 @@ need_images() {   # the bench tier's image cells load trained models and dataset
 }
 
 preflight() {   # what the jobs need from this host and the scheduler, checked before anything is submitted
-  local bad=() t hf="" big
+  local bad=() t hf="" big gb=60
+  [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do case "$t" in real|quality|tv|attack) hf=1 ;; esac; done
-  [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<node-local folder with ~60 GB free> (the real, \
-quality, tv and attack tiers download checkpoints and datasets)")
+  [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<node-local folder with ~$gb \
+GB free> (the real, quality, tv and attack tiers download checkpoints and datasets)")
   [ -n "$NONATIVE" ] || command -v "${CXX:-}" > /dev/null 2>&1 || bad+=("CXX='${CXX:-}' names no compiler here: \
 export CXX=<path to g++> (the native CPU kernels), or pass --no-native-ok")
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")

@@ -225,7 +225,7 @@ q/k-norm gains). Output: one JSON line per (mode, block) on stdout and `--out`, 
 
 The run package's `quality` tier (`bash code/experiments/package/run.sh --platform <name> quality`; with your own
 Llama-2 licence and a Hugging Face token (`export HF_TOKEN`; sbatch passes it to the jobs), `--llama-licence`, and
-`HF_HOME` on a disk with about 60 GB free) runs every command of the table above, and the Llama-2 rows; its jobs
+`HF_HOME` on a disk with about 100 GB free) runs every command of the table above, and the Llama-2 rows; its jobs
 q-qwen4 and q-openllama7 keep their fp32 CPU reference in `logs/<name>/ref_*.pt` (`--ref-cache`), and with
 `--llama-licence` the rehearsal also runs the Llama-2-7B smoke model (job q-llama-access), which reads the gated
 repository from a compute node:
