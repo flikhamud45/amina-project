@@ -129,8 +129,10 @@ committing activations. The window lemmas, the GKR details and the per-phase ver
   while a faster dynamic-int8 engine was excluded as non-exact. On the earlier Xeon measurements the ratio becomes
   7.2 (142 s against 19.6 s) instead of 4.7, and the fastest inexact engine (dynamic int8, 56 s) is 2.9 times the
   verifier's time. Reverting is one line (`experiments/paper/tables.py`, `EXACT`) plus the wording.
-- **Length** (Tectonic, Times): the submission is 19 pages: body 1-13, references 14-15, appendix 16-19. The body
-  meets the 13-page limit; the total is one page over the 18 pages that recent S&P calls allow (check the 2027 call).
+- **Length** (Tectonic, Times): the submission is 19 pages: body 1-13 and the first three lines of page 14,
+  references 14-16, appendix 16-19 (page 19 about 45% full). The 2027 call (`docs/submission/CFP_2027.md`) allows
+  13 pages of text and 18 in all and rejects over-length papers without review, so the body is three lines over
+  and the total about half a page over.
   The 20 remaining `\todo` boxes take part of that space. The reframe (Sec. 5-6) has to fit in the same 13 pages
   and bring the total to 18: the edits of M10 (V1's details, the improvement table and the setup proof to the
   extended version) are the room for it.
