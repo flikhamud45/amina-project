@@ -49,8 +49,10 @@ ls artifacts/models/cnn/*.pt      # six models
 exit
 ```
 
-If you have the Llama-2 licence, check on the same node that your login can fetch the gated checkpoint (the rehearsal
-does not download it; the full run does):
+If you have the Llama-2 licence, the jobs must see your Hugging Face token on whichever node they land: a login
+stored under a node-local `HF_HOME` is not visible elsewhere, so `export HF_TOKEN=<your token>` in the shell that runs
+`run.sh` (the jobs inherit it). Then check on the same node that the token can fetch the gated checkpoint (the
+rehearsal does not download it; the full run does):
 `.venv/bin/huggingface-cli download meta-llama/Llama-2-7b-hf config.json`.
 
 ## 2. Smoke (up to an hour)
@@ -61,7 +63,8 @@ From the repository root, on the login node:
 bash code/experiments/package/run.sh --platform smoke smoke
 ```
 
-Wait until it has finished: `squeue -u $USER` lists no `sp-` job, and `logs/smoke/sp-smoke-*.out` ends with
+The smoke job asks for a whole node (`--exclusive`), as the full run's jobs will; please tell us how long it waited
+in the queue. Wait until it has finished: `squeue -u $USER` lists no `sp-` job, and `logs/smoke/sp-smoke-*.out` ends with
 `SMOKE OK`. Please do not start Sec. 3 while the smoke job is still queued or running: `run.sh` skips a job whose
 name is already in the queue, so the rehearsal would lose its own smoke job. If the smoke failed, cancel your pending
 `sp-` jobs (`scancel -u $USER -n <name>`, or `squeue -u $USER` and `scancel <id>`) and send us the log before running
@@ -70,10 +73,11 @@ again.
 ## 3. Rehearsal (about three hours, small cells of every script)
 
 From the repository root (`--llama-licence` only if your Hugging Face account has the Llama-2 licence; otherwise
-leave it out):
+leave it out). The rehearsal's timings are not used, so its jobs share nodes (`--no-exclusive`); by default every job
+waits for a whole node, which on an 8-GPU node can take long:
 
 ```bash
-bash code/experiments/package/run.sh --platform rehearsal --rehearsal --optional --llama-licence all
+bash code/experiments/package/run.sh --platform rehearsal --rehearsal --optional --no-exclusive --llama-licence all
 ```
 
 This only submits the 50 jobs. Wait until `squeue -u $USER` lists no `sp-` job (about three hours), then check:
