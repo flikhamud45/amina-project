@@ -34,8 +34,11 @@ __all__ = ["available", "attention_core"]
 
 
 def available(device) -> bool:
-    """Whether the kernel can run on ``device`` (a CUDA device and Triton)."""
-    return triton is not None and torch.device(device).type == "cuda"
+    """Whether the kernel can run on ``device``: a CUDA device before sm_90, and Triton.  Triton 3.1 (torch 2.5.1's)
+    aborts compiling it for sm_90, so a Hopper GPU takes ``_attention_core`` (the same integers, more memory)."""
+    if triton is None or torch.device(device).type != "cuda":
+        return False
+    return torch.cuda.get_device_capability(device)[0] < 9
 
 
 if triton is not None:

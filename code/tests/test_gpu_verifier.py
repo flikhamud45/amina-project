@@ -152,7 +152,7 @@ def test_grouped_attention_matches_the_reference_on_both_paths(hq, hkv, m_s, dev
 def test_the_fused_attention_kernel_gives_the_int32_cores_integers(hq, hkv, t, tq, dh, pattern, m_s, pmax):
     from pvi.kernels import attention_triton as attention_kernels
     if not attention_kernels.available("cuda"):
-        pytest.skip("no Triton")
+        pytest.skip("the fused kernel is not available here (no Triton, or sm_90 and later)")
     if not tr._int32_scores(m_s, dh, t):
         pytest.skip("the int64 fallback applies")
     g = torch.Generator().manual_seed(hq * t + tq + dh)
