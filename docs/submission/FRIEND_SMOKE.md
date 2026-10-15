@@ -4,8 +4,15 @@ Thanks for running this. Two short runs first, then (after we look at the result
 
 ## 1. Setup (once)
 
+The code is the branch `sp2027-artifact` at commit `1a7ce39`, as a git bundle next to this file
+(`pvi-sp2027-artifact-1a7ce39.bundle`; `SHA256SUMS` holds its checksum). Clone from the bundle (copy it to the L40S
+machine first if that machine does not see this folder); the records name the commit, so please run from a clone,
+not from an unpacked copy:
+
 ```bash
-git clone git@github.com:flikhamud45/amina-project.git pvi && cd pvi && git checkout sp2027-artifact
+H=/home/sharifm/teaching/tml-0368-4075/erelbarzilay/final_project/amina-project/logs/validation/sp2027/handoff_l40s
+(cd $H && sha256sum -c SHA256SUMS)
+git clone -b sp2027-artifact $H/pvi-sp2027-artifact-1a7ce39.bundle pvi && cd pvi && git log --oneline -1   # 1a7ce39
 python3.12 -m venv .venv
 .venv/bin/pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 .venv/bin/pip install -r code/requirements.txt -r code/requirements-llm.txt
@@ -65,4 +72,5 @@ tar czf rehearsal.tgz --exclude=triton --exclude=native --exclude=setup_cache lo
 nvidia-smi -q > env-nvidia.txt; lscpu > env-cpu.txt; free -g > env-mem.txt; .venv/bin/pip freeze > env-pip.txt
 ```
 
-and send `rehearsal.tgz` and the four `env-*.txt` files. Please do not start the full run yet.
+and send `rehearsal.tgz` and the four `env-*.txt` files, or copy them into `$H/return/` (writable by everyone).
+Please do not start the full run yet.
