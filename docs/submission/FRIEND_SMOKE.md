@@ -6,15 +6,15 @@ node; `run.sh` itself runs on the login node and submits the jobs.
 
 ## 1. Setup (once)
 
-The code is the branch `sp2027-artifact` at commit `1a7ce39`, as a git bundle next to this file
-(`pvi-sp2027-artifact-1a7ce39.bundle`; `SHA256SUMS` holds its checksum). Clone from the bundle (copy it to the L40S
+The code is the branch `sp2027-artifact` at commit `b0ec1d9`, as a git bundle next to this file
+(`pvi-sp2027-artifact-b0ec1d9.bundle`; `SHA256SUMS` holds its checksum). Clone from the bundle (copy it to the L40S
 machine first if that machine does not see this folder); the records name the commit, so please run from a clone,
 not from an unpacked copy:
 
 ```bash
 H=/home/sharifm/teaching/tml-0368-4075/erelbarzilay/final_project/amina-project/logs/validation/sp2027/handoff_l40s
 (cd $H && sha256sum -c SHA256SUMS)
-git clone -b sp2027-artifact $H/pvi-sp2027-artifact-1a7ce39.bundle pvi && cd pvi && git log --oneline -1   # 1a7ce39
+git clone -b sp2027-artifact $H/pvi-sp2027-artifact-b0ec1d9.bundle pvi && cd pvi && git log --oneline -1   # b0ec1d9
 python3.12 -m venv .venv
 .venv/bin/pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 .venv/bin/pip install -r code/requirements.txt -r code/requirements-llm.txt
@@ -22,6 +22,12 @@ export SBATCH_PARTITION=<the L40S partition> SBATCH_GRES=gpu:l40s:1     # or add
 export HF_HOME=<node-local folder with about 60 GB free>
 export CXX=$(command -v g++)                                            # g++ 9 or later
 ```
+
+If you already cloned the earlier commit `1a7ce39`, update that clone instead (the environment stays):
+`git fetch $H/pvi-sp2027-artifact-b0ec1d9.bundle sp2027-artifact && git checkout -B sp2027-artifact FETCH_HEAD`.
+If you already ran Sec. 2 or 3 on `1a7ce39`, please send those results too and run both sections again on
+`b0ec1d9` (its run package pins the CPU-timing jobs and checks the native kernels, which only this machine can
+test).
 
 The `bench` tier needs the image datasets and the trained image models (neither is in the repository):
 
