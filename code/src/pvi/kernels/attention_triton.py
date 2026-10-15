@@ -112,8 +112,10 @@ def attention_core(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, lut: torch
     bm, bn = 64, 64
     grid = (triton.cdiv(rows, bm), bsz * heads)
     lut = lut.to(device=q.device, dtype=torch.int32).contiguous()
+    # num_stages=1: on sm_80 and later, Triton 3.1's software pipeliner mis-schedules pass 3 (one tl.dot's result
+    # feeds the next) and the compiler aborts ("mma16816 data type not supported"); sm_75 never pipelines.
     _attn_kernel[grid](q, k, v, lut, out,
                        *q.stride(), *k.stride(), *v.stride(), *out.stride(),
                        heads, rows, queries, t, dh, lut.numel(), 2 * pmax,
-                       BM=bm, BN=bn, BD=bd, num_warps=4)
+                       BM=bm, BN=bn, BD=bd, num_warps=4, num_stages=1)
     return out

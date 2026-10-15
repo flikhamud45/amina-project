@@ -718,7 +718,7 @@ preflight() {   # what the jobs need from this host and the scheduler, checked b
   local bad=() t hf="" big gb=60
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do case "$t" in real|quality|tv|attack) hf=1 ;; esac; done
-  [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<node-local folder with ~$gb \
+  [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
 GB free> (the real, quality, tv and attack tiers download checkpoints and datasets)")
   [ -n "$NONATIVE" ] || command -v "${CXX:-}" > /dev/null 2>&1 || bad+=("CXX='${CXX:-}' names no compiler here: \
 export CXX=<path to g++> (the native CPU kernels), or pass --no-native-ok")
