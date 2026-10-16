@@ -4,30 +4,50 @@ Thanks for running this. Two short runs first, then (after we look at the result
 Every step that uses the GPU or describes the machine runs on an L40S node (an `srun` allocation), not on the login
 node; `run.sh` itself runs on the login node and submits the jobs.
 
+## Round 2 (16 October): after your first smoke
+
+Thank you for the report; the diagnosis was right. Commit `8945367` launches the attention kernel with `num_stages=1`, as
+you proposed, and documents `TMPDIR` in the run package's README (it also sends sm_90 GPUs to the unfused attention,
+since Triton 3.1 cannot compile the fused kernel there; the L40S is not affected). On our side, every Triton kernel
+that the test suite and a whole rehearsal compile was also compiled for sm_80 and sm_89, ahead of time on a 2080 Ti:
+with the fix none fails, and without it the attention kernel fails as on your nodes. This branch also has the
+`b0ec1d9` changes (the CPU-timing jobs are pinned and check the native kernels). To continue in your existing setup
+(your environment file, including `TMPDIR`, stays as it is):
+
+```bash
+H=/home/sharifm/teaching/tml-0368-4075/erelbarzilay/final_project/amina-project/logs/validation/sp2027/handoff_l40s
+(cd $H && sha256sum -c SHA256SUMS)
+git -C <your clone> fetch $H/pvi-sp2027-artifact-8945367.bundle sp2027-artifact
+git -C <your clone> checkout -B sp2027-artifact FETCH_HEAD && git -C <your clone> log --oneline -1   # 8945367
+```
+
+then Sec. 2 (the smoke) and, once it ends in `SMOKE OK`, Sec. 3 (the rehearsal); please also tell us how long the
+smoke job waited in the queue.
+
+**Llama-2.** The Llama-2 cells must run under your own Hugging Face account and token; please do not use the
+teammate's token stored on the account. Please request access to both `meta-llama/Llama-2-7b-hf` and
+`meta-llama/Llama-2-13b-hf` with your account now (each repository has its own request form, and approval can take
+some time). Until both are granted, run the rehearsal without `--llama-licence` and tell us; the full run needs them.
+
 ## 1. Setup (once)
 
-The code is the branch `sp2027-artifact` at commit `b0ec1d9`, as a git bundle next to this file
-(`pvi-sp2027-artifact-b0ec1d9.bundle`; `SHA256SUMS` holds its checksum). Clone from the bundle (copy it to the L40S
+The code is the branch `sp2027-artifact` at commit `8945367`, as a git bundle next to this file
+(`pvi-sp2027-artifact-8945367.bundle`; `SHA256SUMS` holds its checksum). Clone from the bundle (copy it to the L40S
 machine first if that machine does not see this folder); the records name the commit, so please run from a clone,
 not from an unpacked copy:
 
 ```bash
 H=/home/sharifm/teaching/tml-0368-4075/erelbarzilay/final_project/amina-project/logs/validation/sp2027/handoff_l40s
 (cd $H && sha256sum -c SHA256SUMS)
-git clone -b sp2027-artifact $H/pvi-sp2027-artifact-b0ec1d9.bundle pvi && cd pvi && git log --oneline -1   # b0ec1d9
+git clone -b sp2027-artifact $H/pvi-sp2027-artifact-8945367.bundle pvi && cd pvi && git log --oneline -1   # 8945367
 python3.12 -m venv .venv
 .venv/bin/pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 .venv/bin/pip install -r code/requirements.txt -r code/requirements-llm.txt
 export SBATCH_PARTITION=<the L40S partition> SBATCH_GRES=gpu:l40s:1     # or add --local to every run.sh call
-export HF_HOME=<node-local folder with about 100 GB free>
+export HF_HOME=<folder the nodes see, about 100 GB free>
+export TMPDIR=<folder on a disk the nodes see>                         # if the nodes' /tmp is full
 export CXX=$(command -v g++)                                            # g++ 9 or later
 ```
-
-If you already cloned the earlier commit `1a7ce39`, update that clone instead (the environment stays):
-`git fetch $H/pvi-sp2027-artifact-b0ec1d9.bundle sp2027-artifact && git checkout -B sp2027-artifact FETCH_HEAD`.
-If you already ran Sec. 2 or 3 on `1a7ce39`, please send those results too and run both sections again on
-`b0ec1d9` (its run package pins the CPU-timing jobs and checks the native kernels, which only this machine can
-test).
 
 The `bench` tier needs the image datasets and the trained image models (neither is in the repository):
 
