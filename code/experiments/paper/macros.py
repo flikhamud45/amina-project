@@ -15,9 +15,13 @@ The families, with the record each number comes from:
   only what the pruned graph computes) over the Kpre CPU verifier on the same 8 threads, for the full Llama-2-7B at
   2,048 tokens, one value (rounded down to one decimal); ``CpuRatio`` the same ratio (also rounded down, so that the
   abstract and the body print one number), ``CpuRatioShort`` at 64 tokens; ``CpuInexact*`` the fastest inexact engine
-  (:data:`tables.INEXACT`) against the same verifier; ``KpreKeyMB``, ``KpreEmbedMB`` and ``KpreStoreGB`` what a Kpre
-  client of Llama-2-7B stores, from the shapes (:func:`kpre_storage`); ``OptionsRuns`` and ``OptionsSpread`` the
-  timed runs of ``tab:options``' cells and their largest relative min--max spread (:func:`options_timings`);
+  (:data:`tables.INEXACT`, llama.cpp included) against the same verifier; ``CpuLlamaCpp*`` llama.cpp's prefill with
+  Q8_0 (``Short``, ``Long``) and bf16 weights (``BfShort``, ``BfLong``), each its fastest configuration,
+  ``CpuLlamaCppName`` the faster format at 2,048 tokens and ``CpuRatioLlamaCpp`` its time over the same verifier's
+  (never the abstract's N, which stays against exact re-execution), ``LlamaCppRelease`` the release the records ran;
+  ``KpreKeyMB``, ``KpreEmbedMB`` and ``KpreStoreGB`` what a Kpre client of Llama-2-7B stores, from the shapes
+  (:func:`kpre_storage`); ``OptionsRuns`` and ``OptionsSpread`` the timed runs of ``tab:options``' cells and their
+  largest relative min--max spread (:func:`options_timings`);
 * the outcome counts (``bench`` and ``batch`` tiers, ``comparison/count_outcomes.py`` over ``raw_<platform>/``), and
   the tampered queries of the real-weight and generation cells and the setup tier's honest setup proofs
   (``Outcome...``);
@@ -193,6 +197,12 @@ def cpu_client(c: Collector, ctx: T.Ctx) -> None:
     c.put("CpuInexactLong", inexact[0], inexact[2], floor_sig)             # "takes at least N s"
     c.put("CpuRatioInexact", inexact[0] / k[2048].d["verify_s"] if k[2048] and inexact[0] else None, k[2048],
           lambda v: f"{v:.1f}")
+    llama = T.fastest(run, "cpuv", m, 2048, T.LLAMACPP)       # inexact and another model: never CpuRatioN's baseline
+    c.put("CpuLlamaCppName", llama[1], llama[2], lambda v: T.LLAMACPP_FORMAT[v])
+    c.put("CpuRatioLlamaCpp", llama[0] / k[2048].d["verify_s"] if k[2048] and llama[0] else None, k[2048],
+          lambda v: f"{v:.1f}")
+    release = llama[2] or run.first("llamacpp", "cpuv")
+    c.put("LlamaCppRelease", release and (release.d.get("llamacpp") or {}).get("tag"), release)
     for s, name in ((64, "Short"), (2048, "Long")):
         fl = run.reexec("cpuv", m, s, "cpu", ("float",)).get("float")
         c.put(f"CpuFloat{name}", fl and fl[0], fl and fl[1], f.sig)
@@ -200,6 +210,10 @@ def cpu_client(c: Collector, ctx: T.Ctx) -> None:
         c.put(f"CpuBf{name}", bf and bf[0], bf and bf[1], f.sig)
         dyn = run.reexec("cpuv", m, s, "cpu", ("dynint8",)).get("dynint8")
         c.put(f"DynInt{name}", dyn and dyn[0], dyn and dyn[1], lambda v: f.sig(v, 2))
+        lq = T.fastest(run, "cpuv", m, s, ("llamacpp_q8_0",))
+        c.put(f"CpuLlamaCpp{name}", lq[0], lq[2], f.sig)
+        lb = T.fastest(run, "cpuv", m, s, ("llamacpp_bf16",))
+        c.put(f"CpuLlamaCppBf{name}", lb[0], lb[2], f.sig)
         c.put(f"CpuVerify{name}", k[s] and k[s].d["verify_s"], k[s], f.sig)
         g = run.reexec("gpuv", m, s, "cuda", ("int", "float"))
         c.put(f"GpuInt{name}", g.get("int") and g["int"][0], g.get("int") and g["int"][1], f.sig)

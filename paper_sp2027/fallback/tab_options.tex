@@ -1,6 +1,7 @@
 % fallback: the body rows of the paper before the final run (code/experiments/paper/numbers.py writes generated/tab_options.tex)
     Re-exec., CPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 4.08\,s & 142\,s & exact \\
     Re-exec., GPU$^a$ & weights & \multicolumn{2}{c}{6.7\,GB once} & 0.145\,s & 1.65\,s & exact \\
+    llama.cpp~\cite{llamacpp}$^a$ & weights & \multicolumn{4}{c}{\todo{cpuv tier}} & inexact \\
     GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\
     CommitLLM$^e$ & key & \multicolumn{2}{c}{144\,kB per token} & \multicolumn{2}{c}{0.66\,ms per token} & sampled$^b$ \\
     zkLLM~\cite{zkllm} & comm. & -- & 183\,kB & -- & 2.36\,s & full, ZK \\

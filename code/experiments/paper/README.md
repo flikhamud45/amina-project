@@ -20,13 +20,14 @@ Reads the run's folder `logs/<name>/`: every job log `sp-<cell>-<jobid>.out`, wh
 records, and the documents of the attack tier (`attack/*.json`, `attack/analytic.csv`) and the tv tier
 (`sampler_tv_*.json`). A record's tier comes from its job's prefix (`c-` cpuv, `v1-`, `serve-`, `b-` bench, `g-`
 gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-`, `a-` attack, `l-` long, `smoke`)
-and its kind from its fields (`perf`, `v1`, `reexec`, `serve`, `gen`, `setup`, `h2d`, `open_ab`, `forward_ab`,
-`encode_ab`, `fold_ab`, `gpu_profile`, `v1_phases`, `gkr`, `ppl`, `zeroshot`, `digest`, `llama_diag`,
+and its kind from its fields (`perf`, `v1`, `reexec`, `llamacpp`, `serve`, `gen`, `setup`, `h2d`, `open_ab`,
+`forward_ab`, `encode_ab`, `fold_ab`, `gpu_profile`, `v1_phases`, `gkr`, `ppl`, `zeroshot`, `digest`, `llama_diag`,
 `llama_attrib`, `bench_env`, `path_bound`, `inrange`, `tv`, ...). `Run` selects the record of one cell by every
 setting that distinguishes the package's jobs: the tier, the model, the prompt length, the mode, the blocks, the
 verifier device (a V1 record's from its command line), the label and real or random weights; of several matching
-records the latest job's (for re-execution, the fastest of one variant's records). `checks` lists a record's failed
-correctness checks.
+records the latest job's (for re-execution, `reexec.py`'s and `llamacpp.py`'s, the fastest of one variant's
+records). `checks` lists a record's failed correctness checks (a llama.cpp record must be marked inexact and a
+different model, and have run on its threads).
 
 ### `bench.py`
 The benchmark's cells, from `artifacts/comparison/tables_<name>/` (`comparison/aggregate.py --platform <name>`):
@@ -45,15 +46,18 @@ recorded with its source for `cells.csv`. Every table's header comment states th
 sources, so that its caption can be made true. Exact re-execution (`tab:options`, `tab:eval-reexec`,
 `tab:eval-long`) is the fastest of `EXACT`, the integer forward pass with its native int8 GEMMs (`int`), exact fp32
 GEMMs (`int_fp32gemm`) or `torch._int_mm` (`int_mm`, counted only when its record's `exact` is true: its logits
-equal the integer reference's bit for bit in the same run). `tab:params` and `tab:setup` follow from the library's
-parameters and the setup proof's byte model (`costs/setup_bytes.py`; the per-query columns of interactive queries,
-as the setup tier measures them), with V1's counts from the v1 tier; `tab:eval-compare-v1` has a row per full model
-of the v1 tier; the generation tables take the gen tier's cells (Llama-2-7B and Qwen3-4B after a 512-token prompt,
-greedy and sampled; GPT-2 after a 64-token prompt, greedy), selected by the prompt's length as well. `tab:paths` and
-`tab:paths-acc` evaluate Proposition `prop:paths` (`attack/sok.py`: the paths that catch an edit of `k` neurons, and
-the probability that `s` paths accept it) at one neuron, at 16 and at the in-range edits of the attack tier's OPT-1.3B
-documents (`inrange_ks`: the median and largest edit of either direction and the median lowering-only edit, which
-the text prints as `\InrangeKMedian`, `\InrangeKMax`, `\InrangeDownKMedian` and the tables' headers name).
+equal the integer reference's bit for bit in the same run). The inexact engines (`INEXACT`: fp32, bf16 and dynamic
+int8 decoders of the same shapes, and llama.cpp's Q8_0 and bf16 prefill, `LLAMACPP`, each at its fastest
+configuration) are reported next to it (`tab:options`' llama.cpp row, `tab:eval-reexec`), never in its place.
+`tab:params` and `tab:setup` follow from the library's parameters and the setup proof's byte model
+(`costs/setup_bytes.py`; the per-query columns of interactive queries, as the setup tier measures them), with V1's
+counts from the v1 tier; `tab:eval-compare-v1` has a row per full model of the v1 tier; the generation tables take
+the gen tier's cells (Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled; GPT-2 after a 64-token
+prompt, greedy), selected by the prompt's length as well. `tab:paths` and `tab:paths-acc` evaluate Proposition
+`prop:paths` (`attack/sok.py`: the paths that catch an edit of `k` neurons, and the probability that `s` paths accept
+it) at one neuron, at 16 and at the in-range edits of the attack tier's OPT-1.3B documents (`inrange_ks`: the median
+and largest edit of either direction and the median lowering-only edit, which the text prints as `\InrangeKMedian`,
+`\InrangeKMax`, `\InrangeDownKMedian` and the tables' headers name).
 
 ### `macros.py`
 The text numbers, by family (the platform and the plan, the CPU client, the outcome counts, the cost of the defence,
@@ -68,7 +72,8 @@ Llama-2-7B stores (`\KpreKeyMB`, `\KpreEmbedMB`, `\KpreStoreGB`: the secret vect
 Fiat-Shamir repetition count, and the int8 embedding table). The abstract's N (`\CpuRatioN`, and `\CpuRatio` in the
 body) is one value: exact re-execution (the integer forward pass, bit-exact with the claims: the fastest of
 `tables.EXACT`, computing only what the pruned graph computes) over the Kpre CPU verifier, both on 8 threads, for
-the full Llama-2-7B at 2,048 tokens (cpuv tier), rounded down to one decimal. V1's headline range
+the full Llama-2-7B at 2,048 tokens (cpuv tier), rounded down to one decimal; llama.cpp, which computes another
+model, has its own ratio (`\CpuRatioLlamaCpp`) and never changes N. V1's headline range
 (`\VOneRatioRandom`) takes the full models of the v1 tier at 2,048 tokens. `\RealAcceptedClause` names the full
 real-weight models whose every honest Kpre query at 2,048 tokens the real tier accepted. The break-even reuses
 `deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and its byte model.

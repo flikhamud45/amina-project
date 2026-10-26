@@ -166,8 +166,9 @@ $\sC$), \CrossoverOptSLongK{}\,Gb/s (OPT-125M, 2{,}048 tokens, $\Kpre$) and \Cro
   \caption{Re-executing the full model against our verifier, in seconds (random int8 weights, every
   model measured in full). GPU: one \PlatformGpu{}, the integer forward pass on int8 tensor cores and
   the fp16 decoder. CPU: the full Llama-2-7B on 8 threads of an \PlatformCpu{}, our $\Kpre$ verifier
-  with the native kernels (Fiat--Shamir, $\lambda{=}128$), exact re-execution (the integer forward pass)
-  and fp32 inference (Table~\ref{tab:options})}
+  with the native kernels (Fiat--Shamir, $\lambda{=}128$), exact re-execution (the integer forward pass),
+  and fp32 inference and llama.cpp~\cite{llamacpp} with Q8\_0 and bf16 weights, which compute a different model of
+  the same shapes (Table~\ref{tab:options})}
   \label{tab:eval-reexec}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -181,7 +182,13 @@ $\sC$), \CrossoverOptSLongK{}\,Gb/s (OPT-125M, 2{,}048 tokens, $\Kpre$) and \Cro
 \end{table}
 
 A CPU client that could keep the weights beats exact (integer) re-execution at both measured lengths
-by keeping a $\Kpre$ key instead (Table~\ref{tab:eval-reexec}). Since the claims of about $\lceil k/T\rceil$ queries of $T$ tokens
+by keeping a $\Kpre$ key instead (Table~\ref{tab:eval-reexec}). The llama.cpp rows run release
+\LlamaCppRelease{}, built for the \PlatformCpu{}, on the same 8 threads, with random weights of Llama-2-7B's shapes in
+llama.cpp's own formats; each row is the fastest of its two attention kernels and of micro-batches of 512 and
+2{,}048 tokens (at most the prompt), and, unlike our pruned graph, llama.cpp computes the last block's attention at
+every position. Its faster format at 2{,}048 tokens, \CpuLlamaCppName{}, takes \CpuRatioLlamaCpp{}$\times$ our
+$\Kpre$ verifier's time.
+Since the claims of about $\lceil k/T\rceil$ queries of $T$ tokens
 reveal a weight matrix with rows of length $k$, mode $\sC$ suits open-weight models served by an
 untrusted provider. Our streaming GPU verifier checks a 2{,}048-token OPT-1.3B query in $\Kpre$ in
 \OptMGpuVerify{}\,s on the \PlatformGpu{}, against the 0.90\,s that zkLLM reports on an A100.

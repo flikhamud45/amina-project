@@ -10,7 +10,7 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 ==================== ==================================================================================
 ``tab:eval-llm``      ``bench``: modes C (CPU and streaming GPU verifier) and Kpre, Fiat--Shamir, the plan
 ``tab:eval-v1``       ``v1``: ``v1_bytes.py --full`` on the CPU verifier, random weights
-``tab:options``       ``cpuv`` (perf.py, reexec.py, V1's CPU verifier), ``gpuv`` (reexec.py on the GPU)
+``tab:options``       ``cpuv`` (perf.py, reexec.py, llamacpp.py, V1's CPU verifier), ``gpuv`` (reexec.py on the GPU)
 ``tab:eval-compare``  ``bench`` and the published systems (``reported_curated.csv``)
 ``tab:quality``       ``quality``: ``ppl_opt.py`` (the certified recipe, alpha 0.6, 11-bit probabilities)
 ``tab:params``        the library's parameters and byte model; V1's counts from the ``v1`` tier
@@ -19,7 +19,7 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 ``tab:eval-improve``  ``improve``: the A/B scripts and perf.py with the options of each row
 ``tab:eval-long``     ``long``: 2- and 3-block cells, extrapolated to the full Llama-2-7B
 ``tab:eval-real``     ``real``: OPT-1.3B, real weights against the random-weight twins (V1 cells, v0 timed)
-``tab:eval-reexec``   ``gpuv`` and ``cpuv``: reexec.py, the Kpre verifier
+``tab:eval-reexec``   ``gpuv`` and ``cpuv``: reexec.py, llamacpp.py, the Kpre verifier
 ``tab:eval-compare-v1`` ``v1`` (mode C) and the published systems
 ``tab:v1``            ``v1``: the timed queries and the GKR's share of V1's prover
 ``tab:gen``           ``gen``: greedy responses, both modes
@@ -57,11 +57,18 @@ checks."""
 CHECKED_EXACT = ("int_mm",)
 """The exact variants that count as exact only when their record says so: ``exact`` true when the run found their
 logits equal to the integer reference's bit for bit (:func:`exact_record`)."""
-INEXACT = ("float", "bf16", "dynint8")
-"""``reexec.py``'s inexact variants: a floating-point decoder of the same shapes in fp32 and bf16, and torch's dynamic
-int8 engine; what an off-the-shelf stack would run, not bit-exact with the provider's model."""
+LLAMACPP = ("llamacpp_q8_0", "llamacpp_bf16")
+"""``llamacpp.py``'s variants: llama.cpp's prefill with Q8_0 and with bf16 weights of the same shapes (another model,
+not exact); each one's time is its fastest configuration (attention kernel, micro-batch)."""
+INEXACT = ("float", "bf16", "dynint8") + LLAMACPP
+"""The inexact re-executions: ``reexec.py``'s floating-point decoder of the same shapes in fp32 and bf16 and torch's
+dynamic int8 engine, and llama.cpp (:data:`LLAMACPP`); what an off-the-shelf stack would run, not bit-exact with the
+provider's model."""
 REEXEC_NAME = {"int": "int8 GEMMs", "int_fp32gemm": "exact fp32 GEMMs", "int_mm": "oneDNN int8 GEMMs",
-               "float": "fp32", "bf16": "bf16", "dynint8": "dynamic int8"}
+               "float": "fp32", "bf16": "bf16", "dynint8": "dynamic int8", "llamacpp_q8_0": r"llama.cpp Q8\_0",
+               "llamacpp_bf16": "llama.cpp bf16"}
+LLAMACPP_FORMAT = {"llamacpp_q8_0": r"Q8\_0", "llamacpp_bf16": "bf16"}
+"""The weight format of each llama.cpp variant, as the text names it."""
 MODE = {"C": r"$\sC$", "Kpre": r"$\Kpre$"}
 
 
@@ -258,11 +265,13 @@ def tab_eval_v1(ctx: Ctx) -> Table:
 def tab_options(ctx: Ctx) -> Table:
     """``tab:options``: a client's options for one Llama-2-7B prompt: exact re-execution on the CPU (the fastest of
     the integer forward pass's exact variants, :data:`EXACT`) and on the GPU (the integer forward pass on int8 tensor
-    cores), the published options, and our modes C and Kpre and V1 (the CPU verifier: bytes and time)."""
+    cores), llama.cpp's inexact Q8_0 prefill on the same CPU (its fastest configuration; its bytes: the Q8_0 weights),
+    the published options, and our modes C and Kpre and V1 (the CPU verifier: bytes and time)."""
     run, m = ctx.run, "llama2-7b"
     tb = Table("tab_options", "tab:options",
-               f"{protocol(ctx)}; cpuv tier (perf.py --verifier-device cpu, reexec.py on 8 threads, V1's optimised "
-               "CPU verifier), gpuv tier (reexec.py int on the GPU); every model in full")
+               f"{protocol(ctx)}; cpuv tier (perf.py --verifier-device cpu, reexec.py and llamacpp.py on 8 threads "
+               "(llama.cpp: Q8_0, random weights, the fastest of its attention kernels and micro-batches), V1's "
+               "optimised CPU verifier), gpuv tier (reexec.py int on the GPU); every model in full")
     weights = ctx.bench.llm_cost(m, 64, "c_cpu") or ctx.bench.llm_cost(m, 64, "kpre_cpu")
     wb = weights["params"] if weights else None
     once = rf"\multicolumn{{2}}{{c}}{{{f.b(wb) if wb else f.DASH} once}}"
@@ -276,6 +285,13 @@ def tab_options(ctx: Ctx) -> Table:
                                tb.put("Re-exec. GPU", "64", gx[0] and gx[0][0], gx[0] and gx[0][1], f.secs),
                                tb.put("Re-exec. GPU", "2048", gx[1] and gx[1][0], gx[1] and gx[1][1], f.secs),
                                "exact"]) + r" \\")
+    lx = [fastest(run, "cpuv", m, s, ("llamacpp_q8_0",)) for s in (64, 2048)]
+    lr = lx[1][2] or lx[0][2]
+    lb = lr and lr.d.get("gguf_bytes")
+    held = tb.put("llama.cpp", "bytes", lb, lr, f.b) + (r" Q8\_0 once" if lb else "")
+    tb.rows.append(" & ".join([r"llama.cpp~\cite{llamacpp}$^a$", "weights", rf"\multicolumn{{2}}{{c}}{{{held}}}",
+                               tb.put("llama.cpp", "64", lx[0][0], lx[0][2], f.secs),
+                               tb.put("llama.cpp", "2048", lx[1][0], lx[1][2], f.secs), "inexact"]) + r" \\")
     tb.rows.append(r"GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\")
     tb.rows.append(r"CommitLLM$^e$ & key & \multicolumn{2}{c}{144\,kB per token} & "
                    r"\multicolumn{2}{c}{0.66\,ms per token} & sampled$^b$ \\")
@@ -861,10 +877,11 @@ REEXEC_GPU = ("opt-1.3b", "opt-6.7b", "llama2-7b", "llama2-13b", "qwen3-4b")
 def tab_eval_reexec(ctx: Ctx) -> Table:
     """``tab:eval-reexec``: re-executing the full model on the GPU (the integer forward pass on int8 tensor cores /
     the fp16 decoder) and on the CPU (Llama-2-7B: our Kpre verifier, fp32 and exact re-execution, the fastest of
-    :data:`EXACT`)."""
+    :data:`EXACT`, and llama.cpp with Q8_0 and bf16 weights, each its fastest configuration)."""
     run = ctx.run
     tb = Table("tab_eval_reexec", "tab:eval-reexec", f"{protocol(ctx)}; gpuv tier: reexec.py --device cuda (int, "
-               "float = fp16), full models measured; cpuv tier: perf.py Kpre and reexec.py on 8 threads")
+               "float = fp16), full models measured; cpuv tier: perf.py Kpre, reexec.py and llamacpp.py (random "
+               "weights, the fastest of llama.cpp's attention kernels and micro-batches) on 8 threads")
     tb.rows.append(r"\multicolumn{4}{@{}l}{\emph{GPU: integer forward pass / fp16 decoder}} \\")
     for m in REEXEC_GPU:
         cells = [NAME[m]]
@@ -880,7 +897,8 @@ def tab_eval_reexec(ctx: Ctx) -> Table:
     vals = [tb.put(f"cpu {s}", "Kpre verifier", r and r.d["verify_s"], r, lambda v: f.fixed(v, 1))
             for s, r in zip((64, 2048), ver)]
     tb.rows.append(" & ".join([r"our $\Kpre$ verifier", vals[0], "--", vals[1]]) + r" \\")
-    for label, variants in (("fp32 re-execution", ("float",)), ("integer re-execution", EXACT)):
+    for label, variants in (("fp32 re-execution", ("float",)), ("integer re-execution", EXACT),
+                            (r"llama.cpp Q8\_0", ("llamacpp_q8_0",)), ("llama.cpp bf16", ("llamacpp_bf16",))):
         vals = []
         for s in (64, 2048):
             got = run.reexec("cpuv", "llama2-7b", s, "cpu", variants, keep=exact_record)

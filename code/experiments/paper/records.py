@@ -10,8 +10,9 @@ model.
 
 The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), a byte
 accounting that disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected
-(``setup``), an implementation A/B whose two paths disagree (the ``improve`` tier), and the smoke's own verdicts (no
-``SMOKE OK``, int8 GEMMs that are not exact) or a ``FAILED`` line of a script in a job's log.  Each is reported as a
+(``setup``), an implementation A/B whose two paths disagree (the ``improve`` tier), a llama.cpp record not marked
+inexact and a different model or not run on its threads (``llamacpp``), and the smoke's own verdicts (no ``SMOKE OK``,
+int8 GEMMs that are not exact) or a ``FAILED`` line of a script in a job's log.  Each is reported as a
 ``CHECK FAILED`` line; a line that starts with ``{`` and does not parse, or parses as no known kind, is a ``PARSE``
 line.  Either makes ``paper/numbers.py`` exit with status 1.
 """
@@ -26,7 +27,7 @@ TIERS = (("smoke", "smoke"), ("c-", "cpuv"), ("v1-", "v1"), ("serve-", "serve"),
          ("gen-", "gen"), ("bt-", "batch"), ("r-", "real"), ("setup-", "setup"), ("i-", "improve"),
          ("q-", "quality"), ("tv-", "tv"), ("a-", "attack"), ("l-", "long"))
 """The job-name prefixes of ``run.sh`` (``sp-<prefix>...``) and their tiers."""
-KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "v1"}, "v1": {"v1"}, "serve": {"serve"},
+KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "v1": {"v1"}, "serve": {"serve"},
          "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"}, "batch": {"bench_env"},
          "real": {"perf", "v1", "gen"}, "setup": {"setup"},
          "improve": {"open_ab", "forward_ab", "encode_ab", "perf", "gpu_profile", "fold_ab", "v1_phases", "gkr"},
@@ -90,7 +91,7 @@ def tier_of(cell: str) -> str | None:
 def kind_of(d: dict) -> str | None:
     """The script that wrote one record, from its fields; None for a record of no known kind."""
     k = d.get("kind")
-    if k in ("gen", "setup", "h2d", "gpu_profile"):
+    if k in ("gen", "setup", "h2d", "gpu_profile", "llamacpp"):
         return k
     if d.get("row") in ("prove", "on_request"):
         return "serve"
@@ -237,6 +238,15 @@ def checks(r: Rec) -> list[str]:
         bad.append(f"V1 queries accepted: {d.get('accepted')} of {d.get('queries')}")
     elif r.kind == "gkr" and d.get("same_transcript") is False:
         bad.append("the Triton and PyTorch GKR transcripts differ")
+    elif r.kind == "llamacpp":
+        # llama.cpp computes another model, never exact; it ran on the record's threads, no more than the CPUs the
+        # process was allowed (where the record has them)
+        threads, ran = d.get("threads"), (d.get("llamacpp") or {}).get("n_threads")
+        allowed = (d.get("env") or {}).get("cpu_affinity")
+        if d.get("exact") is not False or d.get("same_model") is not False:
+            bad.append("a llama.cpp record not marked inexact (exact false) and a different model (same_model false)")
+        if ran != threads or (allowed is not None and threads is not None and allowed < threads):
+            bad.append(f"llama.cpp ran on {ran} threads, not its {threads} (on {allowed} allowed CPUs)")
     # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose)
     on_cpu = str(d.get("verifier_device") or d.get("device") or "cpu").startswith("cpu")
     if (r.tier in ("cpuv", "long", "real", "v1") and r.kind in ("perf", "v1", "reexec", "gen") and on_cpu
@@ -341,11 +351,12 @@ class Run:
 
     # ---------------------------------------------------------------- re-execution (reexec.py)
     def reexec(self, tier, model, seq, device, variants, keep=None) -> dict:
-        """``{variant: (seconds, record)}``: each variant's full model measured at full depth (no extrapolation);
-        of several records (e.g. two allocator settings), the faster; ``keep(variant, record)``: the records that may
+        """``{variant: (seconds, record)}``: each variant's full model measured at full depth (no extrapolation),
+        from ``reexec.py``'s records and ``llamacpp.py``'s (variants ``llamacpp_<type>``); of several records (e.g. two
+        allocator settings, or llama.cpp's configurations), the faster; ``keep(variant, record)``: the records that may
         stand for their variant (default all)."""
         out = {}
-        for r in self.kind("reexec", tier):
+        for r in self.kind("reexec", tier) + self.kind("llamacpp", tier):
             d = r.d
             if d.get("model") != model or d.get("seq") != seq or not str(d.get("device", "")).startswith(device):
                 continue

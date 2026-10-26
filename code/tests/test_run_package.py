@@ -16,10 +16,11 @@
 * the package's submission against stand-ins for SLURM: a queued job of the same platform is not submitted again and
   the chain and the smoke gate pass through it; ``--one-job`` submits the tiers as one whole-node job that runs them
   with ``--local``, and a ``--local`` run again runs the smoke and only the jobs that did not end successfully;
-  nothing is submitted when the partition lacks the memory, the compiler is missing, a Hugging Face cache variable
-  overrides ``HF_HOME`` with an unwritable folder or the bench tier's models and datasets are; ``bench.py`` itself
-  stops without the substitute model; ``experiments/package/pin.py`` picks one thread of each core of one NUMA
-  node, and every record keeps the affinity, the library versions and the checkpoints' revisions.
+  nothing is submitted when the partition lacks the memory, the compiler (or, for the cpuv tier's llama.cpp build,
+  CMake) is missing, a Hugging Face cache variable overrides ``HF_HOME`` with an unwritable folder or the bench tier's
+  models and datasets are; ``bench.py`` itself stops without the substitute model; ``experiments/package/pin.py``
+  picks one thread of each core of one NUMA node, and every record keeps the affinity, the library versions and the
+  checkpoints' revisions.
 
 The smoke tier runs this file on the final platform.
 """
@@ -177,6 +178,8 @@ def test_every_cpu_timing_cell_requires_the_native_kernels_and_is_pinned():
         if cpu_reexec:                  # glibc's allocator defaults, or the like-for-like row with the verifier's
             assert " int_mm " in cmd and ("--no-malloc-tune" in cmd or "--malloc-tune" in cmd), job
             assert "MALLOC_" not in cmd, job                    # the allocator setting is a flag, not a variable
+        if "reexec.llamacpp" in cmd:     # llama.cpp on the same 8 pinned threads (never its default thread count)
+            assert "-m experiments.package.pin --cores 8 --pid $$ && " in cmd and "--threads 8 " in cmd, job
         if "experiments.package.pin" in cmd:
             pinned += 1
             assert tier_of(job[len("sp-"):]) in CPU_TIERS, job
@@ -203,11 +206,12 @@ def test_the_help_prints_the_whole_header():
 FAKE = {"squeue": '#!/bin/bash\n[ -z "${FAKE_QUEUE:-}" ] || printf \'%s\\n\' "$FAKE_QUEUE"\n',
         "sbatch": '#!/bin/bash\necho "$*" >> "$FAKE_LOG"\ncat > /dev/null\nwc -l < "$FAKE_LOG" | tr -d " "\n',
         "sinfo": '#!/bin/bash\nprintf \'%s\\n\' $FAKE_MEM\n',
-        "fakepy": '#!/bin/bash\ncase "$*" in *"${FAKE_FAIL:-@none@}"*) exit 3 ;; esac\necho "{}"\n'}
-"""Stand-ins for SLURM's commands and the interpreter: ``squeue`` lists ``$FAKE_QUEUE`` (``name|platform|id``
+        "fakepy": '#!/bin/bash\ncase "$*" in *"${FAKE_FAIL:-@none@}"*) exit 3 ;; esac\necho "{}"\n',
+        "cmake": '#!/bin/bash\necho "cmake version 3.31.6"\n'}
+"""Stand-ins for SLURM's commands, the interpreter and CMake: ``squeue`` lists ``$FAKE_QUEUE`` (``name|platform|id``
 lines), ``sbatch`` appends its arguments to ``$FAKE_LOG`` and answers with its line number as the job id, ``sinfo``
 gives each node's memory in MB (``$FAKE_MEM``); the interpreter prints ``{}`` and succeeds, except for a command
-line that contains ``$FAKE_FAIL`` (exit status 3)."""
+line that contains ``$FAKE_FAIL`` (exit status 3); ``cmake`` (the cpuv tier's pre-flight) prints its version."""
 
 HF_CACHES = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE", "HF_HUB_OFFLINE",
              "TRANSFORMERS_OFFLINE")
@@ -243,17 +247,18 @@ def test_a_queued_job_of_the_same_platform_is_skipped_and_the_chain_and_gate_pas
                                      "cpuv", queue=queue)
     assert status == 0, err
     names = [_job(" " + j) for j in jobs]
-    assert names == ["sp-smoke", "sp-c-rx-gpt2", "sp-c-v1-gpt2-64"]     # another platform's sp-smoke is not this one
+    assert names == ["sp-smoke", "sp-c-rx-gpt2", "sp-c-v1-gpt2-64", "sp-c-llamacpp-llama2-7b-L1"]    # another
+    # platform's sp-smoke is not this one
     assert all("--comment=rehearsal" in j and "--exclusive" not in j for j in jobs)
     assert "--dependency=afterok:1,afterany:902,singleton" in jobs[1]    # after the smoke's success and the queued job
-    assert "--dependency=afterany:2,singleton" in jobs[2]
+    assert "--dependency=afterany:2,singleton" in jobs[2] and "--dependency=afterany:3,singleton" in jobs[3]
     assert "skip sp-c-gpt2-64: already queued (job 902)" in out and "# 1 jobs already queued" in out
 
 
 def test_a_queued_smoke_still_gates_the_run(tmp_path):
     status, out, err, jobs = _submit(tmp_path, "--platform", "final", "smoke", "cpuv", queue="sp-smoke|final|901")
     assert status == 0, err
-    assert len(jobs) == 13 and "--dependency=afterok:901,singleton" in jobs[0], jobs[0]
+    assert len(jobs) == 14 and "--dependency=afterok:901,singleton" in jobs[0], jobs[0]
 
 
 def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(tmp_path):
@@ -266,7 +271,7 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
     for part in ("-J sp-node-smoke-cpuv-long", "--comment=final", "--exclusive", "--mem=0", "--time=24:00:00",
                  "--requeue", "--open-mode=append", "--dependency=singleton", "logs/final/node-smoke-cpuv-long-%j.log"):
         assert part in jobs[0], (part, jobs[0])
-    assert "# one job: smoke cpuv long: 26 jobs, job limits 53 h, time limit 24 h" in out, out
+    assert "# one job: smoke cpuv long: 27 jobs, job limits 56 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
@@ -289,10 +294,11 @@ def test_a_local_run_again_runs_the_smoke_and_the_jobs_that_did_not_end_successf
     logs = tmp_path / "root" / "logs" / "t"
     status, out, err, _ = _submit(tmp_path, *argv, extra={"FAKE_FAIL": "reexec.reexec"})
     assert status == 0 and "sp-c-rx-gpt2: exit status 3" in err, err
-    assert sorted(p.name for p in (logs / "done").iterdir()) == ["sp-c-gpt2-64", "sp-c-v1-gpt2-64", "sp-smoke"]
+    assert sorted(p.name for p in (logs / "done").iterdir()) == ["sp-c-gpt2-64", "sp-c-llamacpp-llama2-7b-L1",
+                                                                 "sp-c-v1-gpt2-64", "sp-smoke"]
     status, out, err, _ = _submit(tmp_path, *argv)
     assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke", "sp-c-rx-gpt2"], out
-    assert "skip sp-c-gpt2-64: ended successfully earlier" in out and "# 2 jobs had ended successfully" in out
+    assert "skip sp-c-gpt2-64: ended successfully earlier" in out and "# 3 jobs had ended successfully" in out
     (logs / "done" / "sp-c-gpt2-64").unlink()
     status, out, err, _ = _submit(tmp_path, *argv)
     assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke", "sp-c-gpt2-64"], out
@@ -322,6 +328,18 @@ def test_nothing_is_submitted_when_the_partition_lacks_the_memory_or_the_compile
     assert status == 2 and not jobs and "--no-native-ok" in err, err
     status, _, err, jobs = _submit(tmp_path / "d", "--platform", "final", "--no-native-ok", "smoke", cxx=False)
     assert status == 0 and len(jobs) == 1, err
+    # the cpuv tier builds llama.cpp: CMake (CMAKE, else cmake on the PATH) is checked before anything is submitted
+    status, _, err, jobs = _submit(tmp_path / "e", "--platform", "final", "--rehearsal", "cpuv",
+                                   extra={"CMAKE": "/no/cmake"})
+    assert status == 2 and not jobs and "CMake ('/no/cmake') not found" in err and "cmake==3.31.6" in err, err
+    status, _, err, jobs = _submit(tmp_path / "f", "--platform", "final", "--rehearsal", "smoke",
+                                   extra={"CMAKE": "/no/cmake"})
+    assert status == 0 and len(jobs) == 1, err                          # no cpuv tier: no CMake needed
+    cmake = (tmp_path / "g" / "bin" / "cmake").as_posix()                # FAKE's stand-in, given by its path
+    status, out, err, _ = _submit(tmp_path / "g", "--dry-run", "--platform", "final", "--rehearsal", "cpuv",
+                                  extra={"CMAKE": cmake})
+    wraps = [x for x in out.splitlines() if x.startswith("sbatch")]
+    assert status == 0 and len(wraps) == 4 and all(f"CMAKE={cmake} " in x for x in wraps), err  # passed to the jobs
 
 
 def test_the_bench_tier_needs_the_substitute_model_and_the_imagenet_layout(tmp_path):
@@ -413,7 +431,8 @@ def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_j
     jobs = [_job(line) for line in lines]
     for line in lines:
         job = _job(line)
-        if job.startswith("sp-c-") and any(s in line for s in ("costs.perf", "v1.v1_bytes", "reexec.reexec")):
+        if job.startswith("sp-c-") and any(s in line for s in ("costs.perf", "v1.v1_bytes", "reexec.reexec",
+                                                                "reexec.llamacpp")):
             assert re.search(r"--(queries|reps) 5\b", line), job
         if job in ("sp-v1-opt13-64", "sp-v1-opt13-2048", "sp-v1-llama7-64", "sp-v1-llama7-2048"):
             assert "--reps 5" in line, job

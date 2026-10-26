@@ -206,10 +206,10 @@ The run writes its job logs and documents to `logs/final/` at the repository roo
 
 * `comparison/raw_final/` as the run wrote it, and `comparison/tables_final/`
   (`python -m experiments.comparison.aggregate --platform final`);
-* `final/`: a copy of `logs/final/` without its caches (`triton/`, `native/`, `setup_cache/`, `ref_*.pt`), that is
-  every job log `sp-<cell>-<job id>.out` (the records are its lines that start with `{`), the attack tier's
-  `attack/` documents, the tv tier's `sampler_tv_*.json`, the dry-run listing `dryrun.txt`, and the machine's
-  description `env-*.txt` (`experiments/package/README.md`, Sec. 6).
+* `final/`: a copy of `logs/final/` without its caches (`triton/`, `native/`, `setup_cache/`, `llamacpp/`,
+  `ref_*.pt`), that is every job log `sp-<cell>-<job id>.out` (the records are its lines that start with `{`), the
+  attack tier's `attack/` documents, the tv tier's `sampler_tv_*.json`, the dry-run listing `dryrun.txt`, and the
+  machine's description `env-*.txt` (`experiments/package/README.md`, Sec. 6).
 
 From `code/`, `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs artifacts/final --platform final
 --check --expect artifacts/final/dryrun.txt` checks the

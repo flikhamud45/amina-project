@@ -10,7 +10,8 @@
 # code/artifacts/comparison/raw_<name>/):
 #     smoke    the GPU and native-kernel tests, one V1 query, the host-to-device copy; ends with "SMOKE OK", and no
 #              other tier of 'all' starts unless it does
-#     cpuv     the CPU verifier against every re-execution baseline on the same 8 threads; V1's CPU verifier
+#     cpuv     the CPU verifier against every re-execution baseline on the same 8 threads (llama.cpp's included); V1's
+#              CPU verifier
 #     v1       V1 against v0 (bytes, prover and verifier times)
 #     serve    the prover against unverified serving on the same GPU, single prompts and batches
 #     bench    the benchmark's cells: image models and decoders, modes C, K and Kpre, with the attacks
@@ -65,17 +66,19 @@
 #                       (HF_TOKEN); the rehearsal's one Llama-2 job reads the gated repository from a compute node
 #     --bigmem          the long tier also measures the full Llama-2-7B at 8,192 tokens (a node with >= 256 GB)
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1,
-# SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required), PVI_NATIVE_DIR, PVI_PY_INCLUDE, HF_HOME
-# (the real, quality, tv and attack tiers download checkpoints and datasets) and PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT
-# and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute path (a relative one is taken
-# from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's environment and is never
-# written into a job.  Everything is checked before the first job is submitted: the compiler, the interpreter,
-# HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is unwritable), the
-# image models and datasets of the bench tier and, under SLURM, that the partition has a node with the memory the
-# largest job asks for.  Jobs are named sp-<cell>, with this platform as their --comment and
-# --dependency=singleton.  A job of the same name and platform that is still queued or running is not submitted
-# again, and the chain and the smoke gate pass through it, so running a tier again submits only what is missing; a
-# finished benchmark cell is skipped by bench.py itself.  experiments/package/README.md is the runner's guide.
+# SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
+# llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
+# PVI_PY_INCLUDE, HF_HOME (the real, quality, tv and attack tiers download checkpoints and datasets) and
+# PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute
+# path (a relative one is taken from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through
+# sbatch's environment and is never written into a job.  Everything is checked before the first job is submitted: the
+# compiler, CMake and git (the cpuv tier), the interpreter, HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or
+# HF_DATASETS_CACHE that overrides it is unwritable), the image models and datasets of the bench tier and, under
+# SLURM, that the partition has a node with the memory the largest job asks for.  Jobs are named sp-<cell>, with this
+# platform as their --comment and --dependency=singleton.  A job of the same name and platform that is still queued
+# or running is not submitted again, and the chain and the smoke gate pass through it, so running a tier again
+# submits only what is missing; a finished benchmark cell is skipped by bench.py itself.
+# experiments/package/README.md is the runner's guide.
 set -euo pipefail
 
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
@@ -135,6 +138,7 @@ ENVS="cd $ROOT/code && export PYTHONPATH=$ROOT/code/src:$ROOT/code${EXTRA_PP:+:$
 MKL_NUM_THREADS=8 NVIDIA_TF32_OVERRIDE=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 TRITON_CACHE_DIR=$ROOT/$LOGS/triton PVI_NATIVE_DIR=$(printf %q "${PVI_NATIVE_DIR:-$ROOT/$LOGS/native}")"
 [ -z "${CXX:-}" ] || ENVS="$ENVS CXX=$(printf %q "$CXX")"
+[ -z "${CMAKE:-}" ] || ENVS="$ENVS CMAKE=$(printf %q "$CMAKE")"
 for v in PVI_PY_INCLUDE HF_HOME PVI_CIFAR_ROOT PVI_IMAGENET_ROOT PVI_CACHE; do
   [ -z "${!v:-}" ] || ENVS="$ENVS $v=$(printf %q "${!v}")"
 done
@@ -214,7 +218,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     return
   fi
   case "$1" in
-    smoke) echo 1 ;; cpuv) echo 6-9 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
+    smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
     quality) echo 10-16 ;; tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;;
   esac
@@ -227,6 +231,7 @@ PERF="$M.costs.perf --threads 8 $CACHED"
 V1="$M.v1.v1_bytes --full --threads 8 $CACHED"
 RX="$M.reexec.reexec --threads 8"
 RXCPU="int int_mm int_fp32gemm float bf16 dynint8"   # the re-execution variants on a CPU (dynint8 is another model)
+LCPP="$M.reexec.llamacpp --threads 8 --llamacpp-dir $ROOT/$LOGS/llamacpp"   # llama.cpp (another model), cached build
 GEN="$M.generation.gen_bench --threads 8 $CACHED"
 BENCH="$M.costs.bench --platform $PLATFORM --threads 8 $CACHED"
 H2D="$M.reexec.h2d_bandwidth"
@@ -255,8 +260,9 @@ $H2D --sizes-mb 256 --reps 3 --label smoke && echo SMOKE OK"
 tier_cpuv() {
   # the CPU verifier (native kernels) of the full models in Kpre and C, the prover on the GPU; every re-execution
   # baseline on the same 8 threads (the full model and 2 blocks), with the allocator setting the verifier applies to
-  # itself for a like-for-like row (the other rows with glibc's defaults); V1's optimised and baseline CPU verifiers
-  # on the same queries
+  # itself for a like-for-like row (the other rows with glibc's defaults), and llama.cpp's prefill of Llama-2-7B's
+  # shapes (Q8_0 and bf16 weights: inexact, another model); V1's optimised and baseline CPU verifiers on the same
+  # queries
   if [ -n "$REH" ]; then
     csub c-gpt2-64 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre C --policy $POL --queries $QH \
 --verifier-device cpu --label cpuv $NATIVE"
@@ -264,6 +270,7 @@ tier_cpuv() {
 --no-malloc-tune $NATIVE"
     csub c-v1-gpt2-64 1 64 "$V1 --model gpt2 --layers 2 --seq 64 --modes Kpre --reps $QH --lmax 20 \
 --v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
+    csub c-llamacpp-llama2-7b-L1 1 64 "$LCPP --model llama2-7b --layers 1 --seq 64 --types q8_0 bf16 --reps $QH"
     return 0
   fi
   local m t
@@ -280,6 +287,7 @@ tier_cpuv() {
   done
   csub c-rx-heap-llama2-7b 2 256 "$RX --model llama2-7b --seq 64 2048 --layers 2 32 --variants int int_mm float \
 dynint8 --device cpu --reps $QH --malloc-tune $NATIVE"
+  csub c-llamacpp-llama2-7b 3 64 "$LCPP --model llama2-7b --seq 64 2048 --types q8_0 bf16 --reps $QH"
   for t in 64 2048; do
     csub "c-v1-llama2-7b-$t" 2 256 "$V1 --model llama2-7b --seq $t --modes Kpre --reps $QH \
 --v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
@@ -765,6 +773,15 @@ missing from the cache" >&2 ;;
   esac
   [ -n "$NONATIVE" ] || command -v "${CXX:-}" > /dev/null 2>&1 || bad+=("CXX='${CXX:-}' names no compiler here: \
 export CXX=<path to g++> (the native CPU kernels), or pass --no-native-ok")
+  # the cpuv tier clones and builds llama.cpp (experiments/reexec/llamacpp.py) with CMake and git
+  for t in "${TIERS[@]}"; do
+    [ "$t" = cpuv ] || continue
+    command -v "${CMAKE:-cmake}" > /dev/null 2>&1 || bad+=("CMake ('${CMAKE:-cmake}') not found here: the cpuv \
+tier builds llama.cpp with it (3.14 or later); put cmake on the PATH or export CMAKE=<path> (one way: pip install \
+cmake==3.31.6 into a separate environment, e.g. python3 -m venv ~/cmake && ~/cmake/bin/pip install cmake==3.31.6, \
+then export CMAKE=~/cmake/bin/cmake)")
+    command -v git > /dev/null 2>&1 || bad+=("git not found here: the cpuv tier clones llama.cpp with it")
+  done
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")
   if [ -z "$DRY$LOCAL" ] && command -v sinfo > /dev/null 2>&1; then
     big="$(sinfo -h -N ${SBATCH_PARTITION:+-p "$SBATCH_PARTITION"} -o %m | tr -dc '0-9\n' | sort -n | tail -n 1)"

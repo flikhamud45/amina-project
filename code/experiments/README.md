@@ -11,7 +11,7 @@ them and where each part of the paper lives.
 | [`improvements/`](improvements/README.md) | each implementation improvement (the extended version) | `tab:eval-improve`, the GPU verifier's time shares, the Kpre precomputation |
 | [`v1/`](v1/README.md) | V1 | `tab:eval-v1`, V1's verifier by phase, the GKR prover per leaf |
 | [`generation/`](generation/README.md) | generated responses | `tab:gen`, `tab:gen-full`, the sampler's total-variation distance |
-| [`reexec/`](reexec/README.md) | the re-execution baselines | `tab:options`' re-execution rows, `tab:eval-reexec`, the host-to-device bandwidth |
+| [`reexec/`](reexec/README.md) | the re-execution baselines (llama.cpp's included) | `tab:options`' re-execution and llama.cpp rows, `tab:eval-reexec`, the host-to-device bandwidth |
 | [`deployment/`](deployment/README.md) | the deployment case | the prover against unverified serving, `fig:breakeven` |
 | [`quality/`](quality/README.md) | the integer models' quality | `tab:quality`, `tab:zeroshot`, the recipe studies, the reproducible build |
 | [`comparison/`](comparison/README.md) | the benchmark's tables and the published systems | the aggregated tables, the outcome counts, the literature values of `tab:eval-compare` |
