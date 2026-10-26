@@ -198,7 +198,7 @@ def test_a_path_count_that_differs_from_the_formula_fails_the_build(run_dir):
 # ------------------------------------------------------------------------------------------------ zkLLM on one GPU
 def _bench_int(root: Path, gpu: str = "NVIDIA L40S") -> Path:
     """A ``tables_<name>/`` with the interactive mode-C cells of Llama-2-7B and Llama-2-13B at 2,048 tokens (the prover
-    10.0 s and 20.0 s)."""
+    10.0 s and 20.0 s), at the final run's 11-bit attention probabilities (``pmax2047``)."""
     t = root / "tables_int"
     t.mkdir(parents=True)
     head = ["model", "seq", "mode", "challenges", "lam", "metric", "threads", "rate", "variant", "device", "prover_hw",
@@ -208,7 +208,7 @@ def _bench_int(root: Path, gpu: str = "NVIDIA L40S") -> Path:
         w.writerow(head)
         for m, layers, prove in (("llama2-7b", 32, 10.0), ("llama2-13b", 40, 20.0)):
             for metric, value in (("prove_forward", prove), ("verify_products", 1.0), ("bytes_total", 6e9)):
-                w.writerow([m, 2048, "C", "int", 128, metric, 8, 4, "_wire_prune_polcnn18c", "cuda", gpu,
+                w.writerow([m, 2048, "C", "int", 128, metric, 8, 4, "_wire_prune_pmax2047_polcnn18c", "cuda", gpu,
                             "AMD EPYC 9334 32-Core Processor x8 threads", layers, 7e9, value, "measured", ""])
     with open(t / "measured_summary.csv", "w", newline="", encoding="utf-8") as fh:
         csv.writer(fh).writerow(["suite", "model", "cell", "metric", "batch", "attack", "lam", "stage", "k", "n",
