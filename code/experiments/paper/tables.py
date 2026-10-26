@@ -295,7 +295,7 @@ def tab_options(ctx: Ctx) -> Table:
     lr = lx[1][2] or lx[0][2]
     lb = lr and lr.d.get("gguf_bytes")
     held = tb.put("llama.cpp", "bytes", lb, lr, f.b) + (r" Q8\_0 once" if lb else "")
-    tb.rows.append(" & ".join([r"llama.cpp~\cite{llamacpp}$^a$", "weights", rf"\multicolumn{{2}}{{c}}{{{held}}}",
+    tb.rows.append(" & ".join([r"llama.cpp~\cite{llamacpp}$^g$", "weights", rf"\multicolumn{{2}}{{c}}{{{held}}}",
                                tb.put("llama.cpp", "64", lx[0][0], lx[0][2], f.secs),
                                tb.put("llama.cpp", "2048", lx[1][0], lx[1][2], f.secs), "inexact"]) + r" \\")
     tb.rows.append(r"GPU TEE~\cite{gpucc} & -- & -- & -- & -- & -- & vendor \\")
@@ -638,15 +638,16 @@ def inrange_ks(run: Run) -> dict:
     """The sizes of OPT-1.3B's in-range edits that the text (``\\InrangeKMedian``, ``\\InrangeDownKMedian``,
     ``\\InrangeKMax``) and ``tab:paths`` quote: ``median``, the median number of edited neurons over the successful
     edits of either direction (both ranges, :data:`INRANGE_LAYERS`); ``max``, the largest of them; ``down``, the
-    median of the lowering-only edits (the natural maximum's range).  None where a cell is missing or no edit
+    median of the lowering-only edits (the natural maximum's range).  Each median is the lower one of an even count,
+    so that it is an edit size that occurred (a whole number of neurons).  None where a cell is missing or no edit
     succeeded."""
     any_, down = run.file("inrange_llm_opt-1.3b_any.json"), run.file("inrange_llm_opt-1.3b_down.json")
     cells = [inrange_cell(any_, layer, rng) for layer in INRANGE_LAYERS for rng in ("max", "p999")]
     ks = [k for x in cells if x for k in x["k_all"]] if all(cells) else []
     dc = [inrange_cell(down, layer, "max") for layer in INRANGE_LAYERS]
     dk = [k for x in dc if x for k in x["k_all"]] if all(dc) else []
-    return {"median": statistics.median(ks) if ks else None, "max": max(ks) if ks else None,
-            "down": statistics.median(dk) if dk else None, "source": any_, "source_down": down}
+    return {"median": statistics.median_low(ks) if ks else None, "max": max(ks) if ks else None,
+            "down": statistics.median_low(dk) if dk else None, "source": any_, "source_down": down}
 
 
 PATHS_MODELS = ("opt-1.3b", "qwen3-4b", "llama2-7b", "llama2-13b", "opt-6.7b")
@@ -806,10 +807,10 @@ MEMORY = (("Kpre", 64), ("Kpre", 2048), ("C", 64), ("C", 2048))
 
 def tab_memory(ctx: Ctx) -> Table:
     """``tab:memory``: the memory of one query on the full Llama-2-7B (``cpuv`` tier, ``perf.py --client-memory``),
-    in GB: the CPU client's own process, which holds only its key or the roots, the public graph and one proof
-    (its peak resident set over the timed proofs, and its resident set after the imports), the prover's GPU peak
-    over the timed queries, and the peak resident set of the measuring process, which runs the prover and the
-    in-process verifier together."""
+    in GB: the CPU client's own process, which holds only its key and embedding tables (Kpre) or the roots (C), the
+    public graph and one proof (its peak resident set over the timed proofs, and its resident set after the
+    imports), the prover's GPU peak over the timed queries, and the peak resident set of the measuring process,
+    which runs the prover and the in-process verifier together."""
     tb = Table("tab_memory", "tab:memory", f"{protocol(ctx)}; cpuv tier: perf.py --verifier-device cpu "
                "--client-memory (label cpuv); client: client_memory.peak_rss and .baseline_rss; prover GPU: "
                "peak.gpu_peak_memory; process: peak.host_peak_rss; GB")

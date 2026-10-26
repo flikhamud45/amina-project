@@ -21,11 +21,12 @@ The families, with the record each number comes from:
   (never the abstract's N, which stays against exact re-execution), ``LlamaCppRelease`` the release the records ran;
   ``KpreKeyMB``, ``KpreEmbedMB`` and ``KpreStoreGB`` what a Kpre client of Llama-2-7B stores, from the shapes
   (:func:`kpre_storage`); ``ClientPeak*`` and ``ClientBaseline`` the client's own memory, measured in a process that
-  holds only its key or the roots and the proof (:func:`client_memory`); ``OptionsRuns`` and ``OptionsSpread`` the
-  timed runs of ``tab:options``' cells and their largest relative min--max spread (:func:`options_timings`);
+  holds only its key and embedding tables or the roots and the proof (:func:`client_memory`); ``OptionsRuns`` and
+  ``OptionsSpread`` the timed runs of ``tab:options``' cells and their largest relative min--max spread
+  (:func:`options_timings`);
 * the outcome counts (``bench`` and ``batch`` tiers, ``comparison/count_outcomes.py`` over ``raw_<platform>/``), and
-  the tampered queries of the real-weight and generation cells and the setup tier's honest setup proofs
-  (``Outcome...``);
+  the tampered queries of the real-weight cells, their random-weight twins and the generation cells and the setup
+  tier's honest setup proofs (``Outcome...``);
 * the cost of the defence, batches against one opening, V1 (with its verifier's tensors on the GPU, the gpuv tier),
   serving, the comparison with published systems (and with zkLLM's stored runs on the run's GPU model,
   ``ZkllmSameGpu...``), re-execution, real weights, long prompts, the improvements (with the A/B of 8- against
@@ -249,9 +250,10 @@ def _spread(rng, median) -> float | None:
 def options_timings(run) -> list[tuple]:
     """``(timed runs, relative min--max spread, record)`` of every timed cell of ``tab:options`` (Llama-2-7B, 64 and
     2,048 tokens): our CPU verifier in modes Kpre and C (perf.py: ``queries``, ``verify_s_range`` against
-    ``verify_s``), exact re-execution on the CPU (the fastest exact variant) and on the GPU (reexec.py: ``reps``,
-    ``range_s`` against ``measured_s`` of the full model) and V1's optimised CPU verifier (v1_bytes.py: ``timed``'s
-    ``queries`` and its ``verify_s_range`` against ``verify_s``).  A cell that the run lacks is left out; a cell whose
+    ``verify_s``), exact re-execution on the CPU (the fastest exact variant) and on the GPU and llama.cpp's fastest
+    configuration (reexec.py and llamacpp.py: ``reps``, ``range_s`` against ``measured_s`` of the full model) and
+    V1's optimised CPU verifier (v1_bytes.py: ``timed``'s ``queries`` and its ``verify_s_range`` against
+    ``verify_s``).  A cell that the run lacks is left out; a cell whose
     record lacks its count or range gives None in its place."""
     m, out = "llama2-7b", []
     for s in (64, 2048):
@@ -261,7 +263,7 @@ def options_timings(run) -> list[tuple]:
                 out.append((r.d.get("queries"), _spread(r.d.get("verify_s_range"), r.d.get("verify_s")), r))
         cpu = T.fastest(run, "cpuv", m, s)[2]
         gpu = (run.reexec("gpuv", m, s, "cuda", ("int",)).get("int") or (None, None))[1]
-        for r in (cpu, gpu):
+        for r in (cpu, gpu, T.fastest(run, "cpuv", m, s, ("llamacpp_q8_0",))[2]):
             if r:
                 key = str(r.d.get("n_layers"))
                 out.append((r.d.get("reps"), _spread((r.d.get("range_s") or {}).get(key),
@@ -281,7 +283,7 @@ def options_timing(c: Collector, ctx: T.Ctx) -> None:
     cells = options_timings(ctx.run)
     runs = [n for n, _, _ in cells]
     spread = [x for _, x, _ in cells]
-    src = "tab:options' timed cells (cpuv perf.py, reexec.py and V1; gpuv reexec.py)"
+    src = "tab:options' timed cells (cpuv perf.py, reexec.py, llamacpp.py and V1; gpuv reexec.py)"
     c.put("OptionsRuns", None if not runs or None in runs else (min(runs), max(runs)), src,
           lambda v: f.rng(v[0], v[1], f.num))
     c.put("OptionsSpread", None if not spread or None in spread else max(spread), src, ceil_pct)
@@ -318,7 +320,8 @@ def kpre_client(c: Collector, ctx: T.Ctx) -> None:
 
 def client_memory(c: Collector, ctx: T.Ctx) -> None:
     """The CPU client's own memory for the full Llama-2-7B (``cpuv`` tier, ``perf.py --client-memory``: a separate
-    process that holds only its key or the roots, the public graph and one proof, checking the timed proofs again),
+    process that holds only its key and embedding tables (Kpre) or the roots (C), the public graph and one proof,
+    checking the timed proofs again),
     in GB as ``tab:memory`` prints it: its peak resident set per prompt length and mode (``ClientPeak<T><mode>``) and
     the largest resident set after its imports over those cells (``ClientBaseline``, rounded up: "at most")."""
     base, src = [], None
@@ -366,7 +369,8 @@ def _tampered(r: Rec) -> tuple[int, int]:
 
 
 OUTCOME_TIERS = ("real", "gen")
-"""The tiers whose cells send tampered queries besides the benchmark's (the real-weight and generation cells)."""
+"""The tiers whose cells send tampered queries besides the benchmark's (the real-weight cells, their random-weight
+twins and the generation cells)."""
 
 
 def outcomes(c: Collector, ctx: T.Ctx) -> None:
@@ -543,11 +547,12 @@ def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
     exc = [r.d["n_exceptions"] for r in tier if r.d.get("n_exceptions") is not None]
     c.put("VOneRandomExceptionsMax", max(exc) if exc else None, "v1 tier, random weights", f.num)
     # the multiplicities and GKR transcripts, which do not grow with the prompt, of every measured V1 proof (the
-    # exceptions grow with the values and are counted apart)
+    # exceptions grow with the values and are counted apart); the smoke's and the gate's records fill no number
     extras = [sum((r.d.get("v1_bytes") or {}).get(k, 0) for k in ("cut_mult", "cut_gkr")) for r in run.kind("v1")
-              if not r.d.get("codec_only")]
+              if not r.d.get("codec_only") and r.tier not in ("smoke", "gate")]
     extras = [x for x in extras if x]
-    c.put("VOneExtrasMax", max(extras) if extras else None, "every V1 record: V1's multiplicities and GKR transcripts",
+    c.put("VOneExtrasMax", max(extras) if extras else None,
+          "every V1 record but the smoke's and the gate's: V1's multiplicities and GKR transcripts",
           lambda v: ceil_sig(v / 1e6, 2))
     dev = [abs(sum(r.d["v1_full"]["bytes"].values()) - r.d["v1_total"]) / r.d["v1_total"] for r in tier
            if (r.d.get("v1_full") or {}).get("bytes") and r.d.get("v1_total")]

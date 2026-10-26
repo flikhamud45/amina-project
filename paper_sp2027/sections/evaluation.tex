@@ -20,9 +20,9 @@ GPU claim decoder and the fused exact attention, and C++/OpenMP kernels for CPU
 verifiers. We use $\lambda = 128$ unless stated otherwise; v0 and V1 are the protocols of
 Sections~\ref{sec:defence} and~\ref{sec:v1}.
 
-\para{Platform.} Every measurement of this section comes from one run of our artifact's run
+\para{Platform.} Every measurement here but zkLLM's comes from one run of our artifact's run
 package on one platform: one \PlatformGpu{} runs the prover, the GPU verifier and the GPU
-re-execution, and 8 threads of an \PlatformCpu{} run the CPU verifier and every CPU re-execution. All cells use Fiat--Shamir unless a table states
+re-execution, and 8 threads of an \PlatformCpu{} run the CPU verifier and every CPU re-execution. All cells use Fiat--Shamir unless a table says
 otherwise; mode~$\sC$ uses codewords of at least $2^{\PlanLogPoints{}}$ points. Times are medians
 after a warm-up (\OptionsRuns{} runs in Table~\ref{tab:options}, min--max spread $\le$\OptionsSpread{}\%).
 
@@ -65,11 +65,11 @@ Freivalds' check rejected \FinalNFreivalds{}, the column check \FinalNColumnsCod
 verified in \CnnVerifyRange{}\,ms, with proofs \CnnProofRatio{}$\times$ smaller than their int8 weights.
 Llama-2-7B's 64-token proof is about \ProofRatioLlamaShort{}$\times$ smaller than its int8 weights
 (Table~\ref{tab:eval-llm}). At 2{,}048 tokens the proof and the CPU verifier's time grow
-(OPT-6.7B: \ProofOptLLong{}, \VerifyOptLLong{}), since the weight operations' results grow with the prompt (\ClaimsShareLlama{}\%
+(OPT-6.7B: \ProofOptLLong{}, \VerifyOptLLong{}), as the weight operations' results grow with the prompt (\ClaimsShareLlama{}\%
 of Llama-2-7B's \ProofLlamaLongCExact{} proof) and the verifier recomputes attention over all position pairs.
-There the GPU verifier is \GpuVerifyFactor{}$\times$ faster than the CPU one (peak memory \ClientPeakLongKpre{}\,GB in $\Kpre$).
+There the GPU verifier is \GpuVerifyFactor{}$\times$ faster than the CPU one (a Llama-2-7B client peaks at \ClientPeakLongKpre{}\,GB in $\Kpre$).
 On the \PlatformGpu{}, proving a 2{,}048-token OPT-1.3B prompt in $\Kpre$ and $\sC$ costs \ServeOptMKpreOverUOne{} and \ServeOptMCOverUOne{}$\times$
-our exact integer forward pass without proofs, and \ServeOptMKpreOverUTwo{} and \ServeOptMCOverUTwo{}$\times$ an fp16 one on the same GPU. Proving 64 prompts of 64 tokens together in $\Kpre$ takes \ServeBatchKpre{}\,s (\ServeBatchOverUOne{} and
+our exact integer forward pass without proofs, and \ServeOptMKpreOverUTwo{} and \ServeOptMCOverUTwo{}$\times$ an fp16 one. Proving 64 prompts of 64 tokens together in $\Kpre$ takes \ServeBatchKpre{}\,s (\ServeBatchOverUOne{} and
 \ServeBatchOverUTwo{}$\times$)\TodoServing{}.
 
 \para{Improvements.} Our improvements change no byte that the parties exchange; the extended
@@ -122,10 +122,10 @@ takes \VOneVerifyLlama{}\,s, \VOneVerifyRatioLlama{}$\times$ v0's on the same qu
 
 \begin{table}[t]
   \caption{A client's options for one Llama-2-7B prompt of $T$ tokens (--: none or not reported).
-  Ours and re-execution: the full model, random int8 weights; ours under Fiat--Shamir,
+  Measured rows: the full model, random weights; ours under Fiat--Shamir,
   $\lambda{=}128$, mode $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points; CPU: 8 threads
-  of an \PlatformCpu{}, our verifier with the native kernels, re-execution the fastest exact one;
-  GPU: one \PlatformGpu{}. The cited systems as reported, on their own hardware}
+  of an \PlatformCpu{}, our verifier with the native kernels;
+  GPU: one \PlatformGpu{}. Other cited systems as reported, on their own hardware}
   \label{tab:options}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.2pt}
@@ -145,13 +145,13 @@ takes \VOneVerifyLlama{}\,s, \VOneVerifyRatioLlama{}$\times$ v0's on the same qu
   fp32, \CpuBfShort{}/\CpuBfLong{}\,s in bf16 and \DynIntShort{}/\DynIntLong{}\,s with dynamic int8. GPU: the integer forward
   pass on int8 tensor cores; fp16 takes \GpuFloatShort{}/\GpuFloatLong{}\,s. $^b$An edit passes a one-token response with probability about
   \SokCommitRateAbout{}\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$V1's proof and its CPU
-  verifier on the same queries (random weights; V1's gain on the real OPT-6.7B: \VOneRatioRealOptLExact{}$\times$).
+  verifier on the same queries (its gain on the real OPT-6.7B: \VOneRatioRealOptLExact{}$\times$).
   $^e$Llama-3.1-8B (Llama-2-7B's layers and width), per audited token, as
   reported~\cite{commitllm2026}: retained trace state (Merkle paths not counted) and the routine
   10-layer check on an Apple M4. $^f$Provider's cost over unverified serving: GPU TEE below
   7\%~\cite{gpucc}, CommitLLM 12--14\%~\cite{commitllm2026}; ours \ServeLlamaKpreOverUTwo{}$\times$ ($\Kpre$) and
   \ServeLlamaCOverUTwo{}$\times$ ($\sC$) fp16 inference on the \PlatformGpu{} (Llama-2-7B, full model, 64 to
-  2{,}048 tokens).}
+  2{,}048 tokens). $^g$The fastest of its attention kernels and micro-batches.}
 \end{table}
 
 \begin{figure}[t]

@@ -9,8 +9,8 @@ run's records, on the synthetic run of ``test_paper_numbers.py``.
   states (``attack/sok.py``), equal the fallback, and a run's path count that differs from the formula's fails the
   build.
 * zkLLM's stored runs on the run's GPU model give same-GPU prover factors, and none on another GPU.
-* The tampered queries of the real-weight and generation cells, V1's verifier with GPU tensors and the timed runs of
-  ``tab:options`` with their spread.
+* The tampered queries of the real tier's and generation cells, V1's verifier with GPU tensors, the timed runs
+  of ``tab:options`` with their spread and V1's bound on the measured builds alone (not the gate's or the smoke's).
 """
 from __future__ import annotations
 
@@ -128,6 +128,19 @@ def test_the_path_tables_take_the_runs_edit_sizes(run_dir, tmp_path):
     assert tb.rows[0] == r"OPT-1.3B & 8{,}192 & 227{,}117 & -- & -- & 14{,}182 & -- \\"
 
 
+def test_an_even_number_of_edits_gives_the_lower_median(monkeypatch):
+    """The column of an even number of edits is an edit size that occurred (the lower median), never half a neuron."""
+    sizes = {"any": [2, 3], "down": [4, 7]}      # each layer (and range) the same two edits: medians 2.5 and 5.5
+
+    class Files:
+        def file(self, name):
+            return "down" if name.endswith("_down.json") else "any"
+
+    monkeypatch.setattr(T, "inrange_cell", lambda doc, layer, rng: {"k_all": sizes[doc]})
+    ks = T.inrange_ks(Files())
+    assert (ks["median"], ks["down"], ks["max"]) == (2, 4, 3)
+
+
 def test_the_acceptance_format():
     assert T.accept_text(math.log10(0.02551)) == "0.026"
     assert T.accept_text(math.log10(0.5797)) == "0.580"
@@ -242,7 +255,7 @@ def test_zkllm_on_the_same_gpu(tmp_path):
 
 # ------------------------------------------------------------------------------------------------ the run's records
 def test_the_tampered_queries_and_the_setup_proofs(run_dir):
-    """The real-weight and generation cells' tampered queries (perf.py and V1 per kind, gen_bench.py per cell) and
+    """The real tier's and generation cells' tampered queries (perf.py and V1 per kind, gen_bench.py per cell) and
     the setup tier's honest proofs; an accepted tamper or a rejected setup proof leaves its count empty."""
     tmp, logs = run_dir
     tam = {"trace": {"attempts": 3, "rejected": 3, "labels": {}}, "single": {"attempts": 3, "rejected": 3}}
@@ -278,14 +291,15 @@ def test_v1_with_the_verifier_tensors_on_the_gpu(run_dir):
 
 
 def test_the_timed_runs_of_the_options_table(run_dir):
-    """``tab:options``' cells: their timed runs (5 for perf.py and reexec.py, 3 for V1's) and their largest relative
-    min--max spread, rounded up; a cell whose record has no range leaves the spread empty."""
+    """``tab:options``' cells: their timed runs (5 for perf.py, reexec.py and llamacpp.py, 3 for V1's) and their
+    largest relative min--max spread, rounded up; a cell whose record has no range leaves the spread empty."""
     tmp, logs = run_dir
     ctx, _ = _ctx(tmp, logs)
     cells = M.options_timings(ctx.run)
-    assert len(cells) == 4 + 2 + 2 + 1                   # Kpre and C at 64 and 2,048; CPU and GPU re-execution; V1
+    assert len(cells) == 4 + 2 + 2 + 2 + 1     # Kpre and C at 64 and 2,048; CPU and GPU re-execution; llama.cpp; V1
+    assert {r.kind for _, _, r in cells} >= {"llamacpp"}
     v, _ = _macros(ctx)
-    assert (v["OptionsRuns"], v["OptionsSpread"]) == ("3--5", "1")
+    assert (v["OptionsRuns"], v["OptionsSpread"]) == ("3--5", "4")    # llama.cpp: (1.02 - 0.98) / 1.0
     wide = dict(perf("llama2-7b", 2048, "Kpre", 19.6, 6.43e9), verify_s_range=[18.6, 20.6])
     _write(logs, "sp-c-llama2-7b-2048-64.out", [wide])
     ctx, _ = _ctx(tmp, logs)
@@ -298,3 +312,17 @@ def test_the_timed_runs_of_the_options_table(run_dir):
     v, _ = _macros(ctx)
     assert v["OptionsSpread"] is None and v["OptionsRuns"] == "3--5"
     assert M._spread([1.0, 1.2], 1.1) == pytest.approx(0.2 / 1.1) and M._spread(None, 1.0) is None
+
+
+def test_the_gate_and_the_smoke_fill_no_v1_bound(run_dir):
+    """V1's multiplicities and GKR transcripts (``VOneExtrasMax``) are the measured builds': a larger gate or smoke
+    proof leaves the bound unchanged."""
+    tmp, logs = run_dir
+    for name, label in (("sp-gate-v1-llama7-2k-2-66.out", "gate"), ("sp-smoke-67.out", "")):
+        big = v1("llama2-7b", 2048, "Kpre", 2, 2.5e8, 1.1e8, label=label)
+        big["v1_bytes"] = dict(big["v1_bytes"], cut_mult=5e6)
+        _write(logs, name, [big])
+    ctx, _ = _ctx(tmp, logs)
+    assert {r.tier for r in ctx.run.kind("v1")} >= {"gate", "smoke"}
+    v, _ = _macros(ctx)
+    assert v["VOneExtrasMax"] == "0.91"

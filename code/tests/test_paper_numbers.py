@@ -906,7 +906,7 @@ def test_llamacpp_is_inexact_and_never_the_headline_baseline():
     assert "sp-c-llamacpp-" in o["llama.cpp", "2048"]["source"] and o["llama.cpp", "64"]["value"] is None
     assert o["Re-exec. CPU", "2048"]["value"] == 141.6
     row = next(r for r in opts.rows if r.startswith("llama.cpp"))
-    assert row == r"llama.cpp~\cite{llamacpp}$^a$ & weights & \multicolumn{2}{c}{7.2\,GB Q8\_0 once} & -- & " \
+    assert row == r"llama.cpp~\cite{llamacpp}$^g$ & weights & \multicolumn{2}{c}{7.2\,GB Q8\_0 once} & -- & " \
                   r"10\,s & inexact \\"
     e = {(x["row"], x["column"]): x["value"] for x in T.tab_eval_reexec(ctx).cells}
     assert e["cpu 2048", r"llama.cpp Q8\_0"] == pytest.approx(10.0) and e["cpu 2048", "llama.cpp bf16"] == 15.0

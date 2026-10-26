@@ -30,14 +30,14 @@ the train split. Our fp32 references reproduce the published values (\QualityRef
 
 \para{Where the perplexity goes.} The integer LayerNorm outputs a gain times the normalised value.
 With the best scalar gain, perplexity is \QualityScalarExcessOptS{}\%, \QualityScalarExcessOptM{}\% and \QualityScalarExcessOptL{}\% above fp32 for OPT-125M, OPT-1.3B and
-OPT-6.7B (Table~\ref{tab:quality}). Switching each component of a floating-point copy of the graph
+OPT-6.7B (Table~\ref{tab:quality}). Switching each component of a float copy of the graph
 between integer and float locates the loss in the norm's outputs (on OPT-125M at 128 tokens, float
-outputs remove more than half of the gap; extended version~\cite{fullversion}). The loss comes from
+outputs remove more than half of the gap~\cite{fullversion}). The loss comes from
 rounding, not clipping: a few outlier channels of OPT's residual stream inflate the standard
 deviation, so a scalar gain that keeps them within int8 leaves the other channels few levels. At
 2{,}048 tokens 8-bit attention probabilities cost another \QualityProbCost{}\%, since a rounded row keeps as
-little as \QualityMassMinEight{}\% of its mass; the certified models and all cost measurements use 11-bit probabilities (\QualityMassMinEleven{}\% of the mass), which
-change the proof's size by at most \ProbBitsBytes{}\% and the prover's and verifier's times by at most \ProbBitsTime{}\%~\cite{fullversion}.
+little as \QualityMassMinEight{}\% of its mass; the certified models and all costs use 11-bit probabilities (\QualityMassMinEleven{}\% of the mass), which
+change the proof's size by at most \ProbBitsBytes{}\% and the prover's and verifier's times by at most \ProbBitsTime{}\% (Llama-2-7B, 2 blocks, 2{,}048 tokens)~\cite{fullversion}.
 
 \para{SmoothQuant through the norm's gains.} Per-channel gains absorb SmoothQuant's
 scaling~\cite{xiao2023smoothquant}: channel $j$ gets the gain $\gamma_j=\kappa/s_j$ with
@@ -67,9 +67,9 @@ activation~\cite{chen2024prefixquant,son2024cushioncache}, a per-channel balance
 product folded into the up and down projections~\cite{xiao2023smoothquant,lin2024awq}, and for
 Qwen3 a balance of the q and k norms' gains~\cite{shao2024omniquant}, after each head's rows of $W_q$
 and $W_k$ are rescaled to a common int8 range (the per-head RMSNorm that follows is invariant to
-it). The smoothing $\alpha$ and the SwiGLU balance are chosen per model on the test split; on
-OpenLLaMA-7B's validation split, among $\alpha$ and balance $\pm0.1$ from ours, \LlamaOpenValClause{}. With
-them, OpenLLaMA-7B, whose integer graph has exactly the structure of our Llama-2-7B benchmark, is
-within $\times$\LlamaOpenRatio{} of fp32 at 2{,}048 tokens, Llama-2-7B itself within $\times$\LlamaSevenRatio{}, TinyLlama within $\times$\TinyLlamaRatio{} and Qwen3-1.7B
+it). The smoothing $\alpha$ and the SwiGLU balance are chosen per model on the test split (Llama-2-7B:
+OpenLLaMA-7B's); on its validation split, among $\alpha$ and balance $\pm0.1$ from ours, \LlamaOpenValClause{}. With
+them, OpenLLaMA-7B, whose integer graph has our Llama-2-7B benchmark's structure, is
+within $\times$\LlamaOpenRatio{} of fp32 at 2{,}048 tokens, Llama-2-7B within $\times$\LlamaSevenRatio{}, TinyLlama within $\times$\TinyLlamaRatio{} and Qwen3-1.7B
 within $\times$\QwenMRatio{}, and Llama-2-13B within $\times$\LlamaThirteenRatio{} of fp16, while Qwen3-4B, which forms a second
 massive activation that no prefix takes, stays at $\times$\QwenLRatio{}~\cite{fullversion}.

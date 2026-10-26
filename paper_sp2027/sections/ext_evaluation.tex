@@ -72,7 +72,8 @@ the proof, which V1 makes smaller. On a CPU, native exact kernels for every phas
   \caption{Memory of one query on the full Llama-2-7B (Fiat--Shamir, $\lambda{=}128$, random int8 weights;
   mode $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points; the prover on one \PlatformGpu{}, the
   CPU verifier on 8 threads of an \PlatformCpu{}), in GB. Client: the CPU verifier in a process of its own,
-  which holds only the public graph, its key ($\Kpre$) or the roots ($\sC$) and one proof, and checks
+  which holds only the public graph, its key and the embedding tables it looks up ($\Kpre$) or the roots
+  ($\sC$), and one proof, and checks
   the timed proofs again: its peak resident set and its resident set after its imports. Prover GPU: the
   peak allocated GPU memory over the timed queries. Process: the peak resident set of the measuring
   process, which runs the prover and the in-process verifier together}
@@ -90,8 +91,9 @@ the proof, which V1 makes smaller. On a CPU, native exact kernels for every phas
 
 The prover and the verifier of a timed cell share one process, whose peak resident set is theirs
 together (Table~\ref{tab:memory}, process). The client's own memory is therefore measured in a
-separate process that holds only what the client holds, the public graph, its key or the roots, and
-one proof at a time, and checks every timed proof again from the proof's bytes; its verdicts equal
+separate process that holds only what the client holds, the public graph, its key and the embedding
+tables it looks up ($\Kpre$) or the roots ($\sC$), and one proof at a time, and checks every timed proof again
+from the proof's bytes; its verdicts equal
 those of the measuring process. For Llama-2-7B in $\Kpre$ it peaks at \ClientPeakShortKpre{}\,GB at 64
 tokens and at \ClientPeakLongKpre{}\,GB at 2{,}048 tokens (\ClientPeakShortC{} and \ClientPeakLongC{}\,GB in $\sC$), of
 which at most \ClientBaseline{}\,GB is the runtime after its imports (Python, PyTorch and our library);
@@ -177,7 +179,8 @@ proof is \ProofLlamaShortC{} at $\lambda = 128$ (Table~\ref{tab:eval-llm}). With
 queries; with it, the commitment is rejected at setup (the tests of the setup proof, which the run's
 smoke job repeats on the platform). In the run, all \OutcomeSetupProofs{} honest setup proofs were
 accepted, and beyond the counts of Section~\ref{sec:eval-setup}, which come from the benchmark's cells, the
-real-weight and generation cells rejected all \OutcomeTampers{} tampered queries they sent
+real-weight cells, their random-weight twins and the generation cells rejected all \OutcomeTampers{} tampered
+queries they sent
 (\OutcomeTampersVOne{} of them V1 queries and \OutcomeTampersGen{} generated responses).
 
 \subsection{V1: Crossover per Cell}

@@ -84,11 +84,11 @@ model, has its own ratio (`\CpuRatioLlamaCpp`) and never changes N. V1's headlin
 real-weight models whose every honest Kpre query at 2,048 tokens the real tier accepted. The break-even reuses
 `deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and its byte model.
 `\OptionsRuns` and `\OptionsSpread` are the timed runs of `tab:options`' cells and their largest relative min--max
-spread; `\Outcome...` the tampered queries of the real-weight and generation cells (all, V1's, the generated
-responses') and the setup tier's honest setup proofs, printed only when every tamper was rejected and every setup
+spread; `\Outcome...` the tampered queries of the real-weight cells, their random-weight twins and the generation
+cells (all, V1's, the generated responses') and the setup tier's honest setup proofs, printed only when every tamper was rejected and every setup
 proof accepted. `\ZkllmSameGpu...` set zkLLM's stored runs on the run's GPU model (`artifacts/results/zkllm_l40s/`,
 read by `bench.literature` with the published values: the proof binaries of two decoder layers, times the layers)
-against our interactive mode-C prover on the same prompts, only when the stored runs' GPU is the run's. The
+against our interactive mode-C prover on prompts of the same length, only when the stored runs' GPU is the run's. The
 spot-checking schemes' acceptance probabilities and path counts of `tab:sok` and `tab:sok-derivation` (`\Sok...`)
 follow from the formulas and parameters those tables state (`attack/sok.py`; no run). The bounds over the in-range
 cells skip a layer and range without a successful edit. A number the text states as a bound ("at most", "up to",
