@@ -329,7 +329,9 @@ def open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, o
     (each weight op's, or each group's: its members' rows side by side) travel 31-bit packed, tree
     after tree in the order of the challenges and column by column, and arrive as the int32 rows
     ``[t, N]`` of :func:`pvi.v0.streaming.wire_openings` (``None`` if the packed columns are malformed);
-    ``keep`` (with ``u_blob``) receives those bytes and the multiproofs."""
+    ``keep`` (with ``u_blob``) receives the multiproofs, and those bytes only if they are malformed:
+    well-formed ones are freed here and packed again from the openings after the column checks
+    (:func:`kept_columns`), so that a kept proof adds nothing to the peak memory of those checks."""
     p, t = verifier.params, out["timings"]
     if p.fiat_shamir:
         c0 = contention.begin()
@@ -365,9 +367,18 @@ def open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, o
         paths = {name: proof for name, (_, proof) in opened.items()}
         openings = received_openings(verifier, cols, blob, paths, out)
         if keep is not None:
-            keep.columns, keep.paths = blob, paths
+            keep.paths = paths
+            if any(rows is None for rows, _ in openings.values()):
+                keep.columns = blob
     out["bytes"]["paths"] += sum(len(proof) * HASH_BYTES for _, proof in opened.values())
     return cols, openings
+
+
+def kept_columns(cols: dict, openings: dict) -> bytes:
+    """The 31-bit packed opened columns of :func:`open_message` again, from their well-formed openings
+    (the int32 rows ``[t, N]`` of every tree, in the order of the challenges ``cols``): the same bytes,
+    since packing is canonical (the padding bits are zero)."""
+    return encoded_message(claimcodec.pack_field, [openings[name][0] for name in cols])
 
 
 def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
@@ -498,6 +509,8 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
         sync_device(vdev)
         t["verify_columns"] = time.perf_counter() - t0
         phase_done(out, "verify_columns", c0)
+        if keep is not None and keep.columns is None:
+            keep.columns = kept_columns(cols, openings)
         if reason is not None:
             out["rejected_at"] = reason
             return out

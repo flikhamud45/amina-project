@@ -96,7 +96,8 @@ and `same_model` false), `paper/numbers.py` fails any that does not, and it neve
   any other model is refused; `--layers N`: N blocks), normal with standard deviation 0.02 and norms of one
   (`--seed`), written as a bf16 GGUF by the clone's own `gguf-py` one tensor at a time, with a dummy vocabulary of
   Llama-2's SentencePiece layout (32,000 tokens: `<unk>`, `<s>`, `</s>`, the 256 byte tokens and unique fillers), then
-  quantised to Q8_0 by `llama-quantize`. No checkpoint, sentencepiece, protobuf or torch is needed for this. The files
+  quantised to Q8_0 by `llama-quantize`. This needs numpy and PyYAML (which `gguf-py` imports), but no checkpoint,
+  sentencepiece, protobuf or torch. The files
   go to a new folder under `--tmp-dir` (default `$TMPDIR`), which is deleted at exit: about 21 GB for Llama-2-7B
   (13.5 GB bf16, 7.2 GB Q8_0), 1.4 GB for one block; the script stops before writing them if they do not fit.
 * **Measurement.** `llama-bench -p T -n 0 -t <--threads> -r <--reps> -b T -ub <--ubatch, capped at T> -fa

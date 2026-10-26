@@ -50,7 +50,7 @@ the client holds -- the public graph and the parameters, mode C's roots, mode Kp
 reads itself -- and checks each timed proof again from its messages alone (:func:`pvi.v0.query.verify_wire`), right
 after the timed query and while this process waits; its verdict must equal this process's.  The key and each proof
 reach it through files in a temporary folder under ``--client-dir`` (default: the system's temporary folder), one
-proof at a time.
+proof at a time; the folder is removed when the process ends, also on SIGTERM (a scheduler's time limit or requeue).
 
 Record (one JSON line per mode and variant): ``label``, ``git``, ``model``, ``real``, ``smooth``, ``recipe``,
 ``calib_seq``, ``seq``, ``layers``, ``mode``, ``policy``, ``chosen`` (mode C: the plan committed, ``auto``'s pick),
@@ -79,6 +79,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import platform
+import signal
 import statistics
 import sys
 import time
@@ -127,6 +128,11 @@ def _start_client(stack: contextlib.ExitStack, verifier, folder: str | None, thr
         return {"process": stack.enter_context(ClientProcess(verifier, folder, threads)), "got": [], "error": None}
     except Exception as e:                     # recorded as a failed check (client_memory.error)
         return {"process": None, "got": [], "error": f"{type(e).__name__}: {e}"}
+
+
+def _terminated(signum, frame) -> None:
+    """SIGTERM as an exit, so that the client processes' ``ExitStack`` removes their temporary folders."""
+    raise SystemExit(128 + signum)
 
 
 def _client_check(st: dict, x: torch.Tensor, proof) -> None:
@@ -225,6 +231,7 @@ def main() -> int:
             raise SystemExit("--client-memory sends the client the proof's bytes: --wire on")
         if "C" in args.modes and not args.fs:
             raise SystemExit("--client-memory checks mode C's proofs from their Fiat-Shamir transcript: --fs")
+        signal.signal(signal.SIGTERM, _terminated)
     cli.apply_runtime(args)
     sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
     device = torch.device(args.device)

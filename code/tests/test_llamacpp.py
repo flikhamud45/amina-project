@@ -89,6 +89,18 @@ def _gguf():
     pytest.skip("no gguf-py (an installed gguf, or a llama.cpp clone under logs/<platform>/llamacpp/src)")
 
 
+def test_a_missing_dependency_of_gguf_py_is_a_failed_step(tmp_path, monkeypatch):
+    """gguf-py imports numpy and PyYAML: without one of them the step fails with its name, not a traceback."""
+    pkg = tmp_path / "gguf-py" / "gguf"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("import pvi_no_such_module_yaml_stand_in\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.delitem(sys.modules, "gguf", raising=False)
+    with pytest.raises(L.LlamaCppError, match="PyYAML") as e:
+        L.import_gguf(tmp_path)
+    assert e.value.step == "gguf-py"
+
+
 def test_a_tiny_gguf_written_one_tensor_at_a_time_reads_back(tmp_path):
     gguf = _gguf()
     L.check_llama(SMALL)

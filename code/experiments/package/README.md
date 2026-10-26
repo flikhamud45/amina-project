@@ -58,7 +58,7 @@ submits nothing and needs none of the settings above (it only warns about those 
 bash code/experiments/package/run.sh --platform smoke --no-exclusive smoke
 #  -> "SMOKE OK" at the end of logs/smoke/sp-smoke-*.out (up to an hour); wait for it before the rehearsal
 bash code/experiments/package/run.sh --platform rehearsal --rehearsal --no-exclusive --optional [--llama-licence] all
-#  -> 51 small jobs (52 with --llama-licence): every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three
+#  -> 54 small jobs (55 with --llama-licence): every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three
 #     hours; wait until `squeue -u $USER` lists none of them, then
 cd code
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.comparison.aggregate --platform rehearsal
@@ -109,7 +109,7 @@ accepted, every tamper rejected, V1's bytes exactly as the byte model gives them
 
 ```bash
 bash code/experiments/package/run.sh --platform final --one-job smoke gate    # or without --one-job: a chain
-#  -> 7 jobs, about an hour on an L40S node (job limits 8 h); then, from code/,
+#  -> 8 jobs (the smoke and the gate's 7), about two hours on an L40S node (job limits 10 h); then, from code/,
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --check \
     --no-byte-model
 #  -> no CHECK FAILED line (the run's tables and macros are still missing, which --check alone does not fail)
@@ -166,7 +166,7 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
 | `smoke` | 1 | 1 | 2 | the platform gate |
-| `cpuv` | 14 | 7-10 | 26 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times", which stays against exact re-execution); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
+| `cpuv` | 14 | 7-10 | 26 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times", which stays against exact re-execution); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key and embedding tables or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
 | `v1` | 13 | 4-8 | 26 | V1 against v0: bytes, prover and verifier (`tab:eval-v1`) |
 | `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
 | `bench` | 43 | 8-12 | 48 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`), the outcome counts, the image models' attack cells |

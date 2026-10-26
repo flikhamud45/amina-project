@@ -24,10 +24,10 @@ it was compiled for, e.g. ``AVX512_VNNI`` and ``AVX512_BF16``) goes into every r
 projections and the LM head and ones for the norms (``--seed``), so that no activation is denormal.  They are written
 as a bf16 GGUF by the clone's own ``gguf-py``, one tensor at a time (memory holds one tensor), with a vocabulary of
 Llama-2's SentencePiece layout (``<unk>``, ``<s>``, ``</s>``, the 256 byte tokens and unique fillers);
-``llama-quantize`` then writes the Q8_0 file (the norms stay fp32).  This step needs numpy and the clone's
-``gguf-py`` only (no checkpoint, sentencepiece, protobuf or torch).  The files go to a new folder under ``--tmp-dir``
-(default the system's temporary folder, ``$TMPDIR``), deleted at exit.  Only Llama-2's architecture (RMSNorm, SwiGLU,
-rotary positions, no biases, an untied LM head) is accepted.
+``llama-quantize`` then writes the Q8_0 file (the norms stay fp32).  This step needs numpy, PyYAML (which ``gguf-py``
+imports) and the clone's ``gguf-py`` only (no checkpoint, sentencepiece, protobuf or torch).  The files go to a new
+folder under ``--tmp-dir`` (default the system's temporary folder, ``$TMPDIR``), deleted at exit.  Only Llama-2's
+architecture (RMSNorm, SwiGLU, rotary positions, no biases, an untied LM head) is accepted.
 
 **Measurement.**  ``llama-bench`` times prompt processing only (``-p T -n 0``) on ``--threads`` threads (``-t``;
 never its default, every physical core of the machine): ``--reps`` passes after one untimed warm-up pass of the same
@@ -185,12 +185,16 @@ def _size(shape) -> int:
 
 
 def import_gguf(src: Path):
-    """The clone's own ``gguf-py`` (``<src>/gguf-py``), first on the path."""
+    """The clone's own ``gguf-py`` (``<src>/gguf-py``), first on the path; a missing dependency of it (numpy,
+    PyYAML) is a failed step."""
     path = Path(src) / "gguf-py"
     if not (path / "gguf" / "__init__.py").is_file():
         raise LlamaCppError("gguf-py", f"{path} holds no gguf package")
     sys.path.insert(0, str(path))
-    import gguf
+    try:
+        import gguf
+    except ImportError as e:
+        raise LlamaCppError("gguf-py", f"{e} (gguf-py needs numpy and PyYAML)") from e
     if Path(gguf.__file__).resolve().parent != (path / "gguf").resolve():
         raise LlamaCppError("gguf-py", f"another gguf package was imported ({gguf.__file__}), not {path}")
     return gguf
