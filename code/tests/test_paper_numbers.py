@@ -1143,11 +1143,12 @@ def _node(host: str, gpu: str | None = "NVIDIA L40S", cpu: str = ENV["cpu"], dri
 def test_jobs_of_another_gpu_or_cpu_model_fail_and_nodes_and_drivers_are_listed(run_dir, capsys):
     """Every job's GPU and CPU (its log's node line and its records' environments) must be one model each: a job on
     another GPU model, one that saw no GPU, or one on another CPU model is a ``CHECK FAILED platform`` line that
-    names it; several nodes and drivers of the same models are allowed and listed in the report's machines line."""
+    names it; several nodes and drivers of the same models are allowed and listed in the report's machines line (the
+    cells this synthetic run lacks allowed: --allow-missing)."""
     tmp, logs = run_dir
     _write(logs, "sp-g-h2d-95.out", [], extra=_node("n-805", driver="595.99.02"))
     _write(logs, "sp-tv-checks-96.out", [], extra=_node("n-801"))
-    assert N.main(_args(tmp, logs, "--check")) == 0
+    assert N.main(_args(tmp, logs, "--check", "--allow-missing")) == 0
     out = capsys.readouterr().out
     assert "CHECK FAILED platform" not in out
     machines = next(line for line in out.splitlines() if line.startswith("machines: "))
@@ -1155,7 +1156,7 @@ def test_jobs_of_another_gpu_or_cpu_model_fail_and_nodes_and_drivers_are_listed(
     assert "drivers: 535.183.01 (1 jobs), 595.99.02 (1 jobs) (allowed)" in machines
     _write(logs, "sp-a-mnist-97.out", [], extra=_node("t-806", cpu="Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz"))
     _write(logs, "sp-q-opt125-98.out", [], extra=_node("n-802", gpu=None))
-    assert N.main(_args(tmp, logs, "--check")) == 1
+    assert N.main(_args(tmp, logs, "--check", "--allow-missing")) == 1
     out = capsys.readouterr().out
     gpu = next(line for line in out.splitlines() if "GPU models" in line)
     cpu = next(line for line in out.splitlines() if "CPU models" in line)
