@@ -319,6 +319,39 @@ def test_forged_u_and_openings_are_rejected_where_the_default_flow_rejects_them(
     assert labels["merkle then code"] == "columns_merkle"
 
 
+@pytest.mark.parametrize("kind", ["gpt2", "llama"])
+@pytest.mark.parametrize("mode", ["C", "K", "Kpre"])
+def test_a_kept_proof_checked_again_from_its_bytes_gives_the_queries_verdict(kind, mode):
+    """``run_query(wire=True, keep_proof=True)`` keeps the prover's messages as the verifier received them, and
+    ``verify_wire`` checks them again with no prover (a client's process): the same verdict and rejection label on
+    honest queries, tampered claims and, in mode C, forged ``u`` and openings, and the kept bytes are the proof's."""
+    from pvi.v0.query import verify_wire
+    graph, x = _graph(kind)
+    prover, pair = _setup(graph, mode, fiat_shamir=True)
+    cases = [(name, kw, None) for name, kw in _claim_attacks(graph.mat_ops).items()]
+    if mode == "C":
+        cases += [(name, {}, attack) for name, attack in _fold_and_open_attacks(graph).items()]
+    real = {"fold": prover.fold, "open": prover.open}
+    for i, (name, kw, attack) in enumerate(cases):
+        if attack is not None:
+            setattr(prover, attack[0], attack[1](real[attack[0]]))
+        try:
+            res = proto.run_query(prover, pair[0], x, seed=i, wire=True, keep_proof=True, forward_kwargs=kw)
+        finally:
+            setattr(prover, "fold", real["fold"])
+            setattr(prover, "open", real["open"])
+        again = verify_wire(pair[0], x, res["proof"])
+        assert (again["accepted"], again["rejected_at"]) == (res["accepted"], res["rejected_at"]), name
+        if res["accepted"]:
+            assert res["proof"].nbytes() == sum(res["bytes"].values())
+    with pytest.raises(ValueError):
+        proto.run_query(prover, pair[0], x, keep_proof=True)                  # the bytes need wire=True
+    if mode == "C":       # an interactive proof answers challenges drawn while it ran: nothing to check again
+        prover, pair = _setup(graph, "C", fiat_shamir=False)
+        with pytest.raises(ValueError):
+            verify_wire(pair[0], x, proto.run_query(prover, pair[0], x, wire=True, keep_proof=True)["proof"])
+
+
 def _as_unpacked(tensors: list, change) -> list:
     """The flat tensors the verifier unpacks from the packed ``tensors`` after ``change``."""
     flat = torch.from_numpy(cc.unpack_field(change(_PACK_FIELD(tensors)), sum(t.numel() for t in tensors))

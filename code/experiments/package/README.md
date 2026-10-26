@@ -15,7 +15,7 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 | A Python 3.12 environment as `.venv` at the checkout's root (or `--python <path>`) | torch 2.5.1+cu121, `code/requirements.txt` and `code/requirements-llm.txt` | `.venv/bin/python -c "import torch, transformers, triton; print(torch.__version__)"` |
 | A C++ compiler in `CXX` | the native CPU kernels (`-march=native`) of the CPU verifier and of the exact int8 re-execution; every CPU-timing cell passes `--require-native`, so a compiler missing on the node stops it instead of timing the torch path, and `run.sh` submits nothing while `CXX` names no compiler (`--no-native-ok` overrides both) | `$CXX --version` (g++ 9 or later) |
 | The Python headers for Triton's launcher | Triton compiles a small launcher with `Python.h` on first use, on the GPU node | on the GPU node, `.venv/bin/python -c "import os, sysconfig; print(os.path.exists(os.path.join(sysconfig.get_paths()['include'], 'Python.h')))"`; if `False`, copy the headers into a folder and `export PVI_PY_INCLUDE=<folder>` |
-| A few GB of free temporary space on the GPU node | the compilers of Triton's launcher and of the native kernels write their temporary files to `$TMPDIR` (default `/tmp`) | on the GPU node, `df -h ${TMPDIR:-/tmp}`; if it is full, `export TMPDIR=<folder on a disk the nodes see>` (sbatch passes it to the jobs) |
+| About 10 GB of free temporary space on the GPU node | the compilers of Triton's launcher and of the native kernels write their temporary files to `$TMPDIR` (default `/tmp`), and the `cpuv` tier's client process receives each Llama-2-7B proof through a file there (6.4 GB at 2,048 tokens; one at a time) | on the GPU node, `df -h ${TMPDIR:-/tmp}`; if it is full, `export TMPDIR=<folder on a disk the nodes see>` (sbatch passes it to the jobs) |
 | `HF_HOME` on a disk the GPU nodes see, with about 60 GB free, 100 GB with `--llama-licence` (a node-local folder holds a copy per node) | the `real`, `quality`, `tv` and `attack` tiers download OPT-125M to OPT-6.7B, OpenLLaMA-7B, TinyLlama, Qwen3 and WikiText-2 (47 GB of checkpoints); with `--llama-licence` also Llama-2-7B and Llama-2-13B (40 GB more; each repository has its own gate on Hugging Face), for which the jobs need your Hugging Face token: `export HF_TOKEN=<token>` (sbatch passes it to the jobs; `run.sh` never writes it into one), or a login whose `$HF_HOME/token` the compute node reads | `df -h $HF_HOME` |
 | The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats, and the dogs-vs-squirrels ResNet-18 that is Anchuri et al.'s substitute model) | `code/artifacts/models/cnn/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224,resnet18_224_squirrel}.pt` (on the GPU node, from `code/`: `PYTHONPATH=src:. ../.venv/bin/python -m experiments.costs.train_cnn --model <m> --device cuda`, seed 0); CIFAR-10 in the `cifar-10-batches-py` layout under `code/data/cifar10` (or `$PVI_CIFAR_ROOT`); the ImageNet subsets' caches `dogs_cats.pt` and `dogs_squirrels.pt` under `code/artifacts/cache` (or `$PVI_CACHE`), or ImageNet under `code/data/imagenet` (or `$PVI_IMAGENET_ROOT`) with `train/` and `val/` holding class `i` of the sorted synsets in folder `i + 1` (`1` to `1000`; the dogs are `152` to `269`, the cats `282` to `286`, the fox squirrel `336`), from which the first run writes the caches. `run.sh all` and `run.sh bench` stop before submitting anything if one is missing |
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `--local` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
@@ -77,7 +77,7 @@ during the run. Every job asks for at most 64 GB of host memory:
 | Tier | Jobs | The rehearsal's cells |
 |---|---:|---|
 | `smoke` | 1 | the Fiat-Shamir tree, serving, options and package tests; the native-kernel and int8 self-checks, one V1 query, the host-to-device copy |
-| `cpuv` | 3 | GPT-2 (2 blocks, 64 tokens): the CPU verifier, every re-execution baseline, V1's two CPU verifiers |
+| `cpuv` | 3 | GPT-2 (2 blocks, 64 tokens): the CPU verifier (its proofs checked again in the client's own process), every re-execution baseline, V1's two CPU verifiers |
 | `v1` | 1 | V1 against v0 on GPT-2 |
 | `serve` | 1 | OPT-125M (2 blocks): single prompts and batches of 4 |
 | `bench` | 5 | LeNet-5; GPT-2 in modes C and Kpre, with the GPU verifier, and in Maverick's setting (one thread, no compact encoding) |
@@ -95,6 +95,37 @@ during the run. Every job asks for at most 64 GB of host memory:
 The attack tier's OPT-125M documents are named by their model (`attack/inrange_llm_opt-125m_any.json`,
 `attack/adaptive_game_opt-125m.json`, ...): `numbers.py` counts them for their kinds, and no table or text number
 reads them.
+
+### The gate: the full sizes, once before the run
+
+The rehearsal's cells are small, so a path that fails only at the run's largest sizes would first fail during the
+run. The `gate` tier, which `all` does not include and `--rehearsal` refuses, runs those paths once on the final
+platform, each on its least costly cell of full size, with the checks of the run's cells (every honest query
+accepted, every tamper rejected, V1's bytes exactly as the byte model gives them); its records
+(`logs/final/sp-gate-*.out`) fill no table cell or text number. Run it after the smoke and before the run:
+
+```bash
+bash code/experiments/package/run.sh --platform final --one-job smoke gate    # or without --one-job: a chain
+#  -> 7 jobs, about an hour on an L40S node (job limits 8 h); then, from code/,
+PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --check \
+    --no-byte-model
+#  -> no CHECK FAILED line (the run's tables and macros are still missing, which --check alone does not fail)
+```
+
+| Job | Cell | The size it checks |
+|---|---|---|
+| `gate-v1-llama7-2k-2` | V1 on two Llama-2-7B blocks at 2,048 tokens, modes Kpre and C, both CPU verifiers, 2 timed queries, 2 tampers of each kind | a GKR instance of 27 variables (2^27 leaves, the default `--lmax`; the smoke and the rehearsal reach 20) on the Triton prover and both CPU verifiers |
+| `gate-g-v1-llama7-2k-2` | the same cell in Kpre with the GPU verifier, 1 tamper of each kind | V1's GPU verifier at 2^27 leaves |
+| `gate-v1-opt13-2k` | V1 on OPT-1.3B at 2,048 tokens, both modes, 2 timed queries, 1 tamper of each kind | seven instances of 27 variables, three of them of exactly 2^27 leaves (no padding row) |
+| `gate-r-opt125-v1-2k` | V1 on the certified OPT-125M (real weights) at 2,048 tokens, both modes, 2 timed queries, 1 tamper of each kind | the real-weight path at 2,048 tokens, an instance of 27 variables |
+| `gate-v1-llama7-2k` | V1 on the full Llama-2-7B at 2,048 tokens, Kpre, one query and one tamper of each kind | the run's largest V1 query (21 instances) and its host and GPU memory |
+| `gate-l-llama7-16k` | the CPU verifier on two Llama-2-7B blocks at 16,384 tokens | the `long` tier's largest prompt |
+| `gate-l-rx-llama7-16k` | exact re-execution (`int`, `int_mm`, `int_fp32gemm`) of the same cell, the rotary positions extended to 16,384 | the same, for the baselines that `tab:eval-long` reads |
+
+Every V1 cell of the run at 2,048 tokens, and the 64-token V1 cells of Qwen3-4B, Llama-2-7B, OPT-6.7B and
+Llama-2-13B, reach GKR instances of 27 variables (`experiments/paper/tables.py`, `v1_shape_model`; random weights).
+The setup proof's openings span every member of a tree, so only the `setup` tier's full Llama-2-7B reaches its size;
+the gate leaves it to the run.
 
 ## 4. The run
 
@@ -132,7 +163,7 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
 | `smoke` | 1 | 1 | 2 | the platform gate |
-| `cpuv` | 13 | 6-9 | 23 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times"); V1's optimised and baseline CPU verifiers |
+| `cpuv` | 13 | 6-9 | 23 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times"); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
 | `v1` | 13 | 4-8 | 26 | V1 against v0: bytes, prover and verifier (`tab:eval-v1`) |
 | `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
 | `bench` | 43 | 8-12 | 48 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`), the outcome counts, the image models' attack cells |

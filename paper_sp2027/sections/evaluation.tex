@@ -65,9 +65,9 @@ Freivalds' check rejected \FinalNFreivalds{}, the column check \FinalNColumnsCod
 verified in \CnnVerifyRange{}\,ms, with proofs \CnnProofRatio{}$\times$ smaller than their int8 weights.
 Llama-2-7B's 64-token proof is about \ProofRatioLlamaShort{}$\times$ smaller than its int8 weights
 (Table~\ref{tab:eval-llm}). At 2{,}048 tokens the proof and the CPU verifier's time grow
-(OPT-6.7B: \ProofOptLLong{}, \VerifyOptLLong{}), since the results of the weight operations grow with the prompt (\ClaimsShareLlama{}\%
-of Llama-2-7B's \ProofLlamaLongCExact{} proof) and the verifier recomputes attention over all pairs of positions.
-There the GPU verifier is \GpuVerifyFactor{}$\times$ faster than the CPU one \todo{peak memory}.
+(OPT-6.7B: \ProofOptLLong{}, \VerifyOptLLong{}), since the weight operations' results grow with the prompt (\ClaimsShareLlama{}\%
+of Llama-2-7B's \ProofLlamaLongCExact{} proof) and the verifier recomputes attention over all position pairs.
+There the GPU verifier is \GpuVerifyFactor{}$\times$ faster than the CPU one (peak memory \ClientPeakLongKpre{}\,GB in $\Kpre$).
 On the \PlatformGpu{}, proving a 2{,}048-token OPT-1.3B prompt in $\Kpre$ and $\sC$ costs \ServeOptMKpreOverUOne{} and \ServeOptMCOverUOne{}$\times$
 our exact integer forward pass without proofs, and \ServeOptMKpreOverUTwo{} and \ServeOptMCOverUTwo{}$\times$ an fp16 one on the same GPU. Proving 64 prompts of 64 tokens together in $\Kpre$ takes \ServeBatchKpre{}\,s (\ServeBatchOverUOne{} and
 \ServeBatchOverUTwo{}$\times$)\TodoServing{}.

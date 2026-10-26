@@ -61,9 +61,36 @@ the proof, which V1 makes smaller. On a CPU, native exact kernels for every phas
 \subsection{Memory and Untrusted Commitments}
 \label{app:eval-untrusted}
 
-\todo{peak GPU and host memory of the prover and the verifier per cell of
-Table~\ref{tab:eval-llm}}. Without the honest-commitment assumption
-(Section~\ref{sec:setup-proof}), Llama-2-7B needs a one-time setup proof of \SetupGBLlamaA{}\,GB (or \SetupGBLlamaB{}\,GB),
+\begin{table}[t]
+  \caption{Memory of one query on the full Llama-2-7B (Fiat--Shamir, $\lambda{=}128$, random int8 weights;
+  mode $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points; the prover on one \PlatformGpu{}, the
+  CPU verifier on 8 threads of an \PlatformCpu{}), in GB. Client: the CPU verifier in a process of its own,
+  which holds only the public graph, its key ($\Kpre$) or the roots ($\sC$) and one proof, and checks
+  the timed proofs again: its peak resident set and its resident set after its imports. Prover GPU: the
+  peak allocated GPU memory over the timed queries. Process: the peak resident set of the measuring
+  process, which runs the prover and the in-process verifier together}
+  \label{tab:memory}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    Mode & $T$ & client & after imports & prover GPU & process \\
+    \midrule
+    \pvitable{tab_memory}
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The prover and the verifier of a timed cell share one process, whose peak resident set is theirs
+together (Table~\ref{tab:memory}, process). The client's own memory is therefore measured in a
+separate process that holds only what the client holds, the public graph, its key or the roots, and
+one proof at a time, and checks every timed proof again from the proof's bytes; its verdicts equal
+those of the measuring process. For Llama-2-7B in $\Kpre$ it peaks at \ClientPeakShortKpre{}\,GB at 64
+tokens and at \ClientPeakLongKpre{}\,GB at 2{,}048 tokens (\ClientPeakShortC{} and \ClientPeakLongC{}\,GB in $\sC$), of
+which at most \ClientBaseline{}\,GB is the runtime after its imports (Python, PyTorch and our library);
+re-execution holds the \WeightsLlama{} of int8 weights.
+
+Without the honest-commitment assumption (Section~\ref{sec:setup-proof}), Llama-2-7B needs a one-time setup proof of \SetupGBLlamaA{}\,GB (or \SetupGBLlamaB{}\,GB),
 which raises its column bytes per interactive query from \SetupHonestMBLlama{} to \SetupUntrustedMBLlamaA{}\,MB (or \SetupUntrustedMBLlamaB{}\,MB), less than \SetupQueryShareLlamaA{}\% of the
 proof at 2{,}048 tokens (Table~\ref{tab:setup}).
 

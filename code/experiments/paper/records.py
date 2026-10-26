@@ -8,8 +8,9 @@ and the record's fields name the script that wrote it (:func:`kind_of`).  The at
 :func:`doc_kind` names their kinds from their file names (:data:`FILES`, :data:`DOCUMENTS`).  Nothing here runs a
 model.
 
-The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), a byte
-accounting that disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected
+The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), a client
+process whose verdicts differ from the in-process ones (``perf``'s ``client_memory``), a byte accounting that
+disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected
 (``setup``), an implementation A/B whose two paths disagree (the ``improve`` tier), and the smoke's own verdicts (no
 ``SMOKE OK``, int8 GEMMs that are not exact) or a ``FAILED`` line of a script in a job's log.  Each is reported as a
 ``CHECK FAILED`` line; a line that starts with ``{`` and does not parse, or parses as no known kind, is a ``PARSE``
@@ -24,8 +25,9 @@ from pathlib import Path
 
 TIERS = (("smoke", "smoke"), ("c-", "cpuv"), ("v1-", "v1"), ("serve-", "serve"), ("b-", "bench"), ("g-", "gpuv"),
          ("gen-", "gen"), ("bt-", "batch"), ("r-", "real"), ("setup-", "setup"), ("i-", "improve"),
-         ("q-", "quality"), ("tv-", "tv"), ("a-", "attack"), ("l-", "long"))
-"""The job-name prefixes of ``run.sh`` (``sp-<prefix>...``) and their tiers."""
+         ("q-", "quality"), ("tv-", "tv"), ("a-", "attack"), ("l-", "long"), ("gate-", "gate"))
+"""The job-name prefixes of ``run.sh`` (``sp-<prefix>...``) and their tiers (``gate``: the full-size checks run once
+before the run, whose records fill no table cell or text number)."""
 KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "v1"}, "v1": {"v1"}, "serve": {"serve"},
          "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"}, "batch": {"bench_env"},
          "real": {"perf", "v1", "gen"}, "setup": {"setup"},
@@ -33,11 +35,12 @@ KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "v1"}, "v1": {"v1"},
          "quality": {"ppl", "zeroshot", "digest", "llama_diag", "llama_attrib"}, "tv": {"tv"},
          "attack": {"reproduction", "attack_mnist", "samplers", "floor_sampler", "adaptive_game", "path_bound",
                     "attack_llm", "inrange", "adaptive_game_llm"},
-         "long": {"perf", "reexec"}}
+         "long": {"perf", "reexec"}, "gate": {"v1", "perf", "reexec"}}
 """The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``)."""
-REHEARSAL_KINDS = KINDS
+REHEARSAL_KINDS = {tier: kinds for tier, kinds in KINDS.items() if tier != "gate"}
 """The kinds of a rehearsal (``run.sh --rehearsal``: each tier's smallest cells, which run every script of every
-tier): each tier must have at least one record of each of its :data:`KINDS`."""
+tier): each tier but ``gate`` (full size only, never rehearsed) must have at least one record of each of its
+:data:`KINDS`."""
 FILES = {"reproduction.json": "reproduction", "attack.json": "attack_mnist", "defence.json": "samplers",
          "floor_sampler.json": "floor_sampler", "adaptive_game_mlp_mnist.json": "adaptive_game",
          "analytic.csv": "path_bound", "real_llm_attack.json": "attack_llm", "real_llm_attack_auto.json": "attack_llm",
@@ -211,6 +214,10 @@ def checks(r: Rec) -> list[str]:
         if d.get("accepted") != d.get("queries"):
             bad.append(f"honest queries accepted: {d.get('accepted')} of {d.get('queries')}")
         tampers(d.get("tampers"))
+        client = d.get("client_memory")
+        if client is not None and client.get("agree") is not True:
+            bad.append("the client process's verdicts differ from the in-process ones, or it failed "
+                       f"({client.get('error') or 'client_memory.agree false'})")
     elif r.kind == "v1" and not d.get("codec_only"):
         if d.get("accounting_ok") is False:
             bad.append("accounting_ok false (a byte accounting, acceptance or tamper check)")
@@ -237,9 +244,11 @@ def checks(r: Rec) -> list[str]:
         bad.append(f"V1 queries accepted: {d.get('accepted')} of {d.get('queries')}")
     elif r.kind == "gkr" and d.get("same_transcript") is False:
         bad.append("the Triton and PyTorch GKR transcripts differ")
-    # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose)
-    on_cpu = str(d.get("verifier_device") or d.get("device") or "cpu").startswith("cpu")
-    if (r.tier in ("cpuv", "long", "real", "v1") and r.kind in ("perf", "v1", "reexec", "gen") and on_cpu
+    # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose;
+    # a V1 record names its verifier's device on its command line)
+    device = verifier_device(d) if r.kind == "v1" else str(d.get("verifier_device") or d.get("device") or "cpu")
+    on_cpu = device.startswith("cpu")
+    if (r.tier in ("cpuv", "long", "real", "v1", "gate") and r.kind in ("perf", "v1", "reexec", "gen") and on_cpu
             and not d.get("codec_only")
             and ((d.get("env") or {}).get("implementation") or {}).get("native") is False):
         bad.append("the native CPU kernels were not used")

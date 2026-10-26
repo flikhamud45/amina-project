@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import struct
 import time
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -105,6 +106,26 @@ def proof_hashes(proof) -> list[bytes]:
     return list(proof) if ok else []
 
 
+@dataclass
+class WireProof:
+    """The prover's messages of one query in the compact encoding, as the verifier receives them: the
+    claims (``PVC3`` bytes), a plan's lookup tables' rows (int8 bytes) and their multiproofs (``lookups``,
+    by table), and in mode C ``u`` and the opened columns (31-bit packed) with each tree's multiproof
+    (``paths``).  What a client holds of one proof (:func:`verify_wire`)."""
+
+    claims: bytes
+    rows: bytes | None = None
+    lookups: dict = field(default_factory=dict)
+    u: bytes | None = None
+    columns: bytes | None = None
+    paths: dict = field(default_factory=dict)
+
+    def nbytes(self) -> int:
+        """The bytes of the proof as it travels (the multiproofs' hashes included)."""
+        hashes = sum(len(proof_hashes(p)) for p in (*self.lookups.values(), *self.paths.values()))
+        return sum(len(b or b"") for b in (self.claims, self.rows, self.u, self.columns)) + HASH_BYTES * hashes
+
+
 def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, out: dict,
                     forward_kwargs: dict, send=None, wire: bool = False) -> tuple[dict | bytes, bytes | None, dict]:
     """``(claims, rows, proofs)``: the claims of every weight op but those whose rows the verifier reads
@@ -153,23 +174,31 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
                     "paths": HASH_BYTES * sum(len(proof_hashes(p)) for p in proofs.values())}
     c0 = contention.begin()
     t0 = time.perf_counter()
-    # Kpre is one message to a designated verifier whose chi and u are its secret key: no challenge reads the
-    # transcript, so there is nothing to absorb
-    if verifier.params.fiat_shamir and verifier.mode != "Kpre":
-        absorb_statement(ch, verifier, x)
-        if wire:
-            ch.absorb_large(b"claims/" + claimcodec.MAGIC, claims)
-            if rows is not None:
-                ch.absorb_large(b"rows/I8", rows)
-        else:
-            for k in sorted(claims):       # int32 wire claims hash as the int64 ones
-                ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
-        for name in verifier.tables:       # the tables' multiproofs, in table order
-            hashes = proof_hashes(proofs.get(name))
-            ch.absorb(b"lookup/" + name.encode(), struct.pack("<Q", len(hashes)) + b"".join(hashes))
+    absorb_claims(ch, verifier, x, claims, rows, proofs, wire)
     t["fs_hash"] = time.perf_counter() - t0
     phase_done(out, "fs_hash", c0)
     return claims, rows, proofs
+
+
+def absorb_claims(ch: Challenger, verifier: Verifier, x: torch.Tensor, claims, rows: bytes | None, proofs: dict,
+                  wire: bool) -> None:
+    """The first message absorbed into the Fiat--Shamir transcript ``ch``, as both parties absorb it: the
+    statement, the claims (their ``PVC3`` bytes with ``wire``, and a plan's lookup tables' ``rows``) and the
+    tables' multiproofs ``proofs``.  Nothing in mode Kpre, which is one message to a designated verifier whose
+    ``chi`` and ``u`` are its secret key (no challenge reads the transcript), or without Fiat--Shamir."""
+    if not verifier.params.fiat_shamir or verifier.mode == "Kpre":
+        return
+    absorb_statement(ch, verifier, x)
+    if wire:
+        ch.absorb_large(b"claims/" + claimcodec.MAGIC, claims)
+        if rows is not None:
+            ch.absorb_large(b"rows/I8", rows)
+    else:
+        for k in sorted(claims):       # int32 wire claims hash as the int64 ones
+            ch.absorb(b"claim/" + k.encode(), _tensor_blob(claims[k]))
+    for name in verifier.tables:       # the tables' multiproofs, in table order
+        hashes = proof_hashes(proofs.get(name))
+        ch.absorb(b"lookup/" + name.encode(), struct.pack("<Q", len(hashes)) + b"".join(hashes))
 
 
 def decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torch.Tensor, out: dict,
@@ -236,7 +265,7 @@ def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, x: torch.T
     under a commitment plan also each col-layout matrix's ``chi'``) and the prover's ``u`` of every
     op checked with Freivalds (mode C; with ``wire`` 31-bit packed, and ``{}`` if the packed ``u``
     is malformed), the verifier's own (K), or the precomputed pair (Kpre)."""
-    p, t = verifier.params, out["timings"]
+    t = out["timings"]
     mats = verifier._row_ops()
     if verifier.mode == "Kpre":
         t["prove_fold"] = t["verify_fold"] = 0.0
@@ -263,8 +292,7 @@ def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, x: torch.T
             t["prove_encode"] += time.perf_counter() - t0
             phase_done(out, "prove_encode", c0)
             out["bytes"]["u"] = len(blob)
-            parts = field_message(blob, [(p.reps, op.row_length) for op in mats], out, torch.int64)
-            us = {} if parts is None else {op.name: u for op, u in zip(mats, parts)}
+            us = received_u(verifier, blob, out)
         else:
             us = passed(us)
     else:  # K: the verifier folds its own copy of the weights
@@ -276,13 +304,32 @@ def _fold_message(prover: Prover, verifier: Verifier, ch: Challenger, x: torch.T
     return chis, us, blob
 
 
+def received_u(verifier: Verifier, blob: bytes, out: dict) -> dict:
+    """Mode C's ``u`` of every op checked with Freivalds from its 31-bit packed bytes, as int64 host
+    tensors (``{}`` if the bytes are malformed), timed as ``verify_decode``."""
+    mats = verifier._row_ops()
+    parts = field_message(blob, [(verifier.params.reps, op.row_length) for op in mats], out, torch.int64)
+    return {} if parts is None else {op.name: u for op, u in zip(mats, parts)}
+
+
+def received_openings(verifier: Verifier, cols: dict, blob: bytes, paths: dict, out: dict) -> dict:
+    """Mode C's openings from the 31-bit packed bytes of the opened columns (every tree's, tree after
+    tree in the order of the challenges ``cols``) and each tree's multiproof ``paths``: ``{tree: (int32
+    rows [t, N] or None if the bytes are malformed, its multiproof)}``, timed as ``verify_decode``."""
+    units = verifier._column_units()
+    rows = field_message(blob, [(len(cols[name]), sum(verifier.publics[m].n_rows for m in members))
+                                for name, members in units], out, torch.int32)
+    return {name: (None if rows is None else rows[i], paths.get(name)) for i, (name, _) in enumerate(units)}
+
+
 def open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, out: dict,
-                  package=None, u_blob: bytes | None = None) -> tuple[dict, dict]:
+                  package=None, u_blob: bytes | None = None, keep: "WireProof | None" = None) -> tuple[dict, dict]:
     """Mode C: ``u`` absorbed (its bytes ``u_blob`` with wire), the column indices, and the openings
     (``package``: the wire format they travel in).  With ``u_blob`` the opened columns of every tree
     (each weight op's, or each group's: its members' rows side by side) travel 31-bit packed, tree
     after tree in the order of the challenges and column by column, and arrive as the int32 rows
-    ``[t, N]`` of :func:`pvi.v0.streaming.wire_openings` (``None`` if the packed columns are malformed)."""
+    ``[t, N]`` of :func:`pvi.v0.streaming.wire_openings` (``None`` if the packed columns are malformed);
+    ``keep`` (with ``u_blob``) receives those bytes and the multiproofs."""
     p, t = verifier.params, out["timings"]
     if p.fiat_shamir:
         c0 = contention.begin()
@@ -315,16 +362,16 @@ def open_message(prover: Prover, verifier: Verifier, ch: Challenger, us: dict, o
         t["prove_encode"] += time.perf_counter() - t0
         phase_done(out, "prove_encode", c0)
         out["bytes"]["columns"] = len(blob)
-        units = verifier._column_units()
-        rows = field_message(blob, [(len(cols[name]), sum(verifier.publics[m].n_rows for m in members))
-                                     for name, members in units], out, torch.int32)
-        openings = {name: (None if rows is None else rows[i], opened[name][1]) for i, (name, _) in enumerate(units)}
+        paths = {name: proof for name, (_, proof) in opened.items()}
+        openings = received_openings(verifier, cols, blob, paths, out)
+        if keep is not None:
+            keep.columns, keep.paths = blob, paths
     out["bytes"]["paths"] += sum(len(proof) * HASH_BYTES for _, proof in opened.values())
     return cols, openings
 
 
 def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int | None = None,
-              forward_kwargs: dict | None = None, wire: bool = False, sampler=None) -> dict:
+              forward_kwargs: dict | None = None, wire: bool = False, sampler=None, keep_proof: bool = False) -> dict:
     """One full interaction.  Returns acceptance, the rejecting check, timings (s)
     and proof bytes.  With Fiat--Shamir, ``fs_hash`` is paid by both parties.
 
@@ -347,15 +394,23 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
 
     ``sampler`` (a :class:`pvi.v0.token_sampler.TokenSampler`, generation graphs): the response's tokens
     were sampled with the client's seed, and the token rule checks that sampler's choices instead of the
-    greedy ones (the seed is part of the statement)."""
+    greedy ones (the seed is part of the statement).
+
+    ``keep_proof=True`` (with ``wire``, not streaming) also returns the prover's messages as the verifier
+    received them (``out["proof"]``, a :class:`WireProof`), which :func:`verify_wire` checks again; a
+    rejected query's holds the messages up to the rejecting check."""
+    if keep_proof and (not wire or verifier.stream):
+        raise ValueError("keep_proof keeps the compact encoding's messages: it needs wire=True and a verifier "
+                         "without stream")
     verifier.sampler = sampler
     try:
-        return _run_query(prover, verifier, x, seed, forward_kwargs, wire)
+        return _run_query(prover, verifier, x, seed, forward_kwargs, wire, keep_proof)
     finally:
         verifier.sampler = None
 
 
-def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forward_kwargs, wire) -> dict:
+def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forward_kwargs, wire,
+               keep_proof: bool = False) -> dict:
     ch = Challenger(fiat_shamir=verifier.params.fiat_shamir, seed=seed)
     out = {"accepted": False, "rejected_at": None, "timings": {}, "contention": {}}
     if verifier.stream:
@@ -364,6 +419,9 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
         return out
     t = out["timings"]
     claims, rows, proofs = _claims_message(prover, verifier, x, ch, out, forward_kwargs or {}, wire=wire)
+    keep = None
+    if keep_proof:
+        keep = out["proof"] = WireProof(claims, rows, proofs)
 
     vdev = torch.device(verifier.device)
     x_v, claims_v = x.cpu(), claims
@@ -410,6 +468,8 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
             return out
 
     chis, us, u_blob = _fold_message(prover, verifier, ch, x, out, wire)
+    if keep is not None:
+        keep.u = u_blob
     if verifier.mode == "C" and vdev.type != "cpu":
         c0 = contention.begin()
         t0 = time.perf_counter()
@@ -431,11 +491,110 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
         return out
 
     if verifier.mode == "C":
-        cols, openings = open_message(prover, verifier, ch, us, out, u_blob=u_blob)
+        cols, openings = open_message(prover, verifier, ch, us, out, u_blob=u_blob, keep=keep)
         c0 = contention.begin()
         t0 = time.perf_counter()
         reason = verifier.check_columns(lefts, sources, cols, openings, wire=wire)
         sync_device(vdev)
+        t["verify_columns"] = time.perf_counter() - t0
+        phase_done(out, "verify_columns", c0)
+        if reason is not None:
+            out["rejected_at"] = reason
+            return out
+    out["accepted"] = True
+    return out
+
+
+def verify_wire(verifier: Verifier, x: torch.Tensor, proof: WireProof, *, sampler=None) -> dict:
+    """A CPU verifier's checks of one query from the prover's messages alone (``proof``, as
+    ``run_query(..., wire=True, keep_proof=True)`` keeps them): what a client that received the proof
+    computes, with no prover in the process.  The checks of :func:`run_query`, in its order and with its
+    rejection labels, timings and verdicts: the challenges come from the Fiat--Shamir transcript that the
+    messages give (mode C needs Fiat--Shamir: an interactive proof answers challenges drawn while it ran),
+    mode Kpre's are the verifier's key, and mode K's verifier folds its own weights; ``sampler`` as in
+    :func:`run_query`.  Returns ``accepted``, ``rejected_at``, ``timings`` and ``contention``."""
+    if verifier.stream or torch.device(verifier.device).type != "cpu":
+        raise ValueError("verify_wire runs the CPU verifier without stream")
+    if verifier.mode == "C" and not verifier.params.fiat_shamir:
+        raise ValueError("mode C's proof answers interactive challenges: verify_wire needs Fiat-Shamir")
+    verifier.sampler = sampler
+    try:
+        return _verify_wire(verifier, x, proof)
+    finally:
+        verifier.sampler = None
+
+
+def _verify_wire(verifier: Verifier, x: torch.Tensor, proof: WireProof) -> dict:
+    ch = Challenger(fiat_shamir=verifier.params.fiat_shamir)
+    out = {"accepted": False, "rejected_at": None, "timings": {}, "contention": {}}
+    t = out["timings"]
+    c0 = contention.begin()
+    t0 = time.perf_counter()
+    absorb_claims(ch, verifier, x, proof.claims, proof.rows, proof.lookups, True)
+    t["fs_hash"] = time.perf_counter() - t0
+    phase_done(out, "fs_hash", c0)
+    x_v = x.cpu()
+    claims_v = decoded_claims(verifier, proof.claims, proof.rows, x, out,
+                              torch.int32 if native_kernels.int32_claims() else torch.int64)
+    if claims_v is None:
+        out["rejected_at"] = "range_or_shape"
+        return out
+    if not verifier.check_tokens(x_v, claims_v):
+        out["rejected_at"] = "token"
+        return out
+    c0 = contention.begin()
+    t0 = time.perf_counter()
+    inputs = verifier.derive(x_v, claims_v)
+    t["verify_derive"] = time.perf_counter() - t0
+    phase_done(out, "verify_derive", c0)
+    if inputs is None:
+        out["rejected_at"] = "range_or_shape"
+        return out
+    if verifier.tables:
+        c0 = contention.begin()
+        t0 = time.perf_counter()
+        reason = verifier.check_lookups(claims_v, inputs, proof.lookups)
+        t["verify_lookups"] = time.perf_counter() - t0
+        phase_done(out, "verify_lookups", c0)
+        if reason is not None:
+            out["rejected_at"] = reason
+            return out
+    mats = verifier._row_ops()
+    t["verify_fold"] = 0.0
+    if verifier.mode == "Kpre":
+        chis = {op.name: verifier._pre[op.name][0] for op in mats}
+        us = {op.name: verifier._pre[op.name][1] for op in mats}
+    else:
+        chis = verifier.fold_challenges(ch, x)
+        if verifier.mode == "C":
+            us = received_u(verifier, proof.u or b"", out)
+        else:                 # K: the verifier folds its own copy of the weights
+            c0 = contention.begin()
+            t0 = time.perf_counter()
+            us = {op.name: verifier._fold_local(op, chis[op.name]) for op in mats}
+            t["verify_fold"] = time.perf_counter() - t0
+            phase_done(out, "verify_fold", c0)
+    c0 = contention.begin()
+    t0 = time.perf_counter()
+    ok = verifier.check_products(claims_v, inputs, chis, us)
+    if ok and verifier.mode == "C":
+        lefts, sources = verifier.column_operands(claims_v, inputs, chis, us)
+    t["verify_products"] = time.perf_counter() - t0
+    phase_done(out, "verify_products", c0)
+    if not ok:
+        out["rejected_at"] = "freivalds"
+        return out
+    if verifier.mode == "C":
+        c0 = contention.begin()
+        t0 = time.perf_counter()
+        ch.absorb_large(b"u/F31", proof.u or b"")
+        t["fs_hash"] += time.perf_counter() - t0
+        phase_done(out, "fs_hash", c0)
+        cols = verifier.column_challenges(ch)
+        openings = received_openings(verifier, cols, proof.columns or b"", proof.paths, out)
+        c0 = contention.begin()
+        t0 = time.perf_counter()
+        reason = verifier.check_columns(lefts, sources, cols, openings, wire=True)
         t["verify_columns"] = time.perf_counter() - t0
         phase_done(out, "verify_columns", c0)
         if reason is not None:

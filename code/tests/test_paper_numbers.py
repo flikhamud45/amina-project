@@ -56,8 +56,8 @@ def _env(argv=()):
 
 
 def perf(model, seq, mode, verify, proof, *, label="cpuv", layers=None, vdev="cpu", real=None, accepted=5,
-         prove=1.0, timings=None, claims=None, tampers=None, stream=False):
-    """A ``costs/perf.py`` record."""
+         prove=1.0, timings=None, claims=None, tampers=None, stream=False, client=None, gpu_peak=None):
+    """A ``costs/perf.py`` record (``client``: ``--client-memory``'s peak and baseline in GB)."""
     return {"label": label, "git": "abc1234", "model": model, "real": real, "seq": seq, "layers": layers, "mode": mode,
             "policy": "cnn18c" if mode == "C" else None, "wire": True, "lean": True, "lam": 128, "rate": 4,
             "prune_last": True, "lookups": mode != "C", "device": "cuda", "verifier_device": vdev, "stream": stream,
@@ -65,7 +65,11 @@ def perf(model, seq, mode, verify, proof, *, label="cpuv", layers=None, vdev="cp
             "prove_s_range": [prove, prove], "verify_s_range": [verify, verify], "proof_bytes": proof,
             "timings": timings or {"verify_derive": verify}, "bytes": {"claims": claims or proof},
             **({"tampers": tampers} if tampers is not None else {}),
-            "peak": {"host_peak_rss": 5e10}, "env": _env()}
+            "peak": {"host_peak_rss": 5e10, **({"gpu_peak_memory": gpu_peak} if gpu_peak else {})},
+            **({"client_memory": {"peak_rss": client[0] * 1e9, "baseline_rss": client[1] * 1e9,
+                                  "key_rss": client[1] * 1e9 + 2e8, "queries": accepted, "accepted": accepted,
+                                  "agree": True, "verify_s": verify}} if client else {}),
+            "env": _env()}
 
 
 def reexec(model, seq, variant, full, *, device="cpu", n_layers=32, blocks=None):
@@ -205,8 +209,15 @@ def _logs(tmp: Path) -> Path:
            extra="4 passed\nint8 GEMMs exact on this GPU: True\n")
     (logs / "sp-smoke-1.out").write_text((logs / "sp-smoke-1.out").read_text(encoding="utf-8") + "SMOKE OK\n",
                                          encoding="utf-8")
-    _write(logs, "sp-c-llama2-7b-64-2.out", [perf(m, 64, "Kpre", 1.4, 1.96e8), perf(m, 64, "C", 1.9, 3.25e8)])
-    _write(logs, "sp-c-llama2-7b-2048-3.out", [perf(m, 2048, "Kpre", 19.6, 6.43e9), perf(m, 2048, "C", 25.0, 6.6e9)])
+    # the client's own process (--client-memory): the peak and the resident set after its imports, in GB
+    _write(logs, "sp-c-llama2-7b-64-2.out", [perf(m, 64, "Kpre", 1.4, 1.96e8, client=(1.15, 0.52), gpu_peak=7.4e9),
+                                             perf(m, 64, "C", 1.9, 3.25e8, client=(1.42, 0.53))])
+    _write(logs, "sp-c-llama2-7b-2048-3.out", [perf(m, 2048, "Kpre", 19.6, 6.43e9, client=(21.4, 0.54)),
+                                               perf(m, 2048, "C", 25.0, 6.6e9, client=(23.06, 0.55))])
+    # the gate tier (full-size checks before the run): its records fill no cell, however close their settings
+    _write(logs, "sp-gate-v1-llama7-2k-2-61.out", [v1(m, 2048, "Kpre", 2, 2.5e8, 1.1e8, label="gate"),
+                                                   v1(m, 2048, "C", 2, 2.7e8, 1.3e8, label="gate")])
+    _write(logs, "sp-gate-l-llama7-16k-62.out", [perf(m, 16384, "Kpre", 99.0, 9e9, layers=2, label="gate")])
     _write(logs, "sp-c-rx-llama2-7b-4.out", [reexec(m, s, v, t) for s, v, t in (
         (64, "int", 7.26), (64, "int_fp32gemm", 4.08), (64, "float", 4.53), (64, "bf16", 19.5), (64, "dynint8", 1.91),
         (2048, "int", 179.4), (2048, "int_fp32gemm", 141.6), (2048, "float", 93.2), (2048, "bf16", 306.5),
@@ -367,7 +378,7 @@ def test_every_record_lands_in_its_tier_and_kind(run_dir):
             ("gpuv", "v1"), ("gpuv", "perf"), ("gpuv", "reexec"), ("serve", "serve"), ("gen", "gen"), ("real", "gen"),
             ("real", "v1"), ("setup", "setup"), ("improve", "open_ab"), ("improve", "perf"), ("improve", "fold_ab"),
             ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("long", "perf"), ("long", "reexec"),
-            ("bench", "bench_env"), ("attack", "path_bound")} <= got
+            ("bench", "bench_env"), ("attack", "path_bound"), ("gate", "v1"), ("gate", "perf")} <= got
     assert not [m for r in recs for m in R.checks(r)] and not R.log_checks(logs)
     files = R.read_files(logs, problems)
     assert {r.kind for r in files} >= {"attack_mnist", "inrange", "tv", "path_bound"} and not problems
@@ -436,6 +447,15 @@ def test_each_cell_comes_from_its_own_records(run_dir):
     i = cells("tab_eval_improve")
     assert i["open Llama-2-7B 1/32", "gain"]["value"] == pytest.approx(0.277 / 0.064)
     assert i["cpuv Llama-2-7B 2/32", "gain"]["value"] == pytest.approx(3.37 / 0.74)
+    # tab:memory: the client's own process and the measuring process of the cpuv cells
+    mem = cells("tab_memory")
+    assert mem["Kpre T=2048", "client"]["value"] == pytest.approx(21.4e9)
+    assert "sp-c-llama2-7b-2048-" in mem["Kpre T=2048", "client"]["source"]
+    assert mem["C T=64", "client after imports"]["value"] == pytest.approx(0.53e9)
+    assert mem["Kpre T=64", "prover GPU"]["value"] == 7.4e9 and mem["C T=2048", "process"]["value"] == 5e10
+    assert tables["tab_memory"].rows[1] == r" & 2{,}048 & 21.4 & 0.5 & -- & 50.0 \\"
+    # the gate tier's V1 records never fill tab:eval-v1 (its Llama-2-7B rows are the v1 tier's)
+    assert not any(c["source"].startswith("sp-gate-") for t in tables.values() for c in t.cells)
 
 
 def test_the_text_numbers(run_dir):
@@ -462,6 +482,9 @@ def test_the_text_numbers(run_dir):
     assert v["AttackOptLPaths"] == "454{,}248" and v["PathsLlama"] == "305{,}193" and v["InrangeKMax"] == "60"
     assert v["InrangeDown"] == "9, 31, 38 and 39" and v["MixtureLayerOne"] == "3.1" and v["TvTopK"] == "0.0063"
     assert v["BreakevenQueriesShort"] is None                  # the byte model is off in this test
+    # the client's own memory (tab:memory); the baseline is the largest over the cells, rounded up ("at most")
+    assert (v["ClientPeakLongKpre"], v["ClientPeakLongC"], v["ClientPeakShortKpre"]) == ("21.4", "23.1", "1.1")
+    assert v["ClientBaseline"] == "0.6"
     assert set(m) == set(M.names())
 
 
@@ -719,6 +742,12 @@ def test_a_failed_check_or_an_unparsable_line_fails(run_dir, capsys):
     assert N.main(_args(tmp, logs, "--check")) == 1
     assert "CHECK FAILED sp-c-qwen3-4b-64-90.out" in capsys.readouterr().out
     (logs / "sp-c-qwen3-4b-64-90.out").unlink()
+    differs = perf("qwen3-4b", 64, "Kpre", 0.7, 1.6e8, client=(1.0, 0.5))
+    differs["client_memory"].update(agree=False, accepted=4)
+    _write(logs, "sp-c-qwen3-4b-64-92.out", [differs])
+    assert N.main(_args(tmp, logs, "--check")) == 1
+    assert "the client process's verdicts differ" in capsys.readouterr().out
+    (logs / "sp-c-qwen3-4b-64-92.out").unlink()
     _write(logs, "sp-v1-gpt2-64-91.out", [], extra="{not json\n")
     assert N.main(_args(tmp, logs, "--check")) == 1
     assert "PARSE sp-v1-gpt2-64-91.out:2" in capsys.readouterr().out

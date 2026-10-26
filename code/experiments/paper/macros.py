@@ -16,7 +16,9 @@ The families, with the record each number comes from:
   2,048 tokens, one value (rounded down to one decimal); ``CpuRatio`` the same ratio (also rounded down, so that the
   abstract and the body print one number), ``CpuRatioShort`` at 64 tokens; ``CpuInexact*`` the fastest inexact engine
   (:data:`tables.INEXACT`) against the same verifier; ``KpreKeyMB``, ``KpreEmbedMB`` and ``KpreStoreGB`` what a Kpre
-  client of Llama-2-7B stores, from the shapes (:func:`kpre_storage`);
+  client of Llama-2-7B stores, from the shapes (:func:`kpre_storage`); ``ClientPeak*`` and ``ClientBaseline`` the
+  client's own memory, measured in a process that holds only its key or the roots and the proof
+  (:func:`client_memory`);
 * the outcome counts (``bench`` and ``batch`` tiers, ``comparison/count_outcomes.py`` over ``raw_<platform>/``);
 * the cost of the defence, batches against one opening, V1, serving, the comparison with published systems,
   re-execution, real weights, long prompts, the improvements, generation (their tiers' records, through the table
@@ -235,6 +237,22 @@ def kpre_client(c: Collector, ctx: T.Ctx) -> None:
     c.put("KpreKeyMB", s["key"], src, lambda v: f"{v / 1e6:.0f}")
     c.put("KpreEmbedMB", s["embed"], src, lambda v: f"{v / 1e6:.0f}")
     c.put("KpreStoreGB", s["key"] + s["embed"], src, lambda v: f"{v / 1e9:.1f}")
+
+
+def client_memory(c: Collector, ctx: T.Ctx) -> None:
+    """The CPU client's own memory for the full Llama-2-7B (``cpuv`` tier, ``perf.py --client-memory``: a separate
+    process that holds only its key or the roots, the public graph and one proof, checking the timed proofs again),
+    in GB as ``tab:memory`` prints it: its peak resident set per prompt length and mode (``ClientPeak<T><mode>``) and
+    the largest resident set after its imports over those cells (``ClientBaseline``, rounded up: "at most")."""
+    base, src = [], None
+    for mode, seq in T.MEMORY:
+        r = ctx.run.perf("cpuv", "llama2-7b", seq, mode, vdev="cpu", label="cpuv")
+        client = (r.d.get("client_memory") or {}) if r else {}
+        name = ("Short" if seq == 64 else "Long") + mode
+        c.put(f"ClientPeak{name}", client.get("peak_rss"), r, lambda v: f.fixed(v / 1e9, 1))
+        base.append(client.get("baseline_rss"))
+        src = src or r
+    c.put("ClientBaseline", max(base) if None not in base else None, src, lambda v: ceil_fixed(v / 1e9, 1))
 
 
 # ================================================================================================ outcome counts
@@ -1286,8 +1304,9 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
     c.put("GenPerPrefixTB", prefixes, src, lambda v: f"{v / 1e12:.1f}")
 
 
-FAMILIES = (platform, cpu_client, kpre_client, defence_cost, batching, serving, v1_numbers, comparison, improvements,
-            real_weights, long_prompts, quality, sampler, attack, setup_and_params, setup_proof, generation)
+FAMILIES = (platform, cpu_client, kpre_client, client_memory, defence_cost, batching, serving, v1_numbers, comparison,
+            improvements, real_weights, long_prompts, quality, sampler, attack, setup_and_params, setup_proof,
+            generation)
 TEXT_CLAIM = "CHECK FAILED text:"
 """The prefix of a check of what the text states about a value (not of a record's correctness): a rehearsal's small
 cells need not bear it out, so ``numbers.py --rehearsal`` reports it as a warning."""

@@ -26,6 +26,12 @@
 #     attack   the attack on the path test: MNIST, the image models' path test, OPT-6.7B, the in-range edits, the
 #              sampler game
 #     long     [optional] prompts of 2,048 to 16,384 tokens, verifier against every baseline
+#     gate     [not in 'all'] the full-size checks, run once on the final platform before the run (after the smoke;
+#              about an hour; no --rehearsal): V1's GKR instances of 2^27 leaves on the GPU prover with both CPU
+#              verifiers and the GPU verifier (two Llama-2-7B blocks at 2,048 tokens), OPT-1.3B at 2,048 tokens
+#              (instances of exactly 2^27 leaves), the certified OPT-125M at 2,048 tokens (real weights), one V1
+#              query of the full Llama-2-7B at 2,048 tokens (the run's largest) and the long tier's 16,384 tokens,
+#              each with its acceptance, tamper and byte-accounting checks; its records fill no table
 # Options:
 #     --platform NAME   required: a new name for this GPU and CPU (letters, digits, '.', '_', '-'; the stored roots
 #                       are not written)
@@ -66,16 +72,16 @@
 #     --bigmem          the long tier also measures the full Llama-2-7B at 8,192 tokens (a node with >= 256 GB)
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1,
 # SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required), PVI_NATIVE_DIR, PVI_PY_INCLUDE, HF_HOME
-# (the real, quality, tv and attack tiers download checkpoints and datasets) and PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT
-# and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute path (a relative one is taken
-# from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's environment and is never
-# written into a job.  Everything is checked before the first job is submitted: the compiler, the interpreter,
-# HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is unwritable), the
-# image models and datasets of the bench tier and, under SLURM, that the partition has a node with the memory the
-# largest job asks for.  Jobs are named sp-<cell>, with this platform as their --comment and
-# --dependency=singleton.  A job of the same name and platform that is still queued or running is not submitted
-# again, and the chain and the smoke gate pass through it, so running a tier again submits only what is missing; a
-# finished benchmark cell is skipped by bench.py itself.  experiments/package/README.md is the runner's guide.
+# (the real, quality, tv, attack and gate tiers download checkpoints and datasets) and PVI_CIFAR_ROOT,
+# PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute path (a
+# relative one is taken from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's
+# environment and is never written into a job.  Everything is checked before the first job is submitted: the
+# compiler, the interpreter, HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE that
+# overrides it is unwritable), the image models and datasets of the bench tier and, under SLURM, that the partition
+# has a node with the memory the largest job asks for.  Jobs are named sp-<cell>, with this platform as their
+# --comment and --dependency=singleton.  A job of the same name and platform that is still queued or running is not
+# submitted again, and the chain and the smoke gate pass through it, so running a tier again submits only what is
+# missing; bench.py itself skips a finished benchmark cell.  experiments/package/README.md is the runner's guide.
 set -euo pipefail
 
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
@@ -216,7 +222,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
   case "$1" in
     smoke) echo 1 ;; cpuv) echo 6-9 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
-    quality) echo 10-16 ;; tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;;
+    quality) echo 10-16 ;; tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
   esac
 }
 
@@ -256,22 +262,24 @@ tier_cpuv() {
   # the CPU verifier (native kernels) of the full models in Kpre and C, the prover on the GPU; every re-execution
   # baseline on the same 8 threads (the full model and 2 blocks), with the allocator setting the verifier applies to
   # itself for a like-for-like row (the other rows with glibc's defaults); V1's optimised and baseline CPU verifiers
-  # on the same queries
+  # on the same queries.  Llama-2-7B's cells also check their timed proofs again in a process that holds only what
+  # the client holds, and record its memory (perf.py --client-memory)
   if [ -n "$REH" ]; then
     csub c-gpt2-64 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre C --policy $POL --queries $QH \
---verifier-device cpu --label cpuv $NATIVE"
+--verifier-device cpu --label cpuv --client-memory $NATIVE"
     csub c-rx-gpt2 1 64 "$RX --model gpt2 --seq 64 --layers 1 2 --variants $RXCPU --device cpu --reps 2 \
 --no-malloc-tune $NATIVE"
     csub c-v1-gpt2-64 1 64 "$V1 --model gpt2 --layers 2 --seq 64 --modes Kpre --reps $QH --lmax 20 \
 --v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
     return 0
   fi
-  local m t
+  local m t cm
   for m in llama2-7b qwen3-4b opt-1.3b; do
+    cm=""; [ "$m" = llama2-7b ] && cm=" --client-memory"
     csub "c-$m-64" 1 128 "$PERF --model $m --seq 64 --modes Kpre C --policy $POL --queries $QH --verifier-device cpu \
---label cpuv $NATIVE"
+--label cpuv$cm $NATIVE"
     csub "c-$m-2048" 2 256 "$PERF --model $m --seq 2048 --modes Kpre C --policy $POL --queries $QH \
---verifier-device cpu --label cpuv $NATIVE"
+--verifier-device cpu --label cpuv$cm $NATIVE"
   done
   for m in llama2-7b qwen3-4b opt-1.3b; do
     t=2; [ "$m" = opt-1.3b ] && t=1; [ "$m" = llama2-7b ] && t=3
@@ -721,6 +729,35 @@ tier_long() {
   return 0
 }
 
+tier_gate() {
+  # [not in 'all'] the full-size paths that no rehearsal cell reaches, each on its least costly full-size cell (label
+  # gate; the records fill no table).  V1's GKR instances hold up to 2^lmax leaves (lmax 27, pvi.v1.cut.LMAX): every
+  # V1 cell at 2,048 tokens and the 64-token cells of Qwen3-4B, Llama-2-7B, OPT-6.7B and Llama-2-13B reach 27
+  # variables (random weights), the smoke and the rehearsal at most 20.  Two Llama-2-7B blocks at 2,048 tokens are one
+  # instance of 27 variables (2^27 leaves, 77% of them cut entries, in both modes): the Triton prover, both CPU
+  # verifiers and the GPU verifier, the honest and tampered queries and the byte accounting.  OPT-1.3B at 2,048 tokens
+  # (the v1 tier's cell) has seven such instances, three of exactly 2^27 leaves (no padding row); the certified
+  # OPT-125M at 2,048 tokens takes the real-weight path to an instance of 27 variables; the full Llama-2-7B at 2,048
+  # tokens is the run's largest V1 query (21 instances; its host and GPU memory).  The long tier's largest cells, 2
+  # blocks at 16,384 tokens: the CPU verifier and the exact re-execution variants that tab:eval-long reads, the
+  # rotary positions extended.  (The setup proof's openings span every member of a tree, so only the setup tier's
+  # full Llama-2-7B reaches its size)
+  local l7="--model llama2-7b --seq 2048" r125="--model opt-125m --real facebook/opt-125m"
+  csub gate-v1-llama7-2k-2 1 128 "$V1 $l7 --layers 2 --modes Kpre C --policy $POL --reps 2 --tampers 2 \
+--v1-verifier optimised baseline --label gate $NATIVE"
+  sub gate-g-v1-llama7-2k-2 1 128 "$V1 $l7 --layers 2 --modes Kpre --reps 2 --tampers 1 --verifier-device cuda \
+--label gate"
+  csub gate-v1-opt13-2k 1 192 "$V1 --model opt-1.3b --seq 2048 --modes Kpre C --policy $POL --reps 2 --tampers 1 \
+--label gate $NATIVE"
+  csub gate-r-opt125-v1-2k 1 96 "$V1 $r125 --seq 2048 --modes Kpre C --policy $POL --reps 2 --tampers 1 --label gate \
+$NATIVE"
+  csub gate-v1-llama7-2k 2 256 "$V1 $l7 --modes Kpre --reps 1 --tampers 1 --label gate $NATIVE"
+  csub gate-l-llama7-16k 1 192 "$PERF --model llama2-7b --layers 2 --seq 16384 --modes Kpre --queries 1 \
+--verifier-device cpu --label gate $NATIVE"
+  csub gate-l-rx-llama7-16k 1 192 "$RX --model llama2-7b --seq 16384 --layers 2 --variants int int_mm int_fp32gemm \
+--device cpu --reps 1 --max-pos 16384 --no-malloc-tune $NATIVE"
+}
+
 need_images() {   # the bench tier's image cells load trained models and datasets that a checkout does not carry
   [ -n "$DRY" ] && return 0
   local m d miss="" models="lenet5" cache="${PVI_CACHE:-code/artifacts/cache}"
@@ -747,9 +784,9 @@ need_images() {   # the bench tier's image cells load trained models and dataset
 preflight() {   # what the jobs need from this host and the scheduler, checked before anything is submitted
   local bad=() t hf="" big gb=60 v d
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
-  for t in "${TIERS[@]}"; do case "$t" in real|quality|tv|attack) hf=1 ;; esac; done
+  for t in "${TIERS[@]}"; do case "$t" in real|quality|tv|attack|gate) hf=1 ;; esac; done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
-GB free> (the real, quality, tv and attack tiers download checkpoints and datasets)")
+GB free> (the real, quality, tv, attack and gate tiers download checkpoints and datasets)")
   # a cache variable of Hugging Face's libraries takes precedence over HF_HOME: it must be writable (the nearest
   # existing folder of its path)
   for v in HF_HUB_CACHE HUGGINGFACE_HUB_CACHE TRANSFORMERS_CACHE HF_DATASETS_CACHE; do
@@ -826,7 +863,10 @@ run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
 MUST="smoke cpuv v1 serve bench gpuv gen batch real setup improve quality tv attack"
 if [ "${TIERS[0]}" = all ]; then TIERS=($MUST ${OPTIONAL:+long}); fi
 for tier in "${TIERS[@]}"; do
-  case " $MUST long " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
+  case " $MUST long gate " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
+  # (the gate tier is never in 'all', and its cells are full size only)
+  [ "$tier" != gate ] || [ -z "$REH" ] || { echo "the gate tier checks the full sizes: run it without --rehearsal" \
+>&2; exit 2; }
 done
 for tier in "${TIERS[@]}"; do [ "$tier" = bench ] && need_images; done
 # a pass that submits nothing: the largest job's memory, for the pre-flight
