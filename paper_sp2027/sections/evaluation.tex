@@ -173,9 +173,9 @@ requantisation, one-pass recomputed operations, field products and claim decodin
 verifier checks a 2{,}048-token query of the full Llama-2-7B in \CpuVerifyLong{}\,s on 8 threads of the
 \PlatformCpu{}, against \CpuReexecLong{}\,s for exact re-execution on the same threads (the integer forward
 pass with \CpuReexecName{}): \CpuRatio{}$\times$ faster. At 64 tokens it takes \CpuVerifyShort{}\,s, against
-\CpuReexecShort{}\,s: \CpuRatioShort{}$\times$. Inexact inference of the same shapes, which cannot confirm the claims bit
-for bit, takes at least \CpuInexactLong{}\,s at 2{,}048 tokens (\CpuInexactName{}), \CpuRatioInexact{}$\times$ the
-verifier's time.
+\CpuReexecShort{}\,s: \CpuRatioShort{}$\times$. Inexact inference of the same shapes (PyTorch, llama.cpp~\cite{llamacpp}),
+which cannot confirm the claims bit for bit, takes at least \CpuInexactLong{}\,s at 2{,}048 tokens
+(\CpuInexactName{}), \CpuRatioInexact{}$\times$ the verifier's time.
 
 \para{Break-even.} A client that receives a proof of $B$ bytes over a link of $L$ bit/s and
 verifies it in $t_v$ is faster than a re-execution taking $t_r$ when $L > 8B/(t_r - t_v)$.

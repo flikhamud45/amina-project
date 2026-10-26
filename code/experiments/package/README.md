@@ -15,7 +15,8 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 | A Python 3.12 environment as `.venv` at the checkout's root (or `--python <path>`) | torch 2.5.1+cu121, `code/requirements.txt` and `code/requirements-llm.txt` | `.venv/bin/python -c "import torch, transformers, triton; print(torch.__version__)"` |
 | A C++ compiler in `CXX` | the native CPU kernels (`-march=native`) of the CPU verifier and of the exact int8 re-execution; every CPU-timing cell passes `--require-native`, so a compiler missing on the node stops it instead of timing the torch path, and `run.sh` submits nothing while `CXX` names no compiler (`--no-native-ok` overrides both) | `$CXX --version` (g++ 9 or later) |
 | The Python headers for Triton's launcher | Triton compiles a small launcher with `Python.h` on first use, on the GPU node | on the GPU node, `.venv/bin/python -c "import os, sysconfig; print(os.path.exists(os.path.join(sysconfig.get_paths()['include'], 'Python.h')))"`; if `False`, copy the headers into a folder and `export PVI_PY_INCLUDE=<folder>` |
-| A few GB of free temporary space on the GPU node | the compilers of Triton's launcher and of the native kernels write their temporary files to `$TMPDIR` (default `/tmp`) | on the GPU node, `df -h ${TMPDIR:-/tmp}`; if it is full, `export TMPDIR=<folder on a disk the nodes see>` (sbatch passes it to the jobs) |
+| A few GB of free temporary space on the GPU node, and about 21 GB during the `cpuv` tier's llama.cpp job | the compilers of Triton's launcher and of the native kernels write their temporary files to `$TMPDIR` (default `/tmp`); the llama.cpp job (`experiments/reexec/llamacpp.py`) writes the bf16 and Q8_0 files of Llama-2-7B's shapes there (13.5 and 7.2 GB, deleted at its end; 1.4 GB for the rehearsal's one block) and stops before writing them if they do not fit | on the GPU node, `df -h ${TMPDIR:-/tmp}`; if it is full, `export TMPDIR=<folder on a disk the nodes see>` (sbatch passes it to the jobs) |
+| CMake 3.14 or later and git (the `cpuv` tier) | the `cpuv` tier's llama.cpp job clones llama.cpp's release v0.6.0 and builds `llama-bench` and `llama-quantize` for the node's CPU (`-march=native`, with `CXX`), once per platform, into `logs/<name>/llamacpp/` (about 1 GB); `run.sh` submits nothing while that tier is selected and CMake (`CMAKE`, else `cmake` on the `PATH`) or git is missing | `${CMAKE:-cmake} --version`, `git --version`; without CMake, one way is `pip install cmake==3.31.6` into a separate environment (`python3 -m venv ~/cmake && ~/cmake/bin/pip install cmake==3.31.6`, then `export CMAKE=~/cmake/bin/cmake`), which leaves the run's environment unchanged. The job clones from GitHub; if the compute nodes have no network access, clone the release beforehand: `git clone --depth 1 --branch v0.6.0 https://github.com/ggml-org/llama.cpp.git logs/<name>/llamacpp/src` |
 | `HF_HOME` on a disk the GPU nodes see, with about 60 GB free, 100 GB with `--llama-licence` (a node-local folder holds a copy per node) | the `real`, `quality`, `tv` and `attack` tiers download OPT-125M to OPT-6.7B, OpenLLaMA-7B, TinyLlama, Qwen3 and WikiText-2 (47 GB of checkpoints); with `--llama-licence` also Llama-2-7B and Llama-2-13B (40 GB more; each repository has its own gate on Hugging Face), for which the jobs need your Hugging Face token: `export HF_TOKEN=<token>` (sbatch passes it to the jobs; `run.sh` never writes it into one), or a login whose `$HF_HOME/token` the compute node reads | `df -h $HF_HOME` |
 | The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats, and the dogs-vs-squirrels ResNet-18 that is Anchuri et al.'s substitute model) | `code/artifacts/models/cnn/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224,resnet18_224_squirrel}.pt` (on the GPU node, from `code/`: `PYTHONPATH=src:. ../.venv/bin/python -m experiments.costs.train_cnn --model <m> --device cuda`, seed 0); CIFAR-10 in the `cifar-10-batches-py` layout under `code/data/cifar10` (or `$PVI_CIFAR_ROOT`); the ImageNet subsets' caches `dogs_cats.pt` and `dogs_squirrels.pt` under `code/artifacts/cache` (or `$PVI_CACHE`), or ImageNet under `code/data/imagenet` (or `$PVI_IMAGENET_ROOT`) with `train/` and `val/` holding class `i` of the sorted synsets in folder `i + 1` (`1` to `1000`; the dogs are `152` to `269`, the cats `282` to `286`, the fox squirrel `336`), from which the first run writes the caches. `run.sh all` and `run.sh bench` stop before submitting anything if one is missing |
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `--local` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
@@ -36,14 +37,16 @@ python3.12 -m venv .venv && .venv/bin/pip install torch==2.5.1 torchvision==0.20
 export SBATCH_PARTITION=<GPU partition> SBATCH_GRES=gpu:<type>:1      # or pass --local to run.sh
 export HF_HOME=<folder the nodes see, 100 GB free>  # 60 GB without --llama-licence
 export CXX=<path to g++>
+export CMAKE=<path to cmake>                         # only if cmake is not on the PATH (the cpuv tier)
 export PVI_PY_INCLUDE=<headers folder>               # only if the check above printed False
 export HF_TOKEN=<your Hugging Face token>            # only with --llama-licence
 ```
 
 `run.sh` passes `HF_HOME`, `PVI_CIFAR_ROOT`, `PVI_IMAGENET_ROOT`, `PVI_CACHE`, `PVI_NATIVE_DIR` and `PVI_PY_INCLUDE`
-to the jobs as absolute paths (a relative one is taken from the repository root). Before it submits anything it
-checks the compiler, the interpreter, `HF_HOME` (for the tiers that download), the bench tier's models and datasets
-and the partition's memory, and stops with what is missing.
+to the jobs as absolute paths (a relative one is taken from the repository root), and `CXX` and `CMAKE` as they are.
+Before it submits anything it checks the compiler, CMake and git (for the cpuv tier), the interpreter, `HF_HOME` (for
+the tiers that download), the bench tier's models and datasets and the partition's memory, and stops with what is
+missing.
 
 `bash code/experiments/package/run.sh --platform final --dry-run all` prints every job it would submit, with each
 tier's job count, the sum of its time limits and its expected hours, and a last line `# <tiers>: N jobs, ...`; it
@@ -55,7 +58,7 @@ submits nothing and needs none of the settings above (it only warns about those 
 bash code/experiments/package/run.sh --platform smoke --no-exclusive smoke
 #  -> "SMOKE OK" at the end of logs/smoke/sp-smoke-*.out (up to an hour); wait for it before the rehearsal
 bash code/experiments/package/run.sh --platform rehearsal --rehearsal --no-exclusive --optional [--llama-licence] all
-#  -> 50 small jobs (51 with --llama-licence): every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three
+#  -> 51 small jobs (52 with --llama-licence): every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three
 #     hours; wait until `squeue -u $USER` lists none of them, then
 cd code
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.comparison.aggregate --platform rehearsal
@@ -77,7 +80,7 @@ during the run. Every job asks for at most 64 GB of host memory:
 | Tier | Jobs | The rehearsal's cells |
 |---|---:|---|
 | `smoke` | 1 | the Fiat-Shamir tree, serving, options and package tests; the native-kernel and int8 self-checks, one V1 query, the host-to-device copy |
-| `cpuv` | 3 | GPT-2 (2 blocks, 64 tokens): the CPU verifier, every re-execution baseline, V1's two CPU verifiers |
+| `cpuv` | 4 | GPT-2 (2 blocks, 64 tokens): the CPU verifier, every re-execution baseline, V1's two CPU verifiers; llama.cpp's build and one block of Llama-2-7B's shapes in Q8_0 and bf16 (64 tokens) |
 | `v1` | 1 | V1 against v0 on GPT-2 |
 | `serve` | 1 | OPT-125M (2 blocks): single prompts and batches of 4 |
 | `bench` | 5 | LeNet-5; GPT-2 in modes C and Kpre, with the GPU verifier, and in Maverick's setting (one thread, no compact encoding) |
@@ -106,13 +109,13 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 179 jobs. There, the paper's run submits its tiers as eight jobs (`--one-job`), each
+waits that long for each of its 180 jobs. There, the paper's run submits its tiers as eight jobs (`--one-job`), each
 of which runs its tiers' jobs one after another in its allocation: the timed tiers in six jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `tv`, `attack`) in two jobs on one GPU of a shared node:
 
 ```bash
 R="bash code/experiments/package/run.sh --platform final --llama-licence"
-$R --one-job smoke cpuv long                     # expected 11-17 h
+$R --one-job smoke cpuv long                     # expected 12-18 h
 $R --one-job smoke bench                         # 9-13 h
 $R --one-job smoke real                          # 9-13 h
 $R --one-job smoke serve gen batch               # 13-17 h
@@ -132,7 +135,7 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
 | `smoke` | 1 | 1 | 2 | the platform gate |
-| `cpuv` | 13 | 6-9 | 23 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times"); V1's optimised and baseline CPU verifiers |
+| `cpuv` | 14 | 7-10 | 26 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times", which stays against exact re-execution); V1's optimised and baseline CPU verifiers |
 | `v1` | 13 | 4-8 | 26 | V1 against v0: bytes, prover and verifier (`tab:eval-v1`) |
 | `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
 | `bench` | 43 | 8-12 | 48 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`), the outcome counts, the image models' attack cells |
@@ -151,7 +154,7 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 invocation as the other tiers, so that it is chained after them and gated by the smoke; a second invocation starts a
 new chain. Without a Llama-2 licence, leave out `--llama-licence`: the Llama-2 cells then stay empty. The counts and
 limits are those with `--llama-licence`; without it (in parentheses) the `real` tier has 17 jobs and 23 h of limits
-and the `quality` tier 18 jobs and 55 h. `all` is then 156 jobs and 272 h of limits (167 and 308 h with
+and the `quality` tier 18 jobs and 55 h. `all` is then 157 jobs and 275 h of limits (168 and 311 h with
 `--llama-licence`; the `long` tier adds 12 jobs and 28 h).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
@@ -202,9 +205,10 @@ then the records, without the caches, as one archive and as the artifact's store
 "The final run's records"):
 
 ```bash
-tar czf final.tgz --exclude=triton --exclude=native --exclude=setup_cache --exclude='ref_*.pt' logs/final \
-    code/artifacts/comparison/raw_final
-rsync -a --exclude=triton --exclude=native --exclude=setup_cache --exclude='ref_*.pt' logs/final/ code/artifacts/final/
+tar czf final.tgz --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp --exclude='ref_*.pt' \
+    logs/final code/artifacts/comparison/raw_final
+rsync -a --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp --exclude='ref_*.pt' logs/final/ \
+    code/artifacts/final/
 ```
 
 ## 7. From the records to the tables

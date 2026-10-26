@@ -7,7 +7,8 @@
   column, an alpha-0.55 quality cell never fills the certified row, and the abstract's N is the 2,048-token ratio.
 * ``--strict`` fails on a missing cell, a failed check or an unparsable line gives exit status 1, and a dry-run
   listing gives the job coverage (an incomplete listing is refused).
-* Exact re-execution is the fastest exact variant; mode C's plan comes from the records; the bounds round up.
+* Exact re-execution is the fastest exact variant; llama.cpp is an inexact baseline of another model, which never
+  changes the abstract's N, at its fastest configuration; mode C's plan comes from the records; the bounds round up.
 * A document named by another model (a rehearsal's OPT-125M) counts for its tier and kind and fills no table cell or
   text number.
 * The paper's wiring: the generated files and ``paper_sp2027/fallback/`` have the same names and macro sets, every
@@ -75,6 +76,21 @@ def reexec(model, seq, variant, full, *, device="cpu", n_layers=32, blocks=None)
             "threads": 8, "reps": 5, "prune_last": True, "measured_s": ms,
             "range_s": {k: [v, v] for k, v in ms.items()}, "per_block_s": full / n_layers, "fixed_s": 0.0,
             "n_layers": n_layers, "full_s": full, "env": _env()}
+
+
+def llamacpp(seq, wtype, t, *, fa=1, layers=32, threads=8):
+    """A ``reexec/llamacpp.py`` record (written by the script's own :func:`record`) of a llama-bench line whose 5
+    samples have the median ``t``."""
+    from experiments.reexec import llamacpp as L
+    samples = [round(t * x * 1e9) for x in (0.98, 0.99, 1.0, 1.01, 1.02)]
+    line = {"build_commit": "d812350", "build_number": L.BUILD_NUMBER, "cpu_info": ENV["cpu"], "backends": "CPU",
+            "model_type": f"llama 7B {wtype.upper()}", "model_size": 7.16e9 if wtype == "q8_0" else 1.348e10,
+            "model_n_params": 6_738_415_616, "n_batch": seq, "n_ubatch": min(512, seq), "n_threads": threads,
+            "cpu_mask": "0x0", "type_k": "f16", "type_v": "f16", "flash_attn": fa, "load_mode": "none",
+            "n_prompt": seq, "n_gen": 0, "n_depth": 0, "samples_ns": samples}
+    return L.record(line, model="llama2-7b", n_layers=32, layers=layers, wtype=wtype, threads=8, reps=5,
+                    llamacpp={"tag": L.TAG, "commit": L.COMMIT}, extra={"git": "abc1234",
+                                                                        "env": dict(_env(), cpu_affinity=8)})
 
 
 def v1(model, seq, mode, layers, v0_total, v1_total, *, label="", real=None, argv=(), v0=(1.0, 5.0),
@@ -211,6 +227,10 @@ def _logs(tmp: Path) -> Path:
         (64, "int", 7.26), (64, "int_fp32gemm", 4.08), (64, "float", 4.53), (64, "bf16", 19.5), (64, "dynint8", 1.91),
         (2048, "int", 179.4), (2048, "int_fp32gemm", 141.6), (2048, "float", 93.2), (2048, "bf16", 306.5),
         (2048, "dynint8", 56.0))])
+    # llama.cpp (inexact, another model), each type with both attention kernels: slower here than dynamic int8
+    _write(logs, "sp-c-llamacpp-llama2-7b-48.out", [llamacpp(s, w, t, fa=fa) for s, w, t, fa in (
+        (64, "q8_0", 2.2, 1), (64, "q8_0", 2.4, 0), (2048, "q8_0", 61.3, 1), (2048, "q8_0", 65.0, 0),
+        (64, "bf16", 3.1, 0), (2048, "bf16", 88.0, 1))])
     _write(logs, "sp-c-v1-llama2-7b-2048-5.out", [v1(m, 2048, "Kpre", 32, 6.43e9, 2.8e9, label="cpuv-v1",
                                                      v0=(1.0, 19.5), opt=(30.0, 45.3), base=(30.0, 70.0))])
     # the timed full V1 query of OPT-125M in C is 0.34% above the accounting (VOneAccountingWithin rounds it up)
@@ -363,7 +383,8 @@ def test_every_record_lands_in_its_tier_and_kind(run_dir):
     recs = R.read_logs(logs, problems)
     assert not problems
     got = {(r.tier, r.kind) for r in recs}
-    assert {("smoke", "v1"), ("smoke", "h2d"), ("cpuv", "perf"), ("cpuv", "reexec"), ("cpuv", "v1"), ("v1", "v1"),
+    assert {("smoke", "v1"), ("smoke", "h2d"), ("cpuv", "perf"), ("cpuv", "reexec"), ("cpuv", "llamacpp"),
+            ("cpuv", "v1"), ("v1", "v1"),
             ("gpuv", "v1"), ("gpuv", "perf"), ("gpuv", "reexec"), ("serve", "serve"), ("gen", "gen"), ("real", "gen"),
             ("real", "v1"), ("setup", "setup"), ("improve", "open_ab"), ("improve", "perf"), ("improve", "fold_ab"),
             ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("long", "perf"), ("long", "reexec"),
@@ -446,10 +467,14 @@ def test_the_text_numbers(run_dir):
     v = {k: x.value for k, x in m.items()}
     # the abstract's N: the 2,048-token ratio of exact re-execution (the integer forward pass, its faster GEMM path:
     # 141.6 s) to the Kpre CPU verifier (19.6 s), rounded down; not the minimum over the prompt lengths (64 tokens:
-    # 4.08 / 1.4 = 2.9); fp32 (93.2 s) and dynamic int8 (56 s) are inexact and never the baseline
+    # 4.08 / 1.4 = 2.9); fp32 (93.2 s), dynamic int8 (56 s) and llama.cpp (61.3 s) are inexact and never the baseline
     assert v["CpuRatioN"] == "7.2" and v["CpuRatio"] == "7.2" and v["CpuRatioShort"] == "2.9"
     assert v["CpuReexecName"] == "exact fp32 GEMMs" and v["CpuReexecShort"] == "4.08" and v["CpuReexecLong"] == "142"
     assert v["CpuInexactName"] == "dynamic int8" and v["CpuInexactLong"] == "56" and v["CpuRatioInexact"] == "2.9"
+    # llama.cpp: each type at its faster attention kernel; Q8_0 is the faster type at 2,048 tokens (61.3 / 19.6 s)
+    assert (v["CpuLlamaCppShort"], v["CpuLlamaCppLong"], v["CpuLlamaCppBfShort"], v["CpuLlamaCppBfLong"]) == \
+        ("2.2", "61.3", "3.1", "88")
+    assert v["CpuLlamaCppName"] == r"Q8\_0" and v["CpuRatioLlamaCpp"] == "3.1" and v["LlamaCppRelease"] == "v0.6.0"
     assert v["VOneVerifyLlama"] == "45.4" and v["VOneVerifyRatioLlama"] == "2.3"
     assert v["ServeOptMKpre"] == "2.1" and v["ServeOptMOverUOneRange"] == "4.1--8.6" and v["ServeBatchKpre"] == "3.4"
     assert v["QualityRatioOptS"] == "1.076" and v["QualityCIOptS"] == "1.073, 1.079" and v["QualityMissOptS"] == "0.016"
@@ -571,6 +596,58 @@ def test_exact_reexecution_is_the_fastest_exact_variant():
     run = _reexec_run(*base, ("int_mm", 50.0, {"exact": False}), ("int_mm", 60.0, {"exact": True}))
     assert T.fastest(run, "cpuv", "llama2-7b", 2048)[:2] == (60.0, "int_mm")
     assert T.REEXEC_NAME["int_mm"] == "oneDNN int8 GEMMs"
+
+
+def test_llamacpp_is_inexact_and_never_the_headline_baseline():
+    """llama.cpp (``reexec/llamacpp.py``) is an inexact baseline that computes another model: a llama.cpp record
+    faster than every re-execution never changes the abstract's N or the exact baseline's name, but it becomes the
+    fastest inexact engine; of its configurations the fastest is chosen, a one-block build fills no full-model cell,
+    and a record not marked inexact and a different model, or not run on its threads, fails the checks."""
+    m = "llama2-7b"
+    recs = [R.Rec("cpuv", "c-rx-llama2-7b", "1", "sp-c-rx-llama2-7b-1.out", i, "reexec", reexec(m, 2048, v, t))
+            for i, (v, t) in enumerate((("int", 179.4), ("int_fp32gemm", 141.6), ("float", 93.2),
+                                        ("dynint8", 56.0)), 1)]
+    recs.append(R.Rec("cpuv", "c-llama2-7b-2048", "2", "sp-c-llama2-7b-2048-2.out", 1, "perf",
+                      perf(m, 2048, "Kpre", 19.6, 6.43e9)))
+    fast = [llamacpp(2048, "q8_0", 12.0, fa=0), llamacpp(2048, "q8_0", 10.0, fa=1), llamacpp(2048, "bf16", 15.0),
+            llamacpp(64, "q8_0", 0.1, layers=1)]
+    recs += [R.Rec("cpuv", "c-llamacpp-llama2-7b", "3", "sp-c-llamacpp-llama2-7b-3.out", i, "llamacpp", d)
+             for i, d in enumerate(fast, 1)]
+    assert all(R.kind_of(d) == "llamacpp" for d in fast)
+    run = R.Run(recs)
+    ctx = T.Ctx(run, B.Bench(None), {}, "cnn18c", "test platform", byte_model=False)
+    c = M.Collector()
+    M.cpu_client(c, ctx)
+    v = {k: x.value for k, x in c.m.items()}
+    # the abstract's N and the exact baseline: exact re-execution only (141.6 / 19.6 s)
+    assert v["CpuRatioN"] == v["CpuRatio"] == "7.2" and v["CpuReexecName"] == "exact fp32 GEMMs"
+    assert T.fastest(run, "cpuv", m, 2048)[:2] == (141.6, "int_fp32gemm")
+    # the fastest inexact engine: llama.cpp's faster attention kernel (10 s, not 12 s)
+    assert v["CpuInexactName"] == r"llama.cpp Q8\_0" and v["CpuInexactLong"] == "10" and v["CpuRatioInexact"] == "0.5"
+    assert (v["CpuLlamaCppLong"], v["CpuLlamaCppBfLong"], v["CpuLlamaCppName"], v["CpuRatioLlamaCpp"]) == \
+        ("10", "15", r"Q8\_0", "0.5")
+    assert v["CpuLlamaCppShort"] is None and v["LlamaCppRelease"] == "v0.6.0"      # one block: no full-model cell
+    q8 = run.reexec("cpuv", m, 2048, "cpu", T.LLAMACPP)["llamacpp_q8_0"]
+    assert q8[0] == pytest.approx(10.0) and q8[1].d["flash_attn"] == "on"
+    # the tables: tab:options' llama.cpp row (Q8_0 with its bytes) and tab:eval-reexec's two llama.cpp rows
+    opts = T.tab_options(ctx)
+    o = {(x["row"], x["column"]): x for x in opts.cells}
+    assert o["llama.cpp", "2048"]["value"] == pytest.approx(10.0) and o["llama.cpp", "bytes"]["value"] == 7.16e9
+    assert "sp-c-llamacpp-" in o["llama.cpp", "2048"]["source"] and o["llama.cpp", "64"]["value"] is None
+    assert o["Re-exec. CPU", "2048"]["value"] == 141.6
+    row = next(r for r in opts.rows if r.startswith("llama.cpp"))
+    assert row == r"llama.cpp~\cite{llamacpp}$^a$ & weights & \multicolumn{2}{c}{7.2\,GB Q8\_0 once} & -- & " \
+                  r"10\,s & inexact \\"
+    e = {(x["row"], x["column"]): x["value"] for x in T.tab_eval_reexec(ctx).cells}
+    assert e["cpu 2048", r"llama.cpp Q8\_0"] == pytest.approx(10.0) and e["cpu 2048", "llama.cpp bf16"] == 15.0
+    assert e["cpu 2048", "integer re-execution"] == 141.6
+    # the checks: marked inexact and a different model, on its threads (no more than the CPUs it was allowed)
+    good = R.Rec("cpuv", "c-llamacpp-llama2-7b", "3", "sp-c-llamacpp-llama2-7b-3.out", 2, "llamacpp", fast[1])
+    assert R.checks(good) == []
+    unmarked = {k: x for k, x in fast[1].items() if k != "exact"}
+    for d in (unmarked, dict(fast[1], exact=True), dict(fast[1], same_model=True), dict(fast[1], threads=16),
+              dict(fast[1], env=dict(_env(), cpu_affinity=4))):
+        assert R.checks(R.Rec("cpuv", "c-llamacpp-llama2-7b", "3", "x.out", 1, "llamacpp", d)), d
 
 
 def test_the_plan_comes_from_the_records(tmp_path):
