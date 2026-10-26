@@ -1,11 +1,15 @@
-# zkLLM's public demo on an L40S node (not used by the paper)
+# zkLLM's public demo on an L40S node
 
 zkLLM's public demo (commit `993311e` of its repository, unchanged), run on an L40S node of a SLURM cluster (L40S
 prover, AMD EPYC 9334 host) for Llama-2-7B and Llama-2-13B at 2,048 tokens: about 844 s for Llama-2-7B, and 2.5x the
-7B figure per layer for Llama-2-13B. The paper does not use these runs. They time zkLLM's prover on the hardware of
-the stored benchmark roots, next to their Llama-2-7B prover at 2,048 tokens, whose timing is withheld
-([`artifacts/comparison/README.md`](../../comparison/README.md#withheld-timings-excluded_cellscsv)); the paper
-compares with zkLLM's published numbers instead (`tab:eval-compare`). The runs are kept as they were measured.
+7B figure per layer for Llama-2-13B. They time zkLLM's prover on the hardware of the run package (an L40S prover
+and an EPYC 9334 host). `experiments/paper/bench.py` reads `summary.csv` and the runs' `env.txt` with the
+published values (`literature`, `zkllm_runs`), and the paper sets `whole_model_s` against our prover on the same
+prompts in the final run (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`; the extended version states how the times
+were measured, as the next section does), only when the final run's GPU is the one `env.txt` names;
+`tab:eval-compare` keeps zkLLM's published A100 numbers. The stored benchmark roots' own Llama-2-7B prover at 2,048 tokens is withheld
+([`artifacts/comparison/README.md`](../../comparison/README.md#withheld-timings-excluded_cellscsv)). The runs are
+kept as they were measured.
 
 ## Reproduce the numbers from the stored runs (no GPU)
 

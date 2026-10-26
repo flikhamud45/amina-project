@@ -83,7 +83,7 @@ its attestation service and the enclave's resistance to side channels.
 
 \para{CommitLLM-style audit.} CommitLLM~\cite{commitllm2026} adds 12--14\% to serving. Its routine
 audit opens one token of 1--5\% of the responses and 10 of 80 layers at that token, so an edit
-passes with probability 87.5\% when the token is opened and about 99.4\% per one-token response at
+passes with probability \SokCommitOpened{}\% when the token is opened and about \SokCommitRateAbout{}\% per one-token response at
 a 5\% audit rate (Table~\ref{tab:sok}). Its client holds secret Freivalds vectors precomputed from
 the weights, and attention is audited, not verified. For Llama-3.1-8B, whose 32 layers of width
 4{,}096 match Llama-2-7B's, it reports 144\,kB of retained trace state per token and a client check
@@ -96,12 +96,19 @@ A100, with a 183\,kB proof that its verifier checks in 2.36\,s, and hides the we
 which proves a generated sequence in one pass, reports 0.30\,s per token for GPT-2~\cite{zkagent}.
 On a 2{,}048-token Llama-2-13B prompt our prover on the \PlatformGpu{} is \ZkllmProverFactor{}$\times$ faster than zkLLM, but zkLLM
 also proves the operations without weights and hides the weights (Table~\ref{tab:eval-compare}).
+On the \PlatformGpu{} itself, zkLLM's public demo (commit 993311e of its repository) takes about
+\ZkllmSameGpuProverLlama{}\,s to prove a 2{,}048-token Llama-2-7B prompt and \ZkllmSameGpuProverLlamaL{}\,s for Llama-2-13B,
+\ZkllmSameGpuFactorLlama{}$\times$ and \ZkllmSameGpuFactorLlamaL{}$\times$ our prover's time on the same prompts (mode $\sC$, interactive,
+as in Table~\ref{tab:eval-compare}). These times count zkLLM's proof binaries alone, not its one-time
+setup and commitment or the scripts around the binaries; they were measured on two decoder layers
+(three repetitions each) and multiplied by the number of layers, the first skip connection of each
+layer, which its demo does not run, being counted as the second. They cover the decoder layers only.
 
 \para{Ours.} In mode $\sC$ the client holds the 32-byte Merkle roots of the weights and no weights. A 64-token
 proof is \ProofLlamaShortC{}, about \ProofRatioLlamaShort{}$\times$ smaller than the int8 weights, and is checked in \VerifyLlamaShortCCpu{} on 8
 threads of the \PlatformCpu{} or \VerifyLlamaShortCGpu{} on the \PlatformGpu{}. Of it, \ColumnsLlamaShort{} are opened columns, which do not shrink with
 shorter prompts. At 2{,}048 tokens the proof is \ProofLlamaLongC{} (\ProofLlamaLongK{} in $\Kpre$), about the size of the
-weights, and takes \TransferLlamaLong{}\,s to transfer at 10\,Gb/s \todo{transfer times}. A client that sends
+weights, and takes \TransferLlamaLong{}\,s to transfer at 10\,Gb/s. A client that sends
 more than about \BreakevenQueriesShort{} short prompts therefore receives more bytes than a download of the
 weights, which are only \BreakevenQueriesLong{}$\times$ the size of one long prompt's proof, and the protocol pays off only for a client that cannot store or run the model, or
 will not (Figure~\ref{fig:breakeven}). A $\Kpre$ client needs the weights once, to compute its key

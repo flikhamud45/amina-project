@@ -18,9 +18,10 @@ Inputs (nothing here runs a model):
   (``sampler_tv_*.json``);
 * ``--platform``: the benchmark's aggregated tables ``tables_<name>/`` and its raw records ``raw_<name>/`` (the
   outcome counts) in ``--bench`` (default ``artifacts/comparison``), :mod:`experiments.paper.bench`;
-* the published systems' values (``artifacts/comparison/tables/reported_curated.csv``) and, for ``tab:params``,
-  ``tab:setup`` and the break-even, the library's parameters and byte model (several minutes on a laptop CPU;
-  ``--no-byte-model`` skips them).
+* the published systems' values (``artifacts/comparison/tables/reported_curated.csv``), zkLLM's stored runs on the
+  run's GPU model (``artifacts/results/zkllm_l40s/``), the formulas of the spot-checking schemes and of the path
+  protocol (``attack/sok.py``: ``tab:sok``, ``tab:paths``) and, for ``tab:params``, ``tab:setup`` and the break-even,
+  the library's parameters and byte model (several minutes on a laptop CPU; ``--no-byte-model`` skips them).
 
 Outputs (``--out``, default ``paper_sp2027/generated/``; ``--check`` writes nothing):
 
@@ -41,14 +42,16 @@ paper prints today) otherwise.
 
 Checks: an honest query rejected, a tamper accepted, a byte accounting, serving or A/B check that failed, a setup
 proof rejected, the smoke's verdicts, records of more than one machine, a table cell that disagrees with the macro
-printing the same value (:data:`SAME_VALUE`; in the written files and in ``paper_sp2027/fallback/``): each is a
-``CHECK FAILED`` line; a log line that starts with ``{`` and is not a record of a known kind is a ``PARSE`` line.  The
-exit status is 1 on either, and with ``--strict`` also on any missing cell, macro or job.  ``WARNING`` lines, which
+printing the same value (:data:`SAME_VALUE`; in the written files and in ``paper_sp2027/fallback/``), a statement of
+the text that the run's values contradict (``CHECK FAILED text:``, :data:`experiments.paper.macros.TEXT_CLAIM`): each
+is a ``CHECK FAILED`` line; a log line that starts with ``{`` and is not a record of a known kind is a ``PARSE`` line.
+The exit status is 1 on either, and with ``--strict`` also on any missing cell, macro or job.  ``WARNING`` lines, which
 do not change it: one quantity measured by two jobs differs by more than 10% (:data:`TWO_JOBS`), the records' mode-C
 plan is not ``--policy``.  ``--rehearsal``: a rehearsal's folder (small models; no cell of the paper is expected):
 every tier must have at least one record of each kind it writes (:data:`experiments.paper.records.REHEARSAL_KINDS`),
 every builder runs on what is there, and the checks apply, except those of what the text states about the final values
-(the sign of a loss), which are warnings.
+(the sign of a loss; a path count of the attack's documents or the benchmark that differs from the formula's, which
+``tab:sok`` prints as the same number), which are warnings.
 """
 from __future__ import annotations
 
@@ -247,6 +250,8 @@ SAME_VALUE = (
     ("tab_quality", None, ("OPT-6.7B",), 3, None, 1, 1, "QualityRatioOptL", 1),
     ("tab_gen", None, ("GPT-2",), 2, None, 0, 1, "GenGptProveC", 1),
     ("tab_zeroshot", None, ("Mean",), 6, None, 0, 1, "ZeroshotMeanOptL", 1),
+    ("tab_paths", None, ("Llama-2-7B",), 2, None, 0, 1, "SokPathsLlama", 1),
+    ("tab_paths", None, ("OPT-6.7B",), 2, None, 0, 1, "SokPathsOptL", 1),
 )
 """The table cells and macros that print the same value of the same record: they agree up to one unit of the
 coarser printed precision (a bound rounded up against a value rounded to nearest)."""

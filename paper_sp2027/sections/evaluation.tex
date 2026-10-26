@@ -23,8 +23,8 @@ Sections~\ref{sec:defence} and~\ref{sec:v1}.
 \para{Platform.} Every measurement of this section, except the attribution of the integer OPT-125M's
 perplexity in Section~\ref{sec:quality}, comes from one run of our artifact's run package on one platform: one \PlatformGpu{} runs the prover, the GPU verifier and the GPU
 re-execution, and 8 threads of an \PlatformCpu{} run the CPU verifier and every CPU re-execution. All cells use Fiat--Shamir unless a table states
-otherwise, and mode~$\sC$ commits every matrix with codewords of at least
-$2^{\PlanLogPoints{}}$ points (Section~\ref{sec:defence}). Times are medians after a warm-up.
+otherwise; mode~$\sC$ uses codewords of at least $2^{\PlanLogPoints{}}$ points. Times are medians
+after a warm-up (\OptionsRuns{} runs in Table~\ref{tab:options}, min--max spread $\le$\OptionsSpread{}\%).
 
 \para{Models.} The image models are the six of Section~\ref{sec:break}. The language models are
 GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B and Qwen3-4B. Costs use random int8 weights, since they
@@ -144,7 +144,7 @@ takes \VOneVerifyLlama{}\,s, \VOneVerifyRatioLlama{}$\times$ v0's on the same qu
   our int8, oneDNN int8 and exact fp32 GEMMs). Inexact CPU inference takes \CpuFloatShort{}/\CpuFloatLong{}\,s in
   fp32, \CpuBfShort{}/\CpuBfLong{}\,s in bf16 and \DynIntShort{}/\DynIntLong{}\,s with dynamic int8. GPU: the integer forward
   pass on int8 tensor cores; fp16 takes \GpuFloatShort{}/\GpuFloatLong{}\,s. $^b$An edit passes a one-token response with probability about
-  99.4\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$V1's proof and its CPU
+  \SokCommitRateAbout{}\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier. $^d$V1's proof and its CPU
   verifier on the same queries (random weights; V1's gain on the real OPT-6.7B: \VOneRatioRealOptLExact{}$\times$).
   $^e$Llama-3.1-8B (Llama-2-7B's layers and width), per audited token, as
   reported~\cite{commitllm2026}: retained trace state (Merkle paths not counted) and the routine
@@ -229,8 +229,8 @@ With these caveats, our prover is faster in every measured row, by \CompareProve
 \CompareProverMax{}$\times$ against the zkSNARKs and \CompareMaverick{}$\times$ against Maverick; our verifier is slower in
 \CompareVerifierSlowerRows{}; and our proof is larger in most rows, by up to \CompareProofMax{}$\times$ against zkLLM, whose proof
 stays below 200\,kB. V1 narrows that gap, from about \CompareVOneBefore{}$\times$ to about \CompareVOneAfter{}$\times$ on
-OPT-1.3B (Table~\ref{tab:eval-v1}) \todo{new timings, against zkLLM's stored runs on the same L40S
-model (844\,s for Llama-2-7B at 2{,}048 tokens)}. Sampling-based
+OPT-1.3B (Table~\ref{tab:eval-v1}). On the \PlatformGpu{}, zkLLM's prover takes about \ZkllmSameGpuProverLlama{}\,s
+(Llama-2-7B) and \ZkllmSameGpuProverLlamaL{}\,s (13B), \ZkllmSameGpuFactorRange{}$\times$ ours~\cite{fullversion}. Sampling-based
 schemes such as CommitLLM (Table~\ref{tab:sok}) do not check every operation of every query, so we
 do not compare their costs.
 

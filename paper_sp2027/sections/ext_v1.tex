@@ -158,7 +158,10 @@ bytes costs more than seconds of GPU time.
 
 \subsection{Limitations of V1}
 
-Mode $\sK$ and the streaming GPU verifier do not support V1 yet \todo{GPU verifier with V1}. V1
+Mode $\sK$ and the streaming GPU verifier do not support V1 yet. The non-streaming verifier with its
+tensors on the \PlatformGpu{} (V1's GKR and final checks stay on the CPU) checks a 2{,}048-token $\Kpre$
+query of the full OPT-1.3B with V1 in \VOneGpuVerifyOptM{}\,s and of the full Llama-2-7B in \VOneGpuVerifyLlama{}\,s, against
+\VOneGpuVZeroVerifyOptM{}\,s and \VOneGpuVZeroVerifyLlama{}\,s for v0 on the same queries. V1
 assumes one requantisation multiplier per operation, so per-row weight scales
 (Section~\ref{sec:quality}) need more widths, and CNNs that fuse ReLU into the requantisation are
 not covered. By the byte model the full Llama-2-7B proof still reaches the size of its int8 weights

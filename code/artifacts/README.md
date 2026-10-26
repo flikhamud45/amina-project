@@ -14,8 +14,8 @@ counts included, comes from those two folders, and every other measured number f
 (`logs/final/` at the repository root while the run writes them, stored afterwards as `final/`;
 [`experiments/paper/README.md`](../experiments/paper/README.md)). [The final run's
 records](#the-final-runs-records) says what the artifact keeps of them. The published
-systems' values come from `comparison/tables/reported_curated.csv`, and `tab:params` and `tab:setup` from the
-library's parameters. The paper's generator reads none of the stored roots below. The stored files serve as inputs
+systems' values come from `comparison/tables/reported_curated.csv` (and zkLLM's prover on the run's GPU model from
+`results/zkllm_l40s/`), and `tab:params` and `tab:setup` from the library's parameters. The paper's generator reads none of the stored roots below. The stored files serve as inputs
 that scripts need (the MNIST networks, the literature catalogue), as the records behind the values the paper prints
 before the final run (`paper_sp2027/fallback/`, checked against them by the tests named below), and as reference
 measurements of other platforms.
@@ -32,7 +32,7 @@ writes files of that format.
 | `models/` | the seven MNIST networks of the attack, their training reports, `MODELS.sha256` | `attack/train_mnist.py` | the attack scripts, `costs/bench.py`, `costs/perf.py`, `costs/wire.py`, two tests |
 | `models/cnn/` | not in the repository: the benchmark's image models (`<model>.pt`, `<model>.json`) | `costs/train_cnn.py` | `costs/bench.py`, `costs/perf.py` (`experiments.common.models.trained_cnn`) |
 | `comparison/` | the benchmark's raw roots `raw_<platform>/`, their tables `tables_<platform>/`, `tables/`, `literature/`, `excluded_cells.csv`; described in [`comparison/README.md`](comparison/README.md) | `costs/bench.py`, `comparison/aggregate.py`, `comparison/literature.py`, `attack/path_test_bound.py` | `experiments/comparison/`, `experiments/paper/`, `tests/test_comparison_tables.py`, `tests/test_paper_numbers.py` |
-| `results/` | the attack's documents, the sampler's distances, the quality records, development measurements, zkLLM's demo on an L40S | the scripts of `experiments/attack/`, `generation/`, `quality/`, `costs/`, `deployment/`, `v1/` | `tests/test_paper_numbers.py` (the fallback) |
+| `results/` | the attack's documents, the sampler's distances, the quality records, development measurements, zkLLM's demo on an L40S | the scripts of `experiments/attack/`, `generation/`, `quality/`, `costs/`, `deployment/`, `v1/` | `tests/test_paper_numbers.py` (the fallback); `experiments/paper/bench.py` (`zkllm_l40s/summary.csv`) |
 | `cache/` | not in the repository: the dataset cache of `pvi.models.datasets` (`PVI_CACHE`) | `pvi.models.datasets` | `costs/bench.py` (image models) |
 | `final/` | added after the final run: its job logs, documents and dry-run listing, and the machine's description ([below](#the-final-runs-records)) | `experiments/package/run.sh` (a copy of `logs/final/`) | `experiments/paper/numbers.py --logs artifacts/final` |
 
@@ -188,7 +188,10 @@ zkLLM's code (its commit `993311e`, unchanged) run for Llama-2-7B and Llama-2-13
 script, the timing shims, the input generator and the summary (`summarise.py`, `summary.csv`); described in
 [`results/zkllm_l40s/README.md`](results/zkllm_l40s/README.md). Each run folder's `env.txt` records the GPU
 (NVIDIA L40S), the CPU (AMD EPYC 9334 32-Core Processor) and zkLLM's commit; `summary.csv` records no provenance and
-is written by `summarise.py --csv`. The paper does not use these runs, and no script of `code/` reads them.
+is written by `summarise.py --csv`. `experiments/paper/bench.py` (`literature`, `zkllm_runs`) reads `summary.csv` and
+the runs' `env.txt` with the published values: the paper sets zkLLM's prover on this GPU model against ours on the
+same prompts (`\ZkllmSameGpu...`, Sec. `sec:eval-compare` and `ext:disc-options`), only when the final run's GPU is the
+one `env.txt` names.
 
 ### Written by a run, not stored
 

@@ -1,4 +1,4 @@
-"""Summarise one zkLLM run of zkllm.sbatch (not used by the paper): per-stage times (script
+"""Summarise one zkLLM run of zkllm.sbatch (summary.csv feeds the paper's same-GPU factors): per-stage times (script
 wall incl. model load; binary alone, from the run's bin_times.log, written by the shims of
 install_timing_shims.sh).
 Usage: summarise.py <run dir> <layers per model>      # print the run's figures

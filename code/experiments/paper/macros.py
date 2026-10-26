@@ -16,17 +16,22 @@ The families, with the record each number comes from:
   2,048 tokens, one value (rounded down to one decimal); ``CpuRatio`` the same ratio (also rounded down, so that the
   abstract and the body print one number), ``CpuRatioShort`` at 64 tokens; ``CpuInexact*`` the fastest inexact engine
   (:data:`tables.INEXACT`) against the same verifier; ``KpreKeyMB``, ``KpreEmbedMB`` and ``KpreStoreGB`` what a Kpre
-  client of Llama-2-7B stores, from the shapes (:func:`kpre_storage`);
-* the outcome counts (``bench`` and ``batch`` tiers, ``comparison/count_outcomes.py`` over ``raw_<platform>/``);
-* the cost of the defence, batches against one opening, V1, serving, the comparison with published systems,
-  re-execution, real weights, long prompts, the improvements, generation (their tiers' records, through the table
-  selections of :mod:`experiments.paper.tables`);
+  client of Llama-2-7B stores, from the shapes (:func:`kpre_storage`); ``OptionsRuns`` and ``OptionsSpread`` the
+  timed runs of ``tab:options``' cells and their largest relative min--max spread (:func:`options_timings`);
+* the outcome counts (``bench`` and ``batch`` tiers, ``comparison/count_outcomes.py`` over ``raw_<platform>/``), and
+  the tampered queries of the real-weight and generation cells and the setup tier's honest setup proofs
+  (``Outcome...``);
+* the cost of the defence, batches against one opening, V1 (with its verifier's tensors on the GPU, the gpuv tier),
+  serving, the comparison with published systems (and with zkLLM's stored runs on the run's GPU model,
+  ``ZkllmSameGpu...``), re-execution, real weights, long prompts, the improvements, generation (their tiers' records,
+  through the table selections of :mod:`experiments.paper.tables`);
 * the break-even (``deployment/ev_breakeven.py``'s formulas on the run's claims, verifier and re-execution times);
 * quality and zero-shot accuracy (``quality`` tier), the sampler's distance (``tv`` tier) and the attack (``attack``
   tier's documents);
 * values that follow from the code alone, under the run's plan: the security parameters, the setup proof's size,
   breakdown and radii (``costs/setup_bytes.py``), the split commitment's columns per query, and V1's cut of a model
-  from its shapes (:func:`experiments.paper.tables.v1_shape_model`).
+  from its shapes (:func:`experiments.paper.tables.v1_shape_model`); and the acceptance probabilities and path counts
+  of the spot-checking schemes from their own formulas and parameters (``Sok...``, ``attack/sok.py``).
 
 A number that the text states as a bound ("at most", "up to", "within", "less than") is rounded up (:func:`ceil_pct`,
 :func:`ceil_fixed`, :func:`ceil_sig`, :func:`ceil_about`, :func:`ceil_sci`), one stated as "at least" is rounded down
@@ -208,6 +213,52 @@ def cpu_client(c: Collector, ctx: T.Ctx) -> None:
     c.todo("TodoGpuOneGpu")
 
 
+def _spread(rng, median) -> float | None:
+    """The relative min--max spread of one cell's timed runs: ``(max - min) / median``."""
+    return (rng[1] - rng[0]) / median if rng and len(rng) == 2 and median else None
+
+
+def options_timings(run) -> list[tuple]:
+    """``(timed runs, relative min--max spread, record)`` of every timed cell of ``tab:options`` (Llama-2-7B, 64 and
+    2,048 tokens): our CPU verifier in modes Kpre and C (perf.py: ``queries``, ``verify_s_range`` against
+    ``verify_s``), exact re-execution on the CPU (the fastest exact variant) and on the GPU (reexec.py: ``reps``,
+    ``range_s`` against ``measured_s`` of the full model) and V1's optimised CPU verifier (v1_bytes.py: ``timed``'s
+    ``queries`` and its ``verify_s_range`` against ``verify_s``).  A cell that the run lacks is left out; a cell whose
+    record lacks its count or range gives None in its place."""
+    m, out = "llama2-7b", []
+    for s in (64, 2048):
+        for mode in ("Kpre", "C"):
+            r = run.perf("cpuv", m, s, mode, vdev="cpu", label="cpuv")
+            if r:
+                out.append((r.d.get("queries"), _spread(r.d.get("verify_s_range"), r.d.get("verify_s")), r))
+        cpu = T.fastest(run, "cpuv", m, s)[2]
+        gpu = (run.reexec("gpuv", m, s, "cuda", ("int",)).get("int") or (None, None))[1]
+        for r in (cpu, gpu):
+            if r:
+                key = str(r.d.get("n_layers"))
+                out.append((r.d.get("reps"), _spread((r.d.get("range_s") or {}).get(key),
+                                                     (r.d.get("measured_s") or {}).get(key)), r))
+        v1 = run.v1("cpuv", m, s, "Kpre", vdev="cpu", label="cpuv-v1")
+        timed = (v1.d.get("timed") or {}) if v1 else {}
+        q = (timed.get("v1_paths") or {}).get("optimised")
+        if q:
+            out.append((timed.get("queries"), _spread(q.get("verify_s_range"), q.get("verify_s")), v1))
+    return out
+
+
+def options_timing(c: Collector, ctx: T.Ctx) -> None:
+    """How the times of ``tab:options`` were taken (Sec. ``sec:eval-setup``: medians after a warm-up): the number of
+    timed runs of its cells (one number, or the range when they differ) and the largest relative min--max spread
+    over them, rounded up (a bound) (:func:`options_timings`)."""
+    cells = options_timings(ctx.run)
+    runs = [n for n, _, _ in cells]
+    spread = [x for _, x, _ in cells]
+    src = "tab:options' timed cells (cpuv perf.py, reexec.py and V1; gpuv reexec.py)"
+    c.put("OptionsRuns", None if not runs or None in runs else (min(runs), max(runs)), src,
+          lambda v: f.rng(v[0], v[1], f.num))
+    c.put("OptionsSpread", None if not spread or None in spread else max(spread), src, ceil_pct)
+
+
 FIELD_BYTES = 4
 """The bytes of one element of the base field (``p = 15 * 2^27 + 1 < 2^31``)."""
 
@@ -257,6 +308,43 @@ def counts(c: Collector, ctx: T.Ctx, problems: list) -> None:
     for k in COUNTS:
         c.put("Final" + k, m and m.get("Final" + k), root.name if root else "", lambda v: f.num(v))
     c.todo("TodoCounts")
+
+
+def _tampered(r: Rec) -> tuple[int, int]:
+    """``(attempts, rejected)`` of one record's tampered queries: ``perf.py`` and ``v1_bytes.py`` count them per
+    kind (``attempts``, ``rejected``), ``gen_bench.py`` lists one query per tamper cell (``rejected`` true or
+    false)."""
+    t = [v for v in (r.d.get("tampers") or {}).values() if isinstance(v, dict)]
+    if r.kind == "gen":
+        return len(t), sum(bool(v.get("rejected")) for v in t)
+    return sum(int(v.get("attempts", 0)) for v in t), sum(int(v.get("rejected", 0)) for v in t)
+
+
+OUTCOME_TIERS = ("real", "gen")
+"""The tiers whose cells send tampered queries besides the benchmark's (the real-weight and generation cells)."""
+
+
+def outcomes(c: Collector, ctx: T.Ctx) -> None:
+    """The run's soundness tests beyond the benchmark's counts (:func:`counts`): the tampered queries of the
+    ``perf.py``, ``v1_bytes.py`` and ``gen_bench.py`` records of :data:`OUTCOME_TIERS`, in all, of V1 and of generated
+    responses, and the honest setup proofs of the setup tier.  Each count is printed only when every tampered query
+    was rejected and every setup proof accepted (each failure is also a ``CHECK FAILED`` of
+    :func:`experiments.paper.records.checks`)."""
+    run = ctx.run
+    per = {kind: [_tampered(r) for tier in OUTCOME_TIERS for r in run.kind(kind, tier) if not r.d.get("codec_only")]
+           for kind in ("perf", "v1", "gen")}
+
+    def rejected(pairs):
+        attempts, rej = sum(a for a, _ in pairs), sum(b for _, b in pairs)
+        return attempts if attempts and rej == attempts else None
+
+    src = "the tampers of the real and gen tiers' perf.py, v1_bytes.py and gen_bench.py records"
+    c.put("OutcomeTampers", rejected([p for pairs in per.values() for p in pairs]), src, f.num)
+    c.put("OutcomeTampersVOne", rejected(per["v1"]), src, f.num)
+    c.put("OutcomeTampersGen", rejected(per["gen"]), src, f.num)
+    setups = run.kind("setup", "setup")
+    c.put("OutcomeSetupProofs", len(setups) if setups and all(r.d.get("accepted") is True for r in setups) else None,
+          "setup tier, setup_timing.py", f.num)
 
 
 # ================================================================================================ cost of the defence
@@ -483,6 +571,12 @@ def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
     c.put("VOneVZeroVerifyLlama", v0, cv, lambda v: f"{v:.1f}")
     c.put("VOneVerifyRatioLlama", v1 / v0 if v0 and v1 else None, cv, lambda v: f"{v:.1f}")
     c.put("VOneVerifyLlamaBaseline", v1_timed(cv, "v1", "baseline")[1], cv, lambda v: f"{v:.1f}")
+    # the non-streaming verifier with its tensors on the GPU (V1's GKR and final checks on the CPU; the gpuv tier's
+    # full models, Kpre, 2,048 tokens): V1's and v0's on the same queries
+    for m, name in (("opt-1.3b", "OptM"), ("llama2-7b", "Llama")):
+        g = run.v1("gpuv", m, 2048, "Kpre", vdev="cuda", label="gpuv-v1", layers=T.FULL_LAYERS[m])
+        c.put(f"VOneGpuVerify{name}", v1_timed(g, "v1", "optimised")[1], g, f.sig)
+        c.put(f"VOneGpuVZeroVerify{name}", v1_timed(g, "v0")[1], g, f.sig)
     c.todo("TodoVOneTimings")
     c.todo("TodoVOneIntro")
     for (m, seq, mode), name in ((("gpt2", 512, "C"), "CrossoverGptMediumC"), (("gpt2", 512, "Kpre"),
@@ -576,6 +670,7 @@ def comparison(c: Collector, ctx: T.Ctx) -> None:
     c.put("ZkllmProverFactor", zl and ours and zl / ours["prove"], ours and f"{ctx.bench.name} {ours['cell']}",
           lambda v: f"{v:.0f}")
     c.todo("TodoZkllmFactor")
+    zkllm_same_gpu(c, ctx)
     b = ctx.bench
     cell = b.cnn_cell("lenet5", "C", "fs")
     le = b.cnn_cost("lenet5", cell)
@@ -590,6 +685,47 @@ def comparison(c: Collector, ctx: T.Ctx) -> None:
         c.put(f"LenetVerifyVs{sys_}", le and tv and tv / le["verify"], src, _ratio_text)
         q = le and tb and (tb / le["bytes"] if sys_ == "Zkcnn" else le["bytes"] / tb)
         c.put(f"LenetProofVs{sys_}", q, src, _ratio_text)
+
+
+def zkllm_same_gpu(c: Collector, ctx: T.Ctx) -> None:
+    """zkLLM's prover on the run's own GPU model: its stored runs (``artifacts/results/zkllm_l40s/``, read with the
+    published values by :func:`experiments.paper.bench.literature`; the proof binaries of two decoder layers, times
+    the layers) for Llama-2-7B and Llama-2-13B at 2,048 tokens, and their factor over our prover on the same prompt
+    (mode C, interactive, as ``tab:eval-compare``'s zkLLM rows).  Every value is printed only when the stored runs'
+    GPU is the run's (the records' ``env.gpu``, else the benchmark's prover): a factor holds on the same hardware
+    only."""
+    from experiments.paper.bench import ZKLLM_RUNS
+    env = ctx.run.environment()["gpu"] or next(iter(sorted(ctx.bench.hardware()[0])), None)
+    gpu = " ".join(env.split()) if env else None
+    factors = []
+    for model, m, name in (("Llama-2-7B", "llama2-7b", "Llama"), ("Llama-2-13B", "llama2-13b", "LlamaL")):
+        row = ctx.lit.get((ZKLLM_RUNS, model, "2048")) or {}
+        same = bool(gpu and row.get("prover_hw") and " ".join(row["prover_hw"].split()) == gpu)
+        theirs = f.to_float(row.get("prover_s")) if same else None
+        ours = ctx.bench.llm_cost(m, 2048, "c_cpu_int") or ctx.bench.llm_cost(m, 2048, "c_gpu_int")
+        q = theirs / ours["prove"] if theirs and ours and ours["prove"] else None
+        factors.append(q)
+        c.put(f"ZkllmSameGpuProver{name}", theirs, row.get("source", ""), lambda v: f.num(v))
+        c.put(f"ZkllmSameGpuFactor{name}", q, f"{row.get('source', '')}; {ctx.bench.name} {ours['cell']}"
+              if ours else "", _ratio_text)
+    _range(c, "ZkllmSameGpuFactorRange", factors, "zkLLM's stored runs and the benchmark's interactive mode-C cells",
+           _ratio_text)
+
+
+# ================================================================================================ spot-checking schemes
+def sok(c: Collector, ctx: T.Ctx) -> None:
+    """The acceptance probabilities and path counts of ``tab:sok`` and ``tab:sok-derivation`` from each scheme's own
+    formulas and parameters (:func:`experiments.attack.sok.values`; no run needed): ``Sok<name>`` as the paper prints
+    it, a percentage without its sign or a count."""
+    from experiments.attack import sok as S
+    for row in S.values():
+        c.put("Sok" + row["name"], row["value"], f"attack/sok.py: {row['setting']}, {row['formula']}",
+              lambda v, p=row["printed"]: f.thousands(p))
+
+
+FORMULA = (("AttackOptLPaths", "SokPathsOptL"), ("PathsLlama", "SokPathsLlama"), ("CnnPathsResNet", "SokPathsWide"))
+"""Pairs of a run's value and the formula's that the text states as one number (``tab:sok``'s path counts are
+those of our models, Sec. ``sec:break``): they must agree, or the build fails (:data:`TEXT_CLAIM`)."""
 
 
 # ================================================================================================ improvements
@@ -1048,10 +1184,19 @@ def all_of(v) -> str:
     return f"all {total}" if n == total else f"at least {n} of the {total}"
 
 
+def _medians(cells: list, key: str) -> list:
+    """The cells' ``key`` (a median over the successful edits) where an edit succeeded: a cell (a layer and range)
+    without one has no median and does not count, so that it cannot void the bound of the others; ``[None]`` when no
+    cell has one."""
+    return [x[key] for x in cells if x[key] is not None] or [None]
+
+
 def inrange(c: Collector, ctx: T.Ctx) -> None:
+    """The in-range edits (``inrange_llm.py``): the bounds over the cells (``...PMedianMax``, the paths' and the
+    edits' ranges) are taken over the cells with at least one successful edit (:func:`_medians`)."""
     run = ctx.run
     any_, down = run.file("inrange_llm_opt-1.3b_any.json"), run.file("inrange_llm_opt-1.3b_down.json")
-    layers = (6, 12, 18, 23)
+    layers = T.INRANGE_LAYERS
     args = (any_.d.get("args") or {}) if any_ else {}
     c.put("InrangeCalibTokens", args and args.get("calib_windows", 0) * args.get("calib_seq", 0) or None, any_, f.num)
     cells = [T.inrange_cell(any_, layer, rng) for layer in layers for rng in ("max", "p999")]
@@ -1059,20 +1204,19 @@ def inrange(c: Collector, ctx: T.Ctx) -> None:
     c.put("InrangeChanged", (min(x["changed"] for x in cells), max(x["prompts"] for x in cells)) if ok else None,
           any_, all_of)
     c.put("InrangePrompts", cells[0]["prompts"] if ok else None, any_)
-    ks = [k for x in cells if x for k in x["k_all"]]
-    c.put("InrangeKMedian", statistics.median(ks) if ok and ks else None, any_, lambda v: f"{v:g}")
-    c.put("InrangeKMax", max(ks) if ok and ks else None, any_)
-    c.put("InrangePMedianMax", max(x["p_uniform"] for x in cells) if ok else None, any_, ceil_sci)   # "at most"
+    ks = T.inrange_ks(run)
+    c.put("InrangeKMedian", ks["median"], any_, lambda v: f"{v:g}")
+    c.put("InrangeKMax", ks["max"], any_)
+    c.put("InrangePMedianMax", max(_medians(cells, "p_uniform")) if ok else None, any_, ceil_sci)   # "at most"
     ps = [p for x in cells if x for p in x["p_uniform_all"]]
     c.put("InrangePMax", max(ps) if ok and ps else None, any_, ceil_sci)
     dc = [T.inrange_cell(down, layer, "max") for layer in layers]
     c.put("InrangeDown", [x["changed"] for x in dc] if all(dc) else None, down,
           lambda v: ", ".join(map(str, v[:-1])) + f" and {v[-1]}")
     c.put("InrangeDownLast", dc[-1]["changed"] if dc[-1] else None, down)
-    dk = [k for x in dc if x for k in x["k_all"]]
-    c.put("InrangeDownKMedian", statistics.median(dk) if all(dc) and dk else None, down, lambda v: f"{v:g}")
+    c.put("InrangeDownKMedian", ks["down"], down, lambda v: f"{v:g}")
     allc = cells + dc
-    paths = [_paths(x["p_uniform"]) for x in allc] if all(allc) else [None]
+    paths = [_paths(p) for p in _medians(allc, "p_uniform")] if all(allc) else [None]
     _range(c, "InrangePathsOptM", paths, any_, lambda v: f.about(v, 3))
     a67, d67 = run.file("inrange_llm_opt-6.7b_any.json"), run.file("inrange_llm_opt-6.7b_down.json")
     l67 = (8, 16, 24, 31)
@@ -1080,10 +1224,10 @@ def inrange(c: Collector, ctx: T.Ctx) -> None:
     ok67 = all(c67)
     c.put("InrangeOptLChanged", (min(x["changed"] for x in c67), max(x["prompts"] for x in c67)) if ok67 else None,
           a67, all_of)
-    c.put("InrangeOptLPMedianMax", max(x["p_uniform"] for x in c67) if ok67 else None, a67, ceil_sci)
-    _range(c, "InrangeOptLKRange", [x["k_median"] for x in c67] if ok67 else [None], a67, lambda v: f"{v:g}")
+    c.put("InrangeOptLPMedianMax", max(_medians(c67, "p_uniform")) if ok67 else None, a67, ceil_sci)
+    _range(c, "InrangeOptLKRange", _medians(c67, "k_median") if ok67 else [None], a67, lambda v: f"{v:g}")
     d67c = [T.inrange_cell(d67, layer, "max") for layer in l67]
-    paths = [_paths(x["p_uniform"]) for x in c67 + d67c] if ok67 and all(d67c) else [None]
+    paths = [_paths(p) for p in _medians(c67 + d67c, "p_uniform")] if ok67 and all(d67c) else [None]
     _range(c, "InrangePathsOptL", paths, a67, lambda v: f.about(v, 3))
     game = run.file("adaptive_game_opt-1.3b.json")
     per = (game.d.get("per_layer") or {}) if game else {}
@@ -1286,8 +1430,9 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
     c.put("GenPerPrefixTB", prefixes, src, lambda v: f"{v / 1e12:.1f}")
 
 
-FAMILIES = (platform, cpu_client, kpre_client, defence_cost, batching, serving, v1_numbers, comparison, improvements,
-            real_weights, long_prompts, quality, sampler, attack, setup_and_params, setup_proof, generation)
+FAMILIES = (platform, cpu_client, options_timing, kpre_client, outcomes, defence_cost, batching, serving, v1_numbers,
+            comparison, improvements, real_weights, long_prompts, quality, sampler, attack, sok, setup_and_params,
+            setup_proof, generation)
 TEXT_CLAIM = "CHECK FAILED text:"
 """The prefix of a check of what the text states about a value (not of a record's correctness): a rehearsal's small
 cells need not bear it out, so ``numbers.py --rehearsal`` reports it as a warning."""
@@ -1311,6 +1456,11 @@ def build(ctx: T.Ctx, problems: list) -> tuple[dict[str, Macro], dict | None]:
         raw = c.m[name].raw if name in c.m else None
         if raw is not None and raw >= 0:
             problems.append(f"{TEXT_CLAIM} {name} is {100 * raw:+.2f} points, which the text calls a loss")
+    for name, formula in FORMULA:
+        got, want = (c.m[n].raw if n in c.m else None for n in (name, formula))
+        if got is not None and want is not None and round(float(got)) != round(float(want)):
+            problems.append(f"{TEXT_CLAIM} {name} is {got}, the formula's {formula} {want}, which tab:sok prints as "
+                            "the same number")
     for name in names():
         c.m.setdefault(name, Macro(name, None, None, ""))
     return c.m, be

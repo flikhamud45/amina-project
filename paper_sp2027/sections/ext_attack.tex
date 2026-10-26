@@ -116,7 +116,7 @@ for one changed node, state that their other-model analysis ``trivially extends 
 soundness'' for binary-output models, and leave full soundness open for LLMs; their other-model
 theorem is unaffected. The $2^{-40}$ figures are \CnnPathsResNet{} paths for our dog-vs-cat ResNet-18 and at
 least \PathsLlama{} and \AttackOptLPaths{} for Llama-2-7B and OPT-6.7B. For SLP's TinyLlama configuration (5 of
-45 chunks) one audit accepts the edit with probability 88.9\%. CommitLLM's routine audit covers
+45 chunks) one audit accepts the edit with probability \SokSlpTiny{}\%. CommitLLM's routine audit covers
 Llama-70B; by the authors' own finding an edited attention output passes every tier, and attention
 is audited, not verified. NanoZK presents its audit mode as an efficiency tool, not a security
 claim; its full mode checks every layer. SPEX states that sampling ``cannot prevent an adversarial
@@ -161,18 +161,18 @@ answer with honestly recomputed fingerprints lies outside what they claim.
     \toprule
     Scheme and setting & Formula & Value \\
     \midrule
-    Path, $N{=}512$, $s{=}1$ & $1-1/N$ & 99.80\% \\
-    Path, $N{=}512$, $s{=}250$ & $(1-1/N)^{s}$ & 61.3\% \\
-    Path, $2^{-40}$, LeNet-5 ($N{=}84$) & $\lceil 40\ln2/{-\ln(1-1/N)}\rceil$ & 2{,}316 \\
-    Path, $2^{-40}$, VGG, ResNet ($N{=}512$) & same & 14{,}182 \\
-    Path, $2^{-40}$, Llama-2-7B ($N{=}11{,}008$) & same & 305{,}193 \\
-    Path, $2^{-40}$, OPT-6.7B ($N{=}16{,}384$) & same & 454{,}248 \\
-    SLP 70B, 3 of 161 chunks & $1-3/161$ & 98.14\% \\
-    SLP 70B, audits for 50\% / 95\% & $\lceil\ln(1-P)/\ln(158/161)\rceil$ & 37 / 160 \\
-    SLP TinyLlama, 5 of 45 chunks & $1-5/45$ & 88.9\% \\
-    CommitLLM, token opened & $1-10/80$ & 87.5\% \\
-    CommitLLM, 5\% audit rate & $1-0.05\cdot10/80$ & 99.375\% \\
-    NanoZK audit, uniform 50\% & $1-|S|/L$ & 50\% \\
+    Path, $N{=}512$, $s{=}1$ & $1-1/N$ & \SokPathOne{}\% \\
+    Path, $N{=}512$, $s{=}250$ & $(1-1/N)^{s}$ & \SokPathMany{}\% \\
+    Path, $2^{-40}$, LeNet-5 ($N{=}84$) & $\lceil 40\ln2/{-\ln(1-1/N)}\rceil$ & \SokPathsLenet{} \\
+    Path, $2^{-40}$, VGG, ResNet ($N{=}512$) & same & \SokPathsWide{} \\
+    Path, $2^{-40}$, Llama-2-7B ($N{=}11{,}008$) & same & \SokPathsLlama{} \\
+    Path, $2^{-40}$, OPT-6.7B ($N{=}16{,}384$) & same & \SokPathsOptL{} \\
+    SLP 70B, 3 of 161 chunks & $1-3/161$ & \SokSlpAudit{}\% \\
+    SLP 70B, audits for 50\% / 95\% & $\lceil\ln(1-P)/\ln(158/161)\rceil$ & \SokSlpAuditsHalf{} / \SokSlpAuditsMost{} \\
+    SLP TinyLlama, 5 of 45 chunks & $1-5/45$ & \SokSlpTiny{}\% \\
+    CommitLLM, token opened & $1-10/80$ & \SokCommitOpened{}\% \\
+    CommitLLM, 5\% audit rate & $1-0.05\cdot10/80$ & \SokCommitRate{}\% \\
+    NanoZK audit, uniform 50\% & $1-|S|/L$ & \SokNanoAudit{}\% \\
     SPEX & $1-\delta$ & -- \\
     IMMACULATE, $T$ steps & flagged fraction $+1/T$ & -- \\
     \bottomrule

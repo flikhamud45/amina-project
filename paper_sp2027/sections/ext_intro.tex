@@ -71,7 +71,7 @@ weight privacy in exchange for a prover that is orders of magnitude faster.
 \para{Spot-checking and sampling.} Anchuri et al.~\cite{anchuri2026verifiable} spot-check random
 paths through a committed trace and prove other-model soundness through trace separation.
 SLP~\cite{slp} commits every chunk boundary and proves a random subset of chunks with a SNARK; one
-audit of its 70B configuration accepts an edited chunk with probability 98.14\%. CommitLLM's routine
+audit of its 70B configuration accepts an edited chunk with probability \SokSlpAudit{}\%. CommitLLM's routine
 audit~\cite{commitllm2026} opens 10 of 80 layers at one token of an audited response.
 TensorCommitments~\cite{tensorcommitments} and NanoZK's audit mode~\cite{nanozk} check a subset of
 layers, SPEX~\cite{spex} re-executes with a fixed probability, and IMMACULATE~\cite{immaculate}

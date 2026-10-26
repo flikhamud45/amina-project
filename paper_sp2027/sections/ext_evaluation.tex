@@ -140,8 +140,11 @@ Catching one edited neuron with probability $1-2^{-40}$ takes at least \PathsLla
 protocol for Llama-2-7B, about \OpenAllLlama{}\,GB of openings at 64 tokens (Section~\ref{sec:break}), where our
 proof is \ProofLlamaShortC{} at $\lambda = 128$ (Table~\ref{tab:eval-llm}). Without the setup proof
 (Section~\ref{sec:setup-proof}), a commitment that mixes two models passes about $2^{-t}$ of the
-queries; with it, the commitment is rejected at setup \todo{L40S: outcome counts with the final
-code, including V1 and the setup proof}.
+queries; with it, the commitment is rejected at setup (the tests of the setup proof, which the run's
+smoke job repeats on the platform). In the run, all \OutcomeSetupProofs{} honest setup proofs were
+accepted, and beyond the counts of Section~\ref{sec:eval-setup}, which come from the benchmark's cells, the
+real-weight and generation cells rejected all \OutcomeTampers{} tampered queries they sent
+(\OutcomeTampersVOne{} of them V1 queries and \OutcomeTampersGen{} generated responses).
 
 \subsection{V1: Crossover per Cell}
 \label{app:eval-crossover}

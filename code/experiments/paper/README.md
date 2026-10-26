@@ -8,8 +8,8 @@ prints before the final run, otherwise. Nothing here runs a model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:zeroshot` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
-| Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the quality, attack and sampler numbers, ... (about 440 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
+| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
+| Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the quality, attack and sampler numbers, the spot-checking schemes' acceptance (`\Sok...`), ... (about 470 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
 | `fig:breakeven` (once its inputs are all in the run); `fig:overview`, `fig:protocol` with `--schematics` | `figures.py` | the same | `paper_sp2027/figures/*.pdf` |
 | Every value with its source record; per table the cells filled and missing; the checks | `numbers.py` | the same (`--check`: report only) | `generated/cells.csv`, `generated/coverage.txt` |
 
@@ -49,7 +49,11 @@ equal the integer reference's bit for bit in the same run). `tab:params` and `ta
 parameters and the setup proof's byte model (`costs/setup_bytes.py`; the per-query columns of interactive queries,
 as the setup tier measures them), with V1's counts from the v1 tier; `tab:eval-compare-v1` has a row per full model
 of the v1 tier; the generation tables take the gen tier's cells (Llama-2-7B and Qwen3-4B after a 512-token prompt,
-greedy and sampled; GPT-2 after a 64-token prompt, greedy), selected by the prompt's length as well.
+greedy and sampled; GPT-2 after a 64-token prompt, greedy), selected by the prompt's length as well. `tab:paths` and
+`tab:paths-acc` evaluate Proposition `prop:paths` (`attack/sok.py`: the paths that catch an edit of `k` neurons, and
+the probability that `s` paths accept it) at one neuron, at 16 and at the in-range edits of the attack tier's OPT-1.3B
+documents (`inrange_ks`: the median and largest edit of either direction and the median lowering-only edit, which
+the text prints as `\InrangeKMedian`, `\InrangeKMax`, `\InrangeDownKMedian` and the tables' headers name).
 
 ### `macros.py`
 The text numbers, by family (the platform and the plan, the CPU client, the outcome counts, the cost of the defence,
@@ -67,9 +71,18 @@ body) is one value: exact re-execution (the integer forward pass, bit-exact with
 the full Llama-2-7B at 2,048 tokens (cpuv tier), rounded down to one decimal. V1's headline range
 (`\VOneRatioRandom`) takes the full models of the v1 tier at 2,048 tokens. `\RealAcceptedClause` names the full
 real-weight models whose every honest Kpre query at 2,048 tokens the real tier accepted. The break-even reuses
-`deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and its byte model. A
-number the text states as a bound ("at most", "up to", "within", "less than") is rounded up, one stated as "at
-least" down. The `Todo...` macros carry the `\todo` markers of numbers that the run fills (empty once generated).
+`deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and its byte model.
+`\OptionsRuns` and `\OptionsSpread` are the timed runs of `tab:options`' cells and their largest relative min--max
+spread; `\Outcome...` the tampered queries of the real-weight and generation cells (all, V1's, the generated
+responses') and the setup tier's honest setup proofs, printed only when every tamper was rejected and every setup
+proof accepted. `\ZkllmSameGpu...` set zkLLM's stored runs on the run's GPU model (`artifacts/results/zkllm_l40s/`,
+read by `bench.literature` with the published values: the proof binaries of two decoder layers, times the layers)
+against our interactive mode-C prover on the same prompts, only when the stored runs' GPU is the run's. The
+spot-checking schemes' acceptance probabilities and path counts of `tab:sok` and `tab:sok-derivation` (`\Sok...`)
+follow from the formulas and parameters those tables state (`attack/sok.py`; no run). The bounds over the in-range
+cells skip a layer and range without a successful edit. A number the text states as a bound ("at most", "up to",
+"within", "less than") is rounded up, one stated as "at least" down. The `Todo...` macros carry the `\todo` markers
+of numbers that the run fills (empty once generated).
 
 ### `figures.py`
 `fig:overview` and `fig:protocol` (schematics, from code; laid out for the pinned matplotlib of `requirements.txt`,
@@ -94,14 +107,18 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
   disagree, a smoke log without `SMOKE OK` or with int8 GEMMs that are not exact, a `FAILED` line of a script,
   records of more than one GPU or CPU model, an honest query rejected or an attack accepted in the benchmark's
   outcome counts, a table cell that disagrees with the macro printing the same value (`SAME_VALUE`, beyond one unit
-  of the coarser rounding), in the files written and in `paper_sp2027/fallback/` (`CHECK FAILED fallback:`).
+  of the coarser rounding), in the files written and in `paper_sp2027/fallback/` (`CHECK FAILED fallback:`), a
+  statement of the text that the run contradicts (`CHECK FAILED text:`: a zero-shot loss that is not negative, a path
+  count of the attack's documents or the benchmark that differs from the formula's, `macros.FORMULA`, which `tab:sok`
+  prints as the same number).
 * `PARSE`: a log line that starts with `{` and does not parse, or is not a record of a known kind; a table or macro
   family that cannot read a record; an `--expect` listing that does not end with run.sh's summary line
   (`# <tiers>: N jobs, ...`) for the N jobs it lists (a dry run that stopped early, e.g. at a tier's check of
   `HF_HOME`).
 * `--strict`: also any table cell, macro or (with `--expect`) job without results.
 * `--rehearsal`: every tier has at least one record of each kind it writes (`records.REHEARSAL_KINDS`), and no table
-  cell is expected.
+  cell is expected; the `CHECK FAILED text:` lines become warnings (a rehearsal's small cells need not bear out what
+  the text states about the final values).
 
 The exit status is 1 on any of these. `WARNING` lines leave it unchanged: two jobs' values of one quantity more than
 10% apart (`TWO_JOBS`), records that name another mode-C plan than `--policy` (or several), an `int_mm`
@@ -154,12 +171,18 @@ its fallback values.
 On a laptop (no run): `tests/test_paper_numbers.py` writes synthetic records of every kind, as the scripts write
 them, and checks the selection of each table and macro, the checks and the files; the attack tier's stored
 documents (`artifacts/results/`) regenerate the fallback's `tab:inrange` and its text numbers, and every fallback
-cell agrees with its macro. `PVI_SLOW=1` adds the check that the library's setup proof gives the fallback's
-setup-proof values (`test_the_setup_proof_from_the_library_gives_the_fallback`, about ten minutes on a laptop CPU);
-without it that test is skipped:
+cell agrees with its macro. `tests/test_paper_numbers_derived.py` checks, on the same synthetic run, the numbers
+that follow from formulas, stored literature runs and summaries of the records: `tab:paths` and `tab:paths-acc` (the
+stored documents give the fallback; other edit sizes move their columns), the `\Sok...` values against the formulas
+and parameters the paper states, zkLLM's same-GPU factors, the tampered queries and setup proofs, V1's verifier with
+GPU tensors, the timed runs of `tab:options`, and an in-range layer without a successful edit. `PVI_SLOW=1` adds the
+check that the library's setup proof gives the fallback's setup-proof values
+(`test_the_setup_proof_from_the_library_gives_the_fallback`, about ten minutes on a laptop CPU); without it that test
+is skipped:
 
 ```bash
 cd code
-PYTHONPATH="src;." python -m pytest -q tests/test_paper_numbers.py tests/test_comparison_tables.py  # Windows
+PYTHONPATH="src;." python -m pytest -q tests/test_paper_numbers.py tests/test_paper_numbers_derived.py \
+    tests/test_comparison_tables.py                                                             # Windows
 PVI_SLOW=1 PYTHONPATH=src:. ../.venv/bin/python -m pytest -q tests/test_paper_numbers.py      # the slow check too
 ```

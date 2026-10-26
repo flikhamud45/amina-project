@@ -25,11 +25,13 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 ``tab:gen``           ``gen``: greedy responses, both modes
 ``tab:gen-full``      ``gen``: every cell, greedy and sampled
 ``tab:zeroshot``      ``quality``: ``zeroshot.py`` (the certified recipe)
+``tab:paths``         Proposition ``prop:paths`` (``attack/sok.py``) at the ``attack`` tier's in-range edit sizes
+``tab:paths-acc``     the same
 ==================== ==================================================================================
 
 Tables that no record produces are not built: ``tab:quality-attr`` (its scripts are not in the artifact) and the
-analysis and literature tables ``tab:sok``, ``tab:sok-derivation``, ``tab:aligned``, ``tab:paths`` and
-``tab:paths-acc``.
+analysis and literature tables ``tab:sok``, ``tab:sok-derivation`` and ``tab:aligned`` (the derived values of
+``tab:sok`` and ``tab:sok-derivation`` are the macros ``\\Sok...`` of ``attack/sok.py``).
 """
 from __future__ import annotations
 
@@ -606,6 +608,95 @@ def tab_inrange(ctx: Ctx) -> Table:
     return tb
 
 
+INRANGE_LAYERS = (6, 12, 18, 23)
+"""The attacked layers of OPT-1.3B whose in-range edits the text and ``tab:paths`` quote."""
+
+
+def inrange_ks(run: Run) -> dict:
+    """The sizes of OPT-1.3B's in-range edits that the text (``\\InrangeKMedian``, ``\\InrangeDownKMedian``,
+    ``\\InrangeKMax``) and ``tab:paths`` quote: ``median``, the median number of edited neurons over the successful
+    edits of either direction (both ranges, :data:`INRANGE_LAYERS`); ``max``, the largest of them; ``down``, the
+    median of the lowering-only edits (the natural maximum's range).  None where a cell is missing or no edit
+    succeeded."""
+    any_, down = run.file("inrange_llm_opt-1.3b_any.json"), run.file("inrange_llm_opt-1.3b_down.json")
+    cells = [inrange_cell(any_, layer, rng) for layer in INRANGE_LAYERS for rng in ("max", "p999")]
+    ks = [k for x in cells if x for k in x["k_all"]] if all(cells) else []
+    dc = [inrange_cell(down, layer, "max") for layer in INRANGE_LAYERS]
+    dk = [k for x in dc if x for k in x["k_all"]] if all(dc) else []
+    return {"median": statistics.median(ks) if ks else None, "max": max(ks) if ks else None,
+            "down": statistics.median(dk) if dk else None, "source": any_, "source_down": down}
+
+
+PATHS_MODELS = ("opt-1.3b", "qwen3-4b", "llama2-7b", "llama2-13b", "opt-6.7b")
+"""``tab:paths``' rows: the FFN layer's width ``N`` is the model's ``d_ff`` (``pvi.models.decoder.CONFIGS``)."""
+PATHS_ACC_MODELS, PATHS_ACC_S = ("llama2-7b", "opt-6.7b"), (3, 4, 5)
+"""``tab:paths-acc``' rows: the models and the paths ``s = 10^e``."""
+PATHS_K_ILLUSTRATIVE = 16
+"""The one edit size of ``tab:paths`` and ``tab:paths-acc`` that no measurement gives."""
+PATHS_LAM = 40
+"""The soundness target ``2^-40`` of ``tab:paths``."""
+
+
+def paths_columns(run: Run) -> list[tuple[str, float | None, object]]:
+    """The edit sizes ``k`` of ``tab:paths``' and ``tab:paths-acc``' columns, in the order of the paper's header:
+    ``(column, k, source)``: one neuron (the edit measured on OPT-6.7B), the median in-range edit, the median
+    lowering-only edit, :data:`PATHS_K_ILLUSTRATIVE` and the largest in-range edit (:func:`inrange_ks`)."""
+    ks = inrange_ks(run)
+    return [("k=1", 1, "the single-neuron edit"), ("k median", ks["median"], ks["source"]),
+            ("k down", ks["down"], ks["source_down"]),
+            (f"k={PATHS_K_ILLUSTRATIVE}", PATHS_K_ILLUSTRATIVE, "illustrative"), ("k max", ks["max"], ks["source"])]
+
+
+def accept_text(log10p: float) -> str:
+    """An acceptance probability of ``tab:paths-acc`` from its ``log10``: three decimals down to 0.01
+    (``0.913``), then scientific notation with two digits (``$4.2\\cdot10^{-3}$``), and below ``10^-100`` the bound
+    ``$<10^{-E}$`` with ``E`` a multiple of 50 (``$<10^{-200}$``)."""
+    if log10p >= -2:
+        return f"{10 ** log10p:.3f}"
+    if log10p >= -100:
+        return f.sci(10 ** log10p)
+    return f"$<10^{{-{50 * math.floor(-log10p / 50)}}}$"
+
+
+def tab_paths(ctx: Ctx) -> Table:
+    """``tab:paths``: the uniform paths ``s_40(k, N)`` that catch an edit of ``k`` neurons in one FFN layer of width
+    ``N`` with probability ``1 - 2^-40`` (Proposition ``prop:paths``), for the edit sizes of :func:`paths_columns`:
+    the run's in-range edits of OPT-1.3B (the attack tier's ``inrange_llm.py`` documents) and two fixed sizes."""
+    from experiments.attack.sok import paths_needed
+    from pvi.models.decoder import CONFIGS
+    cols = paths_columns(ctx.run)
+    tb = Table("tab_paths", "tab:paths", "Proposition prop:paths, s_40(k, N) = ceil(40 / -log2(1 - k/N)); N = d_ff; "
+               "the columns k = 1, the median in-range edit, the median lowering-only edit, 16, the largest in-range "
+               "edit (attack tier, inrange_llm_opt-1.3b_{any,down}.json): "
+               + ", ".join(f"{name} {'--' if k is None else f'{k:g}'}" for name, k, _ in cols))
+    for m in PATHS_MODELS:
+        n = CONFIGS[m].d_ff
+        tb.rows.append(" & ".join([NAME[m], f.num(n)] + [
+            tb.put(NAME[m], name, None if k is None else paths_needed(PATHS_LAM, k, n), src, f.num)
+            for name, k, src in cols]) + r" \\")
+    return tb
+
+
+def tab_paths_acc(ctx: Ctx) -> Table:
+    """``tab:paths-acc``: the probability ``(1 - k/N)^s`` that ``s`` uniform paths accept an edit of ``k`` neurons in
+    one FFN layer (Proposition ``prop:paths``), for the edit sizes of :func:`paths_columns`."""
+    from experiments.attack.sok import accept_log10
+    from pvi.models.decoder import CONFIGS
+    cols = paths_columns(ctx.run)
+    tb = Table("tab_paths_acc", "tab:paths-acc", "Proposition prop:paths, (1 - k/N)^s; N = d_ff; the columns of "
+               "tab:paths: " + ", ".join(f"{name} {'--' if k is None else f'{k:g}'}" for name, k, _ in cols))
+    for i, m in enumerate(PATHS_ACC_MODELS):
+        if i:
+            tb.rows.append(r"\midrule")
+        n = CONFIGS[m].d_ff
+        for j, e in enumerate(PATHS_ACC_S):
+            row = f"{NAME[m]} s=10^{e}"
+            tb.rows.append(" & ".join([NAME[m] if j == 0 else "", f"$10^{e}$"] + [
+                tb.put(row, name, None if k is None else accept_log10(k, n, 10 ** e), src, accept_text)
+                for name, k, src in cols]) + r" \\")
+    return tb
+
+
 # ================================================================================================ ext_defence.tex
 SETUP_MODELS = (("gpt2", "GPT-2"), ("llama2-7b", "Llama-2-7B"), ("opt-6.7b", "OPT-6.7B"), ("llama2-13b", "Llama-2-13B"))
 
@@ -949,7 +1040,7 @@ def tab_zeroshot(ctx: Ctx) -> Table:
 
 BUILDERS = (tab_eval_llm, tab_eval_v1, tab_options, tab_eval_compare, tab_quality, tab_params, tab_inrange, tab_setup,
             tab_eval_improve, tab_eval_long, tab_eval_real, tab_eval_reexec, tab_eval_compare_v1, tab_v1, tab_gen,
-            tab_gen_full, tab_zeroshot)
+            tab_gen_full, tab_zeroshot, tab_paths, tab_paths_acc)
 """Every table builder, in the paper's order."""
 TABLE_FILES = tuple(b.__name__ for b in BUILDERS)
 """The tables' file names (``<name>.tex``), as ``paper_sp2027/main.tex`` lists them."""

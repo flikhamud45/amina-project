@@ -215,18 +215,18 @@ token for \InrangeOptLChanged{} prompts at every layer, and a path opens them wi
     \midrule
     \rr Path protocol~\cite{anchuri2026verifiable} &
       \rr one output-to-input path &
-      \rr $(1-1/N)^s$: 99.80\% ($N{=}512$, $s{=}1$), 61.3\% ($s{=}250$); $2^{-40}$ needs 14{,}182
-      (ResNet-18) to $\ge$454{,}248 (OPT-6.7B) paths$^a$ &
+      \rr $(1-1/N)^s$: \SokPathOne{}\% ($N{=}512$, $s{=}1$), \SokPathMany{}\% ($s{=}250$); $2^{-40}$ needs \SokPathsWide{}
+      (ResNet-18) to $\ge$\SokPathsOptL{} (OPT-6.7B) paths$^a$ &
       \rr other-model soundness (proved); full soundness for binary classifiers (stated) &
       \rr yes, for binary classifiers$^b$ \tabularnewline
     \rr SLP~\cite{slp} &
       \rr 3 of 161 non-anchor chunks (70B) &
-      \rr 98.14\% per audit; 37 / 160 audits for 50\% / 95\% detection &
+      \rr \SokSlpAudit{}\% per audit; \SokSlpAuditsHalf{} / \SokSlpAuditsMost{} audits for 50\% / 95\% detection &
       \rr covers proven chunks only &
       \rr no \tabularnewline
     \rr CommitLLM, routine audit~\cite{commitllm2026} &
       \rr 1--5\% of responses; one token; 10 of 80 layers &
-      \rr 87.5\% if the token is opened; $\approx$99.4\% per one-token response at 5\% audits &
+      \rr \SokCommitOpened{}\% if the token is opened; $\approx$\SokCommitRateAbout{}\% per one-token response at 5\% audits &
       \rr exact for opened matrices; statistical coverage &
       \rr no \tabularnewline
     \rr Tensor\-Commitments \cite{tensorcommitments} &
@@ -236,7 +236,7 @@ token for \InrangeOptLChanged{} prompts at every layer, and a path opens them wi
       \rr stated goal not achieved$^c$ \tabularnewline
     \rr NanoZK~\cite{nanozk} &
       \rr audit mode: a budget $S$ of layers &
-      \rr full mode: $\le 3\cdot10^{-37}$; uniform 50\% audit: 50\% &
+      \rr full mode: $\le 3\cdot10^{-37}$; uniform 50\% audit: \SokNanoAudit{}\% &
       \rr audit mode is an efficiency tool &
       \rr no \tabularnewline
     \rr SPEX~\cite{spex} &
