@@ -20,9 +20,10 @@ Inputs (nothing here runs a model):
   outcome counts) in ``--bench`` (default ``artifacts/comparison``), :mod:`experiments.paper.bench`, whose decoder
   cells are those of the attention probabilities' scale ``--prob-max`` (default 2047, the cells tagged
   ``pmax2047``);
-* the published systems' values (``artifacts/comparison/tables/reported_curated.csv``), zkLLM's stored runs on the
-  run's GPU model (``artifacts/results/zkllm_l40s/``), the formulas of the spot-checking schemes and of the path
-  protocol (``attack/sok.py``: ``tab:sok``, ``tab:paths``) and, for ``tab:params``, ``tab:setup`` and the break-even,
+* the published systems' values (``artifacts/comparison/tables/reported_curated.csv``), zkLLM's prover on the
+  run's GPU model (the run's ``zkllm`` tier, ``--logs``/``zkllm/summary.csv``, when it holds both models on the
+  run's GPU, else the stored runs, ``artifacts/results/zkllm_l40s/``), the formulas of the spot-checking schemes
+  and of the path protocol (``attack/sok.py``: ``tab:sok``, ``tab:paths``) and, for ``tab:params``, ``tab:setup`` and the break-even,
   the library's parameters and byte model (several minutes on a laptop CPU; ``--no-byte-model`` skips them).
 
 Outputs (``--out``, default ``paper_sp2027/generated/``; ``--check`` writes nothing):
@@ -110,7 +111,8 @@ def expected_jobs(listing: Path) -> dict:
 
 def job_coverage(jobs: dict, logs: Path, recs: list) -> list[str]:
     """The jobs of ``jobs`` whose log is missing or holds nothing: a benchmark job (``b-``, ``bt-``) without its
-    ``done in`` line, an attack or tv job without the files it writes, any other job without a record."""
+    ``done in`` line, an attack or tv job without the files it writes, a zkllm job without a record or (zkLLM's build)
+    ``ZKLLM_BUILD_OK``, any other job without a record."""
     have = defaultdict(int)
     for r in recs:
         have[r.cell] += 1
@@ -124,6 +126,11 @@ def job_coverage(jobs: dict, logs: Path, recs: list) -> list[str]:
                 missing.append(name)
         elif outs:
             if not all((logs / "attack" / o).exists() or (logs / o).exists() for o in outs):
+                missing.append(name)
+        elif tier == "zkllm" and not have.get(cell):
+            # zkLLM's build job writes no record: its log's last line
+            files = glob.glob(str(logs / f"{name}-*.out"))
+            if not any("ZKLLM_BUILD_OK" in Path(p).read_text(encoding="utf-8", errors="replace") for p in files):
                 missing.append(name)
         elif not have.get(cell):
             missing.append(name)
@@ -455,7 +462,9 @@ def build(args) -> int:
     bench.policy = policy
     machine_failed, machine_summary = machine_check(run, bench, logs)
     failed += machine_failed
-    ctx = T.Ctx(run, bench, literature(), policy, platform_text(run, bench), not args.no_byte_model)
+    # the published values, zkLLM's stored runs and the run's own zkLLM runs (the zkllm tier's logs/<name>/zkllm/)
+    ctx = T.Ctx(run, bench, literature(run_zkllm=logs / "zkllm"), policy, platform_text(run, bench),
+                not args.no_byte_model)
     tables = T.build_all(ctx, problems)
     macros, crossovers = M.build(ctx, failed)
     # a table cell and the macro printing the same value agree, in this build and in the paper's fallback

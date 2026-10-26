@@ -1,0 +1,10 @@
+# zkLLM's own Python environment (run_zkllm.sh build creates it as <zkllm home>/env, separate from the run's .venv).
+# zkLLM's scripts need transformers 4.40 and a CUDA build of torch; torch 2.3.1's wheels are built for CUDA 12.1.
+torch==2.3.1
+transformers==4.40.2
+tokenizers==0.19.1
+huggingface_hub==0.23.4
+safetensors==0.4.3
+numpy==1.26.4
+pyarrow==16.1.0
+sentencepiece==0.2.0

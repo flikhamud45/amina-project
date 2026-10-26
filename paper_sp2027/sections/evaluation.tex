@@ -20,10 +20,11 @@ GPU claim decoder and the fused exact attention, and C++/OpenMP kernels for CPU
 verifiers. We use $\lambda = 128$ unless stated otherwise; v0 and V1 are the protocols of
 Sections~\ref{sec:defence} and~\ref{sec:v1}.
 
-\para{Platform.} Every measurement here but zkLLM's comes from one run of our artifact's run
-package on one platform: one \PlatformGpu{} runs the prover, the GPU verifier and the GPU
-re-execution, and 8 threads of an \PlatformCpu{} run the CPU verifier and every CPU re-execution. All cells use Fiat--Shamir unless a table says
-otherwise; mode~$\sC$ uses codewords of at least $2^{\PlanLogPoints{}}$ points. Times are medians
+\para{Platform.} Our measurements come from one run of our artifact's run package: one
+\PlatformGpu{} runs the prover, the GPU verifier and re-execution, and 8 threads of an
+\PlatformCpu{} the CPU verifier and re-execution. Other systems' costs are quoted from their
+papers; zkLLM's public demo also ran on the \PlatformGpu{} \ZkllmSameGpuRun{}. All cells use
+Fiat--Shamir unless a table says otherwise; mode~$\sC$ uses codewords of at least $2^{\PlanLogPoints{}}$ points. Times are medians
 after a warm-up (\OptionsRuns{} runs in Table~\ref{tab:options}, min--max spread $\le$\OptionsSpread{}\%).
 
 \para{Models.} The image models are the six of Section~\ref{sec:break}. The language models are
@@ -220,8 +221,8 @@ verifier suits an auditor or gateway that checks a provider without holding the 
 \end{table*}
 
 Table~\ref{tab:eval-compare} sets our costs against published
-systems~\cite{zkcnn,zkml,zkgpt,deepprove,zktorch,maverick,zkllm} on matched models
-(costs checked against the sources). Two caveats apply to every row. The hardware differs: our
+systems~\cite{zkcnn,zkml,zkgpt,deepprove,zktorch,maverick,zkllm} on matched models.
+The hardware differs: our
 prover runs on an \PlatformGpu{}, while all the zkSNARKs except zkLLM ran on CPUs. The guarantees differ: the
 zkSNARKs also prove the operations without weights, and many hide the weights; our verifier
 recomputes those operations and our protocol is not zero-knowledge.

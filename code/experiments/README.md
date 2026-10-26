@@ -14,7 +14,7 @@ them and where each part of the paper lives.
 | [`reexec/`](reexec/README.md) | the re-execution baselines (llama.cpp's included) | `tab:options`' re-execution and llama.cpp rows, `tab:eval-reexec`, the host-to-device bandwidth |
 | [`deployment/`](deployment/README.md) | the deployment case | the prover against unverified serving, `fig:breakeven` |
 | [`quality/`](quality/README.md) | the integer models' quality | `tab:quality`, `tab:zeroshot`, the recipe studies, the reproducible build |
-| [`comparison/`](comparison/README.md) | the benchmark's tables and the published systems | the aggregated tables, the outcome counts, the literature values of `tab:eval-compare` |
+| [`comparison/`](comparison/README.md) | the benchmark's tables and the published systems | the aggregated tables, the outcome counts, the literature values of `tab:eval-compare`; zkLLM's public demo on the run's GPU ([`comparison/zkllm/`](comparison/zkllm/README.md), `\ZkllmSameGpu...`) |
 | [`paper/`](paper/README.md) | the paper's numbers | the run's records -> the table bodies and text macros of `paper_sp2027/` |
 | [`package/`](package/README.md) | the run | `run.sh`: every job of the final run on one GPU node |
 | `common/` | | what the scripts share: the protocol and runtime flags, records, models, checkpoints, tampers, the client in a process of its own |

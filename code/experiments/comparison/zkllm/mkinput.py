@@ -1,5 +1,8 @@
 """Layer-0 input for the zkLLM demo (ours): the embeddings of the first SEQ tokens of
-WikiText-2 test, in zkLLM's fixed-point format (int32, scale 2^16)."""
+WikiText-2 test, in zkLLM's fixed-point format (int32, scale 2^16).
+
+Usage, from zkLLM's checkout with the checkout on PYTHONPATH (zkLLM's fileio_utils, and its ./model-storage):
+    mkinput.py <7|13> <seq> <wikitext-2-raw-v1 test parquet> <output .bin>"""
 import sys
 import pyarrow.parquet as pq
 import torch

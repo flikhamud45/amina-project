@@ -30,6 +30,9 @@
 #     attack   the attack on the path test: MNIST, the image models' path test, OPT-6.7B, the in-range edits, the
 #              sampler game
 #     long     [optional] prompts of 2,048 to 16,384 tokens, verifier against every baseline
+#     zkllm    [optional] zkLLM's public demo (commit 993311e, unchanged) on this GPU: Llama-2-7B and Llama-2-13B at
+#              2,048 tokens, 3 repetitions of layers 0 and 1 (experiments/comparison/zkllm/run_zkllm.sh); only with
+#              --llama-licence; its records go to logs/<name>/zkllm/
 #     gate     [not in 'all'] the full-size checks, run once on the final platform before the run (after the smoke;
 #              about an hour; no --rehearsal): V1's GKR instances of 2^27 leaves on the GPU prover with both CPU
 #              verifiers and the GPU verifier (two Llama-2-7B blocks at 2,048 tokens), OPT-1.3B at 2,048 tokens
@@ -70,7 +73,7 @@
 #     --exclude-nodes LIST  nodes no job may run on (sbatch --exclude), e.g. nodes of the partition whose GPU or CPU
 #                       is of another model
 #     --from-one-job    set by --one-job on the command its allocation runs: the summary names the --one-job command
-#     --optional        'all' also runs the optional tier (long)
+#     --optional        'all' also runs the optional tiers (long, zkllm)
 #     --no-chain        do not chain the jobs (default: each job starts after the previous one ends, so no two timed
 #                       jobs share the node)
 #     --no-exclusive    no --exclusive (default: every job has the node to itself; the smoke and the rehearsal,
@@ -92,6 +95,15 @@
 #     --llama-licence   the Llama-2 cells (real, quality): only with your own Llama-2 licence and Hugging Face token
 #                       (HF_TOKEN); the rehearsal's one Llama-2 job reads the gated repository from a compute node
 #     --bigmem          the long tier also measures the full Llama-2-7B at 8,192 tokens (a node with >= 256 GB)
+#     --zkllm-home DIR  the zkllm tier's zkLLM: DIR/zkllm (a checkout at commit 993311e, built for the GPU, with the
+#                       timing shims, or none) and DIR/env (its Python environment, or none); what is missing the
+#                       tier's first job clones, creates and builds (default logs/<name>/zkllm/home)
+#     --zkllm-scratch DIR   where zkLLM's fixed-point weights and commitments go (27 GB for Llama-2-7B, 52 GB for
+#                       Llama-2-13B; deleted at each job's end; default: the first of the node's $TMPDIR, /tmp and the
+#                       zkLLM home with the space free)
+#     --zkllm-python PY the interpreter (3.8 to 3.12) from which the zkllm tier creates zkLLM's environment, which is
+#                       separate from the run's (default: the run's interpreter, --python)
+#     --cuda-home DIR   the CUDA toolkit (DIR/bin/nvcc) that builds zkLLM (default: nvcc on the PATH, else CUDA_HOME)
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1
 # unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
 # llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
@@ -113,6 +125,7 @@ usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}";
 PLATFORM="" DRY="" REH="" LOCAL="" OPTIONAL="" CHAIN=1 EXCL="--exclusive" PIN=1 NONATIVE="" MEMMAX=256 QH=5 Q=3
 POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM="" ONEJOB="" MAXH=24 TIERS=()
 REQGPU="L40S" REQCPU="EPYC 9334" GRES="${SBATCH_GRES:-}" EXCLUDE="" FROMONE=""
+ZKHOME="" ZKSCRATCH="" ZKPY="" CUDAHOME=""
 ARGV=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -141,6 +154,10 @@ while [ $# -gt 0 ]; do
     --gres) GRES=$2; shift ;;
     --exclude-nodes) EXCLUDE=$2; shift ;;
     --from-one-job) FROMONE=1 ;;
+    --zkllm-home) ZKHOME=$2; shift ;;
+    --zkllm-scratch) ZKSCRATCH=$2; shift ;;
+    --zkllm-python) ZKPY=$2; shift ;;
+    --cuda-home) CUDAHOME=$2; shift ;;
     -h|--help) usage 0 ;;
     -*) echo "unknown option $1" >&2; usage ;;
     *) TIERS+=("$1") ;;
@@ -157,6 +174,11 @@ done
 ROOT="$PWD"
 LOGS="logs/$PLATFORM"
 PY="${PY:-$ROOT/.venv/bin/python}"
+# the zkllm tier's places, as absolute paths (a relative one is taken from the repository root)
+ZKHOME="${ZKHOME:-$LOGS/zkllm/home}" ZKPY="${ZKPY:-$PY}"
+case "$ZKHOME" in /*) ;; *) ZKHOME="$ROOT/$ZKHOME" ;; esac
+case "$ZKSCRATCH" in ""|/*) ;; *) ZKSCRATCH="$ROOT/$ZKSCRATCH" ;; esac
+case "$CUDAHOME" in ""|/*) ;; *) CUDAHOME="$ROOT/$CUDAHOME" ;; esac
 if [ -n "$REH" ]; then QH=2; Q=2; fi
 case "$CACHE" in none) CACHE="" ;; "") CACHE="$ROOT/$LOGS/setup_cache" ;; esac
 ME="${USER:-$(id -un)}"
@@ -260,7 +282,7 @@ nl() {    # a model's decoder blocks
 
 est() {   # a tier's expected hours on an L40S node (measured times of the same cells)
   if [ -n "$REH" ]; then
-    case "$1" in improve) echo "<1" ;; quality) echo "<0.5" ;; *) echo "<0.3" ;; esac
+    case "$1" in improve) echo "<1" ;; quality) echo "<0.5" ;; zkllm) echo "<1.5" ;; *) echo "<0.3" ;; esac
     return
   fi
   case "$1" in
@@ -268,6 +290,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
     quality) if [ -n "$LLAMA" ]; then echo 28-36; else echo 16-24; fi ;;
     tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
+    zkllm) echo 3-5 ;;
   esac
 }
 
@@ -808,6 +831,32 @@ tier_long() {
   return 0
 }
 
+tier_zkllm() {
+  # [optional] zkLLM's public demo (commit 993311e of its repository, unchanged) on this platform's GPU, as the stored
+  # runs of artifacts/results/zkllm_l40s/ ran it: its first job clones and builds zkLLM for the GPU in an environment of
+  # its own (unless --zkllm-home holds it) and downloads Llama-2-7B, Llama-2-13B and WikiText-2's test split; then per
+  # model zkLLM's setup and commitment, the layer-0 input (2,048 tokens) and 3 repetitions of the proof scripts of
+  # layers 0 and 1, each proof binary timed (logs/<name>/zkllm/<model>-T2048/, summary.csv; one record per model)
+  if [ -z "$LLAMA" ]; then
+    echo "tier zkllm: skipped: zkLLM's demo proves Llama-2-7B and Llama-2-13B, which need your own Llama-2 \
+licence and Hugging Face token (--llama-licence)" >&2
+    return 0
+  fi
+  local zk="bash $ROOT/code/experiments/comparison/zkllm/run_zkllm.sh" b p cuda=""
+  [ -z "$CUDAHOME" ] || cuda=" --cuda-home $(printf %q "$CUDAHOME")"
+  b="--home $(printf %q "$ZKHOME") --python $(printf %q "$ZKPY")$cuda"
+  p="--home $(printf %q "$ZKHOME") --out $ROOT/$LOGS/zkllm$cuda"
+  [ -z "$ZKSCRATCH" ] || p="$p --scratch $(printf %q "$ZKSCRATCH")"
+  if [ -n "$REH" ]; then
+    # the build (Llama-2-7B only) and one repetition of layer 0 at 2,048 tokens: every step of the full jobs
+    sub zk-rehearsal 2 64 "$zk build $b --models 7 && $zk prove $p --size 7 --reps 1 --layers 0"
+    return 0
+  fi
+  sub zk-build 2 32 "$zk build $b"
+  sub zk-llama2-7b 2 64 "$zk prove $p --size 7 --seq 2048 --reps 3 --layers 0,1"
+  sub zk-llama2-13b 4 128 "$zk prove $p --size 13 --seq 2048 --reps 3 --layers 0,1"
+}
+
 tier_gate() {
   # [not in 'all'] the full-size paths that no rehearsal cell reaches, each on its least costly full-size cell (label
   # gate; the records fill no table).  V1's GKR instances hold up to 2^lmax leaves (lmax 27, pvi.v1.cut.LMAX): every
@@ -860,15 +909,21 @@ need_images() {   # the bench tier's image cells load trained models and dataset
   fi
 }
 
+near() {   # the nearest existing folder of a path (the path itself, or the closest ancestor that exists)
+  local d=$1
+  while [ ! -e "$d" ] && [ "$d" != "$(dirname "$d")" ]; do d="$(dirname "$d")"; done
+  echo "$d"
+}
+
 preflight() {   # what the jobs need from this host and the scheduler, checked before anything is submitted
   local bad=() t hf="" spm="" big gb=60 v d
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do
-    case "$t" in real|quality|tv|attack|gate) hf=1 ;; esac
+    case "$t" in real|quality|tv|attack|gate) hf=1 ;; zkllm) [ -z "$LLAMA" ] || hf=1 ;; esac
     [ "$t" != quality ] || [ -n "$LLAMA" ] || spm=1      # OpenLLaMA-7B's jobs run only without --llama-licence
   done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
-GB free> (the real, quality, tv, attack and gate tiers download checkpoints and datasets)")
+GB free> (the real, quality, tv, attack, gate and zkllm tiers download checkpoints and datasets)")
   # a cache variable of Hugging Face's libraries takes precedence over HF_HOME: it must be writable (the nearest
   # existing folder of its path)
   for v in HF_HUB_CACHE HUGGINGFACE_HUB_CACHE TRANSFORMERS_CACHE HF_DATASETS_CACHE; do
@@ -892,6 +947,39 @@ tier builds llama.cpp with it (3.14 or later); put cmake on the PATH or export C
 cmake==3.31.6 into a separate environment, e.g. python3 -m venv ~/cmake && ~/cmake/bin/pip install cmake==3.31.6, \
 then export CMAKE=~/cmake/bin/cmake)")
     command -v git > /dev/null 2>&1 || bad+=("git not found here: the cpuv tier clones llama.cpp with it")
+  done
+  # the zkllm tier (with --llama-licence) builds zkLLM unless --zkllm-home holds it built with its environment, and
+  # downloads the gated Llama-2 checkpoints
+  for t in "${TIERS[@]}"; do
+    [ "$t" = zkllm ] && [ -n "$LLAMA" ] || continue
+    if [ ! -f "$ZKHOME/zkllm/self-attn.real" ]; then
+      [ -d "$ZKHOME/zkllm" ] || command -v git > /dev/null 2>&1 || bad+=("git not found here: the zkllm tier \
+clones zkLLM with it (or put a checkout at commit 993311e into $ZKHOME/zkllm)")
+      for v in make gcc g++; do
+        command -v "$v" > /dev/null 2>&1 || bad+=("$v not found here: the zkllm tier builds zkLLM with it")
+      done
+      v="${CUDAHOME:+$CUDAHOME/bin/nvcc}"
+      [ -n "$v" ] || v="$(command -v nvcc 2> /dev/null || true)"
+      [ -n "$v" ] || [ -z "${CUDA_HOME:-}" ] || v="$CUDA_HOME/bin/nvcc"
+      [ -x "$ZKHOME/env/bin/nvcc" ] || { [ -n "$v" ] && [ -x "$v" ]; } || bad+=("no CUDA compiler (nvcc) here: \
+the zkllm tier builds zkLLM with it; load CUDA 12.1 (e.g. module load cuda/12.1) or pass --cuda-home <CUDA folder>")
+    fi
+    if [ ! -x "$ZKHOME/env/bin/python" ]; then
+      "$ZKPY" -c 'import sys; sys.exit(not (3, 8) <= sys.version_info[:2] <= (3, 12))' > /dev/null 2>&1 \
+        || bad+=("$ZKPY is not a Python 3.8 to 3.12 interpreter: the zkllm tier creates zkLLM's environment \
+(torch 2.3.1) from it (--zkllm-python <path>)")
+      d="$(near "$ZKHOME")"; v="$(df -Pk "$d" 2> /dev/null | awk 'NR == 2 { print int($4 / 1048576) }')"
+      [ "${v:-0}" -ge 10 ] || bad+=("$d has ${v:-?} GB free: the zkllm tier's zkLLM checkout and environment \
+need 10 GB (--zkllm-home <folder>)")
+    fi
+    if [ -n "$ZKSCRATCH" ]; then
+      d="$(near "$ZKSCRATCH")"; v="$(df -Pk "$d" 2> /dev/null | awk 'NR == 2 { print int($4 / 1048576) }')"
+      [ "${v:-0}" -ge 58 ] || bad+=("--zkllm-scratch $ZKSCRATCH has ${v:-?} GB free; zkLLM's weights and \
+commitments of Llama-2-13B need 58 GB")
+    fi
+    [ -n "${HF_TOKEN:-}" ] || [ -s "${HF_HOME:-/nonexistent}/token" ] || bad+=("the zkllm tier downloads the \
+gated Llama-2 checkpoints with your Hugging Face token: export HF_TOKEN=<token> (or log in so that \$HF_HOME/token \
+exists)")
   done
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")
   # OpenLLaMA-7B ships only its SentencePiece model: its tokenizer (the quality tier's q-openllama7 jobs and their
@@ -1005,9 +1093,9 @@ run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
 }
 
 MUST="smoke cpuv v1 serve bench gpuv gen batch real setup improve quality tv attack"
-if [ "${TIERS[0]}" = all ]; then TIERS=($MUST ${OPTIONAL:+long}); fi
+if [ "${TIERS[0]}" = all ]; then TIERS=($MUST ${OPTIONAL:+long zkllm}); fi
 for tier in "${TIERS[@]}"; do
-  case " $MUST long gate " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
+  case " $MUST long zkllm gate " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
   # (the gate tier is never in 'all', and its cells are full size only)
   [ "$tier" != gate ] || [ -z "$REH" ] || { echo "the gate tier checks the full sizes: run it without --rehearsal" \
 >&2; exit 2; }
