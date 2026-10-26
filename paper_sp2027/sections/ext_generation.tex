@@ -162,13 +162,13 @@ $\alpha=0.6$ was chosen on the test split: over $\alpha\in\{0.3,\dots,0.7\}$ its
 \QualityAlphaGapOptS{} of the best on OPT-125M and within \QualityAlphaGapOptM{} on OPT-1.3B. On the validation split, which
 no choice used, it is within \QualityAlphaValGapOptS{} and \QualityAlphaValGapOptM{} of the best of $\alpha\in\{0.5,0.6,0.7\}$ on
 OPT-125M and OPT-1.3B, and costs OPT-6.7B \QualityAlphaCostOptL{} against $\alpha=0.5$. The Llama recipe's $\alpha$
-and SwiGLU balance were likewise chosen per model on the test split, except Llama-2-7B's ($\alpha=0.55$, balance
-0.2) and Llama-2-13B's ($\alpha=0.6$, balance 0.2), fixed in advance. On Llama-2-7B the best of
-$\alpha\in\{0.45,0.55,0.65\}$ and balance $\in\{0.1,0.2,0.3\}$ is \LlamaSevenTestBest{} on the test split and
-\LlamaSevenValBest{} on the validation split, ours within \LlamaSevenTestGap{} and \LlamaSevenValGap{} of their ratios;
+and SwiGLU balance were likewise chosen per model on the test split, except Llama-2's, fixed in advance: 7B takes
+($\alpha=0.55$, balance 0.2) from a licence-free model of its shapes, 13B $\alpha=0.6$, balance 0.2. On Llama-2-7B the best of
+$\alpha\in\{0.45,0.55,0.65\}$ and balance $\in\{0.1,0.2,0.3\}$ is \LlamaSevenTestBest{} (test) and
+\LlamaSevenValBest{} (validation), ours within \LlamaSevenTestGap{} and \LlamaSevenValGap{} of them;
 on Llama-2-13B the best of $\alpha\in\{0.5,0.6,0.7\}$ is \LlamaThirteenTestBest{} and \LlamaThirteenValBest{}, ours
 within \LlamaThirteenTestGap{} and \LlamaThirteenValGap{}.
-Cross-layer equalisation did not help on top of smoothing (\CleWith{} against \CleWithout{}
+Cross-layer equalisation did not help after smoothing (\CleWith{} against \CleWithout{}
 at 128 tokens).
 
 \para{Zero-shot accuracy.} Table~\ref{tab:zeroshot} scores the certified models on six tasks of the

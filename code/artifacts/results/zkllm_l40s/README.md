@@ -48,11 +48,12 @@ picked from `nvidia-smi.csv.gz`, which also records the node's other GPUs (they 
 
 ## Re-run from scratch (GPU, hours)
 
-The run package's optional `zkllm` tier (`run.sh --llama-licence zkllm`) runs the same demo in the same way, from
-the checkout to the summary (`experiments/comparison/zkllm/README.md`). The stored runs' own job is kept: it needs
-zkLLM's checkout at commit `993311e`, built for the GPU (the stored runs: sm_89, CUDA 12.1, gcc 11), with its own
-conda environment (its scripts need `transformers` 4.40), and the Llama-2 checkpoints (gated on Hugging Face) in
-`zkllm/model-storage`; the job runs offline.
+The run package's optional `zkllm` tier (`bash code/experiments/package/run.sh --platform final --llama-licence
+--one-job zkllm`) runs the same demo in the same way, from the checkout to the summary
+(`experiments/comparison/zkllm/README.md`). The stored runs' own job is kept: it needs zkLLM's checkout at commit
+`993311e`, built for the GPU (the stored runs: sm_89, CUDA 12.1, gcc 11), with its own conda environment (its scripts
+need `transformers` 4.40), and the Llama-2 checkpoints (gated on Hugging Face) in `zkllm/model-storage`; the job runs
+offline.
 
 From the folder that holds `code/`:
 

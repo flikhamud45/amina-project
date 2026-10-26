@@ -152,8 +152,10 @@ def machine_check(run: R.Run, bench: Bench, logs: Path | None = None) -> tuple[l
     :func:`experiments.paper.records.machines`) and the benchmark tables' provers and client CPUs name one GPU model
     and one CPU model; else a ``CHECK FAILED`` line per field that names each model with its jobs (all jobs but those
     of the most frequent model, which are counted).  Returns ``(failures, summary)``: the summary lines name the
-    nodes and the drivers with their job counts (several nodes or drivers of one model are allowed)."""
+    nodes and the drivers with their job counts (several nodes or drivers of one model are allowed) and the logs of
+    jobs that stopped at the node check (on a node of another model, before any work), which are left out."""
     jobs = R.machines(run, logs)
+    stopped = R.stopped_at_node_check(logs) if logs is not None and logs.is_dir() else []
     provers, clients = bench.hardware()
     tables = {"gpu": set(provers), "cpu": {re.sub(r" x\d+ threads$", "", c) for c in clients}, "driver": set(),
               "host": set()}
@@ -172,6 +174,8 @@ def machine_check(run: R.Run, bench: Bench, logs: Path | None = None) -> tuple[l
         if values:
             summary.append(f"{what}: " + ", ".join(f"{v} ({len(js)} jobs)" for v, js in values.items())
                            + (" (allowed)" if len(values) > 1 else ""))
+    if stopped:
+        summary.append(f"left out, stopped at the node check (wrong node, no work): {', '.join(stopped)}")
     return bad, (["machines: " + "; ".join(summary)] if summary else [])
 
 

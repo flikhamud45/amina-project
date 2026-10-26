@@ -93,10 +93,10 @@ Hardware and time (2,048 tokens, every test window; the integer forward on an RT
 CPU of a Xeon node with 250 GB): a 7B cell (OpenLLaMA-7B) takes about 47 min, mostly the calibration build on the
 CPU, and its fp32 reference about 4 h on the CPU (``--ref-device cpu``; ``--ref-cache`` keeps it); Qwen3-4B's fp32
 reference does not fit the 2080 Ti either (about 2.7 h on the CPU) and its build needs about 128 GB of host memory;
-TinyLlama, Qwen3-0.6B and Qwen3-1.7B need 64 GB.  The run package's Llama-2 grids run on an L40S (48 GB) with the
-reference on the GPU, one job per model and split: Llama-2-7B's nine cells against fp32 (192 GB of host memory,
-10-12 h), Llama-2-13B's three against an fp16 copy (256 GB, 12 h); so do OpenLLaMA-7B's nine validation cells
-without the Llama-2 licence.
+TinyLlama, Qwen3-0.6B and Qwen3-1.7B need 64 GB.  The run package's Llama-2 grids (its qllama tier) run on an L40S
+(48 GB) with the reference on the GPU, one job per model, split and alpha: Llama-2-7B's three balances of one alpha
+against fp32 (192 GB of host memory, about 4 h; nine cells per split in 10-12 h), Llama-2-13B's one cell against an
+fp16 copy (256 GB, about 4 h); OpenLLaMA-7B's nine validation cells, without the Llama-2 licence, run as one job.
 """
 from __future__ import annotations
 

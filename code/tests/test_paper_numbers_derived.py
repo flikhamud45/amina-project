@@ -270,15 +270,31 @@ def _zkllm_run(folder: Path, gpu: str, models=(("llama2-7b", 32, 28.125), ("llam
     return folder
 
 
+def _zkllm_record(model: str, ok: bool, job: str = "60") -> R.Rec:
+    """The record a zkllm tier's prove job writes (``summarise.py --record``): ``ok`` when every proof binary exited 0
+    and every proved layer printed each verifier message."""
+    d = {"kind": "zkllm", "model": model, "seq": 2048, "layers": 32 if model == "llama2-7b" else 40, "reps": 3,
+         "layer_ids": [0, 1], "layers_expected": 6, "layers_proved": 6 if ok else 5, "binary_failures": 0 if ok else 1,
+         "ok": ok, "env": {"gpu": "NVIDIA L40S", "cpu": "AMD EPYC 9334 32-Core Processor"}}
+    return R.Rec("zkllm", f"zk-{model}", job, f"sp-zk-{model}-{job}.out", 1, "zkllm", d)
+
+
 def test_zkllm_on_the_same_gpu_from_the_run_itself(tmp_path):
     """The run's own zkllm tier (logs/<name>/zkllm/summary.csv) gives the same-GPU values when it holds both models on
-    the run's GPU ("in the same run"); on another GPU, or with one model only, the stored runs do ("in separate
-    runs")."""
-    cases = (("NVIDIA L40S", None, ("900", "2{,}700", "90", "135", "90--135", "in the same run")),
-             ("NVIDIA A100-SXM4-80GB", None, ("844", "2{,}628", "84", "131", "84--131", "in separate runs")),
-             ("NVIDIA L40S", (("llama2-7b", 32, 28.125),), ("844", "2{,}628", "84", "131", "84--131",
-                                                             "in separate runs")))
-    for i, (zk_gpu, models, want) in enumerate(cases):
+    the run's GPU, each with an ok record of its prove job ("in the same run"); on another GPU, with one model only,
+    or with a prove job whose record is not ok (a proof binary failed: its times are not zkLLM's) or missing, the
+    stored runs do ("in separate runs")."""
+    stored = ("844", "2{,}628", "84", "131", "84--131", "in separate runs")
+    both = (("llama2-7b", True, "60"), ("llama2-13b", True, "60"))
+    cases = (("NVIDIA L40S", None, both, ("900", "2{,}700", "90", "135", "90--135", "in the same run")),
+             ("NVIDIA A100-SXM4-80GB", None, both, stored),
+             ("NVIDIA L40S", (("llama2-7b", 32, 28.125),), both, stored),
+             ("NVIDIA L40S", None, (("llama2-7b", True, "60"), ("llama2-13b", False, "60")), stored),
+             ("NVIDIA L40S", None, (("llama2-7b", True, "60"),), stored),
+             # the tier run again: the later prove job's ok record replaces the failed one
+             ("NVIDIA L40S", None, (("llama2-7b", True, "60"), ("llama2-13b", False, "60"), ("llama2-13b", True, "61")),
+              ("900", "2{,}700", "90", "135", "90--135", "in the same run")))
+    for i, (zk_gpu, models, oks, want) in enumerate(cases):
         folder = _zkllm_run(tmp_path / f"logs{i}" / "zkllm", zk_gpu, *(m for m in (models,) if m))
         lit = B.literature(run_zkllm=folder)
         assert lit[(B.ZKLLM_RUN, "Llama-2-7B", "2048")]["prover_hw"] == zk_gpu
@@ -286,13 +302,14 @@ def test_zkllm_on_the_same_gpu_from_the_run_itself(tmp_path):
         bench = B.Bench(_bench_int(tmp_path / f"bench{i}", "NVIDIA L40S"))
         rec = R.Rec("cpuv", "c-x", "1", "x", 1, "perf", dict(perf("llama2-7b", 64, "Kpre", 1.0, 1.0),
                                                               env={"gpu": "NVIDIA L40S", "cpu": "AMD EPYC 9334"}))
-        ctx = T.Ctx(R.Run([rec]), bench, lit, "cnn18c", "x", byte_model=False)
+        zk = [_zkllm_record(m, ok, job) for m, ok, job in oks]
+        ctx = T.Ctx(R.Run([rec, *zk]), bench, lit, "cnn18c", "x", byte_model=False)
         c = M.Collector()
         M.zkllm_same_gpu(c, ctx)
         got = tuple(c.m[k].value for k in ("ZkllmSameGpuProverLlama", "ZkllmSameGpuProverLlamaL",
                                            "ZkllmSameGpuFactorLlama", "ZkllmSameGpuFactorLlamaL",
                                            "ZkllmSameGpuFactorRange", "ZkllmSameGpuRun"))
-        assert got == want, (zk_gpu, got)
+        assert got == want, (zk_gpu, oks, got)
     assert B.literature(run_zkllm=tmp_path / "no-run").keys() == B.literature().keys()
     assert FALLBACK["ZkllmSameGpuRun"] == "in separate runs"
 

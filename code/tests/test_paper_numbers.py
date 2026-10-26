@@ -783,8 +783,13 @@ def test_the_llama_cells_are_the_main_recipes_and_the_grid_the_texts():
         assert cell == f"main-a{r['smooth']:g}-glus{r['glu_smooth']:g}", model
     body = (PAPER / "sections" / "quality.tex").read_text(encoding="utf-8")
     ext = (PAPER / "sections" / "ext_generation.tex").read_text(encoding="utf-8")
-    assert r"(test) and \LlamaSevenValGap{} (validation) of the best" in body
-    assert r"ratios among $\alpha$ and balance $\pm0.1$" in body
+    assert r"(test) and \LlamaSevenValGap{} (validation) of the best" in body.replace("\n", " ")
+    assert r"of the best among $\alpha$ and balance $\pm0.1$" in body.replace("\n", " ")
+    # Llama-2-7B's setting is OpenLLaMA-7B's, chosen on the test split of that model of the same shapes: both texts
+    # say where it comes from (without naming the stand-in)
+    assert "fixed before the run (7B's from a same-shape model)" in body.replace("\n", " ")
+    assert "7B takes ($\\alpha=0.55$, balance 0.2) from a licence-free model of its shapes" in ext.replace("\n", " ")
+    assert hf_llama.MAIN_SETTINGS["Llama-2-7b-hf"] == hf_llama.MAIN_SETTINGS["open_llama_7b_v2"]
     assert [m for m, _, _, _ in M.LLAMA_GRIDS] == ["meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf"]
     for model, name, alphas, balances in M.LLAMA_GRIDS:
         r = hf_llama.main_recipe(model)
@@ -796,7 +801,8 @@ def test_the_llama_cells_are_the_main_recipes_and_the_grid_the_texts():
         if len(balances) > 1:
             grid += rf" and balance $\in\{{{','.join(f'{g:g}' for g in balances)}\}}$"
         assert grid in ext, model
-        assert rf"($\alpha={centre[0]:g}$, balance" in ext.replace("\n", " ") and f"\\{name}ValGap{{}}" in ext
+        assert rf"$\alpha={centre[0]:g}$, balance {centre[1]:g}" in ext.replace("\n", " "), model
+        assert f"\\{name}ValGap{{}}" in ext, model
     for f in sorted((PAPER / "sections").glob("*.tex")):
         assert "OpenLLaMA" not in f.read_text(encoding="utf-8"), f.name
 
@@ -1170,6 +1176,17 @@ def test_jobs_of_another_gpu_or_cpu_model_fail_and_nodes_and_drivers_are_listed(
     machines = next(line for line in out.splitlines() if line.startswith("machines: "))
     assert "n-805 (1 jobs)" in machines and "n-801 (1 jobs)" in machines and "(allowed)" in machines
     assert "drivers: 535.183.01 (1 jobs), 595.99.02 (1 jobs) (allowed)" in machines
+    # a job that stopped at its node check on a node of another model (exit status 86) did no work: its log is left
+    # out of the check and named in the machines line
+    wrong = "wrong node: GPU NVIDIA RTX A6000 / CPU Intel Xeon, expected GPU 'L40S' / CPU 'EPYC 9334'\n"
+    _write(logs, "sp-g-h2d-90.out", [], extra=_node("n-900", gpu="NVIDIA RTX A6000", cpu="Intel Xeon") + wrong)
+    assert N.main(_args(tmp, logs, "--check", "--allow-missing")) == 0
+    out = capsys.readouterr().out
+    assert "CHECK FAILED platform" not in out and "sp-g-h2d-90.out" not in R.nodes(logs)
+    assert R.stopped_at_node_check(logs) == ["sp-g-h2d-90.out"]
+    machines = next(line for line in out.splitlines() if line.startswith("machines: "))
+    assert "left out, stopped at the node check (wrong node, no work): sp-g-h2d-90.out" in machines
+    assert "n-900" not in machines
     _write(logs, "sp-a-mnist-97.out", [], extra=_node("t-806", cpu="Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz"))
     _write(logs, "sp-q-opt125-98.out", [], extra=_node("n-802", gpu=None))
     assert N.main(_args(tmp, logs, "--check", "--allow-missing")) == 1

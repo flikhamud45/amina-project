@@ -225,21 +225,30 @@ FAKE = {"squeue": '#!/bin/bash\n[ -z "${FAKE_QUEUE:-}" ] || printf \'%s\\n\' "$F
         "sinfo": '#!/bin/bash\nprintf \'%s\\n\' $FAKE_MEM\n',
         "fakepy": '#!/bin/bash\ncase "$*" in *experiments.package.node*) [ -z "${FAKE_WRONG_NODE:-}" ] || '
                   '{ echo "wrong node: GPU NVIDIA A100 / CPU Intel Xeon, expected GPU L40S"; exit 86; } ;; esac\n'
-                  'case "$*" in *"${FAKE_FAIL:-@none@}"*) exit 3 ;; esac\necho "{}"\n',
+                  'case "$*" in *"${FAKE_FAIL:-@none@}"*) exit 3 ;; esac\n'
+                  'case "$*" in *"${FAKE_SLOW:-@none@}"*) sleep 100 ;; esac\necho "{}"\n',
         "cmake": '#!/bin/bash\necho "cmake version 3.31.6"\n'}
 """Stand-ins for SLURM's commands, the interpreter and CMake: ``squeue`` lists ``$FAKE_QUEUE`` (``name|platform|id``
 lines), ``sbatch`` appends its arguments to ``$FAKE_LOG`` and answers with its line number as the job id, ``sinfo``
 gives each node's memory in MB (``$FAKE_MEM``); the interpreter prints ``{}`` and succeeds, except for a command
-line that contains ``$FAKE_FAIL`` (exit status 3) and the node check with ``$FAKE_WRONG_NODE`` set (exit status 86,
-``wrong node``); ``cmake`` (the cpuv tier's pre-flight) prints its version."""
+line that contains ``$FAKE_FAIL`` (exit status 3), one that contains ``$FAKE_SLOW`` (which first sleeps 100 s)
+and the node check with ``$FAKE_WRONG_NODE`` set (exit status 86, ``wrong node``); ``cmake`` (the cpuv tier's
+pre-flight) prints its version."""
 
 HF_CACHES = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE", "HF_HUB_OFFLINE",
              "TRANSFORMERS_OFFLINE")
 
 
-def _submit(tmp_path, *argv, queue: str = "", mem: str = "1031000", cxx: bool = True, extra: dict | None = None):
+SIGNAL_WHEN = ('bash "$0" "$@" > out.txt 2> err.txt & p=$!; until grep -q "$SIGNAL_AFTER" out.txt; do sleep 0.2; '
+               'done; kill -TERM $p; wait $p; st=$?; cat out.txt; cat err.txt >&2; exit $st')
+"""Runs ``run.sh`` in the background and sends it SIGTERM once its output holds ``$SIGNAL_AFTER``."""
+
+
+def _submit(tmp_path, *argv, queue: str = "", mem: str = "1031000", cxx: bool = True, extra: dict | None = None,
+            signal_after: str | None = None):
     """``run.sh argv`` from a copy of the package under ``tmp_path`` (kept between calls with the same
-    ``tmp_path``), submitting to :data:`FAKE`'s SLURM, with the variables ``extra`` added to the environment:
+    ``tmp_path``), submitting to :data:`FAKE`'s SLURM, with the variables ``extra`` added to the environment (with
+    ``signal_after``, SIGTERM is sent to it once its output holds that text: :data:`SIGNAL_WHEN`):
     ``(exit status, stdout, stderr, [sbatch's arguments of each job])``."""
     bash = _bash()
     root, bin_ = tmp_path / "root", tmp_path / "bin"
@@ -252,13 +261,17 @@ def _submit(tmp_path, *argv, queue: str = "", mem: str = "1031000", cxx: bool = 
     log = tmp_path / "sbatch.log"
     log.write_text("")
     py = (bin_ / "fakepy").as_posix()
-    drop = ("PVI_CACHE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT", "FAKE_FAIL", "FAKE_WRONG_NODE", *HF_CACHES)
+    drop = ("PVI_CACHE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT", "FAKE_FAIL", "FAKE_SLOW", "FAKE_WRONG_NODE",
+            *HF_CACHES)
     env = {k: v for k, v in os.environ.items() if k not in drop}
     env.update(PATH=f"{bin_}{os.pathsep}{os.environ['PATH']}", FAKE_QUEUE=queue, FAKE_MEM=mem, FAKE_LOG=log.as_posix(),
                CXX=py if cxx else "", HF_HOME=(tmp_path / "hf").as_posix(), SBATCH_GRES="gpu:l40s:1")
     env.update(extra or {})
-    out = subprocess.run([bash, str(RUN), "--python", py, *argv], cwd=root, env=env, capture_output=True, text=True,
-                         timeout=120)
+    cmd = [bash, str(RUN), "--python", py, *argv]
+    if signal_after is not None:
+        env["SIGNAL_AFTER"] = signal_after
+        cmd = [bash, "-c", SIGNAL_WHEN, *cmd[1:]]
+    out = subprocess.run(cmd, cwd=root, env=env, capture_output=True, text=True, timeout=120)
     return out.returncode, out.stdout, out.stderr, log.read_text().splitlines()
 
 
@@ -290,15 +303,15 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
     status, out, err, jobs = _submit(tmp_path / "a", *argv)
     assert status == 0 and len(jobs) == 1, err
     for part in ("-J sp-node-smoke-cpuv-long", "--comment=final", "--exclusive", "--mem=0", "--time=24:00:00",
-                 "--requeue", "--open-mode=append", "--dependency=singleton", "logs/final/node-smoke-cpuv-long-%j.log",
-                 "--gres=gpu:l40s:1"):
+                 "--requeue", "--signal=B:TERM@300", "--open-mode=append", "--dependency=singleton",
+                 "logs/final/node-smoke-cpuv-long-%j.log", "--gres=gpu:l40s:1"):
         assert part in jobs[0], (part, jobs[0])
     assert "# one job: smoke cpuv long: 27 jobs, job limits 56 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
-    assert re.search(r' && bash code/experiments/package/run\.sh --local --python \S+ --max-hours 12 --platform final '
-                     r'--llama-licence smoke cpuv long --from-one-job"$', line), line
+    assert re.search(r' && exec bash code/experiments/package/run\.sh --local --python \S+ --max-hours 12 '
+                     r'--platform final --llama-licence smoke cpuv long --from-one-job"$', line), line
     status, out, err, jobs = _submit(tmp_path / "c", *argv, queue="sp-node-smoke-cpuv-long|final|77")
     assert status == 0 and not jobs and "skip sp-node-smoke-cpuv-long: already queued (job 77)" in out, err
     status, out, err, jobs = _submit(tmp_path / "d", "--no-exclusive", *argv)
@@ -353,6 +366,55 @@ def test_a_submission_without_the_smoke_runs_every_job_past_a_failure_and_names_
                         command), command
     status, out, err, _ = _submit(tmp_path, *argv)
     assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-c-rx-gpt2"], out
+
+
+def test_a_local_run_stopped_by_a_signal_writes_its_summary(tmp_path):
+    """A --one-job allocation (--local --from-one-job) that SLURM signals (its time limit, through --signal, or a
+    pre-emption) stops its running job at once and writes its summary: the jobs that ended successfully, the stopped
+    one as failed with exit status 143 and its log, and the command to submit again, which runs only the stopped job
+    and those after it."""
+    argv = ("--platform", "t", "--rehearsal", "--local", "--from-one-job", "cpuv")
+    status, out, err, _ = _submit(tmp_path, *argv, extra={"FAKE_SLOW": "reexec.reexec"},
+                                  signal_after="running sp-c-rx-gpt2")
+    assert status == 143 and "run.sh: stopped by SIGTERM" in err, (status, out, err)
+    assert re.findall(r"running (sp-\S+)", out) == ["sp-c-gpt2-64", "sp-c-rx-gpt2"], out
+    assert "1 jobs ended successfully, 1 failed" in out and "stopped by SIGTERM" in out, out
+    assert re.search(r"^#   FAILED  sp-c-rx-gpt2 \(exit status 143: stopped by a signal\)  "
+                     r"logs/t/sp-c-rx-gpt2-\d+\.out$", out, re.M), out
+    assert re.search(r"^#   bash code/experiments/package/run\.sh --python \S+ --platform t --rehearsal --one-job "
+                     r"cpuv$", out, re.M), out
+    status, out, err, _ = _submit(tmp_path, *argv)
+    assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-c-rx-gpt2", "sp-c-v1-gpt2-64",
+                                                                      "sp-c-llamacpp-llama2-7b-L1"], out
+
+
+def test_the_tv_jobs_use_the_cpus_they_ask_for_and_have_room_over_their_estimates():
+    """The tv tier runs on the CPU in the 8 CPUs every job and --one-job allocation asks for: no more worker processes
+    or threads than those, and limits above the documented times (OPT-1.3B's analysis took 43 min with 16 workers;
+    OPT-125M's Monte Carlo on one worker about an hour)."""
+    lines = {_job(line): line for line in _dry()}
+    for job, hours in (("sp-tv-opt-1.3b", 4), ("sp-tv-checks", 3)):
+        line = lines[job]
+        assert "--cpus-per-task=8" in line and f"--time={hours}:00:00" in line, line
+        for flag in ("--workers", "--threads"):
+            assert all(int(n) <= 8 for n in re.findall(rf"{flag} (\d+)", line)), line
+    assert "--workers 8 --threads 8" in lines["sp-tv-opt-1.3b"]
+
+
+def test_the_qllama_tier_is_in_all_and_runs_next_to_quality():
+    """The Llama-2 grids are a tier of their own (qllama, in 'all' after quality), so that they run on a second GPU
+    next to the quality tier; their jobs keep the quality tier's names (q-...), whose records numbers.py reads."""
+    run = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--llama-licence", "all"], cwd=REPO,
+                         env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}, capture_output=True, text=True,
+                         timeout=120)
+    tiers = re.search(r"^# (smoke .*): \d+ jobs", run.stdout, re.M).group(1).split()
+    assert tiers[tiers.index("quality") + 1] == "qllama", tiers
+    qllama = re.search(r"^# tier qllama: (\d+) jobs, job limits (\d+) h, estimate (\S+) h$", run.stdout, re.M)
+    assert qllama and qllama.group(1) == "12" and qllama.group(3) == "40-48", run.stdout[-2000:]
+    for tier in ("quality", "qllama"):
+        jobs = [_job(x) for x in _dry(tiers=(tier,))]
+        assert jobs and all(tier_of(j[len("sp-"):]) == "quality" for j in jobs), (tier, jobs)
+    assert not any(re.search(r"Llama-2|open_llama", x) for x in _dry(tiers=("quality",)))
 
 
 def test_a_failed_smoke_still_stops_its_own_invocation(tmp_path):
@@ -471,19 +533,21 @@ def test_nothing_is_submitted_when_the_partition_lacks_the_memory_or_the_compile
     assert status == 0 and len(wraps) == 4 and all(f"CMAKE={cmake} " in x for x in wraps), err  # passed to the jobs
 
 
-def test_the_quality_tier_needs_the_tokenizer_libraries(tmp_path):
-    """OpenLLaMA-7B ships only its SentencePiece model: run.sh submits nothing for the quality tier without
+def test_the_qllama_tier_needs_the_tokenizer_libraries(tmp_path):
+    """OpenLLaMA-7B ships only its SentencePiece model: run.sh submits nothing for the qllama tier without
     --llama-licence (OpenLLaMA-7B's jobs) while the interpreter cannot import sentencepiece and google.protobuf, and
-    asks for neither without that tier or with --llama-licence (Llama-2 ships its fast tokenizer)."""
+    asks for neither without that tier (the quality tier included) or with --llama-licence (Llama-2 ships its fast
+    tokenizer)."""
     fail = {"FAKE_FAIL": "import sentencepiece, google.protobuf"}
-    status, _, err, jobs = _submit(tmp_path / "a", "--platform", "final", "--rehearsal", "quality", extra=fail)
+    status, _, err, jobs = _submit(tmp_path / "a", "--platform", "final", "--rehearsal", "qllama", extra=fail)
     assert status == 2 and not jobs and "cannot import sentencepiece and google.protobuf" in err, err
-    status, _, err, jobs = _submit(tmp_path / "b", "--platform", "final", "--rehearsal", "cpuv", extra=fail)
-    assert status == 0 and jobs, err
-    status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "--rehearsal", "quality")
+    for i, tier in enumerate(("cpuv", "quality")):
+        status, _, err, jobs = _submit(tmp_path / f"b{i}", "--platform", "final", "--rehearsal", tier, extra=fail)
+        assert status == 0 and jobs, err
+    status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "--rehearsal", "quality", "qllama")
     assert status == 0 and len(jobs) == 8 and any(" -J sp-q-openllama7-smoke " in j for j in jobs), err
     status, _, err, jobs = _submit(tmp_path / "d", "--platform", "final", "--rehearsal", "--llama-licence", "quality",
-                                   extra=fail)
+                                   "qllama", extra=fail)
     assert status == 0 and len(jobs) == 8 and any(" -J sp-q-llama-access " in j for j in jobs), err
     assert not any("openllama" in j for j in jobs), err
 
@@ -706,15 +770,26 @@ def test_the_gen_and_quality_cells_of_the_text():
     assert "--alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11 --draws 0 1" in lines["sp-q-opt13-recipes"]   # draw 1's 0.6
     first, second = lines["sp-q-qwen4"].split("--wrap", 1)[1].split(" && ")[-2:]
     assert "--glu-exps" not in first and "--glu-exps 8 --exp-only" in second
+    # one job per model, split and alpha (each with every balance of its grid), whose limit leaves room over its
+    # estimate (about 4 h); together they are exactly the grid
     for (model, _, alphas, balances), job in zip(LLAMA_GRIDS, ("sp-q-llama7", "sp-q-llama13")):
-        grid = f"--alphas {' '.join(f'{a:g}' for a in alphas)}"
-        if len(balances) > 1:
-            grid += f" --glu-smooths {' '.join(f'{g:g}' for g in balances)}"
-        test, val = lines[job].split("--wrap", 1)[1], lines[job + "-validation"].split("--wrap", 1)[1]
-        assert f"--model {model} {grid}" in test and "--structure" in test and "--split" not in test, job
-        assert f"--model {model} --split validation {grid}" in val and "--structure" not in val, job
-        assert ("--ref-dtype float16" in test + val) == (model == "meta-llama/Llama-2-13b-hf"), job
-        assert test.count("quality.ppl_llama") == val.count("quality.ppl_llama") == 1, job   # one model and split
+        for split, suffix in (("test", ""), ("validation", "-validation")):
+            jobs = sorted(j for j in lines if re.fullmatch(rf"{job}{suffix}-a[0-9.]+", j))
+            assert jobs == sorted(f"{job}{suffix}-a{a:g}" for a in alphas), (job, split, jobs)
+            for a in alphas:
+                line = lines[f"{job}{suffix}-a{a:g}"]
+                cmd = line.split("--wrap", 1)[1]
+                assert cmd.count("quality.ppl_llama") == 1 and f"--model {model}" in cmd, line
+                assert re.search(rf"--alphas {a:g}( |\")", cmd), line
+                if len(balances) > 1:
+                    assert f"--glu-smooths {' '.join(f'{g:g}' for g in balances)}" in cmd, line
+                else:
+                    assert "--glu-smooths" not in cmd, line
+                assert ("--split validation" in cmd) == (split == "validation"), line
+                assert ("--structure" in cmd) == (split == "test"), line
+                assert ("--ref-dtype float16" in cmd) == (model == "meta-llama/Llama-2-13b-hf"), line
+                hours = int(re.search(r"--time=(\d+):00:00", line)[1])
+                assert 6 <= hours <= 8, line
     assert not any("openllama" in j for j in lines)
     builds = re.findall(r"quality\.digest_check (--model \S+ --threads \d+[^&\"]*)", lines["sp-q-digest"])
     assert [b.strip() for b in builds] == [
@@ -741,7 +816,7 @@ def test_the_gen_and_quality_cells_of_the_text():
 
 def test_every_tier_is_documented_and_reachable():
     text = (REPO / RUN).read_text()
-    for tier in (*TIERS, "zkllm", "gate"):
+    for tier in (*TIERS, "qllama", "zkllm", "gate"):
         assert f"tier_{tier}()" in text and re.search(rf"^#\s+{tier}\s", text, re.M), tier
 
 

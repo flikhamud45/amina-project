@@ -47,11 +47,11 @@ matrices that the norm feeds, into which $1/\gamma_j$ is folded. This is SmoothQ
 weights, static per-tensor activations) inside the integer graph. Multipliers stay scalars and no
 operation or shape changes, so the costs, the verifier and V1 are unaffected; the graph digest binds
 the gains. Percentile statistics and clipping, tuned on short windows, transferred badly from train to
-test text (OPT-1.3B $\times$\QualityLegacyLo{}--\QualityLegacyHi{}, depending on the calibration windows); channel maxima without
+test text (OPT-1.3B $\times$\QualityLegacyLo{}--\QualityLegacyHi{} by calibration window); channel maxima without
 clipping are stable across calibration windows to $\pm$\QualityDrawSpread{}, and $\alpha=0.6$ gives the certified
 models of Table~\ref{tab:quality}. On six zero-shot tasks (LAMBADA, HellaSwag, PIQA, ARC-e, ARC-c,
 WinoGrande), the certified OPT-125M and OPT-1.3B lose \ZeroshotMeanOptS{} and \ZeroshotMeanOptM{} points of accuracy on average,
-and OPT-6.7B matches fp16 (\ZeroshotMeanOptL{}). LAMBADA, which scores exact next-token predictions, loses the most (\ZeroshotLambadaOptS{}, \ZeroshotLambadaOptM{} and
+and OPT-6.7B matches fp16 (\ZeroshotMeanOptL{}). LAMBADA (exact next-token predictions) loses the most (\ZeroshotLambadaOptS{}, \ZeroshotLambadaOptM{} and
 \ZeroshotLambadaOptL{} points); on OPT-6.7B every multiple-choice difference is within its 95\% interval of zero
 (extended version~\cite{fullversion}).
 
@@ -67,9 +67,9 @@ activation~\cite{chen2024prefixquant,son2024cushioncache}, a per-channel balance
 product folded into the up and down projections~\cite{xiao2023smoothquant,lin2024awq}, and for
 Qwen3 a balance of the q and k norms' gains~\cite{shao2024omniquant}, after each head's rows of $W_q$
 and $W_k$ are rescaled to a common int8 range (the per-head RMSNorm that follows is invariant to
-it). The smoothing $\alpha$ and the SwiGLU balance are chosen per model on the test split; Llama-2's, fixed before
-the run, are on Llama-2-7B within \LlamaSevenTestGap{} (test) and \LlamaSevenValGap{} (validation) of the best
-ratios among $\alpha$ and balance $\pm0.1$. With them, Llama-2-7B, whose integer graph has our benchmark's
+it). The smoothing $\alpha$ and SwiGLU balance are chosen per model on the test split; Llama-2's, fixed before the run
+(7B's from a same-shape model), are on Llama-2-7B within \LlamaSevenTestGap{} (test) and \LlamaSevenValGap{}
+(validation) of the best among $\alpha$ and balance $\pm0.1$. With them, Llama-2-7B, whose integer graph has our benchmark's
 structure, is within $\times$\LlamaSevenRatio{} of fp32 at 2{,}048 tokens, TinyLlama within $\times$\TinyLlamaRatio{} and Qwen3-1.7B
 within $\times$\QwenMRatio{}, and Llama-2-13B within $\times$\LlamaThirteenRatio{} of fp16, while Qwen3-4B, which forms a second
 massive activation that no prefix takes, stays at $\times$\QwenLRatio{}~\cite{fullversion}.

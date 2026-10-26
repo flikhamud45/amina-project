@@ -22,10 +22,11 @@
 #     setup    the setup proof of an untrusted commitment
 #     improve  each implementation improvement against the path it replaces, on the same queries; 8- against 11-bit
 #              attention probabilities
-#     quality  the integer models' quality: OPT (perplexity, zero-shot, reproducible build), TinyLlama and Qwen3;
-#              with --llama-licence Llama-2-7B and Llama-2-13B, each with its recipe's alpha (and Llama-2-7B's
-#              product balance) against their neighbours on the test and validation splits; without it OpenLLaMA-7B
-#              (Llama-2-7B's shapes) in their place
+#     quality  the integer models' quality: OPT (perplexity, zero-shot, reproducible build), TinyLlama and Qwen3
+#     qllama   the quality of the 7B- and 13B-shaped Llama models: with --llama-licence Llama-2-7B and Llama-2-13B,
+#              each with its recipe's alpha (and Llama-2-7B's product balance) against their neighbours on the test
+#              and validation splits, one job per model, split and alpha; without it OpenLLaMA-7B (Llama-2-7B's
+#              shapes) in their place
 #     tv       the token sampler's total-variation distance to the softmax (CPU)
 #     attack   the attack on the path test: MNIST, the image models' path test, OPT-6.7B, the in-range edits, the
 #              sampler game
@@ -58,7 +59,9 @@
 #                       its allocation, with the summary at the end of its log) with the node to itself (unless
 #                       --no-exclusive): one wait for a whole node instead of one per job.  Submitting the same
 #                       command again, after the job's time limit, a pre-emption or a failed job, runs only the jobs
-#                       that have not ended successfully
+#                       that have not ended successfully.  SLURM signals the allocation 5 minutes before its time
+#                       limit (--signal=B:TERM@300); on that signal, a pre-emption's or an interrupt, a --local run
+#                       stops its current job and writes its summary (that job: exit status 143)
 #     --max-hours H     --one-job's time limit in hours (default 24, the partition's usual limit; the sum of the
 #                       jobs' limits if smaller)
 #     --require-gpu NAME  every job, and a --local run before its first job, starts by checking that the GPU it uses
@@ -92,8 +95,8 @@
 #                       commitment from them (the setup tier never uses it)
 #     --python PATH     the interpreter (default .venv/bin/python)
 #     --extra-pythonpath DIR   packages outside the environment, put after the code on the path
-#     --llama-licence   the Llama-2 cells (real, quality): only with your own Llama-2 licence and Hugging Face token
-#                       (HF_TOKEN); the rehearsal's one Llama-2 job reads the gated repository from a compute node
+#     --llama-licence   the Llama-2 cells (real, qllama, zkllm): only with your own Llama-2 licence and Hugging Face
+#                       token (HF_TOKEN); the rehearsal's one Llama-2 job reads the gated repository from a compute node
 #     --bigmem          the long tier also measures the full Llama-2-7B at 8,192 tokens (a node with >= 256 GB)
 #     --zkllm-home DIR  the zkllm tier's zkLLM: DIR/zkllm (a checkout at commit 993311e, built for the GPU, with the
 #                       timing shims, or none) and DIR/env (its Python environment, or none); what is missing the
@@ -107,17 +110,18 @@
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1
 # unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
 # llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
-# PVI_PY_INCLUDE, HF_HOME (the real, quality, tv, attack and gate tiers download checkpoints and datasets) and
-# PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute
-# path (a relative one is taken from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through
-# sbatch's environment and is never written into a job.  Everything is checked before the first job is submitted: the
-# compiler, CMake and git (the cpuv tier), the interpreter (and, for the quality tier without --llama-licence, its
-# sentencepiece and protobuf, which OpenLLaMA-7B's tokenizer needs), HF_HOME (and that no HF_HUB_CACHE,
-# TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is unwritable), the image models and datasets of the bench
-# tier and, under SLURM, that the partition has a node with the memory the largest job asks for.  Jobs are named
-# sp-<cell>, with this platform as their --comment and --dependency=singleton.  A job of the same name and platform
-# that is still queued or running is not submitted again, and the chain and the smoke gate pass through it, so running
-# a tier again submits only what is missing; bench.py itself skips a finished benchmark cell.
+# PVI_PY_INCLUDE, HF_HOME (the real, quality, qllama, tv, attack and gate tiers, and the zkllm tier with
+# --llama-licence, download checkpoints and datasets) and PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image
+# models' datasets), each passed to the jobs as an absolute path (a relative one is taken from the repository root).
+# HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's environment and is never written into a job.
+# Everything is checked before the first job is submitted: the compiler, CMake and git (the cpuv tier), the
+# interpreter (and, for the qllama tier without --llama-licence, its sentencepiece and protobuf, which OpenLLaMA-7B's
+# tokenizer needs), HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is
+# unwritable), the image models and datasets of the bench tier and, under SLURM, that the partition has a node with
+# the memory the largest job asks for.  Jobs are named sp-<cell>, with this platform as their --comment and
+# --dependency=singleton.  A job of the same name and platform that is still queued or running is not submitted again,
+# and the chain and the smoke gate pass through it, so running a tier again submits only what is missing; bench.py
+# itself skips a finished benchmark cell.
 # experiments/package/README.md is the runner's guide.
 set -euo pipefail
 
@@ -205,6 +209,7 @@ NODECHK="$PY -m experiments.package.node --require-gpu $(printf %q "$REQGPU") --
 WRONG_NODE=86
 DEP="" GATE="" NJOBS=0 HOURS=0 DRYN=0 LAST="" SKIPPED=0 DONE=0 PLAN="" MEMNEED=0 PLANH=0 NPLAN=0 CPUJOB=""
 OKS=() FAILS=()     # --local: the jobs of this run that ended successfully and those that failed (name|status|log)
+CHILD="" CURRENT="" # --local: the running job's process and its name|log
 
 sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the previous one
   # (the first job submitted after the smoke also waits for the smoke's success: GATE)
@@ -246,7 +251,10 @@ $NODECHK && $pin$*"
       jid="$(date +%s%N)"
       [[ "$jid" =~ ^[0-9]+$ ]] || printf -v jid '%s%09d' "$(date +%s)" "$RANDOM"     # a date(1) without %N
       echo "$(date '+%F %T') running $name (limit ${hours} h): $LOGS/$name-$jid.out"
-      if timeout "${hours}h" bash -c "$wrap" > "$LOGS/$name-$jid.out" 2>&1; then
+      # in the background and waited for, so that a signal to this script runs its trap at once (on_signal)
+      timeout "${hours}h" bash -c "$wrap" > "$LOGS/$name-$jid.out" 2>&1 &
+      CHILD=$! CURRENT="$name|$LOGS/$name-$jid.out"
+      if wait "$CHILD"; then
         mkdir -p "$LOGS/done" && echo "$jid" > "$LOGS/done/$name"
         OKS+=("$name|$LOGS/$name-$jid.out")
       else
@@ -254,6 +262,7 @@ $NODECHK && $pin$*"
         echo "$name: exit status $st" >&2
         FAILS+=("$name|$st|$LOGS/$name-$jid.out")
       fi
+      CHILD="" CURRENT=""
     else
       # the job script goes in on stdin with a bash shebang (--wrap runs /bin/sh, which may not be bash)
       jid="$(printf '#!/bin/bash\n%s\n' "$wrap" | sbatch --parsable "${args[@]}")"; jid="${jid%%;*}"
@@ -288,8 +297,8 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
   case "$1" in
     smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
-    quality) if [ -n "$LLAMA" ]; then echo 28-36; else echo 16-24; fi ;;
-    tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
+    quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
+    tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
     zkllm) echo 3-5 ;;
   esac
 }
@@ -663,15 +672,9 @@ tier_quality() {
   # smooth-max recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split; the alpha study of
   # OPT-125M without the certified cell, which q-opt125 measures), the attribution of OPT-125M's perplexity on the CPU
   # (tab:quality-attr), zero-shot accuracy (tab:zeroshot), the reproducible build (OPT-125M with 1 and 8 threads,
-  # OPT-1.3B's commitment encoded on the GPU and on the CPU); TinyLlama and Qwen3 with the main Llama recipe; with
-  # --llama-licence Llama-2-7B and Llama-2-13B with their committed recipes (hf_llama.MAIN_SETTINGS) and the
-  # neighbours of their alphas (and of Llama-2-7B's product balance) on the test and the validation split
-  # (macros.LLAMA_GRIDS); without it OpenLLaMA-7B, a licence-free model of Llama-2-7B's shapes, with the same recipe
-  # on the test split and its grid on the validation split.
-  # The fp32 CPU references of Qwen3-4B and OpenLLaMA-7B are kept in logs/<name>/ref_*.pt (the second pass and a
-  # re-run reuse them).  The rehearsal runs the grid path (two alphas, two product balances, the validation split, an
-  # fp16 reference) on a smoke model with the vocabulary of Llama-2-7B, read from the gated repository by a job, with
-  # --llama-licence, and of OpenLLaMA-7B (its tokenizer needs sentencepiece and protobuf) without it.
+  # OPT-1.3B's commitment encoded on the GPU and on the CPU); TinyLlama and Qwen3 with the main Llama recipe (the
+  # 7B- and 13B-shaped Llama models: the qllama tier).  Qwen3-4B's fp32 CPU reference is kept in
+  # logs/<name>/ref_qwen3-4b.pt (the second pass and a re-run reuse it).
   local P="$M.quality.ppl_opt --device cuda" L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8"
   local Z="$M.quality.zeroshot --device cuda" A="$M.quality.attribution --device cpu --threads 8" m
   if [ -n "$REH" ]; then
@@ -680,13 +683,6 @@ tier_quality() {
     sub q-opt125-attr 1 64 "$A --model facebook/opt-125m --windows 2 --skip-sub"
     sub q-smoke 1 64 "$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 && \
 $L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 --glu-exps 8 --exp-only"
-    local grid="--smoke --split validation --seq 128 --windows 2 --calib-windows 1 --chunk 64 --alphas 0.45 0.55 \
---glu-smooths 0.1 0.2 --ref-dtype float16"
-    if [ -n "$LLAMA" ]; then
-      sub q-llama-access 1 32 "$L --model meta-llama/Llama-2-7b-hf $grid"
-    else
-      sub q-openllama7-smoke 1 32 "$L --model openlm-research/open_llama_7b_v2 $grid"
-    fi
     sub q-zeroshot-opt-125m 1 64 "$Z --model facebook/opt-125m --limit 20 && $Z --model facebook/opt-125m \
 --recipe legacy --limit 20"
     sub q-digest-opt125 1 64 "$M.quality.digest_check --model facebook/opt-125m --threads 8 --commit \
@@ -729,6 +725,29 @@ $L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3
 $M.quality.llama_diag --model Qwen/Qwen3-4B-Base --recipes smooth55 scalar4 --prefix 151643,151643 && \
 $L --model Qwen/Qwen3-4B-Base --seq 128 --windows 16 --graphs smooth --glu-exps 8 --ref-device cpu \
 --prefix 151643,151643 && $M.quality.llama_attrib --model Qwen/Qwen3-4B-Base --blocks all --recipe smooth55"
+}
+
+tier_qllama() {
+  # the quality of the 7B- and 13B-shaped Llama models on WikiText-2 (raw) at 2,048 tokens, a tier of its own so that
+  # it can run on a second GPU next to the quality tier: with --llama-licence Llama-2-7B and Llama-2-13B with their
+  # committed recipes (hf_llama.MAIN_SETTINGS) among the neighbours of their alphas (and of Llama-2-7B's product
+  # balance) on the test and the validation split (macros.LLAMA_GRIDS); without it OpenLLaMA-7B, a licence-free model
+  # of Llama-2-7B's shapes, with the same recipe on the test split and its grid on the validation split (the paper
+  # does not report it).  Its records are the quality tier's (job names q-...).  The rehearsal runs the grid path (two
+  # alphas, two product balances, the validation split, an fp16 reference) on a smoke model with the vocabulary of
+  # Llama-2-7B, read from the gated repository by a job, with --llama-licence, and of OpenLLaMA-7B (its tokenizer
+  # needs sentencepiece and protobuf) without it.
+  local L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8" a
+  if [ -n "$REH" ]; then
+    local grid="--smoke --split validation --seq 128 --windows 2 --calib-windows 1 --chunk 64 --alphas 0.45 0.55 \
+--glu-smooths 0.1 0.2 --ref-dtype float16"
+    if [ -n "$LLAMA" ]; then
+      sub q-llama-access 1 32 "$L --model meta-llama/Llama-2-7b-hf $grid"
+    else
+      sub q-openllama7-smoke 1 32 "$L --model openlm-research/open_llama_7b_v2 $grid"
+    fi
+    return 0
+  fi
   if [ -z "$LLAMA" ]; then
     # the licence-free stand-in: OpenLLaMA-7B with Llama-2-7B's recipe (0.55, 0.2) on the test split, and that alpha
     # and product balance against their neighbours on the validation split (the fp32 reference on the GPU)
@@ -736,22 +755,35 @@ $L --model Qwen/Qwen3-4B-Base --seq 128 --windows 16 --graphs smooth --glu-exps 
 --ref-device cpu --ref-cache $ROOT/$LOGS/ref_open_llama_7b_v2.pt"
     sub q-openllama7-validation 10 192 "$L --model openlm-research/open_llama_7b_v2 --split validation \
 --alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3"
-    echo "tier quality: no Llama-2 rows (they need your own Llama-2 licence: --llama-licence)" >&2
+    echo "tier qllama: no Llama-2 rows (they need your own Llama-2 licence: --llama-licence)" >&2
     return 0
   fi
   # Llama-2 itself: the committed recipe's cell (Llama-2-7B 0.55 / 0.2, Llama-2-13B 0.6 / 0.2; the text's ratios,
-  # with the structural diff) among its alpha +-0.1 (and Llama-2-7B's product balance +-0.1), one job per model and
-  # split (the reference on the GPU: Llama-2-7B's in fp32, Llama-2-13B's in fp16, as the text states)
-  local g7="--alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3" g13="--alphas 0.5 0.6 0.7 --ref-dtype float16"
-  sub q-llama7 12 192 "$L --model meta-llama/Llama-2-7b-hf $g7 --structure"
-  sub q-llama7-validation 10 192 "$L --model meta-llama/Llama-2-7b-hf --split validation $g7"
-  sub q-llama13 12 256 "$L --model meta-llama/Llama-2-13b-hf $g13 --structure"
-  sub q-llama13-validation 12 256 "$L --model meta-llama/Llama-2-13b-hf --split validation $g13"
+  # with the structural diff on the test split) among its alpha +-0.1 (and Llama-2-7B's product balance +-0.1).  One
+  # job per model, split and alpha (Llama-2-7B: its three balances, about 4 h; Llama-2-13B: one cell, about 4 h;
+  # mostly the calibration build on the CPU), so that a job stopped at a limit loses one alpha's cells only and each
+  # job's limit leaves room over its estimate.  The reference on the GPU: Llama-2-7B's in fp32, Llama-2-13B's in fp16,
+  # as the text states
+  for a in 0.45 0.55 0.65; do
+    sub "q-llama7-a$a" 6 192 "$L --model meta-llama/Llama-2-7b-hf --alphas $a --glu-smooths 0.1 0.2 0.3 --structure"
+  done
+  for a in 0.45 0.55 0.65; do
+    sub "q-llama7-validation-a$a" 6 192 "$L --model meta-llama/Llama-2-7b-hf --split validation --alphas $a \
+--glu-smooths 0.1 0.2 0.3"
+  done
+  for a in 0.5 0.6 0.7; do
+    sub "q-llama13-a$a" 7 256 "$L --model meta-llama/Llama-2-13b-hf --alphas $a --ref-dtype float16 --structure"
+  done
+  for a in 0.5 0.6 0.7; do
+    sub "q-llama13-validation-a$a" 7 256 "$L --model meta-llama/Llama-2-13b-hf --split validation --alphas $a \
+--ref-dtype float16"
+  done
 }
 
 tier_tv() {
-  # the token sampler's total-variation distance to the softmax on the certified OPT-1.3B (CPU, 16 workers), and the
-  # sampler's closed-form and Monte Carlo checks
+  # the token sampler's total-variation distance to the softmax on the certified OPT-1.3B (CPU, 8 workers: the 8 CPUs
+  # each job and allocation asks for), and the sampler's closed-form and Monte Carlo checks (the Monte Carlo of
+  # OPT-125M on one worker takes about an hour)
   local T="$M.generation.sampler_tv"
   if [ -n "$REH" ]; then
     sub tv-selfcheck 1 32 "$T --selfcheck"
@@ -759,9 +791,9 @@ tier_tv() {
 --mc-positions 1 --mc-settings 1:0 1:50 --out $ROOT/$LOGS/sampler_tv_opt-125m.json"
     return 0
   fi
-  sub tv-opt-1.3b 2 96 "$T --model facebook/opt-1.3b --seq 128 --windows 4 --workers 16 --threads 16 \
+  sub tv-opt-1.3b 4 96 "$T --model facebook/opt-1.3b --seq 128 --windows 4 --workers 8 --threads 8 \
 --out $ROOT/$LOGS/sampler_tv_opt-1.3b.json"
-  sub tv-checks 1 64 "$T --selfcheck --out $ROOT/$LOGS/sampler_tv_selfcheck.json && $T --model facebook/opt-125m \
+  sub tv-checks 3 64 "$T --selfcheck --out $ROOT/$LOGS/sampler_tv_selfcheck.json && $T --model facebook/opt-125m \
 --recipe legacy --windows 1 --positions 32 --mc 100000 --mc-positions 8 31 --mc-settings 1:0 1:50 1.3:0 \
 --out $ROOT/$LOGS/sampler_tv_opt-125m.json"
 }
@@ -919,11 +951,11 @@ preflight() {   # what the jobs need from this host and the scheduler, checked b
   local bad=() t hf="" spm="" big gb=60 v d
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do
-    case "$t" in real|quality|tv|attack|gate) hf=1 ;; zkllm) [ -z "$LLAMA" ] || hf=1 ;; esac
-    [ "$t" != quality ] || [ -n "$LLAMA" ] || spm=1      # OpenLLaMA-7B's jobs run only without --llama-licence
+    case "$t" in real|quality|qllama|tv|attack|gate) hf=1 ;; zkllm) [ -z "$LLAMA" ] || hf=1 ;; esac
+    [ "$t" != qllama ] || [ -n "$LLAMA" ] || spm=1       # OpenLLaMA-7B's jobs run only without --llama-licence
   done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
-GB free> (the real, quality, tv, attack, gate and zkllm tiers download checkpoints and datasets)")
+GB free> (the real, quality, qllama, tv, attack, gate and zkllm tiers download checkpoints and datasets)")
   # a cache variable of Hugging Face's libraries takes precedence over HF_HOME: it must be writable (the nearest
   # existing folder of its path)
   for v in HF_HUB_CACHE HUGGINGFACE_HUB_CACHE TRANSFORMERS_CACHE HF_DATASETS_CACHE; do
@@ -982,11 +1014,11 @@ gated Llama-2 checkpoints with your Hugging Face token: export HF_TOKEN=<token> 
 exists)")
   done
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")
-  # OpenLLaMA-7B ships only its SentencePiece model: its tokenizer (the quality tier's q-openllama7 jobs and their
+  # OpenLLaMA-7B ships only its SentencePiece model: its tokenizer (the qllama tier's q-openllama7 jobs and their
   # rehearsal cell, without --llama-licence) needs sentencepiece, and protobuf for the conversion to the fast
   # tokenizer; Llama-2's repositories ship the fast tokenizer (tokenizer.json) and need neither
   if [ -n "$spm" ] && [ -x "$PY" ] && ! "$PY" -c "import sentencepiece, google.protobuf" > /dev/null 2>&1; then
-    bad+=("$PY cannot import sentencepiece and google.protobuf, which the quality tier's OpenLLaMA-7B tokenizer \
+    bad+=("$PY cannot import sentencepiece and google.protobuf, which the qllama tier's OpenLLaMA-7B tokenizer \
 needs: $PY -m pip install -r code/requirements-llm.txt")
   fi
   if [ -z "$DRY$LOCAL" ] && command -v sinfo > /dev/null 2>&1; then
@@ -1037,11 +1069,12 @@ one_job() {   # --one-job: the tiers as one SLURM job that runs this command wit
   fi
   # the allocation's own log is not a job log (logs/<name>/sp-*.out): it lists the jobs it ran
   args=(-o "$LOGS/${name#sp-}-%j.log" --open-mode=append -J "$name" "--comment=$PLATFORM" --dependency=singleton
-        --requeue --cpus-per-task=8 "--time=${hours}:00:00")
+        --requeue --cpus-per-task=8 "--time=${hours}:00:00" --signal=B:TERM@300)
   if [ -n "$EXCL" ]; then args+=("$EXCL" --mem=0); else args+=("--mem=${MEMNEED}G"); fi
   [ -n "$GRES" ] && args+=("--gres=$GRES")
   [ -n "$EXCLUDE" ] && args+=("--exclude=$EXCLUDE")
-  wrap="cd $(printf %q "$ROOT") && bash code/experiments/package/run.sh --local$(printf ' %q' "${inner[@]}")"
+  # (exec: the allocation's shell is run.sh itself, which --signal's SIGTERM reaches, 5 minutes before the limit)
+  wrap="cd $(printf %q "$ROOT") && exec bash code/experiments/package/run.sh --local$(printf ' %q' "${inner[@]}")"
   if [ -n "$DRY" ]; then
     echo "sbatch ${args[*]} --wrap \"$wrap\""
   else
@@ -1073,7 +1106,10 @@ ${#FAILS[@]} failed, $DONE had ended successfully in an earlier run${1:+; $1}"
   for x in ${OKS[@]+"${OKS[@]}"}; do echo "#   ok      ${x%%|*}  ${x#*|}"; done
   for x in ${FAILS[@]+"${FAILS[@]}"}; do
     IFS='|' read -r name st log <<<"$x"
-    case "$st" in 124) why=": its time limit" ;; "$WRONG_NODE") why=": wrong node" ;; *) why="" ;; esac
+    case "$st" in
+      124) why=": its time limit" ;; "$WRONG_NODE") why=": wrong node" ;; 143) why=": stopped by a signal" ;;
+      *) why="" ;;
+    esac
     echo "#   FAILED  $name (exit status $st$why)  $log"
   done
   if [ "${#FAILS[@]}" -gt 0 ] || [ -n "${1:-}" ]; then
@@ -1085,6 +1121,20 @@ command:"
   fi
 }
 
+on_signal() {   # on_signal <signal>: --local stopped (the allocation's time limit, a pre-emption, an interrupt)
+  trap - TERM INT
+  if [ -n "$CHILD" ]; then
+    # the running job (timeout passes the signal on to the job's processes); it counts as failed, status 143
+    kill -TERM "$CHILD" 2> /dev/null || true
+    wait "$CHILD" 2> /dev/null || true
+    FAILS+=("${CURRENT%%|*}|143|${CURRENT#*|}")
+  fi
+  echo "run.sh: stopped by SIG$1" >&2
+  local_summary "stopped by SIG$1 (TERM: the allocation's time limit or a pre-emption; INT: an interrupt), the jobs \
+after the stopped one not run"
+  exit 143
+}
+
 run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
   local n0=$NJOBS h0=$HOURS
   "tier_$1"
@@ -1092,7 +1142,7 @@ run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
     || echo "# tier $1: $((NJOBS - n0)) jobs, job limits $((HOURS - h0)) h, estimate $(est "$1") h"
 }
 
-MUST="smoke cpuv v1 serve bench gpuv gen batch real setup improve quality tv attack"
+MUST="smoke cpuv v1 serve bench gpuv gen batch real setup improve quality qllama tv attack"
 if [ "${TIERS[0]}" = all ]; then TIERS=($MUST ${OPTIONAL:+long zkllm}); fi
 for tier in "${TIERS[@]}"; do
   case " $MUST long zkllm gate " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
@@ -1119,6 +1169,9 @@ if [ -n "$LOCAL" ] && [ -z "$DRY" ]; then
 $(hostname)${EXCLUDE:+,$EXCLUDE} (or the partition's nodes of other models):"$'\n'"#   $(resubmit)"
     exit "$NODE_ST"
   fi
+  # a time limit (--one-job's --signal), a pre-emption or an interrupt: stop the running job and write the summary
+  trap 'on_signal TERM' TERM
+  trap 'on_signal INT' INT
 fi
 for tier in "${TIERS[@]}"; do
   run_tier "$tier"

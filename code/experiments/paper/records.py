@@ -359,21 +359,47 @@ NODE = re.compile(r"^node: (\{.*\})\s*$")
 CPU."""
 
 
+WRONG_NODE = "wrong node:"
+"""The start of the line ``experiments/package/node.py`` writes, after the node line, when the node is of another GPU or
+CPU model than the run's: the job stopped there (exit status 86) and did no work."""
+
+
+def _node_line(path: Path) -> tuple[dict | None, bool]:
+    """A job log's node line's fields (None without one) and whether the job stopped at the node check (a
+    :data:`WRONG_NODE` line among the lines that follow the node line)."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            m = NODE.match(line)
+            if not m:
+                continue
+            try:
+                fields = json.loads(m.group(1))
+            except json.JSONDecodeError:
+                return None, False
+            for _, after in zip(range(5), fh):
+                if after.startswith(WRONG_NODE):
+                    return fields, True
+            return fields, False
+    return None, False
+
+
 def nodes(logs: Path) -> dict[str, dict]:
     """``{job log name: its node line's fields}`` (``host``, ``gpu``, ``driver``, ``cpu``, ...) of every job log
-    ``sp-*.out`` in ``logs`` that has one (the first; logs of jobs submitted before the line existed have none)."""
+    ``sp-*.out`` in ``logs`` that has one (the first; logs of jobs submitted before the line existed have none), but
+    the logs of jobs that stopped at the node check (:func:`stopped_at_node_check`), which ran on no node of the
+    run."""
     out = {}
     for path in sorted(logs.glob("sp-*.out")):
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                m = NODE.match(line)
-                if m:
-                    try:
-                        out[path.name] = json.loads(m.group(1))
-                    except json.JSONDecodeError:
-                        pass
-                    break
+        fields, stopped = _node_line(path)
+        if fields is not None and not stopped:
+            out[path.name] = fields
     return out
+
+
+def stopped_at_node_check(logs: Path) -> list[str]:
+    """The job logs ``sp-*.out`` in ``logs`` of jobs that stopped at the node check (``wrong node: ...``, exit status
+    86): they did no work, and :func:`nodes` leaves them out."""
+    return [path.name for path in sorted(logs.glob("sp-*.out")) if _node_line(path)[1]]
 
 
 def machines(run: "Run", logs: Path | None) -> dict[str, dict[str, set]]:

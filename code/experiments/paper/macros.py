@@ -748,7 +748,8 @@ def zkllm_same_gpu(c: Collector, ctx: T.Ctx) -> None:
     of two decoder layers, times the layers), and its factor over our prover on the same prompt (mode C,
     interactive, as ``tab:eval-compare``'s zkLLM rows).  The source is the run's own ``zkllm`` tier
     (``logs/<name>/zkllm/``, :data:`experiments.paper.bench.ZKLLM_RUN`) when it holds both models on the run's GPU,
-    else the stored runs (``artifacts/results/zkllm_l40s/``, :data:`experiments.paper.bench.ZKLLM_RUNS`); both are
+    each with an ``ok`` record of its prove job (a run whose proof binaries failed is never read), else the stored
+    runs (``artifacts/results/zkllm_l40s/``, :data:`experiments.paper.bench.ZKLLM_RUNS`); both are
     read with the published values by :func:`experiments.paper.bench.literature`.  Every value is printed only when
     the source's GPU is the run's (the records' ``env.gpu``, else the benchmark's prover): a factor holds on the
     same hardware only.  ``ZkllmSameGpuRun`` names the source for the text (:data:`ZKLLM_SOURCE`; empty when neither
@@ -758,9 +759,16 @@ def zkllm_same_gpu(c: Collector, ctx: T.Ctx) -> None:
     gpu = " ".join(env.split()) if env else None
     models = (("Llama-2-7B", "llama2-7b", "Llama"), ("Llama-2-13B", "llama2-13b", "LlamaL"))
 
+    def verified(m):
+        # the run's own zkLLM run of a model counts only if its record (the zkllm tier's job log) is ok: every proof
+        # binary exited 0 and every proved layer printed each verifier message (summarise.record)
+        recs = [r for r in ctx.run.kind("zkllm") if r.d.get("model") == m and r.d.get("seq") == 2048]
+        return bool(recs) and recs[-1].d.get("ok") is True
+
     def rows(system):
         out = [ctx.lit.get((system, model, "2048")) or {} for model, _, _ in models]
-        same = [bool(gpu and r.get("prover_hw") and " ".join(r["prover_hw"].split()) == gpu) for r in out]
+        same = [bool(gpu and r.get("prover_hw") and " ".join(r["prover_hw"].split()) == gpu
+                     and (system != ZKLLM_RUN or verified(m))) for r, (_, m, _) in zip(out, models)]
         return out, same
 
     own, same = rows(ZKLLM_RUN)
@@ -1062,18 +1070,19 @@ LLAMAS = (("meta-llama/Llama-2-7b-hf", "LlamaSeven", "main-a0.55-glus0.2", 3, Tr
           ("Qwen/Qwen3-4B-Base", "QwenL", "main-a0.45-glus0.5", 1, False))
 """The Llama-family checkpoints of the text, their ``ppl_llama.py`` main cell (``hf_llama.MAIN_SETTINGS``), the
 decimals the text prints and whether the text states the ratio as a bound ("within"; rounded up).  Llama-2-7B and
-Llama-2-13B (the quality tier's ``q-llama7`` and ``q-llama13``, with ``--llama-licence``) also have their 95%
+Llama-2-13B (the qllama tier's ``q-llama7-a0.55`` and ``q-llama13-a0.6``, with ``--llama-licence``) also have their 95%
 bootstrap intervals (:data:`LLAMA_CI`)."""
 LLAMA_CI = ("LlamaSeven", "LlamaThirteen")
 LLAMA_REFERENCE = {"meta-llama/Llama-2-13b-hf": "float16"}
 """The reference of each Llama-family ratio as the text states it: the checkpoint in fp32, except Llama-2-13B's in
-fp16 (``q-llama13 --ref-dtype float16``)."""
+fp16 (``q-llama13-a* --ref-dtype float16``)."""
 LLAMA_GRIDS = (("meta-llama/Llama-2-7b-hf", "LlamaSeven", (0.45, 0.55, 0.65), (0.1, 0.2, 0.3)),
                ("meta-llama/Llama-2-13b-hf", "LlamaThirteen", (0.5, 0.6, 0.7), (0.2,)))
 """The committed Llama-2 recipes against their neighbours, as the text names them: per checkpoint the smoothing alphas
 and the SwiGLU product balances of its grid, whose middle cell is the committed recipe (``hf_llama.MAIN_SETTINGS``,
-the cell of :data:`LLAMAS`), measured on each split of :data:`LLAMA_SPLITS` (the quality tier's ``q-llama7``,
-``q-llama7-validation``, ``q-llama13`` and ``q-llama13-validation``, with ``--llama-licence``).  The recipe is not
+the cell of :data:`LLAMAS`), measured on each split of :data:`LLAMA_SPLITS` (the qllama tier's ``q-llama7-a<alpha>``,
+``q-llama7-validation-a<alpha>``, ``q-llama13-a<alpha>`` and ``q-llama13-validation-a<alpha>``, one job per alpha, with
+``--llama-licence``).  The recipe is not
 chosen from these cells: they report the grid's best cell and the committed recipe's ratio above it."""
 LLAMA_SPLITS = (("test", "Test"), ("validation", "Val"))
 ALPHAS_TEST = (0.3, 0.4, 0.5, 0.6, 0.7)

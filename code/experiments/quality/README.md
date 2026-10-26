@@ -22,8 +22,8 @@ Llama-family scripts use `pvi.models.hf_llama`.
 | `tab:zeroshot`; Sec. `sec:quality`: "the certified OPT-125M and OPT-1.3B lose 1.0 and 0.8 points of accuracy on average, and OPT-6.7B matches fp16 (+0.06); LAMBADA ... loses the most (3.1, 2.0 and 0.5 points)" | `zeroshot.py` | `python -m experiments.quality.zeroshot --model facebook/opt-1.3b --device cuda --out zeroshot_opt-1.3b.jsonl` (OPT-6.7B: see below) | stdout, `--out` (`variant: ref` / `int`, `acc`, `acc_norm`, `diff_acc`, `diff_acc_ci95`, `same_pick`) |
 | Ext. `sec:ext-quality`: with the first recipe "the mean zero-shot loss of OPT-1.3B was 2.8 points (0.8 with the certified recipe)" | `zeroshot.py` | `python -m experiments.quality.zeroshot --model facebook/opt-1.3b --device cuda --recipe legacy` | as above |
 | Sec. `sec:defence`: "in our run, builds of the certified OPT-125M with 1 and 8 threads are identical bit for bit, and so are OPT-1.3B's builds and commitments with CPU and GPU encoding" (`\DigestThreadsOptS`, `\DigestEncodingOptM`; `numbers.py` fails if two builds of one model differ) | `digest_check.py` | `python -m experiments.quality.digest_check --model facebook/opt-125m --threads 1` (and `--threads 8 --commit --commit-device cuda`; `--model facebook/opt-1.3b --threads 8 --commit` with `--commit-device cuda` and `cpu`: job `q-digest`) | one JSON line (`digest`, `weights_sha256`, `roots_sha256`, `commit_device`) |
-| Sec. `sec:quality`, `discussion`, `ext_intro` and `ext_discussion` (the final run): "Llama-2-7B, whose integer graph has our benchmark's structure, is within x... of fp32 at 2,048 tokens (95% interval [...]) ... and Llama-2-13B within x... of fp16" (`\LlamaSevenRatio`, `\LlamaSevenCI`, `\LlamaThirteenRatio`, `\LlamaThirteenCI`): the committed recipe's perplexity ratio to the fp32 (Llama-2-13B: fp16) checkpoint and its 95% interval at 2,048 tokens | `ppl_llama.py` | `python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3 --structure --device cuda` (job `q-llama7`) and `--model meta-llama/Llama-2-13b-hf --alphas 0.5 0.6 0.7 --ref-dtype float16 --structure --device cuda` (job `q-llama13`) | stdout, `--out` (cell `main-a0.55-glus0.2` for Llama-2-7B, `main-a0.6-glus0.2` for Llama-2-13B: `ratio`, `ratio_ci95`, `top1`; `structure_diff`) |
-| Sec. `sec:quality`: "Llama-2's, fixed before the run, are on Llama-2-7B within ... (test) and ... (validation) of the best ratios among alpha and balance +-0.1" (`\LlamaSevenTestGap`, `\LlamaSevenValGap`); Ext. `sec:ext-quality`: each grid's best cell and the committed recipe's ratio above it, on Llama-2-7B (alpha in {0.45, 0.55, 0.65} x balance in {0.1, 0.2, 0.3}) and Llama-2-13B (alpha in {0.5, 0.6, 0.7}, balance 0.2), on the test and the validation split (`\LlamaSevenTestBest`, `\LlamaSevenValBest`, `\LlamaThirteenTestBest`, `\LlamaThirteenValBest`, `\LlamaThirteenTestGap`, `\LlamaThirteenValGap`) (the final run) | `ppl_llama.py` | the two commands above (test split) and the same with `--split validation` without `--structure` (jobs `q-llama7-validation`, `q-llama13-validation`) | cells `main-a<alpha>-glus<balance>` (`split`, `ratio`); `macros.LLAMA_GRIDS` |
+| Sec. `sec:quality`, `discussion`, `ext_intro` and `ext_discussion` (the final run): "Llama-2-7B, whose integer graph has our benchmark's structure, is within x... of fp32 at 2,048 tokens (95% interval [...]) ... and Llama-2-13B within x... of fp16" (`\LlamaSevenRatio`, `\LlamaSevenCI`, `\LlamaThirteenRatio`, `\LlamaThirteenCI`): the committed recipe's perplexity ratio to the fp32 (Llama-2-13B: fp16) checkpoint and its 95% interval at 2,048 tokens | `ppl_llama.py` | `python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3 --structure --device cuda` (jobs `q-llama7-a<alpha>`) and `--model meta-llama/Llama-2-13b-hf --alphas 0.5 0.6 0.7 --ref-dtype float16 --structure --device cuda` (jobs `q-llama13-a<alpha>`) | stdout, `--out` (cell `main-a0.55-glus0.2` for Llama-2-7B, `main-a0.6-glus0.2` for Llama-2-13B: `ratio`, `ratio_ci95`, `top1`; `structure_diff`) |
+| Sec. `sec:quality`: "Llama-2's, fixed before the run (7B's from a same-shape model), are on Llama-2-7B within ... (test) and ... (validation) of the best among alpha and balance +-0.1" (`\LlamaSevenTestGap`, `\LlamaSevenValGap`); Ext. `sec:ext-quality`: each grid's best cell and the committed recipe's ratio above it, on Llama-2-7B (alpha in {0.45, 0.55, 0.65} x balance in {0.1, 0.2, 0.3}) and Llama-2-13B (alpha in {0.5, 0.6, 0.7}, balance 0.2), on the test and the validation split (`\LlamaSevenTestBest`, `\LlamaSevenValBest`, `\LlamaThirteenTestBest`, `\LlamaThirteenValBest`, `\LlamaThirteenTestGap`, `\LlamaThirteenValGap`) (the final run) | `ppl_llama.py` | the two commands above (test split) and the same with `--split validation` without `--structure` (jobs `q-llama7-validation-a<alpha>`, `q-llama13-validation-a<alpha>`) | cells `main-a<alpha>-glus<balance>` (`split`, `ratio`); `macros.LLAMA_GRIDS` |
 | Sec. `sec:quality` and `ext_discussion`: "TinyLlama within x1.12 and Qwen3-1.7B within x1.40, while Qwen3-4B ... stays at x5.3" | `ppl_llama.py` | `python -m experiments.quality.ppl_llama --model TinyLlama/TinyLlama_v1.1 --device cuda` (and `--model Qwen/Qwen3-1.7B-Base`, `--model Qwen/Qwen3-4B-Base --ref-device cpu`) | cells `main-a0.75-glus0.2`, `main-a0.45-glus0.3`, `main-a0.45-glus0.5` (`ratio`) |
 | `ext_discussion`: "A per-token exponent at the SwiGLU product would bring Qwen3-1.7B to x1.20 and Qwen3-4B to x3.0" (a possible improvement, outside the main recipe) | `ppl_llama.py` | `python -m experiments.quality.ppl_llama --model Qwen/Qwen3-1.7B-Base --device cuda --glu-smooths 0.4 --glu-exps 8` (and `--model Qwen/Qwen3-4B-Base --ref-device cpu --glu-exps 8 --exp-only`, after the main cell's run) | cells `main-a0.45-glus0.4-exp8`, `main-a0.45-glus0.5-exp8` |
 | Sec. `sec:quality` and `ext_discussion`: "Qwen3-4B forms a second massive activation, at the first token after the prefix, that no public prefix we tried takes, and one static int8 scale per residual stream cannot hold it" | `llama_diag.py`, `ppl_llama.py`, `llama_attrib.py` | `python -m experiments.quality.llama_diag --model Qwen/Qwen3-4B-Base --recipes smooth55 scalar4` (and `--prefix 151643,151643`); `python -m experiments.quality.ppl_llama --model Qwen/Qwen3-4B-Base --seq 128 --windows 16 --graphs smooth --glu-exps 8 --ref-device cpu --prefix 151643,151643` (and the other prefixes below); `python -m experiments.quality.llama_attrib --model Qwen/Qwen3-4B-Base --blocks all --recipe smooth55` | `llama_diag`: per block `fp_max` at `fp_max_pos` 0 above the prefix's `fp_prefix_max` from block 7 on, `cos_mean`; `ppl_llama`: the 16 x 128 ratios per prefix; `llama_attrib`: `worst` per block (stderr: the table) |
@@ -260,36 +260,41 @@ q/k-norm gains). Output: one JSON line per (mode, block) on stdout and `--out`, 
 
 ### Reproducing the paper's numbers
 
-The run package's `quality` tier (`bash code/experiments/package/run.sh --platform <name> quality`; with your own
-Llama-2 licence and a Hugging Face token (`export HF_TOKEN`; sbatch passes it to the jobs), `--llama-licence`, and
-`HF_HOME` on a disk with about 100 GB free) runs every command of the table above, the Llama-2 rows and grids
-in four jobs (one per model and split; Llama-2-7B's fp32 reference and Llama-2-13B's fp16 copy on the GPU):
+The run package's `quality` tier (`bash code/experiments/package/run.sh --platform <name> quality`) runs every
+command of the table above but the 7B- and 13B-shaped Llama models, which its `qllama` tier runs (`run.sh --platform
+<name> --llama-licence qllama`, with your own Llama-2 licence and a Hugging Face token (`export HF_TOKEN`; sbatch
+passes it to the jobs) and `HF_HOME` on a disk with about 100 GB free; a tier of its own so that it can run on a
+second GPU next to `quality`). It measures the Llama-2 rows and grids in twelve jobs, one per model, split and alpha
+(Llama-2-7B's fp32 reference and Llama-2-13B's fp16 copy on the GPU; a job's time is mostly the calibration build
+on the CPU, the same on both splits):
 
-    python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --alphas 0.45 0.55 0.65 \
-        --glu-smooths 0.1 0.2 0.3 --structure --device cuda --calib-device cpu --threads 8          # q-llama7, 12 h
-    python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --split validation \
-        --alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3 --device cuda --calib-device cpu --threads 8
-                                                                                     # q-llama7-validation, 10 h
-    python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-13b-hf --alphas 0.5 0.6 0.7 \
-        --ref-dtype float16 --structure --device cuda --calib-device cpu --threads 8               # q-llama13, 12 h
-    python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-13b-hf --split validation --alphas 0.5 0.6 0.7 \
-        --ref-dtype float16 --device cuda --calib-device cpu --threads 8              # q-llama13-validation, 12 h
+    for a in 0.45 0.55 0.65; do       # q-llama7-a<a>: 6 h limit, about 4 h
+        python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --alphas $a \
+            --glu-smooths 0.1 0.2 0.3 --structure --device cuda --calib-device cpu --threads 8
+    done
+    for a in 0.5 0.6 0.7; do          # q-llama13-a<a>: 7 h limit, about 4 h
+        python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-13b-hf --alphas $a \
+            --ref-dtype float16 --structure --device cuda --calib-device cpu --threads 8
+    done
+    # and both with --split validation instead of --structure: q-llama7-validation-a<a>, q-llama13-validation-a<a>
 
 (`main-a0.55-glus0.2` is Llama-2-7B's row and `main-a0.6-glus0.2` Llama-2-13B's; the other cells are their
 neighbours; `--graphs main smooth` adds the same graphs without the product balance, which the paper does not
-report.) Without `--llama-licence` the tier runs, in their place, the licence-free stand-in OpenLLaMA-7B (Llama-2-7B's
-shapes, not gated): its main cell on the test split with the structural diff (job q-openllama7, its fp32 CPU reference
-kept in `logs/<name>/ref_open_llama_7b_v2.pt`) and the same 3 x 3 grid on the validation split (job
-q-openllama7-validation); the paper does not report them. OpenLLaMA-7B ships only its SentencePiece model, so its
-tokenizer needs `sentencepiece` and `protobuf` (`code/requirements-llm.txt`; `run.sh` checks both before it submits
-the tier without `--llama-licence`); Llama-2's repositories ship the fast tokenizer and need neither. Job q-qwen4
-keeps its fp32 CPU reference in `logs/<name>/ref_*.pt` (`--ref-cache`). The tier's rehearsal (`--rehearsal`) runs the
-grid path (two alphas, two product balances, the validation split, an fp16 reference) on a 2-block smoke model with
-Llama-2-7B's vocabulary (job q-llama-access, which reads the gated repository from a compute node) with
-`--llama-licence`, and with OpenLLaMA-7B's (job q-openllama7-smoke, which loads its tokenizer) without it; and the
-tiny random model below. The other ratios come from the commands of the table above, one checkpoint per run
-(TinyLlama and the Qwen3 models are not gated); the Qwen3-4B prefix study at 16 x 128 repeats the `ppl_llama.py`
-command of the table with `--prefix` set to `<|endoftext|>` (151643) twice or four times, or followed by newline (198), `.` (13) or ` =` (284).
+report. One job per alpha keeps each job well inside its limit, and a job stopped at a limit, run again, repeats one
+alpha's cells only.) Without `--llama-licence` the `qllama` tier runs, in their place, the licence-free stand-in
+OpenLLaMA-7B (Llama-2-7B's shapes, not gated): its main cell on the test split with the structural diff (job
+q-openllama7, its fp32 CPU reference kept in `logs/<name>/ref_open_llama_7b_v2.pt`) and the same 3 x 3 grid on the
+validation split (job q-openllama7-validation); the paper does not report them. OpenLLaMA-7B ships only its
+SentencePiece model, so its tokenizer needs `sentencepiece` and `protobuf` (`code/requirements-llm.txt`; `run.sh` checks
+both before it submits the `qllama` tier without `--llama-licence`); Llama-2's repositories ship the fast tokenizer and
+need neither. Job q-qwen4 keeps its fp32 CPU reference in `logs/<name>/ref_*.pt` (`--ref-cache`). The `qllama` tier's
+rehearsal (`--rehearsal`) runs the grid path (two alphas, two product balances, the validation split, an fp16 reference)
+on a 2-block smoke model with Llama-2-7B's vocabulary (job q-llama-access, which reads the gated repository from a
+compute node) with `--llama-licence`, and with OpenLLaMA-7B's (job q-openllama7-smoke, which loads its tokenizer)
+without it; the `quality` tier's rehearsal runs the tiny random model below. The other ratios come from the commands of
+the table above, one checkpoint per run (TinyLlama and the Qwen3 models are not gated); the Qwen3-4B prefix study at 16
+x 128 repeats the `ppl_llama.py` command of the table with `--prefix` set to `<|endoftext|>` (151643) twice or four
+times, or followed by newline (198), `.` (13) or ` =` (284).
 The repository stores no record of these runs; the stored diagnosis is `llama_diag_tinyllama_qwen3-0.6b.txt` (above).
 
 On a laptop (no checkpoint; the scripts' `--smoke` model downloads only a configuration and a tokenizer):

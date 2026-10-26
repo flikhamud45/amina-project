@@ -94,8 +94,8 @@ exits with "Input or output file does not exist"); the measured skip connection 
 whole model's time is the time per layer times the model's decoder layers (32 and 40). The stored runs give
 26.37 s per layer (844 s) for Llama-2-7B and 65.71 s (2,628 s) for Llama-2-13B.
 
-The rehearsal (`run.sh --rehearsal --llama-licence zkllm`) runs one job: the build for Llama-2-7B only and one
-repetition of layer 0 at 2,048 tokens, which takes every step of the full jobs.
+The rehearsal (`run.sh --platform <name> --rehearsal --llama-licence zkllm`) runs one job: the build for Llama-2-7B
+only and one repetition of layer 0 at 2,048 tokens, which takes every step of the full jobs.
 
 ## Without the run package
 
