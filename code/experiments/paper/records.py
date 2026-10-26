@@ -297,7 +297,9 @@ def checks(r: Rec) -> list[str]:
         bad.append(f"the smoke's tests: {d.get('failed')} failed, {d.get('errors')} errors ({d.get('line')})")
     elif r.kind == "attribution" and d.get("part") == "check" and d.get("ok") is False:
         bad.append("the attribution's float copy failed a check (ok false)")
-    elif r.kind == "zkllm" and d.get("ok") is not True:
+    elif r.kind == "zkllm" and d.get("ok") is not True and d.get("required", True) is not False:
+        # a length run with --allow-failed-lengths (required false) that zkLLM's demo did not prove is a result (the
+        # paper reports the length as failed), not a failed check
         bad.append(f"zkLLM's demo: {d.get('binary_failures')} proof binaries failed, verifier messages "
                    f"{d.get('verdicts')} for {d.get('layers_expected')} proved layers (ok false)")
     # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose;

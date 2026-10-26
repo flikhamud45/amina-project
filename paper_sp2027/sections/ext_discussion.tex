@@ -108,6 +108,32 @@ as in Table~\ref{tab:eval-compare}). These times count zkLLM's proof binaries al
 setup and commitment or the scripts around the binaries; they were measured on two decoder layers
 (three repetitions each) and multiplied by the number of layers, the first skip connection of each
 layer, which its demo does not run, being counted as the second. They cover the decoder layers only.
+Table~\ref{tab:zkllm-lengths} repeats the comparison at shorter prompts, with zkLLM's setup and commitment run once
+per job and shared by its lengths, as they depend on the weights alone. Across the lengths that its demo proves,
+zkLLM's prover takes \ZkllmSameGpuFactorLengthRange{}$\times$ our prover's time, and
+\ZkllmSameGpuFactorShortRange{}$\times$ at \ZkllmSameGpuShortSeq{} tokens, the shortest length that it proves for
+both models here. Its lookup arguments need power-of-two sizes that are multiples of their tables' sizes ($2^{20}$ entries for
+the attention scores' softmax and $2^{22}$ for SwiGLU), so its demo, run unchanged, may stop with an error at short
+prompts; the table marks such a length as failed.
+
+\begin{table}[t]
+  \caption{zkLLM's public demo (commit 993311e) against our prover on the \PlatformGpu{} at each prompt length $T$:
+  the prover's time for the full model (zkLLM: its proof binaries on two decoder layers times the layers; ours: mode
+  $\sC$, interactive, $\lambda{=}128$, random int8 weights of the same shapes) and zkLLM's time over ours; fails:
+  zkLLM's demo stopped with an error at this length}
+  \label{tab:zkllm-lengths}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}rrrrrrr@{}}
+    \toprule
+    & \multicolumn{3}{c}{Llama-2-7B} & \multicolumn{3}{c}{Llama-2-13B} \\
+    \cmidrule(lr){2-4}\cmidrule(l){5-7}
+    $T$ & zkLLM & ours & factor & zkLLM & ours & factor \\
+    \midrule
+    \pvitable{tab_zkllm_lengths}
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \para{Ours.} In mode $\sC$ the client holds the 32-byte Merkle roots of the weights and no weights. A 64-token
 proof is \ProofLlamaShortC{}, about \ProofRatioLlamaShort{}$\times$ smaller than the int8 weights, and is checked in \VerifyLlamaShortCCpu{} on 8

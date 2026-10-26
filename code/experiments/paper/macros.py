@@ -166,8 +166,8 @@ def build_text(layers, model: str) -> str:
 
 
 def _ratio_text(v: float) -> str:
-    """A factor without the times sign: 1{,}213, 78, 2.1."""
-    return f.thousands(f"{v:,.0f}") if v >= 100 else (f"{v:.0f}" if v >= 10 else f"{v:.1f}")
+    """A factor without the times sign: 1{,}213, 78, 2.1 (:func:`experiments.paper.tables.ratio_text`)."""
+    return T.ratio_text(v)
 
 
 # ================================================================================================ the platform
@@ -688,12 +688,13 @@ def count_word(v: float) -> str:
 
 
 def comparison(c: Collector, ctx: T.Ctx) -> None:
+    """The text's numbers on ``tab:eval-compare``, over the rows that the table prints (``ctx.compare_rows``), and
+    zkLLM's comparison on the run's GPU (:func:`zkllm_same_gpu`)."""
     prover, proof, slower = [], [], []
-    for row in T.COMPARE:
-        if row is None:
-            continue
-        label, key, model, which = row
-        lit = ctx.lit.get(key) or {}
+    gpu = T.zkllm_gpu(ctx)
+    for row in T.compare_rows(ctx.compare_rows):
+        which = row.which
+        lit = T.compare_theirs(ctx, row, gpu)
         p, v, nb, src = T.compare_ours(ctx, which)
         tp, tb = f.to_float(lit.get("prover_s")), f.to_float(lit.get("proof_bytes"))
         tv = f.to_float(lit.get("verifier_s"))
@@ -721,7 +722,7 @@ def comparison(c: Collector, ctx: T.Ctx) -> None:
     c.put("ZkllmProverFactor", zl and ours and zl / ours["prove"], ours and f"{ctx.bench.name} {ours['cell']}",
           lambda v: f"{v:.0f}")
     c.todo("TodoZkllmFactor")
-    zkllm_same_gpu(c, ctx)
+    zkllm_same_gpu(c, ctx, gpu)
     b = ctx.bench
     cell = b.cnn_cell("lenet5", "C", "fs")
     le = b.cnn_cost("lenet5", cell)
@@ -743,51 +744,51 @@ ZKLLM_SOURCE = {True: "in the same run", False: "in separate runs"}
 demo also ran on the GPU ..."): by the run package's ``zkllm`` tier in the same run, or in the separate stored runs."""
 
 
-def zkllm_same_gpu(c: Collector, ctx: T.Ctx) -> None:
-    """zkLLM's prover on the run's own GPU model, for Llama-2-7B and Llama-2-13B at 2,048 tokens (the proof binaries
-    of two decoder layers, times the layers), and its factor over our prover on the same prompt (mode C,
-    interactive, as ``tab:eval-compare``'s zkLLM rows).  The source is the run's own ``zkllm`` tier
-    (``logs/<name>/zkllm/``, :data:`experiments.paper.bench.ZKLLM_RUN`) when it holds both models on the run's GPU,
-    each with an ``ok`` record of its prove job (a run whose proof binaries failed is never read), else the stored
-    runs (``artifacts/results/zkllm_l40s/``, :data:`experiments.paper.bench.ZKLLM_RUNS`); both are
-    read with the published values by :func:`experiments.paper.bench.literature`.  Every value is printed only when
-    the source's GPU is the run's (the records' ``env.gpu``, else the benchmark's prover): a factor holds on the
-    same hardware only.  ``ZkllmSameGpuRun`` names the source for the text (:data:`ZKLLM_SOURCE`; empty when neither
-    source has the run's GPU)."""
-    from experiments.paper.bench import ZKLLM_RUN, ZKLLM_RUNS
-    env = ctx.run.environment()["gpu"] or next(iter(sorted(ctx.bench.hardware()[0])), None)
-    gpu = " ".join(env.split()) if env else None
-    models = (("Llama-2-7B", "llama2-7b", "Llama"), ("Llama-2-13B", "llama2-13b", "LlamaL"))
+def zkllm_same_gpu(c: Collector, ctx: T.Ctx, gpu: dict | None = None) -> None:
+    """zkLLM's prover on the run's own GPU model against ours on prompts of the same length (mode C, interactive, as
+    ``tab:eval-compare``'s zkLLM rows), from :func:`experiments.paper.tables.zkllm_gpu` (the run's ``zkllm`` tier,
+    at 2,048 tokens else the stored runs; a value only where the source's GPU is the run's).
 
-    def verified(m):
-        # the run's own zkLLM run of a model counts only if its record (the zkllm tier's job log) is ok: every proof
-        # binary exited 0 and every proved layer printed each verifier message (summarise.record)
-        recs = [r for r in ctx.run.kind("zkllm") if r.d.get("model") == m and r.d.get("seq") == 2048]
-        return bool(recs) and recs[-1].d.get("ok") is True
-
-    def rows(system):
-        out = [ctx.lit.get((system, model, "2048")) or {} for model, _, _ in models]
-        same = [bool(gpu and r.get("prover_hw") and " ".join(r["prover_hw"].split()) == gpu
-                     and (system != ZKLLM_RUN or verified(m))) for r, (_, m, _) in zip(out, models)]
-        return out, same
-
-    own, same = rows(ZKLLM_RUN)
-    in_run = all(same)
-    if not in_run:
-        own, same = rows(ZKLLM_RUNS)
-    factors = []
-    for (model, m, name), row, ok in zip(models, own, same):
-        theirs = f.to_float(row.get("prover_s")) if ok else None
-        ours = ctx.bench.llm_cost(m, 2048, "c_cpu_int") or ctx.bench.llm_cost(m, 2048, "c_gpu_int")
-        q = theirs / ours["prove"] if theirs and ours and ours["prove"] else None
-        factors.append(q)
-        c.put(f"ZkllmSameGpuProver{name}", theirs, row.get("source", ""), lambda v: f.num(v))
-        c.put(f"ZkllmSameGpuFactor{name}", q, f"{row.get('source', '')}; {ctx.bench.name} {ours['cell']}"
-              if ours else "", _ratio_text)
-    _range(c, "ZkllmSameGpuFactorRange", factors, "zkLLM's runs on the run's GPU and the benchmark's interactive "
-           "mode-C cells", _ratio_text)
-    c.put("ZkllmSameGpuRun", ZKLLM_SOURCE[in_run] if any(same) else None,
-          "; ".join(r.get("source", "") for r in own if r))
+    At 2,048 tokens: ``ZkllmSameGpuProverLlama``/``...LlamaL`` (seconds), ``ZkllmSameGpuFactorLlama``/``...LlamaL``,
+    their range ``ZkllmSameGpuFactorRange`` and ``ZkllmSameGpuRun``, the source for the text (:data:`ZKLLM_SOURCE`;
+    empty when neither source has the run's GPU), and ``ZkllmSameGpuOursLlama``/``...LlamaL`` (our prover).  At
+    each other length of :data:`experiments.paper.tables.ZKLLM_SEQS` the same names with ``T<length>`` spelled out
+    (``ZkllmSameGpuProverLlamaTSixFour``): zkLLM's prover prints ``fails`` and the factor ``--`` where its demo did
+    not prove the length.  Over the lengths: ``ZkllmSameGpuFactorLengthRange`` (every proved model and length),
+    ``ZkllmSameGpuShortSeq`` (the shortest length below 2,048 tokens that both models proved; the text's second
+    comparison) and ``ZkllmSameGpuFactorShortRange`` (both models' factors there)."""
+    gpu = gpu if gpu is not None else T.zkllm_gpu(ctx)
+    names = (("llama2-7b", "Llama"), ("llama2-13b", "LlamaL"))
+    for seq in sorted({s for _, s in gpu}):
+        tail = "" if seq == 2048 else f.macro_name("T", seq)
+        for m, name in names:
+            z = gpu[(m, seq)]
+            src_ours = f"{ctx.bench.name} {z.ours['cell']}" if z.ours else ""
+            c.put(f"ZkllmSameGpuProver{name}{tail}", T.ZKLLM_FAILED if z.failed else z.theirs, z.source,
+                  lambda v: v if isinstance(v, str) else f.num(v))
+            c.put(f"ZkllmSameGpuOurs{name}{tail}", z.ours and z.ours["prove"], src_ours, lambda v: f.sig(v, 3))
+            c.put(f"ZkllmSameGpuFactor{name}{tail}", f.DASH if z.failed else z.factor,
+                  f"{z.source}; {src_ours}" if z.ours else "", lambda v: v if isinstance(v, str) else _ratio_text(v))
+    main = [gpu[(m, 2048)] for m, _ in names]
+    _range(c, "ZkllmSameGpuFactorRange", [z.factor for z in main], "zkLLM's runs on the run's GPU and the "
+           "benchmark's interactive mode-C cells", _ratio_text)
+    c.put("ZkllmSameGpuRun", ZKLLM_SOURCE[main[0].in_run] if any(z.theirs for z in main) else None,
+          "; ".join(z.source for z in main if z.source))
+    proved = [z.factor for z in gpu.values() if z.factor is not None]
+    c.put("ZkllmSameGpuFactorLengthRange", (min(proved), max(proved)) if proved else None,
+          "zkLLM's runs on the run's GPU at every length and the benchmark's interactive mode-C cells",
+          lambda p: f.rng(p[0], p[1], _ratio_text))
+    short = next((s for s in sorted({s for _, s in gpu}) if s < 2048
+                  and all(gpu[(m, s)].factor is not None for m, _ in names)), None)
+    c.put("ZkllmSameGpuShortSeq", short, "the shortest length below 2,048 tokens that zkLLM proved for both models",
+          f.tokens)
+    # the extended version: "the shortest length that it proves for both models here" (ours measured at each)
+    if short is not None:
+        c.claim(not any(all(gpu[(m, s)].theirs is not None for m, _ in names) for _, s in gpu if s < short),
+                f"\\ZkllmSameGpuShortSeq is {short} tokens, but zkLLM proved both models at a shorter length whose "
+                "interactive mode-C cell is missing")
+    _range(c, "ZkllmSameGpuFactorShortRange", [gpu[(m, short)].factor for m, _ in names] if short else [],
+           f"zkLLM's runs on the run's GPU at {short} tokens and the benchmark's interactive mode-C cells", _ratio_text)
 
 
 # ================================================================================================ spot-checking schemes

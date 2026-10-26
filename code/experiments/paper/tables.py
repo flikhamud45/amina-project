@@ -11,7 +11,8 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 ``tab:eval-llm``      ``bench``: modes C (CPU and streaming GPU verifier) and Kpre, Fiat--Shamir, the plan
 ``tab:eval-v1``       ``v1``: ``v1_bytes.py --full`` on the CPU verifier, random weights
 ``tab:options``       ``cpuv`` (perf.py, reexec.py, llamacpp.py, V1's CPU verifier), ``gpuv`` (reexec.py on the GPU)
-``tab:eval-compare``  ``bench`` and the published systems (``reported_curated.csv``)
+``tab:eval-compare``  ``bench`` and the published systems (``reported_curated.csv``); its rows: ``numbers.py
+                      --compare-rows`` (:data:`COMPARE_ROWS`)
 ``tab:quality``       ``quality``: ``ppl_opt.py`` (the certified recipe, alpha 0.6, 11-bit probabilities)
 ``tab:params``        the library's parameters and byte model; V1's counts from the ``v1`` tier
 ``tab:inrange``       ``attack``: ``inrange_llm.py``'s documents
@@ -29,6 +30,9 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 ``tab:zeroshot``      ``quality``: ``zeroshot.py`` (the certified recipe)
 ``tab:paths``         Proposition ``prop:paths`` (``attack/sok.py``) at the ``attack`` tier's in-range edit sizes
 ``tab:paths-acc``     the same
+``tab:eval-compare-full`` every row of :data:`COMPARE_ROWS` (the extended version)
+``tab:zkllm-lengths`` ``zkllm`` (zkLLM's demo on the run's GPU, each prompt length) and ``bench`` (mode C,
+                      interactive, at the same lengths)
 ==================== ==================================================================================
 
 Tables that no record produces are not built: the analysis and literature tables ``tab:sok``, ``tab:sok-derivation``
@@ -117,6 +121,8 @@ class Ctx:
     policy: str = DEFAULT_POLICY
     platform: str = ""
     byte_model: bool = True
+    compare_rows: tuple = field(default_factory=lambda: COMPARE_DEFAULT)
+    """``tab:eval-compare``'s rows (keys of :data:`COMPARE_ROWS`; ``numbers.py --compare-rows``)."""
 
 
 def protocol(ctx: Ctx, extra: str = "") -> str:
@@ -320,21 +326,166 @@ def tab_options(ctx: Ctx) -> Table:
     return tb
 
 
-COMPARE = (("zkCNN$^a$", ("zkCNN", "VGG-16 CIFAR-10", ""), "VGG-16", ("cnn", "vgg16")),
-           ("ZKML", ("ZKML", "VGG-16 CIFAR-10", ""), "VGG-16", ("cnn", "vgg16")),
-           None,
-           ("zkGPT$^b$", ("zkGPT", "GPT-2", ""), "GPT-2 (64)", ("llm", "gpt2", 64)),
-           ("DeepProve$^c$", ("DeepProve", "GPT-2", "64"), "GPT-2 (64)", ("llm", "gpt2", 64)),
-           ("DeepProve$^c$", ("DeepProve", "GPT-2", "512"), "GPT-2 (512)", ("llm", "gpt2", 512)),
-           ("ZKTorch", ("ZKTorch", "Llama-2-7B (1 token)", "1"), "Llama-2-7B (1)", ("llm", "llama2-7b", 1)),
-           ("Maverick$^d$", ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "8"), "Qwen3-4B (8)", ("maverick",)),
-           None,
-           ("zkLLM", ("zkLLM", "OPT-125M", "2048"), "OPT-125M (2{,}048)", ("zkllm", "opt-125m")),
-           ("zkLLM", ("zkLLM", "OPT-1.3B", "2048"), "OPT-1.3B (2{,}048)", ("zkllm", "opt-1.3b")),
-           ("zkLLM", ("zkLLM", "Llama-2-7B", "2048"), "Llama-2-7B (2{,}048)", ("zkllm", "llama2-7b")),
-           ("zkLLM", ("zkLLM", "Llama-2-13B", "2048"), "Llama-2-13B (2{,}048)", ("zkllm", "llama2-13b")))
-"""``tab:eval-compare``'s rows: (system label, its row in ``reported_curated.csv``, the model label, ours);
-None: a rule between groups."""
+@dataclass(frozen=True)
+class CompareRow:
+    """One row of the comparison with published systems: ``key`` names it for ``numbers.py --compare-rows``,
+    ``group`` the rows that sit between two rules, ``label`` the system as the table prints it, ``lit`` its row in
+    ``reported_curated.csv`` (``(system, model, seq)``; for zkLLM's runs on the run's GPU, ``(ZKLLM_GPU, model,
+    seq)``: :func:`zkllm_gpu`), ``model`` the model as printed and ``which`` ours (:func:`compare_ours`)."""
+
+    key: str
+    group: str
+    label: str
+    lit: tuple
+    model: str
+    which: tuple
+
+
+ZKLLM_GPU = "zkLLM (the run's GPU)"
+"""The ``lit`` system of the comparison rows whose zkLLM prover was measured on the run's GPU model (:func:`zkllm_gpu`:
+the run's ``zkllm`` tier, else the stored runs)."""
+COMPARE_ROWS = (
+    CompareRow("zkcnn-vgg16", "cnn", "zkCNN$^a$", ("zkCNN", "VGG-16 CIFAR-10", ""), "VGG-16", ("cnn", "vgg16")),
+    CompareRow("zkml-vgg16", "cnn", "ZKML", ("ZKML", "VGG-16 CIFAR-10", ""), "VGG-16", ("cnn", "vgg16")),
+    CompareRow("zkcnn-vgg11", "cnn", "zkCNN$^a$", ("zkCNN", "VGG-11 CIFAR-10", ""), "VGG-11", ("cnn", "vgg11")),
+    CompareRow("zkcnn-lenet5", "cnn", "zkCNN$^a$", ("zkCNN", "LeNet-5 MNIST", ""), "LeNet-5", ("cnn", "lenet5")),
+    CompareRow("bionetta-lenet5", "cnn", "Bionetta", ("Bionetta", "LeNet-5", ""), "LeNet-5", ("cnn", "lenet5")),
+    CompareRow("zkgpt-gpt2-64", "llm", "zkGPT$^b$", ("zkGPT", "GPT-2", ""), "GPT-2 (64)", ("llm", "gpt2", 64)),
+    CompareRow("deepprove-gpt2-64", "llm", "DeepProve$^c$", ("DeepProve", "GPT-2", "64"), "GPT-2 (64)",
+               ("llm", "gpt2", 64)),
+    CompareRow("deepprove-gpt2-512", "llm", "DeepProve$^c$", ("DeepProve", "GPT-2", "512"), "GPT-2 (512)",
+               ("llm", "gpt2", 512)),
+    CompareRow("zktorch-llama2-7b-1", "llm", "ZKTorch", ("ZKTorch", "Llama-2-7B (1 token)", "1"), "Llama-2-7B (1)",
+               ("llm", "llama2-7b", 1)),
+    CompareRow("maverick-qwen3-4b-8", "llm", "Maverick$^d$", ("Maverick (verif.-only, 1 thr.)", "Qwen3-4B", "8"),
+               "Qwen3-4B (8)", ("maverick",)),
+    CompareRow("zkllm-opt-125m", "zkllm", "zkLLM", ("zkLLM", "OPT-125M", "2048"), "OPT-125M (2{,}048)",
+               ("zkllm", "opt-125m")),
+    CompareRow("zkllm-opt-1.3b", "zkllm", "zkLLM", ("zkLLM", "OPT-1.3B", "2048"), "OPT-1.3B (2{,}048)",
+               ("zkllm", "opt-1.3b")),
+    CompareRow("zkllm-llama2-7b", "zkllm", "zkLLM", ("zkLLM", "Llama-2-7B", "2048"), "Llama-2-7B (2{,}048)",
+               ("zkllm", "llama2-7b")),
+    CompareRow("zkllm-llama2-13b", "zkllm", "zkLLM", ("zkLLM", "Llama-2-13B", "2048"), "Llama-2-13B (2{,}048)",
+               ("zkllm", "llama2-13b")),
+    CompareRow("zkllm-gpu-llama2-7b", "zkllm", r"zkLLM, \PlatformGpu{}", (ZKLLM_GPU, "Llama-2-7B", "2048"),
+               "Llama-2-7B (2{,}048)", ("zkllm", "llama2-7b")),
+    CompareRow("zkllm-gpu-llama2-13b", "zkllm", r"zkLLM, \PlatformGpu{}", (ZKLLM_GPU, "Llama-2-13B", "2048"),
+               "Llama-2-13B (2{,}048)", ("zkllm", "llama2-13b")),
+)
+"""Every row of the comparison with published systems, in the tables' order: ``tab:eval-compare-full`` (the extended
+version) prints them all, ``tab:eval-compare`` those of ``numbers.py --compare-rows`` (default
+:data:`COMPARE_DEFAULT`).  Each row's values are computed for both tables, whichever rows the paper's table keeps."""
+COMPARE_KEYS = tuple(r.key for r in COMPARE_ROWS)
+COMPARE_DEFAULT = ("zkcnn-vgg16", "zkml-vgg16", "zkgpt-gpt2-64", "deepprove-gpt2-64", "deepprove-gpt2-512",
+                   "zktorch-llama2-7b-1", "maverick-qwen3-4b-8", "zkllm-opt-125m", "zkllm-opt-1.3b",
+                   "zkllm-llama2-7b", "zkllm-llama2-13b")
+"""``tab:eval-compare``'s rows unless ``numbers.py --compare-rows`` names others."""
+
+
+def compare_selection(spec: str | None) -> tuple:
+    """The keys of :data:`COMPARE_ROWS` that ``--compare-rows`` names: ``default`` (or None: :data:`COMPARE_DEFAULT`),
+    ``all``, a comma-separated list of keys, or a file of keys (separated by commas or new lines; ``#`` starts a
+    comment).  The rows keep the tables' order; an unknown key is a ValueError that lists the known ones."""
+    from pathlib import Path
+    if spec is None or spec.strip() == "default":
+        return COMPARE_DEFAULT
+    if spec.strip() == "all":
+        return COMPARE_KEYS
+    path = Path(spec)
+    text = path.read_text(encoding="utf-8") if path.is_file() else spec
+    keys = [k.strip() for line in text.splitlines() for k in line.split("#", 1)[0].split(",") if k.strip()]
+    unknown = [k for k in keys if k not in COMPARE_KEYS]
+    if unknown or not keys:
+        raise ValueError(f"--compare-rows: unknown rows {unknown or '(none given)'}; "
+                         f"the rows: {', '.join(COMPARE_KEYS)}")
+    return tuple(k for k in COMPARE_KEYS if k in keys)
+
+
+def compare_rows(keys) -> list:
+    """The :data:`COMPARE_ROWS` of ``keys``, in the tables' order."""
+    return [r for r in COMPARE_ROWS if r.key in set(keys)]
+
+
+ZKLLM_SEQS = (64, 512, 1024, 2048)
+"""The prompt lengths of zkLLM's comparison on the run's GPU (``run.sh --zkllm-seqs``' default; ``tab:zkllm-lengths``'
+rows)."""
+ZKLLM_MODELS = (("Llama-2-7B", "llama2-7b"), ("Llama-2-13B", "llama2-13b"))
+
+
+@dataclass
+class ZkGpu:
+    """zkLLM's prover against ours at one model and prompt length on the run's GPU model (:func:`zkllm_gpu`):
+    ``theirs`` (seconds; None when not measured on that GPU or not proved), ``failed`` (zkLLM's demo ran at this
+    length on the run's GPU and did not prove it: its record is not ``ok``), ``ours`` (``Bench.llm_cost`` of mode C,
+    interactive) and the sources."""
+
+    theirs: float | None
+    failed: bool
+    ours: dict | None
+    source: str
+    in_run: bool
+
+    @property
+    def factor(self) -> float | None:
+        return self.theirs / self.ours["prove"] if self.theirs and self.ours and self.ours["prove"] else None
+
+
+def ours_int(ctx: Ctx, model: str, seq: int) -> dict | None:
+    """Our side of zkLLM's comparison: mode C, interactive, lambda 128, the CPU-verifier cell's prover (else the
+    GPU-verifier cell's), as ``tab:eval-compare``'s zkLLM rows."""
+    return ctx.bench.llm_cost(model, seq, "c_cpu_int") or ctx.bench.llm_cost(model, seq, "c_gpu_int")
+
+
+def zkllm_gpu(ctx: Ctx) -> dict:
+    """``{(model, seq): ZkGpu}`` for :data:`ZKLLM_MODELS` and :data:`ZKLLM_SEQS` (and any other length the run's
+    ``zkllm`` tier measured): zkLLM's prover on the run's own GPU model (the proof binaries of two decoder layers,
+    times the layers) and ours on the same prompt length.  At 2,048 tokens the source is the run's own ``zkllm`` tier
+    (``logs/<name>/zkllm/``, :data:`experiments.paper.bench.ZKLLM_RUN`) when it holds both models on the run's GPU,
+    each with an ``ok`` record of its prove job, else the stored runs (``artifacts/results/zkllm_l40s/``,
+    :data:`experiments.paper.bench.ZKLLM_RUNS`); at the other lengths it is the run's tier alone.  A value counts
+    only when its GPU is the run's (the records' ``env.gpu``, else the benchmark's prover): a factor holds on the
+    same hardware only.  A length whose record (on the run's GPU) is not ``ok`` is ``failed``: zkLLM's demo did not
+    prove it."""
+    from experiments.paper.bench import ZKLLM_RUN, ZKLLM_RUNS
+    env = ctx.run.environment()["gpu"] or next(iter(sorted(ctx.bench.hardware()[0])), None)
+    gpu = " ".join(env.split()) if env else None
+    on_gpu = lambda hw: bool(gpu and hw and " ".join(hw.split()) == gpu)       # noqa: E731
+
+    def record(m, seq):
+        recs = [r for r in ctx.run.kind("zkllm") if r.d.get("model") == m and r.d.get("seq") == seq
+                and on_gpu((r.d.get("env") or {}).get("gpu"))]
+        return recs[-1] if recs else None
+
+    def own(name, m, seq):
+        row = ctx.lit.get((ZKLLM_RUN, name, str(seq))) or {}
+        rec = record(m, seq)
+        ok = bool(row and on_gpu(row.get("prover_hw")) and rec is not None and rec.d.get("ok") is True)
+        return row, ok, rec is not None and rec.d.get("ok") is not True
+
+    seqs = sorted(set(ZKLLM_SEQS) | {int(k[2]) for k in ctx.lit if k[0] == ZKLLM_RUN and str(k[2]).isdigit()})
+    out = {}
+    main = {m: own(name, m, 2048) for name, m in ZKLLM_MODELS}
+    in_run = all(ok for _, ok, _ in main.values())
+    for name, m in ZKLLM_MODELS:
+        for seq in seqs:
+            row, ok, failed = own(name, m, seq)
+            if seq == 2048 and not in_run:
+                row = ctx.lit.get((ZKLLM_RUNS, name, "2048")) or {}
+                ok, failed = on_gpu(row.get("prover_hw")), False
+            out[(m, seq)] = ZkGpu(f.to_float(row.get("prover_s")) if ok else None, failed and not ok,
+                                  ours_int(ctx, m, seq), row.get("source", "") if ok or failed else "",
+                                  in_run if seq == 2048 else ok)
+    return out
+
+
+def compare_theirs(ctx: Ctx, row: CompareRow, gpu: dict | None = None) -> dict:
+    """The published values of one comparison row (``reported_curated.csv``), or, for zkLLM on the run's GPU, its
+    prover time there (:func:`zkllm_gpu`; no verifier or proof size)."""
+    if row.lit[0] != ZKLLM_GPU:
+        return ctx.lit.get(row.lit) or {}
+    m = dict((name, key) for name, key in ZKLLM_MODELS)[row.lit[1]]
+    z = (gpu if gpu is not None else zkllm_gpu(ctx))[(m, int(row.lit[2]))]
+    return {"prover_s": z.theirs, "source": z.source}
 
 
 def compare_ours(ctx: Ctx, which: tuple):
@@ -370,26 +521,75 @@ def compare_cell(theirs, ours, fmt) -> str:
     return rf"\textbf{{{cell}}}" if q >= 1.01 else cell
 
 
-def tab_eval_compare(ctx: Ctx) -> Table:
-    """``tab:eval-compare``: our prover, verifier and proof against the published systems on matched models."""
-    tb = Table("tab_eval_compare", "tab:eval-compare",
+def _compare_table(ctx: Ctx, name: str, label: str, keys) -> Table:
+    tb = Table(name, label,
                f"{protocol(ctx)}; bench tables {ctx.bench.name}; ours under Fiat-Shamir with the CPU verifier, "
                "except Maverick's row (Kpre, lambda 40, one thread, interactive, no compact encoding) and zkLLM's "
-               "(interactive; the streaming GPU verifier); theirs: artifacts/comparison/tables/reported_curated.csv")
-    for row in COMPARE:
-        if row is None:
+               "(interactive; the streaming GPU verifier); theirs: artifacts/comparison/tables/reported_curated.csv "
+               "and, for zkLLM on the run's GPU, its prover there (zkllm tier or stored runs)\n"
+               f"rows (numbers.py --compare-rows): {','.join(keys)}")
+    gpu = zkllm_gpu(ctx)
+    last = None
+    for row in compare_rows(keys):
+        if last is not None and row.group != last:
             tb.rows.append(r"\midrule")
-            continue
-        label, key, model, which = row
-        lit = ctx.lit.get(key) or {}
+        last = row.group
+        lit = compare_theirs(ctx, row, gpu)
         theirs = [f.to_float(lit.get(k)) for k in ("prover_s", "verifier_s", "proof_bytes")]
-        p, v, nb, src = compare_ours(ctx, which)
-        name = f"{key[0]} {model}"
-        cells = [label, model]
+        p, v, nb, src = compare_ours(ctx, row.which)
+        rname = f"{row.key}"
+        cells = [row.label, row.model]
         for (t_val, o_val, col, fmt) in ((theirs[0], p, "prover", f.t), (theirs[1], v, "verifier", f.t),
                                          (theirs[2], nb, "proof", f.b)):
-            tb.put(name, f"ours {col}", o_val, src)
+            tb.put(rname, f"ours {col}", o_val, src)
+            if row.lit[0] == ZKLLM_GPU and col == "prover":
+                tb.put(rname, "theirs prover", t_val, lit.get("source"))
             cells += [fmt(t_val) if t_val else f.DASH, compare_cell(t_val, o_val, fmt)]
+        tb.rows.append(" & ".join(cells) + r" \\")
+    return tb
+
+
+def tab_eval_compare(ctx: Ctx) -> Table:
+    """``tab:eval-compare``: our prover, verifier and proof against the published systems on matched models, the rows
+    of ``numbers.py --compare-rows`` (``ctx.compare_rows``)."""
+    return _compare_table(ctx, "tab_eval_compare", "tab:eval-compare", ctx.compare_rows)
+
+
+def tab_eval_compare_full(ctx: Ctx) -> Table:
+    """``tab:eval-compare-full`` (the extended version): every row of :data:`COMPARE_ROWS`, whichever rows
+    ``tab:eval-compare`` keeps."""
+    return _compare_table(ctx, "tab_eval_compare_full", "tab:eval-compare-full", COMPARE_KEYS)
+
+
+def ratio_text(v: float) -> str:
+    """A factor without the times sign: 1{,}213, 78, 2.1."""
+    return f.thousands(f"{v:,.0f}") if v >= 100 else (f"{v:.0f}" if v >= 10 else f"{v:.1f}")
+
+
+ZKLLM_FAILED = "fails"
+"""What ``tab:zkllm-lengths`` prints where zkLLM's demo did not prove a length (its caption says so)."""
+
+
+def tab_zkllm_lengths(ctx: Ctx) -> Table:
+    """``tab:zkllm-lengths`` (the extended version): zkLLM's prover and ours (mode C, interactive) on the run's GPU
+    model, for Llama-2-7B and Llama-2-13B at each prompt length of :data:`ZKLLM_SEQS` (:func:`zkllm_gpu`), and their
+    factor; ``fails`` where zkLLM's demo did not prove the length."""
+    tb = Table("tab_zkllm_lengths", "tab:zkllm-lengths",
+               f"{protocol(ctx, 'ours: mode C, interactive, the CPU-verifier cell')}; bench tables {ctx.bench.name}; "
+               "zkLLM: the proof binaries of two decoder layers times the layers (zkllm tier; 2,048 tokens: else "
+               "the stored runs)\ncolumns: T & zkLLM 7B & ours 7B & factor & zkLLM 13B & ours 13B & factor")
+    gpu = zkllm_gpu(ctx)
+    for seq in sorted({s for _, s in gpu}):
+        cells = [f.tokens(seq)]
+        for name, m in ZKLLM_MODELS:
+            z = gpu[(m, seq)]
+            row = f"{name} T={seq}"
+            src = z.ours and f"{ctx.bench.name} {z.ours['cell']}"
+            cells.append(tb.put(row, "zkLLM", ZKLLM_FAILED if z.failed else z.theirs, z.source,
+                                lambda v: v if isinstance(v, str) else f.t(v)))
+            cells.append(tb.put(row, "ours", z.ours and z.ours["prove"], src, f.t))
+            cells.append(f.DASH if z.failed else tb.put(row, "factor", z.factor, f"{z.source}; {src}",
+                                                        lambda v: rf"{ratio_text(v)}$\times$"))
         tb.rows.append(" & ".join(cells) + r" \\")
     return tb
 
@@ -1124,7 +1324,8 @@ def tab_zeroshot(ctx: Ctx) -> Table:
 
 BUILDERS = (tab_eval_llm, tab_eval_v1, tab_options, tab_eval_compare, tab_quality, tab_params, tab_inrange, tab_setup,
             tab_eval_improve, tab_memory, tab_eval_long, tab_eval_real, tab_eval_reexec, tab_eval_compare_v1, tab_v1,
-            tab_gen, tab_gen_full, tab_quality_attr, tab_zeroshot, tab_paths, tab_paths_acc)
+            tab_gen, tab_gen_full, tab_quality_attr, tab_zeroshot, tab_paths, tab_paths_acc, tab_eval_compare_full,
+            tab_zkllm_lengths)
 """Every table builder, in the paper's order."""
 TABLE_FILES = tuple(b.__name__ for b in BUILDERS)
 """The tables' file names (``<name>.tex``), as ``paper_sp2027/main.tex`` lists them."""

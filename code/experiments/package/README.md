@@ -149,7 +149,7 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 194 jobs. There, the paper's run submits its tiers as eleven jobs (`--one-job`), each of
+waits that long for each of its 198 jobs. There, the paper's run submits its tiers as eleven jobs (`--one-job`), each of
 which runs its tiers' jobs one after another in its allocation: the timed tiers in seven jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `qllama`, `tv`, `attack`, `smoke`) in four jobs on one GPU of a
 shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates nothing:
@@ -160,12 +160,12 @@ it is submitted on its own:
 R="bash code/experiments/package/run.sh --platform final --llama-licence --gres gpu:l40s:1 \
    --exclude-nodes <the partition's nodes of another GPU or CPU model>"
 $R --one-job cpuv long                     # expected 11-17 h
-$R --one-job bench                         # 8-12 h
+$R --one-job bench                         # 10-14 h
 $R --one-job real                          # 8-12 h
 $R --one-job serve gen batch               # 12-16 h
 $R --one-job v1 setup improve              # 8-15 h
 $R --one-job gpuv                          # 4-6 h
-$R --one-job zkllm                         # 3-5 h: zkLLM's demo on the same GPU model
+$R --one-job zkllm                         # 6-9 h: zkLLM's demo on the same GPU model
 $R --one-job --no-exclusive quality        # 16-24 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive qllama         # 40-48 h, not timed: two or three submissions in a row (Sec. 5)
 $R --one-job --no-exclusive tv attack      # 6-9 h, not timed
@@ -194,7 +194,7 @@ if it succeeds, which the run above does not need.
 | `cpuv` | 14 | 7-10 | 26 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times", which stays against exact re-execution); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key and embedding tables or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
 | `v1` | 13 | 4-8 | 26 | V1 against v0: bytes, prover and verifier (`tab:eval-v1`) |
 | `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
-| `bench` | 43 | 8-12 | 48 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`), the outcome counts, the image models' attack cells |
+| `bench` | 45 | 10-14 | 53 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`, `tab:eval-compare-full`), the outcome counts, the image models' attack cells; our interactive mode-C prover of Llama-2-7B and Llama-2-13B at the `zkllm` tier's other lengths (`--zkllm-seqs`, default 64, 512 and 1,024 tokens: `tab:zkllm-lengths`, `\ZkllmSameGpuOurs...`, `\ZkllmSameGpuFactor...T...`) |
 | `gpuv` | 12 | 4-6 | 19 | the streaming GPU verifier, int8/fp16/bf16 re-execution on the same GPU, the host-to-device bandwidth |
 | `gen` | 3 | 2-3 | 7 | generated responses proved as one prefill: Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled, and GPT-2's prover per generated token (`tab:gen`, `tab:gen-full`, Sec. `sec:gen-prefill`) |
 | `batch` | 7 | 2-3 | 8 | several prompts against one opening |
@@ -206,17 +206,17 @@ if it succeeds, which the run above does not need.
 | `tv` | 2 | 2-3 | 7 | the sampler's total-variation distance on the certified OPT-1.3B, and its checks |
 | `attack` | 5 | 4-6 | 12 | the attack: reproduction, MNIST, OPT-6.7B, the in-range edits (`tab:inrange`), the sampler games |
 | `long` (optional) | 12 | 4-7 | 28 | prompts of 2,048 to 16,384 tokens (`tab:eval-long`) |
-| `zkllm` (optional) | 3 (0) | 3-5 | 8 (0) | zkLLM's public demo (commit `993311e`, unchanged) on the run's GPU: its build, then Llama-2-7B and Llama-2-13B at 2,048 tokens, 3 repetitions of layers 0 and 1, each proof binary timed (`logs/<name>/zkllm/`): zkLLM's prover on the same GPU model (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`), in place of the stored runs (`artifacts/results/zkllm_l40s/`), and the text's "in the same run" (`experiments/comparison/zkllm/README.md`) |
+| `zkllm` (optional) | 5 (0) | 6-9 | 14 (0) | zkLLM's public demo (commit `993311e`, unchanged) on the run's GPU: its build, then Llama-2-7B and Llama-2-13B at 2,048 tokens (one job each), then each model at the other lengths of `--zkllm-seqs` (default 64, 512 and 1,024 tokens; one job each, on one setup shared by its lengths; a length that zkLLM's demo does not prove is recorded as failed and the job goes on), 3 repetitions of layers 0 and 1, each proof binary timed (`logs/<name>/zkllm/`): zkLLM's prover on the same GPU model (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`; at the other lengths `tab:zkllm-lengths`, `\ZkllmSameGpuShortSeq`, `\ZkllmSameGpuFactorShortRange`, `\ZkllmSameGpuFactorLengthRange`), in place of the stored runs (`artifacts/results/zkllm_l40s/`), and the text's "in the same run" (`experiments/comparison/zkllm/README.md`) |
 
 `--optional` adds the `long` tier, which the paper's Discussion and `tab:eval-long` read, and the `zkllm` tier (with
 `--llama-licence` only). Submit them in the same invocation as the other tiers, so that they are chained after them
 and gated by the smoke; a second invocation starts a new chain. Without a Llama-2 licence, leave out
 `--llama-licence`: the Llama-2 cells then stay empty (the qllama tier runs OpenLLaMA-7B's two jobs instead, which the
 paper does not report). The counts and limits are those with `--llama-licence`; without it (in parentheses) the
-`real` tier has 17 jobs and 23 h of limits and the `qllama` tier 2 jobs and 14 h. `all` is then 160 jobs and 295 h
-of limits (179 and 381 h with `--llama-licence`; the `long` tier adds 12 jobs and 28 h, and the `zkllm` tier, with
-`--llama-licence`, 3 jobs and 8 h: `run.sh --platform final --optional --llama-licence --dry-run all` lists 194 jobs
-and 417 h).
+`real` tier has 17 jobs and 23 h of limits and the `qllama` tier 2 jobs and 14 h. `all` is then 162 jobs and 300 h
+of limits (181 and 386 h with `--llama-licence`; the `long` tier adds 12 jobs and 28 h, and the `zkllm` tier, with
+`--llama-licence`, 5 jobs and 14 h: `run.sh --platform final --optional --llama-licence --dry-run all` lists 198 jobs
+and 428 h).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
 cpuv`, then `v1`, ...); its jobs are chained among themselves. Every mode-C cell takes `--policy` (default `cnn18c`)
@@ -233,7 +233,10 @@ measures the setup itself.
 * Expected: in `serve`, the largest joint batches of the 7B and 13B models are recorded as `"skipped": "out of
   memory"`; the first job of a real checkpoint spends some minutes downloading it. In the `zkllm` tier, each first
   skip connection's log says "Input or output file does not exist" (zkLLM's demo writes no attention output; the
-  time per layer counts the second one twice); `zk-build` ends with `ZKLLM_BUILD_OK`, and a prove job that stops
+  time per layer counts the second one twice); `zk-build` ends with `ZKLLM_BUILD_OK`; the jobs `zk-llama2-7b-short`
+  and `zk-llama2-13b-short` may report that zkLLM's demo did not prove a length ("did not prove Llama-2-7B at 64
+  tokens: recorded"; its lookup arguments need sizes that short prompts may not give), which is a result, not a
+  failure, as long as the job ends successfully (it fails only if no length was proved); and a prove job that stops
   names what it lacks (the scratch space: `--zkllm-scratch <folder with 58 GB>`; the CUDA toolkit on the node:
   `--cuda-home`).
 * `A CORRECTNESS CHECK FAILED` or `FAILED:` in a log (an honest query rejected, a tamper accepted, a byte count that

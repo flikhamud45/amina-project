@@ -4,13 +4,16 @@ load included; the proof binary alone, from the run's ``bin_times.log``, which t
 
 Usage (standard library only):
     summarise.py <run dir> [<layers per model>]     # print the run's figures
-    summarise.py --csv [<folder>]                   # write <folder>/summary.csv, one row per run folder in it
-                                                    # (default: the stored runs, artifacts/results/zkllm_l40s/)
+    summarise.py --csv [<folder>]                   # write <folder>/summary.csv, one row per run folder in it,
+                                                    # with its record's ok (default: the stored runs,
+                                                    # artifacts/results/zkllm_l40s/)
     summarise.py --record <run dir>                 # print the run's record (one JSON line, kind "zkllm");
                                                     # exit status 1 unless it is ok
 
 A run folder is named ``<model>-T<seq>`` (``llama2-7b-T2048``; a trailing ``-<number>`` is accepted) and holds
-``bin_times.log``, ``env.txt``, ``verdicts.txt`` and ``time-*.txt``, as ``run_zkllm.sh prove`` writes them."""
+``bin_times.log``, ``env.txt``, ``verdicts.txt`` and ``time-*.txt``, as ``run_zkllm.sh prove`` writes them (one
+folder per prompt length; ``errors.txt``: the first error line of each script that printed one, at a length where
+zkLLM's demo failed)."""
 import csv
 import gzip
 import json
@@ -94,11 +97,22 @@ def verdicts(run_dir: Path) -> dict:
     return {k: counts.get(text, 0) for k, text in VERDICTS.items()}
 
 
+def errors(run_dir: Path) -> list[str]:
+    """The run's ``errors.txt`` (``run_zkllm.sh prove``: the first error line of each script that printed one, counted
+    with ``uniq -c``), one entry per line; empty when there is none."""
+    path = Path(run_dir) / "errors.txt"
+    return [" ".join(x.split()) for x in path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if x.strip()] if path.exists() else []
+
+
 def record(run_dir: Path) -> dict:
     """The run's record: the model, prompt length, repetitions and layers proved, the time per layer and for the whole
-    model, the verifier messages, the proof binaries that failed and the environment (``env``: GPU, driver, CPU,
-    zkLLM's commit).  ``ok``: every proof binary exited 0 and each of the ``reps`` x ``layers`` proved layers
-    (``run.json``) printed each message of :data:`VERDICTS` once."""
+    model, the verifier messages, the proof binaries that failed, zkLLM's error lines (:func:`errors`) and the
+    environment (``env``: GPU, driver, CPU, zkLLM's commit).  ``ok``: every proof binary exited 0 and each of the
+    ``reps`` x ``layers`` proved layers (``run.json``) printed each message of :data:`VERDICTS` once.  ``required``
+    (``run.json``; true unless ``run_zkllm.sh prove --allow-failed-lengths``): whether a record that is not ``ok`` is
+    a failed check (``paper/records.py``) or a length at which zkLLM's demo does not run, which the paper reports as
+    such."""
     run_dir = Path(run_dir)
     model, seq = run_name(run_dir)
     binary = binary_times(run_dir)
@@ -114,17 +128,20 @@ def record(run_dir: Path) -> dict:
     return {"kind": "zkllm", "model": model, "seq": seq, "layers": LAYERS[model], "reps": meta.get("reps"),
             "layer_ids": meta.get("layers"), "layers_expected": expected, "layers_proved": proved,
             "per_layer_s": round(per, 4), "whole_model_s": round(per * LAYERS[model], 2), "verdicts": said,
-            "binary_failures": failed, "ok": ok, "run": run_dir.name, "env": environment(run_dir)}
+            "binary_failures": failed, "errors": errors(run_dir), "ok": ok,
+            "required": meta.get("required", True) is not False, "run": run_dir.name, "env": environment(run_dir)}
 
 
 def write_csv(folder: Path) -> list[dict]:
-    """``<folder>/summary.csv``: one row per run folder, model, seq, layers, per_layer_s, whole_model_s."""
+    """``<folder>/summary.csv``: one row per run folder, model, seq, layers, per_layer_s, whole_model_s and ok (the
+    run's :func:`record`; the times of a run that is not ``ok`` cover the binaries that ran, not a proof)."""
     rows = []
     for run in sorted(p for p in folder.iterdir() if p.is_dir() and (p / "bin_times.log").exists()):
         model, seq = run_name(run)
         per = per_layer_s(run)
         rows.append({"model": model, "seq": seq, "layers": LAYERS[model], "run": run.name,
-                     "per_layer_s": f"{per:.4f}", "whole_model_s": f"{per * LAYERS[model]:.2f}"})
+                     "per_layer_s": f"{per:.4f}", "whole_model_s": f"{per * LAYERS[model]:.2f}",
+                     "ok": str(record(run)["ok"]).lower()})
     if not rows:
         raise SystemExit(f"{folder}: no run folder with a bin_times.log")
     with open(folder / "summary.csv", "w", newline="", encoding="utf-8") as fh:
