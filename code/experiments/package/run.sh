@@ -33,7 +33,15 @@
 #                       only warn about what this host lacks
 #     --rehearsal       each tier's smallest cells (GPT-2 / OPT-125M, 2 blocks, short prompts), every script of
 #                       every tier: the whole package in about three hours on one GPU, or a platform check
-#     --local           no SLURM: every job runs here, in the foreground, one after another, logged as SLURM would
+#     --local           no SLURM: every job runs here, in the foreground, one after another, logged as SLURM would;
+#                       a job that ended successfully in an earlier --local run of this platform is not run again
+#                       (its marker: logs/<name>/done/sp-<cell>); the smoke always runs, since it checks the node
+#     --one-job         submit the tiers as one SLURM job that runs their jobs one after another (run.sh --local in
+#                       its allocation) with the node to itself (unless --no-exclusive): one wait for a whole node
+#                       instead of one per job.  Submitting the same command again, after the job's time limit or a
+#                       pre-emption, runs only the jobs that have not ended successfully
+#     --max-hours H     --one-job's time limit in hours (default 24, the partition's usual limit; the sum of the
+#                       jobs' limits if smaller)
 #     --optional        'all' also runs the optional tier (long)
 #     --no-chain        do not chain the jobs (default: each job starts after the previous one ends, so no two timed
 #                       jobs share the node)
@@ -62,8 +70,9 @@
 # and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute path (a relative one is taken
 # from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's environment and is never
 # written into a job.  Everything is checked before the first job is submitted: the compiler, the interpreter,
-# HF_HOME, the image models and datasets of the bench tier and, under SLURM, that the partition has a node with the
-# memory the largest job asks for.  Jobs are named sp-<cell>, with this platform as their --comment and
+# HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is unwritable), the
+# image models and datasets of the bench tier and, under SLURM, that the partition has a node with the memory the
+# largest job asks for.  Jobs are named sp-<cell>, with this platform as their --comment and
 # --dependency=singleton.  A job of the same name and platform that is still queued or running is not submitted
 # again, and the chain and the smoke gate pass through it, so running a tier again submits only what is missing; a
 # finished benchmark cell is skipped by bench.py itself.  experiments/package/README.md is the runner's guide.
@@ -71,13 +80,16 @@ set -euo pipefail
 
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 PLATFORM="" DRY="" REH="" LOCAL="" OPTIONAL="" CHAIN=1 EXCL="--exclusive" PIN=1 NONATIVE="" MEMMAX=256 QH=5 Q=3
-POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM="" TIERS=()
+POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM="" ONEJOB="" MAXH=24 TIERS=()
+ARGV=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --platform) PLATFORM=$2; shift ;;
     --dry-run) DRY=1 ;;
     --rehearsal) REH=1 ;;
     --local) LOCAL=1 ;;
+    --one-job) ONEJOB=1 ;;
+    --max-hours) MAXH=$2; shift ;;
     --optional) OPTIONAL=1 ;;
     --no-chain) CHAIN=0 ;;
     --no-exclusive) EXCL="" ;;
@@ -101,6 +113,8 @@ done
 [ -n "$PLATFORM" ] || { echo "--platform <name> is required" >&2; usage; }
 [[ "$PLATFORM" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "--platform: letters, digits, '.', '_', '-'" >&2; exit 2; }
 [ "${#TIERS[@]}" -gt 0 ] || usage
+[ -z "$ONEJOB" ] || [ -z "$LOCAL" ] || { echo "--one-job submits a job that runs --local itself" >&2; exit 2; }
+[[ "$MAXH" =~ ^[1-9][0-9]*$ ]] || { echo "--max-hours: a whole number of hours" >&2; exit 2; }
 [ -f code/experiments/package/run.sh ] || { echo "run this from the repository root" >&2; exit 2; }
 ROOT="$PWD"
 LOGS="logs/$PLATFORM"
@@ -124,15 +138,24 @@ TRITON_CACHE_DIR=$ROOT/$LOGS/triton PVI_NATIVE_DIR=$(printf %q "${PVI_NATIVE_DIR
 for v in PVI_PY_INCLUDE HF_HOME PVI_CIFAR_ROOT PVI_IMAGENET_ROOT PVI_CACHE; do
   [ -z "${!v:-}" ] || ENVS="$ENVS $v=$(printf %q "${!v}")"
 done
-DEP="" GATE="" NJOBS=0 HOURS=0 DRYN=0 LAST="" SKIPPED=0 PLAN="" MEMNEED=0 CPUJOB=""
+DEP="" GATE="" NJOBS=0 HOURS=0 DRYN=0 LAST="" SKIPPED=0 DONE=0 PLAN="" MEMNEED=0 PLANH=0 NPLAN=0 CPUJOB=""
 
 sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the previous one
   # (the first job submitted after the smoke also waits for the smoke's success: GATE)
   local name="sp-$1" hours=$2 mem=$3 jid dep="singleton" pin=""; shift 3
   [ "$mem" -gt "$MEMMAX" ] && mem=$MEMMAX
-  if [ -n "$PLAN" ]; then [ "$mem" -le "$MEMNEED" ] || MEMNEED=$mem; return 0; fi
+  if [ -n "$PLAN" ]; then
+    [ "$mem" -le "$MEMNEED" ] || MEMNEED=$mem
+    PLANH=$((PLANH + hours)); NPLAN=$((NPLAN + 1))
+    return 0
+  fi
   jid="$(awk -F'|' -v n="$name" -v p="$PLATFORM" '$1 == n && $2 == p { print $3; exit }' <<<"$QUEUED")"
-  if [ -n "$jid" ]; then
+  if [ -z "$jid" ] && [ -n "$LOCAL" ] && [ "$name" != sp-smoke ] && [ -s "$LOGS/done/$name" ]; then
+    # ended successfully in an earlier --local run of this platform (run again after a time limit or a pre-emption)
+    jid="$(cat "$LOGS/done/$name")"
+    echo "skip $name: ended successfully earlier ($LOGS/$name-$jid.out)"
+    DONE=$((DONE + 1))
+  elif [ -n "$jid" ]; then
     # queued or running for this platform: not submitted again; the next job waits for it (and for the gate)
     echo "skip $name: already queued (job $jid)"
     SKIPPED=$((SKIPPED + 1))
@@ -149,9 +172,16 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
       DRYN=$((DRYN + 1)); jid="DRY$DRYN"
       echo "sbatch ${args[*]} --wrap \"$wrap\""
     elif [ -n "$LOCAL" ]; then
-      jid="$(date +%s)"
+      # the start time in nanoseconds (one-job runs on several nodes may start a smoke in the same second): a later
+      # run's log sorts later, and its records replace the earlier ones (experiments/paper/records.py)
+      jid="$(date +%s%N)"
+      [[ "$jid" =~ ^[0-9]+$ ]] || printf -v jid '%s%09d' "$(date +%s)" "$RANDOM"     # a date(1) without %N
       echo "$(date '+%F %T') running $name (limit ${hours} h): $LOGS/$name-$jid.out"
-      timeout "${hours}h" bash -c "$wrap" > "$LOGS/$name-$jid.out" 2>&1 || echo "$name: exit status $?" >&2
+      if timeout "${hours}h" bash -c "$wrap" > "$LOGS/$name-$jid.out" 2>&1; then
+        mkdir -p "$LOGS/done" && echo "$jid" > "$LOGS/done/$name"
+      else
+        echo "$name: exit status $?" >&2
+      fi
     else
       # the job script goes in on stdin with a bash shebang (--wrap runs /bin/sh, which may not be bash)
       jid="$(printf '#!/bin/bash\n%s\n' "$wrap" | sbatch --parsable "${args[@]}")"; jid="${jid%%;*}"
@@ -715,11 +745,24 @@ need_images() {   # the bench tier's image cells load trained models and dataset
 }
 
 preflight() {   # what the jobs need from this host and the scheduler, checked before anything is submitted
-  local bad=() t hf="" big gb=60
+  local bad=() t hf="" big gb=60 v d
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do case "$t" in real|quality|tv|attack) hf=1 ;; esac; done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
 GB free> (the real, quality, tv and attack tiers download checkpoints and datasets)")
+  # a cache variable of Hugging Face's libraries takes precedence over HF_HOME: it must be writable (the nearest
+  # existing folder of its path)
+  for v in HF_HUB_CACHE HUGGINGFACE_HUB_CACHE TRANSFORMERS_CACHE HF_DATASETS_CACHE; do
+    [ -n "${!v:-}" ] || continue
+    d="${!v}"
+    while [ ! -e "$d" ] && [ "$d" != "$(dirname "$d")" ]; do d="$(dirname "$d")"; done
+    [ -d "$d" ] && [ -w "$d" ] || bad+=("$v=${!v} takes precedence over HF_HOME and is not writable here: unset \
+$v (or point it to a writable folder the nodes see)")
+  done
+  case "${HF_HUB_OFFLINE:-}${TRANSFORMERS_OFFLINE:-}" in *1*|*[Tt][Rr][Uu][Ee]*|*[Yy][Ee][Ss]*|*[Oo][Nn]*)
+    echo "warning: HF_HUB_OFFLINE or TRANSFORMERS_OFFLINE is set: a job cannot download a checkpoint or dataset \
+missing from the cache" >&2 ;;
+  esac
   [ -n "$NONATIVE" ] || command -v "${CXX:-}" > /dev/null 2>&1 || bad+=("CXX='${CXX:-}' names no compiler here: \
 export CXX=<path to g++> (the native CPU kernels), or pass --no-native-ok")
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")
@@ -737,6 +780,40 @@ the compute node sees it (export HF_TOKEN=<token>: sbatch passes it to the jobs)
   [ -n "$DRY" ] && return 0
   echo "run.sh: nothing submitted" >&2
   exit 2
+}
+
+one_job() {   # --one-job: the tiers as one SLURM job that runs this command with --local in its allocation
+  local name jid hours=$PLANH args=() inner=() wrap
+  name="sp-node-$(IFS=-; echo "${TIERS[*]}")"
+  [ "$hours" -le "$MAXH" ] || hours=$MAXH
+  set -- "${ARGV[@]}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --one-job|--dry-run|--no-chain) ;;
+      --max-hours) shift ;;
+      *) inner+=("$1") ;;
+    esac
+    shift
+  done
+  jid="$(awk -F'|' -v n="$name" -v p="$PLATFORM" '$1 == n && $2 == p { print $3; exit }' <<<"$QUEUED")"
+  if [ -n "$jid" ]; then
+    echo "skip $name: already queued (job $jid)"
+    return 0
+  fi
+  # the allocation's own log is not a job log (logs/<name>/sp-*.out): it lists the jobs it ran
+  args=(-o "$LOGS/${name#sp-}-%j.log" --open-mode=append -J "$name" "--comment=$PLATFORM" --dependency=singleton
+        --requeue --cpus-per-task=8 "--time=${hours}:00:00")
+  if [ -n "$EXCL" ]; then args+=("$EXCL" --mem=0); else args+=("--mem=${MEMNEED}G"); fi
+  wrap="cd $(printf %q "$ROOT") && bash code/experiments/package/run.sh --local$(printf ' %q' "${inner[@]}")"
+  if [ -n "$DRY" ]; then
+    echo "sbatch ${args[*]} --wrap \"$wrap\""
+  else
+    jid="$(printf '#!/bin/bash\n%s\n' "$wrap" | sbatch --parsable "${args[@]}")"; jid="${jid%%;*}"
+    echo "submitted $name: job $jid (its log: $LOGS/${name#sp-}-$jid.log)"
+  fi
+  echo "# one job: ${TIERS[*]}: $NPLAN jobs, job limits $PLANH h, time limit $hours h"
+  [ "$PLANH" -le "$hours" ] || echo "# if it ends at its time limit, submit the same command again: it runs only \
+the jobs that have not ended successfully"
 }
 
 run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
@@ -757,6 +834,7 @@ PLAN=1
 for tier in "${TIERS[@]}"; do run_tier "$tier"; done 2> /dev/null
 PLAN=""
 preflight
+if [ -n "$ONEJOB" ]; then one_job; exit 0; fi
 for tier in "${TIERS[@]}"; do
   run_tier "$tier"
   # the platform gate: nothing after smoke starts unless smoke succeeded
@@ -768,5 +846,7 @@ for tier in "${TIERS[@]}"; do
 done
 [ "$SKIPPED" = 0 ] || echo "# $SKIPPED jobs already queued for platform $PLATFORM: not submitted again, and the jobs \
 after each wait for it"
+[ "$DONE" = 0 ] || echo "# $DONE jobs had ended successfully in an earlier run of platform $PLATFORM: not run again \
+(to run one again, delete its marker in $LOGS/done/)"
 [ -z "$DRY" ] || echo "# ${TIERS[*]}: $NJOBS jobs, job limits $HOURS h"
 [ -n "$DRY" ] || [ -n "$LOCAL" ] || squeue -u "$ME"

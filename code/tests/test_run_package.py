@@ -14,10 +14,12 @@
   cell requires the native kernels and is pinned to one NUMA node, and the dry run lists every job even on a host
   without the run's settings;
 * the package's submission against stand-ins for SLURM: a queued job of the same platform is not submitted again and
-  the chain and the smoke gate pass through it, and nothing is submitted when the partition lacks the memory, the
-  compiler is missing or the bench tier's models and datasets are; ``bench.py`` itself stops without the
-  substitute model; ``experiments/package/pin.py`` picks one thread of each core of one NUMA node, and every
-  record keeps the affinity, the library versions and the checkpoints' revisions.
+  the chain and the smoke gate pass through it; ``--one-job`` submits the tiers as one whole-node job that runs them
+  with ``--local``, and a ``--local`` run again runs the smoke and only the jobs that did not end successfully;
+  nothing is submitted when the partition lacks the memory, the compiler is missing, a Hugging Face cache variable
+  overrides ``HF_HOME`` with an unwritable folder or the bench tier's models and datasets are; ``bench.py`` itself
+  stops without the substitute model; ``experiments/package/pin.py`` picks one thread of each core of one NUMA
+  node, and every record keeps the affinity, the library versions and the checkpoints' revisions.
 
 The smoke tier runs this file on the final platform.
 """
@@ -37,7 +39,7 @@ import torch
 from experiments.costs import perf, setup_timing
 from experiments.generation import gen_bench
 from experiments.package import pin
-from experiments.paper.records import tier_of
+from experiments.paper.records import LOG, tier_of
 from experiments.reexec import h2d_bandwidth, reexec
 
 CODE = Path(__file__).resolve().parents[1]
@@ -201,29 +203,35 @@ def test_the_help_prints_the_whole_header():
 FAKE = {"squeue": '#!/bin/bash\n[ -z "${FAKE_QUEUE:-}" ] || printf \'%s\\n\' "$FAKE_QUEUE"\n',
         "sbatch": '#!/bin/bash\necho "$*" >> "$FAKE_LOG"\ncat > /dev/null\nwc -l < "$FAKE_LOG" | tr -d " "\n',
         "sinfo": '#!/bin/bash\nprintf \'%s\\n\' $FAKE_MEM\n',
-        "fakepy": "#!/bin/bash\nexit 0\n"}
+        "fakepy": '#!/bin/bash\ncase "$*" in *"${FAKE_FAIL:-@none@}"*) exit 3 ;; esac\necho "{}"\n'}
 """Stand-ins for SLURM's commands and the interpreter: ``squeue`` lists ``$FAKE_QUEUE`` (``name|platform|id``
 lines), ``sbatch`` appends its arguments to ``$FAKE_LOG`` and answers with its line number as the job id, ``sinfo``
-gives each node's memory in MB (``$FAKE_MEM``)."""
+gives each node's memory in MB (``$FAKE_MEM``); the interpreter prints ``{}`` and succeeds, except for a command
+line that contains ``$FAKE_FAIL`` (exit status 3)."""
+
+HF_CACHES = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE", "HF_HUB_OFFLINE",
+             "TRANSFORMERS_OFFLINE")
 
 
-def _submit(tmp_path, *argv, queue: str = "", mem: str = "1031000", cxx: bool = True):
-    """``run.sh argv`` from a copy of the package under ``tmp_path``, submitting to :data:`FAKE`'s SLURM:
+def _submit(tmp_path, *argv, queue: str = "", mem: str = "1031000", cxx: bool = True, extra: dict | None = None):
+    """``run.sh argv`` from a copy of the package under ``tmp_path`` (kept between calls with the same
+    ``tmp_path``), submitting to :data:`FAKE`'s SLURM, with the variables ``extra`` added to the environment:
     ``(exit status, stdout, stderr, [sbatch's arguments of each job])``."""
     bash = _bash()
     root, bin_ = tmp_path / "root", tmp_path / "bin"
-    (root / RUN).parent.mkdir(parents=True)
+    (root / RUN).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO / RUN, root / RUN)
-    bin_.mkdir()
+    bin_.mkdir(exist_ok=True)
     for name, text in FAKE.items():
         (bin_ / name).write_text(text, newline="\n")
         (bin_ / name).chmod(0o755)
     log = tmp_path / "sbatch.log"
-    log.touch()
+    log.write_text("")
     py = (bin_ / "fakepy").as_posix()
-    env = {k: v for k, v in os.environ.items() if k not in ("PVI_CACHE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT")}
+    drop = ("PVI_CACHE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT", "FAKE_FAIL", *HF_CACHES)
+    env = {k: v for k, v in os.environ.items() if k not in drop}
     env.update(PATH=f"{bin_}{os.pathsep}{os.environ['PATH']}", FAKE_QUEUE=queue, FAKE_MEM=mem, FAKE_LOG=log.as_posix(),
-               CXX=py if cxx else "", HF_HOME=(tmp_path / "hf").as_posix())
+               CXX=py if cxx else "", HF_HOME=(tmp_path / "hf").as_posix(), **(extra or {}))
     out = subprocess.run([bash, str(RUN), "--python", py, *argv], cwd=root, env=env, capture_output=True, text=True,
                          timeout=120)
     return out.returncode, out.stdout, out.stderr, log.read_text().splitlines()
@@ -246,6 +254,63 @@ def test_a_queued_smoke_still_gates_the_run(tmp_path):
     status, out, err, jobs = _submit(tmp_path, "--platform", "final", "smoke", "cpuv", queue="sp-smoke|final|901")
     assert status == 0, err
     assert len(jobs) == 13 and "--dependency=afterok:901,singleton" in jobs[0], jobs[0]
+
+
+def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(tmp_path):
+    """--one-job: one job with the node to itself, its time limit the sum of the jobs' limits capped at --max-hours,
+    queued again when pre-empted, whose script runs the same command with --local; a queued one is not submitted
+    again, and with --no-exclusive it asks for the largest job's memory instead of the node."""
+    argv = ("--platform", "final", "--llama-licence", "--one-job", "smoke", "cpuv", "long")
+    status, out, err, jobs = _submit(tmp_path / "a", *argv)
+    assert status == 0 and len(jobs) == 1, err
+    for part in ("-J sp-node-smoke-cpuv-long", "--comment=final", "--exclusive", "--mem=0", "--time=24:00:00",
+                 "--requeue", "--open-mode=append", "--dependency=singleton", "logs/final/node-smoke-cpuv-long-%j.log"):
+        assert part in jobs[0], (part, jobs[0])
+    assert "# one job: smoke cpuv long: 26 jobs, job limits 53 h, time limit 24 h" in out, out
+    status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
+    line = next(s for s in out.splitlines() if s.startswith("sbatch"))
+    assert status == 0 and not jobs and "--time=12:00:00" in line, err
+    assert re.search(r' && bash code/experiments/package/run\.sh --local --python \S+ --platform final '
+                     r'--llama-licence smoke cpuv long"$', line), line
+    status, out, err, jobs = _submit(tmp_path / "c", *argv, queue="sp-node-smoke-cpuv-long|final|77")
+    assert status == 0 and not jobs and "skip sp-node-smoke-cpuv-long: already queued (job 77)" in out, err
+    status, out, err, jobs = _submit(tmp_path / "d", "--no-exclusive", *argv)
+    assert status == 0 and "--mem=256G" in jobs[0] and "--exclusive" not in jobs[0], jobs
+    status, out, err, jobs = _submit(tmp_path / "e", "--local", *argv)
+    assert status == 2 and not jobs and "--one-job submits a job that runs --local itself" in err
+
+
+def test_a_local_run_again_runs_the_smoke_and_the_jobs_that_did_not_end_successfully(tmp_path):
+    """--local (the script of a --one-job allocation): a job that ends successfully leaves a marker, and the same
+    command run again (after a time limit or a pre-emption) runs the smoke, which checks the node, and only the jobs
+    without a marker: one that failed, one whose marker was deleted.  Every log is named as the records expect, and a
+    later run's log sorts later."""
+    argv = ("--platform", "t", "--rehearsal", "--local", "smoke", "cpuv")
+    logs = tmp_path / "root" / "logs" / "t"
+    status, out, err, _ = _submit(tmp_path, *argv, extra={"FAKE_FAIL": "reexec.reexec"})
+    assert status == 0 and "sp-c-rx-gpt2: exit status 3" in err, err
+    assert sorted(p.name for p in (logs / "done").iterdir()) == ["sp-c-gpt2-64", "sp-c-v1-gpt2-64", "sp-smoke"]
+    status, out, err, _ = _submit(tmp_path, *argv)
+    assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke", "sp-c-rx-gpt2"], out
+    assert "skip sp-c-gpt2-64: ended successfully earlier" in out and "# 2 jobs had ended successfully" in out
+    (logs / "done" / "sp-c-gpt2-64").unlink()
+    status, out, err, _ = _submit(tmp_path, *argv)
+    assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke", "sp-c-gpt2-64"], out
+    smokes = sorted(logs.glob("sp-smoke-*.out"), key=lambda p: p.stat().st_mtime_ns)
+    ids = [int(LOG.match(p.name)["job"]) for p in smokes]
+    assert len(ids) == 3 and ids == sorted(ids) and all("SMOKE OK" in p.read_text() for p in smokes)
+    assert all(LOG.match(p.name) for p in logs.glob("*.out"))
+
+
+def test_a_hugging_face_cache_variable_the_jobs_cannot_write_stops_the_submission(tmp_path):
+    """HF_HUB_CACHE, TRANSFORMERS_CACHE and HF_DATASETS_CACHE take precedence over HF_HOME: an unwritable one stops
+    run.sh before it submits anything; a writable one (or one still to be created in a writable folder) does not."""
+    status, _, err, jobs = _submit(tmp_path / "a", "--platform", "final", "--rehearsal", "real",
+                                   extra={"HF_HUB_CACHE": "/proc/no-cache"})
+    assert status == 2 and not jobs and "HF_HUB_CACHE=/proc/no-cache takes precedence over HF_HOME" in err, err
+    status, _, err, jobs = _submit(tmp_path / "b", "--platform", "final", "--rehearsal", "real",
+                                   extra={"HF_HUB_CACHE": (tmp_path / "b" / "hf" / "hub").as_posix()})
+    assert status == 0 and len(jobs) == 4, err
 
 
 def test_nothing_is_submitted_when_the_partition_lacks_the_memory_or_the_compiler(tmp_path):

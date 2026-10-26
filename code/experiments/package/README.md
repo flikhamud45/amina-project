@@ -2,8 +2,8 @@
 
 `run.sh` is the one scripted run whose records give every number of the paper. It runs on one GPU node: the GPU
 proves and is the GPU verifier, and 8 threads of the node's CPU are the CPU verifier and the re-execution baselines.
-The paper's numbers come from an NVIDIA L40S (48 GB) with an AMD EPYC 9334. Each job starts only after the previous
-one has ended, so no two timed jobs share the machine, and nothing after the smoke tier starts unless it succeeded.
+The paper's numbers come from an NVIDIA L40S (48 GB) with an AMD EPYC 9334. Every timed job has its node to itself
+and no two timed jobs share a node, and nothing after the smoke tier starts unless it succeeded.
 The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the paper's tables and text numbers.
 
 ## 1. What the machine needs
@@ -19,7 +19,8 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 | `HF_HOME` on a disk the GPU nodes see, with about 60 GB free, 100 GB with `--llama-licence` (a node-local folder holds a copy per node) | the `real`, `quality`, `tv` and `attack` tiers download OPT-125M to OPT-6.7B, OpenLLaMA-7B, TinyLlama, Qwen3 and WikiText-2 (47 GB of checkpoints); with `--llama-licence` also Llama-2-7B and Llama-2-13B (40 GB more; each repository has its own gate on Hugging Face), for which the jobs need your Hugging Face token: `export HF_TOKEN=<token>` (sbatch passes it to the jobs; `run.sh` never writes it into one), or a login whose `$HF_HOME/token` the compute node reads | `df -h $HF_HOME` |
 | The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats, and the dogs-vs-squirrels ResNet-18 that is Anchuri et al.'s substitute model) | `code/artifacts/models/cnn/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224,resnet18_224_squirrel}.pt` (on the GPU node, from `code/`: `PYTHONPATH=src:. ../.venv/bin/python -m experiments.costs.train_cnn --model <m> --device cuda`, seed 0); CIFAR-10 in the `cifar-10-batches-py` layout under `code/data/cifar10` (or `$PVI_CIFAR_ROOT`); the ImageNet subsets' caches `dogs_cats.pt` and `dogs_squirrels.pt` under `code/artifacts/cache` (or `$PVI_CACHE`), or ImageNet under `code/data/imagenet` (or `$PVI_IMAGENET_ROOT`) with `train/` and `val/` holding class `i` of the sorted synsets in folder `i + 1` (`1` to `1000`; the dogs are `152` to `269`, the cats `282` to `286`, the fox squirrel `336`), from which the first run writes the caches. `run.sh all` and `run.sh bench` stop before submitting anything if one is missing |
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `--local` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
-| Exclusive use of the node | the timings | every job asks for `--exclusive` (check that the partition allows exclusive jobs); the smoke and the rehearsal, whose timings are not used, pass `--no-exclusive` |
+| Exclusive use of the node | the timings | every job asks for `--exclusive` (check that the partition allows exclusive jobs); the smoke and the rehearsal, whose timings are not used, pass `--no-exclusive`; on a shared partition, see Sec. 4 (`--one-job`) |
+| No Hugging Face cache variable that overrides `HF_HOME` with a folder the jobs cannot write | `HF_HUB_CACHE`, `TRANSFORMERS_CACHE` and `HF_DATASETS_CACHE` take precedence over `HF_HOME` | `env \| grep -E 'HF_HUB_CACHE\|TRANSFORMERS_CACHE\|HF_DATASETS_CACHE'`; `run.sh` refuses an unwritable one (`unset` it) |
 
 Every language model of the cost tiers has random weights (the costs depend only on the shapes); real checkpoints
 are downloaded by the `real`, `quality`, `tv` and `attack` tiers only. The Llama-2 cells (`real`, `quality`) need the
@@ -97,9 +98,35 @@ reads them.
 
 ## 4. The run
 
+On a machine of your own, or a partition whose nodes are free, one invocation runs everything as a chain of
+whole-node jobs:
+
 ```bash
-bash code/experiments/package/run.sh --platform final --optional --llama-licence all   # the paper's run
+bash code/experiments/package/run.sh --platform final --optional --llama-licence all
 ```
+
+On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
+waits that long for each of its 179 jobs. There, the paper's run submits the timed tiers as six whole-node jobs
+(`--one-job`), each of which runs its tiers' jobs one after another in its allocation, and the tiers that time
+nothing (`quality`, `tv`, `attack`) as a chain of one-GPU jobs that need no whole node:
+
+```bash
+R="bash code/experiments/package/run.sh --platform final --llama-licence"
+$R --one-job smoke cpuv long               # expected 11-17 h
+$R --one-job smoke bench                   # 9-13 h
+$R --one-job smoke real                    # 9-13 h
+$R --one-job smoke serve gen batch         # 13-17 h
+$R --one-job smoke v1 setup improve        # 9-16 h
+$R --one-job smoke gpuv                    # 5-7 h
+$R --no-exclusive smoke quality tv attack  # 16-25 h, plus each job's wait for a GPU
+```
+
+Each whole-node job starts with the smoke on the node it was given (and stops if it fails), writes the same job
+logs as the chain (`logs/final/sp-<cell>-<id>.out`) and lists what it ran in its own log
+(`logs/final/node-<tiers>-<job id>.log`). Its time limit is 24 hours (`--max-hours`), and SLURM queues a pre-empted
+one again by itself (`--requeue`); a job that ends successfully leaves a marker in `logs/final/done/`, and the
+allocation, when it starts again or when the same command is submitted again after its time limit, runs only the
+jobs without a marker (and the smoke). A later job's records of a cell replace an earlier one's.
 
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
@@ -142,10 +169,13 @@ measures the setup itself.
   memory"`; the first job of a real checkpoint spends some minutes downloading it.
 * `A CORRECTNESS CHECK FAILED` or `FAILED:` in a log (an honest query rejected, a tamper accepted, a byte count that
   disagrees with the model) is a real problem; the job's log says which check.
-* A job that hit its time limit or was pre-empted: run its tier again. A job of the same name and platform that is
-  still queued or running is not submitted twice (each job carries its platform as its SLURM comment), and the jobs
-  submitted after it wait for it, behind the smoke's gate; finished `bench` and `batch` cells are skipped by
-  `bench.py` itself.
+* A whole-node job (`--one-job`) that hit its time limit: submit the same command again; it skips the jobs that
+  ended successfully (`logs/<name>/done/`). Its log names each job it ran or skipped and the exit status of each
+  that failed.
+* A job of the chain that hit its time limit or was pre-empted: run its tier again. A job of the same name and
+  platform that is still queued or running is not submitted twice (each job carries its platform as its SLURM
+  comment), and the jobs submitted after it wait for it, behind the smoke's gate; finished `bench` and `batch` cells
+  are skipped by `bench.py` itself.
 * A failed smoke leaves the rest of its chain pending for ever, and since every job has `--dependency=singleton`, a
   pending job also holds back the job of the same name of any later run. Before running again (and before the final
   run, for the smoke's and the rehearsal's jobs), cancel the platform's pending jobs:
