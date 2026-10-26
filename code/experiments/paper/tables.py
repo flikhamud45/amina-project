@@ -17,6 +17,7 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 ``tab:inrange``       ``attack``: ``inrange_llm.py``'s documents
 ``tab:setup``         the setup proof's byte model (``costs/setup_bytes.py``)
 ``tab:eval-improve``  ``improve``: the A/B scripts and perf.py with the options of each row
+``tab:memory``        ``cpuv``: perf.py ``--client-memory`` (the client's own process), the prover's GPU peak
 ``tab:eval-long``     ``long``: 2- and 3-block cells, extrapolated to the full Llama-2-7B
 ``tab:eval-real``     ``real``: OPT-1.3B, real weights against the random-weight twins (V1 cells, v0 timed)
 ``tab:eval-reexec``   ``gpuv`` and ``cpuv``: reexec.py, llamacpp.py, the Kpre verifier
@@ -185,12 +186,13 @@ def v1_cell(run: Run, model: str, seq: int, mode: str) -> Rec | None:
     return run.v1("v1", model, seq, mode, vdev="cpu", label="", real=None)
 
 
-def v1_shape_model(model: str, seq: int, lmax: int, policy: str | None = None) -> dict:
-    """V1's cut of the full ``model`` (last block pruned) on a ``seq``-token query, from its shapes alone, when every
-    weight operation that rule (P2) of :mod:`pvi.v1.cut` allows is cut (as with random weights): every linear
-    operation with a claim per position but the LM head.  The instances are packed as
+def v1_shape_model(model: str, seq: int, lmax: int, policy: str | None = None, layers: int | None = None) -> dict:
+    """V1's cut of ``model`` (``layers`` blocks, default all; the last block pruned) on a ``seq``-token query, from
+    its shapes alone, when every weight operation that rule (P2) of :mod:`pvi.v1.cut` allows is cut (as with random
+    weights): every linear operation with a claim per position but the LM head.  The instances are packed as
     :meth:`pvi.v1.cut.CutPlan.from_graph` packs them (in graph order, at most ``2^lmax`` leaves each; under the plan
-    ``policy`` a transposed matrix is one unit, cut whole or not at all).  Returns ``n_leaves``, ``n_instances``,
+    ``policy`` of the full model, as mode C commits it, a transposed matrix is one unit, cut whole or not at all;
+    ``None``: mode Kpre).  Returns ``n_leaves``, ``n_instances``, ``instance_leaves`` (each instance's cut entries),
     ``max_bits`` (the largest instance's variables) and the two new terms of Theorem ``thm:v1`` as ``log2``: the GKR
     terms of the instances and the lookup term with the largest table the window widths allow (two widths of at most
     ``2^16`` per cut operation, and width 1)."""
@@ -199,12 +201,13 @@ def v1_shape_model(model: str, seq: int, lmax: int, policy: str | None = None) -
     from pvi.core.field import P
     from pvi.models.decoder import CONFIGS
     cfg = CONFIGS[model]
-    shapes = decoder_shapes(cfg, prune_last=True)
-    cols = decoder_claim_columns(cfg, seq, prune_last=True)
+    full = decoder_shapes(cfg, prune_last=True)
+    shapes = decoder_shapes(cfg, layers, prune_last=True)
+    cols = decoder_claim_columns(cfg, seq, layers, prune_last=True)
     cut = {o.name: o for o in shapes if o.layout == "linear" and o.name != "head" and cols[o.name] == seq}
     col_of = {}
     if policy:
-        plan = plan_commitment(shapes, policy, rate=4)
+        plan = plan_commitment(shapes, policy, rate=4, model_ops=full)
         col_of = {m.name: tuple(m.members) for m in plan.matrices if m.layout == "col"}
     for members in col_of.values():
         if any(o not in cut for o in members):
@@ -229,7 +232,8 @@ def v1_shape_model(model: str, seq: int, lmax: int, policy: str | None = None) -
     leaves = sum(o.n_rows for o in cut.values()) * seq
     gkr = [_gkr_log2(n, log2p) for n in bits]
     top = max(gkr) if gkr else 0.0
-    return {"n_leaves": leaves, "n_instances": len(rows), "max_bits": max(bits, default=0),
+    return {"n_leaves": leaves, "n_instances": len(rows), "instance_leaves": [r * seq for r in rows],
+            "max_bits": max(bits, default=0),
             "gkr_log2": top + math.log2(sum(2 ** (x - top) for x in gkr)) if gkr else None,
             "lookup_log2": math.log2(leaves + 1 + 2 * len(cut) * (1 << 16)) - math.log2(P ** 8 - P ** 2)}
 
@@ -796,6 +800,35 @@ def tab_eval_improve(ctx: Ctx) -> Table:
     return tb
 
 
+MEMORY = (("Kpre", 64), ("Kpre", 2048), ("C", 64), ("C", 2048))
+"""``tab:memory``'s rows: the cpuv tier's perf.py cells of the full Llama-2-7B."""
+
+
+def tab_memory(ctx: Ctx) -> Table:
+    """``tab:memory``: the memory of one query on the full Llama-2-7B (``cpuv`` tier, ``perf.py --client-memory``),
+    in GB: the CPU client's own process, which holds only its key or the roots, the public graph and one proof
+    (its peak resident set over the timed proofs, and its resident set after the imports), the prover's GPU peak
+    over the timed queries, and the peak resident set of the measuring process, which runs the prover and the
+    in-process verifier together."""
+    tb = Table("tab_memory", "tab:memory", f"{protocol(ctx)}; cpuv tier: perf.py --verifier-device cpu "
+               "--client-memory (label cpuv); client: client_memory.peak_rss and .baseline_rss; prover GPU: "
+               "peak.gpu_peak_memory; process: peak.host_peak_rss; GB")
+    gb = lambda v: f.fixed(v / 1e9, 1)                 # noqa: E731
+    last = None
+    for mode, seq in MEMORY:
+        r = ctx.run.perf("cpuv", "llama2-7b", seq, mode, vdev="cpu", label="cpuv")
+        client, peak = ((r.d.get("client_memory") or {}), (r.d.get("peak") or {})) if r else ({}, {})
+        row = f"{mode} T={seq}"
+        tb.rows.append(" & ".join([
+            MODE[mode] if mode != last else "", f.tokens(seq),
+            tb.put(row, "client", client.get("peak_rss"), r, gb),
+            tb.put(row, "client after imports", client.get("baseline_rss"), r, gb),
+            tb.put(row, "prover GPU", peak.get("gpu_peak_memory"), r, gb),
+            tb.put(row, "process", peak.get("host_peak_rss"), r, gb)]) + r" \\")
+        last = mode
+    return tb
+
+
 LONG = (2048, 4096, 8192, 16384)
 """``tab:eval-long``'s prompt lengths."""
 
@@ -1089,8 +1122,8 @@ def tab_zeroshot(ctx: Ctx) -> Table:
 
 
 BUILDERS = (tab_eval_llm, tab_eval_v1, tab_options, tab_eval_compare, tab_quality, tab_params, tab_inrange, tab_setup,
-            tab_eval_improve, tab_eval_long, tab_eval_real, tab_eval_reexec, tab_eval_compare_v1, tab_v1, tab_gen,
-            tab_gen_full, tab_quality_attr, tab_zeroshot, tab_paths, tab_paths_acc)
+            tab_eval_improve, tab_memory, tab_eval_long, tab_eval_real, tab_eval_reexec, tab_eval_compare_v1, tab_v1,
+            tab_gen, tab_gen_full, tab_quality_attr, tab_zeroshot, tab_paths, tab_paths_acc)
 """Every table builder, in the paper's order."""
 TABLE_FILES = tuple(b.__name__ for b in BUILDERS)
 """The tables' file names (``<name>.tex``), as ``paper_sp2027/main.tex`` lists them."""

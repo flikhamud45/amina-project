@@ -8,8 +8,8 @@ prints before the final run, otherwise. Nothing here runs a model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
-| Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the quality, attribution, attack and sampler numbers, the spot-checking schemes' acceptance (`\Sok...`), ... (about 490 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
+| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:memory`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
+| Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the client's own memory, the quality, attribution, attack and sampler numbers, the spot-checking schemes' acceptance (`\Sok...`), ... (about 490 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
 | `fig:breakeven` (once its inputs are all in the run); `fig:overview`, `fig:protocol` with `--schematics` | `figures.py` | the same | `paper_sp2027/figures/*.pdf` |
 | Every value with its source record; per table the cells filled and missing; the checks | `numbers.py` | the same (`--check`: report only) | `generated/cells.csv`, `generated/coverage.txt` |
 
@@ -19,7 +19,8 @@ prints before the final run, otherwise. Nothing here runs a model.
 Reads the run's folder `logs/<name>/`: every job log `sp-<cell>-<jobid>.out`, whose lines that start with `{` are the
 records, and the documents of the attack tier (`attack/*.json`, `attack/analytic.csv`) and the tv tier
 (`sampler_tv_*.json`). A record's tier comes from its job's prefix (`c-` cpuv, `v1-`, `serve-`, `b-` bench, `g-`
-gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-`, `a-` attack, `l-` long, `smoke`)
+gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-`, `a-` attack, `l-` long, `smoke`;
+`gate-` gate, the full-size checks run before the run, whose records are checked and fill no cell or number)
 and its kind from its fields (`perf`, `v1`, `reexec`, `llamacpp`, `serve`, `gen`, `setup`, `h2d`, `open_ab`,
 `forward_ab`, `encode_ab`, `fold_ab`, `gpu_profile`, `v1_phases`, `gkr`, `ppl`, `zeroshot`, `digest`, `llama_diag`,
 `llama_attrib`, `attribution`, `bench_env`, `path_bound`, `inrange`, `tv`, ...). `Run` selects the record of one cell
@@ -54,18 +55,20 @@ int8 decoders of the same shapes, and llama.cpp's Q8_0 and bf16 prefill, `LLAMAC
 configuration) are reported next to it (`tab:options`' llama.cpp row, `tab:eval-reexec`), never in its place.
 `tab:params` and `tab:setup` follow from the library's parameters and the setup proof's byte model
 (`costs/setup_bytes.py`; the per-query columns of interactive queries, as the setup tier measures them), with V1's
-counts from the v1 tier; `tab:eval-compare-v1` has a row per full model of the v1 tier; the generation tables take
-the gen tier's cells (Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled; GPT-2 after a 64-token
-prompt, greedy), selected by the prompt's length as well. `tab:paths` and `tab:paths-acc` evaluate Proposition
-`prop:paths` (`attack/sok.py`: the paths that catch an edit of `k` neurons, and the probability that `s` paths accept
-it) at one neuron, at 16 and at the in-range edits of the attack tier's OPT-1.3B documents (`inrange_ks`: the median
-and largest edit of either direction and the median lowering-only edit, which the text prints as `\InrangeKMedian`,
-`\InrangeKMax`, `\InrangeDownKMedian` and the tables' headers name).
+counts from the v1 tier; `tab:memory` takes the cpuv tier's Llama-2-7B cells: the client's own process (`perf.py
+--client-memory`'s `client_memory`), the prover's GPU peak and the measuring process's peak; `tab:eval-compare-v1`
+has a row per full model of the v1 tier; the generation tables take the gen tier's cells (Llama-2-7B and Qwen3-4B
+after a 512-token prompt, greedy and sampled; GPT-2 after a 64-token prompt, greedy), selected by the prompt's length
+as well. `tab:paths` and `tab:paths-acc` evaluate Proposition `prop:paths` (`attack/sok.py`: the paths that catch an
+edit of `k` neurons, and the probability that `s` paths accept it) at one neuron, at 16 and at the in-range edits of
+the attack tier's OPT-1.3B documents (`inrange_ks`: the median and largest edit of either direction and the median
+lowering-only edit, which the text prints as `\InrangeKMedian`, `\InrangeKMax`, `\InrangeDownKMedian` and the tables'
+headers name).
 
 ### `macros.py`
-The text numbers, by family (the platform and the plan, the CPU client, the outcome counts, the cost of the defence,
-batches against one opening, serving, V1, the comparison, the improvements, real weights, long prompts, quality, the
-sampler, the attack, the security parameters, the setup proof, generation, the break-even). The platform's macros
+The text numbers, by family (the platform and the plan, the CPU client and its own memory, the outcome counts, the
+cost of the defence, batches against one opening, serving, V1, the comparison, the improvements, real weights, long
+prompts, quality, the sampler, the attack, the security parameters, the setup proof, generation, the break-even). The platform's macros
 (`\PlatformGpu`, `\PlatformCpu`, `\PlanLogPoints`) come from the records' `env` and `--policy`, so the captions and the
 sentences that say how a number was measured state the run's settings. Values that follow from the code alone are
 computed from the library under `--policy`: the setup proof's size, breakdown and radii (`costs/setup_bytes.py`'s byte
@@ -110,7 +113,8 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
 
 ## The checks
 
-* `CHECK FAILED`: an honest query rejected or a tamper accepted (`perf.py`, `v1_bytes.py`, `gen_bench.py`), a byte
+* `CHECK FAILED`: an honest query rejected or a tamper accepted (`perf.py`, `v1_bytes.py`, `gen_bench.py`), a
+  client process whose verdicts differ from the in-process ones (`perf.py`'s `client_memory`), a byte
   accounting that disagrees with the model (`v1_bytes.py`'s `accounting_ok`), a serving check that failed
   (`serve_ab.py`'s `ok`), a setup proof rejected (`setup_timing.py`), the two paths of an implementation A/B that
   disagree, an attribution whose float copy failed a check (`attribution.py`'s `ok`) or whose integer graph is not

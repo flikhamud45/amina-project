@@ -1,5 +1,6 @@
 """The Triton GKR prover (``pvi.v1.gkr_triton``) gives the eager prover's transcript byte for byte
-(``tests/test_logup_gkr.py`` on the GPU), from uploaded leaves and from leaves built on the device; skipped
+(``tests/test_logup_gkr.py`` on the GPU), from uploaded leaves and from leaves built on the device (among them an
+instance whose rows fill it, no padding row, as the full-size instances of OPT-1.3B at 2,048 tokens); skipped
 without CUDA and Triton."""
 
 from __future__ import annotations
@@ -34,7 +35,8 @@ def test_random_leaves_give_the_eager_transcript(n):
     assert torch.equal(a.point, b.point.cpu())
 
 
-@pytest.mark.parametrize("rows,cols,n_col", [(1, 1, 1), (5, 6, 3), (13, 64, 6), (100, 33, 6), (7, 2048, 11)])
+@pytest.mark.parametrize("rows,cols,n_col", [(1, 1, 1), (5, 6, 3), (13, 64, 6), (16, 64, 6), (100, 33, 6),
+                                             (7, 2048, 11)])
 def test_device_leaves_give_the_eager_transcript(rows, cols, n_col):
     g = torch.Generator().manual_seed(rows * cols)
     w = torch.randint(1, 1 << 16, (rows, 1), generator=g).expand(rows, cols).clone()

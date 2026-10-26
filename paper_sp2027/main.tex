@@ -32,7 +32,7 @@
   {\@namedef{pvi@#1}{fallback/#1.tex }}}
 \@for\pvi@name:=numbers,tab_eval_llm,tab_eval_v1,tab_options,%
   tab_eval_compare,tab_quality,tab_params,tab_inrange,%
-  tab_setup,tab_eval_improve,tab_eval_long,tab_eval_real,%
+  tab_setup,tab_eval_improve,tab_memory,tab_eval_long,tab_eval_real,%
   tab_eval_reexec,tab_eval_compare_v1,tab_v1,tab_gen,%
   tab_gen_full,tab_quality_attr,tab_zeroshot,tab_paths,tab_paths_acc\do{\expandafter\pviresolve\expandafter{\pvi@name}}
 \newcommand{\pvitable}[1]{\expandafter\@@input\csname pvi@#1\endcsname}

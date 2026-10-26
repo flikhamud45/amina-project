@@ -6,6 +6,8 @@
 * ``setup_timing`` (the setup tier): the honest setup proof is accepted, its bytes and parameters are recorded;
 * ``reexec --max-pos`` refuses a model with learned positions (before building anything); ``h2d_bandwidth``
   measures on a GPU and exits 2 without one; ``perf``'s ``[min, max]`` are each query's own totals;
+  ``perf --client-memory`` checks every timed proof again in the client's own process, with the in-process verdicts,
+  and records that process's memory;
 * the package's dry run (``--dry-run``): no v0, V1 or generation cell turns Fiat-Shamir off, the only interactive
   benchmark cells are those a table compares with an interactive system, every mode-C cell takes ``--policy``, the
   headline cells time 5 queries, every job is chained after the previous one and the jobs after smoke wait for it,
@@ -14,7 +16,10 @@
   every tier on the paths the full cells take (OpenLLaMA-7B's tokenizer too); every CPU-timing
   cell requires the native kernels and is pinned to one NUMA node, and the dry run lists every job even on a host
   without the run's settings; every cost cell builds its decoders at the default 11-bit attention probabilities but
-  the improve tier's A/B of 8 against 11 bits (in the full run and the rehearsal);
+  the improve tier's A/B of 8 against 11 bits (in the full run and the rehearsal); Llama-2-7B's CPU-verifier cells
+  measure the client's own memory; the gate tier (the full-size checks before the run) is not in 'all', is refused
+  with --rehearsal, and its V1 cells reach GKR instances of 2^lmax leaves (exactly 2^lmax on OPT-1.3B), its long cells
+  16,384 tokens;
 * the package's submission against stand-ins for SLURM: a queued job of the same platform is not submitted again and
   the chain and the smoke gate pass through it; ``--one-job`` submits the tiers as one whole-node job that runs them
   with ``--local``, and a ``--local`` run again runs the smoke and only the jobs that did not end successfully;
@@ -130,11 +135,14 @@ def _bash() -> str:
     return bash
 
 
-def _dry(*flags, env: dict | None = None, out: list | None = None) -> list[str]:
-    env = {**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"} if env is None else env
+def _dry(*flags, env: dict | None = None, out: list | None = None, tiers: tuple = ("all",),
+         status: int = 0) -> list[str]:
+    """The ``sbatch`` lines of ``run.sh --dry-run`` of ``tiers`` (its output appended to ``out``), which must end
+    with the exit status ``status``."""
+    env ={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"} if env is None else env
     run = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--optional", "--llama-licence",
-                          *flags, "all"], cwd=REPO, env=env, capture_output=True, text=True, timeout=120)
-    assert run.returncode == 0, run.stderr
+                          *flags, *tiers], cwd=REPO, env=env, capture_output=True, text=True, timeout=120)
+    assert run.returncode == status, run.stderr
     if out is not None:
         out.append(run)
     return [line for line in run.stdout.splitlines() if line.startswith("sbatch")]
@@ -483,9 +491,9 @@ def test_the_rehearsal_submits_small_cells_of_every_tier():
         assert "--time=" in line
 
 
-FLAGS = ("--real", "--no-wire", "--codec-only", "--exp-only")
+FLAGS = ("--real", "--no-wire", "--codec-only", "--exp-only", "--client-memory")
 """The switches that select a script's path: a checkpoint, the encoding off, V1's codec profile only, the
-per-token-exponent cells only."""
+per-token-exponent cells only, the client's own process."""
 VALUED = ("--recipe", "--prefix", "--v1-verifier", "--split")
 """The options whose values select a path: the recipe, the fixed prefix, V1's verifiers, the evaluated split."""
 
@@ -600,5 +608,79 @@ def test_the_gen_and_quality_cells_of_the_text():
 
 def test_every_tier_is_documented_and_reachable():
     text = (REPO / RUN).read_text()
-    for tier in TIERS:
+    for tier in (*TIERS, "gate"):
         assert f"tier_{tier}()" in text and re.search(rf"^#\s+{tier}\s", text, re.M), tier
+
+
+def test_the_gate_tier_checks_the_full_sizes_once_before_the_run():
+    """The gate tier: never in 'all' and refused with --rehearsal; its records land in a tier of their own.  Every V1
+    cell runs the whole query (--full) at the default lmax, and its GKR instances reach 2^lmax leaves in each mode
+    (from the shapes, as the cut packs them): two Llama-2-7B blocks at 2,048 tokens in modes Kpre and C with both CPU
+    verifiers and with the GPU verifier, honest and tampered queries; OPT-1.3B at 2,048 tokens, whose instances hold
+    exactly 2^lmax leaves; the certified OPT-125M (real weights); the full Llama-2-7B at 2,048 tokens.  Its long cells
+    take 16,384 tokens, the long tier's largest prompt; the CPU cells are pinned and need the native kernels."""
+    from experiments.paper.tables import v1_shape_model
+    from pvi.v1.cut import LMAX
+    assert not any(_job(line).startswith("sp-gate-") for line in _dry())
+    runs: list = []
+    _dry("--rehearsal", tiers=("smoke", "gate"), status=2, out=runs)
+    assert "without --rehearsal" in runs[0].stderr
+    jobs = {_job(line): line.split("--wrap", 1)[1] for line in _dry(tiers=("gate",))}
+    assert jobs and {tier_of(job[len("sp-"):]) for job in jobs} == {"gate"}
+    v1 = {job: cmd for job, cmd in jobs.items() if "v1.v1_bytes" in cmd}
+    exact = set()
+    for job, cmd in v1.items():
+        assert "--full" in cmd and "--lmax" not in cmd and "--codec-only" not in cmd and "--tampers" in cmd, job
+        model, seq = re.search(r"--model (\S+)", cmd).group(1), int(re.search(r"--seq (\d+)", cmd).group(1))
+        layers = re.search(r"--layers (\d+)", cmd)
+        for mode in re.search(r"--modes ([A-Za-z ]+?) --", cmd).group(1).split():
+            shape = v1_shape_model(model, seq, LMAX, "cnn18c" if mode == "C" else None,
+                                   int(layers.group(1)) if layers else None)
+            assert shape["max_bits"] == LMAX, (job, mode)
+            if max(shape["instance_leaves"]) == 1 << LMAX:
+                exact.add((model, mode))
+    assert exact == {("opt-1.3b", "Kpre"), ("opt-1.3b", "C")}
+    two = v1["sp-gate-v1-llama7-2k-2"]
+    assert "--layers 2 --modes Kpre C" in two and "--v1-verifier optimised baseline" in two
+    assert "--verifier-device cuda" in v1["sp-gate-g-v1-llama7-2k-2"]
+    assert "--real facebook/opt-125m" in v1["sp-gate-r-opt125-v1-2k"]
+    assert "--layers" not in v1["sp-gate-v1-llama7-2k"] and "--model llama2-7b --seq 2048" in v1["sp-gate-v1-llama7-2k"]
+    long = {job: cmd for job, cmd in jobs.items() if job.startswith("sp-gate-l-")}
+    assert len(long) == 2 and all("--seq 16384" in cmd and "--layers 2" in cmd for cmd in long.values())
+    assert "--max-pos 16384" in long["sp-gate-l-rx-llama7-16k"] and " int_mm " in long["sp-gate-l-rx-llama7-16k"]
+    for job, cmd in jobs.items():
+        cpu = "--verifier-device cuda" not in cmd
+        assert ("--require-native" in cmd and "experiments.package.pin" in cmd) == cpu, job
+
+
+def test_the_cpuv_tier_measures_the_clients_own_memory():
+    """Llama-2-7B's CPU-verifier cells (64 and 2,048 tokens, modes Kpre and C) check their timed proofs again in the
+    client's own process (perf.py --client-memory), and the rehearsal's cell takes the same path."""
+    full = {_job(line): line for line in _dry()}
+    assert all("--client-memory" in full[f"sp-c-llama2-7b-{s}"] for s in (64, 2048))
+    assert "--modes Kpre C" in full["sp-c-llama2-7b-2048"]
+    assert "--client-memory" in {_job(line): line for line in _dry("--rehearsal")}["sp-c-gpt2-64"]
+
+
+def test_perf_checks_the_timed_proofs_again_in_the_clients_own_process(monkeypatch, capsys, tmp_path):
+    """``perf.py --client-memory`` on a tiny decoder: a separate process checks every timed proof again from its
+    bytes, with the in-process verdicts, and the record keeps that process's peak resident set and its resident set
+    after the imports (Linux) and nothing of the key or the proofs is left in ``--client-dir``; the option refuses a
+    GPU verifier and mode C without Fiat-Shamir."""
+    status, lines = _cli(perf, monkeypatch, capsys, "perf.py", "--model", "tiny-llama", "--seq", "12", "--modes", "C",
+                         "Kpre", "--queries", "2", "--device", "cpu", "--threads", "1", "--policy", "auto",
+                         "--client-memory", "--client-dir", str(tmp_path))
+    assert status == 0 and sorted(r["mode"] for r in lines) == ["C", "Kpre"]
+    for r in lines:
+        client = r["client_memory"]
+        assert client["agree"] and client["queries"] == client["accepted"] == r["accepted"] == 2, client
+        assert "error" not in client and client["verify_s"] > 0
+        if os.path.exists("/proc/self/status"):
+            assert 0 < client["baseline_rss"] <= client["peak_rss"] and client["key_rss"] <= client["peak_rss"]
+        else:
+            assert client["peak_rss"] is None
+    assert not list(tmp_path.iterdir())
+    for argv in (("--verifier-device", "cuda"), ("--modes", "C", "--no-fs")):
+        monkeypatch.setattr(sys, "argv", ["perf.py", "--model", "tiny-llama", "--client-memory", *argv])
+        with pytest.raises(SystemExit, match="--client-memory"):
+            perf.main()

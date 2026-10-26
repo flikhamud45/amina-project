@@ -13,7 +13,7 @@ scripts compute byte models from the public shapes or train the image models.
 | Sec. `sec:eval-setup`: "accepted all 3,792 honest queries and rejected all 2,512 attacks", with the check that rejected each | `bench.py` (defence and tamper cells) | as above; then `python -m experiments.comparison.count_outcomes --platform <name>` | `raw_<name>/`, counts |
 | Sec. `sec:break`: one penultimate neuron flips every test query of each image model; the path test detects it with probability 1/84 to 1/512; `app:eval-attack`: 305,193 paths for `1 - 2^-40` | `bench.py cnn` (cells `attack_float`, `sampling`) | `python -m experiments.costs.bench cnn --model resnet18_224 --tampers 60 --platform <name>` | `raw_<name>/cnn/<model>/{attack_float,sampling}*.jsonl` |
 | `tab:gen` (the stored generated-response cells) | `bench.py --gen` | `python -m experiments.costs.bench llm --model gpt2 --seq 64 --gen 256 --builds full --modes C:int --platform <name>` | `raw_<name>/llm/gpt2/*_gen256*` (the final run uses `generation/gen_bench.py`) |
-| `tab:options` (CPU verifier against re-execution), `tab:eval-reexec`'s verifier row, peak memory | `perf.py` (tier `cpuv`) | `python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes Kpre C --queries 5 --verifier-device cpu --label cpuv` | stdout, one JSON line per mode |
+| `tab:options` (CPU verifier against re-execution), `tab:eval-reexec`'s verifier row, `tab:memory` (the client's own peak memory) | `perf.py` (tier `cpuv`) | `python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes Kpre C --queries 5 --verifier-device cpu --label cpuv --client-memory` | stdout, one JSON line per mode |
 | `tab:eval-llm`'s GPU-verifier column | `perf.py` (tier `gpuv`) | `python -m experiments.costs.perf --model opt-1.3b --seq 2048 --modes Kpre --queries 3 --verifier-device cuda --stream --label gpuv` | stdout |
 | `tab:eval-real` (real weights against random twins) | `perf.py --real` (tier `real`) | `python -m experiments.costs.perf --model opt-1.3b --real facebook/opt-1.3b --seq 2048 --modes Kpre C --queries 3 --tampers 3 --label real` and the same without `--real` (`--label real-random`) | stdout |
 | `tab:eval-long` (2,048 to 16,384 tokens) | `perf.py` (tier `long`) | `python -m experiments.costs.perf --model llama2-7b --layers 2 --seq 8192 --modes Kpre --queries 3 --verifier-device cpu --label long` (2 and 3 blocks at every length) | stdout |
@@ -93,6 +93,17 @@ the streaming verifier (with `--verifier-device cuda`: the paper's GPU verifier)
 trace-tampering attack per variant (`experiments.common.tampers`). Real checkpoints are downloaded from Hugging Face
 (OPT-1.3B/6.7B, Llama-2-7B under its licence) with the WikiText-2 test split. The package gives a 7B decoder at 2,048
 tokens a job limit of one to two hours and up to 256 GB of host memory (the CPU verifier holds the decoded claims).
+
+The prover and the verifier share the process, so its peak memory is theirs together. `--client-memory` (a CPU
+verifier, the compact encoding; mode C under Fiat-Shamir) measures the client's own: a separate process
+(`experiments/common/client.py`, spawned per mode after the warm-up) holds only the public graph, the parameters and
+mode C's roots or mode Kpre's key and embedding rows, and checks every timed proof again from its bytes
+(`pvi.v0.query.verify_wire`), right after the timed query while the measuring process waits. The record's
+`client_memory` holds that process's peak resident set, its resident set after the imports and after loading the key
+(Linux), and whether every verdict equals the measuring process's (a difference, or a failed client process, is a
+`FAILED` line and exit status 1). The key and each proof travel through files in a temporary folder under
+`--client-dir` (default: the system's temporary folder; 6.4 GB for one Llama-2-7B proof at 2,048 tokens). The `cpuv`
+tier passes it on Llama-2-7B's cells (`tab:memory`).
 
 ### `setup_bytes.py`
 

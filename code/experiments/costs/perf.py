@@ -10,7 +10,7 @@ tier's A/B of 8- against 11-bit attention probabilities (``quality.tex``: the pr
 verifier's times on the same queries).
 
     python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes Kpre C --queries 5 --verifier-device cpu \\
-        --label cpuv
+        --label cpuv --client-memory
     python -m experiments.costs.perf --model opt-1.3b --seq 2048 --modes Kpre --queries 3 --verifier-device cuda \\
         --stream --label gpuv
     python -m experiments.costs.perf --model opt-1.3b --real facebook/opt-1.3b --seq 2048 --modes Kpre C \\
@@ -43,6 +43,15 @@ made from the graph's own weight ops.  ``--tampers n`` (decoders): after the tim
 each of the trace-tampering attacks of :func:`experiments.common.tampers.decoder_tampers` on the first query, each of
 which must be rejected.
 
+``--client-memory`` (a CPU verifier, the compact encoding): the client's own memory.  The prover and the verifier share
+this process, so its peak resident set (``peak``) is theirs together.  With this option a separate process
+(:class:`experiments.common.client.ClientProcess`, spawned once per mode and variant after the warm-up) holds only what
+the client holds -- the public graph and the parameters, mode C's roots, mode Kpre's key and the embedding rows it
+reads itself -- and checks each timed proof again from its messages alone (:func:`pvi.v0.query.verify_wire`), right
+after the timed query and while this process waits; its verdict must equal this process's.  The key and each proof
+reach it through files in a temporary folder under ``--client-dir`` (default: the system's temporary folder), one
+proof at a time.
+
 Record (one JSON line per mode and variant): ``label``, ``git``, ``model``, ``real``, ``smooth``, ``recipe``,
 ``calib_seq``, ``seq``, ``layers``, ``mode``, ``policy``, ``chosen`` (mode C: the plan committed, ``auto``'s pick),
 ``wire``, ``lean``, ``lam``, ``rate``, ``prune_last``, ``lookups``, ``prob_max`` (the graph's attention probabilities'
@@ -52,16 +61,23 @@ scale, :func:`pvi.models.decoder.prob_max_of`; None for an image model), ``reps`
 ``verify_s_range`` (``[min, max]`` of each query's own totals), ``proof_bytes``, ``timings`` and ``bytes`` (per-part
 medians), ``build_s``, ``commit_s``, ``setup_cache``, ``tampers``, ``peak`` / ``build_peak`` (host peak resident set
 and GPU peak memory over the queries, and over the build and commitments), ``vs_first`` (several variants: the
-medians over the first variant's), ``host``, ``gpu`` and ``env`` (:func:`experiments.common.records.environment`).
-The exit status is 1 if an honest query was rejected or a tampered one accepted.
+medians over the first variant's), ``host``, ``gpu`` and ``env`` (:func:`experiments.common.records.environment`);
+with ``--client-memory`` ``client_memory``: the client process's peak resident set ``peak_rss``, its resident set
+after the imports ``baseline_rss`` and after loading the key ``key_rss`` (bytes; ``None`` without Linux's ``/proc``),
+the proofs it checked (``queries``) and accepted (``accepted``), ``agree`` (every verdict and rejection label equal
+to this process's), the median of its verifier's time ``verify_s`` and, if it failed, ``error``.  The exit status
+is 1 if an honest query was rejected, a tampered one accepted or the client process's verdicts differ.
 
 Hardware and time: the package runs it on an NVIDIA L40S prover with 8 CPU threads, with job limits of one to two
 hours and up to 256 GB of host memory for a 7B decoder at 2,048 tokens (the CPU verifier holds the decoded claims);
-a small decoder on a laptop CPU takes seconds.
+a small decoder on a laptop CPU takes seconds.  ``--client-memory`` adds one CPU verification per timed query, the
+client process's memory next to this process's (for a 7B decoder at 2,048 tokens about its proof and the decoded
+claims) and temporary space for one proof (6.4 GB for Llama-2-7B at 2,048 tokens).
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import platform
 import statistics
 import sys
@@ -70,6 +86,7 @@ import time
 import torch
 
 from experiments.common import checkpoints, cli, records
+from experiments.common.client import ClientProcess
 from experiments.common.models import decoder_config, test_batches, trained_cnn, trained_mlp
 from experiments.common.paths import CODE
 from experiments.common.tampers import decoder_tampers
@@ -101,6 +118,43 @@ def _spread(runs: list[dict]) -> dict:
     verify = [sum(v_ for k, v_ in r["timings"].items() if k.startswith("verify_") or k == "fs_hash") for r in runs]
     return {"prove_s_range": [min(prove), max(prove)] if runs else None,
             "verify_s_range": [min(verify), max(verify)] if runs else None}
+
+
+def _start_client(stack: contextlib.ExitStack, verifier, folder: str | None, threads: int) -> dict:
+    """A variant's client process (:class:`experiments.common.client.ClientProcess`, ended with ``stack``), and
+    its verdicts and failure: ``{"process", "got", "error"}``."""
+    try:
+        return {"process": stack.enter_context(ClientProcess(verifier, folder, threads)), "got": [], "error": None}
+    except Exception as e:                     # recorded as a failed check (client_memory.error)
+        return {"process": None, "got": [], "error": f"{type(e).__name__}: {e}"}
+
+
+def _client_check(st: dict, x: torch.Tensor, proof) -> None:
+    """The client process's verdict on one timed proof, appended to ``st["got"]`` (none once it failed)."""
+    if st["error"] is None:
+        try:
+            st["got"].append(st["process"].verify(x, proof))
+        except (RuntimeError, OSError, EOFError) as e:
+            st["error"] = f"{type(e).__name__}: {e}"
+
+
+def _client_memory(st: dict, runs: list[dict]) -> dict:
+    """The record's ``client_memory``: the client process's peak resident set (it ends here), its resident set
+    after the imports and after loading the key, its verdicts on the timed proofs and whether they are this
+    process's (``runs``)."""
+    c, got, peak = st["process"], st["got"], None
+    if st["error"] is None:
+        try:
+            peak = c.close()["peak_rss"]
+        except (RuntimeError, OSError, EOFError) as e:
+            st["error"] = f"{type(e).__name__}: {e}"
+    ready = c.ready if c is not None else {}
+    agree = st["error"] is None and [(g["accepted"], g["rejected_at"]) for g in got] == [
+        (r["accepted"], r["rejected_at"]) for r in runs]
+    return {"peak_rss": peak, "baseline_rss": ready.get("baseline_rss"), "key_rss": ready.get("key_rss"),
+            "queries": len(got), "accepted": sum(bool(g["accepted"]) for g in got), "agree": agree,
+            "verify_s": statistics.median(g["verify_s"] for g in got) if got else None,
+            **({"error": st["error"]} if st["error"] else {})}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -135,6 +189,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="with --recipe legacy: the calibration window's tokens (0: --seq)")
     ap.add_argument("--tampers", type=int, default=0, help="decoders, per variant after the timed queries: attempts "
                     "of each trace-tampering attack, each of which must be rejected")
+    ap.add_argument("--client-memory", action="store_true",
+                    help="check each timed proof again in a separate process that holds only what the client holds "
+                         "(experiments.common.client) and record that process's peak resident memory "
+                         "(client_memory); a CPU verifier, the variants with the compact encoding")
+    ap.add_argument("--client-dir", default=None, metavar="DIR",
+                    help="with --client-memory: the folder of the client's key and proofs (default: the system's "
+                         "temporary folder)")
     cli.add_protocol_arguments(ap, variants=True)
     cli.add_runtime_arguments(ap, threads=8)
     return ap
@@ -157,6 +218,13 @@ def main() -> int:
     if (args.real or args.model in RANDOM_CNNS) and scales != [cli.PAPER.prob_max]:
         raise SystemExit("--prob-max is for random-weight decoders: an image model has no attention, and a "
                          "checkpoint's recipe fixes its scale")
+    if args.client_memory:
+        if torch.device(args.verifier_device).type != "cpu" or args.stream:
+            raise SystemExit("--client-memory measures the CPU verifier's process: --verifier-device cpu, no --stream")
+        if "on" not in args.wire:
+            raise SystemExit("--client-memory sends the client the proof's bytes: --wire on")
+        if "C" in args.modes and not args.fs:
+            raise SystemExit("--client-memory checks mode C's proofs from their Fiat-Shamir transcript: --fs")
     cli.apply_runtime(args)
     sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
     device = torch.device(args.device)
@@ -223,7 +291,7 @@ def main() -> int:
             commit_s[prune, scale, policy] = time.perf_counter() - t0
     build_peak = records.peaks(device)
     env = records.environment(device)
-    ok = True
+    ok = client_ok = True
     for mode in args.modes:
         records.reset_peaks(device)
         pairs = {}
@@ -249,10 +317,16 @@ def main() -> int:
                             run_query(prover, v, queries[0], wire=wire)  # warm-up
                             pairs[prune, scale, policy, looked, lean, wire] = (prover, v, [])
         order = list(pairs)
-        for i, q in enumerate(queries[1:]):     # interleaved, the first variant rotating
-            for key in order[i % len(order):] + order[:i % len(order)]:
-                prover, v, runs = pairs[key]
-                runs.append(run_query(prover, v, q, wire=key[5]))
+        with contextlib.ExitStack() as stack:
+            clients = {key: _start_client(stack, v, args.client_dir, args.threads)
+                       for key, (_, v, _) in pairs.items() if args.client_memory and key[5]}
+            for i, q in enumerate(queries[1:]):     # interleaved, the first variant rotating
+                for key in order[i % len(order):] + order[:i % len(order)]:
+                    prover, v, runs = pairs[key]
+                    runs.append(run_query(prover, v, q, wire=key[5], keep_proof=key in clients))
+                    if key in clients:                # the client checks the proof again while this process waits
+                        _client_check(clients[key], q, runs[-1].pop("proof"))
+            memory = {key: _client_memory(st, pairs[key][2]) for key, st in clients.items()}
         tampered = {key: decoder_tampers(prover, v, queries[0], args.tampers, key[5])
                     for key, (prover, v, _) in pairs.items()} if args.tampers else {}
         peak = records.peaks(device)
@@ -282,6 +356,7 @@ def main() -> int:
                    "setup_cache": getattr(coms.get((prune, scale, policy)), "setup_cache", None),  # "hit": a load
                    **({"tampers": tampered[key]} if tampered else {}),
                    "peak": peak, "build_peak": build_peak,
+                   **({"client_memory": memory[key]} if key in memory else {}),
                    "host": platform.node(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
                    "env": env}
             if first is None:
@@ -293,10 +368,14 @@ def main() -> int:
                                         if first["timings"].get(k)})
             ok = ok and out["accepted"] == out["queries"] and all(
                 t["rejected"] == t["attempts"] for t in out.get("tampers", {}).values())
+            client_ok = client_ok and (out.get("client_memory") or {}).get("agree", True)
             records.emit(out)
     if not ok:
         print("FAILED: an honest query was rejected or a tampered one accepted", file=sys.stderr, flush=True)
-    return 0 if ok else 1
+    if not client_ok:
+        print("FAILED: the client process's verdicts differ from this process's, or it failed (client_memory)",
+              file=sys.stderr, flush=True)
+    return 0 if ok and client_ok else 1
 
 
 if __name__ == "__main__":

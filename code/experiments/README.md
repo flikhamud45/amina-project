@@ -17,7 +17,7 @@ them and where each part of the paper lives.
 | [`comparison/`](comparison/README.md) | the benchmark's tables and the published systems | the aggregated tables, the outcome counts, the literature values of `tab:eval-compare` |
 | [`paper/`](paper/README.md) | the paper's numbers | the run's records -> the table bodies and text macros of `paper_sp2027/` |
 | [`package/`](package/README.md) | the run | `run.sh`: every job of the final run on one GPU node |
-| `common/` | | what the scripts share: the protocol and runtime flags, records, models, checkpoints, tampers |
+| `common/` | | what the scripts share: the protocol and runtime flags, records, models, checkpoints, tampers, the client in a process of its own |
 
 ## Running a script
 

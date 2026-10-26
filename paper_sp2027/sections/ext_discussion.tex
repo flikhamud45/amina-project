@@ -14,7 +14,9 @@ implementation improvement is measured against the code path it replaces on the 
 (Appendix~\ref{app:eval-improve}). Models are measured in full, except where a table gives a build of
 $b$ of $L$ blocks and the long prompts of Appendix~\ref{app:eval-long}, which extrapolate 2- and
 3-block builds; the security parameters, the setup proof's size and the per-prefix comparison of
-Section~\ref{sec:gen} follow from the byte model. Peak memory is not yet reported \todo{peak memory}.
+Section~\ref{sec:gen} follow from the byte model. The client's peak memory is measured in a process
+of its own that holds only its key or the roots and one proof (Appendix~\ref{app:eval-untrusted},
+Table~\ref{tab:memory}), since the timed cells run the prover and the verifier in one process.
 
 \subsection{Real Weights, Model Quality and V1}
 \label{ext:disc-real}
