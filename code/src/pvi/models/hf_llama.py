@@ -480,7 +480,10 @@ MAIN_SETTINGS = {"open_llama_7b_v2": (0.55, 0.2), "Llama-2-7b-hf": (0.55, 0.2), 
 windows of the WikiText-2 (raw) test split.  At these settings the measured perplexity ratios to fp32 on every such
 window (``experiments/quality/ppl_llama.py``, calibration as in :data:`MAIN_RECIPE`) are x1.073 for OpenLLaMA-7B,
 x1.122 for TinyLlama, x1.40 for Qwen3-1.7B and x5.3 for Qwen3-4B.  Llama-2-7B takes :data:`MAIN_RECIPE`'s
-(OpenLLaMA-7B's, a model of the same shapes) and Llama-2-13B 0.6; any other checkpoint :data:`MAIN_RECIPE`'s."""
+(OpenLLaMA-7B's, a model of the same shapes) and Llama-2-13B 0.6; any other checkpoint :data:`MAIN_RECIPE`'s.
+Llama-2's two settings are fixed here before the final run and never chosen from its records: the run package's
+quality tier measures each among its neighbours on the test and the validation split, and the paper reports where
+it lies (``experiments/paper/macros.py``, ``LLAMA_GRIDS``)."""
 
 
 def main_recipe(name: str, alpha: float | None = None, glu_smooth: float | None = None) -> dict:

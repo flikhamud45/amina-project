@@ -133,8 +133,8 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
   of a cost measurement (`macros.GRAPH_KINDS`, outside the quality tier) whose decoder is not at the 11-bit attention
   probabilities the text states (`prob_max` 2047), but for the 8-bit side of the improve tier's A/B
   (`macros.PROB_BITS`, label `prob-bits`; `\ProbBitsBytes`, `\ProbBitsTime`), a Llama-family ratio whose reference
-  is not the one the text names (fp32; fp16 for Llama-2-13B), validation cells of OpenLLaMA-7B outside the grid the
-  text names (`macros.LLAMA_VALIDATION`). A rehearsal reports these as warnings.
+  is not the one the text names (fp32; fp16 for Llama-2-13B), a Llama-2 grid cell (test or validation split) outside
+  the grid the text names (`macros.LLAMA_GRIDS`). A rehearsal reports these as warnings.
 * `PARSE`: a log line that starts with `{` and does not parse, or is not a record of a known kind; a table or macro
   family that cannot read a record; an `--expect` listing that does not end with run.sh's summary line
   (`# <tiers>: N jobs, ...`) for the N jobs it lists (a dry run that stopped early, e.g. at a tier's check of

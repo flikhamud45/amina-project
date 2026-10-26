@@ -22,8 +22,10 @@
 #     setup    the setup proof of an untrusted commitment
 #     improve  each implementation improvement against the path it replaces, on the same queries; 8- against 11-bit
 #              attention probabilities
-#     quality  the integer models' quality: OPT (perplexity, zero-shot, reproducible build), OpenLLaMA-7B, TinyLlama
-#              and Qwen3 (and Llama-2-7B/13B with --llama-licence)
+#     quality  the integer models' quality: OPT (perplexity, zero-shot, reproducible build), TinyLlama and Qwen3;
+#              with --llama-licence Llama-2-7B and Llama-2-13B, each with its recipe's alpha (and Llama-2-7B's
+#              product balance) against their neighbours on the test and validation splits; without it OpenLLaMA-7B
+#              (Llama-2-7B's shapes) in their place
 #     tv       the token sampler's total-variation distance to the softmax (CPU)
 #     attack   the attack on the path test: MNIST, the image models' path test, OPT-6.7B, the in-range edits, the
 #              sampler game
@@ -79,13 +81,13 @@
 # PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute
 # path (a relative one is taken from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through
 # sbatch's environment and is never written into a job.  Everything is checked before the first job is submitted: the
-# compiler, CMake and git (the cpuv tier), the interpreter (and, for the quality tier, its sentencepiece and protobuf,
-# which OpenLLaMA-7B's tokenizer needs), HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE
-# that overrides it is unwritable), the image models and datasets of the bench tier and, under SLURM, that the
-# partition has a node with the memory the largest job asks for.  Jobs are named sp-<cell>, with this platform as
-# their --comment and --dependency=singleton.  A job of the same name and platform that is still queued or running is
-# not submitted again, and the chain and the smoke gate pass through it, so running a tier again submits only what is
-# missing; bench.py itself skips a finished benchmark cell.
+# compiler, CMake and git (the cpuv tier), the interpreter (and, for the quality tier without --llama-licence, its
+# sentencepiece and protobuf, which OpenLLaMA-7B's tokenizer needs), HF_HOME (and that no HF_HUB_CACHE,
+# TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is unwritable), the image models and datasets of the bench
+# tier and, under SLURM, that the partition has a node with the memory the largest job asks for.  Jobs are named
+# sp-<cell>, with this platform as their --comment and --dependency=singleton.  A job of the same name and platform
+# that is still queued or running is not submitted again, and the chain and the smoke gate pass through it, so running
+# a tier again submits only what is missing; bench.py itself skips a finished benchmark cell.
 # experiments/package/README.md is the runner's guide.
 set -euo pipefail
 
@@ -228,7 +230,8 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
   case "$1" in
     smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
-    quality) echo 16-24 ;; tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
+    quality) if [ -n "$LLAMA" ]; then echo 28-36; else echo 16-24; fi ;;
+    tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
   esac
 }
 
@@ -601,13 +604,15 @@ tier_quality() {
   # smooth-max recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split; the alpha study of
   # OPT-125M without the certified cell, which q-opt125 measures), the attribution of OPT-125M's perplexity on the CPU
   # (tab:quality-attr), zero-shot accuracy (tab:zeroshot), the reproducible build (OPT-125M with 1 and 8 threads,
-  # OPT-1.3B's commitment encoded on the GPU and on the CPU); OpenLLaMA-7B, TinyLlama and Qwen3 with the main Llama
-  # recipe, and OpenLLaMA-7B's alpha and product balance on the validation split; with --llama-licence Llama-2-7B and
-  # Llama-2-13B.
+  # OPT-1.3B's commitment encoded on the GPU and on the CPU); TinyLlama and Qwen3 with the main Llama recipe; with
+  # --llama-licence Llama-2-7B and Llama-2-13B with their committed recipes (hf_llama.MAIN_SETTINGS) and the
+  # neighbours of their alphas (and of Llama-2-7B's product balance) on the test and the validation split
+  # (macros.LLAMA_GRIDS); without it OpenLLaMA-7B, a licence-free model of Llama-2-7B's shapes, with the same recipe
+  # on the test split and its grid on the validation split.
   # The fp32 CPU references of Qwen3-4B and OpenLLaMA-7B are kept in logs/<name>/ref_*.pt (the second pass and a
-  # re-run reuse them).  The rehearsal loads OpenLLaMA-7B's tokenizer (sentencepiece, protobuf) for a smoke model on
-  # the validation split and, with --llama-licence, reads the gated Llama-2 repository from a job (its configuration
-  # and tokenizer, for the smoke model).
+  # re-run reuse them).  The rehearsal runs the grid path (two alphas, two product balances, the validation split, an
+  # fp16 reference) on a smoke model with the vocabulary of Llama-2-7B, read from the gated repository by a job, with
+  # --llama-licence, and of OpenLLaMA-7B (its tokenizer needs sentencepiece and protobuf) without it.
   local P="$M.quality.ppl_opt --device cuda" L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8"
   local Z="$M.quality.zeroshot --device cuda" A="$M.quality.attribution --device cpu --threads 8" m
   if [ -n "$REH" ]; then
@@ -616,8 +621,13 @@ tier_quality() {
     sub q-opt125-attr 1 64 "$A --model facebook/opt-125m --windows 2 --skip-sub"
     sub q-smoke 1 64 "$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 && \
 $L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 --glu-exps 8 --exp-only"
-    sub q-openllama7-smoke 1 32 "$L --model openlm-research/open_llama_7b_v2 --smoke --split validation --seq 128 \
---windows 2 --calib-windows 1 --chunk 64"
+    local grid="--smoke --split validation --seq 128 --windows 2 --calib-windows 1 --chunk 64 --alphas 0.45 0.55 \
+--glu-smooths 0.1 0.2 --ref-dtype float16"
+    if [ -n "$LLAMA" ]; then
+      sub q-llama-access 1 32 "$L --model meta-llama/Llama-2-7b-hf $grid"
+    else
+      sub q-openllama7-smoke 1 32 "$L --model openlm-research/open_llama_7b_v2 $grid"
+    fi
     sub q-zeroshot-opt-125m 1 64 "$Z --model facebook/opt-125m --limit 20 && $Z --model facebook/opt-125m \
 --recipe legacy --limit 20"
     sub q-digest-opt125 1 64 "$M.quality.digest_check --model facebook/opt-125m --threads 8 --commit \
@@ -627,8 +637,6 @@ $M.quality.llama_diag --model Qwen/Qwen3-0.6B-Base --recipes smooth55 scalar4 --
 $M.quality.llama_attrib --model Qwen/Qwen3-0.6B-Base --blocks all --recipe smooth55"
     sub q-qwen06 1 64 "$L --model Qwen/Qwen3-0.6B-Base --seq 128 --windows 2 --graphs smooth --glu-exps 8 \
 --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-0.6b.pt --prefix 151643,151643"
-    [ -z "$LLAMA" ] || sub q-llama-access 1 32 "$L --model meta-llama/Llama-2-7b-hf --smoke --seq 128 --windows 2 \
---calib-windows 1 --chunk 64"
     return 0
   fi
   sub q-opt125 2 64 "$P --model facebook/opt-125m"
@@ -654,12 +662,6 @@ $P --model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.7 --pbits 11
 $M.quality.digest_check --model facebook/opt-125m --threads 8 --commit --commit-device cuda && \
 $M.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cuda && \
 $M.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cpu"
-  sub q-openllama7 4 192 "$L --model openlm-research/open_llama_7b_v2 --config llama2-7b --structure --ref-device cpu \
---ref-cache $ROOT/$LOGS/ref_open_llama_7b_v2.pt"
-  # the main recipe's alpha and product balance (0.55, 0.2) against their neighbours on the validation split (the
-  # fp32 reference on the GPU)
-  sub q-openllama7-validation 10 192 "$L --model openlm-research/open_llama_7b_v2 --split validation \
---alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3"
   sub q-tinyllama 2 96 "$L --model TinyLlama/TinyLlama_v1.1"
   sub q-qwen17 2 96 "$L --model Qwen/Qwen3-1.7B-Base && $L --model Qwen/Qwen3-1.7B-Base --glu-smooths 0.4 --glu-exps 8"
   sub q-qwen4 5 192 "$L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-4b.pt && \
@@ -669,11 +671,23 @@ $M.quality.llama_diag --model Qwen/Qwen3-4B-Base --recipes smooth55 scalar4 --pr
 $L --model Qwen/Qwen3-4B-Base --seq 128 --windows 16 --graphs smooth --glu-exps 8 --ref-device cpu \
 --prefix 151643,151643 && $M.quality.llama_attrib --model Qwen/Qwen3-4B-Base --blocks all --recipe smooth55"
   if [ -z "$LLAMA" ]; then
+    # the licence-free stand-in: OpenLLaMA-7B with Llama-2-7B's recipe (0.55, 0.2) on the test split, and that alpha
+    # and product balance against their neighbours on the validation split (the fp32 reference on the GPU)
+    sub q-openllama7 4 192 "$L --model openlm-research/open_llama_7b_v2 --config llama2-7b --structure \
+--ref-device cpu --ref-cache $ROOT/$LOGS/ref_open_llama_7b_v2.pt"
+    sub q-openllama7-validation 10 192 "$L --model openlm-research/open_llama_7b_v2 --split validation \
+--alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3"
     echo "tier quality: no Llama-2 rows (they need your own Llama-2 licence: --llama-licence)" >&2
     return 0
   fi
-  sub q-llama7 6 192 "$L --model meta-llama/Llama-2-7b-hf --graphs main smooth --alphas 0.55 0.65 --structure"
-  sub q-llama13 8 256 "$L --model meta-llama/Llama-2-13b-hf --graphs main smooth --ref-dtype float16 --structure"
+  # Llama-2 itself: the committed recipe's cell (Llama-2-7B 0.55 / 0.2, Llama-2-13B 0.6 / 0.2; the text's ratios,
+  # with the structural diff) among its alpha +-0.1 (and Llama-2-7B's product balance +-0.1), one job per model and
+  # split (the reference on the GPU: Llama-2-7B's in fp32, Llama-2-13B's in fp16, as the text states)
+  local g7="--alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3" g13="--alphas 0.5 0.6 0.7 --ref-dtype float16"
+  sub q-llama7 12 192 "$L --model meta-llama/Llama-2-7b-hf $g7 --structure"
+  sub q-llama7-validation 10 192 "$L --model meta-llama/Llama-2-7b-hf --split validation $g7"
+  sub q-llama13 12 256 "$L --model meta-llama/Llama-2-13b-hf $g13 --structure"
+  sub q-llama13-validation 12 256 "$L --model meta-llama/Llama-2-13b-hf --split validation $g13"
 }
 
 tier_tv() {
@@ -815,7 +829,7 @@ preflight() {   # what the jobs need from this host and the scheduler, checked b
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do
     case "$t" in real|quality|tv|attack|gate) hf=1 ;; esac
-    [ "$t" != quality ] || spm=1
+    [ "$t" != quality ] || [ -n "$LLAMA" ] || spm=1      # OpenLLaMA-7B's jobs run only without --llama-licence
   done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
 GB free> (the real, quality, tv, attack and gate tiers download checkpoints and datasets)")
@@ -845,7 +859,8 @@ then export CMAKE=~/cmake/bin/cmake)")
   done
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")
   # OpenLLaMA-7B ships only its SentencePiece model: its tokenizer (the quality tier's q-openllama7 jobs and their
-  # rehearsal cell) needs sentencepiece, and protobuf for the conversion to the fast tokenizer
+  # rehearsal cell, without --llama-licence) needs sentencepiece, and protobuf for the conversion to the fast
+  # tokenizer; Llama-2's repositories ship the fast tokenizer (tokenizer.json) and need neither
   if [ -n "$spm" ] && [ -x "$PY" ] && ! "$PY" -c "import sentencepiece, google.protobuf" > /dev/null 2>&1; then
     bad+=("$PY cannot import sentencepiece and google.protobuf, which the quality tier's OpenLLaMA-7B tokenizer \
 needs: $PY -m pip install -r code/requirements-llm.txt")

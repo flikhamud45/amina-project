@@ -1,10 +1,16 @@
 """Perplexity of the integer Llama-family models (Llama, Qwen3) on WikiText-2 (raw): the Llama-family ratios of
-Sec. ``sec:quality`` and of the extended version's discussion (with the main recipe at 2,048 tokens OpenLLaMA-7B
-x1.073, TinyLlama x1.12, Qwen3-1.7B x1.40 and Qwen3-4B x5.3; with the per-token exponent, a possible improvement,
-Qwen3-1.7B x1.20 and Qwen3-4B x3.0), the ratios of Llama-2-7B and Llama-2-13B themselves (the run package's quality
-tier), OpenLLaMA-7B's grid of alphas and product balances on the validation split, and the check that OpenLLaMA-7B's
-integer graph has exactly the structure of the Llama-2-7B benchmark graph whose costs the paper reports.
+Sec. ``sec:quality`` and of the extended version's discussion (with the main recipe at 2,048 tokens TinyLlama x1.12,
+Qwen3-1.7B x1.40 and Qwen3-4B x5.3; with the per-token exponent, a possible improvement, Qwen3-1.7B x1.20 and
+Qwen3-4B x3.0), the ratios of Llama-2-7B and Llama-2-13B (the run package's quality tier, with ``--llama-licence``),
+their committed alphas (and Llama-2-7B's product balance) among their neighbours on the test and the validation split,
+and the check that Llama-2-7B's integer graph has exactly the structure of the benchmark graph whose costs the paper
+reports.  OpenLLaMA-7B (``openlm-research/open_llama_7b_v2``), a licence-free model of Llama-2-7B's shapes, takes
+Llama-2-7B's place in a run without the Llama-2 licence (x1.073 with the same recipe); the paper does not report it.
 
+    python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --alphas 0.45 0.55 0.65 \\
+        --glu-smooths 0.1 0.2 0.3 --structure --device cuda --out llama2-7b.jsonl       # add --split validation
+    python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-13b-hf --alphas 0.5 0.6 0.7 \\
+        --ref-dtype float16 --structure --device cuda --out llama2-13b.jsonl            # add --split validation
     python -m experiments.quality.ppl_llama --model openlm-research/open_llama_7b_v2 --config llama2-7b \\
         --structure --device cuda --ref-device cpu --ref-cache ref_open_llama_7b_v2.pt --out open_llama_7b_v2.jsonl
     python -m experiments.quality.ppl_llama --model TinyLlama/TinyLlama_v1.1 --device cuda --out tinyllama.jsonl
@@ -87,9 +93,10 @@ Hardware and time (2,048 tokens, every test window; the integer forward on an RT
 CPU of a Xeon node with 250 GB): a 7B cell (OpenLLaMA-7B) takes about 47 min, mostly the calibration build on the
 CPU, and its fp32 reference about 4 h on the CPU (``--ref-device cpu``; ``--ref-cache`` keeps it); Qwen3-4B's fp32
 reference does not fit the 2080 Ti either (about 2.7 h on the CPU) and its build needs about 128 GB of host memory;
-TinyLlama, Qwen3-0.6B and Qwen3-1.7B need 64 GB.  The run package's Llama-2-7B and Llama-2-13B cells run on an L40S
-(48 GB), Llama-2-13B with an fp16 reference; so does its validation grid of OpenLLaMA-7B (nine cells, the fp32
-reference on the GPU).
+TinyLlama, Qwen3-0.6B and Qwen3-1.7B need 64 GB.  The run package's Llama-2 grids run on an L40S (48 GB) with the
+reference on the GPU, one job per model and split: Llama-2-7B's nine cells against fp32 (192 GB of host memory,
+10-12 h), Llama-2-13B's three against an fp16 copy (256 GB, 12 h); so do OpenLLaMA-7B's nine validation cells
+without the Llama-2 licence.
 """
 from __future__ import annotations
 

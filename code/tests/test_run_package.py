@@ -13,7 +13,8 @@
   headline cells time 5 queries, every job is chained after the previous one and the jobs after smoke wait for it,
   every tier submits jobs, the cells behind the text's generation, recipe and quality numbers are there (no quality
   cell measured twice where one job suffices), and the rehearsal submits small cells only, which run every script of
-  every tier on the paths the full cells take (OpenLLaMA-7B's tokenizer too); every CPU-timing
+  every tier on the paths the full cells take (Llama-2-7B's grid path, or OpenLLaMA-7B's tokenizer without
+  --llama-licence); every CPU-timing
   cell requires the native kernels and is pinned to one NUMA node, and the dry run lists every job even on a host
   without the run's settings; every cost cell builds its decoders at the default 11-bit attention probabilities but
   the improve tier's A/B of 8 against 11 bits (in the full run and the rehearsal); Llama-2-7B's CPU-verifier cells
@@ -353,8 +354,9 @@ def test_nothing_is_submitted_when_the_partition_lacks_the_memory_or_the_compile
 
 
 def test_the_quality_tier_needs_the_tokenizer_libraries(tmp_path):
-    """OpenLLaMA-7B ships only its SentencePiece model: run.sh submits nothing for the quality tier while the
-    interpreter cannot import sentencepiece and google.protobuf, and asks for neither without that tier."""
+    """OpenLLaMA-7B ships only its SentencePiece model: run.sh submits nothing for the quality tier without
+    --llama-licence (OpenLLaMA-7B's jobs) while the interpreter cannot import sentencepiece and google.protobuf, and
+    asks for neither without that tier or with --llama-licence (Llama-2 ships its fast tokenizer)."""
     fail = {"FAKE_FAIL": "import sentencepiece, google.protobuf"}
     status, _, err, jobs = _submit(tmp_path / "a", "--platform", "final", "--rehearsal", "quality", extra=fail)
     assert status == 2 and not jobs and "cannot import sentencepiece and google.protobuf" in err, err
@@ -362,6 +364,10 @@ def test_the_quality_tier_needs_the_tokenizer_libraries(tmp_path):
     assert status == 0 and jobs, err
     status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "--rehearsal", "quality")
     assert status == 0 and len(jobs) == 8 and any(" -J sp-q-openllama7-smoke " in j for j in jobs), err
+    status, _, err, jobs = _submit(tmp_path / "d", "--platform", "final", "--rehearsal", "--llama-licence", "quality",
+                                   extra=fail)
+    assert status == 0 and len(jobs) == 8 and any(" -J sp-q-llama-access " in j for j in jobs), err
+    assert not any("openllama" in j for j in jobs), err
 
 
 def test_the_bench_tier_needs_the_substitute_model_and_the_imagenet_layout(tmp_path):
@@ -562,11 +568,12 @@ def test_the_gen_and_quality_cells_of_the_text():
     """The gen tier's cells (GPT-2's per-token prover after a 64-token prompt; Llama-2-7B and Qwen3-4B after a
     512-token prompt, greedy and sampled) and the quality tier's: the OPT-125M recipe studies (the alpha study without
     the certified cell, alpha 0.6, which q-opt125 measures) and attribution, Qwen3-4B's per-token-exponent cells
-    without the main cell the job's first command measured, OpenLLaMA-7B's validation grid (the text's,
-    macros.LLAMA_VALIDATION), the reproducible build (OPT-125M with 1 and 8 threads, OPT-1.3B's commitment on the GPU
-    and on the CPU) and the Llama-2 cells; the rehearsal keeps its own small generation and attribution cells and loads
-    OpenLLaMA-7B's tokenizer."""
-    from experiments.paper.macros import DIGESTS, LLAMA_VALIDATION
+    without the main cell the job's first command measured, the reproducible build (OPT-125M with 1 and 8 threads,
+    OPT-1.3B's commitment on the GPU and on the CPU) and, with --llama-licence, the Llama-2 grids of the text
+    (macros.LLAMA_GRIDS) on the test split (with the structural diff) and the validation split, Llama-2-13B against
+    fp16, and no OpenLLaMA-7B job; the rehearsal keeps its own small generation and attribution cells and runs the
+    grid path on a Llama-2-7B smoke model (OpenLLaMA-7B's without --llama-licence)."""
+    from experiments.paper.macros import DIGESTS, LLAMA_GRIDS
     lines = {_job(line): line for line in _dry()}
     gpt2 = lines["sp-gen-gpt2"].split("generation.gen_bench", 1)[1]
     assert "--model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --policy cnn18c" in gpt2
@@ -580,21 +587,28 @@ def test_the_gen_and_quality_cells_of_the_text():
     assert "--alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11 --draws 0 1" in lines["sp-q-opt13-recipes"]   # draw 1's 0.6
     first, second = lines["sp-q-qwen4"].split("--wrap", 1)[1].split(" && ")[-2:]
     assert "--glu-exps" not in first and "--glu-exps 8 --exp-only" in second
-    model, alphas, balances = LLAMA_VALIDATION
-    grid = (f"--model {model} --split validation --alphas {' '.join(f'{a:g}' for a in alphas)} "
-            f"--glu-smooths {' '.join(f'{g:g}' for g in balances)}")
-    assert grid in lines["sp-q-openllama7-validation"]
+    for (model, _, alphas, balances), job in zip(LLAMA_GRIDS, ("sp-q-llama7", "sp-q-llama13")):
+        grid = f"--alphas {' '.join(f'{a:g}' for a in alphas)}"
+        if len(balances) > 1:
+            grid += f" --glu-smooths {' '.join(f'{g:g}' for g in balances)}"
+        test, val = lines[job].split("--wrap", 1)[1], lines[job + "-validation"].split("--wrap", 1)[1]
+        assert f"--model {model} {grid}" in test and "--structure" in test and "--split" not in test, job
+        assert f"--model {model} --split validation {grid}" in val and "--structure" not in val, job
+        assert ("--ref-dtype float16" in test + val) == (model == "meta-llama/Llama-2-13b-hf"), job
+        assert test.count("quality.ppl_llama") == val.count("quality.ppl_llama") == 1, job   # one model and split
+    assert not any("openllama" in j for j in lines)
     builds = re.findall(r"quality\.digest_check (--model \S+ --threads \d+[^&\"]*)", lines["sp-q-digest"])
     assert [b.strip() for b in builds] == [
         "--model facebook/opt-125m --threads 1", "--model facebook/opt-125m --threads 8 --commit --commit-device cuda",
         "--model facebook/opt-1.3b --threads 8 --commit --commit-device cuda",
         "--model facebook/opt-1.3b --threads 8 --commit --commit-device cpu"]
     assert [m for m, _, _ in DIGESTS] == ["facebook/opt-125m", "facebook/opt-1.3b"]
-    assert "--model meta-llama/Llama-2-7b-hf --graphs main smooth" in lines["sp-q-llama7"]
-    assert "--model meta-llama/Llama-2-13b-hf --graphs main smooth --ref-dtype float16" in lines["sp-q-llama13"]
     rehearsal = {_job(line): line for line in _dry("--rehearsal")}
     assert "--layers 2" in rehearsal["sp-gen-gpt2"] and "sp-q-opt125-recipes" not in rehearsal
-    assert f"--model {model} --smoke --split validation" in rehearsal["sp-q-openllama7-smoke"]
+    access = rehearsal["sp-q-llama-access"]
+    assert "--model meta-llama/Llama-2-7b-hf --smoke --split validation" in access and "sp-q-openllama7-smoke" \
+        not in rehearsal
+    assert "--alphas 0.45 0.55 --glu-smooths 0.1 0.2 --ref-dtype float16" in access
     # the attribution of OPT-125M's perplexity (tab:quality-attr): the script's defaults are the paper's settings (16
     # windows of 128 tokens, the scalar graph with norm gain 4 and 8-bit probabilities, the feature sub-rows), on the
     # CPU and not pinned; the rehearsal's cell takes two windows without the sub-rows

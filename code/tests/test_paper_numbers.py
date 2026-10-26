@@ -412,33 +412,31 @@ def _logs(tmp: Path) -> Path:
     _write(logs, "sp-q-zeroshot-opt-125m-22.out", [
         zeroshot("facebook/opt-125m", t, v, 0.379 if t == "lambada_openai" else 0.4, diff=-0.031 if t == "lambada_openai" else -0.005)
         for t, _ in T.ZEROSHOT for v in ("ref", "int")])
-    _write(logs, "sp-q-openllama7-23.out", [
-        {"model": "openlm-research/open_llama_7b_v2", "config": "llama2-7b", "seq": 2048, "windows": 160,
-         "cell": "reference", "ppl": 6.0, "env": _env()},
-        {"model": "openlm-research/open_llama_7b_v2", "config": "llama2-7b", "seq": 2048, "windows": 160,
-         "cell": "main-a0.55-glus0.2", "graph": "main", "alpha": 0.55, "glu_smooth": 0.2, "draw": 0, "ppl": 6.44,
-         "ratio": 1.073, "ratio_ci95": [1.07, 1.08], "top1": 0.9, "env": _env()}])
     # the legacy recipe's zero-shot job of OPT-125M, a later job: its fp16 reference never fills the certified columns
     _write(logs, "sp-q-zeroshot-legacy-opt-125m-48.out", [
         zeroshot("facebook/opt-125m", t, v, 0.5, diff=-0.02, recipe="legacy") for t, _ in T.ZEROSHOT
         for v in ("ref", "int")])
-    # Llama-2-7B against its fp32 checkpoint, Llama-2-13B against its fp16 copy
-    l7, l13, ol = "meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf", "openlm-research/open_llama_7b_v2"
-    _write(logs, "sp-q-llama7-49.out", [
-        llama_ppl(l7, "reference", 1.0),
-        llama_ppl(l7, "main-a0.55-glus0.2", 1.0805, ci=(1.0781, 1.0832), alpha=0.55, balance=0.2),
-        llama_ppl(l7, "main-a0.65-glus0.2", 1.09, alpha=0.65, balance=0.2),
-        llama_ppl(l7, "smooth-a0.55", 1.12, alpha=0.55)])
-    _write(logs, "sp-q-llama13-50.out", [
-        llama_ppl(l13, "reference", 1.0, ref_dtype="float16"),
-        llama_ppl(l13, "main-a0.6-glus0.2", 1.0641, ci=(1.0622, 1.0660), alpha=0.6, balance=0.2,
-                  ref_dtype="float16")])
-    # OpenLLaMA-7B's grid on the validation split: alpha 0.45 with balance 0.3 is the best, the main recipe's ratio
-    # 0.0035 above it; none of these fills the test split's \LlamaOpenRatio
-    best = {(0.55, 0.2): 1.0735, (0.45, 0.3): 1.07}
-    _write(logs, "sp-q-openllama7-validation-51.out", [llama_ppl(ol, "reference", 1.0, split="validation")] + [
-        llama_ppl(ol, f"main-a{a:g}-glus{g:g}", best.get((a, g), 1.08), alpha=a, balance=g, split="validation")
+    # Llama-2-7B against its fp32 checkpoint and Llama-2-13B against its fp16 copy, each committed recipe among its
+    # grid on the test and the validation split: on Llama-2-7B alpha 0.45 with balance 0.3 is the best on both splits
+    # (the committed recipe 0.0025 and 0.0035 above it); on Llama-2-13B the committed alpha 0.6 is the best on the
+    # test split, alpha 0.5 on the validation split (0.0012 below it); no validation cell fills a test-split macro
+    l7, l13 = "meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf"
+    test7 = {(0.55, 0.2): 1.0805, (0.45, 0.3): 1.078}
+    _write(logs, "sp-q-llama7-49.out", [llama_ppl(l7, "reference", 1.0)] + [
+        llama_ppl(l7, f"main-a{a:g}-glus{g:g}", test7.get((a, g), 1.09), alpha=a, balance=g,
+                  ci=(1.0781, 1.0832) if (a, g) == (0.55, 0.2) else None)
         for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)])
+    val7 = {(0.55, 0.2): 1.0735, (0.45, 0.3): 1.07}
+    _write(logs, "sp-q-llama7-validation-51.out", [llama_ppl(l7, "reference", 1.0, split="validation")] + [
+        llama_ppl(l7, f"main-a{a:g}-glus{g:g}", val7.get((a, g), 1.08), alpha=a, balance=g, split="validation")
+        for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)])
+    _write(logs, "sp-q-llama13-50.out", [llama_ppl(l13, "reference", 1.0, ref_dtype="float16")] + [
+        llama_ppl(l13, f"main-a{a:g}-glus0.2", r, alpha=a, balance=0.2, ref_dtype="float16",
+                  ci=(1.0622, 1.0660) if a == 0.6 else None) for a, r in ((0.5, 1.07), (0.6, 1.0641), (0.7, 1.08))])
+    _write(logs, "sp-q-llama13-validation-54.out", [
+        llama_ppl(l13, "reference", 1.0, ref_dtype="float16", split="validation")] + [
+        llama_ppl(l13, f"main-a{a:g}-glus0.2", r, alpha=a, balance=0.2, ref_dtype="float16", split="validation")
+        for a, r in ((0.5, 1.06), (0.6, 1.0612), (0.7, 1.07))])
     # the reproducible build: OPT-125M with 1 and 8 threads, OPT-1.3B's commitment encoded on the GPU and the CPU
     _write(logs, "sp-q-digest-52.out", [
         digest_rec("facebook/opt-125m", 1), digest_rec("facebook/opt-125m", 8, device="cuda"),
@@ -595,7 +593,7 @@ def test_the_text_numbers(run_dir):
     assert v["VOneVerifyLlama"] == "45.4" and v["VOneVerifyRatioLlama"] == "2.3"
     assert v["ServeOptMKpre"] == "2.1" and v["ServeOptMOverUOneRange"] == "4.1--8.6" and v["ServeBatchKpre"] == "3.4"
     assert v["QualityRatioOptS"] == "1.076" and v["QualityCIOptS"] == "1.073, 1.079" and v["QualityMissOptS"] == "0.016"
-    assert v["QualityMassMinEight"] == "56" and v["LlamaOpenRatio"] == "1.073" and v["ZeroshotLambadaOptS"] == "3.1"
+    assert v["QualityMassMinEight"] == "56" and v["LlamaSevenRatio"] == "1.081" and v["ZeroshotLambadaOptS"] == "3.1"
     assert v["GkrNsPerLeaf"] == "15.6" and v["KpreKeyLlama"] == "12.7" and v["ImproveCpuv"] == "4.6"
     assert v["ProbBitsBytes"] == "0.05" and v["ProbBitsTime"] == "3"           # bounds: rounded up
     assert v["FinalNHonest"] == "3" and v["FinalNFreivalds"] == "1" and v["TodoCounts"] == ""
@@ -683,9 +681,10 @@ def test_the_settings_and_the_further_text_numbers(run_dir):
 
 
 def test_the_llama_family_the_validation_grid_and_the_reproducible_build(run_dir):
-    """Llama-2-7B against fp32 and Llama-2-13B against fp16, with their intervals; OpenLLaMA-7B's validation grid (its
-    best cell, the main recipe's ratio above it rounded up, and never the test split's ratio); the reproducible
-    build's thread counts and encoding devices; and tab:zeroshot's fp16 column from the certified job only."""
+    """Llama-2-7B against fp32 and Llama-2-13B against fp16, with their intervals (the test split's committed cells,
+    never a validation cell); each grid's best cell on the test and the validation split and the committed recipe's
+    ratio above it, rounded up (Llama-2-13B's grid has one balance and names its alpha only); the reproducible build's
+    thread counts and encoding devices; and tab:zeroshot's fp16 column from the certified job only."""
     tmp, logs = run_dir
     ctx, problems = _ctx(tmp, logs)
     m, _ = M.build(ctx, problems)
@@ -694,9 +693,10 @@ def test_the_llama_family_the_validation_grid_and_the_reproducible_build(run_dir
     v = {k: x.value for k, x in m.items()}
     assert (v["LlamaSevenRatio"], v["LlamaSevenCI"]) == ("1.081", "1.078, 1.083")
     assert (v["LlamaThirteenRatio"], v["LlamaThirteenCI"]) == ("1.065", "1.062, 1.066")
-    assert v["LlamaOpenRatio"] == "1.073"                      # the test split's cell, never the validation grid's
-    assert (v["LlamaOpenValAlpha"], v["LlamaOpenValBalance"], v["LlamaOpenValGap"]) == ("0.45", "0.3", "0.004")
-    assert v["LlamaOpenValClause"] == r"$\alpha=0.45$ with balance 0.3 is the best, ours within 0.004 of its ratio"
+    assert (v["LlamaSevenTestBest"], v["LlamaSevenTestGap"]) == (r"$\alpha=0.45$ with balance 0.3", "0.003")
+    assert (v["LlamaSevenValBest"], v["LlamaSevenValGap"]) == (r"$\alpha=0.45$ with balance 0.3", "0.004")
+    assert (v["LlamaThirteenTestBest"], v["LlamaThirteenTestGap"]) == (r"$\alpha=0.6$", "0.000")
+    assert (v["LlamaThirteenValBest"], v["LlamaThirteenValGap"]) == (r"$\alpha=0.5$", "0.002")
     assert (v["DigestThreadsOptS"], v["DigestEncodingOptM"]) == ("1 and 8", "CPU and GPU")
     z = {(c["row"], c["column"]): c for c in tables["tab_zeroshot"].cells}
     assert z["facebook/opt-125m lambada_openai", "fp16"]["value"] == 0.379           # not the legacy job's 0.5
@@ -712,20 +712,26 @@ def _quality_run(*records) -> tuple[dict, list]:
 
 
 def test_the_texts_claims_on_the_llama_family_and_a_build_that_differs():
-    """The main recipe best on its validation grid (a tie goes to it); a validation cell outside the grid the text
-    names, or a Llama-2-13B ratio against fp32, fails the text's claims (a rehearsal's warnings); two builds of one
-    model that differ fail the build and name no setting, also in a rehearsal; one thread count names none."""
-    ol, l13 = "openlm-research/open_llama_7b_v2", "meta-llama/Llama-2-13b-hf"
-    grid = [llama_ppl(ol, f"main-a{a:g}-glus{g:g}", 1.07 if (a, g) in ((0.55, 0.2), (0.65, 0.1)) else 1.08, alpha=a,
-                  balance=g, split="validation") for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)]
+    """The committed recipe best on its grid (a tie goes to it); a grid cell outside the grid the text names, on
+    either split, or a Llama-2-13B ratio against fp32, fails the text's claims (a rehearsal's warnings); two builds of
+    one model that differ fail the build and name no setting, also in a rehearsal; one thread count names none."""
+    l7, l13 = "meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf"
+    grid = [llama_ppl(l7, f"main-a{a:g}-glus{g:g}", 1.07 if (a, g) in ((0.55, 0.2), (0.65, 0.1)) else 1.08, alpha=a,
+                      balance=g, split="validation") for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)]
     v, problems = _quality_run(*grid)
-    assert not problems and v["LlamaOpenValClause"] == "ours are the best" and v["LlamaOpenValGap"] == "0.000"
-    assert (v["LlamaOpenValAlpha"], v["LlamaOpenValBalance"]) == ("0.55", "0.2")
-    v, problems = _quality_run(*grid[:8])                       # one cell missing: no clause, and no false claim
-    assert not problems and v["LlamaOpenValClause"] is None and v["LlamaOpenValAlpha"] is None
-    outside = llama_ppl(ol, "main-a0.75-glus0.2", 1.06, alpha=0.75, balance=0.2, split="validation")
-    _, problems = _quality_run(*grid, outside)
-    assert len(problems) == 1 and problems[0].startswith(M.TEXT_CLAIM) and "outside the grid" in problems[0]
+    assert not problems and v["LlamaSevenValGap"] == "0.000"
+    assert v["LlamaSevenValBest"] == r"$\alpha=0.55$ with balance 0.2"
+    assert v["LlamaSevenTestBest"] is None and v["LlamaSevenTestGap"] is None    # the test split's grid: not run
+    v, problems = _quality_run(*grid[:8])                       # one cell missing: no best cell, and no false claim
+    assert not problems and v["LlamaSevenValBest"] is None and v["LlamaSevenValGap"] is None
+    for split in ("validation", "test"):
+        outside = llama_ppl(l7, "main-a0.75-glus0.2", 1.06, alpha=0.75, balance=0.2, split=split)
+        _, problems = _quality_run(*grid, outside)
+        assert len(problems) == 1 and problems[0].startswith(M.TEXT_CLAIM) and "outside the grid" in problems[0]
+        assert f"the {split} cells of {l7}" in problems[0]
+    outside = llama_ppl(l13, "main-a0.6-glus0.3", 1.06, alpha=0.6, balance=0.3, ref_dtype="float16")
+    _, problems = _quality_run(outside)                         # Llama-2-13B's grid has the committed balance only
+    assert len(problems) == 1 and "outside the grid" in problems[0]
     v, problems = _quality_run(llama_ppl(l13, "main-a0.6-glus0.2", 1.05, alpha=0.6, balance=0.2))
     assert v["LlamaThirteenRatio"] == "1.050" and problems == [
         f"{M.TEXT_CLAIM} LlamaThirteenRatio's reference is float32; the text states float16"]
@@ -740,8 +746,9 @@ def test_the_texts_claims_on_the_llama_family_and_a_build_that_differs():
     v, problems = _quality_run(digest_rec("facebook/opt-125m", 1), digest_rec("facebook/opt-125m", 8, weights="w2"))
     assert v["DigestThreadsOptS"] is None and "differ in weights_sha256" in problems[0]
     assert M.commit_device({"roots_sha256": "r", "env": {"argv": ["--commit-device", "cuda:0"]}}) == "cuda"
-    assert M.commit_device({"digest": "d"}) is None and M.val_clause((0.45, 0.1), 0.00012, (0.55, 0.2)) == \
-        r"$\alpha=0.45$ with balance 0.1 is the best, ours within 0.001 of its ratio"
+    assert M.commit_device({"digest": "d"}) is None
+    assert M.grid_cell((0.45, 0.1), (0.1, 0.2)) == r"$\alpha=0.45$ with balance 0.1"
+    assert M.grid_cell((0.5, 0.2), (0.2,)) == r"$\alpha=0.5$"
 
 
 def test_two_records_of_one_quality_cell_that_differ_are_a_warning(run_dir, capsys):
@@ -767,22 +774,31 @@ def test_two_records_of_one_quality_cell_that_differ_are_a_warning(run_dir, caps
 
 
 def test_the_llama_cells_are_the_main_recipes_and_the_grid_the_texts():
-    """Each Llama-family macro reads its checkpoint's main recipe (``hf_llama.MAIN_SETTINGS``), and OpenLLaMA-7B's
-    validation grid is the main recipe's alpha and balance with their neighbours 0.1 away, as the text names it."""
+    """Each Llama-family macro reads its checkpoint's main recipe (``hf_llama.MAIN_SETTINGS``), and each Llama-2 grid
+    is the committed recipe's alpha (and Llama-2-7B's balance) with their neighbours 0.1 away, as the text names it;
+    no text names OpenLLaMA-7B, the licence-free stand-in the paper does not report."""
     from pvi.models import hf_llama
     for model, _, cell, _, _ in M.LLAMAS:
         r = hf_llama.main_recipe(model)
         assert cell == f"main-a{r['smooth']:g}-glus{r['glu_smooth']:g}", model
-    model, alphas, balances = M.LLAMA_VALIDATION
-    r = hf_llama.main_recipe(model)
-    assert (alphas[1], balances[1]) == (r["smooth"], r["glu_smooth"])
-    assert [round(b - a, 9) for x in (alphas, balances) for a, b in zip(x, x[1:])] == [0.1] * 4
     body = (PAPER / "sections" / "quality.tex").read_text(encoding="utf-8")
     ext = (PAPER / "sections" / "ext_generation.tex").read_text(encoding="utf-8")
-    assert r"$\alpha$ and balance $\pm0.1$ from ours, \LlamaOpenValClause{}" in body
-    assert (rf"$\alpha\in\{{{','.join(f'{a:g}' for a in alphas)}\}}$ and balance "
-            rf"$\in\{{{','.join(f'{g:g}' for g in balances)}\}}$") in ext
-    assert rf"($\alpha={alphas[1]:g}$, balance {balances[1]:g})" in ext
+    assert r"(test) and \LlamaSevenValGap{} (validation) of the best" in body
+    assert r"ratios among $\alpha$ and balance $\pm0.1$" in body
+    assert [m for m, _, _, _ in M.LLAMA_GRIDS] == ["meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf"]
+    for model, name, alphas, balances in M.LLAMA_GRIDS:
+        r = hf_llama.main_recipe(model)
+        centre = (alphas[len(alphas) // 2], balances[len(balances) // 2])
+        assert centre == (r["smooth"], r["glu_smooth"]), model
+        assert [round(b - a, 9) for x in (alphas, balances) for a, b in zip(x, x[1:])] == \
+            [0.1] * (len(alphas) + len(balances) - 2)
+        grid = rf"$\alpha\in\{{{','.join(f'{a:g}' for a in alphas)}\}}$"
+        if len(balances) > 1:
+            grid += rf" and balance $\in\{{{','.join(f'{g:g}' for g in balances)}\}}$"
+        assert grid in ext, model
+        assert rf"($\alpha={centre[0]:g}$, balance" in ext.replace("\n", " ") and f"\\{name}ValGap{{}}" in ext
+    for f in sorted((PAPER / "sections").glob("*.tex")):
+        assert "OpenLLaMA" not in f.read_text(encoding="utf-8"), f.name
 
 
 def test_the_attribution_its_numbers_and_what_the_text_says(run_dir):
