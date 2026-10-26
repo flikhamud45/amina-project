@@ -111,8 +111,8 @@ accepted, every tamper rejected, V1's bytes exactly as the byte model gives them
 bash code/experiments/package/run.sh --platform final --one-job smoke gate    # or without --one-job: a chain
 #  -> 8 jobs (the smoke and the gate's 7), about two hours on an L40S node (job limits 10 h); then, from code/,
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --check \
-    --no-byte-model
-#  -> no CHECK FAILED line (the run's tables and macros are still missing, which --check alone does not fail)
+    --no-byte-model --allow-missing
+#  -> no CHECK FAILED line (the run's tables and macros are still missing: --allow-missing lists them, exit status 0)
 ```
 
 | Job | Cell | The size it checks |
@@ -247,10 +247,15 @@ rsync -a --exclude=triton --exclude=native --exclude=setup_cache --exclude=llama
 ```bash
 cd code
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.comparison.aggregate --platform final   # -> tables_final/
-PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --check
+(cd .. && bash code/experiments/package/run.sh --platform final --dry-run --optional --llama-licence all \
+    > logs/final/dryrun.txt)                                       # every job of the run, for --expect
+PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --check \
+    --expect ../logs/final/dryrun.txt | tee ../logs/final/numbers_check.txt
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final
 #  (the first numbers command: coverage and checks; the second writes paper_sp2027/generated/)
 ```
 
-The coverage report names every job without records and every table cell still missing; a `CHECK FAILED` or `PARSE`
-line, or `--strict` with anything missing, gives exit status 1.
+The coverage report names every job without records (with `--expect`); its last lines list every table cell and
+every macro that the run does not provide (`MISSING: ...`, one per line; `COMPLETE: ...` when there is none). A
+`CHECK FAILED` or `PARSE` line, or any missing cell or macro, gives exit status 1 (`--strict`: also a job without
+results). `numbers_check.txt` keeps the first command's report: its end shows at a glance what is missing.

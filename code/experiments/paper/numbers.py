@@ -7,7 +7,7 @@ body and every text number, and write them for the paper.
     ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --check     # report only
     ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final             # -> generated/
     ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --strict \\
-        --expect ../logs/final/dryrun.txt                                    # fail on anything missing
+        --expect ../logs/final/dryrun.txt                                    # also fail on a job without results
     ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/rehearsal --platform rehearsal --rehearsal --check
 
 Inputs (nothing here runs a model):
@@ -49,16 +49,20 @@ machine, builds of one certified model whose digests, weights or commitment root
 (:func:`experiments.paper.macros.digest_agreement`), a table cell that disagrees with the macro printing the same
 value (:data:`SAME_VALUE`; in the written files and in ``paper_sp2027/fallback/``), a statement of the text that the
 run's values contradict (``CHECK FAILED text:``, :data:`experiments.paper.macros.TEXT_CLAIM`): each is a ``CHECK
-FAILED`` line; a log line that starts with ``{`` and is not a record of a known kind is a ``PARSE`` line.  The exit
-status is 1 on either, and with ``--strict`` also on any missing cell, macro or job.  ``WARNING`` lines, which do not
+FAILED`` line; a log line that starts with ``{`` and is not a record of a known kind is a ``PARSE`` line.  The report
+ends with every table cell and every macro that the run does not provide, one per line (``MISSING: ...``; ``COMPLETE:
+...`` when there is none), so that its last lines show the run's completeness.  The exit status is 1 on a ``CHECK
+FAILED`` or ``PARSE`` line and on any missing cell or macro (unless ``--allow-missing``, for a partial run such as the
+gate tier's), and with ``--strict`` also on any job of ``--expect`` without results.  ``WARNING`` lines, which do not
 change it: one quantity measured by two jobs differs by more than 10% (:data:`TWO_JOBS`), two records of one quality
 cell differ (:meth:`experiments.paper.records.Run.ppl`), the records' mode-C plan is not ``--policy``.
 ``--rehearsal``: a rehearsal's folder (small models; no cell of the paper is expected): every tier must have at least
-one record of each kind it writes (:data:`experiments.paper.records.REHEARSAL_KINDS`), every builder runs on what is
-there, and the checks apply, except those of what the text states about the final values (the sign of a loss; the
-attribution's ranking; a path count of the attack's documents or the benchmark that differs from the formula's,
-which ``tab:sok`` prints as the same number; the 11-bit attention probabilities of every cost record; the grid of a
-validation study; the reference of a ratio: ``CHECK FAILED text:`` lines), which are warnings.
+one record of each kind it writes (:data:`experiments.paper.records.REHEARSAL_KINDS`), the missing cells and macros
+are counted and do not set the exit status, every builder runs on what is there, and the checks apply, except those
+of what the text states about the final values (the sign of a loss; the attribution's ranking; a path count of the
+attack's documents or the benchmark that differs from the formula's, which ``tab:sok`` prints as the same number;
+the 11-bit attention probabilities of every cost record; the grid of a validation study; the reference of a ratio:
+``CHECK FAILED text:`` lines), which are warnings.
 """
 from __future__ import annotations
 
@@ -405,6 +409,19 @@ def folder_files(folder: Path) -> tuple[dict, dict]:
     return tables, dict(re.findall(r"^\\newcommand\{\\(\w+)\}\{(.*?)\}(?:\s+%.*)?$", text, re.M))
 
 
+def missing_report(tables: list, absent: list[str], count_only: bool = False) -> list[str]:
+    """The report's last lines: every table cell and every macro that the run does not provide (the paper then prints
+    ``--`` or a visible ``\\todo``), one per line under a ``MISSING:`` line with their numbers, or ``COMPLETE:``;
+    ``count_only`` (a rehearsal, which expects no cell): the ``MISSING:`` line alone."""
+    cells = [f"    cell {tb.label}: {m}" for tb in tables for m in tb.missing]
+    macros = [f"    macro \\{n}" for n in absent]
+    if not cells and not macros:
+        return ["COMPLETE: every table cell and every macro is in the run"]
+    head = (f"MISSING: {len(cells)} table cells and {len(macros)} macros are not in the run (the paper prints them as "
+            "-- or \\todo)")
+    return [head] + ([] if count_only else cells + macros)
+
+
 def build(args) -> int:
     logs = Path(args.logs)
     problems: list[str] = []
@@ -474,6 +491,9 @@ def build(args) -> int:
     report += warnings + problems + failed
     if problems or failed:
         status = 1
+    report += missing_report(tables, absent, args.rehearsal and not args.verbose)
+    if (missing_cells or absent) and not args.rehearsal and not args.allow_missing:
+        status = 1
     if args.strict and not args.rehearsal and (missing_jobs or missing_cells or absent):
         report.append(f"STRICT: {missing_cells} table cells, {len(absent)} macros and {len(missing_jobs)} jobs "
                       "missing")
@@ -530,6 +550,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--expect", default=None, help="a dry-run listing of run.sh: report every job without results")
     ap.add_argument("--check", action="store_true", help="read, check and report; write nothing")
     ap.add_argument("--strict", action="store_true", help="exit status 1 on any missing cell, macro or job")
+    ap.add_argument("--allow-missing", action="store_true",
+                    help="a missing cell or macro does not set the exit status (a partial run, e.g. after the gate "
+                         "tier); they are still listed")
     ap.add_argument("--rehearsal", action="store_true",
                     help="a rehearsal's folder: every tier must have records of its kinds; no cell is expected")
     ap.add_argument("--no-byte-model", action="store_true",

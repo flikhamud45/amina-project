@@ -165,7 +165,9 @@ memory for `attack_llm`, 32 GB for `adaptive_game_llm`), with `HF_HOME` exported
 The CNN attack cells (*Larger models*) are part of the benchmark: the run package's `bench` tier runs
 `costs/bench.py cnn --model <cnn>` with them, and `python -m experiments.comparison.aggregate --platform l40s` builds
 `tables_l40s/measured_summary.csv` (`attack_float flip_success`, `sampling p_detect_penultimate`,
-`p_detect_min_node`, `paths_needed_penultimate`) from the stored `raw_l40s/` records without a GPU.
+`p_detect_min_node`, `paths_needed_penultimate`) from the stored `raw_l40s/` records without a GPU. The final run's
+`bench` tier writes the same cells to `raw_final/`, and `paper/numbers.py` reads them from `tables_final/`
+(`aggregate.py --platform final`); the stored tables give the values the paper prints before the run.
 
 **What reproduces exactly.** On one machine the MNIST records are deterministic given the stored models, except the
 rates from real protocol runs with fresh challenges (`triggered_acceptance_empirical`, the rates of

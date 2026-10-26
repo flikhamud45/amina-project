@@ -36,6 +36,7 @@ The families, with the record each number comes from:
 * quality and zero-shot accuracy, the attribution of OPT-125M's perplexity and the reproducible build (``quality``
   tier; two builds of one certified model that differ are a ``CHECK FAILED`` line, :func:`digest_agreement`), the
   sampler's distance (``tv`` tier) and the attack (``attack`` tier's documents);
+* the smoke's pytest run on the run's platform (``SmokeTests``: the tests that passed, from its log's summary line);
 * values that follow from the code alone, under the run's plan: the security parameters, the setup proof's size,
   breakdown and radii (``costs/setup_bytes.py``), the split commitment's columns per query, and V1's cut of a model
   from its shapes (:func:`experiments.paper.tables.v1_shape_model`); and the acceptance probabilities and path counts
@@ -1525,6 +1526,13 @@ def inrange(c: Collector, ctx: T.Ctx) -> None:
 
 
 # ================================================================================================ the rest
+def smoke_tests(c: Collector, ctx: T.Ctx) -> None:
+    """The tests that passed in the smoke's pytest run on the run's platform (its log's summary line, the record of
+    kind ``tests``; :func:`experiments.paper.records.pytest_summary`), which the text quotes for V1's tests."""
+    r = ctx.run.first("tests", "smoke")
+    c.put("SmokeTests", r and r.d.get("passed"), r, f.num)
+
+
 def setup_and_params(c: Collector, ctx: T.Ctx) -> None:
     run = ctx.run
     for model, name in (("llama2-7b", "Llama"), ("gpt2", "Gpt")):
@@ -1707,7 +1715,7 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
 
 FAMILIES = (platform, cpu_client, options_timing, kpre_client, client_memory, outcomes, defence_cost, batching,
             serving, v1_numbers, comparison, improvements, real_weights, long_prompts, quality, attribution, sampler,
-            attack, sok, setup_and_params, setup_proof, generation)
+            attack, sok, smoke_tests, setup_and_params, setup_proof, generation)
 TEXT_CLAIM = "CHECK FAILED text:"
 """The prefix of a check of what the text states about a value (not of a record's correctness): a rehearsal's small
 cells need not bear it out, so ``numbers.py --rehearsal`` reports it as a warning."""

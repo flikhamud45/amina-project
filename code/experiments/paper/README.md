@@ -23,7 +23,8 @@ gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-
 `gate-` gate, the full-size checks run before the run, whose records are checked and fill no cell or number)
 and its kind from its fields (`perf`, `v1`, `reexec`, `llamacpp`, `serve`, `gen`, `setup`, `h2d`, `open_ab`,
 `forward_ab`, `encode_ab`, `fold_ab`, `gpu_profile`, `v1_phases`, `gkr`, `ppl`, `zeroshot`, `digest`, `llama_diag`,
-`llama_attrib`, `attribution`, `bench_env`, `path_bound`, `inrange`, `tv`, ...). `Run` selects the record of one cell
+`llama_attrib`, `attribution`, `bench_env`, `path_bound`, `inrange`, `tv`, ...; in the smoke's log, pytest's
+summary line is a record of kind `tests`). `Run` selects the record of one cell
 by every
 setting that distinguishes the package's jobs: the tier, the model, the prompt length, the mode, the blocks, the
 verifier device (a V1 record's from its command line), the label and real or random weights; of several matching
@@ -68,7 +69,7 @@ headers name).
 ### `macros.py`
 The text numbers, by family (the platform and the plan, the CPU client and its own memory, the outcome counts, the
 cost of the defence, batches against one opening, serving, V1, the comparison, the improvements, real weights, long
-prompts, quality, the sampler, the attack, the security parameters, the setup proof, generation, the break-even). The platform's macros
+prompts, quality, the sampler, the attack, the smoke's tests, the security parameters, the setup proof, generation, the break-even). The platform's macros
 (`\PlatformGpu`, `\PlatformCpu`, `\PlanLogPoints`) come from the records' `env` and `--policy`, so the captions and the
 sentences that say how a number was measured state the run's settings. Values that follow from the code alone are
 computed from the library under `--policy`: the setup proof's size, breakdown and radii (`costs/setup_bytes.py`'s byte
@@ -88,8 +89,9 @@ spread; `\Outcome...` the tampered queries of the real-weight cells, their rando
 cells (all, V1's, the generated responses') and the setup tier's honest setup proofs, printed only when every tamper was rejected and every setup
 proof accepted. `\ZkllmSameGpu...` set zkLLM's stored runs on the run's GPU model (`artifacts/results/zkllm_l40s/`,
 read by `bench.literature` with the published values: the proof binaries of two decoder layers, times the layers)
-against our interactive mode-C prover on prompts of the same length, only when the stored runs' GPU is the run's. The
-spot-checking schemes' acceptance probabilities and path counts of `tab:sok` and `tab:sok-derivation` (`\Sok...`)
+against our interactive mode-C prover on prompts of the same length, only when the stored runs' GPU is the run's.
+`\SmokeTests` is the number of tests that passed in the smoke's pytest run on the run's platform (the summary line
+of its log). The spot-checking schemes' acceptance probabilities and path counts of `tab:sok` and `tab:sok-derivation` (`\Sok...`)
 follow from the formulas and parameters those tables state (`attack/sok.py`; no run). The bounds over the in-range
 cells skip a layer and range without a successful edit. A number the text states as a bound ("at most", "up to",
 "within", "less than") is rounded up, one stated as "at least" down. The `Todo...` macros carry the `\todo` markers
@@ -106,7 +108,7 @@ The command: read, check, build, write. Options: `--logs` (default `../logs/<pla
 else `bench.DEFAULT_POLICY`, `cnn18c`), `--prob-max` (the decoders' attention probabilities' scale of the benchmark
 cells, default 2047; 255 reads the stored runs' 8-bit cells), `--out` (default `paper_sp2027/generated`),
 `--figures` (default `paper_sp2027/figures`; `''` for none) and `--schematics`, `--expect <dry-run listing>`, `--check`, `--strict`,
-`--rehearsal`, `--no-byte-model` (skips `tab:params`, `tab:setup` and the break-even, which take several minutes on a
+`--allow-missing`, `--rehearsal`, `--no-byte-model` (skips `tab:params`, `tab:setup` and the break-even, which take several minutes on a
 laptop CPU), `--verbose`. `SAME_VALUE` pairs each table cell with the macro that prints the same value of the same
 record, `TWO_JOBS` each quantity that two jobs measure (the serving harness's prover and the benchmark's, the
 benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and perf.py's).
@@ -119,7 +121,8 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
   (`serve_ab.py`'s `ok`), a setup proof rejected (`setup_timing.py`), the two paths of an implementation A/B that
   disagree, an attribution whose float copy failed a check (`attribution.py`'s `ok`) or whose integer graph is not
   the quality tier's cell of the same graph (`scalar-g4-p8` at 128 tokens: another digest, or another perplexity
-  over the same windows), a smoke log without `SMOKE OK` or with int8 GEMMs that are not exact, a `FAILED` line of a
+  over the same windows), a smoke log without `SMOKE OK`, with int8 GEMMs that are not exact or with a failed test
+  (its pytest summary line, the `tests` record), a `FAILED` line of a
   script, records of more than one GPU or CPU model, an honest query rejected or an attack accepted in the
   benchmark's outcome counts, builds of one certified model (`digest_check.py`, the quality tier's reproducible
   build) whose digests, weights or commitment roots differ (`macros.digest_agreement`), a table cell that disagrees
@@ -139,9 +142,12 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
   family that cannot read a record; an `--expect` listing that does not end with run.sh's summary line
   (`# <tiers>: N jobs, ...`) for the N jobs it lists (a dry run that stopped early, e.g. at a tier's check of
   `HF_HOME`).
-* `--strict`: also any table cell, macro or (with `--expect`) job without results.
+* `MISSING:`: the report ends with every table cell and every macro that the run does not provide, one per line
+  (`COMPLETE:` when there is none); any of them sets the exit status to 1, unless `--allow-missing` (a partial run,
+  such as the gate tier's before the run).
+* `--strict`: also any job of `--expect` without results.
 * `--rehearsal`: every tier has at least one record of each kind it writes (`records.REHEARSAL_KINDS`), and no table
-  cell is expected; the `CHECK FAILED text:` lines become warnings (a rehearsal's small cells need not bear out what
+  cell is expected (the `MISSING:` line counts them and leaves the exit status unchanged); the `CHECK FAILED text:` lines become warnings (a rehearsal's small cells need not bear out what
   the text states about the final values).
 
 The exit status is 1 on any of these. `WARNING` lines leave it unchanged: two jobs' values of one quantity more than 10%
@@ -189,7 +195,9 @@ export PYTHONPATH=src:.                           # the library (src) and the ex
 cd ../paper_sp2027 && latexmk -pdf main.tex && latexmk -pdf main_ext.tex  # or: tectonic main.tex
 ```
 
-`--strict` makes the run's coverage a gate: exit status 1 while any cell, macro or job is missing. A rehearsal
+The report's last lines (`MISSING:`, one line per cell or macro the run lacks, or `COMPLETE:`) show the run's
+completeness, and any missing cell or macro gives exit status 1 (`--allow-missing`: a partial run); `--strict` also
+fails on a job of `--expect` without results. A rehearsal
 (`run.sh --rehearsal`) is checked with `--rehearsal --check`. Removing `paper_sp2027/generated/` returns the paper to
 its fallback values.
 
