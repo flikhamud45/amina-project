@@ -20,8 +20,9 @@ generated-response cells of ``tab:gen``.  Nothing is aggregated here: ``comparis
 The prover runs on ``--device`` (default the GPU if there is one) and the verifier on ``--verifier-device`` (default
 the CPU; ``cuda``: the prover's GPU).  The protocol settings default to the paper's configuration
 (:data:`experiments.common.cli.PAPER`): mode C under the commitment plan ``cnn18c``, the compact wire encoding, the
-lean prover and verifier, the last decoder block pruned to the last position and, in modes K and Kpre, the verifier
-reading the embedding rows itself.  Each also has a ``--no-...`` form (the per-op commitment: ``--policy per-op``).
+lean prover and verifier, the last decoder block pruned to the last position, in modes K and Kpre the verifier
+reading the embedding rows itself, and decoders with 11-bit attention probabilities (``--prob-max 2047``).  Each also
+has a ``--no-...`` form (the per-op commitment: ``--policy per-op``; the 8-bit decoders: ``--prob-max 255``).
 
 **Records.**  Every measurement is appended, one JSON object per line, to
 ``artifacts/comparison/raw_<platform>/<suite>/<model>/<cell>.jsonl``: a first row with ``metric`` ``env`` (the run's
@@ -40,10 +41,11 @@ with ``_rate<r>`` after the base of the commitment and mode-C cells at a rate ot
 this order, of the settings that differ from the reference:  ``_thr<n>`` (``--threads`` other than 8), ``_nolean``
 (decoders, ``--no-lean``), ``_tf32``, ``_wire``, ``_gpuv`` (a verifier on the GPU), ``_stream`` (the streaming
 verifier), ``_batch`` (batch sizes other than the defaults), ``_prune`` (decoders, the pruned last block),
-``_lookups`` (the K and Kpre cells of decoders with ``--lookups``), ``_gen<G>`` and ``_pol<name>`` (the commitment and
-mode-C cells under a plan other than ``per-op``).  A cell measured under the same settings therefore has the name of
-the stored cell measured under them, and the cells a setting does not change (e.g. the K and Kpre cells under a
-commitment plan) are shared between runs.
+``_lookups`` (the K and Kpre cells of decoders with ``--lookups``), ``_pmax<n>`` (decoders whose attention
+probabilities' scale is not the stored cells' 255, :data:`STORED_PROB_MAX`: ``_pmax2047``, 11 bits), ``_gen<G>`` and
+``_pol<name>`` (the commitment and mode-C cells under a plan other than ``per-op``).  A cell measured under the same
+settings therefore has the name of the stored cell measured under them, and the cells a setting does not change (e.g.
+the K and Kpre cells under a commitment plan) are shared between runs.
 
 Hardware and time: the paper's cells ran on an NVIDIA L40S prover with 8 threads of an AMD EPYC 9334 as the CPU
 verifier.  A CNN or GPT-2 job takes minutes, a 7B or 13B decoder at 2,048 tokens one to two hours and up to 128 GB
@@ -94,6 +96,9 @@ PLAN_CELLS = ("commit_", "defence_C_", "tamper_C_")
 """The cells a commitment plan or rate changes (the others are the same under every plan)."""
 FROZEN_ALIAS = "rtx2080ti"
 """The platform name of the root ``raw/`` (the first stored run, frozen)."""
+STORED_PROB_MAX = 255
+"""The attention probabilities' scale of the stored decoder cells (8 bits); a decoder cell of another scale is named
+``_pmax<n>``."""
 
 
 def _require_this_pvi() -> Path:
@@ -210,6 +215,7 @@ def variant(args, suite: str, base: str) -> str:
             "gpuv" if args.verifier_device != "cpu" else "", "stream" if args.verifier_impl == "stream" else "",
             "batch" if _batch_variant(args, suite) else "", "prune" if llm and args.prune_last else "",
             "lookups" if llm and args.lookups and base.startswith(("defence_K_", "defence_Kpre_")) else "",
+            f"pmax{args.prob_max}" if llm and args.prob_max != STORED_PROB_MAX else "",
             f"gen{args.gen}" if llm and args.gen > 1 else "",
             f"pol{args.policy}" if plan and args.policy != "per-op" else ""]
     return "".join("_" + t for t in tags if t)
@@ -767,7 +773,7 @@ def suite_llm(args, env) -> None:
             c0 = contention.begin()
             t0 = time.perf_counter()
             graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, args.calib_tokens), seed=args.seed,
-                                  prune_last=prune)
+                                  prune_last=prune, prob_max=args.prob_max)
             build_s = time.perf_counter() - t0
             contention.add(setup_cs, "build_graph", c0)
             mats = graph.mat_ops
@@ -788,6 +794,7 @@ def suite_llm(args, env) -> None:
                 if not is_done(args, "llm", cfg.name, cell):
                     r = Recorder(args, "llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": rate,
                                                                "n_layers_full": cfg.n_layers, "lean": args.lean,
+                                                               "prob_max": args.prob_max,
                                                                "params_full": decoder_param_count(cfg),
                                                                **({"prune_last": True} if prune else {}),
                                                                **_plan_config(coms)}, env)
@@ -815,7 +822,7 @@ def suite_llm(args, env) -> None:
                     conf = {"mode": mode, "challenges": chal, "lam": lam, "reps": params.reps, "rate": rate,
                             "columns": params.columns, "seq": seq, "n_layers": n_layers,
                             "n_layers_full": cfg.n_layers, "params_full": decoder_param_count(cfg),
-                            "params_built": graph.n_params(), "lean": args.lean,
+                            "params_built": graph.n_params(), "lean": args.lean, "prob_max": args.prob_max,
                             "threads": torch.get_num_threads(), **({"prune_last": True} if prune else {}),
                             **({"lookups": True} if args.lookups and mode != "C" else {}),
                             **({"gen": args.gen, "positions": tokens.shape[1]} if args.gen > 1 else {}),
@@ -878,7 +885,8 @@ def suite_llm(args, env) -> None:
                 r = Recorder(args, "llm", cfg.name, cell, {"lam": lam, "mode": "C", "reps": params.reps,
                                                            "columns": params.columns, "seq": seq,
                                                            "n_layers": n_layers, "n_layers_full": cfg.n_layers,
-                                                           "lean": args.lean, **({"prune_last": True} if prune else {}),
+                                                           "lean": args.lean, "prob_max": args.prob_max,
+                                                           **({"prune_last": True} if prune else {}),
                                                            **_plan_config(coms, params)}, env)
                 g = torch.Generator().manual_seed(args.tamper_seed)
                 x0 = tokens[:1]
@@ -975,6 +983,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--lookups", action=argparse.BooleanOptionalAction, default=paper.lookups,
                    help="decoders, modes K and Kpre: the verifier reads the embedding rows itself and the prover "
                         "sends no claims for them (Verifier(lookups=True); _lookups)")
+    cli.add_prob_max_argument(g, default=paper.prob_max,
+                              note=f"; a scale other than the stored cells' {STORED_PROB_MAX}: _pmax<n>")
     g.add_argument("--rate", type=int, default=cli.RATE, help="Reed-Solomon rate of the weight commitment")
     g.add_argument("--setup-cache", default=None, metavar="DIR",
                    help="the prover's setup cache (pvi.commit.setup_cache): commitments are rebuilt from stored leaf "

@@ -8,16 +8,18 @@ counterpart is the "before" of this A/B; the GPU path is measured alongside).
     python -m experiments.improvements.fold_ab --model gpt2 --layers 1 --reps 1 --threads 2      # a laptop check
 
 Builds the decoder as ``bench.py`` does (random weights, ``--seed``; ``--layers`` blocks, 0: all of them; the last one
-pruned) and runs ``Verifier.precompute`` in mode Kpre on each of ``--devices``, ``--reps`` times after one untimed run
-(uploads, the native library's build), with the float64 limb products (the implementation option ``int8_fold`` of
+pruned; 11-bit attention probabilities, ``--prob-max``, which the precomputation does not read) and runs
+``Verifier.precompute`` in mode Kpre on each of ``--devices``, ``--reps`` times after one untimed run (uploads, the
+native library's build), with the float64 limb products (the implementation option ``int8_fold`` of
 :mod:`pvi.options` off) and with the default path (on: the native field product on a CPU, which needs the native
 kernels, else the float64 products; int8 GEMMs on a GPU whose int8 GEMMs pass their self-check), on the same
 challenges (``--challenge-seed``).  Every ``u`` must equal the float64 path's.
 
 Record (one JSON line per device and path ``float64`` / ``default``): ``precompute_s`` (the median), ``all_s``, the
 number of weight matrices and their entries, ``equal_to_float64``, the repetitions ``reps`` of the security parameters,
-the threads, the implementation status (``native``) and ``env``.  The full Llama-2-7B holds its 6.7 GB of int8 weights
-in host memory; its float64 path took 107 s per run on 8 threads of a Xeon Silver 4114, the native path 12.7 s.
+the threads, ``prob_max``, the implementation status (``native``) and ``env``.  The full Llama-2-7B holds its 6.7 GB
+of int8 weights in host memory; its float64 path took 107 s per run on 8 threads of a Xeon Silver 4114, the native
+path 12.7 s.
 """
 from __future__ import annotations
 
@@ -47,6 +49,7 @@ def main() -> int:
                     help="the last block at the last position only")
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--challenge-seed", type=int, default=5, help="the secret challenges' seed")
+    cli.add_prob_max_argument(ap)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
     cli.apply_runtime(args)
@@ -58,7 +61,7 @@ def main() -> int:
 
     cfg = decoder_config(args.model)
     graph = build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=cli.CALIB_TOKENS, seed=args.seed,
-                          prune_last=args.prune_last)
+                          prune_last=args.prune_last, prob_max=args.prob_max)
     params = params_for(args.lam, len(graph.mat_ops), fiat_shamir=args.fs)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
     entries = sum(op.weight.numel() for op in graph.mat_ops)
@@ -87,6 +90,7 @@ def main() -> int:
                           "path": path, "fs": args.fs, "reps": params.reps, "matrices": len(pre), "entries": entries,
                           "precompute_s": statistics.median(ts[1:]) if args.reps else None,
                           "all_s": [round(t, 3) for t in ts], "equal_to_float64": same, "threads": args.threads,
+                          "prob_max": args.prob_max,
                           "native": native.available(), "env": env})
     return 0 if ok_all else 1
 

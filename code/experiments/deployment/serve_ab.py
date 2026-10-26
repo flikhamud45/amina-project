@@ -32,9 +32,10 @@ shapes, device and host:
 * **the prover** in each of ``--modes`` (C, Kpre) under the protocol flags, which default to the paper's
   configuration (:data:`experiments.common.cli.PAPER`): Fiat--Shamir, the compact wire encoding, the lean prover, the
   last block pruned to the last position, mode C under the commitment plan ``cnn18c``, Kpre with the verifier
-  reading the embedding rows itself.  :func:`prove` runs the prover's side of ``run_query`` alone --
-  ``v0.query._claims_message``, ``_fold_message`` and ``open_message``, the functions ``run_query`` runs, so the
-  messages, the byte counts and the phase timings are the same -- and returns the proof's messages.  No check of the
+  reading the embedding rows itself, 11-bit attention probabilities (``--prob-max``, also U1's graph).
+  :func:`prove` runs the prover's side of ``run_query`` alone -- ``v0.query._claims_message``, ``_fold_message`` and
+  ``open_message``, the functions ``run_query`` runs, so the messages, the byte counts and the phase timings are the
+  same -- and returns the proof's messages.  No check of the
   verifier's is in the timed window; one untimed ``run_query`` per cell (``--accept``) shows that the verifier
   accepts the same proof.  A proof that no verifier attends needs non-interactive challenges, so mode C needs
   Fiat--Shamir (``--no-fs`` is for Kpre, whose one message reads no challenge).
@@ -445,7 +446,7 @@ def build(name: str, layers: int, args, device: torch.device) -> Built:
     layers = layers or cfg.n_layers
     t0 = time.perf_counter()
     graph = build_decoder(cfg, n_layers=layers, calib_tokens=args.calib_tokens, seed=args.seed,
-                          prune_last=args.prune_last)
+                          prune_last=args.prune_last, prob_max=args.prob_max)
     setup = {"build_s": time.perf_counter() - t0}
     shapes = decoder_shapes(cfg, prune_last=args.prune_last)
     n_checks = len(shapes)          # (r, t) for the full model's op count, as bench.py and perf.py
@@ -863,7 +864,8 @@ def main() -> int:
     base = {"label": args.label, "git": records.git_sha(CODE), "device": str(device),
             "verifier_device": args.verifier_device, "threads": args.threads, "reps": args.reps, "warmup": 1,
             "lam": args.lam, "rate": args.rate, "fs": args.fs, "wire": args.wire, "lean": args.lean,
-            "prune_last": args.prune_last, "timer": "cuda_events" if device.type == "cuda" else "perf_counter",
+            "prune_last": args.prune_last, "prob_max": args.prob_max,
+            "timer": "cuda_events" if device.type == "cuda" else "perf_counter",
             "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
             "cpu": platform.processor() or platform.machine(), "host": platform.node(), "torch": torch.__version__,
             "env": records.environment(device)}

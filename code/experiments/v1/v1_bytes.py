@@ -22,10 +22,11 @@ sized exactly).  ``--full`` also runs the whole V1 query (:func:`pvi.v1.protocol
 in Triton) and checks its bytes; with ``--reps n`` it then times ``n`` queries of each protocol, interleaved on the
 same prompts, after one warm-up.  The protocol settings default to the paper's configuration
 (:data:`experiments.common.cli.PAPER`: plan ``cnn18c``, Fiat--Shamir, the lean prover and verifier, the last block at
-the last position, mode Kpre's verifier reading the embedding rows itself); V1 always sends its proof in the compact
-encoding, and ``--wire`` concerns v0's proof only.  ``--lmax`` (default :data:`pvi.v1.cut.LMAX` = 27, the package's
-and the measured proofs' value) is the GKR instances' target size ``2^lmax``; an operation larger than that forms an
-instance of its own, so the record lists every instance's size (``instance_bits``).
+the last position, mode Kpre's verifier reading the embedding rows itself, 11-bit attention probabilities); V1
+always sends its proof in the compact encoding, and ``--wire`` concerns v0's proof only.  ``--lmax`` (default
+:data:`pvi.v1.cut.LMAX` = 27, the package's and the measured proofs' value) is the GKR instances' target size
+``2^lmax``; an operation larger than that forms an instance of its own, so the record lists every instance's size
+(``instance_bits``).
 
 **Checks.** Every line checks the byte accounting (``accounting``, ``accounting_ok``): v0's ``u`` and opened columns
 (and, off the wire, its claims) are :func:`pvi.commit.cost.proof_bytes` of the graph's weight ops exactly, with the
@@ -56,7 +57,8 @@ and the other ops' claims, and the exceptions frame), summed per block: the byte
 machine cannot hold.
 
 **Record** (one JSON line per mode, on stdout): ``label``, ``git``, ``model``, ``real``, ``smooth``, ``recipe``,
-``calib_seq``, ``layers``, ``seq``, ``prune_last``, ``lmax``, ``graph_digest``, ``shapes``, ``build_s``,
+``calib_seq``, ``layers``, ``seq``, ``prune_last``, ``prob_max`` (the graph's attention probabilities' scale:
+``--prob-max``, or a checkpoint recipe's), ``lmax``, ``graph_digest``, ``shapes``, ``build_s``,
 ``build_peak``, ``host``, ``gpu``, ``env`` (:func:`experiments.common.records.environment`), ``mode``, ``policy``,
 ``chosen`` (mode C: the plan committed), ``fs``, ``wire``, ``lean``, ``lookups``, ``lam``, ``rate``,
 ``v1_verifier``, ``v0_accepted``, ``v0_bytes`` and ``v1_bytes`` (per message), ``v0_total``, ``v1_total``,
@@ -295,7 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     from pvi.commit.cost import decoder_shapes
-    from pvi.models.decoder import build_decoder
+    from pvi.models.decoder import build_decoder, prob_max_of
     from pvi.v0.graph_commitment import commit_graph
     from pvi.v0.params import params_for
     from pvi.v0.prover import Prover
@@ -313,6 +315,8 @@ def main() -> int:
         raise SystemExit("several --v1-verifier values time V1 queries: they go with --full --reps n (n > 1)")
     if args.real and args.recipe == "certified" and (args.smooth is not None or args.calib_seq):
         raise SystemExit("--smooth and --calib-seq are the legacy recipe's: pass --recipe legacy")
+    if args.real and args.prob_max != cli.PAPER.prob_max:
+        raise SystemExit("--prob-max is for random-weight decoders: a checkpoint's recipe fixes its scale")
     main_verifier = "optimised" if "optimised" in verifiers else verifiers[0]
     args.v1_verifier = main_verifier                 # the untimed V1 work runs under it
     cli.apply_runtime(args)
@@ -335,14 +339,15 @@ def main() -> int:
         real_queries = wins[1:]
     else:
         graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, args.calib_tokens), seed=args.seed,
-                              prune_last=args.prune_last)
+                              prune_last=args.prune_last, prob_max=args.prob_max)
         x = torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(args.prompt_seed))
         real_queries = None
     build_s = time.perf_counter() - t0
     head = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None,
             "smooth": args.smooth if legacy else None, "recipe": recipe_used,
             "calib_seq": (args.calib_seq or args.seq) if legacy else None, "layers": n_layers, "seq": args.seq,
-            "prune_last": args.prune_last, "lmax": args.lmax, "graph_digest": graph.digest().hex(),
+            "prune_last": args.prune_last, "prob_max": prob_max_of(graph), "lmax": args.lmax,
+            "graph_digest": graph.digest().hex(),
             "shapes": shape_check(graph, cfg, n_layers, args.prune_last, bool(args.real), x), "build_s": build_s,
             "build_peak": records.peaks(args.device), "host": platform.node(),
             "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,

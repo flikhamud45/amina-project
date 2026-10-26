@@ -18,7 +18,7 @@ mode C, commits it once under ``--policy``: the commitment binds the weight ops,
 ``decoder.with_lm_positions`` keeps, so one commitment serves every ``G``.  The protocol settings default to the
 paper's configuration (:data:`experiments.common.cli.PAPER`: plan ``cnn18c``, Fiat--Shamir, the compact encoding,
 the lean prover and verifier, the last block at the last position, mode Kpre's verifier reading the embedding rows
-itself).  For each ``G`` and decoding rule:
+itself, 11-bit attention probabilities).  For each ``G`` and decoding rule:
 
 * the ``G - 1`` tokens after each of ``--queries`` + 1 prompts of ``--prompt`` tokens (seed ``--prompt-seed``) are
   generated on ``--device`` by ``decoder.greedy_tokens`` (``greedy``) or ``token_sampler.sample_tokens``
@@ -44,8 +44,9 @@ WikiText-2 test windows of ``--prompt`` tokens, mode C commits the graph's own w
 
 **Record** (one JSON line per ``G``, rule and mode, on stdout; ``"kind": "gen"``): the settings (``model``,
 ``layers``, ``n_layers``, ``prompt``, ``gen``, ``decode``, ``mode``, ``policy``, ``chosen``, ``lam``, ``rate``, ``fs``,
-``wire``, ``lean``, ``prune_last``, ``lookups``, ``sampler``, ``real``, ``temperature``, ``logit_scale``, ``device``,
-``verifier_device``, ``threads``), ``positions``, ``reps``, ``columns``, ``queries``, ``accepted``,
+``wire``, ``lean``, ``prune_last``, ``prob_max`` (the graph's scale, :func:`pvi.models.decoder.prob_max_of`),
+``lookups``, ``sampler``, ``real``, ``temperature``, ``logit_scale``, ``device``, ``verifier_device``, ``threads``),
+``positions``, ``reps``, ``columns``, ``queries``, ``accepted``,
 ``warmup_accepted``, the medians and ``[min, max]`` of ``prove_s`` and ``verify_s`` over the timed queries, every
 timing and byte part (medians), ``proof_bytes``, ``proof_mb_per_token`` (the proof over ``G``), ``token_rule_s``,
 ``generate_s``, ``tampers`` (verdicts and labels), ``ok``, peak host and GPU memory over the build and the commitment
@@ -163,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     from pvi.commit.cost import decoder_shapes
-    from pvi.models.decoder import build_decoder, with_lm_positions
+    from pvi.models.decoder import build_decoder, prob_max_of, with_lm_positions
     from pvi.v0.graph_commitment import commit_graph
     from pvi.v0.params import params_for
     from pvi.v0.prover import Prover
@@ -175,6 +176,8 @@ def main() -> int:
     args = build_parser().parse_args()
     if min(args.gen) < 2:
         raise SystemExit("--gen: a response of at least 2 tokens (G = 1 is the plain prefill of perf.py)")
+    if args.real and args.prob_max != cli.PAPER.prob_max:
+        raise SystemExit("--prob-max is for random-weight decoders: a checkpoint's recipe fixes its scale")
     cli.apply_runtime(args)
     device = torch.device(args.device)
     cfg = decoder_config(args.model)
@@ -196,7 +199,7 @@ def main() -> int:
         n_checks = len(graph.mat_ops)
     else:
         graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.prompt, args.calib_tokens), seed=args.seed,
-                              prune_last=args.prune_last)
+                              prune_last=args.prune_last, prob_max=args.prob_max)
         shapes = decoder_shapes(cfg, prune_last=args.prune_last)
         n_checks = len(shapes)                   # (r, t) for the full model's op count, as perf.py and bench.py
     build_s = time.perf_counter() - t0
@@ -216,7 +219,8 @@ def main() -> int:
                              generator=torch.Generator().manual_seed(args.prompt_seed)))
     head = {"kind": "gen", "label": args.label, "git": sha, "model": args.model, "layers": args.layers or None,
             "n_layers": n_layers, "prompt": args.prompt, "lam": args.lam, "rate": args.rate, "fs": args.fs,
-            "wire": args.wire, "lean": args.lean, "prune_last": args.prune_last, "device": args.device,
+            "wire": args.wire, "lean": args.lean, "prune_last": args.prune_last, "prob_max": prob_max_of(graph),
+            "device": args.device,
             "verifier_device": args.verifier_device, "threads": args.threads, "build_s": build_s,
             "commit_s": commit_s, "setup_cache": None if coms is None else coms.setup_cache,
             "real": args.real or None, "temperature": args.temperature if args.real else None,

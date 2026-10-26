@@ -12,6 +12,13 @@ al.~\cite{anchuri2026verifiable}. Int8 quantisation changes the accuracy of the 
 most \CnnAccuracyChange{} points. Real weights are used for the attack on OPT-6.7B (Section~\ref{sec:break}) and for
 model quality (Section~\ref{sec:quality}). Proof sizes do not depend on the hardware.
 
+The random-weight language models use 11-bit attention probabilities, as the certified models do. The scale is a
+public constant of the attention, which the verifier recomputes: it changes no shape, only values, and with them the
+compressed claims and, in mode~$\sC$, the columns that the challenges open. On two blocks of Llama-2-7B at
+2{,}048 tokens, in modes~$\Kpre$ and~$\sC$ on the same queries with the CPU verifier on 8 threads, 11-bit
+probabilities change the proof's size by at most \ProbBitsBytes{}\% and the prover's and verifier's medians by at
+most \ProbBitsTime{}\% against 8-bit ones.
+
 \subsection{Prover and Verifier Improvements}
 \label{app:eval-improve}
 

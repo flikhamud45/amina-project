@@ -16,7 +16,9 @@ bytes of the claims, of ``u`` and of the opened columns (the Merkle term depends
 verdict; and, within ``--accuracy-tolerance``, the float model's accuracy (cuDNN may change its last digits).  A
 mismatch means different weights, data, code or a GPU/CPU disagreement.  It also prints every honest rejection and
 every accepted attack of the second root.  Exits 1 on any problem, and also when nothing could be compared (a wrong
-or partial stored root).  Reads only; a minute on a laptop CPU for the stored roots.
+or partial stored root).  Cells are compared by name, so a decoder cell of another attention probabilities' scale (the
+final run's ``_pmax2047``, 11 bits) has no counterpart in the stored roots' 8-bit cells.  Reads only; a minute on a
+laptop CPU for the stored roots.
 """
 from __future__ import annotations
 

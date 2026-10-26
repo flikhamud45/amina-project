@@ -66,10 +66,11 @@ learned positions is refused). The runtime flags: `--device`, `--threads` (8) an
 setting (`pvi.kernels.native.tune_malloc`: freed memory stays in the process) to the whole process on a CPU.
 
 **Records.** One JSON line per model, `T` and variant: `variant`, `dtype`, `device`, `threads`, `reps`,
-`prune_last`, `measured_s` and `range_s` (median and `[min, max]` per block count), `per_block_s`, `fixed_s`,
-`n_layers`, `full_s`, `max_pos`, `peak` (host and GPU), `malloc_tuned` (whether the process applied `--malloc-tune`'s
-setting; glibc's `MALLOC_*` variables, which set the same parameters, are in `env.env_vars`), `gpu`, `cpu`, `host`,
-`torch`, `env`; `int_mm` also `exact` and `exact_check` (`bounds`, and `logits` by block count).
+`prune_last`, `prob_max` (the integer variants' attention probabilities' scale, `--prob-max`, default 2047: the
+cost measurements' 11 bits), `measured_s` and `range_s` (median and `[min, max]` per block count), `per_block_s`,
+`fixed_s`, `n_layers`, `full_s`, `max_pos`, `peak` (host and GPU), `malloc_tuned` (whether the process applied
+`--malloc-tune`'s setting; glibc's `MALLOC_*` variables, which set the same parameters, are in `env.env_vars`), `gpu`,
+`cpu`, `host`, `torch`, `env`; `int_mm` also `exact` and `exact_check` (`bounds`, and `logits` by block count).
 
 **Hardware and time.** The CPU rows run on 8 threads of the verifier's CPU, the GPU rows on the prover's GPU. One run
 of the full Llama-2-7B at 2,048 tokens took 93 s (fp32) and 142 s (integer) on 8 threads of a Xeon Silver 4114; the

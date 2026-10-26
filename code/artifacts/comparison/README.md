@@ -114,7 +114,7 @@ same seeded instances, so the totals are those of the first two batches):
 
 ```bash
 python -m experiments.comparison.count_outcomes --platform l40s_improved,l40s_improved2,l40s_improved3 --definition \
-    --policy auto
+    --policy auto --prob-max 255
 # 61,629 records; 3,792 honest queries accepted (2,196 image, 1,596 language); 2,512 attacks rejected
 # (1,848 image, 664 language): Freivalds 1,601, column code check 853, Merkle check 56, range check 2
 ```

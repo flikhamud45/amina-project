@@ -2,8 +2,9 @@
 
 The GPU tests in ``test_v0_protocol.py`` use tiny graphs (T = 12 tokens, K <= 4608),
 so they never reach the regimes where a new GPU could behave differently: split-K /
-stream-K GEMM kernels at K = 11,008, the batched P @ V product at T = 2,048 (4 chunks
-of 512 terms, or one float32 GEMM on the int32 attention path), every partial sum at its
+stream-K GEMM kernels at K = 11,008, the batched P @ V product at T = 2,048 (chunks of
+512 terms at 8-bit probabilities and of 64 at 11-bit ones, or one float32 GEMM on the int32
+attention path), every partial sum at its
 2**24 bound, the prover's weight products and fold/open (int8 tensor cores where ``int8_ok``,
 else float32 and float64), the verifier's int8 tensor-core products, and the Reed--Solomon/NTT
 commitment on the device.  Run this file on every new GPU type before any benchmark (the
@@ -110,12 +111,13 @@ def test_batched_pv_product_at_its_bound(heads, t, dh, tf32):
 
 @pytest.mark.parametrize("m_s", [1 << 12, 2_600_000], ids=["int64_path", "int32_path"])
 @pytest.mark.parametrize("heads,t,dh", [(4, 2048, 128), (1, 4096, 128)])
-def test_attention_matches_cpu_at_long_prompts(heads, t, dh, m_s, tf32):
+@pytest.mark.parametrize("pmax", [255, 2047], ids=["p8", "p11"])
+def test_attention_matches_cpu_at_long_prompts(heads, t, dh, m_s, pmax, tf32):
     g = torch.Generator().manual_seed(t + heads)
     q, k, v = (torch.randint(-127, 128, (1, heads, t, dh), generator=g) for _ in range(3))
     k[:, :, ::3] = q[:, :, ::3]                         # peaked softmax rows as well as flat ones
-    cpu = _attention_heads(q, k, v, m_s)                # the raw P @ V integers
-    dev = _attention_heads(q.to(DEV), k.to(DEV), v.to(DEV), m_s).cpu()
+    cpu = _attention_heads(q, k, v, m_s, 1, pmax)       # the raw P @ V integers
+    dev = _attention_heads(q.to(DEV), k.to(DEV), v.to(DEV), m_s, 1, pmax).cpu()
     assert torch.equal(cpu, dev)
 
 

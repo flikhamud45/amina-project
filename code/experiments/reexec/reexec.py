@@ -19,8 +19,9 @@ an answer by computing it again.  The script times that for the decoders of ``pv
 weights, ``--seed``: the cost depends on the shapes only), one prompt of ``T`` tokens (``--seq``; seed
 ``--prompt-seed``) per variant:
 
-* ``int``: our integer model's forward pass (``IntGraph.forward`` of ``build_decoder``), which the prover runs and
-  which is bit-exact with the claims, so it is a complete check in itself (the int8 GEMMs of :mod:`pvi.options`'
+* ``int``: our integer model's forward pass (``IntGraph.forward`` of ``build_decoder``, with the attention
+  probabilities' scale ``--prob-max``, default 2047: 11 bits, as the cost measurements' graphs), which the prover runs
+  and which is bit-exact with the claims, so it is a complete check in itself (the int8 GEMMs of :mod:`pvi.options`'
   ``native_gemm`` on a CPU, ``torch._int_mm`` on a GPU);
 * ``int_fp32gemm`` (CPU): the same integer forward with the option ``native_gemm`` off (its weight products as exact
   fp32 GEMMs over 1,024-term chunks);
@@ -56,7 +57,8 @@ learned positions is refused, since its position table would change.
 re-execution can be timed under either setting.
 
 **Record** (one JSON line per model, ``T`` and variant, on stdout): ``git``, ``model``, ``seq``, ``variant``,
-``dtype``, ``device``, ``threads``, ``reps``, ``prune_last``, ``measured_s`` (median seconds per measured block
+``dtype``, ``device``, ``threads``, ``reps``, ``prune_last``, ``prob_max`` (the integer variants' scale; None for
+the floating-point ones), ``measured_s`` (median seconds per measured block
 count), ``range_s`` (their ``[min, max]``), ``per_block_s``, ``fixed_s``, ``n_layers``, ``full_s`` (the linear fit at
 the full depth), ``max_pos``, ``peak`` (host peak resident set and GPU peak memory over the variant's builds and
 runs), ``malloc_tuned`` (whether this process applied ``--malloc-tune``'s allocator setting; glibc's ``MALLOC_*``
@@ -303,6 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompt's seed")
     ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
                     help="calibration tokens of the integer decoder (at most --seq)")
+    cli.add_prob_max_argument(ap, note="; the integer variants")
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     ap.set_defaults(malloc_tune=False)               # glibc's defaults unless --malloc-tune (module docstring)
     return ap
@@ -347,7 +350,8 @@ def main() -> int:
                         warm_up = True
                         if variant in INTEGER:
                             graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, args.calib_tokens),
-                                                  seed=args.seed, prune_last=args.prune_last)
+                                                  seed=args.seed, prune_last=args.prune_last,
+                                                  prob_max=args.prob_max)
 
                             # int_fp32gemm: the same forward pass with the native int8 GEMM switched off; int_mm:
                             # also off, its products on torch._int_mm
@@ -387,6 +391,7 @@ def main() -> int:
                     "git": sha, "model": name, "seq": seq, "variant": variant,
                     "dtype": DTYPE.get(variant, str(fdtype).replace("torch.", "")),
                     "device": str(device), "threads": args.threads, "reps": args.reps, "prune_last": args.prune_last,
+                    "prob_max": args.prob_max if variant in INTEGER else None,
                     "measured_s": {str(k): v for k, v in measured.items()},
                     "range_s": {str(k): v for k, v in spread.items()}, "peak": records.peaks(device),
                     "max_pos": cfg.max_pos,

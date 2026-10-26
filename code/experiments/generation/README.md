@@ -39,7 +39,8 @@ serves every `G`, since `decoder.with_lm_positions` keeps the weight operations.
 * **Main options.** `--model`, `--prompt 512`, `--gen 64 256`, `--decode greedy sample`, `--modes C Kpre`,
   `--queries 3`, `--top-k`, `--no-tampers`, `--seed`, `--prompt-seed`, `--calib-tokens`. The protocol settings default
   to the paper's configuration (`experiments.common.cli.PAPER`): `--policy cnn18c`, `--fs`, `--wire`, `--lean`,
-  `--prune-last`, `--lookups`, each with a `--no-...` form, `--lam 128`, `--rate 4`, `--setup-cache DIR`; the runtime
+  `--prune-last`, `--lookups`, each with a `--no-...` form, `--prob-max 2047` (11-bit attention probabilities),
+  `--lam 128`, `--rate 4`, `--setup-cache DIR`; the runtime
   flags `--device`, `--verifier-device`, `--threads` and every implementation option of `pvi.options`.
 * **Records.** One JSON line per cell with `"kind": "gen"`: the settings, `positions`, `accepted` / `queries`, the
   medians and `[min, max]` of `prove_s` and `verify_s`, per-part timings and bytes, `proof_bytes`,

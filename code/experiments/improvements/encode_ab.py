@@ -8,7 +8,8 @@ fused Triton encoder ("1.74 against 1.54 s on OPT-1.3B") in ``sections/ext_evalu
     python -m experiments.improvements.encode_ab --model llama2-7b --layers 2 --seq 2048 --fused
     python -m experiments.improvements.encode_ab --model opt-1.3b --layers 4 --profile      # a torch.profiler table
 
-Builds the decoder as ``bench.py`` does (random weights, ``--seed``; ``--layers`` blocks, the last one pruned),
+Builds the decoder as ``bench.py`` does (random weights, ``--seed``; ``--layers`` blocks, the last one pruned;
+11-bit attention probabilities, ``--prob-max``),
 computes one query's claims on the device as the lean prover keeps them for the compact encoding (int32,
 ``claimcodec.narrow``), then encodes them ``--reps`` times per variant after one untimed call each, the variants
 interleaved, and checks that every variant gives the same bytes:
@@ -20,9 +21,9 @@ interleaved, and checks that every variant gives the same bytes:
   :mod:`pvi.options`), on ``--threads`` threads.
 
 Record (one JSON line per variant): ``encode_s`` (the median), ``all_s``, ``vs_one_thread``, ``same_bytes``, ``bytes``,
-``claims``, ``ops``, the thread count, the GPU, peak GPU memory and ``env``; with ``--profile``, a ``torch.profiler``
-table of one more threaded call, sorted by CPU and by CUDA time.  Needs a CUDA GPU (the device encoder); the full
-OPT-1.3B at 2,048 tokens gives a proof of about 2 GB.
+``claims``, ``ops``, ``prob_max``, the thread count, the GPU, peak GPU memory and ``env``; with ``--profile``, a
+``torch.profiler`` table of one more threaded call, sorted by CPU and by CUDA time.  Needs a CUDA GPU (the device
+encoder); the full OPT-1.3B at 2,048 tokens gives a proof of about 2 GB.
 """
 from __future__ import annotations
 
@@ -65,6 +66,7 @@ def main() -> int:
                     help="the last block at the last position only")
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompt's seed")
+    cli.add_prob_max_argument(ap)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
     cli.apply_runtime(args)
@@ -79,7 +81,7 @@ def main() -> int:
     sha, env = records.git_sha(CODE), records.environment(device)
     n_layers = args.layers or cfg.n_layers
     graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=cli.CALIB_TOKENS, seed=args.seed,
-                          prune_last=args.prune_last)
+                          prune_last=args.prune_last, prob_max=args.prob_max)
     prover = Prover(graph, device=device, lean=True)
     x = torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(args.prompt_seed))
     claims = prover.claims(x, send=claimcodec.narrow, to_host=False)
@@ -111,7 +113,8 @@ def main() -> int:
         records.emit({"git": sha, "model": args.model, "layers": n_layers, "seq": args.seq, "variant": name,
                       "threads": variants[name]["threads"], "encode_s": med, "all_s": [round(t, 4) for t in ts],
                       "vs_one_thread": med / base, "same_bytes": same, "bytes": blobs[name][1], "claims": n,
-                      "ops": len(zs), "gpu_peak_memory": torch.cuda.max_memory_allocated(device),
+                      "ops": len(zs), "prob_max": args.prob_max,
+                      "gpu_peak_memory": torch.cuda.max_memory_allocated(device),
                       "gpu": torch.cuda.get_device_name(device), "host": platform.node(), "env": env})
     if args.profile:
         from torch.profiler import ProfilerActivity, profile

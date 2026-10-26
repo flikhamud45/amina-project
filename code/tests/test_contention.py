@@ -255,7 +255,7 @@ def test_records_without_the_field_still_read(monkeypatch, tmp_path):
     _bench_run(monkeypatch, root)
     stripped = tmp_path / "raw_old"
     _strip(root, stripped)
-    one = next(stripped.rglob("defence_*lookups.jsonl"))       # one cell without the field among cells with it
+    one = next(stripped.rglob("defence_*_lookups_pmax2047.jsonl"))   # one cell without the field among cells with it
     target = root / one.relative_to(stripped)
     target.write_bytes(one.read_bytes())
     from experiments.comparison import aggregate as agg

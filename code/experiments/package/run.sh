@@ -20,7 +20,8 @@
 #     batch    B prompts against one opening
 #     real     real-weight OPT end to end next to random-weight twins (and Llama-2-7B with --llama-licence)
 #     setup    the setup proof of an untrusted commitment
-#     improve  each implementation improvement against the path it replaces, on the same queries
+#     improve  each implementation improvement against the path it replaces, on the same queries; 8- against 11-bit
+#              attention probabilities
 #     quality  the integer models' quality: OPT (perplexity, zero-shot, reproducible build), OpenLLaMA-7B, TinyLlama
 #              and Qwen3 (and Llama-2-7B/13B with --llama-licence)
 #     tv       the token sampler's total-variation distance to the softmax (CPU)
@@ -531,7 +532,8 @@ tier_setup() {
 tier_improve() {
   # tab:eval-improve: each improvement against the path it replaces on the same queries (the options of pvi.options
   # select the path); the CUDA time shares of a GPU verifier query; the Kpre precomputation; V1's verifier per phase
-  # (optimised and baseline) and the GKR prover per leaf
+  # (optimised and baseline) and the GKR prover per leaf; 8- against 11-bit attention probabilities (the proof's size
+  # and the prover's and CPU verifier's times on the same queries, modes Kpre and C)
   local a="--queries $Q --label improve" m
   if [ -n "$REH" ]; then
     sub i-open-gpt2 1 64 "$M.improvements.open_ab --model gpt2 --layers 2 --queries 3"
@@ -554,6 +556,8 @@ tier_improve() {
 --verifier-device cpu --label cpuv-after $NATIVE"
     sub i-profile-opt-125m 1 64 "$M.improvements.gpu_profile --model opt-125m --layers 2 --seq 64"
     sub i-gkr 1 32 "$M.v1.gkr_bench --n 20 --check 20"
+    csub i-probbits-gpt2 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre C --policy $POL \
+--prob-max 255 2047 --queries $Q --verifier-device cpu --label prob-bits $NATIVE"
     return 0
   fi
   sub i-open-llama2-7b 1 128 "$M.improvements.open_ab --model llama2-7b --layers 1 4 --queries 7"
@@ -578,6 +582,8 @@ tier_improve() {
   sub i-v1phases-llama2-7b 2 192 "$M.v1.v1_phases --model llama2-7b --layers 2 --seq 2048 --mode Kpre --reps 3 \
 --device cuda --v1-verifier optimised baseline"
   sub i-gkr 1 64 "$M.v1.gkr_bench --n 20 22 24 25 --check 20"
+  csub i-probbits-llama2-7b 1 128 "$PERF --model llama2-7b --layers 2 --seq 2048 --modes Kpre C --policy $POL \
+--prob-max 255 2047 --queries $QH --verifier-device cpu --label prob-bits $NATIVE"
 }
 
 tier_quality() {

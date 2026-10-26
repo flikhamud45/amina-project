@@ -17,12 +17,14 @@ and the prover's attention are `costs/perf.py` runs with the option flags that e
 | `tab:eval-improve`, "Native exact kernels for every phase (CPU verifier, Kpre)": Llama-2-7B 2/32 | `costs/perf.py` | before: `python -m experiments.costs.perf --model llama2-7b --layers 2 --seq 2048 --modes Kpre --queries 3 --verifier-device cpu --threads 8 --no-native --no-malloc-tune --label cpuv-before`; after: the same without `--no-native --no-malloc-tune` (and with `CXX` set: the native kernels are compiled on first use) | stdout: `verify_s` |
 | "copies take 32% of the CUDA time of an OPT-1.3B query (12 blocks) and int8 GEMMs 4.4%" (`app:eval-improve`) | `gpu_profile.py` | `python -m experiments.improvements.gpu_profile --model opt-1.3b --layers 12 --seq 2048` | stdout: tables and a JSON line with `shares` |
 | "12.7 s for Llama-2-7B on 8 Xeon threads" (the Kpre client's key, `ext_discussion.tex`) | `fold_ab.py` | `python -m experiments.improvements.fold_ab --model llama2-7b --devices cpu cuda --reps 3 --threads 8` | stdout: `precompute_s` of `float64` / `default` |
+| `quality.tex` and `app:eval-setup`: 11-bit attention probabilities change the proof's size by at most `\ProbBitsBytes`% and the prover's and verifier's times by at most `\ProbBitsTime`% (Llama-2-7B 2/32 at 2,048 tokens, modes Kpre and C, the CPU verifier) | `costs/perf.py` | `python -m experiments.costs.perf --model llama2-7b --layers 2 --seq 2048 --modes Kpre C --prob-max 255 2047 --queries 5 --verifier-device cpu --threads 8 --label prob-bits` (the two scales are variants on the same queries, interleaved) | stdout: `proof_bytes`, `prove_s`, `verify_s` of `prob_max` 255 and 2047 |
 
 Every script prints one JSON object per line with the run's environment under `env` (commit, host, CPU, GPU,
 versions, the implementation options in force and what the host runs), and exits with status 1 if the two paths
 disagree or a query is rejected. `--help` lists every option; the protocol settings default to the paper's
 configuration (`experiments.common.cli.PAPER`: plan `cnn18c`, Fiat-Shamir, the compact encoding, the lean prover,
-the pruned last block, the verifier's own embedding rows), the runtime flags to the GPU prover and 8 threads.
+the pruned last block, the verifier's own embedding rows, 11-bit attention probabilities: `--prob-max 2047`), the
+runtime flags to the GPU prover and 8 threads.
 
 ## Scripts
 

@@ -9,6 +9,8 @@
   listing gives the job coverage (an incomplete listing is refused).
 * Exact re-execution is the fastest exact variant; llama.cpp is an inexact baseline of another model, which never
   changes the abstract's N, at its fastest configuration; mode C's plan comes from the records; the bounds round up.
+* The 8- against 11-bit A/B of the improve tier gives its two macros, and a cost record whose decoder is not at the
+  11-bit attention probabilities the text states is a text check that fails (a warning in a rehearsal).
 * A document named by another model (a rehearsal's OPT-125M) counts for its tier and kind and fills no table cell or
   text number.
 * The paper's wiring: the generated files and ``paper_sp2027/fallback/`` have the same names and macro sets, every
@@ -57,11 +59,12 @@ def _env(argv=()):
 
 
 def perf(model, seq, mode, verify, proof, *, label="cpuv", layers=None, vdev="cpu", real=None, accepted=5,
-         prove=1.0, timings=None, claims=None, tampers=None, stream=False):
+         prove=1.0, timings=None, claims=None, tampers=None, stream=False, prob_max=2047):
     """A ``costs/perf.py`` record."""
     return {"label": label, "git": "abc1234", "model": model, "real": real, "seq": seq, "layers": layers, "mode": mode,
             "policy": "cnn18c" if mode == "C" else None, "wire": True, "lean": True, "lam": 128, "rate": 4,
-            "prune_last": True, "lookups": mode != "C", "device": "cuda", "verifier_device": vdev, "stream": stream,
+            "prune_last": True, "lookups": mode != "C", "prob_max": prob_max, "device": "cuda", "verifier_device": vdev,
+            "stream": stream,
             "threads": 8, "accepted": accepted, "queries": 5, "fs": True, "prove_s": prove, "verify_s": verify,
             "prove_s_range": [prove, prove], "verify_s_range": [verify, verify], "proof_bytes": proof,
             "timings": timings or {"verify_derive": verify}, "bytes": {"claims": claims or proof},
@@ -73,7 +76,8 @@ def reexec(model, seq, variant, full, *, device="cpu", n_layers=32, blocks=None)
     """A ``reexec/reexec.py`` record; ``blocks``: measured seconds by block count (default 2 and the full model)."""
     ms = blocks or {"2": full / 16, str(n_layers): full}
     return {"git": "abc1234", "model": model, "seq": seq, "variant": variant, "dtype": "fp32", "device": device,
-            "threads": 8, "reps": 5, "prune_last": True, "measured_s": ms,
+            "threads": 8, "reps": 5, "prune_last": True, "prob_max": 2047 if variant in T.EXACT else None,
+            "measured_s": ms,
             "range_s": {k: [v, v] for k, v in ms.items()}, "per_block_s": full / n_layers, "fixed_s": 0.0,
             "n_layers": n_layers, "full_s": full, "env": _env()}
 
@@ -99,7 +103,8 @@ def v1(model, seq, mode, layers, v0_total, v1_total, *, label="", real=None, arg
     q = lambda p, v, t=None: {"accepted": 3, "timings": t or {}, "prove_s": p, "verify_s": v,    # noqa: E731
                               "prove_s_range": [p, p], "verify_s_range": [v, v], "fs_s": 0.1}
     return {"label": label, "git": "abc1234", "model": model, "real": real, "layers": layers, "seq": seq,
-            "prune_last": True, "lmax": 27, "env": _env(argv), "mode": mode, "fs": True, "v1_verifier": "optimised",
+            "prune_last": True, "prob_max": 2047, "lmax": 27, "env": _env(argv), "mode": mode, "fs": True,
+            "v1_verifier": "optimised",
             "v0_accepted": True, "v0_bytes": {"claims": 0.9 * v0_total},
             "v1_bytes": {"claims": 0.4 * v0_total, "cut_exc": 1.8e6, "cut_mult": 3.1e5, "cut_gkr": 5.249e5},
             "v0_total": v0_total, "v1_total": v1_total, "ratio": v0_total / v1_total, "n_leaves": 2_714_763_264,
@@ -118,7 +123,7 @@ def serve(model, seq, batch, mode, how, prove, u1, u2, *, mb=4.25):
             "prover_over_u1": {"ratio": prove / u1, "ci95": [0, 0]},
             "prover_over_u2": {"fp16": {"ratio": prove / u2, "ci95": [0, 0]}},
             "u1_over_u2": {"fp16": {"ratio": u1 / u2, "ci95": [0, 0]}}, "proof_mb_per_token": mb, "ok": True,
-            "env": _env()}
+            "prob_max": 2047, "env": _env()}
 
 
 def gen(model, mode, decode, g, prove, *, real=None, label="gen"):
@@ -128,7 +133,7 @@ def gen(model, mode, decode, g, prove, *, real=None, label="gen"):
             "accepted": 4, "prove_s": prove, "prove_s_range": [prove, prove], "verify_s": 2 * prove,
             "verify_s_range": [2 * prove, 2 * prove], "proof_bytes": 1e9, "proof_mb_per_token": 1e3 / g,
             "tampers": {"wrong_token": {"rejected": True, "label": "token", "expected": ["token"]}}, "ok": True,
-            "env": _env()}
+            "prob_max": 2047, "env": _env()}
 
 
 def ppl(model, cell, ppl_, ratio, *, split="test", calibration="train", seq=2048, draw=0, mass=0.975, top1=0.9,
@@ -165,10 +170,11 @@ def _bench(root: Path, platform: str = "test") -> None:
             "verifier_hw", "n_layers_full", "params_full", "value", "provenance", "batch"]
     rows = []
     for m, seq, mode, ch, variant, scale in (
-            ("llama2-7b", 64, "C", "fs", "_wire_prune_polcnn18c", 1.0),
-            ("llama2-7b", 64, "C", "fs", "_wire_gpuv_stream_prune_polcnn18c", 0.4),
-            ("llama2-7b", 64, "Kpre", "fs", "_wire_prune_lookups", 0.7),
-            ("llama2-7b", 64, "C", "int", "_wire_prune_polcnn18c", 0.9)):          # interactive: not tab:eval-llm's
+            ("llama2-7b", 64, "C", "fs", "_wire_prune_pmax2047_polcnn18c", 1.0),
+            ("llama2-7b", 64, "C", "fs", "_wire_gpuv_stream_prune_pmax2047_polcnn18c", 0.4),
+            ("llama2-7b", 64, "Kpre", "fs", "_wire_prune_lookups_pmax2047", 0.7),
+            ("llama2-7b", 64, "C", "int", "_wire_prune_pmax2047_polcnn18c", 0.9),   # interactive: not tab:eval-llm's
+            ("llama2-7b", 64, "Kpre", "fs", "_wire_prune_lookups", 5.0)):          # 8-bit: not the final run's
         hw = "AMD EPYC 9334 32-Core Processor x8 threads"
         for metric, v in (("prove_forward", 1.5 * scale), ("fs_hash", 0.1), ("verify_products", scale),
                           ("bytes_total", 3.25e8 * scale)):
@@ -193,11 +199,12 @@ def _bench(root: Path, platform: str = "test") -> None:
                 w.writerow(["cnn", m, "facts_wire", metric, "", "", "", "", "", 1, v, v, "", ""])
         # the batch tier: Llama-2-7B, mode C, 64 tokens; the single cell's claims and B = 4, 16 prompts per opening
         # (per prompt: claims + shared / B, exactly at B = 4 and 1.5% above at B = 16)
-        single = "defence_C_fs_lam128_T64_L32_wire_prune_polcnn18c"
+        single = "defence_C_fs_lam128_T64_L32_wire_prune_pmax2047_polcnn18c"
         w.writerow(["llm", "llama2-7b", single, "bytes_claims", "", "", "", "", "", 3, 2.0e8, 2.0e8, "", ""])
         for bsz, off in ((4, 1.0), (16, 1.015)):
             total = bsz * (2.0e8 + 1.25e8 / bsz) * off
-            w.writerow(["llm", "llama2-7b", "defence_C_fs_lam128_T64_L32_wire_batch_prune_polcnn18c", "bytes_total",
+            w.writerow(["llm", "llama2-7b", "defence_C_fs_lam128_T64_L32_wire_batch_prune_pmax2047_polcnn18c",
+                        "bytes_total",
                         bsz, "", "", "", "", 3, total, total, "", ""])
     raw = root / f"raw_{platform}" / "cnn" / "lenet5"
     raw.mkdir(parents=True)
@@ -255,7 +262,7 @@ def _logs(tmp: Path) -> Path:
                                            serve("opt-1.3b", 2048, 1, "C", "seq", 4.4, 0.51, 0.11),
                                            serve("opt-1.3b", 64, 64, "Kpre", "joint", 3.4, 0.71, 0.19),
                                            {"row": "on_request", "model": "opt-1.3b", "seq": 2048, "batch": 1,
-                                            "serve_s": {"median": 0.5}, "env": _env()}])
+                                            "serve_s": {"median": 0.5}, "prob_max": 2047, "env": _env()}])
     _write(logs, "sp-gen-llama2-7b-12.out", [gen(m, mode, d, g, 2.0 if mode == "C" else 1.0)
                                              for mode in ("C", "Kpre") for d in ("greedy", "sample") for g in (64, 256)])
     # Qwen3-4B's sampled responses cost 2.5% more than its greedy ones (GenSampledWithin)
@@ -292,18 +299,26 @@ def _logs(tmp: Path) -> Path:
     real_v1["v1_bytes"].update(cut_mult=4.0e5, cut_gkr=5.01e5)
     _write(logs, "sp-r-llama7-v1-2048-45.out", [real_v1])
     _write(logs, "sp-setup-llama2-7b-16.out", [{
-        "kind": "setup", "label": "setup", "model": m, "layers": None, "amortise": 100, "proof_bytes": 2.38e9,
+        "kind": "setup", "label": "setup", "model": m, "layers": None, "prob_max": 2047, "amortise": 100,
+        "proof_bytes": 2.38e9,
         "commit_s": 500.0, "prove_s": 120.0, "verify_s": 60.0, "query_columns_bytes_honest": 6.56e7,
         "query_columns_bytes_untrusted": 1.135e8, "accepted": True, "env": _env()}])
     _write(logs, "sp-i-open-llama2-7b-17.out", [
         {"git": "a", "model": m, "layers": n, "seq": 64, "variant": v, "queries": 6, "accepted": 6, "identical": True,
-         "prove_s": t, "open_fold_s": t / 2, "timings": {"prove_open": 0.6 * t}, "env": _env()}
+         "prove_s": t, "open_fold_s": t / 2, "timings": {"prove_open": 0.6 * t}, "prob_max": 2047, "env": _env()}
         for n, v, t in ((1, "float64", 0.277), (1, "int8", 0.064), (4, "float64", 0.653), (4, "int8", 0.175))])
     _write(logs, "sp-i-cpuv-llama2-7b-18.out", [perf(m, 2048, "Kpre", 3.37, 1e9, layers=2, label="cpuv-before"),
                                                 perf(m, 2048, "Kpre", 0.74, 1e9, layers=2, label="cpuv-after")])
     _write(logs, "sp-i-fold-llama2-7b-19.out", [
         {"git": "a", "model": m, "layers": 32, "device": "cpu", "path": p, "fs": True, "reps": 7, "precompute_s": t,
-         "equal_to_float64": True, "env": _env()} for p, t in (("float64", 107.0), ("default", 12.7))])
+         "equal_to_float64": True, "prob_max": 2047, "env": _env()}
+        for p, t in (("float64", 107.0), ("default", 12.7))])
+    # the A/B of 8- against 11-bit attention probabilities on two Llama-2-7B blocks: the proof 0.02% larger in Kpre
+    # and 0.045% smaller in C, the times at most 2.7% apart (Kpre's verifier)
+    _write(logs, "sp-i-probbits-llama2-7b-48.out", [
+        perf(m, 2048, mode, verify, proof, prove=prove, layers=2, label="prob-bits", prob_max=p)
+        for mode, p, prove, verify, proof in (("Kpre", 255, 1.00, 0.74, 1.0e9), ("Kpre", 2047, 1.01, 0.76, 1.0002e9),
+                                              ("C", 255, 1.20, 0.90, 1.1e9), ("C", 2047, 1.18, 0.91, 1.0995e9))])
     _write(logs, "sp-i-gkr-20.out", [{"n": 25, "leaves": 1 << 25, "T": 2048, "s": 0.52, "ns_per_leaf": 15.6,
                                       "env": _env()}])
     for q, job, gain, ref, scalar, cert in (("facebook/opt-125m", "opt125-21", 4, 27.66, 1.166, 1.076),
@@ -480,6 +495,7 @@ def test_the_text_numbers(run_dir):
     assert v["QualityRatioOptS"] == "1.076" and v["QualityCIOptS"] == "1.073, 1.079" and v["QualityMissOptS"] == "0.016"
     assert v["QualityMassMinEight"] == "56" and v["LlamaOpenRatio"] == "1.073" and v["ZeroshotLambadaOptS"] == "3.1"
     assert v["GkrNsPerLeaf"] == "15.6" and v["KpreKeyLlama"] == "12.7" and v["ImproveCpuv"] == "4.6"
+    assert v["ProbBitsBytes"] == "0.05" and v["ProbBitsTime"] == "3"           # bounds: rounded up
     assert v["FinalNHonest"] == "3" and v["FinalNFreivalds"] == "1" and v["TodoCounts"] == ""
     assert v["LenetProof"] == "63.3" and v["VOneRealOptMShortK"] == "1.28"
     assert v["OptMGpuVerify"] == "1.1" and v["GpuFloatLong"] == "0.64" and v["GpuIntShort"] == "0.15"
@@ -666,6 +682,7 @@ def test_the_plan_comes_from_the_records(tmp_path):
     run_sh = (CODE / "experiments" / "package" / "run.sh").read_text(encoding="utf-8")
     assert re.search(r"^POL=(\S+)", run_sh, re.M).group(1) == B.DEFAULT_POLICY == cli.PAPER.policy
     assert co.PAPER_POLICY == T.Ctx.policy == B.DEFAULT_POLICY
+    assert co.PAPER_PROB_MAX == B.DEFAULT_PROB_MAX == cli.PAPER.prob_max == B.Bench(None).prob_max
 
 
 def _setup_size(setup, columns, combined, at_lam, untrusted=79.4, factor=1.21):
@@ -806,6 +823,28 @@ def test_a_failed_check_or_an_unparsable_line_fails(run_dir, capsys):
     assert "did not end in SMOKE OK" in capsys.readouterr().out
 
 
+def test_the_cost_records_are_at_the_texts_probability_scale(run_dir, capsys):
+    """The text states 11-bit attention probabilities for the certified models and every cost measurement: a cost
+    record of another scale, or of none, is a text check that fails (a warning in a rehearsal); the 8-bit side of the
+    improve tier's A/B, an image model's ``perf.py`` record, a floating-point re-execution and the quality tier's
+    records are not cost records of an integer decoder at the paper's scale."""
+    tmp, logs = run_dir
+    unscaled = perf("qwen3-4b", 64, "C", 1.0, 1e8)
+    del unscaled["prob_max"]
+    _write(logs, "sp-c-qwen3-4b-64-92.out", [perf("qwen3-4b", 64, "Kpre", 0.7, 1.6e8, prob_max=255), unscaled,
+                                            perf("lenet5", None, "C", 0.1, 1e5, prob_max=None),
+                                            reexec("qwen3-4b", 64, "float", 3.0, n_layers=36)])
+    ctx, problems = _ctx(tmp, logs)
+    M.build(ctx, problems)
+    assert [p.split(" builds")[0] for p in problems] == [f"{M.TEXT_CLAIM} sp-c-qwen3-4b-64-92.out:2",
+                                                         f"{M.TEXT_CLAIM} sp-c-qwen3-4b-64-92.out:3"], problems
+    assert "prob_max 255" in problems[0] and "prob_max None" in problems[1]
+    kept, warned = N.demote_text_claims(problems)
+    assert kept == [] and len(warned) == 2
+    assert N.main(_args(tmp, logs, "--check")) == 1
+    assert "builds its decoder at prob_max 255" in capsys.readouterr().out
+
+
 def test_job_coverage_from_a_dry_run_listing(run_dir):
     tmp, logs = run_dir
     listing = tmp / "dry.txt"
@@ -929,12 +968,16 @@ def test_the_fallback_tables_agree_with_their_macros():
 
 
 def test_the_definition_of_the_cells():
+    """The final run's language-model cells carry the tag of its 11-bit attention probabilities (``pmax2047``), the
+    stored runs' 8-bit cells none; the image models have no attention."""
     d = B.definition_tagsets("cnn18c")
-    assert frozenset({"wire", "prune", "polcnn18c"}) in d[("llm", "C")]
-    assert frozenset({"wire", "batch", "prune", "lookups"}) in d[("llm", "Kpre")]
-    assert frozenset({"thr1", "wire", "prune", "lookups"}) in d[("llm", "Kpre")]
-    assert frozenset({"thr1", "prune", "lookups"}) not in d[("llm", "Kpre")]       # the uncompressed by-product
+    assert frozenset({"wire", "prune", "pmax2047", "polcnn18c"}) in d[("llm", "C")]
+    assert frozenset({"wire", "batch", "prune", "lookups", "pmax2047"}) in d[("llm", "Kpre")]
+    assert frozenset({"thr1", "wire", "prune", "lookups", "pmax2047"}) in d[("llm", "Kpre")]
+    assert frozenset({"thr1", "prune", "lookups", "pmax2047"}) not in d[("llm", "Kpre")]  # the uncompressed by-product
     assert d[("cnn", "C")] == {frozenset({"wire", "polcnn18c"})} and d[("cnn", "Kpre")] == {frozenset({"wire"})}
+    stored = B.definition_tagsets("cnn18c", B.STORED_PROB_MAX)
+    assert frozenset({"wire", "prune", "polcnn18c"}) in stored[("llm", "C")] and stored[("cnn", "C")] == d[("cnn", "C")]
     bench = B.Bench(None, "cnn18c")
     assert bench.cnn_cell("vgg16", "C", "fs") == "defence_C_fs_lam128_rate4_wire_polcnn18c"
     assert bench.cnn_cell("vgg16", "Kpre", "int") == "defence_Kpre_int_lam128_rate4_wire"

@@ -21,7 +21,7 @@ scripts compute byte models from the public shapes or train the image models.
 | `tab:setup`; the setup-proof breakdown after it (`ext_defence.tex`); `tab:params`' setup-proof size and untrusted columns | `setup_bytes.py` | `python -m experiments.costs.setup_bytes` | stdout, one JSON line per model and `a` |
 | the setup proof's prover and verifier times (`ext_defence.tex`, after `tab:setup`) | `setup_timing.py` (tier `setup`) | `python -m experiments.costs.setup_timing --model llama2-7b --amortise 100 --label setup`; `... --model gpt2 --amortise 100 1000 --reps 3` | stdout |
 | `tab:params` (`app_params.tex`) | `params_table.py` | `python -m experiments.costs.params_table --tex` | stdout |
-| "16–19 bits for a claim" (`ext_v1.tex`, Sec. on V1's proof size) | `wire.py` | `python -m experiments.costs.wire --mnist <dir> lenet5 vgg16 resnet18_cifar mlp_mnist gpt2:64 gpt2:512 qwen3-4b:8:1,2,4,8 llama2-7b:64:1,2`; stored: `python -m experiments.costs.wire --out artifacts/results/development/wire_laptop.json --summary` | `artifacts/results/development/wire.json` |
+| "16–19 bits for a claim" (`ext_v1.tex`, Sec. on V1's proof size) | `wire.py` | `python -m experiments.costs.wire --mnist <dir> lenet5 vgg16 resnet18_cifar mlp_mnist gpt2:64 gpt2:512 qwen3-4b:8:1,2,4,8 llama2-7b:64:1,2`; stored (measured on the 8-bit graphs, `--prob-max 255`): `python -m experiments.costs.wire --out artifacts/results/development/wire_laptop.json --summary` | `artifacts/results/development/wire.json` |
 | the trained image models of the benchmark | `train_cnn.py` | `python -m experiments.costs.train_cnn --model lenet5 --device cuda` (and `vgg11 vgg16 resnet18_cifar resnet18_224 resnet18_224_squirrel`) | `artifacts/models/cnn/<model>.{pt,json}` |
 
 Run every command from `code/` with the checkout's library first on the path (`PYTHONPATH=src:.` on Linux,
@@ -52,14 +52,16 @@ random-weight decoders with the shapes of the paper's language models (`llm` sui
   `--builds` (`auto`, `full`, `1,2,full`), `--queries`, `--tampers`, `--llm-tampers`, `--batches`, `--cnn-batches`,
   `--gen`. The protocol settings default to the paper's configuration (`experiments.common.cli.PAPER`): `--policy
   cnn18c`, `--wire`, `--lean`, `--prune-last`, `--lookups`, each with a `--no-...` form (`--policy per-op` for one
-  tree per weight op), `--rate 4`, `--setup-cache DIR`. The runtime flags: `--device` (the prover's), `--verifier-device
+  tree per weight op), `--prob-max 2047` (the decoders' 11-bit attention probabilities; 255: the 8-bit graphs),
+  `--rate 4`, `--setup-cache DIR`. The runtime flags: `--device` (the prover's), `--verifier-device
   cpu|cuda`, `--verifier-impl default|stream` (the streaming verifier), `--threads 8`, `--tf32`, and every
   implementation option of `pvi.options` (`--no-native`, `--no-fused-attention`, ...; recorded in the `env` row).
 * **Cell names follow the settings that change the cell**, in this order: `_thr<n>` (threads other than 8),
   `_nolean`, `_tf32`, `_wire`, `_gpuv`, `_stream`, `_batch` (batch sizes other than the defaults), `_prune` (every
-  decoder cell), `_lookups` (decoder K and Kpre cells), `_gen<G>`, `_pol<name>` (commitment and mode-C cells under a
-  plan other than `per-op`). A cell measured under the same settings therefore has the same name as the stored one:
-  checked against every stored cell of `artifacts/comparison/raw_*`. The names depend on the effective settings,
+  decoder cell), `_lookups` (decoder K and Kpre cells), `_pmax<n>` (decoder cells whose attention probabilities'
+  scale is not the stored cells' 255: `_pmax2047` by default), `_gen<G>`, `_pol<name>` (commitment and mode-C cells
+  under a plan other than `per-op`). A cell measured under the same settings therefore has the same name as the
+  stored one: checked against every stored cell of `artifacts/comparison/raw_*`. The names depend on the effective settings,
   not on which flags were given. The defaults are the paper's configuration, with 8 verifier threads, the batched
   verifier on the CPU, TF32 off, and the batch sizes 8 and 32 (image models) and none (decoders). A stored `_polauto` cell (the planning rule, which picks `cnn16c`, `cnn17c` or
   `cnn18c` per model) is distinct from a `_polcnn18c` cell (the paper's fixed plan).
@@ -83,8 +85,10 @@ does (or, with `--real`, a checkpoint's integer graph: OPT with the certified re
 default, `--recipe legacy --smooth 0.55 --calib-seq 2048` for the percentile recipe; a Llama-family checkpoint with
 `hf_llama.MAIN_RECIPE`), runs one warm-up and `--queries` queries per variant and prints one JSON line per mode and
 variant: the per-part medians, the prover and verifier totals with their `[min, max]`, the proof bytes, the
-commitment's time, the peak host and GPU memory, `env`. `--policy`, `--wire`, `--lean`, `--prune-last` and
-`--lookups` take several values (e.g. `--wire off on`), and the variants' queries are interleaved. `--stream` selects
+commitment's time, the peak host and GPU memory, `env`. `--policy`, `--wire`, `--lean`, `--prune-last`,
+`--lookups` and `--prob-max` take several values (e.g. `--wire off on`; `--prob-max 255 2047`: the 8- and 11-bit
+graphs of the same weights, the improve tier's A/B behind `quality.tex`'s "change the proof's size by at most"), and
+the variants' queries are interleaved. `--stream` selects
 the streaming verifier (with `--verifier-device cuda`: the paper's GPU verifier). `--tampers n` runs `n` of each
 trace-tampering attack per variant (`experiments.common.tampers`). Real checkpoints are downloaded from Hugging Face
 (OPT-1.3B/6.7B, Llama-2-7B under its licence) with the WikiText-2 test split. The package gives a 7B decoder at 2,048

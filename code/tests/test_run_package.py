@@ -12,7 +12,8 @@
   every tier submits jobs, the cells behind the text's generation and recipe numbers are there, and the rehearsal
   submits small cells only, which run every script of every tier on the paths the full cells take; every CPU-timing
   cell requires the native kernels and is pinned to one NUMA node, and the dry run lists every job even on a host
-  without the run's settings;
+  without the run's settings; every cost cell builds its decoders at the default 11-bit attention probabilities but
+  the improve tier's A/B of 8 against 11 bits (in the full run and the rehearsal);
 * the package's submission against stand-ins for SLURM: a queued job of the same platform is not submitted again and
   the chain and the smoke gate pass through it; ``--one-job`` submits the tiers as one whole-node job that runs them
   with ``--local``, and a ``--local`` run again runs the smoke and only the jobs that did not end successfully;
@@ -515,6 +516,21 @@ def test_the_rehearsal_runs_every_script_of_every_tier():
     for tier in TIERS:
         missing = full[tier] - rehearsal.get(tier, set())
         assert not missing, (tier, sorted(missing))
+
+
+def test_the_cost_cells_use_11_bit_probabilities_but_the_a_b_of_the_scales():
+    """No job passes ``--prob-max`` (every script's default is the certified models' 2047, ``cli.PAPER``) but the
+    improve tier's A/B, which times 255 and 2047 on the same queries in modes Kpre and C with the CPU verifier: two
+    Llama-2-7B blocks at 2,048 tokens in the full run, two GPT-2 blocks in the rehearsal."""
+    from experiments.common import cli
+    assert cli.PAPER.prob_max == 2047
+    for flags, job, cell in (((), "sp-i-probbits-llama2-7b", "--model llama2-7b --layers 2 --seq 2048"),
+                             (("--rehearsal",), "sp-i-probbits-gpt2", "--model gpt2 --layers 2 --seq 64")):
+        lines = {_job(line): line for line in _dry(*flags)}
+        assert [j for j, line in lines.items() if "--prob-max" in line] == [job]
+        ab = lines[job].split("costs.perf", 1)[1]
+        assert cell in ab and "--modes Kpre C" in ab and "--prob-max 255 2047" in ab and "--label prob-bits" in ab
+        assert "--verifier-device cpu" in ab and "--require-native" in ab
 
 
 def test_the_gen_and_quality_cells_of_the_text():

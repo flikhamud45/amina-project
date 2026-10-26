@@ -7,8 +7,9 @@ honest queries and rejected all 2,512 attacks, Freivalds' check rejecting 1,601,
 final run's root (``\\FinalNHonest``, ...).
 
     python -m experiments.comparison.count_outcomes --platform l40s_improved,l40s_improved2,l40s_improved3 \\
-        --definition --policy auto
-        # the paper's counts: the stored runs of the base implementation, added up, their defining cells only
+        --definition --policy auto --prob-max 255
+        # the paper's counts: the stored runs of the base implementation (8-bit decoders), added up, their defining
+        # cells only
     python -m experiments.comparison.count_outcomes --platform l40s
         # the first L40S run (the per-op commitment, uncompressed proofs; the attack's path-test cells)
     python -m experiments.comparison.count_outcomes --platform rtx2080ti-v2
@@ -17,9 +18,10 @@ final run's root (``\\FinalNHonest``, ...).
 ``--platform`` takes one platform or a comma-separated list, whose counts are added (a cell finished in a later
 platform's root replaces the same cell of an earlier one, as in the tables).  A listed platform that has no raw root
 yet (a run still to come) is skipped with a warning: the counts are then partial.  ``--definition`` counts only the
-defining defence and tamper cells under the plan ``--policy`` (``experiments.paper.bench.definition_tagsets``: no
-cells of the uncompressed proofs, stand-ins or by-products of those roots); ``--require-tag TAG`` only the cells
-whose name carries TAG.
+defining defence and tamper cells under the plan ``--policy``, the language models' at the attention probabilities'
+scale ``--prob-max`` (default 2047, the final run's; 255 for the stored runs' cells), as
+``experiments.paper.bench.definition_tagsets`` defines them (no cells of the uncompressed proofs, stand-ins or
+by-products of those roots); ``--require-tag TAG`` only the cells whose name carries TAG.
 
 Honest queries: every ``accepted`` record of a defence cell (the batched image and language-model queries included).
 Attacks: every ``rejected`` record of the tamper cells and every ``tamper_rejected`` record (the one tampered query of
@@ -45,6 +47,7 @@ from pathlib import Path
 
 from experiments.common.paths import BENCH
 from experiments.paper.bench import DEFAULT_POLICY as PAPER_POLICY
+from experiments.paper.bench import DEFAULT_PROB_MAX as PAPER_PROB_MAX
 
 SUITES = ("cnn", "llm")
 PLUS_ONE = "one pre-activation +1"   # the attack of every LLM defence cell (no 'attack' field)
@@ -215,8 +218,12 @@ def build_parser() -> argparse.ArgumentParser:
                          f"{PAPER_POLICY}, the paper's: experiments.paper.bench.DEFAULT_POLICY; the stored runs of the "
                          "base implementation: auto, the planning rule)")
     ap.add_argument("--definition", action="store_true",
-                    help="count only the defining defence and tamper cells under --policy "
+                    help="count only the defining defence and tamper cells under --policy and --prob-max "
                          "(experiments.paper.bench.definition_tagsets), without by-products and stand-ins")
+    ap.add_argument("--prob-max", type=int, default=PAPER_PROB_MAX,
+                    help=f"with --definition: the language models' attention probabilities' scale (default "
+                         f"{PAPER_PROB_MAX}, the final run's: cells tagged pmax{PAPER_PROB_MAX}; the stored runs: 255, "
+                         "cells without the tag)")
     ap.add_argument("--require-tag", action="append", default=[], metavar="TAG",
                     help="count only the cells whose name carries this tag (repeatable; e.g. wire: the cells in the "
                          "compact encoding only)")
@@ -240,7 +247,7 @@ def main() -> None:
     definition = None
     if args.definition:
         from experiments.paper import bench    # the one definition of the cost tables' cells
-        definition = bench.definition_tagsets(args.policy)
+        definition = bench.definition_tagsets(args.policy, args.prob_max)
     c = count_runs(roots, args.policy, args.require_tag, definition)
     label = (" + ".join(r.name for r in roots)
              + (f" (cells tagged {', '.join(args.require_tag)})" if args.require_tag else "")

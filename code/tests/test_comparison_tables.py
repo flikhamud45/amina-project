@@ -76,7 +76,7 @@ def _tables(tmp_path, rows: list[list], name: str = "t") -> B.Bench:
     return B.Bench(d, "cnn18c")
 
 
-def _row(metric, value, variant="_wire_gpuv_stream_prune_polcnn18c", provenance="measured", ch="fs"):
+def _row(metric, value, variant="_wire_gpuv_stream_prune_pmax2047_polcnn18c", provenance="measured", ch="fs"):
     return ["llama2-7b", 2048, "C", ch, 128, metric, 8, 4, variant, "cuda", "NVIDIA L40S",
             "NVIDIA L40S (GPU client) + AMD EPYC 9334 x8 threads", 32, 6738149376, value, provenance, ""]
 
@@ -86,22 +86,27 @@ def test_the_streaming_verifier_is_timed_once(tmp_path):
     b = _tables(tmp_path, base + [_row("verify_total", 3.0)])
     c = b.llm_cost("llama2-7b", 2048, "c_gpu")
     assert (c["prove"], c["verify"], c["bytes"]) == (2.75, 3.25, 1000.0)
-    assert c["cell"] == "defence_C_fs_lam128_T2048_L32_wire_gpuv_stream_prune_polcnn18c"
+    assert c["cell"] == "defence_C_fs_lam128_T2048_L32_wire_gpuv_stream_prune_pmax2047_polcnn18c"
     both = _tables(tmp_path, base + [_row("verify_total", 3.0), _row("verify_products", 1.5)], "both")
     with pytest.raises(ValueError):
         both.llm_cost("llama2-7b", 2048, "c_gpu")
 
 
 def test_a_cell_is_selected_by_its_settings_only(tmp_path):
-    """A cell of other challenges, another plan, extrapolated rows or a batch never stands in for the cell."""
-    rows = [_row("prove_forward", 1.0, "_wire_prune_polcnn18c"), _row("verify_products", 2.0, "_wire_prune_polcnn18c"),
-            _row("prove_forward", 9.0, "_wire_prune_polauto"), _row("prove_forward", 8.0, "_wire_prune_polcnn18c",
-                                                                     ch="int"),
-            _row("prove_forward", 7.0, "_wire_prune_lookups", "extrapolated_from_1_and_2_blocks")]
+    """A cell of other challenges, another plan, another attention probabilities' scale, extrapolated rows or a batch
+    never stands in for the cell; the stored runs' 8-bit cells (no ``pmax`` tag) are read at their scale only."""
+    rows = [_row("prove_forward", 1.0, "_wire_prune_pmax2047_polcnn18c"),
+            _row("verify_products", 2.0, "_wire_prune_pmax2047_polcnn18c"),
+            _row("prove_forward", 9.0, "_wire_prune_pmax2047_polauto"),
+            _row("prove_forward", 8.0, "_wire_prune_pmax2047_polcnn18c", ch="int"),
+            _row("prove_forward", 6.0, "_wire_prune_polcnn18c"), _row("verify_products", 3.0, "_wire_prune_polcnn18c"),
+            _row("prove_forward", 7.0, "_wire_prune_lookups_pmax2047", "extrapolated_from_1_and_2_blocks")]
     b = _tables(tmp_path, rows)
     assert b.llm_cost("llama2-7b", 2048, "c_cpu")["prove"] == 1.0
     assert b.llm_cost("llama2-7b", 2048, "c_cpu_int")["prove"] == 8.0
     assert b.llm_cost("llama2-7b", 2048, "kpre_cpu") is None          # extrapolated: not a full build
+    stored = B.Bench(b.dir, "cnn18c", B.STORED_PROB_MAX)
+    assert stored.llm_cost("llama2-7b", 2048, "c_cpu")["prove"] == 6.0    # the 8-bit cell, at its own scale
     assert B.tagset("_wire_gpuv_prune_polcnn18c") == B.tagset("_gpuv_wire_polcnn18c_prune")
 
 
@@ -123,7 +128,8 @@ def test_counts_of_several_runs_add_up():
 
 
 def test_counts_can_keep_the_definition_cells_only():
-    d = B.definition_tagsets("auto")
+    """The stored runs' defining cells (8-bit decoders: no ``pmax`` tag) and the final run's (``pmax2047``)."""
+    d = B.definition_tagsets("auto", B.STORED_PROB_MAX)
     assert co.cell_tags("tamper_C_int_lam40_T64_L32_wire_prune_polauto") == ("C", {"wire", "prune", "polauto"})
     assert co.cell_tags("commit_T64_L12") == (None, None)
     keep = lambda suite, cell: co._kept(suite, cell, (), d)   # noqa: E731
@@ -135,6 +141,10 @@ def test_counts_can_keep_the_definition_cells_only():
     assert not keep("llm", "defence_C_int_lam128_T64_L32_wire_polauto")          # a stand-in, not the definition
     assert not keep("llm", "defence_C_int_lam128_T2048_L32_gpuv_stream")         # the uncompressed proof format
     assert not keep("llm", "defence_Kpre_int_lam40_T8_L36_thr1_prune_lookups")   # Maverick's uncompressed by-product
+    final = B.definition_tagsets("cnn18c")
+    assert co._kept("llm", "defence_C_fs_lam128_T2048_L32_wire_prune_pmax2047_polcnn18c", (), final)
+    assert not co._kept("llm", "defence_C_fs_lam128_T2048_L32_wire_prune_polcnn18c", (), final)   # an 8-bit cell
+    assert co._kept("cnn", "defence_C_int_lam40_rate4_wire_polcnn18c", (), final)                 # no attention
 
 
 def test_the_stored_counts_are_the_papers():
@@ -143,6 +153,6 @@ def test_the_stored_counts_are_the_papers():
     roots = [BENCH / f"raw_{n}" for n in STORED_RUNS]
     if not all((r / "PLATFORM.json").exists() for r in roots):
         pytest.skip("the stored raw runs are not in this checkout")
-    m = co.macros(co.count_runs(roots, "auto", (), B.definition_tagsets("auto")), "")
+    m = co.macros(co.count_runs(roots, "auto", (), B.definition_tagsets("auto", B.STORED_PROB_MAX)), "")
     assert (m["NHonest"], m["NAttacks"], m["NFreivalds"], m["NColumnsCode"], m["NColumnsMerkle"], m["NRange"]) == \
         (3792, 2512, 1601, 853, 56, 2)

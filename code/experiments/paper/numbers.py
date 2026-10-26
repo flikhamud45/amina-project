@@ -17,7 +17,9 @@ Inputs (nothing here runs a model):
   and the documents of the attack tier (``attack/*.json``, ``attack/analytic.csv``) and of the tv tier
   (``sampler_tv_*.json``);
 * ``--platform``: the benchmark's aggregated tables ``tables_<name>/`` and its raw records ``raw_<name>/`` (the
-  outcome counts) in ``--bench`` (default ``artifacts/comparison``), :mod:`experiments.paper.bench`;
+  outcome counts) in ``--bench`` (default ``artifacts/comparison``), :mod:`experiments.paper.bench`, whose decoder
+  cells are those of the attention probabilities' scale ``--prob-max`` (default 2047, the cells tagged
+  ``pmax2047``);
 * the published systems' values (``artifacts/comparison/tables/reported_curated.csv``), zkLLM's stored runs on the
   run's GPU model (``artifacts/results/zkllm_l40s/``), the formulas of the spot-checking schemes and of the path
   protocol (``attack/sok.py``: ``tab:sok``, ``tab:paths``) and, for ``tab:params``, ``tab:setup`` and the break-even,
@@ -51,7 +53,8 @@ plan is not ``--policy``.  ``--rehearsal``: a rehearsal's folder (small models; 
 every tier must have at least one record of each kind it writes (:data:`experiments.paper.records.REHEARSAL_KINDS`),
 every builder runs on what is there, and the checks apply, except those of what the text states about the final values
 (the sign of a loss; a path count of the attack's documents or the benchmark that differs from the formula's, which
-``tab:sok`` prints as the same number), which are warnings.
+``tab:sok`` prints as the same number; the 11-bit attention probabilities of every cost record: ``CHECK FAILED
+text:`` lines), which are warnings.
 """
 from __future__ import annotations
 
@@ -67,7 +70,7 @@ from experiments.common.paths import BENCH, CODE
 from experiments.paper import macros as M
 from experiments.paper import records as R
 from experiments.paper import tables as T
-from experiments.paper.bench import DEFAULT_POLICY, Bench, literature
+from experiments.paper.bench import DEFAULT_POLICY, DEFAULT_PROB_MAX, Bench, literature
 
 REPO = CODE.parent
 PAPER = REPO / "paper_sp2027"
@@ -402,7 +405,7 @@ def build(args) -> int:
     failed = [f"CHECK FAILED {Path(r.path).name}:{r.line}: {msg}" for r in recs for msg in R.checks(r)]
     failed += R.log_checks(logs) if logs.is_dir() else []
     tables_dir = Path(args.bench) / f"tables_{args.platform}"
-    bench = Bench(tables_dir if tables_dir.is_dir() else None)
+    bench = Bench(tables_dir if tables_dir.is_dir() else None, prob_max=args.prob_max)
     policy, warnings = choose_plan(args.policy, record_plans(run, bench))
     bench.policy = policy
     failed += machine_check(run, bench)
@@ -503,6 +506,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--policy", default=None,
                     help="mode C's commitment plan of the run (run.sh --policy; default: the plan the records name, "
                          f"else {DEFAULT_POLICY}); a plan the records do not name is a WARNING")
+    ap.add_argument("--prob-max", type=int, default=DEFAULT_PROB_MAX,
+                    help="the decoders' attention probabilities' scale of the run's benchmark cells (their tag "
+                         f"pmax<n>; default {DEFAULT_PROB_MAX}, run.sh's; 255: the stored runs' 8-bit cells)")
     ap.add_argument("--bench", default=str(BENCH),
                     help="the folder of the benchmark's tables_<platform>/ and raw_<platform>/ (default "
                          "artifacts/comparison)")

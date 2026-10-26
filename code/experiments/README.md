@@ -36,7 +36,9 @@ paper's measured results (the protocol's: `experiments.common.cli.PAPER`):
 * **Protocol** (`experiments.common.cli`): mode C's commitment plan `cnn18c` (`--policy`), Fiat-Shamir
   (`--no-fs`: interactive), the compact wire encoding (`--no-wire`), the lean prover (`--no-lean`), the last decoder
   block computed at the last position only (`--no-prune-last`), the verifier reading the embedding rows itself in
-  modes K and Kpre (`--no-lookups`), `--lam 128`, `--rate 4`, and `--setup-cache DIR` for the prover's setup cache.
+  modes K and Kpre (`--no-lookups`), random-weight decoders with 11-bit attention probabilities as the certified
+  models (`--prob-max 2047`; `--prob-max 255`: the 8-bit graphs), `--lam 128`, `--rate 4`, and `--setup-cache DIR`
+  for the prover's setup cache.
 * **Models**: random weights with the benchmark shapes for the cost cells; for real checkpoints the certified OPT
   recipe (`pvi.models.hf_opt.CERTIFIED_RECIPE`) and the main Llama recipe with its fixed public prefix
   (`pvi.models.hf_llama.MAIN_RECIPE`, per checkpoint `main_recipe`). The percentile recipe is `--recipe legacy`.

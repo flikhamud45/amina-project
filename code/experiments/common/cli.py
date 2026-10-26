@@ -2,8 +2,9 @@
 
 The protocol flags default to the configuration of the paper's measured results (:data:`PAPER`): mode C's
 commitment plan ``cnn18c``, Fiat--Shamir, the compact wire encoding, the lean prover, the last decoder block
-pruned to the last position, and the verifier reading the embedding rows itself (lookups), at ``lambda = 128`` and
-Reed--Solomon rate 4.  Each flag turns one of them off or changes it, so that every other configuration the paper
+pruned to the last position, the verifier reading the embedding rows itself (lookups) and random-weight decoders with
+11-bit attention probabilities (``prob_max`` 2047, as the certified models), at ``lambda = 128`` and Reed--Solomon
+rate 4.  Each flag turns one of them off or changes it, so that every other configuration the paper
 reports (interactive challenges, the per-op commitment, ...) is one flag away.  The runtime flags choose the
 devices and threads and every implementation option (:mod:`pvi.options`).
 """
@@ -17,8 +18,8 @@ import torch
 
 from pvi import options
 
-__all__ = ["Protocol", "PAPER", "RATE", "CALIB_TOKENS", "add_protocol_arguments", "add_runtime_arguments",
-           "apply_runtime", "protocol_of"]
+__all__ = ["Protocol", "PAPER", "RATE", "CALIB_TOKENS", "add_protocol_arguments", "add_prob_max_argument",
+           "add_runtime_arguments", "apply_runtime", "protocol_of"]
 
 RATE = 4
 """The Reed--Solomon rate (codeword length over row length) of the weight commitment."""
@@ -44,6 +45,9 @@ class Protocol:
     lam: int = 128
     """The security level in bits."""
     rate: int = RATE
+    prob_max: int = 2047
+    """Random-weight decoders: the attention probabilities' scale (``build_decoder(prob_max=...)``), 2047 (11 bits) as
+    the certified models' (:data:`pvi.models.decoder.CERTIFIED_PROB_MAX`); 255 builds the 8-bit graphs."""
 
 
 PAPER = Protocol()
@@ -76,6 +80,7 @@ def add_protocol_arguments(parser: argparse.ArgumentParser, *, variants: bool = 
                        help="decoders: the last block at the last position only")
         g.add_argument("--lookups", action=argparse.BooleanOptionalAction, default=defaults.lookups,
                        help="modes K and Kpre: the verifier reads the embedding rows itself")
+    add_prob_max_argument(g, variants=variants, default=defaults.prob_max)
     g.add_argument("--fs", action=argparse.BooleanOptionalAction, default=defaults.fiat_shamir,
                    help="Fiat-Shamir challenges (off: interactive)")
     g.add_argument("--lam", type=int, default=defaults.lam, help="security level in bits")
@@ -85,10 +90,31 @@ def add_protocol_arguments(parser: argparse.ArgumentParser, *, variants: bool = 
                         "digests (the same roots and proofs); default none")
 
 
+def _prob_max(text: str) -> int:
+    v = int(text)
+    if not 1 <= v <= 2047:
+        raise argparse.ArgumentTypeError(f"a probability scale from 1 to 2047 (the exact kernels' bound), not {v}")
+    return v
+
+
+def add_prob_max_argument(parser, *, variants: bool = False, default: int = PAPER.prob_max, note: str = "") -> None:
+    """``--prob-max``: random-weight decoders' attention probabilities' scale (:attr:`Protocol.prob_max`); with
+    ``variants`` a list of scales timed side by side.  ``parser``: a parser or an argument group; ``note``: appended
+    to the help."""
+    text = ("random-weight decoders: the attention probabilities' scale, p = round(prob_max e / tot) in 0..prob_max "
+            "(build_decoder(prob_max=...); 2047: 11 bits, as the certified models; 255: the 8-bit graphs)" + note)
+    if variants:
+        parser.add_argument("--prob-max", nargs="+", type=_prob_max, default=[default],
+                            help=text + ", one or more, timed side by side")
+    else:
+        parser.add_argument("--prob-max", type=_prob_max, default=default, help=text)
+
+
 def protocol_of(args: argparse.Namespace) -> Protocol:
     """The :class:`Protocol` of single-valued protocol flags."""
     return Protocol(policy=args.policy, fiat_shamir=args.fs, wire=args.wire, lean=args.lean,
-                    prune_last=args.prune_last, lookups=args.lookups, lam=args.lam, rate=args.rate)
+                    prune_last=args.prune_last, lookups=args.lookups, lam=args.lam, rate=args.rate,
+                    prob_max=args.prob_max)
 
 
 def add_runtime_arguments(parser: argparse.ArgumentParser, *, threads: int = 8, verifier_device: bool = True) -> None:

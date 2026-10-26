@@ -36,8 +36,8 @@ outputs remove more than half of the gap; extended version~\cite{fullversion}). 
 rounding, not clipping: a few outlier channels of OPT's residual stream inflate the standard
 deviation, so a scalar gain that keeps them within int8 leaves the other channels few levels. At
 2{,}048 tokens 8-bit attention probabilities cost another \QualityProbCost{}\%, since a rounded row keeps as
-little as \QualityMassMinEight{}\% of its mass; the certified models use 11-bit probabilities (\QualityMassMinEleven{}\% of the mass), which
-change neither the proof's size nor its cost.
+little as \QualityMassMinEight{}\% of its mass; the certified models and all cost measurements use 11-bit probabilities (\QualityMassMinEleven{}\% of the mass), which
+change the proof's size by at most \ProbBitsBytes{}\% and the prover's and verifier's times by at most \ProbBitsTime{}\%~\cite{fullversion}.
 
 \para{SmoothQuant through the norm's gains.} Per-channel gains absorb SmoothQuant's
 scaling~\cite{xiao2023smoothquant}: channel $j$ gets the gain $\gamma_j=\kappa/s_j$ with
