@@ -140,7 +140,7 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 180 jobs. There, the paper's run submits its tiers as eight jobs (`--one-job`), each
+waits that long for each of its 183 jobs. There, the paper's run submits its tiers as eight jobs (`--one-job`), each
 of which runs its tiers' jobs one after another in its allocation: the timed tiers in six jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `tv`, `attack`) in two jobs on one GPU of a shared node:
 
@@ -152,7 +152,7 @@ $R --one-job smoke real                          # 9-13 h
 $R --one-job smoke serve gen batch               # 13-17 h
 $R --one-job smoke v1 setup improve              # 9-16 h
 $R --one-job smoke gpuv                          # 5-7 h
-$R --one-job --no-exclusive smoke quality        # 17-25 h, not timed
+$R --one-job --no-exclusive smoke quality        # 17-25 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive smoke tv attack      # 6-9 h, not timed
 ```
 
