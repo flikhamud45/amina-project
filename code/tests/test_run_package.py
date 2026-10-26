@@ -643,13 +643,14 @@ def _paths(script: str, cmd: str) -> set:
 
 def _scripts(lines: list[str]) -> dict:
     """``{tier: {(script, path)}}`` of a dry run: the script of every command of a job (``-m
-    experiments.<section>.<name>``) with each path it takes (:func:`_paths`)."""
+    experiments.<section>.<name>``) with each path it takes (:func:`_paths`); the node check that starts every job
+    (``experiments.package.node``) is not a tier's script."""
     out: dict = {}
     for line in lines:
         tier = tier_of(_job(line)[len("sp-"):])
         for cmd in re.split(r"&&|;", line.split("--wrap", 1)[1]):
             m = re.search(r"-m experiments\.(\w+\.\w+)", cmd)
-            if m:
+            if m and m.group(1) != "package.node":
                 out.setdefault(tier, set()).update((m.group(1), p) for p in _paths(m.group(1), cmd))
     return out
 
