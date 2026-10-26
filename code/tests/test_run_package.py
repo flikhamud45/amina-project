@@ -20,9 +20,14 @@
   measure the client's own memory; the gate tier (the full-size checks before the run) is not in 'all', is refused
   with --rehearsal, and its V1 cells reach GKR instances of 2^lmax leaves (exactly 2^lmax on OPT-1.3B), its long cells
   16,384 tokens;
+* every job starts by logging its node and checking the GPU and CPU models (``experiments/package/node.py``; exit
+  status 86 on another model), and ``--gres`` and ``--exclude-nodes`` reach every job and allocation;
 * the package's submission against stand-ins for SLURM: a queued job of the same platform is not submitted again and
   the chain and the smoke gate pass through it; ``--one-job`` submits the tiers as one whole-node job that runs them
-  with ``--local``, and a ``--local`` run again runs the smoke and only the jobs that did not end successfully;
+  with ``--local``, and a ``--local`` run again runs the smoke and only the jobs that did not end successfully; a
+  ``--local`` run checks its node first (on another model it runs nothing), runs every job past a failed one, needs
+  no smoke when the smoke tier is not selected, and ends with a summary that names the command to submit again;
+  nothing is submitted without a GPU request;
   nothing is submitted when the partition lacks the memory, the compiler (or, for the cpuv tier's llama.cpp build,
   CMake) is missing, the interpreter lacks the quality tier's tokenizer libraries, a Hugging Face cache variable
   overrides ``HF_HOME`` with an unwritable folder or the bench tier's models and datasets are; ``bench.py`` itself
@@ -211,17 +216,21 @@ def test_the_help_prints_the_whole_header():
     out = subprocess.run([_bash(), str(RUN), "--help"], cwd=REPO, capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and out.stdout.rstrip().endswith("is the runner's guide."), out.stdout[-300:]
     assert "--no-pin" in out.stdout and "--no-native-ok" in out.stdout
+    assert all(f in out.stdout for f in ("--require-gpu", "--require-cpu", "--gres", "--exclude-nodes"))
 
 
 FAKE = {"squeue": '#!/bin/bash\n[ -z "${FAKE_QUEUE:-}" ] || printf \'%s\\n\' "$FAKE_QUEUE"\n',
         "sbatch": '#!/bin/bash\necho "$*" >> "$FAKE_LOG"\ncat > /dev/null\nwc -l < "$FAKE_LOG" | tr -d " "\n',
         "sinfo": '#!/bin/bash\nprintf \'%s\\n\' $FAKE_MEM\n',
-        "fakepy": '#!/bin/bash\ncase "$*" in *"${FAKE_FAIL:-@none@}"*) exit 3 ;; esac\necho "{}"\n',
+        "fakepy": '#!/bin/bash\ncase "$*" in *experiments.package.node*) [ -z "${FAKE_WRONG_NODE:-}" ] || '
+                  '{ echo "wrong node: GPU NVIDIA A100 / CPU Intel Xeon, expected GPU L40S"; exit 86; } ;; esac\n'
+                  'case "$*" in *"${FAKE_FAIL:-@none@}"*) exit 3 ;; esac\necho "{}"\n',
         "cmake": '#!/bin/bash\necho "cmake version 3.31.6"\n'}
 """Stand-ins for SLURM's commands, the interpreter and CMake: ``squeue`` lists ``$FAKE_QUEUE`` (``name|platform|id``
 lines), ``sbatch`` appends its arguments to ``$FAKE_LOG`` and answers with its line number as the job id, ``sinfo``
 gives each node's memory in MB (``$FAKE_MEM``); the interpreter prints ``{}`` and succeeds, except for a command
-line that contains ``$FAKE_FAIL`` (exit status 3); ``cmake`` (the cpuv tier's pre-flight) prints its version."""
+line that contains ``$FAKE_FAIL`` (exit status 3) and the node check with ``$FAKE_WRONG_NODE`` set (exit status 86,
+``wrong node``); ``cmake`` (the cpuv tier's pre-flight) prints its version."""
 
 HF_CACHES = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE", "HF_HUB_OFFLINE",
              "TRANSFORMERS_OFFLINE")
@@ -242,10 +251,11 @@ def _submit(tmp_path, *argv, queue: str = "", mem: str = "1031000", cxx: bool = 
     log = tmp_path / "sbatch.log"
     log.write_text("")
     py = (bin_ / "fakepy").as_posix()
-    drop = ("PVI_CACHE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT", "FAKE_FAIL", *HF_CACHES)
+    drop = ("PVI_CACHE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT", "FAKE_FAIL", "FAKE_WRONG_NODE", *HF_CACHES)
     env = {k: v for k, v in os.environ.items() if k not in drop}
     env.update(PATH=f"{bin_}{os.pathsep}{os.environ['PATH']}", FAKE_QUEUE=queue, FAKE_MEM=mem, FAKE_LOG=log.as_posix(),
-               CXX=py if cxx else "", HF_HOME=(tmp_path / "hf").as_posix(), **(extra or {}))
+               CXX=py if cxx else "", HF_HOME=(tmp_path / "hf").as_posix(), SBATCH_GRES="gpu:l40s:1")
+    env.update(extra or {})
     out = subprocess.run([bash, str(RUN), "--python", py, *argv], cwd=root, env=env, capture_output=True, text=True,
                          timeout=120)
     return out.returncode, out.stdout, out.stderr, log.read_text().splitlines()
@@ -279,18 +289,20 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
     status, out, err, jobs = _submit(tmp_path / "a", *argv)
     assert status == 0 and len(jobs) == 1, err
     for part in ("-J sp-node-smoke-cpuv-long", "--comment=final", "--exclusive", "--mem=0", "--time=24:00:00",
-                 "--requeue", "--open-mode=append", "--dependency=singleton", "logs/final/node-smoke-cpuv-long-%j.log"):
+                 "--requeue", "--open-mode=append", "--dependency=singleton", "logs/final/node-smoke-cpuv-long-%j.log",
+                 "--gres=gpu:l40s:1"):
         assert part in jobs[0], (part, jobs[0])
     assert "# one job: smoke cpuv long: 27 jobs, job limits 56 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
-    assert re.search(r' && bash code/experiments/package/run\.sh --local --python \S+ --platform final '
-                     r'--llama-licence smoke cpuv long"$', line), line
+    assert re.search(r' && bash code/experiments/package/run\.sh --local --python \S+ --max-hours 12 --platform final '
+                     r'--llama-licence smoke cpuv long --from-one-job"$', line), line
     status, out, err, jobs = _submit(tmp_path / "c", *argv, queue="sp-node-smoke-cpuv-long|final|77")
     assert status == 0 and not jobs and "skip sp-node-smoke-cpuv-long: already queued (job 77)" in out, err
     status, out, err, jobs = _submit(tmp_path / "d", "--no-exclusive", *argv)
     assert status == 0 and "--mem=256G" in jobs[0] and "--exclusive" not in jobs[0], jobs
+    assert "--gres=gpu:l40s:1" in jobs[0]                   # the jobs that time nothing get the same GPU
     status, out, err, jobs = _submit(tmp_path / "e", "--local", *argv)
     assert status == 2 and not jobs and "--one-job submits a job that runs --local itself" in err
 
@@ -303,11 +315,15 @@ def test_a_local_run_again_runs_the_smoke_and_the_jobs_that_did_not_end_successf
     argv = ("--platform", "t", "--rehearsal", "--local", "smoke", "cpuv")
     logs = tmp_path / "root" / "logs" / "t"
     status, out, err, _ = _submit(tmp_path, *argv, extra={"FAKE_FAIL": "reexec.reexec"})
-    assert status == 0 and "sp-c-rx-gpt2: exit status 3" in err, err
+    assert status == 1 and "sp-c-rx-gpt2: exit status 3" in err, err
+    assert re.search(r"^#   FAILED  sp-c-rx-gpt2 \(exit status 3\)  logs/t/sp-c-rx-gpt2-\d+\.out$", out, re.M), out
+    assert re.search(r"^#   bash code/experiments/package/run\.sh --python \S+ --platform t --rehearsal --local smoke "
+                     r"cpuv$", out, re.M), out
     assert sorted(p.name for p in (logs / "done").iterdir()) == ["sp-c-gpt2-64", "sp-c-llamacpp-llama2-7b-L1",
                                                                  "sp-c-v1-gpt2-64", "sp-smoke"]
     status, out, err, _ = _submit(tmp_path, *argv)
     assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke", "sp-c-rx-gpt2"], out
+    assert "# every job of this submission has ended successfully" in out
     assert "skip sp-c-gpt2-64: ended successfully earlier" in out and "# 3 jobs had ended successfully" in out
     (logs / "done" / "sp-c-gpt2-64").unlink()
     status, out, err, _ = _submit(tmp_path, *argv)
@@ -316,6 +332,108 @@ def test_a_local_run_again_runs_the_smoke_and_the_jobs_that_did_not_end_successf
     ids = [int(LOG.match(p.name)["job"]) for p in smokes]
     assert len(ids) == 3 and ids == sorted(ids) and all("SMOKE OK" in p.read_text() for p in smokes)
     assert all(LOG.match(p.name) for p in logs.glob("*.out"))
+
+
+def test_a_submission_without_the_smoke_runs_every_job_past_a_failure_and_names_its_command(tmp_path):
+    """A --one-job allocation (--local --from-one-job) without the smoke tier starts at once (no SMOKE OK needed),
+    runs every job although one before them failed (no job reads another's output), and its summary names each job
+    with its log, the failed one with its exit status, and the --one-job command, which, submitted again, runs only
+    the failed job."""
+    argv = ("--platform", "t", "--rehearsal", "--local", "--from-one-job", "cpuv")
+    status, out, err, _ = _submit(tmp_path, *argv, extra={"FAKE_FAIL": "reexec.reexec"})
+    ran = ["sp-c-gpt2-64", "sp-c-rx-gpt2", "sp-c-v1-gpt2-64", "sp-c-llamacpp-llama2-7b-L1"]
+    assert status == 1 and re.findall(r"running (sp-\S+)", out) == ran, (out, err)
+    assert "sp-smoke" not in out and "SMOKE OK" not in out + err
+    assert "3 jobs ended successfully, 1 failed, 0 had ended successfully in an earlier run" in out
+    assert len(re.findall(r"^#   ok      sp-c-\S+  logs/t/sp-c-\S+\.out$", out, re.M)) == 3, out
+    assert re.search(r"^#   FAILED  sp-c-rx-gpt2 \(exit status 3\)  logs/t/sp-c-rx-gpt2-\d+\.out$", out, re.M), out
+    command = re.search(r"^#   (bash code/experiments/package/run\.sh .*)$", out, re.M).group(1)
+    assert re.fullmatch(r"bash code/experiments/package/run\.sh --python \S+ --platform t --rehearsal --one-job cpuv",
+                        command), command
+    status, out, err, _ = _submit(tmp_path, *argv)
+    assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-c-rx-gpt2"], out
+
+
+def test_a_failed_smoke_still_stops_its_own_invocation(tmp_path):
+    """With the smoke tier, nothing after it runs unless it ends in SMOKE OK, and the summary says so."""
+    status, out, err, _ = _submit(tmp_path, "--platform", "t", "--rehearsal", "--local", "smoke", "cpuv",
+                                  extra={"FAKE_FAIL": "-m pytest"})
+    assert status == 1 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke"], out
+    assert "the smoke did not end in SMOKE OK: the jobs after it were not run" in out
+    assert "#   FAILED  sp-smoke (exit status 3)" in out and "--local smoke cpuv" in out
+
+
+def test_a_node_of_another_model_runs_nothing(tmp_path):
+    """--local (a --one-job allocation) checks its node before the first job: on another GPU or CPU model it runs no
+    job, exits with status 86 and names the command to submit again with the node excluded."""
+    status, out, err, _ = _submit(tmp_path, "--platform", "t", "--rehearsal", "--local", "--from-one-job", "cpuv",
+                                  extra={"FAKE_WRONG_NODE": "1"})
+    assert status == 86 and "running" not in out, out
+    assert "wrong node: GPU NVIDIA A100 / CPU Intel Xeon" in out and "the node check failed (exit status 86)" in err
+    assert "--exclude-nodes" in out and "--rehearsal --one-job cpuv" in out
+    assert not list((tmp_path / "root" / "logs" / "t").glob("sp-*.out"))
+
+
+def test_every_job_checks_its_node_and_asks_for_the_same_gpu():
+    """Every job's first command logs its node and checks the GPU and CPU models (default the paper's, L40S and EPYC
+    9334; 'any' checks nothing), and --gres and --exclude-nodes reach every job and every --one-job allocation, also
+    one without --exclusive (the tiers that time nothing); the dry run prints the requirement."""
+    check = "-m experiments.package.node --require-gpu L40S --require-cpu EPYC\\ 9334 && "
+    runs: list = []
+    lines = _dry(out=runs)
+    assert all(check in line for line in lines) and "# node: GPU 'L40S', CPU 'EPYC 9334'" in runs[0].stdout
+    for line in lines:                                  # the check comes before the pinning and any work
+        first = re.search(r"-m (experiments\.\S+|pytest)", line.split("--wrap", 1)[1]).group(1)
+        assert first == "experiments.package.node", _job(line)
+    lines = _dry("--require-gpu", "any", "--require-cpu", "any", "--gres", "gpu:l40s:1", "--exclude-nodes", "t-806")
+    assert all("--require-gpu any --require-cpu any && " in line for line in lines)
+    assert all("--gres=gpu:l40s:1" in line and "--exclude=t-806" in line for line in lines)
+    for flags in ((), ("--no-exclusive",)):
+        one = _dry(*flags, "--one-job", "--gres", "gpu:l40s:1", "--exclude-nodes", "t-806", tiers=("tv", "attack"))
+        assert len(one) == 1 and "--gres=gpu:l40s:1 --exclude=t-806" in one[0], one
+        assert "--exclude-nodes t-806 tv attack --from-one-job" in one[0]
+    _dry("--require-gpu", "", status=2)
+
+
+def test_nothing_is_submitted_without_a_gpu_request(tmp_path):
+    status, _, err, jobs = _submit(tmp_path / "a", "--platform", "final", "smoke", extra={"SBATCH_GRES": ""})
+    assert status == 2 and not jobs and "no GPU requested" in err, err
+    status, _, err, jobs = _submit(tmp_path / "b", "--platform", "final", "--gres", "gpu:l40s:1", "smoke",
+                                   extra={"SBATCH_GRES": ""})
+    assert status == 0 and len(jobs) == 1 and "--gres=gpu:l40s:1" in jobs[0], err
+    status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "--gres", "gpu:1", "smoke")
+    assert status == 0 and "names no GPU type 'L40S'" in err, err
+
+
+def test_the_node_check(monkeypatch, capsys):
+    """``node.py``: one ``node:`` line of the node's fields; exit status 86 and a ``wrong node`` line when the GPU's
+    name or the CPU's model name lacks the required part (letters compared without case; 'any' requires nothing); a
+    job that sees no GPU has GPU none."""
+    from experiments.package import node
+    seen = {"host": "n-801", "gpu": "NVIDIA L40S", "gpu_count": 1, "cuda_visible_devices": "0", "gpu_uuid": None,
+            "gpu_bus_id": None, "driver": "535.183.01", "cpu": "AMD EPYC 9334 32-Core Processor", "slurm_job": "1",
+            "slurm_nodelist": "n-801"}
+    monkeypatch.setattr(node, "describe", lambda: dict(seen))
+    assert node.main(["--require-gpu", "l40s", "--require-cpu", "EPYC 9334"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("node: {") and json.loads(out.split("node: ", 1)[1]) == seen and "wrong" not in out
+    assert node.main([]) == 0 and node.main(["--require-gpu", "any", "--require-cpu", "any"]) == 0
+    capsys.readouterr()
+    seen.update(cpu="Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz", host="t-806")
+    assert node.main(["--require-gpu", "L40S", "--require-cpu", "EPYC 9334"]) == node.WRONG_NODE == 86
+    assert ("wrong node: GPU NVIDIA L40S / CPU Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz, expected GPU 'L40S' / CPU "
+            "'EPYC 9334' (host t-806") in capsys.readouterr().out
+    seen.update(gpu=None, cpu="AMD EPYC 9334 32-Core Processor")
+    assert node.main(["--require-gpu", "L40S"]) == 86 and "wrong node: GPU none / CPU AMD" in capsys.readouterr().out
+    assert node.matches("NVIDIA L40S", "l40s") and not node.matches(None, "L40S") and node.matches(None, "any")
+
+
+def test_the_node_description_on_this_host():
+    from experiments.package import node
+    d = node.describe()
+    assert set(d) == {"host", "gpu", "gpu_count", "cuda_visible_devices", "gpu_uuid", "gpu_bus_id", "driver", "cpu",
+                      "slurm_job", "slurm_nodelist"}
+    assert d["host"] and (d["gpu"] is None) == (d["gpu_count"] == 0)
 
 
 def test_a_hugging_face_cache_variable_the_jobs_cannot_write_stops_the_submission(tmp_path):

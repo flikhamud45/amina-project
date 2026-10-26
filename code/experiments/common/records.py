@@ -110,8 +110,9 @@ LIBRARIES = ("numpy", "scipy", "transformers", "tokenizers", "huggingface_hub", 
              "torchvision")
 """The libraries besides torch whose versions a record keeps (``None``: not installed)."""
 VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "NVIDIA_TF32_OVERRIDE", "PYTORCH_CUDA_ALLOC_CONF",
-             "MALLOC_MMAP_MAX_", "MALLOC_TRIM_THRESHOLD_", "MALLOC_TOP_PAD_")
-"""The environment variables of the thread pools, the allocators and cuBLAS that a record keeps when they are set
+             "MALLOC_MMAP_MAX_", "MALLOC_TRIM_THRESHOLD_", "MALLOC_TOP_PAD_", "CUDA_VISIBLE_DEVICES")
+"""The environment variables of the thread pools, the allocators and cuBLAS, and the GPUs the scheduler allocated
+(``CUDA_VISIBLE_DEVICES``; the record's ``gpu`` is device 0 among them), that a record keeps when they are set
 (recorded only; the library reads none of them)."""
 
 

@@ -44,8 +44,9 @@ paper prints today) otherwise.
 
 Checks: an honest query rejected, a tamper accepted, a byte accounting, serving or A/B check that failed, a setup
 proof rejected, an attribution whose float copy failed a check or whose integer graph is not the quality tier's cell
-of the same graph (:func:`experiments.paper.records.cross_checks`), the smoke's verdicts, records of more than one
-machine, builds of one certified model whose digests, weights or commitment roots differ
+of the same graph (:func:`experiments.paper.records.cross_checks`), the smoke's verdicts, jobs that name more than one
+GPU model or CPU model (each job's node line and records, :func:`machine_check`, which names the jobs of each model;
+the report's ``machines:`` line lists the nodes and drivers, which may differ), builds of one certified model whose digests, weights or commitment roots differ
 (:func:`experiments.paper.macros.digest_agreement`), a table cell that disagrees with the macro printing the same
 value (:data:`SAME_VALUE`; in the written files and in ``paper_sp2027/fallback/``), a statement of the text that the
 run's values contradict (``CHECK FAILED text:``, :data:`experiments.paper.macros.TEXT_CLAIM`): each is a ``CHECK
@@ -125,25 +126,42 @@ def job_coverage(jobs: dict, logs: Path, recs: list) -> list[str]:
     return missing
 
 
-def machine_check(run: R.Run, bench: Bench) -> list[str]:
-    """One platform: the records' GPUs and CPUs, and the benchmark tables' provers and client CPUs, name one GPU and
-    one CPU model."""
-    gpus, cpus = set(), set()
-    for r in run.recs:
-        env = r.d.get("env") or {}
-        if env.get("gpu"):
-            gpus.add(env["gpu"])
-        if env.get("cpu"):
-            cpus.add(env["cpu"])
+def _by_value(jobs: dict, key: str) -> dict[str, list[str]]:
+    """``{value: [jobs]}`` of one field of :func:`experiments.paper.records.machines`, the most frequent value
+    first."""
+    out: dict = defaultdict(list)
+    for job, m in sorted(jobs.items()):
+        for v in m[key]:
+            out[v].append(job)
+    return dict(sorted(out.items(), key=lambda kv: (-len(kv[1]), kv[0])))
+
+
+def machine_check(run: R.Run, bench: Bench, logs: Path | None = None) -> tuple[list[str], list[str]]:
+    """One platform: every job (its log's node line and its records' environments,
+    :func:`experiments.paper.records.machines`) and the benchmark tables' provers and client CPUs name one GPU model
+    and one CPU model; else a ``CHECK FAILED`` line per field that names each model with its jobs (all jobs but those
+    of the most frequent model, which are counted).  Returns ``(failures, summary)``: the summary lines name the
+    nodes and the drivers with their job counts (several nodes or drivers of one model are allowed)."""
+    jobs = R.machines(run, logs)
     provers, clients = bench.hardware()
-    gpus |= provers
-    cpus |= {re.sub(r" x\d+ threads$", "", c) for c in clients}
+    tables = {"gpu": set(provers), "cpu": {re.sub(r" x\d+ threads$", "", c) for c in clients}, "driver": set(),
+              "host": set()}
+    if tables["gpu"] or tables["cpu"]:
+        jobs["the benchmark's tables"] = tables
     bad = []
-    if len(gpus) > 1:
-        bad.append(f"CHECK FAILED platform: records of several GPUs: {sorted(gpus)}")
-    if len(cpus) > 1:
-        bad.append(f"CHECK FAILED platform: records of several CPUs: {sorted(cpus)}")
-    return bad
+    for key, what in (("gpu", "GPU"), ("cpu", "CPU")):
+        models = _by_value(jobs, key)
+        if len(models) > 1:
+            parts = [f"'{v}' ({len(js)} jobs)" if i == 0 else f"'{v}' ({len(js)} jobs: {', '.join(js)})"
+                     for i, (v, js) in enumerate(models.items())]
+            bad.append(f"CHECK FAILED platform: the jobs name {len(models)} {what} models: {'; '.join(parts)}")
+    summary = []
+    for key, what in (("host", "nodes"), ("driver", "drivers")):
+        values = _by_value(jobs, key)
+        if values:
+            summary.append(f"{what}: " + ", ".join(f"{v} ({len(js)} jobs)" for v, js in values.items())
+                           + (" (allowed)" if len(values) > 1 else ""))
+    return bad, (["machines: " + "; ".join(summary)] if summary else [])
 
 
 def platform_text(run: R.Run, bench: Bench) -> str:
@@ -418,7 +436,8 @@ def build(args) -> int:
     bench = Bench(tables_dir if tables_dir.is_dir() else None, prob_max=args.prob_max)
     policy, warnings = choose_plan(args.policy, record_plans(run, bench))
     bench.policy = policy
-    failed += machine_check(run, bench)
+    machine_failed, machine_summary = machine_check(run, bench, logs)
+    failed += machine_failed
     ctx = T.Ctx(run, bench, literature(), policy, platform_text(run, bench), not args.no_byte_model)
     tables = T.build_all(ctx, problems)
     macros, crossovers = M.build(ctx, failed)
@@ -439,7 +458,8 @@ def build(args) -> int:
                  if r.d.get("variant") in T.CHECKED_EXACT and not T.exact_record(r.d["variant"], r)]
 
     report = [f"logs {logs}: {len(recs)} records from {len(list(logs.glob('sp-*.out'))) if logs.is_dir() else 0} "
-              f"job logs, {len(files)} documents; bench tables {bench.name}; plan {policy}", ctx.platform]
+              f"job logs, {len(files)} documents; bench tables {bench.name}; plan {policy}", ctx.platform,
+              *machine_summary]
     counts = defaultdict(lambda: defaultdict(int))
     for r in recs + files:
         counts[r.tier][r.kind] += 1

@@ -9,7 +9,7 @@
 # Tiers, in the order 'all' runs them (each job's records go to logs/<name>/sp-<job>-<jobid>.out, the benchmark's to
 # code/artifacts/comparison/raw_<name>/):
 #     smoke    the GPU and native-kernel tests, one V1 query, the host-to-device copy; ends with "SMOKE OK", and no
-#              other tier of 'all' starts unless it does
+#              other tier of the same invocation starts unless it does (a submission without it starts at once)
 #     cpuv     the CPU verifier against every re-execution baseline on the same 8 threads (llama.cpp's included); V1's
 #              CPU verifier
 #     v1       V1 against v0 (bytes, prover and verifier times)
@@ -43,13 +43,31 @@
 #                       every tier: the whole package in about three hours on one GPU, or a platform check
 #     --local           no SLURM: every job runs here, in the foreground, one after another, logged as SLURM would;
 #                       a job that ended successfully in an earlier --local run of this platform is not run again
-#                       (its marker: logs/<name>/done/sp-<cell>); the smoke always runs, since it checks the node
+#                       (its marker: logs/<name>/done/sp-<cell>; the smoke always runs).  The node is checked first
+#                       (--require-gpu); a job that fails does not stop the jobs after it (no job reads another's
+#                       output; the setup cache and the reference caches are rebuilt where missing), and the run ends
+#                       with a summary (the jobs that ended successfully, those that failed with their logs and exit
+#                       statuses, the command that runs the failed and missing ones again) and exit status 1 if any
+#                       failed
 #     --one-job         submit the tiers as one SLURM job that runs their jobs one after another (run.sh --local in
-#                       its allocation) with the node to itself (unless --no-exclusive): one wait for a whole node
-#                       instead of one per job.  Submitting the same command again, after the job's time limit or a
-#                       pre-emption, runs only the jobs that have not ended successfully
+#                       its allocation, with the summary at the end of its log) with the node to itself (unless
+#                       --no-exclusive): one wait for a whole node instead of one per job.  Submitting the same
+#                       command again, after the job's time limit, a pre-emption or a failed job, runs only the jobs
+#                       that have not ended successfully
 #     --max-hours H     --one-job's time limit in hours (default 24, the partition's usual limit; the sum of the
 #                       jobs' limits if smaller)
+#     --require-gpu NAME  every job, and a --local run before its first job, starts by checking that the GPU it uses
+#                       (CUDA device 0 under CUDA_VISIBLE_DEVICES) has NAME in its name, and the CPU --require-cpu
+#                       in its model name (letters compared without case), and otherwise exits with status 86 and
+#                       "wrong node: GPU <x> / CPU <y>, expected ..." before doing any work
+#                       (experiments/package/node.py; every job's log names its node, GPU, driver and CPU).  Default:
+#                       the paper's platform, L40S; 'any' checks nothing
+#     --require-cpu NAME  default 'EPYC 9334' (the paper's); 'any' checks nothing
+#     --gres SPEC       the GPU each job and --one-job allocation asks for, passed to sbatch as --gres (default
+#                       $SBATCH_GRES; the paper's: gpu:l40s:1); under SLURM nothing is submitted without one
+#     --exclude-nodes LIST  nodes no job may run on (sbatch --exclude), e.g. nodes of the partition whose GPU or CPU
+#                       is of another model
+#     --from-one-job    set by --one-job on the command its allocation runs: the summary names the --one-job command
 #     --optional        'all' also runs the optional tier (long)
 #     --no-chain        do not chain the jobs (default: each job starts after the previous one ends, so no two timed
 #                       jobs share the node)
@@ -72,8 +90,8 @@
 #     --llama-licence   the Llama-2 cells (real, quality): only with your own Llama-2 licence and Hugging Face token
 #                       (HF_TOKEN); the rehearsal's one Llama-2 job reads the gated repository from a compute node
 #     --bigmem          the long tier also measures the full Llama-2-7B at 8,192 tokens (a node with >= 256 GB)
-# The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1,
-# SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
+# The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1
+# unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
 # llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
 # PVI_PY_INCLUDE, HF_HOME (the real, quality, tv, attack and gate tiers download checkpoints and datasets) and
 # PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute
@@ -92,6 +110,7 @@ set -euo pipefail
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 PLATFORM="" DRY="" REH="" LOCAL="" OPTIONAL="" CHAIN=1 EXCL="--exclusive" PIN=1 NONATIVE="" MEMMAX=256 QH=5 Q=3
 POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM="" ONEJOB="" MAXH=24 TIERS=()
+REQGPU="L40S" REQCPU="EPYC 9334" GRES="${SBATCH_GRES:-}" EXCLUDE="" FROMONE=""
 ARGV=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -115,6 +134,11 @@ while [ $# -gt 0 ]; do
     --extra-pythonpath) EXTRA_PP=$2; shift ;;
     --llama-licence) LLAMA=1 ;;
     --bigmem) BIGMEM=1 ;;
+    --require-gpu) REQGPU=$2; shift ;;
+    --require-cpu) REQCPU=$2; shift ;;
+    --gres) GRES=$2; shift ;;
+    --exclude-nodes) EXCLUDE=$2; shift ;;
+    --from-one-job) FROMONE=1 ;;
     -h|--help) usage 0 ;;
     -*) echo "unknown option $1" >&2; usage ;;
     *) TIERS+=("$1") ;;
@@ -126,6 +150,7 @@ done
 [ "${#TIERS[@]}" -gt 0 ] || usage
 [ -z "$ONEJOB" ] || [ -z "$LOCAL" ] || { echo "--one-job submits a job that runs --local itself" >&2; exit 2; }
 [[ "$MAXH" =~ ^[1-9][0-9]*$ ]] || { echo "--max-hours: a whole number of hours" >&2; exit 2; }
+[ -n "$REQGPU" ] && [ -n "$REQCPU" ] || { echo "--require-gpu, --require-cpu: a part of the name, or 'any'" >&2; exit 2; }
 [ -f code/experiments/package/run.sh ] || { echo "run this from the repository root" >&2; exit 2; }
 ROOT="$PWD"
 LOGS="logs/$PLATFORM"
@@ -150,7 +175,12 @@ TRITON_CACHE_DIR=$ROOT/$LOGS/triton PVI_NATIVE_DIR=$(printf %q "${PVI_NATIVE_DIR
 for v in PVI_PY_INCLUDE HF_HOME PVI_CIFAR_ROOT PVI_IMAGENET_ROOT PVI_CACHE; do
   [ -z "${!v:-}" ] || ENVS="$ENVS $v=$(printf %q "${!v}")"
 done
+# every job's first command: its node, GPU, driver and CPU in its log, and the check that they are the platform's
+# (experiments/package/node.py: exit status 86 on another GPU or CPU model, before any work)
+NODECHK="$PY -m experiments.package.node --require-gpu $(printf %q "$REQGPU") --require-cpu $(printf %q "$REQCPU")"
+WRONG_NODE=86
 DEP="" GATE="" NJOBS=0 HOURS=0 DRYN=0 LAST="" SKIPPED=0 DONE=0 PLAN="" MEMNEED=0 PLANH=0 NPLAN=0 CPUJOB=""
+OKS=() FAILS=()     # --local: the jobs of this run that ended successfully and those that failed (name|status|log)
 
 sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the previous one
   # (the first job submitted after the smoke also waits for the smoke's success: GATE)
@@ -178,8 +208,11 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
     local args=(-o "$LOGS/%x-%j.out" -J "$name" "--comment=$PLATFORM" "--dependency=$dep" --cpus-per-task=8
                 "--mem=${mem}G" "--time=${hours}:00:00")
     [ -n "$EXCL" ] && args+=("$EXCL")
+    [ -n "$GRES" ] && args+=("--gres=$GRES")
+    [ -n "$EXCLUDE" ] && args+=("--exclude=$EXCLUDE")
     [ -n "$CPUJOB" ] && [ "$PIN" = 1 ] && pin="$PY -m experiments.package.pin --cores 8 --pid \$\$ && "
-    local wrap="set -uo pipefail; $ENVS; echo host \$(hostname) git \$(git -C $ROOT log --oneline -1); $pin$*"
+    local wrap="set -uo pipefail; $ENVS; echo host \$(hostname) git \$(git -C $ROOT log --oneline -1); \
+$NODECHK && $pin$*"
     if [ -n "$DRY" ]; then
       DRYN=$((DRYN + 1)); jid="DRY$DRYN"
       echo "sbatch ${args[*]} --wrap \"$wrap\""
@@ -191,8 +224,11 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
       echo "$(date '+%F %T') running $name (limit ${hours} h): $LOGS/$name-$jid.out"
       if timeout "${hours}h" bash -c "$wrap" > "$LOGS/$name-$jid.out" 2>&1; then
         mkdir -p "$LOGS/done" && echo "$jid" > "$LOGS/done/$name"
+        OKS+=("$name|$LOGS/$name-$jid.out")
       else
-        echo "$name: exit status $?" >&2
+        local st=$?
+        echo "$name: exit status $st" >&2
+        FAILS+=("$name|$st|$LOGS/$name-$jid.out")
       fi
     else
       # the job script goes in on stdin with a bash shebang (--wrap runs /bin/sh, which may not be bash)
@@ -859,6 +895,17 @@ partition's largest node has $((big / 1024)) GB: pass --mem-max $((big / 1024))"
     echo "warning: HF_TOKEN is not set; the Llama-2 jobs then need your Hugging Face token in \$HF_HOME/token as \
 the compute node sees it (export HF_TOKEN=<token>: sbatch passes it to the jobs)" >&2
   fi
+  # under SLURM every job and allocation asks for the GPU itself (a job without one sees no GPU and stops at its node
+  # check); the GPU type in the request keeps the jobs off nodes of another GPU model
+  if [ -z "$LOCAL" ]; then
+    if [ -z "$GRES" ]; then
+      bad+=("no GPU requested: export SBATCH_GRES=gpu:<type>:1 or pass --gres gpu:<type>:1 (the paper's: \
+gpu:l40s:1)")
+    elif [ "$REQGPU" != any ] && [[ "${GRES,,}" != *"$(tr -d ' ' <<<"${REQGPU,,}")"* ]]; then
+      echo "warning: --gres $GRES names no GPU type '$REQGPU': a job that lands on another GPU stops at its node \
+check (exit status $WRONG_NODE)" >&2
+    fi
+  fi
   [ "${#bad[@]}" -gt 0 ] || return 0
   printf 'run.sh: %s\n' "${bad[@]}" >&2
   [ -n "$DRY" ] && return 0
@@ -870,15 +917,16 @@ one_job() {   # --one-job: the tiers as one SLURM job that runs this command wit
   local name jid hours=$PLANH args=() inner=() wrap
   name="sp-node-$(IFS=-; echo "${TIERS[*]}")"
   [ "$hours" -le "$MAXH" ] || hours=$MAXH
+  # the allocation's command: this one with --local for --one-job (its summary names this command)
   set -- "${ARGV[@]}"
   while [ $# -gt 0 ]; do
     case "$1" in
       --one-job|--dry-run|--no-chain) ;;
-      --max-hours) shift ;;
       *) inner+=("$1") ;;
     esac
     shift
   done
+  inner+=(--from-one-job)
   jid="$(awk -F'|' -v n="$name" -v p="$PLATFORM" '$1 == n && $2 == p { print $3; exit }' <<<"$QUEUED")"
   if [ -n "$jid" ]; then
     echo "skip $name: already queued (job $jid)"
@@ -888,6 +936,8 @@ one_job() {   # --one-job: the tiers as one SLURM job that runs this command wit
   args=(-o "$LOGS/${name#sp-}-%j.log" --open-mode=append -J "$name" "--comment=$PLATFORM" --dependency=singleton
         --requeue --cpus-per-task=8 "--time=${hours}:00:00")
   if [ -n "$EXCL" ]; then args+=("$EXCL" --mem=0); else args+=("--mem=${MEMNEED}G"); fi
+  [ -n "$GRES" ] && args+=("--gres=$GRES")
+  [ -n "$EXCLUDE" ] && args+=("--exclude=$EXCLUDE")
   wrap="cd $(printf %q "$ROOT") && bash code/experiments/package/run.sh --local$(printf ' %q' "${inner[@]}")"
   if [ -n "$DRY" ]; then
     echo "sbatch ${args[*]} --wrap \"$wrap\""
@@ -898,6 +948,38 @@ one_job() {   # --one-job: the tiers as one SLURM job that runs this command wit
   echo "# one job: ${TIERS[*]}: $NPLAN jobs, job limits $PLANH h, time limit $hours h"
   [ "$PLANH" -le "$hours" ] || echo "# if it ends at its time limit, submit the same command again: it runs only \
 the jobs that have not ended successfully"
+}
+
+resubmit() {   # the command that runs this submission's failed and missing jobs again: the same one
+  local a=() x
+  for x in "${ARGV[@]}"; do
+    case "$x" in
+      --from-one-job) ;;
+      --local) if [ -n "$FROMONE" ]; then a+=(--one-job); else a+=(--local); fi ;;
+      *) a+=("$x") ;;
+    esac
+  done
+  echo "bash code/experiments/package/run.sh$(printf ' %q' "${a[@]}")"
+}
+
+local_summary() {   # local_summary [reason]: the end of a --local run's output (a --one-job allocation's log)
+  [ -n "$LOCAL" ] && [ -z "$DRY" ] || return 0
+  local x name st log why
+  echo "# summary ($(hostname), platform $PLATFORM, tiers ${TIERS[*]}): ${#OKS[@]} jobs ended successfully, \
+${#FAILS[@]} failed, $DONE had ended successfully in an earlier run${1:+; $1}"
+  for x in ${OKS[@]+"${OKS[@]}"}; do echo "#   ok      ${x%%|*}  ${x#*|}"; done
+  for x in ${FAILS[@]+"${FAILS[@]}"}; do
+    IFS='|' read -r name st log <<<"$x"
+    case "$st" in 124) why=": its time limit" ;; "$WRONG_NODE") why=": wrong node" ;; *) why="" ;; esac
+    echo "#   FAILED  $name (exit status $st$why)  $log"
+  done
+  if [ "${#FAILS[@]}" -gt 0 ] || [ -n "${1:-}" ]; then
+    echo "# to run the failed and missing jobs again (those that ended successfully are skipped), submit the same \
+command:"
+    echo "#   $(resubmit)"
+  else
+    echo "# every job of this submission has ended successfully"
+  fi
 }
 
 run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
@@ -921,13 +1003,28 @@ PLAN=1
 for tier in "${TIERS[@]}"; do run_tier "$tier"; done 2> /dev/null
 PLAN=""
 preflight
+echo "# node: GPU '$REQGPU', CPU '$REQCPU' (--require-gpu, --require-cpu)${GRES:+; --gres=$GRES}\
+${EXCLUDE:+; --exclude=$EXCLUDE}"
 if [ -n "$ONEJOB" ]; then one_job; exit 0; fi
+if [ -n "$LOCAL" ] && [ -z "$DRY" ]; then
+  # this node, before the first job (a --one-job allocation that started on a node of another model runs nothing)
+  if NODE_OUT="$(bash -c "$ENVS; $NODECHK" 2>&1)"; then NODE_ST=0; else NODE_ST=$?; fi
+  echo "$NODE_OUT"
+  if [ "$NODE_ST" != 0 ]; then
+    echo "run.sh: the node check failed (exit status $NODE_ST): no job run on $(hostname)" >&2
+    [ "$NODE_ST" != "$WRONG_NODE" ] || echo "# to run elsewhere, submit the same command again with --exclude-nodes \
+$(hostname)${EXCLUDE:+,$EXCLUDE} (or the partition's nodes of other models):"$'\n'"#   $(resubmit)"
+    exit "$NODE_ST"
+  fi
+fi
 for tier in "${TIERS[@]}"; do
   run_tier "$tier"
-  # the platform gate: nothing after smoke starts unless smoke succeeded
+  # the platform gate: nothing after smoke starts unless smoke succeeded (a submission without smoke has no gate)
   if [ "$tier" = smoke ] && [ "$CHAIN" = 1 ] && [ -n "$LAST" ]; then GATE="afterok:$LAST" DEP=""; fi
-  if [ "$tier" = smoke ] && [ -n "$LOCAL" ] && [ -n "$LAST" ] && ! grep -q "SMOKE OK" "$LOGS/sp-smoke-$LAST.out"; then
+  if [ "$tier" = smoke ] && [ -n "$LOCAL" ] && [ -z "$DRY" ] && [ -n "$LAST" ] \
+      && ! grep -q "SMOKE OK" "$LOGS/sp-smoke-$LAST.out"; then
     echo "smoke did not end in SMOKE OK ($LOGS/sp-smoke-$LAST.out): stopping" >&2
+    local_summary "the smoke did not end in SMOKE OK: the jobs after it were not run"
     exit 1
   fi
 done
@@ -937,3 +1034,5 @@ after each wait for it"
 (to run one again, delete its marker in $LOGS/done/)"
 [ -z "$DRY" ] || echo "# ${TIERS[*]}: $NJOBS jobs, job limits $HOURS h"
 [ -n "$DRY" ] || [ -n "$LOCAL" ] || squeue -u "$ME"
+local_summary
+[ "${#FAILS[@]}" = 0 ] || exit 1

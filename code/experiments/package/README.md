@@ -2,8 +2,11 @@
 
 `run.sh` is the one scripted run whose records give every number of the paper. It runs on one GPU node: the GPU
 proves and is the GPU verifier, and 8 threads of the node's CPU are the CPU verifier and the re-execution baselines.
-The paper's numbers come from an NVIDIA L40S (48 GB) with an AMD EPYC 9334. Every timed job has its node to itself
-and no two timed jobs share a node, and nothing after the smoke tier starts unless it succeeded.
+The paper's numbers come from an NVIDIA L40S (48 GB) with an AMD EPYC 9334, and every job runs on that platform:
+each job starts by writing its node, GPU, driver and CPU to its log and checking the GPU and CPU models
+(`--require-gpu`, default `L40S`; `--require-cpu`, default `EPYC 9334`; `any` checks nothing), and on another model
+exits with status 86 before doing any work. Every timed job has its node to itself and no two timed jobs share a node;
+when the smoke tier is selected, nothing after it starts unless it succeeded.
 The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the paper's tables and text numbers.
 
 ## 1. What the machine needs
@@ -19,7 +22,8 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 | CMake 3.14 or later and git (the `cpuv` tier) | the `cpuv` tier's llama.cpp job clones llama.cpp's release v0.6.0 and builds `llama-bench` and `llama-quantize` for the node's CPU (`-march=native`, with `CXX`), once per platform, into `logs/<name>/llamacpp/` (about 1 GB); `run.sh` submits nothing while that tier is selected and CMake (`CMAKE`, else `cmake` on the `PATH`) or git is missing | `${CMAKE:-cmake} --version`, `git --version`; without CMake, one way is `pip install cmake==3.31.6` into a separate environment (`python3 -m venv ~/cmake && ~/cmake/bin/pip install cmake==3.31.6`, then `export CMAKE=~/cmake/bin/cmake`), which leaves the run's environment unchanged. The job clones from GitHub; if the compute nodes have no network access, clone the release beforehand: `git clone --depth 1 --branch v0.6.0 https://github.com/ggml-org/llama.cpp.git logs/<name>/llamacpp/src` |
 | `HF_HOME` on a disk the GPU nodes see, with about 60 GB free, 100 GB with `--llama-licence` (a node-local folder holds a copy per node) | the `real`, `quality`, `tv` and `attack` tiers download OPT-125M to OPT-6.7B, OpenLLaMA-7B, TinyLlama, Qwen3 and WikiText-2 (47 GB of checkpoints); with `--llama-licence` also Llama-2-7B and Llama-2-13B (40 GB more; each repository has its own gate on Hugging Face), for which the jobs need your Hugging Face token: `export HF_TOKEN=<token>` (sbatch passes it to the jobs; `run.sh` never writes it into one), or a login whose `$HF_HOME/token` the compute node reads | `df -h $HF_HOME` |
 | The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats, and the dogs-vs-squirrels ResNet-18 that is Anchuri et al.'s substitute model) | `code/artifacts/models/cnn/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224,resnet18_224_squirrel}.pt` (on the GPU node, from `code/`: `PYTHONPATH=src:. ../.venv/bin/python -m experiments.costs.train_cnn --model <m> --device cuda`, seed 0); CIFAR-10 in the `cifar-10-batches-py` layout under `code/data/cifar10` (or `$PVI_CIFAR_ROOT`); the ImageNet subsets' caches `dogs_cats.pt` and `dogs_squirrels.pt` under `code/artifacts/cache` (or `$PVI_CACHE`), or ImageNet under `code/data/imagenet` (or `$PVI_IMAGENET_ROOT`) with `train/` and `val/` holding class `i` of the sorted synsets in folder `i + 1` (`1` to `1000`; the dogs are `152` to `269`, the cats `282` to `286`, the fox squirrel `336`), from which the first run writes the caches. `run.sh all` and `run.sh bench` stop before submitting anything if one is missing |
-| SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `--local` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
+| SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]` (or `--gres gpu:<type>:1`; `run.sh` passes it to every job and allocation and submits nothing without it; `--exclude-nodes <list>` keeps the jobs off the partition's nodes of another GPU or CPU model); without: `--local` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
+| The platform's GPU and CPU models on every node a job runs on | one platform for every number | `--require-gpu`, `--require-cpu` (defaults `L40S`, `EPYC 9334`; on another platform pass its names, or `any`); `run.sh --dry-run` prints them in its `# node:` line |
 | Exclusive use of the node | the timings | every job asks for `--exclusive` (check that the partition allows exclusive jobs); the smoke and the rehearsal, whose timings are not used, pass `--no-exclusive`; on a shared partition, see Sec. 4 (`--one-job`) |
 | No Hugging Face cache variable that overrides `HF_HOME` with a folder the jobs cannot write | `HF_HUB_CACHE`, `TRANSFORMERS_CACHE` and `HF_DATASETS_CACHE` take precedence over `HF_HOME` | `env \| grep -E 'HF_HUB_CACHE\|TRANSFORMERS_CACHE\|HF_DATASETS_CACHE'`; `run.sh` refuses an unwritable one (`unset` it) |
 
@@ -145,23 +149,30 @@ of which runs its tiers' jobs one after another in its allocation: the timed tie
 themselves, and the tiers that time nothing (`quality`, `tv`, `attack`) in two jobs on one GPU of a shared node:
 
 ```bash
-R="bash code/experiments/package/run.sh --platform final --llama-licence"
-$R --one-job smoke cpuv long                     # expected 12-18 h
-$R --one-job smoke bench                         # 9-13 h
-$R --one-job smoke real                          # 9-13 h
-$R --one-job smoke serve gen batch               # 13-17 h
-$R --one-job smoke v1 setup improve              # 9-16 h
-$R --one-job smoke gpuv                          # 5-7 h
-$R --one-job --no-exclusive smoke quality        # 17-25 h, not timed (past 24 h: submit it again, Sec. 5)
-$R --one-job --no-exclusive smoke tv attack      # 6-9 h, not timed
+R="bash code/experiments/package/run.sh --platform final --llama-licence --gres gpu:l40s:1 \
+   --exclude-nodes <the partition's nodes of another GPU or CPU model>"
+$R --one-job cpuv long                     # expected 11-17 h
+$R --one-job bench                         # 8-12 h
+$R --one-job real                          # 8-12 h
+$R --one-job serve gen batch               # 12-16 h
+$R --one-job v1 setup improve              # 8-15 h
+$R --one-job gpuv                          # 4-6 h
+$R --one-job --no-exclusive quality        # 16-24 h, not timed (past 24 h: submit it again, Sec. 5)
+$R --one-job --no-exclusive tv attack      # 5-8 h, not timed
 ```
 
-Each of these jobs starts with the smoke on the node it was given (and stops if it fails), writes the same job logs
-as the chain (`logs/final/sp-<cell>-<id>.out`) and lists what it ran in its own log
-(`logs/final/node-<tiers>-<job id>.log`). Its time limit is 24 hours (`--max-hours`), and SLURM queues a pre-empted
-one again by itself (`--requeue`); a job that ends successfully leaves a marker in `logs/final/done/`, and the
-allocation, when it starts again or when the same command is submitted again after its time limit, runs only the
-jobs without a marker (and the smoke). A later job's records of a cell replace an earlier one's.
+Every allocation, the two without `--exclusive` too, asks for the same GPU (`--gres`) and checks its node before its
+first job (the default `--require-gpu L40S --require-cpu "EPYC 9334"`): on a node of another model it runs nothing,
+exits with status 86 and prints the command to submit again with that node excluded. It then runs its tiers' jobs one
+after another; a job that fails does not stop the jobs after it (no job reads another's output: the setup cache and
+the reference caches are rebuilt where missing). It writes the same job logs as the chain
+(`logs/final/sp-<cell>-<id>.out`), and its own log (`logs/final/node-<tiers>-<job id>.log`) ends with a summary: the
+jobs that ended successfully, those that failed with their logs and exit statuses (124: the job's time limit), and the
+command that runs the failed and missing ones again, which is the same command. Its time limit is 24 hours
+(`--max-hours`), and SLURM queues a pre-empted one again by itself (`--requeue`); a job that ends successfully leaves
+a marker in `logs/final/done/`, and the allocation, when it starts again or when the same command is submitted again,
+runs only the jobs without a marker. A later job's records of a cell replace an earlier one's. The smoke is optional
+here: `smoke` in front of a submission's tiers runs it first on that node and runs the rest only if it succeeds.
 
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
@@ -204,9 +215,11 @@ measures the setup itself.
   memory"`; the first job of a real checkpoint spends some minutes downloading it.
 * `A CORRECTNESS CHECK FAILED` or `FAILED:` in a log (an honest query rejected, a tamper accepted, a byte count that
   disagrees with the model) is a real problem; the job's log says which check.
-* A whole-node job (`--one-job`) that hit its time limit: submit the same command again; it skips the jobs that
-  ended successfully (`logs/<name>/done/`). Its log names each job it ran or skipped and the exit status of each
-  that failed.
+* A `--one-job` submission that hit its time limit or had failed jobs: submit the same command again (the last
+  lines of its log print it); it skips the jobs that ended successfully (`logs/<name>/done/`). Its log names each job
+  it ran or skipped, and its summary the exit status and log of each that failed.
+* `wrong node: GPU <x> / CPU <y>, expected ...` (exit status 86) in a log: the job or allocation started on a node of
+  another model and did nothing; add that node to `--exclude-nodes` and submit the same command again.
 * A job of the chain that hit its time limit or was pre-empted: run its tier again. A job of the same name and
   platform that is still queued or running is not submitted twice (each job carries its platform as its SLURM
   comment), and the jobs submitted after it wait for it, behind the smoke's gate; finished `bench` and `batch` cells
@@ -253,4 +266,6 @@ PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs
 ```
 
 The coverage report names every job without records and every table cell still missing; a `CHECK FAILED` or `PARSE`
-line, or `--strict` with anything missing, gives exit status 1.
+line, or `--strict` with anything missing, gives exit status 1. Its `machines:` line lists the nodes and drivers the
+jobs ran on (several are allowed), and jobs whose logs or records name another GPU or CPU model than the rest are a
+`CHECK FAILED platform` line that names them.

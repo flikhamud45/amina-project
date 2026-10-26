@@ -1083,6 +1083,37 @@ def test_a_failed_check_or_an_unparsable_line_fails(run_dir, capsys):
     assert "did not end in SMOKE OK" in capsys.readouterr().out
 
 
+def _node(host: str, gpu: str | None = "NVIDIA L40S", cpu: str = ENV["cpu"], driver: str = "535.183.01") -> str:
+    """The node line ``experiments/package/node.py`` writes at the start of a job's log."""
+    return "node: " + json.dumps({"host": host, "gpu": gpu, "gpu_count": 1 if gpu else 0, "driver": driver,
+                                  "cpu": cpu, "cuda_visible_devices": "0"}) + "\n"
+
+
+def test_jobs_of_another_gpu_or_cpu_model_fail_and_nodes_and_drivers_are_listed(run_dir, capsys):
+    """Every job's GPU and CPU (its log's node line and its records' environments) must be one model each: a job on
+    another GPU model, one that saw no GPU, or one on another CPU model is a ``CHECK FAILED platform`` line that
+    names it; several nodes and drivers of the same models are allowed and listed in the report's machines line."""
+    tmp, logs = run_dir
+    _write(logs, "sp-g-h2d-95.out", [], extra=_node("n-805", driver="595.99.02"))
+    _write(logs, "sp-tv-checks-96.out", [], extra=_node("n-801"))
+    assert N.main(_args(tmp, logs, "--check")) == 0
+    out = capsys.readouterr().out
+    assert "CHECK FAILED platform" not in out
+    machines = next(line for line in out.splitlines() if line.startswith("machines: "))
+    assert "n-805 (1 jobs)" in machines and "n-801 (1 jobs)" in machines and "(allowed)" in machines
+    assert "drivers: 535.183.01 (1 jobs), 595.99.02 (1 jobs) (allowed)" in machines
+    _write(logs, "sp-a-mnist-97.out", [], extra=_node("t-806", cpu="Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz"))
+    _write(logs, "sp-q-opt125-98.out", [], extra=_node("n-802", gpu=None))
+    assert N.main(_args(tmp, logs, "--check")) == 1
+    out = capsys.readouterr().out
+    gpu = next(line for line in out.splitlines() if "GPU models" in line)
+    cpu = next(line for line in out.splitlines() if "CPU models" in line)
+    assert gpu.startswith("CHECK FAILED platform: the jobs name 2 GPU models: 'NVIDIA L40S' (") and \
+        "'none' (1 jobs: sp-q-opt125-98.out)" in gpu
+    assert "'Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz' (1 jobs: sp-a-mnist-97.out)" in cpu
+    assert R.nodes(logs)["sp-a-mnist-97.out"]["host"] == "t-806"
+
+
 def test_the_cost_records_are_at_the_texts_probability_scale(run_dir, capsys):
     """The text states 11-bit attention probabilities for the certified models and every cost measurement: a cost
     record of another scale, or of none, is a text check that fails (a warning in a rehearsal); the 8-bit side of the
