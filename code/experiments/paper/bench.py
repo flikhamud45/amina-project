@@ -27,6 +27,8 @@ thread).
     ``c_gpu_int``        C      int         128     8        wire, gpuv, stream, prune, pmax, pol<plan>
     ``maverick``         Kpre   int         40      1        thr1, prune, lookups, pmax (no compact encoding)
     ``maverick_wire``    Kpre   int         40      1        thr1, wire, prune, lookups, pmax
+    ``c_cpu_lam<l>``     C      fs          40, 80  8        wire, prune, pmax, pol<plan>
+    ``kpre_cpu_lam<l>``  Kpre   fs          40, 80  8        wire, prune, lookups, pmax
     image models, C      C      fs / int    l       8        wire, pol<plan>
     image models, Kpre   K/Kpre int         l       8        wire
     ===================  =====  ==========  ======  =======  ====================================
@@ -87,8 +89,13 @@ CELLS = {
     "c_gpu_int": Spec("C", "int", 128, 8, ("wire", "gpuv", "stream", "prune", "pmax", "pol")),
     "maverick": Spec("Kpre", "int", 40, 1, ("thr1", "prune", "lookups", "pmax")),
     "maverick_wire": Spec("Kpre", "int", 40, 1, ("thr1", "wire", "prune", "lookups", "pmax")),
+    "c_cpu_lam40": Spec("C", "fs", 40, 8, ("wire", "prune", "pmax", "pol")),
+    "c_cpu_lam80": Spec("C", "fs", 80, 8, ("wire", "prune", "pmax", "pol")),
+    "kpre_cpu_lam40": Spec("Kpre", "fs", 40, 8, ("wire", "prune", "lookups", "pmax")),
+    "kpre_cpu_lam80": Spec("Kpre", "fs", 80, 8, ("wire", "prune", "lookups", "pmax")),
 }
-"""The language-model cells of the final run (module docstring)."""
+"""The language-model cells of the final run (module docstring; ``*_lam40`` and ``*_lam80``: ``c_cpu`` and
+``kpre_cpu`` at lambda 40 and 80, Llama-2-7B's cells of ``tab:eval-lambda``)."""
 CNN_C = ("wire", "pol")
 CNN_K = ("wire",)
 

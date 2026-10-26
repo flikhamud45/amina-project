@@ -11,8 +11,9 @@ host-to-device copy bandwidth that bounds a GPU client's time from below.
 |---|---|---|---|
 | `tab:options`' re-execution rows (CPU: exact re-execution, the integer forward pass, on the verifier's 8 threads; the inexact engines in its note a), the abstract's and Sec. `sec:eval-reexec`'s ratio of the CPU verifier to it (with `costs/perf.py`'s verifier) | `reexec.py` (tier `cpuv`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 64 2048 --layers 2 32 --variants int int_fp32gemm int_mm float bf16 dynint8 --device cpu --threads 8 --reps 5` (and Qwen3-4B, OPT-1.3B) | stdout, one JSON line per model, `T` and variant |
 | `tab:options`' GPU row and `tab:eval-reexec`'s GPU rows (the integer forward pass with int8 GEMMs / the fp16 decoder, full models) | `reexec.py --device cuda` (tier `gpuv`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 64 512 2048 --layers 2 32 --variants int float bf16 --device cuda --reps 5` (and OPT-1.3B, Qwen3-4B, OPT-6.7B, Llama-2-13B) | stdout |
-| `tab:eval-reexec`'s CPU rows (fp32 and the integer forward pass of Llama-2-7B) | `reexec.py --device cpu` (tier `cpuv`) | the first command | stdout |
-| `tab:options`' llama.cpp row, `tab:eval-reexec`'s llama.cpp rows (Q8_0 and bf16), `\CpuLlamaCpp*`, `\CpuRatioLlamaCpp`, `\LlamaCppRelease` and, through `\CpuInexact*`, the body's inexact-inference sentence | `llamacpp.py` (tier `cpuv`; CMake and git) | `python -m experiments.reexec.llamacpp --model llama2-7b --seq 64 2048 --types q8_0 bf16 --reps 5 --threads 8 --llamacpp-dir ../logs/<name>/llamacpp` | stdout, one JSON line per weight type, `T` and configuration (`"kind": "llamacpp"`) |
+| `tab:eval-reexec`'s CPU rows (fp32 and the integer forward pass of Llama-2-7B at 64, 512 and 2,048 tokens) | `reexec.py --device cpu` (tier `cpuv`) | the first command, for Llama-2-7B with `--seq 64 512 2048` | stdout |
+| `tab:eval-cpu`'s re-execution column (exact re-execution of Llama-2-7B on 2 and 4 threads and without the AVX-512 attention kernel, of Llama-2-13B on 8 threads) | `reexec.py --device cpu` (tier `cpux`) | `python -m experiments.reexec.reexec --threads 4 --model llama2-7b --seq 2048 --layers 2 32 --variants int int_mm int_fp32gemm --device cpu --reps 3` (on 4 pinned cores; 2 likewise; `--threads 8 --no-native-avx512`; `--model llama2-13b --layers 2 40`) | stdout |
+| `tab:options`' llama.cpp row, `tab:eval-reexec`'s llama.cpp rows (Q8_0 and bf16), `\CpuLlamaCpp*`, `\CpuRatioLlamaCpp`, `\LlamaCppRelease` and, through `\CpuInexact*`, the body's inexact-inference sentence | `llamacpp.py` (tier `cpuv`; CMake and git) | `python -m experiments.reexec.llamacpp --model llama2-7b --seq 64 512 2048 --types q8_0 bf16 --reps 5 --threads 8 --llamacpp-dir ../logs/<name>/llamacpp` | stdout, one JSON line per weight type, `T` and configuration (`"kind": "llamacpp"`) |
 | `tab:eval-long`'s re-execution columns (2,048 to 16,384 tokens) | `reexec.py --max-pos` (tier `long`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 8192 --layers 2 3 --variants int int_fp32gemm int_mm float bf16 dynint8 --device cpu --reps 3 --max-pos 16384` (and 2,048, 4,096, 16,384) | stdout |
 | no number of the paper: the host-to-device bandwidth of the run's GPU, a record of the platform (the text's transfer time of a proof, `\TransferLlamaLong`, is the proof's size over a 10 Gb/s link) | `h2d_bandwidth.py` (tiers `smoke`, `gpuv`) | `python -m experiments.reexec.h2d_bandwidth --sizes-mb 64 1024 4096 --reps 10 --label gpuv` | stdout, one JSON line per size, direction and memory (`"kind": "h2d"`) |
 
@@ -131,9 +132,11 @@ Needs a GPU (exit status 2 without one); seconds.
 ## Reproducing the paper's numbers
 
 The final numbers come from the run package (`bash code/experiments/package/run.sh --platform <name> <tier>`, `experiments/package/README.md`): its `cpuv` tier runs
-`reexec.py --device cpu` with every variant on Llama-2-7B, Qwen3-4B and OPT-1.3B at 64 and 2,048 tokens (2 blocks and
-the full model; Llama-2-7B also with the allocator settings the CPU verifier applies to itself) and `llamacpp.py` on
-Llama-2-7B's shapes (Q8_0 and bf16, 64 and 2,048 tokens; the rehearsal: one block at 64 tokens), its `gpuv` tier
+`reexec.py --device cpu` with every variant on Llama-2-7B, Qwen3-4B and OPT-1.3B at 64 and 2,048 tokens (Llama-2-7B
+also at 512; 2 blocks and the full model; Llama-2-7B also with the allocator settings the CPU verifier applies to
+itself) and `llamacpp.py` on Llama-2-7B's shapes (Q8_0 and bf16, 64, 512 and 2,048 tokens; the rehearsal: one block at
+64 tokens), its `cpux` tier the exact variants of Llama-2-7B at 2,048 tokens on 2 and 4 threads (as many pinned cores)
+and without the AVX-512 attention kernel, and of Llama-2-13B, its `gpuv` tier
 `reexec.py --device cuda` (`int float bf16`) on the five table models at 64, 512 and 2,048 tokens and
 `h2d_bandwidth.py`, its `long` tier `reexec.py --max-pos 16384` at 2,048 to 16,384 tokens (2 and 3 blocks), and its
 `smoke` tier one `h2d_bandwidth.py` copy of 256 MiB.

@@ -12,6 +12,8 @@
 #              other tier of the same invocation starts unless it does (a submission without it starts at once)
 #     cpuv     the CPU verifier against every re-execution baseline on the same 8 threads (llama.cpp's included); V1's
 #              CPU verifier
+#     cpux     the CPU verifier against exact re-execution on 2 and 4 cores, without the AVX-512 attention kernel and
+#              on Llama-2-13B; mode C's candidate commitment plans side by side
 #     v1       V1 against v0 (bytes, prover and verifier times)
 #     serve    the prover against unverified serving on the same GPU, single prompts and batches
 #     bench    the benchmark's cells: image models and decoders, modes C, K and Kpre, with the attacks
@@ -82,8 +84,9 @@
 #     --no-exclusive    no --exclusive (default: every job has the node to itself; the smoke and the rehearsal,
 #                       whose timings are not used, need not wait for a whole node)
 #     --no-pin          do not pin the CPU-timing jobs, the cells that time the CPU verifier or a re-execution on the
-#                       CPU (cpuv, long and those of v1, bench, batch, gen, real, setup and improve); by default each
-#                       runs on 8 cores of one NUMA node, one hardware thread per core (experiments/package/pin.py)
+#                       CPU (cpuv, cpux, long and those of v1, bench, batch, gen, real, setup and improve); by default
+#                       each runs on 8 cores of one NUMA node (the cpux tier's 2- and 4-thread cells on 2 and 4 cores of
+#                       one), one hardware thread per core (experiments/package/pin.py)
 #     --no-native-ok    submit although CXX names no compiler here; the CPU-timing cells then run without
 #                       --require-native and time whatever path the node has (default: refuse)
 #     --mem-max GB      the largest --mem any job asks for (default 256; the node's memory)
@@ -207,7 +210,7 @@ done
 # (experiments/package/node.py: exit status 86 on another GPU or CPU model, before any work)
 NODECHK="$PY -m experiments.package.node --require-gpu $(printf %q "$REQGPU") --require-cpu $(printf %q "$REQCPU")"
 WRONG_NODE=86
-DEP="" GATE="" NJOBS=0 HOURS=0 DRYN=0 LAST="" SKIPPED=0 DONE=0 PLAN="" MEMNEED=0 PLANH=0 NPLAN=0 CPUJOB=""
+DEP="" GATE="" NJOBS=0 HOURS=0 DRYN=0 LAST="" SKIPPED=0 DONE=0 PLAN="" MEMNEED=0 PLANH=0 NPLAN=0 CPUJOB="" CORES=8
 OKS=() FAILS=()     # --local: the jobs of this run that ended successfully and those that failed (name|status|log)
 CHILD="" CURRENT="" # --local: the running job's process and its name|log
 
@@ -239,7 +242,7 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
     [ -n "$EXCL" ] && args+=("$EXCL")
     [ -n "$GRES" ] && args+=("--gres=$GRES")
     [ -n "$EXCLUDE" ] && args+=("--exclude=$EXCLUDE")
-    [ -n "$CPUJOB" ] && [ "$PIN" = 1 ] && pin="$PY -m experiments.package.pin --cores 8 --pid \$\$ && "
+    [ -n "$CPUJOB" ] && [ "$PIN" = 1 ] && pin="$PY -m experiments.package.pin --cores $CORES --pid \$\$ && "
     local wrap="set -uo pipefail; $ENVS; echo host \$(hostname) git \$(git -C $ROOT log --oneline -1); \
 $NODECHK && $pin$*"
     if [ -n "$DRY" ]; then
@@ -282,6 +285,13 @@ csub() {  # csub <name> <hours> <memGB> <command...>: a CPU-timing job (pinned t
   CPUJOB=""
 }
 
+ksub() {  # ksub <cores> <name> <hours> <memGB> <command...>: a CPU-timing job pinned to <cores> cores of one NUMA
+  # node (its command runs on as many threads, --threads <cores>)
+  CORES=$1; shift
+  csub "$@"
+  CORES=8
+}
+
 nl() {    # a model's decoder blocks
   case "$1" in
     gpt2|opt-125m) echo 12 ;; opt-1.3b) echo 24 ;; opt-6.7b|llama2-7b) echo 32 ;; qwen3-4b) echo 36 ;;
@@ -295,7 +305,8 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     return
   fi
   case "$1" in
-    smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
+    smoke) echo 1 ;; cpuv) echo 8-11 ;; cpux) echo 5-9 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 9-14 ;;
+    gpuv) echo 4-6 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
     tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
@@ -307,6 +318,10 @@ M="$PY -m experiments"
 CACHED="${CACHE:+--setup-cache $CACHE}"
 NATIVE="--require-native"; [ -z "$NONATIVE" ] || NATIVE=""
 PERF="$M.costs.perf --threads 8 $CACHED"
+EXACT="int int_mm int_fp32gemm"   # exact re-execution's variants on a CPU (the fastest is the ratios' baseline)
+# mode C's candidate plans (pvi.commit.plans.AUTO_CANDIDATES), the run's --policy first (the reference of vs_first)
+PLANS="$POL"
+for p in tightc cnn16c cnn17c cnn18c R16c R64c; do [ "$p" = "$POL" ] || PLANS="$PLANS $p"; done
 V1="$M.v1.v1_bytes --full --threads 8 $CACHED"
 RX="$M.reexec.reexec --threads 8"
 RXCPU="int int_mm int_fp32gemm float bf16 dynint8"   # the re-execution variants on a CPU (dynint8 is another model)
@@ -353,7 +368,7 @@ tier_cpuv() {
     csub c-llamacpp-llama2-7b-L1 1 64 "$LCPP --model llama2-7b --layers 1 --seq 64 --types q8_0 bf16 --reps $QH"
     return 0
   fi
-  local m t cm
+  local m t cm s
   for m in llama2-7b qwen3-4b opt-1.3b; do
     cm=""; [ "$m" = llama2-7b ] && cm=" --client-memory"
     csub "c-$m-64" 1 128 "$PERF --model $m --seq 64 --modes Kpre C --policy $POL --queries $QH --verifier-device cpu \
@@ -361,20 +376,61 @@ tier_cpuv() {
     csub "c-$m-2048" 2 256 "$PERF --model $m --seq 2048 --modes Kpre C --policy $POL --queries $QH \
 --verifier-device cpu --label cpuv$cm $NATIVE"
   done
+  # Llama-2-7B at 512 tokens as well (tab:eval-reexec's middle column): the verifier, every baseline, llama.cpp
+  csub c-llama2-7b-512 1 192 "$PERF --model llama2-7b --seq 512 --modes Kpre C --policy $POL --queries $QH \
+--verifier-device cpu --label cpuv $NATIVE"
   for m in llama2-7b qwen3-4b opt-1.3b; do
-    t=2; [ "$m" = opt-1.3b ] && t=1; [ "$m" = llama2-7b ] && t=3
-    csub "c-rx-$m" "$t" 256 "$RX --model $m --seq 64 2048 --layers 2 $(nl "$m") --variants $RXCPU --device cpu \
+    t=2 s="64 2048"; [ "$m" = opt-1.3b ] && t=1; [ "$m" = llama2-7b ] && t=4 s="64 512 2048"
+    csub "c-rx-$m" "$t" 256 "$RX --model $m --seq $s --layers 2 $(nl "$m") --variants $RXCPU --device cpu \
 --reps $QH --no-malloc-tune $NATIVE"
   done
   csub c-rx-heap-llama2-7b 2 256 "$RX --model llama2-7b --seq 64 2048 --layers 2 32 --variants int int_mm float \
 dynint8 --device cpu --reps $QH --malloc-tune $NATIVE"
-  csub c-llamacpp-llama2-7b 3 64 "$LCPP --model llama2-7b --seq 64 2048 --types q8_0 bf16 --reps $QH"
+  csub c-llamacpp-llama2-7b 3 64 "$LCPP --model llama2-7b --seq 64 512 2048 --types q8_0 bf16 --reps $QH"
   for t in 64 2048; do
     csub "c-v1-llama2-7b-$t" 2 256 "$V1 --model llama2-7b --seq $t --modes Kpre --reps $QH \
 --v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
   done
   csub c-v1-qwen3-4b-2048 2 256 "$V1 --model qwen3-4b --seq 2048 --modes Kpre --reps $QH \
 --v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
+}
+
+tier_cpux() {
+  # the CPU verifier's scaling and cost ablations, each against exact re-execution on the same cores (tab:eval-cpu):
+  # Llama-2-7B at 2,048 tokens with 4 and 2 threads, each pinned to as many cores of one NUMA node; on 8 threads
+  # without the AVX-512 attention kernel (--no-native-avx512, in the verifier and in the integer forward pass alike;
+  # the library is still built for the node's CPU); Llama-2-13B on 8 threads.  Mode C's six candidate plans side by
+  # side on the same Llama-2-7B queries (tab:eval-plans), each commitment encoded afresh (no setup cache: commit_s is
+  # the encoding's time)
+  local t h
+  if [ -n "$REH" ]; then
+    ksub 4 x-gpt2-64-thr4 1 64 "$M.costs.perf --threads 4 $CACHED --model gpt2 --layers 2 --seq 64 --modes Kpre \
+--queries $Q --verifier-device cpu --label cpux $NATIVE && $M.reexec.reexec --threads 4 --model gpt2 --seq 64 \
+--layers 1 2 --variants $EXACT --device cpu --reps 2 --no-malloc-tune $NATIVE"
+    csub x-gpt2-64-noavx512 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre --queries $Q \
+--verifier-device cpu --no-native-avx512 --label cpux-noavx512 $NATIVE && $RX --model gpt2 --seq 64 --layers 1 2 \
+--variants $EXACT --device cpu --reps 2 --no-native-avx512 --no-malloc-tune $NATIVE"
+    csub x-plans-gpt2 1 64 "$M.costs.perf --threads 8 --model gpt2 --layers 2 --seq 64 --modes C --policy $PLANS \
+--queries $Q --verifier-device cpu --label plans $NATIVE"
+    return 0
+  fi
+  for t in 4 2; do
+    ksub "$t" "x-llama2-7b-2048-thr$t" 2 256 "$M.costs.perf --threads $t $CACHED --model llama2-7b --seq 2048 \
+--modes Kpre --queries $QH --verifier-device cpu --label cpux $NATIVE"
+    h=3; [ "$t" = 2 ] && h=4
+    ksub "$t" "x-rx-llama2-7b-thr$t" "$h" 256 "$M.reexec.reexec --threads $t --model llama2-7b --seq 2048 \
+--layers 2 32 --variants $EXACT --device cpu --reps $Q --no-malloc-tune $NATIVE"
+  done
+  csub x-llama2-7b-2048-noavx512 2 256 "$PERF --model llama2-7b --seq 2048 --modes Kpre --queries $QH \
+--verifier-device cpu --no-native-avx512 --label cpux-noavx512 $NATIVE"
+  csub x-rx-llama2-7b-noavx512 2 256 "$RX --model llama2-7b --seq 2048 --layers 2 32 --variants $EXACT --device cpu \
+--reps $Q --no-native-avx512 --no-malloc-tune $NATIVE"
+  csub x-llama2-13b-2048 2 256 "$PERF --model llama2-13b --seq 2048 --modes Kpre --queries $Q --verifier-device cpu \
+--label cpux $NATIVE"
+  csub x-rx-llama2-13b 3 256 "$RX --model llama2-13b --seq 2048 --layers 2 40 --variants $EXACT --device cpu \
+--reps $Q --no-malloc-tune $NATIVE"
+  csub x-plans-llama2-7b-2k 4 256 "$M.costs.perf --threads 8 --model llama2-7b --seq 2048 --modes C \
+--policy $PLANS --queries $Q --verifier-device cpu --label plans $NATIVE"
 }
 
 tier_v1() {
@@ -461,6 +517,12 @@ tier_bench() {
 --modes Kpre:int --threads 1 --no-wire $NATIVE"
   csub b-k-qwen3-4b-8-thr1-wire 1 96 "$BENCH llm --model qwen3-4b --seq 8 --builds full --queries 5 --lams 40 \
 --modes Kpre:int --threads 1 $NATIVE"
+  # the security level (tab:eval-lambda): Llama-2-7B at lambda 40 and 80 in both modes (lambda 128: the cells of
+  # (b) and (c)), the CPU verifier
+  csub b-lam-llama2-7b-64 2 96 "$BENCH llm --model llama2-7b --seq 64 --builds full --queries 5 --lams 40 80 \
+--modes C:fs,Kpre:fs --policy $POL $NATIVE"
+  csub b-lam-llama2-7b-2k 4 128 "$BENCH llm --model llama2-7b --seq 2048 --builds full --queries 3 --lams 40 80 \
+--modes C:fs,Kpre:fs --policy $POL $NATIVE"
   # (c) 2,048-token prompts (zkLLM's rows interactive as well)
   for m in opt-125m opt-1.3b opt-6.7b llama2-7b llama2-13b; do
     q=3; mem=96; cm="C:fs,C:int"; hc=1; hk=1; hg=1
@@ -1142,7 +1204,7 @@ run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
     || echo "# tier $1: $((NJOBS - n0)) jobs, job limits $((HOURS - h0)) h, estimate $(est "$1") h"
 }
 
-MUST="smoke cpuv v1 serve bench gpuv gen batch real setup improve quality qllama tv attack"
+MUST="smoke cpuv cpux v1 serve bench gpuv gen batch real setup improve quality qllama tv attack"
 if [ "${TIERS[0]}" = all ]; then TIERS=($MUST ${OPTIONAL:+long zkllm}); fi
 for tier in "${TIERS[@]}"; do
   case " $MUST long zkllm gate " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac

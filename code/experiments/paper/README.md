@@ -18,8 +18,8 @@ prints before the final run, otherwise. Nothing here runs a model.
 ### `records.py`
 Reads the run's folder `logs/<name>/`: every job log `sp-<cell>-<jobid>.out`, whose lines that start with `{` are the
 records, and the documents of the attack tier (`attack/*.json`, `attack/analytic.csv`) and the tv tier
-(`sampler_tv_*.json`). A record's tier comes from its job's prefix (`c-` cpuv, `v1-`, `serve-`, `b-` bench, `g-`
-gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-`, `a-` attack, `l-` long, `smoke`;
+(`sampler_tv_*.json`). A record's tier comes from its job's prefix (`c-` cpuv, `x-` cpux, `v1-`, `serve-`, `b-` bench,
+`g-` gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-`, `a-` attack, `l-` long, `smoke`;
 `gate-` gate, the full-size checks run before the run, whose records are checked and fill no cell or number)
 and its kind from its fields (`perf`, `v1`, `reexec`, `llamacpp`, `serve`, `gen`, `setup`, `h2d`, `open_ab`,
 `forward_ab`, `encode_ab`, `fold_ab`, `gpu_profile`, `v1_phases`, `gkr`, `ppl`, `zeroshot`, `digest`, `llama_diag`,
@@ -27,7 +27,8 @@ and its kind from its fields (`perf`, `v1`, `reexec`, `llamacpp`, `serve`, `gen`
 summary line is a record of kind `tests`). `Run` selects the record of one cell
 by every
 setting that distinguishes the package's jobs: the tier, the model, the prompt length, the mode, the blocks, the
-verifier device (a V1 record's from its command line), the label and real or random weights; of several matching
+verifier device (a V1 record's from its command line), the label and real or random weights (and, in the cpux tier,
+the threads, the AVX-512 attention option and mode C's plan); of several matching
 records the latest job's (for re-execution, `reexec.py`'s and `llamacpp.py`'s, the fastest of one variant's
 records). `checks` lists a record's failed correctness checks (a llama.cpp record must be marked inexact and a
 different model, and have run on its threads).
@@ -64,10 +65,17 @@ as well. `tab:paths` and `tab:paths-acc` evaluate Proposition `prop:paths` (`att
 edit of `k` neurons, and the probability that `s` paths accept it) at one neuron, at 16 and at the in-range edits of
 the attack tier's OPT-1.3B documents (`inrange_ks`: the median and largest edit of either direction and the median
 lowering-only edit, which the text prints as `\InrangeKMedian`, `\InrangeKMax`, `\InrangeDownKMedian` and the tables'
-headers name).
+headers name). `tab:eval-cpu` sets the Kpre CPU verifier against the fastest exact re-execution on the same threads
+(`tables.cpu_point`): Llama-2-7B at 2,048 tokens on 2 and 4 threads and without the AVX-512 attention kernel (cpux
+tier; records of the same thread count and option only), on 8 threads (the cpuv tier's cells) and Llama-2-13B;
+`tab:eval-plans` takes the cpux tier's comparison of mode C's six candidate plans (label `plans`, whose records name
+no plan of the run), `tab:eval-lambda` the bench tier's Llama-2-7B cells at lambda 40, 80 and 128 (`bench.CELLS`'
+`*_lam40` and `*_lam80`).
 
 ### `macros.py`
-The text numbers, by family (the platform and the plan, the CPU client and its own memory, the outcome counts, the
+The text numbers, by family (the platform and the plan, the CPU client and its own memory, the CPU verifier on other
+thread counts, without the AVX-512 attention and on Llama-2-13B, mode C's candidate plans, the security level, the
+outcome counts, the
 cost of the defence, batches against one opening, serving, V1, the comparison, the improvements, real weights, long
 prompts, quality, the sampler, the attack, the smoke's tests, the security parameters, the setup proof, generation, the break-even). The platform's macros
 (`\PlatformGpu`, `\PlatformCpu`, `\PlanLogPoints`) come from the records' `env` and `--policy`, so the captions and the

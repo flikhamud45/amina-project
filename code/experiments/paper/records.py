@@ -13,8 +13,8 @@ process whose verdicts differ from the in-process ones (``perf``'s ``client_memo
 disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected (``setup``), an
 implementation A/B whose two paths disagree (the ``improve`` tier), a zkLLM run whose proof binaries failed or
 whose layers did not all print zkLLM's verifier messages (``zkllm``), a llama.cpp record not marked inexact and a
-different model or not run on its threads (``llamacpp``), an attribution study whose float copy failed a check
-(``attribution``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact, a test of its
+different model or not run on its threads (``llamacpp``), a cpux cell that ran on fewer CPUs than its threads, an
+attribution study whose float copy failed a check (``attribution``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact, a test of its
 pytest run that failed: the ``tests`` record of its summary line) or a ``FAILED`` line
 of a script in a job's log; between two jobs (:func:`cross_checks`), the attribution's integer graph against the
 quality tier's cell of the same graph.  Each job's GPU, CPU, driver and node come from the node line at the start of
@@ -30,13 +30,14 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-TIERS = (("smoke", "smoke"), ("c-", "cpuv"), ("v1-", "v1"), ("serve-", "serve"), ("b-", "bench"), ("g-", "gpuv"),
-         ("gen-", "gen"), ("bt-", "batch"), ("r-", "real"), ("setup-", "setup"), ("i-", "improve"),
+TIERS = (("smoke", "smoke"), ("c-", "cpuv"), ("x-", "cpux"), ("v1-", "v1"), ("serve-", "serve"), ("b-", "bench"),
+         ("g-", "gpuv"), ("gen-", "gen"), ("bt-", "batch"), ("r-", "real"), ("setup-", "setup"), ("i-", "improve"),
          ("q-", "quality"), ("tv-", "tv"), ("a-", "attack"), ("l-", "long"), ("zk-", "zkllm"), ("gate-", "gate"))
 """The job-name prefixes of ``run.sh`` (``sp-<prefix>...``) and their tiers (``gate``: the full-size checks run once
 before the run, whose records fill no table cell or text number; ``zkllm``: zkLLM's public demo on the run's GPU,
 whose figures ``paper/bench.py`` reads from ``logs/<name>/zkllm/summary.csv``)."""
-KINDS = {"smoke": {"v1", "h2d", "tests"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "v1": {"v1"},
+KINDS = {"smoke": {"v1", "h2d", "tests"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "cpux": {"perf", "reexec"},
+         "v1": {"v1"},
          "serve": {"serve"}, "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"},
          "batch": {"bench_env"}, "real": {"perf", "v1", "gen"}, "setup": {"setup"},
          "improve": {"open_ab", "forward_ab", "encode_ab", "perf", "gpu_profile", "fold_ab", "v1_phases", "gkr"},
@@ -304,10 +305,17 @@ def checks(r: Rec) -> list[str]:
     # a V1 record names its verifier's device on its command line)
     device = verifier_device(d) if r.kind == "v1" else str(d.get("verifier_device") or d.get("device") or "cpu")
     on_cpu = device.startswith("cpu")
-    if (r.tier in ("cpuv", "long", "real", "v1", "gate") and r.kind in ("perf", "v1", "reexec", "gen") and on_cpu
+    if (r.tier in ("cpuv", "cpux", "long", "real", "v1", "gate") and r.kind in ("perf", "v1", "reexec", "gen")
+            and on_cpu
             and not d.get("codec_only")
             and ((d.get("env") or {}).get("implementation") or {}).get("native") is False):
         bad.append("the native CPU kernels were not used")
+    # the cpux tier's cells time a CPU of their threads' cores: never on fewer CPUs than threads (where the record has
+    # them)
+    allowed = (d.get("env") or {}).get("cpu_affinity")
+    if (r.tier == "cpux" and r.kind in ("perf", "reexec") and on_cpu and allowed is not None
+            and d.get("threads") is not None and allowed < d["threads"]):
+        bad.append(f"{d['threads']} threads on {allowed} allowed CPUs")
     return bad
 
 
@@ -444,7 +452,10 @@ class Run:
     another configuration: the tier, the model, the prompt length, the mode, the blocks (``layers``; None: the full
     model), the verifier device, the label and real or random weights (``real``: None for random weights, else the
     checkpoint); a ``perf.py`` record also by its attention probabilities' scale where an A/B of the improve tier
-    times two scales under one label (``prob_max``).  Of several matching records (a tier run again) the latest job's
+    times two scales under one label (``prob_max``), by its threads where the cpux tier times one label on several
+    (``threads``) and by mode C's plan where it times several plans side by side (``policy``); a re-execution record
+    of the cpux tier by its threads and implementation options (:func:`experiments.paper.tables.cpu_point`).  Of
+    several matching records (a tier run again) the latest job's
     is used; of several re-execution records of one variant (e.g. two allocator settings), the fastest.  Several
     quality records of one cell whose values differ are a ``WARNING`` line of :attr:`warnings` (:meth:`ppl`).
     """
@@ -486,14 +497,16 @@ class Run:
 
     # ---------------------------------------------------------------- protocol v0 (perf.py)
     def perf(self, tier, model, seq, mode, *, vdev="cpu", layers=None, label=None, real=None, fs=True,
-             stream=None, prob_max=None) -> Rec | None:
+             stream=None, prob_max=None, threads=None, policy=None) -> Rec | None:
         def ok(r):
             d = r.d
             return (d.get("model") == model and d.get("seq") == seq and d.get("mode") == mode
                     and str(d.get("verifier_device", "cpu")).split(":")[0] == vdev and d.get("layers") == layers
                     and (label is None or d.get("label") == label) and (d.get("real") or None) == real
                     and bool(d.get("fs")) == fs and (stream is None or bool(d.get("stream")) == stream)
-                    and (prob_max is None or d.get("prob_max") == prob_max))
+                    and (prob_max is None or d.get("prob_max") == prob_max)
+                    and (threads is None or d.get("threads") == threads)
+                    and (policy is None or d.get("policy") == policy))
         return self._last([r for r in self.kind("perf", tier) if ok(r)])
 
     # ---------------------------------------------------------------- V1 (v1_bytes.py)
