@@ -154,7 +154,7 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 invocation as the other tiers, so that it is chained after them and gated by the smoke; a second invocation starts a
 new chain. Without a Llama-2 licence, leave out `--llama-licence`: the Llama-2 cells then stay empty. The counts and
 limits are those with `--llama-licence`; without it (in parentheses) the `real` tier has 17 jobs and 23 h of limits
-and the `quality` tier 20 jobs and 70 h. `all` is then @ALL@ jobs and @ALLH@ h of limits (@LIC@ and @LICH@ h with
+and the `quality` tier 20 jobs and 70 h. `all` is then 160 jobs and 291 h of limits (171 and 327 h with
 `--llama-licence`; the `long` tier adds 12 jobs and 28 h).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
