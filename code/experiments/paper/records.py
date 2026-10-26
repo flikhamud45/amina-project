@@ -16,7 +16,8 @@ different model or not run on its threads (``llamacpp``), an attribution study w
 (``attribution``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact, a test of its
 pytest run that failed: the ``tests`` record of its summary line) or a ``FAILED`` line
 of a script in a job's log; between two jobs (:func:`cross_checks`), the attribution's integer graph against the
-quality tier's cell of the same graph.  Each is reported as a ``CHECK FAILED`` line; a line that starts with ``{`` and
+quality tier's cell of the same graph.  Each job's GPU, CPU, driver and node come from the node line at the start of
+its log (:func:`nodes`) and its records' environments (:func:`machines`).  Each is reported as a ``CHECK FAILED`` line; a line that starts with ``{`` and
 does not parse, or parses as no known kind, is a ``PARSE`` line.  Either makes ``paper/numbers.py`` exit with status
 1.
 """
@@ -344,6 +345,50 @@ def log_checks(logs: Path) -> list[str]:
         for i, line in enumerate(text.splitlines(), 1):
             if line.startswith("FAILED:") or "A CORRECTNESS CHECK FAILED" in line:
                 out.append(f"CHECK FAILED {path.name}:{i}: {line.strip()[:160]}")
+    return out
+
+
+NODE = re.compile(r"^node: (\{.*\})\s*$")
+"""The line ``experiments/package/node.py`` writes at the start of every job's log: the node, its GPU, driver and
+CPU."""
+
+
+def nodes(logs: Path) -> dict[str, dict]:
+    """``{job log name: its node line's fields}`` (``host``, ``gpu``, ``driver``, ``cpu``, ...) of every job log
+    ``sp-*.out`` in ``logs`` that has one (the first; logs of jobs submitted before the line existed have none)."""
+    out = {}
+    for path in sorted(logs.glob("sp-*.out")):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                m = NODE.match(line)
+                if m:
+                    try:
+                        out[path.name] = json.loads(m.group(1))
+                    except json.JSONDecodeError:
+                        pass
+                    break
+    return out
+
+
+def machines(run: "Run", logs: Path | None) -> dict[str, dict[str, set]]:
+    """``{job log name: {"gpu", "cpu", "driver", "host": set of values}}``: what each job's node line
+    (:func:`nodes`) and the environments of its records (``env``) name; a job without a GPU in its node line names
+    GPU ``none``."""
+    out: dict = {}
+
+    def add(job, key, value):
+        if value:
+            out.setdefault(job, {k: set() for k in ("gpu", "cpu", "driver", "host")})[key].add(str(value).strip())
+
+    for job, n in (nodes(logs) if logs is not None and logs.is_dir() else {}).items():
+        add(job, "gpu", n.get("gpu") or "none")
+        for key in ("cpu", "driver", "host"):
+            add(job, key, n.get(key))
+    for r in run.recs:
+        env = r.d.get("env") or {}
+        job = Path(r.path).name
+        for key in ("gpu", "cpu", "driver", "host"):
+            add(job, key, env.get(key))
     return out
 
 
