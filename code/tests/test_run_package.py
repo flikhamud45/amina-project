@@ -353,7 +353,7 @@ def test_the_quality_tier_needs_the_tokenizer_libraries(tmp_path):
     status, _, err, jobs = _submit(tmp_path / "b", "--platform", "final", "--rehearsal", "cpuv", extra=fail)
     assert status == 0 and jobs, err
     status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "--rehearsal", "quality")
-    assert status == 0 and len(jobs) == 7 and any(" -J sp-q-openllama7-smoke " in j for j in jobs), err
+    assert status == 0 and len(jobs) == 8 and any(" -J sp-q-openllama7-smoke " in j for j in jobs), err
 
 
 def test_the_bench_tier_needs_the_substitute_model_and_the_imagenet_layout(tmp_path):

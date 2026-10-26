@@ -79,8 +79,8 @@
 # partition has a node with the memory the largest job asks for.  Jobs are named sp-<cell>, with this platform as
 # their --comment and --dependency=singleton.  A job of the same name and platform that is still queued or running is
 # not submitted again, and the chain and the smoke gate pass through it, so running a tier again submits only what is
-# missing; a finished benchmark cell is skipped by bench.py itself.  experiments/package/README.md is the runner's
-# guide.
+# missing; a finished benchmark cell is skipped by bench.py itself.
+# experiments/package/README.md is the runner's guide.
 set -euo pipefail
 
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
