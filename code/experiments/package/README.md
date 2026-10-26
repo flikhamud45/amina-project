@@ -147,9 +147,11 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 186 jobs. There, the paper's run submits its tiers as nine jobs (`--one-job`), each
+waits that long for each of its 186 jobs. There, the paper's run submits its tiers as ten jobs (`--one-job`), each
 of which runs its tiers' jobs one after another in its allocation: the timed tiers in seven jobs that have a node to
-themselves, and the tiers that time nothing (`quality`, `tv`, `attack`) in two jobs on one GPU of a shared node:
+themselves, and the tiers that time nothing (`quality`, `tv`, `attack`, `smoke`) in three jobs on one GPU of a shared
+node. The smoke here is a job of the run like the others and gates nothing: its pytest summary gives the text's
+`\SmokeTests` and its exactness tests the platform's GPU-against-CPU agreement, so it is submitted on its own:
 
 ```bash
 R="bash code/experiments/package/run.sh --platform final --llama-licence --gres gpu:l40s:1 \
@@ -163,9 +165,10 @@ $R --one-job gpuv                          # 4-6 h
 $R --one-job zkllm                         # 3-5 h: zkLLM's demo on the same GPU model
 $R --one-job --no-exclusive quality        # 28-36 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive tv attack      # 5-8 h, not timed
+$R --one-job --no-exclusive smoke          # 1 h, not timed: the test suite on the run's GPU and CPU
 ```
 
-Every allocation, the two without `--exclusive` too, asks for the same GPU (`--gres`) and checks its node before its
+Every allocation, the three without `--exclusive` too, asks for the same GPU (`--gres`) and checks its node before its
 first job (the default `--require-gpu L40S --require-cpu "EPYC 9334"`): on a node of another model it runs nothing,
 exits with status 86 and prints the command to submit again with that node excluded. It then runs its tiers' jobs one
 after another; a job that fails does not stop the jobs after it (no job reads another's output: the setup cache and
@@ -175,8 +178,9 @@ jobs that ended successfully, those that failed with their logs and exit statuse
 command that runs the failed and missing ones again, which is the same command. Its time limit is 24 hours
 (`--max-hours`), and SLURM queues a pre-empted one again by itself (`--requeue`); a job that ends successfully leaves
 a marker in `logs/final/done/`, and the allocation, when it starts again or when the same command is submitted again,
-runs only the jobs without a marker. A later job's records of a cell replace an earlier one's. The smoke is optional
-here: `smoke` in front of a submission's tiers runs it first on that node and runs the rest only if it succeeds.
+runs only the jobs without a marker. A later job's records of a cell replace an earlier one's. A submission without
+the smoke starts at once; `smoke` in front of a submission's tiers would run it first on that node and the rest only
+if it succeeds, which the run above does not need.
 
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
