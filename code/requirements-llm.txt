@@ -4,3 +4,7 @@
 transformers==4.51.3
 tokenizers==0.21.4
 pyarrow==25.0.1
+# the tokenizer of a checkpoint that ships only tokenizer.model (OpenLLaMA-7B): the SentencePiece model, and
+# transformers' conversion of it to the fast tokenizer
+sentencepiece==0.2.0
+protobuf==5.29.5

@@ -158,7 +158,8 @@ of the matrices that the norm feeds before their per-matrix quantisation. Every 
 multiplier stays a scalar, and both proof formats accept a smoothed graph in our tests. Our first
 recipe took $\rho_j$ as the 99.9th percentile of the channel's normalised magnitude, clipped the
 q/k/v, fc1 and attention-output requantisations at the 99.99th percentile, and used $\alpha=0.55$; on
-128-token windows calibrated on the test split it gave $\times\LegacySmallLo{}$--$\LegacySmallHi{}$ on OPT-125M. At 2{,}048
+128-token windows calibrated on the test split it gave $\times\LegacySmallLo{}$--$\LegacySmallHi{}$ on OPT-125M at
+$\alpha=0.55$ and at $\alpha=0.5$. At 2{,}048
 tokens with train-split calibration these statistics transferred badly ($\times\QualityLegacyLo{}$--$\QualityLegacyHi{}$ on
 OPT-1.3B depending on the calibration windows, about $\times$\QualityLegacyOptS{} on OPT-125M), and the mean zero-shot
 loss of OPT-1.3B was \ZeroshotLegacyMean{} points (\ZeroshotMeanOptM{} with the certified recipe below). Each channel's maximum without clipping (``smooth-max'') is
@@ -166,7 +167,11 @@ stable across calibration windows (OPT-1.3B within \QualityDrawSpread{} over two
 $\alpha=0.6$ was chosen on the test split: over $\alpha\in\{0.3,\dots,0.7\}$ its ratio is within
 \QualityAlphaGapOptS{} of the best on OPT-125M and within \QualityAlphaGapOptM{} on OPT-1.3B. On the validation split, which
 no choice used, it is within \QualityAlphaValGapOptS{} and \QualityAlphaValGapOptM{} of the best of $\alpha\in\{0.5,0.6,0.7\}$ on
-OPT-125M and OPT-1.3B, and costs OPT-6.7B \QualityAlphaCostOptL{} against $\alpha=0.5$. Cross-layer equalisation did not help on top of smoothing (\CleWith{} against \CleWithout{}
+OPT-125M and OPT-1.3B, and costs OPT-6.7B \QualityAlphaCostOptL{} against $\alpha=0.5$. The Llama recipe's $\alpha$
+and SwiGLU balance were likewise chosen per model on the test split; on OpenLLaMA-7B's validation split, the best of
+$\alpha\in\{0.45,0.55,0.65\}$ and balance $\in\{0.1,0.2,0.3\}$ is $\alpha=\LlamaOpenValAlpha{}$ with balance
+\LlamaOpenValBalance{}, and the main recipe's ($\alpha=0.55$, balance 0.2) is within \LlamaOpenValGap{} of its ratio.
+Cross-layer equalisation did not help on top of smoothing (\CleWith{} against \CleWithout{}
 at 128 tokens).
 
 \para{Zero-shot accuracy.} Table~\ref{tab:zeroshot} scores the certified models on six tasks of the

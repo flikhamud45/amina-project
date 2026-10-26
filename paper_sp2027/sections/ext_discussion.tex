@@ -36,8 +36,10 @@ tamper, with proofs \RealLlamaShortSmaller{}\% smaller and the verifier within \
 its 2{,}048-token proof \VOneRealLlamaRatio{}$\times$ smaller (\VOneRatioLlama{}$\times$ with random weights). With smoothing through the norm's gains, the certified OPT-125M,
 OPT-1.3B and OPT-6.7B are within factors of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 at 2{,}048 tokens
 (Section~\ref{sec:quality}); with one scalar gain OPT-6.7B is \QualityScalarExcessOptL{}\% above. With a fixed public prefix and a balance of
-the SwiGLU product, OpenLLaMA-7B (Llama-2-7B's exact benchmark structure) is within $\times$\LlamaOpenRatio{} and
-TinyLlama within $\times$\TinyLlamaRatio{} at 2{,}048 tokens; with a per-pair balance of the q/k norms' gains as
+the SwiGLU product, OpenLLaMA-7B (Llama-2-7B's exact benchmark structure) is within $\times$\LlamaOpenRatio{},
+Llama-2-7B itself within $\times$\LlamaSevenRatio{} (95\% interval [\LlamaSevenCI{}]) and TinyLlama within
+$\times$\TinyLlamaRatio{} of fp32 at 2{,}048 tokens, and Llama-2-13B within $\times$\LlamaThirteenRatio{} of fp16
+([\LlamaThirteenCI{}]); with a per-pair balance of the q/k norms' gains as
 well, Qwen3-1.7B is within $\times$\QwenMRatio{} and Qwen3-4B at $\times$\QwenLRatio{}. These graphs are the ones whose
 costs we report. A per-token exponent at the SwiGLU product would bring Qwen3-1.7B to $\times$\QwenMExpRatio{}
 and Qwen3-4B to $\times$\QwenLExpRatio{}, but it changes two operations per block and leaves the down projection

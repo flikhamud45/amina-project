@@ -12,7 +12,7 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 |---|---|---|
 | An NVIDIA GPU with int8 tensor cores (sm_75 or later; the paper's: L40S, sm_89) and a CUDA 12.1 driver | the prover, the GPU verifier, serving (on sm_90 and later, the attention takes the unfused exact path: the fused Triton kernel does not compile there with Triton 3.1) | `nvidia-smi`; `.venv/bin/python -c "import torch; print(torch.cuda.get_device_name(0), torch.cuda.get_arch_list())"` |
 | 8 free CPU cores of one NUMA node and about 256 GB of memory | the CPU verifier and every re-execution baseline run on 8 threads; each CPU-timing job pins itself to 8 cores of one NUMA node (the GPU's, where the kernel reports it), one hardware thread per core, and its records name the CPUs it ran on (`--no-pin`: not pinned); the 7B cells at 2,048 tokens ask for 256 GB | `lscpu`, `free -g`; with less memory, `--mem-max <GB>` (under SLURM, `run.sh` compares the largest request with the partition's largest node before it submits anything) |
-| A Python 3.12 environment as `.venv` at the checkout's root (or `--python <path>`) | torch 2.5.1+cu121, `code/requirements.txt` and `code/requirements-llm.txt` | `.venv/bin/python -c "import torch, transformers, triton; print(torch.__version__)"` |
+| A Python 3.12 environment as `.venv` at the checkout's root (or `--python <path>`) | torch 2.5.1+cu121, `code/requirements.txt` and `code/requirements-llm.txt` (with `sentencepiece` and `protobuf`, which OpenLLaMA-7B's tokenizer needs; `run.sh` checks them before it submits the quality tier) | `.venv/bin/python -c "import torch, transformers, triton, sentencepiece, google.protobuf; print(torch.__version__)"` |
 | A C++ compiler in `CXX` | the native CPU kernels (`-march=native`) of the CPU verifier and of the exact int8 re-execution; every CPU-timing cell passes `--require-native`, so a compiler missing on the node stops it instead of timing the torch path, and `run.sh` submits nothing while `CXX` names no compiler (`--no-native-ok` overrides both) | `$CXX --version` (g++ 9 or later) |
 | The Python headers for Triton's launcher | Triton compiles a small launcher with `Python.h` on first use, on the GPU node | on the GPU node, `.venv/bin/python -c "import os, sysconfig; print(os.path.exists(os.path.join(sysconfig.get_paths()['include'], 'Python.h')))"`; if `False`, copy the headers into a folder and `export PVI_PY_INCLUDE=<folder>` |
 | A few GB of free temporary space on the GPU node, and about 21 GB during the `cpuv` tier's llama.cpp job | the compilers of Triton's launcher and of the native kernels write their temporary files to `$TMPDIR` (default `/tmp`); the llama.cpp job (`experiments/reexec/llamacpp.py`) writes the bf16 and Q8_0 files of Llama-2-7B's shapes there (13.5 and 7.2 GB, deleted at its end; 1.4 GB for the rehearsal's one block) and stops before writing them if they do not fit | on the GPU node, `df -h ${TMPDIR:-/tmp}`; if it is full, `export TMPDIR=<folder on a disk the nodes see>` (sbatch passes it to the jobs) |
@@ -90,7 +90,7 @@ during the run. Every job asks for at most 64 GB of host memory:
 | `real` | 4 | the certified OPT-125M: v0, V1, V1's codec profile and generated responses |
 | `setup` | 1 | the setup proof of GPT-2 (2 blocks) |
 | `improve` | 13 | the A/B cells of `tab:eval-improve` (opening, forward pass, encoder, fold; the fused attention and the GPU verifier before and after on OPT-125M with 2 blocks and on one Llama-2-7B block, the CPU verifier on that block), V1's two verifiers by phase, the GPU profile, the GKR prover at 2^20 leaves, 8- against 11-bit attention probabilities on GPT-2 (2 blocks) |
-| `quality` | 6 (7) | OPT-125M: perplexity and zero-shot accuracy (20 documents per task) with the certified and the legacy recipe, the reproducible build and its commitment; Qwen3-0.6B: the Llama recipe on the smoke model and, with a fixed prefix and a kept reference, on the checkpoint, `llama_diag` and `llama_attrib`; with `--llama-licence`, the smoke model of Llama-2-7B, which reads the gated repository from a compute node |
+| `quality` | 7 (8) | OPT-125M: perplexity (the legacy recipe on the validation split) and zero-shot accuracy (20 documents per task) with the certified and the legacy recipe, the reproducible build and its commitment; Qwen3-0.6B: the Llama recipe on the smoke model (also its per-token-exponent cells alone) and, with a fixed prefix and a kept reference, on the checkpoint, `llama_diag` and `llama_attrib`; OpenLLaMA-7B's tokenizer (`sentencepiece`, `protobuf`) on the smoke model, on the validation split; with `--llama-licence`, the smoke model of Llama-2-7B, which reads the gated repository from a compute node |
 | `tv` | 2 | the sampler's closed-form and Monte Carlo checks on its toy distributions; its total-variation distance on OPT-125M (legacy recipe, 2 positions, 2 workers) |
 | `attack` | 5 | the path test's bound; the MNIST scripts on the stored networks; OPT-125M: the single-neuron attack and its backdoor, the in-range edits, the sampler game |
 | `long` | 2 | one Llama-2-7B block at 4,608 tokens: the CPU verifier and re-execution |
@@ -121,7 +121,7 @@ $R --one-job smoke real                          # 9-13 h
 $R --one-job smoke serve gen batch               # 13-17 h
 $R --one-job smoke v1 setup improve              # 9-16 h
 $R --one-job smoke gpuv                          # 5-7 h
-$R --one-job --no-exclusive smoke quality        # 11-17 h, not timed
+$R --one-job --no-exclusive smoke quality        # 17-25 h, not timed
 $R --one-job --no-exclusive smoke tv attack      # 6-9 h, not timed
 ```
 
@@ -145,7 +145,7 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 | `real` | 26 (17) | 8-12 | 45 (23) | the certified OPT-1.3B and OPT-6.7B end to end next to random weights (`tab:eval-real`); with `--llama-licence` the real Llama-2-7B |
 | `setup` | 2 | 1-2 | 4 | the setup proof of an untrusted commitment (`tab:setup`) |
 | `improve` | 16 | 3-5 | 18 | each implementation improvement against the path it replaces (`tab:eval-improve`); V1's verifier by phase; the GKR prover per leaf; 8- against 11-bit attention probabilities on two Llama-2-7B blocks at 2,048 tokens (`quality.tex`: the proof's size and the prover's and CPU verifier's times) |
-| `quality` | 20 (18) | 10-16 | 69 (55) | `tab:quality` (OPT; OpenLLaMA-7B, TinyLlama, Qwen3; Llama-2 with `--llama-licence`), the recipe's alpha on the validation split, the recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split), `tab:zeroshot`, the reproducible build |
+| `quality` | 21 (19) | 16-24 | 83 (69) | `tab:quality` (OPT), the Llama-family ratios of the text (OpenLLaMA-7B, TinyLlama, Qwen3; Llama-2-7B and Llama-2-13B with `--llama-licence`), the recipe's alpha on the validation split (OPT) and OpenLLaMA-7B's alpha and product balance there, the recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split), `tab:zeroshot`, the reproducible build (1 and 8 threads, the commitment encoded on the GPU and the CPU) |
 | `tv` | 2 | 1-2 | 3 | the sampler's total-variation distance on the certified OPT-1.3B, and its checks |
 | `attack` | 5 | 4-6 | 12 | the attack: reproduction, MNIST, OPT-6.7B, the in-range edits (`tab:inrange`), the sampler games |
 | `long` (optional) | 12 | 4-7 | 28 | prompts of 2,048 to 16,384 tokens (`tab:eval-long`) |
@@ -154,7 +154,7 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 invocation as the other tiers, so that it is chained after them and gated by the smoke; a second invocation starts a
 new chain. Without a Llama-2 licence, leave out `--llama-licence`: the Llama-2 cells then stay empty. The counts and
 limits are those with `--llama-licence`; without it (in parentheses) the `real` tier has 17 jobs and 23 h of limits
-and the `quality` tier 18 jobs and 55 h. `all` is then 157 jobs and 275 h of limits (168 and 311 h with
+and the `quality` tier 19 jobs and 69 h. `all` is then @ALL@ jobs and @ALLH@ h of limits (@LIC@ and @LICH@ h with
 `--llama-licence`; the `long` tier adds 12 jobs and 28 h).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final

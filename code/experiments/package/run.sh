@@ -73,13 +73,14 @@
 # PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute
 # path (a relative one is taken from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through
 # sbatch's environment and is never written into a job.  Everything is checked before the first job is submitted: the
-# compiler, CMake and git (the cpuv tier), the interpreter, HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or
-# HF_DATASETS_CACHE that overrides it is unwritable), the image models and datasets of the bench tier and, under
-# SLURM, that the partition has a node with the memory the largest job asks for.  Jobs are named sp-<cell>, with this
-# platform as their --comment and --dependency=singleton.  A job of the same name and platform that is still queued
-# or running is not submitted again, and the chain and the smoke gate pass through it, so running a tier again
-# submits only what is missing; a finished benchmark cell is skipped by bench.py itself.
-# experiments/package/README.md is the runner's guide.
+# compiler, CMake and git (the cpuv tier), the interpreter (and, for the quality tier, its sentencepiece and protobuf,
+# which OpenLLaMA-7B's tokenizer needs), HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE
+# that overrides it is unwritable), the image models and datasets of the bench tier and, under SLURM, that the
+# partition has a node with the memory the largest job asks for.  Jobs are named sp-<cell>, with this platform as
+# their --comment and --dependency=singleton.  A job of the same name and platform that is still queued or running is
+# not submitted again, and the chain and the smoke gate pass through it, so running a tier again submits only what is
+# missing; a finished benchmark cell is skipped by bench.py itself.  experiments/package/README.md is the runner's
+# guide.
 set -euo pipefail
 
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
@@ -221,7 +222,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
   case "$1" in
     smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
-    quality) echo 10-16 ;; tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;;
+    quality) echo 16-24 ;; tv) echo 1-2 ;; attack) echo 4-6 ;; long) echo 4-7 ;;
   esac
 }
 
@@ -589,18 +590,24 @@ tier_improve() {
 tier_quality() {
   # the integer models' quality on WikiText-2 (raw) at 2,048 tokens: the certified OPT models (tab:quality's OPT rows,
   # the 8- against 11-bit attention probabilities), the recipe's alpha on the validation split, the percentile and
-  # smooth-max recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split), zero-shot accuracy
-  # (tab:zeroshot), the reproducible build;
-  # OpenLLaMA-7B, TinyLlama and Qwen3 with the main Llama recipe; with --llama-licence Llama-2-7B and Llama-2-13B.
+  # smooth-max recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split; the alpha study of
+  # OPT-125M without the certified cell, which q-opt125 measures), zero-shot accuracy (tab:zeroshot), the
+  # reproducible build (OPT-125M with 1 and 8 threads, OPT-1.3B's commitment encoded on the GPU and on the CPU);
+  # OpenLLaMA-7B, TinyLlama and Qwen3 with the main Llama recipe, and OpenLLaMA-7B's alpha and product balance on the
+  # validation split; with --llama-licence Llama-2-7B and Llama-2-13B.
   # The fp32 CPU references of Qwen3-4B and OpenLLaMA-7B are kept in logs/<name>/ref_*.pt (the second pass and a
-  # re-run reuse them).  The rehearsal with --llama-licence reads the gated Llama-2 repository from a job (its
-  # configuration and tokenizer, for the smoke model).
+  # re-run reuse them).  The rehearsal loads OpenLLaMA-7B's tokenizer (sentencepiece, protobuf) for a smoke model on
+  # the validation split and, with --llama-licence, reads the gated Llama-2 repository from a job (its configuration
+  # and tokenizer, for the smoke model).
   local P="$M.quality.ppl_opt --device cuda" L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8"
   local Z="$M.quality.zeroshot --device cuda" m
   if [ -n "$REH" ]; then
     sub q-opt125 1 64 "$P --model facebook/opt-125m --windows 2 --mass-windows 1 && $P --model facebook/opt-125m \
---recipe legacy --graphs smooth --pbits 11 --windows 2 --mass-windows 1"
-    sub q-smoke 1 64 "$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64"
+--recipe legacy --graphs smooth --pbits 11 --windows 2 --mass-windows 1 --split validation"
+    sub q-smoke 1 64 "$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 && \
+$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 --glu-exps 8 --exp-only"
+    sub q-openllama7-smoke 1 32 "$L --model openlm-research/open_llama_7b_v2 --smoke --split validation --seq 128 \
+--windows 2 --calib-windows 1 --chunk 64"
     sub q-zeroshot-opt-125m 1 64 "$Z --model facebook/opt-125m --limit 20 && $Z --model facebook/opt-125m \
 --recipe legacy --limit 20"
     sub q-digest-opt125 1 64 "$M.quality.digest_check --model facebook/opt-125m --threads 8 --commit \
@@ -624,7 +631,7 @@ $M.quality.llama_attrib --model Qwen/Qwen3-0.6B-Base --blocks all --recipe smoot
   sub q-opt13-recipes 6 96 "$P --model facebook/opt-1.3b --recipe legacy --graphs smooth rows --pbits 11 \
 --draws 0 1 2 && $P --model facebook/opt-1.3b --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11 --draws 0 1"
   sub q-opt125-recipes 1 64 "$P --model facebook/opt-125m --recipe legacy --graphs smooth --pbits 11 && \
-$P --model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11"
+$P --model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.7 --pbits 11"
   sub q-opt125-128 1 64 "$P --model facebook/opt-125m --calibration test-end --seq 128 --windows 16 --recipe legacy \
 --graphs scalar smooth rows --alphas 0.55 0.5 --pbits 8 && $P --model facebook/opt-125m --calibration test-end \
 --seq 128 --windows 16 --recipe legacy --graphs smooth --alphas 0.55 --cle-mlp 0 --cle-ratio 2 --pbits 8"
@@ -632,15 +639,20 @@ $P --model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbit
     sub "q-zeroshot-$m" 3 192 "$Z --model facebook/$m"
   done
   sub q-zeroshot-legacy-opt-1.3b 2 96 "$Z --model facebook/opt-1.3b --recipe legacy"
-  sub q-digest 1 64 "$M.quality.digest_check --model facebook/opt-125m --threads 1 && \
+  sub q-digest 5 64 "$M.quality.digest_check --model facebook/opt-125m --threads 1 && \
 $M.quality.digest_check --model facebook/opt-125m --threads 8 --commit --commit-device cuda && \
-$M.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cuda"
+$M.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cuda && \
+$M.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cpu"
   sub q-openllama7 4 192 "$L --model openlm-research/open_llama_7b_v2 --config llama2-7b --structure --ref-device cpu \
 --ref-cache $ROOT/$LOGS/ref_open_llama_7b_v2.pt"
+  # the main recipe's alpha and product balance (0.55, 0.2) against their neighbours on the validation split (the
+  # fp32 reference on the GPU)
+  sub q-openllama7-validation 10 192 "$L --model openlm-research/open_llama_7b_v2 --split validation \
+--alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3"
   sub q-tinyllama 2 96 "$L --model TinyLlama/TinyLlama_v1.1"
   sub q-qwen17 2 96 "$L --model Qwen/Qwen3-1.7B-Base && $L --model Qwen/Qwen3-1.7B-Base --glu-smooths 0.4 --glu-exps 8"
   sub q-qwen4 5 192 "$L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-4b.pt && \
-$L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-4b.pt --glu-exps 8"
+$L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-4b.pt --glu-exps 8 --exp-only"
   sub q-qwen4-diag 2 192 "$M.quality.llama_diag --model Qwen/Qwen3-4B-Base --recipes smooth55 scalar4 && \
 $M.quality.llama_diag --model Qwen/Qwen3-4B-Base --recipes smooth55 scalar4 --prefix 151643,151643 && \
 $L --model Qwen/Qwen3-4B-Base --seq 128 --windows 16 --graphs smooth --glu-exps 8 --ref-device cpu \
@@ -759,9 +771,12 @@ need_images() {   # the bench tier's image cells load trained models and dataset
 }
 
 preflight() {   # what the jobs need from this host and the scheduler, checked before anything is submitted
-  local bad=() t hf="" big gb=60 v d
+  local bad=() t hf="" spm="" big gb=60 v d
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
-  for t in "${TIERS[@]}"; do case "$t" in real|quality|tv|attack) hf=1 ;; esac; done
+  for t in "${TIERS[@]}"; do
+    case "$t" in real|quality|tv|attack) hf=1 ;; esac
+    [ "$t" != quality ] || spm=1
+  done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
 GB free> (the real, quality, tv and attack tiers download checkpoints and datasets)")
   # a cache variable of Hugging Face's libraries takes precedence over HF_HOME: it must be writable (the nearest
@@ -789,6 +804,12 @@ then export CMAKE=~/cmake/bin/cmake)")
     command -v git > /dev/null 2>&1 || bad+=("git not found here: the cpuv tier clones llama.cpp with it")
   done
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")
+  # OpenLLaMA-7B ships only its SentencePiece model: its tokenizer (the quality tier's q-openllama7 jobs and their
+  # rehearsal cell) needs sentencepiece, and protobuf for the conversion to the fast tokenizer
+  if [ -n "$spm" ] && [ -x "$PY" ] && ! "$PY" -c "import sentencepiece, google.protobuf" > /dev/null 2>&1; then
+    bad+=("$PY cannot import sentencepiece and google.protobuf, which the quality tier's OpenLLaMA-7B tokenizer \
+needs: $PY -m pip install -r code/requirements-llm.txt")
+  fi
   if [ -z "$DRY$LOCAL" ] && command -v sinfo > /dev/null 2>&1; then
     big="$(sinfo -h -N ${SBATCH_PARTITION:+-p "$SBATCH_PARTITION"} -o %m | tr -dc '0-9\n' | sort -n | tail -n 1)"
     [ -z "$big" ] || [ $((MEMNEED * 1024)) -le "$big" ] || bad+=("the largest job asks for $MEMNEED GB and the \

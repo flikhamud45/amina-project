@@ -741,3 +741,57 @@ def test_glu_smooth_box_keeps_both_weight_scales():
     assert float((dc * g).max()) <= float(dc.max()) * (1 + 1e-9)
     assert abs(float(g[3]) - float(u[3] / u.max())) < 1e-12  # the box binds the dead channel...
     assert float(g[7]) > 1                                 # ...and the balance still shrinks the large product
+
+
+# ------------------------------------------------------------------ experiments/quality/ppl_llama.py
+def _ppl_args(**kw):
+    """``ppl_llama.py``'s arguments for the tiny Llama (no prefix, two 32-token windows, one calibration window)."""
+    import argparse
+    base = dict(model="tiny/llama", config=None, split="test", seq=32, windows=2, calib_windows=1, calib_seq=None,
+                train_chars=100, draws=[0], graphs=["main"], alphas=None, glu_smooths=None, gains=[4.0],
+                pct=99.99, pct_att=99.99, pct_glu=None, smooth_pct=99.9, no_qk_balance=False, glu_exps=[],
+                exp_only=False, calib_device="cpu", ref_device=None, ref_dtype="float32", ref_cache=None,
+                cos_windows=1, chunk=16, structure=False, out=None, smoke=False, device="cpu")
+    return argparse.Namespace(**dict(base, **kw))
+
+
+def test_ppl_llama_cells_and_the_per_token_exponent_cells_alone():
+    """The main graphs per alpha and product balance, each followed by its per-token-exponent variant; with
+    ``--exp-only`` the variants alone (a second run of a checkpoint's main cell measures nothing again)."""
+    from experiments.quality import ppl_llama
+    both = ppl_llama.cells(_ppl_args(graphs=["main", "scalar"], alphas=[0.45, 0.55], glu_smooths=[0.1, 0.2],
+                                     glu_exps=[8]))
+    names = [c["cell"] for c in both]
+    assert names == [f"main-a{a}-glus{g}{e}" for a in ("0.45", "0.55") for g in ("0.1", "0.2") for e in ("", "-exp8")] \
+        + ["scalar-g4"]
+    only = ppl_llama.cells(_ppl_args(graphs=["main", "scalar"], alphas=[0.45, 0.55], glu_smooths=[0.1, 0.2],
+                                     glu_exps=[8], exp_only=True))
+    assert [c["cell"] for c in only] == [n for n in names if n.endswith("-exp8")]
+    assert all(c["kw"]["glu_exp"] == 8 for c in only)
+    assert [c["cell"] for c in ppl_llama.cells(_ppl_args())] == ["main-a0.55-glus0.2"]    # the main recipe's
+
+
+def test_ppl_llama_scores_the_split_it_is_given(tmp_path, monkeypatch, capsys):
+    """``--split validation`` scores the validation split's windows (calibration still on the train split), every
+    record names the split, and a reference kept for the test split is not reused for the validation split."""
+    import json
+    from experiments.quality import ppl_llama
+    model = _tiny("llama")
+    read = []
+
+    def ids(tok, text, spec):                   # each split's own tokens (the stand-in text is the split's name)
+        return torch.randint(0, 97, (200,), generator=torch.Generator().manual_seed(len(text)))
+
+    monkeypatch.setattr(ppl_llama, "wikitext", lambda split: read.append(split) or split)
+    monkeypatch.setattr(ppl_llama, "token_ids", ids)
+    cache, rows = tmp_path / "ref.pt", {}
+    for split in ("test", "validation"):
+        ppl_llama.run(_ppl_args(split=split, ref_cache=str(cache)), model, None, None)
+        rows[split] = [json.loads(s) for s in capsys.readouterr().out.splitlines() if s.startswith("{")]
+    assert read == ["test", "train", "validation", "train"]
+    (ref_t, cell_t), (ref_v, cell_v) = rows["test"], rows["validation"]
+    assert [r["split"] for r in (ref_t, cell_t, ref_v, cell_v)] == ["test", "test", "validation", "validation"]
+    assert cell_v["dataset"] == r"wikitext-2-raw-v1 validation, '\n\n'.join" and cell_v["cell"] == "main-a0.55-glus0.2"
+    assert ref_v["nll"] != ref_t["nll"]                       # the test split's kept reference is not reused
+    assert torch.load(cache, weights_only=True)["key"]["split"] == "validation"
+    assert cell_v["digest"] == cell_t["digest"]               # the same calibration, so the same graph

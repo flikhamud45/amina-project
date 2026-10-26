@@ -1,7 +1,6 @@
-"""The reproducible build of the certified commitment (Sec. ``sec:defence`` overview: "the certified OPT-125M and
-OPT-1.3B and their commitments are reproduced bit for bit across Linux machines and 1 to 8 threads, OPT-1.3B's
-commitment also across CPU and GPU encoding (OPT-125M's earlier recipe also across operating systems and torch
-versions)").
+"""The reproducible build of the certified commitment (Sec. ``sec:defence`` overview: "in our run, builds of the
+certified OPT-125M with 1 and 8 threads are identical bit for bit, and so are OPT-1.3B's builds and commitments with
+CPU and GPU encoding"; ``experiments/paper/macros.py``'s ``digest_agreement`` compares the run's records).
 
 Builds the certified integer OPT graph from a Hugging Face checkpoint on the CPU with ``--threads`` threads --
 ``--recipe certified`` (the default: ``hf_opt.CERTIFIED_RECIPE`` calibrated on ``checkpoints.certified_calibration``,
@@ -9,12 +8,15 @@ four 2,048-token windows of the WikiText-2 train split) or ``--recipe legacy`` (
 percentile statistics, calibrated on the last 128-token window of the test split) -- and prints one JSON line: the
 graph digest (``IntGraph.digest``, format ``pvi/graph/v2``: every op, its kind and every constant), a SHA-256 of every
 weight matrix and bias (``weights_sha256``), and with ``--commit`` a SHA-256 of the commitment's Merkle roots under the
-commitment plan ``--policy`` at rate ``--rate`` (``roots_sha256``, ``n_roots``).  Run it on two machines, with two
-thread counts and with ``--commit-device cpu`` and ``cuda``: equal ``digest``, ``weights_sha256`` and
-``roots_sha256`` mean the same model and the same ``C_M``.
+commitment plan ``--policy`` at rate ``--rate`` encoded on ``--commit-device`` (``roots_sha256``, ``n_roots``,
+``commit_device``).  Run it on two machines, with two thread counts and with ``--commit-device cpu`` and ``cuda``:
+equal ``digest``, ``weights_sha256`` and ``roots_sha256`` mean the same model and the same ``C_M``.  The run
+package's job q-digest builds OPT-125M with 1 and 8 threads and OPT-1.3B twice, its commitment encoded on the GPU and
+on the CPU.
 
     python -m experiments.quality.digest_check --model facebook/opt-125m --threads 1
     python -m experiments.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cuda
+    python -m experiments.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cpu
 
 Hardware and time (Xeon CPU nodes, measured with the certified recipe): OPT-125M's build takes about 2-3 h on one
 thread; with 8 threads OPT-1.3B builds and commits in about 55 min.  The four 2,048-token calibration windows need
@@ -70,7 +72,8 @@ def main() -> None:
                     roots.update(kind.encode() + name.encode() + pub.root)
                     n_roots += 1
         assert n_roots, "no Merkle root"
-        out.update(policy=args.policy, rate=args.rate, roots_sha256=roots.hexdigest(), n_roots=n_roots)
+        out.update(policy=args.policy, rate=args.rate, commit_device=args.commit_device, roots_sha256=roots.hexdigest(),
+                   n_roots=n_roots)
     records.emit(dict(out, env=records.environment(args.commit_device if args.commit else "cpu")))
 
 
