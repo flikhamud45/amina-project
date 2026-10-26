@@ -7,10 +7,10 @@
 \subsection{Status of the Measurements}
 \label{ext:disc-status}
 
-Every measurement of the paper comes from one run of the artifact's
-run package on one platform, one \PlatformGpu{} and 8 threads of an \PlatformCpu{}, with one version of
-the code, except zkLLM's prover times on the \PlatformGpu{}, which come from separate runs of its public demo
-(Appendix~\ref{ext:disc-options}); each
+Our measurements come from one run of the artifact's
+run package, on one \PlatformGpu{} and 8 threads of an \PlatformCpu{}, with one version of
+the code; other systems' costs are quoted from their papers, and zkLLM's public demo ran on the
+\PlatformGpu{} \ZkllmSameGpuRun{} (Appendix~\ref{ext:disc-options}); each
 implementation improvement is measured against the code path it replaces on the same queries
 (Appendix~\ref{app:eval-improve}). Models are measured in full, except where a table gives a build of
 $b$ of $L$ blocks and the long prompts of Appendix~\ref{app:eval-long}, which extrapolate 2- and
@@ -101,7 +101,7 @@ A100, with a 183\,kB proof that its verifier checks in 2.36\,s, and hides the we
 which proves a generated sequence in one pass, reports 0.30\,s per token for GPT-2~\cite{zkagent}.
 On a 2{,}048-token Llama-2-13B prompt our prover on the \PlatformGpu{} is \ZkllmProverFactor{}$\times$ faster than zkLLM, but zkLLM
 also proves the operations without weights and hides the weights (Table~\ref{tab:eval-compare}).
-On the \PlatformGpu{} itself, zkLLM's public demo (commit 993311e of its repository) takes about
+On the \PlatformGpu{} itself (\ZkllmSameGpuRun{}), zkLLM's public demo (commit 993311e) takes about
 \ZkllmSameGpuProverLlama{}\,s to prove a 2{,}048-token Llama-2-7B prompt and \ZkllmSameGpuProverLlamaL{}\,s for Llama-2-13B,
 \ZkllmSameGpuFactorLlama{}$\times$ and \ZkllmSameGpuFactorLlamaL{}$\times$ our prover's time on prompts of the same length (ours with random int8 weights of the same shapes; mode $\sC$, interactive,
 as in Table~\ref{tab:eval-compare}). These times count zkLLM's proof binaries alone, not its one-time

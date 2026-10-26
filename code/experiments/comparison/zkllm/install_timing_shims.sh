@@ -1,5 +1,6 @@
 #!/bin/bash
-# The timing shims of zkllm.sbatch (written for these runs, not part of zkLLM). Run inside a built zkLLM checkout
+# The timing shims of run_zkllm.sh and of the stored runs (written for these runs, not part of zkLLM).
+# Run inside a built zkLLM checkout
 # (commit 993311e). Each binary of the loop below (ppgen, commit-param and the four proof binaries) X
 # is renamed X.real and replaced by a script that runs it under /usr/bin/time and appends one line to
 # $ZK_TIMELOG (default: bin_times.log next to the binaries):

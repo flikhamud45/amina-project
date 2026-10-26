@@ -6,6 +6,8 @@ package's `bench` tier; the stored roots below hold the values the paper prints 
 measurements into the table the comparison quotes, `aggregate.py` turns a platform's raw benchmark records into its
 tables, `count_outcomes.py` counts every honest query and every attack in them, and `fingerprint_check.py` checks that
 two platforms agree on every hardware-independent value. `paper/numbers.py` reads their outputs (`paper/bench.py`).
+[`zkllm/`](zkllm/README.md) runs zkLLM's public demo on the run's GPU (the run package's optional `zkllm` tier) for
+zkLLM's prover on the same GPU model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|

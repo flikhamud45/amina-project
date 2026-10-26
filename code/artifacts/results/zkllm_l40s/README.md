@@ -6,19 +6,21 @@ prover, AMD EPYC 9334 host) for Llama-2-7B and Llama-2-13B at 2,048 tokens: abou
 and an EPYC 9334 host). `experiments/paper/bench.py` reads `summary.csv` and the runs' `env.txt` with the
 published values (`literature`, `zkllm_runs`), and the paper sets `whole_model_s` against our prover on the same
 prompts in the final run (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`; the extended version states how the times
-were measured, as the next section does), only when the final run's GPU is the one `env.txt` names;
+were measured, as the next section does), only when the final run's GPU is the one `env.txt` names and the final run
+has no zkLLM runs of its own (the run package's optional `zkllm` tier, which runs the same demo in the same way and
+whose records take the place of these);
 `tab:eval-compare` keeps zkLLM's published A100 numbers. The stored benchmark roots' own Llama-2-7B prover at 2,048 tokens is withheld
 ([`artifacts/comparison/README.md`](../../comparison/README.md#withheld-timings-excluded_cellscsv)). The runs are
 kept as they were measured.
 
 ## Reproduce the numbers from the stored runs (no GPU)
 
-From `code/`:
+From `code/` (the scripts are in [`experiments/comparison/zkllm/`](../../../experiments/comparison/zkllm/README.md)):
 
 ```bash
-python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048 32
-python artifacts/results/zkllm_l40s/summarise.py artifacts/results/zkllm_l40s/llama2-13b-T2048 40
-python artifacts/results/zkllm_l40s/summarise.py --csv     # rewrites summary.csv (one row per run)
+python experiments/comparison/zkllm/summarise.py artifacts/results/zkllm_l40s/llama2-7b-T2048 32
+python experiments/comparison/zkllm/summarise.py artifacts/results/zkllm_l40s/llama2-13b-T2048 40
+python experiments/comparison/zkllm/summarise.py --csv     # rewrites summary.csv (one row per run)
 ```
 
 `summarise.py <run dir> <layers>` prints each proof binary's median time, the time per layer and for
@@ -40,25 +42,25 @@ picked from `nvidia-smi.csv.gz`, which also records the node's other GPUs (they 
 
 | File | Contents |
 |---|---|
-| `zkllm.sbatch` | the job: zkLLM's setup (`ppgen`, `commit`) once, the input, then 3 repetitions of the proof scripts of layers 0 and 1 |
-| `install_timing_shims.sh` | wraps each zkLLM binary in a shim that appends its wall time and peak RSS to `bin_times.log`; zkLLM's code is unchanged |
-| `mkinput.py` | the layer-0 input: the embeddings of the first 2,048 tokens of the WikiText-2 test split, in zkLLM's fixed-point format |
-| `summarise.py` | recomputes every figure above from a run's records, and writes `summary.csv` |
+| `zkllm.sbatch` | the job that measured these runs: zkLLM's setup (`ppgen`, `commit`) once, the input, then 3 repetitions of the proof scripts of layers 0 and 1 (`experiments/comparison/zkllm/run_zkllm.sh prove` does the same) |
+| `summary.csv` | one row per run (`summarise.py --csv`) |
 | `<model>-T2048/` | one stored run: `bin_times.log` (each binary's time), `time-*.txt` (each script's wall time), `nvidia-smi.csv.gz` (memory and utilisation of every GPU of the node every 0.5 s), `verdicts.txt` (the verifier messages counted), `env.txt` (host, GPU, CPU), `logs.tar.gz` (the scripts' logs) |
 
 ## Re-run from scratch (GPU, hours)
 
-Needs zkLLM's checkout at commit `993311e`, built for the GPU (the stored runs: sm_89, CUDA 12.1, gcc
-11), with its own conda environment (its scripts need `transformers` 4.40), and the Llama-2
-checkpoints (gated on Hugging Face) in `zkllm/model-storage`; the job runs offline.
+The run package's optional `zkllm` tier (`run.sh --llama-licence zkllm`) runs the same demo in the same way, from
+the checkout to the summary (`experiments/comparison/zkllm/README.md`). The stored runs' own job is kept: it needs
+zkLLM's checkout at commit `993311e`, built for the GPU (the stored runs: sm_89, CUDA 12.1, gcc 11), with its own
+conda environment (its scripts need `transformers` 4.40), and the Llama-2 checkpoints (gated on Hugging Face) in
+`zkllm/model-storage`; the job runs offline.
 
 From the folder that holds `code/`:
 
 ```bash
 export ZKLLM_HOME=<dir holding zkllm/ and its conda env/>
 export WIKITEXT_PARQUET=<wikitext-2-raw-v1 test split, parquet>
-cp code/artifacts/results/zkllm_l40s/mkinput.py $ZKLLM_HOME/zkllm/                    # it imports zkLLM's fileio_utils
-bash code/artifacts/results/zkllm_l40s/install_timing_shims.sh $ZKLLM_HOME/zkllm      # once
+cp code/experiments/comparison/zkllm/mkinput.py $ZKLLM_HOME/zkllm/                   # it imports zkLLM's fileio_utils
+bash code/experiments/comparison/zkllm/install_timing_shims.sh $ZKLLM_HOME/zkllm     # once
 sbatch -p <partition> --gres=gpu:l40s:1 code/artifacts/results/zkllm_l40s/zkllm.sbatch 7    # Llama-2-7B
 sbatch -p <partition> --gres=gpu:l40s:1 code/artifacts/results/zkllm_l40s/zkllm.sbatch 13   # Llama-2-13B
 ```

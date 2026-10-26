@@ -608,7 +608,7 @@ def test_the_gen_and_quality_cells_of_the_text():
 
 def test_every_tier_is_documented_and_reachable():
     text = (REPO / RUN).read_text()
-    for tier in (*TIERS, "gate"):
+    for tier in (*TIERS, "zkllm", "gate"):
         assert f"tier_{tier}()" in text and re.search(rf"^#\s+{tier}\s", text, re.M), tier
 
 
@@ -684,3 +684,57 @@ def test_perf_checks_the_timed_proofs_again_in_the_clients_own_process(monkeypat
         monkeypatch.setattr(sys, "argv", ["perf.py", "--model", "tiny-llama", "--client-memory", *argv])
         with pytest.raises(SystemExit, match="--client-memory"):
             perf.main()
+
+
+def test_the_zkllm_tier_runs_zkllms_demo_with_the_llama_licence_only(tmp_path):
+    """The optional zkllm tier: in 'all' with --optional (after long), only with --llama-licence (else no job and a
+    message); zkLLM's build, then Llama-2-7B and Llama-2-13B at 2,048 tokens, 3 repetitions of layers 0 and 1, in
+    logs/<name>/zkllm/ (whole-node jobs, not pinned); the rehearsal's one job builds for Llama-2-7B and proves one
+    layer once; --zkllm-home, --zkllm-scratch, --zkllm-python and --cuda-home reach the jobs; --one-job zkllm is one
+    whole-node job; the pre-flight names what the build lacks."""
+    runs: list = []
+    jobs = {_job(line): line.split("--wrap", 1)[1] for line in _dry(out=runs)}
+    names = [j for j in jobs if j.startswith("sp-zk-")]
+    assert names == ["sp-zk-build", "sp-zk-llama2-7b", "sp-zk-llama2-13b"] and list(jobs)[-3:] == names
+    assert runs[0].stdout.splitlines()[-1].startswith("# smoke cpuv ") and " long zkllm: " in runs[0].stdout
+    assert "run_zkllm.sh build --home " in jobs["sp-zk-build"] and "/logs/final/zkllm/home" in jobs["sp-zk-build"]
+    for size, job in ((7, "sp-zk-llama2-7b"), (13, "sp-zk-llama2-13b")):
+        assert "run_zkllm.sh prove --home " in jobs[job] and "/logs/final/zkllm" in jobs[job]
+        assert f"--size {size} --seq 2048 --reps 3 --layers 0,1" in jobs[job]
+    assert all("experiments.package.pin" not in jobs[j] for j in names)
+    full = {_job(line): line for line in _dry(tiers=("zkllm",))}
+    assert "--time=2:00:00" in full["sp-zk-llama2-7b"] and "--time=4:00:00" in full["sp-zk-llama2-13b"]
+    # without --llama-licence: nothing, and why
+    out = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--optional", "zkllm"], cwd=REPO,
+                         env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}, capture_output=True, text=True,
+                         timeout=120)
+    assert out.returncode == 0 and "sbatch" not in out.stdout and "--llama-licence" in out.stderr, out.stderr
+    reh = {_job(line): line for line in _dry("--rehearsal", tiers=("zkllm",))}
+    assert list(reh) == ["sp-zk-rehearsal"]
+    assert "build --home " in reh["sp-zk-rehearsal"] and "--models 7 && " in reh["sp-zk-rehearsal"]
+    assert "--size 7 --reps 1 --layers 0" in reh["sp-zk-rehearsal"]
+    opts = {_job(line): line for line in _dry("--zkllm-home", "/zk/home", "--zkllm-scratch", "/zk/scratch",
+                                              "--zkllm-python", "/zk/python3", "--cuda-home", "/zk/cuda",
+                                              tiers=("zkllm",))}
+    assert "--home /zk/home --python /zk/python3 --cuda-home /zk/cuda" in opts["sp-zk-build"]
+    assert "--home /zk/home --out " in opts["sp-zk-llama2-13b"]
+    assert "--cuda-home /zk/cuda --scratch /zk/scratch --size 13" in opts["sp-zk-llama2-13b"]
+    # one whole-node job
+    status, out_, err, _ = _submit(tmp_path / "a", "--dry-run", "--platform", "final", "--llama-licence",
+                                   "--one-job", "zkllm")
+    assert status == 0 and "-J sp-node-zkllm " in out_ and "--exclusive --mem=0" in out_, err
+    assert "# one job: zkllm: 3 jobs, job limits 8 h, time limit 8 h" in out_, out_
+    # the pre-flight: no CUDA compiler and no token stop the submission
+    status, _, err, jobs_ = _submit(tmp_path / "b", "--platform", "final", "--llama-licence", "--cuda-home",
+                                    "/no/cuda", "zkllm", extra={"HF_TOKEN": ""})
+    assert status == 2 and not jobs_ and "no CUDA compiler (nvcc)" in err and "export HF_TOKEN=" in err, err
+    # a home that holds the build and its environment needs neither the compilers nor the interpreter
+    home = tmp_path / "c" / "root" / "logs" / "final" / "zkllm" / "home"
+    (home / "zkllm").mkdir(parents=True)
+    (home / "env" / "bin").mkdir(parents=True)
+    (home / "zkllm" / "self-attn.real").write_text("")
+    (home / "env" / "bin" / "python").write_text("#!/bin/bash\n", newline="\n")
+    (home / "env" / "bin" / "python").chmod(0o755)
+    status, _, err, jobs_ = _submit(tmp_path / "c", "--platform", "final", "--llama-licence", "--cuda-home",
+                                    "/no/cuda", "zkllm", extra={"HF_TOKEN": "hf_x"})
+    assert status == 0 and len(jobs_) == 3, err

@@ -279,12 +279,16 @@ class Bench:
 
 ZKLLM_RUNS = "zkLLM (stored runs)"
 """The system name under which :func:`literature` lists zkLLM's stored runs (:func:`zkllm_runs`)."""
+ZKLLM_RUN = "zkLLM (this run)"
+"""The system name under which :func:`literature` lists the run's own zkLLM runs (the run package's ``zkllm`` tier,
+``logs/<name>/zkllm/``)."""
 ZKLLM_MODELS = {"llama2-7b": "Llama-2-7B", "llama2-13b": "Llama-2-13B"}
 
 
-def zkllm_runs(folder: Path | None = None) -> dict:
-    """zkLLM's public demo run on the hardware of the run package (``artifacts/results/zkllm_l40s/``, its README):
-    ``{(ZKLLM_RUNS, model, seq): row}`` from ``summary.csv`` and each run's ``env.txt``.  ``prover_s`` is the run's
+def zkllm_runs(folder: Path | None = None, system: str = ZKLLM_RUNS) -> dict:
+    """zkLLM's public demo run on the hardware of the run package (``artifacts/results/zkllm_l40s/``, its README, or
+    the ``zkllm`` tier's ``logs/<name>/zkllm/``, both written by ``experiments/comparison/zkllm/summarise.py``):
+    ``{(system, model, seq): row}`` from ``summary.csv`` and each run's ``env.txt``.  ``prover_s`` is the run's
     ``whole_model_s``: the median times of zkLLM's proof binaries on two decoder layers (three repetitions each; the
     one-time ``ppgen`` and ``commit-param`` and the Python scripts around the binaries excluded), with the skip
     connection that its demo does not run counted as the one it runs, times the model's layers.  ``prover_hw`` and
@@ -294,6 +298,7 @@ def zkllm_runs(folder: Path | None = None) -> dict:
     path = folder / "summary.csv"
     if not path.exists():
         return {}
+    where = "artifacts/results/zkllm_l40s" if system == ZKLLM_RUNS else f"logs/{folder.parent.name}/{folder.name}"
     out = {}
     with open(path, newline="", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
@@ -303,22 +308,24 @@ def zkllm_runs(folder: Path | None = None) -> dict:
             gpus = {x.split(",")[0].strip() for x in lines if x.startswith("NVIDIA")}
             cpus = {x.split(":", 1)[1].strip() for x in lines if x.startswith("Model name:")}
             model = ZKLLM_MODELS.get(r["model"], r["model"])
-            out[(ZKLLM_RUNS, model, r["seq"])] = {
-                "system": ZKLLM_RUNS, "model": model, "seq": r["seq"], "prover_s": r["whole_model_s"],
+            out[(system, model, r["seq"])] = {
+                "system": system, "model": model, "seq": r["seq"], "prover_s": r["whole_model_s"],
                 "per_layer_s": r["per_layer_s"], "layers": r["layers"], "run": r["run"],
                 "prover_hw": next(iter(gpus)) if len(gpus) == 1 else None,
                 "cpu": next(iter(cpus)) if len(cpus) == 1 else None,
-                "source": f"artifacts/results/zkllm_l40s/summary.csv ({r['run']})"}
+                "source": f"{where}/summary.csv ({r['run']})"}
     return out
 
 
-def literature(path: Path | None = None, runs: Path | None = None) -> dict:
-    """The published systems' values (``artifacts/comparison/tables/reported_curated.csv``, ``literature.py``) and
+def literature(path: Path | None = None, runs: Path | None = None, run_zkllm: Path | None = None) -> dict:
+    """The published systems' values (``artifacts/comparison/tables/reported_curated.csv``, ``literature.py``),
     zkLLM's stored runs on the run package's GPU model (``runs``, default ``artifacts/results/zkllm_l40s/``:
-    :func:`zkllm_runs`): ``{(system, model, seq): row}``."""
+    :func:`zkllm_runs`) and, with ``run_zkllm`` (the run's ``logs/<name>/zkllm/``), the run's own zkLLM runs under
+    :data:`ZKLLM_RUN`: ``{(system, model, seq): row}``."""
     path = path or BENCH / "tables" / "reported_curated.csv"
     out = {}
     if path.exists():
         with open(path, newline="", encoding="utf-8") as fh:
             out = {(r["system"], r["model"], r["seq"]): r for r in csv.DictReader(fh)}
-    return {**out, **zkllm_runs(runs)}
+    own = zkllm_runs(run_zkllm, ZKLLM_RUN) if run_zkllm is not None else {}
+    return {**out, **zkllm_runs(runs), **own}

@@ -11,7 +11,8 @@ model.
 The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), a client
 process whose verdicts differ from the in-process ones (``perf``'s ``client_memory``), a byte accounting that
 disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected (``setup``), an
-implementation A/B whose two paths disagree (the ``improve`` tier), a llama.cpp record not marked inexact and a
+implementation A/B whose two paths disagree (the ``improve`` tier), a zkLLM run whose proof binaries failed or
+whose layers did not all print zkLLM's verifier messages (``zkllm``), a llama.cpp record not marked inexact and a
 different model or not run on its threads (``llamacpp``), an attribution study whose float copy failed a check
 (``attribution``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact) or a ``FAILED`` line
 of a script in a job's log; between two jobs (:func:`cross_checks`), the attribution's integer graph against the
@@ -29,9 +30,10 @@ from pathlib import Path
 
 TIERS = (("smoke", "smoke"), ("c-", "cpuv"), ("v1-", "v1"), ("serve-", "serve"), ("b-", "bench"), ("g-", "gpuv"),
          ("gen-", "gen"), ("bt-", "batch"), ("r-", "real"), ("setup-", "setup"), ("i-", "improve"),
-         ("q-", "quality"), ("tv-", "tv"), ("a-", "attack"), ("l-", "long"), ("gate-", "gate"))
+         ("q-", "quality"), ("tv-", "tv"), ("a-", "attack"), ("l-", "long"), ("zk-", "zkllm"), ("gate-", "gate"))
 """The job-name prefixes of ``run.sh`` (``sp-<prefix>...``) and their tiers (``gate``: the full-size checks run once
-before the run, whose records fill no table cell or text number)."""
+before the run, whose records fill no table cell or text number; ``zkllm``: zkLLM's public demo on the run's GPU,
+whose figures ``paper/bench.py`` reads from ``logs/<name>/zkllm/summary.csv``)."""
 KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "v1": {"v1"}, "serve": {"serve"},
          "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"}, "batch": {"bench_env"},
          "real": {"perf", "v1", "gen"}, "setup": {"setup"},
@@ -39,11 +41,12 @@ KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "
          "quality": {"ppl", "zeroshot", "digest", "llama_diag", "llama_attrib", "attribution"}, "tv": {"tv"},
          "attack": {"reproduction", "attack_mnist", "samplers", "floor_sampler", "adaptive_game", "path_bound",
                     "attack_llm", "inrange", "adaptive_game_llm"},
-         "long": {"perf", "reexec"}, "gate": {"v1", "perf", "reexec"}}
+         "long": {"perf", "reexec"}, "zkllm": {"zkllm"}, "gate": {"v1", "perf", "reexec"}}
 """The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``)."""
-REHEARSAL_KINDS = {tier: kinds for tier, kinds in KINDS.items() if tier != "gate"}
+REHEARSAL_KINDS = {tier: kinds for tier, kinds in KINDS.items() if tier not in ("gate", "zkllm")}
 """The kinds of a rehearsal (``run.sh --rehearsal``: each tier's smallest cells, which run every script of every
-tier): each tier but ``gate`` (full size only, never rehearsed) must have at least one record of each of its
+tier): each tier but ``gate`` (full size only, never rehearsed) and ``zkllm`` (zkLLM's demo, which runs only with
+``--llama-licence``; its rehearsal job's record is checked as any other) must have at least one record of each of its
 :data:`KINDS`."""
 FILES = {"reproduction.json": "reproduction", "attack.json": "attack_mnist", "defence.json": "samplers",
          "floor_sampler.json": "floor_sampler", "adaptive_game_mlp_mnist.json": "adaptive_game",
@@ -100,7 +103,7 @@ def tier_of(cell: str) -> str | None:
 def kind_of(d: dict) -> str | None:
     """The script that wrote one record, from its fields; None for a record of no known kind."""
     k = d.get("kind")
-    if k in ("gen", "setup", "h2d", "gpu_profile", "llamacpp", "attribution"):
+    if k in ("gen", "setup", "h2d", "gpu_profile", "llamacpp", "attribution", "zkllm"):
         return k
     if d.get("row") in ("prove", "on_request"):
         return "serve"
@@ -262,6 +265,9 @@ def checks(r: Rec) -> list[str]:
             bad.append(f"llama.cpp ran on {ran} threads, not its {threads} (on {allowed} allowed CPUs)")
     elif r.kind == "attribution" and d.get("part") == "check" and d.get("ok") is False:
         bad.append("the attribution's float copy failed a check (ok false)")
+    elif r.kind == "zkllm" and d.get("ok") is not True:
+        bad.append(f"zkLLM's demo: {d.get('binary_failures')} proof binaries failed, verifier messages "
+                   f"{d.get('verdicts')} for {d.get('layers_expected')} proved layers (ok false)")
     # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose;
     # a V1 record names its verifier's device on its command line)
     device = verifier_device(d) if r.kind == "v1" else str(d.get("verifier_device") or d.get("device") or "cpu")

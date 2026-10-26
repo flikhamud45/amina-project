@@ -185,13 +185,16 @@ The perf records name their settings in `label`, `model`, `mode`, `policy`, `wir
 ### `zkllm_l40s/`: zkLLM's public demo on an L40S
 
 zkLLM's code (its commit `993311e`, unchanged) run for Llama-2-7B and Llama-2-13B at 2,048 tokens, with the job
-script, the timing shims, the input generator and the summary (`summarise.py`, `summary.csv`); described in
-[`results/zkllm_l40s/README.md`](results/zkllm_l40s/README.md). Each run folder's `env.txt` records the GPU
+script that ran them and the summary (`summary.csv`); described in
+[`results/zkllm_l40s/README.md`](results/zkllm_l40s/README.md). The timing shims, the input generator and
+`summarise.py` are in [`experiments/comparison/zkllm/`](../experiments/comparison/zkllm/README.md), whose
+`run_zkllm.sh` the run package's optional `zkllm` tier runs. Each run folder's `env.txt` records the GPU
 (NVIDIA L40S), the CPU (AMD EPYC 9334 32-Core Processor) and zkLLM's commit; `summary.csv` records no provenance and
 is written by `summarise.py --csv`. `experiments/paper/bench.py` (`literature`, `zkllm_runs`) reads `summary.csv` and
 the runs' `env.txt` with the published values: the paper sets zkLLM's prover on this GPU model against ours on the
 same prompts (`\ZkllmSameGpu...`, Sec. `sec:eval-compare` and `ext:disc-options`), only when the final run's GPU is the
-one `env.txt` names.
+one `env.txt` names, and only when the final run's own `zkllm` tier did not measure both models on that GPU (its
+records then take their place).
 
 ### Written by a run, not stored
 

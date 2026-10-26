@@ -28,9 +28,9 @@ The families, with the record each number comes from:
   the tampered queries of the real-weight cells, their random-weight twins and the generation cells and the setup
   tier's honest setup proofs (``Outcome...``);
 * the cost of the defence, batches against one opening, V1 (with its verifier's tensors on the GPU, the gpuv tier),
-  serving, the comparison with published systems (and with zkLLM's stored runs on the run's GPU model,
-  ``ZkllmSameGpu...``), re-execution, real weights, long prompts, the improvements (with the A/B of 8- against
-  11-bit attention probabilities, :data:`PROB_BITS`), generation (their tiers' records, through the table selections
+  serving, the comparison with published systems (and with zkLLM's prover on the run's GPU model, from the run's
+  ``zkllm`` tier or else its stored runs, ``ZkllmSameGpu...``), re-execution, real weights, long prompts, the
+  improvements (with the A/B of 8- against 11-bit attention probabilities, :data:`PROB_BITS`), generation (their tiers' records, through the table selections
   of :mod:`experiments.paper.tables`);
 * the break-even (``deployment/ev_breakeven.py``'s formulas on the run's claims, verifier and re-execution times);
 * quality and zero-shot accuracy, the attribution of OPT-125M's perplexity and the reproducible build (``quality``
@@ -737,29 +737,48 @@ def comparison(c: Collector, ctx: T.Ctx) -> None:
         c.put(f"LenetProofVs{sys_}", q, src, _ratio_text)
 
 
+ZKLLM_SOURCE = {True: "in the same run", False: "in separate runs"}
+"""``ZkllmSameGpuRun``, the text's account of how zkLLM's prover times on the run's GPU were measured ("its public
+demo also ran on the GPU ..."): by the run package's ``zkllm`` tier in the same run, or in the separate stored runs."""
+
+
 def zkllm_same_gpu(c: Collector, ctx: T.Ctx) -> None:
-    """zkLLM's prover on the run's own GPU model: its stored runs (``artifacts/results/zkllm_l40s/``, read with the
-    published values by :func:`experiments.paper.bench.literature`; the proof binaries of two decoder layers, times
-    the layers) for Llama-2-7B and Llama-2-13B at 2,048 tokens, and their factor over our prover on the same prompt
-    (mode C, interactive, as ``tab:eval-compare``'s zkLLM rows).  Every value is printed only when the stored runs'
-    GPU is the run's (the records' ``env.gpu``, else the benchmark's prover): a factor holds on the same hardware
-    only."""
-    from experiments.paper.bench import ZKLLM_RUNS
+    """zkLLM's prover on the run's own GPU model, for Llama-2-7B and Llama-2-13B at 2,048 tokens (the proof binaries
+    of two decoder layers, times the layers), and its factor over our prover on the same prompt (mode C,
+    interactive, as ``tab:eval-compare``'s zkLLM rows).  The source is the run's own ``zkllm`` tier
+    (``logs/<name>/zkllm/``, :data:`experiments.paper.bench.ZKLLM_RUN`) when it holds both models on the run's GPU,
+    else the stored runs (``artifacts/results/zkllm_l40s/``, :data:`experiments.paper.bench.ZKLLM_RUNS`); both are
+    read with the published values by :func:`experiments.paper.bench.literature`.  Every value is printed only when
+    the source's GPU is the run's (the records' ``env.gpu``, else the benchmark's prover): a factor holds on the
+    same hardware only.  ``ZkllmSameGpuRun`` names the source for the text (:data:`ZKLLM_SOURCE`; empty when neither
+    source has the run's GPU)."""
+    from experiments.paper.bench import ZKLLM_RUN, ZKLLM_RUNS
     env = ctx.run.environment()["gpu"] or next(iter(sorted(ctx.bench.hardware()[0])), None)
     gpu = " ".join(env.split()) if env else None
+    models = (("Llama-2-7B", "llama2-7b", "Llama"), ("Llama-2-13B", "llama2-13b", "LlamaL"))
+
+    def rows(system):
+        out = [ctx.lit.get((system, model, "2048")) or {} for model, _, _ in models]
+        same = [bool(gpu and r.get("prover_hw") and " ".join(r["prover_hw"].split()) == gpu) for r in out]
+        return out, same
+
+    own, same = rows(ZKLLM_RUN)
+    in_run = all(same)
+    if not in_run:
+        own, same = rows(ZKLLM_RUNS)
     factors = []
-    for model, m, name in (("Llama-2-7B", "llama2-7b", "Llama"), ("Llama-2-13B", "llama2-13b", "LlamaL")):
-        row = ctx.lit.get((ZKLLM_RUNS, model, "2048")) or {}
-        same = bool(gpu and row.get("prover_hw") and " ".join(row["prover_hw"].split()) == gpu)
-        theirs = f.to_float(row.get("prover_s")) if same else None
+    for (model, m, name), row, ok in zip(models, own, same):
+        theirs = f.to_float(row.get("prover_s")) if ok else None
         ours = ctx.bench.llm_cost(m, 2048, "c_cpu_int") or ctx.bench.llm_cost(m, 2048, "c_gpu_int")
         q = theirs / ours["prove"] if theirs and ours and ours["prove"] else None
         factors.append(q)
         c.put(f"ZkllmSameGpuProver{name}", theirs, row.get("source", ""), lambda v: f.num(v))
         c.put(f"ZkllmSameGpuFactor{name}", q, f"{row.get('source', '')}; {ctx.bench.name} {ours['cell']}"
               if ours else "", _ratio_text)
-    _range(c, "ZkllmSameGpuFactorRange", factors, "zkLLM's stored runs and the benchmark's interactive mode-C cells",
-           _ratio_text)
+    _range(c, "ZkllmSameGpuFactorRange", factors, "zkLLM's runs on the run's GPU and the benchmark's interactive "
+           "mode-C cells", _ratio_text)
+    c.put("ZkllmSameGpuRun", ZKLLM_SOURCE[in_run] if any(same) else None,
+          "; ".join(r.get("source", "") for r in own if r))
 
 
 # ================================================================================================ spot-checking schemes

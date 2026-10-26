@@ -86,9 +86,12 @@ real-weight models whose every honest Kpre query at 2,048 tokens the real tier a
 `\OptionsRuns` and `\OptionsSpread` are the timed runs of `tab:options`' cells and their largest relative min--max
 spread; `\Outcome...` the tampered queries of the real-weight cells, their random-weight twins and the generation
 cells (all, V1's, the generated responses') and the setup tier's honest setup proofs, printed only when every tamper was rejected and every setup
-proof accepted. `\ZkllmSameGpu...` set zkLLM's stored runs on the run's GPU model (`artifacts/results/zkllm_l40s/`,
-read by `bench.literature` with the published values: the proof binaries of two decoder layers, times the layers)
-against our interactive mode-C prover on prompts of the same length, only when the stored runs' GPU is the run's. The
+proof accepted. `\ZkllmSameGpu...` set zkLLM's prover on the run's GPU model (the proof binaries of two decoder
+layers, times the layers) against our interactive mode-C prover on prompts of the same length: from the run's own
+`zkllm` tier (`logs/<name>/zkllm/summary.csv` and each run's `env.txt`) when it holds Llama-2-7B and Llama-2-13B on
+the run's GPU, else from the stored runs (`artifacts/results/zkllm_l40s/`), both read by `bench.literature` with the
+published values, and only when their GPU is the run's; `\ZkllmSameGpuRun` states which ("in the same run" or "in
+separate runs") in the sentences of Sec. `sec:eval-setup` and `ext:disc-status`. The
 spot-checking schemes' acceptance probabilities and path counts of `tab:sok` and `tab:sok-derivation` (`\Sok...`)
 follow from the formulas and parameters those tables state (`attack/sok.py`; no run). The bounds over the in-range
 cells skip a layer and range without a successful edit. A number the text states as a bound ("at most", "up to",

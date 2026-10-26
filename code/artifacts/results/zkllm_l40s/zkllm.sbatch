@@ -11,10 +11,11 @@
 # with an AMD EPYC 9334 CPU. Each stored run
 # dir is its $OUT without layer-0-input.bin, with the log-*.txt files packed into logs.tar.gz and
 # nvidia-smi.csv gzipped.
-# ZKLLM_HOME holds zkLLM's checkout (zkllm/) and its conda environment (env/). Copy mkinput.py into
-# $ZKLLM_HOME/zkllm first (it imports zkLLM's fileio_utils). The job runs offline: the Llama-2
+# ZKLLM_HOME holds zkLLM's checkout (zkllm/) and its conda environment (env/). Copy
+# code/experiments/comparison/zkllm/mkinput.py into $ZKLLM_HOME/zkllm first (it imports zkLLM's fileio_utils). The job runs offline: the Llama-2
 # checkpoints (gated on Hugging Face) must already be in zkllm/model-storage.
-# Each proof binary is timed (zkLLM's code unchanged) by the shims that install_timing_shims.sh puts
+# Each proof binary is timed (zkLLM's code unchanged) by the shims that
+# code/experiments/comparison/zkllm/install_timing_shims.sh puts
 # into the zkLLM checkout: run it there once first. They append to $ZK_TIMELOG, the run's bin_times.log.
 set -uo pipefail
 SIZE=$1 SEQ=${2:-2048} REPS=${3:-3} LAYERS=${4:-"0 1"}

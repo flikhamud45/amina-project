@@ -21,6 +21,7 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 | The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats, and the dogs-vs-squirrels ResNet-18 that is Anchuri et al.'s substitute model) | `code/artifacts/models/cnn/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224,resnet18_224_squirrel}.pt` (on the GPU node, from `code/`: `PYTHONPATH=src:. ../.venv/bin/python -m experiments.costs.train_cnn --model <m> --device cuda`, seed 0); CIFAR-10 in the `cifar-10-batches-py` layout under `code/data/cifar10` (or `$PVI_CIFAR_ROOT`); the ImageNet subsets' caches `dogs_cats.pt` and `dogs_squirrels.pt` under `code/artifacts/cache` (or `$PVI_CACHE`), or ImageNet under `code/data/imagenet` (or `$PVI_IMAGENET_ROOT`) with `train/` and `val/` holding class `i` of the sorted synsets in folder `i + 1` (`1` to `1000`; the dogs are `152` to `269`, the cats `282` to `286`, the fox squirrel `336`), from which the first run writes the caches. `run.sh all` and `run.sh bench` stop before submitting anything if one is missing |
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]`; without: `--local` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
 | Exclusive use of the node | the timings | every job asks for `--exclusive` (check that the partition allows exclusive jobs); the smoke and the rehearsal, whose timings are not used, pass `--no-exclusive`; on a shared partition, see Sec. 4 (`--one-job`) |
+| For the optional `zkllm` tier (with `--llama-licence`): git, make, gcc/g++ (12 or older for CUDA 12.1) and a CUDA toolkit (nvcc; CUDA 12.1 as zkLLM recommends), a Python 3.8 to 3.12, about 10 GB for zkLLM's checkout and environment and 58 GB of scratch space on the GPU node | the tier clones zkLLM's public demo (commit `993311e`) and builds it for the node's GPU in an environment of its own (`logs/<name>/zkllm/home`, or `--zkllm-home`; the run's `.venv` is not changed); zkLLM writes its fixed-point weights and commitments (27 GB for Llama-2-7B, 52 GB for Llama-2-13B) to the scratch folder (`--zkllm-scratch`, default the node's `$TMPDIR`, else `/tmp`, else the zkLLM home) and the job deletes them at its end; the checkpoints are the Llama-2 ones of `HF_HOME`. `run.sh` submits nothing while one of these is missing on the submitting host and says which (`experiments/comparison/zkllm/README.md`) | `git --version; make --version; g++ --version; nvcc --version` (or `--cuda-home <CUDA folder>`, e.g. after `module load cuda/12.1`, passed to the jobs); on the GPU node, `df -h ${TMPDIR:-/tmp}` |
 | No Hugging Face cache variable that overrides `HF_HOME` with a folder the jobs cannot write | `HF_HUB_CACHE`, `TRANSFORMERS_CACHE` and `HF_DATASETS_CACHE` take precedence over `HF_HOME` | `env \| grep -E 'HF_HUB_CACHE\|TRANSFORMERS_CACHE\|HF_DATASETS_CACHE'`; `run.sh` refuses an unwritable one (`unset` it) |
 
 Every language model of the cost tiers has random weights (the costs depend only on the shapes); real checkpoints
@@ -40,6 +41,7 @@ export CXX=<path to g++>
 export CMAKE=<path to cmake>                         # only if cmake is not on the PATH (the cpuv tier)
 export PVI_PY_INCLUDE=<headers folder>               # only if the check above printed False
 export HF_TOKEN=<your Hugging Face token>            # only with --llama-licence
+module load cuda/12.1                                # only for the zkllm tier, if nvcc is not on the PATH
 ```
 
 `run.sh` passes `HF_HOME`, `PVI_CIFAR_ROOT`, `PVI_IMAGENET_ROOT`, `PVI_CACHE`, `PVI_NATIVE_DIR` and `PVI_PY_INCLUDE`
@@ -58,7 +60,7 @@ submits nothing and needs none of the settings above (it only warns about those 
 bash code/experiments/package/run.sh --platform smoke --no-exclusive smoke
 #  -> "SMOKE OK" at the end of logs/smoke/sp-smoke-*.out (up to an hour); wait for it before the rehearsal
 bash code/experiments/package/run.sh --platform rehearsal --rehearsal --no-exclusive --optional [--llama-licence] all
-#  -> 54 small jobs (55 with --llama-licence): every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three
+#  -> 54 small jobs (56 with --llama-licence): every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three
 #     hours; wait until `squeue -u $USER` lists none of them, then
 cd code
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.comparison.aggregate --platform rehearsal
@@ -94,6 +96,7 @@ during the run. Every job asks for at most 64 GB of host memory:
 | `tv` | 2 | the sampler's closed-form and Monte Carlo checks on its toy distributions; its total-variation distance on OPT-125M (legacy recipe, 2 positions, 2 workers) |
 | `attack` | 5 | the path test's bound; the MNIST scripts on the stored networks; OPT-125M: the single-neuron attack and its backdoor, the in-range edits, the sampler game |
 | `long` | 2 | one Llama-2-7B block at 4,608 tokens: the CPU verifier and re-execution |
+| `zkllm` | 0 (1) | with `--llama-licence`: zkLLM's build (Llama-2-7B's download only) and one repetition of Llama-2-7B's layer 0 at 2,048 tokens, every step of the full jobs (`numbers.py --rehearsal` does not require its record, since the tier needs the licence; a record that is not `ok` is a `CHECK FAILED` line) |
 
 The attack tier's OPT-125M documents are named by their model (`attack/inrange_llm_opt-125m_any.json`,
 `attack/adaptive_game_opt-125m.json`, ...): `numbers.py` counts them for their kinds, and no table or text number
@@ -140,8 +143,8 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 183 jobs. There, the paper's run submits its tiers as eight jobs (`--one-job`), each
-of which runs its tiers' jobs one after another in its allocation: the timed tiers in six jobs that have a node to
+waits that long for each of its 186 jobs. There, the paper's run submits its tiers as nine jobs (`--one-job`), each
+of which runs its tiers' jobs one after another in its allocation: the timed tiers in seven jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `tv`, `attack`) in two jobs on one GPU of a shared node:
 
 ```bash
@@ -152,11 +155,14 @@ $R --one-job smoke real                          # 9-13 h
 $R --one-job smoke serve gen batch               # 13-17 h
 $R --one-job smoke v1 setup improve              # 9-16 h
 $R --one-job smoke gpuv                          # 5-7 h
+$R --one-job zkllm                               # 3-5 h: zkLLM's demo on the same GPU model (no smoke: it runs
+                                                 # none of our code)
 $R --one-job --no-exclusive smoke quality        # 17-25 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive smoke tv attack      # 6-9 h, not timed
 ```
 
-Each of these jobs starts with the smoke on the node it was given (and stops if it fails), writes the same job logs
+Each of these jobs but the zkllm one starts with the smoke on the node it was given (and stops if it fails), writes
+the same job logs
 as the chain (`logs/final/sp-<cell>-<id>.out`) and lists what it ran in its own log
 (`logs/final/node-<tiers>-<job id>.log`). Its time limit is 24 hours (`--max-hours`), and SLURM queues a pre-empted
 one again by itself (`--requeue`); a job that ends successfully leaves a marker in `logs/final/done/`, and the
@@ -180,13 +186,15 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 | `tv` | 2 | 1-2 | 3 | the sampler's total-variation distance on the certified OPT-1.3B, and its checks |
 | `attack` | 5 | 4-6 | 12 | the attack: reproduction, MNIST, OPT-6.7B, the in-range edits (`tab:inrange`), the sampler games |
 | `long` (optional) | 12 | 4-7 | 28 | prompts of 2,048 to 16,384 tokens (`tab:eval-long`) |
+| `zkllm` (optional) | 3 (0) | 3-5 | 8 (0) | zkLLM's public demo (commit `993311e`, unchanged) on the run's GPU: its build, then Llama-2-7B and Llama-2-13B at 2,048 tokens, 3 repetitions of layers 0 and 1, each proof binary timed (`logs/<name>/zkllm/`): zkLLM's prover on the same GPU model (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`), in place of the stored runs (`artifacts/results/zkllm_l40s/`), and the text's "in the same run" (`experiments/comparison/zkllm/README.md`) |
 
-`--optional` adds the `long` tier, which the paper's Discussion and `tab:eval-long` read. Submit it in the same
-invocation as the other tiers, so that it is chained after them and gated by the smoke; a second invocation starts a
-new chain. Without a Llama-2 licence, leave out `--llama-licence`: the Llama-2 cells then stay empty. The counts and
+`--optional` adds the `long` tier, which the paper's Discussion and `tab:eval-long` read, and the `zkllm` tier (with
+`--llama-licence` only). Submit them in the same invocation as the other tiers, so that they are chained after them
+and gated by the smoke; a second invocation starts a new chain. Without a Llama-2 licence, leave out `--llama-licence`: the Llama-2 cells then stay empty. The counts and
 limits are those with `--llama-licence`; without it (in parentheses) the `real` tier has 17 jobs and 23 h of limits
 and the `quality` tier 20 jobs and 70 h. `all` is then 160 jobs and 291 h of limits (171 and 327 h with
-`--llama-licence`; the `long` tier adds 12 jobs and 28 h).
+`--llama-licence`; the `long` tier adds 12 jobs and 28 h, and the `zkllm` tier, with `--llama-licence`, 3 jobs and
+8 h: `run.sh --platform final --optional --llama-licence --dry-run all` lists 186 jobs and 363 h).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
 cpuv`, then `v1`, ...); its jobs are chained among themselves. Every mode-C cell takes `--policy` (default `cnn18c`)
@@ -201,7 +209,11 @@ measures the setup itself.
   `code/artifacts/comparison/raw_<name>/`, the attack's to `logs/<name>/attack/`. The second line of a CPU-timing
   job's log names the CPUs it was pinned to (or why it was not).
 * Expected: in `serve`, the largest joint batches of the 7B and 13B models are recorded as `"skipped": "out of
-  memory"`; the first job of a real checkpoint spends some minutes downloading it.
+  memory"`; the first job of a real checkpoint spends some minutes downloading it. In the `zkllm` tier, each first
+  skip connection's log says "Input or output file does not exist" (zkLLM's demo writes no attention output; the
+  time per layer counts the second one twice); `zk-build` ends with `ZKLLM_BUILD_OK`, and a prove job that stops
+  names what it lacks (the scratch space: `--zkllm-scratch <folder with 58 GB>`; the CUDA toolkit on the node:
+  `--cuda-home`).
 * `A CORRECTNESS CHECK FAILED` or `FAILED:` in a log (an honest query rejected, a tamper accepted, a byte count that
   disagrees with the model) is a real problem; the job's log says which check.
 * A whole-node job (`--one-job`) that hit its time limit: submit the same command again; it skips the jobs that
@@ -237,9 +249,9 @@ then the records, without the caches, as one archive and as the artifact's store
 
 ```bash
 tar czf final.tgz --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp --exclude='ref_*.pt' \
-    logs/final code/artifacts/comparison/raw_final
-rsync -a --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp --exclude='ref_*.pt' logs/final/ \
-    code/artifacts/final/
+    --exclude=zkllm/home logs/final code/artifacts/comparison/raw_final
+rsync -a --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp --exclude='ref_*.pt' \
+    --exclude=zkllm/home logs/final/ code/artifacts/final/
 ```
 
 ## 7. From the records to the tables
