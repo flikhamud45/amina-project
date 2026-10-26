@@ -127,10 +127,32 @@ def ppl(model, cell, ppl_, ratio, *, split="test", calibration="train", seq=2048
 
 
 def zeroshot(model, task, variant, acc, *, diff=None, recipe="certified"):
-    """A ``quality/zeroshot.py`` stdout line (without the per-document lists)."""
-    row = {"model": model, "tag": "", "env": _env(), "task": task, "variant": variant, "acc": acc}
+    """A ``quality/zeroshot.py`` stdout line (without the per-document lists): both variants carry the job's recipe
+    (the script's head, written once the integer model is built)."""
+    row = {"model": model, "tag": "", "env": _env(), "task": task, "variant": variant, "acc": acc, "recipe": recipe}
     if variant == "int":
-        row.update(recipe=recipe, diff_acc=diff, diff_acc_ci95=[diff - 0.01, diff + 0.01], same_pick=0.9)
+        row.update(diff_acc=diff, diff_acc_ci95=[diff - 0.01, diff + 0.01], same_pick=0.9)
+    return row
+
+
+def llama_ppl(model, cell, ratio, *, split="test", ci=None, ref_dtype="float32", alpha=None, balance=None,
+              ppl_=None):
+    """A ``quality/ppl_llama.py`` record (``cell`` ``reference``: the reference)."""
+    head = {"model": model, "smoke": False, "config": "llama2-7b", "split": split, "seq": 2048, "windows": 160,
+            "ref_dtype": ref_dtype, "env": _env()}
+    if cell == "reference":
+        return dict(head, cell="reference", ppl=ppl_ or 6.0, nll=[1.0])
+    return dict(head, cell=cell, graph=cell.split("-")[0], alpha=alpha, glu_smooth=balance, glu_exp=0, draw=0,
+                ppl=(ppl_ or 6.0) * ratio, ref_ppl=ppl_ or 6.0, ratio=ratio, ratio_ci95=list(ci or (ratio, ratio)),
+                top1=0.9)
+
+
+def digest_rec(model, threads, *, device=None, digest_="d1", weights="w1", roots="r1"):
+    """A ``quality/digest_check.py`` record (``device``: where the commitment is encoded; None: no commitment)."""
+    row = {"model": model, "recipe": "certified", "threads": threads, "host": "n-1", "cpu": "x86_64",
+           "torch": "2.5.1", "digest": digest_, "weights_sha256": weights, "env": _env()}
+    if device:
+        row.update(policy="cnn18c", rate=4, commit_device=device, roots_sha256=roots, n_roots=225)
     return row
 
 
@@ -294,14 +316,16 @@ def _logs(tmp: Path) -> Path:
             ppl(q, f"scalar-g{gain}-p8", ref * scalar * 1.2, scalar * 1.2, mass=0.56 if gain == 4 else 0.7),
             ppl(q, "smooth-certified-a0.6-p11", ref * cert, cert, ci=(cert - 0.003, cert + 0.003)),
             ppl(q, "smooth-certified-a0.6-p8", ref * cert * 1.02, cert * 1.02, mass=0.6),
-            # an alpha-0.55 cell (the legacy recipe's): never the certified row
-            ppl(q, "smooth-legacy-a0.55-p11", ref * 1.956, 1.956, alpha=0.55)])
-    # the recipe studies: OPT-125M's percentile recipe at 2,048 tokens, the alpha sweeps on the test split (OPT-1.3B)
-    # and on the validation split (OPT-1.3B, OPT-6.7B); a validation record never fills tab:quality's test-split row
+            # an alpha-0.55 cell (the legacy recipe's): never the certified row (OPT-125M's has the values of the
+            # recipe study below, which measures the same cell)
+            ppl(q, "smooth-legacy-a0.55-p11", *((55.0, 2.03) if gain == 4 else (ref * 1.956, 1.956)), alpha=0.55)])
+    # the recipe studies: OPT-125M's percentile recipe at 2,048 tokens, the alpha sweeps on the test split (OPT-1.3B;
+    # its alpha 0.6 is q-opt13's certified cell again, with the same values) and on the validation split (OPT-1.3B,
+    # OPT-6.7B); a validation record never fills tab:quality's test-split row
     sweep = [ppl("facebook/opt-125m", "smooth-legacy-a0.55-p11", 55.0, 2.03, alpha=0.55)]
     for a, test, val in ((0.3, 1.040, None), (0.4, 1.030, None), (0.5, 1.027, 1.031), (0.6, 1.026, 1.029),
                          (0.7, 1.026, 1.028)):
-        sweep.append(ppl("facebook/opt-1.3b", f"smooth-certified-a{a:g}-p11", 15.0, test, alpha=a))
+        sweep.append(ppl("facebook/opt-1.3b", f"smooth-certified-a{a:g}-p11", 14.62 * test, test, alpha=a))
         if val:
             sweep.append(ppl("facebook/opt-1.3b", f"smooth-certified-a{a:g}-p11", 17.0, val, alpha=a,
                              split="validation"))
@@ -317,6 +341,32 @@ def _logs(tmp: Path) -> Path:
         {"model": "openlm-research/open_llama_7b_v2", "config": "llama2-7b", "seq": 2048, "windows": 160,
          "cell": "main-a0.55-glus0.2", "graph": "main", "alpha": 0.55, "glu_smooth": 0.2, "draw": 0, "ppl": 6.44,
          "ratio": 1.073, "ratio_ci95": [1.07, 1.08], "top1": 0.9, "env": _env()}])
+    # the legacy recipe's zero-shot job of OPT-125M, a later job: its fp16 reference never fills the certified columns
+    _write(logs, "sp-q-zeroshot-legacy-opt-125m-48.out", [
+        zeroshot("facebook/opt-125m", t, v, 0.5, diff=-0.02, recipe="legacy") for t, _ in T.ZEROSHOT
+        for v in ("ref", "int")])
+    # Llama-2-7B against its fp32 checkpoint, Llama-2-13B against its fp16 copy
+    l7, l13, ol = "meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf", "openlm-research/open_llama_7b_v2"
+    _write(logs, "sp-q-llama7-49.out", [
+        llama_ppl(l7, "reference", 1.0),
+        llama_ppl(l7, "main-a0.55-glus0.2", 1.0805, ci=(1.0781, 1.0832), alpha=0.55, balance=0.2),
+        llama_ppl(l7, "main-a0.65-glus0.2", 1.09, alpha=0.65, balance=0.2),
+        llama_ppl(l7, "smooth-a0.55", 1.12, alpha=0.55)])
+    _write(logs, "sp-q-llama13-50.out", [
+        llama_ppl(l13, "reference", 1.0, ref_dtype="float16"),
+        llama_ppl(l13, "main-a0.6-glus0.2", 1.0641, ci=(1.0622, 1.0660), alpha=0.6, balance=0.2,
+                  ref_dtype="float16")])
+    # OpenLLaMA-7B's grid on the validation split: alpha 0.45 with balance 0.3 is the best, the main recipe's ratio
+    # 0.0035 above it; none of these fills the test split's \LlamaOpenRatio
+    best = {(0.55, 0.2): 1.0735, (0.45, 0.3): 1.07}
+    _write(logs, "sp-q-openllama7-validation-51.out", [llama_ppl(ol, "reference", 1.0, split="validation")] + [
+        llama_ppl(ol, f"main-a{a:g}-glus{g:g}", best.get((a, g), 1.08), alpha=a, balance=g, split="validation")
+        for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)])
+    # the reproducible build: OPT-125M with 1 and 8 threads, OPT-1.3B's commitment encoded on the GPU and the CPU
+    _write(logs, "sp-q-digest-52.out", [
+        digest_rec("facebook/opt-125m", 1), digest_rec("facebook/opt-125m", 8, device="cuda"),
+        digest_rec("facebook/opt-1.3b", 8, device="cuda", digest_="d2", weights="w2", roots="r2"),
+        digest_rec("facebook/opt-1.3b", 8, device="cpu", digest_="d2", weights="w2", roots="r2")])
     _write(logs, "sp-l-llama7-4096-L2-24.out", [perf(m, 4096, "Kpre", 4.0, 1e9, layers=2, label="long")])
     _write(logs, "sp-l-llama7-4096-L3-25.out", [perf(m, 4096, "Kpre", 5.4, 1.4e9, layers=3, label="long")])
     _write(logs, "sp-l-rx-llama7-4096-26.out", [reexec(m, 4096, v, t, blocks={"2": t / 16, "3": t * 3 / 32})
@@ -366,7 +416,8 @@ def test_every_record_lands_in_its_tier_and_kind(run_dir):
     assert {("smoke", "v1"), ("smoke", "h2d"), ("cpuv", "perf"), ("cpuv", "reexec"), ("cpuv", "v1"), ("v1", "v1"),
             ("gpuv", "v1"), ("gpuv", "perf"), ("gpuv", "reexec"), ("serve", "serve"), ("gen", "gen"), ("real", "gen"),
             ("real", "v1"), ("setup", "setup"), ("improve", "open_ab"), ("improve", "perf"), ("improve", "fold_ab"),
-            ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("long", "perf"), ("long", "reexec"),
+            ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("quality", "digest"), ("long", "perf"),
+            ("long", "reexec"),
             ("bench", "bench_env"), ("attack", "path_bound")} <= got
     assert not [m for r in recs for m in R.checks(r)] and not R.log_checks(logs)
     files = R.read_files(logs, problems)
@@ -534,6 +585,109 @@ def test_the_settings_and_the_further_text_numbers(run_dir):
     assert (v["GkrTranscriptBits"], v["GkrTranscriptKB"]) == ("27", "36.0")
     assert v["CompareVerifierSlowerRows"] is None              # most rows of tab:eval-compare are not in this run
     assert [M.rows_text(n) for n in (0, 1, 2, 12)] == ["no rows", "one row", "two rows", "12 rows"]
+
+
+def test_the_llama_family_the_validation_grid_and_the_reproducible_build(run_dir):
+    """Llama-2-7B against fp32 and Llama-2-13B against fp16, with their intervals; OpenLLaMA-7B's validation grid (its
+    best cell, the main recipe's ratio above it rounded up, and never the test split's ratio); the reproducible
+    build's thread counts and encoding devices; and tab:zeroshot's fp16 column from the certified job only."""
+    tmp, logs = run_dir
+    ctx, problems = _ctx(tmp, logs)
+    m, _ = M.build(ctx, problems)
+    tables = {t.name: t for t in T.build_all(ctx, problems)}
+    assert not problems and not ctx.run.warnings
+    v = {k: x.value for k, x in m.items()}
+    assert (v["LlamaSevenRatio"], v["LlamaSevenCI"]) == ("1.081", "1.078, 1.083")
+    assert (v["LlamaThirteenRatio"], v["LlamaThirteenCI"]) == ("1.065", "1.062, 1.066")
+    assert v["LlamaOpenRatio"] == "1.073"                      # the test split's cell, never the validation grid's
+    assert (v["LlamaOpenValAlpha"], v["LlamaOpenValBalance"], v["LlamaOpenValGap"]) == ("0.45", "0.3", "0.004")
+    assert v["LlamaOpenValClause"] == r"$\alpha=0.45$ with balance 0.3 is the best, ours within 0.004 of its ratio"
+    assert (v["DigestThreadsOptS"], v["DigestEncodingOptM"]) == ("1 and 8", "CPU and GPU")
+    z = {(c["row"], c["column"]): c for c in tables["tab_zeroshot"].cells}
+    assert z["facebook/opt-125m lambada_openai", "fp16"]["value"] == 0.379           # not the legacy job's 0.5
+    assert "sp-q-zeroshot-opt-125m-22" in z["facebook/opt-125m lambada_openai", "fp16"]["source"]
+
+
+def _quality_run(*records) -> tuple[dict, list]:
+    """``({macro: printed value}, problems)`` of a run of the quality tier's ``records`` alone."""
+    recs = [R.Rec("quality", "q-x", str(i), f"sp-q-x-{i}.out", 1, R.kind_of(d), d) for i, d in enumerate(records, 1)]
+    problems: list = []
+    m, _ = M.build(T.Ctx(R.Run(recs), B.Bench(None), {}, byte_model=False), problems)
+    return {k: x.value for k, x in m.items()}, problems
+
+
+def test_the_texts_claims_on_the_llama_family_and_a_build_that_differs():
+    """The main recipe best on its validation grid (a tie goes to it); a validation cell outside the grid the text
+    names, or a Llama-2-13B ratio against fp32, fails the text's claims (a rehearsal's warnings); two builds of one
+    model that differ fail the build and name no setting, also in a rehearsal; one thread count names none."""
+    ol, l13 = "openlm-research/open_llama_7b_v2", "meta-llama/Llama-2-13b-hf"
+    grid = [llama_ppl(ol, f"main-a{a:g}-glus{g:g}", 1.07 if (a, g) in ((0.55, 0.2), (0.65, 0.1)) else 1.08, alpha=a,
+                  balance=g, split="validation") for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)]
+    v, problems = _quality_run(*grid)
+    assert not problems and v["LlamaOpenValClause"] == "ours are the best" and v["LlamaOpenValGap"] == "0.000"
+    assert (v["LlamaOpenValAlpha"], v["LlamaOpenValBalance"]) == ("0.55", "0.2")
+    v, problems = _quality_run(*grid[:8])                       # one cell missing: no clause, and no false claim
+    assert not problems and v["LlamaOpenValClause"] is None and v["LlamaOpenValAlpha"] is None
+    outside = llama_ppl(ol, "main-a0.75-glus0.2", 1.06, alpha=0.75, balance=0.2, split="validation")
+    _, problems = _quality_run(*grid, outside)
+    assert len(problems) == 1 and problems[0].startswith(M.TEXT_CLAIM) and "outside the grid" in problems[0]
+    v, problems = _quality_run(llama_ppl(l13, "main-a0.6-glus0.2", 1.05, alpha=0.6, balance=0.2))
+    assert v["LlamaThirteenRatio"] == "1.050" and problems == [
+        f"{M.TEXT_CLAIM} LlamaThirteenRatio's reference is float32; the text states float16"]
+    builds = [digest_rec("facebook/opt-1.3b", 8, device="cuda"),
+              digest_rec("facebook/opt-1.3b", 8, device="cpu", roots="r9"), digest_rec("facebook/opt-125m", 8)]
+    v, problems = _quality_run(*builds)
+    assert v["DigestEncodingOptM"] is None and v["DigestThreadsOptS"] is None    # OPT-125M: one thread count only
+    assert len(problems) == 1 and problems[0].startswith("CHECK FAILED digest: the builds of the certified "
+                                                         "facebook/opt-1.3b differ in roots_sha256")
+    kept, _ = N.demote_text_claims(problems)
+    assert kept == problems                                     # a build that differs fails a rehearsal too
+    v, problems = _quality_run(digest_rec("facebook/opt-125m", 1), digest_rec("facebook/opt-125m", 8, weights="w2"))
+    assert v["DigestThreadsOptS"] is None and "differ in weights_sha256" in problems[0]
+    assert M.commit_device({"roots_sha256": "r", "env": {"argv": ["--commit-device", "cuda:0"]}}) == "cuda"
+    assert M.commit_device({"digest": "d"}) is None and M.val_clause((0.45, 0.1), 0.00012, (0.55, 0.2)) == \
+        r"$\alpha=0.45$ with balance 0.1 is the best, ours within 0.001 of its ratio"
+
+
+def test_two_records_of_one_quality_cell_that_differ_are_a_warning(run_dir, capsys):
+    """A cell that two jobs measure (the certified OPT-125M of q-opt125 and of an alpha study) with the same values
+    gives no warning; with different values a WARNING names both records, the later is used, and the exit status
+    stays 0."""
+    tmp, logs = run_dir
+    same = ppl("facebook/opt-125m", "smooth-certified-a0.6-p11", 27.66 * 1.076, 1.076, ci=(1.073, 1.079))
+    _write(logs, "sp-q-opt125-recipes-53.out", [same])
+    ctx, problems = _ctx(tmp, logs)
+    M.build(ctx, problems)
+    assert not problems and not ctx.run.warnings
+    _write(logs, "sp-q-opt125-recipes-53.out", [dict(same, ratio=1.0801, ppl=27.66 * 1.0801)])
+    ctx, problems = _ctx(tmp, logs)
+    m, _ = M.build(ctx, problems)
+    assert m["QualityRatioOptS"].value == "1.081" and len(ctx.run.warnings) == 1
+    w = ctx.run.warnings[0]
+    assert w.startswith("WARNING quality: two records of facebook/opt-125m smooth-certified-a0.6-p11 (test split")
+    assert "sp-q-opt125-21.out" in w and "sp-q-opt125-recipes-53.out" in w
+    capsys.readouterr()
+    assert N.main(_args(tmp, logs, "--check")) == 0
+    assert "WARNING quality: two records of facebook/opt-125m smooth-certified-a0.6-p11" in capsys.readouterr().out
+
+
+def test_the_llama_cells_are_the_main_recipes_and_the_grid_the_texts():
+    """Each Llama-family macro reads its checkpoint's main recipe (``hf_llama.MAIN_SETTINGS``), and OpenLLaMA-7B's
+    validation grid is the main recipe's alpha and balance with their neighbours 0.1 away, as the text names it."""
+    from pvi.models import hf_llama
+    for model, _, cell, _, _ in M.LLAMAS:
+        r = hf_llama.main_recipe(model)
+        assert cell == f"main-a{r['smooth']:g}-glus{r['glu_smooth']:g}", model
+    model, alphas, balances = M.LLAMA_VALIDATION
+    r = hf_llama.main_recipe(model)
+    assert (alphas[1], balances[1]) == (r["smooth"], r["glu_smooth"])
+    assert [round(b - a, 9) for x in (alphas, balances) for a, b in zip(x, x[1:])] == [0.1] * 4
+    body = (PAPER / "sections" / "quality.tex").read_text(encoding="utf-8")
+    ext = (PAPER / "sections" / "ext_generation.tex").read_text(encoding="utf-8")
+    assert r"$\alpha$ and balance $\pm0.1$ from ours, \LlamaOpenValClause{}" in body
+    assert (rf"$\alpha\in\{{{','.join(f'{a:g}' for a in alphas)}\}}$ and balance "
+            rf"$\in\{{{','.join(f'{g:g}' for g in balances)}\}}$") in ext
+    assert rf"($\alpha={alphas[1]:g}$, balance {balances[1]:g})" in ext
 
 
 def test_the_models_from_the_library():

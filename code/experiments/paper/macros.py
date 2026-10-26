@@ -22,8 +22,9 @@ The families, with the record each number comes from:
   re-execution, real weights, long prompts, the improvements, generation (their tiers' records, through the table
   selections of :mod:`experiments.paper.tables`);
 * the break-even (``deployment/ev_breakeven.py``'s formulas on the run's claims, verifier and re-execution times);
-* quality and zero-shot accuracy (``quality`` tier), the sampler's distance (``tv`` tier) and the attack (``attack``
-  tier's documents);
+* quality and zero-shot accuracy and the reproducible build (``quality`` tier; two builds of one certified model that
+  differ are a ``CHECK FAILED`` line, :func:`digest_agreement`), the sampler's distance (``tv`` tier) and the attack
+  (``attack`` tier's documents);
 * values that follow from the code alone, under the run's plan: the security parameters, the setup proof's size,
   breakdown and radii (``costs/setup_bytes.py``), the split commitment's columns per query, and V1's cut of a model
   from its shapes (:func:`experiments.paper.tables.v1_shape_model`).
@@ -55,10 +56,17 @@ class Macro:
 
 
 class Collector:
-    """The macros of one build, in the order they are defined."""
+    """The macros of one build, in the order they are defined, and the checks that failed on the way
+    (``problems``: ``CHECK FAILED`` lines, among them those of what the text states, :data:`TEXT_CLAIM`)."""
 
     def __init__(self) -> None:
         self.m: dict[str, Macro] = {}
+        self.problems: list[str] = []
+
+    def claim(self, holds: bool, text: str) -> None:
+        """What the text states about a value: a :data:`TEXT_CLAIM` line unless it ``holds``."""
+        if not holds:
+            self.problems.append(f"{TEXT_CLAIM} {text}")
 
     def put(self, name: str, raw, src=None, fmt=str) -> None:
         """One number: ``raw`` printed by ``fmt`` (None, NaN or an empty container: not in the run)."""
@@ -797,15 +805,92 @@ def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
 # ================================================================================================ quality
 OPTS = (("facebook/opt-125m", "OptS", 4), ("facebook/opt-1.3b", "OptM", 3), ("facebook/opt-6.7b", "OptL", 2))
 LLAMAS = (("openlm-research/open_llama_7b_v2", "LlamaOpen", "main-a0.55-glus0.2", 3, True),
+          ("meta-llama/Llama-2-7b-hf", "LlamaSeven", "main-a0.55-glus0.2", 3, True),
+          ("meta-llama/Llama-2-13b-hf", "LlamaThirteen", "main-a0.6-glus0.2", 3, True),
           ("TinyLlama/TinyLlama_v1.1", "TinyLlama", "main-a0.75-glus0.2", 2, True),
           ("Qwen/Qwen3-1.7B-Base", "QwenM", "main-a0.45-glus0.3", 2, True),
           ("Qwen/Qwen3-4B-Base", "QwenL", "main-a0.45-glus0.5", 1, False))
-"""The Llama-family checkpoints of the text, their ``ppl_llama.py`` main cell (``ppl_llama.MAIN_SETTINGS``), the
-decimals the text prints and whether the text states the ratio as a bound ("within"; rounded up)."""
+"""The Llama-family checkpoints of the text, their ``ppl_llama.py`` main cell (``hf_llama.MAIN_SETTINGS``), the
+decimals the text prints and whether the text states the ratio as a bound ("within"; rounded up).  Llama-2-7B and
+Llama-2-13B (the quality tier's ``q-llama7`` and ``q-llama13``, with ``--llama-licence``) also have their 95%
+bootstrap intervals (:data:`LLAMA_CI`)."""
+LLAMA_CI = ("LlamaSeven", "LlamaThirteen")
+LLAMA_REFERENCE = {"meta-llama/Llama-2-13b-hf": "float16"}
+"""The reference of each Llama-family ratio as the text states it: the checkpoint in fp32, except Llama-2-13B's in
+fp16 (``q-llama13 --ref-dtype float16``)."""
+LLAMA_VALIDATION = ("openlm-research/open_llama_7b_v2", (0.45, 0.55, 0.65), (0.1, 0.2, 0.3))
+"""OpenLLaMA-7B's grid on the validation split (``q-openllama7-validation``): the smoothing alphas and the SwiGLU
+product balances within 0.1 of the main recipe's (0.55 and 0.2, ``hf_llama.MAIN_SETTINGS``), as the text names
+them."""
 ALPHAS_TEST = (0.3, 0.4, 0.5, 0.6, 0.7)
 ALPHAS_VALIDATION = (0.5, 0.6, 0.7)
 """The smoothing alphas of the quality tier's alpha studies on the test split (``q-opt13-recipes``,
-``q-opt125-recipes``) and the validation split (``q-opt-validation``)."""
+``q-opt125-recipes``; OPT-125M's alpha 0.6 is ``q-opt125``'s certified cell) and the validation split
+(``q-opt-validation``)."""
+DIGESTS = (("facebook/opt-125m", "DigestThreadsOptS", "threads"),
+           ("facebook/opt-1.3b", "DigestEncodingOptM", "commit_device"))
+"""The reproducible build as the text states it (``q-digest``): per certified model, the setting its builds vary
+(OPT-125M's thread counts; the device that encodes OPT-1.3B's commitment) and the macro that names those settings."""
+DEVICE_NAMES = {"cpu": "CPU", "cuda": "GPU"}
+
+
+def _and(words: list[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def commit_device(d: dict) -> str | None:
+    """The device that encoded a ``digest_check.py`` record's commitment (its ``commit_device``, else the
+    ``--commit-device`` of its command line, else the script's default, ``cpu``); None without a commitment."""
+    if not d.get("roots_sha256"):
+        return None
+    if d.get("commit_device"):
+        return str(d["commit_device"]).split(":")[0]
+    argv = (d.get("env") or {}).get("argv") or []
+    for i, a in enumerate(argv[:-1]):
+        if a == "--commit-device":
+            return str(argv[i + 1]).split(":")[0]
+    return "cpu"
+
+
+def digest_agreement(run) -> tuple[dict, list[str]]:
+    """The reproducible build: ``({model: {setting: sorted values}}, failures)`` over the quality tier's
+    ``digest_check.py`` records of the certified recipe.  Per model, every build must have the same ``digest`` and
+    ``weights_sha256``, and every commitment under one plan and rate the same ``roots_sha256``; a build that differs
+    is a ``CHECK FAILED`` line, and its model has no entry.  A model's entry gives the thread counts (``threads``)
+    and the encoding devices (``commit_device``) of its builds."""
+    groups: dict = {}
+    for r in run.kind("digest", "quality"):
+        if r.d.get("recipe", "certified") == "certified" and r.d.get("model"):
+            groups.setdefault(r.d["model"], []).append(r)
+    out, failures = {}, []
+    for model, rs in groups.items():
+        bad = []
+        for key in ("digest", "weights_sha256"):
+            if len({r.d.get(key) for r in rs}) > 1:
+                bad.append(key)
+        plans: dict = {}
+        for r in rs:
+            if r.d.get("roots_sha256"):
+                plans.setdefault((r.d.get("policy"), r.d.get("rate")), set()).add(r.d["roots_sha256"])
+        bad += [f"roots_sha256 ({p} at rate {k})" for (p, k), roots in plans.items() if len(roots) > 1]
+        if bad:
+            failures.append(f"CHECK FAILED digest: the builds of the certified {model} differ in {', '.join(bad)}: "
+                            + "; ".join(f"{r.source} ({r.d.get('threads')} threads, commitment on "
+                                        f"{commit_device(r.d)})" for r in rs))
+            continue
+        out[model] = {"threads": sorted({r.d.get("threads") for r in rs if r.d.get("threads") is not None}),
+                      "commit_device": sorted({commit_device(r.d) for r in rs} - {None})}
+    return out, failures
+
+
+def val_clause(best: tuple, gap: float, main: tuple) -> str:
+    """The text's clause on OpenLLaMA-7B's validation grid (``best``, ``main``: ``(alpha, balance)``; ``gap``: the
+    main recipe's ratio minus the best's): ``ours are the best``, or the best cell with the main recipe's ratio within
+    ``gap`` of its ratio (rounded up)."""
+    if best == main:
+        return "ours are the best"
+    return rf"$\alpha={best[0]:g}$ with balance {best[1]:g} is the best, ours within {ceil_fixed(gap, 3)} of its ratio"
 
 
 def quality(c: Collector, ctx: T.Ctx) -> None:
@@ -858,6 +943,7 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
     rs = {a: run.ppl("facebook/opt-6.7b", f"smooth-certified-a{a:g}-p11", split="validation") for a in (0.5, 0.6)}
     c.put("QualityAlphaCostOptL", rs[0.6].d["ratio"] - rs[0.5].d["ratio"] if all(rs.values()) else None, rs[0.6],
           lambda v: f"{v:.3f}")
+    # the first recipe at 128 tokens (q-opt125-128): its range over alpha 0.55 and 0.5, as the text states it
     small = [run.ppl("facebook/opt-125m", f"smooth-legacy-a{a}-p8", calibration="test-end", seq=128)
              for a in ("0.55", "0.5")]
     sr = [r.d["ratio"] for r in small if r]
@@ -880,6 +966,39 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
         r = run.ppl(model, cell)
         c.put(f"{name}Ratio", r and r.d["ratio"], r,
               (lambda v, dec=dec: ceil_fixed(v, dec)) if bound else (lambda v, dec=dec: f"{v:.{dec}f}"))
+        if name in LLAMA_CI:
+            c.put(f"{name}CI", r and r.d.get("ratio_ci95"), r, lambda v, dec=dec: f"{v[0]:.{dec}f}, {v[1]:.{dec}f}")
+        stated = LLAMA_REFERENCE.get(model, "float32")
+        c.claim(r is None or r.d.get("ref_dtype", "float32") == stated,
+                f"{name}Ratio's reference is {r and r.d.get('ref_dtype')}; the text states {stated}")
+    # OpenLLaMA-7B's alpha and product balance on the validation split: the grid's best cell, and the main recipe's
+    # ratio above it ("within")
+    model, alphas, balances = LLAMA_VALIDATION
+    main = next(cell for m, _, cell, _, _ in LLAMAS if m == model)
+    grid = {(a, g): run.ppl(model, f"main-a{a:g}-glus{g:g}", split="validation") for a in alphas for g in balances}
+    measured = {(round(r.d.get("alpha"), 6), round(r.d.get("glu_smooth"), 6)) for r in run.kind("ppl", "quality")
+                if r.d.get("model") == model and r.d.get("split") == "validation" and r.d.get("graph") == "main"
+                and r.d.get("glu_exp", 0) == 0 and not r.d.get("smoke") and r.d.get("alpha") is not None
+                and r.d.get("glu_smooth") is not None}
+    c.claim(measured <= set(grid), f"the validation cells of {model} include {sorted(measured - set(grid))}, outside "
+            f"the grid the text names (alphas {alphas}, balances {balances})")
+    centre = (alphas[1], balances[1])
+    full = all(grid.values()) and f"main-a{centre[0]:g}-glus{centre[1]:g}" == main
+    best = min(grid, key=lambda k: (grid[k].d["ratio"], k != centre)) if full else None    # a tie: the main recipe
+    src = grid[best] if best else None
+    c.put("LlamaOpenValAlpha", best and best[0], src, lambda v: f"{v:g}")
+    c.put("LlamaOpenValBalance", best and best[1], src, lambda v: f"{v:g}")
+    gap = grid[centre].d["ratio"] - grid[best].d["ratio"] if best else None
+    c.put("LlamaOpenValGap", gap, src, lambda v: ceil_fixed(v, 3))
+    c.put("LlamaOpenValClause", best and (best, gap), src, lambda v: val_clause(*v, centre))
+    # the reproducible build: every build of a certified model agrees (a CHECK FAILED line otherwise), over at least
+    # two settings of what the text says it varies
+    agree, failures = digest_agreement(run)
+    c.problems.extend(failures)
+    for model, name, key in DIGESTS:
+        vals = (agree.get(model) or {}).get(key) or []
+        c.put(name, vals if len(vals) >= 2 else None, f"quality tier, digest_check.py records of {model}",
+              lambda v: _and([DEVICE_NAMES.get(x, x) if isinstance(x, str) else str(x) for x in v]))
     for model, name, cell in (("Qwen/Qwen3-1.7B-Base", "QwenMExpRatio", "main-a0.45-glus0.4-exp8"),
                               ("Qwen/Qwen3-4B-Base", "QwenLExpRatio", "main-a0.45-glus0.5-exp8")):
         r = run.ppl(model, cell)
@@ -1307,6 +1426,7 @@ def build(ctx: T.Ctx, problems: list) -> tuple[dict[str, Macro], dict | None]:
             be = got if fam is breakeven else be
         except (KeyError, TypeError, ValueError, ZeroDivisionError, AttributeError, IndexError) as e:
             problems.append(f"PARSE macros {fam.__name__}: {type(e).__name__}: {e}")
+    problems.extend(c.problems)
     for name in LOSSES:
         raw = c.m[name].raw if name in c.m else None
         if raw is not None and raw >= 0:

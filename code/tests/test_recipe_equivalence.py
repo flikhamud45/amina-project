@@ -244,3 +244,4 @@ def test_digest_check_prints_the_certified_digest_and_roots(setup, monkeypatch, 
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     graph, _ = _build(setup, **hf_opt.CERTIFIED_RECIPE)
     assert out["digest"] == graph.digest().hex() and out["policy"] == "cnn18c" and out["n_roots"] > 0
+    assert out["commit_device"] == "cpu" and out["threads"] == 2       # what experiments/paper compares across builds

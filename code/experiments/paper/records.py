@@ -285,8 +285,12 @@ class Run:
     another configuration: the tier, the model, the prompt length, the mode, the blocks (``layers``; None: the full
     model), the verifier device, the label and real or random weights (``real``: None for random weights, else the
     checkpoint).  Of several matching records (a tier run again) the latest job's is used; of several re-execution
-    records of one variant (e.g. two allocator settings), the fastest.
+    records of one variant (e.g. two allocator settings), the fastest.  Several quality records of one cell whose
+    values differ are a ``WARNING`` line of :attr:`warnings` (:meth:`ppl`).
     """
+
+    SAME = 1e-6
+    """The relative difference above which two records of one quality cell are said to differ."""
 
     def __init__(self, recs: list[Rec], files: list[Rec] | None = None) -> None:
         self.recs = sorted(recs, key=job_order)
@@ -294,6 +298,8 @@ class Run:
         self.by_kind: dict = {}
         for r in self.recs:
             self.by_kind.setdefault(r.kind, []).append(r)
+        self.warnings: list[str] = []
+        self._warned: set = set()
 
     def kind(self, kind: str, tier: str | None = None) -> list[Rec]:
         return [r for r in self.by_kind.get(kind, []) if tier is None or r.tier == tier]
@@ -387,18 +393,43 @@ class Run:
     def ppl(self, model, cell, *, split="test", calibration="train", seq=2048, draw=0) -> Rec | None:
         """A quality record of ``ppl_opt.py`` (``cell`` names the graph, its recipe, alpha and probability width:
         ``smooth-certified-a0.6-p11``; ``fp32`` the reference) or ``ppl_llama.py`` (``main-a0.55-glus0.2``;
-        ``reference``), on ``split`` with ``calibration`` (``ppl_llama.py``'s records name neither: test, train)."""
+        ``reference``), on ``split`` with ``calibration`` (``ppl_llama.py``'s records name no calibration: train;
+        records without a split are the test split's).  Two jobs that measure one cell (a cell of two studies)
+        should give the same values: records of one cell whose perplexity or ratio differ by more than :data:`SAME`
+        (relative) are a ``WARNING`` of :attr:`warnings`."""
         def ok(r):
             d = r.d
             return (d.get("model") == model and d.get("cell") == cell and d.get("seq") == seq
                     and d.get("split", "test") == split and d.get("calibration", "train") == calibration
                     and d.get("draw") in (None, draw) and not d.get("tag") and not d.get("smoke"))
-        return self._last([r for r in self.kind("ppl", "quality") if ok(r)])
+        rs = [r for r in self.kind("ppl", "quality") if ok(r)]
+        self._same_values(rs, ("ppl", "ratio"), f"{model} {cell} ({split} split, {calibration} calibration, "
+                                                f"{seq} tokens, draw {draw})")
+        return self._last(rs)
+
+    def _same_values(self, rs: list[Rec], keys: tuple, what: str) -> None:
+        """A ``WARNING`` (once per selection) when the records ``rs`` of one selection disagree on a value of
+        ``keys`` by more than :data:`SAME` (relative): the latest is used."""
+        if len(rs) < 2 or what in self._warned:
+            return
+        last = rs[-1]
+        for r in rs[:-1]:
+            for k in keys:
+                a, b = r.d.get(k), last.d.get(k)
+                if isinstance(a, (int, float)) and isinstance(b, (int, float)) \
+                        and abs(a - b) > self.SAME * max(abs(a), abs(b)):
+                    self._warned.add(what)
+                    self.warnings.append(f"WARNING quality: two records of {what} differ: {k} {a:.6g} in "
+                                         f"{r.source} and {b:.6g} in {last.source}, which is used")
+                    return
 
     def zeroshot(self, model, task, variant, recipe="certified") -> Rec | None:
+        """A ``zeroshot.py`` record of ``model`` on ``task``: the fp16 reference (``ref``) or the integer model
+        (``int``) of the job whose integer model has ``recipe``, so that a table's fp16 column and its difference
+        come from one job."""
         return self._last([r for r in self.kind("zeroshot", "quality")
                            if (r.d.get("model"), r.d.get("task"), r.d.get("variant")) == (model, task, variant)
-                           and (variant == "ref" or r.d.get("recipe") == recipe) and not r.d.get("tag")])
+                           and r.d.get("recipe") == recipe and not r.d.get("tag")])
 
     def first(self, kind, tier=None, **match) -> Rec | None:
         """The latest record of ``kind`` (in ``tier``) whose fields equal ``match``."""

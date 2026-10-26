@@ -1,24 +1,29 @@
 """Perplexity of the integer Llama-family models (Llama, Qwen3) on WikiText-2 (raw): the Llama-family ratios of
 Sec. ``sec:quality`` and of the extended version's discussion (with the main recipe at 2,048 tokens OpenLLaMA-7B
 x1.073, TinyLlama x1.12, Qwen3-1.7B x1.40 and Qwen3-4B x5.3; with the per-token exponent, a possible improvement,
-Qwen3-1.7B x1.20 and Qwen3-4B x3.0), the Llama-2-7B and Llama-2-13B quality cells of the run package's quality tier
-(for ``tab:quality``), and the check that OpenLLaMA-7B's integer graph has exactly the structure of the Llama-2-7B
-benchmark graph whose costs the paper reports.
+Qwen3-1.7B x1.20 and Qwen3-4B x3.0), the ratios of Llama-2-7B and Llama-2-13B themselves (the run package's quality
+tier), OpenLLaMA-7B's grid of alphas and product balances on the validation split, and the check that OpenLLaMA-7B's
+integer graph has exactly the structure of the Llama-2-7B benchmark graph whose costs the paper reports.
 
     python -m experiments.quality.ppl_llama --model openlm-research/open_llama_7b_v2 --config llama2-7b \\
         --structure --device cuda --ref-device cpu --ref-cache ref_open_llama_7b_v2.pt --out open_llama_7b_v2.jsonl
     python -m experiments.quality.ppl_llama --model TinyLlama/TinyLlama_v1.1 --device cuda --out tinyllama.jsonl
     python -m experiments.quality.ppl_llama --model Qwen/Qwen3-4B-Base --device cuda --ref-device cpu \\
         --graphs main smooth --glu-exps 8 --out qwen3-4b.jsonl
+    python -m experiments.quality.ppl_llama --model Qwen/Qwen3-4B-Base --device cuda --ref-device cpu \\
+        --glu-exps 8 --exp-only --out qwen3-4b.jsonl          # the per-token-exponent cells only
+    python -m experiments.quality.ppl_llama --model openlm-research/open_llama_7b_v2 --device cuda --split validation \\
+        --alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3 --out open_llama_7b_v2_validation.jsonl
     python -m experiments.quality.ppl_llama --model Qwen/Qwen3-0.6B-Base --check
     python -m experiments.quality.ppl_llama --model Qwen/Qwen3-0.6B-Base --protocol
     python -m experiments.quality.ppl_llama --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 \\
         --calib-windows 1 --device cpu --threads 2 --chunk 64                # a tiny random model (laptop)
 
-* Text and windows: WikiText-2 (raw) test split joined with blank lines (``checkpoints.wikitext``), tokenised once --
-  with a prefix without the tokenizer's special tokens, since the prefix takes the BOS's place and no window holds
-  one; every non-overlapping ``--seq``-token window (``--windows`` keeps the first ones; 0: all), each scored on its
-  own at every position in one pass.
+* Text and windows: WikiText-2 (raw) ``--split`` -- ``test`` (the reported ratios) or ``validation`` (to check a
+  checkpoint's smoothing alpha and product balance on text no choice used) -- joined with blank lines
+  (``checkpoints.wikitext``), tokenised once -- with a prefix without the tokenizer's special tokens, since the prefix
+  takes the BOS's place and no window holds one; every non-overlapping ``--seq``-token window (``--windows`` keeps the
+  first ones; 0: all), each scored on its own at every position in one pass.
 * Calibration: draw ``d`` is ``--calib-windows`` consecutive ``--calib-seq``-token windows (default ``--seq``) of the
   train split's first ``--train-chars`` characters from window ``d * --calib-windows`` on; no evaluated token is
   seen.  With the defaults, draw 0 is ``checkpoints.llama_calibration``: for OpenLLaMA-7B and Llama-2-7B (whose
@@ -40,11 +45,13 @@ benchmark graph whose costs the paper reports.
   (:data:`pvi.models.hf_llama.MAIN_SETTINGS`).  ``smooth``: the same without the product balance.  ``scalar``: one norm gain per
   ``--gains``, no clipping.  ``--glu-exps E ...`` adds to every smoothed cell its variant with the per-token exponent
   ``0 .. E`` at the SwiGLU product (``glu_exp``; ``--pct-glu`` then picks the token maximum that takes exponent E): a
-  possible improvement, not the main algorithm, since it changes two ops per block and V1's cut.
+  possible improvement, not the main algorithm, since it changes two ops per block and V1's cut; ``--exp-only``
+  keeps only those variants (a run whose cells without the exponent an earlier run of the same settings measured).
   ``--no-qk-balance``: Qwen3's graphs without the q/k-norm balance.  Every graph keeps the benchmark graph's ops and
   shapes (but ``glu_exp``'s two ops per block): only constants change.
 * Reference: the checkpoint in fp32 on ``--ref-device`` (``--ref-dtype`` float16 / bfloat16: a second copy loaded in
-  that type), its LM head applied a ``--chunk`` of positions at a time; ``--ref-cache`` keeps its NLL and argmaxes.
+  that type), its LM head applied a ``--chunk`` of positions at a time; ``--ref-cache`` keeps its NLL and argmaxes
+  (keyed by the model, the split, the windows, the type and the prefix).
 * Lean evaluation (``hf_llama.lean_logits``): the integer forward on ``--device`` frees each tensor after its last
   reader and keeps no claim; the LM head takes ``--chunk`` positions at a time, reduced at once to NLL and argmax.
   The integer calibration pass runs on ``--calib-device``.
@@ -73,15 +80,16 @@ Output: one JSON line per cell on stdout (and appended to ``--out``): first the 
 ``digest``, ``weights_sha256``, ``report``, ``build_s``, ``seconds``, the peak memory (``peaks``, ``peak_rss_GB``,
 ``peak_gpu_GB``), with a prefix its keys' and values' reach (``prefix_clip``, ``prefix_hidden_max``), with
 ``--structure`` ``structure_against`` and ``structure_diff``; every line carries the run's head (model, shape,
-windows, tokens, calibration, prefix and its choice, ``env``: ``records.environment``).  A short summary per cell
-goes to stderr.
+``split``, windows, tokens, calibration, prefix and its choice, ``env``: ``records.environment``).  A short summary per
+cell goes to stderr.
 
 Hardware and time (2,048 tokens, every test window; the integer forward on an RTX 2080 Ti, the calibration on the
 CPU of a Xeon node with 250 GB): a 7B cell (OpenLLaMA-7B) takes about 47 min, mostly the calibration build on the
 CPU, and its fp32 reference about 4 h on the CPU (``--ref-device cpu``; ``--ref-cache`` keeps it); Qwen3-4B's fp32
 reference does not fit the 2080 Ti either (about 2.7 h on the CPU) and its build needs about 128 GB of host memory;
 TinyLlama, Qwen3-0.6B and Qwen3-1.7B need 64 GB.  The run package's Llama-2-7B and Llama-2-13B cells run on an L40S
-(48 GB), Llama-2-13B with an fp16 reference.
+(48 GB), Llama-2-13B with an fp16 reference; so does its validation grid of OpenLLaMA-7B (nine cells, the fp32
+reference on the GPU).
 """
 from __future__ import annotations
 
@@ -161,7 +169,8 @@ def fp_eval(model, w: torch.Tensor, chunk: int, prefix=None):
 def reference(args, model, wins, prefix=None) -> dict:
     """The reference's NLL and argmaxes per window (cached in ``--ref-cache`` with its key), on ``[prefix | window]``
     with a prefix."""
-    key = {"model": args.model, "seq": args.seq, "windows": len(wins), "dtype": args.ref_dtype, "smoke": args.smoke}
+    key = {"model": args.model, "split": args.split, "seq": args.seq, "windows": len(wins), "dtype": args.ref_dtype,
+           "smoke": args.smoke}
     if prefix:                      # (the key of a run without a prefix has no such entry)
         key["prefix"] = list(prefix)
     cache = Path(args.ref_cache) if args.ref_cache else None
@@ -196,20 +205,23 @@ def reference(args, model, wins, prefix=None) -> dict:
 
 def cells(args, prefix=None) -> list[dict]:
     """The integer graphs of a run, in ``--graphs`` order: ``{"cell", "graph", "gain", "alpha", "glu_smooth",
-    "glu_exp", "kw"}``, ``kw`` the keyword arguments of ``build_llama_from_hf``."""
+    "glu_exp", "kw"}``, ``kw`` the keyword arguments of ``build_llama_from_hf``; with ``--exp-only`` only the smoothed
+    cells' per-token-exponent variants."""
     common = dict(qk_balance=not args.no_qk_balance, prefix_tokens=list(prefix) if prefix else None)
     stats = dict(smooth_pct=args.smooth_pct, pct=args.pct, pct_att=args.pct_att, pct_glu=args.pct_glu)
     own = hf_llama.main_recipe(args.model)
+    exps = list(args.glu_exps) if args.exp_only else [0] + list(args.glu_exps)
     out = []
     for graph in args.graphs:
         if graph == "scalar":
-            out += [{"cell": f"scalar-g{g:g}", "graph": graph, "gain": g, "alpha": None, "glu_smooth": None,
-                     "glu_exp": 0, "kw": dict(norm_gain=g, **common)} for g in args.gains]
+            if not args.exp_only:
+                out += [{"cell": f"scalar-g{g:g}", "graph": graph, "gain": g, "alpha": None, "glu_smooth": None,
+                         "glu_exp": 0, "kw": dict(norm_gain=g, **common)} for g in args.gains]
             continue
         for a in args.alphas or [own["smooth"]]:
             for gs in (args.glu_smooths or [own["glu_smooth"]]) if graph == "main" else [None]:
                 label = f"main-a{a:g}-glus{gs:g}" if graph == "main" else f"smooth-a{a:g}"
-                for e in [0] + list(args.glu_exps):
+                for e in exps:
                     kw = dict(hf_llama.main_recipe(args.model, a), **stats, glu_smooth=gs, glu_exp=e, **common)
                     out.append({"cell": label + (f"-exp{e}" if e else ""), "graph": graph, "gain": None, "alpha": a,
                                 "glu_smooth": gs,
@@ -231,8 +243,8 @@ def _gb(v):
 
 def run(args, model, tok, spec) -> None:
     """The perplexity cells of ``args`` (module docstring)."""
-    test = token_ids(tok, wikitext("test"), spec)
-    wins = windows(test, args.seq, args.windows)
+    text = token_ids(tok, wikitext(args.split), spec)
+    wins = windows(text, args.seq, args.windows)
     train = token_ids(tok, wikitext("train")[:args.train_chars], spec)
     counts = [w.shape[1] - 1 for w in wins]
     cs = args.calib_seq or args.seq
@@ -245,8 +257,9 @@ def run(args, model, tok, spec) -> None:
     name = args.config or CONFIG_OF.get(args.model.split("/")[-1])
     shape = hf_llama.config_of(model.config)
     env = records.environment(args.device)
-    head = {"model": args.model, "smoke": args.smoke, "config": name, "seq": args.seq, "windows": len(wins),
-            "tokens": sum(counts), "dataset": "wikitext-2-raw-v1 test, '\\n\\n'.join", "host": env["host"],
+    head = {"model": args.model, "smoke": args.smoke, "config": name, "split": args.split, "seq": args.seq,
+            "windows": len(wins), "tokens": sum(counts), "dataset": f"wikitext-2-raw-v1 {args.split}, '\\n\\n'.join",
+            "host": env["host"],
             "gpu": env["gpu"], "device": args.device, "calib_windows": args.calib_windows, "calib_seq": cs,
             "ref_dtype": args.ref_dtype, "shape_vs_config": (hf_llama.same_shape(shape, CONFIGS[name])
                                                              if name in CONFIGS else None),
@@ -463,8 +476,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--model", default="openlm-research/open_llama_7b_v2", help="a Llama or Qwen3 checkpoint")
     ap.add_argument("--config", default=None, help="the CONFIGS key of its shape (default: from --model)")
+    ap.add_argument("--split", choices=["test", "validation"], default="test",
+                    help="the evaluated split (validation: check a checkpoint's alpha and product balance on text no "
+                         "choice used)")
     ap.add_argument("--seq", type=int, default=2048, help="tokens per window")
-    ap.add_argument("--windows", type=int, default=0, help="evaluated windows (0: every window of the test split)")
+    ap.add_argument("--windows", type=int, default=0, help="evaluated windows (0: every window of the split)")
     ap.add_argument("--calib-windows", type=int, default=4, help="calibration windows per draw")
     ap.add_argument("--calib-seq", type=int, default=None, help="tokens per calibration window (default: --seq)")
     ap.add_argument("--train-chars", type=int, default=4_000_000, help="characters of the train split tokenised")
@@ -492,6 +508,8 @@ def main() -> None:
     ap.add_argument("--glu-exps", type=int, nargs="*", default=[],
                     help="also each smoothed graph with the per-token exponent 0..E at the SwiGLU product, per E (a "
                          "possible improvement, not the main algorithm)")
+    ap.add_argument("--exp-only", action="store_true",
+                    help="with --glu-exps, only the per-token-exponent variants (not the cells without it)")
     ap.add_argument("--calib-device", default="cpu", help="where the integer calibration pass runs")
     ap.add_argument("--ref-device", default=None, help="where the reference runs (default: --device)")
     ap.add_argument("--ref-dtype", default="float32", choices=["float32", "float16", "bfloat16"])
@@ -510,6 +528,8 @@ def main() -> None:
     args = ap.parse_args()
     if args.glu_smooths and "main" not in args.graphs:
         ap.error("--glu-smooths sets the main graphs' product balance: add main to --graphs")
+    if args.exp_only and not args.glu_exps:
+        ap.error("--exp-only keeps the per-token-exponent variants: give their exponents with --glu-exps")
     apply_runtime(args)
     spec = prefix_spec(args.prefix)
     model, tok = smoke_model(args.model) if args.smoke else load_llama(args.model)

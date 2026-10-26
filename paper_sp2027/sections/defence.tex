@@ -29,9 +29,8 @@ them once, to derive a key~\cite{slalom,commitllm2026} that it stores instead (\
 Llama-2-7B): secret Freivalds vectors with their folded rows (\KpreKeyMB{}\,MB) and the embedding
 tables (\KpreEmbedMB{}\,MB), whose rows it looks up itself. We compare it with re-execution for a
 client that could also keep the weights. For open weights anyone can recompute $C_M$
-(Section~\ref{sec:threat}); the certified OPT-125M and OPT-1.3B and their commitments are reproduced
-bit for bit across Linux machines and 1 to 8 threads, OPT-1.3B's commitment also across CPU and GPU
-encoding (OPT-125M's earlier recipe also across operating systems and torch versions).
+(Section~\ref{sec:threat}); in our run, builds of the certified OPT-125M with \DigestThreadsOptS{} threads are
+identical bit for bit, and so are OPT-1.3B's builds and commitments with \DigestEncodingOptM{} encoding.
 
 \subsection{The Exact Integer Model}
 \label{sec:intmodel}

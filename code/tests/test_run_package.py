@@ -9,15 +9,17 @@
 * the package's dry run (``--dry-run``): no v0, V1 or generation cell turns Fiat-Shamir off, the only interactive
   benchmark cells are those a table compares with an interactive system, every mode-C cell takes ``--policy``, the
   headline cells time 5 queries, every job is chained after the previous one and the jobs after smoke wait for it,
-  every tier submits jobs, the cells behind the text's generation and recipe numbers are there, and the rehearsal
-  submits small cells only, which run every script of every tier on the paths the full cells take; every CPU-timing
+  every tier submits jobs, the cells behind the text's generation, recipe and quality numbers are there (no quality
+  cell measured twice where one job suffices), and the rehearsal submits small cells only, which run every script of
+  every tier on the paths the full cells take (OpenLLaMA-7B's tokenizer too); every CPU-timing
   cell requires the native kernels and is pinned to one NUMA node, and the dry run lists every job even on a host
   without the run's settings;
 * the package's submission against stand-ins for SLURM: a queued job of the same platform is not submitted again and
   the chain and the smoke gate pass through it; ``--one-job`` submits the tiers as one whole-node job that runs them
   with ``--local``, and a ``--local`` run again runs the smoke and only the jobs that did not end successfully;
-  nothing is submitted when the partition lacks the memory, the compiler is missing, a Hugging Face cache variable
-  overrides ``HF_HOME`` with an unwritable folder or the bench tier's models and datasets are; ``bench.py`` itself
+  nothing is submitted when the partition lacks the memory, the compiler is missing, the interpreter lacks the
+  quality tier's tokenizer libraries, a Hugging Face cache variable overrides ``HF_HOME`` with an unwritable folder or
+  the bench tier's models and datasets are; ``bench.py`` itself
   stops without the substitute model; ``experiments/package/pin.py`` picks one thread of each core of one NUMA
   node, and every record keeps the affinity, the library versions and the checkpoints' revisions.
 
@@ -324,6 +326,18 @@ def test_nothing_is_submitted_when_the_partition_lacks_the_memory_or_the_compile
     assert status == 0 and len(jobs) == 1, err
 
 
+def test_the_quality_tier_needs_the_tokenizer_libraries(tmp_path):
+    """OpenLLaMA-7B ships only its SentencePiece model: run.sh submits nothing for the quality tier while the
+    interpreter cannot import sentencepiece and google.protobuf, and asks for neither without that tier."""
+    fail = {"FAKE_FAIL": "import sentencepiece, google.protobuf"}
+    status, _, err, jobs = _submit(tmp_path / "a", "--platform", "final", "--rehearsal", "quality", extra=fail)
+    assert status == 2 and not jobs and "cannot import sentencepiece and google.protobuf" in err, err
+    status, _, err, jobs = _submit(tmp_path / "b", "--platform", "final", "--rehearsal", "cpuv", extra=fail)
+    assert status == 0 and jobs, err
+    status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "--rehearsal", "quality")
+    assert status == 0 and len(jobs) == 7 and any(" -J sp-q-openllama7-smoke " in j for j in jobs), err
+
+
 def test_the_bench_tier_needs_the_substitute_model_and_the_imagenet_layout(tmp_path):
     status, _, err, jobs = _submit(tmp_path, "--platform", "final", "bench")
     assert status == 2 and not jobs
@@ -442,15 +456,19 @@ def test_the_rehearsal_submits_small_cells_of_every_tier():
     big = ("opt-1.3b", "opt-6.7b", "llama2-13b", "qwen3-4b", "facebook/opt-1.3b", "facebook/opt-6.7b")
     for line in lines:
         assert not any(f"--model {m} " in line for m in big), _job(line)
+        for cmd in re.split(r"&&|;", line):                    # a 7B checkpoint lends its tokenizer to a smoke model
+            if re.search(r"--model (openlm-research|meta-llama)/", cmd):
+                assert "--smoke" in cmd, _job(line)
         if "--model llama2-7b" in line:            # the long tier's one block at 4,608 tokens
             assert "--layers 1" in line, _job(line)
         assert "--time=" in line
 
 
-FLAGS = ("--real", "--no-wire", "--codec-only")
-"""The switches that select a script's path: a checkpoint, the encoding off, V1's codec profile only."""
-VALUED = ("--recipe", "--prefix", "--v1-verifier")
-"""The options whose values select a path: the recipe, the fixed prefix, V1's verifiers."""
+FLAGS = ("--real", "--no-wire", "--codec-only", "--exp-only")
+"""The switches that select a script's path: a checkpoint, the encoding off, V1's codec profile only, the
+per-token-exponent cells only."""
+VALUED = ("--recipe", "--prefix", "--v1-verifier", "--split")
+"""The options whose values select a path: the recipe, the fixed prefix, V1's verifiers, the evaluated split."""
 
 
 def _paths(script: str, cmd: str) -> set:
@@ -500,8 +518,12 @@ def test_the_rehearsal_runs_every_script_of_every_tier():
 
 def test_the_gen_and_quality_cells_of_the_text():
     """The gen tier's cells (GPT-2's per-token prover after a 64-token prompt; Llama-2-7B and Qwen3-4B after a
-    512-token prompt, greedy and sampled) and the OPT-125M recipe studies of the quality tier; the rehearsal keeps its
-    own small generation cell."""
+    512-token prompt, greedy and sampled) and the quality tier's: the OPT-125M recipe studies (the alpha study without
+    the certified cell, alpha 0.6, which q-opt125 measures), Qwen3-4B's per-token-exponent cells without the main
+    cell the job's first command measured, OpenLLaMA-7B's validation grid (the text's, macros.LLAMA_VALIDATION), the
+    reproducible build (OPT-125M with 1 and 8 threads, OPT-1.3B's commitment on the GPU and on the CPU) and the
+    Llama-2 cells; the rehearsal keeps its own small generation cell and loads OpenLLaMA-7B's tokenizer."""
+    from experiments.paper.macros import DIGESTS, LLAMA_VALIDATION
     lines = {_job(line): line for line in _dry()}
     gpt2 = lines["sp-gen-gpt2"].split("generation.gen_bench", 1)[1]
     assert "--model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --policy cnn18c" in gpt2
@@ -510,9 +532,26 @@ def test_the_gen_and_quality_cells_of_the_text():
         assert f"--model {m} --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre" in lines[f"sp-gen-{m}"]
     rec = lines["sp-q-opt125-recipes"]
     assert "--model facebook/opt-125m --recipe legacy --graphs smooth --pbits 11" in rec
-    assert "--model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11" in rec
+    assert "--model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.7 --pbits 11" in rec
+    assert re.search(r"quality\.ppl_opt --device cuda --model facebook/opt-125m\"", lines["sp-q-opt125"])
+    assert "--alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11 --draws 0 1" in lines["sp-q-opt13-recipes"]   # draw 1's 0.6
+    first, second = lines["sp-q-qwen4"].split("--wrap", 1)[1].split(" && ")[-2:]
+    assert "--glu-exps" not in first and "--glu-exps 8 --exp-only" in second
+    model, alphas, balances = LLAMA_VALIDATION
+    grid = (f"--model {model} --split validation --alphas {' '.join(f'{a:g}' for a in alphas)} "
+            f"--glu-smooths {' '.join(f'{g:g}' for g in balances)}")
+    assert grid in lines["sp-q-openllama7-validation"]
+    builds = re.findall(r"quality\.digest_check (--model \S+ --threads \d+[^&\"]*)", lines["sp-q-digest"])
+    assert [b.strip() for b in builds] == [
+        "--model facebook/opt-125m --threads 1", "--model facebook/opt-125m --threads 8 --commit --commit-device cuda",
+        "--model facebook/opt-1.3b --threads 8 --commit --commit-device cuda",
+        "--model facebook/opt-1.3b --threads 8 --commit --commit-device cpu"]
+    assert [m for m, _, _ in DIGESTS] == ["facebook/opt-125m", "facebook/opt-1.3b"]
+    assert "--model meta-llama/Llama-2-7b-hf --graphs main smooth" in lines["sp-q-llama7"]
+    assert "--model meta-llama/Llama-2-13b-hf --graphs main smooth --ref-dtype float16" in lines["sp-q-llama13"]
     rehearsal = {_job(line): line for line in _dry("--rehearsal")}
     assert "--layers 2" in rehearsal["sp-gen-gpt2"] and "sp-q-opt125-recipes" not in rehearsal
+    assert f"--model {model} --smoke --split validation" in rehearsal["sp-q-openllama7-smoke"]
 
 
 def test_every_tier_is_documented_and_reachable():

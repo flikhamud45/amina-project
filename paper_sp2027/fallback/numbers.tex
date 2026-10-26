@@ -1,6 +1,7 @@
 % fallback: the text numbers the paper prints before the final run (code/experiments/paper/numbers.py writes generated/numbers.tex)
 % A value measured in another setting than the paper states (interactive cells where the text says Fiat-Shamir, the legacy recipe for the certified model) prints as \todo{<tier>}.
 % \GameCaps*, \GameLayer*, \GameThreshold and \GameUniform*: the attack tier's adaptive_game_opt-1.3b.json, which code/artifacts/results does not store.
+% \LegacySmallLo, \LegacySmallHi: the quality tier's q-opt125-128 cells smooth-legacy-a0.55-p8 and smooth-legacy-a0.5-p8, run on a CPU (the integer forward pass is exact; the fp32 reference on the CPU).
 \newcommand{\AttackOptLBackdoorBack}{40/40}
 \newcommand{\AttackOptLBackdoorHacked}{0/40}
 \newcommand{\AttackOptLPaths}{454{,}248}
@@ -65,6 +66,8 @@
 \newcommand{\CrossoverLlamaLongKBuild}{2 of 32 blocks}
 \newcommand{\CrossoverOptSLongC}{0.23}
 \newcommand{\CrossoverOptSLongK}{0.22}
+\newcommand{\DigestEncodingOptM}{CPU and GPU}
+\newcommand{\DigestThreadsOptS}{1 and 8}
 \newcommand{\DynIntLong}{56}
 \newcommand{\DynIntShort}{1.9}
 \newcommand{\FinalNAttacks}{2{,}512}
@@ -144,7 +147,7 @@
 \newcommand{\KpreKeyLlama}{12.7}
 \newcommand{\KpreKeyMB}{71}
 \newcommand{\KpreStoreGB}{0.2}
-\newcommand{\LegacySmallHi}{1.05}
+\newcommand{\LegacySmallHi}{1.04}
 \newcommand{\LegacySmallLo}{1.03}
 \newcommand{\LenetProof}{63.3}
 \newcommand{\LenetProofVsBionetta}{72}
@@ -156,6 +159,14 @@
 \newcommand{\LenetVerifyVsBionetta}{3.6}
 \newcommand{\LenetVerifyVsZkcnn}{2.1}
 \newcommand{\LlamaOpenRatio}{1.073}
+\newcommand{\LlamaOpenValAlpha}{\todo{quality tier}}
+\newcommand{\LlamaOpenValBalance}{\todo{quality tier}}
+\newcommand{\LlamaOpenValClause}{\todo{quality tier}}
+\newcommand{\LlamaOpenValGap}{\todo{quality tier}}
+\newcommand{\LlamaSevenCI}{\todo{quality tier}}
+\newcommand{\LlamaSevenRatio}{\todo{quality tier}}
+\newcommand{\LlamaThirteenCI}{\todo{quality tier}}
+\newcommand{\LlamaThirteenRatio}{\todo{quality tier}}
 \newcommand{\LocatorOne}{75}
 \newcommand{\LocatorQueries}{40}
 \newcommand{\LocatorTwo}{95}

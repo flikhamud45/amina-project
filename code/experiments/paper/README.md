@@ -93,8 +93,14 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
   (`serve_ab.py`'s `ok`), a setup proof rejected (`setup_timing.py`), the two paths of an implementation A/B that
   disagree, a smoke log without `SMOKE OK` or with int8 GEMMs that are not exact, a `FAILED` line of a script,
   records of more than one GPU or CPU model, an honest query rejected or an attack accepted in the benchmark's
-  outcome counts, a table cell that disagrees with the macro printing the same value (`SAME_VALUE`, beyond one unit
-  of the coarser rounding), in the files written and in `paper_sp2027/fallback/` (`CHECK FAILED fallback:`).
+  outcome counts, builds of one certified model (`digest_check.py`, the quality tier's reproducible build) whose
+  digests, weights or commitment roots differ (`macros.digest_agreement`), a table cell that disagrees with the
+  macro printing the same value (`SAME_VALUE`, beyond one unit of the coarser rounding), in the files written and in
+  `paper_sp2027/fallback/` (`CHECK FAILED fallback:`).
+* `CHECK FAILED text:`: a value that does not bear out what the text states about it (`macros.TEXT_CLAIM`): a
+  zero-shot difference the text calls a loss that is not negative, a Llama-family ratio whose reference is not the
+  one the text names (fp32; fp16 for Llama-2-13B), validation cells of OpenLLaMA-7B outside the grid the text names
+  (`macros.LLAMA_VALIDATION`). A rehearsal reports these as warnings.
 * `PARSE`: a log line that starts with `{` and does not parse, or is not a record of a known kind; a table or macro
   family that cannot read a record; an `--expect` listing that does not end with run.sh's summary line
   (`# <tiers>: N jobs, ...`) for the N jobs it lists (a dry run that stopped early, e.g. at a tier's check of
@@ -103,8 +109,9 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
 * `--rehearsal`: every tier has at least one record of each kind it writes (`records.REHEARSAL_KINDS`), and no table
   cell is expected.
 
-The exit status is 1 on any of these. `WARNING` lines leave it unchanged: two jobs' values of one quantity more than
-10% apart (`TWO_JOBS`), records that name another mode-C plan than `--policy` (or several), an `int_mm`
+The exit status is 1 on any of these. `WARNING` lines leave it unchanged: two jobs' values of one quantity more than 10%
+apart (`TWO_JOBS`), two records of one quality cell (two jobs that measure it) whose perplexity or ratio differ
+(`records.Run.ppl`; the later is used), records that name another mode-C plan than `--policy` (or several), an `int_mm`
 re-execution that is not recorded as bit-exact (it is then no exact baseline). `coverage.txt` lists them all, the
 records per tier and kind, and per table the cells filled and missing (`--verbose`: each missing cell and macro).
 
