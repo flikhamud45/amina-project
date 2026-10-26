@@ -79,12 +79,12 @@ differently. The forgeries that Anchuri et al.\ consider are their substitute mo
 and~F and Section~7.2 of~\cite{anchuri2026verifiable}); on the MLP they corrupt hundreds of its 778
 trace nodes.
 
-\para{MNIST, further results.} One tampered neuron passes 250 paths 61\% of the time. Keeping each
+\para{MNIST, further results.} One tampered neuron passes 250 paths \SokPathMany{}\% of the time. Keeping each
 tampered value below its neuron's 95th percentile takes about \MnistStealthNeurons{} neurons and passes \MnistStealthPass{}\% of the
 time under uniform sampling. With percentiles from \StealthCalib{} training images and \LocatorQueries{} disjoint test
 queries, the edit changes \StealthNeurons{} neurons on average, passes \StealthPass{}\% of paths, keeps every edited value in
 range, and exceeds a neuron's natural maximum no more often than the honest trace (\StealthExceed{}\% of queries in
-both cases); the in-range edits on OPT-1.3B and OPT-6.7B (Section~\ref{ext:attack-inrange}) use
+both cases); the in-range edits (Section~\ref{ext:attack-inrange}) use
 held-out ranges as well.
 
 \para{Other samplers on MNIST.} Against an adversary who knows the rule, a static importance score

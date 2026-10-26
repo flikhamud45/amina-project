@@ -13,7 +13,8 @@ process whose verdicts differ from the in-process ones (``perf``'s ``client_memo
 disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected (``setup``), an
 implementation A/B whose two paths disagree (the ``improve`` tier), a llama.cpp record not marked inexact and a
 different model or not run on its threads (``llamacpp``), an attribution study whose float copy failed a check
-(``attribution``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact) or a ``FAILED`` line
+(``attribution``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact, a test of its
+pytest run that failed: the ``tests`` record of its summary line) or a ``FAILED`` line
 of a script in a job's log; between two jobs (:func:`cross_checks`), the attribution's integer graph against the
 quality tier's cell of the same graph.  Each is reported as a ``CHECK FAILED`` line; a line that starts with ``{`` and
 does not parse, or parses as no known kind, is a ``PARSE`` line.  Either makes ``paper/numbers.py`` exit with status
@@ -32,15 +33,23 @@ TIERS = (("smoke", "smoke"), ("c-", "cpuv"), ("v1-", "v1"), ("serve-", "serve"),
          ("q-", "quality"), ("tv-", "tv"), ("a-", "attack"), ("l-", "long"), ("gate-", "gate"))
 """The job-name prefixes of ``run.sh`` (``sp-<prefix>...``) and their tiers (``gate``: the full-size checks run once
 before the run, whose records fill no table cell or text number)."""
-KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "v1": {"v1"}, "serve": {"serve"},
-         "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"}, "batch": {"bench_env"},
-         "real": {"perf", "v1", "gen"}, "setup": {"setup"},
+KINDS = {"smoke": {"v1", "h2d", "tests"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "v1": {"v1"},
+         "serve": {"serve"}, "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"},
+         "batch": {"bench_env"}, "real": {"perf", "v1", "gen"}, "setup": {"setup"},
          "improve": {"open_ab", "forward_ab", "encode_ab", "perf", "gpu_profile", "fold_ab", "v1_phases", "gkr"},
          "quality": {"ppl", "zeroshot", "digest", "llama_diag", "llama_attrib", "attribution"}, "tv": {"tv"},
          "attack": {"reproduction", "attack_mnist", "samplers", "floor_sampler", "adaptive_game", "path_bound",
                     "attack_llm", "inrange", "adaptive_game_llm"},
          "long": {"perf", "reexec"}, "gate": {"v1", "perf", "reexec"}}
-"""The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``)."""
+"""The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``; the smoke's ``tests``: the
+summary line of its pytest run, :data:`PYTEST_SUMMARY`)."""
+PYTEST_SUMMARY = re.compile(r"^=*\s*(?P<counts>\d+ [a-z]+(?:, \d+ [a-z]+)*)(?: in [0-9.]+s(?: \([^)]*\))?)?\s*=*$")
+"""pytest's summary line (``798 passed, 4 skipped in 1203.51s (0:20:03)``), which the smoke's log ends its pytest
+output with: :func:`read_logs` turns it into a record of kind ``tests`` (``passed``, ``failed``, ``skipped``,
+``errors``, ...)."""
+PYTEST_WORDS = {"passed": "passed", "failed": "failed", "skipped": "skipped", "error": "errors", "errors": "errors",
+                "xfailed": "xfailed", "xpassed": "xpassed", "deselected": "deselected", "warning": "warnings",
+                "warnings": "warnings"}
 REHEARSAL_KINDS = {tier: kinds for tier, kinds in KINDS.items() if tier != "gate"}
 """The kinds of a rehearsal (``run.sh --rehearsal``: each tier's smallest cells, which run every script of every
 tier): each tier but ``gate`` (full size only, never rehearsed) must have at least one record of each of its
@@ -147,9 +156,26 @@ def kind_of(d: dict) -> str | None:
     return None
 
 
+def pytest_summary(line: str) -> dict | None:
+    """``{"kind": "tests", "passed": n, ...}`` of pytest's summary line (:data:`PYTEST_SUMMARY`), else None."""
+    m = PYTEST_SUMMARY.match(line.strip())
+    if m is None:
+        return None
+    counts = {}
+    for part in m["counts"].split(", "):
+        n, word = part.split(" ", 1)
+        if word not in PYTEST_WORDS:
+            return None
+        counts[PYTEST_WORDS[word]] = int(n)
+    if not {"passed", "failed", "errors"} & set(counts):
+        return None
+    return {"kind": "tests", "passed": 0, "failed": 0, "errors": 0, "skipped": 0, **counts, "line": line.strip()}
+
+
 def read_logs(logs: Path, problems: list) -> list[Rec]:
     """Every record of the job logs ``sp-*.out`` in ``logs``; a line that starts with ``{`` and does not parse, or
-    is of no known kind, is a ``PARSE`` problem."""
+    is of no known kind, is a ``PARSE`` problem.  In the smoke's logs, pytest's summary line is a record of kind
+    ``tests`` (:func:`pytest_summary`)."""
     out = []
     for path in sorted(logs.glob("sp-*.out")):
         m = LOG.match(path.name)
@@ -158,6 +184,9 @@ def read_logs(logs: Path, problems: list) -> list[Rec]:
         with open(path, encoding="utf-8", errors="replace") as fh:
             for i, line in enumerate(fh, 1):
                 if not line.startswith("{"):
+                    summary = pytest_summary(line) if tier == "smoke" else None
+                    if summary is not None:
+                        out.append(Rec(tier, cell, job, str(path), i, "tests", summary))
                     continue
                 try:
                     d = json.loads(line)
@@ -260,6 +289,8 @@ def checks(r: Rec) -> list[str]:
             bad.append("a llama.cpp record not marked inexact (exact false) and a different model (same_model false)")
         if ran != threads or (allowed is not None and threads is not None and allowed < threads):
             bad.append(f"llama.cpp ran on {ran} threads, not its {threads} (on {allowed} allowed CPUs)")
+    elif r.kind == "tests" and (d.get("failed") or d.get("errors")):
+        bad.append(f"the smoke's tests: {d.get('failed')} failed, {d.get('errors')} errors ({d.get('line')})")
     elif r.kind == "attribution" and d.get("part") == "check" and d.get("ok") is False:
         bad.append("the attribution's float copy failed a check (ok false)")
     # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose;

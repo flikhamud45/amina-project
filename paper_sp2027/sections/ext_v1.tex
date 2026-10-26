@@ -79,11 +79,11 @@ on the GPU). Factoring the current variable's eq term out of each round polynomi
 numerators are all 1; a dedicated path reads only the real rows' denominators, evaluates $\mathsf
 d_L + \mathsf d_R + \eta\, \mathsf d_L \mathsf d_R$ per pair, and adds the padding rows' term $\eta
 (1 - \sum \Veq)$ in closed form. On the \PlatformGpu{} an instance of $2^{25}$ leaves then takes
-\GkrSecondsLarge{}\,s (\GkrNsPerLeaf{}\,ns per leaf). The test suite with V1 (1{,}492 tests)
-passes, including honest queries in eight configurations, a tampered trace value with honestly
+\GkrSecondsLarge{}\,s (\GkrNsPerLeaf{}\,ns per leaf). The run's smoke job (\SmokeTests{} tests) passes,
+including honest queries in eight configurations, a tampered trace value with honestly
 recomputed later layers (rejected at the final check in $\sC$ and at the secret-vector check in
 $\Kpre$), fake or omitted exceptions, multiplicity cheats and tampered GKR and fold messages. V1
-also accepts the sampled generation of Section~\ref{sec:gen}, since the LM head stays clear.
+also accepts the sampled generation of Section~\ref{sec:gen}, as the LM head stays clear.
 
 \subsection{Hardening of the V1 Checks}
 

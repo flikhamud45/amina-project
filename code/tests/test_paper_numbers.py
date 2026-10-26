@@ -490,8 +490,8 @@ def test_every_record_lands_in_its_tier_and_kind(run_dir):
     recs = R.read_logs(logs, problems)
     assert not problems
     got = {(r.tier, r.kind) for r in recs}
-    assert {("smoke", "v1"), ("smoke", "h2d"), ("cpuv", "perf"), ("cpuv", "reexec"), ("cpuv", "llamacpp"),
-            ("cpuv", "v1"), ("v1", "v1"),
+    assert {("smoke", "v1"), ("smoke", "h2d"), ("smoke", "tests"), ("cpuv", "perf"), ("cpuv", "reexec"),
+            ("cpuv", "llamacpp"), ("cpuv", "v1"), ("v1", "v1"),
             ("gpuv", "v1"), ("gpuv", "perf"), ("gpuv", "reexec"), ("serve", "serve"), ("gen", "gen"), ("real", "gen"),
             ("real", "v1"), ("setup", "setup"), ("improve", "open_ab"), ("improve", "perf"), ("improve", "fold_ab"),
             ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("quality", "digest"),
@@ -747,7 +747,7 @@ def test_the_texts_claims_on_the_llama_family_and_a_build_that_differs():
 def test_two_records_of_one_quality_cell_that_differ_are_a_warning(run_dir, capsys):
     """A cell that two jobs measure (the certified OPT-125M of q-opt125 and of an alpha study) with the same values
     gives no warning; with different values a WARNING names both records, the later is used, and the exit status
-    stays 0."""
+    stays 0 (the cells this synthetic run lacks allowed: --allow-missing)."""
     tmp, logs = run_dir
     same = ppl("facebook/opt-125m", "smooth-certified-a0.6-p11", 27.66 * 1.076, 1.076, ci=(1.073, 1.079))
     _write(logs, "sp-q-opt125-recipes-53.out", [same])
@@ -762,7 +762,7 @@ def test_two_records_of_one_quality_cell_that_differ_are_a_warning(run_dir, caps
     assert w.startswith("WARNING quality: two records of facebook/opt-125m smooth-certified-a0.6-p11 (test split")
     assert "sp-q-opt125-21.out" in w and "sp-q-opt125-recipes-53.out" in w
     capsys.readouterr()
-    assert N.main(_args(tmp, logs, "--check")) == 0
+    assert N.main(_args(tmp, logs, "--check", "--allow-missing")) == 0
     assert "WARNING quality: two records of facebook/opt-125m smooth-certified-a0.6-p11" in capsys.readouterr().out
 
 
@@ -1043,7 +1043,7 @@ def test_the_stored_attack_documents_regenerate_the_fallback(run_dir):
 # ------------------------------------------------------------------------------------------------ the command
 def test_the_command_writes_every_file_and_strict_fails_on_a_missing_cell(run_dir, capsys):
     tmp, logs = run_dir
-    assert N.main(_args(tmp, logs)) == 0
+    assert N.main(_args(tmp, logs, "--allow-missing")) == 0
     out = tmp / "out"
     names = {p.name for p in out.glob("*.tex")}
     assert names == {p.name for p in (PAPER / "fallback").glob("*.tex")}
@@ -1059,6 +1059,57 @@ def test_the_command_writes_every_file_and_strict_fails_on_a_missing_cell(run_di
     capsys.readouterr()
     assert N.main(_args(tmp, logs, "--strict", "--check")) == 1           # most cells are missing in this run
     assert "STRICT:" in capsys.readouterr().out
+
+
+def test_the_report_ends_with_every_missing_cell_and_macro(run_dir, capsys):
+    """The report's last lines list every table cell and macro the run lacks (``MISSING:``), and a run that lacks
+    any fails unless ``--allow-missing``; a rehearsal prints only their number and does not fail on them; a complete
+    build ends with ``COMPLETE:``."""
+    tmp, logs = run_dir
+    capsys.readouterr()
+    assert N.main(_args(tmp, logs, "--check")) == 1
+    out = capsys.readouterr().out.splitlines()
+    head = next(i for i, line in enumerate(out) if line.startswith("MISSING: "))
+    tail = out[head + 1:]
+    m = re.match(r"MISSING: (\d+) table cells and (\d+) macros", out[head])
+    assert m and int(m[1]) > 0 and int(m[2]) > 0 and len(tail) == int(m[1]) + int(m[2])
+    assert "    cell tab:eval-llm: GPT-2 (64) / C prove" in tail and "    macro \\ServeOptMC" not in tail
+    assert "    macro \\LlamaThirteenRatio" not in tail and "    macro \\ZeroshotMeanOptL" in tail
+    assert not any(line.startswith(("CHECK FAILED", "PARSE")) for line in out)    # only the missing values fail
+    assert N.main(_args(tmp, logs, "--check", "--allow-missing")) == 0
+    capsys.readouterr()
+    assert N.main(_args(tmp, logs, "--check", "--rehearsal")) == 1               # its tiers lack kinds, not cells
+    out = capsys.readouterr().out.splitlines()
+    assert out[-1].startswith("MISSING: ") and not any(line.startswith("    macro ") for line in out)
+    tb = T.Table("tab_x", "tab:x", "")
+    tb.put("row", "col", 1.0, "src")
+    assert N.missing_report([tb], []) == ["COMPLETE: every table cell and every macro is in the run"]
+    assert N.missing_report([tb], ["A"], count_only=True) == [
+        "MISSING: 0 table cells and 1 macros are not in the run (the paper prints them as -- or \\todo)"]
+
+
+def test_the_smokes_pytest_summary_is_a_record_and_a_failed_test_fails(run_dir, capsys):
+    """pytest's summary line in the smoke's log is a ``tests`` record of the smoke tier (``\\SmokeTests``: the tests
+    that passed); a failed test is a CHECK FAILED line; a summary line in another job's log is no record."""
+    tmp, logs = run_dir
+    assert R.pytest_summary("798 passed, 4 skipped, 2 warnings in 1203.51s (0:20:03)") == {
+        "kind": "tests", "passed": 798, "failed": 0, "errors": 0, "skipped": 4, "warnings": 2,
+        "line": "798 passed, 4 skipped, 2 warnings in 1203.51s (0:20:03)"}
+    assert R.pytest_summary("===== 1 failed, 9 passed in 3.00s =====")["failed"] == 1
+    assert R.pytest_summary("12 tests collected") is None and R.pytest_summary("4 passed the check") is None
+    text = (logs / "sp-smoke-1.out").read_text(encoding="utf-8").replace("4 passed\n", "797 passed, 3 skipped in 99s\n")
+    (logs / "sp-smoke-1.out").write_text(text, encoding="utf-8")
+    _write(logs, "sp-c-qwen3-4b-64-93.out", [], extra="5 passed in 1.00s\n")
+    recs = R.read_logs(logs, [])
+    tests = [r for r in recs if r.kind == "tests"]
+    assert [(r.tier, r.d["passed"]) for r in tests] == [("smoke", 797)] and not R.checks(tests[0])
+    ctx, problems = _ctx(tmp, logs)
+    m, _ = M.build(ctx, problems)
+    assert m["SmokeTests"].value == "797" and m["SmokeTests"].source == "sp-smoke-1.out:2"
+    (logs / "sp-smoke-1.out").write_text(text.replace("797 passed", "1 failed, 796 passed"), encoding="utf-8")
+    capsys.readouterr()
+    assert N.main(_args(tmp, logs, "--check", "--allow-missing")) == 1
+    assert "the smoke's tests: 1 failed, 0 errors" in capsys.readouterr().out
 
 
 def test_a_failed_check_or_an_unparsable_line_fails(run_dir, capsys):
