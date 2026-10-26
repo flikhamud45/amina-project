@@ -67,9 +67,9 @@ activation~\cite{chen2024prefixquant,son2024cushioncache}, a per-channel balance
 product folded into the up and down projections~\cite{xiao2023smoothquant,lin2024awq}, and for
 Qwen3 a balance of the q and k norms' gains~\cite{shao2024omniquant}, after each head's rows of $W_q$
 and $W_k$ are rescaled to a common int8 range (the per-head RMSNorm that follows is invariant to
-it). The smoothing $\alpha$ and the SwiGLU balance are chosen per model on the test split (Llama-2-7B:
-OpenLLaMA-7B's); on its validation split, among $\alpha$ and balance $\pm0.1$ from ours, \LlamaOpenValClause{}. With
-them, OpenLLaMA-7B, whose integer graph has our Llama-2-7B benchmark's structure, is
-within $\times$\LlamaOpenRatio{} of fp32 at 2{,}048 tokens, Llama-2-7B within $\times$\LlamaSevenRatio{}, TinyLlama within $\times$\TinyLlamaRatio{} and Qwen3-1.7B
+it). The smoothing $\alpha$ and the SwiGLU balance are chosen per model on the test split; Llama-2's, fixed before
+the run, are on Llama-2-7B within \LlamaSevenTestGap{} (test) and \LlamaSevenValGap{} (validation) of the best
+ratios among $\alpha$ and balance $\pm0.1$. With them, Llama-2-7B, whose integer graph has our benchmark's
+structure, is within $\times$\LlamaSevenRatio{} of fp32 at 2{,}048 tokens, TinyLlama within $\times$\TinyLlamaRatio{} and Qwen3-1.7B
 within $\times$\QwenMRatio{}, and Llama-2-13B within $\times$\LlamaThirteenRatio{} of fp16, while Qwen3-4B, which forms a second
 massive activation that no prefix takes, stays at $\times$\QwenLRatio{}~\cite{fullversion}.

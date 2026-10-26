@@ -1036,8 +1036,7 @@ def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
 
 # ================================================================================================ quality
 OPTS = (("facebook/opt-125m", "OptS", 4), ("facebook/opt-1.3b", "OptM", 3), ("facebook/opt-6.7b", "OptL", 2))
-LLAMAS = (("openlm-research/open_llama_7b_v2", "LlamaOpen", "main-a0.55-glus0.2", 3, True),
-          ("meta-llama/Llama-2-7b-hf", "LlamaSeven", "main-a0.55-glus0.2", 3, True),
+LLAMAS = (("meta-llama/Llama-2-7b-hf", "LlamaSeven", "main-a0.55-glus0.2", 3, True),
           ("meta-llama/Llama-2-13b-hf", "LlamaThirteen", "main-a0.6-glus0.2", 3, True),
           ("TinyLlama/TinyLlama_v1.1", "TinyLlama", "main-a0.75-glus0.2", 2, True),
           ("Qwen/Qwen3-1.7B-Base", "QwenM", "main-a0.45-glus0.3", 2, True),
@@ -1050,10 +1049,14 @@ LLAMA_CI = ("LlamaSeven", "LlamaThirteen")
 LLAMA_REFERENCE = {"meta-llama/Llama-2-13b-hf": "float16"}
 """The reference of each Llama-family ratio as the text states it: the checkpoint in fp32, except Llama-2-13B's in
 fp16 (``q-llama13 --ref-dtype float16``)."""
-LLAMA_VALIDATION = ("openlm-research/open_llama_7b_v2", (0.45, 0.55, 0.65), (0.1, 0.2, 0.3))
-"""OpenLLaMA-7B's grid on the validation split (``q-openllama7-validation``): the smoothing alphas and the SwiGLU
-product balances within 0.1 of the main recipe's (0.55 and 0.2, ``hf_llama.MAIN_SETTINGS``), as the text names
-them."""
+LLAMA_GRIDS = (("meta-llama/Llama-2-7b-hf", "LlamaSeven", (0.45, 0.55, 0.65), (0.1, 0.2, 0.3)),
+               ("meta-llama/Llama-2-13b-hf", "LlamaThirteen", (0.5, 0.6, 0.7), (0.2,)))
+"""The committed Llama-2 recipes against their neighbours, as the text names them: per checkpoint the smoothing alphas
+and the SwiGLU product balances of its grid, whose middle cell is the committed recipe (``hf_llama.MAIN_SETTINGS``,
+the cell of :data:`LLAMAS`), measured on each split of :data:`LLAMA_SPLITS` (the quality tier's ``q-llama7``,
+``q-llama7-validation``, ``q-llama13`` and ``q-llama13-validation``, with ``--llama-licence``).  The recipe is not
+chosen from these cells: they report the grid's best cell and the committed recipe's ratio above it."""
+LLAMA_SPLITS = (("test", "Test"), ("validation", "Val"))
 ALPHAS_TEST = (0.3, 0.4, 0.5, 0.6, 0.7)
 ALPHAS_VALIDATION = (0.5, 0.6, 0.7)
 """The smoothing alphas of the quality tier's alpha studies on the test split (``q-opt13-recipes``,
@@ -1116,13 +1119,35 @@ def digest_agreement(run) -> tuple[dict, list[str]]:
     return out, failures
 
 
-def val_clause(best: tuple, gap: float, main: tuple) -> str:
-    """The text's clause on OpenLLaMA-7B's validation grid (``best``, ``main``: ``(alpha, balance)``; ``gap``: the
-    main recipe's ratio minus the best's): ``ours are the best``, or the best cell with the main recipe's ratio within
-    ``gap`` of its ratio (rounded up)."""
-    if best == main:
-        return "ours are the best"
-    return rf"$\alpha={best[0]:g}$ with balance {best[1]:g} is the best, ours within {ceil_fixed(gap, 3)} of its ratio"
+def grid_cell(cell: tuple, balances: tuple) -> str:
+    """A Llama-2 grid's cell as the text names it (``cell``: ``(alpha, balance)``): its alpha, and its balance when
+    the grid has more than one."""
+    return rf"$\alpha={cell[0]:g}$" + (f" with balance {cell[1]:g}" if len(balances) > 1 else "")
+
+
+def llama_grids(c: Collector, run) -> None:
+    """Per :data:`LLAMA_GRIDS` checkpoint and :data:`LLAMA_SPLITS` split: ``<name><Split>Best`` (the grid's cell of
+    the lowest ratio; a tie goes to the committed recipe) and ``<name><Split>Gap`` (the committed recipe's ratio minus
+    the best's, rounded up), from a complete grid only; a measured main cell of the checkpoint and split outside the
+    grid fails the text's claim."""
+    for model, name, alphas, balances in LLAMA_GRIDS:
+        main = next(cell for m, _, cell, _, _ in LLAMAS if m == model)
+        centre = (alphas[len(alphas) // 2], balances[len(balances) // 2])
+        for split, tag in LLAMA_SPLITS:
+            grid = {(a, g): run.ppl(model, f"main-a{a:g}-glus{g:g}", split=split) for a in alphas for g in balances}
+            measured = {(round(r.d.get("alpha"), 6), round(r.d.get("glu_smooth"), 6))
+                        for r in run.kind("ppl", "quality")
+                        if r.d.get("model") == model and r.d.get("split", "test") == split
+                        and r.d.get("graph") == "main" and r.d.get("glu_exp", 0) == 0 and not r.d.get("smoke")
+                        and r.d.get("alpha") is not None and r.d.get("glu_smooth") is not None}
+            c.claim(measured <= set(grid), f"the {split} cells of {model} include {sorted(measured - set(grid))}, "
+                    f"outside the grid the text names (alphas {alphas}, balances {balances})")
+            full = all(grid.values()) and f"main-a{centre[0]:g}-glus{centre[1]:g}" == main
+            best = min(grid, key=lambda k: (grid[k].d["ratio"], k != centre)) if full else None
+            src = grid[best] if best else None
+            c.put(f"{name}{tag}Best", best, src, lambda v, balances=balances: grid_cell(v, balances))
+            c.put(f"{name}{tag}Gap", grid[centre].d["ratio"] - grid[best].d["ratio"] if best else None, src,
+                  lambda v: ceil_fixed(v, 3))
 
 
 def quality(c: Collector, ctx: T.Ctx) -> None:
@@ -1203,26 +1228,9 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
         stated = LLAMA_REFERENCE.get(model, "float32")
         c.claim(r is None or r.d.get("ref_dtype", "float32") == stated,
                 f"{name}Ratio's reference is {r and r.d.get('ref_dtype')}; the text states {stated}")
-    # OpenLLaMA-7B's alpha and product balance on the validation split: the grid's best cell, and the main recipe's
-    # ratio above it ("within")
-    model, alphas, balances = LLAMA_VALIDATION
-    main = next(cell for m, _, cell, _, _ in LLAMAS if m == model)
-    grid = {(a, g): run.ppl(model, f"main-a{a:g}-glus{g:g}", split="validation") for a in alphas for g in balances}
-    measured = {(round(r.d.get("alpha"), 6), round(r.d.get("glu_smooth"), 6)) for r in run.kind("ppl", "quality")
-                if r.d.get("model") == model and r.d.get("split") == "validation" and r.d.get("graph") == "main"
-                and r.d.get("glu_exp", 0) == 0 and not r.d.get("smoke") and r.d.get("alpha") is not None
-                and r.d.get("glu_smooth") is not None}
-    c.claim(measured <= set(grid), f"the validation cells of {model} include {sorted(measured - set(grid))}, outside "
-            f"the grid the text names (alphas {alphas}, balances {balances})")
-    centre = (alphas[1], balances[1])
-    full = all(grid.values()) and f"main-a{centre[0]:g}-glus{centre[1]:g}" == main
-    best = min(grid, key=lambda k: (grid[k].d["ratio"], k != centre)) if full else None    # a tie: the main recipe
-    src = grid[best] if best else None
-    c.put("LlamaOpenValAlpha", best and best[0], src, lambda v: f"{v:g}")
-    c.put("LlamaOpenValBalance", best and best[1], src, lambda v: f"{v:g}")
-    gap = grid[centre].d["ratio"] - grid[best].d["ratio"] if best else None
-    c.put("LlamaOpenValGap", gap, src, lambda v: ceil_fixed(v, 3))
-    c.put("LlamaOpenValClause", best and (best, gap), src, lambda v: val_clause(*v, centre))
+    # Llama-2's committed recipes against their neighbours on the test and the validation split: each grid's best
+    # cell, and the committed recipe's ratio above it ("within")
+    llama_grids(c, run)
     # the reproducible build: every build of a certified model agrees (a CHECK FAILED line otherwise), over at least
     # two settings of what the text says it varies
     agree, failures = digest_agreement(run)
