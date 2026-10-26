@@ -24,12 +24,12 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 ``tab:v1``            ``v1``: the timed queries and the GKR's share of V1's prover
 ``tab:gen``           ``gen``: greedy responses, both modes
 ``tab:gen-full``      ``gen``: every cell, greedy and sampled
+``tab:quality-attr``  ``quality``: ``attribution.py`` (OPT-125M, the scalar graph with 8-bit probabilities)
 ``tab:zeroshot``      ``quality``: ``zeroshot.py`` (the certified recipe)
 ==================== ==================================================================================
 
-Tables that no record produces are not built: ``tab:quality-attr`` (its scripts are not in the artifact) and the
-analysis and literature tables ``tab:sok``, ``tab:sok-derivation``, ``tab:aligned``, ``tab:paths`` and
-``tab:paths-acc``.
+Tables that no record produces are not built: the analysis and literature tables ``tab:sok``, ``tab:sok-derivation``,
+``tab:aligned``, ``tab:paths`` and ``tab:paths-acc``.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 
 from experiments.paper import format as f
 from experiments.paper.bench import DEFAULT_POLICY, Bench
-from experiments.paper.records import Rec, Run, v1_timed
+from experiments.paper.records import ATTRIBUTION_CELL, Rec, Run, v1_timed
 
 NAME = {"gpt2": "GPT-2", "opt-125m": "OPT-125M", "opt-1.3b": "OPT-1.3B", "opt-6.7b": "OPT-6.7B",
         "llama2-7b": "Llama-2-7B", "llama2-13b": "Llama-2-13B", "qwen3-4b": "Qwen3-4B"}
@@ -898,6 +898,36 @@ def tab_gen_full(ctx: Ctx) -> Table:
     return tb
 
 
+ATTRIBUTION_MODEL = "facebook/opt-125m"
+ATTRIBUTION_ROWS = (("LayerNorm outputs (all)", "norm"), (r"\quad before attention", "norm1"),
+                    (r"\quad before the MLP", "norm2"), ("All weight matrices", "weights"),
+                    (r"\quad q/k/v weights", "w_qkv"), ("fc1 requantisation", "rq_fc1"),
+                    ("Attention output requantisation", "att_out"), ("Softmax (exp table, 8-bit prob.)", "softmax"),
+                    ("Residual stream", "res"), ("ReLU table", "relu"))
+"""``tab:quality-attr``'s rows: the label and ``attribution.py``'s group (``hybrid_opt.GROUPS``)."""
+ATTRIBUTION_GROUPS = ("weights", "w_emb", "w_qkv", "w_out", "w_fc1", "w_fc2", "w_head", "norm", "norm1", "norm2",
+                      "normf", "rq_qkv", "rq_fc1", "softmax", "att_out", "res", "relu")
+"""Every group of ``attribution.py`` (the keys of ``hybrid_opt.GROUPS``, in its order)."""
+
+
+def tab_quality_attr(ctx: Ctx) -> Table:
+    """``tab:quality-attr``: the attribution of OPT-125M's perplexity, per group of components the leave-one-out
+    perplexity (that group float, the rest integer) and the add-one perplexity (only that group integer) of the
+    float copy of the integer graph (``attribution.py``: the scalar graph with norm gain 4 and 8-bit probabilities,
+    16 windows of 128 tokens, calibration on one 128-token window at the end of the test split)."""
+    check = ctx.run.attribution(ATTRIBUTION_MODEL, part="check")
+    tb = Table("tab_quality_attr", "tab:quality-attr", "quality tier, attribution.py: WikiText-2 test split joined "
+               "without a separator, 16 windows of 128 tokens, calibration on one 128-token window at its end; graph "
+               f"{ATTRIBUTION_CELL}" + (f", digest {check.d.get('digest')}" if check else ""))
+    for label, group in ATTRIBUTION_ROWS:
+        loo, add = (ctx.run.attribution(ATTRIBUTION_MODEL, group, m) for m in ("leave_one_out", "add_one"))
+        tb.rows.append(" & ".join([label, tb.put(label, "leave-one-out", loo and loo.d["ppl"], loo,
+                                                 lambda v: f.fixed(v, 1)),
+                                   tb.put(label, "add-one", add and add.d["ppl"], add, lambda v: f.fixed(v, 1))])
+                       + r" \\")
+    return tb
+
+
 ZEROSHOT = (("lambada_openai", "LAMBADA"), ("hellaswag", "HellaSwag"), ("piqa", "PIQA"), ("arc_easy", "ARC-e"),
             ("arc_challenge", "ARC-c"), ("winogrande", "WinoGrande"))
 ZEROSHOT_MODELS = ("facebook/opt-125m", "facebook/opt-1.3b", "facebook/opt-6.7b")
@@ -949,7 +979,7 @@ def tab_zeroshot(ctx: Ctx) -> Table:
 
 BUILDERS = (tab_eval_llm, tab_eval_v1, tab_options, tab_eval_compare, tab_quality, tab_params, tab_inrange, tab_setup,
             tab_eval_improve, tab_eval_long, tab_eval_real, tab_eval_reexec, tab_eval_compare_v1, tab_v1, tab_gen,
-            tab_gen_full, tab_zeroshot)
+            tab_gen_full, tab_quality_attr, tab_zeroshot)
 """Every table builder, in the paper's order."""
 TABLE_FILES = tuple(b.__name__ for b in BUILDERS)
 """The tables' file names (``<name>.tex``), as ``paper_sp2027/main.tex`` lists them."""

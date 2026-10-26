@@ -265,6 +265,11 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
 
     ``device`` is where the integer calibration pass runs (the fp model stays where it is).
 
+    ``info`` holds the builder's settings, the residual stream's real scale ``s_residual``, the logits' real scale
+    ``logit_scale`` and ``scales``: the real scale of every op's output by tensor name (a float, or a vector for a
+    smoothed norm's channels or per-row weight scales), which the attribution study's float copy of the graph reads
+    (``experiments/quality/attribution.py``).  ``info`` is not part of the graph or its digest.
+
     ``prune_last`` (opt-in): the last block's q, attention output, out-projection, residuals and MLP
     read the last position only, its k and v every position (the ops and order of
     ``build_decoder(..., prune_last=True)``: a "last position" op before q and one before the first
@@ -369,7 +374,8 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     info = {"s_residual": s_res, "residual_real_max": res_max, "logit_scale": B.scale[logits],
             "pct": pct, "norm_gain": norm_gain, "embed_mult": embed_mult, "smooth": smooth,
             "smooth_pct": smooth_pct, "pct_att": pct_att, "prune_last": prune_last, "row_pow2": row_pow2,
-            "cle_mlp": cle_mlp, "cle_ratio": cle_ratio if cle_mlp is not None else None}
+            "cle_mlp": cle_mlp, "cle_ratio": cle_ratio if cle_mlp is not None else None,
+            "scales": dict(B.scale)}
     return IntGraph(B.ops, "x", logits), info
 
 

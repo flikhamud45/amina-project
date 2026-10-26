@@ -500,8 +500,8 @@ def test_the_rehearsal_runs_every_script_of_every_tier():
 
 def test_the_gen_and_quality_cells_of_the_text():
     """The gen tier's cells (GPT-2's per-token prover after a 64-token prompt; Llama-2-7B and Qwen3-4B after a
-    512-token prompt, greedy and sampled) and the OPT-125M recipe studies of the quality tier; the rehearsal keeps its
-    own small generation cell."""
+    512-token prompt, greedy and sampled) and the OPT-125M recipe studies and attribution of the quality tier; the
+    rehearsal keeps its own small generation and attribution cells."""
     lines = {_job(line): line for line in _dry()}
     gpt2 = lines["sp-gen-gpt2"].split("generation.gen_bench", 1)[1]
     assert "--model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --policy cnn18c" in gpt2
@@ -513,6 +513,15 @@ def test_the_gen_and_quality_cells_of_the_text():
     assert "--model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11" in rec
     rehearsal = {_job(line): line for line in _dry("--rehearsal")}
     assert "--layers 2" in rehearsal["sp-gen-gpt2"] and "sp-q-opt125-recipes" not in rehearsal
+    # the attribution of OPT-125M's perplexity (tab:quality-attr): the script's defaults are the paper's settings (16
+    # windows of 128 tokens, the scalar graph with norm gain 4 and 8-bit probabilities, the feature sub-rows), on the
+    # CPU and not pinned; the rehearsal's cell takes two windows without the sub-rows
+    attr = lines["sp-q-opt125-attr"].split("--wrap", 1)[1]
+    assert attr.endswith('experiments.quality.attribution --device cpu --threads 8 --model facebook/opt-125m"'), attr
+    assert "experiments.package.pin" not in attr and "--time=1:00:00" in lines["sp-q-opt125-attr"]
+    assert "--mem=64G" in lines["sp-q-opt125-attr"]
+    assert rehearsal["sp-q-opt125-attr"].endswith("--model facebook/opt-125m --windows 2 --skip-sub\"")
+    assert [j for j, x in lines.items() if "experiments.quality.attribution" in x] == ["sp-q-opt125-attr"]
 
 
 def test_every_tier_is_documented_and_reachable():

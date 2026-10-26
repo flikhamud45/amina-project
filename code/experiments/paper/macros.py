@@ -22,15 +22,17 @@ The families, with the record each number comes from:
   re-execution, real weights, long prompts, the improvements, generation (their tiers' records, through the table
   selections of :mod:`experiments.paper.tables`);
 * the break-even (``deployment/ev_breakeven.py``'s formulas on the run's claims, verifier and re-execution times);
-* quality and zero-shot accuracy (``quality`` tier), the sampler's distance (``tv`` tier) and the attack (``attack``
-  tier's documents);
+* quality and zero-shot accuracy, and the attribution of OPT-125M's perplexity (``quality`` tier), the sampler's
+  distance (``tv`` tier) and the attack (``attack`` tier's documents);
 * values that follow from the code alone, under the run's plan: the security parameters, the setup proof's size,
   breakdown and radii (``costs/setup_bytes.py``), the split commitment's columns per query, and V1's cut of a model
   from its shapes (:func:`experiments.paper.tables.v1_shape_model`).
 
 A number that the text states as a bound ("at most", "up to", "within", "less than") is rounded up (:func:`ceil_pct`,
 :func:`ceil_fixed`, :func:`ceil_sig`, :func:`ceil_about`, :func:`ceil_sci`), one stated as "at least" is rounded down
-(:func:`floor_sig`), so that the printed bound holds for the measured value.
+(:func:`floor_sig`), so that the printed bound holds for the measured value.  What the text states about the values
+(a loss of accuracy, :data:`LOSSES`; the attribution's ranking, :func:`attribution_claims`) is checked against them
+(:data:`TEXT_CLAIM`).
 """
 from __future__ import annotations
 
@@ -902,6 +904,67 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
           lambda v: f"{abs(100 * v):.1f}")
 
 
+SMALL_COSTS = ("softmax", "res", "relu")
+"""The attribution's groups whose cost the text bounds together (the 8-bit softmax, the residual stream, the ReLU
+table): each one's add-one perplexity over the all-float copy's."""
+
+
+def _attribution(run, group, mode):
+    r = run.attribution(T.ATTRIBUTION_MODEL, group, mode)
+    return r, (r.d["ppl"] if r else None)
+
+
+def attribution(c: Collector, ctx: T.Ctx) -> None:
+    """The attribution of OPT-125M's perplexity (``attribution.py``, ``tab:quality-attr``): the integer graph's and
+    fp32's perplexity, the LayerNorm outputs' leave-one-out perplexity, the largest add-one cost of
+    :data:`SMALL_COSTS` and the all-float copy's largest logit difference from the checkpoint (a bound: rounded
+    up)."""
+    run = ctx.run
+    check = run.attribution(T.ATTRIBUTION_MODEL, part="check")
+    c.put("AttrIntPpl", check and check.d.get("int_ppl"), check, lambda v: f"{v:.1f}")
+    c.put("AttrFpPpl", check and check.d.get("fp32"), check, lambda v: f"{v:.1f}")
+    c.put("AttrFloatTol", check and check.d.get("all_float_max_abs_dlogit"), check, lambda v: ceil_sci(v, 1))
+    loo, v = _attribution(run, "norm", "leave_one_out")
+    c.put("AttrNormLoo", v, loo, lambda x: f"{x:.1f}")
+    base, fl = _attribution(run, "all", "all_float")
+    costs = [_attribution(run, g, "add_one")[1] for g in SMALL_COSTS]
+    c.put("AttrSmallCost", None if fl is None or None in costs else max(x - fl for x in costs), base,
+          lambda x: ceil_fixed(x, 1))
+
+
+def attribution_claims(ctx: T.Ctx) -> list[str]:
+    """What the extended version's paragraph "Where the perplexity goes" (and Sec. ``sec:quality``'s) states about the
+    attribution, checked against its records (:data:`TEXT_CLAIM` lines; a claim whose rows are missing is not
+    checked): the LayerNorm outputs dominate (their leave-one-out perplexity is the lowest of the groups), making them
+    float removes more than half of the gap to fp32, the weight matrices and fc1's requantisation follow among the
+    table's other rows, and the LayerNorm's loss comes from rounding, not clipping (the add-one perplexity of its
+    rounding alone exceeds that of its clipping alone)."""
+    run, bad = ctx.run, []
+    check = run.attribution(T.ATTRIBUTION_MODEL, part="check")
+    loo = {g: _attribution(run, g, "leave_one_out")[1] for g in T.ATTRIBUTION_GROUPS}
+    norm = loo.get("norm")
+    if norm is not None and None not in loo.values() and min(loo.values()) < norm:
+        bad.append(f"{TEXT_CLAIM} attribution: the LayerNorm outputs' leave-one-out perplexity {norm:.3f} is not the "
+                   f"lowest ({min(loo, key=loo.get)}: {min(loo.values()):.3f}); the text says they dominate")
+    if norm is not None and check is not None:
+        gap, gain = check.d["int_ppl"] - check.d["fp32"], check.d["int_ppl"] - norm
+        if not gain > 0.5 * gap:
+            bad.append(f"{TEXT_CLAIM} attribution: float LayerNorm outputs remove {gain:.3f} of the gap {gap:.3f}; the "
+                       "text says more than half")
+    others = {label: loo.get(g) for label, g in T.ATTRIBUTION_ROWS if not label.startswith(r"\quad")}
+    others.pop(T.ATTRIBUTION_ROWS[0][0])
+    if None not in others.values() and others:
+        follow = sorted(others, key=others.get)[:2]
+        if set(follow) != {"All weight matrices", "fc1 requantisation"}:
+            bad.append(f"{TEXT_CLAIM} attribution: after the LayerNorm outputs the lowest leave-one-out rows are "
+                       f"{follow}; the text names the weight matrices and fc1's requantisation")
+    rnd, clip = (_attribution(run, g, "add_one_feature")[1] for g in ("norm_round", "norm_clip"))
+    if rnd is not None and clip is not None and not rnd > clip:
+        bad.append(f"{TEXT_CLAIM} attribution: the LayerNorm's rounding alone costs {rnd:.3f}, its clipping alone "
+                   f"{clip:.3f}; the text says the loss comes from rounding, not clipping")
+    return bad
+
+
 # ================================================================================================ the sampler
 def sampler(c: Collector, ctx: T.Ctx) -> None:
     doc = ctx.run.file("sampler_tv_opt-1.3b.json")
@@ -1287,7 +1350,8 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
 
 
 FAMILIES = (platform, cpu_client, kpre_client, defence_cost, batching, serving, v1_numbers, comparison, improvements,
-            real_weights, long_prompts, quality, sampler, attack, setup_and_params, setup_proof, generation)
+            real_weights, long_prompts, quality, attribution, sampler, attack, setup_and_params, setup_proof,
+            generation)
 TEXT_CLAIM = "CHECK FAILED text:"
 """The prefix of a check of what the text states about a value (not of a record's correctness): a rehearsal's small
 cells need not bear it out, so ``numbers.py --rehearsal`` reports it as a warning."""
@@ -1311,6 +1375,10 @@ def build(ctx: T.Ctx, problems: list) -> tuple[dict[str, Macro], dict | None]:
         raw = c.m[name].raw if name in c.m else None
         if raw is not None and raw >= 0:
             problems.append(f"{TEXT_CLAIM} {name} is {100 * raw:+.2f} points, which the text calls a loss")
+    try:
+        problems += attribution_claims(ctx)
+    except (KeyError, TypeError, ValueError) as e:
+        problems.append(f"PARSE macros attribution_claims: {type(e).__name__}: {e}")
     for name in names():
         c.m.setdefault(name, Macro(name, None, None, ""))
     return c.m, be

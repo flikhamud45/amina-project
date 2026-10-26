@@ -10,14 +10,17 @@ model.
 
 The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), a byte
 accounting that disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected
-(``setup``), an implementation A/B whose two paths disagree (the ``improve`` tier), and the smoke's own verdicts (no
-``SMOKE OK``, int8 GEMMs that are not exact) or a ``FAILED`` line of a script in a job's log.  Each is reported as a
-``CHECK FAILED`` line; a line that starts with ``{`` and does not parse, or parses as no known kind, is a ``PARSE``
-line.  Either makes ``paper/numbers.py`` exit with status 1.
+(``setup``), an implementation A/B whose two paths disagree (the ``improve`` tier), an attribution study whose float
+copy failed a check (``attribution``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact) or
+a ``FAILED`` line of a script in a job's log; between two jobs (:func:`cross_checks`), the attribution's integer graph
+against the quality tier's cell of the same graph.  Each is reported as a ``CHECK FAILED`` line; a line that starts
+with ``{`` and does not parse, or parses as no known kind, is a ``PARSE`` line.  Either makes ``paper/numbers.py`` exit
+with status 1.
 """
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,7 +33,7 @@ KINDS = {"smoke": {"v1", "h2d"}, "cpuv": {"perf", "reexec", "v1"}, "v1": {"v1"},
          "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"}, "batch": {"bench_env"},
          "real": {"perf", "v1", "gen"}, "setup": {"setup"},
          "improve": {"open_ab", "forward_ab", "encode_ab", "perf", "gpu_profile", "fold_ab", "v1_phases", "gkr"},
-         "quality": {"ppl", "zeroshot", "digest", "llama_diag", "llama_attrib"}, "tv": {"tv"},
+         "quality": {"ppl", "zeroshot", "digest", "llama_diag", "llama_attrib", "attribution"}, "tv": {"tv"},
          "attack": {"reproduction", "attack_mnist", "samplers", "floor_sampler", "adaptive_game", "path_bound",
                     "attack_llm", "inrange", "adaptive_game_llm"},
          "long": {"perf", "reexec"}}
@@ -55,6 +58,9 @@ DOCUMENTS = ((re.compile(r"real_llm_attack(_.+)?\.json"), "attack_llm"),
 ``inrange_llm_opt-125m_any.json``, ``adaptive_game_opt-125m.json``, ...) and their kinds.  Such a document counts
 for its tier and kind, and fills no table cell or text number, which select the full run's names."""
 LOG = re.compile(r"^sp-(?P<cell>.+)-(?P<job>[0-9]+|DRY[0-9]+)\.out$")
+ATTRIBUTION_CELL = "scalar-g4-p8"
+"""The integer graph of the attribution study (``attribution.py``'s default): ``ppl_opt.py``'s cell of OPT-125M with
+norm gain 4 and 8-bit probabilities, calibrated on one window at the end of the test split."""
 
 
 @dataclass
@@ -90,7 +96,7 @@ def tier_of(cell: str) -> str | None:
 def kind_of(d: dict) -> str | None:
     """The script that wrote one record, from its fields; None for a record of no known kind."""
     k = d.get("kind")
-    if k in ("gen", "setup", "h2d", "gpu_profile"):
+    if k in ("gen", "setup", "h2d", "gpu_profile", "attribution"):
         return k
     if d.get("row") in ("prove", "on_request"):
         return "serve"
@@ -237,12 +243,38 @@ def checks(r: Rec) -> list[str]:
         bad.append(f"V1 queries accepted: {d.get('accepted')} of {d.get('queries')}")
     elif r.kind == "gkr" and d.get("same_transcript") is False:
         bad.append("the Triton and PyTorch GKR transcripts differ")
+    elif r.kind == "attribution" and d.get("part") == "check" and d.get("ok") is False:
+        bad.append("the attribution's float copy failed a check (ok false)")
     # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose)
     on_cpu = str(d.get("verifier_device") or d.get("device") or "cpu").startswith("cpu")
     if (r.tier in ("cpuv", "long", "real", "v1") and r.kind in ("perf", "v1", "reexec", "gen") and on_cpu
             and not d.get("codec_only")
             and ((d.get("env") or {}).get("implementation") or {}).get("native") is False):
         bad.append("the native CPU kernels were not used")
+    return bad
+
+
+def cross_checks(run: "Run") -> list[str]:
+    """The checks between two jobs' records, as ``CHECK FAILED`` lines: the attribution's integer graph (each check
+    record of ``attribution.py`` that names a ``ppl_opt.py`` cell) is the quality tier's graph of that cell with the
+    same calibration and window length (the same digest), and over the same windows has its perplexity (to a relative
+    1e-6); a pair of which one record is missing is not checked."""
+    bad = []
+    for r in run.kind("attribution", "quality"):
+        d = r.d
+        if d.get("part") != "check" or not d.get("graph_cell") or d.get("tag"):
+            continue
+        cell = run.ppl(d.get("model"), d["graph_cell"], calibration=d.get("calibration", "test-end"), seq=d.get("seq"))
+        if cell is None:
+            continue
+        where = f"{Path(r.path).name}:{r.line} against {Path(cell.path).name}:{cell.line}"
+        if d.get("digest") != cell.d.get("digest"):
+            bad.append(f"CHECK FAILED attribution {where}: the integer graph's digest is not that of the cell "
+                       f"{d['graph_cell']}")
+        elif d.get("windows") == cell.d.get("windows") and not (
+                abs(d.get("int_ppl", math.nan) - cell.d.get("ppl", math.nan)) <= 1e-6 * abs(cell.d.get("ppl", 0.0))):
+            bad.append(f"CHECK FAILED attribution {where}: the integer graph's perplexity {d.get('int_ppl')!r} is not "
+                       f"the cell's {cell.d.get('ppl')!r}")
     return bad
 
 
@@ -399,6 +431,17 @@ class Run:
         return self._last([r for r in self.kind("zeroshot", "quality")
                            if (r.d.get("model"), r.d.get("task"), r.d.get("variant")) == (model, task, variant)
                            and (variant == "ref" or r.d.get("recipe") == recipe) and not r.d.get("tag")])
+
+    def attribution(self, model, group="all", mode=None, *, part="row", graph_cell=ATTRIBUTION_CELL, seq=128,
+                    windows=16) -> Rec | None:
+        """A record of ``attribution.py``: a row (``group``, ``mode``: ``leave_one_out``, ``add_one``, ...) or, with
+        ``part="check"``, the check record, of the graph ``graph_cell`` on ``windows`` windows of ``seq`` tokens."""
+        def ok(r):
+            d = r.d
+            return (d.get("model") == model and d.get("part") == part and d.get("graph_cell") == graph_cell
+                    and d.get("seq") == seq and d.get("windows") == windows and not d.get("tag")
+                    and (part != "row" or (d.get("group"), d.get("mode")) == (group, mode)))
+        return self._last([r for r in self.kind("attribution", "quality") if ok(r)])
 
     def first(self, kind, tier=None, **match) -> Rec | None:
         """The latest record of ``kind`` (in ``tier``) whose fields equal ``match``."""

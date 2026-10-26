@@ -134,6 +134,33 @@ def zeroshot(model, task, variant, acc, *, diff=None, recipe="certified"):
     return row
 
 
+ATTRIBUTION = {"weights": (72.5409, 66.6436), "w_emb": (75.5369, 64.8201), "w_qkv": (74.7597, 64.9653),
+               "w_out": (74.7144, 65.1556), "w_fc1": (74.7254, 65.2792), "w_fc2": (74.8286, 65.0959),
+               "w_head": (75.5774, 64.7015), "norm": (69.3907, 70.3329), "norm1": (70.9628, 68.6896),
+               "norm2": (74.9013, 65.9101), "normf": (75.4596, 64.9366), "rq_qkv": (75.1141, 65.2619),
+               "rq_fc1": (72.6652, 66.2708), "softmax": (75.8567, 64.9330), "att_out": (75.7001, 64.8082),
+               "res": (75.8797, 64.7651), "relu": (75.5198, 64.7611)}
+"""The attribution study's leave-one-out and add-one perplexities per group (OPT-125M, 16 windows of 128 tokens)."""
+
+
+def attribution(*, digest="d125", int_ppl=75.5198, fp32=64.7611, ok=True, rows=ATTRIBUTION, sub=None, windows=16):
+    """``quality/attribution.py``'s records: a row per group and mode, the feature sub-rows ``sub`` (``{key: add-one
+    perplexity}``) and the check record."""
+    head = {"kind": "attribution", "model": "facebook/opt-125m", "tag": "", "seq": 128, "windows": windows,
+            "tokens": 127 * windows, "calibration": "test-end", "graph": "scalar", "graph_cell": "scalar-g4-p8",
+            "env": _env()}
+    out = [dict(head, part="row", group="all", mode="all_int", ppl=int_ppl),
+           dict(head, part="row", group="all", mode="all_float", ppl=fp32 + 1e-6)]
+    for g, (loo, add) in rows.items():
+        out += [dict(head, part="row", group=g, mode="leave_one_out", ppl=loo),
+                dict(head, part="row", group=g, mode="add_one", ppl=add)]
+    for g, add in (sub or {"norm_round": 70.3329, "norm_clip": 64.8607}).items():
+        out.append(dict(head, part="row", group=g, mode="add_one_feature", ppl=add))
+    out.append(dict(head, part="check", fp32=fp32, int_ppl=int_ppl, all_int_exact=ok, all_int_max_abs_dlogit=0.0,
+                    all_float_max_abs_dlogit=3.717e-5, digest=digest, weights_sha256="w", ok=ok))
+    return out
+
+
 def _write(folder: Path, name: str, records, extra: str = "") -> None:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / name).write_text("host n-1 git abc1234\n" + extra + "".join(json.dumps(r) + "\n" for r in records),
@@ -308,6 +335,10 @@ def _logs(tmp: Path) -> Path:
     for a, val in ((0.5, 1.010), (0.6, 1.012)):
         sweep.append(ppl("facebook/opt-6.7b", f"smooth-certified-a{a:g}-p11", 12.0, val, alpha=a, split="validation"))
     _write(logs, "sp-q-opt13-recipes-46.out", sweep)
+    # the attribution study and the quality tier's cell of its graph (the same digest and perplexity)
+    _write(logs, "sp-q-opt125-128-47.out", [dict(ppl("facebook/opt-125m", "scalar-g4-p8", 75.5198, 75.5198 / 64.7611,
+                                                     calibration="test-end", seq=128), windows=16, digest="d125")])
+    _write(logs, "sp-q-opt125-attr-48.out", attribution())
     _write(logs, "sp-q-zeroshot-opt-125m-22.out", [
         zeroshot("facebook/opt-125m", t, v, 0.379 if t == "lambada_openai" else 0.4, diff=-0.031 if t == "lambada_openai" else -0.005)
         for t, _ in T.ZEROSHOT for v in ("ref", "int")])
@@ -366,7 +397,8 @@ def test_every_record_lands_in_its_tier_and_kind(run_dir):
     assert {("smoke", "v1"), ("smoke", "h2d"), ("cpuv", "perf"), ("cpuv", "reexec"), ("cpuv", "v1"), ("v1", "v1"),
             ("gpuv", "v1"), ("gpuv", "perf"), ("gpuv", "reexec"), ("serve", "serve"), ("gen", "gen"), ("real", "gen"),
             ("real", "v1"), ("setup", "setup"), ("improve", "open_ab"), ("improve", "perf"), ("improve", "fold_ab"),
-            ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("long", "perf"), ("long", "reexec"),
+            ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("quality", "attribution"),
+            ("long", "perf"), ("long", "reexec"),
             ("bench", "bench_env"), ("attack", "path_bound")} <= got
     assert not [m for r in recs for m in R.checks(r)] and not R.log_checks(logs)
     files = R.read_files(logs, problems)
@@ -534,6 +566,52 @@ def test_the_settings_and_the_further_text_numbers(run_dir):
     assert (v["GkrTranscriptBits"], v["GkrTranscriptKB"]) == ("27", "36.0")
     assert v["CompareVerifierSlowerRows"] is None              # most rows of tab:eval-compare are not in this run
     assert [M.rows_text(n) for n in (0, 1, 2, 12)] == ["no rows", "one row", "two rows", "12 rows"]
+
+
+def test_the_attribution_its_numbers_and_what_the_text_says(run_dir):
+    """``tab:quality-attr`` and its macros from ``attribution.py``'s records (the stored study's values: the
+    fallback's), the cross-check of its integer graph against the quality tier's cell of the same graph, a failed
+    check of the float copy, and the checks of what the text states: the LayerNorm outputs dominate and remove more
+    than half of the gap, the weight matrices and fc1's requantisation follow, the loss comes from rounding, not
+    clipping, and the softmax, residual and ReLU rows each cost at most the printed bound."""
+    tmp, logs = run_dir
+    ctx, problems = _ctx(tmp, logs)
+    m, _ = M.build(ctx, problems)
+    tb = T.tab_quality_attr(ctx)
+    assert not problems and not tb.missing and R.cross_checks(ctx.run) == []
+    assert tuple(T.ATTRIBUTION_GROUPS) == tuple(ATTRIBUTION)
+    v = {k: x.value for k, x in m.items()}
+    assert (v["AttrIntPpl"], v["AttrFpPpl"], v["AttrNormLoo"]) == ("75.5", "64.8", "69.4")
+    assert v["AttrSmallCost"] == "0.2" and v["AttrFloatTol"] == r"$4\cdot10^{-5}$"    # the softmax costs 0.17
+    fallback = (PAPER / "fallback" / "tab_quality_attr.tex").read_text(encoding="utf-8")
+    assert [r.split() for r in tb.rows] == [x.split() for x in fallback.splitlines() if not x.startswith("%")]
+    assert "digest d125" in tb.note
+
+    def build(recs):
+        _write(logs, "sp-q-opt125-attr-48.out", recs)
+        ctx, problems = _ctx(tmp, logs)
+        failed = []
+        M.build(ctx, failed)
+        assert not problems
+        return ctx.run, failed
+
+    run, _ = build(attribution(digest="other"))
+    assert [x for x in R.cross_checks(run) if "digest is not that of the cell scalar-g4-p8" in x]
+    run, _ = build(attribution(int_ppl=75.6))
+    assert [x for x in R.cross_checks(run) if "perplexity 75.6 is not the cell's 75.5198" in x]
+    run, _ = build(attribution(windows=2, int_ppl=75.6))       # a rehearsal's: the same graph, other windows
+    assert R.cross_checks(run) == [] and run.attribution("facebook/opt-125m", part="check") is None
+    run, _ = build(attribution(ok=False))
+    check = run.attribution("facebook/opt-125m", part="check")
+    assert R.checks(check) == ["the attribution's float copy failed a check (ok false)"]
+    # what the text states, against other values
+    rows = dict(ATTRIBUTION, norm=(73.0, 70.3329), relu=(72.0, 64.7611))
+    _, failed = build(attribution(rows=rows, sub={"norm_round": 64.85, "norm_clip": 64.8607}))
+    claims = [x for x in failed if x.startswith(M.TEXT_CLAIM)]
+    assert len(claims) == 4 and all("attribution" in x for x in claims)
+    for text in ("is not the lowest", "the text says more than half", "the text names the weight matrices",
+                 "rounding, not clipping"):
+        assert any(text in x for x in claims), text
 
 
 def test_the_models_from_the_library():

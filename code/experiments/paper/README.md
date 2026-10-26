@@ -8,7 +8,7 @@ prints before the final run, otherwise. Nothing here runs a model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:zeroshot` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
+| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
 | Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the quality, attack and sampler numbers, ... (about 440 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
 | `fig:breakeven` (once its inputs are all in the run); `fig:overview`, `fig:protocol` with `--schematics` | `figures.py` | the same | `paper_sp2027/figures/*.pdf` |
 | Every value with its source record; per table the cells filled and missing; the checks | `numbers.py` | the same (`--check`: report only) | `generated/cells.csv`, `generated/coverage.txt` |
@@ -22,7 +22,7 @@ records, and the documents of the attack tier (`attack/*.json`, `attack/analytic
 gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-`, `a-` attack, `l-` long, `smoke`)
 and its kind from its fields (`perf`, `v1`, `reexec`, `serve`, `gen`, `setup`, `h2d`, `open_ab`, `forward_ab`,
 `encode_ab`, `fold_ab`, `gpu_profile`, `v1_phases`, `gkr`, `ppl`, `zeroshot`, `digest`, `llama_diag`,
-`llama_attrib`, `bench_env`, `path_bound`, `inrange`, `tv`, ...). `Run` selects the record of one cell by every
+`llama_attrib`, `attribution`, `bench_env`, `path_bound`, `inrange`, `tv`, ...). `Run` selects the record of one cell by every
 setting that distinguishes the package's jobs: the tier, the model, the prompt length, the mode, the blocks, the
 verifier device (a V1 record's from its command line), the label and real or random weights; of several matching
 records the latest job's (for re-execution, the fastest of one variant's records). `checks` lists a record's failed
@@ -91,17 +91,22 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
 * `CHECK FAILED`: an honest query rejected or a tamper accepted (`perf.py`, `v1_bytes.py`, `gen_bench.py`), a byte
   accounting that disagrees with the model (`v1_bytes.py`'s `accounting_ok`), a serving check that failed
   (`serve_ab.py`'s `ok`), a setup proof rejected (`setup_timing.py`), the two paths of an implementation A/B that
-  disagree, a smoke log without `SMOKE OK` or with int8 GEMMs that are not exact, a `FAILED` line of a script,
-  records of more than one GPU or CPU model, an honest query rejected or an attack accepted in the benchmark's
-  outcome counts, a table cell that disagrees with the macro printing the same value (`SAME_VALUE`, beyond one unit
-  of the coarser rounding), in the files written and in `paper_sp2027/fallback/` (`CHECK FAILED fallback:`).
+  disagree, an attribution whose float copy failed a check (`attribution.py`'s `ok`) or whose integer graph is not
+  the quality tier's cell of the same graph (`scalar-g4-p8` at 128 tokens: another digest, or another perplexity
+  over the same windows), a smoke log without `SMOKE OK` or with int8 GEMMs that are not exact, a `FAILED` line of a
+  script, records of more than one GPU or CPU model, an honest query rejected or an attack accepted in the
+  benchmark's outcome counts, a table cell that disagrees with the macro printing the same value (`SAME_VALUE`,
+  beyond one unit of the coarser rounding), in the files written and in `paper_sp2027/fallback/` (`CHECK FAILED
+  fallback:`), and what the text states about a value that the run's values contradict (`CHECK FAILED text:` the
+  sign of a zero-shot loss; the attribution's ranking: the LayerNorm outputs dominate and remove more than half of
+  the gap, the weight matrices and fc1's requantisation follow, rounding and not clipping).
 * `PARSE`: a log line that starts with `{` and does not parse, or is not a record of a known kind; a table or macro
   family that cannot read a record; an `--expect` listing that does not end with run.sh's summary line
   (`# <tiers>: N jobs, ...`) for the N jobs it lists (a dry run that stopped early, e.g. at a tier's check of
   `HF_HOME`).
 * `--strict`: also any table cell, macro or (with `--expect`) job without results.
-* `--rehearsal`: every tier has at least one record of each kind it writes (`records.REHEARSAL_KINDS`), and no table
-  cell is expected.
+* `--rehearsal`: every tier has at least one record of each kind it writes (`records.REHEARSAL_KINDS`), no table
+  cell is expected, and the checks of what the text states are warnings.
 
 The exit status is 1 on any of these. `WARNING` lines leave it unchanged: two jobs' values of one quantity more than
 10% apart (`TWO_JOBS`), records that name another mode-C plan than `--policy` (or several), an `int_mm`

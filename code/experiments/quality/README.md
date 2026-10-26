@@ -3,7 +3,8 @@
 The defence proves an integer model, so the paper also shows that the certified integer models are good models:
 their perplexity on WikiText-2 against the fp32 checkpoints (`tab:quality`), their zero-shot accuracy against the
 fp16 checkpoints (`tab:zeroshot`), and that anyone can rebuild them, and their commitment `C_M`, bit for bit from the
-public checkpoints (Sec. `sec:defence`). The OPT scripts build every integer graph with
+public checkpoints (Sec. `sec:defence`); it also locates the integer OPT's loss of perplexity
+(`tab:quality-attr`). The OPT scripts build every integer graph with
 `pvi.models.hf_opt.build_opt_from_hf`, by default with the certified recipe `hf_opt.CERTIFIED_RECIPE`; the
 Llama-family scripts use `pvi.models.hf_llama`.
 
@@ -17,6 +18,7 @@ Llama-family scripts use `pvi.models.hf_llama`.
 | Ext. `sec:ext-quality`: "Cross-layer equalisation did not help on top of smoothing (67.8 against 66.6 at 128 tokens)" | `ppl_opt.py` | the previous command with `--graphs smooth --alphas 0.55 --cle-mlp 0 --cle-ratio 2`, and without `--cle-mlp` | cells `smooth-legacy-a0.55-cle0r2-p8` and `smooth-legacy-a0.55-p8` (`ppl`) |
 | Ext. `sec:ext-quality` and `ext_discussion`: "Per-row power-of-two weight scales (four per matrix) on top of smoothing reach x1.00–1.01 on OPT-125M at 128 tokens, with top-1 agreement 0.87 to 0.88, but do not help at 2,048 tokens" | `ppl_opt.py` | 128 tokens: the 128-token command with `--graphs rows --alphas 0.55`; 2,048 tokens: `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --recipe legacy --graphs smooth rows --draws 0 1 2` | cells `rows4-legacy-a0.55-p8` / `-p11` |
 | Ext. `sec:ext-quality`: "On the validation split, which no choice used, it is within ... and ... of the best of alpha in {0.5, 0.6, 0.7} on OPT-125M and OPT-1.3B, and costs OPT-6.7B ... against alpha = 0.5" (`\QualityAlphaValGapOptS`, `\QualityAlphaValGapOptM`, `\QualityAlphaCostOptL`; the final run fills them) | `ppl_opt.py` | `python -m experiments.quality.ppl_opt --model facebook/opt-1.3b --device cuda --split validation --graphs smooth --alphas 0.5 0.6 0.7 --pbits 11` (and OPT-125M: job `q-opt-validation`); OPT-6.7B: `python -m experiments.quality.ppl_opt --model facebook/opt-6.7b --device cuda --split validation --graphs smooth --alphas 0.5 0.6 --pbits 11 --ref-device cpu` (job `q-opt67-validation`) | records with `split: validation` |
+| `tab:quality-attr` and Ext. `sec:ext-quality`'s "Where the perplexity goes" (the integer graph 75.5 and fp32 64.8; "making them float removes more than half of the gap (75.5 to 69.4 ...)"; "each cost at most 0.2"; "within 4·10^-5": `\AttrIntPpl`, `\AttrFpPpl`, `\AttrNormLoo`, `\AttrSmallCost`, `\AttrFloatTol`); Sec. `sec:quality`: "float outputs remove more than half of the gap ... The loss comes from rounding, not clipping" | `attribution.py` | `python -m experiments.quality.attribution --model facebook/opt-125m --device cpu --threads 8` (job `q-opt125-attr`) | stdout, `--out` (`kind: attribution`; per row `group`, `mode`, `ppl`, `top1`; the check record's `int_ppl`, `fp32`, `all_float_max_abs_dlogit`, `digest`, `ok`) |
 | `tab:zeroshot`; Sec. `sec:quality`: "the certified OPT-125M and OPT-1.3B lose 1.0 and 0.8 points of accuracy on average, and OPT-6.7B matches fp16 (+0.06); LAMBADA ... loses the most (3.1, 2.0 and 0.5 points)" | `zeroshot.py` | `python -m experiments.quality.zeroshot --model facebook/opt-1.3b --device cuda --out zeroshot_opt-1.3b.jsonl` (OPT-6.7B: see below) | stdout, `--out` (`variant: ref` / `int`, `acc`, `acc_norm`, `diff_acc`, `diff_acc_ci95`, `same_pick`) |
 | Ext. `sec:ext-quality`: with the first recipe "the mean zero-shot loss of OPT-1.3B was 2.8 points (0.8 with the certified recipe)" | `zeroshot.py` | `python -m experiments.quality.zeroshot --model facebook/opt-1.3b --device cuda --recipe legacy` | as above |
 | Sec. `sec:defence`: "the integer OPT-125M and OPT-1.3B are reproduced bit for bit across machines and thread counts ..., and their commitments across machines, thread counts and CPU or GPU encoding" | `digest_check.py` | `python -m experiments.quality.digest_check --model facebook/opt-125m --threads 1` (repeat with `--threads 8`, on another machine, with `--commit --commit-device cpu` / `cuda`) | one JSON line (`digest`, `weights_sha256`, `roots_sha256`) |
@@ -97,6 +99,36 @@ devices mean the same model and the same `C_M`. Hardware and time (Xeon CPU node
 one thread; OPT-1.3B builds and commits in about 55 min with 8 threads. The four 2,048-token calibration windows need
 more host memory than a 16 GB laptop has.
 
+### `attribution.py`
+
+Locates the integer OPT-125M's loss of perplexity (`tab:quality-attr`). `hybrid_opt.Hybrid` copies the integer graph
+of `build_opt_from_hf` in floating point and runs the graph's own ops in order, each component either integer or
+float: an integer component computes the graph's integers (exactly when its inputs are integers, and with the same
+rounding, clamping and table look-ups on a float input), a float component OPT's real arithmetic in float64 (the
+checkpoint's weights with the LayerNorm gains folded in, a LayerNorm with eps 1e-5, an exact softmax). The components
+are the weights of each kind of matrix, the three LayerNorms (integer statistics, rounding, clipping), the
+requantisations of q, k, v and fc1, the softmax (exp table, rounded probabilities), the attention output's
+requantisation, the residual stream (rounding, clamp) and the ReLU table; the float copy rebuilds its weights from the
+checkpoint and the builder's real scales (`info["scales"]`).
+
+The graph (`--graph scalar`, the default: one norm gain `--gain` 4, `--pbits` 8, no clipping; or `certified`,
+`legacy`; `--opts` replaces builder arguments) is calibrated on one `--seq`-token window at the end of the test split
+joined without a separator and scored on the first `--windows` (16) windows of `--seq` (128) tokens: the setting of
+`ppl_opt.py --calibration test-end`, whose cell `scalar-g4-p8` is the same graph (`numbers.py` checks the digest and
+the perplexity). Rows: the all-integer and the all-float copy; per group of components leave-one-out (that group
+float, the rest integer) and add-one (only that group integer); unless `--skip-sub`, the feature sub-rows (for
+example the LayerNorm's rounding without its clipping). Checks, each a `FAILED:` line and exit status 1: the
+all-integer copy gives the graph's logits at every position of the first window exactly (`hf_opt.real_logits`), the
+all-float copy the checkpoint's within `--float-tol` (1e-3); every op of the graph has its role and the checkpoint's
+weights quantise to the graph's int8 weights, biases and scales; the graph differs from the benchmark graph only by
+the LM head's bias; the all-integer row's perplexity is the graph's. Output: one JSON line per row and the check
+record (`kind: attribution`, `part: row` or `check`; the fields are listed in the script's docstring). Hardware and
+time: the CPU only; OPT-125M's 62 rows of 16 windows take about 20 minutes on 6 threads of a laptop CPU (an
+11th-generation Intel Core; 15 minutes for the rows) with 5 GB of host memory at its peak, and `--windows 2
+--skip-sub` (the rehearsal's cell) about 7 minutes, most of them the build and the checks before the rows. On that
+laptop the integer graph has 75.5198 and fp32 64.7611, and every row gives the value of `tab:quality-attr` in
+`paper_sp2027/fallback/`.
+
 ### Reproducing the paper's numbers
 
 The run package's `quality` tier (`bash code/experiments/package/run.sh --platform <name> quality`) runs the
@@ -106,14 +138,16 @@ commands of the table above (each OPT model separately). The stored records of t
 
 On a laptop (no checkpoint, no download), the tests run every script's path on a tiny random OPT:
 
-    PYTHONPATH="src;." python -m pytest -q tests/test_recipe_equivalence.py tests/test_zeroshot.py tests/test_prob_max.py
+    PYTHONPATH="src;." python -m pytest -q tests/test_recipe_equivalence.py tests/test_zeroshot.py tests/test_prob_max.py \
+        tests/test_quality_attribution.py
 
 A small real run, OPT-125M with 256-token windows and two calibration windows:
 
     python -m experiments.quality.ppl_opt --model facebook/opt-125m --seq 256 --windows 8 --calib-windows 2 --pbits 11 --device cpu
 
-Not produced by these scripts: the attribution table `tab:quality-attr` (a floating-point re-implementation of the
-graph with switchable components).
+The attribution study runs in full on a laptop (OPT-125M; the tests in `tests/test_quality_attribution.py`):
+
+    python -m experiments.quality.attribution --model facebook/opt-125m --device cpu --threads 8
 
 ## Llama-family models
 
