@@ -106,23 +106,24 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 179 jobs. There, the paper's run submits the timed tiers as six whole-node jobs
-(`--one-job`), each of which runs its tiers' jobs one after another in its allocation, and the tiers that time
-nothing (`quality`, `tv`, `attack`) as a chain of one-GPU jobs that need no whole node:
+waits that long for each of its 179 jobs. There, the paper's run submits its tiers as eight jobs (`--one-job`), each
+of which runs its tiers' jobs one after another in its allocation: the timed tiers in six jobs that have a node to
+themselves, and the tiers that time nothing (`quality`, `tv`, `attack`) in two jobs on one GPU of a shared node:
 
 ```bash
 R="bash code/experiments/package/run.sh --platform final --llama-licence"
-$R --one-job smoke cpuv long               # expected 11-17 h
-$R --one-job smoke bench                   # 9-13 h
-$R --one-job smoke real                    # 9-13 h
-$R --one-job smoke serve gen batch         # 13-17 h
-$R --one-job smoke v1 setup improve        # 9-16 h
-$R --one-job smoke gpuv                    # 5-7 h
-$R --no-exclusive smoke quality tv attack  # 16-25 h, plus each job's wait for a GPU
+$R --one-job smoke cpuv long                     # expected 11-17 h
+$R --one-job smoke bench                         # 9-13 h
+$R --one-job smoke real                          # 9-13 h
+$R --one-job smoke serve gen batch               # 13-17 h
+$R --one-job smoke v1 setup improve              # 9-16 h
+$R --one-job smoke gpuv                          # 5-7 h
+$R --one-job --no-exclusive smoke quality        # 11-17 h, not timed
+$R --one-job --no-exclusive smoke tv attack      # 6-9 h, not timed
 ```
 
-Each whole-node job starts with the smoke on the node it was given (and stops if it fails), writes the same job
-logs as the chain (`logs/final/sp-<cell>-<id>.out`) and lists what it ran in its own log
+Each of these jobs starts with the smoke on the node it was given (and stops if it fails), writes the same job logs
+as the chain (`logs/final/sp-<cell>-<id>.out`) and lists what it ran in its own log
 (`logs/final/node-<tiers>-<job id>.log`). Its time limit is 24 hours (`--max-hours`), and SLURM queues a pre-empted
 one again by itself (`--requeue`); a job that ends successfully leaves a marker in `logs/final/done/`, and the
 allocation, when it starts again or when the same command is submitted again after its time limit, runs only the
