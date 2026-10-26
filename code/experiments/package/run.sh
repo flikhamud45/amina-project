@@ -12,10 +12,12 @@
 #              other tier of the same invocation starts unless it does (a submission without it starts at once)
 #     cpuv     the CPU verifier against every re-execution baseline on the same 8 threads (llama.cpp's included); V1's
 #              CPU verifier
-#     v1       V1 against v0 (bytes, prover and verifier times)
+#     v1       V1 against v0 (bytes, prover and verifier times); V1's claims of the full Llama-2-7B at 2,048 to
+#              16,384 tokens (codec profile)
 #     serve    the prover against unverified serving on the same GPU, single prompts and batches
 #     bench    the benchmark's cells: image models and decoders, modes C, K and Kpre, with the attacks
-#     gpuv     the GPU verifier, re-execution on the same GPU, the host-to-device bandwidth
+#     gpuv     the GPU verifier, re-execution on the same GPU (and both on 2 and 3 Llama-2-7B blocks at 2,048 to
+#              16,384 tokens), the host-to-device bandwidth
 #     gen      a generated response proved as one prefill, greedy and sampled
 #     batch    B prompts against one opening
 #     real     real-weight OPT end to end next to random-weight twins (and Llama-2-7B with --llama-licence)
@@ -30,7 +32,8 @@
 #     tv       the token sampler's total-variation distance to the softmax (CPU)
 #     attack   the attack on the path test: MNIST, the image models' path test, OPT-6.7B, the in-range edits, the
 #              sampler game
-#     long     [optional] prompts of 2,048 to 16,384 tokens, verifier against every baseline
+#     long     [optional] prompts of 2,048 to 16,384 tokens on 2, 3 and 4 blocks, verifier against every
+#              baseline; the full Llama-2-7B at 8,192 tokens (unless --no-bigmem); V1 on 2 blocks to 8,192 tokens
 #     zkllm    [optional] zkLLM's public demo (commit 993311e, unchanged) on this GPU: Llama-2-7B and Llama-2-13B at
 #              2,048 tokens, 3 repetitions of layers 0 and 1 (experiments/comparison/zkllm/run_zkllm.sh); only with
 #              --llama-licence; its records go to logs/<name>/zkllm/
@@ -97,7 +100,8 @@
 #     --extra-pythonpath DIR   packages outside the environment, put after the code on the path
 #     --llama-licence   the Llama-2 cells (real, qllama, zkllm): only with your own Llama-2 licence and Hugging Face
 #                       token (HF_TOKEN); the rehearsal's one Llama-2 job reads the gated repository from a compute node
-#     --bigmem          the long tier also measures the full Llama-2-7B at 8,192 tokens (a node with >= 256 GB)
+#     --no-bigmem       the long tier leaves out the full Llama-2-7B at 8,192 tokens, whose verifier and
+#                       re-execution check the per-block extrapolation (they need a node with >= 256 GB)
 #     --zkllm-home DIR  the zkllm tier's zkLLM: DIR/zkllm (a checkout at commit 993311e, built for the GPU, with the
 #                       timing shims, or none) and DIR/env (its Python environment, or none); what is missing the
 #                       tier's first job clones, creates and builds (default logs/<name>/zkllm/home)
@@ -127,7 +131,7 @@ set -euo pipefail
 
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 PLATFORM="" DRY="" REH="" LOCAL="" OPTIONAL="" CHAIN=1 EXCL="--exclusive" PIN=1 NONATIVE="" MEMMAX=256 QH=5 Q=3
-POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM="" ONEJOB="" MAXH=24 TIERS=()
+POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM=1 ONEJOB="" MAXH=24 TIERS=()
 REQGPU="L40S" REQCPU="EPYC 9334" GRES="${SBATCH_GRES:-}" EXCLUDE="" FROMONE=""
 ZKHOME="" ZKSCRATCH="" ZKPY="" CUDAHOME=""
 ARGV=("$@")
@@ -152,7 +156,7 @@ while [ $# -gt 0 ]; do
     --python) PY=$2; shift ;;
     --extra-pythonpath) EXTRA_PP=$2; shift ;;
     --llama-licence) LLAMA=1 ;;
-    --bigmem) BIGMEM=1 ;;
+    --no-bigmem) BIGMEM="" ;;
     --require-gpu) REQGPU=$2; shift ;;
     --require-cpu) REQCPU=$2; shift ;;
     --gres) GRES=$2; shift ;;
@@ -295,10 +299,10 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     return
   fi
   case "$1" in
-    smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
+    smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 5-9 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 5-7 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
-    tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
+    tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 10-16 ;; gate) echo 1-1.5 ;;
     zkllm) echo 3-5 ;;
   esac
 }
@@ -308,6 +312,7 @@ CACHED="${CACHE:+--setup-cache $CACHE}"
 NATIVE="--require-native"; [ -z "$NONATIVE" ] || NATIVE=""
 PERF="$M.costs.perf --threads 8 $CACHED"
 V1="$M.v1.v1_bytes --full --threads 8 $CACHED"
+V1CODEC="$M.v1.v1_bytes --codec-only --threads 8"   # V1's claims of one forward pass, no commitment or proof
 RX="$M.reexec.reexec --threads 8"
 RXCPU="int int_mm int_fp32gemm float bf16 dynint8"   # the re-execution variants on a CPU (dynint8 is another model)
 LCPP="$M.reexec.llamacpp --threads 8 --llamacpp-dir $ROOT/$LOGS/llamacpp"   # llama.cpp (another model), cached build
@@ -379,10 +384,13 @@ dynint8 --device cpu --reps $QH --malloc-tune $NATIVE"
 
 tier_v1() {
   # V1 against v0 on the same queries: bytes (exact accounting), prover and verifier times (the CPU verifier on 8
-  # threads, the GKR on the GPU), mode C under --policy
+  # threads, the GKR on the GPU), mode C under --policy; the codec profile of the full Llama-2-7B at 2,048 to 16,384
+  # tokens (one forward pass on the GPU, v0's and V1's claims encoded op by op: V1's claims ratio at each length,
+  # which the break-even's V1 crossover reads; tab:eval-v1-long)
   if [ -n "$REH" ]; then
     csub v1-gpt2-64 1 64 "$V1 --model gpt2 --layers 2 --seq 64 --modes C Kpre --policy $POL --reps $Q --lmax 20 \
 $NATIVE"
+    sub v1-codec-gpt2-512 1 64 "$V1CODEC --model gpt2 --layers 2 --seq 512 --lmax 20 --device cuda --label v1-codec"
     return 0
   fi
   local t
@@ -398,6 +406,9 @@ $NATIVE"
   csub v1-llama13-2k-2 1 256 "$V1 --model llama2-13b --layers 2 --seq 2048 --modes Kpre C --policy $POL --reps $Q \
 $NATIVE"
   csub v1-qwen4-64 2 192 "$V1 --model qwen3-4b --seq 64 --modes Kpre C --policy $POL --reps $Q $NATIVE"
+  for t in 2048 4096 8192 16384; do
+    sub "v1-codec-llama7-$t" 1 192 "$V1CODEC --model llama2-7b --seq $t --device cuda --label v1-codec"
+  done
 }
 
 tier_serve() {
@@ -504,6 +515,17 @@ tier_gpuv() {
     sub "g-rx-$m" 2 128 "$RX --model $m --seq 64 512 2048 --layers 2 $(nl "$m") --variants int float bf16 \
 --device cuda --reps $QH"
   done
+  # long prompts (tab:eval-long-gpu): the streaming GPU verifier and re-execution on the same GPU on 2 and 3
+  # Llama-2-7B blocks at 2,048 to 16,384 tokens, extrapolated to the full model as tab:eval-long is; the fused
+  # attention holds no T x T score tensor (the process's GPU peak)
+  local t
+  for t in 2048 4096 8192 16384; do
+    sub "g-long-llama7-$t" 1 192 "$PERF --model llama2-7b --layers 2 --seq $t --modes Kpre --queries $Q \
+--verifier-device cuda --stream --label long-gpuv --require-triton && $PERF --model llama2-7b --layers 3 --seq $t \
+--modes Kpre --queries $Q --verifier-device cuda --stream --label long-gpuv --require-triton"
+  done
+  sub g-long-rx-llama7 2 128 "$RX --model llama2-7b --seq 2048 4096 8192 16384 --layers 2 3 --variants int float \
+bf16 --device cuda --reps $Q --max-pos 16384"
   sub g-h2d 1 32 "$H2D --sizes-mb 64 1024 4096 --reps 10 --label gpuv"
 }
 
@@ -839,27 +861,42 @@ $A.inrange_llm --moves down --out $o/inrange_llm_opt-1.3b_down.json"
 }
 
 tier_long() {
-  # [optional] Llama-2-7B shapes at 2k, 4k, 8k and 16k tokens, 2 and 3 blocks each: the CPU verifier in Kpre and
-  # every re-execution baseline on the same threads (a per-block fit t(T) = aT + bT^2); --bigmem: the full model at
-  # 8,192 tokens
+  # [optional] Llama-2-7B shapes at 2k, 4k, 8k and 16k tokens: the CPU verifier in Kpre on 2, 3 and 4 blocks and
+  # every re-execution baseline on the same threads (the exact ones on 2, 3 and 4 blocks, the inexact ones on 2 and
+  # 3), the full model as a least-squares fit over the blocks (tab:eval-long; a per-block fit t(T) = aT + bT^2); the
+  # full model at 8,192 tokens, the verifier and the exact re-executions measured (unless --no-bigmem), against which
+  # tab:eval-long-check sets the fit (with the cpuv tier's full model at 2,048 tokens); V1 on 2 blocks at 2,048 to
+  # 8,192 tokens (whole queries with tampers, tab:eval-v1-long)
   if [ -n "$REH" ]; then
     csub l-llama7-4608-L1 1 64 "$PERF --model llama2-7b --layers 1 --seq 4608 --modes Kpre --queries $Q \
 --verifier-device cpu --label long $NATIVE"
-    csub l-rx-llama7-4608 1 64 "$RX --model llama2-7b --seq 4608 --layers 1 2 --variants int float --device cpu \
---reps 1 --max-pos 8192 --no-malloc-tune $NATIVE"
+    csub l-rx-llama7-4608 1 64 "$RX --model llama2-7b --seq 4608 --layers 1 2 --variants int int_mm float \
+--device cpu --reps 1 --max-pos 8192 --no-malloc-tune $NATIVE"
+    csub l-v1-gpt2-512-L2 1 64 "$V1 --model gpt2 --layers 2 --seq 512 --modes Kpre --reps $Q --tampers 1 --lmax 20 \
+--label long-v1 $NATIVE"
     return 0
   fi
-  local t l
+  local t l h
   for t in 2048 4096 8192 16384; do
-    for l in 2 3; do
-      csub "l-llama7-$t-L$l" 2 192 "$PERF --model llama2-7b --layers $l --seq $t --modes Kpre --queries $Q \
+    for l in 2 3 4; do
+      csub "l-llama7-$t-L$l" 2 192 "$PERF --model llama2-7b --layers $l --seq $t --modes Kpre --queries $QH \
 --verifier-device cpu --label long $NATIVE"
     done
-    csub "l-rx-llama7-$t" 3 192 "$RX --model llama2-7b --seq $t --layers 2 3 --variants $RXCPU --device cpu \
---reps $Q --max-pos 16384 --no-malloc-tune $NATIVE"
+    case $t in 2048|4096) h=2 ;; 8192) h=3 ;; *) h=5 ;; esac
+    csub "l-rx-llama7-$t" "$h" 192 "$RX --model llama2-7b --seq $t --layers 2 3 4 --variants int int_mm int_fp32gemm \
+--device cpu --reps $Q --max-pos 16384 --no-malloc-tune $NATIVE && $RX --model llama2-7b --seq $t --layers 2 3 \
+--variants float bf16 dynint8 --device cpu --reps $Q --max-pos 16384 --no-malloc-tune $NATIVE"
   done
-  [ -n "$BIGMEM" ] && csub l-llama7-8192-full 6 256 "$PERF --model llama2-7b --seq 8192 --modes Kpre --queries $Q \
+  if [ -n "$BIGMEM" ]; then
+    csub l-llama7-8192-full 6 256 "$PERF --model llama2-7b --seq 8192 --modes Kpre --queries $QH \
 --verifier-device cpu --label long $NATIVE"
+    csub l-rx-llama7-8192-full 5 256 "$RX --model llama2-7b --seq 8192 --layers 32 --variants int int_mm \
+int_fp32gemm --device cpu --reps 1 --max-pos 16384 --no-malloc-tune $NATIVE"
+  fi
+  for t in 2048 4096 8192; do
+    csub "l-v1-llama7-$t-L2" 2 256 "$V1 --model llama2-7b --layers 2 --seq $t --modes Kpre --reps $Q --tampers 1 \
+--label long-v1 $NATIVE"
+  done
   return 0
 }
 

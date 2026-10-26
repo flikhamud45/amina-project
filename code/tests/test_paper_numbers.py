@@ -1382,3 +1382,160 @@ def test_the_schematic_figures(tmp_path):
     paths = figures.schematics(tmp_path)
     assert [p.name for p in paths] == ["overview_attack.pdf", "overview_defence.pdf", "protocol.pdf"]
     assert all(p.stat().st_size > 1000 for p in paths)
+
+
+# ------------------------------------------------------------------------------------------------ long prompts
+def _long_run() -> R.Run:
+    """The long prompts' records: the long tier's 2-, 3- and 4-block cells and its full model at 8,192 tokens, the
+    cpuv tier's full model at 2,048, the gpuv tier's 2- and 3-block cells next to its full model at 2,048, V1 on 2
+    blocks and the v1 tier's codec profiles of the full model."""
+    m, recs = "llama2-7b", []
+
+    def add(tier, cell, kind, *ds):
+        job = str(len(recs) + 1)
+        recs.extend(R.Rec(tier, cell, job, f"sp-{cell}-{job}.out", i, kind, d) for i, d in enumerate(ds, 1))
+
+    # the CPU verifier at 2,048 and 8,192 tokens on 2, 3 and 4 blocks (8,192: off a line by up to 0.67 s)
+    for seq, verify, proof in ((2048, (2.0, 2.6, 3.2), (0.42e9, 0.62e9, 0.82e9)),
+                               (8192, (30.0, 41.0, 50.0), (1e9, 1.5e9, 2e9))):
+        for n, v, b in zip((2, 3, 4), verify, proof):
+            add("long", f"l-llama7-{seq}-L{n}", "perf", perf(m, seq, "Kpre", v, b, layers=n, label="long"))
+    add("long", "l-rx-llama7-2048", "reexec",
+        reexec(m, 2048, "int_fp32gemm", 0, blocks={"2": 9.0, "3": 13.5, "4": 18.0}),
+        reexec(m, 2048, "float", 0, blocks={"2": 5.0, "3": 7.0}))
+    add("long", "l-rx-llama7-8192", "reexec", reexec(m, 8192, "int", 0, blocks={"2": 20.0, "3": 30.0, "4": 40.0}),
+        reexec(m, 8192, "int_fp32gemm", 0, blocks={"2": 25.0, "3": 37.0, "4": 49.0}))
+    # the full model measured: the cpuv tier at 2,048 tokens (glibc's allocator; the tuned row is not the long
+    # tier's setting) and the long tier at 8,192
+    add("cpuv", "c-llama2-7b-2048", "perf", perf(m, 2048, "Kpre", 19.6, 6.43e9))
+    add("cpuv", "c-rx-llama2-7b", "reexec", reexec(m, 2048, "int_fp32gemm", 141.6))
+    add("cpuv", "c-rx-heap-llama2-7b", "reexec", dict(reexec(m, 2048, "int_fp32gemm", 100.0), malloc_tuned=True))
+    add("long", "l-llama7-8192-full", "perf", perf(m, 8192, "Kpre", 335.0, 16e9, label="long"))
+    add("long", "l-rx-llama7-8192-full", "reexec", reexec(m, 8192, "int", 330.0, blocks={"32": 330.0}),
+        reexec(m, 8192, "int_fp32gemm", 400.0, blocks={"32": 400.0}))
+    # the GPU: the full model at 2,048 tokens, then 2 and 3 blocks at 2,048 and 16,384 tokens (the 3-block cell's
+    # GPU peak), and re-execution on 2 and 3 blocks, whose 2 blocks at 2,048 replace the gpuv tier's earlier ones
+    add("gpuv", "g-v0-llama2-7b-Kpre", "perf", perf(m, 2048, "Kpre", 5.0, 6.43e9, vdev="cuda", label="gpuv",
+                                                    stream=True))
+    add("gpuv", "g-rx-llama2-7b", "reexec", reexec(m, 2048, "int", 1.65, device="cuda",
+                                                   blocks={"2": 0.11, "32": 1.65}))
+    for seq, (v2, v3) in ((2048, (1.0, 1.13)), (16384, (20.0, 26.0))):
+        add("gpuv", f"g-long-llama7-{seq}", "perf",
+            perf(m, seq, "Kpre", v2, 1e9, layers=2, vdev="cuda", label="long-gpuv", stream=True),
+            perf(m, seq, "Kpre", v3, 1.5e9, layers=3, vdev="cuda", label="long-gpuv", stream=True, gpu_peak=12.3e9))
+    add("gpuv", "g-long-rx-llama7", "reexec",
+        reexec(m, 2048, "int", 0, device="cuda", blocks={"2": 0.1, "3": 0.15}),
+        reexec(m, 16384, "int", 0, device="cuda", blocks={"2": 30.0, "3": 45.0}),
+        reexec(m, 16384, "float", 0, device="cuda", blocks={"2": 10.0, "3": 15.0}))
+    # V1 on 2 blocks (the long tier) and the full model's codec profile (the v1 tier): V1's values grow faster than
+    # v0's claims past 2,048 tokens
+    for seq in T.V1_LONG:
+        k = seq / 2048
+        add("long", f"l-v1-llama7-{seq}-L2", "v1", v1(m, seq, "Kpre", 2, 4e8 * k, 1.8e8 * k * (1 + k / 20),
+                                                      label="long-v1"))
+    for seq, v0c, v1v in ((2048, 2.2e9, 1.0e9), (4096, 4.4e9, 2.1e9), (8192, 8.8e9, 4.4e9), (16384, 17.6e9, 9.2e9)):
+        add("v1", f"v1-codec-llama7-{seq}", "v1", {"label": "v1-codec", "codec_only": True, "model": m, "seq": seq,
+                                                    "layers": 32, "total": {"v0_claims": v0c, "v1_values": v1v}})
+    return R.Run(recs)
+
+
+def test_the_long_prompts_fit_the_blocks_and_check_the_fit_against_the_full_model():
+    """The full model is the least-squares line through the 2-, 3- and 4-block builds (not the 2-block cell plus
+    30 increments); a re-execution variant's blocks come from every record and the full model's measurement never
+    enters the fit; the extrapolation against the measured full model (CPU at 2,048 and 8,192 tokens, GPU at
+    2,048) gives tab:eval-long-check and the Discussion's bound."""
+    assert T.block_fit({"2": 30.0, "3": 41.0, "4": 50.0, "32": 1.0}, 32) == pytest.approx((10.0, 121 / 3 + 290))
+    assert T.block_fit({2: 1.0}, 32) is None and T.block_fit({2: 1.0, 3: 2.0}, 32, blocks=(2,)) is None
+    run = _long_run()
+    p = T.long_point(run, 8192)
+    assert p["verify"] == pytest.approx(121 / 3 + 290) and p["bytes"] == pytest.approx(16e9)
+    assert p["reexec"][:2] == (pytest.approx(320.0), "int")
+    ms, r = run.reexec_blocks("long", "llama2-7b", 8192, "cpu", "int")
+    assert ms == {"2": 20.0, "3": 30.0, "4": 40.0, "32": 330.0} and r.cell == "l-rx-llama7-8192"
+    old = T.long_point(run, 8192, blocks=(2, 3))
+    assert old["verify"] == pytest.approx(30.0 + 30 * 11.0)
+    err = T.long_errors(run)
+    assert err[("cpu", 8192)]["verify"][:2] == (335.0, pytest.approx(121 / 3 + 290))
+    assert err[("cpu", 8192)]["reexec"][:2] == (330.0, pytest.approx(320.0))
+    assert err[("cpu", 2048)]["reexec"][:2] == (141.6, pytest.approx(144.0))           # not the tuned allocator's 100
+    assert err[("cuda", 2048)]["verify"][:2] == (5.0, pytest.approx(4.9))
+    assert err[("cuda", 2048)]["reexec"][:2] == (1.65, pytest.approx(1.6))             # 2 blocks: the later job's
+    ctx = T.Ctx(run, B.Bench(None), {}, "cnn18c", "test platform", byte_model=False)
+    c = M.Collector()
+    M.long_prompts(c, ctx)
+    v = {k: x.value for k, x in c.m.items()}
+    # verifier: 2.04% at 2,048 and 1.39% at 8,192; re-execution 1.69% and 3.03%; the proof 0.16% and 0
+    assert (v["LongCheckVerify"], v["LongCheckReexec"], v["LongCheckProof"], v["LongCheckMax"]) == ("3", "4", "1", "4")
+    assert v["LongCheckGpu"] == "2" and v["LongCheckTwoThree"] == "8"
+    # the GPU at 16,384 tokens: 20 + 30 x 6 = 200 s against 30 + 30 x 15 = 480 s of int8 re-execution
+    assert (v["LongGpuVerifyLong"], v["LongGpuRatioLong"], v["LongGpuPeakLong"]) == ("200", "2.4", "12.3")
+    check = T.tab_eval_long_check(ctx)
+    assert check.rows[0] == r"CPU & 2{,}048 & 19.6 / 20 & 142 / 144 & 6.43 / 6.42 \\"
+    assert check.rows[1].startswith(" & 8{,}192 & 335 / 330 & 330 / 320 & 16.00 / 16.00")
+    assert check.rows[2].startswith(r"GPU & 2{,}048 & 5 / 4.9 & 1.65 / 1.6 & ")
+    gpu = T.tab_eval_long_gpu(ctx)
+    assert gpu.rows[3] == r"16{,}384 & 200 & 480 & 160 & 2.4$\times$ & 12.3 \\"
+    assert len(gpu.missing) == 2 * 5 + 1                # no GPU cell at 4,096 or 8,192 tokens, no fp16 at 2,048
+    tables = {tb.name: tb.text() for tb in (gpu, check)}
+    assert N.same_value(tables, {k: x for k, x in v.items() if x is not None}) == []
+
+
+def test_v1_at_long_prompts_and_its_measured_crossover(monkeypatch):
+    """V1 at long prompts: the long tier's 2-block queries and the v1 tier's codec profiles of the full model fill
+    tab:eval-v1-long; the V1 crossover uses V1's claims measured at each length (the codec's growth from 2,048
+    tokens applied to the cpuv record's claims), interpolated between the measured lengths around it, next to the
+    crossover that keeps the 2,048-token ratio; a crossover past the longest measured length fails the text's
+    check."""
+    assert M.crossover_piecewise(10.0, [(0, 0.0), (10, 5.0), (20, 15.0)]) == pytest.approx(15.0)
+    assert M.crossover_piecewise(30.0, [(0, 0.0), (10, 5.0), (20, 15.0)]) == pytest.approx(35.0)
+    assert M.crossover_piecewise(30.0, [(0, 5.0), (10, 5.0)]) is None
+    run = _long_run()
+    ctx = T.Ctx(run, B.Bench(None), {}, "cnn18c", "test platform", byte_model=False)
+    tb = T.tab_eval_v1_long(ctx)
+    assert not tb.missing and tb.rows[0].startswith(r"2{,}048 & 400 & 189 & 2.12$\times$ & 4.1 & 9.1 & 2.20$\times$")
+    assert tb.rows[2].endswith(r"& 2.00$\times$ \\")
+    # the break-even on cpuv records and the codec profiles, with a fixed part of 0.1 GB at every length (the byte
+    # model is not run here) and the int8 weights of 6.74 GB
+    from experiments.deployment import ev_breakeven as ev
+    monkeypatch.setattr(ev, "fixed_part", lambda model, policy, fs, seq, *a, **k: {"fixed": 1e8})
+    m = "llama2-7b"
+
+    def rec(tier, cell, kind, d, line=1):
+        return R.Rec(tier, cell, "1", f"sp-{cell}-1.out", line, kind, d)
+
+    recs = [rec("cpuv", "c-llama2-7b-64", "perf", perf(m, 64, "Kpre", 1.4, 1.96e8)),
+            rec("cpuv", "c-llama2-7b-2048", "perf", perf(m, 2048, "Kpre", 19.6, 6.43e9)),
+            rec("cpuv", "c-rx-llama2-7b", "reexec", reexec(m, 64, "int", 7.0)),
+            rec("cpuv", "c-rx-llama2-7b", "reexec", reexec(m, 2048, "int", 141.6), 2),
+            rec("cpuv", "c-v1-llama2-7b-2048", "v1", v1(m, 2048, "Kpre", 32, 6.43e9, 2.8e9, label="cpuv-v1"))]
+    codec = [r for r in _long_run().recs if r.tier == "v1"]
+
+    class _Bench(B.Bench):
+        def llm_cost(self, *a, **k):
+            return {"params": 6.74e9}
+
+    def breakeven(records):
+        c = M.Collector()
+        out = M.breakeven(c, T.Ctx(R.Run(records), _Bench(None), {}, "cnn18c", "test", byte_model=True))
+        return {k: x.value for k, x in c.m.items()}, c.problems, out
+
+    v, problems, out = breakeven(recs + codec)
+    # the ratio 0.9 / 0.4 = 2.25: V1's claims 6.43e9 / 2.25 at 2,048 tokens, x2.1 at 4,096 and x4.4 at 8,192
+    c2 = 6.43e9 / 2.25
+    p4, p8 = c2 * 2.1 + 1e8, c2 * 4.4 + 1e8
+    assert v["BreakevenTokensVOne"] == F.about(4096 + (6.74e9 - p4) * 4096 / (p8 - p4))
+    assert v["BreakevenTokensVOneMeasuredTo"] == "16{,}384"
+    p64, p2 = 1.96e8 / 2.25 + 1e8, c2 + 1e8
+    assert v["BreakevenTokensVOneConstant"] == F.about(64 + (6.74e9 - p64) * (2048 - 64) / (p2 - p64))
+    assert (v["VOneClaimsRatioTwoK"], v["VOneClaimsRatioEightK"], v["VOneClaimsRatioSixteenK"]) == \
+        ("2.2", "2.0", "2.0")
+    assert not problems and [x["seq"] for x in out["v1_measured"]] == [64, 2048, 4096, 8192, 16384]
+    # without the codec profiles the measured crossover is missing (never the constant ratio's)
+    v, problems, _ = breakeven(recs)
+    assert v["BreakevenTokensVOne"] is None and v["BreakevenTokensVOneConstant"] is not None and not problems
+    # V1's values growing so slowly that the crossover lies past 16,384 tokens: the text's check fails
+    slow = [R.Rec(r.tier, r.cell, r.job, r.path, r.line, r.kind,
+                  dict(r.d, total={"v0_claims": 1.0, "v1_values": 1e9 * (1 + r.d["seq"] / 2048 / 100)}))
+            for r in codec]
+    v, problems, _ = breakeven(recs + slow)
+    assert v["BreakevenTokensVOne"] is not None and any("past the longest measured prompt" in p for p in problems)

@@ -164,7 +164,7 @@ query of the full OPT-1.3B with V1 in \VOneGpuVerifyOptM{}\,s and of the full Ll
 \VOneGpuVZeroVerifyOptM{}\,s and \VOneGpuVZeroVerifyLlama{}\,s for v0 on the same queries. V1
 assumes one requantisation multiplier per operation, so per-row weight scales
 (Section~\ref{sec:quality}) need more widths, and CNNs that fuse ReLU into the requantisation are
-not covered. By the byte model the full Llama-2-7B proof still reaches the size of its int8 weights
+not covered. With V1's claims measured at each length (Appendix~\ref{app:eval-long}), the full Llama-2-7B proof still reaches the size of its int8 weights
 at about \BreakevenTokensVOne{} tokens instead of about \BreakevenTokens{}, and the sent values, like the claims, reveal
 information about the weights.
 

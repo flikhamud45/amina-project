@@ -147,14 +147,33 @@ and \RndOptLVerify{}\,s to verify, with a \RndOptLProof{}\,GB v0 proof and V1 \R
 \subsection{Long Prompts}
 \label{app:eval-long}
 
-Llama-2-7B's shapes with 2 and 3 blocks at 2{,}048 to 16{,}384 tokens ($\Kpre$, Fiat--Shamir, the native CPU verifier
-on 8 threads of the \PlatformCpu{}, every query accepted), extrapolated to the full model as the 2-block cell plus 30 blocks, against
-exact re-execution on the same threads at every length
+Llama-2-7B's shapes with 2, 3 and 4 blocks at 2{,}048 to 16{,}384 tokens ($\Kpre$, Fiat--Shamir, the native CPU verifier
+on 8 threads of the \PlatformCpu{}, every query accepted), extrapolated to the full model by a least-squares line through the
+three builds, against exact re-execution on the same threads at every length, extrapolated in the same way
 (Table~\ref{tab:eval-long}). A block's verifier time follows $aT+bT^2$ within \LongFitResidual{}\% from 2{,}048 to 8{,}192 tokens. The
 proof grows linearly, by \LongBytesPerBlock{}\,GB per block at 8{,}192 tokens. 32{,}768 tokens are beyond the range of our kernels.
 
+The full model, measured at 2{,}048 tokens (the CPU-verifier cells of Table~\ref{tab:options}) and at 8{,}192 tokens, checks
+the extrapolation (Table~\ref{tab:eval-long-check}): the fit is within \LongCheckVerify{}\% of the measured verifier,
+\LongCheckReexec{}\% of the measured exact re-execution and \LongCheckProof{}\% of the measured proof. A line through the 2- and
+3-block builds alone is \LongCheckTwoThree{}\% off the verifier at 8{,}192 tokens. On the \PlatformGpu{}, the same fit through 2 and
+3 blocks is within \LongCheckGpu{}\% of the full model's streaming verifier at 2{,}048 tokens.
+
+The streaming GPU verifier checks the full model at 16{,}384 tokens in about \LongGpuVerifyLong{}\,s; exact re-execution with
+int8 GEMMs on the same GPU takes \LongGpuRatioLong{}$\times$ as long (Table~\ref{tab:eval-long-gpu}). Its fused attention keeps
+no $T\times T$ score tensor: with 3 blocks at 16{,}384 tokens, the process that proves and verifies peaks at
+\LongGpuPeakLong{}\,GB of GPU memory.
+
+V1 at long prompts (Table~\ref{tab:eval-v1-long}): whole V1 queries on 2 blocks at 2{,}048 to 8{,}192 tokens are
+accepted and their tampers rejected. A codec profile of the full model (one forward pass, every claim encoded as v0 and
+as V1 send it) gives V1's claims ratio at each length: \VOneClaimsRatioTwoK{}$\times$ at 2{,}048 tokens,
+\VOneClaimsRatioEightK{}$\times$ at 8{,}192 and \VOneClaimsRatioSixteenK{}$\times$ at 16{,}384 (each scaled to the
+protocol's ratio at 2{,}048 tokens). With the ratio of each length, V1's proof of the full Llama-2-7B in mode $\sC$
+reaches the size of its int8 weights at about \BreakevenTokensVOne{} tokens, interpolated between lengths measured up to
+\BreakevenTokensVOneMeasuredTo{}; the 2{,}048-token ratio at every length would give about \BreakevenTokensVOneConstant{}.
+
 \begin{table}[t]
-  \caption{Long prompts, the full Llama-2-7B extrapolated from builds of 2 and 3 blocks (random int8
+  \caption{Long prompts, the full Llama-2-7B extrapolated from builds of 2, 3 and 4 blocks (random int8
   weights): the CPU verifier ($\Kpre$, Fiat--Shamir, $\lambda{=}128$) against the fastest exact
   re-execution on the same 8 threads of an \PlatformCpu{}, and the proof}
   \label{tab:eval-long}
@@ -165,6 +184,57 @@ proof grows linearly, by \LongBytesPerBlock{}\,GB per block at 8{,}192 tokens. 3
     $T$ & verifier (s) & re-execution (s) & ratio & proof (GB) \\
     \midrule
     \pvitable{tab_eval_long}
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \caption{The extrapolation of Table~\ref{tab:eval-long} against the full Llama-2-7B measured: the verifier
+  ($\Kpre$, Fiat--Shamir), the fastest exact re-execution on the same device and the proof, each as measured /
+  extrapolated (CPU: 8 threads of an \PlatformCpu{}, builds of 2, 3 and 4 blocks; GPU: the streaming verifier and
+  re-execution on the \PlatformGpu{}, builds of 2 and 3 blocks)}
+  \label{tab:eval-long-check}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    & $T$ & verifier (s) & re-execution (s) & proof (GB) \\
+    \midrule
+    \pvitable{tab_eval_long_check}
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \caption{Long prompts on the \PlatformGpu{}, the full Llama-2-7B extrapolated from builds of 2 and 3 blocks: the
+  streaming GPU verifier ($\Kpre$, Fiat--Shamir) against re-execution on the same GPU (exact with int8 GEMMs, and
+  fp16), and the GPU memory peak of the 3-block process that proves and verifies}
+  \label{tab:eval-long-gpu}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}rrrrrr@{}}
+    \toprule
+    $T$ & verifier (s) & int8 (s) & fp16 (s) & int8 / verifier & peak (GB) \\
+    \midrule
+    \pvitable{tab_eval_long_gpu}
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \caption{V1 at long prompts ($\Kpre$, Fiat--Shamir, random weights): v0's and V1's proofs, V1's prover and CPU
+  verifier on 2 Llama-2-7B blocks (whole queries), and the claims ratio (v0 over V1) of the full model from its codec
+  profile}
+  \label{tab:eval-v1-long}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}rrrrrrr@{}}
+    \toprule
+    & \multicolumn{5}{c}{2 blocks} & full model \\
+    \cmidrule(lr){2-6}
+    $T$ & v0 (MB) & V1 (MB) & ratio & prove (s) & verify (s) & claims ratio \\
+    \midrule
+    \pvitable{tab_eval_v1_long}
     \bottomrule
   \end{tabular}
 \end{table}

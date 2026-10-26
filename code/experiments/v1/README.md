@@ -13,6 +13,8 @@ prover's and the verifier's times, the verifier's two implementations phase by p
 | V1 with the GPU verifier at 2,048 tokens (tier `gpuv`) | `v1_bytes.py --verifier-device cuda` | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 3 --verifier-device cuda --label gpuv-v1` | stdout |
 | V1 on real weights: the abstract's "1.7x on the real OPT-6.7B", `tab:eval-real`'s V1 column, the real OPT-125M's 1.68x / 1.77x (`ext_v1.tex`) | `v1_bytes.py --real` (tier `real`) | `python -m experiments.v1.v1_bytes --model opt-6.7b --real facebook/opt-6.7b --seq 2048 --modes Kpre --full --reps 3 --tampers 3 --label real`, and the same without `--real` (`--label real-random`) | stdout |
 | the byte profile of a model whose prover the machine cannot hold | `v1_bytes.py --codec-only` | `python -m experiments.v1.v1_bytes --model opt-6.7b --real facebook/opt-6.7b --seq 2048 --codec-only --device cpu` | stdout (`blocks`, `total`) |
+| `tab:eval-v1-long`'s full-model column, V1's claims ratio at each length (`\VOneClaimsRatio...`) and the Discussion's V1 crossover (`\BreakevenTokensVOne`) | `v1_bytes.py --codec-only` (tier `v1`) | `python -m experiments.v1.v1_bytes --codec-only --model llama2-7b --seq 8192 --device cuda --label v1-codec` (and 2,048, 4,096, 16,384) | stdout (`total`) |
+| `tab:eval-v1-long`'s 2-block columns (V1 at 2,048 to 8,192 tokens, whole queries) | `v1_bytes.py --full` (tier `long`) | `python -m experiments.v1.v1_bytes --full --model llama2-7b --layers 2 --seq 8192 --modes Kpre --reps 3 --tampers 1 --label long-v1` (and 2,048, 4,096) | stdout |
 | `tab:params`' V1 rows (leaves, instances, table) | `v1_bytes.py` records read by `costs/params_table.py --v1-cells` | `python -m experiments.costs.params_table --v1-cells <v1_bytes records at two block counts>` | stdout |
 | `app:eval-gkr-leaf` and `ext_v1.tex`: "an instance of 2^25 leaves takes 0.52 s (15.6 ns per leaf)" on the RTX 2080 Ti | `gkr_bench.py` | `python -m experiments.v1.gkr_bench --n 20 22 24 25 --check 20` | stdout, one JSON line per size |
 
@@ -88,7 +90,9 @@ The final numbers come from one platform through the run package (`bash code/exp
 whose records `paper/numbers.py` turns into the tables:
 
 * `v1`: `v1_bytes.py --full` on every model of `tab:eval-v1` (modes C and Kpre, 64 and 2,048 tokens, the headline
-  cells with 5 timed queries, the others with 3);
+  cells with 5 timed queries, the others with 3); `v1_bytes.py --codec-only` on the full Llama-2-7B at 2,048 to
+  16,384 tokens (V1's claims ratio at each length);
+* `long`: `v1_bytes.py --full --layers 2 --tampers 1` on Llama-2-7B at 2,048 to 8,192 tokens;
 * `cpuv`: `v1_bytes.py --modes Kpre --full --v1-verifier optimised baseline` on Llama-2-7B (64 and 2,048 tokens) and
   Qwen3-4B (2,048), the V1 columns of `tab:options`;
 * `gpuv`: `v1_bytes.py --verifier-device cuda` on OPT-1.3B and Llama-2-7B at 2,048 tokens;

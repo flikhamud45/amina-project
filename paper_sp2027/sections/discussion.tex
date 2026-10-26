@@ -16,16 +16,16 @@ verifies faster than exact re-execution on its CPU only on links faster than
 \BreakevenLinkRange{}\,Gb/s (V1: \BreakevenLinkVOne{}\,Gb/s).
 
 \para{Proof size.} The proof carries every weight operation's output, so it grows with the prompt.
-For Llama-2-7B it reaches the size of the int8 weights at about \BreakevenTokens{} tokens without V1 and, by
-the byte model, at about \BreakevenTokensVOne{} with it. Committing the activations, as zkLLM does, would remove this growth.
+For Llama-2-7B it reaches the size of the int8 weights at about \BreakevenTokens{} tokens without V1 and at about
+\BreakevenTokensVOne{} with it. Committing activations, as zkLLM does, avoids this growth.
 
 \para{Weights and trust.} The protocol is not zero-knowledge: the claims of about
 $\lceil k/T\rceil$ queries reveal a weight matrix with rows of length $k$. It therefore targets
-open-weight models. For private weights it shares the limitation that Hollow-LLM shows for
+open-weight models. Private weights share the limitation Hollow-LLM shows for
 zkSNARKs~\cite{hollowllm}.
 
-\para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens and, extrapolated from 2- and
-3-block builds, Llama-2-7B's shapes up to 16{,}384, where the CPU verifier is still about \LongRatioLong{}$\times$ faster than exact re-execution (\CpuRatio{}$\times$
+\para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens and, extrapolated from 2- to
+4-block builds (within \LongCheckMax{}\% of the full model), Llama-2-7B's shapes up to 16{,}384, where the CPU verifier is about \LongRatioLong{}$\times$ faster than exact re-execution (\CpuRatio{}$\times$
 at 2{,}048, both non-interactive) and the proof reaches about \LongProofLong{}\,GB~\cite{fullversion}; mixture-of-experts models are
 untested. Costs use random weights, which real OPT weights match
 (Section~\ref{sec:eval-setup}). The certified OPT models stay close to the floating-point model at 2{,}048 tokens

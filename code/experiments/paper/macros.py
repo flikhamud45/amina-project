@@ -1001,25 +1001,54 @@ def long_prompts(c: Collector, ctx: T.Ctx) -> None:
             resid = max(abs(a * t + bq * t * t - v) / v for t, v in fit)
     c.put("LongFitResidual", resid, "long tier, 2,048 to 8,192 tokens", lambda v: f"{math.ceil(100 * v):.0f}")
     p8 = pts[8192]
-    c.put("LongBytesPerBlock", p8.get("bytes_block"), p8["three"], lambda v: f"{v / 1e9:.2f}")
+    c.put("LongBytesPerBlock", p8.get("bytes_block"), p8["src"], lambda v: f"{v / 1e9:.2f}")
     p16 = pts[16384]
     rx = p16["reexec"]
-    c.put("LongRatioLong", rx and p16.get("verify") and rx[0] / p16["verify"], p16["three"], lambda v: f"{v:.0f}")
-    c.put("LongProofLong", p16.get("bytes"), p16["three"], lambda v: f"{v / 1e9:.0f}")
+    c.put("LongRatioLong", rx and p16.get("verify") and rx[0] / p16["verify"], p16["src"], lambda v: f"{v:.0f}")
+    c.put("LongProofLong", p16.get("bytes"), p16["src"], lambda v: f"{v / 1e9:.0f}")
+    # the fit against the full model measured (tab:eval-long-check): the largest relative error of each quantity
+    # over the CPU points, of all three (the Discussion's "within N%"), of the GPU verifier, and of the 2- and
+    # 3-block extrapolation alone at 8,192 tokens; each a bound, rounded up
+    err = T.long_errors(ctx.run)
+    cpu = [k for k in T.LONG_CHECK if k[0] == "cpu"]
+    src = "tab:eval-long-check (cpuv full model at 2,048 tokens, long full model at 8,192)"
+    worst = {}
+    for key, name in (("verify", "LongCheckVerify"), ("reexec", "LongCheckReexec"), ("bytes", "LongCheckProof")):
+        vals = [err[k][key] for k in cpu]
+        worst[key] = max(abs(v[2]) for v in vals) if all(vals) else None
+        c.put(name, worst[key], src, ceil_pct)
+    c.put("LongCheckMax", max(worst.values()) if None not in worst.values() else None, src, ceil_pct)
+    g = err[("cuda", 2048)]["verify"]
+    c.put("LongCheckGpu", g and abs(g[2]), "tab:eval-long-check (gpuv full model at 2,048 tokens)", ceil_pct)
+    old = err[("cpu", 8192, "two-three")]
+    c.put("LongCheckTwoThree", old and abs(old[2]), "long tier, 2 and 3 blocks against the full model at 8,192 "
+          "tokens", ceil_pct)
+    # the GPU verifier at 16,384 tokens (tab:eval-long-gpu)
+    gp = T.long_point(ctx.run, 16384, gpu=True)
+    i8 = (gp.get("variants") or {}).get("int")
+    c.put("LongGpuVerifyLong", gp.get("verify"), gp["src"], lambda v: f.sig(v, 3))
+    c.put("LongGpuRatioLong", i8 and gp.get("verify") and i8[0] / gp["verify"], gp["src"], lambda v: f"{v:.1f}")
+    three = gp["cells"].get(3)
+    c.put("LongGpuPeakLong", three and (three.d.get("peak") or {}).get("gpu_peak_memory"), three,
+          lambda v: f"{v / 1e9:.1f}")
 
 
 # ================================================================================================ break-even
 def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
     """The crossovers of ``deployment/ev_breakeven.py`` (Llama-2-7B, Fiat--Shamir, the run's plan) on the run's
     records: the claims and the Kpre CPU verifier (cpuv perf.py), V1's claims ratio and verifier (cpuv V1 cell),
-    exact re-execution and the int8 weights.  Returns the inputs and crossovers (for the figure)."""
+    exact re-execution and the int8 weights; V1's crossover in prompt length from V1's claims measured at each length
+    (the v1 tier's codec profiles of the full model, :func:`crossover_piecewise`), next to the crossover that keeps
+    the 2,048-token ratio (``BreakevenTokensVOneConstant``).  Returns the inputs and crossovers (for the figure)."""
     run, b, m = ctx.run, ctx.bench, "llama2-7b"
     k = {s: run.perf("cpuv", m, s, "Kpre", vdev="cpu", label="cpuv") for s in (64, 2048)}
     rx = {s: T.fastest(run, "cpuv", m, s)[0] for s in (64, 2048)}
     v1 = run.v1("cpuv", m, 2048, "Kpre", vdev="cpu", label="cpuv-v1")
     weights = (b.llm_cost(m, 64, "c_cpu") or b.llm_cost(m, 64, "kpre_cpu") or {}).get("params")
     names = ("BreakevenQueriesShort", "BreakevenQueriesLong", "BreakevenQueriesVOne", "BreakevenLinkRange",
-             "BreakevenLinkLong", "BreakevenLinkVOne", "BreakevenVOneFaster", "BreakevenTokens", "BreakevenTokensVOne")
+             "BreakevenLinkLong", "BreakevenLinkVOne", "BreakevenVOneFaster", "BreakevenTokens", "BreakevenTokensVOne",
+             "BreakevenTokensVOneConstant", "VOneClaimsRatioTwoK", "VOneClaimsRatioEightK", "VOneClaimsRatioSixteenK",
+             "BreakevenTokensVOneMeasuredTo")
     v1_claims = v1 and (v1.d.get("v0_bytes") or {}).get("claims") and (v1.d.get("v1_bytes") or {}).get("claims")
     ready = (all(k[s] and (k[s].d.get("bytes") or {}).get("claims") for s in k) and all(rx.values())
              and v1_claims and weights and v1_timed(v1, "v1", "optimised")[1] and ctx.byte_model)
@@ -1056,9 +1085,47 @@ def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
     c.put("BreakevenVOneFaster", ev.breakeven_link_gbps(claims[2048] - claims[2048] / ratio, t_v[2048], t_v1), src,
           lambda v: f"{v:.1f}")
     c.put("BreakevenTokens", ev.crossover_tokens(weights, (64, proof[64]), (2048, proof[2048])), src, f.about)
-    c.put("BreakevenTokensVOne", ev.crossover_tokens(weights, (64, claims[64] / ratio + fixed[64]),
-                                                     (2048, proof_v1)), src, f.about)
+    # V1 with its 2,048-token claims ratio at every length (the byte model's assumption) ...
+    c.put("BreakevenTokensVOneConstant", ev.crossover_tokens(weights, (64, claims[64] / ratio + fixed[64]),
+                                                             (2048, proof_v1)), src, f.about)
+    # ... and with V1's claims measured at each length: the full model's codec profile (v1 tier) scales V1's claims
+    # of the cpuv record from 2,048 tokens to 4,096, 8,192 and 16,384 (the codec's ratio of each length to its own at
+    # 2,048 tokens); the crossover is interpolated between the measured lengths around it
+    codec = {s: T.v1_long(run, s)[1] for s in T.LONG}
+    c.put("VOneClaimsRatioTwoK", ratio, v1, lambda v: f"{v:.1f}")
+    points = [(64, claims[64] / ratio + fixed[64]), (2048, proof_v1)]
+    v1_values = {s: ((r.d.get("total") or {}).get("v1_values") if r else None) for s, r in codec.items()}
+    rat = {s: T.codec_ratio(r) for s, r in codec.items()}
+    if v1_values[2048] and rat[2048]:
+        for s in T.LONG[1:]:
+            if v1_values[s]:
+                points.append((s, claims[2048] / ratio * v1_values[s] / v1_values[2048]
+                               + ev.fixed_part(m, ctx.policy, True, s)["fixed"]))
+    measured = points if len(points) > 2 else None
+    cross = crossover_piecewise(weights, measured) if measured else None
+    srcm = src + "; V1's claims from the v1 tier's codec profile (v1-codec) at 2,048 to 16,384 tokens"
+    c.put("BreakevenTokensVOne", cross, srcm, f.about)
+    c.put("BreakevenTokensVOneMeasuredTo", measured and measured[-1][0], srcm, f.tokens)
+    for s, name in ((8192, "VOneClaimsRatioEightK"), (16384, "VOneClaimsRatioSixteenK")):
+        c.put(name, rat[s] and rat[2048] and ratio * rat[s] / rat[2048], codec[s], lambda v: f"{v:.1f}")
+    # the text: the V1 crossover lies within the measured lengths (no extrapolation past the longest)
+    c.claim(cross is None or measured is None or cross <= measured[-1][0],
+            f"BreakevenTokensVOne is {cross} tokens, past the longest measured prompt ({measured and measured[-1][0]})")
+    out["v1_measured"] = [{"seq": s, "protocol": "v1", "proof_bytes": b} for s, b in (measured or [])]
     return out
+
+
+def crossover_piecewise(weights_bytes: float, points: list[tuple[int, float]]) -> float | None:
+    """The prompt length at which a proof of ``bytes(T)``, piecewise linear through ``points`` (``(T, bytes)``,
+    ascending in ``T``), first reaches ``weights_bytes``; past the last point, the last segment's line (None if
+    it does not grow)."""
+    for (t1, b1), (t2, b2) in zip(points, points[1:]):
+        if b1 <= weights_bytes <= b2 and b2 > b1:
+            return t1 + (weights_bytes - b1) * (t2 - t1) / (b2 - b1)
+    (t1, b1), (t2, b2) = points[-2], points[-1]
+    if weights_bytes > b2 and b2 > b1:
+        return t2 + (weights_bytes - b2) * (t2 - t1) / (b2 - b1)
+    return None
 
 
 # ================================================================================================ quality

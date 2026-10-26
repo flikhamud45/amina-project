@@ -13,7 +13,8 @@ host-to-device copy bandwidth that bounds a GPU client's time from below.
 | `tab:options`' GPU row and `tab:eval-reexec`'s GPU rows (the integer forward pass with int8 GEMMs / the fp16 decoder, full models) | `reexec.py --device cuda` (tier `gpuv`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 64 512 2048 --layers 2 32 --variants int float bf16 --device cuda --reps 5` (and OPT-1.3B, Qwen3-4B, OPT-6.7B, Llama-2-13B) | stdout |
 | `tab:eval-reexec`'s CPU rows (fp32 and the integer forward pass of Llama-2-7B) | `reexec.py --device cpu` (tier `cpuv`) | the first command | stdout |
 | `tab:options`' llama.cpp row, `tab:eval-reexec`'s llama.cpp rows (Q8_0 and bf16), `\CpuLlamaCpp*`, `\CpuRatioLlamaCpp`, `\LlamaCppRelease` and, through `\CpuInexact*`, the body's inexact-inference sentence | `llamacpp.py` (tier `cpuv`; CMake and git) | `python -m experiments.reexec.llamacpp --model llama2-7b --seq 64 2048 --types q8_0 bf16 --reps 5 --threads 8 --llamacpp-dir ../logs/<name>/llamacpp` | stdout, one JSON line per weight type, `T` and configuration (`"kind": "llamacpp"`) |
-| `tab:eval-long`'s re-execution columns (2,048 to 16,384 tokens) | `reexec.py --max-pos` (tier `long`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 8192 --layers 2 3 --variants int int_fp32gemm int_mm float bf16 dynint8 --device cpu --reps 3 --max-pos 16384` (and 2,048, 4,096, 16,384) | stdout |
+| `tab:eval-long`'s re-execution columns (2,048 to 16,384 tokens) and `tab:eval-long-check` | `reexec.py --max-pos` (tier `long`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 8192 --layers 2 3 4 --variants int int_mm int_fp32gemm --device cpu --reps 3 --max-pos 16384` and `--layers 2 3 --variants float bf16 dynint8` (and 2,048, 4,096, 16,384); the full model at 8,192 tokens with `--layers 32 --reps 1` | stdout |
+| `tab:eval-long-gpu`'s re-execution columns | `reexec.py --device cuda --max-pos` (tier `gpuv`) | `python -m experiments.reexec.reexec --model llama2-7b --seq 2048 4096 8192 16384 --layers 2 3 --variants int float bf16 --device cuda --reps 3 --max-pos 16384` | stdout |
 | no number of the paper: the host-to-device bandwidth of the run's GPU, a record of the platform (the text's transfer time of a proof, `\TransferLlamaLong`, is the proof's size over a 10 Gb/s link) | `h2d_bandwidth.py` (tiers `smoke`, `gpuv`) | `python -m experiments.reexec.h2d_bandwidth --sizes-mb 64 1024 4096 --reps 10 --label gpuv` | stdout, one JSON line per size, direction and memory (`"kind": "h2d"`) |
 
 `paper/numbers.py` uses only measured full models (`measured_s` at the model's block count, no extrapolation) and
@@ -135,7 +136,9 @@ The final numbers come from the run package (`bash code/experiments/package/run.
 the full model; Llama-2-7B also with the allocator settings the CPU verifier applies to itself) and `llamacpp.py` on
 Llama-2-7B's shapes (Q8_0 and bf16, 64 and 2,048 tokens; the rehearsal: one block at 64 tokens), its `gpuv` tier
 `reexec.py --device cuda` (`int float bf16`) on the five table models at 64, 512 and 2,048 tokens and
-`h2d_bandwidth.py`, its `long` tier `reexec.py --max-pos 16384` at 2,048 to 16,384 tokens (2 and 3 blocks), and its
+`h2d_bandwidth.py` and on Llama-2-7B's 2 and 3 blocks at 2,048 to 16,384 tokens (`--max-pos 16384`), its `long` tier
+`reexec.py --max-pos 16384` at 2,048 to 16,384 tokens (the exact variants on 2, 3 and 4 blocks, the others on 2 and
+3; the exact ones on the full model at 8,192 tokens), and its
 `smoke` tier one `h2d_bandwidth.py` copy of 256 MiB.
 
 A small version runs on a laptop CPU in seconds:

@@ -306,7 +306,7 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
                  "--requeue", "--signal=B:TERM@300", "--open-mode=append", "--dependency=singleton",
                  "logs/final/node-smoke-cpuv-long-%j.log", "--gres=gpu:l40s:1"):
         assert part in jobs[0], (part, jobs[0])
-    assert "# one job: smoke cpuv long: 27 jobs, job limits 56 h, time limit 24 h" in out, out
+    assert "# one job: smoke cpuv long: 36 jobs, job limits 81 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
@@ -664,7 +664,7 @@ def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_j
 def test_the_rehearsal_submits_small_cells_of_every_tier():
     lines = _dry("--rehearsal")
     jobs = [_job(line) for line in lines]
-    assert len(lines) <= 56 and len(set(jobs)) == len(jobs)
+    assert len(lines) <= 57 and len(set(jobs)) == len(jobs)
     for prefix in ("sp-smoke", "sp-c-", "sp-v1-", "sp-serve-", "sp-b-", "sp-g-", "sp-gen-", "sp-bt-", "sp-r-",
                    "sp-setup-", "sp-i-", "sp-q-", "sp-tv-", "sp-a-", "sp-l-"):
         assert any(j.startswith(prefix) for j in jobs), prefix
@@ -946,3 +946,36 @@ def test_the_zkllm_tier_runs_zkllms_demo_with_the_llama_licence_only(tmp_path):
     status, _, err, jobs_ = _submit(tmp_path / "c", "--platform", "final", "--llama-licence", "--cuda-home",
                                     "/no/cuda", "zkllm", extra={"HF_TOKEN": "hf_x"})
     assert status == 0 and len(jobs_) == 3, err
+
+
+def test_the_long_prompts_cells():
+    """The long tier: the CPU verifier on 2, 3 and 4 Llama-2-7B blocks at every length with the headline cells'
+    queries, the exact re-executions on the same builds (the inexact ones on 2 and 3), the full model at 8,192
+    tokens (verifier and exact re-execution, left out with --no-bigmem) and V1 on 2 blocks to 8,192 tokens with
+    tampers; the gpuv tier's GPU verifier and GPU re-execution on 2 and 3 blocks at every length; the v1 tier's codec
+    profile of the full model at every length, on the GPU and not pinned."""
+    jobs = {_job(line): line.split("--wrap", 1)[1] for line in _dry(tiers=("long", "gpuv", "v1"))}
+    for t in (2048, 4096, 8192, 16384):
+        for n in (2, 3, 4):
+            cmd = jobs[f"sp-l-llama7-{t}-L{n}"]
+            assert f"--layers {n} --seq {t} " in cmd and "--queries 5 " in cmd and "--verifier-device cpu" in cmd
+        rx = jobs[f"sp-l-rx-llama7-{t}"]
+        assert "--layers 2 3 4 --variants int int_mm int_fp32gemm " in rx
+        assert "--layers 2 3 --variants float bf16 dynint8 " in rx and rx.count("--max-pos 16384") == 2
+        g = jobs[f"sp-g-long-llama7-{t}"]
+        assert "--layers 2 " in g and "--layers 3 " in g and g.count("--verifier-device cuda --stream") == 2
+        assert g.count("--require-triton") == 2 and "experiments.package.pin" not in g
+        codec = jobs[f"sp-v1-codec-llama7-{t}"]
+        assert f"--codec-only --threads 8 --model llama2-7b --seq {t} --device cuda" in codec
+        assert "--layers" not in codec and "experiments.package.pin" not in codec
+    assert "--seq 2048 4096 8192 16384 --layers 2 3 " in jobs["sp-g-long-rx-llama7"]
+    assert "--max-pos 16384" in jobs["sp-g-long-rx-llama7"]
+    full = jobs["sp-l-llama7-8192-full"]
+    assert "--seq 8192 " in full and "--layers" not in full and "--queries 5 " in full
+    assert "--layers 32 --variants int int_mm int_fp32gemm " in jobs["sp-l-rx-llama7-8192-full"]
+    for t in (2048, 4096, 8192):
+        cmd = jobs[f"sp-l-v1-llama7-{t}-L2"]
+        assert f"--layers 2 --seq {t} --modes Kpre" in cmd and "--tampers 1 " in cmd and "--label long-v1" in cmd
+    assert not any(j.startswith("sp-l-v1-llama7-16384") for j in jobs)
+    small = {_job(line) for line in _dry("--no-bigmem", tiers=("long",))}
+    assert small == {j for j in jobs if j.startswith("sp-l-")} - {"sp-l-llama7-8192-full", "sp-l-rx-llama7-8192-full"}

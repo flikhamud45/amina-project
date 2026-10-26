@@ -8,7 +8,7 @@ prints before the final run, otherwise. Nothing here runs a model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:memory`, `tab:eval-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
+| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:memory`, `tab:eval-long`, `tab:eval-long-check`, `tab:eval-long-gpu`, `tab:eval-v1-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
 | Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the client's own memory, the quality, attribution, attack and sampler numbers, the spot-checking schemes' acceptance (`\Sok...`), ... (about 490 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
 | `fig:breakeven` (once its inputs are all in the run); `fig:overview`, `fig:protocol` with `--schematics` | `figures.py` | the same | `paper_sp2027/figures/*.pdf` |
 | Every value with its source record; per table the cells filled and missing; the checks | `numbers.py` | the same (`--check`: report only) | `generated/cells.csv`, `generated/coverage.txt` |
@@ -54,6 +54,9 @@ GEMMs (`int_fp32gemm`) or `torch._int_mm` (`int_mm`, counted only when its recor
 equal the integer reference's bit for bit in the same run). The inexact engines (`INEXACT`: fp32, bf16 and dynamic
 int8 decoders of the same shapes, and llama.cpp's Q8_0 and bf16 prefill, `LLAMACPP`, each at its fastest
 configuration) are reported next to it (`tab:options`' llama.cpp row, `tab:eval-reexec`), never in its place.
+The long prompts (`tab:eval-long` on the CPU, `tab:eval-long-gpu` on the GPU) give the full Llama-2-7B as the
+least-squares line through the builds of 2, 3 and 4 blocks (2 and 3 on the GPU) at 32 blocks (`block_fit`), and
+`tab:eval-long-check` sets that line against the full model measured at 2,048 and 8,192 tokens (`long_errors`).
 `tab:params` and `tab:setup` follow from the library's parameters and the setup proof's byte model
 (`costs/setup_bytes.py`; the per-query columns of interactive queries, as the setup tier measures them), with V1's
 counts from the v1 tier; `tab:memory` takes the cpuv tier's Llama-2-7B cells: the client's own process (`perf.py
@@ -177,7 +180,11 @@ the run package's cells on an RTX 2080 Ti and 8 threads of a Xeon Silver 4114, i
 value whose setting differs from the one the paper states (an interactive cell where the text says Fiat-Shamir, the
 legacy recipe's sampler distances) prints as `\todo{<tier>}`. `figures/ev_breakeven.pdf` and the fallback's
 `\Breakeven...` macros follow from the same inputs, `deployment/ev_inputs.json`, through
-`deployment/ev_breakeven.py`'s formulas and drawing (the drawing that `figures.breakeven` uses for the run). The test
+`deployment/ev_breakeven.py`'s formulas and drawing (the drawing that `figures.breakeven` uses for the run), except
+`\BreakevenTokensVOne`, which the run computes from V1's claims measured at each length (the `v1` tier's codec
+profiles of the full Llama-2-7B at 2,048 to 16,384 tokens, interpolated between the lengths around the crossover;
+a crossover past the longest measured length is a `CHECK FAILED text:` line) and whose fallback is a `\todo`: the
+2,048-token ratio at every length gives `\BreakevenTokensVOneConstant`. The test
 `test_the_fallback_tables_agree_with_their_macros` (and `numbers.py` on every run) checks that each fallback cell
 agrees with the macro that prints the same value.
 
