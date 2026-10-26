@@ -114,14 +114,16 @@ we have not implemented.
 \para{Attribution method.} We re-implemented the integer graph in floating point with each
 component switchable between its exact integer form and float. With every component integer it
 reproduces the integer graph's logits exactly, and with every component float it matches the
-checkpoint's to within $4\cdot10^{-5}$. Table~\ref{tab:quality-attr} gives the leave-one-out
+checkpoint's to within \AttrFloatTol{}. Table~\ref{tab:quality-attr} gives the leave-one-out
 perplexity (that component in float, the rest integer) and the add-one perplexity (only that
-component integer) of OPT-125M on 16 WikiText-2 windows of 128 tokens.
+component integer) of OPT-125M on 16 WikiText-2 windows of 128 tokens. Its integer graph has one
+norm gain of 4 and 8-bit probabilities and is calibrated on one 128-token window at the end of the
+test split.
 
 \begin{table}[t]
   \caption{Attribution of OPT-125M's perplexity on WikiText-2 (16 windows of 128 tokens): one
   component in float (leave-one-out) or only that component integer (add-one). The integer graph
-  has 75.5 and fp32 has 64.8.}
+  has \AttrIntPpl{} and fp32 has \AttrFpPpl{}.}
   \label{tab:quality-attr}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -129,24 +131,16 @@ component integer) of OPT-125M on 16 WikiText-2 windows of 128 tokens.
     \toprule
     Component of OPT-125M & Leave-one-out & Add-one \\
     \midrule
-    LayerNorm outputs (all)            & 69.4 & 70.3 \\
-    \quad before attention             & 71.0 & 68.7 \\
-    \quad before the MLP               & 74.9 & 65.9 \\
-    All weight matrices                & 72.5 & 66.6 \\
-    \quad q/k/v weights                & 74.8 & 65.0 \\
-    fc1 requantisation                 & 72.7 & 66.3 \\
-    Attention output requantisation    & 75.7 & 64.8 \\
-    Softmax (exp table, 8-bit prob.)   & 75.9 & 64.9 \\
-    Residual stream                    & 75.9 & 64.8 \\
-    ReLU table                         & 75.5 & 64.8 \\
+    \pvitable{tab_quality_attr}
     \bottomrule
   \end{tabular}
 \end{table}
 
 \para{Where the perplexity goes.} The LayerNorm outputs dominate: making them float removes more
-than half of the gap (75.5 to 69.4, against 64.8 in fp32). The weight matrices and the
-requantisation before fc1 follow, while the 8-bit softmax, the residual stream and the ReLU table
-each cost at most 0.1. The LayerNorm loss comes from rounding, not clipping. A few outlier channels
+than half of the gap (\AttrIntPpl{} to \AttrNormLoo{}, against \AttrFpPpl{} in fp32). The weight
+matrices and the requantisation before fc1 follow, while the 8-bit softmax, the residual stream and
+the ReLU table each cost at most \AttrSmallCost{} on their own. The LayerNorm loss comes from
+rounding, not clipping. A few outlier channels
 of OPT's residual stream, and a large channel at the beginning-of-sequence token, inflate the
 standard deviation, so a scalar gain that keeps them within int8 leaves the other channels few
 levels. The best scalar gains fall with the width (4, 3 and 2 for OPT-125M, OPT-1.3B and

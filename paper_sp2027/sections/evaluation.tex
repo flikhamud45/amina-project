@@ -20,8 +20,8 @@ GPU claim decoder and the fused exact attention, and C++/OpenMP kernels for CPU
 verifiers. We use $\lambda = 128$ unless stated otherwise; v0 and V1 are the protocols of
 Sections~\ref{sec:defence} and~\ref{sec:v1}.
 
-\para{Platform.} Every measurement of this section, except the attribution of the integer OPT-125M's
-perplexity in Section~\ref{sec:quality}, comes from one run of our artifact's run package on one platform: one \PlatformGpu{} runs the prover, the GPU verifier and the GPU
+\para{Platform.} Every measurement of this section comes from one run of our artifact's run
+package on one platform: one \PlatformGpu{} runs the prover, the GPU verifier and the GPU
 re-execution, and 8 threads of an \PlatformCpu{} run the CPU verifier and every CPU re-execution. All cells use Fiat--Shamir unless a table states
 otherwise; mode~$\sC$ uses codewords of at least $2^{\PlanLogPoints{}}$ points. Times are medians
 after a warm-up (\OptionsRuns{} runs in Table~\ref{tab:options}, min--max spread $\le$\OptionsSpread{}\%).

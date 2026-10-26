@@ -591,19 +591,21 @@ tier_quality() {
   # the integer models' quality on WikiText-2 (raw) at 2,048 tokens: the certified OPT models (tab:quality's OPT rows,
   # the 8- against 11-bit attention probabilities), the recipe's alpha on the validation split, the percentile and
   # smooth-max recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split; the alpha study of
-  # OPT-125M without the certified cell, which q-opt125 measures), zero-shot accuracy (tab:zeroshot), the
-  # reproducible build (OPT-125M with 1 and 8 threads, OPT-1.3B's commitment encoded on the GPU and on the CPU);
-  # OpenLLaMA-7B, TinyLlama and Qwen3 with the main Llama recipe, and OpenLLaMA-7B's alpha and product balance on the
-  # validation split; with --llama-licence Llama-2-7B and Llama-2-13B.
+  # OPT-125M without the certified cell, which q-opt125 measures), the attribution of OPT-125M's perplexity on the CPU
+  # (tab:quality-attr), zero-shot accuracy (tab:zeroshot), the reproducible build (OPT-125M with 1 and 8 threads,
+  # OPT-1.3B's commitment encoded on the GPU and on the CPU); OpenLLaMA-7B, TinyLlama and Qwen3 with the main Llama
+  # recipe, and OpenLLaMA-7B's alpha and product balance on the validation split; with --llama-licence Llama-2-7B and
+  # Llama-2-13B.
   # The fp32 CPU references of Qwen3-4B and OpenLLaMA-7B are kept in logs/<name>/ref_*.pt (the second pass and a
   # re-run reuse them).  The rehearsal loads OpenLLaMA-7B's tokenizer (sentencepiece, protobuf) for a smoke model on
   # the validation split and, with --llama-licence, reads the gated Llama-2 repository from a job (its configuration
   # and tokenizer, for the smoke model).
   local P="$M.quality.ppl_opt --device cuda" L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8"
-  local Z="$M.quality.zeroshot --device cuda" m
+  local Z="$M.quality.zeroshot --device cuda" A="$M.quality.attribution --device cpu --threads 8" m
   if [ -n "$REH" ]; then
     sub q-opt125 1 64 "$P --model facebook/opt-125m --windows 2 --mass-windows 1 && $P --model facebook/opt-125m \
 --recipe legacy --graphs smooth --pbits 11 --windows 2 --mass-windows 1 --split validation"
+    sub q-opt125-attr 1 64 "$A --model facebook/opt-125m --windows 2 --skip-sub"
     sub q-smoke 1 64 "$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 && \
 $L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 --glu-exps 8 --exp-only"
     sub q-openllama7-smoke 1 32 "$L --model openlm-research/open_llama_7b_v2 --smoke --split validation --seq 128 \
@@ -635,6 +637,7 @@ $P --model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.7 --pbits 11
   sub q-opt125-128 1 64 "$P --model facebook/opt-125m --calibration test-end --seq 128 --windows 16 --recipe legacy \
 --graphs scalar smooth rows --alphas 0.55 0.5 --pbits 8 && $P --model facebook/opt-125m --calibration test-end \
 --seq 128 --windows 16 --recipe legacy --graphs smooth --alphas 0.55 --cle-mlp 0 --cle-ratio 2 --pbits 8"
+  sub q-opt125-attr 1 64 "$A --model facebook/opt-125m"
   for m in opt-125m opt-1.3b opt-6.7b; do
     sub "q-zeroshot-$m" 3 192 "$Z --model facebook/$m"
   done

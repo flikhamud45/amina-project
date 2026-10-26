@@ -553,10 +553,11 @@ def test_the_cost_cells_use_11_bit_probabilities_but_the_a_b_of_the_scales():
 def test_the_gen_and_quality_cells_of_the_text():
     """The gen tier's cells (GPT-2's per-token prover after a 64-token prompt; Llama-2-7B and Qwen3-4B after a
     512-token prompt, greedy and sampled) and the quality tier's: the OPT-125M recipe studies (the alpha study without
-    the certified cell, alpha 0.6, which q-opt125 measures), Qwen3-4B's per-token-exponent cells without the main
-    cell the job's first command measured, OpenLLaMA-7B's validation grid (the text's, macros.LLAMA_VALIDATION), the
-    reproducible build (OPT-125M with 1 and 8 threads, OPT-1.3B's commitment on the GPU and on the CPU) and the
-    Llama-2 cells; the rehearsal keeps its own small generation cell and loads OpenLLaMA-7B's tokenizer."""
+    the certified cell, alpha 0.6, which q-opt125 measures) and attribution, Qwen3-4B's per-token-exponent cells
+    without the main cell the job's first command measured, OpenLLaMA-7B's validation grid (the text's,
+    macros.LLAMA_VALIDATION), the reproducible build (OPT-125M with 1 and 8 threads, OPT-1.3B's commitment on the GPU
+    and on the CPU) and the Llama-2 cells; the rehearsal keeps its own small generation and attribution cells and loads
+    OpenLLaMA-7B's tokenizer."""
     from experiments.paper.macros import DIGESTS, LLAMA_VALIDATION
     lines = {_job(line): line for line in _dry()}
     gpt2 = lines["sp-gen-gpt2"].split("generation.gen_bench", 1)[1]
@@ -586,6 +587,15 @@ def test_the_gen_and_quality_cells_of_the_text():
     rehearsal = {_job(line): line for line in _dry("--rehearsal")}
     assert "--layers 2" in rehearsal["sp-gen-gpt2"] and "sp-q-opt125-recipes" not in rehearsal
     assert f"--model {model} --smoke --split validation" in rehearsal["sp-q-openllama7-smoke"]
+    # the attribution of OPT-125M's perplexity (tab:quality-attr): the script's defaults are the paper's settings (16
+    # windows of 128 tokens, the scalar graph with norm gain 4 and 8-bit probabilities, the feature sub-rows), on the
+    # CPU and not pinned; the rehearsal's cell takes two windows without the sub-rows
+    attr = lines["sp-q-opt125-attr"].split("--wrap", 1)[1]
+    assert attr.endswith('experiments.quality.attribution --device cpu --threads 8 --model facebook/opt-125m"'), attr
+    assert "experiments.package.pin" not in attr and "--time=1:00:00" in lines["sp-q-opt125-attr"]
+    assert "--mem=64G" in lines["sp-q-opt125-attr"]
+    assert rehearsal["sp-q-opt125-attr"].endswith("--model facebook/opt-125m --windows 2 --skip-sub\"")
+    assert [j for j, x in lines.items() if "experiments.quality.attribution" in x] == ["sp-q-opt125-attr"]
 
 
 def test_every_tier_is_documented_and_reachable():

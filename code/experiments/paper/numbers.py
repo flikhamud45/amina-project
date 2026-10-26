@@ -43,21 +43,22 @@ Outputs (``--out``, default ``paper_sp2027/generated/``; ``--check`` writes noth
 paper prints today) otherwise.
 
 Checks: an honest query rejected, a tamper accepted, a byte accounting, serving or A/B check that failed, a setup
-proof rejected, the smoke's verdicts, records of more than one machine, builds of one certified model whose digests,
-weights or commitment roots differ (:func:`experiments.paper.macros.digest_agreement`), a table cell that disagrees
-with the macro printing the same value (:data:`SAME_VALUE`; in the written files and in ``paper_sp2027/fallback/``),
-a statement of the text that the run's values contradict (``CHECK FAILED text:``,
-:data:`experiments.paper.macros.TEXT_CLAIM`): each is a ``CHECK FAILED`` line; a log line that starts with ``{`` and
-is not a record of a known kind is a ``PARSE`` line.  The exit status is 1 on either, and with ``--strict`` also on
-any missing cell, macro or job.  ``WARNING`` lines, which do not change it: one quantity measured by two jobs differs
-by more than 10% (:data:`TWO_JOBS`), two records of one quality cell differ
-(:meth:`experiments.paper.records.Run.ppl`), the records' mode-C plan is not ``--policy``.  ``--rehearsal``: a
-rehearsal's folder (small models; no cell of the paper is expected): every tier must have at least one record of each
-kind it writes (:data:`experiments.paper.records.REHEARSAL_KINDS`), every builder runs on what is there, and the
-checks apply, except those of what the text states about the final values (the sign of a loss; a path count of the
-attack's documents or the benchmark that differs from the formula's, which ``tab:sok`` prints as the same number; the
-11-bit attention probabilities of every cost record; the grid of a validation study; the reference of a ratio:
-``CHECK FAILED text:`` lines), which are warnings.
+proof rejected, an attribution whose float copy failed a check or whose integer graph is not the quality tier's cell
+of the same graph (:func:`experiments.paper.records.cross_checks`), the smoke's verdicts, records of more than one
+machine, builds of one certified model whose digests, weights or commitment roots differ
+(:func:`experiments.paper.macros.digest_agreement`), a table cell that disagrees with the macro printing the same
+value (:data:`SAME_VALUE`; in the written files and in ``paper_sp2027/fallback/``), a statement of the text that the
+run's values contradict (``CHECK FAILED text:``, :data:`experiments.paper.macros.TEXT_CLAIM`): each is a ``CHECK
+FAILED`` line; a log line that starts with ``{`` and is not a record of a known kind is a ``PARSE`` line.  The exit
+status is 1 on either, and with ``--strict`` also on any missing cell, macro or job.  ``WARNING`` lines, which do not
+change it: one quantity measured by two jobs differs by more than 10% (:data:`TWO_JOBS`), two records of one quality
+cell differ (:meth:`experiments.paper.records.Run.ppl`), the records' mode-C plan is not ``--policy``.
+``--rehearsal``: a rehearsal's folder (small models; no cell of the paper is expected): every tier must have at least
+one record of each kind it writes (:data:`experiments.paper.records.REHEARSAL_KINDS`), every builder runs on what is
+there, and the checks apply, except those of what the text states about the final values (the sign of a loss; the
+attribution's ranking; a path count of the attack's documents or the benchmark that differs from the formula's,
+which ``tab:sok`` prints as the same number; the 11-bit attention probabilities of every cost record; the grid of a
+validation study; the reference of a ratio: ``CHECK FAILED text:`` lines), which are warnings.
 """
 from __future__ import annotations
 
@@ -264,6 +265,7 @@ SAME_VALUE = (
     ("tab_zeroshot", None, ("Mean",), 6, None, 0, 1, "ZeroshotMeanOptL", 1),
     ("tab_paths", None, ("Llama-2-7B",), 2, None, 0, 1, "SokPathsLlama", 1),
     ("tab_paths", None, ("OPT-6.7B",), 2, None, 0, 1, "SokPathsOptL", 1),
+    ("tab_quality_attr", None, ("LayerNorm outputs (all)",), 1, None, 0, 1, "AttrNormLoo", 1),
 )
 """The table cells and macros that print the same value of the same record: they agree up to one unit of the
 coarser printed precision (a bound rounded up against a value rounded to nearest)."""
@@ -407,6 +409,7 @@ def build(args) -> int:
     run = R.Run(recs, files)
     failed = [f"CHECK FAILED {Path(r.path).name}:{r.line}: {msg}" for r in recs for msg in R.checks(r)]
     failed += R.log_checks(logs) if logs.is_dir() else []
+    failed += R.cross_checks(run)
     tables_dir = Path(args.bench) / f"tables_{args.platform}"
     bench = Bench(tables_dir if tables_dir.is_dir() else None, prob_max=args.prob_max)
     policy, warnings = choose_plan(args.policy, record_plans(run, bench))

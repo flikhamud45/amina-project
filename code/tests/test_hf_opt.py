@@ -134,20 +134,23 @@ def _same_constants(a, b) -> bool:
 
 @pytest.mark.parametrize("smooth", [False, True])
 def test_a_pruned_real_graph_has_the_constants_and_logits_of_the_whole_one(tiny_opt, smooth):
-    """The last block at the last position: the same weights, multipliers and norm gains (the pruned block is
-    calibrated on every position), the ops of ``build_decoder(..., prune_last=True)``, and bit-identical next-token
+    """The last block at the last position: the same weights, multipliers, norm gains and real scales (the pruned block
+    is calibrated on every position), the ops of ``build_decoder(..., prune_last=True)``, and bit-identical next-token
     logits on prefixes of every length; its q, o, fc1 and fc2 claim one column, k and v every column."""
     model, _, _, ids = tiny_opt
     kw = _SMOOTH if smooth else dict(norm_gain=4)
     whole, info_w = build_opt_from_hf(model, ids, **kw)
     pruned, info_p = build_opt_from_hf(model, ids, prune_last=True, **kw)
     assert is_pruned(pruned) and not is_pruned(whole)
-    assert {k: v for k, v in info_p.items() if k != "prune_last"} == {k: v for k, v in info_w.items()
-                                                                      if k != "prune_last"}
+    assert {k: v for k, v in info_p.items() if k not in ("prune_last", "scales")} == {
+        k: v for k, v in info_w.items() if k not in ("prune_last", "scales")}
     assert info_p["prune_last"] and not info_w["prune_last"]
     a, b = _without_slices(whole), _without_slices(pruned)
     assert len(pruned.ops) == len(whole.ops) + 2 and [type(o) for o in a] == [type(o) for o in b]
     for x, y in zip(a, b):
+        # the real scale of every op's output (the ops' names differ: the slices take numbers of their own)
+        sx, sy = info_w["scales"][x.output], info_p["scales"][y.output]
+        assert torch.equal(sx, sy) if torch.is_tensor(sx) else sx == sy, x.name
         if isinstance(x, MatOp):
             assert torch.equal(x.weight, y.weight) and (x.bias is None) == (y.bias is None)
             assert x.bias is None or torch.equal(x.bias, y.bias)
