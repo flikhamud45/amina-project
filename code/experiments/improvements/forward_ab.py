@@ -6,15 +6,16 @@ The row "Weight products on int8 GEMMs (forward pass)" of ``tab:eval-improve`` (
 
 ``MatOp.compute`` runs a weight op on a GPU whose ``torch._int_mm`` passes ``field.int8_ok`` as int8 GEMMs
 (``graph.int8_product``), else as float32 GEMMs over chunks of 1,024 terms; both give the same integers.  This script
-builds the decoder as ``bench.py`` does (random weights, ``--seed``; ``--layers`` blocks, the last one pruned), then
+builds the decoder as ``bench.py`` does (random weights, ``--seed``; ``--layers`` blocks, the last one pruned;
+11-bit attention probabilities, ``--prob-max``), then
 times the lean prover's forward pass with the claims kept for the compact encoding (``Prover.claims`` with
 ``claimcodec.narrow``: what ``run_query``'s ``prove_forward`` times) both ways on the same queries, alternating, and
 checks that the claims are identical; the first query warms both up.  The float32 path is the implementation
 option :data:`OPTION` of :mod:`pvi.options` turned off (``options.using(int8_forward=False)``).
 
 Record (one JSON line per model, block count, prompt length and variant ``float32`` / ``int8``): ``prove_forward``
-(the median), ``vs_float32``, ``identical``, ``queries``, ``int8_ok``, the GPU and ``env``.  Needs a CUDA GPU with
-int8 GEMMs; minutes per build.
+(the median), ``vs_float32``, ``identical``, ``queries``, ``int8_ok``, ``prob_max``, the GPU and ``env``.  Needs a
+CUDA GPU with int8 GEMMs; minutes per build.
 """
 from __future__ import annotations
 
@@ -46,6 +47,7 @@ def main() -> int:
                     help="the last block at the last position only")
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompts' seed")
+    cli.add_prob_max_argument(ap)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
     cli.apply_runtime(args)
@@ -63,7 +65,7 @@ def main() -> int:
     ok = True
     for n_layers in args.layers:
         graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=cli.CALIB_TOKENS, seed=args.seed,
-                              prune_last=args.prune_last)
+                              prune_last=args.prune_last, prob_max=args.prob_max)
         prover = Prover(graph, device=device, lean=True)
         for seq in args.seq:
             if seq > cfg.max_pos:
@@ -91,7 +93,7 @@ def main() -> int:
                 med = statistics.median(ts)
                 records.emit({"git": sha, "model": args.model, "layers": n_layers or cfg.n_layers, "seq": seq,
                               "variant": name, "queries": len(ts), "identical": identical, "prove_forward": med,
-                              "vs_float32": med / base, "int8_ok": field.int8_ok(device),
+                              "vs_float32": med / base, "int8_ok": field.int8_ok(device), "prob_max": args.prob_max,
                               "gpu": torch.cuda.get_device_name(device), "host": platform.node(), "env": env})
     return 0 if ok else 1
 

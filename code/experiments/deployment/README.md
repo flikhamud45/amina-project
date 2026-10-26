@@ -41,7 +41,8 @@ after one warm-up:
   and `--calib-tokens` calibration tokens; prompts of random ids (`--prompt-seed`). No downloads.
 * **Main options.** The protocol flags default to the paper's configuration (`experiments.common.cli.PAPER`):
   `--policy cnn18c` (mode C's commitment plan; `--policy per-op` for one tree per weight op), `--fs`, `--wire`,
-  `--lean`, `--prune-last`, `--lookups`, each with a `--no-...` form, `--lam 128`, `--rate 4`, `--setup-cache DIR`.
+  `--lean`, `--prune-last`, `--lookups`, each with a `--no-...` form, `--prob-max 2047` (11-bit attention
+  probabilities, also U1's), `--lam 128`, `--rate 4`, `--setup-cache DIR`.
   Mode C is proved without a verifier, so it needs Fiat-Shamir (`--no-fs` is for `--modes Kpre`). `--accept` (default
   on) runs one untimed `run_query` per variant and cell to show that the verifier accepts the same proof. `--boot`
   (10,000 bootstrap resamples) and `--residual-max` (0.02) set the intervals and the phase check. The runtime flags:

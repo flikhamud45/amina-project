@@ -9,7 +9,8 @@ tier runs it on GPT-2 and Llama-2-7B.
     python -m experiments.costs.setup_timing --model tiny-llama --device cpu --threads 2      # a laptop check
 
 Builds the decoder as ``bench.py`` does (random weights, ``--seed``; ``--layers`` blocks, 0: all of them; the last
-block pruned; ``tiny-*`` / ``small-*``: the shapes of :data:`experiments.common.models.TINY`), commits it under
+block pruned; 11-bit attention probabilities, ``--prob-max``, which change the graph digest only; ``tiny-*`` /
+``small-*``: the shapes of :data:`experiments.common.models.TINY`), commits it under
 ``--policy`` (default the paper's plan ``cnn18c``) on ``--device`` (``commit_s``; never from the setup cache: this
 measures the setup itself), derives the setup proof's parameters for each ``--amortise`` (``setup_params``: ``s``,
 the radii, ``t0`` and the per-query ``t`` of each tree, at ``--lam`` with the per-op column budget of
@@ -19,11 +20,11 @@ every committed matrix's rows on ``--device``, then ``t0`` opened columns and on
 after one untimed run; every verification must accept.  The setup proof is non-interactive (Fiat--Shamir over the
 graph digest and the roots), so its bytes and challenges are the same in every repetition.
 
-Record (one JSON line per ``--amortise`` value, ``"kind": "setup"``): ``commit_s``, ``prove_s`` / ``verify_s``
-(median and ``[min, max]``), ``proof_bytes`` (``SetupProof.nbytes``), ``s``, ``t0`` and ``t`` per tree, the per-query
-column bytes under the honest and the untrusted bound, peak host (Linux) and GPU memory, and ``env``.  The exit status
-is 1 if a verification rejected.  Hardware and time: a GPU for the committer; the package gives GPT-2 a job limit of one
-hour and Llama-2-7B one of three hours with 128 GB of host memory.
+Record (one JSON line per ``--amortise`` value, ``"kind": "setup"``): ``prob_max``, ``commit_s``, ``prove_s`` /
+``verify_s`` (median and ``[min, max]``), ``proof_bytes`` (``SetupProof.nbytes``), ``s``, ``t0`` and ``t`` per tree,
+the per-query column bytes under the honest and the untrusted bound, peak host (Linux) and GPU memory, and ``env``.
+The exit status is 1 if a verification rejected.  Hardware and time: a GPU for the committer; the package gives GPT-2
+a job limit of one hour and Llama-2-7B one of three hours with 128 GB of host memory.
 """
 from __future__ import annotations
 
@@ -53,6 +54,7 @@ def main() -> int:
     ap.add_argument("--reps", type=int, default=1, help="timed repetitions after an untimed one")
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS, help="calibration tokens of the build")
+    cli.add_prob_max_argument(ap, note="; the graph digest the setup proof binds")
     ap.add_argument("--label", default="", help="a label copied into every record")
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
@@ -69,7 +71,8 @@ def main() -> int:
     sha = records.git_sha(CODE)
     records.reset_peaks(device)
     t0 = time.perf_counter()
-    graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=args.calib_tokens, seed=args.seed, prune_last=True)
+    graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=args.calib_tokens, seed=args.seed, prune_last=True,
+                          prob_max=args.prob_max)
     build_s = time.perf_counter() - t0
     shapes = decoder_shapes(cfg, prune_last=True)
     t0 = time.perf_counter()
@@ -108,7 +111,8 @@ def main() -> int:
         honest = {g: max(exact_columns(coded[m].row_length, coded[m].n_points, bits) for m in members)
                   for g, members in coms.plan.groups}
         records.emit({"kind": "setup", "label": args.label, "git": sha, "model": args.model,
-                      "layers": args.layers or None, "n_layers": n_layers, "policy": args.policy,
+                      "layers": args.layers or None, "n_layers": n_layers, "prob_max": args.prob_max,
+                      "policy": args.policy,
                       "chosen": coms.plan.policy, "lam": args.lam, "fiat_shamir": args.fs, "amortise": amortise,
                       "device": args.device, "threads": args.threads, "build_s": build_s, "commit_s": commit_s,
                       "reps": len(prove), "accepted": ok,

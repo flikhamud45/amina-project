@@ -41,7 +41,8 @@ the same query (`pvi.v1.protocol.cut_proof_bytes`: M1 encoded for real, every ot
   default, runs the window-table products, the batched GKR check and the batch-inverted logUp identity, `baseline`
   the float64 limb products and one check per instance), `--lmax 27`, `--codec-only`. The protocol settings default
   to the paper's configuration (`experiments.common.cli.PAPER`): `--policy cnn18c`, `--fs`, `--lean`,
-  `--prune-last`, `--lookups` (mode Kpre's verifier reads the embedding rows itself), each with a `--no-...` form;
+  `--prune-last`, `--lookups` (mode Kpre's verifier reads the embedding rows itself), each with a `--no-...` form,
+  `--prob-max 2047` (11-bit attention probabilities; 255: the 8-bit graphs);
   V1's proof is always in the compact encoding, and `--wire`/`--no-wire` concerns v0's proof only. The runtime flags:
   `--device` (the prover's), `--verifier-device`, `--threads 8` and every implementation option of `pvi.options`.
 * **lmax.** `--lmax` sets the GKR instances' target size `2^lmax`: consecutive operations are packed into one

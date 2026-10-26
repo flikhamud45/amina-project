@@ -16,7 +16,8 @@ Integer semantics (both parties compute these identically):
 * SwiGLU gate: int8 x int8 product, requantised;
 * RoPE: Q14 cosine/sine tables, rounding shift;
 * attention: exact ``q k^T``, integer softmax (exp via a 256-entry table in units
-  of 1/16 nat, integer normalisation to 8-bit probabilities), exact ``P V``.
+  of 1/16 nat, integer normalisation to probabilities 0..``pmax``: 8 bits by default, 11 for
+  the certified models and the cost measurements), exact ``P V``.
 
 Only the weight products are ``MatOp`` s; everything else is recomputed by the
 verifier, including attention, which costs it O(T^2 d) per layer.
@@ -37,12 +38,13 @@ import numpy as np
 import torch
 
 from pvi import options
-from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, exact_matmul, int_scalar, mul_add_half, mul_requant_op,
-                            op_fn, op_kind, requant, requant_fn, residual_add)
+from pvi.core.graph import (INT8_MAX, CheapOp, IntGraph, MatOp, OpFn, exact_matmul, int_scalar, mul_add_half,
+                            mul_requant_op, op_fn, op_kind, requant, requant_fn, residual_add)
 from pvi.kernels import attention_triton as attention_kernels
 from pvi.kernels import native as native_kernels
 
-__all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens"]
+__all__ = ["DecoderConfig", "CONFIGS", "build_decoder", "decoder_param_count", "with_lm_positions", "greedy_tokens",
+           "prob_max_of"]
 
 SHIFT = 30
 RES_MAX = (1 << 22) - 1
@@ -55,15 +57,18 @@ _EXP_ZERO = 178
 """``EXP_TABLE[i] == 0`` exactly for ``i >= _EXP_ZERO``."""
 assert int(EXP_TABLE[_EXP_ZERO - 1]) > 0 and not bool(EXP_TABLE[_EXP_ZERO:].any())
 PROB_MAX = 255
-"""The attention probabilities' scale: ``p = round(PROB_MAX e / tot)``, 0..PROB_MAX (8 bits).  A graph may use another
-``pmax`` (``build_decoder(prob_max=...)``, at most 2047; e.g. :data:`CERTIFIED_PROB_MAX`, 11 bits, which keeps more
-of a long row's probability mass); it is a public constant of the attention op, which the graph digest binds."""
+"""The attention probabilities' scale of :func:`build_decoder` by default: ``p = round(PROB_MAX e / tot)``,
+0..PROB_MAX (8 bits).  A graph may use another ``pmax`` (``build_decoder(prob_max=...)``, at most 2047; e.g.
+:data:`CERTIFIED_PROB_MAX`, 11 bits, which keeps more of a long row's probability mass); it is a public constant of
+the attention op, which the graph digest binds (:func:`prob_max_of` reads it from a graph)."""
 CERTIFIED_PROB_MAX = 2047
 """The probabilities' scale of the certified models built from real checkpoints
 (:func:`pvi.models.hf_opt.build_opt_from_hf`, :func:`pvi.models.hf_llama.build_llama_from_hf`): 11 bits.  Measured on
 the full WikiText-2 (raw) test split in 2,048-token windows, 8-bit probabilities raise the perplexity by 2.4% on
-OPT-6.7B and by 5.5% on OPT-1.3B, while 11-bit ones reach the perplexity of the exact softmax.  The random-weight
-benchmark graphs keep :data:`PROB_MAX`: the scale changes no shape, so neither the proof's size nor its cost."""
+OPT-6.7B and by 5.5% on OPT-1.3B, while 11-bit ones reach the perplexity of the exact softmax.  The cost measurements
+build their random-weight graphs at this scale too (``experiments.common.cli.Protocol.prob_max``; the 8-bit graphs
+with ``--prob-max 255``).  The scale changes no shape and no bound of the exact integer paths: every one holds for
+``pmax <= 2047`` and ``T < 2**15`` (:func:`_int32_scores`, :func:`_attention_core`, the native and Triton kernels)."""
 _MASKED = -(1 << 30)
 """The int32 path's score of a masked entry: below every real score (``|s| <= 2**21``)."""
 _LUT_MAX = 1 << 22
@@ -483,6 +488,17 @@ def greedy_tokens(graph: IntGraph, prompt: torch.Tensor, steps: int) -> torch.Te
         nxt = env[graph.output_name][:, -1].argmax(-1, keepdim=True)
         x = torch.cat([x, nxt.to(x.device, x.dtype)], 1)
     return x
+
+
+def prob_max_of(graph: IntGraph) -> int | None:
+    """The attention probabilities' scale ``pmax`` of a decoder graph (:func:`build_decoder`,
+    :func:`pvi.models.hf_opt.build_opt_from_hf`, :func:`pvi.models.hf_llama.build_llama_from_hf`): the constant its
+    attention ops share; None for a graph without attention (an image model)."""
+    found = {int(op.fn.consts["pmax"]) for op in graph.ops
+             if isinstance(op, CheapOp) and isinstance(op.fn, OpFn) and "pmax" in op.fn.consts}
+    if len(found) > 1:
+        raise ValueError(f"attention ops of several probability scales: {sorted(found)}")
+    return found.pop() if found else None
 
 
 def _residual(a: torch.Tensor, b: torch.Tensor, m: torch.Tensor) -> torch.Tensor:

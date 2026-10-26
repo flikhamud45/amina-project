@@ -11,9 +11,10 @@ compact encoding against the uncoded proof.
 A spec is an image model (``lenet5``, ``vgg11``, ``vgg16``, ``resnet18_cifar``: random weights with ``--seed``, as the
 shapes alone matter here; ``mlp_mnist``: the trained MLP of the attack) or ``decoder:tokens[:blocks]`` (the
 benchmark's random-weight decoders, all blocks by default; with several block counts the per-block slope extrapolates
-to the full model).  The image models' queries are MNIST test digits, read
-with ``download=False`` from ``--mnist`` (padded to 32x32 and repeated on 3 channels for the CIFAR shapes), calibrated
-on the first 512 training digits.
+to the full model; attention probabilities of ``--prob-max``, default 2047: 11 bits, as the cost measurements' graphs;
+the stored ``wire_laptop.json`` predates the option and used the 8-bit graphs, ``--prob-max 255``).  The image
+models' queries are MNIST test digits, read with ``download=False`` from ``--mnist`` (padded to 32x32 and repeated on
+3 channels for the CIFAR shapes), calibrated on the first 512 training digits.
 
 Per spec and mode (C at ``--lam``, interactive; Kpre at ``--lam``, or the level of ``--kpre-lam`` for the model:
 Qwen3-4B at 40 as in Maverick's row), ``run_query`` with and without ``wire`` alternate on the same queries and seeds,
@@ -25,9 +26,9 @@ prover encodes them, ``u`` and the columns have fixed sizes, and the Merkle path
 is compared with reading the same claims as int32 and widening them.
 
 Output: ``--out`` (default ``artifacts/results/development/wire.json``), a JSON object keyed by spec (``codec``:
-claims, bytes, ``bits_per_claim``; ``<mode>_lam<l>_threads<n>``: the A/B; ``C_lam<l>_exact``; ``builds``; ``git``,
-``seconds``, ``env``), updated after every spec; ``--summary`` prints its tables.  Runs on a laptop CPU: the stored
-specs took from 1 s (the MLP) to 191 s (GPT-2 at 512 tokens).
+claims, bytes, ``bits_per_claim``; ``<mode>_lam<l>_threads<n>``: the A/B; ``C_lam<l>_exact``; ``builds``;
+``prob_max`` (a decoder's); ``git``, ``seconds``, ``env``), updated after every spec; ``--summary`` prints its
+tables.  Runs on a laptop CPU: the stored specs took from 1 s (the MLP) to 191 s (GPT-2 at 512 tokens).
 """
 from __future__ import annotations
 
@@ -108,11 +109,13 @@ def _mlp(mnist, queries: int):
     return graph, [quantize_input(graph, test[i:i + 1].reshape(-1, 784)) for i in range(queries)]
 
 
-def _decoder(model: str, seq: int, n_layers: int | None, queries: int, seed: int, prompt_seed: int):
+def _decoder(model: str, seq: int, n_layers: int | None, queries: int, seed: int, prompt_seed: int,
+             prob_max: int = cli.PAPER.prob_max):
     from pvi.models.decoder import build_decoder
 
     cfg = decoder_config(model)
-    graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=min(seq, cli.CALIB_TOKENS), seed=seed)
+    graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=min(seq, cli.CALIB_TOKENS), seed=seed,
+                          prob_max=prob_max)
     tokens = torch.randint(0, cfg.vocab, (queries, seq), generator=torch.Generator().manual_seed(prompt_seed))
     return graph, list(tokens.split(1)), len(decoder_shapes(cfg))
 
@@ -199,7 +202,8 @@ def run(spec: str, args) -> dict:
     else:   # the claims of every block count; the last build is kept for the timings
         seq, blocks = int(rest[0]), ([int(b) for b in rest[1].split(",")] if len(rest) > 1 else [None])
         for b in blocks:
-            graph, xs, n_checks = _decoder(name, seq, b, args.queries, args.seed, args.prompt_seed)
+            graph, xs, n_checks = _decoder(name, seq, b, args.queries, args.seed, args.prompt_seed, args.prob_max)
+            out["prob_max"] = args.prob_max
             if b is not None:
                 zs, encoded = query_claims(graph, xs[0])
                 out.setdefault("builds", {})[str(b)] = {"claims": sum(z.numel() for z in zs), "wire_bytes": encoded}
@@ -302,6 +306,7 @@ def main() -> None:
                     help="mode Kpre's security level for these models (default qwen3-4b=40, Maverick's setting)")
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--prompt-seed", type=int, default=1, help="the decoders' random prompts' seed")
+    cli.add_prob_max_argument(ap, note="; the decoder specs")
     ap.add_argument("--out", default=str(OUT), help="the results file (JSON, updated after every spec)")
     ap.add_argument("--summary", action="store_true", help="print the tables of --out")
     args = ap.parse_args()

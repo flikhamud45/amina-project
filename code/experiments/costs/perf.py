@@ -5,7 +5,9 @@ against re-execution on the same threads: ``tab:options`` and the abstract's rat
 row), its ``gpuv`` tier (the streaming GPU verifier), its ``real`` tier (real-weight OPT and Llama-2-7B next to their
 random-weight twins: ``tab:eval-real``) and its ``long`` tier (2,048 to 16,384 tokens: ``tab:eval-long``); and, with
 the implementation options of :mod:`pvi.options`, the GPU-verifier and CPU-verifier rows and the prover's fused
-attention of ``tab:eval-improve`` (``experiments/improvements/README.md``).
+attention of ``tab:eval-improve`` (``experiments/improvements/README.md``); with ``--prob-max 255 2047`` the ``improve``
+tier's A/B of 8- against 11-bit attention probabilities (``quality.tex``: the proof's size and the prover's and CPU
+verifier's times on the same queries).
 
     python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes Kpre C --queries 5 --verifier-device cpu \\
         --label cpuv
@@ -14,6 +16,8 @@ attention of ``tab:eval-improve`` (``experiments/improvements/README.md``).
     python -m experiments.costs.perf --model opt-1.3b --real facebook/opt-1.3b --seq 2048 --modes Kpre C \\
         --queries 3 --tampers 3 --label real
     python -m experiments.costs.perf --model lenet5 --random-init --modes C --policy per-op cnn18c --wire off on
+    python -m experiments.costs.perf --model llama2-7b --layers 2 --seq 2048 --modes Kpre C --prob-max 255 2047 \\
+        --queries 5 --verifier-device cpu --label prob-bits
     python -m experiments.costs.perf --model tiny-gpt --seq 16 --modes C Kpre --queries 3 --device cpu --threads 2
         # a laptop check (seconds)
 
@@ -22,11 +26,13 @@ queries; random-weight decoders with ``--seed`` and prompts with ``--prompt-seed
 graph), commits it, runs one warm-up and ``--queries`` honest queries with ``run_query`` per variant and prints one
 JSON line per (mode, variant).  The protocol settings default to the paper's configuration
 (:data:`experiments.common.cli.PAPER`: plan ``cnn18c``, Fiat--Shamir, the compact encoding, the lean prover and
-verifier, the pruned last block, the verifier's own embedding rows in modes K and Kpre); ``--policy``, ``--wire``,
-``--lean``, ``--prune-last`` and ``--lookups`` take several values (``--wire off on``), and every combination is a
-variant, its queries interleaved with the others' (the order rotating from query to query).  Modes K and Kpre open no
-columns, so they run once per setting other than the plan; image models have no embedding, no pruned block and no
-lean path.
+verifier, the pruned last block, the verifier's own embedding rows in modes K and Kpre, 11-bit attention
+probabilities); ``--policy``, ``--wire``, ``--lean``, ``--prune-last``, ``--lookups`` and ``--prob-max`` take several
+values (``--wire off on``, ``--prob-max 255 2047``), and every combination is a variant, its queries interleaved with
+the others' (the order rotating from query to query).  The scales of ``--prob-max`` are graphs of the same weights,
+built with the same seeds, queried on the same prompts.  Modes K and Kpre open no columns, so they run once per
+setting other than the plan; image models have no embedding, no pruned block, no lean path and no attention, and a
+checkpoint's recipe fixes its probabilities' scale (``--prob-max`` is for random-weight decoders).
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): every block of the checkpoint's integer graph
 (:func:`experiments.common.checkpoints.real_graph`), queried on WikiText-2 windows of ``--seq`` tokens.  OPT: the
@@ -39,7 +45,8 @@ which must be rejected.
 
 Record (one JSON line per mode and variant): ``label``, ``git``, ``model``, ``real``, ``smooth``, ``recipe``,
 ``calib_seq``, ``seq``, ``layers``, ``mode``, ``policy``, ``chosen`` (mode C: the plan committed, ``auto``'s pick),
-``wire``, ``lean``, ``lam``, ``rate``, ``prune_last``, ``lookups``, ``reps``, ``columns``, ``group_columns``,
+``wire``, ``lean``, ``lam``, ``rate``, ``prune_last``, ``lookups``, ``prob_max`` (the graph's attention probabilities'
+scale, :func:`pvi.models.decoder.prob_max_of`; None for an image model), ``reps``, ``columns``, ``group_columns``,
 ``device``, ``verifier_device``, ``stream``, ``threads``, ``accepted`` / ``queries``, ``fs``, ``prove_s`` and
 ``verify_s`` (sums of the per-part medians, Fiat--Shamir hashing counted for both), ``prove_s_range`` /
 ``verify_s_range`` (``[min, max]`` of each query's own totals), ``proof_bytes``, ``timings`` and ``bytes`` (per-part
@@ -134,6 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    from pvi.models.decoder import prob_max_of
     from pvi.models.quantize import RANDOM_CNNS, random_cnn, random_inputs
     from pvi.v0.graph_commitment import commit_graph
     from pvi.v0.params import params_for
@@ -145,6 +153,10 @@ def main() -> int:
     args = build_parser().parse_args()
     if args.real and args.recipe == "certified" and (args.smooth is not None or args.calib_seq):
         raise SystemExit("--smooth and --calib-seq are the legacy recipe's: pass --recipe legacy")
+    scales = list(dict.fromkeys(args.prob_max))
+    if (args.real or args.model in RANDOM_CNNS) and scales != [cli.PAPER.prob_max]:
+        raise SystemExit("--prob-max is for random-weight decoders: an image model has no attention, and a "
+                         "checkpoint's recipe fixes its scale")
     cli.apply_runtime(args)
     sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
     device = torch.device(args.device)
@@ -166,7 +178,7 @@ def main() -> int:
             graph = quantize_model(model, data["train_x"])
             xs, _ = next(test_batches(data, args.queries + 1))
             queries = list(quantize_input(graph, xs).split(1))
-        graphs[False], model_ops[False] = graph, None
+        graphs[False, None], model_ops[False] = graph, None
         n_checks = len(graph.mat_ops)
         seq = None
     elif args.real:                 # the checkpoint's integer graph, every block; WikiText-2 windows as queries
@@ -176,10 +188,11 @@ def main() -> int:
                                                       args.recipe)
         recipe_used = checkpoints.recipe_name(calib, args.recipe)
         for prune in on["prune_last"]:
-            graphs[prune], _ = checkpoints.real_graph(model, calib, prune, args.recipe, args.smooth)
+            graph, _ = checkpoints.real_graph(model, calib, prune, args.recipe, args.smooth)
+            graphs[prune, prob_max_of(graph)] = graph
             model_ops[prune] = None    # planned from its own weight ops (OPT's LM head has a bias column)
         del model
-        n_checks = len(graphs[on["prune_last"][0]].mat_ops)
+        n_checks = len(next(iter(graphs.values())).mat_ops)
         seq = args.seq
     else:
         from pvi.commit.cost import decoder_shapes
@@ -187,8 +200,10 @@ def main() -> int:
         cfg = decoder_config(args.model)
         n_layers = args.layers or cfg.n_layers
         for prune in on["prune_last"]:
-            graphs[prune] = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, args.calib_tokens),
-                                          seed=args.seed, prune_last=prune)
+            for scale in scales:
+                graphs[prune, scale] = build_decoder(cfg, n_layers=n_layers,
+                                                     calib_tokens=min(args.seq, args.calib_tokens), seed=args.seed,
+                                                     prune_last=prune, prob_max=scale)
             model_ops[prune] = decoder_shapes(cfg, prune_last=prune)
         tokens = torch.randint(0, cfg.vocab, (args.queries + 1, args.seq),
                                generator=torch.Generator().manual_seed(args.prompt_seed))
@@ -198,24 +213,24 @@ def main() -> int:
     build_s = time.perf_counter() - t0
     policies = args.policy if "C" in args.modes else []
     coms, commit_s = {}, {}
-    for prune, graph in graphs.items():
+    for (prune, scale), graph in graphs.items():
         for policy in policies:
             records.sync(device)
             t0 = time.perf_counter()
-            coms[prune, policy] = commit_graph(graph, args.rate, device=device, policy=policy,
-                                               model_ops=model_ops[prune], cache=args.setup_cache)
+            coms[prune, scale, policy] = commit_graph(graph, args.rate, device=device, policy=policy,
+                                                      model_ops=model_ops[prune], cache=args.setup_cache)
             records.sync(device)
-            commit_s[prune, policy] = time.perf_counter() - t0
+            commit_s[prune, scale, policy] = time.perf_counter() - t0
     build_peak = records.peaks(device)
     env = records.environment(device)
     ok = True
     for mode in args.modes:
         records.reset_peaks(device)
         pairs = {}
-        for prune, graph in graphs.items():
+        for (prune, scale), graph in graphs.items():
             weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
             for policy in (policies if mode == "C" else [None]):
-                c = coms.get((prune, policy))
+                c = coms.get((prune, scale, policy))
                 params = params_for(args.lam, n_checks, rate=args.rate, plan=None if c is None else c.plan,
                                     fiat_shamir=args.fs)
                 for looked in (on["lookups"] if mode != "C" else [False]):
@@ -232,17 +247,18 @@ def main() -> int:
                                     v.precompute(Challenger())
                             prover = Prover(graph, device=device, commitments=c, lean=lean)
                             run_query(prover, v, queries[0], wire=wire)  # warm-up
-                            pairs[prune, policy, looked, lean, wire] = (prover, v, [])
+                            pairs[prune, scale, policy, looked, lean, wire] = (prover, v, [])
         order = list(pairs)
         for i, q in enumerate(queries[1:]):     # interleaved, the first variant rotating
             for key in order[i % len(order):] + order[:i % len(order)]:
                 prover, v, runs = pairs[key]
-                runs.append(run_query(prover, v, q, wire=key[4]))
-        tampered = {key: decoder_tampers(prover, v, queries[0], args.tampers, key[4])
+                runs.append(run_query(prover, v, q, wire=key[5]))
+        tampered = {key: decoder_tampers(prover, v, queries[0], args.tampers, key[5])
                     for key, (prover, v, _) in pairs.items()} if args.tampers else {}
         peak = records.peaks(device)
         first = None
-        for (prune, policy, looked, lean, wire), (_, v, runs) in pairs.items():
+        for key, (_, v, runs) in pairs.items():
+            prune, scale, policy, looked, lean, wire = key
             timing, nbytes, prove, verify = _medians(runs)
             legacy = args.real and args.recipe == "legacy"
             out = {"label": args.label, "git": sha, "model": args.model, "real": args.real or None,
@@ -251,9 +267,9 @@ def main() -> int:
                    "calib_seq": (args.calib_seq or args.seq) if legacy else None,
                    "seq": seq, "layers": args.layers or None,
                    "mode": mode, "policy": policy, "wire": wire, "lean": lean,
-                   **({"chosen": _chosen(policy, coms[prune, policy].plan)} if mode == "C" else {}),
+                   **({"chosen": _chosen(policy, coms[prune, scale, policy].plan)} if mode == "C" else {}),
                    "lam": args.lam, "rate": args.rate,
-                   "prune_last": prune, "lookups": looked,
+                   "prune_last": prune, "lookups": looked, "prob_max": scale,
                    "reps": v.params.reps, "columns": v.params.columns,
                    **({"group_columns": dict(v.params.group_columns)} if v.groups else {}),
                    "device": args.device, "verifier_device": args.verifier_device, "stream": args.stream,
@@ -261,9 +277,10 @@ def main() -> int:
                    "accepted": sum(bool(r["accepted"]) for r in runs), "queries": len(runs),
                    "fs": args.fs, "prove_s": prove, "verify_s": verify, **_spread(runs),
                    "proof_bytes": sum(nbytes.values()),
-                   "timings": timing, "bytes": nbytes, "build_s": build_s, "commit_s": commit_s.get((prune, policy)),
-                   "setup_cache": getattr(coms.get((prune, policy)), "setup_cache", None),  # "hit": commit_s is a load
-                   **({"tampers": tampered[prune, policy, looked, lean, wire]} if tampered else {}),
+                   "timings": timing, "bytes": nbytes, "build_s": build_s,
+                   "commit_s": commit_s.get((prune, scale, policy)),
+                   "setup_cache": getattr(coms.get((prune, scale, policy)), "setup_cache", None),  # "hit": a load
+                   **({"tampers": tampered[key]} if tampered else {}),
                    "peak": peak, "build_peak": build_peak,
                    "host": platform.node(), "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
                    "env": env}

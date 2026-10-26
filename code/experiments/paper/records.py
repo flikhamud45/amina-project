@@ -284,8 +284,9 @@ class Run:
     Every selector keys on the settings that distinguish the package's jobs, so that a record never fills a cell of
     another configuration: the tier, the model, the prompt length, the mode, the blocks (``layers``; None: the full
     model), the verifier device, the label and real or random weights (``real``: None for random weights, else the
-    checkpoint).  Of several matching records (a tier run again) the latest job's is used; of several re-execution
-    records of one variant (e.g. two allocator settings), the fastest.
+    checkpoint); a ``perf.py`` record also by its attention probabilities' scale where an A/B of the improve tier
+    times two scales under one label (``prob_max``).  Of several matching records (a tier run again) the latest job's
+    is used; of several re-execution records of one variant (e.g. two allocator settings), the fastest.
     """
 
     def __init__(self, recs: list[Rec], files: list[Rec] | None = None) -> None:
@@ -320,13 +321,14 @@ class Run:
 
     # ---------------------------------------------------------------- protocol v0 (perf.py)
     def perf(self, tier, model, seq, mode, *, vdev="cpu", layers=None, label=None, real=None, fs=True,
-             stream=None) -> Rec | None:
+             stream=None, prob_max=None) -> Rec | None:
         def ok(r):
             d = r.d
             return (d.get("model") == model and d.get("seq") == seq and d.get("mode") == mode
                     and str(d.get("verifier_device", "cpu")).split(":")[0] == vdev and d.get("layers") == layers
                     and (label is None or d.get("label") == label) and (d.get("real") or None) == real
-                    and bool(d.get("fs")) == fs and (stream is None or bool(d.get("stream")) == stream))
+                    and bool(d.get("fs")) == fs and (stream is None or bool(d.get("stream")) == stream)
+                    and (prob_max is None or d.get("prob_max") == prob_max))
         return self._last([r for r in self.kind("perf", tier) if ok(r)])
 
     # ---------------------------------------------------------------- V1 (v1_bytes.py)

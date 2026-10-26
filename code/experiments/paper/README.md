@@ -31,9 +31,11 @@ correctness checks.
 ### `bench.py`
 The benchmark's cells, from `artifacts/comparison/tables_<name>/` (`comparison/aggregate.py --platform <name>`):
 `CELLS` defines each cost-table cell by mode, challenges, lambda, verifier threads and settings tags (`wire`,
-`gpuv`, `stream`, `prune`, `lookups`, `thr1`, `pol<plan>`); `Bench.llm_cost` and `Bench.cnn_cost` read a cell's
-prover and verifier time and its proof (full builds only, the streaming verifier's `verify_total` counted once);
-`definition_tagsets(policy)` gives the defining cells to `comparison/count_outcomes.py --definition`.
+`gpuv`, `stream`, `prune`, `lookups`, `thr1`, `pol<plan>`, and the decoders' `pmax<n>`: `pmax2047`, the 11-bit
+attention probabilities of the final run, `DEFAULT_PROB_MAX`; none for the stored runs' 8-bit cells);
+`Bench.llm_cost` and `Bench.cnn_cost` read a cell's prover and verifier time and its proof (full builds only, the
+streaming verifier's `verify_total` counted once); `definition_tagsets(policy, prob_max)` gives the defining cells to
+`comparison/count_outcomes.py --definition`.
 
 ### `format.py`
 The paper's number formats (times, bytes, ratios, ranges, token and parameter counts, signed and scientific
@@ -79,8 +81,9 @@ with layout checks) and `fig:breakeven` (from the break-even's crossovers, drawn
 The command: read, check, build, write. Options: `--logs` (default `../logs/<platform>`), `--platform` (default
 `final`), `--bench` (the folder of `tables_<name>/` and `raw_<name>/`, default `artifacts/comparison`), `--policy`
 (mode C's plan; default the plan the records name, a mode-C record's `policy` or the benchmark tables' `pol<plan>`,
-else `bench.DEFAULT_POLICY`, `cnn18c`), `--out` (default `paper_sp2027/generated`), `--figures` (default
-`paper_sp2027/figures`; `''` for none) and `--schematics`, `--expect <dry-run listing>`, `--check`, `--strict`,
+else `bench.DEFAULT_POLICY`, `cnn18c`), `--prob-max` (the decoders' attention probabilities' scale of the benchmark
+cells, default 2047; 255 reads the stored runs' 8-bit cells), `--out` (default `paper_sp2027/generated`),
+`--figures` (default `paper_sp2027/figures`; `''` for none) and `--schematics`, `--expect <dry-run listing>`, `--check`, `--strict`,
 `--rehearsal`, `--no-byte-model` (skips `tab:params`, `tab:setup` and the break-even, which take several minutes on a
 laptop CPU), `--verbose`. `SAME_VALUE` pairs each table cell with the macro that prints the same value of the same
 record, `TWO_JOBS` each quantity that two jobs measure (the serving harness's prover and the benchmark's, the
@@ -95,6 +98,11 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
   records of more than one GPU or CPU model, an honest query rejected or an attack accepted in the benchmark's
   outcome counts, a table cell that disagrees with the macro printing the same value (`SAME_VALUE`, beyond one unit
   of the coarser rounding), in the files written and in `paper_sp2027/fallback/` (`CHECK FAILED fallback:`).
+* `CHECK FAILED text:`: what the text states about values without printing them: a loss of accuracy that is not
+  negative (`macros.LOSSES`), and a record of a cost measurement (`macros.GRAPH_KINDS`, outside the quality tier)
+  whose decoder is not at the 11-bit attention probabilities the text states (`prob_max` 2047), but for the 8-bit
+  side of the improve tier's A/B (`macros.PROB_BITS`, label `prob-bits`; `\ProbBitsBytes`, `\ProbBitsTime`).
+  `--rehearsal` reports these as warnings.
 * `PARSE`: a log line that starts with `{` and does not parse, or is not a record of a known kind; a table or macro
   family that cannot read a record; an `--expect` listing that does not end with run.sh's summary line
   (`# <tiers>: N jobs, ...`) for the N jobs it lists (a dry run that stopped early, e.g. at a tier's check of

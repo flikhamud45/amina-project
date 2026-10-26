@@ -10,27 +10,31 @@ A cell is named by its settings (``costs/bench.py``'s docstring): the mode, the 
 ``int`` for interactive), lambda, the prompt length and blocks of a decoder, then the tags of the settings that
 differ from the reference -- ``thr<n>`` (verifier threads other than 8), ``wire`` (the compact encoding), ``gpuv``
 and ``stream`` (the streaming GPU verifier), ``batch``, ``prune`` (the pruned last block), ``lookups`` (the verifier's
-own embedding rows, modes K and Kpre) and ``pol<plan>`` (mode C under a commitment plan).  The final run's cells
-(``package/run.sh``'s ``bench`` and ``batch`` tiers) are all under Fiat--Shamir, except the interactive cells of the
-comparison with zkLLM (``C:int`` at 2,048 tokens) and with Maverick (``Kpre:int``, lambda 40, one thread).
+own embedding rows, modes K and Kpre), ``pmax<n>`` (decoders whose attention probabilities' scale is not the stored
+cells' 255: the final run's ``pmax2047``, 11 bits) and ``pol<plan>`` (mode C under a commitment plan).  The final
+run's cells (``package/run.sh``'s ``bench`` and ``batch`` tiers) are all under Fiat--Shamir, except the interactive
+cells of the comparison with zkLLM (``C:int`` at 2,048 tokens) and with Maverick (``Kpre:int``, lambda 40, one
+thread).
 
     ===================  =====  ==========  ======  =======  ====================================
     cell                 mode   challenges  lambda  threads  tags
     ===================  =====  ==========  ======  =======  ====================================
-    ``c_cpu``            C      fs          128     8        wire, prune, pol<plan>
-    ``c_gpu``            C      fs          128     8        wire, gpuv, stream, prune, pol<plan>
-    ``kpre_cpu``         Kpre   fs          128     8        wire, prune, lookups
-    ``kpre_gpu``         Kpre   fs          128     8        wire, gpuv, stream, prune, lookups
-    ``c_cpu_int``        C      int         128     8        wire, prune, pol<plan>
-    ``c_gpu_int``        C      int         128     8        wire, gpuv, stream, prune, pol<plan>
-    ``maverick``         Kpre   int         40      1        thr1, prune, lookups (no compact encoding)
-    ``maverick_wire``    Kpre   int         40      1        thr1, wire, prune, lookups
+    ``c_cpu``            C      fs          128     8        wire, prune, pmax, pol<plan>
+    ``c_gpu``            C      fs          128     8        wire, gpuv, stream, prune, pmax, pol<plan>
+    ``kpre_cpu``         Kpre   fs          128     8        wire, prune, lookups, pmax
+    ``kpre_gpu``         Kpre   fs          128     8        wire, gpuv, stream, prune, lookups, pmax
+    ``c_cpu_int``        C      int         128     8        wire, prune, pmax, pol<plan>
+    ``c_gpu_int``        C      int         128     8        wire, gpuv, stream, prune, pmax, pol<plan>
+    ``maverick``         Kpre   int         40      1        thr1, prune, lookups, pmax (no compact encoding)
+    ``maverick_wire``    Kpre   int         40      1        thr1, wire, prune, lookups, pmax
     image models, C      C      fs / int    l       8        wire, pol<plan>
     image models, Kpre   K/Kpre int         l       8        wire
     ===================  =====  ==========  ======  =======  ====================================
 
-The batch tier's cells add the tag ``batch``.  :func:`definition_tagsets` gives these tag sets to
-``comparison/count_outcomes.py --definition``, so that the outcome counts cover exactly the defining cells.
+``pmax`` stands for ``pmax<n>`` of the run's scale (:data:`DEFAULT_PROB_MAX`; none for the stored runs' 8-bit
+cells, :data:`STORED_PROB_MAX`).  The batch tier's cells add the tag ``batch``.  :func:`definition_tagsets` gives
+these tag sets to ``comparison/count_outcomes.py --definition``, so that the outcome counts cover exactly the
+defining cells.
 """
 from __future__ import annotations
 
@@ -54,6 +58,12 @@ DEFAULT_POLICY = "cnn18c"
 """Mode C's commitment plan of the final run: the torch-free copy of ``experiments.common.cli.PAPER.policy``, which
 ``paper/tables.py``, ``paper/numbers.py`` and ``comparison/count_outcomes.py`` read (``tests/test_paper_numbers.py``
 checks that it equals ``cli.PAPER.policy`` and run.sh's ``POL`` default)."""
+DEFAULT_PROB_MAX = 2047
+"""The attention probabilities' scale of the final run's decoders (11 bits, as the text states): the torch-free copy of
+``experiments.common.cli.PAPER.prob_max`` (``tests/test_paper_numbers.py`` checks that they agree)."""
+STORED_PROB_MAX = 255
+"""The scale of the stored runs' decoder cells, whose names carry no ``pmax`` tag (``costs/bench.py``'s
+``STORED_PROB_MAX``)."""
 
 
 @dataclass(frozen=True)
@@ -69,23 +79,33 @@ class Spec:
 
 
 CELLS = {
-    "c_cpu": Spec("C", "fs", 128, 8, ("wire", "prune", "pol")),
-    "c_gpu": Spec("C", "fs", 128, 8, ("wire", "gpuv", "stream", "prune", "pol")),
-    "kpre_cpu": Spec("Kpre", "fs", 128, 8, ("wire", "prune", "lookups")),
-    "kpre_gpu": Spec("Kpre", "fs", 128, 8, ("wire", "gpuv", "stream", "prune", "lookups")),
-    "c_cpu_int": Spec("C", "int", 128, 8, ("wire", "prune", "pol")),
-    "c_gpu_int": Spec("C", "int", 128, 8, ("wire", "gpuv", "stream", "prune", "pol")),
-    "maverick": Spec("Kpre", "int", 40, 1, ("thr1", "prune", "lookups")),
-    "maverick_wire": Spec("Kpre", "int", 40, 1, ("thr1", "wire", "prune", "lookups")),
+    "c_cpu": Spec("C", "fs", 128, 8, ("wire", "prune", "pmax", "pol")),
+    "c_gpu": Spec("C", "fs", 128, 8, ("wire", "gpuv", "stream", "prune", "pmax", "pol")),
+    "kpre_cpu": Spec("Kpre", "fs", 128, 8, ("wire", "prune", "lookups", "pmax")),
+    "kpre_gpu": Spec("Kpre", "fs", 128, 8, ("wire", "gpuv", "stream", "prune", "lookups", "pmax")),
+    "c_cpu_int": Spec("C", "int", 128, 8, ("wire", "prune", "pmax", "pol")),
+    "c_gpu_int": Spec("C", "int", 128, 8, ("wire", "gpuv", "stream", "prune", "pmax", "pol")),
+    "maverick": Spec("Kpre", "int", 40, 1, ("thr1", "prune", "lookups", "pmax")),
+    "maverick_wire": Spec("Kpre", "int", 40, 1, ("thr1", "wire", "prune", "lookups", "pmax")),
 }
 """The language-model cells of the final run (module docstring)."""
 CNN_C = ("wire", "pol")
 CNN_K = ("wire",)
 
 
-def tags_of(spec_tags, policy: str) -> frozenset:
-    """A spec's tags with ``pol`` replaced by ``pol<policy>``."""
-    return frozenset(f"pol{policy}" if t == "pol" else t for t in spec_tags)
+def tags_of(spec_tags, policy: str, prob_max: int = DEFAULT_PROB_MAX) -> frozenset:
+    """A spec's tags with ``pol`` replaced by ``pol<policy>`` and ``pmax`` by ``pmax<prob_max>`` (dropped at the
+    stored cells' scale, :data:`STORED_PROB_MAX`)."""
+    out = set()
+    for t in spec_tags:
+        if t == "pol":
+            out.add(f"pol{policy}")
+        elif t == "pmax":
+            if prob_max != STORED_PROB_MAX:
+                out.add(f"pmax{prob_max}")
+        else:
+            out.add(t)
+    return frozenset(out)
 
 
 def tagset(variant: str) -> frozenset:
@@ -93,14 +113,15 @@ def tagset(variant: str) -> frozenset:
     return frozenset(t for t in (variant or "").split("_") if t)
 
 
-def definition_tagsets(policy: str = DEFAULT_POLICY) -> dict:
-    """``{(suite, mode): {tag sets}}`` of the defining defence and tamper cells under the plan ``policy``: what
-    ``comparison/count_outcomes.py --definition`` counts.  Only cells of the compact encoding (``wire``): the
+def definition_tagsets(policy: str = DEFAULT_POLICY, prob_max: int = DEFAULT_PROB_MAX) -> dict:
+    """``{(suite, mode): {tag sets}}`` of the defining defence and tamper cells under the plan ``policy``, the
+    decoders' at the attention probabilities' scale ``prob_max``: what ``comparison/count_outcomes.py --definition``
+    counts.  Only cells of the compact encoding (``wire``): the
     uncompressed cell of the comparison with Maverick is a by-product.  A language model's CPU-verifier cell may also
     be a batch cell (the tag ``batch`` added)."""
     out: dict = defaultdict(set)
     for spec in CELLS.values():
-        tags = tags_of(spec.tags, policy)
+        tags = tags_of(spec.tags, policy, prob_max)
         if "wire" not in tags:
             continue
         out[("llm", spec.mode)].add(tags)
@@ -126,11 +147,13 @@ def _one_verifier(names, where: str) -> None:
 
 
 class Bench:
-    """The aggregated tables of one platform (``tables_<platform>/``); an absent folder reads as empty."""
+    """The aggregated tables of one platform (``tables_<platform>/``); an absent folder reads as empty.  Its language
+    models' cells are those of mode C's plan ``policy`` and the attention probabilities' scale ``prob_max``."""
 
-    def __init__(self, tables: Path | None, policy: str = DEFAULT_POLICY) -> None:
+    def __init__(self, tables: Path | None, policy: str = DEFAULT_POLICY, prob_max: int = DEFAULT_PROB_MAX) -> None:
         self.dir = tables
         self.policy = policy
+        self.prob_max = prob_max
         self.summary = self._read("measured_summary.csv")
         self.llm = self._read("llm_full_model.csv")
         self.idx = {}
@@ -200,7 +223,7 @@ class Bench:
         """``{prove, verify, bytes, params, n_layers, cell}`` of one language model's full-model cell (``cell`` a key
         of :data:`CELLS`; ``batch``: a batch size of the batch tier), from measured rows only, or None."""
         spec = CELLS[cell]
-        want = tags_of(spec.tags, self.policy) | ({"batch"} if batch else set())
+        want = tags_of(spec.tags, self.policy, self.prob_max) | ({"batch"} if batch else set())
         d, hit = {}, None
         for r in self.llm:
             if (r["model"], r["mode"], r["challenges"]) != (model, spec.mode, spec.challenges):
@@ -237,7 +260,7 @@ class Bench:
         """``{B: {bytes, prove, verify}}`` per query of a batch cell (``measured_summary.csv``: the batch's median
         over its trials, divided by ``B``)."""
         spec = CELLS[cell]
-        want = tags_of(spec.tags, self.policy) | {"batch"}
+        want = tags_of(spec.tags, self.policy, self.prob_max) | {"batch"}
         out: dict = defaultdict(dict)
         pat = re.compile(rf"^defence_{spec.mode}_{spec.challenges}_lam{spec.lam}_T{seq}_L\d+(.*)$")
         for (suite, m, c, metric, batch, *_), r in self.idx.items():

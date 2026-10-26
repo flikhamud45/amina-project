@@ -19,8 +19,9 @@ The families, with the record each number comes from:
   client of Llama-2-7B stores, from the shapes (:func:`kpre_storage`);
 * the outcome counts (``bench`` and ``batch`` tiers, ``comparison/count_outcomes.py`` over ``raw_<platform>/``);
 * the cost of the defence, batches against one opening, V1, serving, the comparison with published systems,
-  re-execution, real weights, long prompts, the improvements, generation (their tiers' records, through the table
-  selections of :mod:`experiments.paper.tables`);
+  re-execution, real weights, long prompts, the improvements (with the A/B of 8- against 11-bit attention
+  probabilities, :data:`PROB_BITS`), generation (their tiers' records, through the table selections of
+  :mod:`experiments.paper.tables`);
 * the break-even (``deployment/ev_breakeven.py``'s formulas on the run's claims, verifier and re-execution times);
 * quality and zero-shot accuracy (``quality`` tier), the sampler's distance (``tv`` tier) and the attack (``attack``
   tier's documents);
@@ -30,7 +31,9 @@ The families, with the record each number comes from:
 
 A number that the text states as a bound ("at most", "up to", "within", "less than") is rounded up (:func:`ceil_pct`,
 :func:`ceil_fixed`, :func:`ceil_sig`, :func:`ceil_about`, :func:`ceil_sci`), one stated as "at least" is rounded down
-(:func:`floor_sig`), so that the printed bound holds for the measured value.
+(:func:`floor_sig`), so that the printed bound holds for the measured value.  What the text states about values
+without printing them is checked (:data:`TEXT_CLAIM`): the losses it names (:data:`LOSSES`) and the 11-bit attention
+probabilities of every cost measurement (:func:`prob_scale_claims`).
 """
 from __future__ import annotations
 
@@ -41,7 +44,8 @@ from dataclasses import dataclass
 
 from experiments.paper import format as f
 from experiments.paper import tables as T
-from experiments.paper.records import Rec, v1_timed
+from experiments.paper.bench import DEFAULT_PROB_MAX, STORED_PROB_MAX
+from experiments.paper.records import Rec, Run, v1_timed
 
 
 @dataclass
@@ -244,14 +248,15 @@ COUNTS = ("NHonest", "NAttacks", "NFreivalds", "NColumnsCode", "NColumnsMerkle",
 def counts(c: Collector, ctx: T.Ctx, problems: list) -> None:
     """The completeness and soundness counts of the run's benchmark records (every honest query accepted, every
     attack rejected, and the check that rejected each) over the defining cells, as ``comparison/count_outcomes.py
-    --platform <name> --definition --policy <plan>`` counts them."""
+    --platform <name> --definition --policy <plan> --prob-max <scale>`` counts them."""
     from experiments.comparison import count_outcomes as co
     from experiments.paper.bench import definition_tagsets
     root = ctx.bench.dir.parent / ctx.bench.dir.name.replace("tables_", "raw_", 1) if ctx.bench.dir else None
     m = None
     if root is not None and root.is_dir():
         try:
-            m = co.macros(co.count_runs([root], ctx.policy, (), definition_tagsets(ctx.policy)), "Final")
+            definition = definition_tagsets(ctx.policy, ctx.bench.prob_max)
+            m = co.macros(co.count_runs([root], ctx.policy, (), definition), "Final")
         except SystemExit as e:                     # an honest query rejected or an attack accepted
             problems.append(f"CHECK FAILED outcome counts ({root.name}): {e}")
     for k in COUNTS:
@@ -593,6 +598,54 @@ def comparison(c: Collector, ctx: T.Ctx) -> None:
 
 
 # ================================================================================================ improvements
+PROB_BITS = ("prob-bits", "llama2-7b", 2, 2048)
+"""The improve tier's A/B of 8- against 11-bit attention probabilities (``perf.py --prob-max 255 2047``, modes Kpre
+and C, the CPU verifier, the same queries): its label, model, blocks and prompt tokens."""
+PROB_SCALES = (STORED_PROB_MAX, DEFAULT_PROB_MAX)
+"""The A/B's two scales: the 8-bit graphs and the paper's 11-bit ones."""
+
+
+def prob_bits_changes(run: Run) -> tuple[float | None, float | None, list]:
+    """The A/B of :data:`PROB_BITS`: the largest relative change from 8 to 11 bits, over modes Kpre and C, of the
+    proof's bytes and of the prover's and the CPU verifier's medians, and its records; ``(None, None, [])`` while a
+    record is missing."""
+    label, model, layers, seq = PROB_BITS
+    pairs = [[run.perf("improve", model, seq, mode, layers=layers, label=label, prob_max=p) for p in PROB_SCALES]
+             for mode in ("Kpre", "C")]
+    if any(r is None for pair in pairs for r in pair):
+        return None, None, []
+    nbytes = max(abs(b.d["proof_bytes"] / a.d["proof_bytes"] - 1) for a, b in pairs)
+    times = max(abs(b.d[k] / a.d[k] - 1) for a, b in pairs for k in ("prove_s", "verify_s"))
+    return nbytes, times, [r for pair in pairs for r in pair]
+
+
+GRAPH_KINDS = ("perf", "v1", "gen", "serve", "reexec", "setup", "open_ab", "forward_ab", "encode_ab", "fold_ab",
+               "gpu_profile", "v1_phases")
+"""The record kinds of the cost measurements whose scripts build an integer decoder and record its attention
+probabilities' scale (``prob_max``)."""
+
+
+def prob_scale_claims(run: Run) -> list[str]:
+    """The text states (``quality.tex``) that the certified models and the cost measurements use 11-bit attention
+    probabilities: every record of :data:`GRAPH_KINDS` outside the quality tier builds its decoder at
+    :data:`DEFAULT_PROB_MAX`, but for the 8-bit side of the A/B of :data:`PROB_BITS`; an image model (``perf.py``
+    without a prompt length) and a floating-point re-execution have no such scale.  A failure is a
+    :data:`TEXT_CLAIM` line."""
+    bad = []
+    for r in run.recs:
+        d = r.d
+        if r.kind not in GRAPH_KINDS or r.tier in (None, "quality"):
+            continue
+        if (r.kind == "perf" and d.get("seq") is None) or (r.kind == "reexec" and d.get("variant") not in T.EXACT):
+            continue
+        if r.kind == "perf" and r.tier == "improve" and d.get("label") == PROB_BITS[0]:
+            continue
+        if d.get("prob_max") != DEFAULT_PROB_MAX:
+            bad.append(f"{TEXT_CLAIM} {r.source} builds its decoder at prob_max {d.get('prob_max')}, while the text "
+                       f"states 11-bit attention probabilities ({DEFAULT_PROB_MAX}) for every cost measurement")
+    return bad
+
+
 def improvements(c: Collector, ctx: T.Ctx) -> None:
     run = ctx.run
     gain = lambda kind, m, layers: (lambda p: p[0] / p[1] if p[0] and p[1] else None)(   # noqa: E731
@@ -625,6 +678,11 @@ def improvements(c: Collector, ctx: T.Ctx) -> None:
             and r.d.get("device") == "cpu" and r.d.get("path") != "float64"]
     c.put("KpreKeyLlama", fold[-1].d.get("precompute_s") if fold else None, fold[-1] if fold else None,
           lambda v: f"{v:.1f}")
+    # 11-bit against 8-bit attention probabilities ("at most": rounded up)
+    nbytes, times, recs = prob_bits_changes(run)
+    src = recs[-1] if recs else "improve tier, perf.py --prob-max 255 2047"
+    c.put("ProbBitsBytes", nbytes, src, lambda v: ceil_sig(100 * v, 1))
+    c.put("ProbBitsTime", times, src, ceil_pct)
 
 
 # ================================================================================================ real weights
@@ -1311,6 +1369,7 @@ def build(ctx: T.Ctx, problems: list) -> tuple[dict[str, Macro], dict | None]:
         raw = c.m[name].raw if name in c.m else None
         if raw is not None and raw >= 0:
             problems.append(f"{TEXT_CLAIM} {name} is {100 * raw:+.2f} points, which the text calls a loss")
+    problems += prob_scale_claims(ctx.run)
     for name in names():
         c.m.setdefault(name, Macro(name, None, None, ""))
     return c.m, be

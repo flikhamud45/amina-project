@@ -661,9 +661,10 @@ def test_the_lookup_byte_model():
 
 def test_bench_names_the_pruned_and_lookup_cells_by_the_settings_that_change_them(monkeypatch):
     """``_prune`` names every decoder cell built with the pruned last block, ``_lookups`` only the K and Kpre cells
-    whose verifier reads the embedding rows itself (and ``_pol<name>`` only the commitment and mode-C cells), so one
-    run of every mode names each cell as the stored cells measured under the same settings; image models have neither
-    setting."""
+    whose verifier reads the embedding rows itself, ``_pmax<n>`` every decoder cell whose attention probabilities'
+    scale is not the stored cells' 255 (the default 2047: ``_pmax2047``), and ``_pol<name>`` only the commitment and
+    mode-C cells, so one run of every mode names each cell as the stored cells measured under the same settings; image
+    models have none of these settings."""
     from experiments.costs import bench
     monkeypatch.setattr(sys, "argv", ["bench.py", "cnn", "--model", "lenet5", "--gen", "4", "--platform", "test"])
     with pytest.raises(SystemExit, match="decoders"):
@@ -677,20 +678,21 @@ def test_bench_names_the_pruned_and_lookup_cells_by_the_settings_that_change_the
     bench.main()
     args = seen["args"]
     assert args.prune_last and args.lookups and args.wire and args.lean and args.policy == "cnn18c"
-    assert bench.variant(args, "llm", "defence_Kpre_int_lam40_T8_L1") == "_wire_prune_lookups"
-    assert bench.variant(args, "llm", "defence_K_int_lam40_T8_L1") == "_wire_prune_lookups"
-    assert bench.variant(args, "llm", "defence_C_fs_lam40_T8_L1") == "_wire_prune_polcnn18c"
-    assert bench.variant(args, "llm", "commit_T8_L1") == "_wire_prune_polcnn18c"
-    assert bench.variant(args, "llm", "tamper_C_int_lam40_T8_L1") == "_wire_prune_polcnn18c"
+    assert args.prob_max == 2047
+    assert bench.variant(args, "llm", "defence_Kpre_int_lam40_T8_L1") == "_wire_prune_lookups_pmax2047"
+    assert bench.variant(args, "llm", "defence_K_int_lam40_T8_L1") == "_wire_prune_lookups_pmax2047"
+    assert bench.variant(args, "llm", "defence_C_fs_lam40_T8_L1") == "_wire_prune_pmax2047_polcnn18c"
+    assert bench.variant(args, "llm", "commit_T8_L1") == "_wire_prune_pmax2047_polcnn18c"
+    assert bench.variant(args, "llm", "tamper_C_int_lam40_T8_L1") == "_wire_prune_pmax2047_polcnn18c"
     assert bench.variant(args, "cnn", "defence_K_int_lam40_rate4") == "_wire"
     assert bench.variant(args, "cnn", "facts") == "_wire"
     basic = bench.build_parser().parse_args(["llm", "--model", "gpt2", "--platform", "test", "--policy", "per-op",
-                                            "--no-wire", "--no-prune-last", "--no-lookups"])
+                                            "--no-wire", "--no-prune-last", "--no-lookups", "--prob-max", "255"])
     for cell in ("defence_Kpre_int_lam40_T8_L1", "defence_C_int_lam40_T8_L1", "commit_T8_L1"):
         assert bench.variant(basic, "llm", cell) == ""
     lean_off = bench.build_parser().parse_args(["llm", "--model", "gpt2", "--platform", "test", "--no-lean",
                                                "--threads", "1", "--verifier-device", "cuda", "--verifier-impl",
-                                               "stream", "--batches", "4"])
+                                               "stream", "--batches", "4", "--prob-max", "255"])
     assert bench.variant(lean_off, "llm", "defence_Kpre_int_lam40_T8_L1") == \
         "_thr1_nolean_wire_gpuv_stream_batch_prune_lookups"
 
@@ -714,7 +716,7 @@ def test_bench_tamper_cells_with_wire_reject_rows_outside_int8(monkeypatch, tmp_
                                             "--llm-tampers", "34",                    # (attack 33 hits a table)
                                             "--platform", "test"])
     bench.suite_llm(args, {"device": "cpu", "cpu": "test", "torch_threads": 1})
-    cell = tmp_path / "llm" / gpt.name / "tamper_C_int_lam40_T9_L2_wire_polR8c.jsonl"
+    cell = tmp_path / "llm" / gpt.name / "tamper_C_int_lam40_T9_L2_wire_pmax2047_polR8c.jsonl"
     rows = [json.loads(line) for line in cell.read_text().splitlines()]
     attempts = [r for r in rows if r["metric"] == "rejected"]
     assert len(attempts) == 3 * 34 + 3 and all(r["value"] == 1 for r in attempts)

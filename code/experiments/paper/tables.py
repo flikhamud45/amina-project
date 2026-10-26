@@ -111,7 +111,8 @@ class Ctx:
 def protocol(ctx: Ctx, extra: str = "") -> str:
     """The header comment's protocol line."""
     return (f"protocol: Fiat-Shamir (unless stated), lambda 128, mode C under the plan {ctx.policy}, the compact "
-            f"encoding, the pruned last block, the verifier's own embedding rows in Kpre; {ctx.platform}"
+            f"encoding, the pruned last block, the verifier's own embedding rows in Kpre, decoders' attention "
+            f"probabilities at prob_max {ctx.bench.prob_max}; {ctx.platform}"
             + (f"; {extra}" if extra else ""))
 
 

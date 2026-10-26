@@ -14,7 +14,7 @@ the operators ranked by CUDA time and by CPU time, and one JSON line (``kind`` `
 sum of the device-side events' own time, as the profiler's table totals it) and, for each ``--share`` operator
 (default ``aten::copy_``, the host-to-device and device-to-host copies; ``aten::_int_mm``, the int8 GEMMs;
 ``aten::index_select``; and ``_attn_kernel``, the fused attention kernel), its CUDA time and its share of the total,
-with the timings, the acceptance, the GPU and ``env``.  Needs a CUDA GPU; minutes.
+with the timings, the acceptance, ``prob_max``, the GPU and ``env``.  Needs a CUDA GPU; minutes.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def main() -> int:
         raise SystemExit("this profiles the GPU verifier: --device cuda")
     cfg = decoder_config(args.model)
     graph = build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=min(args.seq, cli.CALIB_TOKENS),
-                          seed=args.seed, prune_last=args.prune_last)
+                          seed=args.seed, prune_last=args.prune_last, prob_max=args.prob_max)
     ops = decoder_shapes(cfg, prune_last=args.prune_last)
     if args.mode == "C":
         coms = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=ops, cache=args.setup_cache)
@@ -105,7 +105,7 @@ def main() -> int:
         shares[name] = {"cuda_s": t / 1e6, "share": t / total if total else None}
     records.emit({"kind": "gpu_profile", "git": records.git_sha(CODE), "model": args.model,
                   "layers": args.layers or cfg.n_layers, "seq": args.seq, "mode": args.mode, "fs": args.fs,
-                  "wire": args.wire, "accepted": bool(warm["accepted"] and out["accepted"]),
+                  "wire": args.wire, "prob_max": args.prob_max, "accepted": bool(warm["accepted"] and out["accepted"]),
                   "timings": out["timings"], "cuda_total_s": total / 1e6, "shares": shares,
                   "gpu": torch.cuda.get_device_name(device), "host": platform.node(),
                   "env": records.environment(device)})

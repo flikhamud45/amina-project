@@ -12,7 +12,7 @@ two platforms agree on every hardware-independent value. `paper/numbers.py` read
 | `tab:eval-compare`, the "theirs" columns (e.g. zkLLM on Llama-2-7B at 2,048 tokens: 10.3 min, 2.36 s, 183 kB); `tab:eval-compare-v1` and the LeNet-5 paragraph (`app:eval-compare-v1`); published costs quoted in the text | `literature.py` | `python -m experiments.comparison.literature` | `artifacts/comparison/tables/reported_curated.csv` (41 rows) |
 | `tab:eval-compare`, the "ours" columns; `tab:eval-llm`; the image models' costs (Sec. `sec:eval-cost`, "Costs") | `aggregate.py` | `python -m experiments.comparison.aggregate --platform final` (the run); the stored roots: `--platform l40s_improved` (and `l40s_improved2`, `l40s_improved3`) | `artifacts/comparison/tables_<platform>/`, read by `paper/numbers.py` |
 | Sec. `sec:break`: the path test's detection probabilities and bytes on the image models | `aggregate.py` | `python -m experiments.comparison.aggregate --platform l40s` | `artifacts/comparison/tables_l40s/` |
-| Sec. `sec:eval-setup`: "accepted all 3,792 honest queries and rejected all 2,512 attacks", "Freivalds' check rejected 1,601, the column check 853, the Merkle check 56 and the range check 2" | `count_outcomes.py` | `python -m experiments.comparison.count_outcomes --platform l40s_improved,l40s_improved2,l40s_improved3 --definition --policy auto` | stdout |
+| Sec. `sec:eval-setup`: "accepted all 3,792 honest queries and rejected all 2,512 attacks", "Freivalds' check rejected 1,601, the column check 853, the Merkle check 56 and the range check 2" | `count_outcomes.py` | `python -m experiments.comparison.count_outcomes --platform l40s_improved,l40s_improved2,l40s_improved3 --definition --policy auto --prob-max 255` | stdout |
 | `app:eval-setup`: "Proof sizes do not depend on the hardware" (all 1,978 hardware-independent values of the L40S run reproduced on an RTX 2080 Ti with a Xeon Silver 4114) | `fingerprint_check.py` | `python -m experiments.comparison.fingerprint_check artifacts/comparison/raw_l40s artifacts/comparison/raw_rtx2080ti-v2` | stdout (`1978 fingerprints compared, 0 problems`), exit status |
 
 Run every command from `code/` with the checkout's library first on the path (`PYTHONPATH=src:.` on Linux,
@@ -79,11 +79,12 @@ and every attack (the `rejected` records of the tamper cells and the one tampere
 cell), with the check that rejected each (`stage`: `freivalds`, `columns_code`, `columns_merkle`, `range_or_shape`).
 Only finished cells count, plus the honest rejections that stopped a job (kept as `<cell>.rejected-<run_id>.jsonl`).
 `--definition` keeps only the defining defence and tamper cells of the base implementation
-(`experiments.paper.bench.definition_tagsets()`); `--require-tag TAG` only the cells whose name carries a tag;
-`--policy` (default `cnn18c`; the stored runs used `auto`) counts apart the attacks on the cells built under that
-commitment plan. It prints the counts; `paper/numbers.py` calls its `count_runs` and `macros` on the final run's root
-(`\FinalNHonest`, `\FinalNAttacks`, `\FinalNFreivalds`, ...), and `macros` refuses if an honest query was rejected
-or an attack accepted.
+(`experiments.paper.bench.definition_tagsets()`), the language models' at the attention probabilities' scale
+`--prob-max` (default 2047, the final run's cells tagged `pmax2047`; the stored runs' 8-bit cells: 255);
+`--require-tag TAG` only the cells whose name carries a tag; `--policy` (default `cnn18c`; the stored runs used
+`auto`) counts apart the attacks on the cells built under that commitment plan. It prints the counts;
+`paper/numbers.py` calls its `count_runs` and `macros` on the final run's root (`\FinalNHonest`, `\FinalNAttacks`,
+`\FinalNFreivalds`, ...), and `macros` refuses if an honest query was rejected or an attack accepted.
 
 ### `fingerprint_check.py`
 
@@ -92,7 +93,9 @@ so must not depend on the hardware: the parameter count, the int8 model's bytes 
 the security bits, the bytes of the claims, of `u` and of the opened columns, and every verdict; the float model's
 accuracy within `--accuracy-tolerance` (0.002: cuDNN may change its last digits). It prints every mismatch, every
 honest rejection and every accepted attack of `new`, and exits 1 on any problem or when nothing could be compared.
-Before a long run on new hardware it checks the new root's first cells against a stored root.
+Before a long run on new hardware it checks the new root's first cells against a stored root. Cells are compared by
+name, so the final run's 11-bit decoder cells (tagged `pmax2047`) have no counterpart in the stored 8-bit roots: the
+comparison then covers the image models' cells.
 
 ## Reproducing the paper's numbers
 

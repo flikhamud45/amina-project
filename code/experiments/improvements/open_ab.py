@@ -23,8 +23,8 @@ The float64 path is the implementation option :data:`OPTION` of :mod:`pvi.option
 Record (one JSON line per model, block count and variant ``float64`` / ``int8``): the medians of the prover's parts
 (``timings``: ``prove_forward``, ``prove_fold``, ``prove_open``, ...), their sum ``prove_s`` (the prover's total, the
 table's value), ``open_fold_s`` (``prove_fold + prove_open``), ``vs_float64``, ``identical``, ``accepted`` of
-``queries``, ``int8_ok``, the GPU and ``env``.  Needs a CUDA GPU with int8 GEMMs (an RTX 2080 Ti or newer);
-minutes per build.
+``queries``, ``int8_ok``, ``prob_max``, the GPU and ``env``.  Needs a CUDA GPU with int8 GEMMs (an RTX 2080 Ti or
+newer); minutes per build.
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def main() -> int:
     ok = True
     for n_layers in args.layers:
         graph = build_decoder(cfg, n_layers=n_layers or cfg.n_layers, calib_tokens=min(args.seq, cli.CALIB_TOKENS),
-                              seed=args.seed, prune_last=args.prune_last)
+                              seed=args.seed, prune_last=args.prune_last, prob_max=args.prob_max)
         com = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=model_ops,
                            cache=args.setup_cache)
         params = params_for(args.lam, len(model_ops), rate=args.rate, plan=com.plan, fiat_shamir=args.fs)
@@ -127,7 +127,7 @@ def main() -> int:
             med = {k: statistics.median(r["timings"].get(k, 0.0) for r in rs) for k in PARTS}
             row = {"git": sha, "model": args.model, "layers": n_layers or cfg.n_layers, "seq": args.seq,
                    "policy": args.policy, "chosen": com.plan.policy if com.plan else None, "variant": name,
-                   "fiat_shamir": args.fs, "wire": args.wire, "queries": len(rs),
+                   "fiat_shamir": args.fs, "wire": args.wire, "prob_max": args.prob_max, "queries": len(rs),
                    "accepted": sum(bool(r["accepted"]) for r in rs), "identical": identical,
                    "prove_s": sum(med.values()), "open_fold_s": med["prove_fold"] + med["prove_open"],
                    "timings": med, "device": str(device), "int8_ok": field.int8_ok(device),

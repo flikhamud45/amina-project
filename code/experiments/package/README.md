@@ -86,7 +86,7 @@ during the run. Every job asks for at most 64 GB of host memory:
 | `batch` | 2 | GPT-2: batches of 4 prompts, modes C and Kpre |
 | `real` | 4 | the certified OPT-125M: v0, V1, V1's codec profile and generated responses |
 | `setup` | 1 | the setup proof of GPT-2 (2 blocks) |
-| `improve` | 12 | the A/B cells of `tab:eval-improve` (opening, forward pass, encoder, fold; the fused attention and the GPU verifier before and after on OPT-125M with 2 blocks and on one Llama-2-7B block, the CPU verifier on that block), V1's two verifiers by phase, the GPU profile, the GKR prover at 2^20 leaves |
+| `improve` | 13 | the A/B cells of `tab:eval-improve` (opening, forward pass, encoder, fold; the fused attention and the GPU verifier before and after on OPT-125M with 2 blocks and on one Llama-2-7B block, the CPU verifier on that block), V1's two verifiers by phase, the GPU profile, the GKR prover at 2^20 leaves, 8- against 11-bit attention probabilities on GPT-2 (2 blocks) |
 | `quality` | 6 (7) | OPT-125M: perplexity and zero-shot accuracy (20 documents per task) with the certified and the legacy recipe, the reproducible build and its commitment; Qwen3-0.6B: the Llama recipe on the smoke model and, with a fixed prefix and a kept reference, on the checkpoint, `llama_diag` and `llama_attrib`; with `--llama-licence`, the smoke model of Llama-2-7B, which reads the gated repository from a compute node |
 | `tv` | 2 | the sampler's closed-form and Monte Carlo checks on its toy distributions; its total-variation distance on OPT-125M (legacy recipe, 2 positions, 2 workers) |
 | `attack` | 5 | the path test's bound; the MNIST scripts on the stored networks; OPT-125M: the single-neuron attack and its backdoor, the in-range edits, the sampler game |
@@ -106,7 +106,7 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 179 jobs. There, the paper's run submits its tiers as eight jobs (`--one-job`), each
+waits that long for each of its 180 jobs. There, the paper's run submits its tiers as eight jobs (`--one-job`), each
 of which runs its tiers' jobs one after another in its allocation: the timed tiers in six jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `tv`, `attack`) in two jobs on one GPU of a shared node:
 
@@ -141,7 +141,7 @@ jobs without a marker (and the smoke). A later job's records of a cell replace a
 | `batch` | 7 | 2-3 | 8 | several prompts against one opening |
 | `real` | 26 (17) | 8-12 | 45 (23) | the certified OPT-1.3B and OPT-6.7B end to end next to random weights (`tab:eval-real`); with `--llama-licence` the real Llama-2-7B |
 | `setup` | 2 | 1-2 | 4 | the setup proof of an untrusted commitment (`tab:setup`) |
-| `improve` | 15 | 3-5 | 17 | each implementation improvement against the path it replaces (`tab:eval-improve`); V1's verifier by phase; the GKR prover per leaf |
+| `improve` | 16 | 3-5 | 18 | each implementation improvement against the path it replaces (`tab:eval-improve`); V1's verifier by phase; the GKR prover per leaf; 8- against 11-bit attention probabilities on two Llama-2-7B blocks at 2,048 tokens (`quality.tex`: the proof's size and the prover's and CPU verifier's times) |
 | `quality` | 20 (18) | 10-16 | 69 (55) | `tab:quality` (OPT; OpenLLaMA-7B, TinyLlama, Qwen3; Llama-2 with `--llama-licence`), the recipe's alpha on the validation split, the recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split), `tab:zeroshot`, the reproducible build |
 | `tv` | 2 | 1-2 | 3 | the sampler's total-variation distance on the certified OPT-1.3B, and its checks |
 | `attack` | 5 | 4-6 | 12 | the attack: reproduction, MNIST, OPT-6.7B, the in-range edits (`tab:inrange`), the sampler games |

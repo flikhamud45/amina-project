@@ -17,7 +17,8 @@ Builds a random-weight decoder as ``v1_bytes.py`` does (``--model``: a decoder o
 width, heads, head size, FFN width and vocabulary), the prover on ``--device`` and the non-streaming verifier on
 ``--verifier-device``, in mode Kpre or C (``--policy``).  The protocol settings default to the paper's configuration
 (:data:`experiments.common.cli.PAPER`: Fiat--Shamir, the lean prover and verifier, the last block at the last
-position, mode Kpre's verifier reading the embedding rows itself; V1's proof is always in the compact encoding).
+position, mode Kpre's verifier reading the embedding rows itself, 11-bit attention probabilities; V1's proof is
+always in the compact encoding).
 ``--v1-verifier`` takes one or more of :data:`pvi.options.V1_VERIFIERS` (``optimised``: the window-table products,
 the batched GKR check and the batch-inverted logUp identity; ``baseline``: float64 limb products and one check per
 instance).  After one warm-up query per verifier (a random prompt, seed ``--prompt-seed``), ``--reps`` queries
@@ -33,9 +34,10 @@ fall back from ``products.lw_times`` (``n_lw_products_fallback``: a residual op 
 ``products.SPAN``) and those that run ``protocol._lw_e_old`` (``n_lw_baseline``).
 
 **Record** (one JSON line per verifier, then a table on stdout): ``label``, ``git``, ``model``, ``layers``, ``seq``,
-``mode``, ``policy``, ``fs``, ``lean``, ``lookups``, ``lmax``, ``threads``, ``path`` (the verifier's name),
-``queries``, ``accepted``, ``cut`` (the cut plan's sizes), ``timings`` (the median of every phase), ``verify_s``
-(the median of each query's ``verify_*`` total), ``env``.  Every query must be accepted, else the exit status is 1.
+``mode``, ``policy``, ``fs``, ``lean``, ``lookups``, ``prob_max``, ``lmax``, ``threads``, ``path`` (the
+verifier's name), ``queries``, ``accepted``, ``cut`` (the cut plan's sizes), ``timings`` (the median of every phase),
+``verify_s`` (the median of each query's ``verify_*`` total), ``env``.  Every query must be accepted, else the exit
+status is 1.
 
 ``--micro ROWS T``: no model and no prover; the final check's ``(L e, W e)`` of one requantisation op (int8 values, a
 few exceptions) and of one residual op (int16 ``Delta`` spanning about 7,000 values, as the random-weight
@@ -232,7 +234,7 @@ def main() -> int:
         raise SystemExit("give --model, --small or --micro")
     n_layers = args.layers or cfg.n_layers
     graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, args.calib_tokens), seed=args.seed,
-                          prune_last=args.prune_last)
+                          prune_last=args.prune_last, prob_max=args.prob_max)
     if args.mode == "C":
         coms = commit_graph(graph, args.rate, device=args.device, policy=args.policy, cache=args.setup_cache)
         params = params_for(args.lam, len(graph.mat_ops), rate=args.rate, fiat_shamir=args.fs, plan=coms.plan,
@@ -279,7 +281,8 @@ def main() -> int:
         rows[v] = med | {"verify_total": verify}
         records.emit({"label": args.label, "git": sha, "model": cfg.name, "layers": n_layers, "seq": args.seq,
                       "mode": args.mode, "policy": args.policy if args.mode == "C" else None, "fs": args.fs,
-                      "lean": args.lean, "lookups": args.lookups if args.mode != "C" else False, "lmax": args.lmax,
+                      "lean": args.lean, "lookups": args.lookups if args.mode != "C" else False,
+                      "prob_max": args.prob_max, "lmax": args.lmax,
                       "threads": args.threads, "path": v, "queries": len(rs), "accepted": accepted,
                       "cut": rs[0]["cut"], "timings": med, "verify_s": verify, "env": env})
     print(f"\n{'phase (s, median)':24s}" + "".join(f"{v:>14s}" for v in verifiers))

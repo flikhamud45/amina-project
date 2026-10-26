@@ -1,7 +1,9 @@
 """The GPU verifier's code paths give the integers and verdicts of the reference code.
 
 * The int32 attention (``pvi.models.decoder._attention_core``) against ``reference.attention_heads``,
-  on both sides of its fallback conditions, and its exp look-up table against the formula.
+  on both sides of its fallback conditions, and its exp look-up table against the formula; the fused Triton kernel
+  and the native CPU kernels against it, at 8- and 11-bit probabilities, also at the run's longest prompt (16,384
+  tokens) on rows at the int32 path's bounds.
 * The int8 GEMM products (``pvi.core.field.int8_*``) against ``reference.field_matmul_mod`` on edge values
   (every int32, blocks straddling ``2**16`` terms), in their float64 emulation on the CPU and with
   ``torch._int_mm`` on a GPU, and the fallbacks when an int8 GEMM is missing, inexact or fails.
@@ -199,6 +201,33 @@ def test_the_native_cpu_attention_gives_the_int32_cores_integers(hq, hkv, t, tq,
     q16 = q.to(torch.int16)                                       # the scalar kernel (int16 copies, no AVX-512)
     assert torch.equal(native_kernels.attention_core(q16, k.to(torch.int16), v.to(torch.int16), lut, tq, pmax=pmax),
                        want)
+
+
+@pytest.mark.parametrize("pmax", [255, 2047])
+def test_the_attention_kernels_at_the_longest_prompt_and_the_bounds(pmax):
+    """The fused Triton kernel (a CUDA device before sm_90) and the native CPU kernels (AVX-512 on int64 views, the
+    scalar kernel on int16 copies) give the int32 path's integers at 16,384 keys on rows at its bounds
+    (``test_prob_max.long_rows``: the largest row sum of probabilities, a row total of about ``2**29``)."""
+    from pvi.kernels import attention_triton as attention_kernels
+    from pvi.kernels import native as native_kernels
+    from test_prob_max import LONG_M_S, last_rows_notmask, long_rows
+    q, k, v = long_rows()
+    rows, t = q.shape[2], k.shape[2]
+    lut = tr._exp_lut(LONG_M_S, "cpu")
+    want = tr._attention_core(q, k, v, lut, last_rows_notmask(t, rows), pmax)
+    ran = False
+    if torch.cuda.is_available() and attention_kernels.available("cuda"):
+        got = attention_kernels.attention_core(q.cuda(), k.cuda(), v.cuda(), tr._exp_lut(LONG_M_S, "cuda"), rows, pmax)
+        assert torch.equal(got.cpu(), want)
+        ran = True
+    if native_kernels.available():
+        assert torch.equal(native_kernels.attention_core(q, k, v, lut, rows, exp_table=tr.EXP_TABLE, m_s=LONG_M_S,
+                                                         pmax=pmax), want)
+        assert torch.equal(native_kernels.attention_core(q.to(torch.int16), k.to(torch.int16), v.to(torch.int16), lut,
+                                                         rows, pmax=pmax), want)
+        ran = True
+    if not ran:
+        pytest.skip("neither the fused kernel nor the native kernels run here")
 
 
 # -- int8 GEMMs -------------------------------------------------------------------------------
