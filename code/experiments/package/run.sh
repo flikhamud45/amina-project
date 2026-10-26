@@ -16,7 +16,8 @@
 #     serve    the prover against unverified serving on the same GPU, single prompts and batches
 #     bench    the benchmark's cells: image models and decoders, modes C, K and Kpre, with the attacks
 #     gpuv     the GPU verifier, re-execution on the same GPU, the host-to-device bandwidth
-#     gen      a generated response proved as one prefill, greedy and sampled
+#     gen      a generated response proved as one prefill, greedy and sampled; the same responses generated
+#              without a proof (fp16, KV cache)
 #     batch    B prompts against one opening
 #     real     real-weight OPT end to end next to random-weight twins (and Llama-2-7B with --llama-licence)
 #     setup    the setup proof of an untrusted commitment
@@ -27,6 +28,9 @@
 #              each with its recipe's alpha (and Llama-2-7B's product balance) against their neighbours on the test
 #              and validation splits, one job per model, split and alpha; without it OpenLLaMA-7B (Llama-2-7B's
 #              shapes) in their place
+#     qcheck   the Llama recipe beyond the cells it was chosen on: TinyLlama's and Qwen3-1.7B's alpha and product
+#              balance among their neighbours on the validation split; three calibration draws of TinyLlama,
+#              Qwen3-1.7B and Llama-2-7B (with --llama-licence; without it OpenLLaMA-7B)
 #     tv       the token sampler's total-variation distance to the softmax (CPU)
 #     attack   the attack on the path test: MNIST, the image models' path test, OPT-6.7B, the in-range edits, the
 #              sampler game
@@ -110,7 +114,7 @@
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1
 # unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
 # llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
-# PVI_PY_INCLUDE, HF_HOME (the real, quality, qllama, tv, attack and gate tiers, and the zkllm tier with
+# PVI_PY_INCLUDE, HF_HOME (the real, quality, qllama, qcheck, tv, attack and gate tiers, and the zkllm tier with
 # --llama-licence, download checkpoints and datasets) and PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image
 # models' datasets), each passed to the jobs as an absolute path (a relative one is taken from the repository root).
 # HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's environment and is never written into a job.
@@ -296,8 +300,9 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
   fi
   case "$1" in
     smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
-    gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
+    gen) echo 4-5 ;; batch) echo 2-3 ;; real) echo 11-16 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
+    qcheck) echo 9-13 ;;
     tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
     zkllm) echo 3-5 ;;
   esac
@@ -312,6 +317,7 @@ RX="$M.reexec.reexec --threads 8"
 RXCPU="int int_mm int_fp32gemm float bf16 dynint8"   # the re-execution variants on a CPU (dynint8 is another model)
 LCPP="$M.reexec.llamacpp --threads 8 --llamacpp-dir $ROOT/$LOGS/llamacpp"   # llama.cpp (another model), cached build
 GEN="$M.generation.gen_bench --threads 8 $CACHED"
+DEC="$M.generation.decode_baseline --device cuda"
 BENCH="$M.costs.bench --platform $PLATFORM --threads 8 $CACHED"
 H2D="$M.reexec.h2d_bandwidth"
 
@@ -510,10 +516,13 @@ tier_gpuv() {
 tier_gen() {
   # a response of G tokens after a P-token prompt proved as one prefill, greedy and sampled with the client's seed,
   # modes C and Kpre; each cell also runs both tamper cells (a wrong token; logits forged to choose it); GPT-2 after a
-  # 64-token prompt gives the prover's time per generated token (the comparison with zkAgent's GPT-2)
+  # 64-token prompt gives the prover's time per generated token (the comparison with zkAgent's GPT-2); Llama-2-7B's
+  # P = G = 512 response (the text's per-prefix comparison) in mode C; the same responses generated without a proof
+  # (fp16 with a KV cache, experiments/generation/decode_baseline.py)
   if [ -n "$REH" ]; then
     csub gen-gpt2 1 64 "$GEN --model gpt2 --layers 2 --prompt 16 --gen 4 --decode greedy sample --modes C Kpre \
---policy $POL --queries $Q --label gen $NATIVE"
+--policy $POL --queries $Q --label gen $NATIVE && $DEC --model small-llama tiny-qwen --prompt 16 --gen 4 --reps $Q \
+--label gen"
     return 0
   fi
   local m
@@ -523,6 +532,11 @@ tier_gen() {
     csub "gen-$m" 3 192 "$GEN --model $m --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre \
 --policy $POL --queries $Q --label gen $NATIVE"
   done
+  # the text's P = G = 512 response of Llama-2-7B, measured as one prefill (mode C, greedy)
+  csub gen-llama2-7b-512 3 192 "$GEN --model llama2-7b --prompt 512 --gen 512 --decode greedy --modes C \
+--policy $POL --queries $Q --label gen $NATIVE"
+  # the same responses generated without a proof on this GPU (fp16, KV cache): the provider's overhead
+  sub gen-decode 1 64 "$DEC --model llama2-7b qwen3-4b --prompt 512 --gen 64 256 512 --reps $QH --label gen"
 }
 
 tier_batch() {
@@ -548,34 +562,45 @@ tier_batch() {
 
 tier_real() {
   # real-weight OPT end to end, each cell next to its random-weight twin: the certified integer OPT (its calibration:
-  # four 2,048-token train windows), last block pruned, 3 of each tamper per cell; with --llama-licence also the real
-  # Llama-2-7B (the main recipe and its fixed public prefix): v0 in Kpre and C, V1 bytes, generated responses
+  # four 2,048-token train windows), last block pruned, 3 of each tamper per cell; the cells whose times the text
+  # compares with their twins' (OPT-1.3B's, OPT-6.7B's v0) time --queries-head queries; OPT-6.7B's V1 at 2,048 tokens
+  # in Kpre and C; with --llama-licence also the real Llama-2-7B (the main recipe and its fixed public prefix): v0 in
+  # Kpre and C, V1 bytes, generated responses
   local r13="--model opt-1.3b --real facebook/opt-1.3b" r67="--model opt-6.7b --real facebook/opt-6.7b" t mode
   if [ -n "$REH" ]; then
     local r125="--model opt-125m --real facebook/opt-125m"
     csub r-opt125-v0 1 64 "$PERF $r125 --seq 64 --modes Kpre C --policy $POL --queries $Q --verifier-device cpu \
 --tampers 1 --label real $NATIVE"
-    csub r-opt125-v1 1 64 "$V1 $r125 --seq 64 --modes Kpre --reps $Q --tampers 1 --lmax 20 --label real $NATIVE"
+    csub r-opt125-v1 1 64 "$V1 $r125 --seq 64 --modes Kpre C --policy $POL --reps $Q --tampers 1 --lmax 20 \
+--label real $NATIVE"
     csub r-opt125-gen 1 64 "$GEN $r125 --prompt 16 --gen 4 --decode greedy sample --modes C Kpre --policy $POL \
 --queries $Q --verifier-device cpu --label real $NATIVE"
     sub r-opt125-codec 1 64 "$V1 $r125 --seq 64 --codec-only --device cpu --label real"
     return 0
   fi
   for t in 64 2048; do
-    csub "r-opt67-v0-$t" 2 192 "$PERF $r67 --seq $t --modes Kpre --queries $Q --verifier-device cpu --tampers 3 \
---label real $NATIVE"
-    csub "r-opt67rnd-v0-$t" 1 192 "$PERF --model opt-6.7b --seq $t --modes Kpre --queries $Q --verifier-device cpu \
---tampers 3 --label real-random $NATIVE"
+    # (the cells whose times the text compares with their twins' time --queries-head queries: an hour more of limit
+    # at 2,048 tokens)
+    h=0; [ "$t" = 2048 ] && h=1
+    csub "r-opt67-v0-$t" $((2 + h)) 192 "$PERF $r67 --seq $t --modes Kpre --queries $QH --verifier-device cpu \
+--tampers 3 --label real $NATIVE"
+    csub "r-opt67rnd-v0-$t" $((1 + h)) 192 "$PERF --model opt-6.7b --seq $t --modes Kpre --queries $QH \
+--verifier-device cpu --tampers 3 --label real-random $NATIVE"
     csub "r-opt67-v1-$t" 2 256 "$V1 $r67 --seq $t --modes Kpre --reps $Q --tampers 3 --label real $NATIVE"
     csub "r-opt67rnd-v1-$t" 2 256 "$V1 --model opt-6.7b --seq $t --modes Kpre --reps $Q --tampers 3 \
 --label real-random $NATIVE"
     for mode in C Kpre; do
-      csub "r-opt13-v1-$mode-$t" 1 192 "$V1 $r13 --seq $t --modes $mode --policy $POL --reps $Q --tampers 3 \
---label real $NATIVE"
-      csub "r-opt13rnd-v1-$mode-$t" 1 192 "$V1 --model opt-1.3b --seq $t --modes $mode --policy $POL --reps $Q \
---tampers 3 --label real-random $NATIVE"
+      csub "r-opt13-v1-$mode-$t" $((1 + h)) 192 "$V1 $r13 --seq $t --modes $mode --policy $POL --reps $QH \
+--tampers 3 --label real $NATIVE"
+      csub "r-opt13rnd-v1-$mode-$t" $((1 + h)) 192 "$V1 --model opt-1.3b --seq $t --modes $mode --policy $POL \
+--reps $QH --tampers 3 --label real-random $NATIVE"
     done
   done
+  # the abstract's real OPT-6.7B in mode C as well (V1 against v0), next to its random-weight twin
+  csub r-opt67-v1-C-2048 3 256 "$V1 $r67 --seq 2048 --modes C --policy $POL --reps $Q --tampers 3 --label real \
+$NATIVE"
+  csub r-opt67rnd-v1-C-2048 2 256 "$V1 --model opt-6.7b --seq 2048 --modes C --policy $POL --reps $Q --tampers 3 \
+--label real-random $NATIVE"
   sub r-opt67-codec 1 192 "$V1 $r67 --seq 2048 --codec-only --device cpu --label real"
   if [ -z "$LLAMA" ]; then
     echo "tier real: no real Llama-2-7B cells (they need your own Llama-2 licence: --llama-licence)" >&2
@@ -780,6 +805,33 @@ tier_qllama() {
   done
 }
 
+tier_qcheck() {
+  # the Llama recipe's checks beyond the cells it was chosen on, on WikiText-2 (raw) at 2,048 tokens, a tier of its
+  # own (the quality and qllama tiers fill their allocations): TinyLlama's and Qwen3-1.7B's alpha and product balance
+  # (chosen on the test split, hf_llama.MAIN_SETTINGS) among their neighbours (+-0.1 each) on the validation split
+  # (macros.VALIDATION_GRIDS); the recipe's calibration draws 0, 1 and 2 (four train windows each; one fixed prefix,
+  # chosen on draw 0) on TinyLlama, Qwen3-1.7B and, with --llama-licence, Llama-2-7B (without it OpenLLaMA-7B, which
+  # the paper does not report: macros.DRAW_MODELS).  Its records are the quality tier's (job names q-...).  The
+  # rehearsal runs the validation grid and the draws on a smoke model with TinyLlama's vocabulary.
+  local L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8"
+  if [ -n "$REH" ]; then
+    sub q-check-smoke 1 32 "$L --model TinyLlama/TinyLlama_v1.1 --smoke --split validation --seq 128 --windows 2 \
+--calib-windows 1 --chunk 64 --alphas 0.65 0.75 --glu-smooths 0.1 0.2 --draws 0 1"
+    return 0
+  fi
+  sub q-tinyllama-validation 4 96 "$L --model TinyLlama/TinyLlama_v1.1 --split validation --alphas 0.65 0.75 0.85 \
+--glu-smooths 0.1 0.2 0.3"
+  sub q-qwen17-validation 5 96 "$L --model Qwen/Qwen3-1.7B-Base --split validation --alphas 0.35 0.45 0.55 \
+--glu-smooths 0.2 0.3 0.4"
+  sub q-tinyllama-draws 2 96 "$L --model TinyLlama/TinyLlama_v1.1 --draws 0 1 2"
+  sub q-qwen17-draws 3 96 "$L --model Qwen/Qwen3-1.7B-Base --draws 0 1 2"
+  if [ -n "$LLAMA" ]; then
+    sub q-llama7-draws 6 192 "$L --model meta-llama/Llama-2-7b-hf --draws 0 1 2"
+  else
+    sub q-openllama7-draws 6 192 "$L --model openlm-research/open_llama_7b_v2 --draws 0 1 2"
+  fi
+}
+
 tier_tv() {
   # the token sampler's total-variation distance to the softmax on the certified OPT-1.3B (CPU, 8 workers: the 8 CPUs
   # each job and allocation asks for), and the sampler's closed-form and Monte Carlo checks (the Monte Carlo of
@@ -951,11 +1003,12 @@ preflight() {   # what the jobs need from this host and the scheduler, checked b
   local bad=() t hf="" spm="" big gb=60 v d
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do
-    case "$t" in real|quality|qllama|tv|attack|gate) hf=1 ;; zkllm) [ -z "$LLAMA" ] || hf=1 ;; esac
+    case "$t" in real|quality|qllama|qcheck|tv|attack|gate) hf=1 ;; zkllm) [ -z "$LLAMA" ] || hf=1 ;; esac
     [ "$t" != qllama ] || [ -n "$LLAMA" ] || spm=1       # OpenLLaMA-7B's jobs run only without --llama-licence
+    [ "$t" != qcheck ] || [ -n "$LLAMA$REH" ] || spm=1  # (the qcheck tier's rehearsal: TinyLlama's tokenizer)
   done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
-GB free> (the real, quality, qllama, tv, attack, gate and zkllm tiers download checkpoints and datasets)")
+GB free> (the real, quality, qllama, qcheck, tv, attack, gate and zkllm tiers download checkpoints and datasets)")
   # a cache variable of Hugging Face's libraries takes precedence over HF_HOME: it must be writable (the nearest
   # existing folder of its path)
   for v in HF_HUB_CACHE HUGGINGFACE_HUB_CACHE TRANSFORMERS_CACHE HF_DATASETS_CACHE; do
@@ -1015,11 +1068,11 @@ exists)")
   done
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")
   # OpenLLaMA-7B ships only its SentencePiece model: its tokenizer (the qllama tier's q-openllama7 jobs and their
-  # rehearsal cell, without --llama-licence) needs sentencepiece, and protobuf for the conversion to the fast
+  # rehearsal cell, and the qcheck tier's q-openllama7-draws, without --llama-licence) needs sentencepiece, and protobuf for the conversion to the fast
   # tokenizer; Llama-2's repositories ship the fast tokenizer (tokenizer.json) and need neither
   if [ -n "$spm" ] && [ -x "$PY" ] && ! "$PY" -c "import sentencepiece, google.protobuf" > /dev/null 2>&1; then
-    bad+=("$PY cannot import sentencepiece and google.protobuf, which the qllama tier's OpenLLaMA-7B tokenizer \
-needs: $PY -m pip install -r code/requirements-llm.txt")
+    bad+=("$PY cannot import sentencepiece and google.protobuf, which the qllama and qcheck tiers' OpenLLaMA-7B \
+tokenizer needs: $PY -m pip install -r code/requirements-llm.txt")
   fi
   if [ -z "$DRY$LOCAL" ] && command -v sinfo > /dev/null 2>&1; then
     big="$(sinfo -h -N ${SBATCH_PARTITION:+-p "$SBATCH_PARTITION"} -o %m | tr -dc '0-9\n' | sort -n | tail -n 1)"
@@ -1142,7 +1195,7 @@ run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
     || echo "# tier $1: $((NJOBS - n0)) jobs, job limits $((HOURS - h0)) h, estimate $(est "$1") h"
 }
 
-MUST="smoke cpuv v1 serve bench gpuv gen batch real setup improve quality qllama tv attack"
+MUST="smoke cpuv v1 serve bench gpuv gen batch real setup improve quality qllama qcheck tv attack"
 if [ "${TIERS[0]}" = all ]; then TIERS=($MUST ${OPTIONAL:+long zkllm}); fi
 for tier in "${TIERS[@]}"; do
   case " $MUST long zkllm gate " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac

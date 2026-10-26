@@ -93,6 +93,36 @@ def test_gen_bench_greedy_and_sampled_responses_and_both_tamper_cells(monkeypatc
     assert sampled["sampler"] == {"a": 4096, "top_k": 0}
 
 
+def test_decode_baseline_generates_the_responses_with_a_kv_cache(monkeypatch, capsys):
+    """``decode_baseline`` (the gen tier's unverified generation): per model and G one record with the prefill and the
+    G - 1 decoding steps timed apart, the KV-cached response equal to one uncached pass's argmaxes (fp32 on a CPU),
+    and Transformers' decoders of the benchmark's shapes with the checkpoints' parameter counts; another
+    architecture is refused."""
+    from experiments.generation import decode_baseline as db
+    from pvi.models.decoder import CONFIGS
+    status, lines = _cli(db, monkeypatch, capsys, "decode_baseline.py", "--model", "tiny-llama", "tiny-qwen",
+                         "--prompt", "6", "--gen", "1", "4", "--reps", "2", "--device", "cpu", "--dtype", "fp32",
+                         "--threads", "1", "--label", "gen")
+    assert status == 0 and [(r["model"], r["gen"]) for r in lines] == [
+        ("tiny-llama", 1), ("tiny-llama", 4), ("tiny-qwen", 1), ("tiny-qwen", 4)]
+    for r in lines:
+        assert r["kind"] == "decode" and r["ok"] and r["reps"] == 2 and r["label"] == "gen" and r["prompt"] == 6
+        assert r["same_as_prefill"] == 1.0 and r["attention"] == "sdpa" and r["dtype"] == "fp32"
+        assert r["total_s_range"][0] <= r["total_s"] <= r["total_s_range"][1] and r["prefill_s"] > 0
+        assert r["ms_per_token"] == pytest.approx(r["total_s"] / r["gen"] * 1e3)
+    from experiments.paper.records import kind_of
+    assert kind_of(lines[0]) == "decode"
+    with torch.device("meta"):
+        from transformers import AutoModelForCausalLM
+        for name, n_params, arch in (("llama2-7b", 6_738_415_616, "LlamaForCausalLM"),
+                                     ("qwen3-4b", 4_022_468_096, "Qwen3ForCausalLM")):
+            cfg = CONFIGS[name]
+            model = AutoModelForCausalLM.from_config(db.hf_config(cfg, cfg.n_layers))
+            assert type(model).__name__ == arch and sum(p.numel() for p in model.parameters()) == n_params
+    with pytest.raises(SystemExit, match="Llama- and Qwen3-style"):
+        db.hf_config(CONFIGS["opt-1.3b"], 2)
+
+
 def test_setup_timing_accepts_the_honest_setup_proof(monkeypatch, capsys):
     status, lines = _cli(setup_timing, monkeypatch, capsys, "setup_timing.py", "--model", "tiny-llama", "--policy",
                          "auto", "--amortise", "100", "1000", "--reps", "1", "--device", "cpu", "--threads", "1")
@@ -417,6 +447,49 @@ def test_the_qllama_tier_is_in_all_and_runs_next_to_quality():
     assert not any(re.search(r"Llama-2|open_llama", x) for x in _dry(tiers=("quality",)))
 
 
+def test_the_qcheck_tier_checks_the_llama_recipe_on_the_validation_split_and_over_draws():
+    """The qcheck tier (in 'all' after qllama, a --no-exclusive submission of its own whose limits fit one allocation
+    of the partition's 24 hours): TinyLlama's and Qwen3-1.7B's validation grids are exactly macros.VALIDATION_GRIDS,
+    and the calibration draws 0, 1 and 2 of macros.DRAW_MODELS' main cells (Llama-2-7B with --llama-licence,
+    OpenLLaMA-7B without it); its jobs keep the quality tier's names; the rehearsal runs both paths on a smoke model."""
+    from experiments.paper.macros import DRAW_MODELS, DRAWS, VALIDATION_GRIDS
+    run = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--llama-licence", "all"], cwd=REPO,
+                         env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}, capture_output=True, text=True,
+                         timeout=120)
+    tiers = re.search(r"^# (smoke .*): \d+ jobs", run.stdout, re.M).group(1).split()
+    assert tiers[tiers.index("qllama") + 1] == "qcheck", tiers
+    tier = re.search(r"^# tier qcheck: (\d+) jobs, job limits (\d+) h, estimate (\S+) h$", run.stdout, re.M)
+    assert tier and tier.group(1) == "5" and int(tier.group(2)) <= 20 and tier.group(3) == "9-13", run.stdout[-2000:]
+    jobs = {"meta-llama/Llama-2-7b-hf": "sp-q-llama7-draws", "TinyLlama/TinyLlama_v1.1": "sp-q-tinyllama-draws",
+            "Qwen/Qwen3-1.7B-Base": "sp-q-qwen17-draws"}
+    assert set(jobs) == {m for m, _ in DRAW_MODELS}
+    for licence in (True, False):
+        out = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run",
+                              *(["--llama-licence"] if licence else []), "qcheck"], cwd=REPO,
+                             env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}, capture_output=True, text=True,
+                             timeout=120)
+        lines = {_job(x): x for x in out.stdout.splitlines() if x.startswith("sbatch")}
+        assert len(lines) == 5 and all(tier_of(j[len("sp-"):]) == "quality" for j in lines), lines
+        for model, name, alphas, balances in VALIDATION_GRIDS:
+            job = {"TinyLlama": "sp-q-tinyllama-validation", "QwenM": "sp-q-qwen17-validation"}[name]
+            cmd = lines[job].split("--wrap", 1)[1]
+            assert f"--model {model} --split validation --alphas {' '.join(f'{a:g}' for a in alphas)} " \
+                f"--glu-smooths {' '.join(f'{g:g}' for g in balances)}\"" in cmd, cmd
+        for model, job in jobs.items():
+            if not licence and model.startswith("meta-llama/"):     # the licence-free model of Llama-2-7B's shapes
+                model, job = "openlm-research/open_llama_7b_v2", "sp-q-openllama7-draws"
+            cmd = lines[job].split("--wrap", 1)[1]
+            assert cmd.endswith(f"--model {model} --draws {' '.join(map(str, DRAWS))}\""), cmd
+    one = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--llama-licence", "--one-job",
+                          "--no-exclusive", "qcheck"], cwd=REPO, env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"},
+                         capture_output=True, text=True, timeout=120)
+    m = re.search(r"^# one job: qcheck: 5 jobs, job limits (\d+) h, time limit (\d+) h$", one.stdout, re.M)
+    assert m and m.group(1) == m.group(2) and int(m.group(1)) <= 24 and "--exclusive" not in one.stdout, one.stdout
+    rehearsal = {_job(x): x for x in _dry("--rehearsal", tiers=("qcheck",))}
+    cmd = rehearsal["sp-q-check-smoke"]
+    assert list(rehearsal) == ["sp-q-check-smoke"] and "--smoke --split validation" in cmd and "--draws 0 1" in cmd
+
+
 def test_a_failed_smoke_still_stops_its_own_invocation(tmp_path):
     """With the smoke tier, nothing after it runs unless it ends in SMOKE OK, and the summary says so."""
     status, out, err, _ = _submit(tmp_path, "--platform", "t", "--rehearsal", "--local", "smoke", "cpuv",
@@ -550,6 +623,14 @@ def test_the_qllama_tier_needs_the_tokenizer_libraries(tmp_path):
                                    "qllama", extra=fail)
     assert status == 0 and len(jobs) == 8 and any(" -J sp-q-llama-access " in j for j in jobs), err
     assert not any("openllama" in j for j in jobs), err
+    # the qcheck tier: OpenLLaMA-7B's draws without --llama-licence need them; its rehearsal (TinyLlama's
+    # vocabulary) and its jobs with --llama-licence do not
+    status, _, err, jobs = _submit(tmp_path / "e", "--platform", "final", "qcheck", extra=fail)
+    assert status == 2 and not jobs and "cannot import sentencepiece and google.protobuf" in err, err
+    status, _, err, jobs = _submit(tmp_path / "f", "--platform", "final", "--rehearsal", "qcheck", extra=fail)
+    assert status == 0 and len(jobs) == 1, err
+    status, _, err, jobs = _submit(tmp_path / "g", "--platform", "final", "--llama-licence", "qcheck", extra=fail)
+    assert status == 0 and len(jobs) == 5 and not any("openllama" in j for j in jobs), err
 
 
 def test_the_bench_tier_needs_the_substitute_model_and_the_imagenet_layout(tmp_path):
@@ -648,6 +729,11 @@ def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_j
             assert "--reps 5" in line, job
         if job.startswith("sp-serve-"):
             assert "--reps 10" in line, job
+        # the real tier's cells whose times the text compares with their random twins' (RealProveWithin,
+        # RealVerifyWithin, RealOptLTimeWithin): OPT-1.3B's V1 cells and OPT-6.7B's v0 cells
+        if re.fullmatch(r"sp-r-opt13(rnd)?-v1-(C|Kpre)-(64|2048)|sp-r-opt67(rnd)?-v0-(64|2048)", job):
+            assert re.search(r"--(queries|reps) 5\b", line), job
+    assert sum(bool(re.fullmatch(r"sp-r-opt13(rnd)?-v1-.*|sp-r-opt67(rnd)?-v0-.*", j)) for j in jobs) == 12
     missing = [t for t in re.findall(r"\btests/\w+\.py", lines[0]) if not (CODE / t).is_file()]
     assert jobs[0] == "sp-smoke" and not missing, missing           # every test file the smoke runs exists
     deps = [re.search(r"--dependency=(\S+)", line).group(1) for line in lines]
@@ -763,6 +849,20 @@ def test_the_gen_and_quality_cells_of_the_text():
     assert "--layers" not in gpt2 and "--label gen" in gpt2
     for m in ("llama2-7b", "qwen3-4b"):
         assert f"--model {m} --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre" in lines[f"sp-gen-{m}"]
+    # the text's P = G = 512 prefill (macros.GEN_P, GEN_G), measured in mode C; unverified generation of the same
+    # responses (fp16, KV cache) on the GPU, the full models, not pinned to CPU cores
+    from experiments.paper.macros import GEN_G, GEN_P
+    assert f"--model llama2-7b --prompt {GEN_P} --gen {GEN_G} --decode greedy --modes C --policy cnn18c" \
+        in lines["sp-gen-llama2-7b-512"]
+    dec = lines["sp-gen-decode"].split("--wrap", 1)[1]
+    assert "generation.decode_baseline --device cuda --model llama2-7b qwen3-4b --prompt 512 --gen 64 256 512 " \
+        "--reps 5 --label gen" in dec and "--layers" not in dec and "experiments.package.pin" not in dec
+    # the real OPT-6.7B's V1 at 2,048 tokens in both modes (the abstract's range), each with its random twin
+    for mode in ("C-", ""):
+        for twin, label in (("", "real"), ("rnd", "real-random")):
+            line = lines[f"sp-r-opt67{twin}-v1-{mode}2048"]
+            assert f"--modes {mode.strip('-') or 'Kpre'} " in line and f"--label {label} " in line, line
+            assert ("--real facebook/opt-6.7b" in line) == (twin == ""), line
     rec = lines["sp-q-opt125-recipes"]
     assert "--model facebook/opt-125m --recipe legacy --graphs smooth --pbits 11" in rec
     assert "--model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.7 --pbits 11" in rec
@@ -816,7 +916,7 @@ def test_the_gen_and_quality_cells_of_the_text():
 
 def test_every_tier_is_documented_and_reachable():
     text = (REPO / RUN).read_text()
-    for tier in (*TIERS, "qllama", "zkllm", "gate"):
+    for tier in (*TIERS, "qllama", "qcheck", "zkllm", "gate"):
         assert f"tier_{tier}()" in text and re.search(rf"^#\s+{tier}\s", text, re.M), tier
 
 

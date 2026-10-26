@@ -136,7 +136,7 @@ Table~\ref{tab:eval-v1}, whose opened columns are a larger share of its proof, \
 V1's sizes come from an exact byte accounting that equals real queries to the byte except for the
 Merkle multiproofs, whose size depends on the drawn columns; the timed full V1 queries agree with
 it within \VOneAccountingWithin{}\%. The full Llama-2-7B at 2{,}048 tokens in $\sC$ gains \VOneLlamaCRatio{}$\times$
-(\VOneLlamaCVZeroGB{} to \VOneLlamaCVOneGB{}\,GB). With real weights, the real OPT-6.7B measures \VOneRatioRealOptLExact{}$\times$ in $\Kpre$
+(\VOneLlamaCVZeroGB{} to \VOneLlamaCVOneGB{}\,GB). With real weights, the real OPT-6.7B measures \VOneRatioRealOptLExact{}$\times$ in $\Kpre$ and \VOneRatioRealOptLCExact{}$\times$ in $\sC$
 at 2{,}048 tokens (\VOneRealOptLVZeroGB{} to \VOneRealOptLVOneGB{}\,GB, with \VOneRealOptLExceptions{} exceptions). On the certified OPT-1.3B the
 gain is \VOneRealOptMLongC{}$\times$ in $\sC$ and \VOneRealOptMLongK{}$\times$ in $\Kpre$ at 2{,}048 tokens (random weights:
 \VOneRandomOptMLongC{}$\times$ and \VOneRandomOptMLongK{}$\times$) and \VOneRealOptMShortC{}$\times$ and \VOneRealOptMShortK{}$\times$ at 64 tokens

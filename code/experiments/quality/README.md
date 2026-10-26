@@ -295,6 +295,22 @@ without it; the `quality` tier's rehearsal runs the tiny random model below. The
 the table above, one checkpoint per run (TinyLlama and the Qwen3 models are not gated); the Qwen3-4B prefix study at 16
 x 128 repeats the `ppl_llama.py` command of the table with `--prefix` set to `<|endoftext|>` (151643) twice or four
 times, or followed by newline (198), `.` (13) or ` =` (284).
+The run package's `qcheck` tier (`run.sh --platform <name> [--llama-licence] qcheck`, a tier of its own beside
+`quality` and `qllama`) checks the Llama recipe beyond the cells it was chosen on: TinyLlama's and Qwen3-1.7B's alpha
+and product balance (chosen on the test split) among their neighbours on the validation split (jobs
+q-tinyllama-validation and q-qwen17-validation; `macros.VALIDATION_GRIDS`, `\TinyLlamaValGap`, `\QwenMValGap`), and
+the main cells of TinyLlama, Qwen3-1.7B and, with `--llama-licence`, Llama-2-7B over calibration draws 0, 1 and 2
+(jobs q-tinyllama-draws, q-qwen17-draws and q-llama7-draws; four train windows per draw, the prefix chosen on draw 0,
+so draw 0 repeats the main cell; `macros.DRAW_MODELS`, `\LlamaDrawSpread`). Without `--llama-licence` the last job
+is OpenLLaMA-7B's (q-openllama7-draws), which the paper does not report:
+
+    python -m experiments.quality.ppl_llama --model TinyLlama/TinyLlama_v1.1 --split validation \
+        --alphas 0.65 0.75 0.85 --glu-smooths 0.1 0.2 0.3 --device cuda --calib-device cpu --threads 8
+    python -m experiments.quality.ppl_llama --model Qwen/Qwen3-1.7B-Base --split validation \
+        --alphas 0.35 0.45 0.55 --glu-smooths 0.2 0.3 0.4 --device cuda --calib-device cpu --threads 8
+    python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --draws 0 1 2 \
+        --device cuda --calib-device cpu --threads 8      # and TinyLlama, Qwen3-1.7B
+
 The repository stores no record of these runs; the stored diagnosis is `llama_diag_tinyllama_qwen3-0.6b.txt` (above).
 
 On a laptop (no checkpoint; the scripts' `--smoke` model downloads only a configuration and a tokenizer):

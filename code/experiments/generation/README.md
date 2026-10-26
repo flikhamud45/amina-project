@@ -3,13 +3,16 @@
 A generated response is proved as one prefill of the prompt followed by the response, with the LM head at the last
 `G` positions and a token rule that the verifier checks (Sec. `sec:gen-prefill`); a sampled response must be the
 output of a public integer Gumbel-max sampler keyed by the client's seed (Sec. `sec:gen-sampling`). `gen_bench.py`
-measures the cost of proving greedy and sampled responses and checks that a wrong token is rejected; `sampler_tv.py`
+measures the cost of proving greedy and sampled responses and checks that a wrong token is rejected;
+`decode_baseline.py` times generating the same responses without a proof (fp16, KV cache); `sampler_tv.py`
 computes the sampler's exact output law and its distance to softmax sampling on a real model's logits.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
 | Sec. `sec:gen-prefill`'s cost paragraph, `tab:gen` and `tab:gen-full` (final run: Llama-2-7B and Qwen3-4B, a 512-token prompt, `G` in {64, 256}, greedy and sampled, modes C and Kpre, both tamper cells) | `gen_bench.py` (tier `gen`) | `python -m experiments.generation.gen_bench --model llama2-7b --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre --queries 3 --label gen` (and `--model qwen3-4b`) | stdout, one JSON line per `G`, rule and mode (`"kind": "gen"`) |
 | Sec. `sec:gen-prefill`'s cost paragraph: GPT-2's prover time per generated token (a greedy 256-token response after a 64-token prompt, modes C and Kpre; the comparison with zkAgent's GPT-2), and its rows of `tab:gen` and `tab:gen-full` | `gen_bench.py` (tier `gen`) | `python -m experiments.generation.gen_bench --model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --queries 3 --label gen` | stdout (`prove_s / gen`) |
+| Sec. `sec:ext-gen` ("Per-prefix queries"): Llama-2-7B's response with `P = G = 512` proved as one prefill, measured in mode C (`\GenPrefillGB`, `\GenPrefillProveC`, `\GenPrefillVerifyC`; the byte model of the per-prefix proofs must give it within 15%, `\GenPrefillModelWithin`) | `gen_bench.py` (tier `gen`, job `gen-llama2-7b-512`) | `python -m experiments.generation.gen_bench --model llama2-7b --prompt 512 --gen 512 --decode greedy --modes C --queries 3 --label gen` | stdout |
+| Sec. `sec:ext-gen` ("Against unverified generation"): the same responses generated without a proof on the prover's GPU, Hugging Face Transformers' fp16 decoders of the benchmark's shapes with a KV cache (`\GenDecodeLlama`, `\GenDecodeQwen`; the prover over it, `\GenOverDecodeC`, `\GenOverDecodeK`) | `decode_baseline.py` (tier `gen`, job `gen-decode`) | `python -m experiments.generation.decode_baseline --model llama2-7b qwen3-4b --prompt 512 --gen 64 256 512 --reps 5 --label gen` | stdout, one JSON line per model and `G` (`"kind": "decode"`) |
 | the real Llama-2-7B's generated responses (tier `real`, with access to the gated Llama-2 checkpoints) | `gen_bench.py --real` | `python -m experiments.generation.gen_bench --model llama2-7b --real meta-llama/Llama-2-7b-hf --prompt 512 --gen 64 --decode greedy sample --modes C Kpre --queries 3 --label real` | stdout |
 | Sec. `sec:gen-sampling` ("Distribution"): the sampler's total-variation distance to `softmax(c z / tau)` at `tau = 1` over 512 WikiText-2 positions of the integer OPT-1.3B (median 0.0063 with `k = 50`, 0.020 with `k = 0`), against 0.087 between the integer and the fp32 model, and 0.0022 with a table of `2^20` entries | `sampler_tv.py` | certified model (the default): `python -m experiments.generation.sampler_tv --model facebook/opt-1.3b --seq 128 --windows 4 --workers 16 --threads 16 --out sampler_tv_opt-1.3b.json`; the stored numbers: the same with `--recipe legacy --calib-seq 128` | the JSON document (`summary`); stored: `artifacts/results/sampler_tv_opt-1.3b.json` |
 | the sampler's checks in the extended version (Sec. `sec:ext-sampling`: closed forms, a Monte Carlo of the sampler itself) | `sampler_tv.py --selfcheck`, `--mc` | `python -m experiments.generation.sampler_tv --selfcheck`; `python -m experiments.generation.sampler_tv --model facebook/opt-125m --recipe legacy --windows 1 --positions 32 --mc 100000 --mc-positions 8 31 --mc-settings 1:0 1:50 1.3:0` | stored: `artifacts/results/sampler_tv_selfcheck.json`, `sampler_tv_opt-125m.json` |
@@ -20,6 +23,20 @@ benchmark's harness. Run every command from `code/` with the checkout's library 
 on Linux, `PYTHONPATH="src;."` on Windows). `python -m experiments.generation.<script> --help` lists every option.
 
 ## Scripts
+
+### `decode_baseline.py`
+
+Builds Hugging Face Transformers' own decoder of a Llama- or Qwen3-style shape (`LlamaForCausalLM`, or
+`Qwen3ForCausalLM` for a decoder with q/k norms; `pvi.models.decoder.CONFIGS` or `experiments.common.models.TINY`,
+`--layers` blocks) on `--device` in `--dtype` (default fp16) with random weights (a decoder's time does not depend on
+its weights' values) and scaled-dot-product attention. A response of `G` tokens after a `P`-token prompt is the one
+`gen_bench.py` proves: the prefill gives the first token (the LM head at the last position only), then `G - 1`
+decoding steps of one token read and extend the KV cache; every token is the argmax, on the device. Per `G`: one
+untimed response, then `--reps` timed ones to random prompts, the prefill and the decoding timed apart (CUDA events
+after a synchronisation). The last response is checked against one uncached forward pass (`same_as_prefill`, the
+share of its tokens that pass gives again). Record: `"kind": "decode"`, the settings, the medians and `[min, max]` of
+`prefill_s`, `decode_s` and `total_s`, `ms_per_token`, `same_as_prefill`, the peaks, `ok` (finite logits, `G` tokens).
+The final run's job takes a few minutes on the L40S (13.5 GB of GPU memory per 7B model in fp16).
 
 ### `gen_bench.py`
 
@@ -77,9 +94,12 @@ the fp32 checkpoint's).
 ## Reproducing the paper's numbers
 
 The run package (`bash code/experiments/package/run.sh --platform <name> <tier>`, `experiments/package/README.md`) runs `gen_bench.py` in its `gen` tier (Llama-2-7B
-and Qwen3-4B, `--prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre`, 3 timed responses per cell; GPT-2, `--prompt 64 --gen 256 --decode greedy`) and, with
+and Qwen3-4B, `--prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre`, 3 timed responses per cell; GPT-2, `--prompt 64 --gen 256 --decode greedy`;
+Llama-2-7B, `--prompt 512 --gen 512 --decode greedy --modes C`) and `decode_baseline.py` (Llama-2-7B and Qwen3-4B, `--prompt 512 --gen 64 256 512`,
+5 timed responses) and, with
 access to the gated Llama-2 checkpoints, `gen_bench.py --real meta-llama/Llama-2-7b-hf` in its `real` tier;
-`paper/numbers.py` turns the `"kind": "gen"` records into `tab:gen`, `tab:gen-full` and the text's macros. The sampler
+`paper/numbers.py` turns the `"kind": "gen"` and `"kind": "decode"` records into `tab:gen`, `tab:gen-full` and the
+text's macros. The sampler
 distances of Sec. `sec:gen-sampling` are those of the certified OPT-1.3B (the default command above, a CPU job of
 about an hour, the package's `tv` tier); the stored `artifacts/results/sampler_tv_opt-1.3b.json` holds the same
 analysis of the percentile recipe (`--recipe legacy`).
@@ -91,6 +111,8 @@ cd code
 export PYTHONPATH=src:.
 python -m experiments.generation.gen_bench --model tiny-llama --prompt 8 --gen 4 --decode greedy sample \
     --modes C Kpre --queries 2 --device cpu --threads 2
+python -m experiments.generation.decode_baseline --model tiny-llama tiny-qwen --prompt 8 --gen 4 --reps 2 \
+    --device cpu --dtype fp32 --threads 2
 python -m experiments.generation.sampler_tv --selfcheck --selfcheck-mc 20000
 ```
 
