@@ -24,7 +24,8 @@ import torch
 from pvi import options
 from pvi.core import contention
 
-__all__ = ["git_sha", "environment", "emit", "write_json", "reset_peaks", "peaks", "sync", "timed"]
+__all__ = ["git_sha", "environment", "emit", "write_json", "reset_peaks", "peaks", "sync", "timed", "file_sha256",
+           "roots_sha256", "per_query"]
 
 
 # ------------------------------------------------------------------ the commit
@@ -160,6 +161,50 @@ def environment(device=None) -> dict:
     ck = sys.modules.get("experiments.common.checkpoints")
     if ck is not None and ck.SOURCES:
         out["sources"] = dict(ck.SOURCES)
+    return out
+
+
+# ------------------------------------------------------------------ digests and raw values
+@functools.lru_cache(maxsize=None)
+def file_sha256(path: str) -> str:
+    """SHA-256 of a file's bytes (hex), read in 16 MB blocks; one read per file and process."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 24), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def roots_sha256(coms) -> tuple[str, int]:
+    """``(SHA-256 over every Merkle root of a commitment C_M, the number of roots)``: the member, group and lookup-table
+    roots in a fixed order, each tagged with its kind and name (under a grouped plan a member's own root is empty and
+    its group's tree holds it).  Equal digests mean the same ``C_M``."""
+    import hashlib
+    roots, n = hashlib.sha256(), 0
+    for kind, publics in (("member", coms.publics), ("group", coms.group_publics), ("table", coms.table_publics)):
+        for name, pub in sorted(publics.items()):
+            if pub.root:
+                roots.update(kind.encode() + name.encode() + pub.root)
+                n += 1
+    return roots.hexdigest(), n
+
+
+def per_query(runs: list[dict], prove: list | None = None, verify: list | None = None) -> dict:
+    """Every timed query's own values, kept next to a record's medians so that spreads and outliers can be computed
+    after the run: ``timings_all`` (each part's seconds per query, in query order; 0.0 where a query has no such
+    part), ``prove_s_all`` and ``verify_s_all`` (each query's own prover and verifier totals, as the record sums
+    them) and ``transcripts`` (each query's Fiat--Shamir transcript digest, :func:`pvi.v0.query.run_query`; only
+    when some query has one)."""
+    keys = sorted({k for r in runs for k in r["timings"]})
+    out: dict = {"timings_all": {k: [r["timings"].get(k, 0.0) for r in runs] for k in keys}}
+    if prove is not None:
+        out["prove_s_all"] = list(prove)
+    if verify is not None:
+        out["verify_s_all"] = list(verify)
+    digests = [r.get("transcript") for r in runs]
+    if any(digests):
+        out["transcripts"] = digests
     return out
 
 

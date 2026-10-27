@@ -47,8 +47,9 @@ WikiText-2 test windows of ``--prompt`` tokens, mode C commits the graph's own w
 ``wire``, ``lean``, ``prune_last``, ``prob_max`` (the graph's scale, :func:`pvi.models.decoder.prob_max_of`),
 ``lookups``, ``sampler``, ``real``, ``temperature``, ``logit_scale``, ``device``, ``verifier_device``, ``threads``),
 ``positions``, ``reps``, ``columns``, ``queries``, ``accepted``,
-``warmup_accepted``, the medians and ``[min, max]`` of ``prove_s`` and ``verify_s`` over the timed queries, every
-timing and byte part (medians), ``proof_bytes``, ``proof_mb_per_token`` (the proof over ``G``), ``token_rule_s``,
+``warmup_accepted``, ``warmup_transcript``, the medians and ``[min, max]`` of ``prove_s`` and ``verify_s`` over the
+timed queries, every timing and byte part (medians), every timed query's own values (``prove_s_all``,
+``verify_s_all``, ``timings_all``, ``token_rule_s_all``, and with Fiat--Shamir ``transcripts``), ``proof_bytes``, ``proof_mb_per_token`` (the proof over ``G``), ``token_rule_s``,
 ``generate_s``, ``tampers`` (verdicts and labels), ``ok``, peak host and GPU memory over the build and the commitment
 (``build_peak``) and over each line's queries (``peak``), ``build_s``, ``commit_s``, ``setup_cache``, ``env``.  The
 exit status is 1 if an honest response was rejected or a tampered one accepted.
@@ -112,7 +113,9 @@ class TokenTimer:
 
 
 def summary(runs: list[dict], tokens: list[float]) -> dict:
-    """Medians of every part, and ``prove_s`` / ``verify_s`` (token rule included) with their ``[min, max]``."""
+    """Medians of every part, and ``prove_s`` / ``verify_s`` (token rule included) with their ``[min, max]``, and
+    every response's own values (:func:`experiments.common.records.per_query`: ``prove_s_all``, ``verify_s_all``,
+    ``timings_all``, ``transcripts``; ``token_rule_s_all``)."""
     keys = sorted({k for r in runs for k in r["timings"]})
     timing = {k: statistics.median(r["timings"].get(k, 0.0) for r in runs) for k in keys}
     nbytes = {k: statistics.median(r["bytes"].get(k, 0) for r in runs) for k in sorted({k for r in runs
@@ -124,7 +127,8 @@ def summary(runs: list[dict], tokens: list[float]) -> dict:
     return {"timings": timing, "bytes": nbytes, "proof_bytes": sum(nbytes.values()),
             "prove_s": statistics.median(prove), "prove_s_range": [min(prove), max(prove)],
             "verify_s": statistics.median(verify), "verify_s_range": [min(verify), max(verify)],
-            "token_rule_s": statistics.median(tokens)}
+            "token_rule_s": statistics.median(tokens), "token_rule_s_all": list(tokens),
+            **records.per_query(runs, prove, verify)}
 
 
 def forge_margin(rule: str, sampler) -> int:
@@ -290,6 +294,7 @@ def main() -> int:
                         **({"sampler": {"a": samplers[0].a, "top_k": args.top_k}} if rule == "sample" else {}),
                         "reps": params.reps, "columns": params.columns, "queries": len(runs),
                         "accepted": accepted, "warmup_accepted": bool(warm["accepted"]),
+                        "warmup_transcript": warm.get("transcript"),
                         **summary(runs, tokens), "generate_s": generate_s, "tampers": tampers,
                         "peak": records.peaks(device)}
                 line["proof_mb_per_token"] = line["proof_bytes"] / g / 1e6

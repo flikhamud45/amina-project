@@ -61,11 +61,14 @@ machine cannot hold.
 ``--prob-max``, or a checkpoint recipe's), ``lmax``, ``graph_digest``, ``shapes``, ``build_s``,
 ``build_peak``, ``host``, ``gpu``, ``env`` (:func:`experiments.common.records.environment`), ``mode``, ``policy``,
 ``chosen`` (mode C: the plan committed), ``fs``, ``wire``, ``lean``, ``lookups``, ``lam``, ``rate``,
-``v1_verifier``, ``v0_accepted``, ``v0_bytes`` and ``v1_bytes`` (per message), ``v0_total``, ``v1_total``,
+``v1_verifier``, ``v0_accepted``, ``v0_transcript`` (with Fiat--Shamir, the untimed v0 query's transcript digest,
+:func:`pvi.v0.query.run_query`), ``commit_roots_sha256`` (mode C: :func:`experiments.common.records.roots_sha256`),
+``v0_bytes`` and ``v1_bytes`` (per message), ``v0_total``, ``v1_total``,
 ``ratio``, ``n_leaves``, ``n_instances``, ``instance_bits``, ``table``, ``n_exceptions``, ``reps``, ``columns``,
-``setup_s``, ``setup_cache``, ``v0_query_s``, ``v1_bytes_s``; with ``--full`` ``v1_full`` (verdict, bytes, timings),
-``timed`` (``queries``; ``v0``, ``v1`` and ``v1_paths``: the per-part medians, ``prove_s`` / ``verify_s`` with their
-``[min, max]`` over the queries' own totals, ``fs_s``) and ``tampers``; ``accounting``, ``accounting_ok``, ``peak``.
+``setup_s``, ``setup_cache``, ``v0_query_s``, ``v1_bytes_s``; with ``--full`` ``v1_full`` (verdict, bytes, timings,
+the transcript digest), ``timed`` (``queries``; ``v0``, ``v1`` and ``v1_paths``: the per-part medians, ``prove_s`` /
+``verify_s`` with their ``[min, max]`` over the queries' own totals, ``fs_s``, and every query's own values
+``prove_s_all``, ``verify_s_all``, ``timings_all`` and ``transcripts``) and ``tampers``; ``accounting``, ``accounting_ok``, ``peak``.
 With ``--codec-only`` one line with ``codec_only``, ``blocks`` and ``total`` instead.
 
 Hardware and time: the paper's cells ran on an NVIDIA L40S (48 GB) prover with 8 CPU threads for the verifier.  A
@@ -240,7 +243,9 @@ def codec_profile(graph, x: torch.Tensor, n_layers: int, lmax: int, device) -> d
 # ------------------------------------------------------------------ timed queries
 def _medians(runs: list[dict]) -> dict:
     """The per-part medians of ``runs``, the prover's and the verifier's totals (sums of the medians) with the
-    ``[min, max]`` of each query's own totals, the accepted count and the Fiat--Shamir hashing (``fs_s``)."""
+    ``[min, max]`` of each query's own totals, the accepted count, the Fiat--Shamir hashing (``fs_s``) and every
+    query's own values (:func:`experiments.common.records.per_query`: ``prove_s_all``, ``verify_s_all``,
+    ``timings_all``, ``transcripts``)."""
     keys = sorted({k for r in runs for k in r["timings"]})
     t = {k: statistics.median(r["timings"].get(k, 0.0) for r in runs) for k in keys}
     pq = [sum(v for k, v in r["timings"].items() if k.startswith("prove_")) for r in runs]
@@ -249,7 +254,7 @@ def _medians(runs: list[dict]) -> dict:
             "prove_s": sum(v for k, v in t.items() if k.startswith("prove_")),
             "verify_s": sum(v for k, v in t.items() if k.startswith("verify_")),
             "prove_s_range": [min(pq), max(pq)], "verify_s_range": [min(vq), max(vq)],
-            "fs_s": t.get("fs_hash", 0.0)}
+            "fs_s": t.get("fs_hash", 0.0), **records.per_query(runs, pq, vq)}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -400,7 +405,9 @@ def main() -> int:
                "chosen": None if mode != "C" else args.policy if plan is None else plan.policy, "fs": args.fs,
                "wire": args.wire, "lean": args.lean, "lookups": args.lookups if mode != "C" else False,
                "lam": args.lam, "rate": args.rate, "v1_verifier": main_verifier,
-               "v0_accepted": ref["accepted"], "v0_bytes": ref["bytes"], "v1_bytes": b1, "v0_total": total0,
+               "v0_accepted": ref["accepted"], "v0_transcript": ref.get("transcript"),
+               **({"commit_roots_sha256": records.roots_sha256(coms)[0]} if coms is not None else {}),
+               "v0_bytes": ref["bytes"], "v1_bytes": b1, "v0_total": total0,
                "v1_total": total1, "ratio": total0 / total1, **stats, "instance_bits": cutmod.instance_bits(cut_plan),
                "reps": p1.reps, "columns": p1.columns, "setup_s": setup_s,
                "setup_cache": coms.setup_cache if coms is not None else None, "v0_query_s": v0_s, "v1_bytes_s": v1_s}
@@ -409,7 +416,8 @@ def main() -> int:
             t0 = time.perf_counter()
             full = cp.run_cut_query(prover, v1, x)
             out["v1_full"] = {"accepted": full["accepted"], "rejected_at": full["rejected_at"], "bytes": full["bytes"],
-                              "timings": full["timings"], "s": time.perf_counter() - t0}
+                              "timings": full["timings"], "s": time.perf_counter() - t0,
+                              "transcript": full.get("transcript")}
             accounting["v1"] = v1_accounting(b1, full)
             good = good and full["accepted"] and all(accounting["v1"][k] for k in V1_EXACT)
             if args.reps > 1:                              # timed queries of both protocols, interleaved

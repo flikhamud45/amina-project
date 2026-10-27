@@ -57,7 +57,11 @@ ends with every table cell and every macro that the run does not provide, one pe
 FAILED`` or ``PARSE`` line and on any missing cell or macro (unless ``--allow-missing``, for a partial run such as the
 gate tier's), and with ``--strict`` also on any job of ``--expect`` without results.  ``WARNING`` lines, which do not
 change it: one quantity measured by two jobs differs by more than 10% (:data:`TWO_JOBS`), two records of one quality
-cell differ (:meth:`experiments.paper.records.Run.ppl`), the records' mode-C plan is not ``--policy``.
+cell differ (:meth:`experiments.paper.records.Run.ppl`), the records' mode-C plan is not ``--policy``, the nodes'
+environment snapshots differ in a compared field (``logs/<name>/env/``, :func:`env_report`), and a timed job's GPU
+was slowed by a power or thermal limit or shared with another process (``logs/<name>/telemetry/``,
+:func:`telemetry_report`).  ``--xcheck-logs`` names another platform's run of the smoke tier: its ``xcheck`` job's
+proofs must equal the run's (:func:`experiments.paper.macros.hardware_digests`).
 ``--rehearsal``: a rehearsal's folder (small models; no cell of the paper is expected): every tier must have at least
 one record of each kind it writes (:data:`experiments.paper.records.REHEARSAL_KINDS`), the missing cells and macros
 are counted and do not set the exit status, every builder runs on what is there, and the checks apply, except those
@@ -177,6 +181,68 @@ def machine_check(run: R.Run, bench: Bench, logs: Path | None = None) -> tuple[l
     if stopped:
         summary.append(f"left out, stopped at the node check (wrong node, no work): {', '.join(stopped)}")
     return bad, (["machines: " + "; ".join(summary)] if summary else [])
+
+
+UNTIMED = ("smoke", "quality", "tv", "attack")
+"""The tiers whose jobs time nothing the paper reports (their GPU's telemetry is not checked)."""
+
+
+def env_report(logs: Path) -> tuple[list[str], list[str]]:
+    """``(summary, warnings)`` of the run's environment snapshots (``logs/env/<host>-<job>/env.json``,
+    :mod:`experiments.package.envsnap`): one ``WARNING env`` line per compared field on which the nodes differ, and
+    per stored network whose hash failed ``MODELS.sha256`` (``env/models-check.txt``)."""
+    from experiments.package import envsnap
+    folder = logs / "env"
+    snaps = envsnap.snapshots(folder)
+    if not snaps:
+        return [], []
+    warn = []
+    for key, values in envsnap.differences(snaps).items():
+        warn.append(f"WARNING env: the nodes differ in {key}: " + "; ".join(
+            f"{v} ({', '.join(names)})" for v, names in values.items()))
+    check = folder / "models-check.txt"
+    if check.is_file():
+        warn += [f"WARNING env: {line.strip()} (MODELS.sha256)" for line in check.read_text(encoding="utf-8").splitlines()
+                 if line.strip().endswith("FAILED")]
+    inputs = folder / "inputs.sha256"
+    n = len(inputs.read_text(encoding="utf-8").splitlines()) if inputs.is_file() else 0
+    return [f"environment: {len(snaps)} node snapshots ({', '.join(s['snapshot'] for s in snaps)}); {n} input files "
+            "hashed (env/inputs.sha256)"], warn
+
+
+def telemetry_report(logs: Path) -> tuple[list[str], list[str]]:
+    """``(summary, warnings)`` of the GPU telemetry of the run's jobs (``logs/telemetry/sp-<cell>-<job>.*``,
+    :mod:`experiments.package.telemetry`): a ``WARNING telemetry`` line for each timed job (a tier not in
+    :data:`UNTIMED`) during which the GPU was slowed by a power or thermal limit (with each reason's share of the
+    samples) or whose GPU ran another process when the job started."""
+    from experiments.package import telemetry
+    folder = logs / "telemetry"
+    stems = sorted({p.name.split(".")[0] for p in folder.glob("sp-*.*")}) if folder.is_dir() else []
+    timed_logs = {p.stem for p in logs.glob("sp-*.out")
+                  if (m := R.LOG.match(p.name)) and R.tier_of(m["cell"]) not in UNTIMED}
+    warn, sampled, slowed = [], 0, 0
+    for stem in stems:
+        m = R.LOG.match(stem + ".out")
+        if m is None or R.tier_of(m["cell"]) in UNTIMED:
+            continue
+        s = telemetry.read(folder / stem)
+        if not s or not s.get("samples"):
+            continue
+        sampled += 1
+        if s.get("slowdown"):
+            slowed += 1
+            warn.append(f"WARNING telemetry: {stem}: the GPU was slowed by " + ", ".join(
+                f"{k} in {100 * v:.0f}% of the samples" for k, v in sorted(s["slowdown"].items()))
+                        + f" ({s['samples']} samples; SM clock {s.get('sm_clock_mhz')}, at most "
+                        f"{s.get('temperature_max_c')} C)")
+        if s.get("apps_at_start"):
+            warn.append(f"WARNING telemetry: {stem}: other processes on the GPU when the job started: "
+                        + "; ".join(s["apps_at_start"]))
+    missing = sorted(timed_logs - set(stems))
+    if not stems and not timed_logs:
+        return [], warn
+    return [f"telemetry: {sampled} timed jobs sampled, {slowed} with a power or thermal slowdown, {len(missing)} timed "
+            "job logs without telemetry"], warn
 
 
 def platform_text(run: R.Run, bench: Bench) -> str:
@@ -469,6 +535,11 @@ def build(args) -> int:
     # the published values, zkLLM's stored runs and the run's own zkLLM runs (the zkllm tier's logs/<name>/zkllm/)
     ctx = T.Ctx(run, bench, literature(run_zkllm=logs / "zkllm"), policy, platform_text(run, bench),
                 not args.no_byte_model)
+    if args.xcheck_logs:                    # another platform's run of the smoke tier: its proofs of the same cells
+        from experiments.comparison.proof_digests import load
+        ctx.xcheck = load(args.xcheck_logs)
+        if not ctx.xcheck:
+            problems.append(f"PARSE --xcheck-logs: no digests record in {', '.join(args.xcheck_logs)}")
     tables = T.build_all(ctx, problems)
     macros, crossovers = M.build(ctx, failed)
     # a table cell and the macro printing the same value agree, in this build and in the paper's fallback
@@ -487,9 +558,12 @@ def build(args) -> int:
                  "with the integer reference: not an exact re-execution" for r in run.kind("reexec")
                  if r.d.get("variant") in T.CHECKED_EXACT and not T.exact_record(r.d["variant"], r)]
 
+    env_summary, env_warn = env_report(logs) if logs.is_dir() else ([], [])
+    tele_summary, tele_warn = telemetry_report(logs) if logs.is_dir() else ([], [])
+    warnings += env_warn + tele_warn
     report = [f"logs {logs}: {len(recs)} records from {len(list(logs.glob('sp-*.out'))) if logs.is_dir() else 0} "
               f"job logs, {len(files)} documents; bench tables {bench.name}; plan {policy}", ctx.platform,
-              *machine_summary]
+              *machine_summary, *env_summary, *tele_summary]
     counts = defaultdict(lambda: defaultdict(int))
     for r in recs + files:
         counts[r.tier][r.kind] += 1
@@ -591,6 +665,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-byte-model", action="store_true",
                     help="skip the library's parameters and byte model (tab:params, tab:setup, the break-even)")
     ap.add_argument("--verbose", action="store_true", help="list every missing cell and macro")
+    ap.add_argument("--xcheck-logs", nargs="+", default=[], metavar="DIR",
+                    help="another platform's logs of the smoke tier (folders of sp-*.out): its xcheck job's proofs "
+                         "must equal this run's, and HwDigestDevices names its GPU and CPU")
     return ap
 
 

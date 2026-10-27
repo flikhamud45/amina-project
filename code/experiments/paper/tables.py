@@ -117,6 +117,8 @@ class Ctx:
     policy: str = DEFAULT_POLICY
     platform: str = ""
     byte_model: bool = True
+    xcheck: list = field(default_factory=list)
+    """The ``digests`` records of other platforms' runs of the same cells (``numbers.py --xcheck-logs``)."""
 
 
 def protocol(ctx: Ctx, extra: str = "") -> str:

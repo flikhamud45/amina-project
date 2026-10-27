@@ -29,7 +29,10 @@ has a ``--no-...`` form (the per-op commitment: ``--policy per-op``; the 8-bit d
 environment, :func:`env_info`, with the implementation options of :mod:`pvi.options` under ``implementation``),
 then rows ``{run_id, suite, model, cell, config, prover_hw, verifier_hw, host, git_sha, metric, value, unit, trial,
 ts}`` with, where they apply, ``batch``, ``attack``, ``stage``, ``lam``, ``k`` and ``contention`` (the scheduler
-evidence of :mod:`pvi.core.contention` for each timed phase).  A platform names one prover GPU and one CPU model:
+evidence of :mod:`pvi.core.contention` for each timed phase).  Two rows carry hex digests instead of numbers (the
+aggregates skip them; ``comparison/fingerprint_check.py`` compares them between platforms): ``commit_roots_sha256``
+in the commitment cells (:func:`experiments.common.records.roots_sha256`) and, per Fiat--Shamir query,
+``proof_transcript`` (the transcript's digest, :func:`pvi.v0.query.run_query`).  A platform names one prover GPU and one CPU model:
 the root's ``PLATFORM.json`` records them, and a job on other hardware, or in a frozen root, stops.  A finished cell
 has a ``.done`` marker and is skipped, so an interrupted job resumes where it stopped.  An honest query that is
 rejected stops the job and keeps the cell's records as ``<cell>.rejected-<run_id>.jsonl``.
@@ -372,6 +375,8 @@ def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
         r.rec("bytes_" + k, v, "B", trial, **extra)
     r.rec("bytes_total", sum(res["bytes"].values()), "B", trial, **extra)
     r.rec("accepted", int(res["accepted"]), "", trial, **extra)
+    if res.get("transcript"):       # Fiat--Shamir: the proof's fingerprint (pvi.v0.query.run_query)
+        r.rec("proof_transcript", res["transcript"], "sha", trial, **extra)
     if not res["accepted"]:  # an honest query must never fail: GPU/CPU disagreement, stop the job
         # keep the evidence where a re-run cannot overwrite it and count_outcomes.py finds it
         # (no .done: the aggregates never read it)
@@ -431,6 +436,8 @@ def suite_cnn(args, env) -> None:
         raise SystemExit(f"{substitute} is missing: the attacks on resnet18_224 include Anchuri et al.'s substitute "
                          "model (python -m experiments.costs.train_cnn --model resnet18_224_squirrel)")
     model, data = trained_mlp() if name == "mlp_mnist" else trained_cnn(name)
+    from experiments.common import checkpoints
+    env["sources"] = {**(env.get("sources") or {}), **checkpoints.SOURCES}   # the weights' SHA-256 in every env row
     graph = quantize_model(model, data["train_x"])
     mats = graph.mat_ops
     n_params = graph.n_params()
@@ -533,6 +540,7 @@ def suite_cnn(args, env) -> None:
     if coms.plan is not None and any(m == "C" for m, _ in modes) and not is_done(args, "cnn", name, cell):
         r = Recorder(args, "cnn", name, cell, {"rate": rate, **_plan_config(coms)}, env)
         r.rec("commit_total", commit_s, "s", **_cs(commit_cs, "commit_total"))
+        r.rec("commit_roots_sha256", records.roots_sha256(coms)[0], "sha256")
         _record_setup(r, coms, mats)
         _record_peaks(r, device)
         r.done()
@@ -804,6 +812,7 @@ def suite_llm(args, env) -> None:
                     else:
                         r.rec("commit_total", commit_s, "s", setup_cache=coms.setup_cache,
                               **_cs(setup_cs, "commit_total"))
+                    r.rec("commit_roots_sha256", records.roots_sha256(coms)[0], "sha256")
                     if coms.plan is not None:
                         _record_setup(r, coms, mats)
                     _record_peaks(r, device)

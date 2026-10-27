@@ -12,12 +12,15 @@ of the L40S run:
 
 The values compared (:data:`EXACT`): the parameter count, the int8 model's bytes and accuracy, the path test's facts
 (the bytes to open everything, the detection probabilities, the paths needed and their bytes), the security bits, the
-bytes of the claims, of ``u`` and of the opened columns (the Merkle term depends on the random columns), and every
-verdict; and, within ``--accuracy-tolerance``, the float model's accuracy (cuDNN may change its last digits).  A
+bytes of the claims, of ``u`` and of the opened columns (the Merkle term depends on the random columns), every
+verdict, and in roots that record them (from the final run's commit on) every Fiat--Shamir query's transcript digest
+(``proof_transcript``: the proof's bytes) and the commitment's roots (``commit_roots_sha256``); and, within ``--accuracy-tolerance``, the float model's accuracy (cuDNN may change its last digits).  A
 mismatch means different weights, data, code or a GPU/CPU disagreement.  It also prints every honest rejection and
 every accepted attack of the second root.  Exits 1 on any problem, and also when nothing could be compared (a wrong
 or partial stored root).  Cells are compared by name, so a decoder cell of another attention probabilities' scale (the
-final run's ``_pmax2047``, 11 bits) has no counterpart in the stored roots' 8-bit cells.  Reads only; a minute on a
+final run's ``_pmax2047``, 11 bits) has no counterpart in the stored roots' 8-bit cells; the final run's own cells
+are compared with a second platform's run of the same cells (``proof_digests.py`` compares the run's fixed cells
+proved on its GPU and CPU and on another platform).  Reads only; a minute on a
 laptop CPU for the stored roots.
 """
 from __future__ import annotations
@@ -30,7 +33,8 @@ from pathlib import Path
 
 EXACT = {"n_params", "model_bytes_int8", "int8_accuracy", "open_all_bytes", "p_detect_penultimate",
          "p_detect_min_node", "paths_needed_penultimate", "paths_bytes_shared", "paths_bytes_shared_k",
-         "soundness_bits", "bytes_claims", "bytes_u", "bytes_columns", "accepted", "tamper_rejected", "rejected"}
+         "soundness_bits", "bytes_claims", "bytes_u", "bytes_columns", "accepted", "tamper_rejected", "rejected",
+         "proof_transcript", "commit_roots_sha256"}
 CLOSE = ("float_accuracy",)
 """Compared within ``--accuracy-tolerance``: the float model on cuDNN, whose last digits may change."""
 

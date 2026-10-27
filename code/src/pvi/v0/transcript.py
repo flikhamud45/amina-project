@@ -88,6 +88,15 @@ class Challenger:
         self._count += 1
         return hashlib.sha256(f"test-seed/{self._seed}/{self._count}/{label}".encode()).digest()
 
+    def transcript_digest(self) -> str:
+        """The transcript so far as 32 bytes of hex (SHAKE-256 of everything absorbed, under the label
+        ``digest``, read from a copy so the transcript is unchanged).  Under Fiat--Shamir it fingerprints the
+        statement and every prover message absorbed so far: equal digests on two machines mean byte-identical
+        messages, the records' check that the proof does not depend on the hardware."""
+        h = self._state.copy()
+        h.update(b"digest")
+        return h.hexdigest(32)
+
     def fork(self) -> "Challenger":
         """A copy with the same transcript and test-seed counter: under Fiat--Shamir it draws exactly the
         challenges this one would, from the messages both absorb (the prover's copy in V1's GKR)."""

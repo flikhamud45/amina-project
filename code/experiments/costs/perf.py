@@ -58,7 +58,11 @@ Record (one JSON line per mode and variant): ``label``, ``git``, ``model``, ``re
 scale, :func:`pvi.models.decoder.prob_max_of`; None for an image model), ``reps``, ``columns``, ``group_columns``,
 ``device``, ``verifier_device``, ``stream``, ``threads``, ``accepted`` / ``queries``, ``fs``, ``prove_s`` and
 ``verify_s`` (sums of the per-part medians, Fiat--Shamir hashing counted for both), ``prove_s_range`` /
-``verify_s_range`` (``[min, max]`` of each query's own totals), ``proof_bytes``, ``timings`` and ``bytes`` (per-part
+``verify_s_range`` (``[min, max]`` of each query's own totals), ``prove_s_all`` / ``verify_s_all`` and
+``timings_all`` (every timed query's own totals and parts, in query order), ``transcripts`` (with Fiat--Shamir, each
+timed query's transcript digest, :func:`pvi.v0.query.run_query`), ``warmup`` (the untimed warm-up query's totals,
+verdict and transcript digest), ``graph_digest``, ``commit_roots_sha256`` (mode C: the SHA-256 of ``C_M``'s roots,
+:func:`experiments.common.records.roots_sha256`), ``proof_bytes``, ``timings`` and ``bytes`` (per-part
 medians), ``build_s``, ``commit_s``, ``setup_cache``, ``tampers``, ``peak`` / ``build_peak`` (host peak resident set
 and GPU peak memory over the queries, and over the build and commitments), ``vs_first`` (several variants: the
 medians over the first variant's), ``host``, ``gpu`` and ``env`` (:func:`experiments.common.records.environment`);
@@ -112,13 +116,28 @@ def _medians(runs: list[dict]) -> tuple[dict, dict, float, float]:
     return timing, nbytes, prove, verify
 
 
-def _spread(runs: list[dict]) -> dict:
-    """``[min, max]`` over ``runs`` of each query's own prover and verifier totals (the parts of :func:`_medians`),
-    for the paper's median [min-max]."""
+def _totals(runs: list[dict]) -> tuple[list, list]:
+    """Each query's own prover and verifier totals (the parts of :func:`_medians`)."""
     prove = [sum(r["timings"].get(k, 0.0) for k in PROVE_PARTS) for r in runs]
     verify = [sum(v_ for k, v_ in r["timings"].items() if k.startswith("verify_") or k == "fs_hash") for r in runs]
+    return prove, verify
+
+
+def _spread(runs: list[dict]) -> dict:
+    """``[min, max]`` over ``runs`` of each query's own prover and verifier totals (:func:`_totals`), for the paper's
+    median [min-max], and every query's own values (:func:`experiments.common.records.per_query`)."""
+    prove, verify = _totals(runs)
     return {"prove_s_range": [min(prove), max(prove)] if runs else None,
-            "verify_s_range": [min(verify), max(verify)] if runs else None}
+            "verify_s_range": [min(verify), max(verify)] if runs else None,
+            **records.per_query(runs, prove, verify)}
+
+
+def _warmup(run: dict) -> dict:
+    """The untimed warm-up query's own totals, verdict and transcript digest (its first-call costs: lazy
+    initialisation, compilation)."""
+    prove, verify = _totals([run])
+    return {"prove_s": prove[0], "verify_s": verify[0], "accepted": bool(run["accepted"]),
+            "transcript": run.get("transcript")}
 
 
 def _start_client(stack: contextlib.ExitStack, verifier, folder: str | None, threads: int) -> dict:
@@ -297,11 +316,13 @@ def main() -> int:
             records.sync(device)
             commit_s[prune, scale, policy] = time.perf_counter() - t0
     build_peak = records.peaks(device)
+    digests = {key: graph.digest().hex() for key, graph in graphs.items()}
+    roots = {key: records.roots_sha256(c)[0] for key, c in coms.items()}
     env = records.environment(device)
     ok = client_ok = True
     for mode in args.modes:
         records.reset_peaks(device)
-        pairs = {}
+        pairs, warm = {}, {}
         for (prune, scale), graph in graphs.items():
             weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
             for policy in (policies if mode == "C" else [None]):
@@ -321,8 +342,9 @@ def main() -> int:
                                 if mode == "Kpre":
                                     v.precompute(Challenger())
                             prover = Prover(graph, device=device, commitments=c, lean=lean)
-                            run_query(prover, v, queries[0], wire=wire)  # warm-up
-                            pairs[prune, scale, policy, looked, lean, wire] = (prover, v, [])
+                            key = (prune, scale, policy, looked, lean, wire)
+                            warm[key] = _warmup(run_query(prover, v, queries[0], wire=wire))  # untimed
+                            pairs[key] = (prover, v, [])
         order = list(pairs)
         with contextlib.ExitStack() as stack:
             clients = {key: _start_client(stack, v, args.client_dir, args.threads)
@@ -361,6 +383,8 @@ def main() -> int:
                    "timings": timing, "bytes": nbytes, "build_s": build_s,
                    "commit_s": commit_s.get((prune, scale, policy)),
                    "setup_cache": getattr(coms.get((prune, scale, policy)), "setup_cache", None),  # "hit": a load
+                   "warmup": warm[key], "graph_digest": digests[prune, scale],
+                   **({"commit_roots_sha256": roots[prune, scale, policy]} if (prune, scale, policy) in roots else {}),
                    **({"tampers": tampered[key]} if tampered else {}),
                    "peak": peak, "build_peak": build_peak,
                    **({"client_memory": memory[key]} if key in memory else {}),

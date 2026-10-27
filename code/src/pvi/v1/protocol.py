@@ -202,7 +202,7 @@ def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: 
                   forward_kwargs: dict | None = None, cheat: dict | None = None, sampler=None) -> dict:
     """One V1 query (always on the wire: ``PVC3`` values, packed field elements).  Returns what
     :func:`pvi.v0.query.run_query` returns, with the cut's bytes (``cut_exc``, ``cut_mult``, ``cut_gkr``) and
-    timings.
+    timings, and ``transcript`` (with Fiat--Shamir the transcript's digest at the query's end, else None).
 
     ``cheat`` (tests only) makes the prover dishonest at one message: ``"witness"(values, witness, exc, mult)``
     edits its sent values, leaves, exceptions or counts in place; ``"gkr"(blobs)``, ``"fold"(parts)`` return
@@ -231,6 +231,7 @@ def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: 
     finally:
         verifier._cut_plan = verifier.sampler = None
     out["accepted"] = out["rejected_at"] is None
+    out["transcript"] = ch.transcript_digest() if ch.fiat_shamir else None
     out["cut"] = {"n_ops": len(plan.ops), "n_instances": len(plan.instances), "n_leaves": plan.n_leaves(),
                   "table": plan.table_size(), "n_rounds": sum(n * (n - 1) // 2 for n in cutmod.instance_bits(plan))}
     return out

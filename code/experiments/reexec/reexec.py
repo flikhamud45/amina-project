@@ -59,7 +59,7 @@ re-execution can be timed under either setting.
 **Record** (one JSON line per model, ``T`` and variant, on stdout): ``git``, ``model``, ``seq``, ``variant``,
 ``dtype``, ``device``, ``threads``, ``reps``, ``prune_last``, ``prob_max`` (the integer variants' scale; None for
 the floating-point ones), ``measured_s`` (median seconds per measured block
-count), ``range_s`` (their ``[min, max]``), ``per_block_s``, ``fixed_s``, ``n_layers``, ``full_s`` (the linear fit at
+count), ``range_s`` (their ``[min, max]``), ``times_s`` (every timed repetition, per block count), ``per_block_s``, ``fixed_s``, ``n_layers``, ``full_s`` (the linear fit at
 the full depth), ``max_pos``, ``peak`` (host peak resident set and GPU peak memory over the variant's builds and
 runs), ``malloc_tuned`` (whether this process applied ``--malloc-tune``'s allocator setting; glibc's ``MALLOC_*``
 environment variables, which set the same parameters, are in ``env``'s ``env_vars``), ``gpu``, ``cpu``, ``host``,
@@ -343,7 +343,7 @@ def main() -> int:
             tokens = torch.randint(0, cfg.vocab, (1, seq), generator=torch.Generator().manual_seed(args.prompt_seed))
             tokens = tokens.to(device)
             for variant in variants:
-                measured, spread, same = {}, {}, {}
+                measured, spread, same, raw = {}, {}, {}, {}
                 records.reset_peaks(device)
                 try:
                     for n_layers in args.layers:
@@ -377,6 +377,7 @@ def main() -> int:
                         times = _timed(run, device, args.reps, warm_up=warm_up)
                         measured[n_layers] = statistics.median(times)
                         spread[n_layers] = [min(times), max(times)]
+                        raw[n_layers] = list(times)
                         del run
                         if device.type == "cuda":
                             torch.cuda.empty_cache()
@@ -393,7 +394,8 @@ def main() -> int:
                     "device": str(device), "threads": args.threads, "reps": args.reps, "prune_last": args.prune_last,
                     "prob_max": args.prob_max if variant in INTEGER else None,
                     "measured_s": {str(k): v for k, v in measured.items()},
-                    "range_s": {str(k): v for k, v in spread.items()}, "peak": records.peaks(device),
+                    "range_s": {str(k): v for k, v in spread.items()},
+                    "times_s": {str(k): v for k, v in raw.items()}, "peak": records.peaks(device),
                     "max_pos": cfg.max_pos,
                     "per_block_s": per_block, "fixed_s": fixed, "n_layers": cfg.n_layers,
                     "full_s": fixed + cfg.n_layers * per_block,

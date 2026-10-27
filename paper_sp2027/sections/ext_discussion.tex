@@ -121,7 +121,8 @@ will not (Figure~\ref{fig:breakeven}). A $\Kpre$ client needs the weights once, 
 \KpreKeyMB{}\,MB of secret vectors and folded rows and the \KpreEmbedMB{}\,MB embedding table. A provider may also serve with the exact model and prove
 later, on request, with the same proof; it then still pays the integer engine's cost over fp16
 serving (\ServeOptMUOneOverUTwo{}$\times$ on OPT-1.3B), and only the queries it proves are checked. On the \PlatformGpu{}, proving a 2{,}048-token OPT-1.3B prompt costs
-\ServeOptMOverUOneRange{}$\times$ our exact forward pass and \ServeOptMOverUTwoRange{}$\times$ an fp16 one\TodoServingExt{}. Sending one opening and one fold for a batch of
+\ServeOptMOverUOneRange{}$\times$ our exact forward pass and \ServeOptMOverUTwoRange{}$\times$ an fp16 one\TodoServingExt{}, and
+\ServeOptMEnergyOverUTwoRange{}$\times$ the fp16 one's GPU energy. Sending one opening and one fold for a batch of
 queries whose claims are all fixed before the challenges amortises the opened columns over the
 batch: on OPT-1.3B at 64 tokens, 64 prompts in one mode-$\sC$ proof take \ServeBatchMBPerTokenC{}\,MB per token
 against \ServeSingleMBPerTokenC{}\,MB for one prompt, and on the full Llama-2-7B \BatchLlamaSize{} prompts of 64 tokens take
