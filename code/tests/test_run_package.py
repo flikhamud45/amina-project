@@ -489,12 +489,12 @@ def test_the_qcheck_tier_checks_the_llama_recipe_on_the_validation_split_and_ove
             job = {"TinyLlama": "sp-q-tinyllama-validation", "QwenM": "sp-q-qwen17-validation"}[name]
             cmd = lines[job].split("--wrap", 1)[1]
             assert f"--model {model} --split validation --alphas {' '.join(f'{a:g}' for a in alphas)} " \
-                f"--glu-smooths {' '.join(f'{g:g}' for g in balances)}\"" in cmd, cmd
+                f"--glu-smooths {' '.join(f'{g:g}' for g in balances)}{STOP}" in cmd, cmd
         for model, job in jobs.items():
             if not licence and model.startswith("meta-llama/"):     # the licence-free model of Llama-2-7B's shapes
                 model, job = "openlm-research/open_llama_7b_v2", "sp-q-openllama7-draws"
             cmd = lines[job].split("--wrap", 1)[1]
-            assert cmd.endswith(f"--model {model} --draws {' '.join(map(str, DRAWS))}\""), cmd
+            assert cmd.endswith(f"--model {model} --draws {' '.join(map(str, DRAWS))}{STOP}"), cmd
     one = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--llama-licence", "--one-job",
                           "--no-exclusive", "qcheck"], cwd=REPO, env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"},
                          capture_output=True, text=True, timeout=120)
