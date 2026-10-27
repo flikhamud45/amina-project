@@ -220,8 +220,8 @@ $\sC$), \CrossoverOptSLongK{}\,Gb/s (OPT-125M, 2{,}048 tokens, $\Kpre$) and \Cro
   \end{tabular}
 \end{table}
 
-A CPU client that could keep the weights beats exact (integer) re-execution at both measured lengths
-by keeping a $\Kpre$ key instead (Table~\ref{tab:eval-reexec}). The llama.cpp rows run release
+A CPU client that could keep the weights beats exact (integer) re-execution at every measured length
+by keeping a $\Kpre$ key instead (Table~\ref{tab:eval-reexec}; \CpuRatioMedium{}$\times$ at 512 tokens). The llama.cpp rows run release
 \LlamaCppRelease{}, built for the \PlatformCpu{}, on the same 8 threads, with random weights of Llama-2-7B's shapes in
 llama.cpp's own formats; each row is the fastest of its two attention kernels and of micro-batches of 512 and
 2{,}048 tokens (at most the prompt), and, unlike our pruned graph, llama.cpp computes the last block's attention at
@@ -231,6 +231,83 @@ Since the claims of about $\lceil k/T\rceil$ queries of $T$ tokens
 reveal a weight matrix with rows of length $k$, mode $\sC$ suits open-weight models served by an
 untrusted provider. Our streaming GPU verifier checks a 2{,}048-token OPT-1.3B query in $\Kpre$ in
 \OptMGpuVerify{}\,s on the \PlatformGpu{}, against the 0.90\,s that zkLLM reports on an A100.
+
+\subsection{The CPU Verifier: Cores, Kernels and Model Size}
+\label{app:eval-cpu}
+
+The ratio of Section~\ref{sec:eval-reexec} is measured on 8 cores of a server CPU.
+Table~\ref{tab:eval-cpu} measures it for Llama-2-7B at 2{,}048 tokens on 4 and 2 cores of the same NUMA node, the
+verifier and re-execution each on as many threads, on 8 cores without our AVX-512 attention kernel, and for
+Llama-2-13B. Our $\Kpre$ verifier is \CpuRatioThrFour{}$\times$ faster than exact re-execution on 4 cores and
+\CpuRatioThrTwo{}$\times$ on 2, against \CpuRatio{}$\times$ on 8. Without the AVX-512 attention, in the verifier and
+in the integer forward pass alike, the verifier takes \CpuNoAvxSlowdown{}$\times$ as long and the ratio is
+\CpuRatioNoAvx{}$\times$; the library is still compiled for the host CPU, so this isolates the attention kernel and
+does not emulate a CPU without AVX-512. For Llama-2-13B, the verifier takes \CpuVerifyThirteen{}\,s against
+\CpuReexecThirteen{}\,s for exact re-execution (\CpuRatioThirteen{}$\times$).
+
+\begin{table}[t]
+  \caption{The CPU verifier ($\Kpre$, Fiat--Shamir, $\lambda{=}128$) against the fastest exact re-execution on the
+  same cores of an \PlatformCpu{}, in seconds (2{,}048 tokens, full models, random int8 weights): Llama-2-7B on 2, 4
+  and 8 cores of one NUMA node, one thread per core, and on 8 without the AVX-512 attention kernel in either;
+  Llama-2-13B on 8 cores}
+  \label{tab:eval-cpu}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}llrrr@{}}
+    \toprule
+    Model & threads & verifier & re-execution & ratio \\
+    \midrule
+    \pvitable{tab_eval_cpu}
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Commitment Plans and the Security Level}
+\label{app:eval-plans}
+
+Table~\ref{tab:eval-plans} commits the full Llama-2-7B under each of the six candidate plans
+(Appendix~\ref{app:plans}) and answers the same 2{,}048-token queries in mode~$\sC$. Codewords of at least $2^{18}$
+points open \PlanColsEighteen{} columns per query, against \PlanColsSixteen{} at $2^{16}$ points, for a one-time
+encoding of \PlanCommitEighteen{}\,s against \PlanCommitSixteen{}\,s. For Llama-2-7B the planning rule picks
+\PlanAutoLlama{}; our runs use $n\ge2^{\PlanLogPoints{}}$ for every model. Table~\ref{tab:eval-lambda} varies the security level:
+at $\lambda=40$ a 2{,}048-token proof in mode~$\sC$ is \LamFortyProofC{}\% of its size at $\lambda=128$ (a $\Kpre$
+proof, the claims alone, does not change), and the CPU verifier takes \LamFortyVerifyC{}\% ($\sC$) and
+\LamFortyVerifyK{}\% ($\Kpre$) of its time.
+
+\begin{table}[t]
+  \caption{Mode~$\sC$'s candidate plans on the full Llama-2-7B (random int8 weights), the same 2{,}048-token
+  queries, Fiat--Shamir, $\lambda{=}128$: the Merkle trees of encoded matrices and the columns they open per query,
+  the commitment's one-time encoding on the \PlatformGpu{}, the proof, the prover and the CPU verifier on 8 threads
+  of the \PlatformCpu{}. $n\ge2^e$: every matrix at $\max(2^e,2\,\mathrm{next\_pow2}(k))$ points; tight: the
+  per-op lengths; rate~$R$: every matrix at rate $R$; each with the transposed layout and lookup tables}
+  \label{tab:eval-plans}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}lrrrrrr@{}}
+    \toprule
+    Plan & trees & columns & encoding (s) & proof (GB) & prover (s) & verifier (s) \\
+    \midrule
+    \pvitable{tab_eval_plans}
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[t]
+  \caption{The full Llama-2-7B (random int8 weights, Fiat--Shamir) at $\lambda=40$, 80 and 128: the prover on the
+  \PlatformGpu{}, the CPU verifier on 8 threads of the \PlatformCpu{} (times in seconds) and the proof}
+  \label{tab:eval-lambda}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}rrrrrrrr@{}}
+    \toprule
+    & & \multicolumn{3}{c}{$\sC$} & \multicolumn{3}{c}{$\Kpre$} \\
+    \cmidrule(lr){3-5}\cmidrule(l){6-8}
+    $T$ & $\lambda$ & prove & verify & proof & prove & verify & proof \\
+    \midrule
+    \pvitable{tab_eval_lambda}
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \subsection{V1 Against Published Systems}
 \label{app:eval-compare-v1}

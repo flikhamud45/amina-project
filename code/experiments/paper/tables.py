@@ -21,6 +21,9 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 ``tab:eval-long``     ``long``: 2- and 3-block cells, extrapolated to the full Llama-2-7B
 ``tab:eval-real``     ``real``: OPT-1.3B, real weights against the random-weight twins (V1 cells, v0 timed)
 ``tab:eval-reexec``   ``gpuv`` and ``cpuv``: reexec.py, llamacpp.py, the Kpre verifier
+``tab:eval-cpu``      ``cpux`` (2 and 4 threads, no AVX-512 attention, Llama-2-13B) and ``cpuv``: perf.py, reexec.py
+``tab:eval-plans``    ``cpux``: perf.py with mode C's six candidate plans side by side
+``tab:eval-lambda``   ``bench``: lambda 40 and 80 (``b-lam-*``) and 128
 ``tab:eval-compare-v1`` ``v1`` (mode C) and the published systems
 ``tab:v1``            ``v1``: the timed queries and the GKR's share of V1's prover
 ``tab:gen``           ``gen``: greedy responses, both modes
@@ -143,6 +146,30 @@ def fastest(run: Run, tier: str, model: str, seq: int, variants=EXACT):
         return None, None, None
     v, (s, r) = min(got.items(), key=lambda kv: kv[1][0])
     return s, v, r
+
+
+def option(rec: Rec | None, name: str):
+    """An implementation option in force for a record (``env.implementation.options``; None where not recorded)."""
+    env = (rec.d.get("env") or {}) if rec is not None else {}
+    return ((env.get("implementation") or {}).get("options") or {}).get(name)
+
+
+def cpu_point(run: Run, tier: str, model: str, seq: int, threads: int = 8, avx512: bool = True, label: str = "cpuv"):
+    """``(verifier, exact, ratio)`` of one CPU setting: the Kpre CPU verifier's ``perf.py`` record of the full
+    ``model`` (``label``, ``threads``), the fastest exact re-execution on as many threads, ``(seconds, variant,
+    record)`` or None, and the ratio of the two (None if either is missing).  ``avx512`` False: both with the option
+    ``native_avx512`` off (records that state no options count as on)."""
+    def same(r):
+        return r.d.get("threads", 8) == threads and (option(r, "native_avx512") is not False) == avx512
+    ver = run.perf(tier, model, seq, "Kpre", vdev="cpu", label=label, threads=threads)
+    ver = ver if ver is not None and same(ver) else None
+    got = run.reexec(tier, model, seq, "cpu", EXACT, keep=lambda v, r: exact_record(v, r) and same(r))
+    best = None
+    if got:
+        v, (sec, r) = min(got.items(), key=lambda kv: kv[1][0])
+        best = (sec, v, r)
+    ratio = best[0] / ver.d["verify_s"] if best and ver and ver.d.get("verify_s") else None
+    return ver, best, ratio
 
 
 # ================================================================================================ evaluation.tex
@@ -910,6 +937,8 @@ def tab_eval_real(ctx: Ctx) -> Table:
 
 
 REEXEC_GPU = ("opt-1.3b", "opt-6.7b", "llama2-7b", "llama2-13b", "qwen3-4b")
+REEXEC_CPU = (64, 512, 2048)
+"""``tab:eval-reexec``'s prompt lengths of the CPU rows (Llama-2-7B, the cpuv tier)."""
 
 
 def tab_eval_reexec(ctx: Ctx) -> Table:
@@ -931,18 +960,18 @@ def tab_eval_reexec(ctx: Ctx) -> Table:
             cells.append(f.DASH if i is None and fl is None else f"{a} / {c}")
         tb.rows.append(" & ".join(cells) + r" \\")
     tb.rows += [r"\midrule", r"\multicolumn{4}{@{}l}{\emph{CPU: Llama-2-7B}} \\"]
-    ver = [run.perf("cpuv", "llama2-7b", s, "Kpre", vdev="cpu", label="cpuv") for s in (64, 2048)]
+    ver = [run.perf("cpuv", "llama2-7b", s, "Kpre", vdev="cpu", label="cpuv") for s in REEXEC_CPU]
     vals = [tb.put(f"cpu {s}", "Kpre verifier", r and r.d["verify_s"], r, lambda v: f.fixed(v, 1))
-            for s, r in zip((64, 2048), ver)]
-    tb.rows.append(" & ".join([r"our $\Kpre$ verifier", vals[0], "--", vals[1]]) + r" \\")
+            for s, r in zip(REEXEC_CPU, ver)]
+    tb.rows.append(" & ".join([r"our $\Kpre$ verifier", *vals]) + r" \\")
     for label, variants in (("fp32 re-execution", ("float",)), ("integer re-execution", EXACT),
                             (r"llama.cpp Q8\_0", ("llamacpp_q8_0",)), ("llama.cpp bf16", ("llamacpp_bf16",))):
         vals = []
-        for s in (64, 2048):
+        for s in REEXEC_CPU:
             got = run.reexec("cpuv", "llama2-7b", s, "cpu", variants, keep=exact_record)
             best = min(got.values(), key=lambda v: v[0]) if got else None
             vals.append(tb.put(f"cpu {s}", label, best and best[0], best and best[1], lambda v: f.fixed(v, 1)))
-        tb.rows.append(" & ".join([label, vals[0], "--", vals[1]]) + r" \\")
+        tb.rows.append(" & ".join([label, *vals]) + r" \\")
     return tb
 
 
@@ -970,6 +999,97 @@ def tab_eval_compare_v1(ctx: Ctx) -> Table:
         tb.rows.append(" & ".join([system, label, f.b(theirs) if theirs else f.DASH,
                                    tb.put(label, "ours (v0)", r and r.d["v0_total"], r, f.b),
                                    tb.put(label, "V1", r and r.d["v1_total"], r, f.b)]) + r" \\")
+    return tb
+
+
+CPU_ROWS = (("Llama-2-7B", "2 threads", "cpux", "llama2-7b", 2, True, "cpux"),
+            ("", "4 threads", "cpux", "llama2-7b", 4, True, "cpux"),
+            ("", "8 threads", "cpuv", "llama2-7b", 8, True, "cpuv"),
+            ("", "8, no AVX-512 attention", "cpux", "llama2-7b", 8, False, "cpux-noavx512"),
+            ("Llama-2-13B", "8 threads", "cpux", "llama2-13b", 8, True, "cpux"))
+"""``tab:eval-cpu``'s rows: (model label, setting, tier, model, threads, the AVX-512 attention kernel, perf.py's
+label), each at 2,048 tokens (:func:`cpu_point`); the 8-thread Llama-2-7B row is the cpuv tier's (``CpuRatio``)."""
+
+
+def tab_eval_cpu(ctx: Ctx) -> Table:
+    """``tab:eval-cpu``: the Kpre CPU verifier against the fastest exact re-execution on the same cores, at 2,048
+    tokens: Llama-2-7B on 2, 4 and 8 threads (each pinned to as many cores of one NUMA node), on 8 threads without
+    the AVX-512 attention kernel (in both), and Llama-2-13B on 8 threads."""
+    tb = Table("tab_eval_cpu", "tab:eval-cpu", f"{protocol(ctx)}; cpux tier: perf.py Kpre --threads 2/4 (label cpux), "
+               "--no-native-avx512 (label cpux-noavx512), Llama-2-13B (label cpux), reexec.py's exact variants on the "
+               "same threads and options; the 8-thread Llama-2-7B row: the cpuv tier's cells")
+    for name, setting, tier, m, threads, avx, label in CPU_ROWS:
+        ver, rx, ratio = cpu_point(ctx.run, tier, m, 2048, threads, avx, label)
+        row = f"{NAME[m]} {setting}"
+        tb.rows.append(" & ".join([
+            name, setting, tb.put(row, "verifier", ver and ver.d["verify_s"], ver, lambda v: f.sig(v, 3)),
+            tb.put(row, "re-execution", rx and rx[0], rx and rx[2], lambda v: f.sig(v, 3)),
+            tb.put(row, "ratio", ratio, ver, lambda v: f.x(v, 1))]) + r" \\")
+    return tb
+
+
+PLANS = ("tightc", "cnn16c", "cnn17c", "cnn18c", "R16c", "R64c")
+"""``tab:eval-plans``' rows: mode C's candidate plans (``pvi.commit.plans.AUTO_CANDIDATES``)."""
+PLAN_NAME = {"tightc": "tight", "cnn16c": r"$n\ge2^{16}$", "cnn17c": r"$n\ge2^{17}$", "cnn18c": r"$n\ge2^{18}$",
+             "R16c": "rate 16", "R64c": "rate 64"}
+"""Each candidate plan as the paper names it (every one with the transposed layout and lookup tables)."""
+PLANS_LABEL = "plans"
+"""The label of the cpux tier's ``perf.py`` cell that times every candidate plan side by side: its records name no
+plan of the run (``numbers.record_plans``)."""
+
+
+def plan_cell(run: Run, policy: str, model: str = "llama2-7b", seq: int = 2048) -> dict | None:
+    """One plan of the cpux tier's side-by-side cell (``perf.py --policy ...``, label ``plans``): ``{trees, columns,
+    commit, proof, prove, verify, record}`` with ``trees`` the Merkle trees of encoded matrices (``group_columns``),
+    ``columns`` the columns they open together and ``commit`` the commitment's time (None if it came from the setup
+    cache, which skips the encoding); None without the record."""
+    r = run.perf("cpux", model, seq, "C", vdev="cpu", label=PLANS_LABEL, policy=policy)
+    if r is None:
+        return None
+    groups = r.d.get("group_columns") or {}
+    return {"trees": len(groups) or None, "columns": sum(groups.values()) if groups else r.d.get("columns"),
+            "commit": r.d.get("commit_s") if r.d.get("setup_cache") != "hit" else None,
+            "proof": r.d.get("proof_bytes"), "prove": r.d.get("prove_s"), "verify": r.d.get("verify_s"), "record": r}
+
+
+def tab_eval_plans(ctx: Ctx) -> Table:
+    """``tab:eval-plans``: mode C's candidate plans on the same Llama-2-7B queries at 2,048 tokens (the CPU verifier
+    on 8 threads): the trees and the columns they open, the commitment's one-time encoding, the proof and the times."""
+    tb = Table("tab_eval_plans", "tab:eval-plans", f"{protocol(ctx)}; cpux tier: perf.py --modes C --policy "
+               f"{' '.join(PLANS)} (label plans) on the same queries, no setup cache")
+    for p in PLANS:
+        c = plan_cell(ctx.run, p) or {}
+        r = c.get("record")
+        tb.rows.append(" & ".join([
+            PLAN_NAME[p], tb.put(p, "trees", c.get("trees"), r, str),
+            tb.put(p, "columns", c.get("columns"), r, lambda v: f.num(v)),
+            tb.put(p, "commit s", c.get("commit"), r, lambda v: f.sig(v, 3)),
+            tb.put(p, "proof GB", c.get("proof"), r, lambda v: f.fixed(v / 1e9, 2)),
+            tb.put(p, "prover s", c.get("prove"), r, lambda v: f.sig(v, 3)),
+            tb.put(p, "verifier s", c.get("verify"), r, lambda v: f.sig(v, 3))]) + r" \\")
+    return tb
+
+
+LAMBDA_ROWS = ((64, 40), (64, 80), (64, 128), (2048, 40), (2048, 80), (2048, 128))
+"""``tab:eval-lambda``'s rows: Llama-2-7B's prompt length and the security level (lambda 128: ``tab:eval-llm``'s
+cells)."""
+
+
+def tab_eval_lambda(ctx: Ctx) -> Table:
+    """``tab:eval-lambda``: the full Llama-2-7B at lambda 40, 80 and 128 (the bench tier, Fiat--Shamir, the CPU
+    verifier on 8 threads): prover, verifier and proof in modes C and Kpre."""
+    tb = Table("tab_eval_lambda", "tab:eval-lambda", f"{protocol(ctx)} (lambda as the row states); bench tier: "
+               "costs/bench.py llm --lams 40 80 (b-lam-*) and the lambda-128 cells, modes C:fs and Kpre:fs")
+    for seq, lam in LAMBDA_ROWS:
+        cells = [f.tokens(seq) if lam == LAMBDA_ROWS[0][1] else "", str(lam)]
+        for mode, base in (("C", "c_cpu"), ("Kpre", "kpre_cpu")):
+            cell = base if lam == 128 else f"{base}_lam{lam}"
+            cost = ctx.bench.llm_cost("llama2-7b", seq, cell) or {}
+            row, src = f"T={seq} lambda={lam}", cost.get("cell") or ctx.bench.name
+            cells += [tb.put(row, f"{mode} prover", cost.get("prove"), src, lambda v: f.sig(v, 3)),
+                      tb.put(row, f"{mode} verifier", cost.get("verify"), src, lambda v: f.sig(v, 3)),
+                      tb.put(row, f"{mode} proof", cost.get("bytes"), src, f.b)]
+        tb.rows.append(" & ".join(cells) + r" \\")
     return tb
 
 
@@ -1125,7 +1245,8 @@ def tab_zeroshot(ctx: Ctx) -> Table:
 
 
 BUILDERS = (tab_eval_llm, tab_eval_v1, tab_options, tab_eval_compare, tab_quality, tab_params, tab_inrange, tab_setup,
-            tab_eval_improve, tab_memory, tab_eval_long, tab_eval_real, tab_eval_reexec, tab_eval_compare_v1, tab_v1,
+            tab_eval_improve, tab_memory, tab_eval_long, tab_eval_real, tab_eval_reexec, tab_eval_cpu, tab_eval_plans,
+            tab_eval_lambda, tab_eval_compare_v1, tab_v1,
             tab_gen, tab_gen_full, tab_quality_attr, tab_zeroshot, tab_paths, tab_paths_acc)
 """Every table builder, in the paper's order."""
 TABLE_FILES = tuple(b.__name__ for b in BUILDERS)

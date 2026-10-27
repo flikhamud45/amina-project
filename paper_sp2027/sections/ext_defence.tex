@@ -28,6 +28,7 @@ runs in float32 within its exact range (Appendix~\ref{app:semantics}). A hardwar
 make an honest proof fail.
 
 \subsection{Commitment Plans}
+\label{app:plans}
 
 Each Merkle tree hashes its leaves and its inner nodes with separate domain prefixes. $C_M$ uses
 no secret randomness, so anyone who holds the weights can recompute it. Long codewords need fewer
@@ -41,7 +42,7 @@ read the same input, such as the query, key and value projections, are stacked i
 tree and a multiproof. Our runs use one plan for every model: each matrix is encoded at
 $n=\max(2^{18},2\,\mathrm{next\_pow2}(k))$ points, so most matrices share a few trees (six for
 Llama-2-7B). A longer codeword opens fewer columns per query at the price of a longer one-time
-encoding, which the prover does once per model (Table~\ref{tab:params}); the plan is part of
+encoding, which the prover does once per model (Tables~\ref{tab:params} and~\ref{tab:eval-plans}); the plan is part of
 $C_M$. A layer with many
 rows, such as GPT-2's output layer ($N=50{,}257$), encodes the rows of $A_\ell^\T$ instead (the
 \emph{transposed layout}). An embedding table without a bias is a Merkle tree over its

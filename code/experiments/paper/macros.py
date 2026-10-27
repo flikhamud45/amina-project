@@ -247,6 +247,94 @@ def cpu_client(c: Collector, ctx: T.Ctx) -> None:
     c.todo("TodoGpuOneGpu")
 
 
+CPU_SETTINGS = (("ThrTwo", "cpux", "llama2-7b", 2, True, "cpux"), ("ThrFour", "cpux", "llama2-7b", 4, True, "cpux"),
+                ("NoAvx", "cpux", "llama2-7b", 8, False, "cpux-noavx512"),
+                ("Thirteen", "cpux", "llama2-13b", 8, True, "cpux"))
+"""The settings of :func:`cpu_scaling`'s macros: (name, tier, model, threads, the AVX-512 attention, perf.py's
+label), each at 2,048 tokens (``tab:eval-cpu``'s rows other than the cpuv tier's)."""
+
+
+def cpu_scaling(c: Collector, ctx: T.Ctx) -> None:
+    """The CPU verifier against exact re-execution on the same cores beyond the cpuv tier's 8 threads
+    (``tab:eval-cpu``, :func:`experiments.paper.tables.cpu_point`): ``CpuRatio<setting>`` (rounded down, as
+    ``CpuRatio``), ``CpuVerify<setting>`` and ``CpuReexec<setting>`` for Llama-2-7B on 2 and 4 threads, on 8 threads
+    without the AVX-512 attention kernel and for Llama-2-13B on 8 threads; ``CpuNoAvxSlowdown`` the verifier's time
+    without that kernel over its time with it; and Llama-2-7B at 512 tokens (the cpuv tier, ``tab:eval-reexec``):
+    ``CpuVerifyMedium``, ``CpuReexecMedium``, ``CpuRatioMedium``.  What the text states: a Kpre key beats exact
+    re-execution at every measured prompt length of ``tab:eval-reexec`` (``ext_evaluation.tex``), and the cpuv
+    tier's verifier runs the AVX-512 attention that ``evaluation.tex`` credits (where its record says)."""
+    run, m = ctx.run, "llama2-7b"
+    for name, tier, model, threads, avx, label in CPU_SETTINGS:
+        ver, rx, ratio = T.cpu_point(run, tier, model, 2048, threads, avx, label)
+        c.put(f"CpuRatio{name}", ratio, ver, _floor1)
+        c.put(f"CpuVerify{name}", ver and ver.d["verify_s"], ver, f.sig)
+        c.put(f"CpuReexec{name}", rx and rx[0], rx and rx[2], f.sig)
+    base = T.cpu_point(run, "cpuv", m, 2048)[0]
+    off = T.cpu_point(run, "cpux", m, 2048, 8, False, "cpux-noavx512")[0]
+    c.put("CpuNoAvxSlowdown", off.d["verify_s"] / base.d["verify_s"] if base and off else None, off,
+          lambda v: f"{v:.1f}")
+    ver, rx, ratio = T.cpu_point(run, "cpuv", m, 512)
+    c.put("CpuVerifyMedium", ver and ver.d["verify_s"], ver, f.sig)
+    c.put("CpuReexecMedium", rx and rx[0], rx and rx[2], f.sig)
+    c.put("CpuRatioMedium", ratio, ver, lambda v: f"{v:.1f}")
+    for seq in T.REEXEC_CPU:
+        r = T.cpu_point(run, "cpuv", m, seq)[2]
+        if r is not None:
+            c.claim(r > 1, f"Llama-2-7B's Kpre CPU verifier at {seq} tokens is not faster than exact re-execution "
+                           f"(ratio {r:.2f}), which ext_evaluation.tex states for every measured length")
+    avx = ((base.d.get("env") or {}).get("implementation") or {}).get("avx512") if base else None
+    if avx is not None:
+        c.claim(avx is True, "the cpuv tier's Llama-2-7B verifier ran without the AVX-512 attention kernel, which "
+                             "evaluation.tex credits")
+
+
+def commitment_plans(c: Collector, ctx: T.Ctx) -> None:
+    """Mode C's candidate plans on Llama-2-7B at 2,048 tokens (``tab:eval-plans``, the cpux tier): the columns that
+    codewords of at least 2^16 and 2^18 points open per query (``PlanColsSixteen``, ``PlanColsEighteen``) and their
+    one-time encodings (``PlanCommitSixteen``, ``PlanCommitEighteen``, in s); ``PlanAutoLlama`` the plan that the
+    public planning rule (``auto``, :func:`pvi.commit.plans.auto_policy`) picks for Llama-2-7B, from its shapes.
+    What ``ext_defence.tex`` states: a longer codeword opens fewer columns at the price of a longer encoding."""
+    from pvi.commit.cost import decoder_shapes
+    from pvi.commit.plans import auto_policy
+    from pvi.models.decoder import CONFIGS
+    cells = {p: T.plan_cell(ctx.run, p) or {} for p in ("cnn16c", "cnn18c")}
+    for p, name in (("cnn16c", "Sixteen"), ("cnn18c", "Eighteen")):
+        x = cells[p]
+        c.put(f"PlanCols{name}", x.get("columns"), x.get("record"), f.num)
+        c.put(f"PlanCommit{name}", x.get("commit"), x.get("record"), f.sig)
+    a, b = cells["cnn16c"], cells["cnn18c"]
+    if None not in (a.get("columns"), b.get("columns"), a.get("commit"), b.get("commit")):
+        c.claim(b["columns"] < a["columns"] and b["commit"] > a["commit"],
+                f"codewords of 2^18 points open {b['columns']} columns in {b['commit']:.1f} s of encoding, those of "
+                f"2^16 points {a['columns']} in {a['commit']:.1f} s: not fewer columns at a longer encoding, as "
+                "ext_defence.tex states")
+    pick = auto_policy(decoder_shapes(CONFIGS["llama2-7b"], prune_last=True))
+    c.put("PlanAutoLlama", pick, "pvi.commit.plans.auto_policy(llama2-7b)", lambda v: T.PLAN_NAME.get(v, v))
+
+
+def security_levels(c: Collector, ctx: T.Ctx) -> None:
+    """The full Llama-2-7B at lambda 40 against lambda 128 at 2,048 tokens (``tab:eval-lambda``, the bench tier): mode
+    C's proof and the CPU verifier's time in modes C and Kpre at lambda 40 as a percentage of lambda 128's
+    (``LamFortyProofC``, ``LamFortyVerifyC``, ``LamFortyVerifyK``).  What ``ext_evaluation.tex`` states: a Kpre proof,
+    the claims alone, is the same at every lambda of the table (to 0.1%)."""
+    for mode, base, name in (("C", "c_cpu", "C"), ("Kpre", "kpre_cpu", "K")):
+        lo = ctx.bench.llm_cost("llama2-7b", 2048, f"{base}_lam40")
+        hi = ctx.bench.llm_cost("llama2-7b", 2048, base)
+        src = lo and lo["cell"]
+        for key, macro in (("bytes", "Proof"), ("verify", "Verify")):
+            if (mode, key) == ("Kpre", "bytes"):
+                continue
+            v = lo[key] / hi[key] if lo and hi and lo.get(key) and hi.get(key) else None
+            c.put(f"LamForty{macro}{name}", v, src, f.pct)
+    for seq in (64, 2048):
+        got = [(ctx.bench.llm_cost("llama2-7b", seq, cell) or {}).get("bytes")
+               for cell in ("kpre_cpu_lam40", "kpre_cpu_lam80", "kpre_cpu")]
+        if None not in got:
+            c.claim(max(got) <= 1.001 * min(got), f"Llama-2-7B's Kpre proof at {seq} tokens differs between lambda "
+                                                  f"40, 80 and 128 ({got}), which ext_evaluation.tex states is the "
+                                                  "same")
+
+
 def _spread(rng, median) -> float | None:
     """The relative min--max spread of one cell's timed runs: ``(max - min) / median``."""
     return (rng[1] - rng[0]) / median if rng and len(rng) == 2 and median else None
@@ -1799,9 +1887,10 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
     c.put("GenPerPrefixTB", prefixes, src, lambda v: f"{v / 1e12:.1f}")
 
 
-FAMILIES = (platform, cpu_client, options_timing, kpre_client, client_memory, outcomes, defence_cost, batching,
-            serving, v1_numbers, comparison, improvements, real_weights, long_prompts, quality, attribution, sampler,
-            attack, sok, smoke_tests, hardware_digests, setup_and_params, setup_proof, generation)
+FAMILIES = (platform, cpu_client, cpu_scaling, commitment_plans, security_levels, options_timing, kpre_client,
+            client_memory, outcomes, defence_cost, batching, serving, v1_numbers, comparison, improvements,
+            real_weights, long_prompts, quality, attribution, sampler, attack, sok, smoke_tests, hardware_digests,
+            setup_and_params, setup_proof, generation)
 TEXT_CLAIM = "CHECK FAILED text:"
 """The prefix of a check of what the text states about a value (not of a record's correctness): a rehearsal's small
 cells need not bear it out, so ``numbers.py --rehearsal`` reports it as a warning."""

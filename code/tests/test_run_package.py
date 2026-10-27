@@ -59,8 +59,8 @@ from experiments.reexec import h2d_bandwidth, reexec
 CODE = Path(__file__).resolve().parents[1]
 REPO = CODE.parent
 RUN = Path("code") / "experiments" / "package" / "run.sh"
-TIERS = ("smoke", "cpuv", "v1", "serve", "bench", "gpuv", "gen", "batch", "real", "setup", "improve", "quality", "tv",
-         "attack", "long")
+TIERS = ("smoke", "cpuv", "cpux", "v1", "serve", "bench", "gpuv", "gen", "batch", "real", "setup", "improve",
+         "quality", "tv", "attack", "long")
 
 
 def _cli(mod, monkeypatch, capsys, script: str, *argv) -> tuple[int, list[dict]]:
@@ -138,8 +138,9 @@ HOST_VARIABLES = {"PVI_NATIVE_DIR", "PVI_PY_INCLUDE", "PVI_TEST_DEVICE", "PVI_CI
 which names its telemetry and smoke files), never a switch."""
 STOP = '; st=$?; kill $TPID 2> /dev/null; wait $TPID 2> /dev/null; exit $st"'
 """The end of every job's script: the job's exit status kept, its GPU telemetry sampler stopped."""
-CPU_TIERS = ("cpuv", "v1", "bench", "batch", "gen", "real", "setup", "improve", "long")
-"""The tiers with CPU-timing jobs (pinned to 8 cores of one NUMA node); the others have none."""
+CPU_TIERS = ("cpuv", "cpux", "v1", "bench", "batch", "gen", "real", "setup", "improve", "long")
+"""The tiers with CPU-timing jobs (pinned to 8 cores of one NUMA node, the cpux tier's 2- and 4-thread cells to as
+many cores); the others have none."""
 
 
 def _bash() -> str:
@@ -189,8 +190,9 @@ def test_the_package_runs_fiat_shamir_and_the_policy_everywhere():
 
 def test_every_cpu_timing_cell_requires_the_native_kernels_and_is_pinned():
     """A cell that times the CPU verifier or a re-execution on the CPU passes --require-native (it stops instead of
-    timing the torch path) and starts by pinning itself to 8 cores of one NUMA node; the CPU re-execution includes
-    the int8 GEMMs of torch._int_mm; the GPU, serving, quality, tv and attack jobs are not pinned."""
+    timing the torch path) and starts by pinning itself to 8 cores of one NUMA node (a cell on fewer threads to as
+    many cores, its every command on that many threads); the CPU re-execution includes the int8 GEMMs of
+    torch._int_mm; the GPU, serving, quality, tv and attack jobs are not pinned."""
     pinned = 0
     for line in _dry():
         job, cmd = _job(line), line.split("--wrap", 1)[1]
@@ -198,7 +200,10 @@ def test_every_cpu_timing_cell_requires_the_native_kernels_and_is_pinned():
             and "--verifier-device cuda" not in cmd and "--codec-only" not in cmd
         cpu_reexec = "reexec.reexec" in cmd and "--device cpu" in cmd
         if (cpu_verifier or cpu_reexec) and job != "sp-smoke":
-            assert "--require-native" in cmd and "-m experiments.package.pin --cores 8 --pid $$ && " in cmd, job
+            pin = re.search(r"-m experiments\.package\.pin --cores (\d+) --pid \$\$ && ", cmd)
+            assert "--require-native" in cmd and pin, job
+            cores = int(pin.group(1))
+            assert cores == 8 or set(re.findall(r"--threads (\d+)", cmd)) == {str(cores)}, job
         if cpu_reexec:                  # glibc's allocator defaults, or the like-for-like row with the verifier's
             assert " int_mm " in cmd and ("--no-malloc-tune" in cmd or "--malloc-tune" in cmd), job
             assert "MALLOC_" not in cmd, job                    # the allocator setting is a flag, not a variable
@@ -301,7 +306,7 @@ def test_a_queued_job_of_the_same_platform_is_skipped_and_the_chain_and_gate_pas
 def test_a_queued_smoke_still_gates_the_run(tmp_path):
     status, out, err, jobs = _submit(tmp_path, "--platform", "final", "smoke", "cpuv", queue="sp-smoke|final|901")
     assert status == 0, err
-    assert len(jobs) == 15 and "--dependency=afterany:901,singleton" in jobs[0] and "-J sp-xcheck" in jobs[0], jobs
+    assert len(jobs) == 16 and "--dependency=afterany:901,singleton" in jobs[0] and "-J sp-xcheck" in jobs[0], jobs
     assert "--dependency=afterok:901,afterany:1,singleton" in jobs[1], jobs[1]     # the queued smoke gates the tier after
 
 
@@ -316,7 +321,7 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
                  "--requeue", "--signal=B:TERM@300", "--open-mode=append", "--dependency=singleton",
                  "logs/final/node-smoke-cpuv-long-%j.log", "--gres=gpu:l40s:1"):
         assert part in jobs[0], (part, jobs[0])
-    assert "# one job: smoke cpuv long: 28 jobs, job limits 59 h, time limit 24 h" in out, out
+    assert "# one job: smoke cpuv long: 29 jobs, job limits 61 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
@@ -667,7 +672,7 @@ def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_j
     ids = [int(re.search(r"afterany:DRY(\d+)", d).group(1)) for d in deps[1:]]
     assert ids == list(range(1, len(lines))), "each job after the previous one"
     assert len(set(jobs)) == len(jobs)
-    for prefix in ("sp-smoke", "sp-c-", "sp-v1-", "sp-serve-", "sp-b-", "sp-g-", "sp-gen-", "sp-bt-", "sp-r-",
+    for prefix in ("sp-smoke", "sp-c-", "sp-x-", "sp-v1-", "sp-serve-", "sp-b-", "sp-g-", "sp-gen-", "sp-bt-", "sp-r-",
                    "sp-setup-", "sp-i-", "sp-q-", "sp-tv-", "sp-a-", "sp-l-"):
         assert any(j.startswith(prefix) for j in jobs), prefix
 
@@ -675,8 +680,8 @@ def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_j
 def test_the_rehearsal_submits_small_cells_of_every_tier():
     lines = _dry("--rehearsal")
     jobs = [_job(line) for line in lines]
-    assert len(lines) <= 56 and len(set(jobs)) == len(jobs)
-    for prefix in ("sp-smoke", "sp-c-", "sp-v1-", "sp-serve-", "sp-b-", "sp-g-", "sp-gen-", "sp-bt-", "sp-r-",
+    assert len(lines) <= 59 and len(set(jobs)) == len(jobs)
+    for prefix in ("sp-smoke", "sp-c-", "sp-x-", "sp-v1-", "sp-serve-", "sp-b-", "sp-g-", "sp-gen-", "sp-bt-", "sp-r-",
                    "sp-setup-", "sp-i-", "sp-q-", "sp-tv-", "sp-a-", "sp-l-"):
         assert any(j.startswith(prefix) for j in jobs), prefix
     big = ("opt-1.3b", "opt-6.7b", "llama2-13b", "qwen3-4b", "facebook/opt-1.3b", "facebook/opt-6.7b")
@@ -872,6 +877,51 @@ def test_the_gate_tier_checks_the_full_sizes_once_before_the_run():
     for job, cmd in jobs.items():
         cpu = "--verifier-device cuda" not in cmd
         assert ("--require-native" in cmd and "experiments.package.pin" in cmd) == cpu, job
+
+
+def test_the_cpux_tier_and_the_cells_at_512_tokens_and_other_security_levels():
+    """The cpux tier (tab:eval-cpu, tab:eval-plans): Llama-2-7B's Kpre CPU verifier and exact re-execution at 2,048
+    tokens on 4 and 2 threads, each job pinned to as many cores; both without the AVX-512 attention kernel on 8; both
+    for Llama-2-13B; mode C's six candidate plans side by side in one process on the same queries, the run's plan first
+    and no setup cache (the commitment's time is the encoding).  The cpuv tier measures Llama-2-7B at 512 tokens as
+    well (the verifier, every re-execution baseline, llama.cpp), and the bench tier its cells at lambda 40 and 80.
+    The rehearsal takes the same paths on GPT-2's two blocks."""
+    from pvi.commit.plans import AUTO_CANDIDATES
+    full = {_job(line): line for line in _dry()}
+    cmd = {j: x.split("--wrap", 1)[1] for j, x in full.items()}
+    x = sorted(j for j in full if j.startswith("sp-x-"))
+    assert x == sorted(["sp-x-llama2-7b-2048-thr4", "sp-x-rx-llama2-7b-thr4", "sp-x-llama2-7b-2048-thr2",
+                        "sp-x-rx-llama2-7b-thr2", "sp-x-llama2-7b-2048-noavx512", "sp-x-rx-llama2-7b-noavx512",
+                        "sp-x-llama2-13b-2048", "sp-x-rx-llama2-13b", "sp-x-plans-llama2-7b-2k"])
+    for t in (4, 2):
+        for job in (f"sp-x-llama2-7b-2048-thr{t}", f"sp-x-rx-llama2-7b-thr{t}"):
+            assert f"pin --cores {t} --pid" in cmd[job] and re.findall(r"--threads (\d+)", cmd[job]) == [str(t)], job
+            assert "--model llama2-7b --seq 2048" in cmd[job], job
+        verifier = cmd[f"sp-x-llama2-7b-2048-thr{t}"]
+        assert "--modes Kpre" in verifier and "--label cpux " in verifier
+        assert "--layers 2 32 --variants int int_mm int_fp32gemm" in cmd[f"sp-x-rx-llama2-7b-thr{t}"]
+    for job in ("sp-x-llama2-7b-2048-noavx512", "sp-x-rx-llama2-7b-noavx512"):
+        assert "--no-native-avx512" in cmd[job] and "pin --cores 8 --pid" in cmd[job], job
+    assert "--label cpux-noavx512" in cmd["sp-x-llama2-7b-2048-noavx512"]
+    assert "--model llama2-13b --seq 2048 --layers 2 40 --variants int int_mm int_fp32gemm" in cmd["sp-x-rx-llama2-13b"]
+    assert "--model llama2-13b --seq 2048 --modes Kpre" in cmd["sp-x-llama2-13b-2048"]
+    plans = cmd["sp-x-plans-llama2-7b-2k"]
+    listed = re.search(r"--policy ((?:\w+ )+)--", plans).group(1).split()
+    assert listed[0] == "cnn18c" and sorted(listed) == sorted(AUTO_CANDIDATES), listed
+    assert "--setup-cache" not in plans and "--modes C " in plans and "--label plans" in plans
+    other = {_job(line): line for line in _dry("--policy", "cnn17c", tiers=("cpux",))}
+    assert re.search(r"--policy cnn17c tightc cnn16c cnn18c R16c R64c ", other["sp-x-plans-llama2-7b-2k"])
+    # Llama-2-7B at 512 tokens in the cpuv tier, and at lambda 40 and 80 in the bench tier
+    assert "--model llama2-7b --seq 512 --modes Kpre C" in cmd["sp-c-llama2-7b-512"]
+    assert "--seq 64 512 2048" in cmd["sp-c-rx-llama2-7b"] and "--seq 64 512 2048" in cmd["sp-c-llamacpp-llama2-7b"]
+    for job, seq in (("sp-b-lam-llama2-7b-64", 64), ("sp-b-lam-llama2-7b-2k", 2048)):
+        assert f"--model llama2-7b --seq {seq} --builds full" in cmd[job] and "--lams 40 80 " in cmd[job]
+        assert "--modes C:fs,Kpre:fs --policy cnn18c" in cmd[job]
+    rehearsal = {_job(line): line.split("--wrap", 1)[1] for line in _dry("--rehearsal", tiers=("cpux",))}
+    assert sorted(rehearsal) == ["sp-x-gpt2-64-noavx512", "sp-x-gpt2-64-thr4", "sp-x-plans-gpt2"]
+    assert "pin --cores 4 --pid" in rehearsal["sp-x-gpt2-64-thr4"]
+    assert rehearsal["sp-x-gpt2-64-noavx512"].count("--no-native-avx512") == 2
+    assert "--setup-cache" not in rehearsal["sp-x-plans-gpt2"]
 
 
 def test_the_cpuv_tier_measures_the_clients_own_memory():

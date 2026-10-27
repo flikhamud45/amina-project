@@ -14,6 +14,9 @@ scripts compute byte models from the public shapes or train the image models.
 | Sec. `sec:break`: one penultimate neuron flips every test query of each image model; the path test detects it with probability 1/84 to 1/512; `app:eval-attack`: 305,193 paths for `1 - 2^-40` | `bench.py cnn` (cells `attack_float`, `sampling`) | `python -m experiments.costs.bench cnn --model resnet18_224 --tampers 60 --platform <name>` | `raw_<name>/cnn/<model>/{attack_float,sampling}*.jsonl` |
 | `tab:gen` (the stored generated-response cells) | `bench.py --gen` | `python -m experiments.costs.bench llm --model gpt2 --seq 64 --gen 256 --builds full --modes C:int --platform <name>` | `raw_<name>/llm/gpt2/*_gen256*` (the final run uses `generation/gen_bench.py`) |
 | `tab:options` (CPU verifier against re-execution), `tab:eval-reexec`'s verifier row, `tab:memory` (the client's own peak memory) | `perf.py` (tier `cpuv`) | `python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes Kpre C --queries 5 --verifier-device cpu --label cpuv --client-memory` | stdout, one JSON line per mode |
+| `tab:eval-cpu` (the CPU verifier on 2 and 4 threads, without the AVX-512 attention kernel, Llama-2-13B; against exact re-execution on the same threads), `\CpuRatioThrTwo` and the other macros of `ext_evaluation.tex`'s `app:eval-cpu`; `tab:eval-reexec`'s verifier at 512 tokens (tier `cpuv`) | `perf.py` (tier `cpux`) | `python -m experiments.costs.perf --threads 4 --model llama2-7b --seq 2048 --modes Kpre --queries 5 --verifier-device cpu --label cpux` (on 4 pinned cores; 2 threads likewise); `... --threads 8 --no-native-avx512 --label cpux-noavx512`; `... --model llama2-13b --label cpux` | stdout |
+| `tab:eval-plans` (mode C's six candidate plans on the same queries), `\PlanCols*`, `\PlanCommit*` | `perf.py` (tier `cpux`) | `python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes C --policy cnn18c tightc cnn16c cnn17c R16c R64c --queries 3 --verifier-device cpu --label plans` (no `--setup-cache`: `commit_s` is the encoding) | stdout, one JSON line per plan |
+| `tab:eval-lambda` (Llama-2-7B at lambda 40, 80 and 128), `\LamForty*` | `bench.py` (tier `bench`) | `python -m experiments.costs.bench llm --model llama2-7b --seq 2048 --builds full --queries 3 --lams 40 80 --modes C:fs,Kpre:fs --platform <name>` (and 64 tokens with 5 queries; lambda 128: the cells of `tab:eval-llm`) | `raw_<name>/`, tables by `comparison/aggregate.py` |
 | `tab:eval-llm`'s GPU-verifier column | `perf.py` (tier `gpuv`) | `python -m experiments.costs.perf --model opt-1.3b --seq 2048 --modes Kpre --queries 3 --verifier-device cuda --stream --label gpuv` | stdout |
 | `tab:eval-real` (real weights against random twins) | `perf.py --real` (tier `real`) | `python -m experiments.costs.perf --model opt-1.3b --real facebook/opt-1.3b --seq 2048 --modes Kpre C --queries 3 --tampers 3 --label real` and the same without `--real` (`--label real-random`) | stdout |
 | `tab:eval-long` (2,048 to 16,384 tokens) | `perf.py` (tier `long`) | `python -m experiments.costs.perf --model llama2-7b --layers 2 --seq 8192 --modes Kpre --queries 3 --verifier-device cpu --label long` (2 and 3 blocks at every length) | stdout |
@@ -80,7 +83,7 @@ random-weight decoders with the shapes of the paper's language models (`llm` sui
 
 ### `perf.py`
 
-The timing harness of the run package's `cpuv`, `gpuv`, `real` and `long` tiers. It builds the model as `bench.py`
+The timing harness of the run package's `cpuv`, `cpux`, `gpuv`, `real` and `long` tiers. It builds the model as `bench.py`
 does (or, with `--real`, a checkpoint's integer graph: OPT with the certified recipe `hf_opt.CERTIFIED_RECIPE` by
 default, `--recipe legacy --smooth 0.55 --calib-seq 2048` for the percentile recipe; a Llama-family checkpoint with
 `hf_llama.MAIN_RECIPE`), runs one warm-up and `--queries` queries per variant and prints one JSON line per mode and
@@ -158,9 +161,10 @@ only. Minutes for LeNet-5, a few hours for the 224-pixel ResNets on one GPU.
 The final numbers come from one platform, through the run package (`bash code/experiments/package/run.sh --platform <name> <tier>`; its
 README is `experiments/package/README.md`):
 
-* `bench`: the `bench.py` jobs of `tab:eval-llm`, `tab:eval-compare` and the outcome counts (each job is one
-  `bench.py` invocation with `--platform <name>`); `batch`: the batch cells.
-* `cpuv`, `gpuv`, `real`, `long`: the `perf.py` invocations above, one process per model, length and mode.
+* `bench`: the `bench.py` jobs of `tab:eval-llm`, `tab:eval-compare`, `tab:eval-lambda` and the outcome counts (each
+  job is one `bench.py` invocation with `--platform <name>`); `batch`: the batch cells.
+* `cpuv`, `cpux`, `gpuv`, `real`, `long`: the `perf.py` invocations above, one process per model, length and mode
+  (the cpux tier's plans: one process for all six, on the same queries).
 * `setup`: `setup_timing.py` on Llama-2-7B (`a = 100`) and GPT-2 (`a = 100, 1,000`).
 
 `setup_bytes.py`, `params_table.py` and `wire.py` need no GPU and reproduce `tab:setup`, `tab:params` and the bits per

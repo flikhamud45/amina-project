@@ -233,6 +233,13 @@ def _bench(root: Path, platform: str = "test") -> None:
                           ("bytes_total", 3.25e8 * scale)):
             rows.append([m, seq, mode, ch, 128, metric, 8, 4, variant, "cuda", "NVIDIA L40S", hw, 32, 6738149376, v,
                          "measured", ""])
+    # tab:eval-lambda: Llama-2-7B at 2,048 tokens at lambda 40, 80 and 128 (the proof 60% and 80% of lambda 128's)
+    for lam, scale in ((40, 0.6), (80, 0.8), (128, 1.0)):
+        for mode, variant in (("C", "_wire_prune_pmax2047_polcnn18c"), ("Kpre", "_wire_prune_lookups_pmax2047")):
+            for metric, v in (("prove_forward", 10.0), ("fs_hash", 0.1), ("verify_products", 20.0 * scale),
+                              ("bytes_total", 6.4e9 * (scale if mode == "C" else 1.0))):
+                rows.append(["llama2-7b", 2048, mode, "fs", lam, metric, 8, 4, variant, "cuda", "NVIDIA L40S",
+                             "AMD EPYC 9334 32-Core Processor x8 threads", 32, 6738149376, v, "measured", ""])
     with open(t / "llm_full_model.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(head)
@@ -295,6 +302,34 @@ def _logs(tmp: Path) -> Path:
         (2048, "int", 179.4), (2048, "int_fp32gemm", 141.6), (2048, "float", 93.2), (2048, "bf16", 306.5),
         (2048, "dynint8", 56.0))])
     # llama.cpp (inexact, another model), each type with both attention kernels: slower here than dynamic int8
+    _write(logs, "sp-c-llama2-7b-512-63.out", [perf(m, 512, "Kpre", 5.0, 1.6e9), perf(m, 512, "C", 6.5, 1.7e9)])
+    _write(logs, "sp-c-rx-llama2-7b-512-64.out", [reexec(m, 512, v, t) for v, t in (
+        ("int", 40.0), ("int_fp32gemm", 31.0), ("float", 22.0))])
+    _write(logs, "sp-x-llama2-7b-2048-thr4-65.out", [dict(perf(m, 2048, "Kpre", 36.0, 6.43e9, label="cpux"),
+                                                         threads=4)])
+    _write(logs, "sp-x-llama2-7b-2048-thr2-66.out", [dict(perf(m, 2048, "Kpre", 70.0, 6.43e9, label="cpux"),
+                                                         threads=2)])
+    _write(logs, "sp-x-rx-llama2-7b-thr4-67.out", [dict(reexec(m, 2048, v, t), threads=4)
+                                                   for v, t in (("int", 300.0), ("int_fp32gemm", 270.0))])
+    _write(logs, "sp-x-rx-llama2-7b-thr2-68.out", [dict(reexec(m, 2048, v, t), threads=2)
+                                                   for v, t in (("int", 560.0), ("int_fp32gemm", 530.0))])
+    noavx = {"implementation": {"options": {"native_avx512": False}, "native": True, "avx512": False}}
+    _write(logs, "sp-x-llama2-7b-2048-noavx512-69.out", [dict(perf(m, 2048, "Kpre", 29.4, 6.43e9,
+                                                                   label="cpux-noavx512"), env=dict(_env(), **noavx))])
+    _write(logs, "sp-x-rx-llama2-7b-noavx512-70.out", [dict(reexec(m, 2048, "int_fp32gemm", 160.0),
+                                                            env=dict(_env(), **noavx))])
+    _write(logs, "sp-x-llama2-13b-2048-71.out", [perf("llama2-13b", 2048, "Kpre", 38.0, 1.0e10, label="cpux")])
+    _write(logs, "sp-x-rx-llama2-13b-72.out", [reexec("llama2-13b", 2048, "int_fp32gemm", 275.0, n_layers=40)])
+    _write(logs, "sp-x-plans-llama2-7b-2k-73.out", [
+        dict(perf(m, 2048, "C", verify, proof, label="plans"), policy=p, chosen=p, group_columns=groups,
+             commit_s=commit, setup_cache="off")
+        for p, groups, commit, proof, verify in (
+            ("cnn18c", {"g0_n262144": 12, "g1_n524288": 9}, 610.0, 6.60e9, 25.0),
+            ("tightc", {"g0_n16384": 74, "g1_n65536": 70}, 40.0, 7.10e9, 31.0),
+            ("cnn16c", {"g0_n65536": 26}, 150.0, 6.70e9, 26.0),
+            ("cnn17c", {"g0_n131072": 23}, 300.0, 6.65e9, 25.5),
+            ("R16c", {"g0_n65536": 46, "g1_n262144": 42}, 160.0, 6.90e9, 28.0),
+            ("R64c", {"g0_n262144": 32, "g1_n1048576": 30}, 640.0, 6.75e9, 26.5))])
     _write(logs, "sp-c-llamacpp-llama2-7b-48.out", [llamacpp(s, w, t, fa=fa) for s, w, t, fa in (
         (64, "q8_0", 2.2, 1), (64, "q8_0", 2.4, 0), (2048, "q8_0", 61.3, 1), (2048, "q8_0", 65.0, 0),
         (64, "bf16", 3.1, 0), (2048, "bf16", 88.0, 1))])
@@ -607,6 +642,75 @@ def test_the_text_numbers(run_dir):
     assert (v["ClientPeakLongKpre"], v["ClientPeakLongC"], v["ClientPeakShortKpre"]) == ("21.4", "23.1", "1.1")
     assert v["ClientBaseline"] == "0.6"
     assert set(m) == set(M.names())
+
+
+def test_the_cpu_scaling_the_plans_and_the_security_levels(run_dir):
+    """tab:eval-cpu: Llama-2-7B's Kpre CPU verifier against the fastest exact re-execution on 2 and 4 threads (each
+    from records of its own thread count), on 8 threads (the cpuv tier's, as CpuRatio) and without the AVX-512
+    attention (records with the option off, never the cpuv tier's), and Llama-2-13B; tab:eval-reexec at 512 tokens;
+    tab:eval-plans: the candidate plans' cells (a plans record never makes the run's plan) and what ext_defence.tex
+    states of them; tab:eval-lambda: the bench tier's cells at lambda 40, 80 and 128; the text's claims fail on a
+    violation."""
+    tmp, logs = run_dir
+    ctx, problems = _ctx(tmp, logs)
+    tables = {t.name: t for t in T.build_all(ctx, problems)}
+    m, _ = M.build(ctx, problems)
+    assert not problems
+    cells = lambda name: {(c["row"], c["column"]): c for c in tables[name].cells}    # noqa: E731
+    cpu = cells("tab_eval_cpu")
+    assert cpu["Llama-2-7B 4 threads", "verifier"]["value"] == 36.0
+    assert cpu["Llama-2-7B 4 threads", "re-execution"]["value"] == 270.0
+    assert cpu["Llama-2-7B 2 threads", "ratio"]["value"] == pytest.approx(530.0 / 70.0)
+    assert cpu["Llama-2-7B 8 threads", "re-execution"]["value"] == 141.6
+    assert "sp-c-" in cpu["Llama-2-7B 8 threads", "verifier"]["source"]
+    assert cpu["Llama-2-7B 8, no AVX-512 attention", "verifier"]["value"] == 29.4
+    assert cpu["Llama-2-7B 8, no AVX-512 attention", "re-execution"]["value"] == 160.0
+    assert cpu["Llama-2-13B 8 threads", "ratio"]["value"] == pytest.approx(275.0 / 38.0)
+    v = {k: x.value for k, x in m.items()}
+    assert (v["CpuRatioThrFour"], v["CpuRatioThrTwo"], v["CpuRatioNoAvx"], v["CpuRatioThirteen"]) == \
+        ("7.5", "7.5", "5.4", "7.2")
+    assert v["CpuNoAvxSlowdown"] == "1.5" and v["CpuVerifyThirteen"] == "38" and v["CpuReexecThirteen"] == "275"
+    assert v["CpuRatio"] == "7.2"                       # the cpuv tier's, unchanged by the cpux records
+    r = cells("tab_eval_reexec")
+    assert r["cpu 512", "Kpre verifier"]["value"] == 5.0 and r["cpu 512", "integer re-execution"]["value"] == 31.0
+    assert r["cpu 512", "fp32 re-execution"]["value"] == 22.0 and r["cpu 512", "llama.cpp Q8\\_0"]["value"] is None
+    assert v["CpuRatioMedium"] == "6.2" and v["CpuVerifyMedium"] == "5" and v["CpuReexecMedium"] == "31"
+    assert tables["tab_eval_reexec"].rows[-5] == r"our $\Kpre$ verifier & 1.4 & 5.0 & 19.6 \\"
+    p = cells("tab_eval_plans")
+    assert p["cnn18c", "trees"]["value"] == 2 and p["cnn18c", "columns"]["value"] == 21
+    assert p["tightc", "commit s"]["value"] == 40.0 and p["R64c", "proof GB"]["value"] == 6.75e9
+    assert (v["PlanColsSixteen"], v["PlanColsEighteen"], v["PlanCommitSixteen"], v["PlanCommitEighteen"]) == \
+        ("26", "21", "150", "610")
+    assert v["PlanAutoLlama"] == r"$n\ge2^{16}$"
+    assert N.record_plans(ctx.run, ctx.bench) == {"cnn18c"}       # the plans cell names no plan of the run
+    lam = cells("tab_eval_lambda")
+    assert lam["T=2048 lambda=40", "C proof"]["value"] == pytest.approx(0.6 * 6.4e9)
+    assert lam["T=2048 lambda=128", "Kpre verifier"]["value"] == pytest.approx(20.1)
+    assert lam["T=64 lambda=40", "C proof"]["value"] is None
+    assert (v["LamFortyProofC"], v["LamFortyVerifyC"], v["LamFortyVerifyK"]) == ("60", "60", "60")
+    lam_tables = tmp / "tables_test" / "llm_full_model.csv"
+    text = lam_tables.read_text(encoding="utf-8")
+    lam_tables.write_text(text.replace("Kpre,fs,40,bytes_total,8,4,_wire_prune_lookups_pmax2047,cuda,NVIDIA L40S,"
+                                       "AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,6400000000.0",
+                                       "Kpre,fs,40,bytes_total,8,4,_wire_prune_lookups_pmax2047,cuda,NVIDIA L40S,"
+                                       "AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,6300000000.0"),
+                          encoding="utf-8")
+    assert text != lam_tables.read_text(encoding="utf-8")
+    # the claims: a Kpre proof that changes with lambda; codewords of 2^18 points that open more columns than those of 2^16 points (41 against 26); a Kpre
+    # key slower than exact re-execution at 512 tokens; a cpuv verifier without the AVX-512 attention
+    _write(logs, "sp-x-plans-llama2-7b-2k-74.out", [dict(perf("llama2-7b", 2048, "C", 25.0, 6.6e9, label="plans"),
+                                                         policy="cnn18c", group_columns={"g0_n262144": 41},
+                                                         commit_s=610.0, setup_cache="off")])
+    _write(logs, "sp-c-llama2-7b-512-63.out", [perf("llama2-7b", 512, "Kpre", 40.0, 1.6e9)])
+    _write(logs, "sp-c-llama2-7b-2048-3.out", [dict(perf("llama2-7b", 2048, "Kpre", 19.6, 6.43e9),
+                                                    env=dict(_env(), implementation={"avx512": False}))])
+    ctx, problems = _ctx(tmp, logs)
+    got = []
+    M.build(ctx, got)
+    assert [x for x in got if x.startswith(M.TEXT_CLAIM) and "not fewer columns" in x]
+    assert [x for x in got if x.startswith(M.TEXT_CLAIM) and "Kpre proof at 2048 tokens differs" in x]
+    assert [x for x in got if x.startswith(M.TEXT_CLAIM) and "at 512 tokens" in x]
+    assert [x for x in got if x.startswith(M.TEXT_CLAIM) and "AVX-512 attention kernel" in x]
 
 
 def test_the_settings_and_the_further_text_numbers(run_dir):
@@ -1335,7 +1439,7 @@ def test_the_fallback_tables_agree_with_their_macros():
     assert all(N._cell(tables, s) is not None for s in N.SAME_VALUE)        # every pair names a cell of the fallback
     broken = dict(tables, tab_options=tables["tab_options"].replace(r"& 142\,s &", r"& 93\,s &"))
     assert [x for x in N.same_value(broken, macros) if "CpuReexecLong" in x]
-    assert len(N.same_value(tables, dict(macros, CpuVerifyLong="18.5"))) == 2    # tab:options and tab:eval-reexec
+    assert len(N.same_value(tables, dict(macros, CpuVerifyLong="18.5"))) == 3   # tab:options, :eval-reexec, :eval-cpu
     assert N.two_jobs(tables, macros) == []
     assert N.two_jobs(tables, dict(macros, VOneVZeroVerifyLlama="25.0"))
     assert N.printed(r"2.9--3.5$\times$") == (2.9, 3.5, pytest.approx(0.1))

@@ -255,8 +255,10 @@ def platform_text(run: R.Run, bench: Bench) -> str:
 
 def record_plans(run: R.Run, bench: Bench) -> set:
     """Mode C's commitment plans that the run's records name: a mode-C record's ``policy`` and the benchmark
-    tables' ``pol<plan>`` tags."""
-    plans = {str(r.d["policy"]) for r in run.recs if r.d.get("mode") == "C" and r.d.get("policy")}
+    tables' ``pol<plan>`` tags; the cpux tier's comparison of the candidate plans (label ``plans``,
+    ``tab:eval-plans``), which times every plan side by side, names none."""
+    plans = {str(r.d["policy"]) for r in run.recs if r.d.get("mode") == "C" and r.d.get("policy")
+             and r.d.get("label") != T.PLANS_LABEL}
     for row in bench.llm + bench.summary:
         plans |= set(re.findall(r"_pol([A-Za-z0-9]+)", row.get("variant", "") + " " + row.get("cell", "")))
     return plans
@@ -294,6 +296,11 @@ SAME_VALUE = (
     ("tab_options", None, ("with V1",), 5, None, 0, 1, "VOneVerifyLlama", 1),
     ("tab_eval_reexec", "CPU", (r"our $\Kpre$ verifier",), 1, None, 0, 1, "CpuVerifyShort", 1),
     ("tab_eval_reexec", "CPU", (r"our $\Kpre$ verifier",), 3, None, 0, 1, "CpuVerifyLong", 1),
+    ("tab_eval_reexec", "CPU", (r"our $\Kpre$ verifier",), 2, None, 0, 1, "CpuVerifyMedium", 1),
+    ("tab_eval_reexec", "CPU", ("integer re-execution",), 2, None, 0, 1, "CpuReexecMedium", 1),
+    ("tab_eval_cpu", None, ("Llama-2-7B", "8 threads"), 2, None, 0, 1, "CpuVerifyLong", 1),
+    ("tab_eval_cpu", None, ("Llama-2-7B", "8 threads"), 3, None, 0, 1, "CpuReexecLong", 1),
+    ("tab_eval_cpu", None, ("Llama-2-7B", "8 threads"), 4, None, 0, 1, "CpuRatio", 1),
     ("tab_eval_reexec", "CPU", ("fp32 re-execution",), 1, None, 0, 1, "CpuFloatShort", 1),
     ("tab_eval_reexec", "CPU", ("fp32 re-execution",), 3, None, 0, 1, "CpuFloatLong", 1),
     ("tab_eval_reexec", "CPU", ("integer re-execution",), 1, None, 0, 1, "CpuReexecShort", 1),
