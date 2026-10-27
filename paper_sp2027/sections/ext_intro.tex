@@ -23,7 +23,7 @@ without weights, which our verifier recomputes, and many of them hide the weight
 (Table~\ref{tab:eval-compare})\TodoCompareRange{}. The main cost is the proof. It carries the
 results of every weight operation and so grows with the prompt: \ProofLlamaShortC{} for a 64-token Llama-2-7B
 query and \ProofLlamaLongC{} at 2{,}048 tokens\TodoProofIntro{}, against 183\,kB for zkLLM. V1 makes it
-\VOneRatioRandom{}$\times$ smaller at 2{,}048 tokens with random weights (the full OPT-1.3B: \VOneOptMCVZeroGB{} to
+\VOneRatioRandom{}$\times$ smaller at 2{,}048 tokens on the real checkpoints (the full OPT-1.3B: \VOneOptMCVZeroGB{} to
 \VOneOptMCVOneGB{}\,GB), \VOneRealOptMLongC{}$\times$ on the certified OPT-1.3B in mode $\sC$ and \VOneRatioRealOptLExact{}$\times$ on the
 real OPT-6.7B in $\Kpre$ at 2{,}048 tokens, at the price of a GKR in the prover whose work grows with the
 number of results (OPT-125M at 2{,}048 tokens: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s) and a slower CPU

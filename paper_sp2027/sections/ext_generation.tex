@@ -43,7 +43,7 @@ proof per generated token of Llama-2-7B in mode $\sC$ falls from \GenLlamaMBPerT
 \GenLlamaMBPerTokenLong{}\,MB at $G=256$.
 
 \para{Against unverified generation.} The provider generates the response before it proves it. Without a proof,
-Hugging Face Transformers' fp16 decoders of the same shapes (random weights, scaled-dot-product attention, a KV
+Hugging Face Transformers' fp16 decoders of the same checkpoints (scaled-dot-product attention, a KV
 cache, greedy tokens) generate the 256-token responses after the 512-token prompts on the same GPU in
 \GenDecodeLlama{}\,s (Llama-2-7B) and \GenDecodeQwen{}\,s (Qwen3-4B), medians of the timed responses. For $G\in\{64,256\}$
 the prover then takes \GenOverDecodeC{} times the generation's time in mode $\sC$ and \GenOverDecodeK{} times in

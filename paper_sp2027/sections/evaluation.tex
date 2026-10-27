@@ -28,10 +28,10 @@ Fiat--Shamir unless a table says otherwise; mode~$\sC$ uses codewords of at leas
 after a warm-up (\OptionsRuns{} runs in Table~\ref{tab:options}, min--max spread $\le$\OptionsSpread{}\%).
 
 \para{Models.} The image models are the six of Section~\ref{sec:break}. The language models are
-GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B and Qwen3-4B. Costs use random int8 weights, since they
-depend only on the shapes, except for the compressed size of the claims. Real weights confirm
-this: on the certified OPT-1.3B (both modes, 64 and 2{,}048 tokens) the prover's and the CPU
-verifier's times are within \RealProveWithin{}\% and \RealVerifyWithin{}\% of random weights', and v0's proof is \RealProofSmaller{}\% smaller;
+GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B and Qwen3-4B. Costs use the real checkpoints with the integer recipes of
+Section~\ref{sec:quality}; GPT-2 and prompts beyond a checkpoint's trained context (4{,}096 tokens and
+more) use random int8 weights of the same shapes. Values matter little: on the certified OPT-1.3B (both modes,
+64 and 2{,}048 tokens) the prover's and the CPU verifier's times are within \RealProveWithin{}\% and \RealVerifyWithin{}\% of random weights', and v0's proof is \RealProofSmaller{}\% smaller;
 in $\Kpre$ at 2{,}048 tokens \RealAcceptedClause{}, and every tamper rejected~\cite{fullversion}. Models are measured in full, the last block
 pruned; a table marks a build of $b$ of a model's $L$ blocks as $b/L$.
 
@@ -45,7 +45,7 @@ Freivalds' check rejected \FinalNFreivalds{}, the column check \FinalNColumnsCod
 
 \begin{table*}[t]
   \caption{Cost of proving the next-token logits of one prompt (Fiat--Shamir, $\lambda{=}128$, mode
-  $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points, random int8 weights, full models):
+  $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points, int8 checkpoints, GPT-2 random, full models):
   the prover and the streaming GPU verifier on one \PlatformGpu{}, the CPU verifier on 8 threads of
   an \PlatformCpu{} (--: not measured)}
   \label{tab:eval-llm}
@@ -86,7 +86,7 @@ Llama-2 blocks, and a GPU claim decoder with a fused exact attention kernel make
 \begin{table}[t]
   \caption{V1 against v0 on the same queries (Fiat--Shamir, $\lambda{=}128$, mode $\sC$ with codewords
   of at least $2^{\PlanLogPoints{}}$ points, GKR instances of at most $2^{\ParamsLmax{}}$ leaves,
-  random int8 weights; the prover on one \PlatformGpu{}, the CPU verifier on 8 threads of an
+  int8 checkpoints, GPT-2 random; the prover on one \PlatformGpu{}, the CPU verifier on 8 threads of an
   \PlatformCpu{}; $b/L$: $b$ of the model's $L$ blocks, the last one pruned; --: not timed)}
   \label{tab:eval-v1}
   \centering\footnotesize
@@ -102,13 +102,14 @@ Llama-2 blocks, and a GPU claim decoder with a fused exact attention kernel make
   \end{tabular}
 \end{table}
 
-\para{Proof size.} At 2{,}048 tokens with random weights, V1's proof is \VOneRatioRandom{}$\times$ smaller
+\para{Proof size.} At 2{,}048 tokens on the real checkpoints, V1's proof is \VOneRatioRandom{}$\times$ smaller
 than v0's on every full model (Table~\ref{tab:eval-v1}). V1's multiplicities
 and GKR transcripts take at most \VOneExtrasMax{}\,MB per proof. The gain is
 smaller where parts V1 leaves unchanged weigh more: the Llama-2-13B build in $\sC$
 (\VOneRatioLargeC{}$\times$), whose opened columns are a larger share, and GPT-2 at 64 tokens
-(\VOneRatioShort{}$\times$). With real weights, the certified OPT-1.3B gains \VOneRealOptMLongC{}$\times$ ($\sC$) and
-\VOneRealOptMLongK{}$\times$ ($\Kpre$) at 2{,}048 tokens and \VOneRealOptMShortC{}$\times$ and \VOneRealOptMShortK{}$\times$ at 64, and the real OPT-6.7B
+(\VOneRatioShort{}$\times$). The certified OPT-1.3B gains \VOneRealOptMLongC{}$\times$ ($\sC$) and
+\VOneRealOptMLongK{}$\times$ ($\Kpre$) at 2{,}048 tokens (\VOneRandomOptMLongC{}$\times$ and \VOneRandomOptMLongK{}$\times$ with random weights of its
+shapes), and the real OPT-6.7B
 \VOneRatioRealOptLCExact{}$\times$ and \VOneRatioRealOptLExact{}$\times$ at 2{,}048.
 
 \para{Time.} The prover pays for the GKR, about one leaf per sent value. At 2{,}048 tokens V1's
@@ -123,7 +124,7 @@ takes \VOneVerifyLlama{}\,s, \VOneVerifyRatioLlama{}$\times$ v0's on the same qu
 
 \begin{table}[t]
   \caption{A client's options for one Llama-2-7B prompt of $T$ tokens (--: none or not reported).
-  Measured rows: the full model, random weights; ours under Fiat--Shamir,
+  Measured rows: the full model, its checkpoint's weights; ours under Fiat--Shamir,
   $\lambda{=}128$, mode $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points; CPU: 8 threads
   of an \PlatformCpu{}, our verifier with the native kernels;
   GPU: one \PlatformGpu{}. Other cited systems as reported, on their own hardware}
@@ -158,7 +159,7 @@ takes \VOneVerifyLlama{}\,s, \VOneVerifyRatioLlama{}$\times$ v0's on the same qu
 \begin{figure}[t]
   \centering
   \includegraphics[width=\columnwidth]{figures/ev_breakeven.pdf}
-  \caption{When a client of Llama-2-7B gains (random int8 weights, Fiat--Shamir). Left: the
+  \caption{When a client of Llama-2-7B gains (its int8 checkpoint, Fiat--Shamir). Left: the
   client's bytes for $Q$ mode-$\sC$ queries of 64 or 2{,}048 tokens, and with V1, against one
   download of the int8 weights (\WeightsLlamaGB{}\,GB). Right: a $\Kpre$ client's time for one 2{,}048-token
   query, transfer plus verification on 8 threads of the \PlatformCpu{}, against exact re-execution on the
@@ -174,7 +175,7 @@ requantisation, one-pass recomputed operations, field products and claim decodin
 verifier checks a 2{,}048-token query of the full Llama-2-7B in \CpuVerifyLong{}\,s on 8 threads of the
 \PlatformCpu{}, against \CpuReexecLong{}\,s for exact re-execution on the same threads (the integer forward
 pass with \CpuReexecName{}): \CpuRatio{}$\times$ faster. At 64 tokens it takes \CpuVerifyShort{}\,s, against
-\CpuReexecShort{}\,s: \CpuRatioShort{}$\times$. Inexact inference of the same shapes (PyTorch, llama.cpp~\cite{llamacpp}),
+\CpuReexecShort{}\,s: \CpuRatioShort{}$\times$. Inexact inference of the same weights (PyTorch, llama.cpp~\cite{llamacpp}),
 which cannot confirm the claims bit for bit, takes at least \CpuInexactLong{}\,s at 2{,}048 tokens
 (\CpuInexactName{}), \CpuRatioInexact{}$\times$ the verifier's time.
 
@@ -192,7 +193,7 @@ verifier suits an auditor or gateway that checks a provider without holding the 
 \label{sec:eval-compare}
 
 \begin{table*}[t]
-  \caption{Our costs (v0; trained image models, random int8 weights for the language models; full
+  \caption{Our costs (v0; trained image models, int8 checkpoints of the language models; full
   models) against published systems on matched
   models, theirs as reported on their own hardware (bold where ours is lower; in parentheses, ours
   lower $\downarrow$ or higher $\uparrow$ by the factor shown)}

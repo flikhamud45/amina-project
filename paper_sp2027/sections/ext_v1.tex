@@ -153,7 +153,7 @@ $L_\ell e$ and $W_\ell e$. On the full Llama-2-7B in $\Kpre$ at 2{,}048 tokens (
 \PlatformCpu{}, Fiat--Shamir), V1's verifier takes \VOneVerifyLlama{}\,s with the batched GKR check and a native kernel for
 the final check's products, against \VOneVerifyLlamaBaseline{}\,s with the verifier they replace, on the same
 queries, and v0's verifier \VOneVZeroVerifyLlama{}\,s. V1 thus trades prover time
-for a proof \VOneRatioRandom{}$\times$ smaller with random weights, which pays off where moving and storing
+for a proof \VOneRatioRandom{}$\times$ smaller on the real checkpoints, which pays off where moving and storing
 bytes costs more than seconds of GPU time.
 
 \subsection{Limitations of V1}

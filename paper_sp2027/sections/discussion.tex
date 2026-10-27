@@ -27,8 +27,8 @@ zkSNARKs~\cite{hollowllm}.
 \para{Scope.} We evaluate dense decoders on prompts up to 2{,}048 tokens and, extrapolated from 2- to
 4-block builds (within \LongCheckMax{}\% of the full model), Llama-2-7B's shapes up to 16{,}384, where the CPU verifier is about \LongRatioLong{}$\times$ faster than exact re-execution (\CpuRatio{}$\times$
 at 2{,}048, both non-interactive) and the proof reaches about \LongProofLong{}\,GB~\cite{fullversion}; mixture-of-experts models are
-untested. Costs use random weights, which real OPT weights match
-(Section~\ref{sec:eval-setup}). The certified OPT models stay close to the floating-point model at 2{,}048 tokens
+untested. Beyond 2{,}048 tokens, costs use random weights of the same shapes, which real OPT weights
+match (Section~\ref{sec:eval-setup}). The certified OPT models stay close to the floating-point model at 2{,}048 tokens
 (Section~\ref{sec:quality}), and so does Llama-2-7B ($\times$\LlamaSevenRatio{}), but our
 integer Qwen3-4B does not ($\times$\QwenLRatio{}).
 

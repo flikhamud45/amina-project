@@ -31,7 +31,7 @@ unchanged. Claims and tokens are fixed before the challenges. In $\Kpre$, $Q$ in
 bound counts the verdicts the prover sees.
 
 \para{Cost.} Each matrix is opened and folded once per response, so the proof grows only by the
-claims of the new positions. After a 512-token prompt (Fiat--Shamir, random int8 weights, full
+claims of the new positions. After a 512-token prompt (Fiat--Shamir, the int8 checkpoints, full
 models; the prover on one \PlatformGpu{}, the verifier on 8 threads of an \PlatformCpu{}), a greedy
 256-token Llama-2-7B response takes \GenLlamaProveC{}\,s to prove, \GenLlamaVerifyC{}\,s to verify and
 \GenLlamaProofC{} in mode $\sC$, and \GenLlamaProveK{}\,s, \GenLlamaVerifyK{}\,s and \GenLlamaProofK{} in $\Kpre$; Qwen3-4B takes

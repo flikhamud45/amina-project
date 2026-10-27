@@ -9,15 +9,15 @@
 
 The dog-versus-cat ResNet-18 stands in for the unreleased classifier of Anchuri et
 al.~\cite{anchuri2026verifiable}. Int8 quantisation changes the accuracy of the image models by at
-most \CnnAccuracyChange{} points. Real weights are used for the attack on OPT-6.7B (Section~\ref{sec:break}) and for
-model quality (Section~\ref{sec:quality}). Proofs do not depend on the hardware: on \HwDigestCells{} cells of the run's
+most \CnnAccuracyChange{} points. The language models' costs use their real checkpoints (Section~\ref{sec:eval-setup}), as do the attack on
+OPT-6.7B (Section~\ref{sec:break}) and model quality (Section~\ref{sec:quality}). Proofs do not depend on the hardware: on \HwDigestCells{} cells of the run's
 configuration (image models and decoder blocks, modes~$\sC$ and~$\Kpre$, v0 and V1, Fiat--Shamir), the prover on
 \HwDigestDevices{} produced byte-identical proofs and commitments.
 
-The random-weight language models use 11-bit attention probabilities, as the certified models do. The scale is a
+The language models use 11-bit attention probabilities, as the certified models do. The scale is a
 public constant of the attention, which the verifier recomputes: it changes no shape, only values, and with them the
 compressed claims and, in mode~$\sC$, the columns that the challenges open. On two blocks of Llama-2-7B at
-2{,}048 tokens, in modes~$\Kpre$ and~$\sC$ on the same queries with the CPU verifier on 8 threads, 11-bit
+2{,}048 tokens (random weights, whose scale is free), in modes~$\Kpre$ and~$\sC$ on the same queries with the CPU verifier on 8 threads, 11-bit
 probabilities change the proof's size by at most \ProbBitsBytes{}\% and the prover's and verifier's medians by at
 most \ProbBitsTime{}\% against 8-bit ones.
 
@@ -293,7 +293,7 @@ $\sC$), \CrossoverOptSLongK{}\,Gb/s (OPT-125M, 2{,}048 tokens, $\Kpre$) and \Cro
 
 A CPU client that could keep the weights beats exact (integer) re-execution at every measured length
 by keeping a $\Kpre$ key instead (Table~\ref{tab:eval-reexec}; \CpuRatioMedium{}$\times$ at 512 tokens). The llama.cpp rows run release
-\LlamaCppRelease{}, built for the \PlatformCpu{}, on the same 8 threads, with random weights of Llama-2-7B's shapes in
+\LlamaCppRelease{}, built for the \PlatformCpu{}, on the same 8 threads, with Llama-2-7B's weights converted to
 llama.cpp's own formats; each row is the fastest of its two attention kernels and of micro-batches of 512 and
 2{,}048 tokens (at most the prompt), and, unlike our pruned graph, llama.cpp computes the last block's attention at
 every position. Its faster format at 2{,}048 tokens, \CpuLlamaCppName{}, takes \CpuRatioLlamaCpp{}$\times$ our
