@@ -340,6 +340,42 @@ def test_a_queued_smoke_still_gates_the_run(tmp_path):
     assert "--dependency=afterok:901,afterany:1,singleton" in jobs[1], jobs[1]     # the queued smoke gates the tier after
 
 
+def test_the_final_runs_submissions_hold_every_tier_once_and_fit_one_allocation():
+    """The package README's final run: its --one-job submissions hold every tier of '--optional all' once; each
+    submission's expected hours are the sums of its tiers' estimates, at most 20 h for a timed (whole-node) one; and
+    each submission's dry run prints the '# one job:' line its table states, the thirteen together the whole run."""
+    text = (CODE / "experiments" / "package" / "README.md").read_text(encoding="utf-8")
+    section = text[text.index("## 4. The run"):text.index("Every allocation, the five without")]
+    subs = re.findall(r"^\$R --one-job ((?:--no-exclusive )?[a-z0-9 ]+?) +# (?:expected )?([0-9.]+)-([0-9.]+) h",
+                      section, re.M)
+    table = dict(re.findall(r"^\| `([a-z0-9 -]+)` \| `(# one job: [^`]+)` \|$", section, re.M))
+    assert len(subs) == 13 and len(table) == 13 and "thirteen jobs (`--one-job`)" in section, (subs, table)
+    runs: list = []
+    _dry(out=runs)
+    est = {t: (float(lo), float(hi)) for t, lo, hi in
+           re.findall(r"^# tier (\S+): \d+ jobs, job limits \d+ h, estimate ([0-9.]+)-([0-9.]+) h$", runs[0].stdout, re.M)}
+    last = runs[0].stdout.splitlines()[-1]
+    every = last[2:last.index(":")].split()
+    tiers = [t for sub, _, _ in subs for t in sub.replace("--no-exclusive ", "").split()]
+    assert sorted(tiers) == sorted(every) and len(set(tiers)) == len(tiers), (tiers, every)
+    njobs = hours = 0
+    for sub, lo, hi in subs:
+        own = sub.replace("--no-exclusive ", "").split()
+        assert (float(lo), float(hi)) == (sum(est[t][0] for t in own), sum(est[t][1] for t in own)), sub
+        assert sub.startswith("--no-exclusive ") or float(hi) <= 20, sub
+        run = subprocess.run([_bash(), str(RUN), "--platform", "final", "--llama-licence", "--gres", "gpu:l40s:1",
+                              "--dry-run", "--one-job", *sub.split()], cwd=REPO,
+                             env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}, capture_output=True, text=True,
+                             timeout=120)
+        assert run.returncode == 0, run.stderr
+        line = next(s for s in run.stdout.splitlines() if s.startswith("# one job:"))
+        assert table[sub] == line, (sub, line)
+        n, h = re.search(r": (\d+) jobs, job limits (\d+) h", line).groups()
+        njobs, hours = njobs + int(n), hours + int(h)
+    assert last.endswith(f": {njobs} jobs, job limits {hours} h"), (last, njobs, hours)
+    assert f"once ({njobs} jobs, {hours} h of limits)" in " ".join(section.split()), (njobs, hours)
+
+
 def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(tmp_path):
     """--one-job: one job with the node to itself, its time limit the sum of the jobs' limits capped at --max-hours,
     queued again when pre-empted, whose script runs the same command with --local; a queued one is not submitted

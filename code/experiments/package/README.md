@@ -156,8 +156,8 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 238 jobs. There, the paper's run submits its tiers as fourteen jobs (`--one-job`), each of
-which runs its tiers' jobs one after another in its allocation: the timed tiers in nine jobs that have a node to
+waits that long for each of its 238 jobs. There, the paper's run submits its tiers as thirteen jobs (`--one-job`), each of
+which runs its tiers' jobs one after another in its allocation: the timed tiers in eight jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `qllama`, `qcheck`, `tv`, `attack`, `smoke`) in five jobs on one GPU of a
 shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates nothing:
 its pytest summary gives the text's `\SmokeTests` and its exactness tests the platform's GPU-against-CPU agreement, so
@@ -168,12 +168,11 @@ R="bash code/experiments/package/run.sh --platform final --llama-licence --gres 
    --exclude-nodes <the partition's nodes of another GPU or CPU model>"
 $R --one-job cpuv                          # expected 8-11 h
 $R --one-job long                          # 10-16 h: long prompts, the full model at 8,192 tokens, V1 on 2 blocks
-$R --one-job cpux                          # 5-9 h
 $R --one-job bench                         # 11-17 h
 $R --one-job real                          # 11-16 h
 $R --one-job serve gen batch               # 14-18 h
 $R --one-job v1 setup improve              # 9-16 h
-$R --one-job gpuv                          # 5-7 h
+$R --one-job gpuv cpux                     # 10-16 h: the GPU verifier, then the CPU verifier on 2 and 4 cores
 $R --one-job zkllm                         # 6-9 h: zkLLM's demo on the same GPU model
 $R --one-job --no-exclusive quality        # 16-24 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive qllama         # 40-48 h, not timed: two or three submissions in a row (Sec. 5)
@@ -182,7 +181,29 @@ $R --one-job --no-exclusive tv attack      # 6-9 h, not timed
 $R --one-job --no-exclusive smoke          # 1.5-2 h, not timed: the test suite and xcheck on the run's GPU and CPU
 ```
 
-Every allocation, the three without `--exclusive` too, asks for the same GPU (`--gres`) and checks its node before its
+The expected hours of a submission are the sums of its tiers' estimates (`# tier <tier>: ..., estimate <h> h` in the
+dry run); every timed submission fits one allocation's 24 hours with room. With `--dry-run` in front of `--one-job`,
+each submission prints its allocation's `sbatch` line and then the line below (and, where its job limits add up to
+more than 24 h, a last line saying that the same command, submitted again, runs only the jobs not yet ended
+successfully). Together the thirteen hold every job of `--optional all` once (238 jobs, 533 h of limits):
+
+| Submission | Its dry run's `# one job:` line |
+|---|---|
+| `cpuv` | `# one job: cpuv: 15 jobs, job limits 28 h, time limit 24 h` |
+| `long` | `# one job: long: 21 jobs, job limits 53 h, time limit 24 h` |
+| `bench` | `# one job: bench: 47 jobs, job limits 59 h, time limit 24 h` |
+| `real` | `# one job: real: 28 jobs, job limits 56 h, time limit 24 h` |
+| `serve gen batch` | `# one job: serve gen batch: 17 jobs, job limits 44 h, time limit 24 h` |
+| `v1 setup improve` | `# one job: v1 setup improve: 35 jobs, job limits 52 h, time limit 24 h` |
+| `gpuv cpux` | `# one job: gpuv cpux: 26 jobs, job limits 49 h, time limit 24 h` |
+| `zkllm` | `# one job: zkllm: 5 jobs, job limits 14 h, time limit 14 h` |
+| `--no-exclusive quality` | `# one job: quality: 18 jobs, job limits 56 h, time limit 24 h` |
+| `--no-exclusive qllama` | `# one job: qllama: 12 jobs, job limits 78 h, time limit 24 h` |
+| `--no-exclusive qcheck` | `# one job: qcheck: 5 jobs, job limits 20 h, time limit 20 h` |
+| `--no-exclusive tv attack` | `# one job: tv attack: 7 jobs, job limits 19 h, time limit 19 h` |
+| `--no-exclusive smoke` | `# one job: smoke: 2 jobs, job limits 5 h, time limit 5 h` |
+
+Every allocation, the five without `--exclusive` too, asks for the same GPU (`--gres`) and checks its node before its
 first job (the default `--require-gpu L40S --require-cpu "EPYC 9334"`): on a node of another model it runs nothing,
 exits with status 86 and prints the command to submit again with that node excluded. It then runs its tiers' jobs one
 after another; a job that fails does not stop the jobs after it (no job reads another's output: the setup cache and
