@@ -32,6 +32,7 @@ of every item is `SP2027_PLAN.md` at the repository root; an item is tagged [DON
 | F2c | [F2c_zero_shot.md](F2c_zero_shot.md) | harness done and tested; first cluster job submitted | zero-shot accuracy (LAMBADA, HellaSwag, PIQA, ARC-e/c, WinoGrande) of the integer OPT against fp16, lm-eval 0.4's formats re-implemented, paired intervals |
 | A6 | [A6_kpre_precompute.md](A6_kpre_precompute.md) | done: Llama-2-7B precompute 106.9 -> 12.7 s (CPU), 4.3 -> 2.2 s (GPU) | the Kpre client's precompute `u = chi A` on the native field product (CPU) and int8 GEMMs (GPU), no transposed int64 copy; identical `u` |
 | V-LONG-b | [V_LONG_b_long_prompts.md](V_LONG_b_long_prompts.md) | measured 2k-16k (2080 Ti/Xeon) | the CPU verifier against exact re-execution from 2k to 16k tokens: 5.1x to about 2x; proofs grow linearly (25.8 GB at 8k for Llama-2-7B) |
+| RW | [RW_real_weight_costs.md](RW_real_weight_costs.md) | done; measured in the final run | every cost cell with a usable checkpoint on its real weights (Llama-2 up to 2,048 tokens, OPT, Qwen3-4B); GPT-2 and the long-prompt curve random; one rule in run.sh and the record selectors; `--random-weights` keeps the old run |
 
 Measurement harnesses (all compare against the previous code path on the same queries and check identical
 outputs): `experiments/6_improvements/open_ab.py` (A1), `forward_ab.py` (A2), `encode_prof.py` (A3),
