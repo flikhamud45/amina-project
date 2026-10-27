@@ -33,7 +33,14 @@ Windows).
 
 One prompt of `T` tokens (`--seq`, several values; random tokens, `--prompt-seed`) through a random-weight decoder of
 the shapes of `pvi.models.decoder.CONFIGS` (or `experiments.common.models.TINY`; `--seed`): the cost depends on the
-shapes only. The variants (`--variants`):
+shapes only. With `--real <checkpoint>` (one `--model`, its shapes; OPT, Llama or Qwen3) the prompt is the
+checkpoint's first WikiText-2 test window, the integer variants run the very graph of the verifier's real cells
+(`experiments.common.real_cells`: OPT's certified recipe, a Llama-family checkpoint's main recipe and fixed prefix)
+and the floating-point variants the checkpoint's own fp32 weights with the norms folded; the full model only (the
+run package measures the 2-block rows on random weights and the full model on the checkpoint). Refused: GPT-2,
+other shapes, several `--model`, `--max-pos`, `--prob-max`, `--layers` other than the full model and a prompt beyond
+the trained context (behind the recipe's prefix). The checkpoint adds its download, its fp32 load and calibration
+(tens of minutes for a 7B model) and 60 to 90 GB of host memory for a 7B model. The variants (`--variants`):
 
 * `int`: the integer forward pass of `build_decoder` that the prover runs, bit-exact with the claims, so a complete
   check in itself (the native int8 GEMM on a CPU, `torch._int_mm` on a GPU);
@@ -94,8 +101,13 @@ and `same_model` false), `paper/numbers.py` fails any that does not, and it neve
   and `llama-quantize` only, into `build/`. A stamp file (the release, the commit, the CMake flags, CMake, the
   compilers and the CPU) lets later jobs reuse the build; every record keeps the build's `llama_print_system_info`
   (its CPU features, e.g. `AVX512_VNNI` and `AVX512_BF16`).
-* **Weights.** Random weights of the model's exact shapes (`pvi.models.decoder.CONFIGS`; Llama-2's architecture only,
-  any other model is refused; `--layers N`: N blocks), normal with standard deviation 0.02 and norms of one
+* **Weights.** With `--real <checkpoint>` (a `LlamaForCausalLM` of `--model`'s shapes, e.g.
+  `meta-llama/Llama-2-7b-hf`, as the run package passes with `--llama-licence`) the checkpoint's safetensors,
+  converted one tensor at a time as the release's `convert_hf_to_gguf.py` converts a `LlamaForCausalLM` (the q/k
+  permutation, the SentencePiece vocabulary, the hyperparameters; every written file read back against the plan; the
+  records hold `weights`, `real` and the checkpoint's `revision`). Otherwise random weights of the model's exact
+  shapes (`pvi.models.decoder.CONFIGS`; Llama-2's architecture only, any other model is refused; `--layers N`: N
+  blocks), normal with standard deviation 0.02 and norms of one
   (`--seed`), written as a bf16 GGUF by the clone's own `gguf-py` one tensor at a time, with a dummy vocabulary of
   Llama-2's SentencePiece layout (32,000 tokens: `<unk>`, `<s>`, `</s>`, the 256 byte tokens and unique fillers), then
   quantised to Q8_0 by `llama-quantize`. This needs numpy and PyYAML (which `gguf-py` imports), but no checkpoint,

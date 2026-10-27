@@ -28,7 +28,11 @@ summary line is a record of kind `tests`). `Run` selects the record of one cell
 by every
 setting that distinguishes the package's jobs: the tier, the model, the prompt length, the mode, the blocks, the
 verifier device (a V1 record's from its command line), the label and real or random weights (and, in the cpux tier,
-the threads, the AVX-512 attention option and mode C's plan); of several matching
+the threads, the AVX-512 attention option and mode C's plan); a main cell's weights are those that
+`experiments.common.real_cells.main_checkpoint` gives it (`records.MAIN`, the selectors' default; `run.sh`'s `rw` is
+the same rule), by the run's licence and weights (`numbers.py --llama-licence` and `--weights`; `auto`: from the
+records), so that a real cell is never filled from a random record or the reverse and a missing real record leaves
+the cell missing; the real tier's twins select their weights explicitly; of several matching
 records the latest job's (for re-execution, `reexec.py`'s and `llamacpp.py`'s, the fastest of one variant's
 records). `checks` lists a record's failed correctness checks (a llama.cpp record must be marked inexact and a
 different model, and have run on its threads).

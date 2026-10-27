@@ -28,6 +28,14 @@ runtime flags to the GPU prover and 8 threads.
 
 ## Scripts
 
+Every script below but `gkr_bench.py` takes `--real <checkpoint>` (with `--recipe`, `--smooth` and `--calib-seq`, as
+`costs/perf.py`): instead of random weights and prompts, the integer graph of the checkpoint's first `--layers`
+blocks, the full graph's first blocks (`experiments.common.real_cells`: OPT's certified or legacy recipe, a
+Llama-family checkpoint's main recipe with its fixed prefix), queried on WikiText-2 test windows; every variant of an
+A/B runs on the same graph and the same windows, and the records name `real`, `recipe`, `smooth` and `calib_seq`
+(None for random weights). The run package passes it wherever its rule gives the cell a checkpoint
+(`package/README.md`, Sec. 2); the 8- against 11-bit A/B of `perf.py` stays on random weights.
+
 ### `open_ab.py`
 
 Builds the decoder as `costs/bench.py` does (random weights, `--layers` blocks, the last one pruned), commits it under

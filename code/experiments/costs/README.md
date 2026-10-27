@@ -37,8 +37,9 @@ Run every command from `code/` with the checkout's library first on the path (`P
 
 The benchmark of protocol v0 and of the path test (Anchuri et al., re-implemented on the same integer graphs) on the
 trained image models (`cnn` suite: `mlp_mnist`, `lenet5`, `vgg11`, `vgg16`, `resnet18_cifar`, `resnet18_224`) and on
-random-weight decoders with the shapes of the paper's language models (`llm` suite: the names of
-`pvi.models.decoder.CONFIGS`, and the small shapes `tiny-*`/`small-llama` of `experiments.common.models.TINY`).
+decoders with the shapes of the paper's language models (`llm` suite: the names of `pvi.models.decoder.CONFIGS`, and
+the small shapes `tiny-*`/`small-llama` of `experiments.common.models.TINY`), on random weights or, with `--real`, on a
+checkpoint's (the run package passes `--real` wherever its rule gives a cell a checkpoint: `package/README.md`).
 
 * **Inputs.** The image models need their trained weights (`train_cnn.py`; the MLP is
   `artifacts/models/mlp_mnist_full.npz`, stored) and datasets: MNIST (downloaded by torchvision), CIFAR-10 and the

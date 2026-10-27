@@ -7,7 +7,8 @@ prover's and the verifier's times, the verifier's two implementations phase by p
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| `tab:eval-v1` (V1 and v0 proofs, ratio, prover and verifier times); the abstract's and Sec. `sec:eval-v1`'s "2.0–2.3x smaller at 2,048 tokens with random weights"; the extended version's `tab:v1` (the GKR's share of the prover) | `v1_bytes.py` (tier `v1`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre C --full --reps 5` (and GPT-2 at 64 and 512, OPT-125M, OPT-1.3B, OPT-6.7B at 64 and 2,048, Llama-2-13B, Qwen3-4B) | stdout, one JSON line per mode |
+| `tab:eval-v1` (V1 and v0 proofs, ratio, prover and verifier times); the abstract's and Sec. `sec:eval-v1`'s V1 ratio at 2,048 tokens on the real checkpoints (`--real`, by the run
+package's rule); the extended version's `tab:v1` (the GKR's share of the prover) | `v1_bytes.py` (tier `v1`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre C --full --reps 5` (and GPT-2 at 64 and 512, OPT-125M, OPT-1.3B, OPT-6.7B at 64 and 2,048, Llama-2-13B, Qwen3-4B) | stdout, one JSON line per mode |
 | `tab:options`' V1 columns (V1's byte ratio and its CPU verifier against v0's); the body's "45.4 s against v0's 19.6 s" for the full Llama-2-7B; the extended version's "1.44 s per block (2.49 s before)" | `v1_bytes.py --v1-verifier optimised baseline` (tier `cpuv`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 5 --v1-verifier optimised baseline --label cpuv-v1` (and `--seq 64`, Qwen3-4B) | stdout (`timed.v1_paths`) |
 | where the V1 verifier's time goes (the per-phase breakdown behind the numbers above) | `v1_phases.py` | `python -m experiments.v1.v1_phases --model llama2-7b --layers 2 --seq 2048 --mode Kpre --reps 3 --device cuda` | stdout, one JSON line per verifier and a table |
 | V1 with the GPU verifier at 2,048 tokens (tier `gpuv`) | `v1_bytes.py --verifier-device cuda` | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 3 --verifier-device cuda --label gpuv-v1` | stdout |
@@ -67,7 +68,8 @@ the same query (`pvi.v1.protocol.cut_proof_bytes`: M1 encoded for real, every ot
 ### `v1_phases.py`
 
 V1's verifier phase by phase on a random-weight decoder (`--model`, or `--small D H DH FF V` for a Llama-shaped one of
-those sizes), each query checked once by every verifier of `--v1-verifier` (default both), interleaved. Inside the
+those sizes) or, with `--real <checkpoint>` (and `--recipe`, `--smooth`, `--calib-seq`), the integer graph of the
+checkpoint's first `--layers` blocks on WikiText-2 windows (`experiments.common.real_cells`), each query checked once by every verifier of `--v1-verifier` (default both), interleaved. Inside the
 final check it also times `_xbar`, the eq tables, the Kpre fold check, the window products of each verifier and the
 inner products, and counts the operations that fall back to the baseline products. Records: one JSON line per verifier
 (`path`: its name; `timings`: the median of every phase; `verify_s`; `env`), then a table. `--micro ROWS T` times the

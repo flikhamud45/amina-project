@@ -29,7 +29,9 @@ on Linux, `PYTHONPATH="src;."` on Windows). `python -m experiments.generation.<s
 Builds Hugging Face Transformers' own decoder of a Llama- or Qwen3-style shape (`LlamaForCausalLM`, or
 `Qwen3ForCausalLM` for a decoder with q/k norms; `pvi.models.decoder.CONFIGS` or `experiments.common.models.TINY`,
 `--layers` blocks) on `--device` in `--dtype` (default fp16) with random weights (a decoder's time does not depend on
-its weights' values) and scaled-dot-product attention. A response of `G` tokens after a `P`-token prompt is the one
+its weights' values) and scaled-dot-product attention, or with `--real <checkpoint>` (a Llama or Qwen3 checkpoint of
+the one `--model`'s shapes, every block) the checkpoint's own weights, prompted with WikiText-2 test windows
+tokenised as `gen_bench.py --real`'s prompts (a prompt and response beyond the trained context are refused). A response of `G` tokens after a `P`-token prompt is the one
 `gen_bench.py` proves: the prefill gives the first token (the LM head at the last position only), then `G - 1`
 decoding steps of one token read and extend the KV cache; every token is the argmax, on the device. Per `G`: one
 untimed response, then `--reps` timed ones to random prompts, the prefill and the decoding timed apart (CUDA events

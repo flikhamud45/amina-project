@@ -293,6 +293,12 @@ measures the setup itself.
 
 ## 5. While it runs
 
+The real-weight cells name their refusals before anything is loaded or timed (`--real: ...` on the job's log, exit
+status 1): a model without an integer builder of a real checkpoint (`no integer builder`), a prompt beyond the
+checkpoint's trained context (`exceed ... trained context`), a checkpoint of other shapes (`is not of --model ...'s
+shapes`) or a block count outside the model's (`--layers N: ... has M blocks`). In the package's jobs none occurs;
+one means a changed command line or checkpoint (Sec. 2).
+
 * `squeue -u $USER` (or the foreground output with `--local`) shows where the chain is. Each job writes
   `logs/<name>/sp-<cell>-<job id>.out`; the records are the lines that start with `{`. The benchmark's records go to
   `code/artifacts/comparison/raw_<name>/`, the attack's to `logs/<name>/attack/`. The second line of a CPU-timing
@@ -366,6 +372,10 @@ PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs
 #  (the first numbers command: coverage and checks; the second writes paper_sp2027/generated/)
 ```
 
+The report's first line names the main cells' weights (`main cells on the real checkpoints (with the Llama-2
+licence)`), which `numbers.py` takes from the records (`--weights` and `--llama-licence`, default `auto`; for a run of
+`--random-weights` or without `--llama-licence` they follow by themselves): a main cell is read only from records of
+its weights, so a missing real record is a missing cell, never filled from a random-weight record.
 The coverage report names every job without records (with `--expect`); its last lines list every table cell and
 every macro that the run does not provide (`MISSING: ...`, one per line; `COMPLETE: ...` when there is none). A
 `CHECK FAILED` or `PARSE` line, or any missing cell or macro, gives exit status 1 (`--strict`: also a job without
