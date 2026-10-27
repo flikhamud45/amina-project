@@ -639,7 +639,7 @@ def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
            lambda v: f"{v:.1f}")
     real = run.v1("real", "opt-6.7b", 2048, "Kpre", vdev="cpu", label="real", real="facebook/opt-6.7b")
     real_c = run.v1("real", "opt-6.7b", 2048, "C", vdev="cpu", label="real", real="facebook/opt-6.7b")
-    # the abstract's real-weight gain, like the random-weight one, over modes C and Kpre
+    # the abstract's gain on the real tier's OPT-6.7B, like the main cells' one, over modes C and Kpre
     _range(c, "VOneRatioRealOptL", [ratio(real_c), ratio(real)], real, lambda v: f"{v:.1f}")
     c.put("VOneRatioRealOptLExact", ratio(real), real, lambda v: f"{v:.2f}")
     c.put("VOneRatioRealOptLCExact", ratio(real_c), real_c, lambda v: f"{v:.2f}")
@@ -652,9 +652,11 @@ def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
           and real.d["n_exceptions"] / real.d["n_leaves"] or None, real,
           lambda v: f"$10^{{{round(math.log10(v))}}}$")
     c.put("VOneRealOptLTable", real and real.d.get("table"), real, lambda v: f.sci(v).strip("$"))
-    tier = [r for r in run.kind("v1", "v1") if not r.d.get("codec_only") and not r.d.get("real")]
-    exc = [r.d["n_exceptions"] for r in tier if r.d.get("n_exceptions") is not None]
-    c.put("VOneRandomExceptionsMax", max(exc) if exc else None, "v1 tier, random weights", f.num)
+    # the v1 tier's cells (of the run's weights); the random-weight V1 proofs: its GPT-2 cells and the real tier's twins
+    tier = [r for r in run.kind("v1", "v1") if not r.d.get("codec_only") and run.same_weights(r, MAIN)]
+    exc = [r.d["n_exceptions"] for t in ("v1", "real") for r in run.kind("v1", t)
+           if not r.d.get("codec_only") and not r.d.get("real") and r.d.get("n_exceptions") is not None]
+    c.put("VOneRandomExceptionsMax", max(exc) if exc else None, "v1 and real tiers, random weights", f.num)
     # the multiplicities and GKR transcripts, which do not grow with the prompt, of every measured V1 proof (the
     # exceptions grow with the values and are counted apart); the smoke's and the gate's records fill no number
     extras = [sum((r.d.get("v1_bytes") or {}).get(k, 0) for k in ("cut_mult", "cut_gkr")) for r in run.kind("v1")

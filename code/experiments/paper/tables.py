@@ -9,7 +9,7 @@ The tables and their sources (the run package's tiers, ``experiments/package/run
 
 ==================== ==================================================================================
 ``tab:eval-llm``      ``bench``: modes C (CPU and streaming GPU verifier) and Kpre, Fiat--Shamir, the plan
-``tab:eval-v1``       ``v1``: ``v1_bytes.py --full`` on the CPU verifier, random weights
+``tab:eval-v1``       ``v1``: ``v1_bytes.py --full`` on the CPU verifier, the run's main weights
 ``tab:options``       ``cpuv`` (perf.py, reexec.py, llamacpp.py, V1's CPU verifier), ``gpuv`` (reexec.py on the GPU)
 ``tab:eval-compare``  ``bench`` and the published systems (``reported_curated.csv``); its rows: ``numbers.py
                       --compare-rows`` (:data:`COMPARE_ROWS`)
@@ -225,7 +225,8 @@ V1_ROWS = ((64, "gpt2"), (512, "gpt2"), (2048, "opt-125m"), (2048, "opt-1.3b"), 
 
 
 def v1_cell(run: Run, model: str, seq: int, mode: str) -> Rec | None:
-    """The v1 tier's record of one ``tab:eval-v1`` cell: random weights, the CPU verifier, no label."""
+    """The v1 tier's record of one ``tab:eval-v1`` cell: the run's main weights (the checkpoint where
+    ``experiments.common.real_cells``'s rule gives one, else random), the CPU verifier, no label."""
     return run.v1("v1", model, seq, mode, vdev="cpu", label="")
 
 
@@ -319,7 +320,8 @@ def tab_options(ctx: Ctx) -> Table:
     run, m = ctx.run, "llama2-7b"
     tb = Table("tab_options", "tab:options",
                f"{protocol(ctx)}; cpuv tier (perf.py --verifier-device cpu, reexec.py and llamacpp.py on 8 threads "
-               "(llama.cpp: Q8_0, random weights, the fastest of its attention kernels and micro-batches), V1's "
+               f"(llama.cpp: Q8_0, {weights_of(ctx, m, 2048)}, the fastest of its attention kernels and "
+               "micro-batches), V1's "
                "optimised CPU verifier), gpuv tier (reexec.py int on the GPU); every model in full")
     weights = ctx.bench.llm_cost(m, 64, "c_cpu") or ctx.bench.llm_cost(m, 64, "kpre_cpu")
     wb = weights["params"] if weights else None
@@ -1493,11 +1495,18 @@ GEN = (("gpt2", 64, (256,), ("greedy",)), ("llama2-7b", 512, (64, 256), ("greedy
 prompt, greedy and sampled)."""
 
 
+def weights_of(ctx: Ctx, model: str | None = None, seq: int = 0) -> str:
+    """A table header's weights: those of ``model``'s cell at ``seq`` tokens, else of the run's main cells."""
+    if model is not None:
+        return "the checkpoint's weights" if ctx.run.weights(model, seq) else "random weights"
+    return "random weights" if ctx.run.random_weights else "the real checkpoints (GPT-2: random weights)"
+
+
 def tab_gen(ctx: Ctx) -> Table:
     """``tab:gen``: a G-token greedy response as one prefill: prover, verifier and proof in modes C and Kpre."""
     tb = Table("tab_gen", "tab:gen", f"{protocol(ctx)}; gen tier (gen_bench.py, label gen): GPT-2 after a 64-token "
-               "prompt, Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy, random weights, full models; medians "
-               "over the timed queries; the verifier's time includes the token rule")
+               f"prompt, Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy, {weights_of(ctx)}, full models; "
+               "medians over the timed queries; the verifier's time includes the token rule")
     for m, prompt, gs, _ in GEN:
         for j, g in enumerate(gs):
             cells = [rf"{NAME[m]} ($P{{=}}{prompt}$)" if j == 0 else "", str(g)]
@@ -1515,8 +1524,8 @@ def tab_gen_full(ctx: Ctx) -> Table:
     """``tab:gen-full``: every generation cell of the final run, greedy and sampled (the client's seed), with the
     proof per generated token."""
     tb = Table("tab_gen_full", "tab:gen-full", f"{protocol(ctx)}; gen tier (gen_bench.py, label gen): GPT-2 after a "
-               "64-token prompt (greedy), Llama-2-7B and Qwen3-4B after a 512-token prompt, random weights, full "
-               "models, 3 timed queries per cell; rows ', sampled': the integer sampler")
+               f"64-token prompt (greedy), Llama-2-7B and Qwen3-4B after a 512-token prompt, {weights_of(ctx)}, "
+               "full models, 3 timed queries per cell; rows ', sampled': the integer sampler")
     for i, (m, prompt, gs, decodes) in enumerate(GEN):
         if i:
             tb.rows.append(r"\midrule")
