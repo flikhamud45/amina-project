@@ -1620,9 +1620,10 @@ def test_the_schematic_figures(tmp_path):
 
 # ------------------------------------------------------------------------------------------------ long prompts
 def _long_run() -> R.Run:
-    """The long prompts' records: the long tier's 2-, 3- and 4-block cells and its full model at 8,192 tokens, the
-    cpuv tier's full model at 2,048, the gpuv tier's 2- and 3-block cells next to its full model at 2,048, V1 on 2
-    blocks and the v1 tier's codec profiles of the full model."""
+    """The long prompts' records: the long tier's 2-, 3- and 4-block cells and its full model at 2,048 and 8,192
+    tokens, the gpuv tier's 2- and 3-block cells next to its long cells' full model at 2,048, V1 on 2 blocks and the
+    v1 tier's codec profiles of the full model, all on random weights; and the main cells of the cpuv and gpuv tiers
+    on Llama-2-7B's checkpoint, which the long prompts' check never reads."""
     m, recs = "llama2-7b", []
 
     def add(tier, cell, kind, *ds):
@@ -1639,28 +1640,37 @@ def _long_run() -> R.Run:
         reexec(m, 2048, "float", 0, blocks={"2": 5.0, "3": 7.0}))
     add("long", "l-rx-llama7-8192", "reexec", reexec(m, 8192, "int", 0, blocks={"2": 20.0, "3": 30.0, "4": 40.0}),
         reexec(m, 8192, "int_fp32gemm", 0, blocks={"2": 25.0, "3": 37.0, "4": 49.0}))
-    # the full model measured: the cpuv tier at 2,048 tokens (glibc's allocator; the tuned row is not the long
-    # tier's setting) and the long tier at 8,192
-    add("cpuv", "c-llama2-7b-2048", "perf", perf(m, 2048, "Kpre", 19.6, 6.43e9))
-    add("cpuv", "c-rx-llama2-7b", "reexec", reexec(m, 2048, "int_fp32gemm", 141.6))
-    add("cpuv", "c-rx-heap-llama2-7b", "reexec", dict(reexec(m, 2048, "int_fp32gemm", 100.0), malloc_tuned=True))
+    # the full model measured on the curve's random weights: the long tier at 2,048 and 8,192 tokens; the cpuv
+    # tier's main cells at 2,048 take the checkpoint (another footing: never the check's)
+    ck = "meta-llama/Llama-2-7b-hf"
+    add("cpuv", "c-llama2-7b-2048", "perf", perf(m, 2048, "Kpre", 25.0, 5.9e9, real=ck))
+    add("cpuv", "c-rx-llama2-7b", "reexec", dict(reexec(m, 2048, "int_fp32gemm", 150.0), real=ck))
+    add("cpuv", "c-rx-heap-llama2-7b", "reexec", dict(reexec(m, 2048, "int_fp32gemm", 100.0), malloc_tuned=True,
+                                                      real=ck))
+    add("long", "l-llama7-2048-full", "perf", perf(m, 2048, "Kpre", 19.6, 6.43e9, label="long"))
+    add("long", "l-rx-llama7-2048-full", "reexec", reexec(m, 2048, "int_fp32gemm", 141.6, blocks={"32": 141.6}))
     add("long", "l-llama7-8192-full", "perf", perf(m, 8192, "Kpre", 335.0, 16e9, label="long"))
     add("long", "l-rx-llama7-8192-full", "reexec", reexec(m, 8192, "int", 330.0, blocks={"32": 330.0}),
         reexec(m, 8192, "int_fp32gemm", 400.0, blocks={"32": 400.0}))
-    # the GPU: the full model at 2,048 tokens, then 2 and 3 blocks at 2,048 and 16,384 tokens (the 3-block cell's
-    # GPU peak), and re-execution on 2 and 3 blocks, whose 2 blocks at 2,048 replace the gpuv tier's earlier ones
-    add("gpuv", "g-v0-llama2-7b-Kpre", "perf", perf(m, 2048, "Kpre", 5.0, 6.43e9, vdev="cuda", label="gpuv",
-                                                    stream=True))
-    add("gpuv", "g-rx-llama2-7b", "reexec", reexec(m, 2048, "int", 1.65, device="cuda",
-                                                   blocks={"2": 0.11, "32": 1.65}))
+    # the GPU: the main cells (the checkpoint: the full model's verifier, re-execution's 2 random-weight blocks and
+    # the full model on the checkpoint), then 2 and 3 blocks at 2,048 and 16,384 tokens (the 3-block cell's GPU
+    # peak) and at 2,048 the full model on random weights, and re-execution on 2 and 3 blocks and of the full model
+    # at 2,048, whose 2 blocks at 2,048 replace the gpuv tier's earlier ones
+    add("gpuv", "g-v0-llama2-7b-Kpre", "perf", perf(m, 2048, "Kpre", 7.0, 5.9e9, vdev="cuda", label="gpuv",
+                                                    stream=True, real=ck))
+    add("gpuv", "g-rx-llama2-7b", "reexec", reexec(m, 2048, "int", 0, device="cuda", blocks={"2": 0.11}),
+        dict(reexec(m, 2048, "int", 1.9, device="cuda", blocks={"32": 1.9}), real=ck))
     for seq, (v2, v3) in ((2048, (1.0, 1.13)), (16384, (20.0, 26.0))):
+        full = [perf(m, seq, "Kpre", 5.0, 6.43e9, vdev="cuda", label="long-gpuv", stream=True)] if seq == 2048 else []
         add("gpuv", f"g-long-llama7-{seq}", "perf",
             perf(m, seq, "Kpre", v2, 1e9, layers=2, vdev="cuda", label="long-gpuv", stream=True),
-            perf(m, seq, "Kpre", v3, 1.5e9, layers=3, vdev="cuda", label="long-gpuv", stream=True, gpu_peak=12.3e9))
+            perf(m, seq, "Kpre", v3, 1.5e9, layers=3, vdev="cuda", label="long-gpuv", stream=True, gpu_peak=12.3e9),
+            *full)
     add("gpuv", "g-long-rx-llama7", "reexec",
         reexec(m, 2048, "int", 0, device="cuda", blocks={"2": 0.1, "3": 0.15}),
         reexec(m, 16384, "int", 0, device="cuda", blocks={"2": 30.0, "3": 45.0}),
-        reexec(m, 16384, "float", 0, device="cuda", blocks={"2": 10.0, "3": 15.0}))
+        reexec(m, 16384, "float", 0, device="cuda", blocks={"2": 10.0, "3": 15.0}),
+        reexec(m, 2048, "int", 1.65, device="cuda", blocks={"32": 1.65}))
     # V1 on 2 blocks (the long tier) and the full model's codec profile (the v1 tier): V1's values grow faster than
     # v0's claims past 2,048 tokens
     for seq in T.V1_LONG:
@@ -1681,6 +1691,7 @@ def test_the_long_prompts_fit_the_blocks_and_check_the_fit_against_the_full_mode
     assert T.block_fit({"2": 30.0, "3": 41.0, "4": 50.0, "32": 1.0}, 32) == pytest.approx((10.0, 121 / 3 + 290))
     assert T.block_fit({2: 1.0}, 32) is None and T.block_fit({2: 1.0, 3: 2.0}, 32, blocks=(2,)) is None
     run = _long_run()
+    assert not run.random_weights and run.weights("llama2-7b", 2048) == "meta-llama/Llama-2-7b-hf"
     p = T.long_point(run, 8192)
     assert p["verify"] == pytest.approx(121 / 3 + 290) and p["bytes"] == pytest.approx(16e9)
     assert p["reexec"][:2] == (pytest.approx(320.0), "int")
@@ -1773,3 +1784,62 @@ def test_v1_at_long_prompts_and_its_measured_crossover(monkeypatch):
             for r in codec]
     v, problems, _ = breakeven(recs + slow)
     assert v["BreakevenTokensVOne"] is not None and any("past the longest measured prompt" in p for p in problems)
+
+
+# ------------------------------------------------------------------------------------- the main cells' weights
+def test_the_main_cells_read_only_the_records_of_their_weights():
+    """A selector reads a main cell from the records of the weights the run gives it (records.MAIN:
+    experiments.common.real_cells.main_checkpoint with the run's licence), never from the other weights' records:
+    the real Llama-2-7B at 2,048 tokens with the licence, the random one without it or in a run of random weights;
+    a missing real record leaves the cell missing; the 4,096-token cell and the long tier stay random; the real
+    tier's twins select their weights explicitly; the benchmark's cells are the ``real``-tagged ones."""
+    m, ck = "llama2-7b", "meta-llama/Llama-2-7b-hf"
+
+    def rec(tier, cell, d):
+        return R.Rec(tier, cell, "1", f"sp-{cell}-1.out", 1, "perf", d)
+
+    rnd = rec("cpuv", "c-llama2-7b-2048", perf(m, 2048, "Kpre", 10.0, 6e9))
+    real = rec("cpuv", "c-llama2-7b-2048", perf(m, 2048, "Kpre", 20.0, 5e9, real=ck))
+    long_rnd = rec("cpuv", "c-llama2-7b-4096", perf(m, 4096, "Kpre", 30.0, 9e9))
+    long_real = rec("cpuv", "c-llama2-7b-4096", perf(m, 4096, "Kpre", 40.0, 8e9, real=ck))
+    run = R.Run([rnd, real, long_rnd, long_real])
+    assert run.licence and not run.random_weights                  # what the records show
+    assert run.perf("cpuv", m, 2048, "Kpre", label="cpuv") is real
+    assert run.perf("cpuv", m, 4096, "Kpre", label="cpuv") is long_rnd    # beyond the trained context
+    assert run.perf("cpuv", m, 2048, "Kpre", label="cpuv", real=None) is rnd
+    assert R.Run([rnd, real], licence=False).perf("cpuv", m, 2048, "Kpre", label="cpuv") is rnd
+    assert R.Run([rnd, real], random_weights=True).perf("cpuv", m, 2048, "Kpre", label="cpuv") is rnd
+    assert R.Run([rnd], licence=True, random_weights=False).perf("cpuv", m, 2048, "Kpre", label="cpuv") is None
+    assert R.Run([rnd]).random_weights                              # no checkpoint in a cost tier: random weights
+    opt = rec("cpuv", "c-opt-1.3b-2048", perf("opt-1.3b", 2048, "Kpre", 1.0, 1e9, real="facebook/opt-1.3b"))
+    assert not R.Run([rnd, opt]).licence and R.Run([rnd, opt]).perf("cpuv", m, 2048, "Kpre", label="cpuv") is rnd
+    lng = rec("long", "l-llama7-2048-L2", perf(m, 2048, "Kpre", 1.0, 1e9, layers=2, label="long"))
+    assert run.weights(m, 2048, cell="l-llama7-2048-L2") is None
+    assert R.Run([real, lng]).perf("long", m, 2048, "Kpre", layers=2, label="long") is lng
+    # the benchmark: a real cell is the one tagged real (costs/bench.py --real's _real)
+    bench = B.Bench(None, weights=run.weights)
+    assert bench._real(m, 2048) == {"real"} and bench._real(m, 4096) == set() and bench._real("gpt2", 64) == set()
+    assert B.Bench(None)._real(m, 2048) == set()
+    tags = B.definition_tagsets()
+    assert all(t | {"real"} in tags[k] for k, ts in tags.items() if k[0] == "llm" for t in ts if "real" not in t)
+
+
+def test_a_main_cell_without_its_real_record_is_missing(run_dir, capsys):
+    """numbers.py reads the main cells by the run's weights (--weights, --llama-licence; auto: from the records, here
+    the licence of the real tier's Llama-2-7B and the checkpoint of a cost tier's OPT-1.3B cell): with the Llama-2
+    licence the Llama-2-7B cells need the checkpoint's records and, the run's being random, are missing (the exit
+    status is 1), never filled from the random records; without the licence, or with --weights random, the random
+    records fill them."""
+    tmp, logs = run_dir
+    _write(logs, "sp-c-opt-1.3b-64-90.out", [perf("opt-1.3b", 64, "Kpre", 1.0, 1e8, real="facebook/opt-1.3b")])
+    capsys.readouterr()
+    assert N.main(_args(tmp, logs, "--check")) == 1
+    out = capsys.readouterr().out
+    missing = "    macro \\CpuReexecLong"
+    assert "main cells on the real checkpoints (with the Llama-2 licence)" in out and missing in out
+    assert N.main(_args(tmp, logs, "--check", "--allow-missing", "--llama-licence", "no")) == 0
+    out = capsys.readouterr().out
+    assert "(without the Llama-2 licence)" in out and missing not in out
+    assert N.main(_args(tmp, logs, "--check", "--allow-missing", "--weights", "random")) == 0
+    out = capsys.readouterr().out
+    assert "main cells on random weights" in out and missing not in out

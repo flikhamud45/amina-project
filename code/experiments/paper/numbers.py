@@ -20,6 +20,13 @@ Inputs (nothing here runs a model):
   outcome counts) in ``--bench`` (default ``artifacts/comparison``), :mod:`experiments.paper.bench`, whose decoder
   cells are those of the attention probabilities' scale ``--prob-max`` (default 2047, the cells tagged
   ``pmax2047``);
+* the weights of the main cells: the real checkpoints by :func:`experiments.common.real_cells.main_checkpoint`
+  (``run.sh``'s rule), Llama-2's only with the licence: ``--weights`` (``auto``: real unless no record of a cost
+  tier names a checkpoint, a run of ``run.sh --random-weights``) and ``--llama-licence`` (``auto``: yes if a record
+  names a Llama-2 checkpoint, a run of ``run.sh --llama-licence``; without it the Llama-2 cells are read from random
+  records).  A main cell is read only from records of its weights (:data:`experiments.paper.records.MAIN`): a real
+  cell whose real record is missing is missing (the exit status is 1), never filled from its random twin; the real
+  tier's twins select their weights explicitly;
 * the published systems' values (``artifacts/comparison/tables/reported_curated.csv``), zkLLM's prover on the
   run's GPU model (the run's ``zkllm`` tier, ``--logs``/``zkllm/summary.csv``, when it holds both models on the
   run's GPU, else the stored runs, ``artifacts/results/zkllm_l40s/``), the formulas of the spot-checking schemes
@@ -536,17 +543,32 @@ def missing_report(tables: list, absent: list[str], count_only: bool = False) ->
     return [head] + ([] if count_only else cells + macros)
 
 
+REAL_TIERS = (*R.COST_TIERS, "real")
+"""The tiers whose rehearsal runs a real-weight path (OPT-125M's checkpoint) unless ``run.sh --random-weights``."""
+
+
+def real_in(run, bench, tier: str) -> bool:
+    """Whether the tier has a real-weight record: one of its records names a checkpoint (the bench and batch tiers:
+    a benchmark row tagged ``real``)."""
+    if tier in ("bench", "batch"):
+        from experiments.paper.bench import tagset
+        return any("real" in tagset(r.get("variant", "")) for r in bench.summary + bench.llm)
+    return any(r.d.get("real") for r in run.recs if r.tier == tier)
+
+
 def build(args) -> int:
     logs = Path(args.logs)
     problems: list[str] = []
     recs = R.read_logs(logs, problems) if logs.is_dir() else []
     files = R.read_files(logs, problems) if logs.is_dir() else []
-    run = R.Run(recs, files)
+    run = R.Run(recs, files, licence={"auto": None, "yes": True, "no": False}[args.llama_licence],
+                random_weights={"auto": None, "real": False, "random": True}[args.weights])
+    licence, random_weights = run.licence, run.random_weights
     failed = [f"CHECK FAILED {Path(r.path).name}:{r.line}: {msg}" for r in recs for msg in R.checks(r)]
     failed += R.log_checks(logs) if logs.is_dir() else []
     failed += R.cross_checks(run)
     tables_dir = Path(args.bench) / f"tables_{args.platform}"
-    bench = Bench(tables_dir if tables_dir.is_dir() else None, prob_max=args.prob_max)
+    bench = Bench(tables_dir if tables_dir.is_dir() else None, prob_max=args.prob_max, weights=run.weights)
     policy, warnings = choose_plan(args.policy, record_plans(run, bench))
     bench.policy = policy
     machine_failed, machine_summary = machine_check(run, bench, logs)
@@ -581,7 +603,9 @@ def build(args) -> int:
     tele_summary, tele_warn = telemetry_report(logs) if logs.is_dir() else ([], [])
     warnings += env_warn + tele_warn
     report = [f"logs {logs}: {len(recs)} records from {len(list(logs.glob('sp-*.out'))) if logs.is_dir() else 0} "
-              f"job logs, {len(files)} documents; bench tables {bench.name}; plan {policy}", ctx.platform,
+              f"job logs, {len(files)} documents; bench tables {bench.name}; plan {policy}; main cells on "
+              f"{'random weights' if random_weights else 'the real checkpoints'} "
+              f"({'with' if licence else 'without'} the Llama-2 licence)", ctx.platform,
               *machine_summary, *env_summary, *tele_summary]
     counts = defaultdict(lambda: defaultdict(int))
     for r in recs + files:
@@ -603,6 +627,8 @@ def build(args) -> int:
             lacking = sorted(k for k in kinds if not counts[tier].get(k))
             if tier in ("bench", "batch") and not bench.dir:
                 lacking.append(f"tables_{args.platform} (run comparison/aggregate.py --platform {args.platform})")
+            if tier in REAL_TIERS and not random_weights and not real_in(run, bench, tier):
+                lacking.append("a real-weight record (--real)")
             if lacking:
                 report.append(f"REHEARSAL: tier {tier} has no record of {lacking}")
                 status = 1
@@ -666,6 +692,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--prob-max", type=int, default=DEFAULT_PROB_MAX,
                     help="the decoders' attention probabilities' scale of the run's benchmark cells (their tag "
                          f"pmax<n>; default {DEFAULT_PROB_MAX}, run.sh's; 255: the stored runs' 8-bit cells)")
+    ap.add_argument("--weights", choices=["auto", "real", "random"], default="auto",
+                    help="the main cells' weights: real (the checkpoints by run.sh's rule), random (a run of run.sh "
+                         "--random-weights) or auto (random unless a record of a cost tier names a checkpoint)")
+    ap.add_argument("--llama-licence", choices=["auto", "yes", "no"], default="auto",
+                    help="whether the run had run.sh --llama-licence, so that its Llama-2 main cells are real (auto: "
+                         "yes if a record names a Llama-2 checkpoint)")
     ap.add_argument("--bench", default=str(BENCH),
                     help="the folder of the benchmark's tables_<platform>/ and raw_<platform>/ (default "
                          "artifacts/comparison)")

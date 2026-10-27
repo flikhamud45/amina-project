@@ -24,20 +24,23 @@ windows from its start, the queries of ``perf.py --real``: ``B`` prompts of ``T`
 * :func:`model_ops`: the whole model's weight-op shapes as a real graph has them, for mode C's plan of a build of a
   few blocks (a real OPT's LM head has one more column than the benchmark's: its final LayerNorm's folded bias);
 * :func:`fields`: the records' ``real`` and ``recipe`` (and with the recipe options ``smooth`` and ``calib_seq``);
-* :func:`main_checkpoint`: the checkpoint of a paper cell (``package/run.sh``'s ``real_checkpoint`` implements the
-  same rule), or None where the cell keeps random weights.
+* :func:`main_checkpoint`: the checkpoint of a paper cell (``package/run.sh``'s ``rw`` implements the same rule), or
+  None where the cell keeps random weights.
+
+The rule needs neither torch nor a checkpoint (``experiments/paper`` reads the records by it); torch and the loaders
+are imported where a checkpoint is loaded.
 """
 from __future__ import annotations
 
 import dataclasses
+from typing import TYPE_CHECKING
 
-import torch
-
-from experiments.common import checkpoints, cli
+if TYPE_CHECKING:
+    import torch
 
 __all__ = ["HELP", "add_arguments", "family", "check", "check_args", "partial", "hf_config", "checkpoint_config",
            "Checkpoint", "load", "prompts", "model_ops", "fields", "recipe_fields", "CHECKPOINTS", "CONTEXT",
-           "LICENSED", "LONG_CURVE", "main_checkpoint"]
+           "LICENSED", "PREFIXED", "LONG_CURVE", "main_checkpoint"]
 
 HELP = ("decoders: a Hugging Face checkpoint (e.g. meta-llama/Llama-2-7b-hf), its integer graph queried on WikiText-2 "
         "windows; --model names its shapes (default: random weights)")
@@ -87,6 +90,7 @@ def check(cfg, *, seqs=(), layers=(), prob_max: int | None = None, recipe: str =
                          "hf_llama.MAIN_RECIPE")
     if recipe == "legacy" and not calib_seq and len(set(seqs)) != 1:
         raise SystemExit("--recipe legacy here needs --calib-seq (no single --seq to take it from)")
+    from experiments.common import cli
     if prob_max is not None and prob_max != cli.PAPER.prob_max:
         raise SystemExit("--prob-max is for random-weight decoders: a checkpoint's recipe fixes its scale")
     for n in layers:
@@ -185,6 +189,7 @@ class Checkpoint:
     def __init__(self, name: str, fam: str, model, queries, calib, recipe: str, calib_seq: int | None) -> None:
         self.name, self.family, self.model, self.queries, self.calib = name, fam, model, queries, calib
         self.recipe, self.calib_seq = recipe, calib_seq
+        import torch
         self.stream = torch.cat([q.reshape(-1) for q in queries]) if queries else torch.zeros(0, dtype=torch.int64)
         self.prefix_len = len(getattr(calib, "prefix", None) or [])
         self.n_layers = int(model.config.num_hidden_layers)
@@ -196,6 +201,7 @@ class Checkpoint:
             raise RuntimeError("the checkpoint's fp32 model was freed")
         part = None if not n_layers or n_layers == self.n_layers else n_layers
         recipe = "legacy" if self.recipe == "legacy" else "certified"
+        from experiments.common import checkpoints
         return checkpoints.real_graph(self.model, self.calib, prune_last, recipe, smooth, n_layers=part)
 
     def free(self) -> None:
@@ -210,6 +216,7 @@ def load(name: str, cfg, *, seq: int, n_queries: int, recipe: str = "certified",
     (:func:`experiments.common.checkpoints.load_real`).  Refuses a checkpoint of another family or other shapes than
     ``cfg``'s, and prompts of ``seq`` tokens, with ``generated`` more positions after them, that would run past its
     ``max_position_embeddings`` behind its fixed prefix."""
+    from experiments.common import checkpoints
     model, queries, calib = checkpoints.load_real(name, seq, n_queries, calib_seq, recipe)
     hf = model.config
     problems = _problems(hf, name, cfg)
@@ -227,7 +234,7 @@ def load(name: str, cfg, *, seq: int, n_queries: int, recipe: str = "certified",
                       (calib_seq or seq) if legacy else None)
 
 
-def prompts(ck: Checkpoint, seq: int, n: int) -> torch.Tensor:
+def prompts(ck: Checkpoint, seq: int, n: int) -> "torch.Tensor":
     """``[n, seq]``: the first ``n`` WikiText-2 test windows of ``seq`` tokens (``perf.py --real``'s queries)."""
     if n * seq > ck.stream.numel():
         raise ValueError(f"{n} prompts of {seq} tokens need {n * seq} tokens, {ck.stream.numel()} were loaded")
@@ -271,6 +278,8 @@ CONTEXT = {"llama2-7b": 4096, "llama2-13b": 4096, "opt-125m": 2048, "opt-1.3b": 
 """Each checkpoint's trained context (its ``config.json``'s ``max_position_embeddings``)."""
 LICENSED = ("llama2-7b", "llama2-13b")
 """The models whose checkpoint needs its licence accepted (``run.sh --llama-licence``)."""
+PREFIXED = ("llama2-7b", "llama2-13b", "qwen3-4b")
+"""The Llama-family models of :data:`CHECKPOINTS`, whose recipe runs a fixed prefix in front of each prompt."""
 PREFIX_MAX = 64
 """An upper bound on a Llama-family recipe's fixed prefix (PrefixQuant's rule picks a few tokens), which runs in front
 of each prompt."""
@@ -293,8 +302,7 @@ def main_checkpoint(model: str, seq: int = 0, licence: bool = True, gen: int = 0
     name = CHECKPOINTS.get(model)
     if name is None or long_curve or (model in LICENSED and not licence):
         return None
-    from pvi.models.decoder import CONFIGS
-    prefix = PREFIX_MAX if family(CONFIGS[model]) == "llama" else 0
+    prefix = PREFIX_MAX if model in PREFIXED else 0
     if seq + max(gen - 1, 0) + prefix > CONTEXT[model]:
         return None
     return name

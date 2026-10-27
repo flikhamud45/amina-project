@@ -125,15 +125,16 @@ def definition_tagsets(policy: str = DEFAULT_POLICY, prob_max: int = DEFAULT_PRO
     decoders' at the attention probabilities' scale ``prob_max``: what ``comparison/count_outcomes.py --definition``
     counts.  Only cells of the compact encoding (``wire``): the
     uncompressed cell of the comparison with Maverick is a by-product.  A language model's CPU-verifier cell may also
-    be a batch cell (the tag ``batch`` added)."""
+    be a batch cell (the tag ``batch`` added), and any of them a cell of a checkpoint's weights (the tag ``real``)."""
     out: dict = defaultdict(set)
     for spec in CELLS.values():
         tags = tags_of(spec.tags, policy, prob_max)
         if "wire" not in tags:
             continue
-        out[("llm", spec.mode)].add(tags)
-        if "gpuv" not in tags and "thr1" not in tags:
-            out[("llm", spec.mode)].add(tags | {"batch"})
+        for real in (set(), {"real"}):           # a cell of random weights or of a checkpoint's (``_real``)
+            out[("llm", spec.mode)].add(tags | real)
+            if "gpuv" not in tags and "thr1" not in tags:
+                out[("llm", spec.mode)].add(tags | {"batch"} | real)
     out[("cnn", "C")].add(tags_of(CNN_C, policy))
     for mode in ("K", "Kpre"):
         out[("cnn", mode)].add(frozenset(CNN_K))
@@ -155,12 +156,16 @@ def _one_verifier(names, where: str) -> None:
 
 class Bench:
     """The aggregated tables of one platform (``tables_<platform>/``); an absent folder reads as empty.  Its language
-    models' cells are those of mode C's plan ``policy`` and the attention probabilities' scale ``prob_max``."""
+    models' cells are those of mode C's plan ``policy`` and the attention probabilities' scale ``prob_max``, and of
+    the weights ``weights(model, seq)`` gives (a checkpoint: the cell tagged ``real``; None: the random-weight cell;
+    default: random weights for every cell), so that a real cell is never read from a random one or the reverse."""
 
-    def __init__(self, tables: Path | None, policy: str = DEFAULT_POLICY, prob_max: int = DEFAULT_PROB_MAX) -> None:
+    def __init__(self, tables: Path | None, policy: str = DEFAULT_POLICY, prob_max: int = DEFAULT_PROB_MAX,
+                 weights=None) -> None:
         self.dir = tables
         self.policy = policy
         self.prob_max = prob_max
+        self.weights = weights or (lambda model, seq: None)
         self.summary = self._read("measured_summary.csv")
         self.llm = self._read("llm_full_model.csv")
         self.idx = {}
@@ -226,11 +231,17 @@ class Bench:
         return sorted(cells, key=lambda c: (c not in (f"{base}_wire", base), "batch" in tagset(c[len(base):]), c))
 
     # ---------------------------------------------------------------- language models
+    def _real(self, model: str, seq: int) -> set:
+        """``{"real"}`` for a cell of the checkpoint's weights (``costs/bench.py --real`` names it ``_real``), else
+        the empty set."""
+        return {"real"} if self.weights(model, seq) else set()
+
     def llm_cost(self, model: str, seq: int, cell: str, batch: str = "") -> dict | None:
         """``{prove, verify, bytes, params, n_layers, cell}`` of one language model's full-model cell (``cell`` a key
         of :data:`CELLS`; ``batch``: a batch size of the batch tier), from measured rows only, or None."""
         spec = CELLS[cell]
-        want = tags_of(spec.tags, self.policy, self.prob_max) | ({"batch"} if batch else set())
+        want = tags_of(spec.tags, self.policy, self.prob_max) | ({"batch"} if batch else set()) \
+            | self._real(model, seq)
         d, hit = {}, None
         for r in self.llm:
             if (r["model"], r["mode"], r["challenges"]) != (model, spec.mode, spec.challenges):
@@ -267,7 +278,7 @@ class Bench:
         """``{B: {bytes, prove, verify}}`` per query of a batch cell (``measured_summary.csv``: the batch's median
         over its trials, divided by ``B``)."""
         spec = CELLS[cell]
-        want = tags_of(spec.tags, self.policy, self.prob_max) | {"batch"}
+        want = tags_of(spec.tags, self.policy, self.prob_max) | {"batch"} | self._real(model, seq)
         out: dict = defaultdict(dict)
         pat = re.compile(rf"^defence_{spec.mode}_{spec.challenges}_lam{spec.lam}_T{seq}_L\d+(.*)$")
         for (suite, m, c, metric, batch, *_), r in self.idx.items():

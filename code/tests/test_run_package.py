@@ -400,7 +400,7 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
                  "--requeue", "--signal=B:TERM@300", "--open-mode=append", "--dependency=singleton",
                  "logs/final/node-smoke-cpuv-long-%j.log", "--gres=gpu:l40s:1"):
         assert part in jobs[0], (part, jobs[0])
-    assert "# one job: smoke cpuv long: 38 jobs, job limits 102 h, time limit 24 h" in out, out
+    assert "# one job: smoke cpuv long: 40 jobs, job limits 106 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
@@ -1321,8 +1321,9 @@ def test_the_long_prompts_cells():
         assert "--layers 2 3 4 --variants int int_mm int_fp32gemm " in rx
         assert "--layers 2 3 --variants float bf16 dynint8 " in rx and rx.count("--max-pos 16384") == 2
         g = jobs[f"sp-g-long-llama7-{t}"]
-        assert "--layers 2 " in g and "--layers 3 " in g and g.count("--verifier-device cuda --stream") == 2
-        assert g.count("--require-triton") == 2 and "experiments.package.pin" not in g
+        three = 3 if t == 2048 else 2               # at 2,048 tokens also the full model, the check's measurement
+        assert "--layers 2 " in g and "--layers 3 " in g and g.count("--verifier-device cuda --stream") == three
+        assert g.count("--require-triton") == three and "experiments.package.pin" not in g
         codec = jobs[f"sp-v1-codec-llama7-{t}"]
         assert f"--codec-only --threads 8 --model llama2-7b --seq {t} --device cuda" in codec
         assert "--layers" not in codec and "experiments.package.pin" not in codec
@@ -1331,6 +1332,12 @@ def test_the_long_prompts_cells():
     full = jobs["sp-l-llama7-8192-full"]
     assert "--seq 8192 " in full and "--layers" not in full and "--queries 5 " in full
     assert "--layers 32 --variants int int_mm int_fp32gemm " in jobs["sp-l-rx-llama7-8192-full"]
+    # the full model at 2,048 tokens on the curve's random weights (tab:eval-long-check), on the CPU and the GPU
+    full = jobs["sp-l-llama7-2048-full"]
+    assert "--seq 2048 " in full and "--layers" not in full and "--label long " in full and "--real" not in full
+    assert "--seq 2048 --layers 32 --variants int int_mm int_fp32gemm " in jobs["sp-l-rx-llama7-2048-full"]
+    assert "--seq 2048 --layers 32 --variants int --device cuda" in jobs["sp-g-long-rx-llama7"]
+    assert not any("--real" in jobs[j] for j in jobs if j.startswith(("sp-l-", "sp-g-long-", "sp-v1-codec-")))
     for t in (2048, 4096, 8192):
         cmd = jobs[f"sp-l-v1-llama7-{t}-L2"]
         assert f"--layers 2 --seq {t} --modes Kpre" in cmd and "--tampers 1 " in cmd and "--label long-v1" in cmd

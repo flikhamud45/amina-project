@@ -63,7 +63,7 @@ from dataclasses import dataclass
 from experiments.paper import format as f
 from experiments.paper import tables as T
 from experiments.paper.bench import DEFAULT_PROB_MAX, STORED_PROB_MAX
-from experiments.paper.records import Rec, Run, v1_timed
+from experiments.paper.records import MAIN, Rec, Run, v1_timed
 
 
 @dataclass
@@ -475,9 +475,12 @@ def outcomes(c: Collector, ctx: T.Ctx) -> None:
     ``perf.py``, ``v1_bytes.py`` and ``gen_bench.py`` records of :data:`OUTCOME_TIERS`, in all, of V1 and of generated
     responses, and the honest setup proofs of the setup tier.  Each count is printed only when every tampered query
     was rejected and every setup proof accepted (each failure is also a ``CHECK FAILED`` of
-    :func:`experiments.paper.records.checks`)."""
+    :func:`experiments.paper.records.checks`).  The real tier's cells count with their weights, both of a twin; the
+    gen and setup tiers' only of the run's main weights (:data:`experiments.paper.records.MAIN`), so that the records
+    of a run on other weights in the same folder never add to the counts."""
     run = ctx.run
-    per = {kind: [_tampered(r) for tier in OUTCOME_TIERS for r in run.kind(kind, tier) if not r.d.get("codec_only")]
+    per = {kind: [_tampered(r) for tier in OUTCOME_TIERS for r in run.kind(kind, tier) if not r.d.get("codec_only")
+                  and (tier == "real" or run.same_weights(r, MAIN))]
            for kind in ("perf", "v1", "gen")}
 
     def rejected(pairs):
@@ -488,7 +491,7 @@ def outcomes(c: Collector, ctx: T.Ctx) -> None:
     c.put("OutcomeTampers", rejected([p for pairs in per.values() for p in pairs]), src, f.num)
     c.put("OutcomeTampersVOne", rejected(per["v1"]), src, f.num)
     c.put("OutcomeTampersGen", rejected(per["gen"]), src, f.num)
-    setups = run.kind("setup", "setup")
+    setups = [r for r in run.kind("setup", "setup") if run.same_weights(r, MAIN)]
     c.put("OutcomeSetupProofs", len(setups) if setups and all(r.d.get("accepted") is True for r in setups) else None,
           "setup tier, setup_timing.py", f.num)
 
@@ -932,8 +935,9 @@ def prob_bits_changes(run: Run) -> tuple[float | None, float | None, list]:
     proof's bytes and of the prover's and the CPU verifier's medians, and its records; ``(None, None, [])`` while a
     record is missing."""
     label, model, layers, seq = PROB_BITS
-    pairs = [[run.perf("improve", model, seq, mode, layers=layers, label=label, prob_max=p) for p in PROB_SCALES]
-             for mode in ("Kpre", "C")]
+    # (random weights: a checkpoint's recipe fixes the scale, so the A/B of the scales is a random-weight cell)
+    pairs = [[run.perf("improve", model, seq, mode, layers=layers, label=label, prob_max=p, real=None)
+              for p in PROB_SCALES] for mode in ("Kpre", "C")]
     if any(r is None for pair in pairs for r in pair):
         return None, None, []
     nbytes = max(abs(b.d["proof_bytes"] / a.d["proof_bytes"] - 1) for a, b in pairs)
@@ -1064,7 +1068,7 @@ def real_weights(c: Collector, ctx: T.Ctx) -> None:
     # the real Llama-2-7B (the real tier's cells with --llama-licence) against its random-weight twins
     ckpt = "meta-llama/Llama-2-7b-hf"
     lr = run.perf("real", "llama2-7b", 2048, "Kpre", vdev="cpu", label="real", real=ckpt)
-    ln = run.perf("real", "llama2-7b", 2048, "Kpre", vdev="cpu", label="real-random")
+    ln = run.perf("real", "llama2-7b", 2048, "Kpre", vdev="cpu", label="real-random", real=None)
     tam = (lr.d.get("tampers") or {}) if lr else {}
     c.put("RealLlamaAccepted", lr and lr.d["accepted"], lr)
     c.put("RealLlamaQueries", lr and lr.d["queries"], lr)
@@ -1075,7 +1079,8 @@ def real_weights(c: Collector, ctx: T.Ctx) -> None:
     c.put("RealLlamaVerify", lr and lr.d["verify_s"], lr, f.sig)
     c.put("RndLlamaVerify", ln and ln.d["verify_s"], ln, f.sig)
     short = [(run.perf("real", "llama2-7b", 64, mode, vdev="cpu", label="real", real=ckpt),
-              run.perf("real", "llama2-7b", 64, mode, vdev="cpu", label="real-random")) for mode in ("Kpre", "C")]
+              run.perf("real", "llama2-7b", 64, mode, vdev="cpu", label="real-random", real=None))
+             for mode in ("Kpre", "C")]
     _range(c, "RealLlamaShortSmaller", [a and b and 1 - a.d["proof_bytes"] / b.d["proof_bytes"] for a, b in short],
            "real tier, Llama-2-7B, 64 tokens, Kpre and C", f.pct)
     within = [a and b and abs(a.d["verify_s"] / b.d["verify_s"] - 1) for a, b in short]
@@ -1084,7 +1089,7 @@ def real_weights(c: Collector, ctx: T.Ctx) -> None:
     v1l = run.v1("real", "llama2-7b", 2048, "Kpre", vdev="cpu", label="real", real=ckpt)
     c.put("VOneRealLlamaRatio", v1l and v1l.d["v0_total"] / v1l.d["v1_total"], v1l, lambda v: f"{v:.2f}")
     r = run.perf("real", "opt-6.7b", 2048, "Kpre", vdev="cpu", label="real", real="facebook/opt-6.7b")
-    n = run.perf("real", "opt-6.7b", 2048, "Kpre", vdev="cpu", label="real-random")
+    n = run.perf("real", "opt-6.7b", 2048, "Kpre", vdev="cpu", label="real-random", real=None)
     tam = (r.d.get("tampers") or {}) if r else {}
     c.put("RealOptLAccepted", r and r.d["accepted"], r)
     c.put("RealOptLQueries", r and r.d["queries"], r)

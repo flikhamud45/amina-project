@@ -457,25 +457,49 @@ def verifier_device(d: dict) -> str:
 
 
 # ------------------------------------------------------------------------------------------------ selection
+class _Main:
+    """The weights of the paper's main cells (:data:`MAIN`)."""
+
+    def __repr__(self) -> str:
+        return "MAIN"
+
+
+MAIN = _Main()
+COST_TIERS = ("cpuv", "cpux", "v1", "serve", "bench", "gpuv", "gen", "batch", "setup", "improve")
+"""The tiers whose cost cells take the real checkpoints by ``run.sh``'s rule (``rw``)."""
+"""A selector's ``real`` for the paper's main cells: the weights that ``experiments.common.real_cells``'s rule
+(:func:`~experiments.common.real_cells.main_checkpoint`, ``run.sh``'s ``rw``) gives the record's model, prompt and
+job (:meth:`Run.weights`), so that a real cell is read only from real records and a random one only from random
+records, never one for the other."""
+
+
 class Run:
     """The records of one run and the selection of a table cell's record.
 
     Every selector keys on the settings that distinguish the package's jobs, so that a record never fills a cell of
     another configuration: the tier, the model, the prompt length, the mode, the blocks (``layers``; None: the full
-    model), the verifier device, the label and real or random weights (``real``: None for random weights, else the
-    checkpoint); a ``perf.py`` record also by its attention probabilities' scale where an A/B of the improve tier
-    times two scales under one label (``prob_max``), by its threads where the cpux tier times one label on several
-    (``threads``) and by mode C's plan where it times several plans side by side (``policy``); a re-execution record
-    of the cpux tier by its threads and implementation options (:func:`experiments.paper.tables.cpu_point`).  Of
-    several matching records (a tier run again) the latest job's
-    is used; of several re-execution records of one variant (e.g. two allocator settings), the fastest.  Several
+    model), the verifier device, the label and real or random weights (``real``: None for random weights, a
+    checkpoint for its real weights, :data:`MAIN` -- the default -- for the weights the run gives the paper's main
+    cell: :meth:`weights`, by the run's ``licence`` and ``random_weights``, which default to what the records show:
+    the licence if a record names a Llama-2 checkpoint, random weights if no record of a cost tier
+    (:data:`COST_TIERS`) names a checkpoint, a run of ``run.sh --random-weights``); a ``perf.py`` record also by its
+    attention probabilities' scale where an A/B of the improve tier times two scales under one label (``prob_max``),
+    by its threads where the cpux tier times one label on several (``threads``) and by mode C's plan where it times
+    several plans side by side (``policy``); a re-execution record of the cpux tier by its threads and implementation
+    options (:func:`experiments.paper.tables.cpu_point`).  Of several matching records (a tier run again) the latest
+    job's is used; of several re-execution records of one variant (e.g. two allocator settings), the fastest.  Several
     quality records of one cell whose values differ are a ``WARNING`` line of :attr:`warnings` (:meth:`ppl`).
     """
 
     SAME = 1e-6
     """The relative difference above which two records of one quality cell are said to differ."""
 
-    def __init__(self, recs: list[Rec], files: list[Rec] | None = None) -> None:
+    def __init__(self, recs: list[Rec], files: list[Rec] | None = None, *, licence: bool | None = None,
+                 random_weights: bool | None = None) -> None:
+        named = [(r.tier, str(r.d.get("real"))) for r in recs if r.d.get("real")]
+        self.licence = any(ck.startswith("meta-llama/") for _, ck in named) if licence is None else licence
+        self.random_weights = (not any(t in COST_TIERS for t, _ in named) if random_weights is None
+                               else random_weights)
         self.recs = sorted(recs, key=job_order)
         self.files = {Path(r.path).name: r for r in files or []}
         self.by_kind: dict = {}
@@ -486,6 +510,26 @@ class Run:
 
     def kind(self, kind: str, tier: str | None = None) -> list[Rec]:
         return [r for r in self.by_kind.get(kind, []) if tier is None or r.tier == tier]
+
+    def weights(self, model: str | None, seq: int = 0, gen: int = 0, cell: str = "") -> str | None:
+        """The checkpoint of the paper's main cell of ``model`` at a prompt of ``seq`` tokens and ``gen`` generated
+        ones, in the job ``cell`` (``run.sh``'s name without ``sp-``; a long-prompt curve's jobs keep random weights),
+        or None for random weights: :func:`experiments.common.real_cells.main_checkpoint` with the run's licence; None
+        for every cell of a run with ``random_weights`` (``run.sh --random-weights``)."""
+        if self.random_weights or not model:
+            return None
+        from experiments.common.real_cells import LONG_CURVE, main_checkpoint
+        return main_checkpoint(model, seq, self.licence, gen, cell.startswith(LONG_CURVE))
+
+    def same_weights(self, r: Rec, real) -> bool:
+        """Whether the record ``r`` has the weights ``real`` asks for (None: random; a checkpoint; :data:`MAIN`:
+        :meth:`weights` of the record's model, prompt and generated tokens, and of its job)."""
+        d = r.d
+        if real is MAIN:
+            seq = d.get("prompt") if d.get("prompt") is not None else d.get("seq")
+            gen = d.get("gen") if isinstance(d.get("gen"), int) else 0
+            real = self.weights(d.get("model"), seq or 0, gen, r.cell)
+        return (d.get("real") or None) == real
 
     @staticmethod
     def _last(rs):
@@ -508,13 +552,13 @@ class Run:
                 "cpu": cpus.most_common(1)[0][0] if cpus else None}
 
     # ---------------------------------------------------------------- protocol v0 (perf.py)
-    def perf(self, tier, model, seq, mode, *, vdev="cpu", layers=None, label=None, real=None, fs=True,
+    def perf(self, tier, model, seq, mode, *, vdev="cpu", layers=None, label=None, real=MAIN, fs=True,
              stream=None, prob_max=None, threads=None, policy=None) -> Rec | None:
         def ok(r):
             d = r.d
             return (d.get("model") == model and d.get("seq") == seq and d.get("mode") == mode
                     and str(d.get("verifier_device", "cpu")).split(":")[0] == vdev and d.get("layers") == layers
-                    and (label is None or d.get("label") == label) and (d.get("real") or None) == real
+                    and (label is None or d.get("label") == label) and self.same_weights(r, real)
                     and bool(d.get("fs")) == fs and (stream is None or bool(d.get("stream")) == stream)
                     and (prob_max is None or d.get("prob_max") == prob_max)
                     and (threads is None or d.get("threads") == threads)
@@ -522,31 +566,33 @@ class Run:
         return self._last([r for r in self.kind("perf", tier) if ok(r)])
 
     # ---------------------------------------------------------------- V1 (v1_bytes.py)
-    def v1(self, tier, model, seq, mode, *, vdev="cpu", label=None, real=None, layers=None) -> Rec | None:
+    def v1(self, tier, model, seq, mode, *, vdev="cpu", label=None, real=MAIN, layers=None) -> Rec | None:
         def ok(r):
             d = r.d
             return (not d.get("codec_only") and d.get("model") == model and d.get("seq") == seq
                     and d.get("mode") == mode and verifier_device(d) == vdev
-                    and (label is None or d.get("label") == label) and (d.get("real") or None) == real
+                    and (label is None or d.get("label") == label) and self.same_weights(r, real)
                     and (layers is None or d.get("layers") == layers))
         return self._last([r for r in self.kind("v1", tier) if ok(r)])
 
-    def codec(self, tier, model, seq, *, layers=None, label=None) -> Rec | None:
+    def codec(self, tier, model, seq, *, layers=None, label=None, real=MAIN) -> Rec | None:
         """``v1_bytes.py --codec-only``'s record of one cell (``layers``: the blocks built, None for any)."""
         return self._last([r for r in self.kind("v1", tier) if r.d.get("codec_only") and r.d.get("model") == model
                            and r.d.get("seq") == seq and (layers is None or r.d.get("layers") == layers)
-                           and (label is None or r.d.get("label") == label)])
+                           and (label is None or r.d.get("label") == label) and self.same_weights(r, real)])
 
     # ---------------------------------------------------------------- re-execution (reexec.py)
-    def reexec(self, tier, model, seq, device, variants, keep=None) -> dict:
+    def reexec(self, tier, model, seq, device, variants, keep=None, real=MAIN) -> dict:
         """``{variant: (seconds, record)}``: each variant's full model measured at full depth (no extrapolation),
-        from ``reexec.py``'s records and ``llamacpp.py``'s (variants ``llamacpp_<type>``); of several records (e.g. two
-        allocator settings, or llama.cpp's configurations), the faster; ``keep(variant, record)``: the records that may
-        stand for their variant (default all)."""
+        from ``reexec.py``'s records and ``llamacpp.py``'s (variants ``llamacpp_<type>``) of the weights ``real``; of
+        several records (e.g. two allocator settings, or llama.cpp's configurations), the faster; ``keep(variant,
+        record)``: the records that may stand for their variant (default all)."""
         out = {}
         for r in self.kind("reexec", tier) + self.kind("llamacpp", tier):
             d = r.d
             if d.get("model") != model or d.get("seq") != seq or not str(d.get("device", "")).startswith(device):
+                continue
+            if not self.same_weights(r, real):
                 continue
             if d.get("variant") not in variants or (keep is not None and not keep(d["variant"], r)):
                 continue
@@ -557,17 +603,18 @@ class Run:
                 out[d["variant"]] = (v, r)
         return out
 
-    def reexec_blocks(self, tier, model, seq, device, variant, keep=None) -> tuple[dict, Rec | None]:
+    def reexec_blocks(self, tier, model, seq, device, variant, keep=None, real=MAIN) -> tuple[dict, Rec | None]:
         """``(measured_s by block count, record)`` of one variant (the long tier's builds of 2, 3 and 4 blocks and
-        of the full model; ``keep`` as in :meth:`reexec`): the block counts of every matching record, of several
-        records measuring one count the latest job's (e.g. the gpuv tier's 2 blocks and the full model next to its
-        2- and 3-block builds at long prompts); the record is the latest one that measured a build smaller than the
-        full model (None if none did)."""
+        of the full model; ``keep`` as in :meth:`reexec`; ``real`` the weights, None for a long-prompt curve's): the
+        block counts of every matching record, of several records measuring one count the latest job's (e.g. the
+        gpuv tier's 2 blocks next to its 2- and 3-block builds at long prompts); the record is the latest one that
+        measured a build smaller than the full model (None if none did)."""
         out, last = {}, None
         for r in self.kind("reexec", tier):           # in job order: a later job's count replaces an earlier one's
             d = r.d
             if (d.get("model") != model or d.get("seq") != seq or not str(d.get("device", "")).startswith(device)
-                    or d.get("variant") != variant or (keep is not None and not keep(variant, r))):
+                    or d.get("variant") != variant or (keep is not None and not keep(variant, r))
+                    or not self.same_weights(r, real)):
                 continue
             ms = d.get("measured_s") or {}
             out.update(ms)
@@ -576,30 +623,33 @@ class Run:
         return out, last
 
     # ---------------------------------------------------------------- the other scripts
-    def serve(self, model, seq, batch, mode, how, layers=None) -> Rec | None:
+    def serve(self, model, seq, batch, mode, how, layers=None, real=MAIN) -> Rec | None:
         return self._last([r for r in self.kind("serve", "serve") if r.d.get("row") == "prove"
                            and (r.d.get("model"), r.d.get("seq"), r.d.get("batch"), r.d.get("mode"),
-                                r.d.get("batch_proof"), r.d.get("layers")) == (model, seq, batch, mode, how, layers)])
+                                r.d.get("batch_proof"), r.d.get("layers")) == (model, seq, batch, mode, how, layers)
+                           and self.same_weights(r, real)])
 
-    def gen(self, model, mode, decode, g, *, prompt=None, real=None, label="gen", tier="gen") -> Rec | None:
+    def gen(self, model, mode, decode, g, *, prompt=None, real=MAIN, label="gen", tier="gen") -> Rec | None:
         """A ``gen_bench.py`` record of the full ``model`` (``prompt``: the prompt's tokens, None for any)."""
         return self._last([r for r in self.kind("gen", tier)
                            if (r.d.get("model"), r.d.get("mode"), r.d.get("decode"), r.d.get("gen"))
-                           == (model, mode, decode, g) and (r.d.get("real") or None) == real
+                           == (model, mode, decode, g) and self.same_weights(r, real)
                            and (prompt is None or r.d.get("prompt") == prompt)
                            and r.d.get("layers") is None and (label is None or r.d.get("label") == label)])
 
-    def decode(self, model, g, *, prompt=None, dtype="fp16", label="gen") -> Rec | None:
+    def decode(self, model, g, *, prompt=None, dtype="fp16", label="gen", real=MAIN) -> Rec | None:
         """A ``decode_baseline.py`` record of the full ``model`` (unverified generation of ``g`` tokens; ``prompt``:
         the prompt's tokens, None for any)."""
         return self._last([r for r in self.kind("decode", "gen")
                            if (r.d.get("model"), r.d.get("gen"), r.d.get("dtype")) == (model, g, dtype)
+                           and self.same_weights(r, real)
                            and (prompt is None or r.d.get("prompt") == prompt)
                            and r.d.get("layers") is None and (label is None or r.d.get("label") == label)])
 
-    def setup(self, model, amortise) -> Rec | None:
+    def setup(self, model, amortise, real=MAIN) -> Rec | None:
         return self._last([r for r in self.kind("setup", "setup") if r.d.get("model") == model
-                           and r.d.get("amortise") == amortise and r.d.get("layers") is None])
+                           and r.d.get("amortise") == amortise and r.d.get("layers") is None
+                           and self.same_weights(r, real)])
 
     def ppl(self, model, cell, *, split="test", calibration="train", seq=2048, draw=0) -> Rec | None:
         """A quality record of ``ppl_opt.py`` (``cell`` names the graph, its recipe, alpha and probability width:
@@ -653,9 +703,11 @@ class Run:
                     and (part != "row" or (d.get("group"), d.get("mode")) == (group, mode)))
         return self._last([r for r in self.kind("attribution", "quality") if ok(r)])
 
-    def first(self, kind, tier=None, **match) -> Rec | None:
-        """The latest record of ``kind`` (in ``tier``) whose fields equal ``match``."""
-        return self._last([r for r in self.kind(kind, tier) if all(r.d.get(k) == v for k, v in match.items())])
+    def first(self, kind, tier=None, *, real=MAIN, **match) -> Rec | None:
+        """The latest record of ``kind`` (in ``tier``) whose fields equal ``match``, of the weights ``real`` (a record
+        that names no model or no checkpoint, such as ``gkr``'s or the smoke's ``tests``, is a random one)."""
+        return self._last([r for r in self.kind(kind, tier) if all(r.d.get(k) == v for k, v in match.items())
+                           and self.same_weights(r, real)])
 
 
 def v1_timed(rec: Rec | None, proto: str, verifier: str | None = None):

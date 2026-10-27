@@ -226,7 +226,7 @@ V1_ROWS = ((64, "gpt2"), (512, "gpt2"), (2048, "opt-125m"), (2048, "opt-1.3b"), 
 
 def v1_cell(run: Run, model: str, seq: int, mode: str) -> Rec | None:
     """The v1 tier's record of one ``tab:eval-v1`` cell: random weights, the CPU verifier, no label."""
-    return run.v1("v1", model, seq, mode, vdev="cpu", label="", real=None)
+    return run.v1("v1", model, seq, mode, vdev="cpu", label="")
 
 
 def v1_shape_model(model: str, seq: int, lmax: int, policy: str | None = None, layers: int | None = None) -> dict:
@@ -1075,7 +1075,8 @@ LONG_GPU_BLOCKS = (2, 3)
 """The gpuv tier's builds at long prompts."""
 LONG_CHECK = (("cpu", 2048), ("cpu", 8192), ("cuda", 2048))
 """``tab:eval-long-check``'s rows: the verifier's device and the prompt length of a full model measured next to the
-long prompts' fit (the cpuv tier's full model at 2,048 tokens, the long tier's at 8,192, the gpuv tier's at 2,048)."""
+long prompts' fit, on random weights as the fit (the long tier's full model at 2,048 and 8,192 tokens, the gpuv
+tier's long cells' at 2,048)."""
 V1_LONG = (2048, 4096, 8192)
 """``tab:eval-v1-long``'s prompt lengths (V1 on 2 blocks, whole queries); the codec profile of the full model also
 has 16,384 tokens (``\\VOneClaimsRatioSixteenK``)."""
@@ -1104,7 +1105,7 @@ def long_point(run: Run, seq: int, n_layers: int = 32, *, gpu: bool = False, blo
     the integer pass, ``int``, and the floating-point one, ``float``, in fp16); ``cells``: the perf records by
     blocks, ``src`` the largest build's."""
     tier, vdev, label = ("gpuv", "cuda", "long-gpuv") if gpu else ("long", "cpu", "long")
-    cells = {n: run.perf(tier, "llama2-7b", seq, "Kpre", vdev=vdev, layers=n, label=label)
+    cells = {n: run.perf(tier, "llama2-7b", seq, "Kpre", vdev=vdev, layers=n, label=label, real=None)
              for n in (LONG_GPU_BLOCKS if gpu else LONG_BLOCKS)}
     cells = {n: r for n, r in cells.items() if r and (blocks is None or n in blocks)}
     out = {"cells": cells, "src": cells[max(cells)] if cells else None}
@@ -1116,7 +1117,7 @@ def long_point(run: Run, seq: int, n_layers: int = 32, *, gpu: bool = False, blo
     best = None
     for var in (("int", "float") if gpu else EXACT):
         ms, r = run.reexec_blocks(tier, "llama2-7b", seq, "cuda" if gpu else "cpu", var,
-                                  keep=None if gpu else exact_record)
+                                  keep=None if gpu else exact_record, real=None)
         fit = block_fit(ms, n_layers, blocks)
         if fit is None:
             continue
@@ -1128,20 +1129,18 @@ def long_point(run: Run, seq: int, n_layers: int = 32, *, gpu: bool = False, blo
 
 
 def long_measured(run: Run, device: str, seq: int) -> dict:
-    """The full Llama-2-7B measured at one of :data:`LONG_CHECK`'s points: ``perf`` the verifier's record (Kpre),
-    ``reexec`` the fastest exact re-execution on the same device, ``(seconds, variant, record)`` (on the CPU of the
-    records with glibc's allocator defaults, as the long tier's)."""
+    """The full Llama-2-7B measured at one of :data:`LONG_CHECK`'s points, on random weights as the fit of the long
+    prompts' builds: ``perf`` the verifier's record (Kpre), ``reexec`` the fastest exact re-execution on the same
+    device, ``(seconds, variant, record)`` (on the CPU of the records with glibc's allocator defaults, as the long
+    tier's).  The long tier's full model (2,048 and 8,192 tokens) and the gpuv tier's long cells' (2,048 tokens),
+    never the main cells', whose weights are the checkpoint's."""
     m = "llama2-7b"
     if device == "cuda":
-        perf = run.perf("gpuv", m, seq, "Kpre", vdev="cuda", label="gpuv", stream=True)
-        got = run.reexec("gpuv", m, seq, "cuda", ("int",))
-    elif seq == 2048:
-        perf = run.perf("cpuv", m, seq, "Kpre", vdev="cpu", label="cpuv")
-        got = run.reexec("cpuv", m, seq, "cpu", EXACT,
-                         keep=lambda v, r: exact_record(v, r) and not r.d.get("malloc_tuned"))
+        perf = run.perf("gpuv", m, seq, "Kpre", vdev="cuda", label="long-gpuv", stream=True, real=None)
+        got = run.reexec("gpuv", m, seq, "cuda", ("int",), real=None)
     else:
-        perf = run.perf("long", m, seq, "Kpre", vdev="cpu", layers=None, label="long")
-        got = run.reexec("long", m, seq, "cpu", EXACT, keep=exact_record)
+        perf = run.perf("long", m, seq, "Kpre", vdev="cpu", layers=None, label="long", real=None)
+        got = run.reexec("long", m, seq, "cpu", EXACT, keep=exact_record, real=None)
     best = min(((s, v, r) for v, (s, r) in got.items()), key=lambda x: x[0]) if got else None
     return {"perf": perf, "reexec": best}
 

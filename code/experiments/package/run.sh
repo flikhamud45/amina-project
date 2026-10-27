@@ -429,11 +429,11 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
   fi
   case "$1" in
     smoke) echo 1.5-2 ;; cpuv) echo 11.5-19 ;; cpux) echo 13-24 ;; v1) echo 7-14 ;; serve) echo 9-12.5 ;;
-    bench) echo 17.5-33 ;; gpuv) echo 8-14 ;;
+    bench) echo 17.5-33 ;; gpuv) echo 8.5-14.5 ;;
     gen) echo 5-7.5 ;; batch) echo 3-6 ;; real) echo 11-16 ;; setup) echo 1.5-2.5 ;; improve) echo 6-12.5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
     qcheck) echo 9-13 ;;
-    tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 10-16 ;; gate) echo 1.5-3 ;;
+    tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 11-18 ;; gate) echo 1.5-3 ;;
     zkllm) echo 6-9 ;;
   esac
 }
@@ -783,14 +783,19 @@ $RX --model opt-125m$R --seq 64 --variants int float bf16 --device cuda --reps 2
   # Llama-2-7B blocks at 2,048 to 16,384 tokens, extrapolated to the full model as tab:eval-long is; the fused
   # attention holds no T x T score tensor (the process's GPU peak); random weights, the whole curve on one footing
   # (Llama-2's trained context ends at 4,096 positions)
-  local t
+  # (at 2,048 tokens also the full model, the curve's random weights, against which tab:eval-long-check sets the fit)
+  local t full
   for t in 2048 4096 8192 16384; do
+    full=""
+    [ "$t" != 2048 ] || full=" && $PERF --model llama2-7b --seq $t --modes Kpre --queries $Q --verifier-device cuda \
+--stream --label long-gpuv --require-triton"
     sub "g-long-llama7-$t" 1 192 "$PERF --model llama2-7b --layers 2 --seq $t --modes Kpre --queries $Q \
 --verifier-device cuda --stream --label long-gpuv --require-triton && $PERF --model llama2-7b --layers 3 --seq $t \
---modes Kpre --queries $Q --verifier-device cuda --stream --label long-gpuv --require-triton"
+--modes Kpre --queries $Q --verifier-device cuda --stream --label long-gpuv --require-triton$full"
   done
   sub g-long-rx-llama7 2 128 "$RX --model llama2-7b --seq 2048 4096 8192 16384 --layers 2 3 --variants int float \
-bf16 --device cuda --reps $Q --max-pos 16384"
+bf16 --device cuda --reps $Q --max-pos 16384 && $RX --model llama2-7b --seq 2048 --layers 32 --variants int \
+--device cuda --reps $Q"
   sub g-h2d 1 32 "$H2D --sizes-mb 64 1024 4096 --reps 10 --label gpuv"
 }
 
@@ -1251,6 +1256,12 @@ tier_long() {
 --device cpu --reps $Q --max-pos 16384 --no-malloc-tune $NATIVE && $RX --model llama2-7b --seq $t --layers 2 3 \
 --variants float bf16 dynint8 --device cpu --reps $Q --max-pos 16384 --no-malloc-tune $NATIVE"
   done
+  # the full model at 2,048 tokens on the curve's random weights, against which tab:eval-long-check sets the fit (the
+  # cpuv tier's full model takes the checkpoint)
+  csub l-llama7-2048-full 2 256 "$PERF --model llama2-7b --seq 2048 --modes Kpre --queries $QH \
+--verifier-device cpu --label long $NATIVE"
+  csub l-rx-llama7-2048-full 2 256 "$RX --model llama2-7b --seq 2048 --layers 32 --variants int int_mm \
+int_fp32gemm --device cpu --reps $Q --no-malloc-tune $NATIVE"
   if [ -n "$BIGMEM" ]; then
     csub l-llama7-8192-full 6 256 "$PERF --model llama2-7b --seq 8192 --modes Kpre --queries $QH \
 --verifier-device cpu --label long $NATIVE"
