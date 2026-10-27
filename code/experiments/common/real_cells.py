@@ -36,8 +36,8 @@ import torch
 from experiments.common import checkpoints, cli
 
 __all__ = ["HELP", "add_arguments", "family", "check", "check_args", "partial", "hf_config", "checkpoint_config",
-           "Checkpoint", "load", "prompts", "model_ops", "fields", "recipe_fields", "CHECKPOINTS", "LICENSED",
-           "main_checkpoint"]
+           "Checkpoint", "load", "prompts", "model_ops", "fields", "recipe_fields", "CHECKPOINTS", "CONTEXT",
+           "LICENSED", "LONG_CURVE", "main_checkpoint"]
 
 HELP = ("decoders: a Hugging Face checkpoint (e.g. meta-llama/Llama-2-7b-hf), its integer graph queried on WikiText-2 "
         "windows; --model names its shapes (default: random weights)")
@@ -266,11 +266,17 @@ CHECKPOINTS = {"llama2-7b": "meta-llama/Llama-2-7b-hf", "llama2-13b": "meta-llam
                "opt-125m": "facebook/opt-125m", "opt-1.3b": "facebook/opt-1.3b", "opt-6.7b": "facebook/opt-6.7b",
                "qwen3-4b": "Qwen/Qwen3-4B-Base"}
 """The checkpoint of each model of the paper's cost cells that has one (GPT-2 and the image models: none)."""
+CONTEXT = {"llama2-7b": 4096, "llama2-13b": 4096, "opt-125m": 2048, "opt-1.3b": 2048, "opt-6.7b": 2048,
+           "qwen3-4b": 32768}
+"""Each checkpoint's trained context (its ``config.json``'s ``max_position_embeddings``)."""
 LICENSED = ("llama2-7b", "llama2-13b")
 """The models whose checkpoint needs its licence accepted (``run.sh --llama-licence``)."""
 PREFIX_MAX = 64
 """An upper bound on a Llama-family recipe's fixed prefix (PrefixQuant's rule picks a few tokens), which runs in front
 of each prompt."""
+LONG_CURVE = ("l-", "g-long-", "v1-codec-llama7-", "gate-l-")
+"""The jobs (``run.sh``'s names without ``sp-``) of the curves that reach beyond Llama-2's trained context, whose every
+cell keeps random weights: the long tier, the GPU verifier's long cells, V1's codec curve and the gate's long cells."""
 
 
 def main_checkpoint(model: str, seq: int = 0, licence: bool = True, gen: int = 0,
@@ -279,17 +285,16 @@ def main_checkpoint(model: str, seq: int = 0, licence: bool = True, gen: int = 0
     it; ``seq`` 0: a cell without a prompt, such as the setup's), or None where the cell keeps random weights of the
     model's shapes: a model without a checkpoint (GPT-2, the image models), Llama-2 without ``licence`` (``run.sh
     --llama-licence``), a prompt that with the generated tokens and, for a Llama-family model, the fixed prefix does
-    not fit the checkpoint's trained context (Llama-2's 4,096 positions: cells up to 2,048 tokens are real, the
-    4,096-token cells random), and every cell of a curve that reaches beyond that context (``long_curve``: the
-    long-prompt cells from 2,048 to 16,384 tokens, their re-execution, V1 and GPU cells, and V1's codec curve), so
-    that each curve is measured on one kind of weights."""
+    not fit the checkpoint's trained context (:data:`CONTEXT`; Llama-2: cells up to 2,048 tokens are real, the
+    4,096-token cells random), and every cell of a curve that reaches beyond that context (``long_curve``,
+    :data:`LONG_CURVE`: the long-prompt cells from 2,048 to 16,384 tokens, their re-execution and GPU cells, and V1's
+    codec curve), so that each curve is measured on one kind of weights.  ``run.sh``'s ``rw`` implements the same
+    rule for the jobs (``tests/test_run_package.py`` compares them)."""
     name = CHECKPOINTS.get(model)
     if name is None or long_curve or (model in LICENSED and not licence):
         return None
     from pvi.models.decoder import CONFIGS
-    cfg = CONFIGS[model]
-    prefix = PREFIX_MAX if family(cfg) == "llama" else 0
-    if seq and seq + max(gen - 1, 0) + prefix > cfg.max_pos:
+    prefix = PREFIX_MAX if family(CONFIGS[model]) == "llama" else 0
+    if seq + max(gen - 1, 0) + prefix > CONTEXT[model]:
         return None
     return name
-

@@ -197,6 +197,12 @@ def _job(line: str) -> str:
     return re.search(r" -J (\S+)", line).group(1)
 
 
+def _plain(cmd: str) -> str:
+    """``cmd`` without its checkpoints (``--real <checkpoint>``): the cell's options as a random-weight cell has
+    them (:func:`test_the_cost_cells_take_the_real_checkpoints_by_one_rule` checks the checkpoints)."""
+    return re.sub(r' --real [^ ;"]+', "", cmd)
+
+
 def test_the_package_runs_fiat_shamir_and_the_policy_everywhere():
     lines = _dry("--policy", "cnn18c")
     assert len(lines) > 100
@@ -348,27 +354,28 @@ def test_a_queued_smoke_still_gates_the_run(tmp_path):
 
 def test_the_final_runs_submissions_hold_every_tier_once_and_fit_one_allocation():
     """The package README's final run: its --one-job submissions hold every tier of '--optional all' once; each
-    submission's expected hours are the sums of its tiers' estimates, at most 20 h for a timed (whole-node) one; and
-    each submission's dry run prints the '# one job:' line its table states, the thirteen together the whole run."""
+    submission's expected hours are the sums of its tiers' estimates, at most 20 h for a timed (whole-node) one of
+    several tiers (a tier alone may need a second allocation, which its line says); and each submission's dry run
+    prints the '# one job:' line its table states, the fifteen together the whole run."""
     text = (CODE / "experiments" / "package" / "README.md").read_text(encoding="utf-8")
     section = text[text.index("## 4. The run"):text.index("Every allocation, the five without")]
-    subs = re.findall(r"^\$R --one-job ((?:--no-exclusive )?[a-z0-9 ]+?) +# (?:expected )?([0-9.]+)-([0-9.]+) h",
-                      section, re.M)
+    subs = re.findall(r"^\$R --one-job ((?:--no-exclusive )?[a-z0-9 ]+?) +# (?:expected )?([0-9.]+)-([0-9.]+) h"
+                      r"(.*)$", section, re.M)
     table = dict(re.findall(r"^\| `([a-z0-9 -]+)` \| `(# one job: [^`]+)` \|$", section, re.M))
-    assert len(subs) == 13 and len(table) == 13 and "thirteen jobs (`--one-job`)" in section, (subs, table)
+    assert len(subs) == 15 and len(table) == 15 and "fifteen jobs (`--one-job`)" in section, (subs, table)
     runs: list = []
     _dry(out=runs)
     est = {t: (float(lo), float(hi)) for t, lo, hi in
            re.findall(r"^# tier (\S+): \d+ jobs, job limits \d+ h, estimate ([0-9.]+)-([0-9.]+) h$", runs[0].stdout, re.M)}
     last = runs[0].stdout.splitlines()[-1]
     every = last[2:last.index(":")].split()
-    tiers = [t for sub, _, _ in subs for t in sub.replace("--no-exclusive ", "").split()]
+    tiers = [t for sub, _, _, _ in subs for t in sub.replace("--no-exclusive ", "").split()]
     assert sorted(tiers) == sorted(every) and len(set(tiers)) == len(tiers), (tiers, every)
     njobs = hours = 0
-    for sub, lo, hi in subs:
+    for sub, lo, hi, note in subs:
         own = sub.replace("--no-exclusive ", "").split()
         assert (float(lo), float(hi)) == (sum(est[t][0] for t in own), sum(est[t][1] for t in own)), sub
-        assert sub.startswith("--no-exclusive ") or float(hi) <= 20, sub
+        assert sub.startswith("--no-exclusive ") or float(hi) <= 20 or (len(own) == 1 and "again" in note), sub
         run = subprocess.run([_bash(), str(RUN), "--platform", "final", "--llama-licence", "--gres", "gpu:l40s:1",
                               "--dry-run", "--one-job", *sub.split()], cwd=REPO,
                              env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}, capture_output=True, text=True,
@@ -393,7 +400,7 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
                  "--requeue", "--signal=B:TERM@300", "--open-mode=append", "--dependency=singleton",
                  "logs/final/node-smoke-cpuv-long-%j.log", "--gres=gpu:l40s:1"):
         assert part in jobs[0], (part, jobs[0])
-    assert "# one job: smoke cpuv long: 38 jobs, job limits 87 h, time limit 24 h" in out, out
+    assert "# one job: smoke cpuv long: 38 jobs, job limits 102 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
@@ -909,6 +916,75 @@ def test_the_rehearsal_runs_every_script_of_every_tier():
         assert not missing, (tier, sorted(missing))
 
 
+PROMPT = {"deployment.serve_ab": 2048, "costs.setup_timing": 0, "improvements.fold_ab": 0,
+          "improvements.open_ab": 64, "improvements.forward_ab": 2048, "improvements.encode_ab": 2048,
+          "improvements.gpu_profile": 2048, "v1.v1_phases": 256}
+"""The prompt length of a cost script's cell without ``--seq`` or ``--prompt`` (its default; serve_ab: workloads a and
+b, at most 2,048 tokens; setup_timing and fold_ab: none)."""
+COST = ("costs.perf", "costs.bench", "costs.setup_timing", "v1.v1_bytes", "generation.gen_bench",
+        "generation.decode_baseline", "reexec.reexec", "reexec.llamacpp", "deployment.serve_ab", "v1.v1_phases",
+        *(f"improvements.{s}" for s in ("open_ab", "forward_ab", "encode_ab", "fold_ab", "gpu_profile")))
+"""The scripts of the cost cells, each with ``--real``."""
+
+
+def _values(cmd: str, flag: str) -> list[int]:
+    m = re.search(rf"{flag} ((?:\d+ ?)+)", cmd)
+    return [int(v) for v in m.group(1).split()] if m else []
+
+
+def test_the_cost_cells_take_the_real_checkpoints_by_one_rule():
+    """run.sh's rw and experiments.common.real_cells.main_checkpoint are one rule: every command of a cost script in
+    the full run (the real tier's twins and the smoke's cross-check aside) passes ``--real <checkpoint>`` exactly where
+    the Python rule names a checkpoint for its model, its longest prompt with the generated tokens, the licence and
+    the long-prompt curves; the 2-block re-execution rows and the 8- against 11-bit A/B, which their scripts refuse
+    with --real, stay random.  Without --llama-licence the Llama-2 cells are random, and --random-weights gives the
+    previous run, every cost cell random."""
+    from experiments.common.real_cells import LONG_CURVE, main_checkpoint
+    from pvi.models.decoder import CONFIGS
+    for flags, licence in (((), True), (("--random-weights",), None)):
+        seen = set()
+        for line in _dry(*flags):
+            job = _job(line)[len("sp-"):]
+            if tier_of(job) in ("real", "smoke"):
+                continue
+            for cmd in re.split(r"&&|;", line.split("--wrap", 1)[1]):
+                script = re.search(r"-m experiments\.(\w+\.\w+)", cmd)
+                model = re.search(r"--model (\S+)(?: --| ?$)", cmd)
+                if not script or script.group(1) not in COST or not model or model.group(1) not in CONFIGS:
+                    continue
+                script, model = script.group(1), model.group(1)
+                if script in ("generation.gen_bench", "generation.decode_baseline"):
+                    seq, gen = _values(cmd, "--prompt")[0], max(_values(cmd, "--gen"))
+                else:
+                    seq, gen = max(_values(cmd, "--seq") or [PROMPT.get(script, 0)]), 0
+                want = None if licence is None else main_checkpoint(model, seq, licence, gen,
+                                                                    job.startswith(LONG_CURVE))
+                if (script == "reexec.reexec" and "--layers" in cmd) or re.search(r"--prob-max (?!2047 *$)", cmd):
+                    want = None                       # refused with --real: random weights
+                got = re.search(r'--real ([^ ;"]+)', cmd)
+                assert (got and got.group(1)) == (want or None), (job, cmd.strip()[-160:], want)
+                seen.add((script, want is not None))
+        if licence:
+            assert {s for s, real in seen if real} == set(COST), sorted(seen)
+        else:
+            assert not any(real for _, real in seen)
+    # without the licence the Llama-2 cells are random, the others as with it
+    lines = {_job(line): line.split("--wrap", 1)[1] for line in _dry()}
+    for job, line in ((_job(x), x.split("--wrap", 1)[1]) for x in _dry_no_licence()):
+        if "--model llama2-" in line and tier_of(job[len("sp-"):]) != "real":
+            assert "--real meta-llama/" not in line, job
+        elif job in lines and "--model llama2-" not in lines[job]:
+            assert line == lines[job], job
+
+
+def _dry_no_licence() -> list[str]:
+    run = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--optional", "all"], cwd=REPO,
+                         env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}, capture_output=True, text=True,
+                         timeout=120)
+    assert run.returncode == 0, run.stderr
+    return [line for line in run.stdout.splitlines() if line.startswith("sbatch")]
+
+
 def test_the_cost_cells_use_11_bit_probabilities_but_the_a_b_of_the_scales():
     """No job passes ``--prob-max`` (every script's default is the certified models' 2047, ``cli.PAPER``) but the
     improve tier's A/B, which times 255 and 2047 on the same queries in modes Kpre and C with the CPU verifier: two
@@ -934,7 +1010,8 @@ def test_the_gen_and_quality_cells_of_the_text():
     fp16, and no OpenLLaMA-7B job; the rehearsal keeps its own small generation and attribution cells and runs the
     grid path on a Llama-2-7B smoke model (OpenLLaMA-7B's without --llama-licence)."""
     from experiments.paper.macros import DIGESTS, LLAMA_GRIDS
-    lines = {_job(line): line for line in _dry()}
+    raw = {_job(line): line for line in _dry()}
+    lines = {job: _plain(line) for job, line in raw.items()}
     gpt2 = lines["sp-gen-gpt2"].split("generation.gen_bench", 1)[1]
     assert "--model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --policy cnn18c" in gpt2
     assert "--layers" not in gpt2 and "--label gen" in gpt2
@@ -946,12 +1023,14 @@ def test_the_gen_and_quality_cells_of_the_text():
     assert f"--model llama2-7b --prompt {GEN_P} --gen {GEN_G} --decode greedy --modes C --policy cnn18c" \
         in lines["sp-gen-llama2-7b-512"]
     dec = lines["sp-gen-decode"].split("--wrap", 1)[1]
-    assert "generation.decode_baseline --device cuda --model llama2-7b qwen3-4b --prompt 512 --gen 64 256 512 " \
-        "--reps 5 --label gen" in dec and "--layers" not in dec and "experiments.package.pin" not in dec
+    for m in ("llama2-7b", "qwen3-4b"):              # a checkpoint's decoder: one model per command
+        assert f"generation.decode_baseline --device cuda --model {m} --prompt 512 --gen 64 256 512 " \
+            "--reps 5 --label gen" in dec
+    assert "--layers" not in dec and "experiments.package.pin" not in dec
     # the real OPT-6.7B's V1 at 2,048 tokens in both modes (the abstract's range), each with its random twin
     for mode in ("C-", ""):
         for twin, label in (("", "real"), ("rnd", "real-random")):
-            line = lines[f"sp-r-opt67{twin}-v1-{mode}2048"]
+            line = raw[f"sp-r-opt67{twin}-v1-{mode}2048"]
             assert f"--modes {mode.strip('-') or 'Kpre'} " in line and f"--label {label} " in line, line
             assert ("--real facebook/opt-6.7b" in line) == (twin == ""), line
     rec = lines["sp-q-opt125-recipes"]
@@ -1027,6 +1106,8 @@ def test_the_gate_tier_checks_the_full_sizes_once_before_the_run():
     assert "without --rehearsal" in runs[0].stderr
     jobs = {_job(line): line.split("--wrap", 1)[1] for line in _dry(tiers=("gate",))}
     assert jobs and {tier_of(job[len("sp-"):]) for job in jobs} == {"gate"}
+    assert "--real facebook/opt-125m" in jobs["sp-gate-r-opt125-v1-2k"]
+    jobs = {job: _plain(cmd) for job, cmd in jobs.items()}
     v1 = {job: cmd for job, cmd in jobs.items() if "v1.v1_bytes" in cmd}
     exact = set()
     for job, cmd in v1.items():
@@ -1043,7 +1124,6 @@ def test_the_gate_tier_checks_the_full_sizes_once_before_the_run():
     two = v1["sp-gate-v1-llama7-2k-2"]
     assert "--layers 2 --modes Kpre C" in two and "--v1-verifier optimised baseline" in two
     assert "--verifier-device cuda" in v1["sp-gate-g-v1-llama7-2k-2"]
-    assert "--real facebook/opt-125m" in v1["sp-gate-r-opt125-v1-2k"]
     assert "--layers" not in v1["sp-gate-v1-llama7-2k"] and "--model llama2-7b --seq 2048" in v1["sp-gate-v1-llama7-2k"]
     long = {job: cmd for job, cmd in jobs.items() if job.startswith("sp-gate-l-")}
     assert len(long) == 2 and all("--seq 16384" in cmd and "--layers 2" in cmd for cmd in long.values())
@@ -1063,7 +1143,7 @@ def test_the_cpux_tier_and_the_cells_at_512_tokens_and_other_security_levels():
     GPT-2's two blocks, its six plans side by side in one process."""
     from pvi.commit.plans import AUTO_CANDIDATES
     full = {_job(line): line for line in _dry()}
-    cmd = {j: x.split("--wrap", 1)[1] for j, x in full.items()}
+    cmd = {j: _plain(x.split("--wrap", 1)[1]) for j, x in full.items()}
     x = sorted(j for j in full if j.startswith("sp-x-"))
     assert x == sorted(["sp-x-llama2-7b-2048-thr4", "sp-x-rx-llama2-7b-thr4", "sp-x-llama2-7b-2048-thr2",
                         "sp-x-rx-llama2-7b-thr2", "sp-x-llama2-7b-2048-noavx512", "sp-x-rx-llama2-7b-noavx512",
@@ -1071,19 +1151,22 @@ def test_the_cpux_tier_and_the_cells_at_512_tokens_and_other_security_levels():
                      + [f"sp-x-plans-llama2-7b-2k-{p}" for p in AUTO_CANDIDATES])
     for t in (4, 2):
         for job in (f"sp-x-llama2-7b-2048-thr{t}", f"sp-x-rx-llama2-7b-thr{t}"):
-            assert f"pin --cores {t} --pid" in cmd[job] and re.findall(r"--threads (\d+)", cmd[job]) == [str(t)], job
+            assert f"pin --cores {t} --pid" in cmd[job] and set(re.findall(r"--threads (\d+)", cmd[job])) == {str(t)}, \
+                job
             assert "--model llama2-7b --seq 2048" in cmd[job], job
         verifier = cmd[f"sp-x-llama2-7b-2048-thr{t}"]
         assert "--modes Kpre" in verifier and "--label cpux " in verifier
-        assert "--layers 2 32 --variants int int_mm int_fp32gemm" in cmd[f"sp-x-rx-llama2-7b-thr{t}"]
+        # (the 2-block rows on random weights, the full model on the checkpoint: reexec.py --real builds it whole)
+        assert "--layers 2 --variants int int_mm int_fp32gemm" in cmd[f"sp-x-rx-llama2-7b-thr{t}"]
+        assert "--seq 2048 --variants int int_mm int_fp32gemm" in cmd[f"sp-x-rx-llama2-7b-thr{t}"]
     for job in ("sp-x-llama2-7b-2048-noavx512", "sp-x-rx-llama2-7b-noavx512"):
         assert "--no-native-avx512" in cmd[job] and "pin --cores 8 --pid" in cmd[job], job
     assert "--label cpux-noavx512" in cmd["sp-x-llama2-7b-2048-noavx512"]
-    assert "--model llama2-13b --seq 2048 --layers 2 40 --variants int int_mm int_fp32gemm" in cmd["sp-x-rx-llama2-13b"]
+    assert "--model llama2-13b --seq 2048 --layers 2 --variants int int_mm int_fp32gemm" in cmd["sp-x-rx-llama2-13b"]
     assert "--model llama2-13b --seq 2048 --modes Kpre" in cmd["sp-x-llama2-13b-2048"]
     order = [j[len("sp-x-plans-llama2-7b-2k-"):] for j in full if j.startswith("sp-x-plans-llama2-7b-2k-")]
     assert order[0] == "cnn18c" and sorted(order) == sorted(AUTO_CANDIDATES), order
-    hours = {"tightc": 1, "cnn16c": 1, "cnn17c": 2, "cnn18c": 2, "R16c": 2, "R64c": 5}
+    hours = {"tightc": 2, "cnn16c": 2, "cnn17c": 3, "cnn18c": 3, "R16c": 3, "R64c": 6}    # with the checkpoint's hour
     for p in AUTO_CANDIDATES:
         job = f"sp-x-plans-llama2-7b-2k-{p}"
         assert f"--policy {p} --queries 3 " in cmd[job] and f"--time={hours[p]}:00:00" in full[job], job
@@ -1093,7 +1176,7 @@ def test_the_cpux_tier_and_the_cells_at_512_tokens_and_other_security_levels():
     assert [j for j in other if "-plans-" in j][0] == "sp-x-plans-llama2-7b-2k-cnn17c"
     heap = cmd["sp-c-rx-heap-llama2-7b"]            # the verifier's allocator setting at every length of the table
     assert "--seq 64 512 2048 " in heap and "--malloc-tune" in heap
-    assert "--time=3:00:00" in full["sp-c-rx-heap-llama2-7b"]
+    assert "--time=5:00:00" in full["sp-c-rx-heap-llama2-7b"]      # with the checkpoint's two hours
     # Llama-2-7B at 512 tokens in the cpuv tier, and at lambda 40 and 80 in the bench tier
     assert "--model llama2-7b --seq 512 --modes Kpre C" in cmd["sp-c-llama2-7b-512"]
     assert "--seq 64 512 2048" in cmd["sp-c-rx-llama2-7b"] and "--seq 64 512 2048" in cmd["sp-c-llamacpp-llama2-7b"]
@@ -1167,14 +1250,15 @@ def test_the_zkllm_tier_runs_zkllms_demo_with_the_llama_licence_only(tmp_path):
         assert f"--size {size} --seqs 64,512,1024 --reps 3 --layers 0,1 --allow-failed-lengths" in short
     assert all("experiments.package.pin" not in jobs[j] for j in names)
     for m in ("llama2-7b", "llama2-13b"):
-        ours = jobs[f"sp-b-ci-{m}-zk"]
+        ours = _plain(jobs[f"sp-b-ci-{m}-zk"])
         assert f"--model {m} --seq 64 512 1024 --builds full --queries 3 --lams 128 --modes C:int --policy" in ours
         assert "experiments.package.pin" in ours and "--require-native" in ours      # a CPU-verifier cell
     full = {_job(line): line for line in _dry(tiers=("zkllm",))}
     assert "--time=2:00:00" in full["sp-zk-llama2-7b"] and "--time=4:00:00" in full["sp-zk-llama2-13b"]
     assert "--time=2:00:00" in full["sp-zk-llama2-7b-short"] and "--time=4:00:00" in full["sp-zk-llama2-13b-short"]
     bench = {_job(line): line for line in _dry(tiers=("bench",))}
-    assert "--time=2:00:00" in bench["sp-b-ci-llama2-7b-zk"] and "--time=3:00:00" in bench["sp-b-ci-llama2-13b-zk"]
+    # (with the real checkpoints' load and calibration: an hour more for Llama-2-7B, two for Llama-2-13B)
+    assert "--time=3:00:00" in bench["sp-b-ci-llama2-7b-zk"] and "--time=5:00:00" in bench["sp-b-ci-llama2-13b-zk"]
     # --zkllm-seqs: other lengths for both sides; without 2,048 no 2,048-token job; 2,048 alone: no short job
     got = {_job(line): line for line in _dry("--zkllm-seqs", "256,2048,4096", tiers=("zkllm", "bench"))}
     assert "--seqs 256,4096 " in got["sp-zk-llama2-13b-short"] and "--seq 256 4096 " in got["sp-b-ci-llama2-7b-zk"]

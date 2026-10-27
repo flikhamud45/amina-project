@@ -110,8 +110,21 @@
 #                       commitment from them (the setup tier never uses it)
 #     --python PATH     the interpreter (default .venv/bin/python)
 #     --extra-pythonpath DIR   packages outside the environment, put after the code on the path
-#     --llama-licence   the Llama-2 cells (real, qllama, zkllm): only with your own Llama-2 licence and Hugging Face
-#                       token (HF_TOKEN); the rehearsal's one Llama-2 job reads the gated repository from a compute node
+#     --llama-licence   the Llama-2 cells (real, qllama, zkllm) and the real Llama-2 weights of every cost cell: only
+#                       with your own Llama-2 licence and Hugging Face token (HF_TOKEN); the rehearsal's Llama-2 jobs
+#                       read the gated repository from a compute node
+#     --random-weights  every cost cell on random weights of its model's shapes, as before the real checkpoints were
+#                       the default (the real tier's real-weight cells excepted).  By default a cost cell of
+#                       Llama-2-7B and Llama-2-13B (with --llama-licence), OPT-125M, OPT-1.3B, OPT-6.7B and Qwen3-4B
+#                       takes the model's Hugging Face checkpoint (--real; experiments/common/real_cells.py) wherever
+#                       its prompt, the generated tokens and a Llama-family recipe's fixed prefix fit the checkpoint's
+#                       trained context: Llama-2 cells up to 2,048 tokens.  GPT-2, the image models, the 4,096-token
+#                       cells and the whole long-prompt curve (the long tier, the GPU verifier's long cells, V1's codec
+#                       curve) keep random weights, each curve on one kind of weights; the real tier keeps its
+#                       real-against-random twins; a re-execution job measures its 2-block rows on random weights and
+#                       its full model on the checkpoint (reexec.py --real builds the full model only); the 8- against
+#                       11-bit A/B stays random (a checkpoint's recipe fixes the scale).  The rehearsal makes only
+#                       OPT-125M's cells real (and llama.cpp's Llama-2 conversion with --llama-licence)
 #     --no-bigmem       the long tier leaves out the full Llama-2-7B at 8,192 tokens, whose verifier and
 #                       re-execution check the per-block extrapolation (they need a node with >= 256 GB)
 #     --zkllm-home DIR  the zkllm tier's zkLLM: DIR/zkllm (a checkout at commit 993311e, built for the GPU, with the
@@ -138,9 +151,9 @@
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1
 # unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
 # llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
-# PVI_PY_INCLUDE, HF_HOME (the real, quality, qllama, qcheck, tv, attack and gate tiers, and the zkllm tier with
-# --llama-licence, download checkpoints and datasets) and PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image
-# models' datasets), each passed to the jobs as an absolute path (a relative one is taken from the repository root).
+# PVI_PY_INCLUDE, HF_HOME (every tier but smoke and long downloads checkpoints or datasets: OPT-125M, OPT-1.3B and
+# OPT-6.7B about 16 GB, Qwen3-4B 8 GB, Llama-2-7B and Llama-2-13B 40 GB with --llama-licence, WikiText-2) and
+# PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute path (a relative one is taken from the repository root).
 # HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's environment and is never written into a job.
 # Everything is checked before the first job is submitted: the compiler, CMake and git (the cpuv tier; git only while
 # llama.cpp's clone is missing), the
@@ -156,7 +169,7 @@ set -euo pipefail
 
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 PLATFORM="" DRY="" REH="" LOCAL="" OPTIONAL="" CHAIN=1 EXCL="--exclusive" PIN=1 NONATIVE="" MEMMAX=256 QH=5 Q=3
-POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM=1 ONEJOB="" MAXH=24 TIERS=()
+POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM=1 ONEJOB="" MAXH=24 TIERS=() RANDOMW=""
 REQGPU="L40S" REQCPU="EPYC 9334" GRES="${SBATCH_GRES:-}" EXCLUDE="" FROMONE=""
 ZKHOME="" ZKSCRATCH="" ZKPY="" CUDAHOME="" TELI=1 SNAPON=1 ZKSEQS=64,512,1024,2048
 ARGV=("$@")
@@ -181,6 +194,7 @@ while [ $# -gt 0 ]; do
     --python) PY=$2; shift ;;
     --extra-pythonpath) EXTRA_PP=$2; shift ;;
     --llama-licence) LLAMA=1 ;;
+    --random-weights) RANDOMW=1 ;;
     --no-bigmem) BIGMEM="" ;;
     --require-gpu) REQGPU=$2; shift ;;
     --require-cpu) REQCPU=$2; shift ;;
@@ -351,18 +365,75 @@ nl() {    # a model's decoder blocks
   esac
 }
 
-est() {   # a tier's expected hours on an L40S node (measured times of the same cells)
+rw() {    # rw <model> [<prompt tokens> [<generated tokens>]]: the weights of one cost cell, the one rule of every tier
+  # (experiments.common.real_cells.main_checkpoint, which experiments/paper/numbers.py reads the records by): R is
+  # " --real <checkpoint>" where the cell takes the model's Hugging Face checkpoint, else empty (random weights of the
+  # model's shapes); RH the hours its job's limit adds for the checkpoint's download, fp32 load and calibration (1 for
+  # a 7B-class model, 2 for Llama-2-13B) and RM the memory (GB) the job needs at least (128 and 256: the fp32 weights,
+  # about 27 and 52 GB, and the calibration's peak, about 40 and 78 GB).  Real: Llama-2-7B and Llama-2-13B (with
+  # --llama-licence), OPT-125M, OPT-1.3B, OPT-6.7B and Qwen3-4B, where the prompt, the generated tokens and a
+  # Llama-family recipe's fixed prefix (at most 64 tokens) fit the checkpoint's trained context (Llama-2 and Qwen3-4B:
+  # 4,096 and 32,768 positions; OPT: 2,048); random: every other cell, every cell of --random-weights, and in the
+  # rehearsal every model but OPT-125M (a 7B checkpoint's load and calibration alone take most of an hour)
+  local m=$1 seq=${2:-0} gen=${3:-0} ck="" ctx=2048 pre=0 h=0 mem=0
+  R="" RH=0 RM=0
+  [ -z "$RANDOMW" ] || return 0
+  case "$m" in
+    llama2-7b) [ -z "$LLAMA" ] || ck=meta-llama/Llama-2-7b-hf; ctx=4096 pre=64 h=1 mem=128 ;;
+    llama2-13b) [ -z "$LLAMA" ] || ck=meta-llama/Llama-2-13b-hf; ctx=4096 pre=64 h=2 mem=256 ;;
+    qwen3-4b) ck=Qwen/Qwen3-4B-Base ctx=32768 pre=64 h=1 mem=128 ;;
+    opt-6.7b) ck=facebook/opt-6.7b h=1 mem=128 ;;
+    opt-1.3b) ck=facebook/opt-1.3b ;;
+    opt-125m) ck=facebook/opt-125m ;;
+  esac
+  [ -z "$REH" ] || [ "$m" = opt-125m ] || ck=""
+  [ "$gen" -gt 1 ] || gen=1
+  [ -n "$ck" ] && [ $((seq + gen - 1 + pre)) -le "$ctx" ] || return 0
+  R=" --real $ck" RH=$h RM=$mem
+}
+
+memgb() { # memgb <GB>: a job's memory, at least the RM of the last rw
+  if [ "$1" -ge "$RM" ]; then echo "$1"; else echo "$RM"; fi
+}
+
+rx() {    # rx <model> <prompt tokens...> -- <options...>: RXC, re-execution of 2 blocks and of the full model (rw of
+  # the longest prompt): one command on random weights, or the 2-block rows on random weights and the full model on
+  # the checkpoint (reexec.py --real measures the full graph only); RH then includes an hour for the checkpoint's
+  # second copy (its float weights with the norms folded)
+  local m=$1 s=() top=0
+  shift
+  while [ "$1" != -- ]; do s+=("$1"); [ "$1" -le "$top" ] || top=$1; shift; done
+  shift
+  rw "$m" "$top"
+  if [ -z "$R" ]; then
+    RXC="$RX --model $m --seq ${s[*]} --layers 2 $(nl "$m") $*"
+  else
+    RH=$((RH + 1))
+    RXC="$RX --model $m --seq ${s[*]} --layers 2 $* && $RX --model $m$R --seq ${s[*]} $*"
+  fi
+}
+
+est() {   # a tier's expected hours on an L40S node (measured times of the same cells; a real-weight job adds its
+  # checkpoint's fp32 load and calibration, about 0.2-0.5 h for a 7B-class model, 0.4-1 h for Llama-2-13B, and a real
+  # re-execution job 0.25-0.5 h more; --random-weights: the random-weight cells' hours)
   if [ -n "$REH" ]; then
     case "$1" in improve) echo "<1" ;; quality) echo "<0.5" ;; zkllm) echo "<1.5" ;; *) echo "<0.3" ;; esac
     return
   fi
+  if [ -n "$RANDOMW" ]; then
+    case "$1" in
+      cpuv) echo 8-11 ;; cpux) echo 9-14 ;; v1) echo 5-9 ;; serve) echo 8-10 ;; bench) echo 11-17 ;; gpuv) echo 5-7 ;;
+      gen) echo 4-5 ;; batch) echo 2-3 ;; setup) echo 1-2 ;; improve) echo 3-5 ;; *) RANDOMW="" est "$1" ;;
+    esac
+    return
+  fi
   case "$1" in
-    smoke) echo 1.5-2 ;; cpuv) echo 8-11 ;; cpux) echo 9-14 ;; v1) echo 5-9 ;; serve) echo 8-10 ;; bench) echo 11-17 ;;
-    gpuv) echo 5-7 ;;
-    gen) echo 4-5 ;; batch) echo 2-3 ;; real) echo 11-16 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
+    smoke) echo 1.5-2 ;; cpuv) echo 11.5-19 ;; cpux) echo 13-24 ;; v1) echo 7-14 ;; serve) echo 9-12.5 ;;
+    bench) echo 17.5-33 ;; gpuv) echo 8-14 ;;
+    gen) echo 5-7.5 ;; batch) echo 3-6 ;; real) echo 11-16 ;; setup) echo 1.5-2.5 ;; improve) echo 6-12.5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
     qcheck) echo 9-13 ;;
-    tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 10-16 ;; gate) echo 1-1.5 ;;
+    tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 10-16 ;; gate) echo 1.5-3 ;;
     zkllm) echo 6-9 ;;
   esac
 }
@@ -426,39 +497,53 @@ tier_cpuv() {
   # queries.  Llama-2-7B's cells also check their timed proofs again in a process that holds only what the client
   # holds, and record its memory (perf.py --client-memory)
   if [ -n "$REH" ]; then
+    # (each script's real-weight path on OPT-125M after its GPT-2 cell; llama.cpp's conversion of Llama-2-7B's first
+    # block with --llama-licence)
+    rw opt-125m 64
     csub c-gpt2-64 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre C --policy $POL --queries $QH \
---verifier-device cpu --label cpuv --client-memory $NATIVE"
+--verifier-device cpu --label cpuv --client-memory $NATIVE && $PERF --model opt-125m$R --layers 2 --seq 64 \
+--modes Kpre --queries $Q --verifier-device cpu --label cpuv $NATIVE"
     csub c-rx-gpt2 1 64 "$RX --model gpt2 --seq 64 --layers 1 2 --variants $RXCPU --device cpu --reps 2 \
+--no-malloc-tune $NATIVE && $RX --model opt-125m$R --seq 64 --variants $RXCPU --device cpu --reps 2 \
 --no-malloc-tune $NATIVE"
     csub c-v1-gpt2-64 1 64 "$V1 --model gpt2 --layers 2 --seq 64 --modes Kpre --reps $QH --lmax 20 \
---v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
-    csub c-llamacpp-llama2-7b-L1 1 64 "$LCPP --model llama2-7b --layers 1 --seq 64 --types q8_0 bf16 --reps $QH"
+--v1-verifier optimised baseline --label cpuv-v1 $NATIVE && $V1 --model opt-125m$R --layers 2 --seq 64 --modes Kpre \
+--reps $Q --lmax 20 --label cpuv-v1 $NATIVE"
+    REH="" rw llama2-7b 64
+    csub c-llamacpp-llama2-7b-L1 1 64 "$LCPP --model llama2-7b$R --layers 1 --seq 64 --types q8_0 bf16 --reps $QH"
     return 0
   fi
   local m t cm s
   for m in llama2-7b qwen3-4b opt-1.3b; do
     cm=""; [ "$m" = llama2-7b ] && cm=" --client-memory"
-    csub "c-$m-64" 1 128 "$PERF --model $m --seq 64 --modes Kpre C --policy $POL --queries $QH --verifier-device cpu \
---label cpuv$cm $NATIVE"
-    csub "c-$m-2048" 2 256 "$PERF --model $m --seq 2048 --modes Kpre C --policy $POL --queries $QH \
+    rw "$m" 64
+    csub "c-$m-64" $((1 + RH)) "$(memgb 128)" "$PERF --model $m$R --seq 64 --modes Kpre C --policy $POL --queries $QH \
+--verifier-device cpu --label cpuv$cm $NATIVE"
+    rw "$m" 2048
+    csub "c-$m-2048" $((2 + RH)) 256 "$PERF --model $m$R --seq 2048 --modes Kpre C --policy $POL --queries $QH \
 --verifier-device cpu --label cpuv$cm $NATIVE"
   done
   # Llama-2-7B at 512 tokens as well (tab:eval-reexec's middle column): the verifier, every baseline, llama.cpp
-  csub c-llama2-7b-512 1 192 "$PERF --model llama2-7b --seq 512 --modes Kpre C --policy $POL --queries $QH \
---verifier-device cpu --label cpuv $NATIVE"
+  rw llama2-7b 512
+  csub c-llama2-7b-512 $((1 + RH)) 192 "$PERF --model llama2-7b$R --seq 512 --modes Kpre C --policy $POL \
+--queries $QH --verifier-device cpu --label cpuv $NATIVE"
   for m in llama2-7b qwen3-4b opt-1.3b; do
     t=2 s="64 2048"; [ "$m" = opt-1.3b ] && t=1; [ "$m" = llama2-7b ] && t=4 s="64 512 2048"
-    csub "c-rx-$m" "$t" 256 "$RX --model $m --seq $s --layers 2 $(nl "$m") --variants $RXCPU --device cpu \
---reps $QH --no-malloc-tune $NATIVE"
+    rx "$m" $s -- --variants $RXCPU --device cpu --reps $QH --no-malloc-tune $NATIVE
+    csub "c-rx-$m" $((t + RH)) 256 "$RXC"
   done
-  csub c-rx-heap-llama2-7b 3 256 "$RX --model llama2-7b --seq 64 512 2048 --layers 2 32 --variants int int_mm float \
-dynint8 --device cpu --reps $QH --malloc-tune $NATIVE"
-  csub c-llamacpp-llama2-7b 3 64 "$LCPP --model llama2-7b --seq 64 512 2048 --types q8_0 bf16 --reps $QH"
+  rx llama2-7b 64 512 2048 -- --variants int int_mm float dynint8 --device cpu --reps $QH --malloc-tune $NATIVE
+  csub c-rx-heap-llama2-7b $((3 + RH)) 256 "$RXC"
+  # (llama.cpp's conversion reads the checkpoint one tensor at a time: no fp32 model, no calibration)
+  rw llama2-7b 2048
+  csub c-llamacpp-llama2-7b 3 64 "$LCPP --model llama2-7b$R --seq 64 512 2048 --types q8_0 bf16 --reps $QH"
   for t in 64 2048; do
-    csub "c-v1-llama2-7b-$t" 2 256 "$V1 --model llama2-7b --seq $t --modes Kpre --reps $QH \
+    rw llama2-7b "$t"
+    csub "c-v1-llama2-7b-$t" $((2 + RH)) 256 "$V1 --model llama2-7b$R --seq $t --modes Kpre --reps $QH \
 --v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
   done
-  csub c-v1-qwen3-4b-2048 2 256 "$V1 --model qwen3-4b --seq 2048 --modes Kpre --reps $QH \
+  rw qwen3-4b 2048
+  csub c-v1-qwen3-4b-2048 $((2 + RH)) 256 "$V1 --model qwen3-4b$R --seq 2048 --modes Kpre --reps $QH \
 --v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
 }
 
@@ -471,9 +556,13 @@ tier_cpux() {
   # commitment encoded afresh (no setup cache: commit_s is the encoding's time)
   local t h p
   if [ -n "$REH" ]; then
+    rw opt-125m 64
     ksub 4 x-gpt2-64-thr4 1 64 "$M.costs.perf --threads 4 $CACHED --model gpt2 --layers 2 --seq 64 --modes Kpre \
 --queries $Q --verifier-device cpu --label cpux $NATIVE && $M.reexec.reexec --threads 4 --model gpt2 --seq 64 \
---layers 1 2 --variants $EXACT --device cpu --reps 2 --no-malloc-tune $NATIVE"
+--layers 1 2 --variants $EXACT --device cpu --reps 2 --no-malloc-tune $NATIVE && $M.costs.perf --threads 4 $CACHED \
+--model opt-125m$R --layers 2 --seq 64 --modes Kpre --queries $Q --verifier-device cpu --label cpux $NATIVE && \
+$M.reexec.reexec --threads 4 --model opt-125m$R --seq 64 --variants $EXACT --device cpu --reps 2 --no-malloc-tune \
+$NATIVE"
     csub x-gpt2-64-noavx512 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre --queries $Q \
 --verifier-device cpu --no-native-avx512 --label cpux-noavx512 $NATIVE && $RX --model gpt2 --seq 64 --layers 1 2 \
 --variants $EXACT --device cpu --reps 2 --no-native-avx512 --no-malloc-tune $NATIVE"
@@ -482,27 +571,32 @@ tier_cpux() {
     return 0
   fi
   for t in 4 2; do
-    ksub "$t" "x-llama2-7b-2048-thr$t" 2 256 "$M.costs.perf --threads $t $CACHED --model llama2-7b --seq 2048 \
---modes Kpre --queries $QH --verifier-device cpu --label cpux $NATIVE"
+    rw llama2-7b 2048
+    ksub "$t" "x-llama2-7b-2048-thr$t" $((2 + RH)) 256 "$M.costs.perf --threads $t $CACHED --model llama2-7b$R \
+--seq 2048 --modes Kpre --queries $QH --verifier-device cpu --label cpux $NATIVE"
     h=3; [ "$t" = 2 ] && h=4
-    ksub "$t" "x-rx-llama2-7b-thr$t" "$h" 256 "$M.reexec.reexec --threads $t --model llama2-7b --seq 2048 \
---layers 2 32 --variants $EXACT --device cpu --reps $Q --no-malloc-tune $NATIVE"
+    RX="$M.reexec.reexec --threads $t" rx llama2-7b 2048 -- --variants $EXACT --device cpu --reps $Q \
+--no-malloc-tune $NATIVE
+    ksub "$t" "x-rx-llama2-7b-thr$t" $((h + RH)) 256 "$RXC"
   done
-  csub x-llama2-7b-2048-noavx512 2 256 "$PERF --model llama2-7b --seq 2048 --modes Kpre --queries $QH \
+  rw llama2-7b 2048
+  csub x-llama2-7b-2048-noavx512 $((2 + RH)) 256 "$PERF --model llama2-7b$R --seq 2048 --modes Kpre --queries $QH \
 --verifier-device cpu --no-native-avx512 --label cpux-noavx512 $NATIVE"
-  csub x-rx-llama2-7b-noavx512 2 256 "$RX --model llama2-7b --seq 2048 --layers 2 32 --variants $EXACT --device cpu \
---reps $Q --no-native-avx512 --no-malloc-tune $NATIVE"
-  csub x-llama2-13b-2048 2 256 "$PERF --model llama2-13b --seq 2048 --modes Kpre --queries $Q --verifier-device cpu \
---label cpux $NATIVE"
-  csub x-rx-llama2-13b 3 256 "$RX --model llama2-13b --seq 2048 --layers 2 40 --variants $EXACT --device cpu \
---reps $Q --no-malloc-tune $NATIVE"
+  rx llama2-7b 2048 -- --variants $EXACT --device cpu --reps $Q --no-native-avx512 --no-malloc-tune $NATIVE
+  csub x-rx-llama2-7b-noavx512 $((2 + RH)) 256 "$RXC"
+  rw llama2-13b 2048
+  csub x-llama2-13b-2048 $((2 + RH)) 256 "$PERF --model llama2-13b$R --seq 2048 --modes Kpre --queries $Q \
+--verifier-device cpu --label cpux $NATIVE"
+  rx llama2-13b 2048 -- --variants $EXACT --device cpu --reps $Q --no-malloc-tune $NATIVE
+  csub x-rx-llama2-13b $((3 + RH)) 256 "$RXC"
   # one job per plan, on the same weights and queries (the same seeds); each limit is about twice the plan's expected
   # time, mostly its encoding, which grows with its encoded entries (pvi.commit.cost.setup_size of Llama-2-7B: about
   # 34, 33, 65, 130, 138 and 551 Gi for tightc, cnn16c, cnn17c, cnn18c, R16c and R64c, about 16 s per Gi on an L40S)
+  rw llama2-7b 2048
   for p in $PLANS; do
     case "$p" in tightc|cnn16c) h=1 ;; R64c) h=5 ;; *) h=2 ;; esac
-    csub "x-plans-llama2-7b-2k-$p" "$h" 256 "$M.costs.perf --threads 8 --model llama2-7b --seq 2048 --modes C \
---policy $p --queries $Q --verifier-device cpu --label plans $NATIVE"
+    csub "x-plans-llama2-7b-2k-$p" $((h + RH)) 256 "$M.costs.perf --threads 8 --model llama2-7b$R --seq 2048 \
+--modes C --policy $p --queries $Q --verifier-device cpu --label plans $NATIVE"
   done
 }
 
@@ -512,8 +606,9 @@ tier_v1() {
   # tokens (one forward pass on the GPU, v0's and V1's claims encoded op by op: V1's claims ratio at each length,
   # which the break-even's V1 crossover reads; tab:eval-v1-long)
   if [ -n "$REH" ]; then
+    rw opt-125m 64
     csub v1-gpt2-64 1 64 "$V1 --model gpt2 --layers 2 --seq 64 --modes C Kpre --policy $POL --reps $Q --lmax 20 \
-$NATIVE"
+$NATIVE && $V1 --model opt-125m$R --layers 2 --seq 64 --modes C --policy $POL --reps $Q --lmax 20 $NATIVE"
     sub v1-codec-gpt2-512 1 64 "$V1CODEC --model gpt2 --layers 2 --seq 512 --lmax 20 --device cuda --label v1-codec"
     return 0
   fi
@@ -521,15 +616,26 @@ $NATIVE"
   csub v1-gpt2-64 1 64 "$V1 --model gpt2 --seq 64 --modes C Kpre --policy $POL --reps $Q $NATIVE"
   csub v1-gpt2-512 1 64 "$V1 --model gpt2 --seq 512 --modes C Kpre --policy $POL --reps $Q $NATIVE"
   for t in 64 2048; do
-    csub "v1-opt125-$t" 1 96 "$V1 --model opt-125m --seq $t --modes C Kpre --policy $POL --reps $Q $NATIVE"
-    csub "v1-opt13-$t" 2 192 "$V1 --model opt-1.3b --seq $t --modes C Kpre --policy $POL --reps $QH $NATIVE"
-    csub "v1-llama7-$t" 3 256 "$V1 --model llama2-7b --seq $t --modes Kpre C --policy $POL --reps $QH $NATIVE"
-    csub "v1-opt67-$t" 3 256 "$V1 --model opt-6.7b --seq $t --modes Kpre C --policy $POL --reps $Q $NATIVE"
-  done
-  csub v1-llama13-64 3 256 "$V1 --model llama2-13b --seq 64 --modes Kpre C --policy $POL --reps $Q $NATIVE"
-  csub v1-llama13-2k-2 1 256 "$V1 --model llama2-13b --layers 2 --seq 2048 --modes Kpre C --policy $POL --reps $Q \
+    rw opt-125m "$t"
+    csub "v1-opt125-$t" 1 96 "$V1 --model opt-125m$R --seq $t --modes C Kpre --policy $POL --reps $Q $NATIVE"
+    rw opt-1.3b "$t"
+    csub "v1-opt13-$t" 2 192 "$V1 --model opt-1.3b$R --seq $t --modes C Kpre --policy $POL --reps $QH $NATIVE"
+    rw llama2-7b "$t"
+    csub "v1-llama7-$t" $((3 + RH)) 256 "$V1 --model llama2-7b$R --seq $t --modes Kpre C --policy $POL --reps $QH \
 $NATIVE"
-  csub v1-qwen4-64 2 192 "$V1 --model qwen3-4b --seq 64 --modes Kpre C --policy $POL --reps $Q $NATIVE"
+    rw opt-6.7b "$t"
+    csub "v1-opt67-$t" $((3 + RH)) 256 "$V1 --model opt-6.7b$R --seq $t --modes Kpre C --policy $POL --reps $Q \
+$NATIVE"
+  done
+  rw llama2-13b 64
+  csub v1-llama13-64 $((3 + RH)) 256 "$V1 --model llama2-13b$R --seq 64 --modes Kpre C --policy $POL --reps $Q $NATIVE"
+  rw llama2-13b 2048
+  csub v1-llama13-2k-2 $((1 + RH)) 256 "$V1 --model llama2-13b$R --layers 2 --seq 2048 --modes Kpre C --policy $POL \
+--reps $Q $NATIVE"
+  rw qwen3-4b 64
+  csub v1-qwen4-64 $((2 + RH)) 192 "$V1 --model qwen3-4b$R --seq 64 --modes Kpre C --policy $POL --reps $Q $NATIVE"
+  # (V1's codec curve to 16,384 tokens keeps random weights, one footing for the whole curve: Llama-2's trained
+  # context ends at 4,096 positions)
   for t in 2048 4096 8192 16384; do
     sub "v1-codec-llama7-$t" 1 192 "$V1CODEC --model llama2-7b --seq $t --device cuda --label v1-codec"
   done
@@ -542,14 +648,18 @@ tier_serve() {
   local serve="$M.deployment.serve_ab --workload a b --modes C Kpre --batch-proof seq joint --reps 10 \
 --device cuda --threads 8 --u2-dtype fp16 bf16 --policy $POL --label serve $CACHED"
   if [ -n "$REH" ]; then
-    sub serve-rehearsal 1 64 "$serve --model opt-125m --layers 2 --cells 64x1 64x4 --reps 3"
+    rw opt-125m 64
+    sub serve-rehearsal 1 64 "$serve --model opt-125m$R --layers 2 --cells 64x1 64x4 --reps 3"
     return 0
   fi
-  sub serve-opt13 3 128 "$serve --model opt-1.3b"
-  sub serve-qwen4 4 256 "$serve --model qwen3-4b"
-  sub serve-llama7 5 256 "$serve --model llama2-7b"
-  sub serve-opt67 5 256 "$serve --model opt-6.7b"
-  sub serve-llama13 8 256 "$serve --model llama2-13b"
+  # (workloads a and b: prompts of at most 2,048 tokens)
+  local m n h mm
+  for m in opt-1.3b:opt13:3:128 qwen3-4b:qwen4:4:256 llama2-7b:llama7:5:256 opt-6.7b:opt67:5:256 \
+llama2-13b:llama13:8:256; do
+    IFS=: read -r m n h mm <<<"$m"
+    rw "$m" 2048
+    sub "serve-$n" $((h + RH)) "$(memgb "$mm")" "$serve --model $m$R"
+  done
 }
 
 tier_bench() {
@@ -561,8 +671,10 @@ tier_bench() {
   local gpuv="--verifier-device cuda --verifier-impl stream" m t mem q cm hc hk hg
   if [ -n "$REH" ]; then
     csub b-c-lenet5 1 64 "$BENCH cnn --model lenet5 --queries 3 --tampers 3 --modes C:fs,C:int --policy $POL $NATIVE"
+    rw opt-125m 64
     csub b-c-gpt2-64 1 64 "$BENCH llm --model gpt2 --seq 64 --builds 2 --queries 2 --lams 128 --modes C:fs,C:int \
---llm-tampers 1 --policy $POL $NATIVE"
+--llm-tampers 1 --policy $POL $NATIVE && $BENCH llm --model opt-125m$R --seq 64 --builds 2 --queries 2 --lams 128 \
+--modes C:fs,Kpre:fs --llm-tampers 1 --policy $POL $NATIVE"
     csub b-k-gpt2-64 1 64 "$BENCH llm --model gpt2 --seq 64 --builds 2 --queries 2 --lams 128 --modes Kpre:fs $NATIVE"
     sub b-cg-gpt2-64 1 64 "$BENCH llm --model gpt2 --seq 64 --builds 2 --queries 2 --lams 128 --modes C:fs \
 --policy $POL $gpuv"
@@ -580,28 +692,33 @@ tier_bench() {
   for m in gpt2 qwen3-4b llama2-7b llama2-13b; do
     mem=96; [ "$m" = llama2-13b ] && mem=128
     hc=1; hk=1; hg=1; [ "$m" = llama2-13b ] && hc=2
-    csub "b-c-$m-64" "$hc" "$mem" "$BENCH llm --model $m --seq 64 --builds full --queries 5 --lams 128 \
---modes C:fs --llm-tampers 30 --policy $POL $NATIVE"
-    csub "b-k-$m-64" "$hk" "$mem" "$BENCH llm --model $m --seq 64 --builds full --queries 5 --lams 128 \
---modes Kpre:fs $NATIVE"
-    sub "b-cg-$m-64" "$hg" "$mem" "$BENCH llm --model $m --seq 64 --builds full --queries 5 --lams 128 --modes C:fs \
---policy $POL $gpuv"
+    rw "$m" 64
+    csub "b-c-$m-64" $((hc + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 64 --builds full --queries 5 \
+--lams 128 --modes C:fs --llm-tampers 30 --policy $POL $NATIVE"
+    csub "b-k-$m-64" $((hk + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 64 --builds full --queries 5 \
+--lams 128 --modes Kpre:fs $NATIVE"
+    sub "b-cg-$m-64" $((hg + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 64 --builds full --queries 5 \
+--lams 128 --modes C:fs --policy $POL $gpuv"
   done
   csub b-c-gpt2-512 1 96 "$BENCH llm --model gpt2 --seq 512 --builds full --queries 5 --lams 128 --modes C:fs \
 --policy $POL $NATIVE"
-  csub b-c-llama2-7b-1 1 96 "$BENCH llm --model llama2-7b --seq 1 --builds full --queries 5 --lams 128 --modes C:fs \
---policy $POL $NATIVE"
+  rw llama2-7b 1
+  csub b-c-llama2-7b-1 $((1 + RH)) "$(memgb 96)" "$BENCH llm --model llama2-7b$R --seq 1 --builds full --queries 5 \
+--lams 128 --modes C:fs --policy $POL $NATIVE"
   # Maverick's setting (a fresh challenge per query): Kpre, lambda 40, one thread, without and with the encoding
-  csub b-k-qwen3-4b-8-thr1 1 96 "$BENCH llm --model qwen3-4b --seq 8 --builds full --queries 5 --lams 40 \
---modes Kpre:int --threads 1 --no-wire $NATIVE"
-  csub b-k-qwen3-4b-8-thr1-wire 1 96 "$BENCH llm --model qwen3-4b --seq 8 --builds full --queries 5 --lams 40 \
---modes Kpre:int --threads 1 $NATIVE"
+  rw qwen3-4b 8
+  csub b-k-qwen3-4b-8-thr1 $((1 + RH)) "$(memgb 96)" "$BENCH llm --model qwen3-4b$R --seq 8 --builds full \
+--queries 5 --lams 40 --modes Kpre:int --threads 1 --no-wire $NATIVE"
+  csub b-k-qwen3-4b-8-thr1-wire $((1 + RH)) "$(memgb 96)" "$BENCH llm --model qwen3-4b$R --seq 8 --builds full \
+--queries 5 --lams 40 --modes Kpre:int --threads 1 $NATIVE"
   # the security level (tab:eval-lambda): Llama-2-7B at lambda 40 and 80 in both modes (lambda 128: the cells of
   # (b) and (c)), the CPU verifier
-  csub b-lam-llama2-7b-64 2 96 "$BENCH llm --model llama2-7b --seq 64 --builds full --queries 5 --lams 40 80 \
---modes C:fs,Kpre:fs --policy $POL $NATIVE"
-  csub b-lam-llama2-7b-2k 4 128 "$BENCH llm --model llama2-7b --seq 2048 --builds full --queries 3 --lams 40 80 \
---modes C:fs,Kpre:fs --policy $POL $NATIVE"
+  rw llama2-7b 64
+  csub b-lam-llama2-7b-64 $((2 + RH)) "$(memgb 96)" "$BENCH llm --model llama2-7b$R --seq 64 --builds full --queries 5 \
+--lams 40 80 --modes C:fs,Kpre:fs --policy $POL $NATIVE"
+  rw llama2-7b 2048
+  csub b-lam-llama2-7b-2k $((4 + RH)) 128 "$BENCH llm --model llama2-7b$R --seq 2048 --builds full --queries 3 \
+--lams 40 80 --modes C:fs,Kpre:fs --policy $POL $NATIVE"
   # (c) 2,048-token prompts (zkLLM's rows interactive as well)
   for m in opt-125m opt-1.3b opt-6.7b llama2-7b llama2-13b; do
     q=3; mem=96; cm="C:fs,C:int"; hc=1; hk=1; hg=1
@@ -611,20 +728,23 @@ tier_bench() {
       llama2-7b) q=5; mem=128; hc=2 ;;
       llama2-13b) mem=128; hc=3; hg=2 ;;
     esac
-    csub "b-c-$m-2k" "$hc" "$mem" "$BENCH llm --model $m --seq 2048 --builds full --queries $q --lams 128 \
---modes $cm --policy $POL $NATIVE"
-    csub "b-k-$m-2k" "$hk" "$mem" "$BENCH llm --model $m --seq 2048 --builds full --queries $q --lams 128 \
---modes Kpre:fs $NATIVE"
-    sub "b-cg-$m-2k" "$hg" "$mem" "$BENCH llm --model $m --seq 2048 --builds full --queries $q --lams 128 \
---modes $cm --policy $POL $gpuv"
+    rw "$m" 2048
+    csub "b-c-$m-2k" $((hc + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 2048 --builds full --queries $q \
+--lams 128 --modes $cm --policy $POL $NATIVE"
+    csub "b-k-$m-2k" $((hk + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 2048 --builds full --queries $q \
+--lams 128 --modes Kpre:fs $NATIVE"
+    sub "b-cg-$m-2k" $((hg + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 2048 --builds full --queries $q \
+--lams 128 --modes $cm --policy $POL $gpuv"
   done
   # (d) our side of zkLLM's same-GPU comparison at the zkllm tier's other prompt lengths (--zkllm-seqs): mode C,
   # interactive, lambda 128, as zkLLM's rows of tab:eval-compare (the 2,048-token cells are those of (c))
   if [ -n "$ZKSHORT" ]; then
-    csub b-ci-llama2-7b-zk 2 128 "$BENCH llm --model llama2-7b --seq ${ZKSHORT//,/ } --builds full --queries $Q \
---lams 128 --modes C:int --policy $POL $NATIVE"
-    csub b-ci-llama2-13b-zk 3 128 "$BENCH llm --model llama2-13b --seq ${ZKSHORT//,/ } --builds full --queries $Q \
---lams 128 --modes C:int --policy $POL $NATIVE"
+    rw llama2-7b "$(tr ',' '\n' <<<"$ZKSHORT" | sort -n | tail -n 1)"
+    csub b-ci-llama2-7b-zk $((2 + RH)) "$(memgb 128)" "$BENCH llm --model llama2-7b$R --seq ${ZKSHORT//,/ } \
+--builds full --queries $Q --lams 128 --modes C:int --policy $POL $NATIVE"
+    rw llama2-13b "$(tr ',' '\n' <<<"$ZKSHORT" | sort -n | tail -n 1)"
+    csub b-ci-llama2-13b-zk $((3 + RH)) "$(memgb 128)" "$BENCH llm --model llama2-13b$R --seq ${ZKSHORT//,/ } \
+--builds full --queries $Q --lams 128 --modes C:int --policy $POL $NATIVE"
   fi
 }
 
@@ -633,29 +753,36 @@ tier_gpuv() {
   # at 2,048 tokens; the integer forward pass with int8 GEMMs and fp16/bf16 decoders of every table model at 64, 512
   # and 2,048 tokens (2 blocks and the full model); the host-to-device copy, pinned and pageable
   if [ -n "$REH" ]; then
+    rw opt-125m 64
     sub g-v0-gpt2 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre C --policy $POL --queries $Q \
---verifier-device cuda --stream --label gpuv --require-triton"
+--verifier-device cuda --stream --label gpuv --require-triton && $PERF --model opt-125m$R --layers 2 --seq 64 \
+--modes Kpre --queries $Q --verifier-device cuda --stream --label gpuv --require-triton"
     sub g-v1-gpt2 1 64 "$V1 --model gpt2 --layers 2 --seq 64 --modes Kpre --reps $Q --lmax 20 --verifier-device cuda \
---label gpuv-v1"
-    sub g-rx-gpt2 1 64 "$RX --model gpt2 --seq 64 --layers 1 2 --variants int float bf16 --device cuda --reps 2"
+--label gpuv-v1 && $V1 --model opt-125m$R --layers 2 --seq 64 --modes Kpre --reps $Q --lmax 20 \
+--verifier-device cuda --label gpuv-v1"
+    sub g-rx-gpt2 1 64 "$RX --model gpt2 --seq 64 --layers 1 2 --variants int float bf16 --device cuda --reps 2 && \
+$RX --model opt-125m$R --seq 64 --variants int float bf16 --device cuda --reps 2"
     sub g-h2d 1 32 "$H2D --sizes-mb 64 256 --reps 3 --label gpuv"
     return 0
   fi
   local m mode
   for m in opt-1.3b llama2-7b; do
+    rw "$m" 2048
     for mode in Kpre C; do
-      sub "g-v0-$m-$mode" 1 192 "$PERF --model $m --seq 2048 --modes $mode --policy $POL --queries $Q \
+      sub "g-v0-$m-$mode" $((1 + RH)) 192 "$PERF --model $m$R --seq 2048 --modes $mode --policy $POL --queries $Q \
 --verifier-device cuda --stream --label gpuv --require-triton"
     done
-    sub "g-v1-$m" 2 192 "$V1 --model $m --seq 2048 --modes Kpre --reps $Q --verifier-device cuda --label gpuv-v1"
+    sub "g-v1-$m" $((2 + RH)) 192 "$V1 --model $m$R --seq 2048 --modes Kpre --reps $Q --verifier-device cuda \
+--label gpuv-v1"
   done
   for m in opt-1.3b qwen3-4b llama2-7b opt-6.7b llama2-13b; do
-    sub "g-rx-$m" 2 128 "$RX --model $m --seq 64 512 2048 --layers 2 $(nl "$m") --variants int float bf16 \
---device cuda --reps $QH"
+    rx "$m" 64 512 2048 -- --variants int float bf16 --device cuda --reps $QH
+    sub "g-rx-$m" $((2 + RH)) "$(memgb 128)" "$RXC"
   done
   # long prompts (tab:eval-long-gpu): the streaming GPU verifier and re-execution on the same GPU on 2 and 3
   # Llama-2-7B blocks at 2,048 to 16,384 tokens, extrapolated to the full model as tab:eval-long is; the fused
-  # attention holds no T x T score tensor (the process's GPU peak)
+  # attention holds no T x T score tensor (the process's GPU peak); random weights, the whole curve on one footing
+  # (Llama-2's trained context ends at 4,096 positions)
   local t
   for t in 2048 4096 8192 16384; do
     sub "g-long-llama7-$t" 1 192 "$PERF --model llama2-7b --layers 2 --seq $t --modes Kpre --queries $Q \
@@ -674,8 +801,14 @@ tier_gen() {
   # P = G = 512 response (the text's per-prefix comparison) in mode C; the same responses generated without a proof
   # (fp16 with a KV cache, experiments/generation/decode_baseline.py)
   if [ -n "$REH" ]; then
+    # (decode_baseline.py's real-weight path on Qwen3-0.6B, the smallest checkpoint of a Llama-family shape here)
+    rw opt-125m 16 4
+    local dq=" --real Qwen/Qwen3-0.6B-Base"
+    [ -z "$RANDOMW" ] || dq=""
     csub gen-gpt2 1 64 "$GEN --model gpt2 --layers 2 --prompt 16 --gen 4 --decode greedy sample --modes C Kpre \
 --policy $POL --queries $Q --label gen $NATIVE && $DEC --model small-llama tiny-qwen --prompt 16 --gen 4 --reps $Q \
+--label gen && $GEN --model opt-125m$R --layers 2 --prompt 16 --gen 4 --decode greedy sample --modes C Kpre \
+--policy $POL --queries $Q --label gen $NATIVE && $DEC --model qwen3-0.6b$dq --prompt 16 --gen 4 --reps $Q \
 --label gen"
     return 0
   fi
@@ -683,35 +816,55 @@ tier_gen() {
   csub gen-gpt2 1 64 "$GEN --model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --policy $POL \
 --queries $Q --label gen $NATIVE"
   for m in llama2-7b qwen3-4b; do
-    csub "gen-$m" 3 192 "$GEN --model $m --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre \
+    rw "$m" 512 256
+    csub "gen-$m" $((3 + RH)) 192 "$GEN --model $m$R --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre \
 --policy $POL --queries $Q --label gen $NATIVE"
   done
   # the text's P = G = 512 response of Llama-2-7B, measured as one prefill (mode C, greedy)
-  csub gen-llama2-7b-512 3 192 "$GEN --model llama2-7b --prompt 512 --gen 512 --decode greedy --modes C \
+  rw llama2-7b 512 512
+  csub gen-llama2-7b-512 $((3 + RH)) 192 "$GEN --model llama2-7b$R --prompt 512 --gen 512 --decode greedy --modes C \
 --policy $POL --queries $Q --label gen $NATIVE"
-  # the same responses generated without a proof on this GPU (fp16, KV cache): the provider's overhead
-  sub gen-decode 1 64 "$DEC --model llama2-7b qwen3-4b --prompt 512 --gen 64 256 512 --reps $QH --label gen"
+  # the same responses generated without a proof on this GPU (fp16, KV cache): the provider's overhead; a
+  # checkpoint's decoder is one model per command (its download and its load in fp16: minutes)
+  local dec="" real="" a="--prompt 512 --gen 64 256 512 --reps $QH --label gen"
+  for m in llama2-7b qwen3-4b; do
+    rw "$m" 512 512
+    real="$real$R"
+    dec="$dec${dec:+ && }$DEC --model $m$R $a"
+  done
+  if [ -z "$real" ]; then
+    sub gen-decode 1 64 "$DEC --model llama2-7b qwen3-4b $a"
+  else
+    sub gen-decode 2 64 "$dec"
+  fi
 }
 
 tier_batch() {
   # B prompts of one client against one fold and one opening (B = 1 is each cell's own queries), modes C and Kpre
   # under Fiat-Shamir, 3 trials per B; the interactive Llama-2-7B 64-token cell checks the batched byte model
   if [ -n "$REH" ]; then
+    rw opt-125m 64
     csub bt-gpt2-c 1 64 "$BENCH llm --model gpt2 --seq 64 --builds 2 --queries 2 --lams 128 --modes C:fs --batches 4 \
---batch-trials 2 --policy $POL $NATIVE"
+--batch-trials 2 --policy $POL $NATIVE && $BENCH llm --model opt-125m$R --seq 64 --builds 2 --queries 2 --lams 128 \
+--modes C:fs --batches 4 --batch-trials 2 --policy $POL $NATIVE"
     csub bt-gpt2-k 1 64 "$BENCH llm --model gpt2 --seq 64 --builds 2 --queries 2 --lams 128 --modes Kpre:fs \
 --batches 4 --batch-trials 2 $NATIVE"
     return 0
   fi
   local b="--builds full --queries 3 --lams 128 --batch-trials 3 $NATIVE"
-  csub bt-llama2-7b-64-c 1 128 "$BENCH llm --model llama2-7b --seq 64 $b --modes C:fs --batches 4 16 64 --policy $POL"
-  csub bt-llama2-7b-64-cint 1 128 "$BENCH llm --model llama2-7b --seq 64 $b --modes C:int --batches 4 16 64 \
+  rw llama2-7b 64
+  csub bt-llama2-7b-64-c $((1 + RH)) 128 "$BENCH llm --model llama2-7b$R --seq 64 $b --modes C:fs --batches 4 16 64 \
 --policy $POL"
-  csub bt-llama2-7b-64-k 1 128 "$BENCH llm --model llama2-7b --seq 64 $b --modes Kpre:fs --batches 4 16 64"
-  csub bt-opt-1.3b-512-c 1 96 "$BENCH llm --model opt-1.3b --seq 512 $b --modes C:fs --batches 4 16 --policy $POL"
-  csub bt-opt-1.3b-512-k 1 96 "$BENCH llm --model opt-1.3b --seq 512 $b --modes Kpre:fs --batches 4 16"
-  csub bt-llama2-7b-2k-c 2 192 "$BENCH llm --model llama2-7b --seq 2048 $b --modes C:fs --batches 2 4 --policy $POL"
-  csub bt-llama2-7b-2k-k 1 192 "$BENCH llm --model llama2-7b --seq 2048 $b --modes Kpre:fs --batches 2 4"
+  csub bt-llama2-7b-64-cint $((1 + RH)) 128 "$BENCH llm --model llama2-7b$R --seq 64 $b --modes C:int \
+--batches 4 16 64 --policy $POL"
+  csub bt-llama2-7b-64-k $((1 + RH)) 128 "$BENCH llm --model llama2-7b$R --seq 64 $b --modes Kpre:fs --batches 4 16 64"
+  rw opt-1.3b 512
+  csub bt-opt-1.3b-512-c 1 96 "$BENCH llm --model opt-1.3b$R --seq 512 $b --modes C:fs --batches 4 16 --policy $POL"
+  csub bt-opt-1.3b-512-k 1 96 "$BENCH llm --model opt-1.3b$R --seq 512 $b --modes Kpre:fs --batches 4 16"
+  rw llama2-7b 2048
+  csub bt-llama2-7b-2k-c $((2 + RH)) 192 "$BENCH llm --model llama2-7b$R --seq 2048 $b --modes C:fs --batches 2 4 \
+--policy $POL"
+  csub bt-llama2-7b-2k-k $((1 + RH)) 192 "$BENCH llm --model llama2-7b$R --seq 2048 $b --modes Kpre:fs --batches 2 4"
 }
 
 tier_real() {
@@ -781,10 +934,13 @@ tier_setup() {
   # GPU and verifier on 8 CPU threads; GPT-2 at a = 100 and 1,000 (never through the setup cache)
   local st="$M.costs.setup_timing --policy $POL --threads 8 --label setup"
   if [ -n "$REH" ]; then
-    csub setup-gpt2 1 64 "$st --model gpt2 --layers 2 --amortise 100 --reps 1"
+    rw opt-125m
+    csub setup-gpt2 1 64 "$st --model gpt2 --layers 2 --amortise 100 --reps 1 && $st --model opt-125m$R --layers 2 \
+--amortise 100 --reps 1"
     return 0
   fi
-  csub setup-llama2-7b 3 128 "$st --model llama2-7b --amortise 100 --reps 1"
+  rw llama2-7b
+  csub setup-llama2-7b $((3 + RH)) 128 "$st --model llama2-7b$R --amortise 100 --reps 1"
   csub setup-gpt2 1 64 "$st --model gpt2 --amortise 100 1000 --reps 3"
 }
 
@@ -795,14 +951,22 @@ tier_improve() {
   # and the prover's and CPU verifier's times on the same queries, modes Kpre and C)
   local a="--queries $Q --label improve" m
   if [ -n "$REH" ]; then
-    sub i-open-gpt2 1 64 "$M.improvements.open_ab --model gpt2 --layers 2 --queries 3"
-    sub i-forward-gpt2 1 64 "$M.improvements.forward_ab --model gpt2 --layers 2 --seq 64"
-    sub i-encode-gpt2 1 64 "$M.improvements.encode_ab --model gpt2 --layers 2 --seq 64 --fused"
-    csub i-fold-gpt2 1 64 "$M.improvements.fold_ab --model gpt2 --layers 2 --devices cpu cuda --reps 1 --threads 8"
+    # (each script's real-weight path on OPT-125M's first 2 blocks after its GPT-2 cell)
+    rw opt-125m 64
+    local o="--model opt-125m$R --layers 2"
+    sub i-open-gpt2 1 64 "$M.improvements.open_ab --model gpt2 --layers 2 --queries 3 && \
+$M.improvements.open_ab $o --queries 3"
+    sub i-forward-gpt2 1 64 "$M.improvements.forward_ab --model gpt2 --layers 2 --seq 64 && \
+$M.improvements.forward_ab $o --seq 64"
+    sub i-encode-gpt2 1 64 "$M.improvements.encode_ab --model gpt2 --layers 2 --seq 64 --fused && \
+$M.improvements.encode_ab $o --seq 64 --fused"
+    csub i-fold-gpt2 1 64 "$M.improvements.fold_ab --model gpt2 --layers 2 --devices cpu cuda --reps 1 --threads 8 && \
+$M.improvements.fold_ab $o --devices cpu cuda --reps 1 --threads 8"
     sub i-v1phases-gpt2 1 64 "$M.v1.v1_phases --model gpt2 --layers 2 --seq 64 --mode Kpre --reps 2 --device cuda \
+--v1-verifier optimised baseline && $M.v1.v1_phases $o --seq 64 --mode Kpre --reps 2 --device cuda \
 --v1-verifier optimised baseline"
     # the A/B cells of perf.py with the full cells' flags, on an OPT and a Llama shape (2 blocks and 1) at 64 tokens
-    for m in "opt-125m --layers 2" "llama2-7b --layers 1"; do
+    for m in "opt-125m$R --layers 2" "llama2-7b --layers 1"; do
       sub "i-attn-${m%% *}" 1 64 "$PERF --model $m --seq 64 --modes Kpre --prune-last off $a --verifier-device cuda \
 --stream --no-fused-attention --label attn-before && $PERF --model $m --seq 64 --modes Kpre --prune-last off $a \
 --verifier-device cuda --stream --label attn-after"
@@ -813,34 +977,50 @@ tier_improve() {
     csub i-cpuv-llama2-7b 1 64 "$PERF --model llama2-7b --layers 1 --seq 64 --modes Kpre $a --verifier-device cpu \
 --no-native --no-malloc-tune --label cpuv-before && $PERF --model llama2-7b --layers 1 --seq 64 --modes Kpre $a \
 --verifier-device cpu --label cpuv-after $NATIVE"
-    sub i-profile-opt-125m 1 64 "$M.improvements.gpu_profile --model opt-125m --layers 2 --seq 64"
+    sub i-profile-opt-125m 1 64 "$M.improvements.gpu_profile --model opt-125m$R --layers 2 --seq 64"
     sub i-gkr 1 32 "$M.v1.gkr_bench --n 20 --check 20"
     csub i-probbits-gpt2 1 64 "$PERF --model gpt2 --layers 2 --seq 64 --modes Kpre C --policy $POL \
 --prob-max 255 2047 --queries $Q --verifier-device cpu --label prob-bits $NATIVE"
     return 0
   fi
-  sub i-open-llama2-7b 1 128 "$M.improvements.open_ab --model llama2-7b --layers 1 4 --queries 7"
-  sub i-open-llama2-13b 1 128 "$M.improvements.open_ab --model llama2-13b --layers 1 --queries 7"
+  # (the A/B pairs: both sides on the same weights, real where the rule makes them real; a real job's limit takes
+  # its checkpoint's load once per command)
+  rw llama2-7b 64
+  sub i-open-llama2-7b $((1 + RH)) 128 "$M.improvements.open_ab --model llama2-7b$R --layers 1 4 --queries 7"
+  rw llama2-13b 64
+  sub i-open-llama2-13b $((1 + RH)) "$(memgb 128)" "$M.improvements.open_ab --model llama2-13b$R --layers 1 \
+--queries 7"
   sub i-open-gpt2 1 64 "$M.improvements.open_ab --model gpt2 --queries 7"
-  sub i-forward-llama2-7b 1 128 "$M.improvements.forward_ab --model llama2-7b --layers 2 --seq 2048"
-  sub i-encode-opt-1.3b 1 192 "$M.improvements.encode_ab --model opt-1.3b --layers 24 --seq 2048 --fused"
-  sub i-encode-llama2-7b 1 128 "$M.improvements.encode_ab --model llama2-7b --layers 2 --seq 2048"
-  for m in "opt-1.3b --layers 12" "llama2-7b --layers 2"; do
-    sub "i-attn-${m%% *}" 1 128 "$PERF --model $m --seq 2048 --modes Kpre --prune-last off $a --verifier-device cuda \
---stream --no-fused-attention --label attn-before && $PERF --model $m --seq 2048 --modes Kpre --prune-last off $a \
---verifier-device cuda --stream --label attn-after"
-    sub "i-gpuv-${m%% *}" 1 128 "$PERF --model $m --seq 2048 --modes Kpre $a --verifier-device cuda --stream \
---no-gpu-decode --no-fused-attention --label gpuv-before && $PERF --model $m --seq 2048 --modes Kpre $a \
+  rw llama2-7b 2048
+  sub i-forward-llama2-7b $((1 + RH)) 128 "$M.improvements.forward_ab --model llama2-7b$R --layers 2 --seq 2048"
+  rw opt-1.3b 2048
+  sub i-encode-opt-1.3b 1 192 "$M.improvements.encode_ab --model opt-1.3b$R --layers 24 --seq 2048 --fused"
+  rw llama2-7b 2048
+  sub i-encode-llama2-7b $((1 + RH)) 128 "$M.improvements.encode_ab --model llama2-7b$R --layers 2 --seq 2048"
+  for m in opt-1.3b:12 llama2-7b:2; do
+    rw "${m%:*}" 2048
+    m="${m%:*}$R --layers ${m#*:}"
+    sub "i-attn-${m%% *}" $((1 + 2 * RH)) 128 "$PERF --model $m --seq 2048 --modes Kpre --prune-last off $a \
+--verifier-device cuda --stream --no-fused-attention --label attn-before && $PERF --model $m --seq 2048 --modes Kpre \
+--prune-last off $a --verifier-device cuda --stream --label attn-after"
+    sub "i-gpuv-${m%% *}" $((1 + 2 * RH)) 128 "$PERF --model $m --seq 2048 --modes Kpre $a --verifier-device cuda \
+--stream --no-gpu-decode --no-fused-attention --label gpuv-before && $PERF --model $m --seq 2048 --modes Kpre $a \
 --verifier-device cuda --stream --label gpuv-after"
   done
-  csub i-cpuv-llama2-7b 1 128 "$PERF --model llama2-7b --layers 2 --seq 2048 --modes Kpre $a --verifier-device cpu \
---no-native --no-malloc-tune --label cpuv-before && $PERF --model llama2-7b --layers 2 --seq 2048 --modes Kpre $a \
---verifier-device cpu --label cpuv-after $NATIVE"
-  sub i-profile-opt-1.3b 1 128 "$M.improvements.gpu_profile --model opt-1.3b --layers 12 --seq 2048"
-  csub i-fold-llama2-7b 2 192 "$M.improvements.fold_ab --model llama2-7b --devices cpu cuda --reps 3 --threads 8"
-  sub i-v1phases-llama2-7b 2 192 "$M.v1.v1_phases --model llama2-7b --layers 2 --seq 2048 --mode Kpre --reps 3 \
---device cuda --v1-verifier optimised baseline"
+  rw llama2-7b 2048
+  csub i-cpuv-llama2-7b $((1 + 2 * RH)) 128 "$PERF --model llama2-7b$R --layers 2 --seq 2048 --modes Kpre $a \
+--verifier-device cpu --no-native --no-malloc-tune --label cpuv-before && $PERF --model llama2-7b$R --layers 2 \
+--seq 2048 --modes Kpre $a --verifier-device cpu --label cpuv-after $NATIVE"
+  rw opt-1.3b 2048
+  sub i-profile-opt-1.3b 1 128 "$M.improvements.gpu_profile --model opt-1.3b$R --layers 12 --seq 2048"
+  rw llama2-7b
+  csub i-fold-llama2-7b $((2 + RH)) 192 "$M.improvements.fold_ab --model llama2-7b$R --devices cpu cuda --reps 3 \
+--threads 8"
+  rw llama2-7b 2048
+  sub i-v1phases-llama2-7b $((2 + RH)) 192 "$M.v1.v1_phases --model llama2-7b$R --layers 2 --seq 2048 --mode Kpre \
+--reps 3 --device cuda --v1-verifier optimised baseline"
   sub i-gkr 1 64 "$M.v1.gkr_bench --n 20 22 24 25 --check 20"
+  # (8- against 11-bit probabilities: random weights, whose scale --prob-max sets; a checkpoint's recipe fixes it)
   csub i-probbits-llama2-7b 1 128 "$PERF --model llama2-7b --layers 2 --seq 2048 --modes Kpre C --policy $POL \
 --prob-max 255 2047 --queries $QH --verifier-device cpu --label prob-bits $NATIVE"
 }
@@ -1135,16 +1315,20 @@ tier_gate() {
   # blocks at 16,384 tokens: the CPU verifier and the exact re-execution variants that tab:eval-long reads, the
   # rotary positions extended.  (The setup proof's openings span every member of a tree, so only the setup tier's
   # full Llama-2-7B reaches its size)
-  local l7="--model llama2-7b --seq 2048" r125="--model opt-125m --real facebook/opt-125m"
-  csub gate-v1-llama7-2k-2 1 128 "$V1 $l7 --layers 2 --modes Kpre C --policy $POL --reps 2 --tampers 2 \
+  # (the cells on the run's weights: rw; the long tier's cells, as that tier, on random weights)
+  local l7 h7 r125="--model opt-125m --real facebook/opt-125m"
+  rw llama2-7b 2048
+  l7="--model llama2-7b$R --seq 2048" h7=$RH
+  csub gate-v1-llama7-2k-2 $((1 + h7)) 128 "$V1 $l7 --layers 2 --modes Kpre C --policy $POL --reps 2 --tampers 2 \
 --v1-verifier optimised baseline --label gate $NATIVE"
-  sub gate-g-v1-llama7-2k-2 1 128 "$V1 $l7 --layers 2 --modes Kpre --reps 2 --tampers 1 --verifier-device cuda \
---label gate"
-  csub gate-v1-opt13-2k 1 192 "$V1 --model opt-1.3b --seq 2048 --modes Kpre C --policy $POL --reps 2 --tampers 1 \
+  sub gate-g-v1-llama7-2k-2 $((1 + h7)) 128 "$V1 $l7 --layers 2 --modes Kpre --reps 2 --tampers 1 \
+--verifier-device cuda --label gate"
+  rw opt-1.3b 2048
+  csub gate-v1-opt13-2k 1 192 "$V1 --model opt-1.3b$R --seq 2048 --modes Kpre C --policy $POL --reps 2 --tampers 1 \
 --label gate $NATIVE"
   csub gate-r-opt125-v1-2k 1 96 "$V1 $r125 --seq 2048 --modes Kpre C --policy $POL --reps 2 --tampers 1 --label gate \
 $NATIVE"
-  csub gate-v1-llama7-2k 2 256 "$V1 $l7 --modes Kpre --reps 1 --tampers 1 --label gate $NATIVE"
+  csub gate-v1-llama7-2k $((2 + h7)) 256 "$V1 $l7 --modes Kpre --reps 1 --tampers 1 --label gate $NATIVE"
   csub gate-l-llama7-16k 1 192 "$PERF --model llama2-7b --layers 2 --seq 16384 --modes Kpre --queries 1 \
 --verifier-device cpu --label gate $NATIVE"
   csub gate-l-rx-llama7-16k 1 192 "$RX --model llama2-7b --seq 16384 --layers 2 --variants int int_mm int_fp32gemm \
@@ -1185,11 +1369,16 @@ preflight() {   # what the jobs need from this host and the scheduler, checked b
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do
     case "$t" in real|quality|qllama|qcheck|tv|attack|gate) hf=1 ;; zkllm) [ -z "$LLAMA" ] || hf=1 ;; esac
+    # the cost tiers' real-weight cells (rw): OPT-125M, OPT-1.3B and OPT-6.7B (about 16 GB), Qwen3-4B (8 GB) and,
+    # with --llama-licence, Llama-2-7B and Llama-2-13B (40 GB), and WikiText-2
+    case "$t" in cpuv|cpux|v1|serve|bench|gpuv|gen|batch|setup|improve) [ -n "$RANDOMW" ] || hf=1 ;; esac
     [ "$t" != qllama ] || [ -n "$LLAMA" ] || spm=1       # OpenLLaMA-7B's jobs run only without --llama-licence
     [ "$t" != qcheck ] || [ -n "$LLAMA$REH" ] || spm=1  # (the qcheck tier's rehearsal: TinyLlama's tokenizer)
   done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
-GB free> (the real, quality, qllama, qcheck, tv, attack, gate and zkllm tiers download checkpoints and datasets)")
+GB free> (every tier but smoke and long downloads checkpoints and datasets: OPT-125M, OPT-1.3B and OPT-6.7B about \
+16 GB, Qwen3-4B 8 GB, Llama-2-7B and Llama-2-13B 40 GB with --llama-licence; --random-weights leaves the cost tiers \
+without downloads)")
   # a cache variable of Hugging Face's libraries takes precedence over HF_HOME: it must be writable (the nearest
   # existing folder of its path)
   for v in HF_HUB_CACHE HUGGINGFACE_HUB_CACHE TRANSFORMERS_CACHE HF_DATASETS_CACHE; do

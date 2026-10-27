@@ -20,7 +20,7 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 | The Python headers for Triton's launcher | Triton compiles a small launcher with `Python.h` on first use, on the GPU node | on the GPU node, `.venv/bin/python -c "import os, sysconfig; print(os.path.exists(os.path.join(sysconfig.get_paths()['include'], 'Python.h')))"`; if `False`, copy the headers into a folder and `export PVI_PY_INCLUDE=<folder>` |
 | About 10 GB of free temporary space on the GPU node, and about 21 GB during the `cpuv` tier's llama.cpp job | the compilers of Triton's launcher and of the native kernels write their temporary files to `$TMPDIR` (default `/tmp`); the `cpuv` tier's client process receives each Llama-2-7B proof through a file there (6.4 GB at 2,048 tokens; one at a time); the llama.cpp job (`experiments/reexec/llamacpp.py`) writes the bf16 and Q8_0 files of Llama-2-7B's shapes there (13.5 and 7.2 GB, deleted at its end; 1.4 GB for the rehearsal's one block) and stops before writing them if they do not fit | on the GPU node, `df -h ${TMPDIR:-/tmp}`; if it is full, `export TMPDIR=<folder on a disk the nodes see>` (sbatch passes it to the jobs) |
 | CMake 3.14 or later and git (the `cpuv` tier) | the `cpuv` tier's llama.cpp job clones llama.cpp's release v0.6.0 and builds `llama-bench` and `llama-quantize` for the node's CPU (`-march=native`, with `CXX`), once per platform, into `logs/<name>/llamacpp/` (about 1 GB); `run.sh` submits nothing while that tier is selected and CMake (`CMAKE`, else `cmake` on the `PATH`) or git is missing | `${CMAKE:-cmake} --version`, `git --version`; without CMake, one way is `pip install cmake==3.31.6` into a separate environment (`python3 -m venv ~/cmake && ~/cmake/bin/pip install cmake==3.31.6`, then `export CMAKE=~/cmake/bin/cmake`), which leaves the run's environment unchanged. The job clones from GitHub; if the compute nodes have no network access, clone the release beforehand: `git clone --depth 1 --branch v0.6.0 https://github.com/ggml-org/llama.cpp.git logs/<name>/llamacpp/src` |
-| `HF_HOME` on a disk the GPU nodes see, with about 60 GB free, 100 GB with `--llama-licence` (a node-local folder holds a copy per node) | the `real`, `quality`, `qllama`, `qcheck`, `tv` and `attack` tiers (and `zkllm`, with `--llama-licence`) download OPT-125M to OPT-6.7B, OpenLLaMA-7B (without `--llama-licence`), TinyLlama, Qwen3 and WikiText-2 (47 GB of checkpoints); with `--llama-licence` also Llama-2-7B and Llama-2-13B (40 GB more; each repository has its own gate on Hugging Face), for which the jobs need your Hugging Face token: `export HF_TOKEN=<token>` (sbatch passes it to the jobs; `run.sh` never writes it into one), or a login whose `$HF_HOME/token` the compute node reads | `df -h $HF_HOME` |
+| `HF_HOME` on a disk the GPU nodes see, with about 60 GB free, 100 GB with `--llama-licence` (a node-local folder holds a copy per node) | every tier but `smoke` and `long` downloads checkpoints: the cost tiers' real-weight cells OPT-125M, OPT-1.3B and OPT-6.7B (about 16 GB), Qwen3-4B (8 GB) and WikiText-2, the `quality`, `qllama`, `qcheck`, `tv` and `attack` tiers also OpenLLaMA-7B (without `--llama-licence`), TinyLlama and the smaller Qwen3 models (47 GB of checkpoints in all); with `--llama-licence` also Llama-2-7B and Llama-2-13B (40 GB more, read by the cost tiers, `real`, `qllama`, `qcheck` and `zkllm`; each repository has its own gate on Hugging Face), for which the jobs need your Hugging Face token: `export HF_TOKEN=<token>` (sbatch passes it to the jobs; `run.sh` never writes it into one), or a login whose `$HF_HOME/token` the compute node reads | `df -h $HF_HOME` |
 | The trained image models and their datasets (not in the repository) | the `bench` tier's image cells (MLP, LeNet-5, VGG-11/16, ResNet-18 on CIFAR-10 and on 224-pixel dogs-vs-cats, and the dogs-vs-squirrels ResNet-18 that is Anchuri et al.'s substitute model) | `code/artifacts/models/cnn/{lenet5,vgg11,vgg16,resnet18_cifar,resnet18_224,resnet18_224_squirrel}.pt` (on the GPU node, from `code/`: `PYTHONPATH=src:. ../.venv/bin/python -m experiments.costs.train_cnn --model <m> --device cuda`, seed 0); CIFAR-10 in the `cifar-10-batches-py` layout under `code/data/cifar10` (or `$PVI_CIFAR_ROOT`); the ImageNet subsets' caches `dogs_cats.pt` and `dogs_squirrels.pt` under `code/artifacts/cache` (or `$PVI_CACHE`), or ImageNet under `code/data/imagenet` (or `$PVI_IMAGENET_ROOT`) with `train/` and `val/` holding class `i` of the sorted synsets in folder `i + 1` (`1` to `1000`; the dogs are `152` to `269`, the cats `282` to `286`, the fox squirrel `336`), from which the first run writes the caches. `run.sh all` and `run.sh bench` stop before submitting anything if one is missing |
 | SLURM (`sbatch`, `squeue`), or none | the jobs | with SLURM: `export SBATCH_PARTITION=... SBATCH_GRES=gpu:<type>:1 [SBATCH_ACCOUNT=...]` (or `--gres gpu:<type>:1`; `run.sh` passes it to every job and allocation and submits nothing without it; `--exclude-nodes <list>` keeps the jobs off the partition's nodes of another GPU or CPU model); without: `--local` (every job runs in the foreground, one after another: start it in `tmux` or under `nohup`) |
 | The platform's GPU and CPU models on every node a job runs on | one platform for every number | `--require-gpu`, `--require-cpu` (defaults `L40S`, `EPYC 9334`; on another platform pass its names, or `any`); `run.sh --dry-run` prints them in its `# node:` line |
@@ -28,10 +28,26 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 | For the optional `zkllm` tier (with `--llama-licence`): git, make, gcc/g++ (12 or older for CUDA 12.1) and a CUDA toolkit (nvcc; CUDA 12.1 as zkLLM recommends), a Python 3.8 to 3.12, about 10 GB for zkLLM's checkout and environment and 58 GB of scratch space on the GPU node | the tier clones zkLLM's public demo (commit `993311e`) and builds it for the node's GPU in an environment of its own (`logs/<name>/zkllm/home`, or `--zkllm-home`; the run's `.venv` is not changed); zkLLM writes its fixed-point weights and commitments (27 GB for Llama-2-7B, 52 GB for Llama-2-13B) to the scratch folder (`--zkllm-scratch`, default the node's `$TMPDIR`, else `/tmp`, else the zkLLM home) and the job deletes them at its end; the checkpoints are the Llama-2 ones of `HF_HOME`. `run.sh` submits nothing while one of these is missing on the submitting host and says which (`experiments/comparison/zkllm/README.md`) | `git --version; make --version; g++ --version; nvcc --version` (or `--cuda-home <CUDA folder>`, e.g. after `module load cuda/12.1`, passed to the jobs); on the GPU node, `df -h ${TMPDIR:-/tmp}` |
 | No Hugging Face cache variable that overrides `HF_HOME` with a folder the jobs cannot write | `HF_HUB_CACHE`, `TRANSFORMERS_CACHE` and `HF_DATASETS_CACHE` take precedence over `HF_HOME` | `env \| grep -E 'HF_HUB_CACHE\|TRANSFORMERS_CACHE\|HF_DATASETS_CACHE'`; `run.sh` refuses an unwritable one (`unset` it) |
 
-Every language model of the cost tiers has random weights (the costs depend only on the shapes); real checkpoints
-are downloaded by the `real`, `quality`, `qllama`, `qcheck`, `tv`, `attack` and `zkllm` tiers only. The Llama-2 cells
-(`real`, `qllama`, `qcheck`, `zkllm`) need the Llama-2 licence on your own Hugging Face account and your own token, and run only with
-`--llama-licence`.
+The cost tiers' language-model cells take the real checkpoints (`--real`, `experiments/common/real_cells.py`): their
+integer graphs are built as the certified models are (OPT with `hf_opt.CERTIFIED_RECIPE`, Llama-2 and Qwen3-4B with
+the main Llama recipe and its fixed public prefix) and queried on WikiText-2 windows. One rule decides each cell
+(`rw` in `run.sh`, `real_cells.main_checkpoint` in Python, by which `numbers.py` reads the records): Llama-2-7B and
+Llama-2-13B (with `--llama-licence`), OPT-125M, OPT-1.3B, OPT-6.7B and Qwen3-4B are real wherever the prompt, the
+generated tokens and a Llama-family recipe's fixed prefix fit the checkpoint's trained context (Llama-2: cells up to
+2,048 tokens); GPT-2, the image models, the 4,096-token cells and the whole long-prompt curve (the `long` tier, the
+GPU verifier's long cells `g-long-*`, V1's codec curve `v1-codec-llama7-*`) keep random weights of the same shapes,
+so that each curve is measured on one kind of weights. The `real` tier keeps its real-weight cells next to their
+random-weight twins, which measure how much the values matter. A re-execution job measures its 2-block rows on random
+weights and its full model on the checkpoint (`reexec.py --real` measures the full graph only), and the 8- against
+11-bit A/B of the `improve` tier stays on random weights (a checkpoint's recipe fixes the scale). A real-weight job
+loads its checkpoint in fp32 (about 27 GB for a 7B model, 52 GB for Llama-2-13B; peaks of about 40 and 78 GB during
+the calibration, 60 to 90 GB for a 7B re-execution job, which also holds the float weights) and calibrates it on the
+CPU (about 10 to 30 minutes for a 7B model, twice that for Llama-2-13B): its time limit is one hour longer (two for
+Llama-2-13B, one more for a re-execution job) and it asks for at least 128 GB (256 GB for Llama-2-13B).
+`--random-weights` restores the previous run, every cost cell on random weights (the `real` tier unchanged), with its
+job limits and estimates. The Llama-2 cells need the Llama-2 licence on your own Hugging Face account and your own
+token, and are real only with `--llama-licence` (without it the Llama-2 cost cells take random weights, and the
+`real`, `qllama`, `qcheck` and `zkllm` tiers' Llama-2 cells do not run).
 
 ## 2. Setup
 
@@ -92,17 +108,17 @@ during the run. Every job asks for at most 64 GB of host memory:
 | Tier | Jobs | The rehearsal's cells |
 |---|---:|---|
 | `smoke` | 2 | the Fiat-Shamir tree, serving, options and package tests; the native-kernel and int8 self-checks, one V1 query, the host-to-device copy; `xcheck` on the MLP and two GPT-2 blocks at 16 tokens (V1: one block) |
-| `cpuv` | 4 | GPT-2 (2 blocks, 64 tokens): the CPU verifier (its proofs checked again in the client's own process), every re-execution baseline, V1's two CPU verifiers; llama.cpp's build and one block of Llama-2-7B's shapes in Q8_0 and bf16 (64 tokens) |
-| `cpux` | 3 | GPT-2 (2 blocks, 64 tokens): the CPU verifier and exact re-execution on 4 pinned cores, both without the AVX-512 attention kernel on 8; mode C's six candidate plans side by side without the setup cache |
-| `v1` | 2 | V1 against v0 on GPT-2; V1's codec profile of GPT-2 (2 blocks, 512 tokens) on the GPU |
-| `serve` | 1 | OPT-125M (2 blocks): single prompts and batches of 4 |
-| `bench` | 5 | LeNet-5; GPT-2 in modes C and Kpre, with the GPU verifier, and in Maverick's setting (one thread, no compact encoding) |
-| `gpuv` | 4 | GPT-2: the streaming GPU verifier, V1's GPU verifier, re-execution on the GPU; the host-to-device copy |
-| `gen` | 1 | GPT-2: 4 generated tokens, greedy and sampled; unverified generation (fp16, KV cache) on small Llama- and Qwen3-style decoders (Transformers' classes of the full cells) |
-| `batch` | 2 | GPT-2: batches of 4 prompts, modes C and Kpre |
+| `cpuv` | 4 | GPT-2 (2 blocks, 64 tokens): the CPU verifier (its proofs checked again in the client's own process), every re-execution baseline, V1's two CPU verifiers, each followed by its real-weight path on OPT-125M; llama.cpp's build and one block of Llama-2-7B in Q8_0 and bf16 (64 tokens; the checkpoint's block with `--llama-licence`) |
+| `cpux` | 3 | GPT-2 (2 blocks, 64 tokens): the CPU verifier and exact re-execution on 4 pinned cores (then both on the real OPT-125M), both without the AVX-512 attention kernel on 8; mode C's six candidate plans side by side without the setup cache |
+| `v1` | 2 | V1 against v0 on GPT-2, then on the real OPT-125M (2 blocks); V1's codec profile of GPT-2 (2 blocks, 512 tokens) on the GPU |
+| `serve` | 1 | the real OPT-125M (2 blocks): single prompts and batches of 4 |
+| `bench` | 5 | LeNet-5; GPT-2 in modes C and Kpre (then the real OPT-125M's first 2 blocks), with the GPU verifier, and in Maverick's setting (one thread, no compact encoding) |
+| `gpuv` | 4 | GPT-2, each followed by the real OPT-125M: the streaming GPU verifier, V1's GPU verifier, re-execution on the GPU; the host-to-device copy |
+| `gen` | 1 | GPT-2 and the real OPT-125M (2 blocks): 4 generated tokens, greedy and sampled; unverified generation (fp16, KV cache) on small Llama- and Qwen3-style decoders (Transformers' classes of the full cells) and on the real Qwen3-0.6B |
+| `batch` | 2 | GPT-2: batches of 4 prompts, modes C (then the real OPT-125M) and Kpre |
 | `real` | 4 | the certified OPT-125M: v0, V1 (modes Kpre and C), V1's codec profile and generated responses |
-| `setup` | 1 | the setup proof of GPT-2 (2 blocks) |
-| `improve` | 13 | the A/B cells of `tab:eval-improve` (opening, forward pass, encoder, fold; the fused attention and the GPU verifier before and after on OPT-125M with 2 blocks and on one Llama-2-7B block, the CPU verifier on that block), V1's two verifiers by phase, the GPU profile, the GKR prover at 2^20 leaves, 8- against 11-bit attention probabilities on GPT-2 (2 blocks) |
+| `setup` | 1 | the setup proof of GPT-2 and of the real OPT-125M (2 blocks) |
+| `improve` | 13 | the A/B cells of `tab:eval-improve` (opening, forward pass, encoder, fold, each on GPT-2 and then on the real OPT-125M; the fused attention and the GPU verifier before and after on the real OPT-125M with 2 blocks and on one random-weight Llama-2-7B block, the CPU verifier on that block), V1's two verifiers by phase, the GPU profile (the real OPT-125M), the GKR prover at 2^20 leaves, 8- against 11-bit attention probabilities on GPT-2 (2 blocks) |
 | `quality` | 7 | OPT-125M: perplexity (the legacy recipe on the validation split) and zero-shot accuracy (20 documents per task) with the certified and the legacy recipe, the attribution of its perplexity (2 windows, without the feature sub-rows), the reproducible build and its commitment; Qwen3-0.6B: the Llama recipe on the smoke model (also its per-token-exponent cells alone) and, with a fixed prefix and a kept reference, on the checkpoint, `llama_diag` and `llama_attrib` |
 | `qllama` | 1 | the Llama-2 grid path (two alphas, two product balances, the validation split, an fp16 reference) on a smoke model with Llama-2-7B's vocabulary, which reads the gated repository from a compute node (with `--llama-licence`), or with OpenLLaMA-7B's, whose tokenizer needs `sentencepiece` and `protobuf` (without it) |
 | `qcheck` | 1 | the Llama recipe's validation grid (two alphas, two product balances) and two calibration draws on a smoke model with TinyLlama's vocabulary |
@@ -124,8 +140,9 @@ accepted, every tamper rejected, V1's bytes exactly as the byte model gives them
 (`logs/final/sp-gate-*.out`) fill no table cell or text number. Run it after the smoke and before the run:
 
 ```bash
-bash code/experiments/package/run.sh --platform final --one-job smoke gate    # or without --one-job: a chain
-#  -> 9 jobs (the smoke tier's 2 and the gate's 7), about three hours on an L40S node (job limits 13 h); then, from code/,
+bash code/experiments/package/run.sh --platform final --llama-licence --one-job smoke gate   # or a chain
+#  -> 9 jobs (the smoke tier's 2 and the gate's 7), three to five hours on an L40S node (job limits 16 h; 13 h
+#     without --llama-licence, whose Llama-2-7B cells then take random weights); then, from code/,
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final --check \
     --no-byte-model --allow-missing
 #  -> no CHECK FAILED line (the run's tables and macros are still missing: --allow-missing lists them, exit status 0)
@@ -133,16 +150,17 @@ PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs
 
 | Job | Cell | The size it checks |
 |---|---|---|
-| `gate-v1-llama7-2k-2` | V1 on two Llama-2-7B blocks at 2,048 tokens, modes Kpre and C, both CPU verifiers, 2 timed queries, 2 tampers of each kind | a GKR instance of 27 variables (2^27 leaves, the default `--lmax`; the smoke and the rehearsal reach 20) on the Triton prover and both CPU verifiers |
+| `gate-v1-llama7-2k-2` | V1 on the first two blocks of Llama-2-7B (the checkpoint, as the run's cells) at 2,048 tokens, modes Kpre and C, both CPU verifiers, 2 timed queries, 2 tampers of each kind | a GKR instance of 27 variables (2^27 leaves, the default `--lmax`; the smoke and the rehearsal reach 20) on the Triton prover and both CPU verifiers |
 | `gate-g-v1-llama7-2k-2` | the same cell in Kpre with the GPU verifier, 1 tamper of each kind | V1's GPU verifier at 2^27 leaves |
-| `gate-v1-opt13-2k` | V1 on OPT-1.3B at 2,048 tokens, both modes, 2 timed queries, 1 tamper of each kind | seven instances of 27 variables, three of them of exactly 2^27 leaves (no padding row) |
+| `gate-v1-opt13-2k` | V1 on the real OPT-1.3B at 2,048 tokens, both modes, 2 timed queries, 1 tamper of each kind | seven instances of 27 variables, three of them of exactly 2^27 leaves (no padding row) |
 | `gate-r-opt125-v1-2k` | V1 on the certified OPT-125M (real weights) at 2,048 tokens, both modes, 2 timed queries, 1 tamper of each kind | the real-weight path at 2,048 tokens, an instance of 27 variables |
 | `gate-v1-llama7-2k` | V1 on the full Llama-2-7B at 2,048 tokens, Kpre, one query and one tamper of each kind | the run's largest V1 query (21 instances) and its host and GPU memory |
-| `gate-l-llama7-16k` | the CPU verifier on two Llama-2-7B blocks at 16,384 tokens | the `long` tier's largest prompt |
+| `gate-l-llama7-16k` | the CPU verifier on two Llama-2-7B blocks at 16,384 tokens (random weights, as the `long` tier) | the `long` tier's largest prompt |
 | `gate-l-rx-llama7-16k` | exact re-execution (`int`, `int_mm`, `int_fp32gemm`) of the same cell, the rotary positions extended to 16,384 | the same, for the baselines that `tab:eval-long` reads |
 
 Every V1 cell of the run at 2,048 tokens, and the 64-token V1 cells of Qwen3-4B, Llama-2-7B, OPT-6.7B and
-Llama-2-13B, reach GKR instances of 27 variables (`experiments/paper/tables.py`, `v1_shape_model`; random weights).
+Llama-2-13B, reach GKR instances of 27 variables (`experiments/paper/tables.py`, `v1_shape_model`, a model of the
+shapes).
 The setup proof's openings span every member of a tree, so only the `setup` tier's full Llama-2-7B reaches its size;
 the gate leaves it to the run.
 
@@ -156,8 +174,8 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 243 jobs. There, the paper's run submits its tiers as thirteen jobs (`--one-job`), each of
-which runs its tiers' jobs one after another in its allocation: the timed tiers in eight jobs that have a node to
+waits that long for each of its 243 jobs. There, the paper's run submits its tiers as fifteen jobs (`--one-job`), each of
+which runs its tiers' jobs one after another in its allocation: the timed tiers in ten jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `qllama`, `qcheck`, `tv`, `attack`, `smoke`) in five jobs on one GPU of a
 shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates nothing:
 its pytest summary gives the text's `\SmokeTests` and its exactness tests the platform's GPU-against-CPU agreement, so
@@ -166,14 +184,16 @@ it is submitted on its own:
 ```bash
 R="bash code/experiments/package/run.sh --platform final --llama-licence --gres gpu:l40s:1 \
    --exclude-nodes <the partition's nodes of another GPU or CPU model>"
-$R --one-job cpuv                          # expected 8-11 h
+$R --one-job cpuv                          # expected 11.5-19 h
 $R --one-job long                          # 10-16 h: long prompts, the full model at 8,192 tokens, V1 on 2 blocks
-$R --one-job bench                         # 11-17 h
+$R --one-job bench                         # 17.5-33 h: two allocations in a row (past 24 h: submit it again, Sec. 5)
 $R --one-job real                          # 11-16 h
-$R --one-job serve gen batch               # 14-18 h
-$R --one-job v1 setup improve              # 9-16 h
-$R --one-job cpux                          # 9-14 h: the CPU verifier on 2 and 4 cores, mode C's six plans
-$R --one-job gpuv zkllm                    # 11-16 h: the GPU verifier, then zkLLM's demo on the same GPU model
+$R --one-job serve gen                     # 14-20 h
+$R --one-job v1 setup                      # 8.5-16.5 h
+$R --one-job improve batch                 # 9-18.5 h
+$R --one-job cpux                          # 13-24 h: 2 and 4 cores, mode C's six plans (past 24 h: submit it again)
+$R --one-job gpuv                          # 8-14 h: the GPU verifier
+$R --one-job zkllm                         # 6-9 h: zkLLM's demo on the same GPU model
 $R --one-job --no-exclusive quality        # 16-24 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive qllama         # 40-48 h, not timed: two or three submissions in a row (Sec. 5)
 $R --one-job --no-exclusive qcheck         # 9-13 h, not timed
@@ -182,21 +202,29 @@ $R --one-job --no-exclusive smoke          # 1.5-2 h, not timed: the test suite 
 ```
 
 The expected hours of a submission are the sums of its tiers' estimates (`# tier <tier>: ..., estimate <h> h` in the
-dry run); every timed submission fits one allocation's 24 hours with room. With `--dry-run` in front of `--one-job`,
+dry run). The real checkpoints' loads and calibrations (Sec. 2) lengthen the cost tiers, so the run of random weights'
+eight timed submissions is here ten: `serve gen batch` became `serve gen` and `improve batch`, `v1 setup improve`
+became `v1 setup`, and `gpuv zkllm` became `gpuv` and `zkllm`, each of which fits one allocation's 24 hours with room;
+`bench` (17.5-33 h) and `cpux` (13-24 h), which no split of tiers shortens, may need a second allocation: submitted
+again after the first ends at its limit, the same command runs only the jobs not yet ended successfully. With
+`--random-weights` the thirteen submissions of the random-weight run apply (`serve gen batch`, `v1 setup improve`,
+`gpuv zkllm`). With `--dry-run` in front of `--one-job`,
 each submission prints its allocation's `sbatch` line and then the line below (and, where its job limits add up to
 more than 24 h, a last line saying that the same command, submitted again, runs only the jobs not yet ended
-successfully). Together the thirteen hold every job of `--optional all` once (243 jobs, 543 h of limits):
+successfully). Together the fifteen hold every job of `--optional all` once (243 jobs, 660 h of limits):
 
 | Submission | Its dry run's `# one job:` line |
 |---|---|
-| `cpuv` | `# one job: cpuv: 15 jobs, job limits 29 h, time limit 24 h` |
+| `cpuv` | `# one job: cpuv: 15 jobs, job limits 44 h, time limit 24 h` |
 | `long` | `# one job: long: 21 jobs, job limits 53 h, time limit 24 h` |
-| `bench` | `# one job: bench: 47 jobs, job limits 59 h, time limit 24 h` |
+| `bench` | `# one job: bench: 47 jobs, job limits 91 h, time limit 24 h` |
 | `real` | `# one job: real: 28 jobs, job limits 56 h, time limit 24 h` |
-| `serve gen batch` | `# one job: serve gen batch: 17 jobs, job limits 44 h, time limit 24 h` |
-| `v1 setup improve` | `# one job: v1 setup improve: 35 jobs, job limits 52 h, time limit 24 h` |
-| `cpux` | `# one job: cpux: 14 jobs, job limits 33 h, time limit 24 h` |
-| `gpuv zkllm` | `# one job: gpuv zkllm: 22 jobs, job limits 39 h, time limit 24 h` |
+| `serve gen` | `# one job: serve gen: 10 jobs, job limits 45 h, time limit 24 h` |
+| `v1 setup` | `# one job: v1 setup: 19 jobs, job limits 44 h, time limit 24 h` |
+| `improve batch` | `# one job: improve batch: 23 jobs, job limits 44 h, time limit 24 h` |
+| `cpux` | `# one job: cpux: 14 jobs, job limits 53 h, time limit 24 h` |
+| `gpuv` | `# one job: gpuv: 17 jobs, job limits 38 h, time limit 24 h` |
+| `zkllm` | `# one job: zkllm: 5 jobs, job limits 14 h, time limit 14 h` |
 | `--no-exclusive quality` | `# one job: quality: 18 jobs, job limits 56 h, time limit 24 h` |
 | `--no-exclusive qllama` | `# one job: qllama: 12 jobs, job limits 78 h, time limit 24 h` |
 | `--no-exclusive qcheck` | `# one job: qcheck: 5 jobs, job limits 20 h, time limit 20 h` |
@@ -222,17 +250,17 @@ if it succeeds, which the run above does not need.
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
 | `smoke` | 2 | 1.5-2 | 5 | the text's test count (`\SmokeTests`, `ext_v1`) and the GPU-against-CPU exactness on the run's platform; `xcheck`: the proofs and commitments byte-identical on the GPU and the CPU (`\HwDigestCells`, `\HwDigestDevices`, `ext_evaluation`); in a chain, the smoke is also the gate of the tiers after it |
-| `cpuv` | 15 | 8-11 | 29 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens; Llama-2-7B also at 512 tokens, `tab:eval-reexec`) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row at 64, 512 and 2,048 tokens (`tab:options`, `tab:eval-reexec`, the abstract's "at least N times", which stays against exact re-execution); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key and embedding tables or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
-| `cpux` | 14 | 9-14 | 33 | the CPU verifier against exact re-execution beyond the cpuv tier's 8 threads, every re-execution with glibc's allocator defaults as the cpuv tier's 8-thread row it is set beside (`tab:eval-cpu`, `\CpuRatioThrTwo`, `\CpuRatioThrFour`, `\CpuRatioThrEight`, `\CpuRatioNoAvx`, `\CpuRatioThirteen`): Llama-2-7B at 2,048 tokens on 4 and 2 threads, each job pinned to as many cores of one NUMA node; on 8 threads without the AVX-512 attention kernel, in the verifier and the integer forward pass alike; Llama-2-13B on 8 threads; mode C's six candidate plans on the same Llama-2-7B queries, one job each (1 to 5 h of limits, after the plan's encoded entries), each commitment encoded afresh (`tab:eval-plans`, `\PlanCols...`, `\PlanCommit...`) |
-| `v1` | 17 | 5-9 | 30 | V1 against v0: bytes, prover and verifier (`tab:eval-v1`); the codec profile of the full Llama-2-7B at 2,048 to 16,384 tokens, V1's claims ratio at each length (`tab:eval-v1-long`, the V1 crossover `\BreakevenTokensVOne` of the Discussion) |
-| `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
-| `bench` | 47 | 11-17 | 59 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`, `tab:eval-compare-full`), the outcome counts, the image models' attack cells; our interactive mode-C prover of Llama-2-7B and Llama-2-13B at the `zkllm` tier's other lengths (`--zkllm-seqs`, default 64, 512 and 1,024 tokens: `tab:zkllm-lengths`, `\ZkllmSameGpuOurs...`, `\ZkllmSameGpuFactor...T...`); Llama-2-7B at lambda 40 and 80 (`tab:eval-lambda`, `\LamForty...`) |
-| `gpuv` | 17 | 5-7 | 25 | the streaming GPU verifier, int8/fp16/bf16 re-execution on the same GPU, the host-to-device bandwidth; the GPU verifier and GPU re-execution on 2 and 3 Llama-2-7B blocks at 2,048 to 16,384 tokens (`tab:eval-long-gpu`, `tab:eval-long-check`'s GPU row) |
-| `gen` | 5 | 4-5 | 11 | generated responses proved as one prefill: Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled, and GPT-2's prover per generated token (`tab:gen`, `tab:gen-full`, Sec. `sec:gen-prefill`); Llama-2-7B's P = G = 512 prefill measured in mode C (`\GenPrefillGB`, against the byte model of `\GenPerPrefixTB`); the same responses generated without a proof, fp16 with a KV cache (`experiments/generation/decode_baseline.py`: `\GenDecodeLlama`, `\GenOverDecodeC`, `\GenOverDecodeK`) |
-| `batch` | 7 | 2-3 | 8 | several prompts against one opening |
+| `cpuv` | 15 | 11.5-19 | 44 (35) | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens; Llama-2-7B also at 512 tokens, `tab:eval-reexec`) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row at 64, 512 and 2,048 tokens (`tab:options`, `tab:eval-reexec`, the abstract's "at least N times", which stays against exact re-execution); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key and embedding tables or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
+| `cpux` | 14 | 13-24 | 53 (33) | the CPU verifier against exact re-execution beyond the cpuv tier's 8 threads, every re-execution with glibc's allocator defaults as the cpuv tier's 8-thread row it is set beside (`tab:eval-cpu`, `\CpuRatioThrTwo`, `\CpuRatioThrFour`, `\CpuRatioThrEight`, `\CpuRatioNoAvx`, `\CpuRatioThirteen`): Llama-2-7B at 2,048 tokens on 4 and 2 threads, each job pinned to as many cores of one NUMA node; on 8 threads without the AVX-512 attention kernel, in the verifier and the integer forward pass alike; Llama-2-13B on 8 threads; mode C's six candidate plans on the same Llama-2-7B queries, one job each (1 to 5 h of limits, after the plan's encoded entries), each commitment encoded afresh (`tab:eval-plans`, `\PlanCols...`, `\PlanCommit...`) |
+| `v1` | 17 | 7-14 | 39 (33) | V1 against v0: bytes, prover and verifier (`tab:eval-v1`); the codec profile of the full Llama-2-7B at 2,048 to 16,384 tokens, V1's claims ratio at each length (`tab:eval-v1-long`, the V1 crossover `\BreakevenTokensVOne` of the Discussion) |
+| `serve` | 5 | 9-12.5 | 30 (27) | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
+| `bench` | 47 | 17.5-33 | 91 (67) | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`, `tab:eval-compare-full`), the outcome counts, the image models' attack cells; our interactive mode-C prover of Llama-2-7B and Llama-2-13B at the `zkllm` tier's other lengths (`--zkllm-seqs`, default 64, 512 and 1,024 tokens: `tab:zkllm-lengths`, `\ZkllmSameGpuOurs...`, `\ZkllmSameGpuFactor...T...`); Llama-2-7B at lambda 40 and 80 (`tab:eval-lambda`, `\LamForty...`) |
+| `gpuv` | 17 | 8-14 | 38 (30) | the streaming GPU verifier, int8/fp16/bf16 re-execution on the same GPU, the host-to-device bandwidth; the GPU verifier and GPU re-execution on 2 and 3 Llama-2-7B blocks at 2,048 to 16,384 tokens (`tab:eval-long-gpu`, `tab:eval-long-check`'s GPU row) |
+| `gen` | 5 | 5-7.5 | 15 (13) | generated responses proved as one prefill: Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled, and GPT-2's prover per generated token (`tab:gen`, `tab:gen-full`, Sec. `sec:gen-prefill`); Llama-2-7B's P = G = 512 prefill measured in mode C (`\GenPrefillGB`, against the byte model of `\GenPerPrefixTB`); the same responses generated without a proof, fp16 with a KV cache (`experiments/generation/decode_baseline.py`: `\GenDecodeLlama`, `\GenOverDecodeC`, `\GenOverDecodeK`) |
+| `batch` | 7 | 3-6 | 13 (8) | several prompts against one opening |
 | `real` | 28 (19) | 11-16 | 56 (34) | the certified OPT-1.3B and OPT-6.7B end to end next to random weights (`tab:eval-real`; the cells behind `\RealProveWithin`, `\RealVerifyWithin` and `\RealOptLTimeWithin` with `--queries-head` queries, their spread `\RealQuerySpread`); the real OPT-6.7B's V1 in modes Kpre and C (the abstract's `\VOneRatioRealOptL`); with `--llama-licence` the real Llama-2-7B |
-| `setup` | 2 | 1-2 | 4 | the setup proof of an untrusted commitment (`tab:setup`) |
-| `improve` | 16 | 3-5 | 18 | each implementation improvement against the path it replaces (`tab:eval-improve`); V1's verifier by phase; the GKR prover per leaf; 8- against 11-bit attention probabilities on two Llama-2-7B blocks at 2,048 tokens (`quality.tex`: the proof's size and the prover's and CPU verifier's times) |
+| `setup` | 2 | 1.5-2.5 | 5 (4) | the setup proof of an untrusted commitment (`tab:setup`) |
+| `improve` | 16 | 6-12.5 | 31 (18) | each implementation improvement against the path it replaces (`tab:eval-improve`); V1's verifier by phase; the GKR prover per leaf; 8- against 11-bit attention probabilities on two Llama-2-7B blocks at 2,048 tokens (`quality.tex`: the proof's size and the prover's and CPU verifier's times) |
 | `quality` | 18 | 16-24 | 56 | `tab:quality` (OPT), the Llama-family ratios of the text (TinyLlama, Qwen3), the recipe's alpha on the validation split (OPT), the recipe studies of the extended version (OPT-1.3B and OPT-125M on the test split), the attribution of OPT-125M's perplexity (`tab:quality-attr`, on the CPU), `tab:zeroshot`, the reproducible build (1 and 8 threads, the commitment encoded on the GPU and the CPU) |
 | `qllama` | 12 (2) | 40-48 (10-14) | 78 (14) | with `--llama-licence` the ratios of Llama-2-7B and Llama-2-13B (`\LlamaSevenRatio`, `\LlamaThirteenRatio`) and their committed alpha and product balance among their neighbours on the test and the validation split (`\LlamaSeven...`, `\LlamaThirteen...`), one job per model, split and alpha (about 4 h each; without `--llama-licence` OpenLLaMA-7B's two jobs, which the paper does not report, in their place); its records are the `quality` tier's (`q-...`) |
 | `qcheck` | 5 | 9-13 | 20 | the Llama recipe beyond the cells it was chosen on: TinyLlama's and Qwen3-1.7B's alpha and product balance among their neighbours on the validation split (`\TinyLlamaValGap`, `\QwenMValGap`), and the main cells over three calibration draws on TinyLlama, Qwen3-1.7B and, with `--llama-licence`, Llama-2-7B (`\LlamaDrawSpread`; without it OpenLLaMA-7B, which the paper does not report); its records are the `quality` tier's (`q-...`) |
@@ -246,11 +274,12 @@ if it succeeds, which the run above does not need.
 and gated by the smoke; a second invocation starts a new chain. Without a Llama-2 licence, leave out
 `--llama-licence`: the Llama-2 cells then stay empty (the qllama tier runs OpenLLaMA-7B's two jobs instead, and the
 qcheck tier OpenLLaMA-7B's calibration draws, which the paper does not report). The counts and limits are those with
-`--llama-licence`; without it (in parentheses) the `real` tier has 19 jobs and 34 h of limits and the `qllama` tier
-2 jobs and 14 h. `all` is then 198 jobs and 390 h of limits (217 and 476 h with `--llama-licence`; the `long` tier
-adds 21 jobs and 53 h, and the `zkllm` tier, with `--llama-licence`, 5 jobs and 14 h: `run.sh --platform final
---optional --llama-licence --dry-run all` lists 243 jobs and 543 h). The `long` tier's full model at 8,192 tokens
-(2 jobs, 11 h of limits) runs by default; `--no-bigmem` leaves it out on nodes with less than 256 GB, and
+`--llama-licence`; without it (in parentheses) the Llama-2 cost cells take random weights (job limits as in the
+parentheses of the cost tiers), the `real` tier has 19 jobs and 34 h of limits and the `qllama` tier 2 jobs and 14 h.
+`all` is then 198 jobs and 416 h of limits (217 and 593 h with `--llama-licence`; the `long` tier adds 21 jobs and
+53 h, and the `zkllm` tier, with `--llama-licence`, 5 jobs and 14 h: `run.sh --platform final --optional
+--llama-licence --dry-run all` lists 243 jobs and 660 h; with `--random-weights`, 543 h). The `long` tier's full
+model at 8,192 tokens (2 jobs, 11 h of limits) runs by default; `--no-bigmem` leaves it out on nodes with less than 256 GB, and
 `tab:eval-long-check`'s 8,192-token row then stays empty.
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
