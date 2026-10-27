@@ -1076,7 +1076,7 @@ def test_the_zkllm_tier_runs_zkllms_demo_with_the_llama_licence_only(tmp_path):
     assert "run_zkllm.sh build --home " in jobs["sp-zk-build"] and "/logs/final/zkllm/home" in jobs["sp-zk-build"]
     for size, job in ((7, "sp-zk-llama2-7b"), (13, "sp-zk-llama2-13b")):
         assert "run_zkllm.sh prove --home " in jobs[job] and "/logs/final/zkllm" in jobs[job]
-        assert f"--size {size} --seqs 2048 --reps 3 --layers 0,1\"" in jobs[job]
+        assert f"--size {size} --seqs 2048 --reps 3 --layers 0,1{STOP}" in jobs[job]
         short = jobs[f"{job}-short"]
         assert "run_zkllm.sh prove --home " in short and "/logs/final/zkllm" in short
         assert f"--size {size} --seqs 64,512,1024 --reps 3 --layers 0,1 --allow-failed-lengths" in short
