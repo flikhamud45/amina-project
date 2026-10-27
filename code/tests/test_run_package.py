@@ -274,13 +274,15 @@ FAKE = {"squeue": '#!/bin/bash\n[ -z "${FAKE_QUEUE:-}" ] || printf \'%s\\n\' "$F
                   '{ echo "wrong node: GPU NVIDIA A100 / CPU Intel Xeon, expected GPU L40S"; exit 86; } ;; esac\n'
                   'case "$*" in *"${FAKE_FAIL:-@none@}"*) exit 3 ;; esac\n'
                   'case "$*" in *"${FAKE_SLOW:-@none@}"*) sleep 100 ;; esac\necho "{}"\n',
-        "cmake": '#!/bin/bash\necho "cmake version 3.31.6"\n'}
+        "cmake": '#!/bin/bash\necho "cmake version 3.31.6"\n',
+        "git": '#!/bin/bash\nexit 0\n'}
 """Stand-ins for SLURM's commands, the interpreter and CMake: ``squeue`` lists ``$FAKE_QUEUE`` (``name|platform|id``
 lines), ``sbatch`` appends its arguments to ``$FAKE_LOG`` and answers with its line number as the job id, ``sinfo``
 gives each node's memory in MB (``$FAKE_MEM``); the interpreter prints ``{}`` and succeeds, except for a command
 line that contains ``$FAKE_FAIL`` (exit status 3), one that contains ``$FAKE_SLOW`` (which first sleeps 100 s)
 and the node check with ``$FAKE_WRONG_NODE`` set (exit status 86, ``wrong node``); ``cmake`` (the cpuv tier's
-pre-flight) prints its version."""
+pre-flight) prints its version; ``git`` (the cpuv tier's pre-flight, while llama.cpp's clone is missing: a
+node may have none) succeeds."""
 
 HF_CACHES = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE", "HF_DATASETS_CACHE", "HF_HUB_OFFLINE",
              "TRANSFORMERS_OFFLINE")
@@ -1251,3 +1253,13 @@ def test_the_long_prompts_cells():
     assert not any(j.startswith("sp-l-v1-llama7-16384") for j in jobs)
     small = {_job(line) for line in _dry("--no-bigmem", tiers=("long",))}
     assert small == {j for j in jobs if j.startswith("sp-l-")} - {"sp-l-llama7-8192-full", "sp-l-rx-llama7-8192-full"}
+
+
+def test_the_submitting_host_clones_llama_cpp_and_a_failed_clone_only_warns(tmp_path):
+    # the jobs' nodes need no git: the clone is made here, before anything is submitted (a failure leaves it to the job)
+    argv = ("--platform", "rehearsal", "--rehearsal", "--no-exclusive", "cpuv")
+    status, out, err, jobs = _submit(tmp_path, *argv, extra={"FAKE_FAIL": "--clone-only"})
+    assert status == 0 and jobs and "warning: cloning llama.cpp here failed" in err, err
+    (tmp_path / "root" / "logs" / "rehearsal" / "llamacpp" / "src").mkdir(parents=True)     # cloned: not again
+    status, out, err, jobs = _submit(tmp_path, *argv, extra={"FAKE_FAIL": "--clone-only"})
+    assert status == 0 and jobs and "cloning llama.cpp" not in err, err

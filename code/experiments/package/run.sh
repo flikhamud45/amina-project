@@ -142,7 +142,8 @@
 # --llama-licence, download checkpoints and datasets) and PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image
 # models' datasets), each passed to the jobs as an absolute path (a relative one is taken from the repository root).
 # HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's environment and is never written into a job.
-# Everything is checked before the first job is submitted: the compiler, CMake and git (the cpuv tier), the
+# Everything is checked before the first job is submitted: the compiler, CMake and git (the cpuv tier; git only while
+# llama.cpp's clone is missing), the
 # interpreter (and, for the qllama tier without --llama-licence, its sentencepiece and protobuf, which OpenLLaMA-7B's
 # tokenizer needs), HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is
 # unwritable), the image models and datasets of the bench tier and, under SLURM, that the partition has a node with
@@ -293,7 +294,8 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
       away=" --away \$TPID"
     fi
     [ -n "$CPUJOB" ] && [ "$PIN" = 1 ] && pin="$PY -m experiments.package.pin --cores $CORES --pid \$\$$away && "
-    local wrap="set -uo pipefail; $ENVS; echo host \$(hostname) git \$(git -C $ROOT log --oneline -1); \
+    local wrap="set -uo pipefail; $ENVS; echo host \$(hostname) git \$(git -C $ROOT log --oneline -1 2> /dev/null \
+|| echo '(no git on this node: the commit is in env.json)'); \
 $NODECHK || exit \$?; $SNAP$tele$pin$*$stop"
     if [ -n "$DRY" ]; then
       DRYN=$((DRYN + 1)); jid="DRY$DRYN"
@@ -1210,7 +1212,8 @@ export CXX=<path to g++> (the native CPU kernels), or pass --no-native-ok")
 tier builds llama.cpp with it (3.14 or later); put cmake on the PATH or export CMAKE=<path> (one way: pip install \
 cmake==3.31.6 into a separate environment, e.g. python3 -m venv ~/cmake && ~/cmake/bin/pip install cmake==3.31.6, \
 then export CMAKE=~/cmake/bin/cmake)")
-    command -v git > /dev/null 2>&1 || bad+=("git not found here: the cpuv tier clones llama.cpp with it")
+    [ -d "$ROOT/$LOGS/llamacpp/src" ] || command -v git > /dev/null 2>&1 || bad+=("git not found here: the cpuv \
+tier clones llama.cpp with it (or submit from a host with git, which clones it into $LOGS/llamacpp/src first)")
   done
   # the zkllm tier (with --llama-licence) builds zkLLM unless --zkllm-home holds it built with its environment, and
   # downloads the gated Llama-2 checkpoints
@@ -1278,6 +1281,23 @@ check (exit status $WRONG_NODE)" >&2
   [ -n "$DRY" ] && return 0
   echo "run.sh: nothing submitted" >&2
   exit 2
+}
+
+sources() {   # the sources the jobs build, cloned here before anything is submitted: the jobs' nodes need no git
+  local t
+  for t in "${TIERS[@]}"; do
+    if [ "$t" = cpuv ] && [ ! -d "$ROOT/$LOGS/llamacpp/src" ]; then
+      "$PY" -m experiments.reexec.llamacpp --clone-only --llamacpp-dir "$ROOT/$LOGS/llamacpp" \
+        || echo "warning: cloning llama.cpp here failed; its jobs clone it on their node (which needs git and \
+network)" >&2
+    fi
+    if [ "$t" = zkllm ] && [ -n "$LLAMA" ] && [ ! -d "$ZKHOME/zkllm" ]; then
+      bash "$ROOT/code/experiments/comparison/zkllm/run_zkllm.sh" clone --home "$ZKHOME" \
+        || echo "warning: cloning zkLLM here failed; its build job clones it on its node (which needs git and \
+network)" >&2
+    fi
+  done
+  return 0
 }
 
 one_job() {   # --one-job: the tiers as one SLURM job that runs this command with --local in its allocation
@@ -1388,6 +1408,8 @@ PLAN=1
 for tier in "${TIERS[@]}"; do run_tier "$tier"; done 2> /dev/null
 PLAN=""
 preflight
+[ -n "$DRY$LOCAL" ] || (cd "$ROOT/code" && export PYTHONPATH="$ROOT/code/src:$ROOT/code${EXTRA_PP:+:$EXTRA_PP}" \
+  && sources)
 echo "# node: GPU '$REQGPU', CPU '$REQCPU' (--require-gpu, --require-cpu)${GRES:+; --gres=$GRES}\
 ${EXCLUDE:+; --exclude=$EXCLUDE}"
 if [ -n "$ONEJOB" ]; then one_job; exit 0; fi

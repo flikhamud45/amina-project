@@ -207,3 +207,17 @@ def test_a_stand_in_llama_bench_gives_inexact_records_of_the_median_and_range(tm
                     encoding="utf-8")
     with pytest.raises(L.LlamaCppError, match="failed to load model"):
         L.run_bench([sys.executable, str(fail)], tmp_path, "fail")
+
+
+def test_a_clones_commit_is_read_without_git(tmp_path):
+    src = tmp_path / "src"
+    (src / ".git" / "refs" / "tags").mkdir(parents=True)
+    (src / ".git" / "HEAD").write_text(L.COMMIT + "\n")                    # the shallow clone's detached HEAD
+    assert L._head(src, "no-such-git") == L.COMMIT
+    (src / ".git" / "HEAD").write_text("ref: refs/tags/x\n")
+    (src / ".git" / "refs" / "tags" / "x").write_text("a" * 40 + "\n")    # a loose ref
+    assert L._head(src, "no-such-git") == "a" * 40
+    (src / ".git" / "refs" / "tags" / "x").unlink()
+    (src / ".git" / "packed-refs").write_text(f"# pack-refs\n{'b' * 40} refs/tags/x\n")
+    assert L._head(src, "no-such-git") == "b" * 40
+    assert L._head(tmp_path / "none", "no-such-git") == ""

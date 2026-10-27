@@ -142,6 +142,12 @@ def snapshot(folder: Path, python: str = sys.executable) -> dict:
     put("pip-freeze.txt", pip)
     head = _run(["git", "-c", "safe.directory=*", "-C", str(CODE), "rev-parse", "HEAD"]).strip()
     status = _run(["git", "-c", "safe.directory=*", "-C", str(CODE), "status", "--porcelain", "--untracked-files=no"])
+    if not re.fullmatch(r"[0-9a-f]{40}", head):           # a node without git: read from the repository itself
+        try:
+            from experiments.common.records import git_sha
+            head = git_sha(CODE, short=40) or head
+        except Exception:                                  # the snapshot never stops its job
+            pass
     put("git.txt", f"{head}\n{status}")
     put("environ.txt", "\n".join(f"{k}={os.environ[k]}" for k in VARIABLES if k in os.environ))
     cpu, flags = _cpu_flags()

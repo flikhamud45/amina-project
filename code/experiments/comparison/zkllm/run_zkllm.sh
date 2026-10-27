@@ -3,10 +3,13 @@
 # GPU, timed as the stored runs in code/artifacts/results/zkllm_l40s/ were: the run package's zkllm tier calls it.
 #
 #     run_zkllm.sh build --home DIR [options]       # once: checkout, environment, build, timing shims, downloads
+#     run_zkllm.sh clone --home DIR [options]       # the checkout only (run.sh, on the submitting host)
 #     run_zkllm.sh prove --home DIR --size 7|13 --out DIR [--seqs 64,512,1024,2048] [options]
 #
 # build: the zkLLM home DIR holds zkllm/ (the checkout) and env/ (its Python environment).  A missing checkout is
-# cloned (--repo) at --commit; an existing one must be at that commit with no tracked file changed.  A missing env/ is
+# cloned (--repo) at --commit; an existing one must be at that commit with no tracked file changed (on a node
+# without git, its commit is read from zkllm/.git and the changed-file check is left to the clone step, which run.sh
+# runs on the submitting host).  A missing env/ is
 # created with --python and code/experiments/comparison/zkllm/requirements.txt (torch 2.3.1 for CUDA 12.1,
 # transformers 4.40.2; separate from the run's .venv, which it never touches).  The binaries are built for this
 # node's GPU (--arch, default its compute capability from nvidia-smi: sm_89 on an L40S) with the nvcc of --cuda-home
@@ -47,7 +50,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
 die() { echo "run_zkllm.sh: $*" >&2; exit 2; }
 CMD="${1:-}"; [ $# -gt 0 ] && shift
-case "$CMD" in build|prove) ;; -h|--help) usage 0 ;; *) usage ;; esac
+case "$CMD" in build|clone|prove) ;; -h|--help) usage 0 ;; *) usage ;; esac
 
 ZH="" PYBASE=python3 CUDAH="" ARCH="" HUB="" MODELS=7,13 REPO=https://github.com/jvhs0706/zkllm-ccs2024.git
 COMMIT=993311e JOBS=8 SIZE="" OUT="" SEQS=64,512,1024,2048 ALLOWFAIL="" REPS=3 LAYERS=0,1 SCRATCH="" PARQUET=""
@@ -114,22 +117,37 @@ if [ -n "${CUDA_VISIBLE_DEVICES:-}" ] && [[ "$CUDA_VISIBLE_DEVICES" != *,* ]] \
   GPUSEL="-i $CUDA_VISIBLE_DEVICES"
 fi
 
-# ------------------------------------------------------------------------------------------------------------ build
-if [ "$CMD" = build ]; then
-  for t in git make gcc g++ nvidia-smi /usr/bin/time; do
-    command -v "$t" > /dev/null 2>&1 || die "$t not found on this node (zkLLM's build and timing need it)"
-  done
+checkout() {   # the checkout at --commit: cloned when missing; checked (with git when there is one)
   if [ ! -d "$Z" ]; then
+    command -v git > /dev/null 2>&1 || die "git not found on this host, and $Z does not exist: clone $REPO at $COMMIT \
+into it on a host with git (run_zkllm.sh clone --home $ZH)"
     echo "== clone $REPO at $COMMIT into $Z"
     git clone -q "$REPO" "$Z" && git -C "$Z" -c advice.detachedHead=false checkout -q "$COMMIT" \
       || die "cloning $REPO at $COMMIT failed (no network on the node? clone it beforehand into $Z)"
   fi
-  head="$(git -C "$Z" -c safe.directory='*' rev-parse HEAD 2> /dev/null)" || die "$Z is not a git checkout of zkLLM"
-  want="$(git -C "$Z" -c safe.directory='*' rev-parse "$COMMIT^{commit}" 2> /dev/null)" \
-    || die "$Z does not know commit $COMMIT"
-  [ "$head" = "$want" ] || die "$Z is at $head, not at $COMMIT: git -C $Z checkout $COMMIT"
-  [ -z "$(git -C "$Z" -c safe.directory='*' status --porcelain --untracked-files=no)" ] \
-    || die "$Z has changed tracked files; the demo is run unchanged (git -C $Z checkout -- .)"
+  local head want
+  if command -v git > /dev/null 2>&1; then
+    head="$(git -C "$Z" -c safe.directory='*' rev-parse HEAD 2> /dev/null)" || die "$Z is not a git checkout of zkLLM"
+    want="$(git -C "$Z" -c safe.directory='*' rev-parse "$COMMIT^{commit}" 2> /dev/null)" \
+      || die "$Z does not know commit $COMMIT"
+    [ "$head" = "$want" ] || die "$Z is at $head, not at $COMMIT: git -C $Z checkout $COMMIT"
+    [ -z "$(git -C "$Z" -c safe.directory='*' status --porcelain --untracked-files=no)" ] \
+      || die "$Z has changed tracked files; the demo is run unchanged (git -C $Z checkout -- .)"
+  else
+    head="$(cat "$Z/.git/HEAD" 2> /dev/null)" || die "$Z is not a git checkout of zkLLM"
+    [[ "$head" =~ ^[0-9a-f]{40}$ && "$head" == "$COMMIT"* ]] || die "$Z is at '$head', not at $COMMIT (detached)"
+    echo "== $Z at $head (read without git; its tracked files were checked when it was cloned)"
+  fi
+}
+
+if [ "$CMD" = clone ]; then checkout; exit 0; fi
+
+# ------------------------------------------------------------------------------------------------------------ build
+if [ "$CMD" = build ]; then
+  for t in make gcc g++ nvidia-smi /usr/bin/time; do
+    command -v "$t" > /dev/null 2>&1 || die "$t not found on this node (zkLLM's build and timing need it)"
+  done
+  checkout
   if [ ! -x "$PY" ]; then
     command -v "$PYBASE" > /dev/null 2>&1 || die "--python $PYBASE not found (3.8 to 3.12)"
     "$PYBASE" -c 'import sys; sys.exit(not (3, 8) <= sys.version_info[:2] <= (3, 12))' \
@@ -253,10 +271,16 @@ for R in "${RUNS[@]}"; do
   { hostname
     nvidia-smi $GPUSEL --query-gpu=name,driver_version,memory.total --format=csv,noheader
     lscpu | grep "Model name"
-    git -c safe.directory='*' rev-parse HEAD
-    cat "$ZH/BUILD.txt" 2> /dev/null
-    echo "zkllm_unchanged: $([ -z "$(git -c safe.directory='*' status --porcelain --untracked-files=no)" ] \
+    if command -v git > /dev/null 2>&1; then
+      git -c safe.directory='*' rev-parse HEAD
+      cat "$ZH/BUILD.txt" 2> /dev/null
+      echo "zkllm_unchanged: $([ -z "$(git -c safe.directory='*' status --porcelain --untracked-files=no)" ] \
 && echo yes || echo no)"
+    else
+      cat "$Z/.git/HEAD"
+      cat "$ZH/BUILD.txt" 2> /dev/null
+      echo "zkllm_unchanged: checked when cloned (no git on this node)"
+    fi
     echo "python: $("$PY" -c 'import platform; print(platform.python_version())')"
     echo "torch: $("$PY" -c 'import torch; print(torch.__version__)')"
     echo "transformers: $("$PY" -c 'import transformers; print(transformers.__version__)')"

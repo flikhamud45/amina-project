@@ -311,20 +311,42 @@ def _tool(name: str, what: str, step: str = "build") -> str:
     return path
 
 
+def _head(src: Path, git: str) -> str:
+    """The commit checked out in ``src``: ``git rev-parse HEAD``, else (a node without git) read from ``src/.git``
+    (the clone's detached ``HEAD``, or the ref it names)."""
+    if shutil.which(git):
+        head = subprocess.run([git, "-c", "safe.directory=*", "-C", str(src), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=60).stdout.strip()
+        if head:
+            return head
+    try:
+        head = (src / ".git" / "HEAD").read_text().strip()
+        if not head.startswith("ref:"):
+            return head
+        ref = head[4:].strip()
+        if (src / ".git" / ref).is_file():
+            return (src / ".git" / ref).read_text().strip()
+        for line in (src / ".git" / "packed-refs").read_text().splitlines():
+            if line.endswith(" " + ref):
+                return line.split()[0]
+    except OSError:
+        pass
+    return ""
+
+
 # ================================================================================================ the build
 def checkout(args, logs: Path) -> Path:
     """The release's sources: ``--llamacpp-src``, else ``<--llamacpp-dir>/src`` (cloned when missing); their commit
     must be :data:`COMMIT`."""
-    git = _tool(args.git, "--git", "clone")
     src = Path(args.llamacpp_src) if args.llamacpp_src else Path(args.llamacpp_dir) / "src"
     if not src.exists():
         if args.llamacpp_src:
             raise LlamaCppError("clone", f"--llamacpp-src {src} does not exist")
+        git = _tool(args.git, "--git", "clone")
         print(f"llama.cpp: cloning {TAG} into {src}", file=sys.stderr, flush=True)
         _step("clone", [git, "-c", "advice.detachedHead=false", "clone", "--depth", "1", "--branch", TAG,
                         "--single-branch", REPOSITORY, str(src)], logs / "clone.log")
-    head = subprocess.run([git, "-c", "safe.directory=*", "-C", str(src), "rev-parse", "HEAD"], capture_output=True,
-                          text=True, timeout=60).stdout.strip()
+    head = _head(src, args.git)
     if head != COMMIT:
         raise LlamaCppError("clone", f"{src} is at commit {head or '(none)'}, not {TAG}'s {COMMIT} (remove it, or "
                                      "clone the release there on a host with network access)")
@@ -473,7 +495,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--cxx", default=os.environ.get("CXX") or "g++", help="the C++ compiler (default $CXX)")
     ap.add_argument("--cc", default=os.environ.get("CC") or None,
                     help="the C compiler (default $CC, else the one next to --cxx)")
-    ap.add_argument("--git", default="git", help="git, for the clone and its commit")
+    ap.add_argument("--git", default="git", help="git, for the clone and its commit (without it, an existing "
+                    "clone's commit is read from its .git folder)")
+    ap.add_argument("--clone-only", action="store_true",
+                    help="only clone the release into --llamacpp-dir (or check the clone there) and exit: run.sh does "
+                    "this on the submitting host, so the jobs' nodes need neither git nor network for it")
     return ap
 
 
@@ -485,6 +511,14 @@ def main() -> int:
     from experiments.common import records
 
     args = build_parser().parse_args()
+    if args.clone_only:                       # run.sh, on the submitting host: the jobs' nodes may have no git
+        try:
+            Path(args.llamacpp_dir).mkdir(parents=True, exist_ok=True)
+            print(f"llama.cpp: {checkout(args, Path(args.llamacpp_dir))} at {TAG} ({COMMIT})")
+        except LlamaCppError as e:
+            print(f"FAILED: llama.cpp {e.step}: {e}", file=sys.stderr, flush=True)
+            return 1
+        return 0
     cfg = decoder_config(args.model)
     check_llama(cfg)
     layers = args.layers or cfg.n_layers
