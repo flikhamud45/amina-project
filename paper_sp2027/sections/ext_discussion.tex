@@ -13,8 +13,8 @@ the code; other systems' costs are quoted from their papers, and zkLLM's public 
 \PlatformGpu{} \ZkllmSameGpuRun{} (Appendix~\ref{ext:disc-options}); each
 implementation improvement is measured against the code path it replaces on the same queries
 (Appendix~\ref{app:eval-improve}). Models are measured in full, except where a table gives a build of
-$b$ of $L$ blocks and the long prompts of Appendix~\ref{app:eval-long}, which extrapolate 2- and
-3-block builds; the security parameters, the setup proof's size and the per-prefix comparison of
+$b$ of $L$ blocks and the long prompts of Appendix~\ref{app:eval-long}, which extrapolate 2- to 4-block builds
+(checked against the full model at 2{,}048 and 8{,}192 tokens); the security parameters, the setup proof's size and the per-prefix comparison of
 Section~\ref{sec:gen} follow from the byte model. The client's peak memory is measured in a process
 of its own that holds only its key and the embedding tables it looks up ($\Kpre$) or the roots ($\sC$), and one proof
 (Appendix~\ref{app:eval-untrusted},
@@ -134,8 +134,8 @@ against \ServeSingleMBPerTokenC{}\,MB for one prompt, and on the full Llama-2-7B
 
 \para{Proof size and the verifier.} Even with V1, the proof grows with the prompt, because it
 carries one value for every output of every weight operation. For Llama-2-7B it reaches the size of
-the int8 weights at about \BreakevenTokens{} tokens without V1 and, by the byte model, at about \BreakevenTokensVOne{} tokens
-with it. Only committing the activations and proving the operations without weights, as zkLLM
+the int8 weights at about \BreakevenTokens{} tokens without V1 and, with V1's claims measured at each length (Appendix~\ref{app:eval-long}), at about
+\BreakevenTokensVOne{} tokens with it. Only committing the activations and proving the operations without weights, as zkLLM
 does, would remove this growth; we leave it to future work. The verifier recomputes attention, so
 its cost grows with the square of the prompt length; at 2{,}048 tokens the operations without
 weights take about \CpuDeriveShareLong{}\% of the CPU verifier's time on the full Llama-2-7B even with the native

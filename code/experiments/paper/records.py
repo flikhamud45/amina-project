@@ -47,7 +47,7 @@ KINDS = {"smoke": {"v1", "h2d", "tests", "digests"}, "cpuv": {"perf", "reexec", 
          "quality": {"ppl", "zeroshot", "digest", "llama_diag", "llama_attrib", "attribution"}, "tv": {"tv"},
          "attack": {"reproduction", "attack_mnist", "samplers", "floor_sampler", "adaptive_game", "path_bound",
                     "attack_llm", "inrange", "adaptive_game_llm"},
-         "long": {"perf", "reexec"}, "zkllm": {"zkllm"}, "gate": {"v1", "perf", "reexec"}}
+         "long": {"perf", "reexec", "v1"}, "zkllm": {"zkllm"}, "gate": {"v1", "perf", "reexec"}}
 """The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``; the smoke's ``tests``: the
 summary line of its pytest run, :data:`PYTEST_SUMMARY`; ``digests``: its ``xcheck`` job's proofs on two devices)."""
 PYTEST_SUMMARY = re.compile(r"^=*\s*(?P<counts>\d+ [a-z]+(?:, \d+ [a-z]+)*)(?: in [0-9.]+s(?: \([^)]*\))?)?\s*=*$")
@@ -525,6 +525,12 @@ class Run:
                     and (layers is None or d.get("layers") == layers))
         return self._last([r for r in self.kind("v1", tier) if ok(r)])
 
+    def codec(self, tier, model, seq, *, layers=None, label=None) -> Rec | None:
+        """``v1_bytes.py --codec-only``'s record of one cell (``layers``: the blocks built, None for any)."""
+        return self._last([r for r in self.kind("v1", tier) if r.d.get("codec_only") and r.d.get("model") == model
+                           and r.d.get("seq") == seq and (layers is None or r.d.get("layers") == layers)
+                           and (label is None or r.d.get("label") == label)])
+
     # ---------------------------------------------------------------- re-execution (reexec.py)
     def reexec(self, tier, model, seq, device, variants, keep=None) -> dict:
         """``{variant: (seconds, record)}``: each variant's full model measured at full depth (no extrapolation),
@@ -546,12 +552,22 @@ class Run:
         return out
 
     def reexec_blocks(self, tier, model, seq, device, variant, keep=None) -> tuple[dict, Rec | None]:
-        """``(measured_s by block count, record)`` of one variant (the long tier's 2- and 3-block builds; ``keep`` as
-        in :meth:`reexec`)."""
-        r = self._last([r for r in self.kind("reexec", tier) if r.d.get("model") == model and r.d.get("seq") == seq
-                        and str(r.d.get("device", "")).startswith(device) and r.d.get("variant") == variant
-                        and (keep is None or keep(variant, r))])
-        return ((r.d.get("measured_s") or {}) if r else {}), r
+        """``(measured_s by block count, record)`` of one variant (the long tier's builds of 2, 3 and 4 blocks and
+        of the full model; ``keep`` as in :meth:`reexec`): the block counts of every matching record, of several
+        records measuring one count the latest job's (e.g. the gpuv tier's 2 blocks and the full model next to its
+        2- and 3-block builds at long prompts); the record is the latest one that measured a build smaller than the
+        full model (None if none did)."""
+        out, last = {}, None
+        for r in self.kind("reexec", tier):           # in job order: a later job's count replaces an earlier one's
+            d = r.d
+            if (d.get("model") != model or d.get("seq") != seq or not str(d.get("device", "")).startswith(device)
+                    or d.get("variant") != variant or (keep is not None and not keep(variant, r))):
+                continue
+            ms = d.get("measured_s") or {}
+            out.update(ms)
+            if any(k != str(d.get("n_layers")) for k in ms):
+                last = r
+        return out, last
 
     # ---------------------------------------------------------------- the other scripts
     def serve(self, model, seq, batch, mode, how, layers=None) -> Rec | None:
