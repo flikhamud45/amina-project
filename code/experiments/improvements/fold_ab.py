@@ -6,6 +6,8 @@ counterpart is the "before" of this A/B; the GPU path is measured alongside).
 
     python -m experiments.improvements.fold_ab --model llama2-7b --devices cpu cuda --reps 3
     python -m experiments.improvements.fold_ab --model gpt2 --layers 1 --reps 1 --threads 2      # a laptop check
+    python -m experiments.improvements.fold_ab --model llama2-7b --real meta-llama/Llama-2-7b-hf --devices cpu cuda \\
+        --reps 3
 
 Builds the decoder as ``bench.py`` does (random weights, ``--seed``; ``--layers`` blocks, 0: all of them; the last one
 pruned; 11-bit attention probabilities, ``--prob-max``, which the precomputation does not read) and runs
@@ -15,11 +17,21 @@ native library's build), with the float64 limb products (the implementation opti
 kernels, else the float64 products; int8 GEMMs on a GPU whose int8 GEMMs pass their self-check), on the same
 challenges (``--challenge-seed``).  Every ``u`` must equal the float64 path's.
 
-Record (one JSON line per device and path ``float64`` / ``default``): ``precompute_s`` (the median), ``all_s``, the
-number of weight matrices and their entries, ``equal_to_float64``, the repetitions ``reps`` of the security parameters,
-the threads, ``prob_max``, the implementation status (``native``) and ``env``.  The full Llama-2-7B holds its 6.7 GB
-of int8 weights in host memory; its float64 path took 107 s per run on 8 threads of a Xeon Silver 4114, the native
-path 12.7 s.
+``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of random weights, the integer graph of
+the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_weights`; OPT: the certified recipe, or
+``--recipe legacy`` with ``--smooth`` and ``--calib-seq``, which it then needs: there is no prompt length to take it
+from; a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with its fixed public prefix).  The precomputation reads the
+weights and the challenges only, so no query is loaded.  Refused: shapes without an integer builder of a real
+checkpoint (GPT-2) and ``--prob-max`` (the recipe fixes the scale).
+
+Record (one JSON line per device and path ``float64`` / ``default``): ``model``, ``real`` (the checkpoint; None for
+random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_weights.fields`), ``layers``,
+``precompute_s`` (the median), ``all_s``, the number of weight matrices and their entries, ``equal_to_float64``, the
+repetitions ``reps`` of the security parameters, the threads, ``prob_max`` (the graph's attention probabilities'
+scale), the implementation status (``native``) and ``env``.  The full Llama-2-7B holds its 6.7 GB of int8 weights in
+host memory; its float64 path took 107 s per run on 8 threads of a Xeon Silver 4114, the native path 12.7 s.  With
+``--real`` the checkpoint is loaded in fp32 and calibrated on the CPU first (host memory: its fp32 weights, 27 GB for
+Llama-2-7B, next to the integer graph).
 """
 from __future__ import annotations
 
@@ -30,10 +42,24 @@ import time
 
 import torch
 
-from experiments.common import cli, records
+from experiments.common import cli, real_weights, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
+
+
+def setup(args, cfg):
+    """``(graph, real)``: the graph of ``--layers`` blocks and the checkpoint's load (None for random weights:
+    ``bench.py``'s graph).  The precomputation needs no query: the checkpoint is loaded with none (and with the legacy
+    recipe's ``--calib-seq`` as its window length)."""
+    if args.real:
+        real = real_weights.load(args, cfg, seq=args.calib_seq or 1, n_queries=0, layers=[args.layers])
+        graph = real_weights.graph(real, args, args.layers, args.prune_last)
+        del real.model
+        return graph, real
+    from pvi.models.decoder import build_decoder
+    return build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=cli.CALIB_TOKENS, seed=args.seed,
+                         prune_last=args.prune_last, prob_max=args.prob_max), None
 
 
 def main() -> int:
@@ -50,22 +76,23 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--challenge-seed", type=int, default=5, help="the secret challenges' seed")
     cli.add_prob_max_argument(ap)
+    real_weights.add_arguments(ap)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
+    cfg = decoder_config(args.model)
+    real_weights.check(args, cfg, layers=[args.layers], prob_max=args.prob_max)
     cli.apply_runtime(args)
     from pvi.kernels import native
-    from pvi.models.decoder import build_decoder
+    from pvi.models.decoder import prob_max_of
     from pvi.v0.params import params_for
     from pvi.v0.transcript import Challenger
     from pvi.v0.verifier import Verifier
 
-    cfg = decoder_config(args.model)
-    graph = build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=cli.CALIB_TOKENS, seed=args.seed,
-                          prune_last=args.prune_last, prob_max=args.prob_max)
+    sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
+    graph, real = setup(args, cfg)
     params = params_for(args.lam, len(graph.mat_ops), fiat_shamir=args.fs)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
     entries = sum(op.weight.numel() for op in graph.mat_ops)
-    sha = records.git_sha(CODE)
     ok_all = True
     for dev in args.devices:
         if dev.startswith("cuda") and not torch.cuda.is_available():
@@ -86,11 +113,12 @@ def main() -> int:
                 ref = pre
             same = all(torch.equal(pre[k], ref[k]) for k in ref)
             ok_all &= same
-            records.emit({"git": sha, "model": cfg.name, "layers": args.layers or cfg.n_layers, "device": dev,
+            records.emit({"git": sha, "model": cfg.name, **real_weights.fields(args, real),
+                          "layers": args.layers or cfg.n_layers, "device": dev,
                           "path": path, "fs": args.fs, "reps": params.reps, "matrices": len(pre), "entries": entries,
                           "precompute_s": statistics.median(ts[1:]) if args.reps else None,
                           "all_s": [round(t, 3) for t in ts], "equal_to_float64": same, "threads": args.threads,
-                          "prob_max": args.prob_max,
+                          "prob_max": prob_max_of(graph),
                           "native": native.available(), "env": env})
     return 0 if ok_all else 1
 

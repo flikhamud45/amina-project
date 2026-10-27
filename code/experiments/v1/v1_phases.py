@@ -11,6 +11,8 @@ the time goes).
     python -m experiments.v1.v1_phases --small 256 4 64 688 512 --layers 2 --seq 256 --mode Kpre --lmax 18 \\
         --reps 3 --v1-verifier optimised baseline --device cpu --threads 2          # a laptop check (seconds)
     python -m experiments.v1.v1_phases --micro 4096 2048 --reps 5 --threads 8
+    python -m experiments.v1.v1_phases --model llama2-7b --real meta-llama/Llama-2-7b-hf --layers 2 --seq 2048 \\
+        --mode Kpre --reps 3 --v1-verifier optimised baseline --device cuda --threads 8
 
 Builds a random-weight decoder as ``v1_bytes.py`` does (``--model``: a decoder of ``pvi.models.decoder.CONFIGS`` or
 ``experiments.common.models.TINY`` with ``--layers`` blocks; ``--small D H DH FF V``: a Llama-shaped decoder of that
@@ -25,6 +27,14 @@ instance).  After one warm-up query per verifier (a random prompt, seed ``--prom
 (seeds ``--timed-seed + i``) each run once under every listed verifier (:func:`pvi.options.using`), interleaved, so
 that every verifier sees the same queries and the same machine state.
 
+``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of the random-weight decoder and random
+prompts, the integer graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_weights`; OPT:
+the certified recipe, or ``--recipe legacy`` with ``--smooth`` and ``--calib-seq``; a Llama-family checkpoint:
+``hf_llama.MAIN_RECIPE`` with its fixed public prefix), and as queries WikiText-2 test windows of ``--seq`` tokens: the
+first is every verifier's warm-up query, the next ``--reps`` the timed ones, each run under every verifier.  Refused:
+``--small`` and ``--micro`` (no checkpoint has those shapes), shapes without an integer builder of a real checkpoint
+(GPT-2), ``--prob-max`` (the recipe fixes the scale) and a ``--seq`` beyond the checkpoint's trained context.
+
 Within ``verify_final`` the script also times its parts, by wrapping the functions for the run (the code paths are
 the options'; the wrappers only time and count): ``final_xbar`` (``protocol._xbar``, of which ``final_xbar_products``
 in ``products.xbar``), ``final_points`` (the eq tables, the prover's calls in ``prove_fold`` included),
@@ -33,8 +43,10 @@ in ``products.xbar``), ``final_points`` (the eq tables, the prover's calls in ``
 fall back from ``products.lw_times`` (``n_lw_products_fallback``: a residual op whose values span more than
 ``products.SPAN``) and those that run ``protocol._lw_e_old`` (``n_lw_baseline``).
 
-**Record** (one JSON line per verifier, then a table on stdout): ``label``, ``git``, ``model``, ``layers``, ``seq``,
-``mode``, ``policy``, ``fs``, ``lean``, ``lookups``, ``prob_max``, ``lmax``, ``threads``, ``path`` (the
+**Record** (one JSON line per verifier, then a table on stdout): ``label``, ``git``, ``model``, ``real`` (the
+checkpoint; None for random weights), ``recipe``, ``smooth``, ``calib_seq``
+(:func:`experiments.common.real_weights.fields`), ``layers``, ``seq``, ``mode``, ``policy``, ``fs``, ``lean``,
+``lookups``, ``prob_max`` (the graph's attention probabilities' scale), ``lmax``, ``threads``, ``path`` (the
 verifier's name), ``queries``, ``accepted``, ``cut`` (the cut plan's sizes), ``timings`` (the median of every phase),
 ``verify_s`` (the median of each query's ``verify_*`` total), ``env``.  Every query must be accepted, else the exit
 status is 1.
@@ -48,7 +60,9 @@ per-block projection for Llama-2-7B (34,304 requantisation rows, 8,192 residual 
 block).
 
 Hardware and time: the extended version's numbers are 8 threads of a Xeon Silver 4114 with an RTX 2080 Ti prover
-(Llama-2-7B, 2 blocks, ``--lmax 24``: minutes).  The laptop check takes seconds.
+(Llama-2-7B, 2 blocks, ``--lmax 24``: minutes).  The laptop check takes seconds.  With ``--real`` the checkpoint is
+loaded in fp32 and calibrated on the CPU first (host memory: its fp32 weights, 27 GB for Llama-2-7B, next to the
+integer graph).
 """
 from __future__ import annotations
 
@@ -60,7 +74,7 @@ import time
 
 import torch
 
-from experiments.common import cli, records
+from experiments.common import cli, real_weights, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -200,6 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--timed-seed", type=int, default=100,
                     help="timed random prompt i is drawn with the seed --timed-seed + i")
     ap.add_argument("--label", default="", help="a label copied into every record")
+    real_weights.add_arguments(ap)
     cli.add_protocol_arguments(ap)
     cli.add_runtime_arguments(ap, threads=8)
     ap.add_argument("--v1-verifier", nargs="+", choices=options.V1_VERIFIERS, default=list(options.V1_VERIFIERS),
@@ -208,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    from pvi.models.decoder import DecoderConfig, build_decoder
+    from pvi.models.decoder import DecoderConfig, build_decoder, prob_max_of
     from pvi.v0.graph_commitment import commit_graph
     from pvi.v0.params import params_for
     from pvi.v0.prover import Prover
@@ -219,6 +234,8 @@ def main() -> int:
     args = build_parser().parse_args()
     verifiers = list(dict.fromkeys(args.v1_verifier))
     args.v1_verifier = verifiers[0]
+    if args.real and (args.micro or args.small):
+        raise SystemExit("--real builds the checkpoint of --model's shapes: no --small, no --micro")
     cli.apply_runtime(args)
     if args.micro:
         return micro(*args.micro, args.reps, verifiers, args.threads)
@@ -232,9 +249,17 @@ def main() -> int:
         cfg = decoder_config(args.model)
     else:
         raise SystemExit("give --model, --small or --micro")
+    real_weights.check(args, cfg, layers=[args.layers], seqs=[args.seq], prob_max=args.prob_max)
     n_layers = args.layers or cfg.n_layers
-    graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, args.calib_tokens), seed=args.seed,
-                          prune_last=args.prune_last, prob_max=args.prob_max)
+    sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
+    real = None
+    if args.real:                            # the warm-up window, then the timed ones; every verifier takes each
+        real = real_weights.load(args, cfg, seq=args.seq, n_queries=args.reps + 1, layers=[args.layers])
+        graph = real_weights.graph(real, args, args.layers, args.prune_last)
+        del real.model
+    else:
+        graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, args.calib_tokens), seed=args.seed,
+                              prune_last=args.prune_last, prob_max=args.prob_max)
     if args.mode == "C":
         coms = commit_graph(graph, args.rate, device=args.device, policy=args.policy, cache=args.setup_cache)
         params = params_for(args.lam, len(graph.mat_ops), rate=args.rate, fiat_shamir=args.fs, plan=coms.plan,
@@ -262,13 +287,12 @@ def main() -> int:
     def prompt(seed: int) -> torch.Tensor:
         return torch.randint(0, cfg.vocab, (1, args.seq), generator=torch.Generator().manual_seed(seed))
 
-    warm = {v: query(v, prompt(args.prompt_seed)) for v in verifiers}
+    warm = {v: query(v, real.queries[0] if real else prompt(args.prompt_seed)) for v in verifiers}
     runs = {v: [] for v in verifiers}
     for i in range(args.reps):
-        x = prompt(args.timed_seed + i)
+        x = real.queries[1 + i] if real else prompt(args.timed_seed + i)
         for v in verifiers:
             runs[v].append(query(v, x))
-    sha = records.git_sha(CODE)
     env = records.environment(args.device)
     ok = all(w["accepted"] for w in warm.values())
     rows = {}
@@ -279,10 +303,11 @@ def main() -> int:
         accepted = sum(r["accepted"] for r in rs)
         ok = ok and accepted == len(rs)
         rows[v] = med | {"verify_total": verify}
-        records.emit({"label": args.label, "git": sha, "model": cfg.name, "layers": n_layers, "seq": args.seq,
+        records.emit({"label": args.label, "git": sha, "model": cfg.name, **real_weights.fields(args, real),
+                      "layers": n_layers, "seq": args.seq,
                       "mode": args.mode, "policy": args.policy if args.mode == "C" else None, "fs": args.fs,
                       "lean": args.lean, "lookups": args.lookups if args.mode != "C" else False,
-                      "prob_max": args.prob_max, "lmax": args.lmax,
+                      "prob_max": prob_max_of(graph), "lmax": args.lmax,
                       "threads": args.threads, "path": v, "queries": len(rs), "accepted": accepted,
                       "cut": rs[0]["cut"], "timings": med, "verify_s": verify, "env": env})
     print(f"\n{'phase (s, median)':24s}" + "".join(f"{v:>14s}" for v in verifiers))
