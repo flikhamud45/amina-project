@@ -89,7 +89,11 @@ proof bytes (``proof_bytes``, ``bytes`` by message), ``proof_mb_per_token``, ``p
 served tokens per second, the egress cap (``egress_cap_tokens_per_s_per_100gbps``: proved tokens per second that
 100 Gb/s carries, :data:`EGRESS_BYTES_S` over the bytes per token), the checks and ``ok``, ``proof_sha256``, the peak
 GPU memory of each variant (``gpu_peak_mb``), the largest share of a timed window spent waiting for a CPU
-(``wait_frac_max``), every time (``times_s``) and the host's peak resident memory (``host_maxrss_mb``); and one line
+(``wait_frac_max``), every time (``times_s``), the GPU's energy per call of each variant (``energy_j``: U1, the
+prover's window and each U2 dtype, ``{"joules", "method", "calls"}`` from NVML's energy counter,
+:mod:`experiments.common.energy`: over at least ``--energy-s`` seconds of back-to-back calls for a call shorter than
+that, untimed and after the repetitions, else the median of the timed repetitions' own differences; None without a
+counter, and the record's ``energy_counter`` says why) and the host's peak resident memory (``host_maxrss_mb``); and one line
 per cell, ``row = "on_request"``: serving costs U1 (``serve_s``, and its ratio to U2), and a proof produced later,
 only for the queries a client asks about, costs ``prove_s`` and is byte-identical (``later_proof``: ``deterministic``,
 with its SHA-256).  Every line carries the run's settings, the setup times (``build_s``, ``commit_s``,
@@ -119,6 +123,7 @@ import numpy as np
 import torch
 
 from experiments.common import cli, records
+from experiments.common.energy import EnergyMeter, joules_per_call
 from experiments.common.models import TINY, decoder_config
 from experiments.common.paths import CODE
 from experiments.common.stats import median_ci
@@ -387,6 +392,27 @@ def _why(e: BaseException) -> str:
     return f"{type(e).__name__}: {(str(e).splitlines() or [''])[0][:200]}"
 
 
+def _joules(args) -> float | None:
+    """The GPU's energy counter (joules), or None without one (:mod:`experiments.common.energy`)."""
+    return args.meter.read() if getattr(args, "meter", None) is not None else None
+
+
+def _delta(e0: float | None, e1: float | None) -> float | None:
+    return None if e0 is None or e1 is None else e1 - e0
+
+
+def _energy(per_call: list, loop: dict | None) -> dict | None:
+    """A variant's GPU energy per call: ``{"joules", "method", "calls"}`` from back-to-back calls of at least
+    ``--energy-s`` seconds (``loop``, for a call shorter than that) or else the median over the timed repetitions'
+    own counter differences (``timed``, with every difference in ``joules_all``); None without an energy counter."""
+    if loop is not None:
+        return {"joules": loop["joules"], "method": "loop", "calls": loop["calls"]}
+    xs = [e for e in per_call if e is not None]
+    if not xs:
+        return None
+    return {"joules": float(np.median(xs)), "method": "timed", "calls": len(xs), "joules_all": xs}
+
+
 def time_u2(cfg, layers: int, cells, args, device: torch.device) -> dict:
     """U2's times ``{(T, B): {dtype: {"times", "wait_frac", "gpu_peak_mb"} or {"skipped": why}}}``: per dtype one
     model, a warm-up and ``--reps`` timed batched prefills per cell; the model is freed afterwards.  A dtype or cell
@@ -410,12 +436,17 @@ def time_u2(cfg, layers: int, cells, args, device: torch.device) -> dict:
                 _gpu_peak_reset(device)
                 records.timed(lambda: serve_u2(model, x, device), device)
                 peak = _gpu_peak_mb(device)
-                times, waits = [], []
+                times, waits, joules = [], [], []
                 for _ in range(args.reps):
+                    e0 = _joules(args)
                     _, s, w = records.timed(lambda: serve_u2(model, x, device), device)
+                    joules.append(_delta(e0, _joules(args)))
                     times.append(s)
                     waits.append(w)
-                out[seq, bsz][name] = {"times": times, "wait_frac": waits, "gpu_peak_mb": peak}
+                loop = (joules_per_call(args.meter, lambda: serve_u2(model, x, device), lambda: records.sync(device),
+                                        args.energy_s) if float(np.median(times)) < args.energy_s else None)
+                out[seq, bsz][name] = {"times": times, "wait_frac": waits, "gpu_peak_mb": peak,
+                                       "energy": _energy(joules, loop)}
             except RuntimeError as e:
                 failed = _why(e)
             if failed:
@@ -491,6 +522,8 @@ class Cell:
         self.variants = ["u1"] + [(mode, how) for mode in args.modes for how in hows]
         self.times = {k: [] for k in self.variants}
         self.waits = {k: [] for k in self.variants}
+        self.joules = {k: [] for k in self.variants}      # the GPU's energy counter over each timed repetition
+        self.energy: dict = {}                             # key -> _energy()
         self.phases = {k: [] for k in self.variants if k != "u1"}
         self.skipped: dict = {}
         self.peak: dict = {}
@@ -582,9 +615,11 @@ class Cell:
             for key in active[i % len(active):] + active[:i % len(active)]:
                 if key in self.skipped:
                     continue
+                e0 = _joules(self.args)
                 r = self._run(key, keep=1 if (i == 0 and key != "u1") else 0)
                 if r is None:
                     continue
+                self.joules[key].append(_delta(e0, _joules(self.args)))
                 result, seconds, wait = r
                 del r                                # (the kept proof must not outlive this repetition)
                 self.times[key].append(seconds)
@@ -604,6 +639,28 @@ class Cell:
             if key not in self.skipped:
                 self.checks[key]["u1_equals_claims"] = (self.checks[key].get("u1_equals_claims", False)
                                                         and bool(self.u1_equal) and all(self.u1_equal))
+        self.measure_energy()
+
+    def measure_energy(self) -> None:
+        """Each variant's GPU energy per call (:func:`_energy`): a variant whose median repetition is shorter than
+        ``--energy-s`` is called back to back for that long after the timed repetitions (untimed, outside them);
+        the others use their timed repetitions' counter differences."""
+        for key in self.variants:
+            if key in self.skipped or not self.times[key]:
+                continue
+            loop = None
+            if float(np.median(self.times[key])) < self.args.energy_s:
+                oom = False
+                try:
+                    loop = joules_per_call(self.args.meter, lambda: self._call(key),
+                                           lambda: records.sync(self.device), self.args.energy_s)
+                except RuntimeError as e:          # out of memory: the timed repetitions' differences stand
+                    if not _is_oom(e):
+                        raise
+                    oom = True
+                if oom:
+                    _free(self.device)
+            self.energy[key] = _energy(self.joules[key], loop)
 
     def accept(self) -> None:
         """One untimed ``run_query`` per prover variant: the proof of prompt 0 (``seq``) or of the batch is
@@ -694,6 +751,8 @@ def _lines(cell: Cell, u2: dict, base: dict) -> list[dict]:
                             **{k: v.get("gpu_peak_mb") for k, v in u2.items()}},
             "wait_frac_max": {"u1": _max(cell.waits["u1"]), "prover": _max(cell.waits[key])},
             "times_s": {"u1": u1, "window": total, "prove": prove_s, **{k: v for k, v in u2_ok.items()}},
+            "energy_j": {"u1": cell.energy.get("u1"), "prover": cell.energy.get(key),
+                         **{k: v.get("energy") for k, v in u2.items() if "times" in v}},
         })
         lines.append(line)
     req = {**common, "row": "on_request", "serve_s": u1_rec,
@@ -836,6 +895,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--boot", type=int, default=10_000, help="bootstrap resamples of every interval")
     ap.add_argument("--residual-max", type=float, default=0.02,
                     help="phases_ok: the largest share of the prover's time the phases may leave unaccounted")
+    ap.add_argument("--energy-s", type=float, default=2.0,
+                    help="the GPU's energy per call (NVML's energy counter, experiments.common.energy): a variant "
+                         "whose median call is shorter than this many seconds is also called back to back for this "
+                         "long after its timed repetitions; 0: no energy (default 2)")
     ap.add_argument("--label", default="", help="a label copied into every record")
     ap.add_argument("--table", nargs="+", default=None, help="print this script's logs (JSON lines) as a table")
     cli.add_protocol_arguments(ap)
@@ -869,6 +932,8 @@ def main() -> int:
             "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
             "cpu": platform.processor() or platform.machine(), "host": platform.node(), "torch": torch.__version__,
             "env": records.environment(device)}
+    args.meter = EnergyMeter() if device.type == "cuda" and args.energy_s > 0 else None
+    base["energy_counter"] = None if args.meter is None else (True if args.meter.available else args.meter.why)
     good = True
     for name in args.model:
         good &= run_model(name, args, device, cells, base)

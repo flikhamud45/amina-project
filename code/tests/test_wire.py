@@ -423,6 +423,8 @@ def test_fiat_shamir_absorbs_the_encoded_bytes(mode, monkeypatch):
     absorb = proto.Challenger.absorb
     monkeypatch.setattr(proto.Challenger, "absorb", lambda self, label, blob: (
         absorbed.append((label, bytes(blob))), absorb(self, label, blob)))
+    import pvi.v0.query as query        # (mode Kpre's fingerprint, after the query, is a transcript of its own)
+    monkeypatch.setattr(query, "message_digest", lambda *a: None)
     graph, x = _graph("qwen")
     prover, pair = _setup(graph, mode, fiat_shamir=True)
     claims = [prover.claims(x)[op.name] for op in graph.mat_ops]

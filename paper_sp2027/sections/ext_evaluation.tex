@@ -10,7 +10,9 @@
 The dog-versus-cat ResNet-18 stands in for the unreleased classifier of Anchuri et
 al.~\cite{anchuri2026verifiable}. Int8 quantisation changes the accuracy of the image models by at
 most \CnnAccuracyChange{} points. Real weights are used for the attack on OPT-6.7B (Section~\ref{sec:break}) and for
-model quality (Section~\ref{sec:quality}). Proof sizes do not depend on the hardware.
+model quality (Section~\ref{sec:quality}). Proofs do not depend on the hardware: on \HwDigestCells{} cells of the run's
+configuration (image models and decoder blocks, modes~$\sC$ and~$\Kpre$, v0 and V1, Fiat--Shamir), the prover on
+\HwDigestDevices{} produced byte-identical proofs and commitments.
 
 The random-weight language models use 11-bit attention probabilities, as the certified models do. The scale is a
 public constant of the attention, which the verifier recomputes: it changes no shape, only values, and with them the

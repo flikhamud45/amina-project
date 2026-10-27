@@ -37,6 +37,10 @@ The families, with the record each number comes from:
   tier; two builds of one certified model that differ are a ``CHECK FAILED`` line, :func:`digest_agreement`), the
   sampler's distance (``tv`` tier) and the attack (``attack`` tier's documents);
 * the smoke's pytest run on the run's platform (``SmokeTests``: the tests that passed, from its log's summary line);
+* the proofs that do not depend on the hardware (the smoke tier's ``xcheck`` job, ``comparison/proof_digests.py``, and
+  with ``numbers.py --xcheck-logs`` another platform's run of the same cells): ``HwDigestCells`` the cells whose
+  proofs and commitments are byte-identical on every device and platform compared, ``HwDigestDevices`` those devices
+  as the text names them (:func:`hardware_digests`; a cell that differs is a ``CHECK FAILED text:`` line);
 * values that follow from the code alone, under the run's plan: the security parameters, the setup proof's size,
   breakdown and radii (``costs/setup_bytes.py``), the split commitment's columns per query, and V1's cut of a model
   from its shapes (:func:`experiments.paper.tables.v1_shape_model`); and the acceptance probabilities and path counts
@@ -516,6 +520,12 @@ def serving(c: Collector, ctx: T.Ctx) -> None:
         _range(c, f"ServeLlama{name}OverUTwo", [med(x, "prover_over_u2", "fp16") for x in rs], rs[-1], fmt)
     rs = [run.serve("opt-1.3b", s, bsz, "Kpre", "seq") for s, bsz in cells_a]
     _range(c, "ServeOptMUOneOverUTwo", [med(x, "u1_over_u2", "fp16") for x in rs], rs[-1], lambda v: f"{v:.0f}")
+
+    def energy_ratio(rec):        # the prover's GPU energy per proved prompt over fp16 serving's (NVML's counter)
+        e = (rec.d.get("energy_j") or {}) if rec else {}
+        p, u = (e.get("prover") or {}).get("joules"), (e.get("fp16") or {}).get("joules")
+        return p / u if p and u else None
+    _range(c, "ServeOptMEnergyOverUTwoRange", [energy_ratio(r[m]) for m in r], r["C"], lambda v: f"{v:.0f}")
 
 
 # ================================================================================================ V1
@@ -1569,6 +1579,46 @@ def smoke_tests(c: Collector, ctx: T.Ctx) -> None:
     c.put("SmokeTests", r and r.d.get("passed"), r, f.num)
 
 
+def hardware_digests(c: Collector, ctx: T.Ctx) -> None:
+    """The extended version's "byte-identical on the hardware compared": the ``digests`` records of the smoke tier's
+    ``xcheck`` job (each cell's queries proved with the prover and ``C_M`` on the run's GPU and on its CPU) and, from
+    ``ctx.xcheck``, another platform's records of the same cells and settings
+    (:data:`experiments.comparison.proof_digests.KEY`).  ``HwDigestCells``: the cells (model, mode, protocol)
+    compared on at least two devices, every transcript and root equal; ``HwDigestDevices``: the run's GPU and CPU,
+    and each other platform's GPU and CPU, as the text names them.  A cell whose proofs differ anywhere is a
+    :data:`TEXT_CLAIM` line, and the macros are then missing."""
+    from experiments.comparison.proof_digests import compare, key_of
+    run = [r.d for r in ctx.run.kind("digests", "smoke") if "devices" in r.d]
+    latest = {key_of(d): d for d in run}                 # a later job's record of a cell replaces an earlier one's
+    run = list(latest.values())
+    others = [d for d in ctx.xcheck if "devices" in d]
+    bad = [d for d in run + others if not d.get("agree")]
+    _, problems = compare(run, others) if others else (0, [])
+    c.claim(not bad and not problems, "proofs that differ between devices or platforms: " + "; ".join(
+        [f"{d.get('model')} {d.get('mode')} {d.get('protocol')}" for d in bad] + problems))
+    ok = not bad and not problems
+    cells = sum(1 for d in run if len(d["devices"]) >= 2)
+    c.put("HwDigestCells", cells if ok and cells else None, "the xcheck job's digests records", f.num)
+
+    def platform_of(ds):
+        gpus = sorted({" ".join(str(d["gpu"]).split()) for d in ds if d.get("gpu")})
+        cpus = sorted({cpu_name(str(d["cpu"])) for d in ds if d.get("cpu")})
+        return (gpus[0] if len(gpus) == 1 else None), (cpus[0] if len(cpus) == 1 else None)
+
+    gpu, cpu = platform_of(run)
+    text = None
+    if ok and cells and gpu and cpu:
+        text = f"the {gpu} and on the {cpu}"
+        hosts = {}
+        for d in others:
+            hosts.setdefault((d.get("gpu"), d.get("cpu")), []).append(d)
+        for ds in hosts.values():
+            g, k = platform_of(ds)
+            if g and k and len(compare(run, ds)[1]) == 0 and compare(run, ds)[0]:
+                text += f", and on a second platform's {g} and {k}"
+    c.put("HwDigestDevices", text, "the xcheck job's digests records (and --xcheck-logs)")
+
+
 def setup_and_params(c: Collector, ctx: T.Ctx) -> None:
     run = ctx.run
     for model, name in (("llama2-7b", "Llama"), ("gpt2", "Gpt")):
@@ -1751,7 +1801,7 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
 
 FAMILIES = (platform, cpu_client, options_timing, kpre_client, client_memory, outcomes, defence_cost, batching,
             serving, v1_numbers, comparison, improvements, real_weights, long_prompts, quality, attribution, sampler,
-            attack, sok, smoke_tests, setup_and_params, setup_proof, generation)
+            attack, sok, smoke_tests, hardware_digests, setup_and_params, setup_proof, generation)
 TEXT_CLAIM = "CHECK FAILED text:"
 """The prefix of a check of what the text states about a value (not of a record's correctness): a rehearsal's small
 cells need not bear it out, so ``numbers.py --rehearsal`` reports it as a warning."""

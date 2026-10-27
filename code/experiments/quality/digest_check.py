@@ -25,7 +25,6 @@ more host memory than a 16 GB laptop has.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import platform
 
 import torch
@@ -64,15 +63,9 @@ def main() -> None:
         from pvi.v0.graph_commitment import commit_graph
         coms = commit_graph(graph, args.rate, device=args.commit_device, policy=args.policy)
         # under a grouped plan a member's own root is empty and the group's tree holds it: hash every root
-        roots = hashlib.sha256()
-        n_roots = 0
-        for kind, publics in (("member", coms.publics), ("group", coms.group_publics), ("table", coms.table_publics)):
-            for name, pub in sorted(publics.items()):
-                if pub.root:
-                    roots.update(kind.encode() + name.encode() + pub.root)
-                    n_roots += 1
+        roots, n_roots = records.roots_sha256(coms)
         assert n_roots, "no Merkle root"
-        out.update(policy=args.policy, rate=args.rate, commit_device=args.commit_device, roots_sha256=roots.hexdigest(),
+        out.update(policy=args.policy, rate=args.rate, commit_device=args.commit_device, roots_sha256=roots,
                    n_roots=n_roots)
     records.emit(dict(out, env=records.environment(args.commit_device if args.commit else "cpu")))
 

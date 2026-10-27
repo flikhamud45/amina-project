@@ -188,6 +188,12 @@ def absorb_claims(ch: Challenger, verifier: Verifier, x: torch.Tensor, claims, r
     ``chi`` and ``u`` are its secret key (no challenge reads the transcript), or without Fiat--Shamir."""
     if not verifier.params.fiat_shamir or verifier.mode == "Kpre":
         return
+    _absorb_claims(ch, verifier, x, claims, rows, proofs, wire)
+
+
+def _absorb_claims(ch: Challenger, verifier: Verifier, x: torch.Tensor, claims, rows: bytes | None, proofs: dict,
+                   wire: bool) -> None:
+    """:func:`absorb_claims` in every mode."""
     absorb_statement(ch, verifier, x)
     if wire:
         ch.absorb_large(b"claims/" + claimcodec.MAGIC, claims)
@@ -409,20 +415,45 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
 
     ``keep_proof=True`` (with ``wire``, not streaming) also returns the prover's messages as the verifier
     received them (``out["proof"]``, a :class:`WireProof`), which :func:`verify_wire` checks again; a
-    rejected query's holds the messages up to the rejecting check."""
+    rejected query's holds the messages up to the rejecting check.
+
+    ``out["transcript"]``: with Fiat--Shamir, the transcript's digest at the query's end
+    (:meth:`Challenger.transcript_digest`: the statement with the commitment's roots and every message the
+    challenges depend on; the openings follow from the roots and the challenges), else None.  Mode Kpre's
+    transcript absorbs nothing (no challenge reads it), so there the digest is that of a transcript that absorbs
+    the statement and its one message as mode K's does (:func:`message_digest`).  It is computed after the query,
+    outside every timed phase."""
     if keep_proof and (not wire or verifier.stream):
         raise ValueError("keep_proof keeps the compact encoding's messages: it needs wire=True and a verifier "
                          "without stream")
     verifier.sampler = sampler
+    ch = Challenger(fiat_shamir=verifier.params.fiat_shamir, seed=seed)
     try:
-        return _run_query(prover, verifier, x, seed, forward_kwargs, wire, keep_proof)
+        out = _run_query(prover, verifier, x, ch, forward_kwargs, wire, keep_proof)
+        kpre = "_message" in out            # mode Kpre: its message (None: a streaming one off the wire, not kept)
+        message = out.pop("_message", None)
+        if not ch.fiat_shamir:
+            out["transcript"] = None
+        elif kpre:
+            out["transcript"] = message_digest(verifier, x, *message, wire) if message is not None else None
+        else:
+            out["transcript"] = ch.transcript_digest()
     finally:
         verifier.sampler = None
+    return out
 
 
-def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forward_kwargs, wire,
+def message_digest(verifier: Verifier, x: torch.Tensor, claims, rows: bytes | None, proofs: dict, wire: bool) -> str:
+    """The digest of a fresh Fiat--Shamir transcript that absorbs the statement and the claims message as
+    :func:`absorb_claims` does in the modes that absorb it: mode Kpre's proof fingerprint
+    (:meth:`Challenger.transcript_digest`)."""
+    d = Challenger(fiat_shamir=True)
+    _absorb_claims(d, verifier, x, claims, rows, proofs, wire)
+    return d.transcript_digest()
+
+
+def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, forward_kwargs, wire,
                keep_proof: bool = False) -> dict:
-    ch = Challenger(fiat_shamir=verifier.params.fiat_shamir, seed=seed)
     out = {"accepted": False, "rejected_at": None, "timings": {}, "contention": {}}
     if verifier.stream:
         out["rejected_at"] = _run_streaming(prover, verifier, x, ch, out, forward_kwargs or {}, wire)
@@ -430,6 +461,8 @@ def _run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, seed, forwar
         return out
     t = out["timings"]
     claims, rows, proofs = _claims_message(prover, verifier, x, ch, out, forward_kwargs or {}, wire=wire)
+    if verifier.params.fiat_shamir and verifier.mode == "Kpre":       # its fingerprint, after the query
+        out["_message"] = (claims, rows, proofs)
     keep = None
     if keep_proof:
         keep = out["proof"] = WireProof(claims, rows, proofs)
@@ -627,6 +660,8 @@ def _run_streaming(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Chal
     pin = vdev.type == "cuda"
     claims, rows, proofs = _claims_message(prover, verifier, x, ch, out, forward_kwargs, wire=wire,
                                            send=None if wire else lambda z: wire_claim(z, pin=pin))
+    if verifier.params.fiat_shamir and verifier.mode == "Kpre":       # its fingerprint, after the query
+        out["_message"] = (claims, rows, proofs) if wire else None
     if not wire:   # the verifier's own copies (read after the prover runs again); a lookup table's as its int8 rows
         claims = {k: wire_rows(z, pin=pin) if k in verifier.tables else z for k, z in passed(claims, pin).items()}
     chis, us, u_blob = _fold_message(prover, verifier, ch, x, out, wire)

@@ -65,7 +65,7 @@ submits nothing and needs none of the settings above (it only warns about those 
 bash code/experiments/package/run.sh --platform smoke --no-exclusive smoke
 #  -> "SMOKE OK" at the end of logs/smoke/sp-smoke-*.out (up to an hour); wait for it before the rehearsal
 bash code/experiments/package/run.sh --platform rehearsal --rehearsal --no-exclusive --optional [--llama-licence] all
-#  -> 54 small jobs (55 with --llama-licence): every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three
+#  -> 55 small jobs (56 with --llama-licence): every tier's smallest cells (GPT-2 / OPT-125M, 2 blocks), about three
 #     hours; wait until `squeue -u $USER` lists none of them, then
 cd code
 PYTHONPATH=src:. ../.venv/bin/python -m experiments.comparison.aggregate --platform rehearsal
@@ -77,7 +77,12 @@ PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs
 The smoke runs the GPU tests (the Triton kernels and `torch._int_mm` on this GPU), the native-kernel tests
 (`-march=native` on this CPU), the Fiat-Shamir, serving, generation, setup-proof, options and package tests, the
 native-kernel and int8 self-checks (it fails unless both pass), one V1 query and the host-to-device copy; pytest's
-whole output goes to `logs/<name>/smoke_pytest.txt`. The rehearsal then runs, in this machine's environment, every
+whole output goes to `logs/<name>/smoke_pytest-<host>-<job id>.txt`, with its JUnit XML next to it (`.xml`), one pair
+per node and job. The tier's second job, `xcheck`, proves fixed cells of the run's configuration with the prover (and
+the commitment) on the GPU and on the CPU (`experiments/comparison/proof_digests.py`): the image models MLP, LeNet-5
+and ResNet-18 (CIFAR-10), two blocks of GPT-2 and OPT-125M and one Llama-2-7B block at 64 tokens, and GPT-2's blocks
+with V1; every Fiat-Shamir transcript and every commitment root must be byte-identical on both devices. It gates
+nothing. The rehearsal then runs, in this machine's environment, every
 script of every tier, on each path on which the tier's full cells run it (the verifier on each device, a real
 checkpoint, the proof without the compact encoding, V1's codec profile and both V1 verifiers, the legacy recipe, a
 fixed prefix, the sampler on a real model) and with the A/B cells' implementation options, but on small models with
@@ -86,7 +91,7 @@ during the run. Every job asks for at most 64 GB of host memory:
 
 | Tier | Jobs | The rehearsal's cells |
 |---|---:|---|
-| `smoke` | 1 | the Fiat-Shamir tree, serving, options and package tests; the native-kernel and int8 self-checks, one V1 query, the host-to-device copy |
+| `smoke` | 2 | the Fiat-Shamir tree, serving, options and package tests; the native-kernel and int8 self-checks, one V1 query, the host-to-device copy; `xcheck` on the MLP and two GPT-2 blocks at 16 tokens (V1: one block) |
 | `cpuv` | 4 | GPT-2 (2 blocks, 64 tokens): the CPU verifier (its proofs checked again in the client's own process), every re-execution baseline, V1's two CPU verifiers; llama.cpp's build and one block of Llama-2-7B's shapes in Q8_0 and bf16 (64 tokens) |
 | `v1` | 1 | V1 against v0 on GPT-2 |
 | `serve` | 1 | OPT-125M (2 blocks): single prompts and batches of 4 |
@@ -149,7 +154,7 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 194 jobs. There, the paper's run submits its tiers as eleven jobs (`--one-job`), each of
+waits that long for each of its 195 jobs. There, the paper's run submits its tiers as eleven jobs (`--one-job`), each of
 which runs its tiers' jobs one after another in its allocation: the timed tiers in seven jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `qllama`, `tv`, `attack`, `smoke`) in four jobs on one GPU of a
 shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates nothing:
@@ -169,7 +174,7 @@ $R --one-job zkllm                         # 3-5 h: zkLLM's demo on the same GPU
 $R --one-job --no-exclusive quality        # 16-24 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive qllama         # 40-48 h, not timed: two or three submissions in a row (Sec. 5)
 $R --one-job --no-exclusive tv attack      # 6-9 h, not timed
-$R --one-job --no-exclusive smoke          # 1 h, not timed: the test suite on the run's GPU and CPU
+$R --one-job --no-exclusive smoke          # 1.5-2 h, not timed: the test suite and xcheck on the run's GPU and CPU
 ```
 
 Every allocation, the three without `--exclusive` too, asks for the same GPU (`--gres`) and checks its node before its
@@ -190,7 +195,7 @@ if it succeeds, which the run above does not need.
 
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
-| `smoke` | 1 | 1 | 2 | the text's test count (`\SmokeTests`, `ext_v1`) and the GPU-against-CPU exactness on the run's platform; in a chain, also the gate of the tiers after it |
+| `smoke` | 2 | 1.5-2 | 5 | the text's test count (`\SmokeTests`, `ext_v1`) and the GPU-against-CPU exactness on the run's platform; `xcheck`: the proofs and commitments byte-identical on the GPU and the CPU (`\HwDigestCells`, `\HwDigestDevices`, `ext_evaluation`); in a chain, the smoke is also the gate of the tiers after it |
 | `cpuv` | 14 | 7-10 | 26 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times", which stays against exact re-execution); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key and embedding tables or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
 | `v1` | 13 | 4-8 | 26 | V1 against v0: bytes, prover and verifier (`tab:eval-v1`) |
 | `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
@@ -213,10 +218,10 @@ if it succeeds, which the run above does not need.
 and gated by the smoke; a second invocation starts a new chain. Without a Llama-2 licence, leave out
 `--llama-licence`: the Llama-2 cells then stay empty (the qllama tier runs OpenLLaMA-7B's two jobs instead, which the
 paper does not report). The counts and limits are those with `--llama-licence`; without it (in parentheses) the
-`real` tier has 17 jobs and 23 h of limits and the `qllama` tier 2 jobs and 14 h. `all` is then 160 jobs and 295 h
-of limits (179 and 381 h with `--llama-licence`; the `long` tier adds 12 jobs and 28 h, and the `zkllm` tier, with
-`--llama-licence`, 3 jobs and 8 h: `run.sh --platform final --optional --llama-licence --dry-run all` lists 194 jobs
-and 417 h).
+`real` tier has 17 jobs and 23 h of limits and the `qllama` tier 2 jobs and 14 h. `all` is then 161 jobs and 298 h
+of limits (180 and 384 h with `--llama-licence`; the `long` tier adds 12 jobs and 28 h, and the `zkllm` tier, with
+`--llama-licence`, 3 jobs and 8 h: `run.sh --platform final --optional --llama-licence --dry-run all` lists 195 jobs
+and 420 h).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
 cpuv`, then `v1`, ...); its jobs are chained among themselves. Every mode-C cell takes `--policy` (default `cnn18c`)
@@ -236,6 +241,15 @@ measures the setup itself.
   time per layer counts the second one twice); `zk-build` ends with `ZKLLM_BUILD_OK`, and a prove job that stops
   names what it lacks (the scratch space: `--zkllm-scratch <folder with 58 GB>`; the CUDA toolkit on the node:
   `--cuda-home`).
+* Every job writes, besides its log, the GPU's telemetry (`experiments/package/telemetry.py`: clocks, power,
+  temperature, utilisation and the throttle reasons, one sample a second, `--telemetry-interval`) to
+  `logs/<name>/telemetry/sp-<cell>-<job id>.{csv.gz,json,apps.txt}` (the `.apps.txt` lists the GPU's processes when
+  the job starts and ends), and the first job of each node and allocation writes the node's environment to
+  `logs/<name>/env/<host>-<job id>/` (`experiments/package/envsnap.py`: `nvidia-smi -q`, `lscpu`, `numactl -H`, the
+  frequency governors and boost, `$CXX --version`, `pip freeze`, the commit and `git status`, and `env.json` with the
+  fields compared between nodes); `logs/<name>/env/inputs.sha256` holds the hashes of the image models and datasets
+  and `env/models-check.txt` the check of `artifacts/models/MODELS.sha256`. Neither can fail a job
+  (`--no-env-snapshot`, `--telemetry-interval 0`: neither is written).
 * `A CORRECTNESS CHECK FAILED` or `FAILED:` in a log (an honest query rejected, a tamper accepted, a byte count that
   disagrees with the model) is a real problem; the job's log says which check.
 * A `--one-job` submission that hit its time limit, was pre-empted or had failed jobs: submit the same command again
@@ -262,15 +276,9 @@ measures the setup itself.
 
 ## 6. What the run leaves
 
-The machine's description, written on the GPU node into the run's folder:
-
-```bash
-srun -p "$SBATCH_PARTITION" --gres="$SBATCH_GRES" bash -c 'nvidia-smi -q > logs/final/env-nvidia.txt;
-    lscpu > logs/final/env-cpu.txt; free -g > logs/final/env-mem.txt'   # without SLURM: the three commands
-.venv/bin/pip freeze > logs/final/env-pip.txt; git rev-parse HEAD > logs/final/env-git.txt
-```
-
-then the records, without the caches, as one archive and as the artifact's stored copy (`code/artifacts/README.md`,
+The machines' descriptions are in the run's folder already: every node and allocation wrote its environment from
+inside the run (`logs/<name>/env/`, Sec. 5), and every job its GPU's telemetry (`logs/<name>/telemetry/`). Then the
+records, without the caches, as one archive and as the artifact's stored copy (`code/artifacts/README.md`,
 "The final run's records"):
 
 ```bash
@@ -297,5 +305,12 @@ The coverage report names every job without records (with `--expect`); its last 
 every macro that the run does not provide (`MISSING: ...`, one per line; `COMPLETE: ...` when there is none). A
 `CHECK FAILED` or `PARSE` line, or any missing cell or macro, gives exit status 1 (`--strict`: also a job without
 results). Its `machines:` line lists the nodes and drivers the jobs ran on (several are allowed), and jobs whose logs
-or records name another GPU or CPU model than the rest are a `CHECK FAILED platform` line that names them.
+or records name another GPU or CPU model than the rest are a `CHECK FAILED platform` line that names them. Its `environment:` and `telemetry:` lines count the node snapshots and
+the timed jobs sampled; a field of `env.json` on which the nodes differ (the driver, the compiler, the packages, the
+governors, ...), a stored network whose hash fails, and a timed job during which the GPU was slowed by a power or
+thermal limit or ran another process at the start are `WARNING env` and `WARNING telemetry` lines, which change no
+exit status. A second platform that runs the smoke tier at the same commit (`run.sh --platform <other> --require-gpu
+<its GPU> --require-cpu any smoke`) checks the `xcheck` cells against this run with `python -m
+experiments.comparison.proof_digests --compare ../logs/final ../logs/<other>`, and `numbers.py --xcheck-logs
+../logs/<other>` adds it to `\HwDigestDevices`.
 `numbers_check.txt` keeps the first command's report: its end shows at a glance what is missing.

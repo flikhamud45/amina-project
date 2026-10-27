@@ -123,13 +123,21 @@ def test_h2d_bandwidth(monkeypatch, capsys):
 def test_perf_spread_is_each_querys_own_totals():
     runs = [{"timings": {"prove_forward": 1.0, "fs_hash": 0.5, "verify_derive": 2.0}},
             {"timings": {"prove_forward": 3.0, "fs_hash": 0.5, "verify_derive": 1.0}}]
-    assert perf._spread(runs) == {"prove_s_range": [1.5, 3.5], "verify_s_range": [1.5, 2.5]}
+    assert perf._spread(runs) == {"prove_s_range": [1.5, 3.5], "verify_s_range": [1.5, 2.5],
+                                  "prove_s_all": [1.5, 3.5], "verify_s_all": [2.5, 1.5],
+                                  "timings_all": {"fs_hash": [0.5, 0.5], "prove_forward": [1.0, 3.0],
+                                                  "verify_derive": [2.0, 1.0]}}
+    runs[0]["transcript"], runs[1]["transcript"] = "a" * 64, "b" * 64       # Fiat-Shamir: each query's digest
+    assert perf._spread(runs)["transcripts"] == ["a" * 64, "b" * 64]
 
 
 # ------------------------------------------------------------------------------------------ the package
 HOST_VARIABLES = {"PVI_NATIVE_DIR", "PVI_PY_INCLUDE", "PVI_TEST_DEVICE", "PVI_CIFAR_ROOT", "PVI_IMAGENET_ROOT",
-                  "PVI_CACHE"}
-"""The ``PVI_`` variables a job may carry: places on the host (and the smoke's test device), never a switch."""
+                  "PVI_CACHE", "PVI_JOB_ID"}
+"""The ``PVI_`` variables a job may carry: places on the host (and the smoke's test device, and a --local job's id,
+which names its telemetry and smoke files), never a switch."""
+STOP = '; st=$?; kill $TPID 2> /dev/null; wait $TPID 2> /dev/null; exit $st"'
+"""The end of every job's script: the job's exit status kept, its GPU telemetry sampler stopped."""
 CPU_TIERS = ("cpuv", "v1", "bench", "batch", "gen", "real", "setup", "improve", "long")
 """The tiers with CPU-timing jobs (pinned to 8 cores of one NUMA node); the others have none."""
 
@@ -281,18 +289,20 @@ def test_a_queued_job_of_the_same_platform_is_skipped_and_the_chain_and_gate_pas
                                      "cpuv", queue=queue)
     assert status == 0, err
     names = [_job(" " + j) for j in jobs]
-    assert names == ["sp-smoke", "sp-c-rx-gpt2", "sp-c-v1-gpt2-64", "sp-c-llamacpp-llama2-7b-L1"]    # another
-    # platform's sp-smoke is not this one
+    assert names == ["sp-smoke", "sp-xcheck", "sp-c-rx-gpt2", "sp-c-v1-gpt2-64", "sp-c-llamacpp-llama2-7b-L1"]
+    # (another platform's sp-smoke is not this one)
     assert all("--comment=rehearsal" in j and "--exclusive" not in j for j in jobs)
-    assert "--dependency=afterok:1,afterany:902,singleton" in jobs[1]    # after the smoke's success and the queued job
-    assert "--dependency=afterany:2,singleton" in jobs[2] and "--dependency=afterany:3,singleton" in jobs[3]
+    assert "--dependency=afterany:1,singleton" in jobs[1]                # the smoke tier's xcheck gates nothing
+    assert "--dependency=afterok:1,afterany:902,singleton" in jobs[2]    # after the smoke's success and the queued job
+    assert "--dependency=afterany:3,singleton" in jobs[3] and "--dependency=afterany:4,singleton" in jobs[4]
     assert "skip sp-c-gpt2-64: already queued (job 902)" in out and "# 1 jobs already queued" in out
 
 
 def test_a_queued_smoke_still_gates_the_run(tmp_path):
     status, out, err, jobs = _submit(tmp_path, "--platform", "final", "smoke", "cpuv", queue="sp-smoke|final|901")
     assert status == 0, err
-    assert len(jobs) == 14 and "--dependency=afterok:901,singleton" in jobs[0], jobs[0]
+    assert len(jobs) == 15 and "--dependency=afterany:901,singleton" in jobs[0] and "-J sp-xcheck" in jobs[0], jobs
+    assert "--dependency=afterok:901,afterany:1,singleton" in jobs[1], jobs[1]     # the queued smoke gates the tier after
 
 
 def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(tmp_path):
@@ -306,7 +316,7 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
                  "--requeue", "--signal=B:TERM@300", "--open-mode=append", "--dependency=singleton",
                  "logs/final/node-smoke-cpuv-long-%j.log", "--gres=gpu:l40s:1"):
         assert part in jobs[0], (part, jobs[0])
-    assert "# one job: smoke cpuv long: 27 jobs, job limits 56 h, time limit 24 h" in out, out
+    assert "# one job: smoke cpuv long: 28 jobs, job limits 59 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
@@ -334,11 +344,11 @@ def test_a_local_run_again_runs_the_smoke_and_the_jobs_that_did_not_end_successf
     assert re.search(r"^#   bash code/experiments/package/run\.sh --python \S+ --platform t --rehearsal --local smoke "
                      r"cpuv$", out, re.M), out
     assert sorted(p.name for p in (logs / "done").iterdir()) == ["sp-c-gpt2-64", "sp-c-llamacpp-llama2-7b-L1",
-                                                                 "sp-c-v1-gpt2-64", "sp-smoke"]
+                                                                 "sp-c-v1-gpt2-64", "sp-smoke", "sp-xcheck"]
     status, out, err, _ = _submit(tmp_path, *argv)
     assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke", "sp-c-rx-gpt2"], out
     assert "# every job of this submission has ended successfully" in out
-    assert "skip sp-c-gpt2-64: ended successfully earlier" in out and "# 3 jobs had ended successfully" in out
+    assert "skip sp-c-gpt2-64: ended successfully earlier" in out and "# 4 jobs had ended successfully" in out
     (logs / "done" / "sp-c-gpt2-64").unlink()
     status, out, err, _ = _submit(tmp_path, *argv)
     assert status == 0 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke", "sp-c-gpt2-64"], out
@@ -421,7 +431,7 @@ def test_a_failed_smoke_still_stops_its_own_invocation(tmp_path):
     """With the smoke tier, nothing after it runs unless it ends in SMOKE OK, and the summary says so."""
     status, out, err, _ = _submit(tmp_path, "--platform", "t", "--rehearsal", "--local", "smoke", "cpuv",
                                   extra={"FAKE_FAIL": "-m pytest"})
-    assert status == 1 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke"], out
+    assert status == 1 and re.findall(r"running (sp-\S+)", out) == ["sp-smoke", "sp-xcheck"], out   # the tier's
     assert "the smoke did not end in SMOKE OK: the jobs after it were not run" in out
     assert "#   FAILED  sp-smoke (exit status 3)" in out and "--local smoke cpuv" in out
 
@@ -441,7 +451,7 @@ def test_every_job_checks_its_node_and_asks_for_the_same_gpu():
     """Every job's first command logs its node and checks the GPU and CPU models (default the paper's, L40S and EPYC
     9334; 'any' checks nothing), and --gres and --exclude-nodes reach every job and every --one-job allocation, also
     one without --exclusive (the tiers that time nothing); the dry run prints the requirement."""
-    check = "-m experiments.package.node --require-gpu L40S --require-cpu EPYC\\ 9334 && "
+    check = "-m experiments.package.node --require-gpu L40S --require-cpu EPYC\\ 9334 || exit $?; "
     runs: list = []
     lines = _dry(out=runs)
     assert all(check in line for line in lines) and "# node: GPU 'L40S', CPU 'EPYC 9334'" in runs[0].stdout
@@ -449,7 +459,7 @@ def test_every_job_checks_its_node_and_asks_for_the_same_gpu():
         first = re.search(r"-m (experiments\.\S+|pytest)", line.split("--wrap", 1)[1]).group(1)
         assert first == "experiments.package.node", _job(line)
     lines = _dry("--require-gpu", "any", "--require-cpu", "any", "--gres", "gpu:l40s:1", "--exclude-nodes", "t-806")
-    assert all("--require-gpu any --require-cpu any && " in line for line in lines)
+    assert all("--require-gpu any --require-cpu any || exit $?; " in line for line in lines)
     assert all("--gres=gpu:l40s:1" in line and "--exclude=t-806" in line for line in lines)
     for flags in ((), ("--no-exclusive",)):
         one = _dry(*flags, "--one-job", "--gres", "gpu:l40s:1", "--exclude-nodes", "t-806", tiers=("tv", "attack"))
@@ -463,7 +473,7 @@ def test_nothing_is_submitted_without_a_gpu_request(tmp_path):
     assert status == 2 and not jobs and "no GPU requested" in err, err
     status, _, err, jobs = _submit(tmp_path / "b", "--platform", "final", "--gres", "gpu:l40s:1", "smoke",
                                    extra={"SBATCH_GRES": ""})
-    assert status == 0 and len(jobs) == 1 and "--gres=gpu:l40s:1" in jobs[0], err
+    assert status == 0 and len(jobs) == 2 and all("--gres=gpu:l40s:1" in j for j in jobs), err     # smoke, xcheck
     status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "--gres", "gpu:1", "smoke")
     assert status == 0 and "names no GPU type 'L40S'" in err, err
 
@@ -514,18 +524,18 @@ def test_nothing_is_submitted_when_the_partition_lacks_the_memory_or_the_compile
     status, _, err, jobs = _submit(tmp_path / "a", "--platform", "final", "smoke", "cpuv", mem="64000 131000")
     assert status == 2 and not jobs and "pass --mem-max 127" in err, err
     status, _, err, jobs = _submit(tmp_path / "b", "--platform", "final", "--rehearsal", "smoke", mem="64000 131000")
-    assert status == 0 and len(jobs) == 1, err                          # the rehearsal asks for 64 GB at most
+    assert status == 0 and len(jobs) == 2, err                          # the rehearsal asks for 64 GB at most
     status, _, err, jobs = _submit(tmp_path / "c", "--platform", "final", "smoke", cxx=False)
     assert status == 2 and not jobs and "--no-native-ok" in err, err
     status, _, err, jobs = _submit(tmp_path / "d", "--platform", "final", "--no-native-ok", "smoke", cxx=False)
-    assert status == 0 and len(jobs) == 1, err
+    assert status == 0 and len(jobs) == 2, err
     # the cpuv tier builds llama.cpp: CMake (CMAKE, else cmake on the PATH) is checked before anything is submitted
     status, _, err, jobs = _submit(tmp_path / "e", "--platform", "final", "--rehearsal", "cpuv",
                                    extra={"CMAKE": "/no/cmake"})
     assert status == 2 and not jobs and "CMake ('/no/cmake') not found" in err and "cmake==3.31.6" in err, err
     status, _, err, jobs = _submit(tmp_path / "f", "--platform", "final", "--rehearsal", "smoke",
                                    extra={"CMAKE": "/no/cmake"})
-    assert status == 0 and len(jobs) == 1, err                          # no cpuv tier: no CMake needed
+    assert status == 0 and len(jobs) == 2, err                          # no cpuv tier: no CMake needed
     cmake = (tmp_path / "g" / "bin" / "cmake").as_posix()                # FAKE's stand-in, given by its path
     status, out, err, _ = _submit(tmp_path / "g", "--dry-run", "--platform", "final", "--rehearsal", "cpuv",
                                   extra={"CMAKE": cmake})
@@ -649,11 +659,12 @@ def test_the_package_times_five_queries_on_the_headline_cells_and_chains_every_j
         if job.startswith("sp-serve-"):
             assert "--reps 10" in line, job
     missing = [t for t in re.findall(r"\btests/\w+\.py", lines[0]) if not (CODE / t).is_file()]
-    assert jobs[0] == "sp-smoke" and not missing, missing           # every test file the smoke runs exists
+    assert jobs[:2] == ["sp-smoke", "sp-xcheck"] and not missing, missing   # every test file the smoke runs exists
     deps = [re.search(r"--dependency=(\S+)", line).group(1) for line in lines]
-    assert deps[0] == "singleton" and deps[1].startswith("afterok:DRY1,")       # nothing before smoke succeeds
-    assert all(d.startswith("afterany:DRY") for d in deps[2:]), deps
-    ids = [int(re.search(r"DRY(\d+)", d).group(1)) for d in deps[1:]]
+    assert deps[0] == "singleton" and deps[1] == "afterany:DRY1,singleton"      # the smoke tier's xcheck gates nothing
+    assert deps[2].startswith("afterok:DRY1,afterany:DRY2,")                   # nothing else before smoke succeeds
+    assert all(d.startswith("afterany:DRY") for d in deps[3:]), deps
+    ids = [int(re.search(r"afterany:DRY(\d+)", d).group(1)) for d in deps[1:]]
     assert ids == list(range(1, len(lines))), "each job after the previous one"
     assert len(set(jobs)) == len(jobs)
     for prefix in ("sp-smoke", "sp-c-", "sp-v1-", "sp-serve-", "sp-b-", "sp-g-", "sp-gen-", "sp-bt-", "sp-r-",
@@ -707,14 +718,15 @@ def _paths(script: str, cmd: str) -> set:
 
 def _scripts(lines: list[str]) -> dict:
     """``{tier: {(script, path)}}`` of a dry run: the script of every command of a job (``-m
-    experiments.<section>.<name>``) with each path it takes (:func:`_paths`); the node check that starts every job
-    (``experiments.package.node``) is not a tier's script."""
+    experiments.<section>.<name>``) with each path it takes (:func:`_paths`); the node check, the environment
+    snapshot and the GPU telemetry that start every job (``experiments.package.node``, ``envsnap``, ``telemetry``)
+    are not a tier's scripts."""
     out: dict = {}
     for line in lines:
         tier = tier_of(_job(line)[len("sp-"):])
         for cmd in re.split(r"&&|;", line.split("--wrap", 1)[1]):
             m = re.search(r"-m experiments\.(\w+\.\w+)", cmd)
-            if m and m.group(1) != "package.node":
+            if m and m.group(1) not in ("package.node", "package.envsnap", "package.telemetry"):
                 out.setdefault(tier, set()).update((m.group(1), p) for p in _paths(m.group(1), cmd))
     return out
 
@@ -766,7 +778,7 @@ def test_the_gen_and_quality_cells_of_the_text():
     rec = lines["sp-q-opt125-recipes"]
     assert "--model facebook/opt-125m --recipe legacy --graphs smooth --pbits 11" in rec
     assert "--model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.7 --pbits 11" in rec
-    assert re.search(r"quality\.ppl_opt --device cuda --model facebook/opt-125m\"", lines["sp-q-opt125"])
+    assert re.search(r"quality\.ppl_opt --device cuda --model facebook/opt-125m; st=", lines["sp-q-opt125"])
     assert "--alphas 0.3 0.4 0.5 0.6 0.7 --pbits 11 --draws 0 1" in lines["sp-q-opt13-recipes"]   # draw 1's 0.6
     first, second = lines["sp-q-qwen4"].split("--wrap", 1)[1].split(" && ")[-2:]
     assert "--glu-exps" not in first and "--glu-exps 8 --exp-only" in second
@@ -780,7 +792,7 @@ def test_the_gen_and_quality_cells_of_the_text():
                 line = lines[f"{job}{suffix}-a{a:g}"]
                 cmd = line.split("--wrap", 1)[1]
                 assert cmd.count("quality.ppl_llama") == 1 and f"--model {model}" in cmd, line
-                assert re.search(rf"--alphas {a:g}( |\")", cmd), line
+                assert re.search(rf"--alphas {a:g}( |\"|;)", cmd), line
                 if len(balances) > 1:
                     assert f"--glu-smooths {' '.join(f'{g:g}' for g in balances)}" in cmd, line
                 else:
@@ -791,7 +803,7 @@ def test_the_gen_and_quality_cells_of_the_text():
                 hours = int(re.search(r"--time=(\d+):00:00", line)[1])
                 assert 6 <= hours <= 8, line
     assert not any("openllama" in j for j in lines)
-    builds = re.findall(r"quality\.digest_check (--model \S+ --threads \d+[^&\"]*)", lines["sp-q-digest"])
+    builds = re.findall(r"quality\.digest_check (--model \S+ --threads \d+[^&\";]*)", lines["sp-q-digest"])
     assert [b.strip() for b in builds] == [
         "--model facebook/opt-125m --threads 1", "--model facebook/opt-125m --threads 8 --commit --commit-device cuda",
         "--model facebook/opt-1.3b --threads 8 --commit --commit-device cuda",
@@ -807,10 +819,11 @@ def test_the_gen_and_quality_cells_of_the_text():
     # windows of 128 tokens, the scalar graph with norm gain 4 and 8-bit probabilities, the feature sub-rows), on the
     # CPU and not pinned; the rehearsal's cell takes two windows without the sub-rows
     attr = lines["sp-q-opt125-attr"].split("--wrap", 1)[1]
-    assert attr.endswith('experiments.quality.attribution --device cpu --threads 8 --model facebook/opt-125m"'), attr
+    assert attr.endswith('experiments.quality.attribution --device cpu --threads 8 --model facebook/opt-125m' + STOP), \
+        attr
     assert "experiments.package.pin" not in attr and "--time=1:00:00" in lines["sp-q-opt125-attr"]
     assert "--mem=64G" in lines["sp-q-opt125-attr"]
-    assert rehearsal["sp-q-opt125-attr"].endswith("--model facebook/opt-125m --windows 2 --skip-sub\"")
+    assert rehearsal["sp-q-opt125-attr"].endswith("--model facebook/opt-125m --windows 2 --skip-sub" + STOP)
     assert [j for j, x in lines.items() if "experiments.quality.attribution" in x] == ["sp-q-opt125-attr"]
 
 

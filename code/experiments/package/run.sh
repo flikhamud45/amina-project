@@ -9,7 +9,10 @@
 # Tiers, in the order 'all' runs them (each job's records go to logs/<name>/sp-<job>-<jobid>.out, the benchmark's to
 # code/artifacts/comparison/raw_<name>/):
 #     smoke    the GPU and native-kernel tests, one V1 query, the host-to-device copy; ends with "SMOKE OK", and no
-#              other tier of the same invocation starts unless it does (a submission without it starts at once)
+#              other tier of the same invocation starts unless it does (a submission without it starts at once); and
+#              the job xcheck: fixed cells of the run's configuration proved with the prover on the GPU and on the
+#              CPU, whose proofs and commitments must be byte-identical (experiments/comparison/proof_digests.py; a
+#              second platform runs the same tier and --compare checks it against this run)
 #     cpuv     the CPU verifier against every re-execution baseline on the same 8 threads (llama.cpp's included); V1's
 #              CPU verifier
 #     v1       V1 against v0 (bytes, prover and verifier times)
@@ -107,6 +110,13 @@
 #     --zkllm-python PY the interpreter (3.8 to 3.12) from which the zkllm tier creates zkLLM's environment, which is
 #                       separate from the run's (default: the run's interpreter, --python)
 #     --cuda-home DIR   the CUDA toolkit (DIR/bin/nvcc) that builds zkLLM (default: nvcc on the PATH, else CUDA_HOME)
+#     --telemetry-interval S  every job samples its GPU's clocks, power, temperature, utilisation and throttle reasons
+#                       every S seconds in the background (experiments/package/telemetry.py; S >= 1, default 1; 0: no
+#                       sampling) into logs/<name>/telemetry/sp-<cell>-<job id>.{csv.gz,json,apps.txt}
+#     --no-env-snapshot every job and --local run writes, after its node check, the node's environment once per node
+#                       and allocation (experiments/package/envsnap.py: nvidia-smi -q, lscpu, numactl, the governors,
+#                       the compiler, pip freeze, the commit) into logs/<name>/env/<host>-<job>/, and the hashes of the
+#                       bench tier's models and data into logs/<name>/env/inputs.sha256; this option skips both
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1
 # unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
 # llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
@@ -129,7 +139,7 @@ usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}";
 PLATFORM="" DRY="" REH="" LOCAL="" OPTIONAL="" CHAIN=1 EXCL="--exclusive" PIN=1 NONATIVE="" MEMMAX=256 QH=5 Q=3
 POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM="" ONEJOB="" MAXH=24 TIERS=()
 REQGPU="L40S" REQCPU="EPYC 9334" GRES="${SBATCH_GRES:-}" EXCLUDE="" FROMONE=""
-ZKHOME="" ZKSCRATCH="" ZKPY="" CUDAHOME=""
+ZKHOME="" ZKSCRATCH="" ZKPY="" CUDAHOME="" TELI=1 SNAPON=1
 ARGV=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -162,6 +172,8 @@ while [ $# -gt 0 ]; do
     --zkllm-scratch) ZKSCRATCH=$2; shift ;;
     --zkllm-python) ZKPY=$2; shift ;;
     --cuda-home) CUDAHOME=$2; shift ;;
+    --telemetry-interval) TELI=$2; shift ;;
+    --no-env-snapshot) SNAPON="" ;;
     -h|--help) usage 0 ;;
     -*) echo "unknown option $1" >&2; usage ;;
     *) TIERS+=("$1") ;;
@@ -173,6 +185,8 @@ done
 [ "${#TIERS[@]}" -gt 0 ] || usage
 [ -z "$ONEJOB" ] || [ -z "$LOCAL" ] || { echo "--one-job submits a job that runs --local itself" >&2; exit 2; }
 [[ "$MAXH" =~ ^[1-9][0-9]*$ ]] || { echo "--max-hours: a whole number of hours" >&2; exit 2; }
+[[ "$TELI" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] && awk -v t="$TELI" 'BEGIN { exit !(t == 0 || t >= 1) }' \
+  || { echo "--telemetry-interval: 0 (none) or at least 1 second" >&2; exit 2; }
 [ -n "$REQGPU" ] && [ -n "$REQCPU" ] || { echo "--require-gpu, --require-cpu: a part of the name, or 'any'" >&2; exit 2; }
 [ -f code/experiments/package/run.sh ] || { echo "run this from the repository root" >&2; exit 2; }
 ROOT="$PWD"
@@ -207,7 +221,14 @@ done
 # (experiments/package/node.py: exit status 86 on another GPU or CPU model, before any work)
 NODECHK="$PY -m experiments.package.node --require-gpu $(printf %q "$REQGPU") --require-cpu $(printf %q "$REQCPU")"
 WRONG_NODE=86
-DEP="" GATE="" NJOBS=0 HOURS=0 DRYN=0 LAST="" SKIPPED=0 DONE=0 PLAN="" MEMNEED=0 PLANH=0 NPLAN=0 CPUJOB=""
+# after the node check: the node's environment once per node and allocation (experiments/package/envsnap.py; it never
+# fails a job), and the GPU's telemetry in the background of the job (experiments/package/telemetry.py), started
+# before a CPU-timing job pins itself and stopped when the job ends; its files are named after the job's log
+# (PVI_JOB_ID: a --local job's id, else SLURM's)
+SNAP=""
+[ -z "$SNAPON" ] || SNAP="$PY -m experiments.package.envsnap --out $ROOT/$LOGS/env --inputs --python $(printf %q "$PY"); "
+TELE=""
+DEP="" GATE="" SMOKEJ="" NJOBS=0 HOURS=0 DRYN=0 LAST="" SKIPPED=0 DONE=0 PLAN="" MEMNEED=0 PLANH=0 NPLAN=0 CPUJOB=""
 OKS=() FAILS=()     # --local: the jobs of this run that ended successfully and those that failed (name|status|log)
 CHILD="" CURRENT="" # --local: the running job's process and its name|log
 
@@ -240,8 +261,14 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
     [ -n "$GRES" ] && args+=("--gres=$GRES")
     [ -n "$EXCLUDE" ] && args+=("--exclude=$EXCLUDE")
     [ -n "$CPUJOB" ] && [ "$PIN" = 1 ] && pin="$PY -m experiments.package.pin --cores 8 --pid \$\$ && "
+    local tele="" stop=""
+    if [ "$TELI" != 0 ]; then
+      tele="$PY -m experiments.package.telemetry --out $ROOT/$LOGS/telemetry/$name-\${PVI_JOB_ID:-\${SLURM_JOB_ID:-local}} \
+--interval $TELI --watch \$\$ & TPID=\$!; "
+      stop="; st=\$?; kill \$TPID 2> /dev/null; wait \$TPID 2> /dev/null; exit \$st"
+    fi
     local wrap="set -uo pipefail; $ENVS; echo host \$(hostname) git \$(git -C $ROOT log --oneline -1); \
-$NODECHK && $pin$*"
+$NODECHK || exit \$?; $SNAP$tele$pin$*$stop"
     if [ -n "$DRY" ]; then
       DRYN=$((DRYN + 1)); jid="DRY$DRYN"
       echo "sbatch ${args[*]} --wrap \"$wrap\""
@@ -252,7 +279,7 @@ $NODECHK && $pin$*"
       [[ "$jid" =~ ^[0-9]+$ ]] || printf -v jid '%s%09d' "$(date +%s)" "$RANDOM"     # a date(1) without %N
       echo "$(date '+%F %T') running $name (limit ${hours} h): $LOGS/$name-$jid.out"
       # in the background and waited for, so that a signal to this script runs its trap at once (on_signal)
-      timeout "${hours}h" bash -c "$wrap" > "$LOGS/$name-$jid.out" 2>&1 &
+      PVI_JOB_ID="$jid" timeout "${hours}h" bash -c "$wrap" > "$LOGS/$name-$jid.out" 2>&1 &
       CHILD=$! CURRENT="$name|$LOGS/$name-$jid.out"
       if wait "$CHILD"; then
         mkdir -p "$LOGS/done" && echo "$jid" > "$LOGS/done/$name"
@@ -295,7 +322,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     return
   fi
   case "$1" in
-    smoke) echo 1 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
+    smoke) echo 1.5-2 ;; cpuv) echo 7-10 ;; v1) echo 4-8 ;; serve) echo 8-10 ;; bench) echo 8-12 ;; gpuv) echo 4-6 ;;
     gen) echo 2-3 ;; batch) echo 2-3 ;; real) echo 8-12 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
     tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 4-7 ;; gate) echo 1-1.5 ;;
@@ -324,16 +351,28 @@ tier_smoke() {
 tests/test_gpu_exactness.py tests/test_v1_protocol.py tests/test_token_sampler.py tests/test_extfield.py \
 tests/test_logup.py tests/test_cut.py tests/test_native_cheap.py tests/test_v1_products.py tests/test_generation.py \
 tests/test_setup_proof.py tests/test_reexec.py $t"
-  # (pytest's whole output goes to smoke_pytest.txt, its end to the log)
+  # (pytest's whole output goes to smoke_pytest-<host>-<job>.txt with its JUnit XML next to it, its end to the log)
   local native=""
   [ -n "$NONATIVE" ] || native="$PY -c 'import sys; from pvi.kernels import native; \
 sys.exit(0 if native.available() else \"native kernels unavailable with CXX=${CXX:-}\")' && "
-  sub smoke 2 64 "PVI_TEST_DEVICE=cuda $PY -m pytest -o addopts= -q -rfE --tb=short -p no:cacheprovider $t 2>&1 \
-| tee $ROOT/$LOGS/smoke_pytest.txt | tail -40 && ${native}$PY -c 'import sys; from pvi.core import field; \
+  local out="$ROOT/$LOGS/smoke_pytest-\$(hostname)-\${PVI_JOB_ID:-\${SLURM_JOB_ID:-local}}"
+  sub smoke 2 64 "PVI_TEST_DEVICE=cuda $PY -m pytest -o addopts= -q -rfE --tb=short -p no:cacheprovider \
+--junitxml=$out.xml $t 2>&1 | tee $out.txt | tail -40 && ${native}$PY -c 'import sys; from pvi.core import field; \
 ok = field.int8_ok(\"cuda\"); print(\"int8 GEMMs exact on this GPU:\", ok); \
 sys.exit(0 if ok else \"int8 GEMMs are not exact on this GPU\")' && \
 $V1 --model gpt2 --layers 2 --seq 64 --modes C Kpre --policy $POL --reps 2 --lmax 20 --require-triton | grep '^{' && \
 $H2D --sizes-mb 256 --reps 3 --label smoke && echo SMOKE OK"
+  SMOKEJ="$LAST"
+  # the proofs and commitments of fixed cells of the run's configuration on the GPU and on the CPU, byte-identical
+  # (experiments/comparison/proof_digests.py; Llama-2-7B's block in Kpre only: the CPU's commitment of its embedding
+  # and LM head is the largest step); it gates nothing
+  local dg="$M.comparison.proof_digests --devices cuda cpu --queries 2 --threads 8 --label xcheck"
+  if [ -n "$REH" ]; then
+    sub xcheck 1 64 "$dg --cells mlp_mnist gpt2:2:16 --v1-cells gpt2:1:16:Kpre"
+  else
+    sub xcheck 3 128 "$dg --cells mlp_mnist lenet5 resnet18_cifar gpt2:2:64 opt-125m:2:64 llama2-7b:1:64:Kpre \
+--v1-cells gpt2:2:64"
+  fi
 }
 
 tier_cpuv() {
@@ -1161,6 +1200,7 @@ ${EXCLUDE:+; --exclude=$EXCLUDE}"
 if [ -n "$ONEJOB" ]; then one_job; exit 0; fi
 if [ -n "$LOCAL" ] && [ -z "$DRY" ]; then
   # this node, before the first job (a --one-job allocation that started on a node of another model runs nothing)
+  export PVI_RUN_ID="${PVI_RUN_ID:-$(date +%s)}"      # the snapshot's tag outside SLURM (envsnap.py)
   if NODE_OUT="$(bash -c "$ENVS; $NODECHK" 2>&1)"; then NODE_ST=0; else NODE_ST=$?; fi
   echo "$NODE_OUT"
   if [ "$NODE_ST" != 0 ]; then
@@ -1169,6 +1209,7 @@ if [ -n "$LOCAL" ] && [ -z "$DRY" ]; then
 $(hostname)${EXCLUDE:+,$EXCLUDE} (or the partition's nodes of other models):"$'\n'"#   $(resubmit)"
     exit "$NODE_ST"
   fi
+  [ -z "$SNAP" ] || bash -c "$ENVS; ${SNAP%; }"
   # a time limit (--one-job's --signal), a pre-emption or an interrupt: stop the running job and write the summary
   trap 'on_signal TERM' TERM
   trap 'on_signal INT' INT
@@ -1176,10 +1217,14 @@ fi
 for tier in "${TIERS[@]}"; do
   run_tier "$tier"
   # the platform gate: nothing after smoke starts unless smoke succeeded (a submission without smoke has no gate)
-  if [ "$tier" = smoke ] && [ "$CHAIN" = 1 ] && [ -n "$LAST" ]; then GATE="afterok:$LAST" DEP=""; fi
-  if [ "$tier" = smoke ] && [ -n "$LOCAL" ] && [ -z "$DRY" ] && [ -n "$LAST" ] \
-      && ! grep -q "SMOKE OK" "$LOGS/sp-smoke-$LAST.out"; then
-    echo "smoke did not end in SMOKE OK ($LOGS/sp-smoke-$LAST.out): stopping" >&2
+  # (the smoke's job, SMOKEJ: the tier's xcheck job after it gates nothing; the next job waits for both)
+  if [ "$tier" = smoke ] && [ "$CHAIN" = 1 ] && [ -n "$SMOKEJ" ]; then
+    GATE="afterok:$SMOKEJ"
+    [ "$LAST" != "$SMOKEJ" ] || DEP=""
+  fi
+  if [ "$tier" = smoke ] && [ -n "$LOCAL" ] && [ -z "$DRY" ] && [ -n "$SMOKEJ" ] \
+      && ! grep -q "SMOKE OK" "$LOGS/sp-smoke-$SMOKEJ.out"; then
+    echo "smoke did not end in SMOKE OK ($LOGS/sp-smoke-$SMOKEJ.out): stopping" >&2
     local_summary "the smoke did not end in SMOKE OK: the jobs after it were not run"
     exit 1
   fi

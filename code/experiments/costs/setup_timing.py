@@ -21,7 +21,7 @@ after one untimed run; every verification must accept.  The setup proof is non-i
 graph digest and the roots), so its bytes and challenges are the same in every repetition.
 
 Record (one JSON line per ``--amortise`` value, ``"kind": "setup"``): ``prob_max``, ``commit_s``, ``prove_s`` /
-``verify_s`` (median and ``[min, max]``), ``proof_bytes`` (``SetupProof.nbytes``), ``s``, ``t0`` and ``t`` per tree,
+``verify_s`` (median and ``[min, max]``), ``prove_s_all`` / ``verify_s_all`` (every timed repetition), ``proof_bytes`` (``SetupProof.nbytes``), ``s``, ``t0`` and ``t`` per tree,
 the per-query column bytes under the honest and the untrusted bound, peak host (Linux) and GPU memory, and ``env``.
 The exit status is 1 if a verification rejected.  Hardware and time: a GPU for the committer; the package gives GPT-2
 a job limit of one hour and Llama-2-7B one of three hours with 128 GB of host memory.
@@ -120,6 +120,7 @@ def main() -> int:
                       "prove_s_range": [min(prove), max(prove)] if prove else None,
                       "verify_s": statistics.median(verify) if verify else None,
                       "verify_s_range": [min(verify), max(verify)] if verify else None,
+                      "prove_s_all": prove, "verify_s_all": verify,
                       "proof_bytes": nbytes, "s": params.s, "t0": dict(params.t0), "t": dict(params.t),
                       "trees": len(rows), "query_columns_bytes_honest": sum(4 * honest[g] * rows[g] for g in rows),
                       "query_columns_bytes_untrusted": sum(4 * dict(params.t)[g] * rows[g] for g in rows),

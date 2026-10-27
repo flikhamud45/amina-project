@@ -14,7 +14,8 @@ disagrees with the model (``v1``), a serving check that failed (``serve``), a se
 implementation A/B whose two paths disagree (the ``improve`` tier), a zkLLM run whose proof binaries failed or
 whose layers did not all print zkLLM's verifier messages (``zkllm``), a llama.cpp record not marked inexact and a
 different model or not run on its threads (``llamacpp``), an attribution study whose float copy failed a check
-(``attribution``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact, a test of its
+(``attribution``), a cell whose proofs or commitments differ between the GPU and the CPU (``digests``), and the
+smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact, a test of its
 pytest run that failed: the ``tests`` record of its summary line) or a ``FAILED`` line
 of a script in a job's log; between two jobs (:func:`cross_checks`), the attribution's integer graph against the
 quality tier's cell of the same graph.  Each job's GPU, CPU, driver and node come from the node line at the start of
@@ -30,13 +31,14 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-TIERS = (("smoke", "smoke"), ("c-", "cpuv"), ("v1-", "v1"), ("serve-", "serve"), ("b-", "bench"), ("g-", "gpuv"),
+TIERS = (("smoke", "smoke"), ("xcheck", "smoke"), ("c-", "cpuv"), ("v1-", "v1"), ("serve-", "serve"), ("b-", "bench"), ("g-", "gpuv"),
          ("gen-", "gen"), ("bt-", "batch"), ("r-", "real"), ("setup-", "setup"), ("i-", "improve"),
          ("q-", "quality"), ("tv-", "tv"), ("a-", "attack"), ("l-", "long"), ("zk-", "zkllm"), ("gate-", "gate"))
 """The job-name prefixes of ``run.sh`` (``sp-<prefix>...``) and their tiers (``gate``: the full-size checks run once
 before the run, whose records fill no table cell or text number; ``zkllm``: zkLLM's public demo on the run's GPU,
-whose figures ``paper/bench.py`` reads from ``logs/<name>/zkllm/summary.csv``)."""
-KINDS = {"smoke": {"v1", "h2d", "tests"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "v1": {"v1"},
+whose figures ``paper/bench.py`` reads from ``logs/<name>/zkllm/summary.csv``; the smoke tier's job ``xcheck``: the
+proofs of fixed cells on the GPU and on the CPU, ``comparison/proof_digests.py``)."""
+KINDS = {"smoke": {"v1", "h2d", "tests", "digests"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"}, "v1": {"v1"},
          "serve": {"serve"}, "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"},
          "batch": {"bench_env"}, "real": {"perf", "v1", "gen"}, "setup": {"setup"},
          "improve": {"open_ab", "forward_ab", "encode_ab", "perf", "gpu_profile", "fold_ab", "v1_phases", "gkr"},
@@ -45,7 +47,7 @@ KINDS = {"smoke": {"v1", "h2d", "tests"}, "cpuv": {"perf", "reexec", "llamacpp",
                     "attack_llm", "inrange", "adaptive_game_llm"},
          "long": {"perf", "reexec"}, "zkllm": {"zkllm"}, "gate": {"v1", "perf", "reexec"}}
 """The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``; the smoke's ``tests``: the
-summary line of its pytest run, :data:`PYTEST_SUMMARY`)."""
+summary line of its pytest run, :data:`PYTEST_SUMMARY`; ``digests``: its ``xcheck`` job's proofs on two devices)."""
 PYTEST_SUMMARY = re.compile(r"^=*\s*(?P<counts>\d+ [a-z]+(?:, \d+ [a-z]+)*)(?: in [0-9.]+s(?: \([^)]*\))?)?\s*=*$")
 """pytest's summary line (``798 passed, 4 skipped in 1203.51s (0:20:03)``), which the smoke's log ends its pytest
 output with: :func:`read_logs` turns it into a record of kind ``tests`` (``passed``, ``failed``, ``skipped``,
@@ -113,7 +115,7 @@ def tier_of(cell: str) -> str | None:
 def kind_of(d: dict) -> str | None:
     """The script that wrote one record, from its fields; None for a record of no known kind."""
     k = d.get("kind")
-    if k in ("gen", "setup", "h2d", "gpu_profile", "llamacpp", "attribution", "zkllm"):
+    if k in ("gen", "setup", "h2d", "gpu_profile", "llamacpp", "attribution", "zkllm", "digests"):
         return k
     if d.get("row") in ("prove", "on_request"):
         return "serve"
@@ -297,6 +299,9 @@ def checks(r: Rec) -> list[str]:
         bad.append(f"the smoke's tests: {d.get('failed')} failed, {d.get('errors')} errors ({d.get('line')})")
     elif r.kind == "attribution" and d.get("part") == "check" and d.get("ok") is False:
         bad.append("the attribution's float copy failed a check (ok false)")
+    elif r.kind == "digests" and "skipped" not in d and d.get("agree") is not True:
+        bad.append(f"{d.get('model')} {d.get('mode')} {d.get('protocol')}: the proofs or commitments on "
+                   f"{', '.join(d.get('devices') or {})} differ, or a query was rejected (agree false)")
     elif r.kind == "zkllm" and d.get("ok") is not True:
         bad.append(f"zkLLM's demo: {d.get('binary_failures')} proof binaries failed, verifier messages "
                    f"{d.get('verdicts')} for {d.get('layers_expected')} proved layers (ok false)")

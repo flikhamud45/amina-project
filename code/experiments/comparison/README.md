@@ -4,8 +4,9 @@ Sec. `sec:eval-compare` sets our costs against published zkSNARKs and Maverick o
 its own hardware; the benchmark cells behind our side, and behind `tab:eval-llm`, are records of `costs/bench.py` (the run
 package's `bench` tier; the stored roots below hold the values the paper prints before the final run). These scripts never run a model: `literature.py` turns the catalogue of published
 measurements into the table the comparison quotes, `aggregate.py` turns a platform's raw benchmark records into its
-tables, `count_outcomes.py` counts every honest query and every attack in them, and `fingerprint_check.py` checks that
-two platforms agree on every hardware-independent value. `paper/numbers.py` reads their outputs (`paper/bench.py`).
+tables, `count_outcomes.py` counts every honest query and every attack in them, `fingerprint_check.py` checks that
+two platforms agree on every hardware-independent value, and `proof_digests.py` proves fixed cells on two devices
+(and compares two platforms' runs of them) proof byte for proof byte. `paper/numbers.py` reads their outputs (`paper/bench.py`).
 [`zkllm/`](zkllm/README.md) runs zkLLM's public demo on the run's GPU (the run package's optional `zkllm` tier) for
 zkLLM's prover on the same GPU model.
 
@@ -15,7 +16,8 @@ zkLLM's prover on the same GPU model.
 | `tab:eval-compare`, the "ours" columns; `tab:eval-llm`; the image models' costs (Sec. `sec:eval-cost`, "Costs") | `aggregate.py` | `python -m experiments.comparison.aggregate --platform final` (the run); the stored roots: `--platform l40s_improved` (and `l40s_improved2`, `l40s_improved3`) | `artifacts/comparison/tables_<platform>/`, read by `paper/numbers.py` |
 | Sec. `sec:break`: the path test's detection probabilities and paths on the image models (`\CnnPath...`, `\CnnMinNode`, `\PathPassResNet`: the `sampling` cells of the run's `bench` tier) | `aggregate.py` | `python -m experiments.comparison.aggregate --platform final` (the run); the stored root: `--platform l40s` | `artifacts/comparison/tables_<platform>/`, read by `paper/numbers.py` |
 | Sec. `sec:eval-setup`: the outcome counts `\FinalNHonest`, `\FinalNAttacks`, `\FinalNFreivalds`, `\FinalNColumnsCode`, `\FinalNColumnsMerkle`, `\FinalNRange` (the defining cells of the run's `bench` and `batch` tiers) | `count_outcomes.py` (through `paper/numbers.py`, `macros.counts`) | the run: `paper/numbers.py --platform final` counts `raw_final/`; the fallback's values: `python -m experiments.comparison.count_outcomes --platform l40s_improved,l40s_improved2,l40s_improved3 --definition --policy auto --prob-max 255` ("accepted all 3,792 honest queries and rejected all 2,512 attacks", "Freivalds' check rejected 1,601, the column check 853, the Merkle check 56 and the range check 2") | stdout |
-| `app:eval-setup`: "Proof sizes do not depend on the hardware" (no number). On the run's platform the smoke tier's GPU tests check that every GPU path gives the CPU's claims, commitment, folds and openings bit for bit (`tests/test_gpu_exactness.py`, `tests/test_gpu_verifier.py`); across platforms, all 1,978 hardware-independent values of the stored L40S run were reproduced on an RTX 2080 Ti with a Xeon Silver 4114 | `fingerprint_check.py` | `python -m experiments.comparison.fingerprint_check artifacts/comparison/raw_l40s artifacts/comparison/raw_rtx2080ti-v2` | stdout (`1978 fingerprints compared, 0 problems`), exit status |
+| `app:eval-setup`: "Proofs do not depend on the hardware" (`\HwDigestCells`, `\HwDigestDevices`): the cells of the run's configuration whose Fiat-Shamir transcripts and commitment roots are byte-identical with the prover on the run's GPU and on its CPU, and on a second platform's run of the same cells | `proof_digests.py` (the smoke tier's job `xcheck`; through `paper/numbers.py`, `macros.hardware_digests`) | the run: `run.sh --platform final smoke`; a second platform: `run.sh --platform <other> --require-gpu <GPU> --require-cpu any smoke`, then `python -m experiments.comparison.proof_digests --compare ../logs/final ../logs/<other>` and `paper/numbers.py --xcheck-logs ../logs/<other>` | the `digests` records in `logs/<name>/sp-xcheck-*.out`; stdout (`N cells compared, 0 problems`), exit status |
+| The stored roots: "Proof sizes do not depend on the hardware" (no number). On the run's platform the smoke tier's GPU tests check that every GPU path gives the CPU's claims, commitment, folds and openings bit for bit (`tests/test_gpu_exactness.py`, `tests/test_gpu_verifier.py`); across platforms, all 1,978 hardware-independent values of the stored L40S run were reproduced on an RTX 2080 Ti with a Xeon Silver 4114 | `fingerprint_check.py` | `python -m experiments.comparison.fingerprint_check artifacts/comparison/raw_l40s artifacts/comparison/raw_rtx2080ti-v2` | stdout (`1978 fingerprints compared, 0 problems`), exit status |
 
 Run every command from `code/` with the checkout's library first on the path (`PYTHONPATH=src:.` on Linux,
 `PYTHONPATH="src;."` on Windows). `python -m experiments.comparison.<script> --help` lists every option. None needs a
@@ -97,7 +99,21 @@ accuracy within `--accuracy-tolerance` (0.002: cuDNN may change its last digits)
 honest rejection and every accepted attack of `new`, and exits 1 on any problem or when nothing could be compared.
 Before a long run on new hardware it checks the new root's first cells against a stored root. Cells are compared by
 name, so the final run's 11-bit decoder cells (tagged `pmax2047`) have no counterpart in the stored 8-bit roots: the
-comparison then covers the image models' cells.
+comparison then covers the image models' cells. Roots written from the final run's commit on also record every
+Fiat-Shamir query's transcript digest (`proof_transcript`) and the commitment's roots (`commit_roots_sha256`), which it
+compares as well.
+
+### `proof_digests.py`
+
+Proves fixed cells of the run's configuration (the paper's protocol settings, 11-bit attention probabilities) with the
+prover and the commitment on each `--devices` entry (default `cuda cpu`) and records, per cell, mode and protocol (v0;
+V1 with `--v1-cells`), each query's Fiat-Shamir transcript digest (the statement with the commitment's roots and every
+prover message the challenges depend on; mode Kpre's one message) and the roots' SHA-256 per device; a cell whose
+devices differ, or a rejected query, prints `FAILED:` and gives exit status 1. `--compare A B` matches two runs'
+records (job logs) by cell and settings and checks every digest; `paper/numbers.py` counts the cells
+(`\HwDigestCells`) and names the devices and platforms compared (`\HwDigestDevices`). The laptop check
+`python -m experiments.comparison.proof_digests --cells mlp_mnist tiny-gpt:2:16 --modes Kpre --devices cpu cpu:0`
+takes seconds.
 
 ## Reproducing the paper's numbers
 
