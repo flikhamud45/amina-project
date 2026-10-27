@@ -42,7 +42,8 @@ random-weight decoders with the shapes of the paper's language models (`llm` sui
 
 * **Inputs.** The image models need their trained weights (`train_cnn.py`; the MLP is
   `artifacts/models/mlp_mnist_full.npz`, stored) and datasets: MNIST (downloaded by torchvision), CIFAR-10 and the
-  ImageNet classes of the 224-pixel models as `pvi.models.datasets` reads them. The decoders need nothing.
+  ImageNet classes of the 224-pixel models as `pvi.models.datasets` reads them. The decoders need nothing, unless
+  `--real` names a Hugging Face checkpoint (below).
 * **Cells.** Image models: `facts` (parameters, float and int8 accuracy), `attack_float` (the single-neuron flip on
   the float model), `sampling` (the path test: detection probability per neuron, bytes for `k` paths), `commit_rate4`
   (a plan's commitment and setup size), `defence_<mode>_<int|fs>_lam<l>_rate4` (honest queries: time and bytes per
@@ -54,7 +55,7 @@ random-weight decoders with the shapes of the paper's language models (`llm` sui
 * **Main options.** `--platform <name>` (required: the records go to `artifacts/comparison/raw_<name>/`, which holds
   one prover GPU and one CPU model; the stored roots are frozen), `--modes` (e.g. `C:fs,Kpre:fs`), `--lams`, `--seq`,
   `--builds` (`auto`, `full`, `1,2,full`), `--queries`, `--tampers`, `--llm-tampers`, `--batches`, `--cnn-batches`,
-  `--gen`. The protocol settings default to the paper's configuration (`experiments.common.cli.PAPER`): `--policy
+  `--gen`, `--real`. The protocol settings default to the paper's configuration (`experiments.common.cli.PAPER`): `--policy
   cnn18c`, `--wire`, `--lean`, `--prune-last`, `--lookups`, each with a `--no-...` form (`--policy per-op` for one
   tree per weight op), `--prob-max 2047` (the decoders' 11-bit attention probabilities; 255: the 8-bit graphs),
   `--rate 4`, `--setup-cache DIR`. The runtime flags: `--device` (the prover's), `--verifier-device
@@ -64,7 +65,7 @@ random-weight decoders with the shapes of the paper's language models (`llm` sui
   `_nolean`, `_tf32`, `_wire`, `_gpuv`, `_stream`, `_batch` (batch sizes other than the defaults), `_prune` (every
   decoder cell), `_lookups` (decoder K and Kpre cells), `_pmax<n>` (decoder cells whose attention probabilities'
   scale is not the stored cells' 255: `_pmax2047` by default), `_gen<G>`, `_pol<name>` (commitment and mode-C cells
-  under a plan other than `per-op`). A cell measured under the same settings therefore has the same name as the
+  under a plan other than `per-op`), `_real` (decoder cells of a checkpoint's weights, `--real`). A cell measured under the same settings therefore has the same name as the
   stored one: checked against every stored cell of `artifacts/comparison/raw_*`. The names depend on the effective settings,
   not on which flags were given. The defaults are the paper's configuration, with 8 verifier threads, the batched
   verifier on the CPU, TF32 off, and the batch sizes 8 and 32 (image models) and none (decoders). A stored `_polauto` cell (the planning rule, which picks `cnn16c`, `cnn17c` or
@@ -75,12 +76,22 @@ random-weight decoders with the shapes of the paper's language models (`llm` sui
   `batch`, `attack`, `stage`, `lam`, `k` and `contention` (the scheduler evidence of each timed phase) where they
   apply. A finished cell has a `.done` marker and is skipped on a re-run; an honest query that is rejected stops the
   job and keeps the cell's records as `<cell>.rejected-<run_id>.jsonl`.
+* **Real weights.** `--real <checkpoint>` (`--model` names its shapes; e.g. `--model llama2-7b --real
+  meta-llama/Llama-2-7b-hf`): the decoder cells on the checkpoint's integer graph, built as `perf.py --real` builds it
+  (`experiments.common.real_cells`: OPT with `hf_opt.CERTIFIED_RECIPE`, Llama-family checkpoints, Qwen3 included,
+  with `hf_llama.MAIN_RECIPE` and its fixed public prefix), queried on the WikiText-2 test split's windows from its
+  start. A build of `n` blocks is a Llama-family checkpoint's first `n`; an OPT checkpoint is built whole (`--builds
+  full`). The cells are named `_real`, their `config` holds `real` and `recipe`, and the commitment cell records
+  `load_checkpoint` (loading the checkpoint in fp32 and its calibration). Refused: the image models, GPT-2 (no integer
+  builder), a prompt longer than the checkpoint's trained context, an OPT build of fewer blocks than the checkpoint's,
+  and an attention probabilities' scale other than the paper's. Without `--real` nothing changes.
 * **Measurement notes.** All the cells of one invocation share a prover: when an invocation runs mode C and modes K or
   Kpre, the K and Kpre cells are measured with the commitment resident on the GPU (their peak memory includes it).
   The paper's K and Kpre cells come from jobs of their own (`--modes Kpre:fs`), as the run package runs them. A decoder build whose int8 weights exceed 85% of the GPU's memory is skipped, and the job then fails.
 * **Hardware and time.** The paper's cells ran on an NVIDIA L40S (48 GB) prover with 8 threads of an AMD EPYC 9334 as
   the CPU verifier. An image model or GPT-2 takes minutes; a 7B or 13B decoder at 2,048 tokens one to two hours and up
-  to 128 GB of host memory.
+  to 128 GB of host memory. With `--real` the checkpoint is also held in fp32 until the job's last build (27 GB for
+  Llama-2-7B and OPT-6.7B, 52 GB for Llama-2-13B, 16 GB for Qwen3-4B), and its calibration adds tens of minutes.
 
 ### `perf.py`
 
@@ -127,8 +138,12 @@ The setup proof's prover (`prove_setup` on the GPU) and verifier (`verify_setup`
 decoder (the last block pruned) under `--policy` (default `cnn18c`), for each `--amortise`: one JSON line with
 `kind: setup`, the commitment time, the prover and verifier times (median and range over `--reps`), the proof bytes,
 the parameters (`s`, `t0`, `t`), the per-query columns and peak memory. The commitment is never read from the setup
-cache. `--fs` sizes the per-query columns for Fiat-Shamir queries (default interactive, as `tab:setup`). The package
-gives GPT-2 a job limit of one hour and Llama-2-7B one of three hours with 128 GB of host memory.
+cache. `--fs` sizes the per-query columns for Fiat-Shamir queries (default interactive, as `tab:setup`). `--real
+<checkpoint>` (`--model` names its shapes) times the setup proof of the checkpoint's integer graph instead, built as
+`perf.py --real` builds it (OPT whole; a Llama-family checkpoint's first `--layers` blocks); the line then holds `real`
+and `recipe` (both None for random weights), and `build_s` includes loading the checkpoint in fp32 and its
+calibration. GPT-2 has no integer builder of a real checkpoint and is refused. The package gives GPT-2 a job limit of
+one hour and Llama-2-7B one of three hours with 128 GB of host memory.
 
 ### `params_table.py`
 

@@ -276,15 +276,20 @@ def recipe_name(calib, recipe: str) -> str:
     return "main" if hasattr(calib, "prefix") else recipe
 
 
-def real_graph(model, calib, prune_last: bool, recipe: str = "certified", smooth: float | None = None):
+def real_graph(model, calib, prune_last: bool, recipe: str = "certified", smooth: float | None = None,
+               n_layers: int | None = None):
     """The integer graph of ``model`` calibrated on ``calib`` (from :func:`load_real`) on the CPU.  A Llama-family
-    checkpoint: ``build_llama_from_hf`` with ``MAIN_RECIPE`` and the calibration's prefix.  OPT: ``build_opt_from_hf``
-    with ``CERTIFIED_RECIPE`` (``recipe="certified"``), or the percentile recipe (``legacy``: norm gain 4, with
-    ``smooth`` SmoothQuant through the norm gains and :data:`SMOOTH`'s clipping)."""
+    checkpoint: ``build_llama_from_hf`` with ``MAIN_RECIPE`` and the calibration's prefix (``n_layers``: its first
+    blocks only; None: all of them).  OPT: ``build_opt_from_hf`` with ``CERTIFIED_RECIPE`` (``recipe="certified"``),
+    or the percentile recipe (``legacy``: norm gain 4, with ``smooth`` SmoothQuant through the norm gains and
+    :data:`SMOOTH`'s clipping); its builder takes every block, so ``n_layers`` must be None or the checkpoint's."""
     if hasattr(calib, "prefix"):
         from pvi.models import hf_llama
         return hf_llama.build_llama_from_hf(model, calib.ids, prune_last=prune_last, prefix_tokens=calib.prefix,
-                                            **getattr(calib, "recipe", hf_llama.MAIN_RECIPE))
+                                            n_layers=n_layers, **getattr(calib, "recipe", hf_llama.MAIN_RECIPE))
+    if n_layers is not None and n_layers != model.config.num_hidden_layers:
+        raise ValueError(f"the OPT builder takes every block of the checkpoint ({model.config.num_hidden_layers}), "
+                         f"not {n_layers}")
     from pvi.models.hf_opt import CERTIFIED_RECIPE, build_opt_from_hf
     if recipe == "certified":
         return build_opt_from_hf(model, calib, prune_last=prune_last, **CERTIFIED_RECIPE)
