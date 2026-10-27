@@ -11,13 +11,15 @@ CPU verifier to the fastest exact re-execution, and the re-execution side of ``t
     python -m experiments.reexec.reexec --model llama2-7b opt-6.7b --seq 64 512 2048 --variants int float \\
         --device cuda
     python -m experiments.reexec.reexec --model llama2-7b --seq 8192 --layers 2 3 --max-pos 16384 --device cpu
+    python -m experiments.reexec.reexec --model llama2-7b --real meta-llama/Llama-2-7b-hf --seq 64 2048 \\
+        --variants int int_fp32gemm int_mm float bf16 dynint8 --device cpu --threads 8 --reps 5
     python -m experiments.reexec.reexec --model tiny-llama --seq 32 --layers 1 2 --device cpu --threads 2 \\
         --variants int int_fp32gemm int_mm float bf16 dynint8          # a laptop check (seconds)
 
 A client that holds the weights (mode K), or a Kpre client that could keep them instead of its key, could check
 an answer by computing it again.  The script times that for the decoders of ``pvi.models.decoder.CONFIGS`` (random
-weights, ``--seed``: the cost depends on the shapes only), one prompt of ``T`` tokens (``--seq``; seed
-``--prompt-seed``) per variant:
+weights, ``--seed``: the cost depends on the shapes only; or with ``--real`` a checkpoint's, below), one prompt of
+``T`` tokens (``--seq``; seed ``--prompt-seed``) per variant:
 
 * ``int``: our integer model's forward pass (``IntGraph.forward`` of ``build_decoder``, with the attention
   probabilities' scale ``--prob-max``, default 2047: 11 bits, as the cost measurements' graphs), which the prover runs
@@ -52,30 +54,57 @@ full model, whose ``measured_s`` the paper's tables use (no extrapolation).  ``-
 model's context to ``N`` tokens (the shapes and weights do not depend on it: the long-prompt cells); a model with
 learned positions is refused, since its position table would change.
 
+**Real weights.**  ``--real`` (a Hugging Face checkpoint of the one ``--model``'s shapes: OPT, Llama or Qwen3) runs
+the checkpoint instead, as the verifier's real-weight cells (``experiments/costs/perf.py --real``) query it: the
+prompt of ``T`` tokens is the first window of :func:`experiments.common.checkpoints.load_real` (the WikiText-2 test
+split's first ``T`` tokens, tokenised as those cells tokenise it), and the integer variants run the very graph those
+cells commit (:func:`experiments.common.checkpoints.real_graph`: OPT's certified recipe ``hf_opt.CERTIFIED_RECIPE``
+calibrated on four 2,048-token train windows, or a Llama-family checkpoint's ``hf_llama.MAIN_RECIPE`` with its fixed
+public prefix), built once and run at every ``T``.  The floating-point variants run the checkpoint's own fp32 weights
+(:func:`hf_float_weights`; fp16 on a GPU, cast to bf16, or as dynamic int8 Linear layers) with each norm's gain (and
+LayerNorm's bias) folded into the linear layers that read it; as for random weights they add no position embedding,
+no q/k norms and their own norm epsilons, so they do the same operations as their random-weight twins and their
+logits are not the checkpoint's.  The full graph is measured (``--layers`` may only name the full model, the default
+with ``--real``).  Refused: a checkpoint without an integer graph here (GPT-2, also for the floating-point variants,
+whose rows would have no exact row beside them) or of other shapes than ``--model``'s, several ``--model``,
+``--max-pos``, ``--prob-max`` (the recipe fixes the scale), and a ``--seq`` beyond the checkpoint's trained context
+(with a Llama-family recipe's prefix, the prefix and the prompt together).
+
 **Allocator.**  glibc's defaults unless ``--malloc-tune``, which applies the CPU verifier's allocator setting
 (:func:`pvi.kernels.native.tune_malloc`: freed memory stays in the process) to this whole process on a CPU, so that
 re-execution can be timed under either setting.
 
-**Record** (one JSON line per model, ``T`` and variant, on stdout): ``git``, ``model``, ``seq``, ``variant``,
-``dtype``, ``device``, ``threads``, ``reps``, ``prune_last``, ``prob_max`` (the integer variants' scale; None for
-the floating-point ones), ``measured_s`` (median seconds per measured block
-count), ``range_s`` (their ``[min, max]``), ``times_s`` (every timed repetition, per block count), ``per_block_s``, ``fixed_s``, ``n_layers``, ``full_s`` (the linear fit at
-the full depth), ``max_pos``, ``peak`` (host peak resident set and GPU peak memory over the variant's builds and
-runs), ``malloc_tuned`` (whether this process applied ``--malloc-tune``'s allocator setting; glibc's ``MALLOC_*``
-environment variables, which set the same parameters, are in ``env``'s ``env_vars``), ``gpu``, ``cpu``, ``host``,
-``torch``, ``env`` (:func:`experiments.common.records.environment`); ``int_mm`` also ``exact`` (true only when both
-checks pass) and ``exact_check`` (``bounds``: the GEMM at the int8 bounds; ``logits``: by block count, whether the
-logits equal the integer forward pass's).
+**Record** (one JSON line per model, ``T`` and variant, on stdout): ``git``, ``model``, ``real`` (the checkpoint;
+None for random weights), ``recipe`` (with ``--real``, the integer variants' recipe: ``certified`` or ``main``; else
+None), ``seq``, ``variant``, ``dtype``, ``device``, ``threads``, ``reps``, ``prune_last``, ``prob_max`` (the integer
+variants' scale; None for the floating-point ones), ``measured_s`` (median seconds per measured block count),
+``range_s`` (their ``[min, max]``), ``times_s`` (every timed repetition, per block count), ``per_block_s``,
+``fixed_s``, ``n_layers``, ``full_s`` (the linear fit at the full depth), ``max_pos`` (with ``--real`` the
+checkpoint's trained context), ``peak`` (host peak resident set and GPU peak memory over the variant's builds and
+runs; with ``--real`` the checkpoint's load and graph build come before every variant's), ``malloc_tuned``
+(whether this process applied ``--malloc-tune``'s allocator setting; glibc's ``MALLOC_*`` environment variables,
+which set the same parameters, are in ``env``'s ``env_vars``), ``gpu``, ``cpu``, ``host``, ``torch``, ``env``
+(:func:`experiments.common.records.environment`; with ``--real`` the revisions of the checkpoint and of WikiText-2 in
+``sources``); ``int_mm`` also ``exact`` (true only when both checks pass) and ``exact_check`` (``bounds``: the GEMM at
+the int8 bounds; ``logits``: by block count, whether the logits equal the integer forward pass's).
 
 Hardware and time: the CPU rows run on 8 threads of the verifier's CPU, the GPU rows on the prover's GPU.  One run of
 the full Llama-2-7B at 2,048 tokens took 93 s (fp32) and 142 s (integer) on 8 threads of a Xeon Silver 4114; the
 package gives the CPU variants of one model (64 and 2,048 tokens, 2 blocks and the full model) a job limit of one to
 three hours (OPT-1.3B 1 h, Qwen3-4B 2 h, Llama-2-7B 3 h) with 256 GB of host memory.  A 2-block build takes seconds.
+``--real`` adds, once per job, the checkpoint's download into the Hugging Face cache (Llama-2-7B 13.5 GB, OPT-6.7B
+13.4 GB, Qwen3-4B 8 GB) and its load in fp32 (four bytes per weight: 27 GB for a 7B model), the calibration and the
+integer graph's build of the verifier's real cells (the fp32 model's forward passes over four 2,048-token windows on
+the CPU, and for a Llama-family checkpoint PrefixQuant's choice of the prefix: tens of minutes for a 7B model), and
+the float weights with their norms folded (another fp32 copy, the model's freed after); the host memory of a 7B
+model stays within the 256 GB of a CPU job (fp32 weights, the integer graph and the variant's run), and the time
+limit should allow about one hour more than the random-weight twin's.
 """
 from __future__ import annotations
 
 import argparse
 import dataclasses
+import gc
 import platform
 import statistics
 import sys
@@ -84,7 +113,7 @@ import warnings
 import torch
 import torch.nn.functional as F
 
-from experiments.common import cli, records
+from experiments.common import checkpoints, cli, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -183,7 +212,8 @@ def _same_logits(graph, tokens: torch.Tensor, run) -> bool:
 
 
 class FloatDecoder:
-    """A floating-point decoder with the shapes of ``cfg`` and ``n_layers`` blocks (random weights).
+    """A floating-point decoder with the shapes of ``cfg`` and ``n_layers`` blocks: random weights, or ``weights``
+    (:func:`hf_float_weights`: a checkpoint's own in fp32, cast to ``dtype`` here).
 
     Tokens ``[B, T]`` are one batched prefill (``B`` prompts of ``T`` tokens, no padding); the LM head is applied at
     the last position.  ``prune_last`` (as ``build_decoder(..., prune_last=True)``): the last block computes k and v
@@ -193,7 +223,7 @@ class FloatDecoder:
     drawn as for an unpruned block), so a subclass that replaces ``_lin`` (:class:`DynInt8Decoder`) prunes too."""
 
     def __init__(self, cfg, n_layers: int, dtype: torch.dtype, device: torch.device, seed: int = 0,
-                 prune_last: bool = False):
+                 prune_last: bool = False, weights: dict | None = None):
         g = torch.Generator().manual_seed(seed)
         d, f, dh, hq, hkv = cfg.d_model, cfg.d_ff, cfg.head_dim, cfg.n_heads, cfg.n_kv_heads
         self.cfg, self.dtype, self.device, self.prune_last = cfg, dtype, device, prune_last
@@ -204,20 +234,31 @@ class FloatDecoder:
         def b(n):
             return torch.zeros(n, dtype=dtype, device=device) if cfg.bias else None
 
+        def cast(t):
+            return None if t is None else t.to(dtype).to(device)
+
         self.blocks = []
         for i in range(n_layers):
-            blk = {"qkv": (w((hq + 2 * hkv) * dh, d), b((hq + 2 * hkv) * dh)), "o": (w(d, hq * dh), b(d))}
+            if weights is not None:
+                blk = {k: (cast(wt), cast(bs)) for k, (wt, bs) in weights["blocks"][i].items()}
+            else:
+                blk = {"qkv": (w((hq + 2 * hkv) * dh, d), b((hq + 2 * hkv) * dh)), "o": (w(d, hq * dh), b(d))}
             if prune_last and i == n_layers - 1:      # q at the last position, k and v at every one
                 wq, bq = blk.pop("qkv")
                 blk["q"] = (wq[:hq * dh], None if bq is None else bq[:hq * dh])
                 blk["kv"] = (wq[hq * dh:], None if bq is None else bq[hq * dh:])
-            if cfg.mlp == "swiglu":
+            if weights is None and cfg.mlp == "swiglu":
                 blk["up"], blk["down"] = (w(2 * f, d), None), (w(d, f), None)
-            else:
+            elif weights is None:
                 blk["up"], blk["down"] = (w(f, d), b(f)), (w(d, f), b(d))
             self.blocks.append(blk)
-        self.embed = (torch.randn(cfg.vocab, d, generator=g) * 0.02).to(dtype).to(device)
-        self.head = self.embed if cfg.tied else (torch.randn(cfg.vocab, d, generator=g) / d ** 0.5).to(dtype).to(device)
+        self.head_bias = None
+        if weights is not None:
+            self.embed, self.head, self.head_bias = (cast(weights[k]) for k in ("embed", "head", "head_bias"))
+        else:
+            self.embed = (torch.randn(cfg.vocab, d, generator=g) * 0.02).to(dtype).to(device)
+            self.head = (self.embed if cfg.tied else
+                         (torch.randn(cfg.vocab, d, generator=g) / d ** 0.5).to(dtype).to(device))
 
     def _lin(self, x, wb):
         return F.linear(x, *wb)
@@ -255,15 +296,16 @@ class FloatDecoder:
             else:
                 h = F.relu(h) if cfg.mlp == "relu" else F.gelu(h)
             x = x + self._lin(h, blk["down"])
-        return F.linear(self._norm(x[:, -1]), self.head)          # next-token logits
+        return F.linear(self._norm(x[:, -1]), self.head, self.head_bias)          # next-token logits
 
 
 class DynInt8Decoder(FloatDecoder):
     """:class:`FloatDecoder` (fp32) with every block's linear layer as torch's dynamic int8 Linear (fbgemm, per-call
     activation scales): a standard int8 CPU engine, not exact."""
 
-    def __init__(self, cfg, n_layers: int, device: torch.device, seed: int = 0, prune_last: bool = False):
-        super().__init__(cfg, n_layers, torch.float32, device, seed, prune_last=prune_last)
+    def __init__(self, cfg, n_layers: int, device: torch.device, seed: int = 0, prune_last: bool = False,
+                 weights: dict | None = None):
+        super().__init__(cfg, n_layers, torch.float32, device, seed, prune_last=prune_last, weights=weights)
         self._q = {}
         for blk in self.blocks:
             for w, b in blk.values():
@@ -280,6 +322,93 @@ class DynInt8Decoder(FloatDecoder):
         return self._q[id(wb[0])](x)
 
 
+def _fold(lin, gain: torch.Tensor | None, shift: torch.Tensor | None = None) -> tuple:
+    """``(W diag(gain), b + W shift)`` in fp32 of a linear layer ``lin`` that reads a norm of gain ``gain`` (None:
+    no norm) and shift ``shift`` (LayerNorm's bias; None for RMSNorm): the same products on the norm's unscaled
+    output."""
+    w = lin.weight.detach().float()
+    b = None if lin.bias is None else lin.bias.detach().float()
+    if shift is not None:
+        extra = w @ shift.detach().float()
+        b = extra if b is None else b + extra
+    return (w if gain is None else w * gain.detach().float()[None]), b
+
+
+def _stack(pairs: list[tuple]) -> tuple:
+    """Linear layers ``[(W, b)]`` as one: their weights' rows stacked, and their biases (None if none has one)."""
+    bs = [b if b is not None else torch.zeros(w.shape[0]) for w, b in pairs]
+    return torch.cat([w for w, _ in pairs]), (None if all(b is None for _, b in pairs) else torch.cat(bs))
+
+
+def hf_float_weights(model) -> dict:
+    """A Hugging Face checkpoint's own weights (``model``: Llama, Qwen3, or OPT with its norms before the blocks) in
+    :class:`FloatDecoder`'s layout, fp32: per block ``qkv`` (q, k and v stacked), ``o``, ``up`` (SwiGLU: gate and up
+    stacked) and ``down``, each ``(weight, bias)``, and ``embed``, ``head`` and ``head_bias``.  The norms' gains (and
+    LayerNorm's biases) are folded into the linear layers that read them (:func:`_fold`; the final norm into the LM
+    head), so that :class:`FloatDecoder`'s plain norms give the checkpoint's products."""
+    if model.config.model_type == "opt":
+        dec = model.model.decoder
+        if not model.config.do_layer_norm_before or dec.project_in is not None:
+            raise SystemExit("--real: an OPT checkpoint with its norms after the blocks or an embedding projection "
+                             "(OPT-350M) has no float decoder here")
+        blocks = []
+        for blk in dec.layers:
+            a, n1, n2 = blk.self_attn, blk.self_attn_layer_norm, blk.final_layer_norm
+            blocks.append({"qkv": _stack([_fold(m, n1.weight, n1.bias) for m in (a.q_proj, a.k_proj, a.v_proj)]),
+                           "o": _fold(a.out_proj, None), "up": _fold(blk.fc1, n2.weight, n2.bias),
+                           "down": _fold(blk.fc2, None)})
+        head, head_bias = _fold(model.lm_head, dec.final_layer_norm.weight, dec.final_layer_norm.bias)
+        embed = dec.embed_tokens.weight
+    else:
+        blocks = []
+        for blk in model.model.layers:
+            a, m, n1, n2 = blk.self_attn, blk.mlp, blk.input_layernorm, blk.post_attention_layernorm
+            blocks.append({"qkv": _stack([_fold(x, n1.weight) for x in (a.q_proj, a.k_proj, a.v_proj)]),
+                           "o": _fold(a.o_proj, None), "up": _stack([_fold(x, n2.weight) for x in (m.gate_proj,
+                                                                                                   m.up_proj)]),
+                           "down": _fold(m.down_proj, None)})
+        head, head_bias = _fold(model.lm_head, model.model.norm.weight)
+        embed = model.model.embed_tokens.weight
+    return {"blocks": blocks, "embed": embed.detach().float(), "head": head, "head_bias": head_bias}
+
+
+REAL_FAMILIES = ("opt", "llama", "qwen3")
+"""The ``model_type`` of the checkpoints with an integer builder (:func:`experiments.common.checkpoints.real_graph`)."""
+
+
+def hf_config(name: str):
+    """The Hugging Face configuration of the checkpoint ``name`` (its ``config.json`` alone)."""
+    from transformers import AutoConfig
+    return AutoConfig.from_pretrained(name)
+
+
+def checkpoint_shapes(hf_cfg, name: str):
+    """The ``DecoderConfig`` (named ``name``) of an OPT, Llama or Qwen3 configuration's shapes."""
+    from pvi.models import hf_llama
+    from pvi.models.decoder import DecoderConfig
+    if hf_cfg.model_type != "opt":
+        return hf_llama.config_of(hf_cfg, name)
+    d, h = hf_cfg.hidden_size, hf_cfg.num_attention_heads
+    return DecoderConfig(name, d, hf_cfg.num_hidden_layers, h, h, d // h, hf_cfg.ffn_dim, hf_cfg.vocab_size,
+                         mlp=hf_cfg.activation_function, bias=bool(getattr(hf_cfg, "enable_bias", True)),
+                         tied=bool(hf_cfg.tie_word_embeddings), max_pos=hf_cfg.max_position_embeddings,
+                         embed_dim=0 if hf_cfg.word_embed_proj_dim == d else hf_cfg.word_embed_proj_dim)
+
+
+def real_config(name: str, cfg):
+    """``cfg`` with the checkpoint ``name``'s trained context as ``max_pos``; a checkpoint without an integer builder
+    (:data:`REAL_FAMILIES`; e.g. GPT-2) or of other shapes than ``cfg``'s is refused."""
+    from pvi.models.hf_llama import same_shape
+    hf_cfg = hf_config(name)
+    if hf_cfg.model_type not in REAL_FAMILIES:
+        raise SystemExit(f"--real {name}: a {hf_cfg.model_type} checkpoint has no integer graph here (OPT, Llama and "
+                         "Qwen3 have one)")
+    diff = same_shape(checkpoint_shapes(hf_cfg, cfg.name), cfg)
+    if diff:
+        raise SystemExit(f"--real {name}: not {cfg.name}'s shapes ({'; '.join(diff)})")
+    return dataclasses.replace(cfg, max_pos=hf_cfg.max_position_embeddings)
+
+
 VARIANTS = ("int", "int_fp32gemm", "int_mm", "float", "bf16", "dynint8")
 INTEGER = ("int", "int_fp32gemm", "int_mm")
 """The variants that run the integer graph of ``build_decoder``."""
@@ -294,8 +423,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--model", nargs="+", required=True,
                     help="decoders' shapes (pvi.models.decoder.CONFIGS, experiments.common.models.TINY)")
     ap.add_argument("--seq", type=int, nargs="+", default=[64, 512, 2048], help="prompt tokens (each one a cell)")
-    ap.add_argument("--layers", type=int, nargs="+", default=[1, 2],
-                    help="block counts measured (the full model's count: measured directly)")
+    ap.add_argument("--layers", type=int, nargs="+", default=None,
+                    help="block counts measured (the full model's count: measured directly; default 1 2, with --real "
+                         "the full model)")
     ap.add_argument("--variants", nargs="+", default=["int", "float"], choices=VARIANTS)
     ap.add_argument("--reps", type=int, default=5, help="timed runs per block count, after one warm-up")
     ap.add_argument("--max-pos", type=int, default=0, help="rotary-position models: a longer context")
@@ -305,10 +435,55 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompt's seed")
     ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
                     help="calibration tokens of the integer decoder (at most --seq)")
+    ap.add_argument("--real", default="", metavar="CHECKPOINT",
+                    help="a Hugging Face checkpoint of --model's shapes (OPT, Llama or Qwen3, e.g. "
+                         "meta-llama/Llama-2-7b-hf): its integer graph and its float weights, queried on a WikiText-2 "
+                         "window")
     cli.add_prob_max_argument(ap, note="; the integer variants")
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     ap.set_defaults(malloc_tune=False)               # glibc's defaults unless --malloc-tune (module docstring)
     return ap
+
+
+def check_real(args, cfg):
+    """The refusals of ``--real`` (before anything is loaded) and ``cfg`` with the checkpoint's trained context
+    (:func:`real_config`)."""
+    if len(args.model) != 1:
+        raise SystemExit("--real: one --model, the checkpoint's shapes")
+    if args.max_pos:
+        raise SystemExit("--real: --max-pos would run the checkpoint beyond its trained context")
+    if args.prob_max != cli.PAPER.prob_max:
+        raise SystemExit("--prob-max is for random weights: a checkpoint's recipe fixes its scale")
+    if args.layers not in (None, [cfg.n_layers]):
+        raise SystemExit(f"--real measures the checkpoint's full graph, the one its verifier cells commit (--layers "
+                         f"{cfg.n_layers}, the default)")
+    cfg = real_config(args.real, cfg)
+    if max(args.seq) > cfg.max_pos:
+        raise SystemExit(f"--seq {max(args.seq)}: beyond {args.real}'s trained context of {cfg.max_pos} tokens")
+    return cfg
+
+
+def load_checkpoint(args, cfg, integer: bool, floating: bool) -> dict:
+    """The checkpoint's prompt, integer graph and float weights: ``prompt`` (``[1, max(--seq)]``, the first window of
+    :func:`experiments.common.checkpoints.load_real`, whose first ``T`` tokens are its window of ``T`` tokens),
+    ``graph`` (:func:`experiments.common.checkpoints.real_graph`; with ``integer``), ``recipe`` and ``prob_max``, and
+    ``weights`` (:func:`hf_float_weights`; with ``floating``).  The fp32 model is freed before returning."""
+    from pvi.models.decoder import prob_max_of
+    model, wins, calib = checkpoints.load_real(args.real, max(args.seq), 1)
+    prefix = len(getattr(calib, "prefix", None) or [])
+    if max(args.seq) + prefix > cfg.max_pos:
+        raise SystemExit(f"--seq {max(args.seq)}: with the recipe's {prefix}-token prefix beyond {args.real}'s trained "
+                         f"context of {cfg.max_pos} tokens")
+    out = {"prompt": wins[0], "recipe": checkpoints.recipe_name(calib, "certified"), "graph": None, "prob_max": None,
+           "weights": None}
+    if integer:
+        out["graph"], _ = checkpoints.real_graph(model, calib, args.prune_last)
+        out["prob_max"] = prob_max_of(out["graph"])
+    if floating:
+        out["weights"] = hf_float_weights(model)
+    del model, calib
+    gc.collect()
+    return out
 
 
 def main() -> int:
@@ -318,17 +493,19 @@ def main() -> int:
     cfgs = {}
     for name in args.model:                          # refused before anything is built
         cfg = decoder_config(name)
-        if args.max_pos > cfg.max_pos:
+        if args.real:
+            cfg = check_real(args, cfg)
+        elif args.max_pos > cfg.max_pos:
             if cfg.pos != "rope":
                 raise SystemExit(f"--max-pos: {name} has learned positions (a longer context is another model)")
             cfg = dataclasses.replace(cfg, max_pos=args.max_pos)
         cfgs[name] = cfg
+    layers = args.layers or ([cfg.n_layers] if args.real else [1, 2])
     cli.apply_runtime(args)
     device = torch.device(args.device)
     malloc_tuned = device.type == "cpu" and native_kernels.tune_malloc()      # --malloc-tune, for the whole process
     fdtype = torch.float16 if device.type == "cuda" else torch.float32
     sha = records.git_sha(CODE)
-    env = records.environment(device)
     variants, bounds = list(args.variants), None
     if "int_mm" in variants:
         try:
@@ -336,22 +513,29 @@ def main() -> int:
         except IntMMUnavailable as e:
             print(f"reexec: int_mm unavailable: {e}", file=sys.stderr)
             variants.remove("int_mm")
+    real = (load_checkpoint(args, cfg, any(v in INTEGER for v in variants), any(v not in INTEGER for v in variants))
+            if args.real else None)
+    env = records.environment(device)                # after the checkpoint's load: its revision (env["sources"])
     for name, cfg in cfgs.items():
         for seq in args.seq:
             if seq > cfg.max_pos:                     # e.g. GPT-2's 1,024 learned positions
                 continue
-            tokens = torch.randint(0, cfg.vocab, (1, seq), generator=torch.Generator().manual_seed(args.prompt_seed))
+            if real is not None:                      # the first seq tokens of the checkpoint's WikiText-2 window
+                tokens = real["prompt"][:, :seq].contiguous()
+            else:
+                tokens = torch.randint(0, cfg.vocab, (1, seq),
+                                       generator=torch.Generator().manual_seed(args.prompt_seed))
             tokens = tokens.to(device)
             for variant in variants:
                 measured, spread, same, raw = {}, {}, {}, {}
                 records.reset_peaks(device)
                 try:
-                    for n_layers in args.layers:
+                    for n_layers in layers:
                         warm_up = True
                         if variant in INTEGER:
-                            graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, args.calib_tokens),
-                                                  seed=args.seed, prune_last=args.prune_last,
-                                                  prob_max=args.prob_max)
+                            graph = real["graph"] if real is not None else build_decoder(
+                                cfg, n_layers=n_layers, calib_tokens=min(seq, args.calib_tokens), seed=args.seed,
+                                prune_last=args.prune_last, prob_max=args.prob_max)
 
                             # int_fp32gemm: the same forward pass with the native int8 GEMM switched off; int_mm:
                             # also off, its products on torch._int_mm
@@ -366,10 +550,12 @@ def main() -> int:
                             if override is not None:
                                 same[n_layers], warm_up = _same_logits(graph, tokens, run), False
                         else:
-                            model = (DynInt8Decoder(cfg, n_layers, device, args.seed, prune_last=args.prune_last)
+                            weights = real["weights"] if real is not None else None
+                            model = (DynInt8Decoder(cfg, n_layers, device, args.seed, prune_last=args.prune_last,
+                                                    weights=weights)
                                      if variant == "dynint8" else
                                      FloatDecoder(cfg, n_layers, torch.bfloat16 if variant == "bf16" else fdtype,
-                                                  device, args.seed, prune_last=args.prune_last))
+                                                  device, args.seed, prune_last=args.prune_last, weights=weights))
 
                             def run(model=model):
                                 with torch.no_grad():
@@ -388,11 +574,13 @@ def main() -> int:
                 per_block = ((measured[ls[-1]] - measured[ls[0]]) / (ls[-1] - ls[0]) if len(ls) > 1
                              else measured[ls[0]] / ls[0])
                 fixed = measured[ls[0]] - ls[0] * per_block
+                integer = variant in INTEGER
                 rec = {
-                    "git": sha, "model": name, "seq": seq, "variant": variant,
-                    "dtype": DTYPE.get(variant, str(fdtype).replace("torch.", "")),
+                    "git": sha, "model": name, "real": args.real or None,
+                    "recipe": real["recipe"] if real is not None and integer else None, "seq": seq,
+                    "variant": variant, "dtype": DTYPE.get(variant, str(fdtype).replace("torch.", "")),
                     "device": str(device), "threads": args.threads, "reps": args.reps, "prune_last": args.prune_last,
-                    "prob_max": args.prob_max if variant in INTEGER else None,
+                    "prob_max": (real["prob_max"] if real is not None else args.prob_max) if integer else None,
                     "measured_s": {str(k): v for k, v in measured.items()},
                     "range_s": {str(k): v for k, v in spread.items()},
                     "times_s": {str(k): v for k, v in raw.items()}, "peak": records.peaks(device),

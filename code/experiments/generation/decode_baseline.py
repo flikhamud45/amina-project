@@ -9,6 +9,8 @@ after a 512-token prompt, ``G`` in {64, 256, 512}, as the ``gen`` tier's ``gen_b
         --reps 5 --label gen
     python -m experiments.generation.decode_baseline --model tiny-llama tiny-qwen --prompt 8 --gen 4 --reps 2 \\
         --device cpu --dtype fp32 --threads 2      # a laptop check (seconds)
+    python -m experiments.generation.decode_baseline --model llama2-7b --real meta-llama/Llama-2-7b-hf --prompt 512 \\
+        --gen 64 256 512 --reps 5 --label gen
 
 Each ``--model`` (``pvi.models.decoder.CONFIGS`` or ``experiments.common.models.TINY``: a Llama- or Qwen3-style
 decoder, RMSNorm, SwiGLU and rotary positions) is Hugging Face Transformers' own decoder of those shapes
@@ -24,19 +26,34 @@ synchronisation on a GPU).  The last timed response is also checked against one 
 prompt and its first ``G - 1`` tokens (no cache): ``same_as_prefill`` is the share of the ``G`` tokens that pass's
 argmaxes give again (below 1 only where floating-point rounding differs between the two paths).
 
-**Record** (one JSON line per model and ``G`` on stdout; ``"kind": "decode"``): ``model``, ``layers``, ``n_layers``,
-``prompt``, ``gen``, ``dtype``, ``device``, ``attention``, ``params``, ``weights_bytes``, ``reps``, the medians and
-``[min, max]`` of ``prefill_s``, ``decode_s`` (the ``G - 1`` steps) and ``total_s`` (both), ``ms_per_token`` (the
-median ``total_s`` over ``G``), ``same_as_prefill``, ``build_s``, ``peak`` (host and GPU memory over the timed
-responses), ``label``, ``host``, ``gpu``, ``git``, ``env``, ``ok`` (every logit finite and ``G`` tokens per response).
-The exit status is 1 if a record is not ``ok``.
+**Real weights.**  ``--real`` (a Llama or Qwen3 checkpoint of the one ``--model``'s shapes, e.g.
+meta-llama/Llama-2-7b-hf or Qwen/Qwen3-4B) decodes with the checkpoint's own weights instead
+(:func:`experiments.common.checkpoints.load_llama` in ``--dtype``, moved to ``--device``, scaled-dot-product
+attention) and prompts it with consecutive windows of ``P`` tokens of the WikiText-2 test split, tokenised as the
+real-weight cells' prompts (blank-line joined, no special tokens: the prompts of ``gen_bench.py --real``); the
+response is the checkpoint's own greedy continuation.  Refused: another architecture (OPT, GPT-2: this script runs
+Llama- and Qwen3-style decoders), other shapes than ``--model``'s, several ``--model``, ``--layers``, and a prompt and
+response beyond the checkpoint's trained context (``P + G - 1`` positions).
+
+**Record** (one JSON line per model and ``G`` on stdout; ``"kind": "decode"``): ``model``, ``real`` (the
+checkpoint; None for random weights), ``layers``, ``n_layers``, ``prompt``, ``gen``, ``dtype``, ``device``,
+``attention``, ``params``, ``weights_bytes``, ``reps``, the medians and ``[min, max]`` of ``prefill_s``, ``decode_s``
+(the ``G - 1`` steps) and ``total_s`` (both), ``ms_per_token`` (the median ``total_s`` over ``G``),
+``same_as_prefill``, ``build_s``, ``peak`` (host and GPU memory over the timed responses), ``label``, ``host``,
+``gpu``, ``git``, ``env`` (with ``--real`` the revisions of the checkpoint and of WikiText-2 in ``sources``), ``ok``
+(every logit finite and ``G`` tokens per response).  The exit status is 1 if a record is not ``ok``.
 
 Hardware and time: the final run's job runs on the L40S (fp16; each 7B model takes 13.5 GB of GPU memory) in a few
 minutes; the package gives it a limit of one hour and 64 GB of host memory.  The laptop check above takes seconds.
+``--real`` adds the checkpoint's download into the Hugging Face cache (Llama-2-7B 13.5 GB, Qwen3-4B 8 GB) and its
+load on the host in ``--dtype`` before it moves to the GPU (a few minutes; host memory about the weights' size, within
+the 64 GB), and the tokenisation of the test split (seconds); the GPU memory and the decoding are those of the
+random-weight decoder of the same shapes.
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import gc
 import inspect
 import platform
@@ -79,6 +96,36 @@ def build(cfg, n_layers: int, dtype: torch.dtype, device: torch.device, seed: in
         model = AutoModelForCausalLM.from_config(hf_config(cfg, n_layers), torch_dtype=dtype,
                                                  attn_implementation="sdpa")
     return model.eval()
+
+
+def real_config(name: str, cfg):
+    """``cfg`` with the checkpoint ``name``'s trained context as ``max_pos``; SystemExit for a checkpoint that is not
+    a Llama or Qwen3 decoder of ``cfg``'s shapes (its ``config.json`` alone is read)."""
+    from transformers import AutoConfig
+
+    from pvi.models import hf_llama
+    hf_cfg = AutoConfig.from_pretrained(name)
+    if hf_cfg.model_type not in ("llama", "qwen3"):
+        raise SystemExit(f"--real {name}: a {hf_cfg.model_type} checkpoint (decode_baseline runs Llama and Qwen3 "
+                         "checkpoints)")
+    diff = hf_llama.same_shape(hf_llama.config_of(hf_cfg, cfg.name), cfg)
+    if diff:
+        raise SystemExit(f"--real {name}: not {cfg.name}'s shapes ({'; '.join(diff)})")
+    return dataclasses.replace(cfg, max_pos=hf_cfg.max_position_embeddings)
+
+
+def load(name: str, dtype: torch.dtype, device: torch.device, prompt: int, n: int):
+    """``(model, prompts)``: the checkpoint ``name`` (:func:`experiments.common.checkpoints.load_llama`, in ``dtype``,
+    scaled-dot-product attention) on ``device``, and ``n`` prompts ``[n, prompt]``: consecutive windows of the
+    WikiText-2 test split, tokenised as the real cells' prompts (blank-line joined, no special tokens: the windows of
+    :func:`experiments.common.checkpoints.load_real` and ``gen_bench.py --real``)."""
+    from experiments.common import checkpoints
+    model, tok = checkpoints.load_llama(name, dtype)
+    model.config._attn_implementation = "sdpa"
+    wins = checkpoints.windows(checkpoints.token_ids(tok, checkpoints.wikitext("test"), "auto"), prompt, n)
+    if len(wins) < n:
+        raise SystemExit(f"--real: {len(wins)} WikiText-2 windows of {prompt} tokens, not {n}")
+    return model.to(device).eval(), torch.cat(wins)
 
 
 def _keep_last(model) -> dict:
@@ -149,6 +196,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="where it decodes")
     ap.add_argument("--threads", type=int, default=8, help="torch's intra-op threads")
     ap.add_argument("--label", default="", help="a label copied into every record")
+    ap.add_argument("--real", default="", metavar="CHECKPOINT",
+                    help="a Llama or Qwen3 checkpoint of the one --model's shapes (e.g. meta-llama/Llama-2-7b-hf): its "
+                         "weights, prompted with WikiText-2 windows")
     return ap
 
 
@@ -156,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if min(args.gen) < 1 or args.reps < 1 or args.prompt < 1:
         raise SystemExit("--gen, --reps and --prompt: at least 1")
+    if args.real and (len(args.model) != 1 or args.layers):
+        raise SystemExit("--real: one --model, the checkpoint's shapes, and every block (no --layers)")
     torch.set_num_threads(args.threads)
     device = torch.device(args.device)
     dtype = DTYPES[args.dtype]
@@ -163,23 +215,32 @@ def main(argv: list[str] | None = None) -> int:
     ok = True
     for name in args.model:
         cfg = decoder_config(name)
+        if args.real:                                 # refused before the weights are loaded
+            cfg = real_config(args.real, cfg)
         n_layers = args.layers or cfg.n_layers
         if args.prompt + max(args.gen) - 1 > cfg.max_pos:
-            raise SystemExit(f"{name}: {args.prompt} + {max(args.gen)} - 1 positions > its {cfg.max_pos}")
+            raise SystemExit(f"{args.real or name}: {args.prompt} + {max(args.gen)} - 1 positions > its "
+                             f"{cfg.max_pos}")
+        n_prompts = len(args.gen) * (args.reps + 1)
         t0 = time.perf_counter()
-        model = build(cfg, n_layers, dtype, device, args.seed)
+        if args.real:                                 # the checkpoint and WikiText-2 prompts
+            model, prompts = load(args.real, dtype, device, args.prompt, n_prompts)
+        else:
+            model = build(cfg, n_layers, dtype, device, args.seed)
         records.sync(device)
         build_s = time.perf_counter() - t0
+        if not args.real:
+            prompts = torch.randint(0, cfg.vocab, (n_prompts, args.prompt),
+                                    generator=torch.Generator().manual_seed(args.prompt_seed))
         n_params = sum(p.numel() for p in model.parameters())
-        head = {"kind": "decode", "label": args.label, "git": sha, "model": name, "layers": args.layers or None,
-                "n_layers": n_layers, "prompt": args.prompt, "dtype": args.dtype, "device": args.device,
+        head = {"kind": "decode", "label": args.label, "git": sha, "model": name, "real": args.real or None,
+                "layers": args.layers or None, "n_layers": n_layers, "prompt": args.prompt, "dtype": args.dtype,
+                "device": args.device,
                 "attention": model.config._attn_implementation, "params": n_params,
                 "weights_bytes": sum(p.numel() * p.element_size() for p in model.parameters()),
                 "threads": args.threads, "build_s": build_s, "host": platform.node(),
                 "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
                 "env": records.environment(device)}
-        gen = torch.Generator().manual_seed(args.prompt_seed)
-        prompts = torch.randint(0, cfg.vocab, (len(args.gen) * (args.reps + 1), args.prompt), generator=gen)
         for j, g in enumerate(args.gen):
             xs = prompts[j * (args.reps + 1):(j + 1) * (args.reps + 1)].to(device)
             respond(model, xs[:1], g, device)                       # untimed
