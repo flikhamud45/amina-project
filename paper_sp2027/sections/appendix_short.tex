@@ -46,9 +46,6 @@ $\beta_u(p)=\Pr_{h_u\sim\pi_u}[A(h_u,p_{-u})=(u,p_u)]$. Then $\Pr[J=u\mid P=p]\p
 \beta_u(p)/\pi_u(p_u)$, a point mass on $u$ if $\pi_u(p_u)=0$.
 \end{corollary}
 
-\noindent On $\{P=p,J=u\}$ the law of $\theta$ factorises over $\theta_{-u}$ and $\theta_u$, so
-$\Pr[J=u,P=p]=(\prod_j\pi_j(p_j))\beta_u(p)/\pi_u(p_u)$.
-
 \begin{proposition}[the hard instance; Theorem~\ref{thm:dich}(a)]
 \label{prop:worst}
 Let $N\ge2$ and $\sigma$ be a uniform permutation of $[N]$. Hidden neuron $i$ has the row
@@ -75,10 +72,6 @@ Let $V$ reject only on a failed local check and choose rows independently of the
 On a fixed network, let disjoint site sets $B_1,\dots,B_m$ carry forgeries $\tau'_j$ inconsistent
 exactly on $B_j$. Then $\min_j\Pr[V\text{ rejects }\tau'_j]\le q/m$.
 \end{proposition}
-
-\noindent The opened rows are true, so until its first opening in $B_j$ the run on
-$\tau'_j$ equals one reference run, whose at most $q$ expected openings meet the disjoint $B_j$ at
-most $q$ times in total.
 
 \begin{proposition}[mixing suffices]
 \label{prop:amp}
@@ -107,8 +100,7 @@ low-entropy rows leak: on Proposition~\ref{prop:worst} without dead inputs, inve
 subtrees up to height $\eta$ detects the edit with probability $2^{\eta+1}/N$ instead of $1/N$.
 Theorem~\ref{thm:guess-full} holds for salted leaves $H(s_i\Vert\theta_i)$, and in the
 random-oracle model for an unsalted tree if every leaf preimage, under the true rows and the
-explanation, has min-entropy at least $\kappa$ given the view and the other leaves. Trained weights
-have high-entropy rows, so this concerns the proof, not the attack.
+explanation, has min-entropy at least $\kappa$ given the view and the other leaves.
 \end{remark}
 
 \begin{remark}[correlated rows]
@@ -202,10 +194,8 @@ under Fiat--Shamir; $M^*$ has the weights $A^*$, with weight products computed i
 $(-p/2,p/2)$.
 \end{theorem}
 
-\noindent\emph{Proof idea.} A far extracted $E_j$ makes $\psi_j^\T E_j$ $e_j$-far from the code over
-$\mathbb K_s$, except with probability $n_j/p^s$, by Fact~\ref{fact:ext} and correlated agreement
-over affine spaces in the unique-decoding regime~\cite[Thm.~1.6]{bciks20} applied over $\mathbb K_s$;
-online, a wrong fold survives only where two codewords agree or $E_j$ is corrupted~\cite{fullversion}.
+\noindent The proof, by Fact~\ref{fact:ext} and correlated agreement~\cite[Thm.~1.6]{bciks20} over
+$\mathbb K_s$, is in the extended version~\cite{fullversion}.
 
 \input{sections/app_params}
 
@@ -240,37 +230,7 @@ If a cut operation has the honest input, (D1) and (D4) pass and $\delta_{ij}\not
 $v_{ij}\notin\Vtab$.
 \end{lemma}
 
-\begin{lemma}[fractional-sum GKR]
-\label{lem:v1-gkr}
-Fix $\alpha$ and the true leaves of instance $\gamma$. If the root computed from the prover's first
-message is wrong, then, except with probability $\varepsilon_{\mathrm{GKR}}(n_\gamma)$, a check (G)
-fails or the final claims differ from the true multilinear extensions at $\rho$.
-\end{lemma}
-
-\begin{lemma}[final values]
-\label{lem:v1-final}
-The true leaf layer of instance $\gamma$ satisfies~\eqref{eq:v1-final} with
-$I(\rho)=I_{R_\gamma}(r_{\mathrm{row}})I_T(r_{\mathrm{col}})$, where $I_N(r)=\sum_{y<N}\Veq(r,y)$.
-\end{lemma}
-
-\para{Proof ideas.} For Lemma~\ref{lem:v1-logup}, unique partial fractions give leaf counts
-$c_v\equiv0$ off the table and $c_\tau\equiv\mu_\tau\pmod p$ on it; as $0\le\mu_\tau<p$,
-$c_\tau\ge\mu_\tau$, so $\sum_\tau\mu_\tau=\sum_vc_v$ forces every off-table count to zero.
-Lemma~\ref{lem:v1-window} unfolds the floor. For Lemma~\ref{lem:v1-nowrap}, (P3), (P4), (D1) and
-(D4) give $|\delta_{ij}|<2^{30}+2^{16}$, and $p-2^{30}-2^{16}=939{,}458{,}561>2^{16}\ge W_{ij}$, so
-$\delta_{ij}\bmod p\notin[0,W_{ij})$. For Lemma~\ref{lem:v1-gkr}, the line through the sent
-children, the combination with $\eta_k$ and the degree-3 sum-check~\cite{lfkn1992} of layer $k$ let
-a false claim become true with probability at most $1/p^8$, $1/p^8$ and $3k/p^8$. For
-Lemma~\ref{lem:v1-final}, $\Veq$ factorises, and the leaf in row $o_\ell+i$ and column $j$ has
-weight $(\chi_\ell)_ie_j$.
-
-\para{Proof of Theorem~\ref{thm:v1}.} If every clear claim is correct and every residue lies in its window, Lemma~\ref{lem:v1-window} and induction
-give the honest logits, so $\ell^\ast$ exists. The off-table leaf of a cut $\ell^\ast$
-(Lemma~\ref{lem:v1-nowrap}) is fixed with $\mu$ before $\alpha$. By (D5) and
-Lemma~\ref{lem:v1-logup}, $\sum_i1/(X-v_i)-\sum_\tau\mu_\tau/(X-\tau)$ is nonzero with at most
-$\Nleaf+|\Vtab|$ poles, all in $S$, so it vanishes at $\alpha\in\Fext\setminus S$ with probability
-at most $(\Nleaf+|\Vtab|)/(p^8-p^2)$. Otherwise (F4), Lemma~\ref{lem:v1-gkr} and
-Lemma~\ref{lem:v1-final} make (F3) fail unless a fold is wrong in some base-field plane, which the
-column check catches except with the column term. In $\Kpre$ the secret vectors are handled as in
-Appendix~\ref{app:sound}. Under Fiat--Shamir the new rounds err with probability at most $1/p^8$,
-$3/p^8=2^{-245.7}$ and $2^{\VOneLargeLookupLog{}}$ (Llama-2-13B at 2{,}048 tokens).
+Lemmas~\ref{lem:v1-window} and~\ref{lem:v1-nowrap}, the soundness of the fractional-sum GKR and the
+column check complete the proof sketch of Theorem~\ref{thm:v1}; the lemmas and the full proof are in
+the extended version~\cite{fullversion}. Under Fiat--Shamir the new rounds err with probability at
+most $1/p^8$, $3/p^8=2^{-245.7}$ and $2^{\VOneLargeLookupLog{}}$ (Llama-2-13B at 2{,}048 tokens).
