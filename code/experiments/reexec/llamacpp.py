@@ -1,6 +1,7 @@
-"""llama.cpp on the CPU: a production inference engine's prefill of a model of Llama-2-7B's shapes on the same 8
-threads as the other re-execution baselines.  It is not exact and it computes a different model (llama.cpp's own
-Q8_0 or bf16 weights), so it can confirm no claim; it is reported next to exact re-execution, never in its place.
+"""llama.cpp on the CPU: a production inference engine's prefill of a model of Llama-2-7B's shapes (random weights,
+or with ``--real`` the checkpoint's) on the same 8 threads as the other re-execution baselines.  It is not exact and
+it computes a different model (llama.cpp's own Q8_0 or bf16 weights), so it can confirm no claim; it is reported next
+to exact re-execution, never in its place.
 
 Produces the llama.cpp rows of ``tab:options`` and ``tab:eval-reexec`` and the text's llama.cpp numbers (the package's
 tier ``cpuv``; ``experiments/paper/numbers.py``).
@@ -9,6 +10,8 @@ tier ``cpuv``; ``experiments/paper/numbers.py``).
         --llamacpp-dir ../logs/final/llamacpp
     python -m experiments.reexec.llamacpp --model llama2-7b --layers 1 --seq 64 --types q8_0 bf16 --reps 2 \\
         --threads 8 --llamacpp-dir ../logs/rehearsal/llamacpp                 # the rehearsal's cell
+    python -m experiments.reexec.llamacpp --model llama2-7b --real meta-llama/Llama-2-7b-hf --seq 64 2048 \\
+        --types q8_0 bf16 --reps 5 --threads 8 --llamacpp-dir ../logs/final/llamacpp
 
 **Build.**  llama.cpp's release v0.6.0 (build b11429, commit ``d8123504``), cloned (``git clone --depth 1``) into
 ``<--llamacpp-dir>/src`` unless ``--llamacpp-src`` names a checkout; its commit must be the release's.  CMake
@@ -29,6 +32,27 @@ imports) and the clone's ``gguf-py`` only (no checkpoint, sentencepiece, protobu
 folder under ``--tmp-dir`` (default the system's temporary folder, ``$TMPDIR``), deleted at exit.  Only Llama-2's
 architecture (RMSNorm, SwiGLU, rotary positions, no biases, an untied LM head) is accepted.
 
+**Real weights.**  ``--real`` (a ``LlamaForCausalLM`` checkpoint of ``--model``'s shapes: a Hugging Face repository,
+downloaded by ``huggingface_hub`` into its cache with ``HF_TOKEN`` for a gated one such as meta-llama/Llama-2-7b-hf,
+or a local folder) writes the checkpoint's own weights instead, converted as the release's
+``convert_hf_to_gguf.py --outtype bf16`` converts a ``LlamaForCausalLM`` (``LlamaModel`` of its ``conversion``
+package): each safetensors tensor is read alone (its header gives its offsets; memory holds one tensor) under its
+GGUF name, the q and k projections' rows reordered for llama.cpp's rotary embedding (``LlamaModel.permute``:
+``w.reshape(n_head, 2, rows // n_head // 2, cols).swapaxes(1, 2).reshape(w.shape)``, with the key-value heads' count
+for k), the norms written in fp32 and every matrix rounded to bf16 by gguf-py; the hyperparameters are the
+configuration's as the converter reads it, through Transformers' ``AutoConfig`` (context length, RMSNorm epsilon,
+rotary base and head size, which Llama-2's ``config.json`` leaves to Transformers' defaults of 10,000 and 128, head
+counts), and the vocabulary is the checkpoint's SentencePiece tokenizer as the converter writes it (pieces, scores
+and token types, ``tokenizer_config.json``'s added tokens, gguf-py's ``SpecialVocab`` for the BOS, EOS and UNK ids).  A
+configuration of other shapes, with RoPE scaling, a tied head or biases is refused before anything is built, as is a
+``--seq`` beyond the checkpoint's trained context; the checkpoint's tensor names, shapes and dtypes are checked against
+the plan before the file is written.  The conversion was checked against the release's own converter on a small
+checkpoint (``tests/test_llamacpp.py``: the same tensors byte for byte and the same metadata but ``general.*``).  This
+step also needs sentencepiece, huggingface_hub and Transformers.  llama-bench still times prompts of random token ids
+(it takes no prompt text): the weights are the checkpoint's, the prompt is not WikiText-2's.  Every file written, random
+or real, is read back with gguf-py's reader before quantisation: its tensors' names, order, shapes and types, the
+hyperparameters and the vocabulary's size must be the plan's, else the step fails.
+
 **Measurement.**  ``llama-bench`` times prompt processing only (``-p T -n 0``) on ``--threads`` threads (``-t``;
 never its default, every physical core of the machine): ``--reps`` passes after one untimed warm-up pass of the same
 prompt (random token ids; the KV cache is cleared before each pass), with the weights read into the process's memory
@@ -41,16 +65,18 @@ only; unlike the verifier's pruned graph, llama.cpp computes the last block's at
 
 **Record** (one JSON line per weight type, prompt length and configuration, on stdout): ``kind`` (``llamacpp``),
 ``variant`` (``llamacpp_q8_0``, ``llamacpp_bf16``), ``dtype``, ``exact`` and ``same_model`` (false), ``weights``
-(``random``), ``seed``, ``model``, ``seq``, ``device``, ``threads``, ``reps``, ``layers`` (the blocks built),
-``n_layers`` (the model's), ``measured_s`` (the median pass, keyed by the blocks built: only a full build fills a
-table cell), ``range_s`` (its ``[min, max]``), ``samples_s``, ``full_s`` (the median of a full build, else null),
-``prune_last`` (false), ``flash_attn``, ``n_batch``, ``n_ubatch``, ``gguf_bytes`` and ``gguf_params`` (the weights'
-bytes and parameters), ``gguf_file_bytes``, ``max_pos``, ``peak`` (the peak resident set of llama-bench's run of
-that prompt length, every configuration), ``git``,
-``cpu``, ``host``, ``env`` (:func:`experiments.common.records.environment`) and ``llamacpp``: the release, commit and
-build number, the CMake flags, CMake and the compilers, the system information, llama-bench's command line, the
-OpenMP variables set, and llama-bench's own fields (its CPU description, threads, CPU mask, KV-cache types, load mode,
-the samples in ns).  A failed step prints ``FAILED: llama.cpp <step>: ...`` and the script exits with status 1.
+(``random`` or ``real``), ``real`` (the checkpoint; null for random weights), ``revision`` (the checkpoint's commit
+from its cache snapshot's path; else null), ``seed`` (null with ``--real``), ``model``, ``seq``, ``device``,
+``threads``, ``reps``, ``layers`` (the blocks built), ``n_layers`` (the model's), ``measured_s`` (the median pass,
+keyed by the blocks built: only a full build fills a table cell), ``range_s`` (its ``[min, max]``), ``samples_s``,
+``full_s`` (the median of a full build, else null), ``prune_last`` (false), ``flash_attn``, ``n_batch``, ``n_ubatch``,
+``gguf_bytes`` and ``gguf_params`` (the weights' bytes and parameters), ``gguf_file_bytes``, ``max_pos`` (with
+``--real`` the checkpoint's context), ``peak`` (the peak resident set of llama-bench's run of that prompt length,
+every configuration), ``git``, ``cpu``, ``host``, ``env`` (:func:`experiments.common.records.environment`) and
+``llamacpp``: the release, commit and build number, the CMake flags, CMake and the compilers, the system information,
+llama-bench's command line, the OpenMP variables set, and llama-bench's own fields (its CPU description, threads, CPU
+mask, KV-cache types, load mode, the samples in ns).  A failed step prints ``FAILED: llama.cpp <step>: ...`` and the
+script exits with status 1.
 
 Hardware, time, memory and disk: 8 threads of the verifier's CPU.  The first build takes about 5 to 10 minutes with 8
 jobs (later runs reuse it); writing Llama-2-7B's 13.5 GB bf16 file and quantising it take a few minutes; one pass at
@@ -58,7 +84,10 @@ jobs (later runs reuse it); writing Llama-2-7B's 13.5 GB bf16 file and quantisin
 attention kernels and two micro-batch sizes, one warm-up and 5 timed passes each) takes about one to one and a half
 hours (the package's limit: 3 h).  Peak memory: the bf16 weights in memory (13.5 GB) and the compute buffers, within
 the job's 64 GB.  Disk: about 21 GB under ``--tmp-dir`` for Llama-2-7B (the bf16 and the Q8_0 file; 1.4 GB for one
-block), and about 1 GB under ``--llamacpp-dir`` (the clone and the build).
+block), and about 1 GB under ``--llamacpp-dir`` (the clone and the build).  ``--real`` adds the checkpoint in the
+Hugging Face cache (``HF_HOME``; for Llama-2-7B its fp16 safetensors, 13.5 GB, downloaded once) and its conversion
+(reading 13.5 GB and writing the same bf16 file: a few minutes, as the random weights' drawing); the files under
+``--tmp-dir``, the memory and the benchmark are those of the random weights.
 """
 from __future__ import annotations
 
@@ -66,6 +95,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import signal
 import statistics
@@ -255,6 +285,317 @@ def write_gguf(gguf, path: Path, cfg, layers: int, seed: int) -> dict:
         params += _size(shape)
     w.close()
     return {"tensors": len(plan), "params": params, "bytes": path.stat().st_size, "s": time.perf_counter() - t0}
+
+
+# ================================================================================================ a real checkpoint
+HF_NAMES = {"token_embd.weight": "model.embed_tokens.weight", "output_norm.weight": "model.norm.weight",
+            "output.weight": "lm_head.weight", "attn_norm.weight": "input_layernorm.weight",
+            "attn_q.weight": "self_attn.q_proj.weight", "attn_k.weight": "self_attn.k_proj.weight",
+            "attn_v.weight": "self_attn.v_proj.weight", "attn_output.weight": "self_attn.o_proj.weight",
+            "ffn_norm.weight": "post_attention_layernorm.weight", "ffn_gate.weight": "mlp.gate_proj.weight",
+            "ffn_up.weight": "mlp.up_proj.weight", "ffn_down.weight": "mlp.down_proj.weight"}
+"""The checkpoint's name of each GGUF tensor of a ``LlamaForCausalLM`` (gguf-py's tensor map of the ``llama``
+architecture; a block's tensors under ``model.layers.<i>.``)."""
+SAFETENSORS_DTYPES = {"F32": "<f4", "F16": "<f2", "BF16": "<u2"}
+"""The checkpoint dtypes read (bf16 as its 16-bit patterns, widened to fp32 when read)."""
+SNAPSHOT = re.compile(r"[\\/]snapshots[\\/]([0-9a-f]{40})(?:[\\/]|$)")
+"""A Hugging Face cache snapshot's folder: its commit hash."""
+
+
+def hf_name(name: str) -> str:
+    """The checkpoint's name of the GGUF tensor ``name`` (:data:`HF_NAMES`)."""
+    if name.startswith("blk."):
+        _, i, rest = name.split(".", 2)
+        return f"model.layers.{i}.{HF_NAMES[rest]}"
+    return HF_NAMES[name]
+
+
+def checkpoint_folder(name: str, *, files: bool = True) -> tuple[Path, str | None]:
+    """``(folder, revision)``: a local checkpoint folder as given, else the Hugging Face cache's snapshot of the
+    repository ``name`` (``huggingface_hub``, with ``HF_TOKEN`` for a gated one): the configuration, the tokenizer's
+    files and the safetensors shards, or with ``files=False`` the configuration alone; ``revision`` is the snapshot's
+    commit hash, read from its path (None for a folder outside the cache)."""
+    if Path(name).is_dir():
+        path = Path(name)
+    else:
+        try:
+            from huggingface_hub import hf_hub_download, snapshot_download
+        except ImportError as e:
+            raise LlamaCppError("checkpoint", f"{e} (--real needs huggingface_hub)") from e
+        try:
+            path = (Path(snapshot_download(name, allow_patterns=["*.json", "tokenizer.model", "*.safetensors"]))
+                    if files else Path(hf_hub_download(name, "config.json")).parent)
+        except Exception as e:                # gated without a token, offline, no such repository
+            raise LlamaCppError("checkpoint", f"{name}: {type(e).__name__}: {e}") from e
+    m = SNAPSHOT.search(str(path))
+    return path, (m.group(1) if m else None)
+
+
+def checkpoint_config(path: Path) -> dict:
+    """The checkpoint's configuration as the release's converter reads it (``ModelBase.load_hparams``):
+    Transformers' ``AutoConfig.from_pretrained(path).to_dict()``, which fills in the defaults that ``config.json``
+    leaves out (Llama-2's ``head_dim`` and ``rope_theta``), else ``config.json`` itself."""
+    try:
+        from transformers import AutoConfig
+        return AutoConfig.from_pretrained(str(path), trust_remote_code=False).to_dict()
+    except Exception:                          # as the converter: no Transformers, or a configuration it rejects
+        pass
+    try:
+        return json.loads((Path(path) / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise LlamaCppError("checkpoint", f"{path}: no readable config.json ({e})") from e
+
+
+def check_checkpoint(hp: dict, cfg) -> None:
+    """Refuse a checkpoint whose configuration ``hp`` is not a ``LlamaForCausalLM`` of ``cfg``'s shapes that the
+    conversion here covers (no RoPE scaling, an untied LM head, no biases, not one of the converter's CodeLlama and
+    Granite vocabulary special cases)."""
+    heads = hp.get("num_attention_heads") or 0
+    got = {"architecture": (hp.get("architectures") or [None])[0], "d_model": hp.get("hidden_size"),
+           "n_layers": hp.get("num_hidden_layers"), "n_heads": heads,
+           "n_kv_heads": hp.get("num_key_value_heads") or heads, "d_ff": hp.get("intermediate_size"),
+           "vocab": hp.get("vocab_size"),
+           "head_dim": hp.get("head_dim") or (hp.get("hidden_size") or 0) // (heads or 1),
+           "rope_scaling": hp.get("rope_scaling"), "tied": bool(hp.get("tie_word_embeddings", False)),
+           "bias": bool(hp.get("attention_bias") or hp.get("mlp_bias"))}
+    want = {"architecture": "LlamaForCausalLM", "d_model": cfg.d_model, "n_layers": cfg.n_layers,
+            "n_heads": cfg.n_heads, "n_kv_heads": cfg.n_kv_heads, "d_ff": cfg.d_ff, "vocab": cfg.vocab,
+            "head_dim": cfg.head_dim, "rope_scaling": None, "tied": False, "bias": False}
+    bad = [f"{k} {got[k]!r}, not {want[k]!r}" for k in want if got[k] != want[k]]
+    if hp.get("vocab_size") in (32016, 49152):
+        bad.append(f"a vocabulary of {hp['vocab_size']} tokens (a special case of convert_hf_to_gguf.py)")
+    if bad:
+        raise SystemExit(f"--real: not a LlamaForCausalLM of {cfg.name}'s shapes ({'; '.join(bad)})")
+
+
+def safetensors_index(path: Path) -> dict:
+    """``{name: (file, dtype, shape, first byte, end byte)}`` of every tensor of the checkpoint's safetensors files
+    (``model.safetensors``, or the shards of ``model.safetensors.index.json``), read from their headers alone."""
+    path = Path(path)
+    index = path / "model.safetensors.index.json"
+    if index.is_file():
+        files = sorted({path / f for f in json.loads(index.read_text(encoding="utf-8"))["weight_map"].values()})
+    elif (path / "model.safetensors").is_file():
+        files = [path / "model.safetensors"]
+    else:
+        raise LlamaCppError("checkpoint", f"{path} has no safetensors weights (model.safetensors[.index.json])")
+    out = {}
+    for f in files:
+        with open(f, "rb") as fh:
+            n = int.from_bytes(fh.read(8), "little")
+            header = json.loads(fh.read(n))
+        for name, t in header.items():
+            if name != "__metadata__":
+                a, b = t["data_offsets"]
+                out[name] = (f, t["dtype"], tuple(t["shape"]), 8 + n + a, 8 + n + b)
+    return out
+
+
+def read_tensor(entry):
+    """One tensor of :func:`safetensors_index` as a numpy array: fp16 as stored and fp32 (``convert_hf_to_gguf.py``
+    keeps both), bf16 widened to fp32 exactly (as it widens every other type)."""
+    import numpy as np
+    f, dtype, shape, a, b = entry
+    if dtype not in SAFETENSORS_DTYPES:
+        raise LlamaCppError("weights", f"{f.name}: a tensor of dtype {dtype} (F32, F16 and BF16 are read)")
+    with open(f, "rb") as fh:
+        fh.seek(a)
+        x = np.frombuffer(fh.read(b - a), dtype=SAFETENSORS_DTYPES[dtype]).reshape(shape)
+    if dtype == "BF16":
+        x = (x.astype(np.uint32) << 16).view(np.float32)
+    return x
+
+
+def permute(w, n_head: int, n_head_kv: int | None):
+    """llama.cpp's reordering of a q or k projection's rows for its rotary embedding (``LlamaModel.permute`` of the
+    release's ``convert_hf_to_gguf.py``): the rotate-half pairs ``(i, i + d/2)`` of each Hugging Face head become
+    adjacent rows ``(2i, 2i + 1)``; a k projection (``n_head_kv``) is reordered per key-value head."""
+    if n_head_kv is not None and n_head != n_head_kv:
+        n_head = n_head_kv
+    return w.reshape(n_head, 2, w.shape[0] // n_head // 2, *w.shape[1:]).swapaxes(1, 2).reshape(w.shape)
+
+
+def _looks_special(token: str) -> bool:
+    """``TextModel.does_token_look_special`` of the release's converter."""
+    return (token in ("<pad>", "<mask>", "<2mass>", "[@BOS@]") or (token.startswith("<|") and token.endswith("|>"))
+            or (token.startswith("<｜") and token.endswith("｜>"))
+            or (token.startswith("<unused") and token.endswith(">")))
+
+
+def sentencepiece_vocab(path: Path, vocab_size: int | None) -> tuple[list[bytes], list[float], list[int]]:
+    """``(tokens, scores, token types)`` of the checkpoint's SentencePiece tokenizer (``tokenizer.model``) as the
+    release's converter makes them (``TextModel._create_vocab_sentencepiece``): ``vocab_size`` entries (default the
+    tokenizer's), each piece with its score and type (normal 1, unknown 2, control 3, user-defined 4, unused 5, byte
+    6), unused ``[PAD<i>]`` fillers (score -10000) past the tokenizer's pieces, then the tokens of
+    ``added_tokens.json`` (user-defined) and of ``tokenizer_config.json``'s ``added_tokens_decoder`` (control when
+    special), each of score -1000."""
+    try:
+        from sentencepiece import SentencePieceProcessor
+    except ImportError as e:
+        raise LlamaCppError("vocabulary", f"{e} (--real needs sentencepiece)") from e
+    path = Path(path)
+    if not (path / "tokenizer.model").is_file():
+        raise LlamaCppError("vocabulary", f"{path} has no tokenizer.model (a SentencePiece tokenizer)")
+    sp = SentencePieceProcessor()
+    sp.LoadFromFile(str(path / "tokenizer.model"))
+    n = vocab_size or sp.vocab_size()
+    tokens = [f"[PAD{i}]".encode() for i in range(n)]
+    scores, types = [-10000.0] * n, [5] * n
+    for i in range(min(sp.vocab_size(), n)):
+        kind = 1
+        if sp.IsUnknown(i):
+            kind = 2
+        elif sp.IsControl(i):
+            kind = 3
+        elif sp.IsUnused(i):
+            kind = 5
+        elif sp.IsByte(i):
+            kind = 6
+        tokens[i], scores[i], types[i] = sp.IdToPiece(i).encode(), sp.GetScore(i), kind
+    added = path / "added_tokens.json"
+    if added.is_file():
+        for text, i in json.loads(added.read_text(encoding="utf-8")).items():
+            if i < n:
+                tokens[i], scores[i], types[i] = text.encode(), -1000.0, 4
+    tc = path / "tokenizer_config.json"
+    if tc.is_file():
+        for i, data in json.loads(tc.read_text(encoding="utf-8")).get("added_tokens_decoder", {}).items():
+            i, text = int(i), data["content"]
+            if i >= n:
+                continue
+            if data.get("special") or _looks_special(text):
+                types[i] = 3
+            else:
+                text, types[i] = text.replace("▁", " "), 4
+            scores[i], tokens[i] = -1000.0, text.encode()
+    return tokens, scores, types
+
+
+def check_tensors(index: dict, cfg, layers: int, where) -> None:
+    """Raise unless the checkpoint's tensors (``index``, :func:`safetensors_index`) are exactly those of
+    :func:`tensor_plan` at the full depth (and rotary buffers), with the plan's shapes and a dtype that is read."""
+    bad = []
+    for gname, shape in tensor_plan(cfg, layers):
+        e = index.get(hf_name(gname))
+        if e is None:
+            bad.append(f"no {hf_name(gname)}")
+        elif e[2] != shape or e[1] not in SAFETENSORS_DTYPES:
+            bad.append(f"{hf_name(gname)}: {e[1]} {list(e[2])}, not {list(shape)}")
+    full = {hf_name(g) for g, _ in tensor_plan(cfg, cfg.n_layers)}
+    bad += [f"an unexpected {k}" for k in sorted(index) if k not in full and not k.endswith(".rotary_emb.inv_freq")]
+    if bad:
+        raise LlamaCppError("weights", f"{where}: not the plan's tensors ({'; '.join(bad[:6])})")
+
+
+def write_gguf_real(gguf, path: Path, ckpt: Path, cfg, layers: int, name: str) -> dict:
+    """Write the bf16 GGUF of the checkpoint in the folder ``ckpt`` (a ``LlamaForCausalLM`` of ``cfg``'s shapes,
+    ``name`` in the file's metadata; its first ``layers`` blocks) as the release's ``convert_hf_to_gguf.py --outtype
+    bf16`` writes it, one tensor at a time (memory holds one tensor): the configuration's hyperparameters
+    (:func:`checkpoint_config`: context length, RMSNorm epsilon, rotary base and head size where it has them, head
+    counts), the SentencePiece vocabulary (:func:`sentencepiece_vocab`) with gguf-py's ``SpecialVocab`` (the BOS, EOS
+    and UNK ids, whether BOS and EOS are added), every tensor under its GGUF name (:data:`HF_NAMES`; the tensors are
+    checked first, :func:`check_tensors`), the q and k projections reordered for llama.cpp's rotary embedding
+    (:func:`permute`), the norms in fp32 and every matrix rounded to bf16 by gguf-py.  Returns ``{"tensors",
+    "params", "bytes", "s", "vocab"}``."""
+    import numpy as np
+
+    t0 = time.perf_counter()
+    ckpt = Path(ckpt)
+    hp = checkpoint_config(ckpt)
+    check_checkpoint(hp, cfg)
+    plan = tensor_plan(cfg, layers)
+    index = safetensors_index(ckpt)
+    check_tensors(index, cfg, layers, ckpt)
+    n_head = hp["num_attention_heads"]
+    n_head_kv = hp.get("num_key_value_heads") or n_head
+    tokens, scores, types = sentencepiece_vocab(ckpt, hp.get("vocab_size"))
+    if len(tokens) != cfg.vocab:
+        raise LlamaCppError("vocabulary", f"{len(tokens)} tokens, not the model's {cfg.vocab}")
+    bf16, f32 = gguf.GGMLQuantizationType.BF16, gguf.GGMLQuantizationType.F32
+    w = gguf.GGUFWriter(str(path), "llama")
+    w.add_type("model")
+    w.add_name(f"{name}, {layers} of {cfg.n_layers} blocks")
+    w.add_block_count(layers)
+    w.add_context_length(hp["max_position_embeddings"])
+    w.add_embedding_length(hp["hidden_size"])
+    w.add_feed_forward_length(hp["intermediate_size"])
+    w.add_head_count(n_head)
+    w.add_head_count_kv(n_head_kv)
+    if hp.get("rope_theta") is not None:          # (the converter's rope_parameters of a Llama without scaling)
+        w.add_rope_freq_base(hp["rope_theta"])
+    w.add_layer_norm_rms_eps(hp["rms_norm_eps"])
+    if hp.get("head_dim") is not None:
+        w.add_key_length(hp["head_dim"])
+        w.add_value_length(hp["head_dim"])
+    w.add_file_type(gguf.LlamaFileType.MOSTLY_BF16)
+    w.add_vocab_size(hp["vocab_size"])
+    w.add_rope_dimension_count(hp.get("head_dim") or hp["hidden_size"] // n_head)
+    w.add_quantization_version(gguf.GGML_QUANT_VERSION)
+    if (ckpt / "tokenizer_config.json").is_file():
+        prefix = json.loads((ckpt / "tokenizer_config.json").read_text(encoding="utf-8")).get("add_prefix_space")
+        if prefix is not None:
+            w.add_add_space_prefix(prefix)
+    w.add_tokenizer_model("llama")
+    w.add_tokenizer_pre("default")
+    w.add_token_list(tokens)
+    w.add_token_scores(scores)
+    w.add_token_types(types)
+    gguf.SpecialVocab(ckpt, n_vocab=len(tokens)).add_to_gguf(w)
+    for gname, shape in plan:
+        if len(shape) == 1:
+            w.add_tensor_info(gname, shape, np.dtype(np.float32), 4 * _size(shape))
+        else:
+            byte_shape = gguf.quant_shape_to_byte_shape(shape, bf16)
+            w.add_tensor_info(gname, byte_shape, np.dtype(np.uint8), _size(byte_shape), raw_dtype=bf16)
+    w.write_header_to_file()
+    w.write_kv_data_to_file()
+    w.write_ti_data_to_file()
+    params = 0
+    for gname, shape in plan:
+        x = read_tensor(index[hf_name(gname)])
+        if gname.endswith(".attn_q.weight"):
+            x = permute(x, n_head, n_head)
+        elif gname.endswith(".attn_k.weight"):
+            x = permute(x, n_head, n_head_kv)
+        w.write_tensor_data(gguf.quants.quantize(x, f32 if len(shape) == 1 else bf16))
+        del x
+        params += _size(shape)
+    w.close()
+    return {"tensors": len(plan), "params": params, "bytes": path.stat().st_size, "s": time.perf_counter() - t0,
+            "vocab": len(tokens)}
+
+
+def check_gguf(gguf, path: Path, cfg, layers: int) -> dict:
+    """Read the bf16 file's header back with gguf-py's reader (memory-mapped: no tensor is loaded) and raise unless
+    it holds :func:`tensor_plan`'s tensors in order with their shapes (fp32 norms, bf16 matrices), the block count,
+    the widths, the head counts and a vocabulary of the model's size.  Returns ``{"tensors", "vocab"}``."""
+    r = gguf.GGUFReader(str(path))
+    got = [(t.name, tuple(int(s) for s in reversed(t.shape)), t.tensor_type) for t in r.tensors]
+    want = [(n, s, gguf.GGMLQuantizationType.F32 if len(s) == 1 else gguf.GGMLQuantizationType.BF16)
+            for n, s in tensor_plan(cfg, layers)]
+    bad = [f"{g[0]} {list(g[1])} {g[2].name} instead of {x[0]} {list(x[1])} {x[2].name}"
+           for g, x in zip(got, want) if g != x][:3]
+    if len(got) != len(want):
+        bad.append(f"{len(got)} tensors, not {len(want)}")
+
+    def field(k):
+        f = r.get_field(k)
+        return None if f is None else f.contents()
+
+    for k, v in (("general.architecture", "llama"), ("llama.block_count", layers),
+                 ("llama.embedding_length", cfg.d_model), ("llama.feed_forward_length", cfg.d_ff),
+                 ("llama.attention.head_count", cfg.n_heads), ("llama.attention.head_count_kv", cfg.n_kv_heads),
+                 ("llama.rope.dimension_count", cfg.head_dim), ("llama.vocab_size", cfg.vocab)):
+        if field(k) != v:
+            bad.append(f"{k} {field(k)!r}, not {v!r}")
+    n_vocab = {k: len(r.get_field(k).data) if r.get_field(k) is not None else 0
+               for k in ("tokenizer.ggml.tokens", "tokenizer.ggml.scores", "tokenizer.ggml.token_type")}
+    if set(n_vocab.values()) != {cfg.vocab}:
+        bad.append(f"a vocabulary of {n_vocab} entries, not {cfg.vocab}")
+    del r
+    if bad:
+        raise LlamaCppError("weights", f"{path.name}: " + "; ".join(bad))
+    return {"tensors": len(got), "vocab": cfg.vocab}
 
 
 # ================================================================================================ processes
@@ -484,6 +825,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ubatch", type=int, nargs="+", default=[512, 2048],
                     help="micro-batch sizes (-ub, each capped at the prompt): each one a configuration")
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
+    ap.add_argument("--real", default="", metavar="CHECKPOINT",
+                    help="a LlamaForCausalLM checkpoint of --model's shapes (a Hugging Face repository such as "
+                         "meta-llama/Llama-2-7b-hf, or a local folder): its weights instead of random ones")
     ap.add_argument("--llamacpp-dir", default=str(CODE.parent / "logs" / "llamacpp"),
                     help="the clone (src/) and the cached build (build/); run.sh passes logs/<platform>/llamacpp")
     ap.add_argument("--llamacpp-src", default=None,
@@ -524,8 +868,17 @@ def main() -> int:
     layers = args.layers or cfg.n_layers
     if not 1 <= layers <= cfg.n_layers:
         raise SystemExit(f"--layers {args.layers}: 1 to {cfg.n_layers} for {args.model}")
-    if max(args.seq) > cfg.max_pos or min(args.seq) < 1:
-        raise SystemExit(f"--seq: 1 to {cfg.max_pos} tokens for {args.model}")
+    max_pos = cfg.max_pos
+    if args.real:                             # the configuration only (refusals first); the weights after the build
+        try:
+            hp = checkpoint_config(checkpoint_folder(args.real, files=False)[0])
+        except LlamaCppError as e:
+            print(f"FAILED: llama.cpp {e.step}: {e}", file=sys.stderr, flush=True)
+            return 1
+        check_checkpoint(hp, cfg)
+        max_pos = hp["max_position_embeddings"]  # the checkpoint's trained context
+    if max(args.seq) > max_pos or min(args.seq) < 1:
+        raise SystemExit(f"--seq: 1 to {max_pos} tokens for {args.real or args.model}")
     if args.threads < 1 or args.reps < 1:
         raise SystemExit("--threads and --reps: at least 1")
     signal.signal(signal.SIGTERM, _terminate)
@@ -540,6 +893,7 @@ def main() -> int:
             src = checkout(args, work)
             made = build(args, src, env.get("cpu"))
             gguf = import_gguf(src)
+            ckpt, revision = checkpoint_folder(args.real) if args.real else (None, None)
         except LlamaCppError as e:
             print(f"FAILED: llama.cpp {e.step}: {e}", file=sys.stderr, flush=True)
             return 1
@@ -557,12 +911,15 @@ def main() -> int:
             return 1
         files = {"bf16": work / f"{args.model}-L{layers}-bf16.gguf"}
         try:
-            wrote = write_gguf(gguf, files["bf16"], cfg, layers, args.seed)
-        except (OSError, ValueError) as e:
-            print(f"FAILED: llama.cpp weights: {e}", file=sys.stderr, flush=True)
+            wrote = (write_gguf_real(gguf, files["bf16"], ckpt, cfg, layers, args.real) if args.real else
+                     write_gguf(gguf, files["bf16"], cfg, layers, args.seed))
+            check_gguf(gguf, files["bf16"], cfg, layers)          # the file as written: names, shapes, vocabulary
+        except (OSError, ValueError, LlamaCppError) as e:
+            print(f"FAILED: llama.cpp {getattr(e, 'step', 'weights')}: {e}", file=sys.stderr, flush=True)
             return 1
         print(f"llama.cpp: wrote {wrote['tensors']} tensors ({wrote['params']:,} weights, "
-              f"{wrote['bytes'] / 1e9:.2f} GB) in {wrote['s']:.0f} s", file=sys.stderr, flush=True)
+              f"{wrote['bytes'] / 1e9:.2f} GB) of {args.real or 'random weights'} in {wrote['s']:.0f} s",
+              file=sys.stderr, flush=True)
         for t in args.types:
             if t in QUANTIZE:
                 files[t] = work / f"{args.model}-L{layers}-{t}.gguf"
@@ -589,7 +946,9 @@ def main() -> int:
                           file=sys.stderr, flush=True)
                     status = 1
                     continue
-                extra = {"seed": args.seed, "max_pos": cfg.max_pos, "gguf_file_bytes": files[t].stat().st_size,
+                extra = {"weights": "real" if args.real else "random", "real": args.real or None,
+                         "revision": revision, "seed": None if args.real else args.seed, "max_pos": max_pos,
+                         "gguf_file_bytes": files[t].stat().st_size,
                          "peak": {"host_peak_rss": peak}, "git": sha,
                          "cpu": platform.processor() or platform.machine(), "host": platform.node(), "env": env}
                 for b in lines:
