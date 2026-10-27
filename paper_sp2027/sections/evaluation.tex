@@ -102,14 +102,14 @@ Llama-2 blocks, and a GPU claim decoder with a fused exact attention kernel make
   \end{tabular}
 \end{table}
 
-\para{Proof size.} At 2{,}048 tokens, with random weights, V1's proof is \VOneRatioRandom{}$\times$ smaller
-than v0's on every full model (Table~\ref{tab:eval-v1}). The multiplicities
-and GKR transcripts that V1 adds take at most \VOneExtrasMax{}\,MB per proof. The gain is
-smaller where the parts that V1 leaves unchanged weigh more: the Llama-2-13B build in $\sC$
+\para{Proof size.} At 2{,}048 tokens with random weights, V1's proof is \VOneRatioRandom{}$\times$ smaller
+than v0's on every full model (Table~\ref{tab:eval-v1}). V1's multiplicities
+and GKR transcripts take at most \VOneExtrasMax{}\,MB per proof. The gain is
+smaller where parts V1 leaves unchanged weigh more: the Llama-2-13B build in $\sC$
 (\VOneRatioLargeC{}$\times$), whose opened columns are a larger share, and GPT-2 at 64 tokens
 (\VOneRatioShort{}$\times$). With real weights, the certified OPT-1.3B gains \VOneRealOptMLongC{}$\times$ ($\sC$) and
 \VOneRealOptMLongK{}$\times$ ($\Kpre$) at 2{,}048 tokens and \VOneRealOptMShortC{}$\times$ and \VOneRealOptMShortK{}$\times$ at 64, and the real OPT-6.7B
-\VOneRatioRealOptLExact{}$\times$ ($\Kpre$) at 2{,}048 tokens.
+\VOneRatioRealOptLCExact{}$\times$ and \VOneRatioRealOptLExact{}$\times$ at 2{,}048.
 
 \para{Time.} The prover pays for the GKR, about one leaf per sent value. At 2{,}048 tokens V1's
 prover thus takes about \VOneProverRatioAbout{}$\times$ as long as v0's (OPT-125M in $\sC$: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s, \VOneOptSGkr{}\,s of

@@ -110,8 +110,8 @@ proof at 2{,}048 tokens (Table~\ref{tab:setup}).
 
 The real graphs are the certified integer OPT models of Section~\ref{sec:quality} (calibrated on
 four 2{,}048-token windows of the train split), with the last block pruned; each cell has a
-random-weight twin of the same shape, and every cell uses Fiat--Shamir, three timed queries after a
-warm-up, the prover on the \PlatformGpu{} and the native CPU verifier on 8 threads of the
+random-weight twin of the same shape, and every cell uses Fiat--Shamir, \RealQueries{} timed queries after a
+warm-up (three in OPT-6.7B's V1 cells), the prover on the \PlatformGpu{} and the native CPU verifier on 8 threads of the
 \PlatformCpu{} (Table~\ref{tab:eval-real}). Every honest query was accepted, and every tampered one (a
 changed claim, output logit or last hidden state) rejected.
 
@@ -132,7 +132,8 @@ changed claim, output logit or last hidden state) rejected.
   \end{tabular}
 \end{table}
 
-The prover's time is within \RealProveWithin{}\% of the random twin's and the verifier's within \RealVerifyWithin{}\%. v0's proof is
+The prover's time is within \RealProveWithin{}\% of the random twin's and the verifier's within \RealVerifyWithin{}\%,
+while the timed queries of one cell spread by up to \RealQuerySpread{}\% of their median. v0's proof is
 \RealProofSmaller{}\% smaller with real weights, because a calibrated model's claims are more concentrated than
 a random one's, while V1's values take about the same space; V1's gain is therefore smaller (at 64
 tokens \VOneRealOptMShortC{}$\times$ in $\sC$ and \VOneRealOptMShortK{}$\times$ in $\Kpre$, against \VOneRandomOptMShortC{}$\times$ and \VOneRandomOptMShortK{}$\times$).
@@ -142,7 +143,7 @@ In mode $\sC$ at 64 tokens, real weights cause \VOneRealOptMShortExceptions{} V1
 The full real OPT-6.7B (32 blocks) runs end to end in $\Kpre$ at 2{,}048 tokens: \RealOptLAccepted{} of \RealOptLQueries{} queries accepted and \RealOptLTampersRejected{} of \RealOptLTampers{} tampers rejected
 with a \RealOptLProof{}\,GB proof (with embedding lookups), \RealOptLProve{}\,s to prove and \RealOptLVerify{}\,s to verify (decoding \RealOptLDecode{}\,s,
 recomputation \RealOptLRecompute{}\,s, products \RealOptLProducts{}\,s) on 8 threads of the \PlatformCpu{}. Its V1 proof is \VOneRealOptLVOneGB{}\,GB against
-\VOneRealOptLVZeroGB{}\,GB for v0 (\VOneRatioRealOptLExact{}$\times$), with \VOneRealOptLExceptions{} exceptions (\VOneRealOptLExceptionsMB{}\,MB). Its random-weight twin takes \RndOptLProve{}\,s to prove
+\VOneRealOptLVZeroGB{}\,GB for v0 (\VOneRatioRealOptLExact{}$\times$), with \VOneRealOptLExceptions{} exceptions (\VOneRealOptLExceptionsMB{}\,MB); in mode $\sC$ V1 gains \VOneRatioRealOptLCExact{}$\times$ (random twin: \RndOptLVOneRatioC{}$\times$). Its random-weight twin takes \RndOptLProve{}\,s to prove
 and \RndOptLVerify{}\,s to verify, with a \RndOptLProof{}\,GB v0 proof and V1 \RndOptLVOneRatio{}$\times$ smaller: real weights are within \RealOptLTimeWithin{}\% in time,
 \RealOptLVZeroSmaller{}\% smaller in v0 and \RealOptLVOneLarger{}\% larger in V1.
 

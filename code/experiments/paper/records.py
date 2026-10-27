@@ -8,7 +8,8 @@ and the record's fields name the script that wrote it (:func:`kind_of`).  The at
 :func:`doc_kind` names their kinds from their file names (:data:`FILES`, :data:`DOCUMENTS`).  Nothing here runs a
 model.
 
-The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), a client
+The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), an unverified
+response with a non-finite logit or of the wrong length (``decode``), a client
 process whose verdicts differ from the in-process ones (``perf``'s ``client_memory``), a byte accounting that
 disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected (``setup``), an
 implementation A/B whose two paths disagree (the ``improve`` tier), a zkLLM run whose proof binaries failed or
@@ -41,15 +42,16 @@ whose figures ``paper/bench.py`` reads from ``logs/<name>/zkllm/summary.csv``; t
 proofs of fixed cells on the GPU and on the CPU, ``comparison/proof_digests.py``)."""
 KINDS = {"smoke": {"v1", "h2d", "tests", "digests"}, "cpuv": {"perf", "reexec", "llamacpp", "v1"},
          "cpux": {"perf", "reexec"}, "v1": {"v1"},
-         "serve": {"serve"}, "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen"},
+         "serve": {"serve"}, "bench": {"bench_env"}, "gpuv": {"perf", "v1", "reexec", "h2d"}, "gen": {"gen", "decode"},
          "batch": {"bench_env"}, "real": {"perf", "v1", "gen"}, "setup": {"setup"},
          "improve": {"open_ab", "forward_ab", "encode_ab", "perf", "gpu_profile", "fold_ab", "v1_phases", "gkr"},
          "quality": {"ppl", "zeroshot", "digest", "llama_diag", "llama_attrib", "attribution"}, "tv": {"tv"},
          "attack": {"reproduction", "attack_mnist", "samplers", "floor_sampler", "adaptive_game", "path_bound",
                     "attack_llm", "inrange", "adaptive_game_llm"},
          "long": {"perf", "reexec", "v1"}, "zkllm": {"zkllm"}, "gate": {"v1", "perf", "reexec"}}
-"""The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``; the smoke's ``tests``: the
-summary line of its pytest run, :data:`PYTEST_SUMMARY`; ``digests``: its ``xcheck`` job's proofs on two devices)."""
+"""The record kinds each tier writes (the real tier's ``gen`` with ``--llama-licence``; the gen tier's ``decode``:
+``decode_baseline.py``, unverified generation; the smoke's ``tests``: the summary line of its pytest run,
+:data:`PYTEST_SUMMARY`; ``digests``: its ``xcheck`` job's proofs on two devices)."""
 PYTEST_SUMMARY = re.compile(r"^=*\s*(?P<counts>\d+ [a-z]+(?:, \d+ [a-z]+)*)(?: in [0-9.]+s(?: \([^)]*\))?)?\s*=*$")
 """pytest's summary line (``798 passed, 4 skipped in 1203.51s (0:20:03)``), which the smoke's log ends its pytest
 output with: :func:`read_logs` turns it into a record of kind ``tests`` (``passed``, ``failed``, ``skipped``,
@@ -117,7 +119,7 @@ def tier_of(cell: str) -> str | None:
 def kind_of(d: dict) -> str | None:
     """The script that wrote one record, from its fields; None for a record of no known kind."""
     k = d.get("kind")
-    if k in ("gen", "setup", "h2d", "gpu_profile", "llamacpp", "attribution", "zkllm", "digests"):
+    if k in ("gen", "decode", "setup", "h2d", "gpu_profile", "llamacpp", "attribution", "zkllm", "digests"):
         return k
     if d.get("row") in ("prove", "on_request"):
         return "serve"
@@ -272,6 +274,8 @@ def checks(r: Rec) -> list[str]:
         bad.append("serving check failed (ok false)")
     elif r.kind == "gen" and d.get("ok") is False:
         bad.append("an honest response rejected or a tampered one accepted")
+    elif r.kind == "decode" and d.get("ok") is False:
+        bad.append("an unverified response with a non-finite logit or of the wrong length")
     elif r.kind == "setup" and d.get("accepted") is False:
         bad.append("setup proof rejected")
     elif r.kind == "open_ab" and (d.get("identical") is False or d.get("accepted") != d.get("queries")):
@@ -580,6 +584,14 @@ class Run:
         return self._last([r for r in self.kind("gen", tier)
                            if (r.d.get("model"), r.d.get("mode"), r.d.get("decode"), r.d.get("gen"))
                            == (model, mode, decode, g) and (r.d.get("real") or None) == real
+                           and (prompt is None or r.d.get("prompt") == prompt)
+                           and r.d.get("layers") is None and (label is None or r.d.get("label") == label)])
+
+    def decode(self, model, g, *, prompt=None, dtype="fp16", label="gen") -> Rec | None:
+        """A ``decode_baseline.py`` record of the full ``model`` (unverified generation of ``g`` tokens; ``prompt``:
+        the prompt's tokens, None for any)."""
+        return self._last([r for r in self.kind("decode", "gen")
+                           if (r.d.get("model"), r.d.get("gen"), r.d.get("dtype")) == (model, g, dtype)
                            and (prompt is None or r.d.get("prompt") == prompt)
                            and r.d.get("layers") is None and (label is None or r.d.get("label") == label)])
 

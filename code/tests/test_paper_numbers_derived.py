@@ -324,9 +324,10 @@ def test_the_tampered_queries_and_the_setup_proofs(run_dir):
                                                        real="facebook/opt-6.7b"), tampers=tam)])
     ctx, _ = _ctx(tmp, logs)
     v, _ = _macros(ctx)
-    # perf.py: 9 (the real Llama-2-7B); gen_bench.py: 19 responses of the gen tier and 1 of the real tier; V1: 6
+    # perf.py: 9 (the real Llama-2-7B); gen_bench.py: 20 responses of the gen tier (the P = G = 512 prefill among
+    # them) and 1 of the real tier; V1: 6
     assert (v["OutcomeTampers"], v["OutcomeTampersVOne"], v["OutcomeTampersGen"], v["OutcomeSetupProofs"]) == \
-        ("35", "6", "20", "1")
+        ("36", "6", "21", "1")
     bad = dict(gen("llama2-7b", "C", "greedy", 64, 1.0), tampers={"wrong_token": {"rejected": False}}, ok=False)
     _write(logs, "sp-gen-llama2-7b-61.out", [bad])
     _write(logs, "sp-setup-gpt2-62.out", [{"kind": "setup", "label": "setup", "model": "gpt2", "layers": None,

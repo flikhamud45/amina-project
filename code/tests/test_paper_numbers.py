@@ -140,6 +140,15 @@ def gen(model, mode, decode, g, prove, *, real=None, label="gen"):
             "prob_max": 2047, "env": _env()}
 
 
+def decode(model, g, total, *, prompt=512, layers=None):
+    """A ``generation/decode_baseline.py`` record (unverified generation, fp16 with a KV cache)."""
+    return {"kind": "decode", "label": "gen", "model": model, "layers": layers, "n_layers": 32, "prompt": prompt,
+            "gen": g, "dtype": "fp16", "device": "cuda", "attention": "sdpa", "reps": 5, "prefill_s": 0.05,
+            "prefill_s_range": [0.05, 0.05], "decode_s": total - 0.05, "decode_s_range": [total - 0.05] * 2,
+            "total_s": total, "total_s_range": [total, total], "ms_per_token": total / g * 1e3,
+            "same_as_prefill": 1.0, "ok": True, "env": _env()}
+
+
 def ppl(model, cell, ppl_, ratio, *, split="test", calibration="train", seq=2048, draw=0, mass=0.975, top1=0.9,
         ci=(1.0, 1.1), alpha=None):
     """A ``quality/ppl_opt.py`` record (``cell`` ``fp32``: the reference)."""
@@ -161,13 +170,13 @@ def zeroshot(model, task, variant, acc, *, diff=None, recipe="certified"):
 
 
 def llama_ppl(model, cell, ratio, *, split="test", ci=None, ref_dtype="float32", alpha=None, balance=None,
-              ppl_=None):
+              ppl_=None, draw=0):
     """A ``quality/ppl_llama.py`` record (``cell`` ``reference``: the reference)."""
     head = {"model": model, "smoke": False, "config": "llama2-7b", "split": split, "seq": 2048, "windows": 160,
             "ref_dtype": ref_dtype, "env": _env()}
     if cell == "reference":
         return dict(head, cell="reference", ppl=ppl_ or 6.0, nll=[1.0])
-    return dict(head, cell=cell, graph=cell.split("-")[0], alpha=alpha, glu_smooth=balance, glu_exp=0, draw=0,
+    return dict(head, cell=cell, graph=cell.split("-")[0], alpha=alpha, glu_smooth=balance, glu_exp=0, draw=draw,
                 ppl=(ppl_ or 6.0) * ratio, ref_ppl=ppl_ or 6.0, ratio=ratio, ratio_ci95=list(ci or (ratio, ratio)),
                 top1=0.9)
 
@@ -367,6 +376,13 @@ def _logs(tmp: Path) -> Path:
     _write(logs, "sp-gen-gpt2-36.out", [dict(gen("gpt2", mode, "greedy", 256, 0.29 if mode == "C" else 0.2),
                                              prompt=64, n_layers=12) for mode in ("C", "Kpre")]
            + [dict(gen("gpt2", "C", "greedy", 256, 5.0), prompt=16, n_layers=12)])
+    # Llama-2-7B's P = G = 512 response as one prefill (GenPrefillGB), and unverified generation of the gen tier's
+    # responses (fp16, KV cache): the prover against it (GenOverDecodeC, GenOverDecodeK); a 2-block or a 16-token
+    # prompt's decoding never fills them
+    _write(logs, "sp-gen-llama2-7b-512-63.out", [dict(gen(m, "C", "greedy", 512, 30.0), proof_bytes=3.46e9)])
+    _write(logs, "sp-gen-decode-64.out", [decode(m, 64, 1.6), decode(m, 256, 6.4), decode(m, 512, 12.8),
+                                          decode("qwen3-4b", 64, 1.0), decode("qwen3-4b", 256, 4.0),
+                                          decode(m, 256, 0.01, layers=2), decode(m, 256, 0.02, prompt=16)])
     # the real Llama-2-7B's generation (the real tier): never a cell of tab:gen
     _write(logs, "sp-r-llama7-gen-13.out", [gen(m, "C", "greedy", 64, 99.0, real="meta-llama/Llama-2-7b-hf",
                                                 label="real")])
@@ -379,6 +395,12 @@ def _logs(tmp: Path) -> Path:
     _write(logs, "sp-r-opt13-v1-C-64-37.out", [real_c])
     _write(logs, "sp-r-opt13rnd-v1-C-64-38.out", [dict(v1("opt-1.3b", 64, "C", 24, 6.2e7, 4.1e7, label="real-random"),
                                                        n_exceptions=1)])
+    # the real OPT-6.7B's V1 at 2,048 tokens in Kpre and C (the abstract's range), and the random twin in C
+    o67 = "facebook/opt-6.7b"
+    _write(logs, "sp-r-opt67-v1-2048-65.out", [v1("opt-6.7b", 2048, "Kpre", 32, 2.0e9, 1.15e9, label="real",
+                                                  real=o67)])
+    _write(logs, "sp-r-opt67-v1-C-2048-66.out", [v1("opt-6.7b", 2048, "C", 32, 2.2e9, 1.1e9, label="real", real=o67)])
+    _write(logs, "sp-r-opt67rnd-v1-C-2048-67.out", [v1("opt-6.7b", 2048, "C", 32, 2.6e9, 1.2e9, label="real-random")])
     # the real Llama-2-7B (with the Llama-2 licence) against its random twins
     llama = "meta-llama/Llama-2-7b-hf"
     tam = {"single_value": {"attempts": 3, "rejected": 3}, "neuron": {"attempts": 6, "rejected": 6}}
@@ -525,7 +547,8 @@ def test_every_record_lands_in_its_tier_and_kind(run_dir):
     got = {(r.tier, r.kind) for r in recs}
     assert {("smoke", "v1"), ("smoke", "h2d"), ("smoke", "tests"), ("cpuv", "perf"), ("cpuv", "reexec"),
             ("cpuv", "llamacpp"), ("cpuv", "v1"), ("v1", "v1"),
-            ("gpuv", "v1"), ("gpuv", "perf"), ("gpuv", "reexec"), ("serve", "serve"), ("gen", "gen"), ("real", "gen"),
+            ("gpuv", "v1"), ("gpuv", "perf"), ("gpuv", "reexec"), ("serve", "serve"), ("gen", "gen"), ("gen", "decode"),
+            ("real", "gen"),
             ("real", "v1"), ("setup", "setup"), ("improve", "open_ab"), ("improve", "perf"), ("improve", "fold_ab"),
             ("improve", "gkr"), ("quality", "ppl"), ("quality", "zeroshot"), ("quality", "digest"),
             ("quality", "attribution"), ("long", "perf"), ("long", "reexec"),
@@ -805,6 +828,91 @@ def test_the_llama_family_the_validation_grid_and_the_reproducible_build(run_dir
     z = {(c["row"], c["column"]): c for c in tables["tab_zeroshot"].cells}
     assert z["facebook/opt-125m lambada_openai", "fp16"]["value"] == 0.379           # not the legacy job's 0.5
     assert "sp-q-zeroshot-opt-125m-22" in z["facebook/opt-125m lambada_openai", "fp16"]["source"]
+
+
+def test_the_measured_prefill_unverified_generation_and_the_real_opt_l_in_both_modes(run_dir):
+    """The P = G = 512 prefill measured (not the byte model's), the prover's time over unverified generation (the
+    full model after the gen tier's 512-token prompt only), and the real OPT-6.7B's V1 gain over modes C and Kpre
+    (the abstract's range), each mode's exact value and the random twin's in C."""
+    tmp, logs = run_dir
+    ctx, problems = _ctx(tmp, logs)
+    m, _ = M.build(ctx, problems)
+    assert not problems
+    v = {k: x.value for k, x in m.items()}
+    assert (v["GenPrefillGB"], v["GenPrefillProveC"], v["GenPrefillVerifyC"]) == ("3.5", "30", "60")
+    assert v["GenPerPrefixTB"] is None and v["GenPrefillModelWithin"] is None     # the byte model is off here
+    assert (v["GenDecodeLlama"], v["GenDecodeQwen"]) == ("6.4", "4")
+    # C: 2.0 s over 1.6 and 6.4 s (Llama-2-7B), 1.5 s over 1.0 and 4.0 s (Qwen3-4B); Kpre: 1.0 s and 1.5 s
+    assert (v["GenOverDecodeC"], v["GenOverDecodeK"]) == ("0.3--1.5", "0.2--1.5")
+    assert (v["VOneRatioRealOptL"], v["VOneRatioRealOptLExact"], v["VOneRatioRealOptLCExact"]) == \
+        ("1.7--2.0", "1.74", "2.00")
+    assert v["RndOptLVOneRatioC"] == "2.17"
+    assert "sp-r-opt67-v1-2048-65" in m["VOneRatioRealOptL"].source
+
+
+def _rec(tier: str, cell: str, d: dict) -> R.Rec:
+    return R.Rec(tier, cell, "1", f"sp-{cell}-1.out", 1, R.kind_of(d), d)
+
+
+def test_the_real_tiers_query_spread_and_count():
+    """``RealQuerySpread`` is the largest (max - min) / median of v0's per-query prover and verifier totals over the
+    eight OPT-1.3B cells, ``RealQueries`` their common number of timed queries; a missing cell, or cells of different
+    query counts, leave them empty."""
+    recs = []
+    for mode in ("C", "Kpre"):
+        for seq in (64, 2048):
+            for label, real in (("real", "facebook/opt-1.3b"), ("real-random", None)):
+                d = v1("opt-1.3b", seq, mode, 24, 6e7, 4e7, label=label, real=real, v0=(0.20, 0.50))
+                d["timed"].update(queries=5)
+                if (mode, seq, label) == ("Kpre", 2048, "real"):
+                    d["timed"]["v0"].update(prove_s_range=[0.19, 0.23])      # (0.23 - 0.19) / 0.20 = 20%
+                recs.append(_rec("real", f"r-x-{mode}-{seq}-{label}", d))
+    ctx = T.Ctx(R.Run(recs), B.Bench(None), {}, byte_model=False)
+    assert M.real_query_spread(ctx.run) == (pytest.approx(0.2), 5)
+    problems: list = []
+    m, _ = M.build(ctx, problems)
+    assert (m["RealQuerySpread"].value, m["RealQueries"].value) == ("20", "5")
+    recs[0].d["timed"]["queries"] = 3
+    assert M.real_query_spread(R.Run(recs))[1] is None
+    assert M.real_query_spread(R.Run(recs[1:])) == (None, None)
+
+
+def test_the_llama_recipes_validation_grids_and_calibration_draws():
+    """TinyLlama's and Qwen3-1.7B's settings among their neighbours on the validation split (the best cell and the
+    recipe's ratio above it, rounded up; a cell outside the grid fails the text's claim), and the main cells' ratio
+    over calibration draws 0, 1 and 2 (largest minus smallest, rounded up; the largest over the three checkpoints
+    only when all three are there); a draw-0 record of the draws job equal to the main cell's warns of nothing."""
+    tl, q17, l7 = "TinyLlama/TinyLlama_v1.1", "Qwen/Qwen3-1.7B-Base", "meta-llama/Llama-2-7b-hf"
+    grids = [llama_ppl(tl, f"main-a{a:g}-glus{g:g}", 1.10 if (a, g) == (0.75, 0.2) else
+                       (1.098 if (a, g) == (0.85, 0.1) else 1.12), alpha=a, balance=g, split="validation")
+             for a in (0.65, 0.75, 0.85) for g in (0.1, 0.2, 0.3)]
+    grids += [llama_ppl(q17, f"main-a{a:g}-glus{g:g}", 1.30 if (a, g) == (0.45, 0.3) else 1.35, alpha=a, balance=g,
+                        split="validation") for a in (0.35, 0.45, 0.55) for g in (0.2, 0.3, 0.4)]
+    draws = [llama_ppl(model, cell, r, alpha=a, balance=g, draw=d)
+             for model, cell, a, g, rs in ((tl, "main-a0.75-glus0.2", 0.75, 0.2, (1.13, 1.1325, 1.129)),
+                                           (q17, "main-a0.45-glus0.3", 0.45, 0.3, (1.40, 1.41, 1.395)),
+                                           (l7, "main-a0.55-glus0.2", 0.55, 0.2, (1.081, 1.0815, 1.0802)))
+             for d, r in enumerate(rs)]
+    v, problems = _quality_run(*grids, *draws, draws[0])
+    assert not problems
+    assert (v["TinyLlamaValBest"], v["TinyLlamaValGap"]) == (r"$\alpha=0.85$ with balance 0.1", "0.002")
+    assert (v["QwenMValBest"], v["QwenMValGap"]) == (r"$\alpha=0.45$ with balance 0.3", "0.000")
+    assert (v["TinyLlamaDrawSpread"], v["QwenMDrawSpread"], v["LlamaSevenDrawSpread"]) == ("0.004", "0.015", "0.002")
+    assert v["LlamaDrawSpread"] == "0.015"
+    v, problems = _quality_run(*grids[:8], *draws[:-1])         # a grid cell and Llama-2-7B's draw 2 missing
+    assert not problems and v["TinyLlamaValBest"] is None and v["LlamaSevenDrawSpread"] is None
+    assert v["LlamaDrawSpread"] is None and v["TinyLlamaDrawSpread"] == "0.004"
+    outside = llama_ppl(tl, "main-a0.95-glus0.2", 1.09, alpha=0.95, balance=0.2, split="validation")
+    _, problems = _quality_run(*grids, outside)
+    assert len(problems) == 1 and problems[0].startswith(M.TEXT_CLAIM) and f"validation cells of {tl}" in problems[0]
+    ext = (PAPER / "sections" / "ext_generation.tex").read_text(encoding="utf-8").replace("\n", " ")
+    for model, name, alphas, balances in M.VALIDATION_GRIDS:       # the recipe's own setting in the middle
+        cell = next(c for m_, _, c, _, _ in M.LLAMAS if m_ == model)
+        assert cell == f"main-a{alphas[1]:g}-glus{balances[1]:g}", name
+        grid = (rf"$\alpha\in\{{{','.join(f'{a:g}' for a in alphas)}\}}$ and balance "
+                rf"$\in\{{{','.join(f'{g:g}' for g in balances)}\}}$")
+        assert grid in ext and f"\\{name}ValGap{{}}" in ext, name
+    assert [n for _, n in M.DRAW_MODELS] == ["LlamaSeven", "TinyLlama", "QwenM"] and M.DRAWS == (0, 1, 2)
 
 
 def _quality_run(*records) -> tuple[dict, list]:

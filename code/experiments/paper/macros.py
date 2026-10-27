@@ -631,8 +631,11 @@ def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
     _range(c, "VOneValuesRatio", vals, "v1 tier, 2,048 tokens, full models: claims against V1's values",
            lambda v: f"{v:.1f}")
     real = run.v1("real", "opt-6.7b", 2048, "Kpre", vdev="cpu", label="real", real="facebook/opt-6.7b")
-    c.put("VOneRatioRealOptL", ratio(real), real, lambda v: f"{v:.1f}")
+    real_c = run.v1("real", "opt-6.7b", 2048, "C", vdev="cpu", label="real", real="facebook/opt-6.7b")
+    # the abstract's real-weight gain, like the random-weight one, over modes C and Kpre
+    _range(c, "VOneRatioRealOptL", [ratio(real_c), ratio(real)], real, lambda v: f"{v:.1f}")
     c.put("VOneRatioRealOptLExact", ratio(real), real, lambda v: f"{v:.2f}")
+    c.put("VOneRatioRealOptLCExact", ratio(real_c), real_c, lambda v: f"{v:.2f}")
     c.put("VOneRealOptLVZeroGB", real and real.d["v0_total"], real, lambda v: f"{v / 1e9:.2f}")
     c.put("VOneRealOptLVOneGB", real and real.d["v1_total"], real, lambda v: f"{v / 1e9:.2f}")
     c.put("VOneRealOptLExceptions", real and real.d.get("n_exceptions"), real, f.num)
@@ -993,6 +996,25 @@ def improvements(c: Collector, ctx: T.Ctx) -> None:
 
 
 # ================================================================================================ real weights
+def real_query_spread(run) -> tuple[float | None, int | None]:
+    """``(spread, queries)`` of the real tier's OPT-1.3B cells behind ``RealProveWithin`` and ``RealVerifyWithin``
+    (modes C and Kpre, 64 and 2,048 tokens, real weights and the random twin): the largest ``(max - min) / median``
+    of the per-query prover and verifier totals of v0's timed queries (``v1_bytes.py``'s ``prove_s_range`` and
+    ``verify_s_range`` against the medians of the same parts, without the Fiat--Shamir hashing), and the timed
+    queries every cell has (None unless all eight cells are there and have the same number)."""
+    spreads, counts = [], set()
+    for mode in ("C", "Kpre"):
+        for seq in (64, 2048):
+            for rec in T.real_pair(run, "opt-1.3b", seq, mode, "facebook/opt-1.3b"):
+                q = ((rec.d.get("timed") or {}) if rec else {}).get("v0") or {}
+                for key in ("prove_s", "verify_s"):
+                    lo_hi = q.get(f"{key}_range")
+                    spreads.append((lo_hi[1] - lo_hi[0]) / q[key] if lo_hi and q.get(key) else None)
+                counts.add(((rec.d.get("timed") or {}).get("queries")) if rec else None)
+    spread = None if not spreads or None in spreads else max(spreads)
+    return spread, (counts.pop() if len(counts) == 1 and None not in counts else None)
+
+
 def real_weights(c: Collector, ctx: T.Ctx) -> None:
     run = ctx.run
     prove, verify, smaller = [], [], []
@@ -1006,6 +1028,11 @@ def real_weights(c: Collector, ctx: T.Ctx) -> None:
     src = "real tier, OPT-1.3B (label real against real-random)"
     c.put("RealProveWithin", None if None in prove else max(prove), src, ceil_pct)
     c.put("RealVerifyWithin", None if None in verify else max(verify), src, ceil_pct)
+    # the noise those medians carry: each cell's timed queries, (max - min) / median of the prover's and the
+    # verifier's own totals, the largest over the eight cells; and the timed queries per cell
+    spread, queries = real_query_spread(run)
+    c.put("RealQuerySpread", spread, src, ceil_pct)
+    c.put("RealQueries", queries, src, f.num)
     _range(c, "RealProofSmaller", smaller, src, f.pct)
     real, rnd = T.real_pair(run, "opt-1.3b", 2048, "Kpre", "facebook/opt-1.3b")
     c.put("RealOptMKLongReal", real and real.d["v0_total"], real, lambda v: f"{v / 1e9:.2f}")
@@ -1062,6 +1089,8 @@ def real_weights(c: Collector, ctx: T.Ctx) -> None:
     c.put("RndOptLProof", n and n.d["proof_bytes"], n, lambda v: f"{v / 1e9:.2f}")
     v1r = run.v1("real", "opt-6.7b", 2048, "Kpre", vdev="cpu", label="real-random", real=None)
     c.put("RndOptLVOneRatio", v1r and v1r.d["v0_total"] / v1r.d["v1_total"], v1r, lambda v: f"{v:.2f}")
+    v1rc = run.v1("real", "opt-6.7b", 2048, "C", vdev="cpu", label="real-random", real=None)
+    c.put("RndOptLVOneRatioC", v1rc and v1rc.d["v0_total"] / v1rc.d["v1_total"], v1rc, lambda v: f"{v:.2f}")
     within = [abs(a / b - 1) for a, b in ((r and r.d["prove_s"], n and n.d["prove_s"]),
                                            (r and r.d["verify_s"], n and n.d["verify_s"])) if a and b]
     c.put("RealOptLTimeWithin", max(within) if len(within) == 2 else None, "real tier, OPT-6.7B", ceil_pct)
@@ -1250,6 +1279,19 @@ the cell of :data:`LLAMAS`), measured on each split of :data:`LLAMA_SPLITS` (the
 ``--llama-licence``).  The recipe is not
 chosen from these cells: they report the grid's best cell and the committed recipe's ratio above it."""
 LLAMA_SPLITS = (("test", "Test"), ("validation", "Val"))
+VALIDATION_GRIDS = (("TinyLlama/TinyLlama_v1.1", "TinyLlama", (0.65, 0.75, 0.85), (0.1, 0.2, 0.3)),
+                    ("Qwen/Qwen3-1.7B-Base", "QwenM", (0.35, 0.45, 0.55), (0.2, 0.3, 0.4)))
+"""The Llama recipe's settings chosen on the test split (``hf_llama.MAIN_SETTINGS``, the cells of :data:`LLAMAS`)
+against their neighbours (alpha and product balance +-0.1) on the validation split, which no choice used: the qcheck
+tier's ``q-tinyllama-validation`` and ``q-qwen17-validation``.  Per checkpoint ``<name>ValBest`` and ``<name>ValGap``,
+as for :data:`LLAMA_GRIDS`."""
+DRAW_MODELS = (("meta-llama/Llama-2-7b-hf", "LlamaSeven"), ("TinyLlama/TinyLlama_v1.1", "TinyLlama"),
+               ("Qwen/Qwen3-1.7B-Base", "QwenM"))
+"""The Llama recipe (percentile statistics, ``hf_llama.MAIN_RECIPE``) over three calibration draws (0, 1, 2: four
+train windows each, one prefix chosen on draw 0) of each checkpoint's main cell of :data:`LLAMAS` (the qcheck tier's
+``q-llama7-draws``, with ``--llama-licence``, ``q-tinyllama-draws`` and ``q-qwen17-draws``): ``<name>DrawSpread``, the
+ratio's largest minus its smallest, and ``LlamaDrawSpread``, the largest of them."""
+DRAWS = (0, 1, 2)
 ALPHAS_TEST = (0.3, 0.4, 0.5, 0.6, 0.7)
 ALPHAS_VALIDATION = (0.5, 0.6, 0.7)
 """The smoothing alphas of the quality tier's alpha studies on the test split (``q-opt13-recipes``,
@@ -1343,6 +1385,47 @@ def llama_grids(c: Collector, run) -> None:
                   lambda v: ceil_fixed(v, 3))
 
 
+def validation_grids(c: Collector, run) -> None:
+    """Per :data:`VALIDATION_GRIDS` checkpoint, on the validation split: ``<name>ValBest`` (the grid's cell of the
+    lowest ratio; a tie goes to the recipe's own setting) and ``<name>ValGap`` (the recipe's ratio minus the best's,
+    rounded up), from a complete grid only; a measured validation cell of the checkpoint outside the grid fails the
+    text's claim."""
+    for model, name, alphas, balances in VALIDATION_GRIDS:
+        main = next(cell for m, _, cell, _, _ in LLAMAS if m == model)
+        centre = (alphas[len(alphas) // 2], balances[len(balances) // 2])
+        grid = {(a, g): run.ppl(model, f"main-a{a:g}-glus{g:g}", split="validation") for a in alphas for g in balances}
+        measured = {(round(r.d.get("alpha"), 6), round(r.d.get("glu_smooth"), 6))
+                    for r in run.kind("ppl", "quality")
+                    if r.d.get("model") == model and r.d.get("split", "test") == "validation"
+                    and r.d.get("graph") == "main" and r.d.get("glu_exp", 0) == 0 and not r.d.get("smoke")
+                    and r.d.get("alpha") is not None and r.d.get("glu_smooth") is not None}
+        c.claim(measured <= set(grid), f"the validation cells of {model} include {sorted(measured - set(grid))}, "
+                f"outside the grid the text names (alphas {alphas}, balances {balances})")
+        full = all(grid.values()) and f"main-a{centre[0]:g}-glus{centre[1]:g}" == main
+        best = min(grid, key=lambda k: (grid[k].d["ratio"], k != centre)) if full else None
+        src = grid[best] if best else None
+        c.put(f"{name}ValBest", best, src, lambda v, balances=balances: grid_cell(v, balances))
+        c.put(f"{name}ValGap", grid[centre].d["ratio"] - grid[best].d["ratio"] if best else None, src,
+              lambda v: ceil_fixed(v, 3))
+
+
+def draw_spreads(c: Collector, run) -> None:
+    """Per :data:`DRAW_MODELS` checkpoint, ``<name>DrawSpread``: its main cell's ratio over the calibration draws
+    :data:`DRAWS` on the test split, largest minus smallest (rounded up; None unless every draw is there), and
+    ``LlamaDrawSpread``, the largest of them (None unless every checkpoint has its spread).  The draws share the
+    prefix chosen on draw 0, so draw 0 is the main cell itself; two records of it that differ are a warning
+    (:meth:`records.Run.ppl`)."""
+    spreads = []
+    for model, name in DRAW_MODELS:
+        cell = next(cell for m, _, cell, _, _ in LLAMAS if m == model)
+        rs = [run.ppl(model, cell, draw=d) for d in DRAWS]
+        spread = max(r.d["ratio"] for r in rs) - min(r.d["ratio"] for r in rs) if all(rs) else None
+        spreads.append(spread)
+        c.put(f"{name}DrawSpread", spread, rs[-1], lambda v: ceil_fixed(v, 3))
+    c.put("LlamaDrawSpread", None if None in spreads else max(spreads),
+          "qcheck tier, the Llama recipe's main cells over three calibration draws", lambda v: ceil_fixed(v, 3))
+
+
 def quality(c: Collector, ctx: T.Ctx) -> None:
     run = ctx.run
     first = run.ppl("facebook/opt-125m", "fp32")
@@ -1424,6 +1507,9 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
     # Llama-2's committed recipes against their neighbours on the test and the validation split: each grid's best
     # cell, and the committed recipe's ratio above it ("within")
     llama_grids(c, run)
+    # the other settings chosen on the test split, on the validation split; the recipe over calibration draws
+    validation_grids(c, run)
+    draw_spreads(c, run)
     # the reproducible build: every build of a certified model agrees (a CHECK FAILED line otherwise), over at least
     # two settings of what the text says it varies
     agree, failures = digest_agreement(run)
@@ -1887,7 +1973,11 @@ def setup_proof(c: Collector, ctx: T.Ctx) -> None:
 
 
 GEN_P, GEN_G = 512, 512
-"""The prompt and response of the text's per-prefix comparison (Sec. ``sec:gen-prefill``)."""
+"""The prompt and response of the text's per-prefix comparison (Sec. ``sec:gen-prefill``): the gen tier measures
+this prefill (``gen-llama2-7b-512``), and the byte model gives the per-prefix proofs."""
+GEN_MODEL_WITHIN = 0.15
+"""How far the byte model's one-prefill proof (from the claims per position at 64 and 2,048 tokens) may be from the
+measured one before the per-prefix sum built on the same model is a failed text check."""
 
 
 def prefill_extra_claims(model: str, seq: int = 2048) -> tuple[int, int]:
@@ -1907,12 +1997,14 @@ def prefill_extra_claims(model: str, seq: int = 2048) -> tuple[int, int]:
 def generation(c: Collector, ctx: T.Ctx) -> None:
     """A generated response as one prefill (the gen tier): GPT-2's prover per generated token (the comparison with
     zkAgent), the 256-token greedy responses of Llama-2-7B and Qwen3-4B after a 512-token prompt, the proof per token
-    and the cost of sampling against greedy decoding; and the proofs of per-prefix queries against one prefill for
-    Llama-2-7B with ``P = G = 512`` (mode C: the cpuv tier's claims per position at 64 and 2,048 tokens, linear in
-    the positions, plus the fixed part of the byte model under the run's plan).  The prefill also computes the LM head
-    and the pruned last block's operations at the ``G - 1`` positions before the last, which a next-token query
-    computes at the last position only: their claims are added at the bytes per claim of the per-position
-    operations (:func:`prefill_extra_claims`)."""
+    and the cost of sampling against greedy decoding; the proofs of per-prefix queries for Llama-2-7B with
+    ``P = G = 512`` (mode C: the cpuv tier's claims per position at 64 and 2,048 tokens, linear in the positions, plus
+    the fixed part of the byte model under the run's plan) against the one prefill the gen tier measures, which the
+    same byte model must give within :data:`GEN_MODEL_WITHIN`.  The modelled prefill also computes the LM head and the
+    pruned last block's operations at the ``G - 1`` positions before the last, which a next-token query computes at
+    the last position only: their claims are added at the bytes per claim of the per-position operations
+    (:func:`prefill_extra_claims`).  The provider's overhead: the prover's time for a greedy response (modes C and
+    Kpre, ``G`` 64 and 256) over the time to generate it without a proof (``decode_baseline.py``: fp16, KV cache)."""
     run = ctx.run
     g = run.gen("gpt2", "C", "greedy", 256, prompt=64)
     c.put("GenGptProveC", g and g.d["prove_s"], g, lambda v: f"{v:.2f}")
@@ -1950,8 +2042,32 @@ def generation(c: Collector, ctx: T.Ctx) -> None:
         single = proof(GEN_P + GEN_G - 1) + (GEN_G - 1) * last * per_pos / every
         prefixes = sum(proof(GEN_P + i - 1) for i in range(1, GEN_G + 1))
     src = "cpuv tier's mode-C claims of Llama-2-7B at 64 and 2,048 tokens and the byte model's fixed part"
-    c.put("GenPrefillGB", single, src, lambda v: f"{v / 1e9:.1f}")
     c.put("GenPerPrefixTB", prefixes, src, lambda v: f"{v / 1e12:.1f}")
+    # the one prefill measured (the gen tier's P = G = 512 cell), and the byte model's figure against it
+    pre = run.gen("llama2-7b", "C", "greedy", GEN_G, prompt=GEN_P)
+    c.put("GenPrefillGB", pre and pre.d["proof_bytes"], pre, lambda v: f"{v / 1e9:.1f}")
+    c.put("GenPrefillProveC", pre and pre.d["prove_s"], pre, f.sig)
+    c.put("GenPrefillVerifyC", pre and pre.d["verify_s"], pre, f.sig)
+    off = abs(single / pre.d["proof_bytes"] - 1) if pre and single else None
+    c.put("GenPrefillModelWithin", off, pre, ceil_pct)
+    if off is not None:
+        c.claim(off <= GEN_MODEL_WITHIN, f"the byte model's P = G = {GEN_P} prefill ({single / 1e9:.2f} GB) is "
+                f"{100 * off:.0f}% off the measured proof; the per-prefix sum the text takes from it assumes at most "
+                f"{100 * GEN_MODEL_WITHIN:.0f}%")
+    # the provider's overhead: the prover's time for a greedy response against generating it without a proof (fp16,
+    # KV cache, the same GPU: decode_baseline.py)
+    for m, name in (("llama2-7b", "Llama"), ("qwen3-4b", "Qwen")):
+        d = run.decode(m, 256, prompt=GEN_P)
+        c.put(f"GenDecode{name}", d and d.d["total_s"], d, f.sig)
+    for mode, mn in (("C", "C"), ("Kpre", "K")):
+        over, src = [], None
+        for m in ("llama2-7b", "qwen3-4b"):
+            for gg in (64, 256):
+                r, d = run.gen(m, mode, "greedy", gg, prompt=GEN_P), run.decode(m, gg, prompt=GEN_P)
+                over.append(r.d["prove_s"] / d.d["total_s"] if r and d and d.d.get("total_s") else None)
+                src = src or d
+        _range(c, f"GenOverDecode{mn}", over, src or "gen tier, gen_bench.py against decode_baseline.py",
+               lambda v: _ratio_text(v))
 
 
 FAMILIES = (platform, cpu_client, cpu_scaling, commitment_plans, security_levels, options_timing, kpre_client,

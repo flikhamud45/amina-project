@@ -10,9 +10,10 @@
 prompt in every query: the $i$-th query has $P+i-1$ positions, so the claims cover
 $\sum_{i=1}^{G}(P+i-1)=GP+G(G-1)/2$ positions, and mode $\sC$ needs $G$ column openings. The single
 prefill of Section~\ref{sec:gen} has $P+G-1$ positions and one column opening per response. For
-Llama-2-7B with $P=G=512$, the mode-$\sC$ proofs of the prefixes take about \GenPerPrefixTB{}\,TB against
-about \GenPrefillGB{}\,GB for the prefill (the run's claims per position at 64 and 2{,}048 tokens, plus the
-fixed part of a query).
+Llama-2-7B with $P=G=512$, the mode-$\sC$ proofs of the prefixes take about \GenPerPrefixTB{}\,TB (the run's
+claims per position at 64 and 2{,}048 tokens, plus the fixed part of a query) against \GenPrefillGB{}\,GB measured
+for the prefill, which the same byte model gives within \GenPrefillModelWithin{}\%; that prefill takes
+\GenPrefillProveC{}\,s to prove and \GenPrefillVerifyC{}\,s to verify.
 
 \para{The graph and the token rule.} Every ``last position'' slice of the decoder (the one before
 the LM head, and those of a pruned last block) takes the last $G$ positions instead. Operations,
@@ -40,6 +41,13 @@ tampered queries (a wrong token, and logits forged to choose it) were rejected i
 mode $\sC$, a greedy 256-token GPT-2 response after a 64-token prompt takes \GenGptProveC{}\,s to prove. The
 proof per generated token of Llama-2-7B in mode $\sC$ falls from \GenLlamaMBPerTokenShort{}\,MB at $G=64$ to
 \GenLlamaMBPerTokenLong{}\,MB at $G=256$.
+
+\para{Against unverified generation.} The provider generates the response before it proves it. Without a proof,
+Hugging Face Transformers' fp16 decoders of the same shapes (random weights, scaled-dot-product attention, a KV
+cache, greedy tokens) generate the 256-token responses after the 512-token prompts on the same GPU in
+\GenDecodeLlama{}\,s (Llama-2-7B) and \GenDecodeQwen{}\,s (Qwen3-4B), medians of the timed responses. For $G\in\{64,256\}$
+the prover then takes \GenOverDecodeC{} times the generation's time in mode $\sC$ and \GenOverDecodeK{} times in
+$\Kpre$.
 
 \begin{table}[t]
   \caption{A greedy $G$-token response after a $P$-token prompt as one prefill (Fiat--Shamir,
@@ -157,7 +165,10 @@ $\alpha=0.55$ and at $\alpha=0.5$. At 2{,}048
 tokens with train-split calibration these statistics transferred badly ($\times\QualityLegacyLo{}$--$\QualityLegacyHi{}$ on
 OPT-1.3B depending on the calibration windows, about $\times$\QualityLegacyOptS{} on OPT-125M), and the mean zero-shot
 loss of OPT-1.3B was \ZeroshotLegacyMean{} points (\ZeroshotMeanOptM{} with the certified recipe below). Each channel's maximum without clipping (``smooth-max'') is
-stable across calibration windows (OPT-1.3B within \QualityDrawSpread{} over two draws). The certified recipe's
+stable across calibration windows (OPT-1.3B within \QualityDrawSpread{} over two draws). The Llama recipe keeps
+percentile statistics; over three draws of four train windows each (with the prefix chosen on the first), its ratio
+moves by \LlamaSevenDrawSpread{} on Llama-2-7B, \TinyLlamaDrawSpread{} on TinyLlama and \QwenMDrawSpread{} on
+Qwen3-1.7B (at most \LlamaDrawSpread{}). The certified recipe's
 $\alpha=0.6$ was chosen on the test split: over $\alpha\in\{0.3,\dots,0.7\}$ its ratio is within
 \QualityAlphaGapOptS{} of the best on OPT-125M and within \QualityAlphaGapOptM{} on OPT-1.3B. On the validation split, which
 no choice used, it is within \QualityAlphaValGapOptS{} and \QualityAlphaValGapOptM{} of the best of $\alpha\in\{0.5,0.6,0.7\}$ on
@@ -167,7 +178,10 @@ and SwiGLU balance were likewise chosen per model on the test split, except Llam
 $\alpha\in\{0.45,0.55,0.65\}$ and balance $\in\{0.1,0.2,0.3\}$ is \LlamaSevenTestBest{} (test) and
 \LlamaSevenValBest{} (validation), ours within \LlamaSevenTestGap{} and \LlamaSevenValGap{} of them;
 on Llama-2-13B the best of $\alpha\in\{0.5,0.6,0.7\}$ is \LlamaThirteenTestBest{} and \LlamaThirteenValBest{}, ours
-within \LlamaThirteenTestGap{} and \LlamaThirteenValGap{}.
+within \LlamaThirteenTestGap{} and \LlamaThirteenValGap{}. On the validation split, TinyLlama's setting is within
+\TinyLlamaValGap{} of the best of $\alpha\in\{0.65,0.75,0.85\}$ and balance $\in\{0.1,0.2,0.3\}$ (\TinyLlamaValBest{}),
+and Qwen3-1.7B's within \QwenMValGap{} of the best of $\alpha\in\{0.35,0.45,0.55\}$ and balance $\in\{0.2,0.3,0.4\}$
+(\QwenMValBest{}).
 Cross-layer equalisation did not help after smoothing (\CleWith{} against \CleWithout{}
 at 128 tokens).
 
