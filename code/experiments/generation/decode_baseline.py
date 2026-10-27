@@ -53,7 +53,6 @@ random-weight decoder of the same shapes.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import gc
 import inspect
 import platform
@@ -63,7 +62,7 @@ import time
 
 import torch
 
-from experiments.common import records
+from experiments.common import real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 
@@ -96,22 +95,6 @@ def build(cfg, n_layers: int, dtype: torch.dtype, device: torch.device, seed: in
         model = AutoModelForCausalLM.from_config(hf_config(cfg, n_layers), torch_dtype=dtype,
                                                  attn_implementation="sdpa")
     return model.eval()
-
-
-def real_config(name: str, cfg):
-    """``cfg`` with the checkpoint ``name``'s trained context as ``max_pos``; SystemExit for a checkpoint that is not
-    a Llama or Qwen3 decoder of ``cfg``'s shapes (its ``config.json`` alone is read)."""
-    from transformers import AutoConfig
-
-    from pvi.models import hf_llama
-    hf_cfg = AutoConfig.from_pretrained(name)
-    if hf_cfg.model_type not in ("llama", "qwen3"):
-        raise SystemExit(f"--real {name}: a {hf_cfg.model_type} checkpoint (decode_baseline runs Llama and Qwen3 "
-                         "checkpoints)")
-    diff = hf_llama.same_shape(hf_llama.config_of(hf_cfg, cfg.name), cfg)
-    if diff:
-        raise SystemExit(f"--real {name}: not {cfg.name}'s shapes ({'; '.join(diff)})")
-    return dataclasses.replace(cfg, max_pos=hf_cfg.max_position_embeddings)
 
 
 def load(name: str, dtype: torch.dtype, device: torch.device, prompt: int, n: int):
@@ -196,9 +179,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="where it decodes")
     ap.add_argument("--threads", type=int, default=8, help="torch's intra-op threads")
     ap.add_argument("--label", default="", help="a label copied into every record")
-    ap.add_argument("--real", default="", metavar="CHECKPOINT",
-                    help="a Llama or Qwen3 checkpoint of the one --model's shapes (e.g. meta-llama/Llama-2-7b-hf): its "
-                         "weights, prompted with WikiText-2 windows")
+    real_cells.add_arguments(ap, help="a Llama or Qwen3 checkpoint of the one --model's shapes (e.g. "
+                             "meta-llama/Llama-2-7b-hf): its weights, prompted with WikiText-2 windows")
     return ap
 
 
@@ -216,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in args.model:
         cfg = decoder_config(name)
         if args.real:                                 # refused before the weights are loaded
-            cfg = real_config(args.real, cfg)
+            cfg = real_cells.checkpoint_config(args.real, cfg, families=("llama",))
         n_layers = args.layers or cfg.n_layers
         if args.prompt + max(args.gen) - 1 > cfg.max_pos:
             raise SystemExit(f"{args.real or name}: {args.prompt} + {max(args.gen)} - 1 positions > its "

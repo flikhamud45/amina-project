@@ -24,8 +24,7 @@ graph for every cell), on ``--layers`` blocks (0: the full model); the small sha
 one ``--model``, which names its shapes) the integer model is the checkpoint's integer graph instead, built as
 ``perf.py --real`` builds it (:mod:`experiments.common.real_cells`: an OPT checkpoint with
 ``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint, Qwen3 included, with ``hf_llama.MAIN_RECIPE`` and its fixed
-public prefix; ``--layers n``: a Llama-family checkpoint's first ``n`` blocks, while an OPT checkpoint is built
-whole), and the prompts are the WikiText-2 test split's windows from its start (``perf.py --real``'s queries: the
+public prefix; ``--layers n``: the checkpoint's first ``n`` blocks, the full graph's first ``n``), and the prompts are the WikiText-2 test split's windows from its start (``perf.py --real``'s queries: the
 ``B`` prompts of a cell are the first ``B`` windows of ``T`` tokens, so prompt 0 is again the B = 1 prompt).  The
 checkpoint is loaded in fp32, calibrated and turned into the integer graph before anything is timed, and its fp32
 model freed.  U2 keeps random weights of the checkpoint's shapes (its dense kernels' time depends on the shapes
@@ -504,7 +503,8 @@ def build(name: str, layers: int, args, device: torch.device, real: tuple | None
     shapes = decoder_shapes(cfg, prune_last=args.prune_last)
     if real is not None:
         graph, setup, fam = real[0], dict(real[1]), real[2]
-        plan_ops = real_cells.model_ops(fam, cfg, args.prune_last)
+        plan_ops = (None if fam == "opt" and layers == cfg.n_layers   # a full OPT graph: from its own ops
+                    else real_cells.model_ops(cfg, args.prune_last))
     else:
         t0 = time.perf_counter()
         graph = build_decoder(cfg, n_layers=layers, calib_tokens=args.calib_tokens, seed=args.seed,
@@ -550,7 +550,8 @@ def real_graph(name: str, layers: int, args, cells) -> tuple:
     cfg = decoder_config(name)
     fam = real_cells.family(cfg)
     t0 = time.perf_counter()
-    ck = real_cells.load(args.real, cfg, fam, seq=max(t for t, _ in cells), tokens=max(t * b for t, b in cells))
+    seq = max(t for t, _ in cells)
+    ck = real_cells.load(args.real, cfg, seq=seq, n_queries=max(1, -(-max(t * b for t, b in cells) // seq)))
     load_s = time.perf_counter() - t0
     t0 = time.perf_counter()
     graph, _ = ck.graph(args.prune_last, layers or cfg.n_layers)
@@ -952,7 +953,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the GPU's energy per call (NVML's energy counter, experiments.common.energy): a variant "
                          "whose median call is shorter than this many seconds is also called back to back for this "
                          "long after its timed repetitions; 0: no energy (default 2)")
-    real_cells.add_argument(ap, real_cells.HELP + "; one --model")
+    real_cells.add_arguments(ap, real_cells.HELP + "; one --model")
     ap.add_argument("--label", default="", help="a label copied into every record")
     ap.add_argument("--table", nargs="+", default=None, help="print this script's logs (JSON lines) as a table")
     cli.add_protocol_arguments(ap)
@@ -977,7 +978,7 @@ def main() -> int:
         if len(args.model) != 1:
             ap.error("--real names one checkpoint: give one --model, its shapes")
         cfg = decoder_config(args.model[0])
-        real_cells.check(cfg, seqs=[t for t, _ in cells], n_layers=[args.layers or cfg.n_layers],
+        real_cells.check(cfg, seqs=[t for t, _ in cells], layers=[args.layers or cfg.n_layers],
                          prob_max=args.prob_max)
     cli.apply_runtime(args)
     device = torch.device(args.device)

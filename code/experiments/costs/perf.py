@@ -35,10 +35,10 @@ setting other than the plan; image models have no embedding, no pruned block, no
 checkpoint's recipe fixes its probabilities' scale (``--prob-max`` is for random-weight decoders).
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): every block of the checkpoint's integer graph
-(:func:`experiments.common.checkpoints.real_graph`), or with ``--layers n`` a Llama-family checkpoint's (Llama, Qwen3)
-first ``n`` blocks with the same calibration and prefix (refused for OPT, whose builder takes every block; the build's
-commitment is then planned and its ``(r, t)`` sized for the whole model, as a random-weight build's), queried on
-WikiText-2 windows of ``--seq`` tokens.  OPT: the
+(:func:`experiments.common.checkpoints.real_graph`), or with ``--layers n`` its first ``n`` blocks with the same
+calibration and prefix, the full graph's first ``n`` (:mod:`experiments.common.real_cells`; the build's commitment is
+then planned and its ``(r, t)`` sized for the whole model, as a random-weight build's), queried on WikiText-2 windows
+of ``--seq`` tokens.  OPT: the
 certified recipe (``hf_opt.CERTIFIED_RECIPE``) by default, or with ``--recipe legacy`` the percentile recipe (norm gain 4,
 ``--smooth``: SmoothQuant through the norm gains, calibrated on one window of ``--calib-seq`` tokens from the end of
 the test split); a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with its fixed public prefix.  Mode C's plans are
@@ -93,7 +93,7 @@ import time
 
 import torch
 
-from experiments.common import checkpoints, cli, real_cells, records
+from experiments.common import cli, real_cells, records
 from experiments.common.client import ClientProcess
 from experiments.common.models import decoder_config, test_batches, trained_cnn, trained_mlp
 from experiments.common.paths import CODE
@@ -206,15 +206,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--random-init", action="store_true",
                     help="image models: random weights and random queries (pvi.models.quantize.random_cnn; the costs "
                          "depend on the shapes only)")
-    ap.add_argument("--real", default="", help="decoders: a Hugging Face checkpoint (e.g. facebook/opt-1.3b), its "
-                    "integer graph queried on WikiText-2 windows; --model names its shapes")
-    ap.add_argument("--recipe", choices=["certified", "legacy"], default="certified",
-                    help="with an OPT --real: certified = hf_opt.CERTIFIED_RECIPE calibrated on four 2,048-token "
-                         "train windows; legacy = the percentile recipe (norm gain 4, --smooth, --calib-seq)")
-    ap.add_argument("--smooth", type=float, default=None, help="with --recipe legacy: SmoothQuant strength through "
-                    "the norm gains (0.55 with experiments.common.checkpoints.SMOOTH's clipping)")
-    ap.add_argument("--calib-seq", type=int, default=0,
-                    help="with --recipe legacy: the calibration window's tokens (0: --seq)")
+    real_cells.add_arguments(ap, help="decoders: a Hugging Face checkpoint (e.g. facebook/opt-1.3b), its integer graph "
+                             "queried on WikiText-2 windows; --model names its shapes", recipes=True)
     ap.add_argument("--tampers", type=int, default=0, help="decoders, per variant after the timed queries: attempts "
                     "of each trace-tampering attack, each of which must be rejected")
     ap.add_argument("--client-memory", action="store_true",
@@ -240,8 +233,6 @@ def main() -> int:
     from pvi.v0.verifier import Verifier
 
     args = build_parser().parse_args()
-    if args.real and args.recipe == "certified" and (args.smooth is not None or args.calib_seq):
-        raise SystemExit("--smooth and --calib-seq are the legacy recipe's: pass --recipe legacy")
     scales = list(dict.fromkeys(args.prob_max))
     if (args.real or args.model in RANDOM_CNNS) and scales != [cli.PAPER.prob_max]:
         raise SystemExit("--prob-max is for random-weight decoders: an image model has no attention, and a "
@@ -279,19 +270,19 @@ def main() -> int:
         n_checks = len(graph.mat_ops)
         seq = None
     elif args.real:                 # the checkpoint's integer graph (--layers: its first blocks); WikiText-2 queries
-        from pvi.commit.cost import decoder_shapes
         cfg = decoder_config(args.model)
+        real_cells.check_args(args, cfg, seqs=[args.seq], layers=[args.layers])
         part = real_cells.partial(cfg, args.layers)     # None: every block
-        model, queries, calib = checkpoints.load_real(args.real, args.seq, args.queries + 1, args.calib_seq,
-                                                      args.recipe)
-        recipe_used = checkpoints.recipe_name(calib, args.recipe)
+        ck = real_cells.load(args.real, cfg, seq=args.seq, n_queries=args.queries + 1, recipe=args.recipe,
+                             calib_seq=args.calib_seq)
+        queries, recipe_used = ck.queries, ck.recipe
         for prune in on["prune_last"]:
-            graph, _ = checkpoints.real_graph(model, calib, prune, args.recipe, args.smooth, n_layers=part)
+            graph, _ = ck.graph(prune, part, args.smooth)
             graphs[prune, prob_max_of(graph)] = graph
-            # the full model: planned from its own weight ops (OPT's LM head has a bias column); a Llama-family
-            # build of a few blocks: for the whole model's shapes, as a random-weight build
-            model_ops[prune] = None if part is None else decoder_shapes(cfg, prune_last=prune)
-        del model
+            # the full model: planned from its own weight ops (OPT's LM head has a bias column); a build of a few
+            # blocks: for the whole model's shapes as the real graph has them, as a random-weight build
+            model_ops[prune] = None if part is None else real_cells.model_ops(cfg, prune)
+        ck.free()
         n_checks = (len(next(iter(graphs.values())).mat_ops) if part is None
                     else len(model_ops[on["prune_last"][0]]))      # (r, t) for the full model, as bench.py
         seq = args.seq

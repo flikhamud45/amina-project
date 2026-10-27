@@ -1,9 +1,9 @@
 """The real-weight option (``--real``) of the improvement scripts and of ``experiments.v1.v1_phases``
-(:mod:`experiments.common.real_weights`), on a tiny random OPT and a tiny random Llama, with the checkpoint and
+(:mod:`experiments.common.real_cells`), on a tiny random OPT and a tiny random Llama, with the checkpoint and
 WikiText-2 loaders of ``experiments.common.checkpoints`` replaced (no download).
 
-The refusals; the graph of a checkpoint's first blocks (the graph of the checkpoint cut to those blocks, the model put
-back afterwards); the whole model's op shapes as a real graph has them; ``open_ab.py``, ``fold_ab.py`` and
+The refusals; the graph of a checkpoint's first blocks (the full graph's first blocks, op for op, the residual scale
+set on the whole checkpoint, for OPT and Llama-family alike); the whole model's op shapes as a real graph has them; ``open_ab.py``, ``fold_ab.py`` and
 ``v1_phases.py`` end to end on the CPU, every variant on the same real graph and the same windows; and the
 graph-building part of the GPU-only scripts (``forward_ab.py``, ``encode_ab.py``, ``gpu_profile.py``), which is what
 their GPU paths run.
@@ -20,10 +20,11 @@ import torch
 
 transformers = pytest.importorskip("transformers")
 
-from experiments.common import checkpoints, cli, real_weights  # noqa: E402
+from experiments.common import checkpoints, cli, real_cells  # noqa: E402
 from pvi.models import decoder as transformer  # noqa: E402
 from pvi.models import hf_llama  # noqa: E402
 from pvi.models.decoder import DecoderConfig  # noqa: E402
+from pvi.core.graph import MatOp  # noqa: E402
 from pvi.models.hf_opt import CERTIFIED_RECIPE, build_opt_from_hf  # noqa: E402
 
 OPT_CFG = DecoderConfig("opt-tiny", 32, 2, 4, 4, 8, 64, 97, mlp="relu", max_pos=64)
@@ -108,33 +109,34 @@ def _run(script, monkeypatch, capsys, *argv) -> tuple[int, list[dict]]:
     (transformer.CONFIGS["opt-1.3b"], {"recipe": "legacy"}, "--calib-seq"),
     (transformer.CONFIGS["opt-1.3b"], {"layers": [25]}, "24 blocks"),
     (transformer.CONFIGS["opt-1.3b"], {"seqs": [4096]}, "trained context of 2048"),
+    (transformer.CONFIGS["opt-6.7b"], {"layers": [33]}, "has 32 blocks"),
     (transformer.CONFIGS["llama2-7b"], {"seqs": [8192]}, "trained context of 4096"),
     (transformer.CONFIGS["llama2-7b"], {"prob_max": 255}, "--prob-max"),
 ])
 def test_check_refuses_what_has_no_real_graph(cfg, kw, says):
     args = _args(**{k: v for k, v in kw.items() if k in ("recipe", "smooth", "calib_seq")})
     with pytest.raises(SystemExit, match=says):
-        real_weights.check(args, cfg, layers=kw.get("layers", [0]), seqs=kw.get("seqs", [1024, 2048]),
-                           prob_max=kw.get("prob_max"))
+        real_cells.check_args(args, cfg, layers=kw.get("layers", [0]), seqs=kw.get("seqs", [1024, 2048]),
+                              prob_max=kw.get("prob_max"))
 
 
 def test_check_passes_the_paper_cells_and_random_weights():
     for name, layers, seq in (("llama2-7b", [1, 4], 2048), ("llama2-13b", [1], 2048), ("opt-1.3b", [24], 2048),
                               ("opt-6.7b", [0], 2048), ("qwen3-4b", [2], 2048), ("llama2-7b", [2], 4096)):
-        real_weights.check(_args(), transformer.CONFIGS[name], layers=layers, seqs=[seq], prob_max=2047)
-    real_weights.check(_args(real=""), transformer.CONFIGS["gpt2"], layers=[2], seqs=[64], prob_max=255)
+        real_cells.check_args(_args(), transformer.CONFIGS[name], layers=layers, seqs=[seq], prob_max=2047)
+    real_cells.check_args(_args(real=""), transformer.CONFIGS["gpt2"], layers=[2], seqs=[64], prob_max=255)
     with pytest.raises(SystemExit, match="pass --real"):
-        real_weights.check(_args(real="", recipe="legacy"), transformer.CONFIGS["opt-1.3b"])
+        real_cells.check_args(_args(real="", recipe="legacy"), transformer.CONFIGS["opt-1.3b"])
 
 
 def test_load_refuses_a_checkpoint_of_other_shapes_or_a_longer_prompt(fake_opt, fake_llama, monkeypatch):
     with pytest.raises(SystemExit, match="vocab: 97 vs 32000"):     # a tiny Llama is not Llama-2-7B
-        real_weights.load(_args(), transformer.CONFIGS["llama2-7b"], seq=16, n_queries=1)
+        real_cells.load("tiny", transformer.CONFIGS["llama2-7b"], seq=16, n_queries=1)
     with pytest.raises(SystemExit, match="model type 'llama'"):
-        real_weights.load(_args(), OPT_CFG, seq=16, n_queries=1)
+        real_cells.load("tiny", OPT_CFG, seq=16, n_queries=1)
     # 63 tokens fit the tiny Llama's 64 positions, but not after the fixed prefix's two
-    with pytest.raises(SystemExit, match="after a prefix of 2 tokens is beyond tiny's trained context of 64"):
-        real_weights.load(_args(), LLAMA_CFG, seq=63, n_queries=1)
+    with pytest.raises(SystemExit, match="behind its 2-token fixed prefix exceed its trained context of 64"):
+        real_cells.load("tiny", LLAMA_CFG, seq=63, n_queries=1)
 
 
 @pytest.mark.parametrize("module, argv", [
@@ -159,47 +161,55 @@ def test_the_scripts_refuse_before_loading_anything(module, argv, monkeypatch, c
 # -- the graph of the first blocks ------------------------------------------------------------------------------------
 
 def test_first_blocks_of_a_llama_is_the_builders_n_layers(fake_llama):
-    real = real_weights.load(_args(), LLAMA_CFG, seq=16, n_queries=2)
-    got = real_weights.graph(real, _args(), 1, True)
+    real = real_cells.load("tiny", LLAMA_CFG, seq=16, n_queries=2)
+    got = real.graph(True, 1)[0]
     want, _ = hf_llama.build_llama_from_hf(real.model, real.calib.ids, prune_last=True, prefix_tokens=PREFIX,
                                            n_layers=1, **hf_llama.MAIN_RECIPE)
     assert got.digest() == want.digest()
     assert len(real.model.model.layers) == real.model.config.num_hidden_layers == 2      # put back
-    assert real_weights.graph(real, _args(), 0, True).digest() == real_weights.graph(real, _args(), 2, True).digest()
+    assert real.graph(True, 0)[0].digest() == real.graph(True, 2)[0].digest()
     assert (real.recipe, real.prefix_len) == ("main", 2)
 
 
-def test_first_blocks_of_an_opt_is_the_checkpoint_of_those_blocks(fake_opt):
-    real = real_weights.load(_args(), OPT_CFG, seq=16, n_queries=2)
-    got = real_weights.graph(real, _args(), 1, True)
-    one = _tiny_opt(layers=1)                       # the same weights, the second block left out
-    missing, _ = one.load_state_dict(real.model.state_dict(), strict=False)
-    assert not missing
-    want, _ = build_opt_from_hf(one, real.calib, prune_last=True, **CERTIFIED_RECIPE)
-    assert got.digest() == want.digest()
-    assert len(real.model.model.decoder.layers) == real.model.config.num_hidden_layers == 2
+def _key(op):
+    """An op's name and values (a weight op's weights and bias, a cheap op's parameters)."""
+    if isinstance(op, MatOp):
+        return op.name, op.weight.tolist(), None if op.bias is None else op.bias.tolist()
+    return op.name, op.note, repr(op.params)
+
+
+def test_first_blocks_of_an_opt_are_the_full_graphs_first_blocks(fake_opt, monkeypatch):
+    big = _tiny_opt(layers=3)
+    with torch.no_grad():                            # the second block's output sets the residual stream's scale
+        big.model.decoder.layers[1].fc2.bias.fill_(1000.0)
+    monkeypatch.setattr(checkpoints, "load_opt", lambda name: (big, None))
+    monkeypatch.setitem(transformer.CONFIGS, "opt-tiny", dataclasses.replace(OPT_CFG, n_layers=3))
+    real = real_cells.load("tiny", transformer.CONFIGS["opt-tiny"], seq=16, n_queries=2)
+    full, _ = real.graph(False)
+    part, info = real.graph(False, 1)
+    head = 3                                         # the final norm, the last position and the LM head
+    assert [_key(o) for o in part.ops[:-head]] == [_key(o) for o in full.ops[:len(part.ops) - head]]
+    one = _tiny_opt(layers=1)                        # a checkpoint of the first block alone has another scale
+    one.load_state_dict(big.state_dict(), strict=False)
+    cut, cut_info = build_opt_from_hf(one, real.calib, prune_last=False, **CERTIFIED_RECIPE)
+    assert cut_info["s_residual"] < info["s_residual"] and cut.digest() != part.digest()
+    want, _ = build_opt_from_hf(big, real.calib, prune_last=True, n_layers=1, **CERTIFIED_RECIPE)
+    assert real.graph(True, 1)[0].digest() == want.digest()
     assert real.recipe == "certified" and real.calib_seq is None
-
-
-def test_load_keeps_only_the_blocks_a_build_reads(fake_opt):
-    real = real_weights.load(_args(), OPT_CFG, seq=16, n_queries=2, layers=[1])
-    assert len(real.model.model.decoder.layers) == real.model.config.num_hidden_layers == 1
-    full = real_weights.load(_args(), OPT_CFG, seq=16, n_queries=2, layers=[1, 0])
-    assert len(full.model.model.decoder.layers) == 2
 
 
 @pytest.mark.parametrize("family", ["opt", "llama"])
 def test_model_ops_are_the_real_graphs_shapes(family, request):
     request.getfixturevalue("fake_" + family)
     cfg = OPT_CFG if family == "opt" else LLAMA_CFG
-    real = real_weights.load(_args(), cfg, seq=16, n_queries=1)
-    graph = real_weights.graph(real, _args(), 0, True)
+    real = real_cells.load("tiny", cfg, seq=16, n_queries=1)
+    graph = real.graph(True, 0)[0]
     shape = lambda o: (o.n_rows, o.row_length, o.layout, o.has_bias)  # noqa: E731
-    assert [shape(o) for o in graph.mat_ops] == [shape(s) for s in real_weights.model_ops(cfg, True, True)]
+    assert [shape(o) for o in graph.mat_ops] == [shape(s) for s in real_cells.model_ops(cfg, True, True)]
     if family == "opt":                              # the folded bias of the LM head
-        assert real_weights.model_ops(cfg, True, True)[-1].row_length == cfg.d_model + 1
+        assert real_cells.model_ops(cfg, True, True)[-1].row_length == cfg.d_model + 1
     else:
-        assert real_weights.model_ops(cfg, True, True) == real_weights.model_ops(cfg, True, False)
+        assert real_cells.model_ops(cfg, True, True) == real_cells.model_ops(cfg, True, False)
 
 
 # -- the scripts on the CPU -------------------------------------------------------------------------------------------
@@ -230,7 +240,7 @@ def test_open_ab_real_both_variants_on_the_same_graph_and_windows(family, reques
         assert r["real"] == "tiny" and r["recipe"] == ("certified" if family == "opt" else "main")
         assert r["smooth"] is None and r["calib_seq"] is None and r["prob_max"] == 2047
         assert r["identical"] and r["accepted"] == r["queries"] == 2
-    windows = real_weights.load(_args(), OPT_CFG if family == "opt" else LLAMA_CFG, seq=16, n_queries=3).queries
+    windows = real_cells.load("tiny", OPT_CFG if family == "opt" else LLAMA_CFG, seq=16, n_queries=3).queries
     assert len(seen) == 2 * 2 * 3                    # two block counts, two variants, a warm-up and two queries
     for block in (seen[:6], seen[6:]):
         assert len({d for d, _ in block}) == 1       # one graph per block count
@@ -254,8 +264,8 @@ def test_fold_ab_real_on_the_cpu(fake_llama, monkeypatch, capsys):
                         "--devices", "cpu", "--reps", "1")
     assert status == 0
     assert [r["path"] for r in rows] == ["float64", "default"]
-    real = real_weights.load(_args(), LLAMA_CFG, seq=1, n_queries=0)
-    graph = real_weights.graph(real, _args(), 1, True)
+    real = real_cells.load("tiny", LLAMA_CFG, seq=1, n_queries=0)
+    graph = real.graph(True, 1)[0]
     for r in rows:
         assert (r["real"], r["recipe"], r["layers"], r["equal_to_float64"]) == ("tiny", "main", 1, True)
         assert r["matrices"] == len(graph.mat_ops)
@@ -281,7 +291,7 @@ def test_v1_phases_real_every_verifier_on_the_same_windows(fake_opt, monkeypatch
     assert [r["path"] for r in rows] == ["optimised", "baseline"]
     for r in rows:
         assert (r["real"], r["recipe"], r["layers"], r["accepted"], r["queries"]) == ("tiny", "certified", 1, 2, 2)
-    windows = real_weights.load(_args(), OPT_CFG, seq=16, n_queries=3).queries
+    windows = real_cells.load("tiny", OPT_CFG, seq=16, n_queries=3).queries
     assert len(seen) == 6 and len({d for d, _ in seen}) == 1
     for i, w in enumerate(windows):                  # the warm-up, then the timed windows, under each verifier
         assert all(torch.equal(x, w) for _, x in seen[2 * i:2 * i + 2])
@@ -297,21 +307,21 @@ def test_forward_ab_setup_builds_every_block_count_from_one_load(fake_opt, monke
     args = _args(seq=[16], queries=2, layers=[1, 2], prune_last=True)
     graphs, queries, real = forward_ab.setup(args, OPT_CFG)
     assert len(loads) == 1 and real.recipe == "certified"
-    ref = real_weights.load(_args(), OPT_CFG, seq=16, n_queries=3)
+    ref = real_cells.load("tiny", OPT_CFG, seq=16, n_queries=3)
     for n in (1, 2):
-        assert graphs(n).digest() == real_weights.graph(ref, _args(), n, True).digest()
+        assert graphs(n).digest() == ref.graph(True, n)[0].digest()
     assert all(torch.equal(a, b) for a, b in zip(queries(16), ref.queries)) and len(queries(16)) == 3
 
 
 def test_encode_ab_and_gpu_profile_setups_are_the_real_graph(fake_llama):
     from experiments.improvements import encode_ab, gpu_profile
-    ref = real_weights.load(_args(), LLAMA_CFG, seq=16, n_queries=2)
-    want = real_weights.graph(ref, _args(), 1, True).digest()
+    ref = real_cells.load("tiny", LLAMA_CFG, seq=16, n_queries=2)
+    want = ref.graph(True, 1)[0].digest()
     graph, x, real = encode_ab.setup(_args(seq=16, layers=1, prune_last=True), LLAMA_CFG)
     assert graph.digest() == want and torch.equal(x, ref.queries[0]) and real.recipe == "main"
     graph, xs, real = gpu_profile.setup(_args(seq=16, layers=1, prune_last=True), LLAMA_CFG)
     assert graph.digest() == want and len(xs) == 2 and all(torch.equal(a, b) for a, b in zip(xs, ref.queries))
-    assert real_weights.fields(_args(), real) == {"real": "tiny", "recipe": "main", "smooth": None,
+    assert real_cells.recipe_fields(real, _args()) == {"real": "tiny", "recipe": "main", "smooth": None,
                                                   "calib_seq": None}
 
 

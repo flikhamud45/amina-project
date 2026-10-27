@@ -28,7 +28,7 @@ instance).  After one warm-up query per verifier (a random prompt, seed ``--prom
 that every verifier sees the same queries and the same machine state.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of the random-weight decoder and random
-prompts, the integer graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_weights`; OPT:
+prompts, the integer graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_cells`; OPT:
 the certified recipe, or ``--recipe legacy`` with ``--smooth`` and ``--calib-seq``; a Llama-family checkpoint:
 ``hf_llama.MAIN_RECIPE`` with its fixed public prefix), and as queries WikiText-2 test windows of ``--seq`` tokens: the
 first is every verifier's warm-up query, the next ``--reps`` the timed ones, each run under every verifier.  Refused:
@@ -45,7 +45,7 @@ fall back from ``products.lw_times`` (``n_lw_products_fallback``: a residual op 
 
 **Record** (one JSON line per verifier, then a table on stdout): ``label``, ``git``, ``model``, ``real`` (the
 checkpoint; None for random weights), ``recipe``, ``smooth``, ``calib_seq``
-(:func:`experiments.common.real_weights.fields`), ``layers``, ``seq``, ``mode``, ``policy``, ``fs``, ``lean``,
+(:func:`experiments.common.real_cells.fields`), ``layers``, ``seq``, ``mode``, ``policy``, ``fs``, ``lean``,
 ``lookups``, ``prob_max`` (the graph's attention probabilities' scale), ``lmax``, ``threads``, ``path`` (the
 verifier's name), ``queries``, ``accepted``, ``cut`` (the cut plan's sizes), ``timings`` (the median of every phase),
 ``verify_s`` (the median of each query's ``verify_*`` total), ``env``.  Every query must be accepted, else the exit
@@ -74,7 +74,7 @@ import time
 
 import torch
 
-from experiments.common import cli, real_weights, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -214,7 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--timed-seed", type=int, default=100,
                     help="timed random prompt i is drawn with the seed --timed-seed + i")
     ap.add_argument("--label", default="", help="a label copied into every record")
-    real_weights.add_arguments(ap)
+    real_cells.add_arguments(ap, recipes=True)
     cli.add_protocol_arguments(ap)
     cli.add_runtime_arguments(ap, threads=8)
     ap.add_argument("--v1-verifier", nargs="+", choices=options.V1_VERIFIERS, default=list(options.V1_VERIFIERS),
@@ -249,14 +249,15 @@ def main() -> int:
         cfg = decoder_config(args.model)
     else:
         raise SystemExit("give --model, --small or --micro")
-    real_weights.check(args, cfg, layers=[args.layers], seqs=[args.seq], prob_max=args.prob_max)
+    real_cells.check_args(args, cfg, layers=[args.layers], seqs=[args.seq], prob_max=args.prob_max)
     n_layers = args.layers or cfg.n_layers
     sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
     real = None
     if args.real:                            # the warm-up window, then the timed ones; every verifier takes each
-        real = real_weights.load(args, cfg, seq=args.seq, n_queries=args.reps + 1, layers=[args.layers])
-        graph = real_weights.graph(real, args, args.layers, args.prune_last)
-        del real.model
+        real = real_cells.load(args.real, cfg, seq=args.seq, n_queries=args.reps + 1, recipe=args.recipe,
+                              calib_seq=args.calib_seq)
+        graph = real.graph(args.prune_last, args.layers, args.smooth)[0]
+        real.free()
     else:
         graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.seq, args.calib_tokens), seed=args.seed,
                               prune_last=args.prune_last, prob_max=args.prob_max)
@@ -303,7 +304,7 @@ def main() -> int:
         accepted = sum(r["accepted"] for r in rs)
         ok = ok and accepted == len(rs)
         rows[v] = med | {"verify_total": verify}
-        records.emit({"label": args.label, "git": sha, "model": cfg.name, **real_weights.fields(args, real),
+        records.emit({"label": args.label, "git": sha, "model": cfg.name, **real_cells.recipe_fields(real, args),
                       "layers": n_layers, "seq": args.seq,
                       "mode": args.mode, "policy": args.policy if args.mode == "C" else None, "fs": args.fs,
                       "lean": args.lean, "lookups": args.lookups if args.mode != "C" else False,

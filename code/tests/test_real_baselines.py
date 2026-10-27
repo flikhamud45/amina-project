@@ -24,7 +24,7 @@ import torch
 
 transformers = pytest.importorskip("transformers")
 
-from experiments.common import checkpoints  # noqa: E402
+from experiments.common import checkpoints, real_cells  # noqa: E402
 from experiments.generation import decode_baseline as db  # noqa: E402
 from experiments.reexec import reexec  # noqa: E402
 from pvi import options  # noqa: E402
@@ -78,7 +78,7 @@ WINDOW = torch.randint(3, 97, (1, 40), generator=torch.Generator().manual_seed(4
 def _stand_in(monkeypatch, model, calib, loaded=None):
     """``reexec``'s checkpoint loaders on ``model``: its configuration, and ``load_real``'s ``(model, [WINDOW],
     calib)`` (its calls noted in ``loaded``)."""
-    monkeypatch.setattr(reexec, "hf_config", lambda name: model.config)
+    monkeypatch.setattr(real_cells, "hf_config", lambda name: model.config)
 
     def load_real(name, seq, n_queries, calib_seq=0, recipe="certified"):
         if loaded is not None:
@@ -164,18 +164,18 @@ def test_the_float_decoder_runs_the_checkpoints_weights(family):
 
 
 @pytest.mark.parametrize("argv, match", [
-    (("--model", "gpt2", "--real", "x/gpt2"), "no integer graph"),
+    (("--model", "gpt2", "--real", "x/gpt2"), "no integer builder"),
     (("--model", "tiny-llama", "--real", "x/llama", "--layers", "1"), "full graph"),
     (("--model", "tiny-llama", "--real", "x/llama", "--max-pos", "4096"), "--max-pos"),
     (("--model", "tiny-llama", "--real", "x/llama", "--prob-max", "255"), "--prob-max"),
     (("--model", "tiny-llama", "tiny-qwen", "--real", "x/llama"), "one --model"),
-    (("--model", "tiny-qwen", "--real", "x/llama"), "not tiny-qwen's shapes"),
+    (("--model", "tiny-qwen", "--real", "x/llama"), "not of --model tiny-qwen's shapes"),
     (("--model", "tiny-llama", "--real", "x/llama", "--seq", "64", "65"), "trained context of 64"),
 ])
 def test_real_refusals_come_before_anything_is_loaded(argv, match, monkeypatch, capsys):
     model = (transformers.GPT2LMHeadModel(transformers.GPT2Config(n_embd=64, n_layer=2, n_head=4, vocab_size=97))
              if "gpt2" in argv else _llama(max_pos=64))
-    monkeypatch.setattr(reexec, "hf_config", lambda name: model.config)
+    monkeypatch.setattr(real_cells, "hf_config", lambda name: model.config)
     monkeypatch.setattr(checkpoints, "load_real", lambda *a, **k: pytest.fail("loaded"))
     monkeypatch.setattr(sys, "argv", ["reexec.py", *argv, "--variants", "int", "float", *ARGS])
     with pytest.raises(SystemExit, match=match):
@@ -188,7 +188,7 @@ def test_a_prompt_beyond_the_context_with_the_recipes_prefix_is_refused(monkeypa
     monkeypatch.setattr(checkpoints, "real_graph", lambda *a, **k: pytest.fail("built"))
     args = reexec.build_parser().parse_args(["--model", "tiny-llama", "--real", "x/llama", "--seq", "63", *ARGS])
     cfg = reexec.check_real(args, reexec.decoder_config("tiny-llama"))
-    with pytest.raises(SystemExit, match="2-token prefix"):
+    with pytest.raises(SystemExit, match="2-token fixed prefix"):
         reexec.load_checkpoint(args, cfg, True, False)
 
 
@@ -222,8 +222,8 @@ def test_decode_runs_the_checkpoint_on_wikitext_windows(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("argv, match", [
-    (("--model", "tiny-llama", "--real", "x/opt"), "decode_baseline runs Llama and Qwen3"),
-    (("--model", "tiny-qwen", "--real", "x/llama"), "not tiny-qwen's shapes"),
+    (("--model", "tiny-llama", "--real", "x/opt"), "model type 'opt'"),
+    (("--model", "tiny-qwen", "--real", "x/llama"), "not of --model tiny-qwen's shapes"),
     (("--model", "tiny-llama", "--real", "x/llama", "--layers", "1"), "every block"),
     (("--model", "tiny-llama", "--real", "x/llama", "--prompt", "60", "--gen", "6"), "> its 64"),
 ])

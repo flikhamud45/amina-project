@@ -59,13 +59,14 @@ is then built as ``perf.py --real`` builds it (:mod:`experiments.common.real_cel
 ``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint, Qwen3 included, with ``hf_llama.MAIN_RECIPE`` and its fixed
 public prefix), loaded and calibrated once per job, and the prompts are the WikiText-2 test split's windows from its
 start (``perf.py --real``'s queries: the ``i``-th prompt of ``T`` tokens is the ``i``-th window of ``T`` tokens).  A
-build of ``n`` blocks is a Llama-family checkpoint's first ``n``; an OPT checkpoint is built whole (``--builds
-full``).  The cells are named ``_real`` and their ``config`` holds ``real`` (the checkpoint) and ``recipe``
+build of ``n`` blocks is the checkpoint's first ``n``, the full graph's first ``n`` (OPT and Llama-family alike).  The
+cells are named ``_real`` and their ``config`` holds ``real`` (the checkpoint) and ``recipe``
 (``certified`` or ``main``); the commitment cell also records ``load_checkpoint``, the seconds of loading the
 checkpoint in fp32 and its calibration, which ``build_graph`` (the integer graph's own calibration and build) does not
 include.  Refused: the image models, GPT-2 (no integer builder of a real checkpoint), a prompt (with ``--gen``, the
-prompt and the generated tokens) longer than the checkpoint's trained context, an OPT build of fewer blocks than the
-checkpoint's, and an attention probabilities' scale other than the paper's.  Without ``--real`` the cells and their
+prompt and the generated tokens, behind a Llama-family recipe's fixed prefix) longer than the checkpoint's trained
+context, a checkpoint of other shapes than ``--model``'s, and an attention probabilities' scale other than the
+paper's.  Without ``--real`` the cells and their
 records are the random-weight ones.
 
 Hardware and time: the paper's cells ran on an NVIDIA L40S prover with 8 threads of an AMD EPYC 9334 as the CPU
@@ -782,7 +783,7 @@ def suite_llm(args, env) -> None:
     n_prompts = max([args.queries, *args.batches])
     ck, fam, rw = None, None, {}
     if args.real:        # a checkpoint's weights (experiments.common.real_cells), loaded at the first build to run
-        fam = real_cells.check(cfg, seqs=[s + max(args.gen - 1, 0) for s in args.seq], n_layers=builds,
+        fam = real_cells.check(cfg, seqs=[s + max(args.gen - 1, 0) for s in args.seq], layers=builds,
                                prob_max=args.prob_max)
         rw = {"real": args.real, "recipe": "main" if fam == "llama" else "certified"}
     skipped = []
@@ -818,8 +819,8 @@ def suite_llm(args, env) -> None:
             load_s = None
             if args.real and ck is None:   # once per job: the checkpoint in fp32 and its calibration
                 t0 = time.perf_counter()
-                ck = real_cells.load(args.real, cfg, fam, seq=max(args.seq) + max(args.gen - 1, 0),
-                                     tokens=n_prompts * max(args.seq))
+                long = max(args.seq) + max(args.gen - 1, 0)
+                ck = real_cells.load(args.real, cfg, seq=long, n_queries=max(1, -(-n_prompts * max(args.seq) // long)))
                 load_s = time.perf_counter() - t0
                 env["sources"] = {**(env.get("sources") or {}), **checkpoints.SOURCES}   # its revision in env rows
             setup_cs: dict = {}
@@ -850,7 +851,10 @@ def suite_llm(args, env) -> None:
                 graph = with_lm_positions(graph, args.gen)
             coms = None
             if any(m == "C" for m, _ in modes):
-                plan_ops = real_cells.model_ops(fam, cfg, prune) if args.real else decoder_shapes(cfg, prune_last=prune)
+                # a real OPT's full graph is planned from its own ops (its LM head has a bias column); any other
+                # build for the whole model's shapes as its graph has them
+                plan_ops = (None if fam == "opt" and n_layers == cfg.n_layers
+                            else real_cells.model_ops(cfg, prune, bool(args.real)))
                 coms, commit_s = _commit(args, graph, device, plan_ops, cs=setup_cs)
                 cell = f"commit_{base}{rtag}"
                 if not is_done(args, "llm", cfg.name, cell):
@@ -1082,7 +1086,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--prompt-seed", type=int, default=1, help="decoders: the random prompts' seed")
     g.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
                    help="decoders: calibration tokens of the random-weight build (at most --seq)")
-    real_cells.add_argument(g, real_cells.HELP + "; _real")
+    real_cells.add_arguments(g, real_cells.HELP + "; _real")
     g = ap.add_argument_group("verifier and numerics")
     g.add_argument("--verifier-impl", default="default", choices=["default", "stream"],
                    help="'stream': the streaming verifier, the same verdicts (_stream)")

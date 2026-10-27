@@ -245,7 +245,8 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
                       residual_headroom: float = 1.25, device=None, smooth: float | None = None,
                       smooth_pct: float = 99.9, pct_att: float = 100.0,
                       prune_last: bool = False, prob_max: int = CERTIFIED_PROB_MAX, row_pow2: int = 0,
-                      cle_mlp: float | None = None, cle_ratio: float = 32.0) -> tuple[IntGraph, dict]:
+                      cle_mlp: float | None = None, cle_ratio: float = 32.0,
+                      n_layers: int | None = None) -> tuple[IntGraph, dict]:
     """An integer OPT decoder with the checkpoint's real weights.
 
     ``calib_ids`` ``[B, T]`` (``B`` calibration windows) sets every activation scale. The knobs are all
@@ -276,6 +277,10 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     residual add).  The calibration still sees every position wherever the graph without pruning does
     (:meth:`_RealBuilder.last`), so every weight, norm gain and multiplier is that graph's, and the
     next-token logits are its integers (``tests/test_pruning.py``).
+
+    ``n_layers`` (None: every block): build the checkpoint's first ``n_layers`` blocks only, then the final norm and
+    the LM head (``build_llama_from_hf``'s ``n_layers``).  The residual stream's scale is still set on the whole
+    checkpoint's hidden states, so the blocks built are the full graph's first ``n_layers`` blocks, op for op.
 
     Two variants of the extended version (``sec:ext-quality``), off by default:
 
@@ -327,8 +332,11 @@ def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, nor
     pos = B.mat(pos_ids, pos_table, None, 1.0, layout="embed")
     r = B.residual(B.cheap("scale", [tok], op_fn(scale_op, c=embed_mult), s_res, "embed to residual"), pos)
 
-    for i, layer in enumerate(dec.layers):
-        prune = prune_last and i == len(dec.layers) - 1
+    layers = list(dec.layers)[:n_layers]
+    if not layers:
+        raise ValueError(f"n_layers {n_layers}: the checkpoint has {len(dec.layers)} blocks")
+    for i, layer in enumerate(layers):
+        prune = prune_last and i == len(layers) - 1
         at = layer.self_attn
         ln1 = layer.self_attn_layer_norm
         folded = [_fold(proj.weight.float(), proj.bias, ln1.weight, ln1.bias)

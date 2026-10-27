@@ -22,14 +22,14 @@ interleaved, and checks that every variant gives the same bytes:
   :mod:`pvi.options`), on ``--threads`` threads.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of random weights and a random prompt,
-the integer graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_weights`; OPT: the
+the integer graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_cells`; OPT: the
 certified recipe, or ``--recipe legacy`` with ``--smooth`` and ``--calib-seq``; a Llama-family checkpoint:
 ``hf_llama.MAIN_RECIPE`` with its fixed public prefix) and the first WikiText-2 test window of ``--seq`` tokens as the
 query, whose claims every variant encodes.  Refused: shapes without an integer builder of a real checkpoint (GPT-2),
 ``--prob-max`` (the recipe fixes the scale) and a ``--seq`` beyond the checkpoint's trained context.
 
 Record (one JSON line per variant): ``model``, ``real`` (the checkpoint; None for random weights), ``recipe``,
-``smooth``, ``calib_seq`` (:func:`experiments.common.real_weights.fields`), ``layers``, ``seq``, ``encode_s`` (the
+``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.fields`), ``layers``, ``seq``, ``encode_s`` (the
 median), ``all_s``, ``vs_one_thread``, ``same_bytes``, ``bytes``, ``claims``, ``ops``, ``prob_max`` (the graph's
 attention probabilities' scale), the thread count, the GPU, peak GPU memory and ``env``; with ``--profile``, a
 ``torch.profiler`` table of one more threaded call, sorted by CPU and by CUDA time.  Needs a CUDA GPU (the device
@@ -49,7 +49,7 @@ import time
 
 import torch
 
-from experiments.common import cli, real_weights, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -69,9 +69,10 @@ def setup(args, cfg):
     """``(graph, x, real)``: the graph of ``--layers`` blocks, the query whose claims are encoded and the checkpoint's
     load (None for random weights: ``bench.py``'s graph and a random prompt)."""
     if args.real:
-        real = real_weights.load(args, cfg, seq=args.seq, n_queries=1, layers=[args.layers])
-        graph = real_weights.graph(real, args, args.layers, args.prune_last)
-        del real.model
+        real = real_cells.load(args.real, cfg, seq=args.seq, n_queries=1, recipe=args.recipe,
+                              calib_seq=args.calib_seq)
+        graph = real.graph(args.prune_last, args.layers, args.smooth)[0]
+        real.free()
         return graph, real.queries[0], real
     from pvi.models.decoder import build_decoder
     graph = build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=cli.CALIB_TOKENS, seed=args.seed,
@@ -94,11 +95,11 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompt's seed")
     cli.add_prob_max_argument(ap)
-    real_weights.add_arguments(ap)
+    real_cells.add_arguments(ap, recipes=True)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
     cfg = decoder_config(args.model)
-    real_weights.check(args, cfg, layers=[args.layers], seqs=[args.seq], prob_max=args.prob_max)
+    real_cells.check_args(args, cfg, layers=[args.layers], seqs=[args.seq], prob_max=args.prob_max)
     device = torch.device(args.device)
     if device.type != "cuda":
         raise SystemExit("the device encoder runs on a GPU: --device cuda")
@@ -138,7 +139,7 @@ def main() -> int:
     base = statistics.median(times["one_thread"])
     for name, ts in times.items():
         med = statistics.median(ts)
-        records.emit({"git": sha, "model": args.model, **real_weights.fields(args, real), "layers": n_layers,
+        records.emit({"git": sha, "model": args.model, **real_cells.recipe_fields(real, args), "layers": n_layers,
                       "seq": args.seq, "variant": name,
                       "threads": variants[name]["threads"], "encode_s": med, "all_s": [round(t, 4) for t in ts],
                       "vs_one_thread": med / base, "same_bytes": same, "bytes": blobs[name][1], "claims": n,

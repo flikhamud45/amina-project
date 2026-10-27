@@ -20,7 +20,7 @@ the same challenge seed, so they draw the same ``chi`` and the same columns: the
 folded rows, opened columns and multiproofs, and that the verifier accepts.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of random weights and prompts, the integer
-graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_weights`; OPT: the certified recipe,
+graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_cells`; OPT: the certified recipe,
 or ``--recipe legacy`` with ``--smooth`` and ``--calib-seq``; a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with
 its fixed public prefix), queried on WikiText-2 test windows of ``--seq`` tokens; every block count and both variants
 take the same windows.  Mode C's plan is laid out on the whole model's weight ops as the real graph has them.  Refused:
@@ -31,7 +31,7 @@ The float64 path is the implementation option :data:`OPTION` of :mod:`pvi.option
 (``options.using(int8_opening=False)``).
 
 Record (one JSON line per model, block count and variant ``float64`` / ``int8``): ``model``, ``real`` (the checkpoint;
-None for random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_weights.fields`),
+None for random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.fields`),
 ``layers``, ``seq``, the medians of the prover's parts (``timings``: ``prove_forward``, ``prove_fold``,
 ``prove_open``, ...), their sum ``prove_s`` (the prover's total, the table's value), ``open_fold_s`` (``prove_fold +
 prove_open``), ``vs_float64``, ``identical``, ``accepted`` of ``queries``, ``int8_ok``, ``prob_max`` (the graph's
@@ -48,7 +48,7 @@ import sys
 
 import torch
 
-from experiments.common import cli, real_weights, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -82,12 +82,12 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompts' seed")
     ap.add_argument("--challenge-seed", type=int, default=1000, help="query i draws its challenges with seed + i")
-    real_weights.add_arguments(ap)
+    real_cells.add_arguments(ap, recipes=True)
     cli.add_protocol_arguments(ap)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=True)
     args = ap.parse_args()
     cfg = decoder_config(args.model)
-    real_weights.check(args, cfg, layers=args.layers, seqs=[args.seq], prob_max=args.prob_max)
+    real_cells.check_args(args, cfg, layers=args.layers, seqs=[args.seq], prob_max=args.prob_max)
     cli.apply_runtime(args)
     from pvi.core import field
     from pvi.models.decoder import build_decoder, prob_max_of
@@ -100,13 +100,14 @@ def main() -> int:
     variants = {"float64": {OPTION: False}, "int8": {}}
     device = torch.device(args.device)
     sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
-    model_ops = real_weights.model_ops(cfg, args.prune_last, bool(args.real))
+    model_ops = real_cells.model_ops(cfg, args.prune_last, bool(args.real))
     real = None
     if args.real:                            # every block count and both variants on the same windows
-        real = real_weights.load(args, cfg, seq=args.seq, n_queries=args.queries + 1, layers=args.layers)
+        real = real_cells.load(args.real, cfg, seq=args.seq, n_queries=args.queries + 1, recipe=args.recipe,
+                              calib_seq=args.calib_seq)
         queries = real.queries
-        graphs = {n: real_weights.graph(real, args, n, args.prune_last) for n in dict.fromkeys(args.layers)}
-        del real.model
+        graphs = {n: real.graph(args.prune_last, n, args.smooth)[0] for n in dict.fromkeys(args.layers)}
+        real.free()
     else:
         queries = list(torch.randint(0, cfg.vocab, (args.queries + 1, args.seq),
                                      generator=torch.Generator().manual_seed(args.prompt_seed)).split(1))
@@ -149,7 +150,7 @@ def main() -> int:
         base = None
         for name, rs in runs.items():
             med = {k: statistics.median(r["timings"].get(k, 0.0) for r in rs) for k in PARTS}
-            row = {"git": sha, "model": args.model, **real_weights.fields(args, real),
+            row = {"git": sha, "model": args.model, **real_cells.recipe_fields(real, args),
                    "layers": n_layers or cfg.n_layers, "seq": args.seq,
                    "policy": args.policy, "chosen": com.plan.policy if com.plan else None, "variant": name,
                    "fiat_shamir": args.fs, "wire": args.wire, "prob_max": prob_max_of(graph), "queries": len(rs),

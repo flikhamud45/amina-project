@@ -37,9 +37,9 @@ itself, 11-bit attention probabilities).  For each ``G`` and decoding rule:
 
 ``--real <checkpoint>``: the checkpoint's integer graph instead (:func:`experiments.common.checkpoints.real_graph`:
 OPT with the certified recipe ``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint with ``hf_llama.MAIN_RECIPE``
-and its fixed public prefix; ``--model`` names the benchmark shape it has), every block, or with ``--layers n`` a
-Llama-family checkpoint's first ``n`` blocks with the same calibration and prefix (refused for OPT, whose builder takes
-every block); the prompts are the first WikiText-2 test windows of ``--prompt`` tokens, mode C commits the full
+and its fixed public prefix; ``--model`` names the benchmark shape it has), every block, or with ``--layers n`` its
+first ``n`` blocks with the same calibration and prefix, the full graph's first ``n``
+(:mod:`experiments.common.real_cells`); the prompts are the first WikiText-2 test windows of ``--prompt`` tokens, mode C commits the full
 graph's own weight ops (a build of a few blocks: planned and sized for the whole model, as a random-weight build), and
 the sampler's weight is ``a = round(c 2^16 / tau)`` for the LM head's real logit scale ``c``
 (``TokenSampler.for_temperature``, ``--temperature``), so sampled responses are draws of the integer model at that
@@ -72,7 +72,7 @@ import time
 
 import torch
 
-from experiments.common import checkpoints, cli, real_cells, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 
@@ -162,7 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
                     help="calibration tokens of the random-weight decoder (at most --prompt)")
     ap.add_argument("--label", default="", help="a label copied into every record")
-    ap.add_argument("--real", default="", help="a Hugging Face checkpoint: its integer graph; --model names its shapes")
+    real_cells.add_arguments(ap, help="a Hugging Face checkpoint: its integer graph; --model names its shapes")
     ap.add_argument("--temperature", type=float, default=1.0, help="with --real: the sampler's temperature")
     cli.add_protocol_arguments(ap)
     cli.add_runtime_arguments(ap, threads=8)
@@ -183,11 +183,11 @@ def main() -> int:
     args = build_parser().parse_args()
     if min(args.gen) < 2:
         raise SystemExit("--gen: a response of at least 2 tokens (G = 1 is the plain prefill of perf.py)")
-    if args.real and args.prob_max != cli.PAPER.prob_max:
-        raise SystemExit("--prob-max is for random-weight decoders: a checkpoint's recipe fixes its scale")
+    cfg = decoder_config(args.model)
+    real_cells.check_args(args, cfg, seqs=[args.prompt + max(args.gen) - 1], layers=[args.layers],
+                          prob_max=args.prob_max)
     cli.apply_runtime(args)
     device = torch.device(args.device)
-    cfg = decoder_config(args.model)
     n_layers = args.layers or cfg.n_layers
     if args.prompt + max(args.gen) - 1 > cfg.max_pos and cfg.pos == "learned":
         raise SystemExit(f"{args.model}: {args.prompt} + {max(args.gen)} - 1 positions > its {cfg.max_pos}")
@@ -196,13 +196,13 @@ def main() -> int:
     t0 = time.perf_counter()
     real_info, real_prompts = None, None
     if args.real:                                # the checkpoint's integer graph
-        part = real_cells.partial(cfg, args.layers)     # None: every block; else a Llama checkpoint's first ones
-        model, wins, calib = checkpoints.load_real(args.real, args.prompt, args.queries + 1)
-        graph, real_info = checkpoints.real_graph(model, calib, args.prune_last, n_layers=part)
-        del model
-        real_prompts = torch.cat(wins[:args.queries + 1])
+        part = real_cells.partial(cfg, args.layers)     # None: every block; else the checkpoint's first ones
+        ck = real_cells.load(args.real, cfg, seq=args.prompt, n_queries=args.queries + 1, generated=max(args.gen) - 1)
+        graph, real_info = ck.graph(args.prune_last, part)
+        ck.free()
+        real_prompts = torch.cat(ck.queries[:args.queries + 1])
         # the full model: mode C plans the graph's own weight ops; a build of its first blocks the whole model's
-        shapes = None if part is None else decoder_shapes(cfg, prune_last=args.prune_last)
+        shapes = None if part is None else real_cells.model_ops(cfg, args.prune_last)
         n_checks = len(graph.mat_ops) if part is None else len(shapes)
     else:
         graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(args.prompt, args.calib_tokens), seed=args.seed,

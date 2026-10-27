@@ -17,7 +17,7 @@ option :data:`OPTION` of :mod:`pvi.options` turned off (``options.using(int8_for
 the model's trained context is skipped.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of random weights and prompts, the integer
-graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_weights`; OPT: the certified recipe,
+graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_cells`; OPT: the certified recipe,
 or ``--recipe legacy`` with ``--smooth`` and ``--calib-seq``; a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with
 its fixed public prefix), queried on WikiText-2 test windows of the one ``--seq`` (its calibration and windows come from
 one load of the checkpoint); every block count and both variants take the same windows.  Refused: shapes without an
@@ -26,7 +26,7 @@ integer builder of a real checkpoint (GPT-2), ``--prob-max`` (the recipe fixes t
 
 Record (one JSON line per model, block count, prompt length and variant ``float32`` / ``int8``): ``model``, ``real``
 (the checkpoint; None for random weights), ``recipe``, ``smooth``, ``calib_seq``
-(:func:`experiments.common.real_weights.fields`), ``layers``, ``seq``, ``prove_forward`` (the median),
+(:func:`experiments.common.real_cells.fields`), ``layers``, ``seq``, ``prove_forward`` (the median),
 ``vs_float32``, ``identical``, ``queries``, ``int8_ok``, ``prob_max`` (the graph's attention probabilities' scale),
 the GPU and ``env``.  Needs a CUDA GPU with int8 GEMMs; minutes per build.  With ``--real`` the checkpoint is loaded
 in fp32 and calibrated on the CPU first (host memory: its fp32 weights, 27 GB for Llama-2-7B, next to the integer
@@ -42,7 +42,7 @@ import time
 
 import torch
 
-from experiments.common import cli, real_weights, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -58,9 +58,10 @@ def setup(args, cfg):
     ``--real`` every block count's graph is built here, from one load of the checkpoint, and the windows are its."""
     from pvi.models.decoder import build_decoder
     if args.real:
-        real = real_weights.load(args, cfg, seq=args.seq[0], n_queries=args.queries + 1, layers=args.layers)
-        built = {n: real_weights.graph(real, args, n, args.prune_last) for n in dict.fromkeys(args.layers)}
-        del real.model
+        real = real_cells.load(args.real, cfg, seq=args.seq[0], n_queries=args.queries + 1, recipe=args.recipe,
+                              calib_seq=args.calib_seq)
+        built = {n: real.graph(args.prune_last, n, args.smooth)[0] for n in dict.fromkeys(args.layers)}
+        real.free()
         return built.__getitem__, lambda seq: real.queries, real
 
     def graph(n):
@@ -84,11 +85,11 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompts' seed")
     cli.add_prob_max_argument(ap)
-    real_weights.add_arguments(ap)
+    real_cells.add_arguments(ap, recipes=True)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
     cfg = decoder_config(args.model)
-    real_weights.check(args, cfg, layers=args.layers, seqs=args.seq, prob_max=args.prob_max)
+    real_cells.check_args(args, cfg, layers=args.layers, seqs=args.seq, prob_max=args.prob_max)
     if args.real and len(set(args.seq)) > 1:
         raise SystemExit("--real takes one --seq: its calibration and windows come from one load of the checkpoint")
     device = torch.device(args.device)
@@ -130,7 +131,7 @@ def main() -> int:
             base = statistics.median(times["float32"])
             for name, ts in times.items():
                 med = statistics.median(ts)
-                records.emit({"git": sha, "model": args.model, **real_weights.fields(args, real),
+                records.emit({"git": sha, "model": args.model, **real_cells.recipe_fields(real, args),
                               "layers": n_layers or cfg.n_layers, "seq": seq,
                               "variant": name, "queries": len(ts), "identical": identical, "prove_forward": med,
                               "vs_float32": med / base, "int8_ok": field.int8_ok(device),

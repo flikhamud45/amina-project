@@ -80,11 +80,11 @@ random-weight decoders with the shapes of the paper's language models (`llm` sui
   meta-llama/Llama-2-7b-hf`): the decoder cells on the checkpoint's integer graph, built as `perf.py --real` builds it
   (`experiments.common.real_cells`: OPT with `hf_opt.CERTIFIED_RECIPE`, Llama-family checkpoints, Qwen3 included,
   with `hf_llama.MAIN_RECIPE` and its fixed public prefix), queried on the WikiText-2 test split's windows from its
-  start. A build of `n` blocks is a Llama-family checkpoint's first `n`; an OPT checkpoint is built whole (`--builds
-  full`). The cells are named `_real`, their `config` holds `real` and `recipe`, and the commitment cell records
+  start. A build of `n` blocks is the checkpoint's first `n`, the full graph's first `n` (the residual stream's scale is
+  set on the whole checkpoint), for OPT and Llama-family checkpoints alike. The cells are named `_real`, their `config` holds `real` and `recipe`, and the commitment cell records
   `load_checkpoint` (loading the checkpoint in fp32 and its calibration). Refused: the image models, GPT-2 (no integer
-  builder), a prompt longer than the checkpoint's trained context, an OPT build of fewer blocks than the checkpoint's,
-  and an attention probabilities' scale other than the paper's. Without `--real` nothing changes.
+  builder), a checkpoint of other shapes than `--model`'s, a prompt (behind a Llama-family recipe's fixed prefix)
+  longer than the checkpoint's trained context, and an attention probabilities' scale other than the paper's. Without `--real` nothing changes.
 * **Measurement notes.** All the cells of one invocation share a prover: when an invocation runs mode C and modes K or
   Kpre, the K and Kpre cells are measured with the commitment resident on the GPU (their peak memory includes it).
   The paper's K and Kpre cells come from jobs of their own (`--modes Kpre:fs`), as the run package runs them. A decoder build whose int8 weights exceed 85% of the GPU's memory is skipped, and the job then fails.
@@ -140,7 +140,7 @@ decoder (the last block pruned) under `--policy` (default `cnn18c`), for each `-
 the parameters (`s`, `t0`, `t`), the per-query columns and peak memory. The commitment is never read from the setup
 cache. `--fs` sizes the per-query columns for Fiat-Shamir queries (default interactive, as `tab:setup`). `--real
 <checkpoint>` (`--model` names its shapes) times the setup proof of the checkpoint's integer graph instead, built as
-`perf.py --real` builds it (OPT whole; a Llama-family checkpoint's first `--layers` blocks); the line then holds `real`
+`perf.py --real` builds it (the checkpoint's first `--layers` blocks, 0: every block); the line then holds `real`
 and `recipe` (both None for random weights), and `build_s` includes loading the checkpoint in fp32 and its
 calibration. GPT-2 has no integer builder of a real checkpoint and is refused. The package gives GPT-2 a job limit of
 one hour and Llama-2-7B one of three hours with 128 GB of host memory.

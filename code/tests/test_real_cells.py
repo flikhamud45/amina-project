@@ -1,10 +1,10 @@
-"""The real-weight cells of ``costs/bench.py``, ``costs/setup_timing.py`` and ``deployment/serve_ab.py`` (``--real``,
-:mod:`experiments.common.real_cells`) on a tiny random OPT and a tiny random Llama built in this process: the loaders
+"""The real-weight cells of ``costs/bench.py``, ``costs/setup_timing.py``, ``deployment/serve_ab.py``, ``costs/perf.py``,
+``v1/v1_bytes.py`` and ``generation/gen_bench.py`` (``--real``, :mod:`experiments.common.real_cells`) on a tiny random OPT and a tiny random Llama built in this process: the loaders
 of :mod:`experiments.common.checkpoints` are replaced, so nothing is downloaded.
 
 Each script builds the checkpoint's integer graph as ``perf.py --real`` does (``checkpoints.real_graph``: the
-certified OPT recipe, the main Llama recipe with its fixed prefix; a Llama build of ``n`` blocks is the checkpoint's
-first ``n``), queries it on the test split's windows from its start, records ``real`` and ``recipe``, and every honest
+certified OPT recipe, the main Llama recipe with its fixed prefix; a build of ``n`` blocks is the checkpoint's first
+``n``), queries it on the test split's windows from its start, records ``real`` and ``recipe``, and every honest
 query is accepted; the random-weight cells keep their names; and the settings that cannot be built or would be
 mislabelled are refused before anything is loaded.
 """
@@ -98,7 +98,7 @@ def _main(script, monkeypatch, capsys, *argv) -> tuple[int, list[dict]]:
 def test_the_prompts_are_perf_s_queries(fake):
     """The ``i``-th prompt of ``T`` tokens is the test split's ``i``-th window of ``T`` tokens (``load_real``'s
     queries), whatever longer prompts the job loaded the stream for; the graph is ``real_graph``'s."""
-    ck = real_cells.load("tiny-llama", LLAMA_CFG, "llama", seq=32, tokens=4 * 32)
+    ck = real_cells.load("tiny-llama", LLAMA_CFG, seq=32, n_queries=4)
     for seq, n in ((32, 4), (16, 8), (8, 3)):
         assert torch.equal(real_cells.prompts(ck, seq, n), torch.cat(checkpoints.windows(TEST, seq, n)))
     with pytest.raises(ValueError):
@@ -117,24 +117,25 @@ def test_the_prompts_are_perf_s_queries(fake):
 
 
 def test_a_checkpoint_of_other_shapes_or_context_is_refused(fake):
-    with pytest.raises(SystemExit, match="names 2 blocks of width 64"):
-        real_cells.load("tiny-opt", LLAMA_CFG, "llama", seq=16, tokens=16)
+    with pytest.raises(SystemExit, match="model type 'opt'"):
+        real_cells.load("tiny-opt", LLAMA_CFG, seq=16, n_queries=1)
     with pytest.raises(SystemExit, match="trained context of 64 positions"):
-        real_cells.load("tiny-llama", LLAMA_CFG, "llama", seq=63, tokens=63)     # 63 tokens behind a 2-token prefix
+        real_cells.load("tiny-llama", LLAMA_CFG, seq=63, n_queries=1)     # 63 tokens behind a 2-token prefix
     with pytest.raises(SystemExit, match="random weights only"):
         real_cells.check(transformer.CONFIGS["gpt2"])
     with pytest.raises(SystemExit, match="trained context of 4096"):
         real_cells.check(transformer.CONFIGS["llama2-7b"], seqs=[4097])
-    with pytest.raises(SystemExit, match="every block"):
-        real_cells.check(transformer.CONFIGS["opt-6.7b"], n_layers=[2])
+    with pytest.raises(SystemExit, match="has 32 blocks"):
+        real_cells.check(transformer.CONFIGS["opt-6.7b"], layers=[33])
     with pytest.raises(SystemExit, match="--prob-max"):
         real_cells.check(transformer.CONFIGS["qwen3-4b"], prob_max=255)
-    assert real_cells.check(transformer.CONFIGS["qwen3-4b"], seqs=[2048], n_layers=[2]) == "llama"
-    assert real_cells.check(transformer.CONFIGS["opt-6.7b"], seqs=[2048], n_layers=[32]) == "opt"
+    assert real_cells.check(transformer.CONFIGS["qwen3-4b"], seqs=[2048], layers=[2]) == "llama"
+    assert real_cells.check(transformer.CONFIGS["opt-6.7b"], seqs=[2048], layers=[2, 32]) == "opt"
 
 
 # ------------------------------------------------------------------------------------------ setup_timing.py
 @pytest.mark.parametrize("model,real,layers,recipe", [("opt-tiny", "tiny-opt", "0", "certified"),
+                                                      ("opt-tiny", "tiny-opt", "1", "certified"),
                                                       ("llama-tiny", "tiny-llama", "1", "main")])
 def test_setup_timing_real(fake, monkeypatch, capsys, model, real, layers, recipe):
     status, rows = _main(setup_timing, monkeypatch, capsys, "--model", model, "--real", real, "--layers", layers,
@@ -152,8 +153,8 @@ def test_setup_timing_random_records_name_no_checkpoint(fake, monkeypatch, capsy
 
 
 @pytest.mark.parametrize("argv,match", [(["--model", "gpt2", "--real", "gpt2"], "random weights only"),
-                                        (["--model", "opt-tiny", "--real", "tiny-opt", "--layers", "1"],
-                                         "every block")])
+                                        (["--model", "opt-tiny", "--real", "tiny-opt", "--layers", "3"],
+                                         "has 2 blocks")])
 def test_setup_timing_refuses(fake, monkeypatch, capsys, argv, match):
     with pytest.raises(SystemExit, match=match):
         _main(setup_timing, monkeypatch, capsys, *argv, "--amortise", "10")
@@ -162,6 +163,7 @@ def test_setup_timing_refuses(fake, monkeypatch, capsys, argv, match):
 
 # ------------------------------------------------------------------------------------------ serve_ab.py
 @pytest.mark.parametrize("model,real,layers,recipe", [("opt-tiny", "tiny-opt", "0", "certified"),
+                                                      ("opt-tiny", "tiny-opt", "1", "certified"),
                                                       ("llama-tiny", "tiny-llama", "1", "main")])
 def test_serve_ab_real(fake, monkeypatch, capsys, model, real, layers, recipe):
     seen = []
@@ -191,7 +193,7 @@ def test_serve_ab_real(fake, monkeypatch, capsys, model, real, layers, recipe):
     (["--model", "gpt2", "--real", "gpt2"], "random weights only"),
     (["--model", "opt-tiny", "llama-tiny", "--real", "tiny-opt"], None),
     (["--model", "llama-tiny", "--real", "tiny-llama", "--cells", "65x1"], "trained context"),
-    (["--model", "opt-tiny", "--real", "tiny-opt", "--layers", "1", "--cells", "16x1"], "every block"),
+    (["--model", "opt-tiny", "--real", "tiny-opt", "--layers", "3", "--cells", "16x1"], "has 2 blocks"),
     (["--model", "llama-tiny", "--real", "tiny-llama", "--prob-max", "255", "--cells", "16x1"], "--prob-max")])
 def test_serve_ab_refuses(fake, monkeypatch, capsys, argv, match):
     with pytest.raises(SystemExit, match=match):
@@ -214,6 +216,7 @@ def _bench(tmp_path, monkeypatch, *argv) -> dict:
 
 
 @pytest.mark.parametrize("model,real,builds,recipe", [("opt-tiny", "tiny-opt", "full", "certified"),
+                                                      ("opt-tiny", "tiny-opt", "1,full", "certified"),
                                                       ("llama-tiny", "tiny-llama", "1,full", "main")])
 def test_bench_real_cells(fake, tmp_path, monkeypatch, model, real, builds, recipe):
     cells = _bench(tmp_path, monkeypatch, "--model", model, "--real", real, "--seq", "16", "--builds", builds,
@@ -244,7 +247,7 @@ def test_bench_random_cells_keep_their_names(fake, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("argv,match", [
     (["--model", "gpt2", "--real", "gpt2", "--builds", "full"], "random weights only"),
-    (["--model", "opt-tiny", "--real", "tiny-opt", "--builds", "1,full"], "every block"),
+    (["--model", "opt-tiny", "--real", "tiny-opt", "--builds", "3,full"], "has 2 blocks"),
     (["--model", "llama-tiny", "--real", "tiny-llama", "--seq", "60", "--gen", "8"], "trained context"),
     (["--model", "llama-tiny", "--real", "tiny-llama", "--prob-max", "255"], "--prob-max")])
 def test_bench_refuses(fake, tmp_path, monkeypatch, argv, match):
@@ -256,8 +259,8 @@ def test_bench_refuses(fake, tmp_path, monkeypatch, argv, match):
 
 
 # ------------------------------------------------------------------------- perf.py, v1_bytes.py, gen_bench.py
-# ``--layers n`` with ``--real``: a Llama-family checkpoint's first ``n`` blocks, the full model's prompts and
-# calibration; refused for OPT.
+# ``--layers n`` with ``--real``: the checkpoint's first ``n`` blocks (OPT and Llama-family alike), with the full
+# model's prompts and calibration.
 @pytest.fixture
 def load_calls(fake, monkeypatch):
     """The arguments of every ``checkpoints.load_real`` call (the prompts and calibration a script asks for)."""
@@ -277,12 +280,11 @@ def _one_block(prune: bool = True):
                                   n_layers=1)[0]
 
 
-def test_partial_takes_llama_blocks_and_refuses_opt():
+def test_partial_takes_the_first_blocks_of_either_family():
     assert real_cells.partial(transformer.CONFIGS["qwen3-4b"], 0) is None
     assert real_cells.partial(transformer.CONFIGS["llama2-7b"], 32) is None
     assert real_cells.partial(transformer.CONFIGS["qwen3-4b"], 2) == 2
-    with pytest.raises(SystemExit, match="OPT builder"):
-        real_cells.partial(transformer.CONFIGS["opt-6.7b"], 2)
+    assert real_cells.partial(transformer.CONFIGS["opt-6.7b"], 2) == 2
     with pytest.raises(SystemExit, match="has 32 blocks"):
         real_cells.partial(transformer.CONFIGS["llama2-7b"], 40)
 
@@ -336,12 +338,15 @@ def test_gen_bench_real_first_blocks(load_calls, monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("script,argv", [
-    ("experiments.costs.perf", ["--seq", "16", "--modes", "Kpre"]),
-    ("experiments.v1.v1_bytes", ["--seq", "16", "--modes", "Kpre"]),
-    ("experiments.generation.gen_bench", ["--prompt", "8", "--gen", "3", "--modes", "Kpre"])])
-def test_first_blocks_of_an_opt_checkpoint_are_refused(load_calls, monkeypatch, capsys, script, argv):
+    ("experiments.costs.perf", ["--seq", "16", "--modes", "Kpre", "C", "--policy", "R8c", "--queries", "1"]),
+    ("experiments.v1.v1_bytes", ["--seq", "16", "--modes", "C", "--policy", "R8c", "--lmax", "20"]),
+    ("experiments.generation.gen_bench", ["--prompt", "8", "--gen", "3", "--modes", "C", "--policy", "R8c",
+                                          "--queries", "1"])])
+def test_first_blocks_of_an_opt_checkpoint(load_calls, monkeypatch, capsys, script, argv):
+    """An OPT checkpoint's first block: one load, the records of a one-block build, every query accepted."""
     import importlib
-    with pytest.raises(SystemExit, match="OPT builder"):
-        _main(importlib.import_module(script), monkeypatch, capsys, "--model", "opt-tiny", "--real", "tiny-opt",
-              "--layers", "1", *argv)
-    assert load_calls == []
+    status, rows = _main(importlib.import_module(script), monkeypatch, capsys, "--model", "opt-tiny", "--real",
+                         "tiny-opt", "--layers", "1", *argv)
+    assert status == 0 and rows and len(load_calls) == 1
+    for r in rows:
+        assert r["real"] == "tiny-opt" and r["layers"] == 1

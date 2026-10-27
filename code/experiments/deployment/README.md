@@ -41,10 +41,10 @@ after one warm-up:
   `experiments.common.models.TINY` (`tiny-llama`, ...), built with `--seed` on `--layers` blocks (0: the full model)
   and `--calib-tokens` calibration tokens; prompts of random ids (`--prompt-seed`). No downloads. With `--real
   <checkpoint>` (one `--model`, its shapes) the integer model is the checkpoint's integer graph, built as `perf.py
-  --real` builds it (OPT with `hf_opt.CERTIFIED_RECIPE`, whole; a Llama-family checkpoint, Qwen3 included, with
-  `hf_llama.MAIN_RECIPE` and its fixed public prefix, on its first `--layers` blocks), and the prompts are the
+  --real` builds it (OPT with `hf_opt.CERTIFIED_RECIPE`; a Llama-family checkpoint, Qwen3 included, with
+  `hf_llama.MAIN_RECIPE` and its fixed public prefix; on its first `--layers` blocks), and the prompts are the
   WikiText-2 test split's windows from its start; U2 keeps random weights of the same shapes. GPT-2, a cell longer
-  than the checkpoint's trained context, an OPT model of fewer blocks and a `--prob-max` other than the paper's are
+  than the checkpoint's trained context, a checkpoint of other shapes and a `--prob-max` other than the paper's are
   refused. The checkpoint is loaded in fp32 (27 GB for Llama-2-7B and OPT-6.7B, 52 GB for Llama-2-13B, 16 GB for
   Qwen3-4B) and freed once the graph is built, before anything is timed.
 * **Main options.** The protocol flags default to the paper's configuration (`experiments.common.cli.PAPER`):

@@ -25,9 +25,9 @@ graph digest and the roots), so its bytes and challenges are the same in every r
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): the checkpoint's integer graph instead of random
 weights, built as ``perf.py --real`` builds it (:mod:`experiments.common.real_cells`: an OPT checkpoint with
 ``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint, Qwen3 included, with ``hf_llama.MAIN_RECIPE`` and its fixed
-public prefix), the last block pruned; ``--layers n``: a Llama-family checkpoint's first ``n`` blocks (an OPT
-checkpoint is built whole).  Its commitment is planned from the graph's own weight ops for OPT (its LM head has a
-folded bias column) and from the model's shapes otherwise.  ``build_s`` then includes loading the checkpoint in fp32
+public prefix), the last block pruned; ``--layers n``: the checkpoint's first ``n`` blocks, the full graph's first
+``n``.  The commitment of a full OPT graph is planned from the graph's own weight ops (its LM head has a folded bias
+column), any other from the whole model's shapes as its graph has them.  ``build_s`` then includes loading the checkpoint in fp32
 and its calibration.  GPT-2 has no integer builder of a real checkpoint and is refused.
 
 Record (one JSON line per ``--amortise`` value, ``"kind": "setup"``): ``real`` (the checkpoint; None for random
@@ -68,7 +68,7 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS, help="calibration tokens of the build")
     cli.add_prob_max_argument(ap, note="; the graph digest the setup proof binds")
-    real_cells.add_argument(ap)
+    real_cells.add_arguments(ap)
     ap.add_argument("--label", default="", help="a label copied into every record")
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
@@ -82,13 +82,13 @@ def main() -> int:
     device = torch.device(args.device)
     cfg = decoder_config(args.model)
     n_layers = args.layers or cfg.n_layers
-    fam = real_cells.check(cfg, n_layers=[n_layers], prob_max=args.prob_max) if args.real else None
+    fam = real_cells.check(cfg, layers=[n_layers], prob_max=args.prob_max) if args.real else None
     sha = records.git_sha(CODE)
     records.reset_peaks(device)
     t0 = time.perf_counter()
     ck = None
     if args.real:          # the checkpoint's integer graph (no prompts: a few test tokens are loaded, unused)
-        ck = real_cells.load(args.real, cfg, fam, seq=16, tokens=16)
+        ck = real_cells.load(args.real, cfg, seq=16, n_queries=1)
         graph, _ = ck.graph(True, n_layers)
         ck.free()
     else:
@@ -96,7 +96,10 @@ def main() -> int:
                               prune_last=True, prob_max=args.prob_max)
     build_s = time.perf_counter() - t0
     shapes = decoder_shapes(cfg, prune_last=True)
-    plan_ops = real_cells.model_ops(fam, cfg, True) if args.real else shapes
+    # a real OPT's full graph is planned from its own ops (its LM head has a bias column); any other build for the
+    # whole model's shapes as its graph has them
+    plan_ops = (None if fam == "opt" and n_layers == cfg.n_layers
+                else real_cells.model_ops(cfg, True) if args.real else shapes)
     t0 = time.perf_counter()
     coms = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=plan_ops, cache=None)
     records.sync(device)

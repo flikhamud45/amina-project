@@ -279,22 +279,22 @@ def recipe_name(calib, recipe: str) -> str:
 def real_graph(model, calib, prune_last: bool, recipe: str = "certified", smooth: float | None = None,
                n_layers: int | None = None):
     """The integer graph of ``model`` calibrated on ``calib`` (from :func:`load_real`) on the CPU.  A Llama-family
-    checkpoint: ``build_llama_from_hf`` with ``MAIN_RECIPE`` and the calibration's prefix (``n_layers``: its first
-    blocks only; None: all of them).  OPT: ``build_opt_from_hf`` with ``CERTIFIED_RECIPE`` (``recipe="certified"``),
-    or the percentile recipe (``legacy``: norm gain 4, with ``smooth`` SmoothQuant through the norm gains and
-    :data:`SMOOTH`'s clipping); its builder takes every block, so ``n_layers`` must be None or the checkpoint's."""
+    checkpoint: ``build_llama_from_hf`` with ``MAIN_RECIPE`` and the calibration's prefix.  OPT: ``build_opt_from_hf``
+    with ``CERTIFIED_RECIPE`` (``recipe="certified"``), or the percentile recipe (``legacy``: norm gain 4, with
+    ``smooth`` SmoothQuant through the norm gains and :data:`SMOOTH`'s clipping).  ``n_layers`` (None: every block):
+    the checkpoint's first ``n_layers`` blocks, then the final norm and the LM head; both builders set the residual
+    stream's scale on the whole checkpoint, so these blocks are the full graph's first ``n_layers``, op for op."""
+    if n_layers is not None and not 1 <= n_layers <= model.config.num_hidden_layers:
+        raise ValueError(f"n_layers {n_layers}: the checkpoint has {model.config.num_hidden_layers} blocks")
     if hasattr(calib, "prefix"):
         from pvi.models import hf_llama
         return hf_llama.build_llama_from_hf(model, calib.ids, prune_last=prune_last, prefix_tokens=calib.prefix,
                                             n_layers=n_layers, **getattr(calib, "recipe", hf_llama.MAIN_RECIPE))
-    if n_layers is not None and n_layers != model.config.num_hidden_layers:
-        raise ValueError(f"the OPT builder takes every block of the checkpoint ({model.config.num_hidden_layers}), "
-                         f"not {n_layers}")
     from pvi.models.hf_opt import CERTIFIED_RECIPE, build_opt_from_hf
     if recipe == "certified":
-        return build_opt_from_hf(model, calib, prune_last=prune_last, **CERTIFIED_RECIPE)
+        return build_opt_from_hf(model, calib, prune_last=prune_last, n_layers=n_layers, **CERTIFIED_RECIPE)
     kw = dict(norm_gain=4) if smooth is None else dict(norm_gain=4, smooth=smooth, **SMOOTH)
-    return build_opt_from_hf(model, calib, prune_last=prune_last, **kw)
+    return build_opt_from_hf(model, calib, prune_last=prune_last, n_layers=n_layers, **kw)
 
 
 # ------------------------------------------------------------------ checks of a built graph

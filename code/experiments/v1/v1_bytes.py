@@ -47,9 +47,9 @@ sizing and the tamper queries run under ``optimised`` when it is listed (else th
 ``timed.v1`` is ``timed.v1_path``'s).  Both verifiers give the same verdicts on the same bytes.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): every block of the checkpoint's integer graph
-(:func:`experiments.common.checkpoints.real_graph`), or with ``--layers n`` a Llama-family checkpoint's (Llama, Qwen3)
-first ``n`` blocks with the same calibration and prefix (refused for OPT, whose builder takes every block; planned and
-sized for the whole model, as a random-weight build), queried on WikiText-2 test windows of ``--seq`` tokens.  OPT:
+(:func:`experiments.common.checkpoints.real_graph`), or with ``--layers n`` its first ``n`` blocks with the same
+calibration and prefix, the full graph's first ``n`` (:mod:`experiments.common.real_cells`; planned and sized for the
+whole model, as a random-weight build), queried on WikiText-2 test windows of ``--seq`` tokens.  OPT:
 the certified recipe (``hf_opt.CERTIFIED_RECIPE``, calibrated on four 2,048-token train windows) by default, or with
 ``--recipe legacy`` the percentile recipe (norm gain 4, ``--smooth``: SmoothQuant through the norm gains, calibrated on one
 window of ``--calib-seq`` tokens from the end of the test split); a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE``
@@ -87,7 +87,7 @@ import time
 
 import torch
 
-from experiments.common import checkpoints, cli, real_cells, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -284,15 +284,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--timed-seed", type=int, default=100,
                     help="timed random prompt i is drawn with the seed --timed-seed + i")
     ap.add_argument("--label", default="", help="a label copied into every record")
-    ap.add_argument("--real", default="", help="a Hugging Face checkpoint (e.g. facebook/opt-1.3b): its integer graph, "
-                    "queried on WikiText-2 windows; --model names its shapes")
-    ap.add_argument("--recipe", choices=["certified", "legacy"], default="certified",
-                    help="with an OPT --real: certified = hf_opt.CERTIFIED_RECIPE calibrated on four 2,048-token "
-                         "train windows; legacy = the percentile recipe (norm gain 4, --smooth, --calib-seq)")
-    ap.add_argument("--smooth", type=float, default=None, help="with --recipe legacy: SmoothQuant strength through "
-                    "the norm gains (0.55 with experiments.common.checkpoints.SMOOTH's clipping)")
-    ap.add_argument("--calib-seq", type=int, default=0,
-                    help="with --recipe legacy: the calibration window's tokens (0: --seq)")
+    real_cells.add_arguments(ap, help="a Hugging Face checkpoint (e.g. facebook/opt-1.3b): its integer graph, queried on "
+                             "WikiText-2 windows; --model names its shapes", recipes=True)
     cli.add_protocol_arguments(ap)
     cli.add_runtime_arguments(ap, threads=8)
     ap.add_argument("--v1-verifier", nargs="+", choices=options.V1_VERIFIERS, default=[options.current().v1_verifier],
@@ -303,7 +296,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    from pvi.commit.cost import decoder_shapes
     from pvi.models.decoder import build_decoder, prob_max_of
     from pvi.v0.graph_commitment import commit_graph
     from pvi.v0.params import params_for
@@ -320,26 +312,23 @@ def main() -> int:
     verifiers = list(dict.fromkeys(args.v1_verifier))
     if len(verifiers) > 1 and not (args.full and args.reps > 1):
         raise SystemExit("several --v1-verifier values time V1 queries: they go with --full --reps n (n > 1)")
-    if args.real and args.recipe == "certified" and (args.smooth is not None or args.calib_seq):
-        raise SystemExit("--smooth and --calib-seq are the legacy recipe's: pass --recipe legacy")
-    if args.real and args.prob_max != cli.PAPER.prob_max:
-        raise SystemExit("--prob-max is for random-weight decoders: a checkpoint's recipe fixes its scale")
     main_verifier = "optimised" if "optimised" in verifiers else verifiers[0]
     args.v1_verifier = main_verifier                 # the untimed V1 work runs under it
     cli.apply_runtime(args)
     sha = records.git_sha(CODE)
     cfg = decoder_config(args.model)
     n_layers = args.layers or cfg.n_layers
+    real_cells.check_args(args, cfg, seqs=[args.seq], layers=[args.layers], prob_max=args.prob_max)
     records.reset_peaks(args.device)
     t0 = time.perf_counter()
     recipe_used, legacy = None, args.real and args.recipe == "legacy"
     if args.real:                     # the checkpoint's weights; queries are WikiText-2 windows
-        part = real_cells.partial(cfg, args.layers)     # None: every block; else a Llama checkpoint's first ones
-        model, wins, calib = checkpoints.load_real(args.real, args.seq, max(2, args.reps + 1), args.calib_seq,
-                                                   args.recipe)
-        graph, _ = checkpoints.real_graph(model, calib, args.prune_last, args.recipe, args.smooth, n_layers=part)
-        recipe_used = checkpoints.recipe_name(calib, args.recipe)
-        del model
+        part = real_cells.partial(cfg, args.layers)     # None: every block; else the checkpoint's first ones
+        ck = real_cells.load(args.real, cfg, seq=args.seq, n_queries=max(2, args.reps + 1), recipe=args.recipe,
+                             calib_seq=args.calib_seq)
+        graph, _ = ck.graph(args.prune_last, part, args.smooth)
+        recipe_used, wins = ck.recipe, ck.queries
+        ck.free()
         n_layers = len([op for op in graph.ops if getattr(op, "note", "") == "attention"])
         x = wins[0]
         real_queries = wins[1:]
@@ -366,9 +355,9 @@ def main() -> int:
         return 0 if shapes_ok else 1
     ok = shapes_ok
     # a real checkpoint's full graph (e.g. OPT's LM head has a bias) is planned from its own ops; a build of a few
-    # blocks (random weights, or a Llama-family checkpoint's first blocks) for the whole model's shapes
+    # blocks (random weights, or a checkpoint's first blocks) for the whole model's shapes as its graph has them
     model_ops = (None if args.real and n_layers == cfg.n_layers
-                 else decoder_shapes(cfg, prune_last=args.prune_last))
+                 else real_cells.model_ops(cfg, args.prune_last, bool(args.real)))
     n_checks = len(model_ops) if model_ops is not None else len(graph.mat_ops)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
     for mode in args.modes:

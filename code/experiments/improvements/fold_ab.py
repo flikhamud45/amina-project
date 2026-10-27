@@ -18,14 +18,14 @@ kernels, else the float64 products; int8 GEMMs on a GPU whose int8 GEMMs pass th
 challenges (``--challenge-seed``).  Every ``u`` must equal the float64 path's.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of random weights, the integer graph of
-the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_weights`; OPT: the certified recipe, or
+the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_cells`; OPT: the certified recipe, or
 ``--recipe legacy`` with ``--smooth`` and ``--calib-seq``, which it then needs: there is no prompt length to take it
 from; a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with its fixed public prefix).  The precomputation reads the
 weights and the challenges only, so no query is loaded.  Refused: shapes without an integer builder of a real
 checkpoint (GPT-2) and ``--prob-max`` (the recipe fixes the scale).
 
 Record (one JSON line per device and path ``float64`` / ``default``): ``model``, ``real`` (the checkpoint; None for
-random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_weights.fields`), ``layers``,
+random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.fields`), ``layers``,
 ``precompute_s`` (the median), ``all_s``, the number of weight matrices and their entries, ``equal_to_float64``, the
 repetitions ``reps`` of the security parameters, the threads, ``prob_max`` (the graph's attention probabilities'
 scale), the implementation status (``native``) and ``env``.  The full Llama-2-7B holds its 6.7 GB of int8 weights in
@@ -42,7 +42,7 @@ import time
 
 import torch
 
-from experiments.common import cli, real_weights, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -53,9 +53,10 @@ def setup(args, cfg):
     ``bench.py``'s graph).  The precomputation needs no query: the checkpoint is loaded with none (and with the legacy
     recipe's ``--calib-seq`` as its window length)."""
     if args.real:
-        real = real_weights.load(args, cfg, seq=args.calib_seq or 1, n_queries=0, layers=[args.layers])
-        graph = real_weights.graph(real, args, args.layers, args.prune_last)
-        del real.model
+        real = real_cells.load(args.real, cfg, seq=args.calib_seq or 1, n_queries=0, recipe=args.recipe,
+                              calib_seq=args.calib_seq)
+        graph = real.graph(args.prune_last, args.layers, args.smooth)[0]
+        real.free()
         return graph, real
     from pvi.models.decoder import build_decoder
     return build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=cli.CALIB_TOKENS, seed=args.seed,
@@ -76,11 +77,11 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--challenge-seed", type=int, default=5, help="the secret challenges' seed")
     cli.add_prob_max_argument(ap)
-    real_weights.add_arguments(ap)
+    real_cells.add_arguments(ap, recipes=True)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
     cfg = decoder_config(args.model)
-    real_weights.check(args, cfg, layers=[args.layers], prob_max=args.prob_max)
+    real_cells.check_args(args, cfg, layers=[args.layers], prob_max=args.prob_max)
     cli.apply_runtime(args)
     from pvi.kernels import native
     from pvi.models.decoder import prob_max_of
@@ -113,7 +114,7 @@ def main() -> int:
                 ref = pre
             same = all(torch.equal(pre[k], ref[k]) for k in ref)
             ok_all &= same
-            records.emit({"git": sha, "model": cfg.name, **real_weights.fields(args, real),
+            records.emit({"git": sha, "model": cfg.name, **real_cells.recipe_fields(real, args),
                           "layers": args.layers or cfg.n_layers, "device": dev,
                           "path": path, "fs": args.fs, "reps": params.reps, "matrices": len(pre), "entries": entries,
                           "precompute_s": statistics.median(ts[1:]) if args.reps else None,

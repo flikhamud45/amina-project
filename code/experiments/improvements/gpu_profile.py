@@ -16,11 +16,11 @@ sum of the device-side events' own time, as the profiler's table totals it) and,
 (default ``aten::copy_``, the host-to-device and device-to-host copies; ``aten::_int_mm``, the int8 GEMMs;
 ``aten::index_select``; and ``_attn_kernel``, the fused attention kernel), its CUDA time and its share of the total,
 with ``model``, ``real`` (the checkpoint; None for random weights), ``recipe``, ``smooth``, ``calib_seq``
-(:func:`experiments.common.real_weights.fields`), ``layers``, ``seq``, the timings, the acceptance, ``prob_max`` (the
+(:func:`experiments.common.real_cells.fields`), ``layers``, ``seq``, the timings, the acceptance, ``prob_max`` (the
 graph's attention probabilities' scale), the GPU and ``env``.  Needs a CUDA GPU; minutes.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of random weights and prompts, the integer
-graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_weights`; OPT: the certified recipe,
+graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_cells`; OPT: the certified recipe,
 or ``--recipe legacy`` with ``--smooth`` and ``--calib-seq``; a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with
 its fixed public prefix), its warm-up and profiled queries the first two WikiText-2 test windows of ``--seq`` tokens;
 mode C's plan is laid out on the whole model's weight ops as the real graph has them.  Refused: shapes without an
@@ -36,7 +36,7 @@ import sys
 
 import torch
 
-from experiments.common import cli, real_weights, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 
@@ -56,9 +56,10 @@ def setup(args, cfg):
     """``(graph, xs, real)``: the graph of ``--layers`` blocks, the warm-up and profiled queries and the checkpoint's
     load (None for random weights: ``bench.py``'s graph and random prompts)."""
     if args.real:
-        real = real_weights.load(args, cfg, seq=args.seq, n_queries=2, layers=[args.layers])
-        graph = real_weights.graph(real, args, args.layers, args.prune_last)
-        del real.model
+        real = real_cells.load(args.real, cfg, seq=args.seq, n_queries=2, recipe=args.recipe,
+                              calib_seq=args.calib_seq)
+        graph = real.graph(args.prune_last, args.layers, args.smooth)[0]
+        real.free()
         return graph, real.queries, real
     from pvi.models.decoder import build_decoder
     graph = build_decoder(cfg, n_layers=args.layers or cfg.n_layers, calib_tokens=min(args.seq, cli.CALIB_TOKENS),
@@ -77,12 +78,12 @@ def main() -> int:
     ap.add_argument("--share", nargs="*", default=list(SHARES), help="operators whose share of the CUDA time to print")
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompts' seed")
-    real_weights.add_arguments(ap)
+    real_cells.add_arguments(ap, recipes=True)
     cli.add_protocol_arguments(ap)
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
     cfg = decoder_config(args.model)
-    real_weights.check(args, cfg, layers=[args.layers], seqs=[args.seq], prob_max=args.prob_max)
+    real_cells.check_args(args, cfg, layers=[args.layers], seqs=[args.seq], prob_max=args.prob_max)
     device = torch.device(args.device)
     if device.type != "cuda":
         raise SystemExit("this profiles the GPU verifier: --device cuda")
@@ -100,7 +101,7 @@ def main() -> int:
 
     sha = records.git_sha(CODE)              # before the build, which can outlast a checkout update
     graph, xs, real = setup(args, cfg)
-    ops = real_weights.model_ops(cfg, args.prune_last, bool(args.real))
+    ops = real_cells.model_ops(cfg, args.prune_last, bool(args.real))
     if args.mode == "C":
         coms = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=ops, cache=args.setup_cache)
         params = params_for(args.lam, len(ops), rate=args.rate, plan=coms.plan, fiat_shamir=args.fs)
@@ -130,7 +131,7 @@ def main() -> int:
     for name in args.share:
         t = sum(_device_time(e, own=False) for e in ka if e.key == name)
         shares[name] = {"cuda_s": t / 1e6, "share": t / total if total else None}
-    records.emit({"kind": "gpu_profile", "git": sha, "model": args.model, **real_weights.fields(args, real),
+    records.emit({"kind": "gpu_profile", "git": sha, "model": args.model, **real_cells.recipe_fields(real, args),
                   "layers": args.layers or cfg.n_layers, "seq": args.seq, "mode": args.mode, "fs": args.fs,
                   "wire": args.wire, "prob_max": prob_max_of(graph),
                   "accepted": bool(warm["accepted"] and out["accepted"]),

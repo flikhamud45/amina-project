@@ -113,7 +113,7 @@ import warnings
 import torch
 import torch.nn.functional as F
 
-from experiments.common import checkpoints, cli, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -372,43 +372,6 @@ def hf_float_weights(model) -> dict:
     return {"blocks": blocks, "embed": embed.detach().float(), "head": head, "head_bias": head_bias}
 
 
-REAL_FAMILIES = ("opt", "llama", "qwen3")
-"""The ``model_type`` of the checkpoints with an integer builder (:func:`experiments.common.checkpoints.real_graph`)."""
-
-
-def hf_config(name: str):
-    """The Hugging Face configuration of the checkpoint ``name`` (its ``config.json`` alone)."""
-    from transformers import AutoConfig
-    return AutoConfig.from_pretrained(name)
-
-
-def checkpoint_shapes(hf_cfg, name: str):
-    """The ``DecoderConfig`` (named ``name``) of an OPT, Llama or Qwen3 configuration's shapes."""
-    from pvi.models import hf_llama
-    from pvi.models.decoder import DecoderConfig
-    if hf_cfg.model_type != "opt":
-        return hf_llama.config_of(hf_cfg, name)
-    d, h = hf_cfg.hidden_size, hf_cfg.num_attention_heads
-    return DecoderConfig(name, d, hf_cfg.num_hidden_layers, h, h, d // h, hf_cfg.ffn_dim, hf_cfg.vocab_size,
-                         mlp=hf_cfg.activation_function, bias=bool(getattr(hf_cfg, "enable_bias", True)),
-                         tied=bool(hf_cfg.tie_word_embeddings), max_pos=hf_cfg.max_position_embeddings,
-                         embed_dim=0 if hf_cfg.word_embed_proj_dim == d else hf_cfg.word_embed_proj_dim)
-
-
-def real_config(name: str, cfg):
-    """``cfg`` with the checkpoint ``name``'s trained context as ``max_pos``; a checkpoint without an integer builder
-    (:data:`REAL_FAMILIES`; e.g. GPT-2) or of other shapes than ``cfg``'s is refused."""
-    from pvi.models.hf_llama import same_shape
-    hf_cfg = hf_config(name)
-    if hf_cfg.model_type not in REAL_FAMILIES:
-        raise SystemExit(f"--real {name}: a {hf_cfg.model_type} checkpoint has no integer graph here (OPT, Llama and "
-                         "Qwen3 have one)")
-    diff = same_shape(checkpoint_shapes(hf_cfg, cfg.name), cfg)
-    if diff:
-        raise SystemExit(f"--real {name}: not {cfg.name}'s shapes ({'; '.join(diff)})")
-    return dataclasses.replace(cfg, max_pos=hf_cfg.max_position_embeddings)
-
-
 VARIANTS = ("int", "int_fp32gemm", "int_mm", "float", "bf16", "dynint8")
 INTEGER = ("int", "int_fp32gemm", "int_mm")
 """The variants that run the integer graph of ``build_decoder``."""
@@ -435,10 +398,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--prompt-seed", type=int, default=1, help="the random prompt's seed")
     ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
                     help="calibration tokens of the integer decoder (at most --seq)")
-    ap.add_argument("--real", default="", metavar="CHECKPOINT",
-                    help="a Hugging Face checkpoint of --model's shapes (OPT, Llama or Qwen3, e.g. "
-                         "meta-llama/Llama-2-7b-hf): its integer graph and its float weights, queried on a WikiText-2 "
-                         "window")
+    real_cells.add_arguments(ap, help="a Hugging Face checkpoint of --model's shapes (OPT, Llama or Qwen3, e.g. "
+                             "meta-llama/Llama-2-7b-hf): its integer graph and its float weights, queried on a "
+                             "WikiText-2 window")
     cli.add_prob_max_argument(ap, note="; the integer variants")
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     ap.set_defaults(malloc_tune=False)               # glibc's defaults unless --malloc-tune (module docstring)
@@ -446,42 +408,35 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def check_real(args, cfg):
-    """The refusals of ``--real`` (before anything is loaded) and ``cfg`` with the checkpoint's trained context
-    (:func:`real_config`)."""
+    """The refusals of ``--real`` (before anything is loaded: :func:`experiments.common.real_cells.check` and
+    :func:`~experiments.common.real_cells.checkpoint_config`) and ``cfg`` with the checkpoint's trained context."""
     if len(args.model) != 1:
         raise SystemExit("--real: one --model, the checkpoint's shapes")
     if args.max_pos:
         raise SystemExit("--real: --max-pos would run the checkpoint beyond its trained context")
-    if args.prob_max != cli.PAPER.prob_max:
-        raise SystemExit("--prob-max is for random weights: a checkpoint's recipe fixes its scale")
     if args.layers not in (None, [cfg.n_layers]):
         raise SystemExit(f"--real measures the checkpoint's full graph, the one its verifier cells commit (--layers "
                          f"{cfg.n_layers}, the default)")
-    cfg = real_config(args.real, cfg)
-    if max(args.seq) > cfg.max_pos:
-        raise SystemExit(f"--seq {max(args.seq)}: beyond {args.real}'s trained context of {cfg.max_pos} tokens")
+    real_cells.check(cfg, prob_max=args.prob_max)
+    cfg = real_cells.checkpoint_config(args.real, cfg)
+    real_cells.check(cfg, seqs=args.seq)
     return cfg
 
 
 def load_checkpoint(args, cfg, integer: bool, floating: bool) -> dict:
     """The checkpoint's prompt, integer graph and float weights: ``prompt`` (``[1, max(--seq)]``, the first window of
-    :func:`experiments.common.checkpoints.load_real`, whose first ``T`` tokens are its window of ``T`` tokens),
-    ``graph`` (:func:`experiments.common.checkpoints.real_graph`; with ``integer``), ``recipe`` and ``prob_max``, and
-    ``weights`` (:func:`hf_float_weights`; with ``floating``).  The fp32 model is freed before returning."""
+    :func:`experiments.common.real_cells.load`, whose first ``T`` tokens are its window of ``T`` tokens), ``graph``
+    (the real cells' graph of every block; with ``integer``), ``recipe`` and ``prob_max``, and ``weights``
+    (:func:`hf_float_weights`; with ``floating``).  The fp32 model is freed before returning."""
     from pvi.models.decoder import prob_max_of
-    model, wins, calib = checkpoints.load_real(args.real, max(args.seq), 1)
-    prefix = len(getattr(calib, "prefix", None) or [])
-    if max(args.seq) + prefix > cfg.max_pos:
-        raise SystemExit(f"--seq {max(args.seq)}: with the recipe's {prefix}-token prefix beyond {args.real}'s trained "
-                         f"context of {cfg.max_pos} tokens")
-    out = {"prompt": wins[0], "recipe": checkpoints.recipe_name(calib, "certified"), "graph": None, "prob_max": None,
-           "weights": None}
+    ck = real_cells.load(args.real, cfg, seq=max(args.seq), n_queries=1)
+    out = {"prompt": ck.queries[0], "recipe": ck.recipe, "graph": None, "prob_max": None, "weights": None}
     if integer:
-        out["graph"], _ = checkpoints.real_graph(model, calib, args.prune_last)
+        out["graph"], _ = ck.graph(args.prune_last)
         out["prob_max"] = prob_max_of(out["graph"])
     if floating:
-        out["weights"] = hf_float_weights(model)
-    del model, calib
+        out["weights"] = hf_float_weights(ck.model)
+    ck.free()
     gc.collect()
     return out
 
