@@ -8,7 +8,7 @@ prints before the final run, otherwise. Nothing here runs a model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:memory`, `tab:eval-long`, `tab:eval-long-check`, `tab:eval-long-gpu`, `tab:eval-v1-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
+| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:memory`, `tab:eval-long`, `tab:eval-long-check`, `tab:eval-long-gpu`, `tab:eval-v1-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc`, `tab:eval-compare-full`, `tab:zkllm-lengths` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
 | Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the client's own memory, the quality, attribution, attack and sampler numbers, the spot-checking schemes' acceptance (`\Sok...`), ... (about 490 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
 | `fig:breakeven` (once its inputs are all in the run); `fig:overview`, `fig:protocol` with `--schematics` | `figures.py` | the same | `paper_sp2027/figures/*.pdf` |
 | Every value with its source record; per table the cells filled and missing; the checks | `numbers.py` | the same (`--check`: report only) | `generated/cells.csv`, `generated/coverage.txt` |
@@ -75,6 +75,22 @@ tier; records of the same thread count and option only), on 8 threads (the cpuv 
 no plan of the run), `tab:eval-lambda` the bench tier's Llama-2-7B cells at lambda 40, 80 and 128 (`bench.CELLS`'
 `*_lam40` and `*_lam80`).
 
+The comparison with published systems has one list of rows, `COMPARE_ROWS`, each with a key (`zkcnn-vgg16`,
+`zkllm-llama2-13b`, ...), its published values (`reported_curated.csv`) and our cell. Every row is computed in every
+build: `tab:eval-compare-full` (the extended version) prints them all, `tab:eval-compare` (the body) the rows of
+`numbers.py --compare-rows` (default `COMPARE_DEFAULT`, the paper's eleven rows), with a rule between groups (image
+models, language models, zkLLM). Besides the paper's rows, the list has zkCNN's VGG-11 and LeNet-5 and Bionetta's
+LeNet-5, and zkLLM's public demo on the run's GPU (`zkllm-gpu-llama2-7b`, `zkllm-gpu-llama2-13b`: its prover only,
+from `zkllm_gpu`). A row cut from the body's table keeps its values in `tab:eval-compare-full` and in `cells.csv`;
+the text's comparison numbers (`\CompareProverMin`, `\CompareProverMax`, `\CompareProofMax`,
+`\CompareVerifierSlowerRows`, `\CompareMaverick`) cover the rows that the body's table prints.
+`zkllm_gpu` gives zkLLM's prover on the run's GPU against ours (mode C, interactive: `c_cpu_int`, else `c_gpu_int`)
+for Llama-2-7B and Llama-2-13B at each prompt length of `ZKLLM_SEQS` (64, 512, 1,024 and 2,048 tokens; the
+`zkllm` tier's `--zkllm-seqs`): at 2,048 tokens from the run's `zkllm` tier when both models have an `ok` record on
+the run's GPU, else from the stored runs; at the other lengths from the run's tier only. A length whose record is not
+`ok` (zkLLM's demo stopped with an error there; the tier records it with `required` false) is *failed*:
+`tab:zkllm-lengths` prints `fails` and no factor.
+
 ### `macros.py`
 The text numbers, by family (the platform and the plan, the CPU client and its own memory, the CPU verifier on other
 thread counts, without the AVX-512 attention and on Llama-2-13B, mode C's candidate plans, the security level, the
@@ -103,7 +119,13 @@ layers, times the layers) against our interactive mode-C prover on prompts of th
 `zkllm` tier (`logs/<name>/zkllm/summary.csv` and each run's `env.txt`) when it holds Llama-2-7B and Llama-2-13B on
 the run's GPU, else from the stored runs (`artifacts/results/zkllm_l40s/`), both read by `bench.literature` with the
 published values, and only when their GPU is the run's; `\ZkllmSameGpuRun` states which ("in the same run" or "in
-separate runs") in the sentences of Sec. `sec:eval-setup` and `ext:disc-status`.
+separate runs") in the sentences of Sec. `sec:eval-setup` and `ext:disc-status`. The same names with the length
+spelled out (`\ZkllmSameGpuProverLlamaTSixFour`, `\ZkllmSameGpuFactorLlamaLTOneZeroTwoFour`, ...) give each other
+length of `tables.ZKLLM_SEQS` (`fails` and `--` where zkLLM's demo did not prove it), `\ZkllmSameGpuOurs...` our
+prover, `\ZkllmSameGpuFactorLengthRange` the factors over every proved model and length, and
+`\ZkllmSameGpuShortSeq` with `\ZkllmSameGpuFactorShortRange` the shortest length below 2,048 tokens that zkLLM
+proved for both models and the two factors there (Sec. `sec:eval-compare`; the extended version's `ext:disc-options`
+states that no shorter length was proved for both models, which the build checks).
 `\SmokeTests` is the number of tests that passed in the smoke's pytest run on the run's platform (the summary line
 of its log). The spot-checking schemes' acceptance probabilities and path counts of `tab:sok` and
 `tab:sok-derivation` (`\Sok...`) follow from the formulas and parameters those tables state (`attack/sok.py`; no run). The bounds over the in-range
@@ -123,7 +145,9 @@ else `bench.DEFAULT_POLICY`, `cnn18c`), `--prob-max` (the decoders' attention pr
 cells, default 2047; 255 reads the stored runs' 8-bit cells), `--out` (default `paper_sp2027/generated`),
 `--figures` (default `paper_sp2027/figures`; `''` for none) and `--schematics`, `--expect <dry-run listing>`, `--check`, `--strict`,
 `--allow-missing`, `--rehearsal`, `--no-byte-model` (skips `tab:params`, `tab:setup` and the break-even, which take several minutes on a
-laptop CPU), `--verbose`. `SAME_VALUE` pairs each table cell with the macro that prints the same value of the same
+laptop CPU), `--verbose`, `--compare-rows ROWS` (`tab:eval-compare`'s rows: `default`, `all`, a comma-separated list
+of the keys of `tables.COMPARE_ROWS` or a file of them, one per line with `#` comments; an unknown key is refused
+with the list of keys). `SAME_VALUE` pairs each table cell with the macro that prints the same value of the same
 record, `TWO_JOBS` each quantity that two jobs measure (the serving harness's prover and the benchmark's, the
 benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and perf.py's).
 

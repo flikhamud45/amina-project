@@ -399,7 +399,26 @@ proof, the claims alone, does not change), and the CPU verifier takes \LamFortyV
   \end{tabular}
 \end{table}
 
-\para{LeNet-5.} Table~\ref{tab:eval-compare} omits two LeNet-5 rows for space. On
+\begin{table*}[t]
+  \caption{Every row of our comparison with published systems; Table~\ref{tab:eval-compare} prints a selection, with
+  the same settings and notes ($^a$--$^d$). The rows ``zkLLM, \PlatformGpu{}'' time zkLLM's public demo on our GPU
+  (prover only; Appendix~\ref{ext:disc-options}) against our interactive cells}
+  \label{tab:eval-compare-full}
+  \centering\footnotesize
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabular}{@{}llrrrrrr@{}}
+    \toprule
+    & & \multicolumn{2}{c}{prover} & \multicolumn{2}{c}{verifier} & \multicolumn{2}{c}{proof} \\
+    \cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(l){7-8}
+    System & Model ($T$) & theirs & ours & theirs & ours & theirs & ours \\
+    \midrule
+    \pvitable{tab_eval_compare_full}
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\para{LeNet-5.} Table~\ref{tab:eval-compare} omits two LeNet-5 rows for space (Table~\ref{tab:eval-compare-full}
+has them, with VGG-11 and zkLLM on the \PlatformGpu{}). On
 LeNet-5, zkCNN (verifier on one core) proves in 441\,ms and verifies in 5.8\,ms with a 71.3\,kB
 proof, and Bionetta~\cite{bionetta} proves in 3.8\,s and verifies in 10.0\,ms with an 880\,B proof;
 ours proves in \LenetProve{}\,ms and verifies in \LenetVerify{}\,ms with a \LenetProof{}\,kB proof: \LenetProveVsZkcnn{}$\times$ and \LenetProveVsBionetta{}$\times$

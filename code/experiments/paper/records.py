@@ -308,7 +308,9 @@ def checks(r: Rec) -> list[str]:
     elif r.kind == "digests" and "skipped" not in d and d.get("agree") is not True:
         bad.append(f"{d.get('model')} {d.get('mode')} {d.get('protocol')}: the proofs or commitments on "
                    f"{', '.join(d.get('devices') or {})} differ, or a query was rejected (agree false)")
-    elif r.kind == "zkllm" and d.get("ok") is not True:
+    elif r.kind == "zkllm" and d.get("ok") is not True and d.get("required", True) is not False:
+        # a length run with --allow-failed-lengths (required false) that zkLLM's demo did not prove is a result (the
+        # paper reports the length as failed), not a failed check
         bad.append(f"zkLLM's demo: {d.get('binary_failures')} proof binaries failed, verifier messages "
                    f"{d.get('verdicts')} for {d.get('layers_expected')} proved layers (ok false)")
     # a CPU timing of the paper ran on the native kernels (the improve tier's before-cells run without them on purpose;

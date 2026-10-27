@@ -15,6 +15,23 @@ Every measured number of the paper is a macro (`\CpuRatioN{}`, ...) and every ta
 otherwise; a number that the run lacks prints as a visible `[TODO: ...]`. Removing `generated/` returns the paper to
 the fallback values.
 
+**Choosing the rows of `tab:eval-compare`.** The comparison with published systems is computed for every row of
+`COMPARE_ROWS` in `code/experiments/paper/tables.py` whichever rows the body prints; the extended version's
+`tab:eval-compare-full` prints them all, and `generated/cells.csv` holds every cell with its source. The body's rows
+are chosen without editing code:
+
+```bash
+cd code
+PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final \
+    --compare-rows zkcnn-vgg16,zkgpt-gpt2-64,deepprove-gpt2-512,zktorch-llama2-7b-1,maverick-qwen3-4b-8,zkllm-llama2-13b
+```
+
+`--compare-rows` takes `default` (the eleven rows printed now), `all`, a comma-separated list of row keys or a file
+with one key per line; `numbers.py --help` lists the keys. The text's comparison numbers (`\CompareProverMin`,
+`\CompareProverMax`, `\CompareProofMax`, `\CompareVerifierSlowerRows`, `\CompareMaverick`) follow the chosen rows.
+A cut row whose footnote mark ($^a$--$^d$) no other row carries leaves its note in the caption, which is then
+shortened by hand, as is the sentence on LeNet-5 in the extended version.
+
 ## Build
 
 ```bash

@@ -3,7 +3,7 @@
 # GPU, timed as the stored runs in code/artifacts/results/zkllm_l40s/ were: the run package's zkllm tier calls it.
 #
 #     run_zkllm.sh build --home DIR [options]       # once: checkout, environment, build, timing shims, downloads
-#     run_zkllm.sh prove --home DIR --size 7|13 --out DIR [options]
+#     run_zkllm.sh prove --home DIR --size 7|13 --out DIR [--seqs 64,512,1024,2048] [options]
 #
 # build: the zkLLM home DIR holds zkllm/ (the checkout) and env/ (its Python environment).  A missing checkout is
 # cloned (--repo) at --commit; an existing one must be at that commit with no tracked file changed.  A missing env/ is
@@ -18,21 +18,29 @@
 # Options: --python PY (default python3), --cuda-home DIR, --arch sm_NN, --hub DIR, --models 7,13, --repo URL,
 # --commit SHA (default 993311e), --jobs N (make's parallel jobs, default 8).
 #
-# prove: zkLLM's setup (llama-ppgen.py, llama-commit.py), the layer-0 input (mkinput.py: the first --seq tokens of
-# WikiText-2's test split) and --reps repetitions of the proof scripts of --layers, each script under /usr/bin/time -v
-# and each proof binary timed by the shims; nvidia-smi samples the job's GPU every 0.5 s.  The run's folder is
-# <out>/llama2-<size>b-T<seq>/ (bin_times.log, time-*.txt, nvidia-smi.csv.gz, verdicts.txt, env.txt with the host,
-# GPU, driver, CPU and zkLLM's commit, run.json, logs.tar.gz); summarise.py then rewrites <out>/summary.csv and prints
-# the run's record (one JSON line).  zkLLM writes its fixed-point weights and commitments (27 GB for Llama-2-7B, 52 GB
-# for Llama-2-13B) to ./zkllm-workdir, which prove links to a fresh folder in --scratch (default: the first of $TMPDIR,
-# /tmp and the zkLLM home with the space free; the free space is checked first) and deletes at its end (a
-# zkllm-workdir that is a folder of the checkout, as in a home prepared by hand, is used and kept; the work folders
-# that a pre-empted job of this user left are removed first).
-# Options: --seq N (default 2048), --reps N (default 3), --layers 0,1 (default), --scratch DIR, --parquet FILE
+# prove: zkLLM's setup (llama-ppgen.py, llama-commit.py) once, then per prompt length of --seqs the layer-0 input
+# (mkinput.py: the first N tokens of WikiText-2's test split) and --reps repetitions of the proof scripts of --layers,
+# each script under /usr/bin/time -v and each proof binary timed by the shims; nvidia-smi samples the job's GPU every
+# 0.5 s.  zkLLM's public parameters and commitments depend on the weights' shapes only, not on the prompt length, so
+# every length proves against the one setup (its steps are logged in the first length's folder).  Each length's folder
+# is <out>/llama2-<size>b-T<seq>/ (bin_times.log, time-*.txt, nvidia-smi.csv.gz, verdicts.txt, errors.txt, env.txt
+# with the host, GPU, driver, CPU and zkLLM's commit, run.json, logs.tar.gz); summarise.py prints each length's record
+# (one JSON line) and then rewrites <out>/summary.csv.  A length at which a proof binary fails (zkLLM's lookup
+# arguments need power-of-two sizes divisible by their tables' sizes, which short prompts may not give) stops after
+# that repetition and is recorded as failed (ok false, with zkLLM's error lines in errors.txt); the next length is
+# then proved.  zkLLM writes its fixed-point weights and commitments (27 GB for Llama-2-7B, 52 GB for Llama-2-13B) to
+# ./zkllm-workdir, which prove links to a fresh folder in --scratch (default: the first of $TMPDIR, /tmp and the zkLLM
+# home with the space free; the free space is checked first) and deletes at its end (a zkllm-workdir that is a folder
+# of the checkout, as in a home prepared by hand, is used and kept; the work folders that a pre-empted job of this
+# user left are removed first).
+# Options: --seqs LIST (prompt lengths, comma-separated; default 64,512,1024,2048; --seq is the same option),
+# --allow-failed-lengths (each length's record says "required": false, and a length that fails does not set the exit
+# status while another length succeeds), --reps N (default 3), --layers 0,1 (default), --scratch DIR, --parquet FILE
 # (default <home>/wikitext-2-raw-v1-test.parquet, which build downloads), --threads N (default 8), --time-cmd PATH
 # (GNU time, which times each script; default /usr/bin/time), --need-gb N (the free space the scratch folder must
 # have; default 32 for Llama-2-7B, 58 for Llama-2-13B).
-# The exit status is 0 only if every proof binary exited 0 and every proved layer printed zkLLM's verifier messages.
+# The exit status is 0 only if, at every length, every proof binary exited 0 and every proved layer printed zkLLM's
+# verifier messages (with --allow-failed-lengths: at one length at least).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,7 +50,8 @@ CMD="${1:-}"; [ $# -gt 0 ] && shift
 case "$CMD" in build|prove) ;; -h|--help) usage 0 ;; *) usage ;; esac
 
 ZH="" PYBASE=python3 CUDAH="" ARCH="" HUB="" MODELS=7,13 REPO=https://github.com/jvhs0706/zkllm-ccs2024.git
-COMMIT=993311e JOBS=8 SIZE="" OUT="" SEQ=2048 REPS=3 LAYERS=0,1 SCRATCH="" PARQUET="" THREADS=8
+COMMIT=993311e JOBS=8 SIZE="" OUT="" SEQS=64,512,1024,2048 ALLOWFAIL="" REPS=3 LAYERS=0,1 SCRATCH="" PARQUET=""
+THREADS=8
 TIMECMD=/usr/bin/time NEED=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -57,7 +66,8 @@ while [ $# -gt 0 ]; do
     --jobs) JOBS=$2; shift ;;
     --size) SIZE=$2; shift ;;
     --out) OUT=$2; shift ;;
-    --seq) SEQ=$2; shift ;;
+    --seqs|--seq) SEQS=$2; shift ;;
+    --allow-failed-lengths) ALLOWFAIL=1 ;;
     --reps) REPS=$2; shift ;;
     --layers) LAYERS=$2; shift ;;
     --scratch) SCRATCH=$2; shift ;;
@@ -166,6 +176,9 @@ fi
 # ------------------------------------------------------------------------------------------------------------ prove
 case "$SIZE" in 7) NEED=${NEED:-32} ;; 13) NEED=${NEED:-58} ;; *) die "--size 7 or 13" ;; esac
 [ -n "$OUT" ] || die "--out DIR is required (the run's zkllm folder)"
+SEQS="${SEQS//,/ }"
+[ -n "${SEQS// /}" ] || die "--seqs: no prompt length given"
+for s in $SEQS; do [[ "$s" =~ ^[1-9][0-9]*$ ]] || die "--seqs: '$s' is not a prompt length (a positive integer)"; done
 [ -f "$Z/self-attn.real" ] && [ -x "$PY" ] || die "$ZH holds no built zkLLM with its timing shims and env/: run \
 'run_zkllm.sh build --home $ZH' first"
 command -v "$TIMECMD" > /dev/null 2>&1 || die "$TIMECMD not found on this node (GNU time; --time-cmd PATH)"
@@ -178,8 +191,11 @@ if [ -f "$ZH/BUILD.txt" ] && ! grep -qx "arch: $ARCH" "$ZH/BUILD.txt"; then
 fi
 LAYER_LIST="${LAYERS//,/ }"
 mkdir -p "$OUT" && OUT="$(cd "$OUT" && pwd)"
-R="$OUT/llama2-${SIZE}b-T${SEQ}"
-rm -rf "$R" && mkdir -p "$R"
+RUNS=()
+for s in $SEQS; do
+  RUNS+=("$OUT/llama2-${SIZE}b-T$s")
+  rm -rf "$OUT/llama2-${SIZE}b-T$s" && mkdir -p "$OUT/llama2-${SIZE}b-T$s"
+done
 
 # zkLLM's work folder: a fresh folder of the scratch space, linked from the checkout, deleted at the end
 WORK="" LINKED=""
@@ -212,7 +228,7 @@ SMI=""
 cleanup() {
   [ -z "$SMI" ] || kill "$SMI" 2> /dev/null
   if [ -n "$LINKED" ]; then rm -f "$Z/zkllm-workdir"; rm -rf "$WORK"; fi
-  rm -f "$R"/layer-0-input.bin "$R"/r*-L*.bin
+  for d in "${RUNS[@]}"; do rm -f "$d"/layer-0-input.bin "$d"/r*-L*.bin; done
 }
 trap cleanup EXIT
 trap 'exit 143' TERM INT
@@ -220,59 +236,92 @@ trap 'exit 143' TERM INT
 cd "$Z" || die "cannot enter $Z"
 # zkLLM's scripts call 'make <binary>' (up to date: the shims) and ./<binary>; offline, with the run's threads
 export CONDA_PREFIX="$CUDAH" MAKEFLAGS="ARCH=$ARCH" PATH="$ZH/env/bin:$CUDAH/bin:$PATH" PYTHONPATH="$Z" \
-  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 OMP_NUM_THREADS="$THREADS" ZK_TIMELOG="$R/bin_times.log"
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 OMP_NUM_THREADS="$THREADS"
 ck="$Z/model-storage/models--meta-llama--Llama-2-${SIZE}b-hf/refs/main"
-{ hostname
-  nvidia-smi $GPUSEL --query-gpu=name,driver_version,memory.total --format=csv,noheader
-  lscpu | grep "Model name"
-  git -c safe.directory='*' rev-parse HEAD
-  cat "$ZH/BUILD.txt" 2> /dev/null
-  echo "zkllm_unchanged: $([ -z "$(git -c safe.directory='*' status --porcelain --untracked-files=no)" ] && echo yes \
-|| echo no)"
-  echo "python: $("$PY" -c 'import platform; print(platform.python_version())')"
-  echo "torch: $("$PY" -c 'import torch; print(torch.__version__)')"
-  echo "transformers: $("$PY" -c 'import transformers; print(transformers.__version__)')"
-  echo "checkpoint: $(cat "$ck" 2> /dev/null || echo unknown)"
-  echo "scratch: ${WORK:-$Z/zkllm-workdir}"
-  echo "slurm_job: ${SLURM_JOB_ID:-none}"; } > "$R/env.txt"
-printf '{"size": %s, "seq": %s, "reps": %s, "layers": [%s]}\n' "$SIZE" "$SEQ" "$REPS" "$LAYERS" > "$R/run.json"
-cat "$R/env.txt"
-nvidia-smi $GPUSEL --query-gpu=timestamp,memory.used,utilization.gpu --format=csv -lms 500 > "$R/nvidia-smi.csv" &
-SMI=$!
 step() { local name=$1; shift; echo "== $name"; "$TIMECMD" -v -o "$R/time-$name.txt" "$@" > "$R/log-$name.txt" 2>&1
   echo "   exit $? $(grep Elapsed "$R/time-$name.txt")"; }
+failed_binaries() { grep -c -v -E ' exit 0 +args ' "$R/bin_times.log" 2> /dev/null || true; }
 
+# zkLLM's setup (public parameters and the weights' commitment) does not depend on the prompt length: it runs once,
+# in the first length's folder, and every length of this job proves against it
 W="./zkllm-workdir/Llama-2-${SIZE}b"
-if [ ! -f "$W/.committed" ]; then
-  step ppgen "$PY" llama-ppgen.py "$SIZE"
-  step commit "$PY" llama-commit.py "$SIZE" 16 && touch "$W/.committed"
-fi
-du -shL "$W/" > "$R/workdir-size.txt"
-step input "$PY" "$HERE/mkinput.py" "$SIZE" "$SEQ" "$PARQUET" "$R/layer-0-input.bin"
-for rep in $(seq 1 "$REPS"); do
-  in="$R/layer-0-input.bin"
-  for L in $LAYER_LIST; do
-    p="$R/r$rep-L$L"
-    step "r$rep-L$L-rmsnorm1" "$PY" llama-rmsnorm.py "$SIZE" "$L" input "$SEQ" --input_file "$in" \
-      --output_file "$p-attn_in.bin"
-    step "r$rep-L$L-attn" "$PY" llama-self-attn.py "$SIZE" "$L" "$SEQ" --input_file "$p-attn_in.bin" \
-      --output_file "$p-attn_out.bin"
-    step "r$rep-L$L-skip1" "$PY" llama-skip-connection.py --block_input_file "$in" --block_output_file \
-      "$p-attn_out.bin" --output_file "$p-post_attn.bin"
-    step "r$rep-L$L-rmsnorm2" "$PY" llama-rmsnorm.py "$SIZE" "$L" post_attention "$SEQ" --input_file \
-      "$p-post_attn.bin" --output_file "$p-ffn_in.bin"
-    step "r$rep-L$L-ffn" "$PY" llama-ffn.py "$SIZE" "$L" "$SEQ" --input_file "$p-ffn_in.bin" --output_file \
-      "$p-ffn_out.bin"
-    step "r$rep-L$L-skip2" "$PY" llama-skip-connection.py --block_input_file "$p-post_attn.bin" --block_output_file \
-      "$p-ffn_out.bin" --output_file "$p-out.bin"
-    in="$p-out.bin"
+FIRST="${RUNS[0]}" STATUS=0 GOOD=0 BAD=""
+for R in "${RUNS[@]}"; do
+  SEQ="${R##*-T}"
+  export ZK_TIMELOG="$R/bin_times.log"
+  : > "$ZK_TIMELOG"
+  { hostname
+    nvidia-smi $GPUSEL --query-gpu=name,driver_version,memory.total --format=csv,noheader
+    lscpu | grep "Model name"
+    git -c safe.directory='*' rev-parse HEAD
+    cat "$ZH/BUILD.txt" 2> /dev/null
+    echo "zkllm_unchanged: $([ -z "$(git -c safe.directory='*' status --porcelain --untracked-files=no)" ] \
+&& echo yes || echo no)"
+    echo "python: $("$PY" -c 'import platform; print(platform.python_version())')"
+    echo "torch: $("$PY" -c 'import torch; print(torch.__version__)')"
+    echo "transformers: $("$PY" -c 'import transformers; print(transformers.__version__)')"
+    echo "checkpoint: $(cat "$ck" 2> /dev/null || echo unknown)"
+    echo "scratch: ${WORK:-$Z/zkllm-workdir}"
+    echo "setup: $(basename "$FIRST")"
+    echo "slurm_job: ${SLURM_JOB_ID:-none}"; } > "$R/env.txt"
+  printf '{"size": %s, "seq": %s, "reps": %s, "layers": [%s], "required": %s}\n' "$SIZE" "$SEQ" "$REPS" "$LAYERS" \
+    "$([ -n "$ALLOWFAIL" ] && echo false || echo true)" > "$R/run.json"
+  echo "== Llama-2-${SIZE}B at $SEQ tokens: $R"
+  cat "$R/env.txt"
+  nvidia-smi $GPUSEL --query-gpu=timestamp,memory.used,utilization.gpu --format=csv -lms 500 > "$R/nvidia-smi.csv" &
+  SMI=$!
+  if [ ! -f "$W/.committed" ]; then
+    step ppgen "$PY" llama-ppgen.py "$SIZE"
+    step commit "$PY" llama-commit.py "$SIZE" 16 && touch "$W/.committed"
+    du -shL "$W/" > "$R/workdir-size.txt"
+  fi
+  rm -f ./temp*.bin ./rms_inv_temp.bin       # temporaries that a failed script of an earlier length may have left
+  step input "$PY" "$HERE/mkinput.py" "$SIZE" "$SEQ" "$PARQUET" "$R/layer-0-input.bin"
+  for rep in $(seq 1 "$REPS"); do
+    [ -s "$R/layer-0-input.bin" ] || { echo "   no layer-0 input at $SEQ tokens: this length is not proved"; break; }
+    in="$R/layer-0-input.bin"
+    for L in $LAYER_LIST; do
+      p="$R/r$rep-L$L"
+      step "r$rep-L$L-rmsnorm1" "$PY" llama-rmsnorm.py "$SIZE" "$L" input "$SEQ" --input_file "$in" \
+        --output_file "$p-attn_in.bin"
+      step "r$rep-L$L-attn" "$PY" llama-self-attn.py "$SIZE" "$L" "$SEQ" --input_file "$p-attn_in.bin" \
+        --output_file "$p-attn_out.bin"
+      step "r$rep-L$L-skip1" "$PY" llama-skip-connection.py --block_input_file "$in" --block_output_file \
+        "$p-attn_out.bin" --output_file "$p-post_attn.bin"
+      step "r$rep-L$L-rmsnorm2" "$PY" llama-rmsnorm.py "$SIZE" "$L" post_attention "$SEQ" --input_file \
+        "$p-post_attn.bin" --output_file "$p-ffn_in.bin"
+      step "r$rep-L$L-ffn" "$PY" llama-ffn.py "$SIZE" "$L" "$SEQ" --input_file "$p-ffn_in.bin" --output_file \
+        "$p-ffn_out.bin"
+      step "r$rep-L$L-skip2" "$PY" llama-skip-connection.py --block_input_file "$p-post_attn.bin" \
+        --block_output_file "$p-ffn_out.bin" --output_file "$p-out.bin"
+      in="$p-out.bin"
+    done
+    # a proof binary that failed at this length fails the same way in the next repetition: the length stops here
+    n="$(failed_binaries)"
+    if [ "${n:-0}" -gt 0 ]; then echo "   $n proof binaries failed at $SEQ tokens: no further repetition"; break; fi
   done
+  kill "$SMI" 2> /dev/null; wait "$SMI" 2> /dev/null; SMI=""
+  grep -h -E "verified|complete|rror" "$R"/log-r*.txt 2> /dev/null | sort | uniq -c > "$R/verdicts.txt"
+  # the error lines of the scripts, counted, for the record: zkLLM's C++ exceptions ("what(): ...") and Python's
+  # ("...Error: ..."); the first skip connection's "does not exist" is expected (the attention stage writes no output)
+  grep -h -E "what\(\)|^[A-Za-z_.]*(Error|Exception):" "$R"/log-*.txt 2> /dev/null | grep -v "does not exist" \
+    | sort | uniq -c | head -n 20 > "$R/errors.txt"
+  gzip -f "$R/nvidia-smi.csv"
+  (cd "$OUT" && tar czf "$R/logs.tar.gz" "$(basename "$R")"/log-*.txt) && rm -f "$R"/log-*.txt
+  rm -f "$R"/layer-0-input.bin "$R"/r*-L*.bin
+  (cd "$OUT" && "$PY" "$HERE/summarise.py" "$R") || true
+  if (cd "$OUT" && "$PY" "$HERE/summarise.py" --record "$R"); then
+    GOOD=$((GOOD + 1))
+  else
+    STATUS=1 BAD="$BAD $SEQ"
+    echo "zkLLM's demo did not prove Llama-2-${SIZE}B at $SEQ tokens: recorded (ok false); the other lengths go on" >&2
+  fi
 done
-kill "$SMI" 2> /dev/null; wait "$SMI" 2> /dev/null; SMI=""
-grep -h -E "verified|complete|rror" "$R"/log-r*.txt | sort | uniq -c > "$R/verdicts.txt"
-gzip -f "$R/nvidia-smi.csv"
-(cd "$OUT" && tar czf "$R/logs.tar.gz" "$(basename "$R")"/log-*.txt) && rm -f "$R"/log-*.txt
 cd "$OUT" || exit 2
 "$PY" "$HERE/summarise.py" --csv "$OUT" > /dev/null || echo "summarise.py --csv $OUT failed" >&2
-"$PY" "$HERE/summarise.py" "$R" || true
-"$PY" "$HERE/summarise.py" --record "$R"
+if [ "$STATUS" -ne 0 ] && [ -n "$ALLOWFAIL" ] && [ "$GOOD" -gt 0 ]; then
+  echo "zkLLM's demo proved Llama-2-${SIZE}B at $GOOD of ${#RUNS[@]} lengths and not at${BAD} tokens (recorded; \
+--allow-failed-lengths)"
+  exit 0
+fi
+exit "$STATUS"

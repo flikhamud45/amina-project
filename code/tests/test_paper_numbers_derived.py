@@ -10,7 +10,9 @@ run's records, on the synthetic run of ``test_paper_numbers.py``.
   build.
 * zkLLM's stored runs on the run's GPU model give same-GPU prover factors, and none on another GPU; the run's own
   zkllm tier (logs/<name>/zkllm/) takes their place when it holds both models on the run's GPU, and the text then
-  says so (``ZkllmSameGpuRun``).
+  says so (``ZkllmSameGpuRun``); at the tier's other prompt lengths a length that zkLLM's demo did not prove prints
+  as failed, and ``tab:zkllm-lengths`` agrees with the macros.
+* ``tab:eval-compare``'s rows are chosen by ``numbers.py --compare-rows``; ``tab:eval-compare-full`` keeps every row.
 * The tampered queries of the real tier's and generation cells, V1's verifier with GPU tensors, the timed runs
   of ``tab:options`` with their spread and V1's bound on the measured builds alone (not the gate's or the smoke's).
 """
@@ -23,7 +25,7 @@ import re
 from pathlib import Path
 
 import pytest
-from test_paper_numbers import PAPER, RESULTS, _bench, _ctx, _logs, _write, gen, perf, reexec, v1
+from test_paper_numbers import PAPER, RESULTS, _args, _bench, _ctx, _logs, _write, gen, perf, reexec, v1
 
 from experiments.attack import sok as S
 from experiments.paper import bench as B
@@ -312,6 +314,155 @@ def test_zkllm_on_the_same_gpu_from_the_run_itself(tmp_path):
         assert got == want, (zk_gpu, oks, got)
     assert B.literature(run_zkllm=tmp_path / "no-run").keys() == B.literature().keys()
     assert FALLBACK["ZkllmSameGpuRun"] == "in separate runs"
+
+
+# --------------------------------------------------------------------------------------------- zkLLM at several lengths
+def _bench_lengths(root: Path, seqs=(64, 512, 1024, 2048), skip=()) -> Path:
+    """A ``tables_<name>/`` with the interactive mode-C cells of Llama-2-7B and Llama-2-13B at ``seqs`` (the prover
+    ``seq / 100`` s and ``seq / 50`` s; none at the ``(model, seq)`` of ``skip``) on the L40S."""
+    t = root / "tables_len"
+    t.mkdir(parents=True)
+    head = ["model", "seq", "mode", "challenges", "lam", "metric", "threads", "rate", "variant", "device", "prover_hw",
+            "verifier_hw", "n_layers_full", "params_full", "value", "provenance", "batch"]
+    with open(t / "llm_full_model.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(head)
+        for m, layers, per in (("llama2-7b", 32, 100.0), ("llama2-13b", 40, 50.0)):
+            for seq in seqs:
+                if (m, seq) in skip:
+                    continue
+                for metric, value in (("prove_forward", seq / per), ("verify_products", 1.0), ("bytes_total", 6e9)):
+                    w.writerow([m, seq, "C", "int", 128, metric, 8, 4, "_wire_prune_pmax2047_polcnn18c", "cuda",
+                                "NVIDIA L40S", "AMD EPYC 9334 32-Core Processor x8 threads", layers, 7e9, value,
+                                "measured", ""])
+    with open(t / "measured_summary.csv", "w", newline="", encoding="utf-8") as fh:
+        csv.writer(fh).writerow(["suite", "model", "cell", "metric", "batch", "attack", "lam", "stage", "k", "n",
+                                 "median", "mean", "prover_hw", "verifier_hw"])
+    return t
+
+
+ZK_LENGTHS = {   # (model, seq): (zkLLM's whole-model seconds, ok)
+    ("llama2-7b", 2048): (900.0, True), ("llama2-13b", 2048): (2700.0, True),
+    ("llama2-7b", 1024): (400.0, True), ("llama2-13b", 1024): (1200.0, True),
+    ("llama2-7b", 512): (10.0, False), ("llama2-13b", 512): (500.0, True),
+    ("llama2-7b", 64): (1.0, False), ("llama2-13b", 64): (2.0, False)}
+
+
+def _zkllm_lengths(folder: Path, runs=ZK_LENGTHS) -> list:
+    """The run's ``logs/<name>/zkllm/`` and the records of the zkllm tier's jobs at several lengths: the 2,048-token
+    jobs (required) and the short jobs (``--allow-failed-lengths``: required false)."""
+    folder.mkdir(parents=True)
+    rows, recs = ["model,seq,layers,run,per_layer_s,whole_model_s,ok"], []
+    for (m, seq), (whole, ok) in runs.items():
+        layers = 32 if m == "llama2-7b" else 40
+        run = f"{m}-T{seq}"
+        rows.append(f"{m},{seq},{layers},{run},{whole / layers:.4f},{whole:.2f},{str(ok).lower()}")
+        (folder / run).mkdir()
+        (folder / run / "env.txt").write_text(
+            "n-1\nNVIDIA L40S, 580.126.09, 46068 MiB\nModel name:    AMD EPYC 9334 32-Core Processor\n"
+            "993311ea8e2346b90efacb35337b2e3cfe0d6f8d\narch: sm_89\n", encoding="utf-8")
+        job = f"zk-{m}" + ("" if seq == 2048 else "-short")
+        d = {"kind": "zkllm", "model": m, "seq": seq, "layers": layers, "reps": 3, "layer_ids": [0, 1],
+             "layers_expected": 6, "layers_proved": 6 if ok else 2, "binary_failures": 0 if ok else 2, "ok": ok,
+             "required": seq == 2048, "errors": [] if ok else ["2 what(): N is not power of 2, or D is not "
+                                                                "divisible by N"],
+             "env": {"gpu": "NVIDIA L40S", "cpu": "AMD EPYC 9334 32-Core Processor"}}
+        recs.append(R.Rec("zkllm", job, "70", f"sp-{job}-70.out", 1, "zkllm", d))
+    (folder / "summary.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return recs
+
+
+def test_zkllm_at_several_prompt_lengths(tmp_path):
+    """The zkllm tier's runs at 64, 512, 1,024 and 2,048 tokens against our interactive mode-C cells at the same
+    lengths: a length whose record is not ok prints ``fails`` (no factor) and is no failed check when its job allowed
+    it; the factors over every proved length, the shortest length below 2,048 tokens that zkLLM proved for both models
+    and the factors there; ``tab:zkllm-lengths`` prints the same values; a shorter length that zkLLM proved for both
+    models without our cell makes the text's "the shortest length that it proves for both models" a failed check."""
+    recs = _zkllm_lengths(tmp_path / "logs" / "zkllm")
+    assert not [m for r in recs for m in R.checks(r)]                     # the failed short lengths are results
+    lit = B.literature(run_zkllm=tmp_path / "logs" / "zkllm")
+    ctx = T.Ctx(R.Run(recs), B.Bench(_bench_lengths(tmp_path / "b")), lit, "cnn18c", "x", byte_model=False)
+    c = M.Collector()
+    M.zkllm_same_gpu(c, ctx)
+    v = {k: x.value for k, x in c.m.items()}
+    # ours: 7B seq/100 s, 13B seq/50 s; zkLLM's: ZK_LENGTHS
+    assert (v["ZkllmSameGpuProverLlama"], v["ZkllmSameGpuFactorLlama"], v["ZkllmSameGpuFactorLlamaL"]) == \
+        ("900", "44", "66")
+    assert v["ZkllmSameGpuRun"] == "in the same run" and v["ZkllmSameGpuOursLlamaL"] == "41"
+    assert (v["ZkllmSameGpuProverLlamaTOneZeroTwoFour"], v["ZkllmSameGpuFactorLlamaTOneZeroTwoFour"],
+            v["ZkllmSameGpuFactorLlamaLTOneZeroTwoFour"]) == ("400", "39", "59")
+    assert (v["ZkllmSameGpuProverLlamaTFiveOneTwo"], v["ZkllmSameGpuFactorLlamaTFiveOneTwo"]) == ("fails", "--")
+    assert (v["ZkllmSameGpuProverLlamaLTFiveOneTwo"], v["ZkllmSameGpuFactorLlamaLTFiveOneTwo"]) == ("500", "49")
+    assert v["ZkllmSameGpuProverLlamaLTSixFour"] == "fails" and v["ZkllmSameGpuOursLlamaTSixFour"] == "0.64"
+    assert v["ZkllmSameGpuShortSeq"] == "1{,}024" and v["ZkllmSameGpuFactorShortRange"] == "39--59"
+    assert v["ZkllmSameGpuFactorLengthRange"] == "39--66" and not c.problems
+    tb = T.tab_zkllm_lengths(ctx)
+    assert tb.rows[0].startswith(r"64 & fails & 640\,ms & -- & fails & 1.3\,s & -- \\")
+    assert tb.rows[1] == r"512 & fails & 5.1\,s & -- & 8.3\,min & 10.2\,s & 49$\times$ \\"
+    assert tb.rows[3] == r"2{,}048 & 15.0\,min & 20.5\,s & 44$\times$ & 45.0\,min & 41.0\,s & 66$\times$ \\"
+    assert not tb.missing
+    texts, values = {"tab_zkllm_lengths": tb.text()}, {k: x.value for k, x in c.m.items() if x.value is not None}
+    assert N.same_value(texts, values) == []
+    # without our 512-token cells, 1,024 tokens is no longer the shortest length zkLLM proved for both models (512,
+    # had its 7B run succeeded): a failed check of the text's statement
+    runs = {**ZK_LENGTHS, ("llama2-7b", 512): (250.0, True)}
+    recs = _zkllm_lengths(tmp_path / "logs2" / "zkllm", runs)
+    bench = B.Bench(_bench_lengths(tmp_path / "b2", skip=(("llama2-7b", 512), ("llama2-13b", 512))))
+    ctx = T.Ctx(R.Run(recs), bench, B.literature(run_zkllm=tmp_path / "logs2" / "zkllm"), "cnn18c", "x",
+                byte_model=False)
+    c = M.Collector()
+    M.zkllm_same_gpu(c, ctx)
+    assert c.m["ZkllmSameGpuShortSeq"].value == "1{,}024"
+    assert [p for p in c.problems if p.startswith(M.TEXT_CLAIM) and "ZkllmSameGpuShortSeq" in p]
+    # without the tier's short lengths (the stored runs only): the 2,048-token values, and no other length
+    ctx = T.Ctx(R.Run([]), B.Bench(_bench_lengths(tmp_path / "b3")), B.literature(), "cnn18c", "x", byte_model=False)
+    c = M.Collector()
+    M.zkllm_same_gpu(c, ctx)
+    assert c.m["ZkllmSameGpuProverLlama"].value == "844" and c.m["ZkllmSameGpuRun"].value == "in separate runs"
+    assert c.m["ZkllmSameGpuProverLlamaTSixFour"].value is None and c.m["ZkllmSameGpuShortSeq"].value is None
+    assert T.tab_zkllm_lengths(ctx).missing
+
+
+def test_the_comparison_rows_are_chosen_without_code_edits(run_dir, tmp_path):
+    """``numbers.py --compare-rows``: ``tab:eval-compare`` prints the chosen rows (in the tables' order, with a rule
+    between groups) and ``tab:eval-compare-full`` every row, whichever are chosen, with the same cells; the text's
+    comparison numbers follow the chosen rows; a file of keys works as a list; an unknown key is refused."""
+    assert T.compare_selection(None) == T.compare_selection("default") == T.COMPARE_DEFAULT
+    assert T.compare_selection("all") == T.COMPARE_KEYS and len(T.COMPARE_KEYS) == len(set(T.COMPARE_KEYS)) == 16
+    assert set(T.COMPARE_DEFAULT) < set(T.COMPARE_KEYS)
+    assert T.compare_selection("zkllm-llama2-13b, zkcnn-vgg16") == ("zkcnn-vgg16", "zkllm-llama2-13b")
+    keys = tmp_path / "rows.txt"
+    keys.write_text("# the body's rows\nzkcnn-lenet5\nmaverick-qwen3-4b-8  # Maverick\n", encoding="utf-8")
+    assert T.compare_selection(str(keys)) == ("zkcnn-lenet5", "maverick-qwen3-4b-8")
+    with pytest.raises(ValueError, match="unknown rows.*zkllm-gpt5"):
+        T.compare_selection("zkllm-gpt5")
+    # the fallback's body rows are the default rows, and the full table's rows hold them
+    body, full = _fallback_rows("tab_eval_compare"), _fallback_rows("tab_eval_compare_full")
+    assert sum(r.endswith("\\\\") and r != r"\midrule" for r in body) == len(T.COMPARE_DEFAULT)
+    assert sum(r.endswith("\\\\") for r in full) == len(T.COMPARE_KEYS) and set(body) <= set(full)
+    tmp, logs = run_dir
+    ctx, _ = _ctx(tmp, logs)
+    default, every = T.tab_eval_compare(ctx), T.tab_eval_compare_full(ctx)
+    assert len([r for r in default.rows if r != r"\midrule"]) == len(T.COMPARE_DEFAULT)
+    assert len([r for r in every.rows if r != r"\midrule"]) == len(T.COMPARE_KEYS)
+    assert every.rows.count(r"\midrule") == 2 and default.rows.count(r"\midrule") == 2
+    ctx.compare_rows = ("zkcnn-vgg16", "zkllm-llama2-7b", "zkllm-llama2-13b")
+    some = T.tab_eval_compare(ctx)
+    assert [r.split(" & ")[0] for r in some.rows] == ["zkCNN$^a$", r"\midrule", "zkLLM", "zkLLM"]
+    assert set(some.rows) - {r"\midrule"} <= set(every.rows)
+    assert {(x["row"], x["column"]) for x in some.cells} < {(x["row"], x["column"]) for x in every.cells}
+    # the command: the chosen rows' table, the full table and cells.csv with every row
+    assert N.main(_args(tmp, logs, "--allow-missing", "--compare-rows", "zkcnn-vgg16,zkllm-llama2-13b")) in (0, 1)
+    out = tmp / "out"
+    body = [r for r in (out / "tab_eval_compare.tex").read_text(encoding="utf-8").splitlines()
+            if r and not r.startswith("%")]
+    assert len(body) == 3 and body[1] == r"\midrule"
+    assert "rows (numbers.py --compare-rows): zkcnn-vgg16,zkllm-llama2-13b" in \
+        (out / "tab_eval_compare.tex").read_text(encoding="utf-8")
+    cells = list(csv.DictReader(open(out / "cells.csv", encoding="utf-8")))
+    assert {r["row"] for r in cells if r["table"] == "tab:eval-compare-full"} == set(T.COMPARE_KEYS)
+    with pytest.raises(SystemExit):
+        N.main(_args(tmp, logs, "--compare-rows", "no-such-row"))
 
 
 # ------------------------------------------------------------------------------------------------ the run's records

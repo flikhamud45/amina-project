@@ -44,8 +44,10 @@
 #     long     [optional] prompts of 2,048 to 16,384 tokens on 2, 3 and 4 blocks, verifier against every
 #              baseline; the full Llama-2-7B at 8,192 tokens (unless --no-bigmem); V1 on 2 blocks to 8,192 tokens
 #     zkllm    [optional] zkLLM's public demo (commit 993311e, unchanged) on this GPU: Llama-2-7B and Llama-2-13B at
-#              2,048 tokens, 3 repetitions of layers 0 and 1 (experiments/comparison/zkllm/run_zkllm.sh); only with
-#              --llama-licence; its records go to logs/<name>/zkllm/
+#              2,048 tokens and, in one job per model, at the other lengths of --zkllm-seqs (a length its demo does
+#              not prove is recorded as failed), 3 repetitions of layers 0 and 1
+#              (experiments/comparison/zkllm/run_zkllm.sh); only with --llama-licence; its records go to
+#              logs/<name>/zkllm/
 #     gate     [not in 'all'] the full-size checks, run once on the final platform before the run (after the smoke;
 #              about an hour; no --rehearsal): V1's GKR instances of 2^27 leaves on the GPU prover with both CPU
 #              verifiers and the GPU verifier (two Llama-2-7B blocks at 2,048 tokens), OPT-1.3B at 2,048 tokens
@@ -128,6 +130,11 @@
 #                       and allocation (experiments/package/envsnap.py: nvidia-smi -q, lscpu, numactl, the governors,
 #                       the compiler, pip freeze, the commit) into logs/<name>/env/<host>-<job>/, and the hashes of the
 #                       bench tier's models and data into logs/<name>/env/inputs.sha256; this option skips both
+#     --zkllm-seqs LIST the prompt lengths of the zkllm tier (comma-separated; default 64,512,1024,2048): 2,048 tokens
+#                       (tab:eval-compare's) in one job per model, the others in a second job per model that records a
+#                       length zkLLM's demo does not prove as failed; the bench tier measures our prover (mode C,
+#                       interactive) for both models at the lengths other than 2,048 (the 2,048-token cells are its
+#                       own)
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1
 # unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
 # llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
@@ -150,7 +157,7 @@ usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}";
 PLATFORM="" DRY="" REH="" LOCAL="" OPTIONAL="" CHAIN=1 EXCL="--exclusive" PIN=1 NONATIVE="" MEMMAX=256 QH=5 Q=3
 POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM=1 ONEJOB="" MAXH=24 TIERS=()
 REQGPU="L40S" REQCPU="EPYC 9334" GRES="${SBATCH_GRES:-}" EXCLUDE="" FROMONE=""
-ZKHOME="" ZKSCRATCH="" ZKPY="" CUDAHOME="" TELI=1 SNAPON=1
+ZKHOME="" ZKSCRATCH="" ZKPY="" CUDAHOME="" TELI=1 SNAPON=1 ZKSEQS=64,512,1024,2048
 ARGV=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -185,6 +192,7 @@ while [ $# -gt 0 ]; do
     --cuda-home) CUDAHOME=$2; shift ;;
     --telemetry-interval) TELI=$2; shift ;;
     --no-env-snapshot) SNAPON="" ;;
+    --zkllm-seqs) ZKSEQS=$2; shift ;;
     -h|--help) usage 0 ;;
     -*) echo "unknown option $1" >&2; usage ;;
     *) TIERS+=("$1") ;;
@@ -199,6 +207,10 @@ done
 [[ "$TELI" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] && awk -v t="$TELI" 'BEGIN { exit !(t == 0 || t >= 1) }' \
   || { echo "--telemetry-interval: 0 (none) or at least 1 second" >&2; exit 2; }
 [ -n "$REQGPU" ] && [ -n "$REQCPU" ] || { echo "--require-gpu, --require-cpu: a part of the name, or 'any'" >&2; exit 2; }
+[[ "$ZKSEQS" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || { echo "--zkllm-seqs: prompt lengths, comma-separated" >&2
+  exit 2; }
+# the zkllm tier's lengths other than tab:eval-compare's 2,048 (comma-separated; empty: none)
+ZKSHORT="$(tr ',' '\n' <<<"$ZKSEQS" | awk '$1 != 2048 && !seen[$1]++' | paste -sd, -)"
 [ -f code/experiments/package/run.sh ] || { echo "run this from the repository root" >&2; exit 2; }
 ROOT="$PWD"
 LOGS="logs/$PLATFORM"
@@ -341,13 +353,13 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     return
   fi
   case "$1" in
-    smoke) echo 1.5-2 ;; cpuv) echo 8-11 ;; cpux) echo 5-9 ;; v1) echo 5-9 ;; serve) echo 8-10 ;; bench) echo 9-14 ;;
+    smoke) echo 1.5-2 ;; cpuv) echo 8-11 ;; cpux) echo 5-9 ;; v1) echo 5-9 ;; serve) echo 8-10 ;; bench) echo 11-17 ;;
     gpuv) echo 5-7 ;;
     gen) echo 4-5 ;; batch) echo 2-3 ;; real) echo 11-16 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
     qcheck) echo 9-13 ;;
     tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 10-16 ;; gate) echo 1-1.5 ;;
-    zkllm) echo 3-5 ;;
+    zkllm) echo 6-9 ;;
   esac
 }
 
@@ -596,6 +608,14 @@ tier_bench() {
     sub "b-cg-$m-2k" "$hg" "$mem" "$BENCH llm --model $m --seq 2048 --builds full --queries $q --lams 128 \
 --modes $cm --policy $POL $gpuv"
   done
+  # (d) our side of zkLLM's same-GPU comparison at the zkllm tier's other prompt lengths (--zkllm-seqs): mode C,
+  # interactive, lambda 128, as zkLLM's rows of tab:eval-compare (the 2,048-token cells are those of (c))
+  if [ -n "$ZKSHORT" ]; then
+    csub b-ci-llama2-7b-zk 2 128 "$BENCH llm --model llama2-7b --seq ${ZKSHORT//,/ } --builds full --queries $Q \
+--lams 128 --modes C:int --policy $POL $NATIVE"
+    csub b-ci-llama2-13b-zk 3 128 "$BENCH llm --model llama2-13b --seq ${ZKSHORT//,/ } --builds full --queries $Q \
+--lams 128 --modes C:int --policy $POL $NATIVE"
+  fi
 }
 
 tier_gpuv() {
@@ -1059,7 +1079,12 @@ tier_zkllm() {
   # runs of artifacts/results/zkllm_l40s/ ran it: its first job clones and builds zkLLM for the GPU in an environment of
   # its own (unless --zkllm-home holds it) and downloads Llama-2-7B, Llama-2-13B and WikiText-2's test split; then per
   # model zkLLM's setup and commitment, the layer-0 input (2,048 tokens) and 3 repetitions of the proof scripts of
-  # layers 0 and 1, each proof binary timed (logs/<name>/zkllm/<model>-T2048/, summary.csv; one record per model)
+  # layers 0 and 1, each proof binary timed (logs/<name>/zkllm/<model>-T2048/, summary.csv; one record per model and
+  # length).  The other lengths of --zkllm-seqs run in a second job per model, after both 2,048-token jobs, on one
+  # setup of their own (zkLLM's commitment does not depend on the length): a length its demo does not prove (its
+  # lookup arguments need sizes that short prompts may not give) is recorded as failed and the next one runs, and
+  # the job fails only if no length was proved; the 2,048-token jobs, which tab:eval-compare's comparison needs, are
+  # kept apart so that a failure there loses nothing of them
   if [ -z "$LLAMA" ]; then
     echo "tier zkllm: skipped: zkLLM's demo proves Llama-2-7B and Llama-2-13B, which need your own Llama-2 \
 licence and Hugging Face token (--llama-licence)" >&2
@@ -1072,12 +1097,19 @@ licence and Hugging Face token (--llama-licence)" >&2
   [ -z "$ZKSCRATCH" ] || p="$p --scratch $(printf %q "$ZKSCRATCH")"
   if [ -n "$REH" ]; then
     # the build (Llama-2-7B only) and one repetition of layer 0 at 2,048 tokens: every step of the full jobs
-    sub zk-rehearsal 2 64 "$zk build $b --models 7 && $zk prove $p --size 7 --reps 1 --layers 0"
+    sub zk-rehearsal 2 64 "$zk build $b --models 7 && $zk prove $p --size 7 --seqs 2048 --reps 1 --layers 0"
     return 0
   fi
   sub zk-build 2 32 "$zk build $b"
-  sub zk-llama2-7b 2 64 "$zk prove $p --size 7 --seq 2048 --reps 3 --layers 0,1"
-  sub zk-llama2-13b 4 128 "$zk prove $p --size 13 --seq 2048 --reps 3 --layers 0,1"
+  if [[ ",$ZKSEQS," == *,2048,* ]]; then
+    sub zk-llama2-7b 2 64 "$zk prove $p --size 7 --seqs 2048 --reps 3 --layers 0,1"
+    sub zk-llama2-13b 4 128 "$zk prove $p --size 13 --seqs 2048 --reps 3 --layers 0,1"
+  fi
+  if [ -n "$ZKSHORT" ]; then
+    sub zk-llama2-7b-short 2 64 "$zk prove $p --size 7 --seqs $ZKSHORT --reps 3 --layers 0,1 --allow-failed-lengths"
+    sub zk-llama2-13b-short 4 128 "$zk prove $p --size 13 --seqs $ZKSHORT --reps 3 --layers 0,1 \
+--allow-failed-lengths"
+  fi
 }
 
 tier_gate() {

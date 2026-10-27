@@ -156,7 +156,7 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 234 jobs. There, the paper's run submits its tiers as fourteen jobs (`--one-job`), each of
+waits that long for each of its 238 jobs. There, the paper's run submits its tiers as fourteen jobs (`--one-job`), each of
 which runs its tiers' jobs one after another in its allocation: the timed tiers in nine jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `qllama`, `qcheck`, `tv`, `attack`, `smoke`) in five jobs on one GPU of a
 shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates nothing:
@@ -169,12 +169,12 @@ R="bash code/experiments/package/run.sh --platform final --llama-licence --gres 
 $R --one-job cpuv                          # expected 8-11 h
 $R --one-job long                          # 10-16 h: long prompts, the full model at 8,192 tokens, V1 on 2 blocks
 $R --one-job cpux                          # 5-9 h
-$R --one-job bench                         # 9-14 h
+$R --one-job bench                         # 11-17 h
 $R --one-job real                          # 11-16 h
 $R --one-job serve gen batch               # 14-18 h
 $R --one-job v1 setup improve              # 9-16 h
 $R --one-job gpuv                          # 5-7 h
-$R --one-job zkllm                         # 3-5 h: zkLLM's demo on the same GPU model
+$R --one-job zkllm                         # 6-9 h: zkLLM's demo on the same GPU model
 $R --one-job --no-exclusive quality        # 16-24 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive qllama         # 40-48 h, not timed: two or three submissions in a row (Sec. 5)
 $R --one-job --no-exclusive qcheck         # 9-13 h, not timed
@@ -205,7 +205,7 @@ if it succeeds, which the run above does not need.
 | `cpux` | 9 | 5-9 | 24 | the CPU verifier against exact re-execution beyond the cpuv tier's 8 threads (`tab:eval-cpu`, `\CpuRatioThrTwo`, `\CpuRatioThrFour`, `\CpuRatioNoAvx`, `\CpuRatioThirteen`): Llama-2-7B at 2,048 tokens on 4 and 2 threads, each job pinned to as many cores of one NUMA node; on 8 threads without the AVX-512 attention kernel, in the verifier and the integer forward pass alike; Llama-2-13B on 8 threads; mode C's six candidate plans side by side on the same Llama-2-7B queries, each commitment encoded afresh (`tab:eval-plans`, `\PlanCols...`, `\PlanCommit...`) |
 | `v1` | 17 | 5-9 | 30 | V1 against v0: bytes, prover and verifier (`tab:eval-v1`); the codec profile of the full Llama-2-7B at 2,048 to 16,384 tokens, V1's claims ratio at each length (`tab:eval-v1-long`, the V1 crossover `\BreakevenTokensVOne` of the Discussion) |
 | `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
-| `bench` | 45 | 9-14 | 54 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`), the outcome counts, the image models' attack cells; Llama-2-7B at lambda 40 and 80 (`tab:eval-lambda`, `\LamForty...`) |
+| `bench` | 47 | 11-17 | 59 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`, `tab:eval-compare-full`), the outcome counts, the image models' attack cells; our interactive mode-C prover of Llama-2-7B and Llama-2-13B at the `zkllm` tier's other lengths (`--zkllm-seqs`, default 64, 512 and 1,024 tokens: `tab:zkllm-lengths`, `\ZkllmSameGpuOurs...`, `\ZkllmSameGpuFactor...T...`); Llama-2-7B at lambda 40 and 80 (`tab:eval-lambda`, `\LamForty...`) |
 | `gpuv` | 17 | 5-7 | 25 | the streaming GPU verifier, int8/fp16/bf16 re-execution on the same GPU, the host-to-device bandwidth; the GPU verifier and GPU re-execution on 2 and 3 Llama-2-7B blocks at 2,048 to 16,384 tokens (`tab:eval-long-gpu`, `tab:eval-long-check`'s GPU row) |
 | `gen` | 5 | 4-5 | 11 | generated responses proved as one prefill: Llama-2-7B and Qwen3-4B after a 512-token prompt, greedy and sampled, and GPT-2's prover per generated token (`tab:gen`, `tab:gen-full`, Sec. `sec:gen-prefill`); Llama-2-7B's P = G = 512 prefill measured in mode C (`\GenPrefillGB`, against the byte model of `\GenPerPrefixTB`); the same responses generated without a proof, fp16 with a KV cache (`experiments/generation/decode_baseline.py`: `\GenDecodeLlama`, `\GenOverDecodeC`, `\GenOverDecodeK`) |
 | `batch` | 7 | 2-3 | 8 | several prompts against one opening |
@@ -218,7 +218,7 @@ if it succeeds, which the run above does not need.
 | `tv` | 2 | 2-3 | 7 | the sampler's total-variation distance on the certified OPT-1.3B, and its checks |
 | `attack` | 5 | 4-6 | 12 | the attack: reproduction, MNIST, OPT-6.7B, the in-range edits (`tab:inrange`), the sampler games |
 | `long` (optional) | 21 | 10-16 | 53 | prompts of 2,048 to 16,384 tokens on 2, 3 and 4 Llama-2-7B blocks, the full model a least-squares fit over the blocks (`tab:eval-long`); the full model measured at 8,192 tokens, the verifier and exact re-execution (unless `--no-bigmem`; a node with 256 GB or more), against which `tab:eval-long-check` and the Discussion's `\LongCheckMax` set the fit; V1 on 2 blocks at 2,048 to 8,192 tokens, whole queries with tampers (`tab:eval-v1-long`) |
-| `zkllm` (optional) | 3 (0) | 3-5 | 8 (0) | zkLLM's public demo (commit `993311e`, unchanged) on the run's GPU: its build, then Llama-2-7B and Llama-2-13B at 2,048 tokens, 3 repetitions of layers 0 and 1, each proof binary timed (`logs/<name>/zkllm/`): zkLLM's prover on the same GPU model (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`), in place of the stored runs (`artifacts/results/zkllm_l40s/`), and the text's "in the same run" (`experiments/comparison/zkllm/README.md`) |
+| `zkllm` (optional) | 5 (0) | 6-9 | 14 (0) | zkLLM's public demo (commit `993311e`, unchanged) on the run's GPU: its build, then Llama-2-7B and Llama-2-13B at 2,048 tokens (one job each), then each model at the other lengths of `--zkllm-seqs` (default 64, 512 and 1,024 tokens; one job each, on one setup shared by its lengths; a length that zkLLM's demo does not prove is recorded as failed and the job goes on), 3 repetitions of layers 0 and 1, each proof binary timed (`logs/<name>/zkllm/`): zkLLM's prover on the same GPU model (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`; at the other lengths `tab:zkllm-lengths`, `\ZkllmSameGpuShortSeq`, `\ZkllmSameGpuFactorShortRange`, `\ZkllmSameGpuFactorLengthRange`), in place of the stored runs (`artifacts/results/zkllm_l40s/`), and the text's "in the same run" (`experiments/comparison/zkllm/README.md`) |
 
 `--optional` adds the `long` tier, which the paper's Discussion and `tab:eval-long` read, and the `zkllm` tier (with
 `--llama-licence` only). Submit them in the same invocation as the other tiers, so that they are chained after them
@@ -226,9 +226,9 @@ and gated by the smoke; a second invocation starts a new chain. Without a Llama-
 `--llama-licence`: the Llama-2 cells then stay empty (the qllama tier runs OpenLLaMA-7B's two jobs instead, and the
 qcheck tier OpenLLaMA-7B's calibration draws, which the paper does not report). The counts and limits are those with
 `--llama-licence`; without it (in parentheses) the `real` tier has 19 jobs and 34 h of limits and the `qllama` tier
-2 jobs and 14 h. `all` is then 191 jobs and 375 h of limits (210 and 461 h with `--llama-licence`; the `long` tier
-adds 21 jobs and 53 h, and the `zkllm` tier, with `--llama-licence`, 3 jobs and 8 h: `run.sh --platform final
---optional --llama-licence --dry-run all` lists 234 jobs and 522 h). The `long` tier's full model at 8,192 tokens
+2 jobs and 14 h. `all` is then 193 jobs and 380 h of limits (212 and 466 h with `--llama-licence`; the `long` tier
+adds 21 jobs and 53 h, and the `zkllm` tier, with `--llama-licence`, 5 jobs and 14 h: `run.sh --platform final
+--optional --llama-licence --dry-run all` lists 238 jobs and 533 h). The `long` tier's full model at 8,192 tokens
 (2 jobs, 11 h of limits) runs by default; `--no-bigmem` leaves it out on nodes with less than 256 GB, and
 `tab:eval-long-check`'s 8,192-token row then stays empty.
 
@@ -247,7 +247,10 @@ measures the setup itself.
 * Expected: in `serve`, the largest joint batches of the 7B and 13B models are recorded as `"skipped": "out of
   memory"`; the first job of a real checkpoint spends some minutes downloading it. In the `zkllm` tier, each first
   skip connection's log says "Input or output file does not exist" (zkLLM's demo writes no attention output; the
-  time per layer counts the second one twice); `zk-build` ends with `ZKLLM_BUILD_OK`, and a prove job that stops
+  time per layer counts the second one twice); `zk-build` ends with `ZKLLM_BUILD_OK`; the jobs `zk-llama2-7b-short`
+  and `zk-llama2-13b-short` may report that zkLLM's demo did not prove a length ("did not prove Llama-2-7B at 64
+  tokens: recorded"; its lookup arguments need sizes that short prompts may not give), which is a result, not a
+  failure, as long as the job ends successfully (it fails only if no length was proved); and a prove job that stops
   names what it lacks (the scratch space: `--zkllm-scratch <folder with 58 GB>`; the CUDA toolkit on the node:
   `--cuda-home`).
 * Every job writes, besides its log, the GPU's telemetry (`experiments/package/telemetry.py`: clocks, power,

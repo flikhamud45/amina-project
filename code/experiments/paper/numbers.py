@@ -30,7 +30,9 @@ Outputs (``--out``, default ``paper_sp2027/generated/``; ``--check`` writes noth
 
 * ``<table>.tex`` for each table of :data:`experiments.paper.tables.TABLE_FILES`: the table's body rows (what sits
   between ``\\midrule`` and ``\\bottomrule`` in the paper), under a header comment with the run's protocol settings
-  and sources;
+  and sources; ``tab:eval-compare`` holds the rows of ``--compare-rows`` (default: the paper's), and
+  ``tab:eval-compare-full`` every row of :data:`experiments.paper.tables.COMPARE_ROWS`, so that a row cut from the
+  paper's table keeps its values (there and in ``cells.csv``);
 * ``numbers.tex``: one ``\\newcommand`` per text number (:mod:`experiments.paper.macros`);
 * ``cells.csv``: every table cell and every macro with its value, printed form and source record;
 * ``coverage.txt``: the records per tier and kind, per table the cells filled and missing, the missing macros, the
@@ -349,6 +351,13 @@ SAME_VALUE = (
     ("tab_eval_compare_v1", None, ("zkLLM", "OPT-125M"), 3, None, 0, 1, "CompareVOneOptS", 1e6),
     ("tab_eval_compare_v1", None, ("zkLLM", "OPT-1.3B"), 3, None, 0, 1, "CompareVOneOptM", 1e6),
     ("tab_eval_compare", None, ("zkLLM", "Llama-2-13B"), 3, None, 1, 1, "ZkllmProverFactor", 1),
+    ("tab_eval_compare_full", None, ("zkLLM", "Llama-2-13B"), 3, None, 1, 1, "ZkllmProverFactor", 1),
+    ("tab_zkllm_lengths", None, ("2{,}048",), 1, None, 0, 1, "ZkllmSameGpuProverLlama", 1),
+    ("tab_zkllm_lengths", None, ("2{,}048",), 3, None, 0, 1, "ZkllmSameGpuFactorLlama", 1),
+    ("tab_zkllm_lengths", None, ("2{,}048",), 4, None, 0, 1, "ZkllmSameGpuProverLlamaL", 1),
+    ("tab_zkllm_lengths", None, ("2{,}048",), 6, None, 0, 1, "ZkllmSameGpuFactorLlamaL", 1),
+    ("tab_zkllm_lengths", None, ("1{,}024",), 3, None, 0, 1, "ZkllmSameGpuFactorLlamaTOneZeroTwoFour", 1),
+    ("tab_zkllm_lengths", None, ("1{,}024",), 6, None, 0, 1, "ZkllmSameGpuFactorLlamaLTOneZeroTwoFour", 1),
     ("tab_eval_real", None, (r"$\Kpre$", "2{,}048"), 2, 0, 0, 1e6, "RealOptMKLongReal", 1e9),
     ("tab_eval_real", None, (r"$\Kpre$", "2{,}048"), 2, 1, 0, 1e6, "RealOptMKLongRandom", 1e9),
     ("tab_eval_improve", "Native exact kernels", ("Llama-2-7B",), 3, None, 0, 1, "ImproveCpuv", 1),
@@ -544,7 +553,7 @@ def build(args) -> int:
     failed += machine_failed
     # the published values, zkLLM's stored runs and the run's own zkLLM runs (the zkllm tier's logs/<name>/zkllm/)
     ctx = T.Ctx(run, bench, literature(run_zkllm=logs / "zkllm"), policy, platform_text(run, bench),
-                not args.no_byte_model)
+                not args.no_byte_model, compare_rows=args.compare_rows)
     if args.xcheck_logs:                    # another platform's run of the smoke tier: its proofs of the same cells
         from experiments.comparison.proof_digests import load
         ctx.xcheck = load(args.xcheck_logs)
@@ -678,11 +687,22 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--xcheck-logs", nargs="+", default=[], metavar="DIR",
                     help="another platform's logs of the smoke tier (folders of sp-*.out): its xcheck job's proofs "
                          "must equal this run's, and HwDigestDevices names its GPU and CPU")
+    ap.add_argument("--compare-rows", default="default", metavar="ROWS",
+                    help="tab:eval-compare's rows: 'default' (" + ",".join(T.COMPARE_DEFAULT) + "), 'all', a "
+                         "comma-separated list of row keys or a file of them (one per line, '#' comments); the rows: "
+                         + ",".join(T.COMPARE_KEYS) + ".  Every row is computed whichever are chosen: "
+                         "tab:eval-compare-full (the extended version) and cells.csv hold them all, and the text's "
+                         "comparison numbers (\\Compare...) cover the chosen rows")
     return ap
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    try:
+        args.compare_rows = T.compare_selection(args.compare_rows)
+    except (OSError, ValueError) as e:
+        ap.error(str(e))
     args.logs = args.logs or str(REPO / "logs" / args.platform)
     return build(args)
 

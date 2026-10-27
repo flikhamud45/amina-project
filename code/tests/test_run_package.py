@@ -207,9 +207,9 @@ def test_the_package_runs_fiat_shamir_and_the_policy_everywhere():
             assert "--policy cnn18c" in line, job
         if "costs.bench" in line:
             modes = re.search(r"--modes (\S+)", line).group(1)
-            if ":int" in modes:     # interactive cells: zkLLM's rows, Maverick's, the batched byte model, the images
+            if ":int" in modes:     # interactive: zkLLM's rows and lengths, Maverick's, the batched bytes, the images
                 assert re.search(r"-(c|cg)-(opt-125m|opt-1\.3b|llama2-7b|llama2-13b)-2k$", job) or "thr1" in job \
-                    or job.endswith("-cint") or " cnn " in line, job
+                    or job.endswith("-cint") or job.endswith("-zk") or " cnn " in line, job
             if re.search(r"\bC:", modes):
                 assert "--policy cnn18c" in line, job
             assert "--platform final" in line, job
@@ -1059,22 +1059,48 @@ def test_perf_checks_the_timed_proofs_again_in_the_clients_own_process(monkeypat
 
 def test_the_zkllm_tier_runs_zkllms_demo_with_the_llama_licence_only(tmp_path):
     """The optional zkllm tier: in 'all' with --optional (after long), only with --llama-licence (else no job and a
-    message); zkLLM's build, then Llama-2-7B and Llama-2-13B at 2,048 tokens, 3 repetitions of layers 0 and 1, in
-    logs/<name>/zkllm/ (whole-node jobs, not pinned); the rehearsal's one job builds for Llama-2-7B and proves one
-    layer once; --zkllm-home, --zkllm-scratch, --zkllm-python and --cuda-home reach the jobs; --one-job zkllm is one
+    message); zkLLM's build, then Llama-2-7B and Llama-2-13B at 2,048 tokens (one job each, every length required),
+    then each model at the other lengths of --zkllm-seqs (default 64, 512 and 1,024 tokens; one job each, a length
+    that zkLLM's demo does not prove allowed to fail), 3 repetitions of layers 0 and 1, in logs/<name>/zkllm/
+    (whole-node jobs, not pinned); the bench tier's interactive mode-C cells of both models at the same other lengths;
+    --zkllm-seqs changes both; the rehearsal's one job builds for Llama-2-7B and proves one layer once at 2,048
+    tokens; --zkllm-home, --zkllm-scratch, --zkllm-python and --cuda-home reach the jobs; --one-job zkllm is one
     whole-node job; the pre-flight names what the build lacks."""
     runs: list = []
     jobs = {_job(line): line.split("--wrap", 1)[1] for line in _dry(out=runs)}
     names = [j for j in jobs if j.startswith("sp-zk-")]
-    assert names == ["sp-zk-build", "sp-zk-llama2-7b", "sp-zk-llama2-13b"] and list(jobs)[-3:] == names
+    assert names == ["sp-zk-build", "sp-zk-llama2-7b", "sp-zk-llama2-13b", "sp-zk-llama2-7b-short",
+                     "sp-zk-llama2-13b-short"] and list(jobs)[-5:] == names
     assert runs[0].stdout.splitlines()[-1].startswith("# smoke cpuv ") and " long zkllm: " in runs[0].stdout
+    assert "# tier zkllm: 5 jobs, job limits 14 h, estimate 6-9 h" in runs[0].stdout
     assert "run_zkllm.sh build --home " in jobs["sp-zk-build"] and "/logs/final/zkllm/home" in jobs["sp-zk-build"]
     for size, job in ((7, "sp-zk-llama2-7b"), (13, "sp-zk-llama2-13b")):
         assert "run_zkllm.sh prove --home " in jobs[job] and "/logs/final/zkllm" in jobs[job]
-        assert f"--size {size} --seq 2048 --reps 3 --layers 0,1" in jobs[job]
+        assert f"--size {size} --seqs 2048 --reps 3 --layers 0,1\"" in jobs[job]
+        short = jobs[f"{job}-short"]
+        assert "run_zkllm.sh prove --home " in short and "/logs/final/zkllm" in short
+        assert f"--size {size} --seqs 64,512,1024 --reps 3 --layers 0,1 --allow-failed-lengths" in short
     assert all("experiments.package.pin" not in jobs[j] for j in names)
+    for m in ("llama2-7b", "llama2-13b"):
+        ours = jobs[f"sp-b-ci-{m}-zk"]
+        assert f"--model {m} --seq 64 512 1024 --builds full --queries 3 --lams 128 --modes C:int --policy" in ours
+        assert "experiments.package.pin" in ours and "--require-native" in ours      # a CPU-verifier cell
     full = {_job(line): line for line in _dry(tiers=("zkllm",))}
     assert "--time=2:00:00" in full["sp-zk-llama2-7b"] and "--time=4:00:00" in full["sp-zk-llama2-13b"]
+    assert "--time=2:00:00" in full["sp-zk-llama2-7b-short"] and "--time=4:00:00" in full["sp-zk-llama2-13b-short"]
+    bench = {_job(line): line for line in _dry(tiers=("bench",))}
+    assert "--time=2:00:00" in bench["sp-b-ci-llama2-7b-zk"] and "--time=3:00:00" in bench["sp-b-ci-llama2-13b-zk"]
+    # --zkllm-seqs: other lengths for both sides; without 2,048 no 2,048-token job; 2,048 alone: no short job
+    got = {_job(line): line for line in _dry("--zkllm-seqs", "256,2048,4096", tiers=("zkllm", "bench"))}
+    assert "--seqs 256,4096 " in got["sp-zk-llama2-13b-short"] and "--seq 256 4096 " in got["sp-b-ci-llama2-7b-zk"]
+    got = {_job(line) for line in _dry("--zkllm-seqs", "512", tiers=("zkllm",))}
+    assert got == {"sp-zk-build", "sp-zk-llama2-7b-short", "sp-zk-llama2-13b-short"}
+    got = {_job(line) for line in _dry("--zkllm-seqs", "2048", tiers=("zkllm", "bench"))}
+    assert "sp-zk-llama2-7b" in got and not any(j.endswith("-short") or j.startswith("sp-b-ci-") for j in got)
+    bad = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--llama-licence", "--zkllm-seqs",
+                          "64,x", "zkllm"], cwd=REPO, env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"},
+                         capture_output=True, text=True, timeout=120)
+    assert bad.returncode == 2 and "--zkllm-seqs" in bad.stderr
     # without --llama-licence: nothing, and why
     out = subprocess.run([_bash(), str(RUN), "--platform", "final", "--dry-run", "--optional", "zkllm"], cwd=REPO,
                          env={**os.environ, "HF_HOME": "/tmp/hf", "CXX": "g++"}, capture_output=True, text=True,
@@ -1083,7 +1109,7 @@ def test_the_zkllm_tier_runs_zkllms_demo_with_the_llama_licence_only(tmp_path):
     reh = {_job(line): line for line in _dry("--rehearsal", tiers=("zkllm",))}
     assert list(reh) == ["sp-zk-rehearsal"]
     assert "build --home " in reh["sp-zk-rehearsal"] and "--models 7 && " in reh["sp-zk-rehearsal"]
-    assert "--size 7 --reps 1 --layers 0" in reh["sp-zk-rehearsal"]
+    assert "--size 7 --seqs 2048 --reps 1 --layers 0" in reh["sp-zk-rehearsal"]
     opts = {_job(line): line for line in _dry("--zkllm-home", "/zk/home", "--zkllm-scratch", "/zk/scratch",
                                               "--zkllm-python", "/zk/python3", "--cuda-home", "/zk/cuda",
                                               tiers=("zkllm",))}
@@ -1094,7 +1120,7 @@ def test_the_zkllm_tier_runs_zkllms_demo_with_the_llama_licence_only(tmp_path):
     status, out_, err, _ = _submit(tmp_path / "a", "--dry-run", "--platform", "final", "--llama-licence",
                                    "--one-job", "zkllm")
     assert status == 0 and "-J sp-node-zkllm " in out_ and "--exclusive --mem=0" in out_, err
-    assert "# one job: zkllm: 3 jobs, job limits 8 h, time limit 8 h" in out_, out_
+    assert "# one job: zkllm: 5 jobs, job limits 14 h, time limit 14 h" in out_, out_
     # the pre-flight: no CUDA compiler and no token stop the submission
     status, _, err, jobs_ = _submit(tmp_path / "b", "--platform", "final", "--llama-licence", "--cuda-home",
                                     "/no/cuda", "zkllm", extra={"HF_TOKEN": ""})
@@ -1108,7 +1134,7 @@ def test_the_zkllm_tier_runs_zkllms_demo_with_the_llama_licence_only(tmp_path):
     (home / "env" / "bin" / "python").chmod(0o755)
     status, _, err, jobs_ = _submit(tmp_path / "c", "--platform", "final", "--llama-licence", "--cuda-home",
                                     "/no/cuda", "zkllm", extra={"HF_TOKEN": "hf_x"})
-    assert status == 0 and len(jobs_) == 3, err
+    assert status == 0 and len(jobs_) == 5, err
 
 
 def test_the_long_prompts_cells():

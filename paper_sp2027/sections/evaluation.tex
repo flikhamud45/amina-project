@@ -222,17 +222,17 @@ verifier suits an auditor or gateway that checks a provider without holding the 
 
 Table~\ref{tab:eval-compare} sets our costs against published
 systems~\cite{zkcnn,zkml,zkgpt,deepprove,zktorch,maverick,zkllm} on matched models.
-The hardware differs: our
-prover runs on an \PlatformGpu{}, while all the zkSNARKs except zkLLM ran on CPUs. The guarantees differ: the
+Our
+prover runs on an \PlatformGpu{}; all the zkSNARKs but zkLLM ran on CPUs. The guarantees differ: the
 zkSNARKs also prove the operations without weights, and many hide the weights; our verifier
 recomputes those operations and our protocol is not zero-knowledge.
-With these caveats, our prover is faster in every measured row, by \CompareProverMin{}$\times$ to about
+Still, our prover is faster in every measured row, by \CompareProverMin{}$\times$ to about
 \CompareProverMax{}$\times$ against the zkSNARKs and \CompareMaverick{}$\times$ against Maverick; our verifier is slower in
 \CompareVerifierSlowerRows{}; and our proof is larger in most rows, by up to \CompareProofMax{}$\times$ against zkLLM, whose proof
 stays below 200\,kB. V1 narrows that gap, from about \CompareVOneBefore{}$\times$ to about \CompareVOneAfter{}$\times$ on
 OPT-1.3B (Table~\ref{tab:eval-v1}). On the \PlatformGpu{}, zkLLM's prover takes about \ZkllmSameGpuProverLlama{}\,s
-(Llama-2-7B) and \ZkllmSameGpuProverLlamaL{}\,s (13B), \ZkllmSameGpuFactorRange{}$\times$ ours~\cite{fullversion}. Sampling-based
-schemes such as CommitLLM (Table~\ref{tab:sok}) do not check every operation of every query, so we
-do not compare their costs.
+(Llama-2-7B) and \ZkllmSameGpuProverLlamaL{}\,s (13B), \ZkllmSameGpuFactorRange{}$\times$ ours, and
+\ZkllmSameGpuFactorShortRange{}$\times$ at \ZkllmSameGpuShortSeq{} tokens~\cite{fullversion}. We do not compare
+sampling-based schemes such as CommitLLM (Table~\ref{tab:sok}), which skip operations.
 
 \input{sections/quality}
