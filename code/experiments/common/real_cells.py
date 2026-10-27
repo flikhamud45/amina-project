@@ -23,7 +23,8 @@ import torch
 
 from experiments.common import checkpoints, cli
 
-__all__ = ["HELP", "add_argument", "family", "check", "Checkpoint", "load", "prompts", "model_ops", "fields"]
+__all__ = ["HELP", "add_argument", "family", "check", "partial", "Checkpoint", "load", "prompts", "model_ops",
+           "fields"]
 
 HELP = ("decoders: a Hugging Face checkpoint (e.g. meta-llama/Llama-2-7b-hf), its integer graph queried on WikiText-2 "
         "windows; --model names its shapes (default: random weights)")
@@ -116,6 +117,22 @@ def prompts(ck: Checkpoint, seq: int, n: int) -> torch.Tensor:
     if n * seq > ck.stream.numel():
         raise ValueError(f"{n} prompts of {seq} tokens need {n * seq} tokens, {ck.stream.numel()} were loaded")
     return ck.stream[:n * seq].reshape(n, seq).clone()
+
+
+def partial(cfg, layers: int) -> int | None:
+    """The block count to pass to :func:`experiments.common.checkpoints.real_graph` for ``--layers layers`` of a
+    checkpoint of ``cfg``'s shapes: None for the full model (``layers`` 0 or ``cfg.n_layers``), else ``layers`` for a
+    Llama-family checkpoint (its first ``layers`` blocks); refuses (``SystemExit``) a partial build of any other
+    family (the OPT builder takes every block) and a block count outside ``1 .. cfg.n_layers``."""
+    if not layers or layers == cfg.n_layers:
+        return None
+    if family(cfg) != "llama":
+        raise SystemExit(f"--real with --layers: only a Llama-family checkpoint (Llama, Qwen3) is built on its first "
+                         f"blocks; the OPT builder (hf_opt.build_opt_from_hf) takes every block of {cfg.name} "
+                         f"({cfg.n_layers}): drop --layers")
+    if not 1 <= layers <= cfg.n_layers:
+        raise SystemExit(f"--layers {layers}: {cfg.name} has {cfg.n_layers} blocks")
+    return layers
 
 
 def model_ops(fam: str, cfg, prune_last: bool):

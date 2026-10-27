@@ -253,3 +253,95 @@ def test_bench_refuses(fake, tmp_path, monkeypatch, argv, match):
     assert fake == []
     with pytest.raises(SystemExit, match="decoders"):
         bench.check(bench.build_parser().parse_args(["cnn", "--model", "lenet5", "--real", "x", "--platform", "t"]))
+
+
+# ------------------------------------------------------------------------- perf.py, v1_bytes.py, gen_bench.py
+# ``--layers n`` with ``--real``: a Llama-family checkpoint's first ``n`` blocks, the full model's prompts and
+# calibration; refused for OPT.
+@pytest.fixture
+def load_calls(fake, monkeypatch):
+    """The arguments of every ``checkpoints.load_real`` call (the prompts and calibration a script asks for)."""
+    calls, load_real = [], checkpoints.load_real
+
+    def spy(*a, **kw):
+        calls.append((a, kw))
+        return load_real(*a, **kw)
+
+    monkeypatch.setattr(checkpoints, "load_real", spy)
+    return calls
+
+
+def _one_block(prune: bool = True):
+    """The tiny Llama's first block under the main recipe, calibrated as its full model."""
+    return checkpoints.real_graph(_tiny_llama(), _llama_calibration(None, None, name="tiny-llama"), prune,
+                                  n_layers=1)[0]
+
+
+def test_partial_takes_llama_blocks_and_refuses_opt():
+    assert real_cells.partial(transformer.CONFIGS["qwen3-4b"], 0) is None
+    assert real_cells.partial(transformer.CONFIGS["llama2-7b"], 32) is None
+    assert real_cells.partial(transformer.CONFIGS["qwen3-4b"], 2) == 2
+    with pytest.raises(SystemExit, match="OPT builder"):
+        real_cells.partial(transformer.CONFIGS["opt-6.7b"], 2)
+    with pytest.raises(SystemExit, match="has 32 blocks"):
+        real_cells.partial(transformer.CONFIGS["llama2-7b"], 40)
+
+
+def test_perf_real_first_blocks(load_calls, monkeypatch, capsys):
+    from experiments.costs import perf
+    argv = ["--model", "llama-tiny", "--real", "tiny-llama", "--seq", "16", "--modes", "Kpre", "C", "--policy", "R8c",
+            "--queries", "2", "--tampers", "1"]
+    status, rows = _main(perf, monkeypatch, capsys, *argv, "--layers", "1")
+    assert status == 0 and [r["mode"] for r in rows] == ["Kpre", "C"]
+    for r in rows:
+        assert (r["real"], r["recipe"], r["layers"], r["seq"]) == ("tiny-llama", "main", 1, 16)
+        assert (r["accepted"], r["queries"]) == (2, 2) and all(t["rejected"] == t["attempts"]
+                                                               for t in r["tampers"].values())
+        assert r["graph_digest"] == _one_block().digest().hex()
+    status, full = _main(perf, monkeypatch, capsys, *argv)
+    assert status == 0 and all(r["layers"] is None for r in full)
+    assert full[0]["graph_digest"] != rows[0]["graph_digest"]
+    assert load_calls[0] == load_calls[1]                    # the same prompts and calibration as the full model
+
+
+def test_v1_bytes_real_first_blocks(load_calls, monkeypatch, capsys):
+    from experiments.v1 import v1_bytes
+    status, rows = _main(v1_bytes, monkeypatch, capsys, "--model", "llama-tiny", "--real", "tiny-llama", "--seq",
+                         "16", "--layers", "1", "--modes", "C", "Kpre", "--policy", "R8c", "--full", "--reps", "2",
+                         "--lmax", "20")
+    assert status == 0 and [r["mode"] for r in rows] == ["C", "Kpre"]
+    for r in rows:
+        assert (r["real"], r["recipe"], r["layers"]) == ("tiny-llama", "main", 1)
+        assert r["shapes"] == {"problems": [], "claim_columns": True} and r["accounting_ok"]
+        assert r["v0_accepted"] and r["v1_full"]["accepted"]
+        assert r["graph_digest"] == _one_block().digest().hex()
+    status, (codec,) = _main(v1_bytes, monkeypatch, capsys, "--model", "llama-tiny", "--real", "tiny-llama", "--seq",
+                             "16", "--layers", "1", "--codec-only")
+    assert status == 0 and codec["layers"] == 1
+    status, (whole,) = _main(v1_bytes, monkeypatch, capsys, "--model", "llama-tiny", "--real", "tiny-llama", "--seq",
+                             "16", "--codec-only")
+    assert status == 0 and whole["layers"] == 2 and load_calls[1] == load_calls[2]   # the full model's prompts
+
+
+def test_gen_bench_real_first_blocks(load_calls, monkeypatch, capsys):
+    from experiments.generation import gen_bench
+    argv = ["--model", "llama-tiny", "--real", "tiny-llama", "--prompt", "8", "--gen", "3", "--decode", "greedy",
+            "sample", "--modes", "C", "Kpre", "--policy", "R8c", "--queries", "1"]
+    status, rows = _main(gen_bench, monkeypatch, capsys, *argv, "--layers", "1")
+    assert status == 0 and len(rows) == 4
+    for r in rows:
+        assert (r["real"], r["layers"], r["n_layers"], r["ok"]) == ("tiny-llama", 1, 1, True)
+    status, _ = _main(gen_bench, monkeypatch, capsys, *argv)
+    assert status == 0 and load_calls[0] == load_calls[1]
+
+
+@pytest.mark.parametrize("script,argv", [
+    ("experiments.costs.perf", ["--seq", "16", "--modes", "Kpre"]),
+    ("experiments.v1.v1_bytes", ["--seq", "16", "--modes", "Kpre"]),
+    ("experiments.generation.gen_bench", ["--prompt", "8", "--gen", "3", "--modes", "Kpre"])])
+def test_first_blocks_of_an_opt_checkpoint_are_refused(load_calls, monkeypatch, capsys, script, argv):
+    import importlib
+    with pytest.raises(SystemExit, match="OPT builder"):
+        _main(importlib.import_module(script), monkeypatch, capsys, "--model", "opt-tiny", "--real", "tiny-opt",
+              "--layers", "1", *argv)
+    assert load_calls == []
