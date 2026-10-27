@@ -14,6 +14,8 @@ generated-response cells of ``tab:gen``.  Nothing is aggregated here: ``comparis
         --queries 5 --llm-tampers 30 --platform <name>
     python -m experiments.costs.bench llm --model llama2-7b --seq 64 --builds full --modes Kpre:fs --lams 128 \\
         --queries 5 --platform <name>
+    python -m experiments.costs.bench llm --model llama2-7b --real meta-llama/Llama-2-7b-hf --seq 64 2048 \\
+        --builds full --modes C:fs,Kpre:fs --lams 128 --queries 5 --platform <name>
     python -m experiments.costs.bench llm --model tiny-gpt --seq 16 --queries 2 --lams 40 --platform laptop
         # a laptop check (minutes on a CPU)
 
@@ -45,14 +47,33 @@ this order, of the settings that differ from the reference:  ``_thr<n>`` (``--th
 (decoders, ``--no-lean``), ``_tf32``, ``_wire``, ``_gpuv`` (a verifier on the GPU), ``_stream`` (the streaming
 verifier), ``_batch`` (batch sizes other than the defaults), ``_prune`` (decoders, the pruned last block),
 ``_lookups`` (the K and Kpre cells of decoders with ``--lookups``), ``_pmax<n>`` (decoders whose attention
-probabilities' scale is not the stored cells' 255, :data:`STORED_PROB_MAX`: ``_pmax2047``, 11 bits), ``_gen<G>`` and
-``_pol<name>`` (the commitment and mode-C cells under a plan other than ``per-op``).  A cell measured under the same
+probabilities' scale is not the stored cells' 255, :data:`STORED_PROB_MAX`: ``_pmax2047``, 11 bits), ``_gen<G>``,
+``_pol<name>`` (the commitment and mode-C cells under a plan other than ``per-op``) and ``_real`` (decoders,
+``--real``: a checkpoint's weights).  A cell measured under the same
 settings therefore has the name of the stored cell measured under them, and the cells a setting does not change (e.g.
 the K and Kpre cells under a commitment plan) are shared between runs.
 
+**Real weights.**  The decoder cells take random weights of the model's shapes (``--seed``) and random prompts
+(``--prompt-seed``) unless ``--real`` names a Hugging Face checkpoint (``--model`` names its shapes): its integer graph
+is then built as ``perf.py --real`` builds it (:mod:`experiments.common.real_cells`: an OPT checkpoint with
+``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint, Qwen3 included, with ``hf_llama.MAIN_RECIPE`` and its fixed
+public prefix), loaded and calibrated once per job, and the prompts are the WikiText-2 test split's windows from its
+start (``perf.py --real``'s queries: the ``i``-th prompt of ``T`` tokens is the ``i``-th window of ``T`` tokens).  A
+build of ``n`` blocks is a Llama-family checkpoint's first ``n``; an OPT checkpoint is built whole (``--builds
+full``).  The cells are named ``_real`` and their ``config`` holds ``real`` (the checkpoint) and ``recipe``
+(``certified`` or ``main``); the commitment cell also records ``load_checkpoint``, the seconds of loading the
+checkpoint in fp32 and its calibration, which ``build_graph`` (the integer graph's own calibration and build) does not
+include.  Refused: the image models, GPT-2 (no integer builder of a real checkpoint), a prompt (with ``--gen``, the
+prompt and the generated tokens) longer than the checkpoint's trained context, an OPT build of fewer blocks than the
+checkpoint's, and an attention probabilities' scale other than the paper's.  Without ``--real`` the cells and their
+records are the random-weight ones.
+
 Hardware and time: the paper's cells ran on an NVIDIA L40S prover with 8 threads of an AMD EPYC 9334 as the CPU
 verifier.  A CNN or GPT-2 job takes minutes, a 7B or 13B decoder at 2,048 tokens one to two hours and up to 128 GB
-of host memory; a build whose int8 weights exceed 85% of the GPU's memory is skipped (and the job then fails).
+of host memory; a build whose int8 weights exceed 85% of the GPU's memory is skipped (and the job then fails).  With
+``--real`` the checkpoint is also held in fp32 until the job's last build (about 4 bytes per parameter: 27 GB for
+Llama-2-7B and OPT-6.7B, 52 GB for Llama-2-13B, 16 GB for Qwen3-4B), and its calibration's forward passes on the CPU
+add tens of minutes to a 7B or 13B job.
 """
 
 from __future__ import annotations
@@ -72,7 +93,7 @@ import torch
 from torch import nn
 
 import pvi
-from experiments.common import cli, records
+from experiments.common import checkpoints, cli, real_cells, records
 from experiments.common.models import decoder_config, test_batches, trained_cnn, trained_mlp
 from experiments.common.paths import BENCH, CNN_MODELS, CODE
 from pvi.commit.cost import setup_size
@@ -220,7 +241,8 @@ def variant(args, suite: str, base: str) -> str:
             "lookups" if llm and args.lookups and base.startswith(("defence_K_", "defence_Kpre_")) else "",
             f"pmax{args.prob_max}" if llm and args.prob_max != STORED_PROB_MAX else "",
             f"gen{args.gen}" if llm and args.gen > 1 else "",
-            f"pol{args.policy}" if plan and args.policy != "per-op" else ""]
+            f"pol{args.policy}" if plan and args.policy != "per-op" else "",
+            "real" if llm and getattr(args, "real", "") else ""]
     return "".join("_" + t for t in tags if t)
 
 
@@ -757,16 +779,30 @@ def suite_llm(args, env) -> None:
     else:                          # e.g. "full" or "1,2,full" (L1, L2 and the full model in one job)
         builds = [cfg.n_layers if b == "full" else int(b) for b in args.builds.split(",")]
     modes = _modes(args, (("C", "int"), ("C", "fs"), ("Kpre", "int"), ("K", "int")))
+    n_prompts = max([args.queries, *args.batches])
+    ck, fam, rw = None, None, {}
+    if args.real:        # a checkpoint's weights (experiments.common.real_cells), loaded at the first build to run
+        fam = real_cells.check(cfg, seqs=[s + max(args.gen - 1, 0) for s in args.seq], n_layers=builds,
+                               prob_max=args.prob_max)
+        rw = {"real": args.real, "recipe": "main" if fam == "llama" else "certified"}
     skipped = []
+
+    def todo_of(seq: int, n_layers: int) -> list[str]:
+        base = f"T{seq}_L{n_layers}"
+        todo = [f"defence_{m}_{c}_lam{lam}_{base}" + (rtag if m == "C" else "") for m, c in modes
+                for lam in args.lams]
+        if args.llm_tampers and n_layers == cfg.n_layers and any(m == "C" for m, _ in modes):
+            todo.append(f"tamper_C_int_lam{args.tamper_lam}_{base}{rtag}")
+        return todo
+
+    # the builds still to run (a real checkpoint's fp32 model is dropped after the last of them)
+    left = sum(not all(is_done(args, "llm", cfg.name, t) for t in todo_of(s, n)) for s in args.seq for n in builds)
     for seq in args.seq:
         for n_layers in builds:
             base = f"T{seq}_L{n_layers}"
-            todo = [f"defence_{m}_{c}_lam{lam}_{base}" + (rtag if m == "C" else "") for m, c in modes
-                    for lam in args.lams]
-            if args.llm_tampers and n_layers == cfg.n_layers and any(m == "C" for m, _ in modes):
-                todo.append(f"tamper_C_int_lam{args.tamper_lam}_{base}{rtag}")
-            if all(is_done(args, "llm", cfg.name, t) for t in todo):
+            if all(is_done(args, "llm", cfg.name, t) for t in todo_of(seq, n_layers)):
                 continue
+            left -= 1
             if device.type == "cuda":  # a build whose int8 weights alone fill the GPU would only run out of memory
                 need = sum(sh.n_rows * sh.row_length for sh in decoder_shapes(cfg, n_layers=n_layers,
                                                                               prune_last=prune))
@@ -775,19 +811,36 @@ def suite_llm(args, env) -> None:
                     print(f"SKIP {cfg.name} T{seq} L{n_layers}: {need / 2**30:.1f} GiB of int8 weights "
                           f"> 85% of this GPU's {have / 2**30:.0f} GiB", flush=True)
                     skipped.append(f"T{seq}_L{n_layers}")
+                    if ck is not None and not left:
+                        ck.free()
                     continue
             records.reset_peaks(device)
+            load_s = None
+            if args.real and ck is None:   # once per job: the checkpoint in fp32 and its calibration
+                t0 = time.perf_counter()
+                ck = real_cells.load(args.real, cfg, fam, seq=max(args.seq) + max(args.gen - 1, 0),
+                                     tokens=n_prompts * max(args.seq))
+                load_s = time.perf_counter() - t0
+                env["sources"] = {**(env.get("sources") or {}), **checkpoints.SOURCES}   # its revision in env rows
             setup_cs: dict = {}
             c0 = contention.begin()
             t0 = time.perf_counter()
-            graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, args.calib_tokens), seed=args.seed,
-                                  prune_last=prune, prob_max=args.prob_max)
+            if ck is not None:
+                graph, _ = ck.graph(prune, n_layers)
+                if not left:               # the job's last build: the fp32 model is no longer needed
+                    ck.free()
+            else:
+                graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=min(seq, args.calib_tokens),
+                                      seed=args.seed, prune_last=prune, prob_max=args.prob_max)
             build_s = time.perf_counter() - t0
             contention.add(setup_cs, "build_graph", c0)
             mats = graph.mat_ops
             # the first ``queries`` rows are the single-prompt queries
-            tokens = torch.randint(0, cfg.vocab, (max([args.queries, *args.batches]), seq),
-                                   generator=torch.Generator().manual_seed(args.prompt_seed))
+            if ck is not None:
+                tokens = real_cells.prompts(ck, seq, n_prompts)
+            else:
+                tokens = torch.randint(0, cfg.vocab, (n_prompts, seq),
+                                       generator=torch.Generator().manual_seed(args.prompt_seed))
             generate_s = None
             if args.gen > 1:   # each prompt and the gen - 1 tokens this build generates after it, one prefill
                 t0 = time.perf_counter()
@@ -797,7 +850,8 @@ def suite_llm(args, env) -> None:
                 graph = with_lm_positions(graph, args.gen)
             coms = None
             if any(m == "C" for m, _ in modes):
-                coms, commit_s = _commit(args, graph, device, decoder_shapes(cfg, prune_last=prune), cs=setup_cs)
+                plan_ops = real_cells.model_ops(fam, cfg, prune) if args.real else decoder_shapes(cfg, prune_last=prune)
+                coms, commit_s = _commit(args, graph, device, plan_ops, cs=setup_cs)
                 cell = f"commit_{base}{rtag}"
                 if not is_done(args, "llm", cfg.name, cell):
                     r = Recorder(args, "llm", cfg.name, cell, {"seq": seq, "n_layers": n_layers, "rate": rate,
@@ -805,7 +859,9 @@ def suite_llm(args, env) -> None:
                                                                "prob_max": args.prob_max,
                                                                "params_full": decoder_param_count(cfg),
                                                                **({"prune_last": True} if prune else {}),
-                                                               **_plan_config(coms)}, env)
+                                                               **_plan_config(coms), **rw}, env)
+                    if load_s is not None:
+                        r.rec("load_checkpoint", load_s, "s")
                     r.rec("build_graph", build_s, "s", **_cs(setup_cs, "build_graph"))
                     if coms.setup_cache == "hit":   # rebuilt from the setup cache: a load time, never commit_total
                         r.rec("commit_cached_load", commit_s, "s", setup_cache="hit")
@@ -835,12 +891,13 @@ def suite_llm(args, env) -> None:
                             "threads": torch.get_num_threads(), **({"prune_last": True} if prune else {}),
                             **({"lookups": True} if args.lookups and mode != "C" else {}),
                             **({"gen": args.gen, "positions": tokens.shape[1]} if args.gen > 1 else {}),
-                            **(_plan_config(coms, params) if plan is not None else {})}
+                            **(_plan_config(coms, params) if plan is not None else {}), **rw}
                     r = Recorder(args, "llm", cfg.name, cell, conf, env)
                     if generate_s is not None:   # untimed by the protocol: the honest generation, per query
                         r.rec("generate", generate_s, "s")
                     if plan is not None:      # the whole model's bound, under the whole model's plan
-                        whole = plan_commitment(full_shapes, args.policy, rate=rate)
+                        # (a real OPT's plan is made from its own ops: its LM head has a folded bias column)
+                        whole = plan_commitment(mats if fam == "opt" else full_shapes, args.policy, rate=rate)
                         r.rec("soundness_bits", _plan_soundness(params_for(
                             lam, len(full_shapes), fiat_shamir=(chal == "fs"), plan=whole), whole, "C"), "bits")
                     if mode == "C":
@@ -896,7 +953,7 @@ def suite_llm(args, env) -> None:
                                                            "n_layers": n_layers, "n_layers_full": cfg.n_layers,
                                                            "lean": args.lean, "prob_max": args.prob_max,
                                                            **({"prune_last": True} if prune else {}),
-                                                           **_plan_config(coms, params)}, env)
+                                                           **_plan_config(coms, params), **rw}, env)
                 g = torch.Generator().manual_seed(args.tamper_seed)
                 x0 = tokens[:1]
 
@@ -1025,6 +1082,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--prompt-seed", type=int, default=1, help="decoders: the random prompts' seed")
     g.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS,
                    help="decoders: calibration tokens of the random-weight build (at most --seq)")
+    real_cells.add_argument(g, real_cells.HELP + "; _real")
     g = ap.add_argument_group("verifier and numerics")
     g.add_argument("--verifier-impl", default="default", choices=["default", "stream"],
                    help="'stream': the streaming verifier, the same verdicts (_stream)")
@@ -1040,6 +1098,8 @@ def check(args) -> None:
         raise SystemExit("--platform: a name of letters, digits, '.', '_' and '-'")
     if args.suite == "cnn" and args.gen:
         raise SystemExit("--gen is for the decoders (the llm suite)")
+    if args.suite == "cnn" and args.real:
+        raise SystemExit("--real is for the decoders (the llm suite)")
     if args.verifier_device not in ("cpu", "cuda") and not args.verifier_device.startswith("cuda:"):
         raise SystemExit("--verifier-device: cpu or cuda")
     if args.tf32 and os.environ.get("NVIDIA_TF32_OVERRIDE") == "0":

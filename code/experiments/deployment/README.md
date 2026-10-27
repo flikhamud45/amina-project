@@ -39,7 +39,14 @@ after one warm-up:
 * **Inputs.** Random-weight decoders of the shapes of `pvi.models.decoder.CONFIGS` (`--model opt-1.3b qwen3-4b
   llama2-7b opt-6.7b llama2-13b`; the costs depend on the shapes only) or the small shapes of
   `experiments.common.models.TINY` (`tiny-llama`, ...), built with `--seed` on `--layers` blocks (0: the full model)
-  and `--calib-tokens` calibration tokens; prompts of random ids (`--prompt-seed`). No downloads.
+  and `--calib-tokens` calibration tokens; prompts of random ids (`--prompt-seed`). No downloads. With `--real
+  <checkpoint>` (one `--model`, its shapes) the integer model is the checkpoint's integer graph, built as `perf.py
+  --real` builds it (OPT with `hf_opt.CERTIFIED_RECIPE`, whole; a Llama-family checkpoint, Qwen3 included, with
+  `hf_llama.MAIN_RECIPE` and its fixed public prefix, on its first `--layers` blocks), and the prompts are the
+  WikiText-2 test split's windows from its start; U2 keeps random weights of the same shapes. GPT-2, a cell longer
+  than the checkpoint's trained context, an OPT model of fewer blocks and a `--prob-max` other than the paper's are
+  refused. The checkpoint is loaded in fp32 (27 GB for Llama-2-7B and OPT-6.7B, 52 GB for Llama-2-13B, 16 GB for
+  Qwen3-4B) and freed once the graph is built, before anything is timed.
 * **Main options.** The protocol flags default to the paper's configuration (`experiments.common.cli.PAPER`):
   `--policy cnn18c` (mode C's commitment plan; `--policy per-op` for one tree per weight op), `--fs`, `--wire`,
   `--lean`, `--prune-last`, `--lookups`, each with a `--no-...` form, `--prob-max 2047` (11-bit attention
@@ -56,7 +63,8 @@ after one warm-up:
   served tokens per second, the egress cap at 100 Gb/s, the checks (`u1_equals_claims`, `deterministic`, `accepted`,
   `bytes_consistent`) and `ok`, `proof_sha256`, the peak GPU memory of each variant and the host's peak resident
   memory; and one `row: "on_request"` line per cell: U1's serving time and its ratio to U2, and for every prover
-  variant the later proof's time, bytes and SHA-256. Every line carries the settings, the setup times and `env`
+  variant the later proof's time, bytes and SHA-256. Every line carries the settings, `real` and `recipe` (None for
+  random weights), the setup times (with `--real` also `load_s`) and `env`
   (`experiments.common.records.environment`). A variant that does not fit the GPU is recorded as `skipped` (out of
   memory), never extrapolated; the exit status is 1 if a check failed. `--table <logs>` prints such lines as a table.
 * **Hardware and time.** The package runs one job per model on an NVIDIA L40S (48 GB) with 8 CPU threads: limits of 3

@@ -9,6 +9,8 @@ client asks about); the run package's ``serve`` tier.
     python -m experiments.deployment.serve_ab --model llama2-7b --workload a b --batch-proof seq joint \\
         --u2-dtype fp16 bf16 --label serve
     python -m experiments.deployment.serve_ab --model llama2-7b --layers 2 --cells 64x1 2048x4 --batch-proof seq joint
+    python -m experiments.deployment.serve_ab --model llama2-7b --real meta-llama/Llama-2-7b-hf --workload a b \\
+        --batch-proof seq joint --label serve-real
     python -m experiments.deployment.serve_ab --model tiny-llama --cells 32x1 32x4 --device cpu --threads 2
         # a laptop check (seconds)
     python -m experiments.deployment.serve_ab --table logs/<platform>/sp-serve-*.out
@@ -18,8 +20,19 @@ A cell is a model, a prompt length ``T`` and a batch ``B``: ``B`` prompts of ``T
 prompt of its ``T``).  The decoders have the shapes of ``pvi.models.decoder.CONFIGS`` and random weights (the costs
 depend on the shapes only), built as ``perf.py`` builds them (``--seed``, ``--calib-tokens`` calibration tokens: one
 graph for every cell), on ``--layers`` blocks (0: the full model); the small shapes of
-:data:`experiments.common.models.TINY` are for a laptop and the tests.  Every cell times, on the same token ids,
-shapes, device and host:
+:data:`experiments.common.models.TINY` are for a laptop and the tests.  With ``--real`` (a Hugging Face checkpoint;
+one ``--model``, which names its shapes) the integer model is the checkpoint's integer graph instead, built as
+``perf.py --real`` builds it (:mod:`experiments.common.real_cells`: an OPT checkpoint with
+``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint, Qwen3 included, with ``hf_llama.MAIN_RECIPE`` and its fixed
+public prefix; ``--layers n``: a Llama-family checkpoint's first ``n`` blocks, while an OPT checkpoint is built
+whole), and the prompts are the WikiText-2 test split's windows from its start (``perf.py --real``'s queries: the
+``B`` prompts of a cell are the first ``B`` windows of ``T`` tokens, so prompt 0 is again the B = 1 prompt).  The
+checkpoint is loaded in fp32, calibrated and turned into the integer graph before anything is timed, and its fp32
+model freed.  U2 keeps random weights of the checkpoint's shapes (its dense kernels' time depends on the shapes
+only) and runs no fixed prefix, whose keys and values the real Llama-family graph's attention also reads.  Refused
+with ``--real``: GPT-2 (no integer builder of a real checkpoint), a cell longer than the checkpoint's trained context,
+an OPT model of fewer blocks than the checkpoint's, and an attention probabilities' scale other than the paper's.
+Every cell times, on the same token ids, shapes, device and host:
 
 * **U1**, our exact integer model served without proofs: ``IntGraph.forward(free=True)`` of the integer graph, every
   claim dropped as it is computed (``send`` keeps nothing).  It computes the integers the prover claims -- the logits
@@ -96,16 +109,21 @@ that, untimed and after the repetitions, else the median of the timed repetition
 counter, and the record's ``energy_counter`` says why) and the host's peak resident memory (``host_maxrss_mb``); and one line
 per cell, ``row = "on_request"``: serving costs U1 (``serve_s``, and its ratio to U2), and a proof produced later,
 only for the queries a client asks about, costs ``prove_s`` and is byte-identical (``later_proof``: ``deterministic``,
-with its SHA-256).  Every line carries the run's settings, the setup times (``build_s``, ``commit_s``,
-``setup_cache``, ``precompute_s``) and ``env`` (:func:`experiments.common.records.environment`).  A variant that does
-not fit the GPU is recorded as ``skipped`` (out of memory), never extrapolated.  ``--table`` prints such lines as a
+with its SHA-256).  Every line carries the run's settings, ``real`` (the checkpoint; None for random weights) and
+``recipe`` (``certified`` or ``main``; None for random weights), the setup times (``build_s``, ``commit_s``,
+``setup_cache``, ``precompute_s``; with ``--real`` also ``load_s``, loading the checkpoint in fp32 and its
+calibration, which ``build_s``, the integer graph's own calibration and build, does not include) and ``env``
+(:func:`experiments.common.records.environment`).  A variant that does not fit the GPU is recorded as ``skipped`` (out
+of memory), never extrapolated.  ``--table`` prints such lines as a
 table, and for a (model, T, B) measured on two block counts the two-point extrapolation of U1 and U2 to the full model
 (a consistency check against ``reexec.py``'s extrapolated re-execution; never a reported cell).
 
 Hardware and time: the package runs every table model on an NVIDIA L40S (48 GB) with 8 CPU threads, one job per
 model with limits of 3 hours (OPT-1.3B) to 8 hours (Llama-2-13B) and 128-256 GB of host memory: a joint proof of
 4 x 2,048 tokens holds tens of GB of claims, and its CPU acceptance check the decoded claims and every op's input.
-A ``tiny-*`` cell on a laptop CPU takes seconds.
+A ``tiny-*`` cell on a laptop CPU takes seconds.  With ``--real`` the job also holds the checkpoint in fp32 while
+its graph is built (about 4 bytes per parameter: 27 GB for Llama-2-7B and OPT-6.7B, 52 GB for Llama-2-13B, 16 GB for
+Qwen3-4B), and its calibration's forward passes on the CPU add tens of minutes to a 7B or 13B job.
 """
 from __future__ import annotations
 
@@ -122,7 +140,7 @@ import time
 import numpy as np
 import torch
 
-from experiments.common import cli, records
+from experiments.common import checkpoints, cli, real_cells, records
 from experiments.common.energy import EnergyMeter, joules_per_call
 from experiments.common.models import TINY, decoder_config
 from experiments.common.paths import CODE
@@ -387,6 +405,13 @@ def _tokens(cfg, seq: int, bsz: int, seed: int = 1) -> torch.Tensor:
     return torch.randint(0, cfg.vocab, (bsz, seq), generator=torch.Generator().manual_seed(seed))
 
 
+def _prompts(cfg, seq: int, bsz: int, args) -> torch.Tensor:
+    """A cell's ``[B, T]`` prompts: the checkpoint's WikiText-2 windows with ``--real``
+    (:func:`experiments.common.real_cells.prompts`), else random ids drawn with ``--prompt-seed``."""
+    ck = getattr(args, "checkpoint", None)
+    return real_cells.prompts(ck, seq, bsz) if ck is not None else _tokens(cfg, seq, bsz, args.prompt_seed)
+
+
 def _why(e: BaseException) -> str:
     """An exception as one short line, for a ``skipped`` field."""
     return f"{type(e).__name__}: {(str(e).splitlines() or [''])[0][:200]}"
@@ -430,7 +455,7 @@ def time_u2(cfg, layers: int, cells, args, device: torch.device) -> dict:
             if model is None:
                 out[seq, bsz][name] = {"skipped": why}
                 continue
-            x = _tokens(cfg, seq, bsz, args.prompt_seed)
+            x = _prompts(cfg, seq, bsz, args)
             failed = None
             try:
                 _gpu_peak_reset(device)
@@ -470,23 +495,29 @@ class Built:
     setup: dict
 
 
-def build(name: str, layers: int, args, device: torch.device) -> Built:
+def build(name: str, layers: int, args, device: torch.device, real: tuple | None = None) -> Built:
     """The integer decoder of ``name`` on ``layers`` blocks (0: all of them), its provers and verifiers under the
-    protocol flags."""
+    protocol flags; ``real``: ``(graph, setup, family)`` of a checkpoint's integer graph already built
+    (:func:`real_graph`) instead of random weights."""
     cfg = decoder_config(name)
     layers = layers or cfg.n_layers
-    t0 = time.perf_counter()
-    graph = build_decoder(cfg, n_layers=layers, calib_tokens=args.calib_tokens, seed=args.seed,
-                          prune_last=args.prune_last, prob_max=args.prob_max)
-    setup = {"build_s": time.perf_counter() - t0}
     shapes = decoder_shapes(cfg, prune_last=args.prune_last)
+    if real is not None:
+        graph, setup, fam = real[0], dict(real[1]), real[2]
+        plan_ops = real_cells.model_ops(fam, cfg, args.prune_last)
+    else:
+        t0 = time.perf_counter()
+        graph = build_decoder(cfg, n_layers=layers, calib_tokens=args.calib_tokens, seed=args.seed,
+                              prune_last=args.prune_last, prob_max=args.prob_max)
+        setup = {"build_s": time.perf_counter() - t0}
+        plan_ops = shapes
     n_checks = len(shapes)          # (r, t) for the full model's op count, as bench.py and perf.py
     provers, verifiers = {}, {}
     for mode in args.modes:
         if mode == "C":
             records.sync(device)
             t0 = time.perf_counter()
-            com = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=shapes,
+            com = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=plan_ops,
                                cache=args.setup_cache)
             records.sync(device)
             setup["commit_s"] = time.perf_counter() - t0
@@ -511,13 +542,31 @@ def build(name: str, layers: int, args, device: torch.device) -> Built:
     return Built(name, cfg, layers, graph, provers, verifiers, setup)
 
 
+def real_graph(name: str, layers: int, args, cells) -> tuple:
+    """``(graph, setup, family)``: the integer graph of the checkpoint ``--real`` on ``layers`` blocks (0: all of
+    them), with ``load_s`` (the checkpoint in fp32 and its calibration) and ``build_s`` (the graph's own calibration
+    and build) in ``setup``; the checkpoint's WikiText-2 prompts for ``cells`` become ``args.checkpoint``'s, and its
+    fp32 model is freed."""
+    cfg = decoder_config(name)
+    fam = real_cells.family(cfg)
+    t0 = time.perf_counter()
+    ck = real_cells.load(args.real, cfg, fam, seq=max(t for t, _ in cells), tokens=max(t * b for t, b in cells))
+    load_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    graph, _ = ck.graph(args.prune_last, layers or cfg.n_layers)
+    build_s = time.perf_counter() - t0
+    ck.free()
+    args.checkpoint = ck
+    return graph, {"load_s": load_s, "build_s": build_s}, fam
+
+
 class Cell:
     """One ``(T, B)`` of a built model: the variants ``"u1"`` and ``(mode, how)``, their warm-ups with the checks,
     the interleaved repetitions and the records."""
 
     def __init__(self, m: Built, seq: int, bsz: int, args, device: torch.device):
         self.m, self.seq, self.bsz, self.args, self.device = m, seq, bsz, args, device
-        self.x = _tokens(m.cfg, seq, bsz, args.prompt_seed)
+        self.x = _prompts(m.cfg, seq, bsz, args)
         hows = ["single"] if bsz == 1 else list(args.batch_proof)
         self.variants = ["u1"] + [(mode, how) for mode in args.modes for how in hows]
         self.times = {k: [] for k in self.variants}
@@ -782,11 +831,15 @@ def run_model(name: str, args, device: torch.device, cells, base: dict) -> bool:
     cfg = decoder_config(name)
     layers = args.layers or cfg.n_layers
     cells = [c for c in cells if c[0] <= cfg.max_pos]
+    real = real_graph(name, layers, args, cells) if args.real else None   # before anything is timed
     u2 = time_u2(cfg, layers, cells, args, device)
-    m = build(name, layers, args, device)
+    m = build(name, layers, args, device, real)
     good = True
     base = {**base, "model": name, "layers": args.layers or None, "n_layers": layers, "n_layers_full": cfg.n_layers,
-            "policy": args.policy, "lookups": args.lookups, **m.setup}
+            "policy": args.policy, "lookups": args.lookups, "real": args.real or None,
+            "recipe": None if real is None else ("main" if real[2] == "llama" else "certified"), **m.setup}
+    if real is not None:              # the checkpoint's revision in the records' environment
+        base["env"] = {**base["env"], "sources": {**(base["env"].get("sources") or {}), **checkpoints.SOURCES}}
     for seq, bsz in cells:
         cell = Cell(m, seq, bsz, args, device)
         cell.warm_up()
@@ -899,6 +952,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the GPU's energy per call (NVML's energy counter, experiments.common.energy): a variant "
                          "whose median call is shorter than this many seconds is also called back to back for this "
                          "long after its timed repetitions; 0: no energy (default 2)")
+    real_cells.add_argument(ap, real_cells.HELP + "; one --model")
     ap.add_argument("--label", default="", help="a label copied into every record")
     ap.add_argument("--table", nargs="+", default=None, help="print this script's logs (JSON lines) as a table")
     cli.add_protocol_arguments(ap)
@@ -918,12 +972,18 @@ def main() -> int:
         ap.error("--reps must be at least 2 (the first repetition is compared with the warm-up)")
     if "C" in args.modes and not args.fs:
         ap.error("mode C is proved without a verifier only under Fiat-Shamir: --no-fs needs --modes Kpre")
+    cells = _cells(args)
+    if args.real:
+        if len(args.model) != 1:
+            ap.error("--real names one checkpoint: give one --model, its shapes")
+        cfg = decoder_config(args.model[0])
+        real_cells.check(cfg, seqs=[t for t, _ in cells], n_layers=[args.layers or cfg.n_layers],
+                         prob_max=args.prob_max)
     cli.apply_runtime(args)
     device = torch.device(args.device)
     if device.type == "cuda" and device.index is not None:
         torch.cuda.set_device(device)
     args.u2_dtype = args.u2_dtype or (["fp16"] if device.type == "cuda" else ["fp32"])
-    cells = _cells(args)
     base = {"label": args.label, "git": records.git_sha(CODE), "device": str(device),
             "verifier_device": args.verifier_device, "threads": args.threads, "reps": args.reps, "warmup": 1,
             "lam": args.lam, "rate": args.rate, "fs": args.fs, "wire": args.wire, "lean": args.lean,

@@ -6,6 +6,8 @@ committer's and the client's time, on a random-weight decoder with the paper's s
 tier runs it on GPT-2 and Llama-2-7B.
 
     python -m experiments.costs.setup_timing --model llama2-7b --amortise 100 1000 --label setup
+    python -m experiments.costs.setup_timing --model llama2-7b --real meta-llama/Llama-2-7b-hf --amortise 100 \\
+        --label setup
     python -m experiments.costs.setup_timing --model tiny-llama --device cpu --threads 2      # a laptop check
 
 Builds the decoder as ``bench.py`` does (random weights, ``--seed``; ``--layers`` blocks, 0: all of them; the last
@@ -20,11 +22,22 @@ every committed matrix's rows on ``--device``, then ``t0`` opened columns and on
 after one untimed run; every verification must accept.  The setup proof is non-interactive (Fiat--Shamir over the
 graph digest and the roots), so its bytes and challenges are the same in every repetition.
 
-Record (one JSON line per ``--amortise`` value, ``"kind": "setup"``): ``prob_max``, ``commit_s``, ``prove_s`` /
+``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): the checkpoint's integer graph instead of random
+weights, built as ``perf.py --real`` builds it (:mod:`experiments.common.real_cells`: an OPT checkpoint with
+``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint, Qwen3 included, with ``hf_llama.MAIN_RECIPE`` and its fixed
+public prefix), the last block pruned; ``--layers n``: a Llama-family checkpoint's first ``n`` blocks (an OPT
+checkpoint is built whole).  Its commitment is planned from the graph's own weight ops for OPT (its LM head has a
+folded bias column) and from the model's shapes otherwise.  ``build_s`` then includes loading the checkpoint in fp32
+and its calibration.  GPT-2 has no integer builder of a real checkpoint and is refused.
+
+Record (one JSON line per ``--amortise`` value, ``"kind": "setup"``): ``real`` (the checkpoint; None for random
+weights), ``recipe`` (``certified`` or ``main``; None for random weights), ``prob_max``, ``commit_s``, ``prove_s`` /
 ``verify_s`` (median and ``[min, max]``), ``prove_s_all`` / ``verify_s_all`` (every timed repetition), ``proof_bytes`` (``SetupProof.nbytes``), ``s``, ``t0`` and ``t`` per tree,
 the per-query column bytes under the honest and the untrusted bound, peak host (Linux) and GPU memory, and ``env``.
 The exit status is 1 if a verification rejected.  Hardware and time: a GPU for the committer; the package gives GPT-2
-a job limit of one hour and Llama-2-7B one of three hours with 128 GB of host memory.
+a job limit of one hour and Llama-2-7B one of three hours with 128 GB of host memory.  With ``--real`` the checkpoint
+is held in fp32 until the graph is built (about 4 bytes per parameter: 27 GB for Llama-2-7B, 52 GB for Llama-2-13B),
+and its calibration's forward passes on the CPU add tens of minutes to a 7B or 13B job.
 """
 from __future__ import annotations
 
@@ -36,7 +49,7 @@ import time
 
 import torch
 
-from experiments.common import cli, records
+from experiments.common import cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 
@@ -55,6 +68,7 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0, help="the random weights' seed")
     ap.add_argument("--calib-tokens", type=int, default=cli.CALIB_TOKENS, help="calibration tokens of the build")
     cli.add_prob_max_argument(ap, note="; the graph digest the setup proof binds")
+    real_cells.add_argument(ap)
     ap.add_argument("--label", default="", help="a label copied into every record")
     cli.add_runtime_arguments(ap, threads=8, verifier_device=False)
     args = ap.parse_args()
@@ -68,15 +82,23 @@ def main() -> int:
     device = torch.device(args.device)
     cfg = decoder_config(args.model)
     n_layers = args.layers or cfg.n_layers
+    fam = real_cells.check(cfg, n_layers=[n_layers], prob_max=args.prob_max) if args.real else None
     sha = records.git_sha(CODE)
     records.reset_peaks(device)
     t0 = time.perf_counter()
-    graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=args.calib_tokens, seed=args.seed, prune_last=True,
-                          prob_max=args.prob_max)
+    ck = None
+    if args.real:          # the checkpoint's integer graph (no prompts: a few test tokens are loaded, unused)
+        ck = real_cells.load(args.real, cfg, fam, seq=16, tokens=16)
+        graph, _ = ck.graph(True, n_layers)
+        ck.free()
+    else:
+        graph = build_decoder(cfg, n_layers=n_layers, calib_tokens=args.calib_tokens, seed=args.seed,
+                              prune_last=True, prob_max=args.prob_max)
     build_s = time.perf_counter() - t0
     shapes = decoder_shapes(cfg, prune_last=True)
+    plan_ops = real_cells.model_ops(fam, cfg, True) if args.real else shapes
     t0 = time.perf_counter()
-    coms = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=shapes, cache=None)
+    coms = commit_graph(graph, args.rate, device=device, policy=args.policy, model_ops=plan_ops, cache=None)
     records.sync(device)
     commit_s = time.perf_counter() - t0
     if coms.plan is None:
@@ -111,7 +133,8 @@ def main() -> int:
         honest = {g: max(exact_columns(coded[m].row_length, coded[m].n_points, bits) for m in members)
                   for g, members in coms.plan.groups}
         records.emit({"kind": "setup", "label": args.label, "git": sha, "model": args.model,
-                      "layers": args.layers or None, "n_layers": n_layers, "prob_max": args.prob_max,
+                      "layers": args.layers or None, "n_layers": n_layers, **real_cells.fields(ck),
+                      "prob_max": args.prob_max,
                       "policy": args.policy,
                       "chosen": coms.plan.policy, "lam": args.lam, "fiat_shamir": args.fs, "amortise": amortise,
                       "device": args.device, "threads": args.threads, "build_s": build_s, "commit_s": commit_s,

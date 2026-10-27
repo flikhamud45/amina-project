@@ -35,7 +35,10 @@ setting other than the plan; image models have no embedding, no pruned block, no
 checkpoint's recipe fixes its probabilities' scale (``--prob-max`` is for random-weight decoders).
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): every block of the checkpoint's integer graph
-(:func:`experiments.common.checkpoints.real_graph`), queried on WikiText-2 windows of ``--seq`` tokens.  OPT: the
+(:func:`experiments.common.checkpoints.real_graph`), or with ``--layers n`` a Llama-family checkpoint's (Llama, Qwen3)
+first ``n`` blocks with the same calibration and prefix (refused for OPT, whose builder takes every block; the build's
+commitment is then planned and its ``(r, t)`` sized for the whole model, as a random-weight build's), queried on
+WikiText-2 windows of ``--seq`` tokens.  OPT: the
 certified recipe (``hf_opt.CERTIFIED_RECIPE``) by default, or with ``--recipe legacy`` the percentile recipe (norm gain 4,
 ``--smooth``: SmoothQuant through the norm gains, calibrated on one window of ``--calib-seq`` tokens from the end of
 the test split); a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with its fixed public prefix.  Mode C's plans are
@@ -90,7 +93,7 @@ import time
 
 import torch
 
-from experiments.common import checkpoints, cli, records
+from experiments.common import checkpoints, cli, real_cells, records
 from experiments.common.client import ClientProcess
 from experiments.common.models import decoder_config, test_batches, trained_cnn, trained_mlp
 from experiments.common.paths import CODE
@@ -275,18 +278,22 @@ def main() -> int:
         graphs[False, None], model_ops[False] = graph, None
         n_checks = len(graph.mat_ops)
         seq = None
-    elif args.real:                 # the checkpoint's integer graph, every block; WikiText-2 windows as queries
-        if args.layers:
-            raise SystemExit("--real builds every block of the checkpoint")
+    elif args.real:                 # the checkpoint's integer graph (--layers: its first blocks); WikiText-2 queries
+        from pvi.commit.cost import decoder_shapes
+        cfg = decoder_config(args.model)
+        part = real_cells.partial(cfg, args.layers)     # None: every block
         model, queries, calib = checkpoints.load_real(args.real, args.seq, args.queries + 1, args.calib_seq,
                                                       args.recipe)
         recipe_used = checkpoints.recipe_name(calib, args.recipe)
         for prune in on["prune_last"]:
-            graph, _ = checkpoints.real_graph(model, calib, prune, args.recipe, args.smooth)
+            graph, _ = checkpoints.real_graph(model, calib, prune, args.recipe, args.smooth, n_layers=part)
             graphs[prune, prob_max_of(graph)] = graph
-            model_ops[prune] = None    # planned from its own weight ops (OPT's LM head has a bias column)
+            # the full model: planned from its own weight ops (OPT's LM head has a bias column); a Llama-family
+            # build of a few blocks: for the whole model's shapes, as a random-weight build
+            model_ops[prune] = None if part is None else decoder_shapes(cfg, prune_last=prune)
         del model
-        n_checks = len(next(iter(graphs.values())).mat_ops)
+        n_checks = (len(next(iter(graphs.values())).mat_ops) if part is None
+                    else len(model_ops[on["prune_last"][0]]))      # (r, t) for the full model, as bench.py
         seq = args.seq
     else:
         from pvi.commit.cost import decoder_shapes

@@ -47,7 +47,9 @@ sizing and the tamper queries run under ``optimised`` when it is listed (else th
 ``timed.v1`` is ``timed.v1_path``'s).  Both verifiers give the same verdicts on the same bytes.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): every block of the checkpoint's integer graph
-(:func:`experiments.common.checkpoints.real_graph`), queried on WikiText-2 test windows of ``--seq`` tokens.  OPT:
+(:func:`experiments.common.checkpoints.real_graph`), or with ``--layers n`` a Llama-family checkpoint's (Llama, Qwen3)
+first ``n`` blocks with the same calibration and prefix (refused for OPT, whose builder takes every block; planned and
+sized for the whole model, as a random-weight build), queried on WikiText-2 test windows of ``--seq`` tokens.  OPT:
 the certified recipe (``hf_opt.CERTIFIED_RECIPE``, calibrated on four 2,048-token train windows) by default, or with
 ``--recipe legacy`` the percentile recipe (norm gain 4, ``--smooth``: SmoothQuant through the norm gains, calibrated on one
 window of ``--calib-seq`` tokens from the end of the test split); a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE``
@@ -85,7 +87,7 @@ import time
 
 import torch
 
-from experiments.common import checkpoints, cli, records
+from experiments.common import checkpoints, cli, real_cells, records
 from experiments.common.models import decoder_config
 from experiments.common.paths import CODE
 from pvi import options
@@ -332,11 +334,10 @@ def main() -> int:
     t0 = time.perf_counter()
     recipe_used, legacy = None, args.real and args.recipe == "legacy"
     if args.real:                     # the checkpoint's weights; queries are WikiText-2 windows
-        if args.layers:
-            raise SystemExit("--real builds every block of the checkpoint")
+        part = real_cells.partial(cfg, args.layers)     # None: every block; else a Llama checkpoint's first ones
         model, wins, calib = checkpoints.load_real(args.real, args.seq, max(2, args.reps + 1), args.calib_seq,
                                                    args.recipe)
-        graph, _ = checkpoints.real_graph(model, calib, args.prune_last, args.recipe, args.smooth)
+        graph, _ = checkpoints.real_graph(model, calib, args.prune_last, args.recipe, args.smooth, n_layers=part)
         recipe_used = checkpoints.recipe_name(calib, args.recipe)
         del model
         n_layers = len([op for op in graph.ops if getattr(op, "note", "") == "attention"])
@@ -364,8 +365,10 @@ def main() -> int:
                       **codec_profile(graph, x, n_layers, args.lmax, args.device), "peak": records.peaks(args.device)})
         return 0 if shapes_ok else 1
     ok = shapes_ok
-    # a real checkpoint's graph (e.g. OPT's LM head has a bias) is planned from its own ops
-    model_ops = None if args.real else decoder_shapes(cfg, prune_last=args.prune_last)
+    # a real checkpoint's full graph (e.g. OPT's LM head has a bias) is planned from its own ops; a build of a few
+    # blocks (random weights, or a Llama-family checkpoint's first blocks) for the whole model's shapes
+    model_ops = (None if args.real and n_layers == cfg.n_layers
+                 else decoder_shapes(cfg, prune_last=args.prune_last))
     n_checks = len(model_ops) if model_ops is not None else len(graph.mat_ops)
     weights = {op.name: (op.weight, op.bias) for op in graph.mat_ops}
     for mode in args.modes:
