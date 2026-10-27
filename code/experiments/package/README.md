@@ -156,7 +156,7 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 238 jobs. There, the paper's run submits its tiers as thirteen jobs (`--one-job`), each of
+waits that long for each of its 243 jobs. There, the paper's run submits its tiers as thirteen jobs (`--one-job`), each of
 which runs its tiers' jobs one after another in its allocation: the timed tiers in eight jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `qllama`, `qcheck`, `tv`, `attack`, `smoke`) in five jobs on one GPU of a
 shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates nothing:
@@ -172,8 +172,8 @@ $R --one-job bench                         # 11-17 h
 $R --one-job real                          # 11-16 h
 $R --one-job serve gen batch               # 14-18 h
 $R --one-job v1 setup improve              # 9-16 h
-$R --one-job gpuv cpux                     # 10-16 h: the GPU verifier, then the CPU verifier on 2 and 4 cores
-$R --one-job zkllm                         # 6-9 h: zkLLM's demo on the same GPU model
+$R --one-job cpux                          # 9-14 h: the CPU verifier on 2 and 4 cores, mode C's six plans
+$R --one-job gpuv zkllm                    # 11-16 h: the GPU verifier, then zkLLM's demo on the same GPU model
 $R --one-job --no-exclusive quality        # 16-24 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive qllama         # 40-48 h, not timed: two or three submissions in a row (Sec. 5)
 $R --one-job --no-exclusive qcheck         # 9-13 h, not timed
@@ -185,18 +185,18 @@ The expected hours of a submission are the sums of its tiers' estimates (`# tier
 dry run); every timed submission fits one allocation's 24 hours with room. With `--dry-run` in front of `--one-job`,
 each submission prints its allocation's `sbatch` line and then the line below (and, where its job limits add up to
 more than 24 h, a last line saying that the same command, submitted again, runs only the jobs not yet ended
-successfully). Together the thirteen hold every job of `--optional all` once (238 jobs, 533 h of limits):
+successfully). Together the thirteen hold every job of `--optional all` once (243 jobs, 543 h of limits):
 
 | Submission | Its dry run's `# one job:` line |
 |---|---|
-| `cpuv` | `# one job: cpuv: 15 jobs, job limits 28 h, time limit 24 h` |
+| `cpuv` | `# one job: cpuv: 15 jobs, job limits 29 h, time limit 24 h` |
 | `long` | `# one job: long: 21 jobs, job limits 53 h, time limit 24 h` |
 | `bench` | `# one job: bench: 47 jobs, job limits 59 h, time limit 24 h` |
 | `real` | `# one job: real: 28 jobs, job limits 56 h, time limit 24 h` |
 | `serve gen batch` | `# one job: serve gen batch: 17 jobs, job limits 44 h, time limit 24 h` |
 | `v1 setup improve` | `# one job: v1 setup improve: 35 jobs, job limits 52 h, time limit 24 h` |
-| `gpuv cpux` | `# one job: gpuv cpux: 26 jobs, job limits 49 h, time limit 24 h` |
-| `zkllm` | `# one job: zkllm: 5 jobs, job limits 14 h, time limit 14 h` |
+| `cpux` | `# one job: cpux: 14 jobs, job limits 33 h, time limit 24 h` |
+| `gpuv zkllm` | `# one job: gpuv zkllm: 22 jobs, job limits 39 h, time limit 24 h` |
 | `--no-exclusive quality` | `# one job: quality: 18 jobs, job limits 56 h, time limit 24 h` |
 | `--no-exclusive qllama` | `# one job: qllama: 12 jobs, job limits 78 h, time limit 24 h` |
 | `--no-exclusive qcheck` | `# one job: qcheck: 5 jobs, job limits 20 h, time limit 20 h` |
@@ -222,8 +222,8 @@ if it succeeds, which the run above does not need.
 | Tier | Jobs | Expected (h) | Time limits (h) | What it gives the paper |
 |---|---:|---:|---:|---|
 | `smoke` | 2 | 1.5-2 | 5 | the text's test count (`\SmokeTests`, `ext_v1`) and the GPU-against-CPU exactness on the run's platform; `xcheck`: the proofs and commitments byte-identical on the GPU and the CPU (`\HwDigestCells`, `\HwDigestDevices`, `ext_evaluation`); in a chain, the smoke is also the gate of the tiers after it |
-| `cpuv` | 15 | 8-11 | 28 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens; Llama-2-7B also at 512 tokens, `tab:eval-reexec`) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row (`tab:options`, the abstract's "at least N times", which stays against exact re-execution); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key and embedding tables or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
-| `cpux` | 9 | 5-9 | 24 | the CPU verifier against exact re-execution beyond the cpuv tier's 8 threads (`tab:eval-cpu`, `\CpuRatioThrTwo`, `\CpuRatioThrFour`, `\CpuRatioNoAvx`, `\CpuRatioThirteen`): Llama-2-7B at 2,048 tokens on 4 and 2 threads, each job pinned to as many cores of one NUMA node; on 8 threads without the AVX-512 attention kernel, in the verifier and the integer forward pass alike; Llama-2-13B on 8 threads; mode C's six candidate plans side by side on the same Llama-2-7B queries, each commitment encoded afresh (`tab:eval-plans`, `\PlanCols...`, `\PlanCommit...`) |
+| `cpuv` | 15 | 8-11 | 29 | the CPU verifier of the full Llama-2-7B, Qwen3-4B and OPT-1.3B (Kpre and C, 64 and 2,048 tokens; Llama-2-7B also at 512 tokens, `tab:eval-reexec`) against every re-execution baseline on the same 8 threads (the exact integer pass with the native int8 GEMM, with `torch._int_mm` and with fp32 GEMMs; fp32, bf16 and dynamic int8; llama.cpp's prefill of Llama-2-7B's shapes in Q8_0 and bf16, inexact and another model), the allocator setting of the verifier as a like-for-like row at 64, 512 and 2,048 tokens (`tab:options`, `tab:eval-reexec`, the abstract's "at least N times", which stays against exact re-execution); the Llama-2-7B client's own memory, its timed proofs checked again in a process that holds only its key and embedding tables or the roots (`tab:memory`); V1's optimised and baseline CPU verifiers |
+| `cpux` | 14 | 9-14 | 33 | the CPU verifier against exact re-execution beyond the cpuv tier's 8 threads, every re-execution with glibc's allocator defaults as the cpuv tier's 8-thread row it is set beside (`tab:eval-cpu`, `\CpuRatioThrTwo`, `\CpuRatioThrFour`, `\CpuRatioThrEight`, `\CpuRatioNoAvx`, `\CpuRatioThirteen`): Llama-2-7B at 2,048 tokens on 4 and 2 threads, each job pinned to as many cores of one NUMA node; on 8 threads without the AVX-512 attention kernel, in the verifier and the integer forward pass alike; Llama-2-13B on 8 threads; mode C's six candidate plans on the same Llama-2-7B queries, one job each (1 to 5 h of limits, after the plan's encoded entries), each commitment encoded afresh (`tab:eval-plans`, `\PlanCols...`, `\PlanCommit...`) |
 | `v1` | 17 | 5-9 | 30 | V1 against v0: bytes, prover and verifier (`tab:eval-v1`); the codec profile of the full Llama-2-7B at 2,048 to 16,384 tokens, V1's claims ratio at each length (`tab:eval-v1-long`, the V1 crossover `\BreakevenTokensVOne` of the Discussion) |
 | `serve` | 5 | 8-10 | 25 | the prover against unverified serving on the same GPU, batches of 1 to 64 prompts |
 | `bench` | 47 | 11-17 | 59 | the v0 cost table (`tab:eval-llm`), the comparison with published systems (`tab:eval-compare`, `tab:eval-compare-full`), the outcome counts, the image models' attack cells; our interactive mode-C prover of Llama-2-7B and Llama-2-13B at the `zkllm` tier's other lengths (`--zkllm-seqs`, default 64, 512 and 1,024 tokens: `tab:zkllm-lengths`, `\ZkllmSameGpuOurs...`, `\ZkllmSameGpuFactor...T...`); Llama-2-7B at lambda 40 and 80 (`tab:eval-lambda`, `\LamForty...`) |
@@ -247,9 +247,9 @@ and gated by the smoke; a second invocation starts a new chain. Without a Llama-
 `--llama-licence`: the Llama-2 cells then stay empty (the qllama tier runs OpenLLaMA-7B's two jobs instead, and the
 qcheck tier OpenLLaMA-7B's calibration draws, which the paper does not report). The counts and limits are those with
 `--llama-licence`; without it (in parentheses) the `real` tier has 19 jobs and 34 h of limits and the `qllama` tier
-2 jobs and 14 h. `all` is then 193 jobs and 380 h of limits (212 and 466 h with `--llama-licence`; the `long` tier
+2 jobs and 14 h. `all` is then 198 jobs and 390 h of limits (217 and 476 h with `--llama-licence`; the `long` tier
 adds 21 jobs and 53 h, and the `zkllm` tier, with `--llama-licence`, 5 jobs and 14 h: `run.sh --platform final
---optional --llama-licence --dry-run all` lists 238 jobs and 533 h). The `long` tier's full model at 8,192 tokens
+--optional --llama-licence --dry-run all` lists 243 jobs and 543 h). The `long` tier's full model at 8,192 tokens
 (2 jobs, 11 h of limits) runs by default; `--no-bigmem` leaves it out on nodes with less than 256 GB, and
 `tab:eval-long-check`'s 8,192-token row then stays empty.
 

@@ -1,7 +1,8 @@
 """The GPU's telemetry in the background of a job: clocks, power, temperature, utilisation and throttle reasons.
 
-Every job of ``run.sh`` starts this sampler after its node check and before its work (and before the CPU-timing jobs
-pin themselves to their 8 cores, so the sampler is not among the timed process's CPUs):
+Every job of ``run.sh`` starts this sampler after its node check and before its work; a CPU-timing job then pins
+itself to its cores and moves the sampler, its threads and its ``nvidia-smi`` to the job's other CPUs
+(``experiments/package/pin.py --away``), so that the sampler never runs on the timed process's cores:
 
     python -m experiments.package.telemetry --out logs/<name>/telemetry/sp-<cell>-<job id> --interval 1 --watch <pid>
 

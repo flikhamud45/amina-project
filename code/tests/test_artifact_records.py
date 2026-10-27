@@ -406,12 +406,13 @@ def test_every_job_snapshots_its_node_and_samples_its_gpu():
         node, snap, tele = (cmd.index(f"-m experiments.package.{m} ") for m in ("node", "envsnap", "telemetry"))
         assert node < snap < tele and cmd.endswith(STOP), _job(line)
         assert f"telemetry/{_job(line)}-${{PVI_JOB_ID:-${{SLURM_JOB_ID:-local}}}} --interval 1 --watch $$ &" in cmd
-        if "package.pin" in cmd:
-            assert tele < cmd.index("-m experiments.package.pin"), _job(line)
+        if "package.pin" in cmd:      # the pinning moves the sampler off the pinned cores
+            assert tele < cmd.index("-m experiments.package.pin") and "--away $TPID && " in cmd, _job(line)
     jobs = {_job(x): x for x in lines}
     smoke = jobs["sp-smoke"]
     assert "--junitxml=" in smoke and "smoke_pytest-$(hostname)-${PVI_JOB_ID:-${SLURM_JOB_ID:-local}}.txt" in smoke
     assert "comparison.proof_digests --devices cuda cpu" in jobs["sp-xcheck"] and "--time=3:00:00" in jobs["sp-xcheck"]
     off = _dry("--telemetry-interval", "0", "--no-env-snapshot")
-    assert not any("package.telemetry" in x or "package.envsnap" in x for x in off)
+    assert not any("package.telemetry" in x or "package.envsnap" in x or "--away" in x for x in off)
+    assert any("--pid $$ && " in x for x in off)
     _dry("--telemetry-interval", "0.5", status=2)

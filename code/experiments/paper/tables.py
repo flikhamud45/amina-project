@@ -163,16 +163,21 @@ def option(rec: Rec | None, name: str):
     return ((env.get("implementation") or {}).get("options") or {}).get(name)
 
 
-def cpu_point(run: Run, tier: str, model: str, seq: int, threads: int = 8, avx512: bool = True, label: str = "cpuv"):
+def cpu_point(run: Run, tier: str, model: str, seq: int, threads: int = 8, avx512: bool = True, label: str = "cpuv",
+              any_allocator: bool = True):
     """``(verifier, exact, ratio)`` of one CPU setting: the Kpre CPU verifier's ``perf.py`` record of the full
     ``model`` (``label``, ``threads``), the fastest exact re-execution on as many threads, ``(seconds, variant,
     record)`` or None, and the ratio of the two (None if either is missing).  ``avx512`` False: both with the option
-    ``native_avx512`` off (records that state no options count as on)."""
+    ``native_avx512`` off (records that state no options count as on).  ``any_allocator``: the fastest re-execution
+    with glibc's allocator defaults or with the verifier's own setting (``reexec.py --malloc-tune``, where a tier
+    runs both, as the cpuv tier does at 64, 512 and 2,048 tokens); False: with glibc's defaults alone, the setting
+    every tier runs (``tab:eval-cpu``, whose rows are then measured alike)."""
     def same(r):
         return r.d.get("threads", 8) == threads and (option(r, "native_avx512") is not False) == avx512
     ver = run.perf(tier, model, seq, "Kpre", vdev="cpu", label=label, threads=threads)
     ver = ver if ver is not None and same(ver) else None
-    got = run.reexec(tier, model, seq, "cpu", EXACT, keep=lambda v, r: exact_record(v, r) and same(r))
+    got = run.reexec(tier, model, seq, "cpu", EXACT, keep=lambda v, r: exact_record(v, r) and same(r)
+                     and (any_allocator or not r.d.get("malloc_tuned")))
     best = None
     if got:
         v, (sec, r) = min(got.items(), key=lambda kv: kv[1][0])
@@ -1371,18 +1376,22 @@ CPU_ROWS = (("Llama-2-7B", "2 threads", "cpux", "llama2-7b", 2, True, "cpux"),
             ("", "8, no AVX-512 attention", "cpux", "llama2-7b", 8, False, "cpux-noavx512"),
             ("Llama-2-13B", "8 threads", "cpux", "llama2-13b", 8, True, "cpux"))
 """``tab:eval-cpu``'s rows: (model label, setting, tier, model, threads, the AVX-512 attention kernel, perf.py's
-label), each at 2,048 tokens (:func:`cpu_point`); the 8-thread Llama-2-7B row is the cpuv tier's (``CpuRatio``)."""
+label), each at 2,048 tokens (:func:`cpu_point`), every re-execution with glibc's allocator defaults; the 8-thread
+Llama-2-7B row is the cpuv tier's (``CpuRatioThrEight``)."""
 
 
 def tab_eval_cpu(ctx: Ctx) -> Table:
     """``tab:eval-cpu``: the Kpre CPU verifier against the fastest exact re-execution on the same cores, at 2,048
     tokens: Llama-2-7B on 2, 4 and 8 threads (each pinned to as many cores of one NUMA node), on 8 threads without
-    the AVX-512 attention kernel (in both), and Llama-2-13B on 8 threads."""
+    the AVX-512 attention kernel (in both), and Llama-2-13B on 8 threads; re-execution with glibc's allocator
+    defaults in every row (the setting of every tier's re-execution; the cpuv tier's like-for-like row with the
+    verifier's own setting stays out, so that the rows compare alike)."""
     tb = Table("tab_eval_cpu", "tab:eval-cpu", f"{protocol(ctx)}; cpux tier: perf.py Kpre --threads 2/4 (label cpux), "
                "--no-native-avx512 (label cpux-noavx512), Llama-2-13B (label cpux), reexec.py's exact variants on the "
-               "same threads and options; the 8-thread Llama-2-7B row: the cpuv tier's cells")
+               "same threads and options, glibc's allocator defaults (--no-malloc-tune); the 8-thread Llama-2-7B "
+               "row: the cpuv tier's cells")
     for name, setting, tier, m, threads, avx, label in CPU_ROWS:
-        ver, rx, ratio = cpu_point(ctx.run, tier, m, 2048, threads, avx, label)
+        ver, rx, ratio = cpu_point(ctx.run, tier, m, 2048, threads, avx, label, any_allocator=False)
         row = f"{NAME[m]} {setting}"
         tb.rows.append(" & ".join([
             name, setting, tb.put(row, "verifier", ver and ver.d["verify_s"], ver, lambda v: f.sig(v, 3)),

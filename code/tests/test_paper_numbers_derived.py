@@ -23,6 +23,7 @@ import json
 import math
 import re
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from test_paper_numbers import PAPER, RESULTS, _args, _bench, _ctx, _logs, _write, gen, perf, reexec, v1
@@ -463,6 +464,34 @@ def test_the_comparison_rows_are_chosen_without_code_edits(run_dir, tmp_path):
     assert {r["row"] for r in cells if r["table"] == "tab:eval-compare-full"} == set(T.COMPARE_KEYS)
     with pytest.raises(SystemExit):
         N.main(_args(tmp, logs, "--compare-rows", "no-such-row"))
+
+
+def test_the_comparison_numbers_over_every_row(run_dir):
+    """The text's comparison numbers with ``--compare-rows all``: zkLLM's rows on the run's GPU, which have a prover
+    time alone by design, add a prover ratio where that time exists and leave the proof's and the verifier's numbers
+    as the other rows give them; without their time (another GPU model) they add nothing.  Every published value is
+    100 s (prover), 0.5 s (verifier) and 100 kB, ours 1 s and 2 MB, zkLLM's on the run's GPU 50 s."""
+    tmp, logs = run_dir
+    ctx, _ = _ctx(tmp, logs)
+    ctx.lit = {r.lit: {"prover_s": "100", "verifier_s": "0.5", "proof_bytes": "1e5"} for r in T.COMPARE_ROWS
+               if r.lit[0] != T.ZKLLM_GPU}
+    keys = [(m, 2048) for _, m in T.ZKLLM_MODELS]
+
+    def numbers(rows, theirs):
+        ctx.compare_rows = T.compare_selection(rows)
+        gpu = {k: T.ZkGpu(theirs, False, None, "", True) for k in keys}
+        c = M.Collector()
+        with mock.patch.object(T, "compare_ours", return_value=(1.0, 1.0, 2e6, "ours")), \
+                mock.patch.object(T, "zkllm_gpu", return_value=gpu), mock.patch.object(M, "zkllm_same_gpu"):
+            M.comparison(c, ctx)
+        return {k: c.m[k].value for k in ("CompareProverMin", "CompareProverMax", "CompareProofMax",
+                                          "CompareVerifierSlowerRows")}
+
+    default, every, other_gpu = numbers("default", 50.0), numbers("all", 50.0), numbers("all", None)
+    assert default["CompareProofMax"] == every["CompareProofMax"] == other_gpu["CompareProofMax"] is not None
+    assert default["CompareProverMin"] == other_gpu["CompareProverMin"] == "100" and every["CompareProverMin"] == "50"
+    assert None not in default.values() and None not in every.values() and None not in other_gpu.values()
+    assert every["CompareVerifierSlowerRows"] == other_gpu["CompareVerifierSlowerRows"]
 
 
 # ------------------------------------------------------------------------------------------------ the run's records

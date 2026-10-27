@@ -162,8 +162,8 @@ the extrapolation (Table~\ref{tab:eval-long-check}): the fit is within \LongChec
 3-block builds alone is \LongCheckTwoThree{}\% off the verifier at 8{,}192 tokens. On the \PlatformGpu{}, the same fit through 2 and
 3 blocks is within \LongCheckGpu{}\% of the full model's streaming verifier at 2{,}048 tokens.
 
-The streaming GPU verifier checks the full model at 16{,}384 tokens in about \LongGpuVerifyLong{}\,s; exact re-execution with
-int8 GEMMs on the same GPU takes \LongGpuRatioLong{}$\times$ as long (Table~\ref{tab:eval-long-gpu}). Its fused attention keeps
+Extrapolated from 2 and 3 blocks, the streaming GPU verifier needs about \LongGpuVerifyLong{}\,s for the full model at 16{,}384
+tokens, and exact int8 re-execution on that GPU \LongGpuRatioLong{}$\times$ as long (Table~\ref{tab:eval-long-gpu}). Its fused attention keeps
 no $T\times T$ score tensor: with 3 blocks at 16{,}384 tokens, the process that proves and verifies peaks at
 \LongGpuPeakLong{}\,GB of GPU memory.
 
@@ -307,13 +307,13 @@ untrusted provider. Our streaming GPU verifier checks a 2{,}048-token OPT-1.3B q
 \label{app:eval-cpu}
 
 The ratio of Section~\ref{sec:eval-reexec} is measured on 8 cores of a server CPU.
-Table~\ref{tab:eval-cpu} measures it for Llama-2-7B at 2{,}048 tokens on 4 and 2 cores of the same NUMA node, the
-verifier and re-execution each on as many threads, on 8 cores without our AVX-512 attention kernel, and for
-Llama-2-13B. Our $\Kpre$ verifier is \CpuRatioThrFour{}$\times$ faster than exact re-execution on 4 cores and
-\CpuRatioThrTwo{}$\times$ on 2, against \CpuRatio{}$\times$ on 8. Without the AVX-512 attention, in the verifier and
+Table~\ref{tab:eval-cpu} measures it for Llama-2-7B at 2{,}048 tokens on 4 and 2 cores of one NUMA node, the
+verifier and re-execution (glibc's default allocator) each on as many threads, on 8 cores without our AVX-512 attention
+kernel, and for Llama-2-13B. Our $\Kpre$ verifier is \CpuRatioThrFour{}$\times$ faster than exact re-execution on 4
+cores and \CpuRatioThrTwo{}$\times$ on 2, against \CpuRatioThrEight{}$\times$ on 8. Without the AVX-512 attention, in the verifier and
 in the integer forward pass alike, the verifier takes \CpuNoAvxSlowdown{}$\times$ as long and the ratio is
-\CpuRatioNoAvx{}$\times$; the library is still compiled for the host CPU, so this isolates the attention kernel and
-does not emulate a CPU without AVX-512. For Llama-2-13B, the verifier takes \CpuVerifyThirteen{}\,s against
+\CpuRatioNoAvx{}$\times$; the library is still built for the host CPU, so this isolates the attention kernel and
+emulates no CPU without AVX-512. For Llama-2-13B, the verifier takes \CpuVerifyThirteen{}\,s against
 \CpuReexecThirteen{}\,s for exact re-execution (\CpuRatioThirteen{}$\times$).
 
 \begin{table}[t]

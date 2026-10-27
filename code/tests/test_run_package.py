@@ -203,7 +203,9 @@ def test_the_package_runs_fiat_shamir_and_the_policy_everywhere():
     for line in lines:
         job = _job(line)
         assert "--no-fs" not in line and "--fs " not in line, job          # Fiat-Shamir is every script's default
-        if re.search(r"--modes [^-]*\bC\b", line) or "costs.setup_timing" in line:
+        if "-plans-llama2-7b-2k-" in job:              # the cpux tier's plans, one candidate per job
+            assert f"--policy {job.rsplit('-', 1)[1]} " in line, job
+        elif re.search(r"--modes [^-]*\bC\b", line) or "costs.setup_timing" in line:
             assert "--policy cnn18c" in line, job
         if "costs.bench" in line:
             modes = re.search(r"--modes (\S+)", line).group(1)
@@ -221,8 +223,9 @@ def test_the_package_runs_fiat_shamir_and_the_policy_everywhere():
 def test_every_cpu_timing_cell_requires_the_native_kernels_and_is_pinned():
     """A cell that times the CPU verifier or a re-execution on the CPU passes --require-native (it stops instead of
     timing the torch path) and starts by pinning itself to 8 cores of one NUMA node (a cell on fewer threads to as
-    many cores, its every command on that many threads); the CPU re-execution includes the int8 GEMMs of
-    torch._int_mm; the GPU, serving, quality, tv and attack jobs are not pinned."""
+    many cores, its every command on that many threads), moving the GPU sampler started before it off those cores
+    (--away); the CPU re-execution includes the int8 GEMMs of torch._int_mm; the GPU, serving, quality, tv and attack
+    jobs are not pinned."""
     pinned = 0
     for line in _dry():
         job, cmd = _job(line), line.split("--wrap", 1)[1]
@@ -230,7 +233,7 @@ def test_every_cpu_timing_cell_requires_the_native_kernels_and_is_pinned():
             and "--verifier-device cuda" not in cmd and "--codec-only" not in cmd
         cpu_reexec = "reexec.reexec" in cmd and "--device cpu" in cmd
         if (cpu_verifier or cpu_reexec) and job != "sp-smoke":
-            pin = re.search(r"-m experiments\.package\.pin --cores (\d+) --pid \$\$ && ", cmd)
+            pin = re.search(r"-m experiments\.package\.pin --cores (\d+) --pid \$\$ --away \$TPID && ", cmd)
             assert "--require-native" in cmd and pin, job
             cores = int(pin.group(1))
             assert cores == 8 or set(re.findall(r"--threads (\d+)", cmd)) == {str(cores)}, job
@@ -238,7 +241,8 @@ def test_every_cpu_timing_cell_requires_the_native_kernels_and_is_pinned():
             assert " int_mm " in cmd and ("--no-malloc-tune" in cmd or "--malloc-tune" in cmd), job
             assert "MALLOC_" not in cmd, job                    # the allocator setting is a flag, not a variable
         if "reexec.llamacpp" in cmd:     # llama.cpp on the same 8 pinned threads (never its default thread count)
-            assert "-m experiments.package.pin --cores 8 --pid $$ && " in cmd and "--threads 8 " in cmd, job
+            assert "-m experiments.package.pin --cores 8 --pid $$ --away $TPID && " in cmd, job
+            assert "--threads 8 " in cmd, job
         if "experiments.package.pin" in cmd:
             pinned += 1
             assert tier_of(job[len("sp-"):]) in CPU_TIERS, job
@@ -387,7 +391,7 @@ def test_one_job_submits_the_tiers_as_one_whole_node_job_that_runs_them_locally(
                  "--requeue", "--signal=B:TERM@300", "--open-mode=append", "--dependency=singleton",
                  "logs/final/node-smoke-cpuv-long-%j.log", "--gres=gpu:l40s:1"):
         assert part in jobs[0], (part, jobs[0])
-    assert "# one job: smoke cpuv long: 38 jobs, job limits 86 h, time limit 24 h" in out, out
+    assert "# one job: smoke cpuv long: 38 jobs, job limits 87 h, time limit 24 h" in out, out
     status, out, err, jobs = _submit(tmp_path / "b", "--dry-run", "--max-hours", "12", *argv)
     line = next(s for s in out.splitlines() if s.startswith("sbatch"))
     assert status == 0 and not jobs and "--time=12:00:00" in line, err
@@ -729,6 +733,38 @@ def test_pin_takes_one_thread_of_each_core_of_the_lowest_node_that_has_enough(tm
     assert pin.choose(4, [0, 1, 2, 3, 4], root, prefer=1) == (0, [0, 1, 2, 3])    # unless it lacks the cores
 
 
+def test_pin_moves_the_sampler_its_threads_and_its_children_off_the_pinned_cores(tmp_path):
+    """--away: the sampler (process 10, two threads), its nvidia-smi (11) and that one's child (12) get the CPUs that
+    the pinning left; the job's shell (1) and an unrelated process (20) keep theirs; a thread that has ended is
+    skipped."""
+    proc = tmp_path / "proc"
+
+    def process(pid, ppid, comm, threads=()):
+        d = proc / str(pid)
+        (d / "task").mkdir(parents=True)
+        (d / "stat").write_text(f"{pid} ({comm}) S {ppid} {pid} 0 0\n")
+        for t in threads or (pid,):
+            (d / "task" / str(t)).mkdir()
+
+    process(1, 0, "bash")
+    process(10, 1, "python -m telemetry", threads=(10, 13))      # a command name with spaces and parentheses
+    process(11, 10, "nvidia-smi")
+    process(12, 11, "x) y")
+    process(20, 1, "other")
+    (proc / "self").mkdir()
+    assert sorted(pin.descendants(10, str(proc))) == [10, 11, 12] and pin.tasks(10, str(proc)) == [10, 13]
+    assert pin.tasks(99, str(proc)) == [99]
+    calls = []
+
+    def setter(tid, cpus):
+        if tid == 13 and not calls:
+            raise OSError("ended")
+        calls.append((tid, tuple(cpus)))
+
+    assert sorted(pin.move_away([10], [8, 9], str(proc), setter)) == [10, 11, 12]
+    assert {t for t, _ in calls} == {10, 13, 11, 12} and {c for _, c in calls} == {(8, 9)}
+
+
 @pytest.mark.skipif(os.name == "nt", reason="a PCI address holds ':', which a Windows file name cannot")
 def test_pin_reads_the_gpus_numa_node_from_its_pci_address(tmp_path):
     dev = tmp_path / "pci" / "0000:41:00.0"
@@ -1018,17 +1054,19 @@ def test_the_gate_tier_checks_the_full_sizes_once_before_the_run():
 def test_the_cpux_tier_and_the_cells_at_512_tokens_and_other_security_levels():
     """The cpux tier (tab:eval-cpu, tab:eval-plans): Llama-2-7B's Kpre CPU verifier and exact re-execution at 2,048
     tokens on 4 and 2 threads, each job pinned to as many cores; both without the AVX-512 attention kernel on 8; both
-    for Llama-2-13B; mode C's six candidate plans side by side in one process on the same queries, the run's plan first
-    and no setup cache (the commitment's time is the encoding).  The cpuv tier measures Llama-2-7B at 512 tokens as
-    well (the verifier, every re-execution baseline, llama.cpp), and the bench tier its cells at lambda 40 and 80.
-    The rehearsal takes the same paths on GPT-2's two blocks."""
+    for Llama-2-13B; mode C's six candidate plans on the same queries, one job each (the run's plan first), each limit
+    after the plan's encoded entries, and no setup cache (the commitment's time is the encoding).  The cpuv tier
+    measures Llama-2-7B at 512 tokens as well (the verifier, every re-execution baseline with either allocator
+    setting, llama.cpp), and the bench tier its cells at lambda 40 and 80.  The rehearsal takes the same paths on
+    GPT-2's two blocks, its six plans side by side in one process."""
     from pvi.commit.plans import AUTO_CANDIDATES
     full = {_job(line): line for line in _dry()}
     cmd = {j: x.split("--wrap", 1)[1] for j, x in full.items()}
     x = sorted(j for j in full if j.startswith("sp-x-"))
     assert x == sorted(["sp-x-llama2-7b-2048-thr4", "sp-x-rx-llama2-7b-thr4", "sp-x-llama2-7b-2048-thr2",
                         "sp-x-rx-llama2-7b-thr2", "sp-x-llama2-7b-2048-noavx512", "sp-x-rx-llama2-7b-noavx512",
-                        "sp-x-llama2-13b-2048", "sp-x-rx-llama2-13b", "sp-x-plans-llama2-7b-2k"])
+                        "sp-x-llama2-13b-2048", "sp-x-rx-llama2-13b"]
+                     + [f"sp-x-plans-llama2-7b-2k-{p}" for p in AUTO_CANDIDATES])
     for t in (4, 2):
         for job in (f"sp-x-llama2-7b-2048-thr{t}", f"sp-x-rx-llama2-7b-thr{t}"):
             assert f"pin --cores {t} --pid" in cmd[job] and re.findall(r"--threads (\d+)", cmd[job]) == [str(t)], job
@@ -1041,12 +1079,19 @@ def test_the_cpux_tier_and_the_cells_at_512_tokens_and_other_security_levels():
     assert "--label cpux-noavx512" in cmd["sp-x-llama2-7b-2048-noavx512"]
     assert "--model llama2-13b --seq 2048 --layers 2 40 --variants int int_mm int_fp32gemm" in cmd["sp-x-rx-llama2-13b"]
     assert "--model llama2-13b --seq 2048 --modes Kpre" in cmd["sp-x-llama2-13b-2048"]
-    plans = cmd["sp-x-plans-llama2-7b-2k"]
-    listed = re.search(r"--policy ((?:\w+ )+)--", plans).group(1).split()
-    assert listed[0] == "cnn18c" and sorted(listed) == sorted(AUTO_CANDIDATES), listed
-    assert "--setup-cache" not in plans and "--modes C " in plans and "--label plans" in plans
-    other = {_job(line): line for line in _dry("--policy", "cnn17c", tiers=("cpux",))}
-    assert re.search(r"--policy cnn17c tightc cnn16c cnn18c R16c R64c ", other["sp-x-plans-llama2-7b-2k"])
+    order = [j[len("sp-x-plans-llama2-7b-2k-"):] for j in full if j.startswith("sp-x-plans-llama2-7b-2k-")]
+    assert order[0] == "cnn18c" and sorted(order) == sorted(AUTO_CANDIDATES), order
+    hours = {"tightc": 1, "cnn16c": 1, "cnn17c": 2, "cnn18c": 2, "R16c": 2, "R64c": 5}
+    for p in AUTO_CANDIDATES:
+        job = f"sp-x-plans-llama2-7b-2k-{p}"
+        assert f"--policy {p} --queries 3 " in cmd[job] and f"--time={hours[p]}:00:00" in full[job], job
+        assert "--setup-cache" not in cmd[job] and "--modes C " in cmd[job] and "--label plans" in cmd[job], job
+        assert "--model llama2-7b --seq 2048 " in cmd[job] and "pin --cores 8 --pid" in cmd[job], job
+    other = [_job(line) for line in _dry("--policy", "cnn17c", tiers=("cpux",))]
+    assert [j for j in other if "-plans-" in j][0] == "sp-x-plans-llama2-7b-2k-cnn17c"
+    heap = cmd["sp-c-rx-heap-llama2-7b"]            # the verifier's allocator setting at every length of the table
+    assert "--seq 64 512 2048 " in heap and "--malloc-tune" in heap
+    assert "--time=3:00:00" in full["sp-c-rx-heap-llama2-7b"]
     # Llama-2-7B at 512 tokens in the cpuv tier, and at lambda 40 and 80 in the bench tier
     assert "--model llama2-7b --seq 512 --modes Kpre C" in cmd["sp-c-llama2-7b-512"]
     assert "--seq 64 512 2048" in cmd["sp-c-rx-llama2-7b"] and "--seq 64 512 2048" in cmd["sp-c-llamacpp-llama2-7b"]
@@ -1058,6 +1103,8 @@ def test_the_cpux_tier_and_the_cells_at_512_tokens_and_other_security_levels():
     assert "pin --cores 4 --pid" in rehearsal["sp-x-gpt2-64-thr4"]
     assert rehearsal["sp-x-gpt2-64-noavx512"].count("--no-native-avx512") == 2
     assert "--setup-cache" not in rehearsal["sp-x-plans-gpt2"]
+    listed = re.search(r"--policy ((?:\w+ )+)--", rehearsal["sp-x-plans-gpt2"]).group(1).split()
+    assert listed[0] == "cnn18c" and sorted(listed) == sorted(AUTO_CANDIDATES), listed
 
 
 def test_the_cpuv_tier_measures_the_clients_own_memory():

@@ -21,7 +21,7 @@ model ("in separate runs"), and prints nothing for another GPU.
 ## Through the run package
 
 ```bash
-bash code/experiments/package/run.sh --platform final --llama-licence --one-job zkllm     # its own whole-node job
+bash code/experiments/package/run.sh --platform final --llama-licence --one-job zkllm     # a whole-node job (the final run: --one-job gpuv zkllm)
 ```
 
 or as part of `run.sh --platform final --optional --llama-licence all`. The tier has five jobs: `zk-build` (2 h

@@ -10,7 +10,12 @@ others.  Where no node has ``n`` such cores, or
 the host has no CPU affinity (not Linux), the job runs unpinned and its log says so; every record states the CPUs it
 ran on (``cpu_affinity_list`` and ``cpu_numa_nodes`` of :func:`experiments.common.records.environment`).
 
-    python -m experiments.package.pin --cores 8 --pid <pid>
+``--away <pid>...`` keeps processes that the job started before it pinned itself (the GPU telemetry sampler,
+``experiments/package/telemetry.py``, and its ``nvidia-smi``) off the chosen cores: each of them, every thread of it
+and every process it has started get the job's other CPUs, so that they never preempt the timed process.  Where the
+job may use no other CPU they keep their affinity and the log says so.
+
+    python -m experiments.package.pin --cores 8 --pid <pid> [--away <pid>...]
 
 Only the standard library is imported, so the job's first command starts in a fraction of a second.
 """
@@ -23,12 +28,15 @@ import os
 import re
 import subprocess
 
-__all__ = ["parse_list", "compact", "numa_nodes", "nodes_of", "gpu_bus_ids", "pci_node", "choose", "main"]
+__all__ = ["parse_list", "compact", "numa_nodes", "nodes_of", "gpu_bus_ids", "pci_node", "choose", "descendants",
+           "tasks", "move_away", "main"]
 
 SYS = "/sys/devices/system"
 """The kernel's CPU and NUMA topology (a test passes another root)."""
 PCI = "/sys/bus/pci/devices"
 """The kernel's PCI devices, each with its ``numa_node`` (a test passes another root)."""
+PROC = "/proc"
+"""The kernel's processes, each with its ``stat`` and its threads under ``task`` (a test passes another root)."""
 
 
 def parse_list(text: str) -> list[int]:
@@ -119,11 +127,59 @@ def choose(n: int, allowed, root: str = SYS, prefer: int | None = None) -> tuple
     return None
 
 
+def descendants(pid: int, root: str = PROC) -> list[int]:
+    """``pid`` and every process below it (from each process's parent in ``<root>/<pid>/stat``)."""
+    children: dict[int, list[int]] = {}
+    for path in glob.glob(os.path.join(root, "[0-9]*", "stat")):
+        try:
+            with open(path) as fh:
+                fields = fh.read().rpartition(")")[2].split()      # after the command name, which may hold spaces
+            children.setdefault(int(fields[1]), []).append(int(os.path.basename(os.path.dirname(path))))
+        except (OSError, ValueError, IndexError):
+            continue                                                 # a process that ended meanwhile
+    out, todo = [], [pid]
+    while todo:
+        p = todo.pop()
+        if p not in out:
+            out.append(p)
+            todo.extend(children.get(p, []))
+    return out
+
+
+def tasks(pid: int, root: str = PROC) -> list[int]:
+    """The threads of process ``pid`` (``<root>/<pid>/task``; the process alone where the kernel lists none)."""
+    found = [int(t) for t in os.listdir(os.path.join(root, str(pid), "task")) if t.isdigit()] \
+        if os.path.isdir(os.path.join(root, str(pid), "task")) else []
+    return sorted(found) or [pid]
+
+
+def move_away(pids, cpus, root: str = PROC, setter=None) -> list[int]:
+    """Give ``cpus`` to every thread of each of ``pids`` and of the processes below them; the processes moved.  Two
+    passes, so that a thread or process started during the first is moved as well (a thread started after a pass
+    inherits its creator's new affinity).  ``setter`` (default :func:`os.sched_setaffinity`) is a test's hook."""
+    setter = setter or os.sched_setaffinity
+    moved: list[int] = []
+    for _ in range(2):
+        for pid in pids:
+            for p in descendants(pid, root):
+                for t in tasks(p, root):
+                    try:
+                        setter(t, cpus)
+                    except OSError:                                  # a thread or process that ended meanwhile
+                        continue
+                    if p not in moved:
+                        moved.append(p)
+    return moved
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--cores", type=int, default=8, help="physical cores to pin to (default 8)")
     ap.add_argument("--pid", type=int, default=0, help="the process to pin (default this one); its children "
                                                        "started afterwards inherit the affinity")
+    ap.add_argument("--away", type=int, nargs="+", default=[], metavar="PID",
+                    help="processes started before the pinning (the GPU sampler) to keep off the chosen cores: "
+                         "they, their threads and their children get the job's other CPUs")
     args = ap.parse_args(argv)
     if not hasattr(os, "sched_setaffinity"):
         print("not pinned: this host sets no CPU affinity", flush=True)
@@ -144,6 +200,14 @@ def main(argv=None) -> int:
     where = ("the GPU's node" if node == gpu else "the GPU's node is not known" if gpu is None
              else f"the GPU is on node {gpu}")
     print(f"pinned to CPUs {compact(cpus)} ({args.cores} cores of NUMA node {node}; {where})", flush=True)
+    if args.away:
+        rest = sorted(set(allowed) - set(cpus))
+        if not rest:
+            print(f"processes {' '.join(map(str, args.away))} share the pinned CPUs: the job may use no other",
+                  flush=True)
+        else:
+            moved = move_away(args.away, rest)
+            print(f"processes {' '.join(map(str, moved)) or '(none left)'} moved to CPUs {compact(rest)}", flush=True)
     return 0
 
 

@@ -256,20 +256,24 @@ label), each at 2,048 tokens (``tab:eval-cpu``'s rows other than the cpuv tier's
 
 def cpu_scaling(c: Collector, ctx: T.Ctx) -> None:
     """The CPU verifier against exact re-execution on the same cores beyond the cpuv tier's 8 threads
-    (``tab:eval-cpu``, :func:`experiments.paper.tables.cpu_point`): ``CpuRatio<setting>`` (rounded down, as
-    ``CpuRatio``), ``CpuVerify<setting>`` and ``CpuReexec<setting>`` for Llama-2-7B on 2 and 4 threads, on 8 threads
-    without the AVX-512 attention kernel and for Llama-2-13B on 8 threads; ``CpuNoAvxSlowdown`` the verifier's time
+    (``tab:eval-cpu``, :func:`experiments.paper.tables.cpu_point`), every re-execution with glibc's allocator defaults
+    (the setting of every tier; the cpuv tier's like-for-like re-execution with the verifier's own setting, which
+    ``CpuRatio`` may use, stays out): ``CpuRatio<setting>`` (rounded down, as ``CpuRatio``), ``CpuVerify<setting>``
+    and ``CpuReexec<setting>`` for Llama-2-7B on 2 and 4 threads, on 8 threads without the AVX-512 attention kernel
+    and for Llama-2-13B on 8 threads; ``CpuRatioThrEight`` the same ratio on the cpuv tier's 8 threads (the table's
+    8-thread row, which the text sets beside the 2- and 4-thread ratios); ``CpuNoAvxSlowdown`` the verifier's time
     without that kernel over its time with it; and Llama-2-7B at 512 tokens (the cpuv tier, ``tab:eval-reexec``):
     ``CpuVerifyMedium``, ``CpuReexecMedium``, ``CpuRatioMedium``.  What the text states: a Kpre key beats exact
     re-execution at every measured prompt length of ``tab:eval-reexec`` (``ext_evaluation.tex``), and the cpuv
     tier's verifier runs the AVX-512 attention that ``evaluation.tex`` credits (where its record says)."""
     run, m = ctx.run, "llama2-7b"
     for name, tier, model, threads, avx, label in CPU_SETTINGS:
-        ver, rx, ratio = T.cpu_point(run, tier, model, 2048, threads, avx, label)
+        ver, rx, ratio = T.cpu_point(run, tier, model, 2048, threads, avx, label, any_allocator=False)
         c.put(f"CpuRatio{name}", ratio, ver, _floor1)
         c.put(f"CpuVerify{name}", ver and ver.d["verify_s"], ver, f.sig)
         c.put(f"CpuReexec{name}", rx and rx[0], rx and rx[2], f.sig)
-    base = T.cpu_point(run, "cpuv", m, 2048)[0]
+    base, _, eight = T.cpu_point(run, "cpuv", m, 2048, any_allocator=False)
+    c.put("CpuRatioThrEight", eight, base, _floor1)
     off = T.cpu_point(run, "cpux", m, 2048, 8, False, "cpux-noavx512")[0]
     c.put("CpuNoAvxSlowdown", off.d["verify_s"] / base.d["verify_s"] if base and off else None, off,
           lambda v: f"{v:.1f}")
@@ -790,7 +794,10 @@ def count_word(v: float) -> str:
 
 def comparison(c: Collector, ctx: T.Ctx) -> None:
     """The text's numbers on ``tab:eval-compare``, over the rows that the table prints (``ctx.compare_rows``), and
-    zkLLM's comparison on the run's GPU (:func:`zkllm_same_gpu`)."""
+    zkLLM's comparison on the run's GPU (:func:`zkllm_same_gpu`).  zkLLM's rows on the run's GPU have no verifier or
+    proof size by design and their prover time only where :func:`experiments.paper.tables.zkllm_gpu` has one (the
+    table prints a dash otherwise): they add a prover ratio where both times exist and nothing else, while every other
+    row must have each of its ratios."""
     prover, proof, slower = [], [], []
     gpu = T.zkllm_gpu(ctx)
     for row in T.compare_rows(ctx.compare_rows):
@@ -799,6 +806,10 @@ def comparison(c: Collector, ctx: T.Ctx) -> None:
         p, v, nb, src = T.compare_ours(ctx, which)
         tp, tb = f.to_float(lit.get("prover_s")), f.to_float(lit.get("proof_bytes"))
         tv = f.to_float(lit.get("verifier_s"))
+        if row.lit[0] == T.ZKLLM_GPU:
+            if tp and p:
+                prover.append(tp / p)
+            continue
         slower.append(None if v is None else bool(tv and f.factor(tv, v)[1] < 0.99))
         if which[0] == "maverick":
             c.put("CompareMaverick", tp / p if tp and p else None, src, lambda v: f"{v:.1f}")

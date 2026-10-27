@@ -246,7 +246,8 @@ NODECHK="$PY -m experiments.package.node --require-gpu $(printf %q "$REQGPU") --
 WRONG_NODE=86
 # after the node check: the node's environment once per node and allocation (experiments/package/envsnap.py; it never
 # fails a job), and the GPU's telemetry in the background of the job (experiments/package/telemetry.py), started
-# before a CPU-timing job pins itself and stopped when the job ends; its files are named after the job's log
+# before a CPU-timing job pins itself (the pinning then moves it and its nvidia-smi to the job's other CPUs,
+# experiments/package/pin.py --away) and stopped when the job ends; its files are named after the job's log
 # (PVI_JOB_ID: a --local job's id, else SLURM's)
 SNAP=""
 [ -z "$SNAPON" ] || SNAP="$PY -m experiments.package.envsnap --out $ROOT/$LOGS/env --inputs --python $(printf %q "$PY"); "
@@ -284,13 +285,14 @@ sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the 
     [ -n "$EXCL" ] && args+=("$EXCL")
     [ -n "$GRES" ] && args+=("--gres=$GRES")
     [ -n "$EXCLUDE" ] && args+=("--exclude=$EXCLUDE")
-    [ -n "$CPUJOB" ] && [ "$PIN" = 1 ] && pin="$PY -m experiments.package.pin --cores $CORES --pid \$\$ && "
-    local tele="" stop=""
+    local tele="" stop="" away=""
     if [ "$TELI" != 0 ]; then
       tele="$PY -m experiments.package.telemetry --out $ROOT/$LOGS/telemetry/$name-\${PVI_JOB_ID:-\${SLURM_JOB_ID:-local}} \
 --interval $TELI --watch \$\$ & TPID=\$!; "
       stop="; st=\$?; kill \$TPID 2> /dev/null; wait \$TPID 2> /dev/null; exit \$st"
+      away=" --away \$TPID"
     fi
+    [ -n "$CPUJOB" ] && [ "$PIN" = 1 ] && pin="$PY -m experiments.package.pin --cores $CORES --pid \$\$$away && "
     local wrap="set -uo pipefail; $ENVS; echo host \$(hostname) git \$(git -C $ROOT log --oneline -1); \
 $NODECHK || exit \$?; $SNAP$tele$pin$*$stop"
     if [ -n "$DRY" ]; then
@@ -353,7 +355,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     return
   fi
   case "$1" in
-    smoke) echo 1.5-2 ;; cpuv) echo 8-11 ;; cpux) echo 5-9 ;; v1) echo 5-9 ;; serve) echo 8-10 ;; bench) echo 11-17 ;;
+    smoke) echo 1.5-2 ;; cpuv) echo 8-11 ;; cpux) echo 9-14 ;; v1) echo 5-9 ;; serve) echo 8-10 ;; bench) echo 11-17 ;;
     gpuv) echo 5-7 ;;
     gen) echo 4-5 ;; batch) echo 2-3 ;; real) echo 11-16 ;; setup) echo 1-2 ;; improve) echo 3-5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
@@ -368,7 +370,7 @@ CACHED="${CACHE:+--setup-cache $CACHE}"
 NATIVE="--require-native"; [ -z "$NONATIVE" ] || NATIVE=""
 PERF="$M.costs.perf --threads 8 $CACHED"
 EXACT="int int_mm int_fp32gemm"   # exact re-execution's variants on a CPU (the fastest is the ratios' baseline)
-# mode C's candidate plans (pvi.commit.plans.AUTO_CANDIDATES), the run's --policy first (the reference of vs_first)
+# mode C's candidate plans (pvi.commit.plans.AUTO_CANDIDATES), the run's --policy first
 PLANS="$POL"
 for p in tightc cnn16c cnn17c cnn18c R16c R64c; do [ "$p" = "$POL" ] || PLANS="$PLANS $p"; done
 V1="$M.v1.v1_bytes --full --threads 8 $CACHED"
@@ -447,7 +449,7 @@ tier_cpuv() {
     csub "c-rx-$m" "$t" 256 "$RX --model $m --seq $s --layers 2 $(nl "$m") --variants $RXCPU --device cpu \
 --reps $QH --no-malloc-tune $NATIVE"
   done
-  csub c-rx-heap-llama2-7b 2 256 "$RX --model llama2-7b --seq 64 2048 --layers 2 32 --variants int int_mm float \
+  csub c-rx-heap-llama2-7b 3 256 "$RX --model llama2-7b --seq 64 512 2048 --layers 2 32 --variants int int_mm float \
 dynint8 --device cpu --reps $QH --malloc-tune $NATIVE"
   csub c-llamacpp-llama2-7b 3 64 "$LCPP --model llama2-7b --seq 64 512 2048 --types q8_0 bf16 --reps $QH"
   for t in 64 2048; do
@@ -462,10 +464,10 @@ tier_cpux() {
   # the CPU verifier's scaling and cost ablations, each against exact re-execution on the same cores (tab:eval-cpu):
   # Llama-2-7B at 2,048 tokens with 4 and 2 threads, each pinned to as many cores of one NUMA node; on 8 threads
   # without the AVX-512 attention kernel (--no-native-avx512, in the verifier and in the integer forward pass alike;
-  # the library is still built for the node's CPU); Llama-2-13B on 8 threads.  Mode C's six candidate plans side by
-  # side on the same Llama-2-7B queries (tab:eval-plans), each commitment encoded afresh (no setup cache: commit_s is
-  # the encoding's time)
-  local t h
+  # the library is still built for the node's CPU); Llama-2-13B on 8 threads.  Mode C's six candidate plans on the
+  # same Llama-2-7B queries (tab:eval-plans), one job each (the rehearsal: side by side in one process), each
+  # commitment encoded afresh (no setup cache: commit_s is the encoding's time)
+  local t h p
   if [ -n "$REH" ]; then
     ksub 4 x-gpt2-64-thr4 1 64 "$M.costs.perf --threads 4 $CACHED --model gpt2 --layers 2 --seq 64 --modes Kpre \
 --queries $Q --verifier-device cpu --label cpux $NATIVE && $M.reexec.reexec --threads 4 --model gpt2 --seq 64 \
@@ -492,8 +494,14 @@ tier_cpux() {
 --label cpux $NATIVE"
   csub x-rx-llama2-13b 3 256 "$RX --model llama2-13b --seq 2048 --layers 2 40 --variants $EXACT --device cpu \
 --reps $Q --no-malloc-tune $NATIVE"
-  csub x-plans-llama2-7b-2k 4 256 "$M.costs.perf --threads 8 --model llama2-7b --seq 2048 --modes C \
---policy $PLANS --queries $Q --verifier-device cpu --label plans $NATIVE"
+  # one job per plan, on the same weights and queries (the same seeds); each limit is about twice the plan's expected
+  # time, mostly its encoding, which grows with its encoded entries (pvi.commit.cost.setup_size of Llama-2-7B: about
+  # 34, 33, 65, 130, 138 and 551 Gi for tightc, cnn16c, cnn17c, cnn18c, R16c and R64c, about 16 s per Gi on an L40S)
+  for p in $PLANS; do
+    case "$p" in tightc|cnn16c) h=1 ;; R64c) h=5 ;; *) h=2 ;; esac
+    csub "x-plans-llama2-7b-2k-$p" "$h" 256 "$M.costs.perf --threads 8 --model llama2-7b --seq 2048 --modes C \
+--policy $p --queries $Q --verifier-device cpu --label plans $NATIVE"
+  done
 }
 
 tier_v1() {

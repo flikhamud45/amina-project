@@ -329,16 +329,16 @@ def _logs(tmp: Path) -> Path:
                                                             env=dict(_env(), **noavx))])
     _write(logs, "sp-x-llama2-13b-2048-71.out", [perf("llama2-13b", 2048, "Kpre", 38.0, 1.0e10, label="cpux")])
     _write(logs, "sp-x-rx-llama2-13b-72.out", [reexec("llama2-13b", 2048, "int_fp32gemm", 275.0, n_layers=40)])
-    _write(logs, "sp-x-plans-llama2-7b-2k-73.out", [
-        dict(perf(m, 2048, "C", verify, proof, label="plans"), policy=p, chosen=p, group_columns=groups,
-             commit_s=commit, setup_cache="off")
-        for p, groups, commit, proof, verify in (
+    for i, (p, groups, commit, proof, verify) in enumerate((     # one job per plan, as the cpux tier runs them
             ("cnn18c", {"g0_n262144": 12, "g1_n524288": 9}, 610.0, 6.60e9, 25.0),
             ("tightc", {"g0_n16384": 74, "g1_n65536": 70}, 40.0, 7.10e9, 31.0),
             ("cnn16c", {"g0_n65536": 26}, 150.0, 6.70e9, 26.0),
             ("cnn17c", {"g0_n131072": 23}, 300.0, 6.65e9, 25.5),
             ("R16c", {"g0_n65536": 46, "g1_n262144": 42}, 160.0, 6.90e9, 28.0),
-            ("R64c", {"g0_n262144": 32, "g1_n1048576": 30}, 640.0, 6.75e9, 26.5))])
+            ("R64c", {"g0_n262144": 32, "g1_n1048576": 30}, 640.0, 6.75e9, 26.5))):
+        _write(logs, f"sp-x-plans-llama2-7b-2k-{p}-{173 + i}.out", [
+            dict(perf(m, 2048, "C", verify, proof, label="plans"), policy=p, chosen=p, group_columns=groups,
+                 commit_s=commit, setup_cache="off")])
     _write(logs, "sp-c-llamacpp-llama2-7b-48.out", [llamacpp(s, w, t, fa=fa) for s, w, t, fa in (
         (64, "q8_0", 2.2, 1), (64, "q8_0", 2.4, 0), (2048, "q8_0", 61.3, 1), (2048, "q8_0", 65.0, 0),
         (64, "bf16", 3.1, 0), (2048, "bf16", 88.0, 1))])
@@ -694,6 +694,7 @@ def test_the_cpu_scaling_the_plans_and_the_security_levels(run_dir):
         ("7.5", "7.5", "5.4", "7.2")
     assert v["CpuNoAvxSlowdown"] == "1.5" and v["CpuVerifyThirteen"] == "38" and v["CpuReexecThirteen"] == "275"
     assert v["CpuRatio"] == "7.2"                       # the cpuv tier's, unchanged by the cpux records
+    assert v["CpuRatioThrEight"] == "7.2"               # tab:eval-cpu's 8-thread row, glibc's allocator as the others
     r = cells("tab_eval_reexec")
     assert r["cpu 512", "Kpre verifier"]["value"] == 5.0 and r["cpu 512", "integer re-execution"]["value"] == 31.0
     assert r["cpu 512", "fp32 re-execution"]["value"] == 22.0 and r["cpu 512", "llama.cpp Q8\\_0"]["value"] is None
@@ -721,9 +722,9 @@ def test_the_cpu_scaling_the_plans_and_the_security_levels(run_dir):
     assert text != lam_tables.read_text(encoding="utf-8")
     # the claims: a Kpre proof that changes with lambda; codewords of 2^18 points that open more columns than those of 2^16 points (41 against 26); a Kpre
     # key slower than exact re-execution at 512 tokens; a cpuv verifier without the AVX-512 attention
-    _write(logs, "sp-x-plans-llama2-7b-2k-74.out", [dict(perf("llama2-7b", 2048, "C", 25.0, 6.6e9, label="plans"),
-                                                         policy="cnn18c", group_columns={"g0_n262144": 41},
-                                                         commit_s=610.0, setup_cache="off")])
+    _write(logs, "sp-x-plans-llama2-7b-2k-cnn18c-274.out", [
+        dict(perf("llama2-7b", 2048, "C", 25.0, 6.6e9, label="plans"), policy="cnn18c",
+             group_columns={"g0_n262144": 41}, commit_s=610.0, setup_cache="off")])
     _write(logs, "sp-c-llama2-7b-512-63.out", [perf("llama2-7b", 512, "Kpre", 40.0, 1.6e9)])
     _write(logs, "sp-c-llama2-7b-2048-3.out", [dict(perf("llama2-7b", 2048, "Kpre", 19.6, 6.43e9),
                                                     env=dict(_env(), implementation={"avx512": False}))])
@@ -734,6 +735,27 @@ def test_the_cpu_scaling_the_plans_and_the_security_levels(run_dir):
     assert [x for x in got if x.startswith(M.TEXT_CLAIM) and "Kpre proof at 2048 tokens differs" in x]
     assert [x for x in got if x.startswith(M.TEXT_CLAIM) and "at 512 tokens" in x]
     assert [x for x in got if x.startswith(M.TEXT_CLAIM) and "AVX-512 attention kernel" in x]
+
+
+def test_the_cpu_ratios_compare_like_allocator_settings(run_dir):
+    """The cpuv tier's re-execution with the verifier's allocator setting (reexec.py --malloc-tune, at 64, 512 and
+    2,048 tokens) is a baseline of CpuRatio and of tab:eval-reexec's columns (the faster of the two settings), never
+    of tab:eval-cpu, whose rows (and CpuRatioThrEight, which the text sets beside the 2- and 4-thread ratios) all use
+    glibc's defaults, the setting of every cpux re-execution."""
+    tmp, logs = run_dir
+    m = "llama2-7b"
+    _write(logs, "sp-c-rx-heap-llama2-7b-301.out", [dict(reexec(m, s, "int_fp32gemm", t), malloc_tuned=True)
+                                                    for s, t in ((512, 25.0), (2048, 120.0))])
+    ctx, problems = _ctx(tmp, logs)
+    tables = {t.name: t for t in T.build_all(ctx, problems)}
+    v = {k: x.value for k, x in M.build(ctx, problems)[0].items()}
+    cpu = {(c["row"], c["column"]): c["value"] for c in tables["tab_eval_cpu"].cells}
+    assert cpu["Llama-2-7B 8 threads", "re-execution"] == 141.6 and v["CpuRatioThrEight"] == "7.2"
+    assert v["CpuReexecLong"] == "120" and v["CpuRatio"] == "6.1"           # 120 / 19.6, rounded down
+    assert v["CpuReexecMedium"] == "25" and v["CpuRatioMedium"] == "5.0"    # 25 / 5.0
+    assert (v["CpuRatioThrFour"], v["CpuRatioThrTwo"]) == ("7.5", "7.5")  # the cpux tier's, glibc's defaults alone
+    assert T.cpu_point(ctx.run, "cpuv", m, 2048)[1][0] == 120.0
+    assert T.cpu_point(ctx.run, "cpuv", m, 2048, any_allocator=False)[1][0] == 141.6
 
 
 def test_the_settings_and_the_further_text_numbers(run_dir):
