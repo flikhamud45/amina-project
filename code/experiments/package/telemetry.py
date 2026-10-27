@@ -313,7 +313,17 @@ def _alive(pid: int) -> bool:
         return True
     except OSError:
         return False
-    return True
+    return not _zombie(pid)
+
+
+def _zombie(pid: int) -> bool:
+    """Whether ``pid`` has ended but is not yet reaped by its parent (``os.kill`` still succeeds on it)."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as fh:
+            stat = fh.read()
+    except OSError:
+        return False                                       # no /proc: assume it runs
+    return stat[stat.rfind(")") + 2:][:1] in ("Z", "X")
 
 
 def build_parser() -> argparse.ArgumentParser:

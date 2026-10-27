@@ -416,3 +416,15 @@ def test_every_job_snapshots_its_node_and_samples_its_gpu():
     assert not any("package.telemetry" in x or "package.envsnap" in x or "--away" in x for x in off)
     assert any("--pid $$ && " in x for x in off)
     _dry("--telemetry-interval", "0.5", status=2)
+
+
+def test_a_process_that_ended_but_is_not_reaped_counts_as_ended(tmp_path, monkeypatch):
+    stat = tmp_path / "stat"
+    real_open = open
+    monkeypatch.setattr(telemetry, "open", lambda p, *a, **k: real_open(stat, *a, **k), raising=False)
+    stat.write_text("4242 (python (x) y) Z 1 4242 4242 0 -1\n")
+    assert telemetry._zombie(4242)
+    stat.write_text("4242 (python (x) y) S 1 4242 4242 0 -1\n")
+    assert not telemetry._zombie(4242)
+    stat.unlink()
+    assert not telemetry._zombie(4242)
