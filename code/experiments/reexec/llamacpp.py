@@ -215,8 +215,9 @@ def _size(shape) -> int:
 
 
 def import_gguf(src: Path):
-    """The clone's own ``gguf-py`` (``<src>/gguf-py``), first on the path; a missing dependency of it (numpy,
-    PyYAML) is a failed step."""
+    """The clone's own ``gguf-py`` (``<src>/gguf-py``), first on the path while it is imported (then taken off again,
+    so that the folder's other packages, such as its ``tests``, never shadow this process's); a missing dependency of
+    it (numpy, PyYAML) is a failed step."""
     path = Path(src) / "gguf-py"
     if not (path / "gguf" / "__init__.py").is_file():
         raise LlamaCppError("gguf-py", f"{path} holds no gguf package")
@@ -225,6 +226,8 @@ def import_gguf(src: Path):
         import gguf
     except ImportError as e:
         raise LlamaCppError("gguf-py", f"{e} (gguf-py needs numpy and PyYAML)") from e
+    finally:
+        sys.path.remove(str(path))
     if Path(gguf.__file__).resolve().parent != (path / "gguf").resolve():
         raise LlamaCppError("gguf-py", f"another gguf package was imported ({gguf.__file__}), not {path}")
     return gguf
