@@ -286,6 +286,10 @@ model at 8,192 tokens (2 jobs, 11 h of limits) runs by default; `--no-bigmem` le
 `tab:eval-long-check`'s 8,192-token row then stays empty. Its prover's claims (40.6 GiB of int32 next to 6.3 GiB of
 weights) do not fit on the L40S: this job alone passes `--host-claims auto` (every other job keeps the default
 `device`, all claims on the GPU), which keeps 32 GiB of them on the GPU and stages the rest in pinned host memory (the same proof; the record's `claims_staged`; `experiments/costs/README.md`, `perf.py`).
+Likewise `--gkr-memory` keeps its default path in every job but the V1 cells at 2,048 tokens that would run out of GPU
+memory without it: the full Llama-2-7B's and the GPU-verifier V1 cells pass `--gkr-memory auto`, OPT-6.7B's (42.5 of
+44.5 GiB predicted) `--gkr-memory auto --gkr-memory-budget 100`, which keeps the default path unless the whole GPU
+would not do (`experiments/v1/README.md`, "GPU memory of the GKR", lists the cells; the record's `v1_full.gkr_memory`).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
 cpuv`, then `v1`, ...); its jobs are chained among themselves. Every mode-C cell takes `--policy` (default `cnn18c`)

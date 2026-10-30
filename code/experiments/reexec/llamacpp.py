@@ -49,8 +49,8 @@ configuration of other shapes, with RoPE scaling, a tied head or biases is refus
 the plan before the file is written.  The conversion was checked against the release's own converter on a small
 checkpoint (``tests/test_llamacpp.py``: the same tensors byte for byte and the same metadata but ``general.*``).  This
 step also needs huggingface_hub and Transformers; the tokenizer (``tokenizer.model``) is read by a small protobuf
-reader here (:func:`spm_pieces`), not by sentencepiece, which the run's environment does not install (the tests check
-it against sentencepiece piece by piece).  llama-bench still times prompts of random token ids
+reader here (:func:`spm_pieces`), so this step needs neither sentencepiece nor protobuf (the tests check it against
+sentencepiece piece by piece).  llama-bench still times prompts of random token ids
 (it takes no prompt text): the weights are the checkpoint's, the prompt is not WikiText-2's.  Every file written, random
 or real, is read back with gguf-py's reader before quantisation: its tensors' names, order, shapes and types, the
 hyperparameters and the vocabulary's size must be the plan's, else the step fails.

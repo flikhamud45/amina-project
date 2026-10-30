@@ -1173,7 +1173,7 @@ def long_prompts(c: Collector, ctx: T.Ctx) -> None:
     # footnote on the check, which only the prover's time can feel (the verifier, re-execution and proof are as
     # without it)
     p8f = T.long_measured(ctx.run, "cpu", 8192)["perf"]
-    c.put("LongCheckStaged", p8f and p8f.d.get("claims_staged", 0), "long tier, full model at 8,192 tokens "
+    c.put("LongCheckStaged", (p8f and p8f.d.get("claims_staged")) or None, "long tier, full model at 8,192 tokens "
           "(claims_staged)", lambda v: f"{v / 1e9:.1f}")
     # the GPU verifier at 16,384 tokens (tab:eval-long-gpu)
     gp = T.long_point(ctx.run, 16384, gpu=True)

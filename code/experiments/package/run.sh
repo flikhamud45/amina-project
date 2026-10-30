@@ -617,7 +617,7 @@ $NATIVE && $V1 --model opt-125m$R --layers 2 --seq 64 --modes C --policy $POL --
     sub v1-codec-gpt2-512 1 64 "$V1CODEC --model gpt2 --layers 2 --seq 512 --lmax 20 --device cuda --label v1-codec"
     return 0
   fi
-  local t gm
+  local t gm go
   csub v1-gpt2-64 1 64 "$V1 --model gpt2 --seq 64 --modes C Kpre --policy $POL --reps $Q $NATIVE"
   csub v1-gpt2-512 1 64 "$V1 --model gpt2 --seq 512 --modes C Kpre --policy $POL --reps $Q $NATIVE"
   for t in 64 2048; do
@@ -625,16 +625,18 @@ $NATIVE && $V1 --model opt-125m$R --layers 2 --seq 64 --modes C --policy $POL --
     csub "v1-opt125-$t" 1 96 "$V1 --model opt-125m$R --seq $t --modes C Kpre --policy $POL --reps $Q $NATIVE"
     rw opt-1.3b "$t"
     csub "v1-opt13-$t" 2 192 "$V1 --model opt-1.3b$R --seq $t --modes C Kpre --policy $POL --reps $QH $NATIVE"
-    # --gkr-memory auto at 2,048 tokens: the full Llama-2-7B's GKR needs about 45 GiB on the default path and
-    # OPT-6.7B's about 42.5 (V1's README, "GPU memory of the GKR"); auto keeps the default path whenever its
-    # predicted peak fits, so the flag changes nothing in a cell that fits (the same proof either way)
-    gm=""; [ "$t" = 2048 ] && gm=" --gkr-memory auto"
+    # at 2,048 tokens (V1's README, "GPU memory of the GKR"; the same proof on every path): the full Llama-2-7B's
+    # GKR needs about 45 GiB of the L40S's 44.5 on the default path, so --gkr-memory auto (it takes low);
+    # OPT-6.7B's about 42.5, which fits: --gkr-memory-budget 100 keeps it on the default path unless the
+    # predicted peak exceeds the whole GPU
+    gm="" go=""
+    [ "$t" = 2048 ] && gm=" --gkr-memory auto" go=" --gkr-memory auto --gkr-memory-budget 100"
     rw llama2-7b "$t"
     csub "v1-llama7-$t" $((3 + RH)) 256 "$V1 --model llama2-7b$R --seq $t --modes Kpre C --policy $POL --reps $QH\
 $gm $NATIVE"
     rw opt-6.7b "$t"
     csub "v1-opt67-$t" $((3 + RH)) 256 "$V1 --model opt-6.7b$R --seq $t --modes Kpre C --policy $POL --reps $Q\
-$gm $NATIVE"
+$go $NATIVE"
   done
   rw llama2-13b 64
   csub v1-llama13-64 $((3 + RH)) 256 "$V1 --model llama2-13b$R --seq 64 --modes Kpre C --policy $POL --reps $Q $NATIVE"
@@ -889,7 +891,7 @@ tier_real() {
   # compares with their twins' (OPT-1.3B's, OPT-6.7B's v0) time --queries-head queries; OPT-6.7B's V1 at 2,048 tokens
   # in Kpre and C; with --llama-licence also the real Llama-2-7B (the main recipe and its fixed public prefix): v0 in
   # Kpre and C, V1 bytes, generated responses
-  local r13="--model opt-1.3b --real facebook/opt-1.3b" r67="--model opt-6.7b --real facebook/opt-6.7b" t mode gm
+  local r13="--model opt-1.3b --real facebook/opt-1.3b" r67="--model opt-6.7b --real facebook/opt-6.7b" t mode gm go
   if [ -n "$REH" ]; then
     local r125="--model opt-125m --real facebook/opt-125m"
     csub r-opt125-v0 1 64 "$PERF $r125 --seq 64 --modes Kpre C --policy $POL --queries $Q --verifier-device cpu \
@@ -909,13 +911,15 @@ tier_real() {
 --tampers 3 --label real $NATIVE"
     csub "r-opt67rnd-v0-$t" $((1 + h)) 192 "$PERF --model opt-6.7b --seq $t --modes Kpre --queries $QH \
 --verifier-device cpu --tampers 3 --label real-random $NATIVE"
-    # --gkr-memory auto at 2,048 tokens: the full Llama-2-7B's GKR needs about 45 GiB on the default path and
-    # OPT-6.7B's about 42.5 (V1's README, "GPU memory of the GKR"); auto keeps the default path whenever its
-    # predicted peak fits, so the flag changes nothing in a cell that fits (the same proof either way)
-    gm=""; [ "$t" = 2048 ] && gm=" --gkr-memory auto"
-    csub "r-opt67-v1-$t" 2 256 "$V1 $r67 --seq $t --modes Kpre --reps $Q --tampers 3 --label real$gm $NATIVE"
+    # at 2,048 tokens (V1's README, "GPU memory of the GKR"; the same proof on every path): the full Llama-2-7B's
+    # GKR needs about 45 GiB of the L40S's 44.5 on the default path, so --gkr-memory auto (it takes low);
+    # OPT-6.7B's about 42.5, which fits: --gkr-memory-budget 100 keeps it on the default path unless the
+    # predicted peak exceeds the whole GPU
+    gm="" go=""
+    [ "$t" = 2048 ] && gm=" --gkr-memory auto" go=" --gkr-memory auto --gkr-memory-budget 100"
+    csub "r-opt67-v1-$t" 2 256 "$V1 $r67 --seq $t --modes Kpre --reps $Q --tampers 3 --label real$go $NATIVE"
     csub "r-opt67rnd-v1-$t" 2 256 "$V1 --model opt-6.7b --seq $t --modes Kpre --reps $Q --tampers 3 \
---label real-random$gm $NATIVE"
+--label real-random$go $NATIVE"
     for mode in C Kpre; do
       csub "r-opt13-v1-$mode-$t" $((1 + h)) 192 "$V1 $r13 --seq $t --modes $mode --policy $POL --reps $QH \
 --tampers 3 --label real $NATIVE"
@@ -925,9 +929,9 @@ tier_real() {
   done
   # the abstract's real OPT-6.7B in mode C as well (V1 against v0), next to its random-weight twin
   csub r-opt67-v1-C-2048 3 256 "$V1 $r67 --seq 2048 --modes C --policy $POL --reps $Q --tampers 3 --label real \
---gkr-memory auto $NATIVE"
+--gkr-memory auto --gkr-memory-budget 100 $NATIVE"
   csub r-opt67rnd-v1-C-2048 2 256 "$V1 --model opt-6.7b --seq 2048 --modes C --policy $POL --reps $Q --tampers 3 \
---label real-random --gkr-memory auto $NATIVE"
+--label real-random --gkr-memory auto --gkr-memory-budget 100 $NATIVE"
   sub r-opt67-codec 1 192 "$V1 $r67 --seq 2048 --codec-only --device cpu --label real"
   if [ -z "$LLAMA" ]; then
     echo "tier real: no real Llama-2-7B cells (they need your own Llama-2 licence: --llama-licence)" >&2

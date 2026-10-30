@@ -62,9 +62,13 @@ the same query (`pvi.v1.protocol.cut_proof_bytes`: M1 encoded for real, every ot
   state on the same card (1.8 bytes per byte of claims), and the largest instance's tree -- is within
   `--gkr-memory-budget` percent (default 90) of the GPU. Proofs, transcripts and verdicts are the same on every path;
   `v1_full.gkr_memory` records the path taken. Predicted peaks on the 44.5 GiB L40S at 2,048 tokens (default / low /
-  host): Llama-2-7B 45.0 / 28.4 / 18.3 GiB (the default path runs out of memory; the run package passes
-  `--gkr-memory auto` to its cell `c-v1-llama2-7b-2048`, where `auto` takes `low`), OPT-6.7B 42.5 / 27.2 / 18.4,
-  Qwen3-4B 39.1, OPT-1.3B 26.4; with `--verifier-device cuda` the Llama-2-7B needs `host` (about 36 GiB).
+  host): Llama-2-7B 45.0 / 28.4 / 18.3 GiB (the default path runs out of memory; `auto` takes `low`), OPT-6.7B 42.5 / 27.2 / 18.4,
+  Qwen3-4B 39.1, OPT-1.3B 26.4; with `--verifier-device cuda` the Llama-2-7B needs `host` (about 36 GiB). The run
+  package keeps `default` everywhere but these cells: `--gkr-memory auto` for the full Llama-2-7B's 2,048-token V1
+  cells (`c-v1-llama2-7b-2048`, `v1-llama7-2048`, `r-llama7-v1-2048`, `gate-v1-llama7-2k`: `low`) and the GPU-verifier
+  V1 cells (`g-v1-opt-1.3b`: `default`; `g-v1-llama2-7b`: `host`), and `--gkr-memory auto --gkr-memory-budget 100` for
+  OPT-6.7B's (`v1-opt67-2048`, `r-opt67-v1-2048`, `r-opt67rnd-v1-2048`, `r-opt67-v1-C-2048`, `r-opt67rnd-v1-C-2048`),
+  which stay on `default` unless their predicted peak exceeds the whole GPU.
 * **Checks.** Every line checks the byte accounting (`accounting`, `accounting_ok`): v0's `u` and opened columns
   equal `pvi.commit.cost.proof_bytes` exactly; with `--full`, every V1 message but the Merkle multiproofs equals the
   sizing; the graph's shapes and claim columns are the benchmark's (`shapes`). A failed check, a rejected honest

@@ -256,7 +256,9 @@ def _medians(runs: list[dict]) -> dict:
             "prove_s": sum(v for k, v in t.items() if k.startswith("prove_")),
             "verify_s": sum(v for k, v in t.items() if k.startswith("verify_")),
             "prove_s_range": [min(pq), max(pq)], "verify_s_range": [min(vq), max(vq)],
-            "fs_s": t.get("fs_hash", 0.0), **records.per_query(runs, pq, vq)}
+            "fs_s": t.get("fs_hash", 0.0), **records.per_query(runs, pq, vq),
+            **({"gkr_memory_all": [r.get("gkr_memory") for r in runs]} if any(r.get("gkr_memory") for r in runs)
+               else {})}
 
 
 def build_parser() -> argparse.ArgumentParser:
