@@ -77,9 +77,10 @@ class Options:
     host_claims: str = _option("auto", "where a lean GPU prover with the compact encoding keeps its int32 claims until "
                                        "they are encoded: device (on the GPU, the fastest), host (each claim copied "
                                        "to pinned host memory as it is computed, then uploaded part by part to the "
-                                       "GPU's encoder: the same bytes, the GPU holding no claims), auto (host when "
-                                       "the claims, the weights and --host-claims-reserve would not fit in the GPU's "
-                                       "memory, else device)")
+                                       "GPU's encoder: the same bytes, the GPU holding no claims), auto (device when "
+                                       "the claims, the weights and --host-claims-reserve fit in the GPU's memory; "
+                                       "else the claims beyond that memory staged as with host, the others kept on "
+                                       "the GPU)")
     host_claims_reserve: int = _option(8, "GiB of GPU memory --host-claims auto leaves for everything but the weights "
                                           "and the claims (the forward pass's temporaries, the encoder's, the CUDA "
                                           "context)")

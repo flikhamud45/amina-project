@@ -57,8 +57,8 @@ proof at a time; the folder is removed when the process ends, also on SIGTERM (a
 
 Record (one JSON line per mode and variant): ``label``, ``git``, ``model``, ``real``, ``smooth``, ``recipe``,
 ``calib_seq``, ``seq``, ``layers``, ``mode``, ``policy``, ``chosen`` (mode C: the plan committed, ``auto``'s pick),
-``wire``, ``lean``, ``claims_on_host`` (the prover staged its claims in pinned host memory: the option
-``--host-claims``, :func:`pvi.v0.query.claims_on_host`), ``lam``, ``rate``, ``prune_last``, ``lookups``, ``prob_max`` (the graph's attention probabilities'
+``wire``, ``lean``, ``claims_staged`` (bytes of claims the prover staged in pinned host memory, 0 for none: the
+option ``--host-claims``, :func:`pvi.v0.query.device_claim_budget`), ``lam``, ``rate``, ``prune_last``, ``lookups``, ``prob_max`` (the graph's attention probabilities'
 scale, :func:`pvi.models.decoder.prob_max_of`; None for an image model), ``reps``, ``columns``, ``group_columns``,
 ``device``, ``verifier_device``, ``stream``, ``threads``, ``accepted`` / ``queries``, ``fs``, ``prove_s`` and
 ``verify_s`` (sums of the per-part medians, Fiat--Shamir hashing counted for both), ``prove_s_range`` /
@@ -369,7 +369,7 @@ def main() -> int:
                    "calib_seq": (args.calib_seq or args.seq) if legacy else None,
                    "seq": seq, "layers": args.layers or None,
                    "mode": mode, "policy": policy, "wire": wire, "lean": lean,
-                   "claims_on_host": any(r.get("claims_on_host", False) for r in runs),
+                   "claims_staged": max((r.get("claims_staged", 0) for r in runs), default=0),
                    **({"chosen": _chosen(policy, coms[prune, scale, policy].plan)} if mode == "C" else {}),
                    "lam": args.lam, "rate": args.rate,
                    "prune_last": prune, "lookups": looked, "prob_max": scale,
