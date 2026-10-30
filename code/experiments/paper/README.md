@@ -61,7 +61,7 @@ int8 decoders of the same shapes, and llama.cpp's Q8_0 and bf16 prefill, `LLAMAC
 configuration) are reported next to it (`tab:options`' llama.cpp row, `tab:eval-reexec`), never in its place.
 The long prompts (`tab:eval-long` on the CPU, `tab:eval-long-gpu` on the GPU) give the full Llama-2-7B as the
 least-squares line through the builds of 2, 3 and 4 blocks (2 and 3 on the GPU) at 32 blocks (`block_fit`), and
-`tab:eval-long-check` sets that line against the full model measured at 2,048 and 8,192 tokens (`long_errors`).
+`tab:eval-long-check` sets that line against the full model measured at 2,048 and 8,192 tokens (`long_errors`). `LongCheckStaged`, in the footnote on that check, is the GB of claims the 8,192-token prover moved to host memory (`claims_staged`, option `--host-claims`); it affects only the prover's time, which the check does not use.
 `tab:params` and `tab:setup` follow from the library's parameters and the setup proof's byte model
 (`costs/setup_bytes.py`; the per-query columns of interactive queries, as the setup tier measures them), with V1's
 counts from the v1 tier; `tab:memory` takes the cpuv tier's Llama-2-7B cells: the client's own process (`perf.py

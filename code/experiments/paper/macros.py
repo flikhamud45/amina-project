@@ -1169,6 +1169,12 @@ def long_prompts(c: Collector, ctx: T.Ctx) -> None:
     old = err[("cpu", 8192, "two-three")]
     c.put("LongCheckTwoThree", old and abs(old[2]), "long tier, 2 and 3 blocks against the full model at 8,192 "
           "tokens", ceil_pct)
+    # the claims the full model's prover at 8,192 tokens staged in pinned host memory (--host-claims auto): the
+    # footnote on the check, which only the prover's time can feel (the verifier, re-execution and proof are as
+    # without it)
+    p8f = T.long_measured(ctx.run, "cpu", 8192)["perf"]
+    c.put("LongCheckStaged", p8f and p8f.d.get("claims_staged", 0), "long tier, full model at 8,192 tokens "
+          "(claims_staged)", lambda v: f"{v / 1e9:.1f}")
     # the GPU verifier at 16,384 tokens (tab:eval-long-gpu)
     gp = T.long_point(ctx.run, 16384, gpu=True)
     i8 = (gp.get("variants") or {}).get("int")

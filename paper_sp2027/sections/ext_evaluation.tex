@@ -156,7 +156,10 @@ three builds, against exact re-execution on the same threads at every length, ex
 (Table~\ref{tab:eval-long}). A block's verifier time follows $aT+bT^2$ within \LongFitResidual{}\% from 2{,}048 to 8{,}192 tokens. The
 proof grows linearly, by \LongBytesPerBlock{}\,GB per block at 8{,}192 tokens. 32{,}768 tokens are beyond the range of our kernels.
 
-The full model, measured at 2{,}048 tokens (the CPU-verifier cells of Table~\ref{tab:options}) and at 8{,}192 tokens, checks
+The full model, measured at 2{,}048 tokens (the CPU-verifier cells of Table~\ref{tab:options}) and at 8{,}192
+tokens,\footnote{At 8{,}192 tokens the full model's claims do not fit in the GPU's memory beside the model, so the prover
+moves \LongCheckStaged{}\,GB of them to host memory as they are made. This changes only the prover's time, which this
+check does not use; the verifier, the re-execution and the proof are as they would be without it.} checks
 the extrapolation (Table~\ref{tab:eval-long-check}): the fit is within \LongCheckVerify{}\% of the measured verifier,
 \LongCheckReexec{}\% of the measured exact re-execution and \LongCheckProof{}\% of the measured proof. A line through the 2- and
 3-block builds alone is \LongCheckTwoThree{}\% off the verifier at 8{,}192 tokens. On the \PlatformGpu{}, the same fit through 2 and

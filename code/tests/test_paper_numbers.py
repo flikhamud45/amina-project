@@ -1712,6 +1712,7 @@ def test_the_long_prompts_fit_the_blocks_and_check_the_fit_against_the_full_mode
     # verifier: 2.04% at 2,048 and 1.39% at 8,192; re-execution 1.69% and 3.03%; the proof 0.16% and 0
     assert (v["LongCheckVerify"], v["LongCheckReexec"], v["LongCheckProof"], v["LongCheckMax"]) == ("3", "4", "1", "4")
     assert v["LongCheckGpu"] == "2" and v["LongCheckTwoThree"] == "8"
+    assert v["LongCheckStaged"] == "0.0"                    # the records carry no claims_staged: none staged
     # the GPU at 16,384 tokens: 20 + 30 x 6 = 200 s against 30 + 30 x 15 = 480 s of int8 re-execution
     assert (v["LongGpuVerifyLong"], v["LongGpuRatioLong"], v["LongGpuPeakLong"]) == ("200", "2.4", "12.3")
     check = T.tab_eval_long_check(ctx)
