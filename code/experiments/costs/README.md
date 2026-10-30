@@ -110,6 +110,20 @@ trace-tampering attack per variant (`experiments.common.tampers`). Real checkpoi
 (OPT-1.3B/6.7B, Llama-2-7B under its licence) with the WikiText-2 test split. The package gives a 7B decoder at 2,048
 tokens a job limit of one to two hours and up to 256 GB of host memory (the CPU verifier holds the decoded claims).
 
+GPU memory. The lean prover with the compact encoding keeps each claim on the GPU as int32 until it encodes them all:
+4 bytes a claim, 1.3 GiB per Llama-2-7B block at 8,192 tokens, 40.6 GiB for the full model next to its 6.3 GiB of
+weights, more than an L40S's 44.5 GiB. The option `--host-claims` (`pvi.options`, every script) decides where they
+wait: `auto` (the default) keeps them all on the GPU whenever the claims, the weights and `--host-claims-reserve` GiB
+(default 8: the forward pass's and the encoder's temporaries) fit in the GPU's memory -- every cell of the run but
+the few below, unchanged -- and otherwise keeps on the GPU the claims that fit beside the weights and the reserve and
+copies the others into pinned host memory as they are computed; the GPU's encoder then uploads those part by part.
+The bytes, the proof and the transcripts are the same; the copies add to `prove_forward` and `prove_encode`.
+`device` keeps every claim on the GPU (the path before the option), `host` stages every claim. The record's
+`claims_staged` gives the bytes staged (0: none). On an L40S, auto stages in the long tier's full model at 8,192
+tokens (`l-llama7-8192-full`, about 10 GiB staged), in `bench.py`'s batch of 4 prompts of 2,048 tokens
+(`bt-llama2-7b-2k-*`, the same claims) and in `serve_ab.py`'s joint proof of 4 prompts of 2,048 tokens of the 7B,
+OPT-6.7B and 13B models (which would otherwise run out of memory).
+
 The prover and the verifier share the process, so its peak memory is theirs together. `--client-memory` (a CPU
 verifier, the compact encoding; mode C under Fiat-Shamir) measures the client's own: a separate process
 (`experiments/common/client.py`, spawned per mode after the warm-up) holds only the public graph, the parameters and
