@@ -88,8 +88,8 @@ the models and the model-substitution settings.
 **`pvi.options`: the implementation options.** Each option chooses one of several equivalent code paths: native or
 torch kernels, the fused GPU kernels, GPU or host decoding, int8 GEMMs, the hash threads of the tree absorption,
 V1's optimised or baseline verifier, and where a lean GPU prover keeps its claims until it encodes them
-(`host_claims`: on the GPU, in pinned host memory, or `auto`: on the GPU unless they do not fit, then only the
-overflow staged; `pvi.v0.query.device_claim_budget`). Every path gives the same integers, bytes and verdicts, and only time and memory
+(`host_claims`: on the GPU, the default, in pinned host memory, or `auto`: on the GPU unless they do not fit, then
+only the overflow staged; `pvi.v0.query.device_claim_budget`). Every path gives the same integers, bytes and verdicts, and only time and memory
 change. An option is set for the process (`options.configure`) or for a block (`with options.using(...)`). Every
 script exposes each option as a command-line flag and records `options.describe()`. Six environment variables
 name places on the host and select no code path: `CXX`, `PVI_NATIVE_DIR` and `PVI_PY_INCLUDE` (the native and Triton

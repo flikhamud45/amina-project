@@ -284,8 +284,8 @@ tier, the GPU verifier's long cells and V1's codec curve is on random weights, t
 so that `tab:eval-long-check` sets the fit against measurements of the same weights. The `long` tier's full
 model at 8,192 tokens (2 jobs, 11 h of limits) runs by default; `--no-bigmem` leaves it out on nodes with less than 256 GB, and
 `tab:eval-long-check`'s 8,192-token row then stays empty. Its prover's claims (40.6 GiB of int32 next to 6.3 GiB of
-weights) do not fit on the L40S: the default `--host-claims auto` keeps 32 GiB of them on the GPU and stages the
-rest in pinned host memory (the same proof; the record's `claims_staged`; `experiments/costs/README.md`, `perf.py`).
+weights) do not fit on the L40S: this job alone passes `--host-claims auto` (every other job keeps the default
+`device`, all claims on the GPU), which keeps 32 GiB of them on the GPU and stages the rest in pinned host memory (the same proof; the record's `claims_staged`; `experiments/costs/README.md`, `perf.py`).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
 cpuv`, then `v1`, ...); its jobs are chained among themselves. Every mode-C cell takes `--policy` (default `cnn18c`)

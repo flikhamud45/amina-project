@@ -113,17 +113,18 @@ tokens a job limit of one to two hours and up to 256 GB of host memory (the CPU 
 GPU memory. The lean prover with the compact encoding keeps each claim on the GPU as int32 until it encodes them all:
 4 bytes a claim, 1.3 GiB per Llama-2-7B block at 8,192 tokens, 40.6 GiB for the full model next to its 6.3 GiB of
 weights, more than an L40S's 44.5 GiB. The option `--host-claims` (`pvi.options`, every script) decides where they
-wait: `auto` (the default) keeps them all on the GPU whenever the claims, the weights and `--host-claims-reserve` GiB
-(default 6: the forward pass's and the encoder's temporaries, measured at 2.9 GiB on Llama-2-7B blocks at 8,192
-tokens) fit in the GPU's memory -- every cell of the run but
-the few below, unchanged -- and otherwise keeps on the GPU the claims that fit beside the weights and the reserve and
-copies the others into pinned host memory as they are computed; the GPU's encoder then uploads those part by part.
-The bytes, the proof and the transcripts are the same; the copies add to `prove_forward` and `prove_encode`.
-`device` keeps every claim on the GPU (the path before the option), `host` stages every claim. The record's
-`claims_staged` gives the bytes staged (0: none). On an L40S, auto stages in the long tier's full model at 8,192
-tokens (`l-llama7-8192-full`: 32 GiB of claims kept on the GPU, 8.4 GiB staged), in `bench.py`'s batch of 4 prompts of 2,048 tokens
-(`bt-llama2-7b-2k-*`, the same claims) and in `serve_ab.py`'s joint proof of 4 prompts of 2,048 tokens of Llama-2-7B,
-OPT-6.7B and Llama-2-13B (which would otherwise run out of memory, OPT-6.7B by a few hundred MiB).
+wait. `device`, the default, keeps every claim on the GPU (the fastest; a cell whose claims do not fit runs out of
+memory). `auto` keeps them all on the GPU whenever the claims, the weights and `--host-claims-reserve` GiB (default 6:
+the forward pass's and the encoder's temporaries, measured at 2.9 GiB on Llama-2-7B blocks at 8,192 tokens) fit in the
+GPU's memory, and otherwise keeps on the GPU the claims that fit beside the weights and the reserve and copies the
+others into pinned host memory as they are computed; the GPU's encoder then uploads those part by part. `host` stages
+every claim. The bytes, the proof and the transcripts are the same in all three; staging adds its copies to
+`prove_forward` and `prove_encode`, and the record's `claims_staged` gives the bytes staged (0: none). The run passes
+`--host-claims auto` to one job only, the long tier's full model at 8,192 tokens (`l-llama7-8192-full`: on an L40S,
+32 GiB of claims kept on the GPU and 8.4 GiB staged), whose prover time no table reports; every other job keeps
+`device`. With `auto`, `bench.py`'s batch of 4 prompts of 2,048 tokens of Llama-2-7B (the same claims) and
+`serve_ab.py`'s joint proof of 4 such prompts of Llama-2-7B, OPT-6.7B and Llama-2-13B would also fit, at the cost of
+the copies; the run leaves them on `device`.
 
 The prover and the verifier share the process, so its peak memory is theirs together. `--client-memory` (a CPU
 verifier, the compact encoding; mode C under Fiat-Shamir) measures the client's own: a separate process

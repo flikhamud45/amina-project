@@ -74,8 +74,9 @@ class Options:
     v1_native: bool = _option(True, "the native kernels of V1's window-table products on a CPU")
     gkr_triton: bool = _option(True, "V1's GKR prover in Triton on a GPU; off: the torch prover")
     gkr_profile: bool = _option(False, "synchronise and time each phase of the Triton GKR prover")
-    host_claims: str = _option("auto", "where a lean GPU prover with the compact encoding keeps its int32 claims until "
-                                       "they are encoded: device (on the GPU, the fastest), host (each claim copied "
+    host_claims: str = _option("device", "where a lean GPU prover with the compact encoding keeps its int32 claims "
+                                       "until they are encoded: device (the default: on the GPU, the fastest; a cell "
+                                       "whose claims do not fit runs out of memory), host (each claim copied "
                                        "to pinned host memory as it is computed, then uploaded part by part to the "
                                        "GPU's encoder: the same bytes, the GPU holding no claims), auto (device when "
                                        "the claims, the weights and --host-claims-reserve fit in the GPU's memory; "
