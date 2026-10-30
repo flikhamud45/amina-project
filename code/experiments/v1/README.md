@@ -54,17 +54,17 @@ the same query (`pvi.v1.protocol.cut_proof_bytes`: M1 encoded for real, every ot
   shows; a GPU with less memory may need a smaller `--lmax` (24 fits an 11 GB card; the proofs differ by under 0.3 MB). Each record lists every instance's size (`instance_bits`), from which the GKR term of Theorem `thm:v1` follows.
 * **GPU memory of the GKR.** A lean GPU prover keeps every claim as int32 on the device, and the Triton GKR's tree of
   an instance of `2^n` leaves peaks at 148 bytes per leaf (18.5 GiB at `2^27`). `--gkr-memory` chooses what the query
-  keeps on the GPU once its messages are encoded: `default` keeps everything (the path of the measured cells); `low`
+  keeps on the GPU once its messages are encoded: `default` (the default) keeps everything, the measured path; `low`
   frees the sent values and the claims no fold reads and runs the tree at 96 bytes per leaf (the leaves' numerators
   freed once combined, each layer once halved: the same kernels); `host` is `low` with the claims the folds read
-  moved to pinned host memory until the folds (timed as `prove_offload`; moved back within `prove_fold`); `auto` (the
-  default) takes the first of `default`, `low` and `host` whose predicted peak -- the memory in use, a GPU verifier's
+  moved to pinned host memory until the folds (timed as `prove_offload`; moved back within `prove_fold`); `auto` takes
+  the first of `default`, `low` and `host` whose predicted peak -- the memory in use, a GPU verifier's
   state on the same card (1.8 bytes per byte of claims), and the largest instance's tree -- is within
   `--gkr-memory-budget` percent (default 90) of the GPU. Proofs, transcripts and verdicts are the same on every path;
   `v1_full.gkr_memory` records the path taken. Predicted peaks on the 44.5 GiB L40S at 2,048 tokens (default / low /
-  host): Llama-2-7B 45.0 / 28.4 / 18.3 GiB (the default path runs out of memory: `auto` takes `low`), OPT-6.7B 42.5 /
-  27.2 / 18.4 (`low`), Qwen3-4B 39.1 (`default`), OPT-1.3B 26.4 (`default`); with `--verifier-device cuda` the
-  Llama-2-7B needs `host` (about 36 GiB).
+  host): Llama-2-7B 45.0 / 28.4 / 18.3 GiB (the default path runs out of memory; the run package passes
+  `--gkr-memory auto` to its cell `c-v1-llama2-7b-2048`, where `auto` takes `low`), OPT-6.7B 42.5 / 27.2 / 18.4,
+  Qwen3-4B 39.1, OPT-1.3B 26.4; with `--verifier-device cuda` the Llama-2-7B needs `host` (about 36 GiB).
 * **Checks.** Every line checks the byte accounting (`accounting`, `accounting_ok`): v0's `u` and opened columns
   equal `pvi.commit.cost.proof_bytes` exactly; with `--full`, every V1 message but the Merkle multiproofs equals the
   sizing; the graph's shapes and claim columns are the benchmark's (`shapes`). A failed check, a rejected honest

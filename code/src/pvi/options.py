@@ -74,10 +74,11 @@ class Options:
     v1_native: bool = _option(True, "the native kernels of V1's window-table products on a CPU")
     gkr_triton: bool = _option(True, "V1's GKR prover in Triton on a GPU; off: the torch prover")
     gkr_profile: bool = _option(False, "synchronise and time each phase of the Triton GKR prover")
-    gkr_memory: str = _option("auto", "V1's GPU prover memory during the GKR: low (free the sent values and the "
+    gkr_memory: str = _option("default", "V1's GPU prover memory during the GKR: low (free the sent values and the "
                                       "claims no fold reads before it, and each Triton tree's leaf numerators and "
                                       "layers once read), host (low, and the claims the folds read wait on the host "
-                                      "during the GKR), default (keep them: the measured path), or auto (the first "
+                                      "during the GKR), default (keep them: the measured path; the default), or "
+                                      "auto (the first "
                                       "of default, low and host whose predicted peak is within "
                                       "--gkr-memory-budget)")
     gkr_memory_budget: int = _option(90, "with --gkr-memory auto: the percentage of the GPU's memory the default "

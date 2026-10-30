@@ -537,10 +537,15 @@ tier_cpuv() {
   # (llama.cpp's conversion reads the checkpoint one tensor at a time: no fp32 model, no calibration)
   rw llama2-7b 2048
   csub c-llamacpp-llama2-7b 3 64 "$LCPP --model llama2-7b$R --seq 64 512 2048 --types q8_0 bf16 --reps $QH"
+  local gm
   for t in 64 2048; do
     rw llama2-7b "$t"
+    # the full Llama-2-7B at 2,048 tokens: the GKR's default path needs about 45 GiB of the L40S's 44.5 (V1's
+    # README, "GPU memory of the GKR"); --gkr-memory auto frees what the GKR does not read (the same proof)
+    gm=""
+    [ "$t" = 2048 ] && gm=" --gkr-memory auto"
     csub "c-v1-llama2-7b-$t" $((2 + RH)) 256 "$V1 --model llama2-7b$R --seq $t --modes Kpre --reps $QH \
---v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
+--v1-verifier optimised baseline --label cpuv-v1$gm $NATIVE"
   done
   rw qwen3-4b 2048
   csub c-v1-qwen3-4b-2048 $((2 + RH)) 256 "$V1 --model qwen3-4b$R --seq 2048 --modes Kpre --reps $QH \
