@@ -31,10 +31,11 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 __all__ = ["Options", "current", "configure", "using", "add_arguments", "apply_arguments", "describe",
-           "native_dir", "python_include", "V1_VERIFIERS", "HOST_CLAIMS"]
+           "native_dir", "python_include", "V1_VERIFIERS", "HOST_CLAIMS", "GKR_MEMORY"]
 
 V1_VERIFIERS = ("optimised", "baseline")
 HOST_CLAIMS = ("auto", "device", "host")
+GKR_MEMORY = ("auto", "low", "host", "default")
 
 
 def _option(default, help: str):
@@ -85,10 +86,23 @@ class Options:
     host_claims_reserve: int = _option(6, "GiB of GPU memory --host-claims auto leaves for everything but the weights "
                                           "and the claims (the forward pass's temporaries, the encoder's, the CUDA "
                                           "context: 2.9 GiB measured on Llama-2-7B blocks at 8,192 tokens)")
+    gkr_memory: str = _option("default", "V1's GPU prover memory during the GKR: low (free the sent values and the "
+                                      "claims no fold reads before it, and each Triton tree's leaf numerators and "
+                                      "layers once read), host (low, and the claims the folds read wait on the host "
+                                      "during the GKR), default (keep them: the measured path; the default), or "
+                                      "auto (the first "
+                                      "of default, low and host whose predicted peak is within "
+                                      "--gkr-memory-budget)")
+    gkr_memory_budget: int = _option(90, "with --gkr-memory auto: the percentage of the GPU's memory the default "
+                                         "path's predicted GKR peak may take before the low-memory path is used")
 
     def __post_init__(self):
         if self.v1_verifier not in V1_VERIFIERS:
             raise ValueError(f"v1_verifier: one of {V1_VERIFIERS}, not {self.v1_verifier!r}")
+        if self.gkr_memory not in GKR_MEMORY:
+            raise ValueError(f"gkr_memory: one of {GKR_MEMORY}, not {self.gkr_memory!r}")
+        if not 1 <= self.gkr_memory_budget <= 100:
+            raise ValueError("gkr_memory_budget: a percentage in 1 .. 100")
         if self.hash_threads < 0:
             raise ValueError("hash_threads: 0 (torch's thread count) or a positive number")
         if self.host_claims not in HOST_CLAIMS:
@@ -136,6 +150,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
             group.add_argument(flag, choices=V1_VERIFIERS, default=default, help=text)
         elif f.name == "host_claims":
             group.add_argument(flag, choices=HOST_CLAIMS, default=default, help=text)
+        elif f.name == "gkr_memory":
+            group.add_argument(flag, choices=GKR_MEMORY, default=default, help=text)
         else:
             group.add_argument(flag, type=int, default=default, help=text)
     group.add_argument("--require-native", action="store_true", help="stop unless the native CPU kernels are available")

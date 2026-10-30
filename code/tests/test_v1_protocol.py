@@ -352,3 +352,81 @@ def test_honest_exceptions_across_row_blocks(mode, monkeypatch):
     out = cp.run_cut_query(prover, v, x)
     assert out["accepted"], out["rejected_at"]
     assert out["bytes"]["cut_exc"] == est["cut_exc"]
+
+
+@pytest.mark.parametrize("kind,mode,policy,fs,pruned", [("llama", "C", "cnn16c", True, True),
+                                                         ("opt", "C", "tightc", False, False),
+                                                         ("llama", "Kpre", None, False, True)])
+@pytest.mark.parametrize("memory", ["low", "host", "default", "auto"])
+def test_the_low_memory_gkr_runs_with_only_the_claims_the_folds_read(kind, mode, policy, fs, pruned, memory,
+                                                                     monkeypatch):
+    # gkr_memory low and host: the sent values and the claims no fold reads are freed before the GKR (a lean GPU
+    # prover keeps them as int32 on the device, where the GKR's fraction trees need the memory); default, and auto on
+    # a CPU prover, keep them; the query and its transcript are the same on every path
+    from pvi import options
+    monkeypatch.setattr(options, "_CURRENT", options.replace(options.current(), gkr_memory=memory))
+    g, prover, v = _setup(kind, mode, policy, fs, pruned)
+    ref = cp.run_cut_query(prover, v, _x(), seed=None if fs else 5)
+    kept, at_gkr = [], []
+    claims = prover.claims
+
+    def spy_claims(*a, **kw):
+        kept.append(claims(*a, **kw))
+        return kept[-1]
+    gkr_prove = cp.gkr.prove
+
+    def spy_prove(*a, **kw):
+        at_gkr.append(set(kept[-1]))
+        return gkr_prove(*a, **kw)
+    monkeypatch.setattr(prover, "claims", spy_claims)
+    monkeypatch.setattr(cp.gkr, "prove", spy_prove)
+    out = cp.run_cut_query(prover, v, _x(), seed=None if fs else 5)
+    assert out["accepted"], out["rejected_at"]
+    assert out["bytes"] == ref["bytes"] and (not fs or out["transcript"] == ref["transcript"])
+    assert out["gkr_memory"] == (memory if memory != "auto" else "default")
+    plan = cp.cut_plan(v.graph, v.claim_columns(_x()), _x().shape[1], v.publics if v.groups else None,
+                       v.params.cut_lmax, v.weights or None)
+    want = cp._fold_claims(v, plan) if memory in ("low", "host") else {op.name for op in g.mat_ops}
+    assert at_gkr and all(keys == want for keys in at_gkr)
+    assert len(cp._fold_claims(v, plan)) < len(g.mat_ops)
+
+
+def test_auto_low_memory_only_where_the_default_peak_exceeds_the_budget(monkeypatch):
+    # gkr_memory auto on a GPU prover: low exactly when the memory in use plus the largest instance's default tree
+    # (148 bytes per leaf) exceeds gkr_memory_budget percent of the GPU; then the claims wait on the host exactly when
+    # the memory in use after the frees plus the low-memory tree (96 bytes per leaf) still exceeds it
+    import types
+
+    from pvi import options
+    g, prover, v = _setup("llama", "Kpre", None, False, True)
+    plan = cp.cut_plan(v.graph, v.claim_columns(_x()), _x().shape[1], None, v.params.cut_lmax, v.weights or None)
+    tree = 148 << max(sum(plan.n_vars(b)) for b in range(len(plan.instances)))
+    gpu = types.SimpleNamespace(device=torch.device("cuda", 0))
+    claims = {"a": torch.zeros(3, 4, dtype=torch.int32)}
+    assert cp._gpu_verifier_bytes(prover, v, claims) == 0                    # a CPU prover and verifier
+    assert cp._gpu_verifier_bytes(gpu, types.SimpleNamespace(device="cpu"), claims) == 0
+    monkeypatch.setattr(torch.Tensor, "is_cuda", property(lambda t: True))
+    assert cp._gpu_verifier_bytes(gpu, types.SimpleNamespace(device="cuda"), claims) == int(1.8 * 48)
+    monkeypatch.undo()
+    for in_use, total, budget, want in [(0, 10 * tree, 90, False), (8 * tree, 10 * tree, 90, False),
+                                        (8 * tree + 1, 10 * tree, 90, True), (0, 2 * tree, 40, True)]:
+        monkeypatch.setattr(torch.cuda, "memory_allocated", lambda dev=None, n=in_use: n)
+        monkeypatch.setattr(torch.cuda, "mem_get_info", lambda dev=None, t=total: (t, t))
+        with options.using(gkr_memory="auto", gkr_memory_budget=budget):
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=True) is want
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=False) is False
+        with options.using(gkr_memory="default"):
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=True) is False
+        with options.using(gkr_memory="low"):
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=False) is True
+            assert cp._gkr_on_host(gpu, plan, on_gpu=True) is False
+        with options.using(gkr_memory="host"):
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=False) is True
+            assert cp._gkr_on_host(gpu, plan, on_gpu=False) is True
+    low = 96 << max(sum(plan.n_vars(b)) for b in range(len(plan.instances)))
+    for in_use, total, want in [(0, 10 * low, False), (9 * low, 10 * low, False), (9 * low + 1, 10 * low, True)]:
+        monkeypatch.setattr(torch.cuda, "memory_allocated", lambda dev=None, n=in_use: n)
+        monkeypatch.setattr(torch.cuda, "mem_get_info", lambda dev=None, t=total: (t, t))
+        with options.using(gkr_memory="auto", gkr_memory_budget=100):
+            assert cp._gkr_on_host(gpu, plan, on_gpu=True) is want
+            assert cp._gkr_on_host(gpu, plan, on_gpu=False) is False

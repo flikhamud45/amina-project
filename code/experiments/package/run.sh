@@ -537,10 +537,15 @@ tier_cpuv() {
   # (llama.cpp's conversion reads the checkpoint one tensor at a time: no fp32 model, no calibration)
   rw llama2-7b 2048
   csub c-llamacpp-llama2-7b 3 64 "$LCPP --model llama2-7b$R --seq 64 512 2048 --types q8_0 bf16 --reps $QH"
+  local gm
   for t in 64 2048; do
     rw llama2-7b "$t"
+    # the full Llama-2-7B at 2,048 tokens: the GKR's default path needs about 45 GiB of the L40S's 44.5 (V1's
+    # README, "GPU memory of the GKR"); --gkr-memory auto frees what the GKR does not read (the same proof)
+    gm=""
+    [ "$t" = 2048 ] && gm=" --gkr-memory auto"
     csub "c-v1-llama2-7b-$t" $((2 + RH)) 256 "$V1 --model llama2-7b$R --seq $t --modes Kpre --reps $QH \
---v1-verifier optimised baseline --label cpuv-v1 $NATIVE"
+--v1-verifier optimised baseline --label cpuv-v1$gm $NATIVE"
   done
   rw qwen3-4b 2048
   csub c-v1-qwen3-4b-2048 $((2 + RH)) 256 "$V1 --model qwen3-4b$R --seq 2048 --modes Kpre --reps $QH \
@@ -612,7 +617,7 @@ $NATIVE && $V1 --model opt-125m$R --layers 2 --seq 64 --modes C --policy $POL --
     sub v1-codec-gpt2-512 1 64 "$V1CODEC --model gpt2 --layers 2 --seq 512 --lmax 20 --device cuda --label v1-codec"
     return 0
   fi
-  local t
+  local t gm
   csub v1-gpt2-64 1 64 "$V1 --model gpt2 --seq 64 --modes C Kpre --policy $POL --reps $Q $NATIVE"
   csub v1-gpt2-512 1 64 "$V1 --model gpt2 --seq 512 --modes C Kpre --policy $POL --reps $Q $NATIVE"
   for t in 64 2048; do
@@ -620,12 +625,16 @@ $NATIVE && $V1 --model opt-125m$R --layers 2 --seq 64 --modes C --policy $POL --
     csub "v1-opt125-$t" 1 96 "$V1 --model opt-125m$R --seq $t --modes C Kpre --policy $POL --reps $Q $NATIVE"
     rw opt-1.3b "$t"
     csub "v1-opt13-$t" 2 192 "$V1 --model opt-1.3b$R --seq $t --modes C Kpre --policy $POL --reps $QH $NATIVE"
+    # --gkr-memory auto at 2,048 tokens: the full Llama-2-7B's GKR needs about 45 GiB on the default path and
+    # OPT-6.7B's about 42.5 (V1's README, "GPU memory of the GKR"); auto keeps the default path whenever its
+    # predicted peak fits, so the flag changes nothing in a cell that fits (the same proof either way)
+    gm=""; [ "$t" = 2048 ] && gm=" --gkr-memory auto"
     rw llama2-7b "$t"
-    csub "v1-llama7-$t" $((3 + RH)) 256 "$V1 --model llama2-7b$R --seq $t --modes Kpre C --policy $POL --reps $QH \
-$NATIVE"
+    csub "v1-llama7-$t" $((3 + RH)) 256 "$V1 --model llama2-7b$R --seq $t --modes Kpre C --policy $POL --reps $QH\
+$gm $NATIVE"
     rw opt-6.7b "$t"
-    csub "v1-opt67-$t" $((3 + RH)) 256 "$V1 --model opt-6.7b$R --seq $t --modes Kpre C --policy $POL --reps $Q \
-$NATIVE"
+    csub "v1-opt67-$t" $((3 + RH)) 256 "$V1 --model opt-6.7b$R --seq $t --modes Kpre C --policy $POL --reps $Q\
+$gm $NATIVE"
   done
   rw llama2-13b 64
   csub v1-llama13-64 $((3 + RH)) 256 "$V1 --model llama2-13b$R --seq 64 --modes Kpre C --policy $POL --reps $Q $NATIVE"
@@ -772,8 +781,10 @@ $RX --model opt-125m$R --seq 64 --variants int float bf16 --device cuda --reps 2
       sub "g-v0-$m-$mode" $((1 + RH)) 192 "$PERF --model $m$R --seq 2048 --modes $mode --policy $POL --queries $Q \
 --verifier-device cuda --stream --label gpuv --require-triton"
     done
+    # --gkr-memory auto: the full Llama-2-7B's prover and GPU verifier together need about 63 GiB on the default
+    # path; auto takes the default path where it fits (OPT-1.3B) and otherwise the first that does
     sub "g-v1-$m" $((2 + RH)) 192 "$V1 --model $m$R --seq 2048 --modes Kpre --reps $Q --verifier-device cuda \
---label gpuv-v1"
+--gkr-memory auto --label gpuv-v1"
   done
   for m in opt-1.3b qwen3-4b llama2-7b opt-6.7b llama2-13b; do
     rx "$m" 64 512 2048 -- --variants int float bf16 --device cuda --reps $QH
@@ -878,7 +889,7 @@ tier_real() {
   # compares with their twins' (OPT-1.3B's, OPT-6.7B's v0) time --queries-head queries; OPT-6.7B's V1 at 2,048 tokens
   # in Kpre and C; with --llama-licence also the real Llama-2-7B (the main recipe and its fixed public prefix): v0 in
   # Kpre and C, V1 bytes, generated responses
-  local r13="--model opt-1.3b --real facebook/opt-1.3b" r67="--model opt-6.7b --real facebook/opt-6.7b" t mode
+  local r13="--model opt-1.3b --real facebook/opt-1.3b" r67="--model opt-6.7b --real facebook/opt-6.7b" t mode gm
   if [ -n "$REH" ]; then
     local r125="--model opt-125m --real facebook/opt-125m"
     csub r-opt125-v0 1 64 "$PERF $r125 --seq 64 --modes Kpre C --policy $POL --queries $Q --verifier-device cpu \
@@ -898,9 +909,13 @@ tier_real() {
 --tampers 3 --label real $NATIVE"
     csub "r-opt67rnd-v0-$t" $((1 + h)) 192 "$PERF --model opt-6.7b --seq $t --modes Kpre --queries $QH \
 --verifier-device cpu --tampers 3 --label real-random $NATIVE"
-    csub "r-opt67-v1-$t" 2 256 "$V1 $r67 --seq $t --modes Kpre --reps $Q --tampers 3 --label real $NATIVE"
+    # --gkr-memory auto at 2,048 tokens: the full Llama-2-7B's GKR needs about 45 GiB on the default path and
+    # OPT-6.7B's about 42.5 (V1's README, "GPU memory of the GKR"); auto keeps the default path whenever its
+    # predicted peak fits, so the flag changes nothing in a cell that fits (the same proof either way)
+    gm=""; [ "$t" = 2048 ] && gm=" --gkr-memory auto"
+    csub "r-opt67-v1-$t" 2 256 "$V1 $r67 --seq $t --modes Kpre --reps $Q --tampers 3 --label real$gm $NATIVE"
     csub "r-opt67rnd-v1-$t" 2 256 "$V1 --model opt-6.7b --seq $t --modes Kpre --reps $Q --tampers 3 \
---label real-random $NATIVE"
+--label real-random$gm $NATIVE"
     for mode in C Kpre; do
       csub "r-opt13-v1-$mode-$t" $((1 + h)) 192 "$V1 $r13 --seq $t --modes $mode --policy $POL --reps $QH \
 --tampers 3 --label real $NATIVE"
@@ -910,9 +925,9 @@ tier_real() {
   done
   # the abstract's real OPT-6.7B in mode C as well (V1 against v0), next to its random-weight twin
   csub r-opt67-v1-C-2048 3 256 "$V1 $r67 --seq 2048 --modes C --policy $POL --reps $Q --tampers 3 --label real \
-$NATIVE"
+--gkr-memory auto $NATIVE"
   csub r-opt67rnd-v1-C-2048 2 256 "$V1 --model opt-6.7b --seq 2048 --modes C --policy $POL --reps $Q --tampers 3 \
---label real-random $NATIVE"
+--label real-random --gkr-memory auto $NATIVE"
   sub r-opt67-codec 1 192 "$V1 $r67 --seq 2048 --codec-only --device cpu --label real"
   if [ -z "$LLAMA" ]; then
     echo "tier real: no real Llama-2-7B cells (they need your own Llama-2 licence: --llama-licence)" >&2
@@ -924,7 +939,8 @@ $NATIVE"
 --label real $NATIVE"
     csub "r-llama7rnd-v0-$t" 1 192 "$PERF --model llama2-7b --seq $t --modes Kpre --queries $Q --verifier-device cpu \
 --tampers 3 --label real-random $NATIVE"
-    csub "r-llama7-v1-$t" 3 256 "$V1 $l7 --seq $t --modes Kpre --reps $Q --tampers 3 --label real $NATIVE"
+    gm=""; [ "$t" = 2048 ] && gm=" --gkr-memory auto"     # (as tier v1's, at 2,048 tokens)
+    csub "r-llama7-v1-$t" 3 256 "$V1 $l7 --seq $t --modes Kpre --reps $Q --tampers 3 --label real$gm $NATIVE"
   done
   csub r-llama7-v0C-64 3 256 "$PERF $l7 --seq 64 --modes C --policy $POL --queries $Q --verifier-device cpu \
 --tampers 3 --label real $NATIVE"
@@ -1345,7 +1361,8 @@ tier_gate() {
 --label gate $NATIVE"
   csub gate-r-opt125-v1-2k 1 96 "$V1 $r125 --seq 2048 --modes Kpre C --policy $POL --reps 2 --tampers 1 --label gate \
 $NATIVE"
-  csub gate-v1-llama7-2k $((2 + h7)) 256 "$V1 $l7 --modes Kpre --reps 1 --tampers 1 --label gate $NATIVE"
+  csub gate-v1-llama7-2k $((2 + h7)) 256 "$V1 $l7 --modes Kpre --reps 1 --tampers 1 --label gate --gkr-memory auto \
+$NATIVE"
   csub gate-l-llama7-16k 1 192 "$PERF --model llama2-7b --layers 2 --seq 16384 --modes Kpre --queries 1 \
 --verifier-device cpu --label gate $NATIVE"
   csub gate-l-rx-llama7-16k 1 192 "$RX --model llama2-7b --seq 16384 --layers 2 --variants int int_mm int_fp32gemm \

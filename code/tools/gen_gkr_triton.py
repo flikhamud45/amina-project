@@ -470,14 +470,21 @@ def _absorb(ch, label: str, v: torch.Tensor) -> None:
     ch.absorb(label.encode(), v.reshape(-1).to(torch.int64).contiguous().cpu().numpy().tobytes())
 
 
-def _prove_tree(layers: list, ch, label: str, bottom: tuple[int, int] | None = None):
+def _bottom_path(bottom: tuple[int, int] | None, n: int) -> bool:
+    """Whether :func:`_prove_tree` runs the bottom layer's column rounds on the real rows' ``q`` alone."""
+    return bottom is not None and bottom[1] >= 2 and n >= 2
+
+
+def _prove_tree(layers: list, ch, label: str, bottom: tuple[int, int] | None = None, low_memory: bool = False):
     """The transcript from the tree's layers (``layers[k]``: Montgomery SoA ``(p, q)`` of ``2^k`` nodes).  ``bottom =
     (rows, n_col)``: the leaves are an instance's, every one of its ``rows`` rows full (``T = 2^n_col``), so the bottom
-    layer's first ``n_col - 1`` rounds (its column bits) run on the real rows' ``q`` alone (:func:`_bottom_rounds`)."""
+    layer's first ``n_col - 1`` rounds (its column bits) run on the real rows' ``q`` alone (:func:`_bottom_rounds`).
+    ``low_memory`` (the caller keeps no reference to the layers): each layer array is freed as soon as it is halved,
+    the same kernels on the same values."""
     from pvi.v1.gkr import Transcript
 
     n = len(layers) - 1
-    if bottom is not None and bottom[1] >= 2 and n >= 2:
+    if _bottom_path(bottom, n):
         layers[n] = (None, layers[n][1])         # the bottom path reads the leaves' q only: free their p now
     p1, q1 = layers[1]
     _tick("start", p1.device)
@@ -496,13 +503,25 @@ def _prove_tree(layers: list, ch, label: str, bottom: tuple[int, int] | None = N
         rounds, rs = [], []
         j0 = 0
         cp, cq = layers[k + 1]
-        if k == n - 1 and bottom is not None and bottom[1] >= 2:
-            arrs, scale, j0 = _bottom_rounds(cq, bottom, rho, suffixes, lam_m, _li(lam), ch, label, k, rounds, rs,
-                                             dev)
+        if low_memory:
+            layers[k + 1] = None                 # its halves are all this layer reads: each array freed once halved
+            if k == n - 1 and _bottom_path(bottom, n):
+                del cp
+                arrs, scale, j0 = _bottom_rounds(cq, bottom, rho, suffixes, lam_m, _li(lam), ch, label, k, rounds,
+                                                 rs, dev)
+            else:
+                arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous()]
+                del cp
+                arrs += [cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
+            del cq
         else:
-            arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(),
-                    cq[:, 1::2].contiguous()]
-        layers[k + 1] = None                     # its halves are all this layer reads
+            if k == n - 1 and _bottom_path(bottom, n):
+                arrs, scale, j0 = _bottom_rounds(cq, bottom, rho, suffixes, lam_m, _li(lam), ch, label, k, rounds,
+                                                 rs, dev)
+            else:
+                arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(),
+                        cq[:, 1::2].contiguous()]
+            layers[k + 1] = None                 # its halves are all this layer reads
         _tick("halves", dev)
         for j in range(j0, k):
             # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
@@ -609,15 +628,35 @@ def _tree(p: torch.Tensor, q: torch.Tensor) -> list:
     return layers[::-1]
 
 
+def _tree_low(leaves: list, drop_leaf_p: bool) -> list:
+    """:func:`_tree` from ``leaves = [p, q]``, emptied so that the layers hold the only reference to the leaves;
+    ``drop_leaf_p``: the leaves' ``p`` is freed once the layer above them is combined (the bottom path,
+    :func:`_bottom_path`, reads the leaves' ``q`` only)."""
+    p, q = leaves
+    leaves.clear()
+    dev = q.device
+    _tick("start", dev)
+    layers = [(p, q)]
+    del p, q
+    while layers[-1][1].shape[1] > 1:
+        layers.append(_combine(*layers[-1]))
+        if drop_leaf_p and len(layers) == 2:
+            layers[0] = (None, layers[0][1])
+    _tick("tree", dev)
+    return layers[::-1]
+
+
 def prove(p: torch.Tensor, q: torch.Tensor, ch, label: str, device="cuda"):
     """:func:`pvi.v1.gkr.prove` on the GPU for canonical leaves ``p, q`` ``[2^n, 8]`` (int64, any device)."""
     return _prove_tree(_tree(_planes_mont(p, device), _planes_mont(q, device)), ch, label)
 
 
 def prove_leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, alpha: torch.Tensor, ch, label: str,
-                 device="cuda"):
+                 device="cuda", low_memory: bool = False):
     """The transcript of the instance whose real entries are ``delta``, ``width`` ``[R, T]`` (integers, as
-    :func:`pvi.v1.logup.leaves` lays them out), its leaves built on the device."""
+    :func:`pvi.v1.logup.leaves` lays them out), its leaves built on the device.  ``low_memory``: the same transcript
+    with the leaves' numerators freed once combined (when the bottom path reads the leaves' ``q`` alone) and each
+    layer once halved: a peak of 96 bytes per leaf instead of 148 (``pvi.options`` ``gkr_memory``)."""
     rows, cols = delta.shape
     total = 1 << n
     # uploaded as they are (the prover's witness is int32), reduced into the field on the device
@@ -628,7 +667,12 @@ def prove_leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, a
     _leaf_kernel[_grid(total)](d, w, p, q, *_to_mont(alpha), rows, cols, n_col, total, total, PRIME, MU, R2, R_MOD,
                                BLOCK=BLOCK)
     del d, w
-    return _prove_tree(_tree(p, q), ch, label, (rows, n_col) if cols == 1 << n_col else None)
+    bottom = (rows, n_col) if cols == 1 << n_col else None
+    if low_memory:
+        leaves = [p, q]
+        del p, q
+        return _prove_tree(_tree_low(leaves, _bottom_path(bottom, n)), ch, label, bottom, low_memory=True)
+    return _prove_tree(_tree(p, q), ch, label, bottom)
 '''
 
 

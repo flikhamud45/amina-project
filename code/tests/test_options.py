@@ -54,6 +54,10 @@ def test_invalid_values_are_refused():
         options.Options(host_claims="gpu")
     with pytest.raises(ValueError):
         options.Options(host_claims_reserve=-1)
+    with pytest.raises(ValueError):
+        options.Options(gkr_memory="small")
+    with pytest.raises(ValueError):
+        options.Options(gkr_memory_budget=0)
     with pytest.raises(TypeError):
         options.configure(no_such_option=True)
 

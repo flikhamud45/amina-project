@@ -51,3 +51,24 @@ def test_device_leaves_give_the_eager_transcript(rows, cols, n_col):
     assert a.to_bytes() == b.to_bytes()
     out = gkr.verify(gkr.Transcript.from_bytes(b.to_bytes(), n), _ch(), "cut/3/")
     assert out is not None
+
+
+@pytest.mark.parametrize("rows", [512, 300])
+def test_the_low_memory_path_gives_the_same_transcript_at_96_bytes_per_leaf(rows):
+    # 2^20 leaves, full rows of 2,048 columns (300 rows: padding rows up to 512); the default path peaks at 148 bytes
+    # per leaf (pvi.v1.protocol._TREE_BYTES), the low-memory path at 96
+    n_col, n = 11, 20
+    g = torch.Generator().manual_seed(rows)
+    w = torch.randint(1, 1 << 16, (rows, 1), generator=g, dtype=torch.int32).expand(rows, 1 << n_col).contiguous()
+    d = (torch.rand(rows, 1 << n_col, generator=g) * w).floor().to(torch.int32)
+    alpha = torch.randint(0, P, (ef.D,), generator=g)
+    out, peaks = {}, {}
+    for low in (False, True):
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        base = torch.cuda.memory_allocated()
+        out[low] = gt.prove_leaves(d, w, n_col, n, alpha, _ch(), "cut/5/", low_memory=low).to_bytes()
+        torch.cuda.synchronize()
+        peaks[low] = (torch.cuda.max_memory_allocated() - base) / (1 << n)
+    assert out[False] == out[True]
+    assert peaks[True] <= 97 and peaks[False] <= 149
