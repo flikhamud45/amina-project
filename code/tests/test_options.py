@@ -20,9 +20,14 @@ def test_flags_round_trip_and_default_to_the_options_in_force(set_options):
     options.add_arguments(ap)
     args = ap.parse_args([])
     assert options.apply_arguments(args) == options.Options()
-    args = ap.parse_args(["--no-native-gemm", "--fused-encoder", "--hash-threads", "3", "--v1-verifier", "baseline"])
+    args = ap.parse_args(["--no-native-gemm", "--fused-encoder", "--hash-threads", "3", "--v1-verifier", "baseline",
+                          "--host-claims", "host", "--host-claims-reserve", "2"])
     got = options.apply_arguments(args)
     assert (got.native_gemm, got.fused_encoder, got.hash_threads, got.v1_verifier) == (False, True, 3, "baseline")
+    assert (got.host_claims, got.host_claims_reserve) == ("host", 2)
+    assert (options.Options().host_claims, options.Options().host_claims_reserve) == ("auto", 8)
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--host-claims", "gpu"])
     assert options.current() == got
     set_options(int8_fold=False)
     ap = argparse.ArgumentParser()
@@ -45,6 +50,10 @@ def test_invalid_values_are_refused():
         options.Options(v1_verifier="fast")
     with pytest.raises(ValueError):
         options.Options(hash_threads=-1)
+    with pytest.raises(ValueError):
+        options.Options(host_claims="gpu")
+    with pytest.raises(ValueError):
+        options.Options(host_claims_reserve=-1)
     with pytest.raises(TypeError):
         options.configure(no_such_option=True)
 

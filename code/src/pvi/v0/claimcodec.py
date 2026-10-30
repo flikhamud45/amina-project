@@ -788,7 +788,7 @@ def _segments(lay: _Layout, centred, width, lo, means_b, means_lo):
 
 
 def encode(claims: list, *, centre: bool = True, impl: str | None = None,
-           workers: int | None = None) -> bytes | memoryview:
+           workers: int | None = None, device=None) -> bytes | memoryview:
     """``PVC3`` bytes of the claim matrices (``[N, M]`` integer tensors or arrays, in the graph's
     weight-op order, every ``|z| < 2**29``).  ``centre=False`` never centres (for measurements).
 
@@ -796,10 +796,19 @@ def encode(claims: list, *, centre: bool = True, impl: str | None = None,
     statistics, the exceptions' number, the Rice statistics and the encoding itself come to the host,
     each in one copy; the result is a read-only memoryview of one buffer (:func:`_join_pieces`), which
     hashing, sending and :func:`decode` take as they take bytes.  Host claims are encoded on ``workers``
-    threads (``impl="host"``; default ``torch.get_num_threads()``), into bytes.  Both give the same bytes."""
+    threads (``impl="host"``; default ``torch.get_num_threads()``), into bytes.  Both give the same bytes.
+
+    ``device`` (a GPU): host claims (e.g. a prover's claims staged in pinned memory) encoded on that device
+    anyway, in parts (:func:`_encode_chunked`), each part's claims uploaded as it is read; the device then
+    holds only the encoder's temporaries of a part, not the claims.  The same bytes."""
     zts = [z.detach() if torch.is_tensor(z) else torch.from_numpy(np.asarray(z)) for z in claims]
     if any(z.dim() != 2 for z in zts):
         raise ValueError("claims must be 2-D")
+    if device is not None and torch.device(device).type != "cpu" and impl in (None, "device") and zts:
+        dev = torch.device(device)
+        if dev.type == "cuda" and dev.index is None:
+            dev = torch.device("cuda", torch.cuda.current_device())
+        return _encode_device(zts, centre, dev)
     devices = {z.device for z in zts}
     if impl is None:
         impl = "device" if len(devices) == 1 and next(iter(devices)).type != "cpu" else "host"
@@ -1041,22 +1050,24 @@ def _assemble(ops: list, workers: int = 1) -> bytes:
 
 # -- a device's encoder
 
-def _encode_device(zts: list, centre: bool) -> bytes:
+def _encode_device(zts: list, centre: bool, dev: torch.device | None = None) -> bytes:
     """:func:`encode` with torch ops on the claims' device: a fixed number of kernels plus about ten per
     distinct width, and four waits for the device (:func:`_d2h`, :func:`_nonzero_dev`).  Its temporaries
     take about 40 bytes a claim value: more than ``_ONE_PASS`` values are encoded in parts of ``_CHUNK``
-    (:func:`_encode_chunked`, the same bytes)."""
-    dev = zts[0].device
+    (:func:`_encode_chunked`, the same bytes), as are claims held elsewhere than on ``dev`` (default: the
+    claims' device), uploaded part by part."""
+    dev = zts[0].device if dev is None else dev
+    staged = any(z.device != dev for z in zts)
     lay = _layout(tuple((int(z.shape[0]), int(z.shape[1])) for z in zts))
     if lay.total == 0:                                         # nothing to encode on the device
         return _encode_host([z.cpu() for z in zts], centre, 1)
     n = lay.n_ops
     centre = bool(centre and lay.eligible.any())
     tb = lay.on(dev, centre)
-    if _fused_ok(zts):
+    if not staged and _fused_ok(zts):
         return _encode_fused(zts, lay, tb, centre)
-    if lay.total > _ONE_PASS:
-        return _encode_chunked(zts, lay, tb, centre)
+    if staged or lay.total > _ONE_PASS:
+        return _encode_chunked(zts, lay, tb, centre, dev)
     # 1. the claims in one int32 buffer, then the statistics of every op's samples and (if centring)
     # of every op's row means, in one sort and one scatter; one copy back
     flat = [z.reshape(-1) for z in zts]
@@ -1262,15 +1273,19 @@ def _op_groups(weights: np.ndarray, budget: int) -> list[tuple[int, int]]:
 class _Claims:
     """The claims as one flat buffer (op after op, row-major) read through slices of the caller's tensors, in
     one dtype ``dt``: int32 when every claim is int32 (:func:`narrow`'s), else int64 (others widened slice by
-    slice), as :func:`_encode_device` concatenates them."""
+    slice), as :func:`_encode_device` concatenates them.  Slices of claims held elsewhere than on ``dev`` (staged
+    on the host) are uploaded to ``dev`` as they are read (from pinned memory: without a wait)."""
 
-    def __init__(self, zts: list, lay: _Layout) -> None:
+    def __init__(self, zts: list, lay: _Layout, dev: torch.device | None = None) -> None:
         self.flat = [z.reshape(-1) for z in zts]
         self.dt = torch.int32 if all(f.dtype == torch.int32 for f in self.flat) else torch.int64
         self.off = lay.off.tolist()
+        self.dev = self.flat[0].device if dev is None else dev
 
     def piece(self, i: int, a: int, e: int) -> torch.Tensor:
         p = self.flat[i][a:e]
+        if p.device != self.dev:
+            p = p.to(self.dev, non_blocking=True)
         return p if p.dtype == self.dt else p.to(self.dt)
 
     def window(self, a: int, e: int) -> torch.Tensor:
@@ -1290,7 +1305,7 @@ class _Parts:
     centred ops' row means, any ranges of it at once (:meth:`values`)."""
 
     def __init__(self, src: _Claims, lay: _Layout, g: dict, gstart: np.ndarray, means: torch.Tensor | None) -> None:
-        self.src, self.dev = src, means.device if means is not None else src.flat[0].device
+        self.src, self.dev = src, means.device if means is not None else src.dev
         self.start, self.total = gstart.tolist(), int(gstart[-1])
         self.b, self.lo, self.kind, self.op = (g[k].tolist() for k in ("b", "lo", "kind", "op"))
         self.frow0, self.cols = lay.frow0.tolist(), lay.cols.tolist()
@@ -1375,13 +1390,13 @@ class _Parts:
         return _nonzero_dev(high), high
 
 
-def _chunked_plan(zts: list, lay: _Layout, tb: dict, centre: bool):
+def _chunked_plan(zts: list, lay: _Layout, tb: dict, centre: bool, dev: torch.device | None = None):
     """Steps 1 and 2 of :func:`_encode_chunked` (the statistics in windows, the plan on the host): the claims'
     reader, the header, the segments in the global order and their starts, and every row's mean (``None``
-    unless an op is centred)."""
-    dev = zts[0].device
+    unless an op is centred).  ``dev``: where it runs (default: the claims' device)."""
+    dev = zts[0].device if dev is None else dev
     n = lay.n_ops
-    src = _Claims(zts, lay)
+    src = _Claims(zts, lay, dev)
     frow, samp_rows, srow = lay.chunk_index()
     nr = frow.size - 1
     # 1. the claims in row-aligned windows of at most _CHUNK values (a longer row alone): their extremes, the
@@ -1478,10 +1493,11 @@ def _chunked_plan(zts: list, lay: _Layout, tb: dict, centre: bool):
     return src, head, g, gstart, means if centred.any() else None
 
 
-def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool) -> bytes:
-    """:func:`_encode_device` in parts of about ``_CHUNK`` claim values (its bytes; see above)."""
-    dev = zts[0].device
-    src, head, g, gstart, means = _chunked_plan(zts, lay, tb, centre)
+def _encode_chunked(zts: list, lay: _Layout, tb: dict, centre: bool, dev: torch.device | None = None) -> bytes:
+    """:func:`_encode_device` in parts of about ``_CHUNK`` claim values (its bytes; see above), on ``dev`` (default:
+    the claims' device; host claims are uploaded part by part)."""
+    dev = zts[0].device if dev is None else dev
+    src, head, g, gstart, means = _chunked_plan(zts, lay, tb, centre, dev)
     parts = _Parts(src, lay, g, gstart, means)
     del means
     # 3. (a) the exceptions in order: their Rice values' statistics, and the values copied back

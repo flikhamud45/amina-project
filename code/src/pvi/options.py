@@ -31,9 +31,10 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 __all__ = ["Options", "current", "configure", "using", "add_arguments", "apply_arguments", "describe",
-           "native_dir", "python_include", "V1_VERIFIERS"]
+           "native_dir", "python_include", "V1_VERIFIERS", "HOST_CLAIMS"]
 
 V1_VERIFIERS = ("optimised", "baseline")
+HOST_CLAIMS = ("auto", "device", "host")
 
 
 def _option(default, help: str):
@@ -73,12 +74,25 @@ class Options:
     v1_native: bool = _option(True, "the native kernels of V1's window-table products on a CPU")
     gkr_triton: bool = _option(True, "V1's GKR prover in Triton on a GPU; off: the torch prover")
     gkr_profile: bool = _option(False, "synchronise and time each phase of the Triton GKR prover")
+    host_claims: str = _option("auto", "where a lean GPU prover with the compact encoding keeps its int32 claims until "
+                                       "they are encoded: device (on the GPU, the fastest), host (each claim copied "
+                                       "to pinned host memory as it is computed, then uploaded part by part to the "
+                                       "GPU's encoder: the same bytes, the GPU holding no claims), auto (host when "
+                                       "the claims, the weights and --host-claims-reserve would not fit in the GPU's "
+                                       "memory, else device)")
+    host_claims_reserve: int = _option(8, "GiB of GPU memory --host-claims auto leaves for everything but the weights "
+                                          "and the claims (the forward pass's temporaries, the encoder's, the CUDA "
+                                          "context)")
 
     def __post_init__(self):
         if self.v1_verifier not in V1_VERIFIERS:
             raise ValueError(f"v1_verifier: one of {V1_VERIFIERS}, not {self.v1_verifier!r}")
         if self.hash_threads < 0:
             raise ValueError("hash_threads: 0 (torch's thread count) or a positive number")
+        if self.host_claims not in HOST_CLAIMS:
+            raise ValueError(f"host_claims: one of {HOST_CLAIMS}, not {self.host_claims!r}")
+        if self.host_claims_reserve < 0:
+            raise ValueError("host_claims_reserve: GiB, at least 0")
 
 
 _CURRENT = Options()
@@ -118,6 +132,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
             group.add_argument(flag, action=argparse.BooleanOptionalAction, default=default, help=text)
         elif f.name == "v1_verifier":
             group.add_argument(flag, choices=V1_VERIFIERS, default=default, help=text)
+        elif f.name == "host_claims":
+            group.add_argument(flag, choices=HOST_CLAIMS, default=default, help=text)
         else:
             group.add_argument(flag, type=int, default=default, help=text)
     group.add_argument("--require-native", action="store_true", help="stop unless the native CPU kernels are available")
