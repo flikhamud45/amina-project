@@ -34,7 +34,7 @@ __all__ = ["Options", "current", "configure", "using", "add_arguments", "apply_a
            "native_dir", "python_include", "V1_VERIFIERS", "GKR_MEMORY"]
 
 V1_VERIFIERS = ("optimised", "baseline")
-GKR_MEMORY = ("auto", "low", "default")
+GKR_MEMORY = ("auto", "low", "host", "default")
 
 
 def _option(default, help: str):
@@ -76,8 +76,10 @@ class Options:
     gkr_profile: bool = _option(False, "synchronise and time each phase of the Triton GKR prover")
     gkr_memory: str = _option("auto", "V1's GPU prover memory during the GKR: low (free the sent values and the "
                                       "claims no fold reads before it, and each Triton tree's leaf numerators and "
-                                      "layers once read), default (keep them: the measured path), or auto (low only "
-                                      "where the default path's predicted peak exceeds --gkr-memory-budget)")
+                                      "layers once read), host (low, and the claims the folds read wait on the host "
+                                      "during the GKR), default (keep them: the measured path), or auto (the first "
+                                      "of default, low and host whose predicted peak is within "
+                                      "--gkr-memory-budget)")
     gkr_memory_budget: int = _option(90, "with --gkr-memory auto: the percentage of the GPU's memory the default "
                                          "path's predicted GKR peak may take before the low-memory path is used")
 

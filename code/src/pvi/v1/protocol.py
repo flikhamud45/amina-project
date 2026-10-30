@@ -414,15 +414,22 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     if options.current().gkr_triton and prover.device.type == "cuda":
         from pvi.v1 import gkr_triton
         on_gpu = gkr_triton.available(prover.device)
-    low = _gkr_low_memory(prover, plan, on_gpu)
-    out["gkr_low_memory"] = low
-    if low:
+    path = "low" if _gkr_low_memory(prover, plan, on_gpu) else "default"
+    if path == "low":
         # the sent values were the encoder's alone, and of the claims only those the folds read (y = Z e) are read
         # again: free the rest (on a lean GPU prover, int32 on the device) before the GKR's fraction trees need it
         values = sent_vals = None
         read_again = _fold_claims(verifier, plan)
         for name in [k for k in zs if k not in read_again]:
             del zs[name]
+        if _gkr_on_host(prover, plan, on_gpu):
+            # still too large (e.g. a GPU verifier's state on the same card): the kept claims wait on the host
+            path = "host"
+            with _timed(out, "prove_offload"):
+                for name in [k for k, z in zs.items() if z.device.type != "cpu"]:
+                    zs[name] = zs[name].cpu()
+    low = path != "default"
+    out["gkr_memory"] = path
     if on_gpu:
         # free the forward pass's cached blocks: the Triton GKR's fraction tree alone takes up to 148 bytes per leaf
         # (numerators and denominators as 8 int32 planes each, over all its layers, one layer's halves and the eq
@@ -471,7 +478,9 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
                     chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
                     folds[o.name] = prover.fold({o.name: _planes(chi).to(prover.device)})[o.name].cpu()
                 else:                                       # y = A xbar = Z e (|Z| < 2^29), where Z is kept
-                    folds[o.name] = _planes(ef.int_times(zs[o.name], e, 30)).cpu()
+                    z = zs[o.name] if path != "host" else zs[o.name].to(prover.device)
+                    folds[o.name] = _planes(ef.int_times(z, e, 30)).cpu()
+                    del z
         order = [op.name for op in clear_rows] if verifier.mode == "C" else []
         items = _fold_items(verifier, plan, col_cut)
         parts = [us_clear[n] for n in order] + [torch.cat([folds[o] for o in members], 1) for _, members in items]
@@ -549,21 +558,42 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
 _TREE_BYTES = 148
 """Bytes per leaf of a Triton GKR instance's peak on the default path (:func:`pvi.v1.gkr_triton.prove_leaves`: the
 leaves, every layer above them, one layer's halves and the suffix eq tables, as 8 int32 planes each; measured with
-``torch.cuda.max_memory_allocated`` from 2^18 to 2^26 leaves; the low-memory path: 96)."""
+``torch.cuda.max_memory_allocated`` from 2^18 to 2^26 leaves)."""
+_TREE_BYTES_LOW = 96
+"""The same on the low-memory path (``prove_leaves(low_memory=True)``)."""
+
+
+def _max_bits(plan) -> int:
+    return max(sum(plan.n_vars(b)) for b in range(len(plan.instances)))
+
+
+def _gkr_on_host(prover: Prover, plan, on_gpu: bool) -> bool:
+    """On the low-memory path, whether the claims the folds read wait on the host during the GKR (moved back to the
+    device one by one for the folds): ``gkr_memory`` ``host``, or ``auto`` on a GPU prover where the memory in use
+    after the low path's frees plus the largest instance's low-memory tree (:data:`_TREE_BYTES_LOW` per leaf) still
+    exceeds ``gkr_memory_budget`` percent of the GPU's memory."""
+    o = options.current()
+    if o.gkr_memory != "auto":
+        return o.gkr_memory == "host"
+    if not on_gpu or not plan.instances:
+        return False
+    total = torch.cuda.mem_get_info(prover.device)[1]
+    return (torch.cuda.memory_allocated(prover.device) + (_TREE_BYTES_LOW << _max_bits(plan))
+            > total * o.gkr_memory_budget / 100)
 
 
 def _gkr_low_memory(prover: Prover, plan, on_gpu: bool) -> bool:
     """Whether the query frees, before its GKR, what the GKR does not read, and the Triton prover runs with
-    ``low_memory`` (``pvi.options`` ``gkr_memory``: ``low``, ``default``, or ``auto``: on a GPU prover, where the
+    ``low_memory`` (``pvi.options`` ``gkr_memory``: ``low`` or ``host``, ``default``, or ``auto``: on a GPU prover, where the
     default path's predicted peak -- the memory in use now plus the largest instance's tree, :data:`_TREE_BYTES`
     per leaf -- exceeds
     ``gkr_memory_budget`` percent of the GPU's memory).  The proof is the same either way."""
     o = options.current()
     if o.gkr_memory != "auto":
-        return o.gkr_memory == "low"
+        return o.gkr_memory != "default"
     if not on_gpu or not plan.instances:
         return False
-    tree = _TREE_BYTES << max(sum(plan.n_vars(b)) for b in range(len(plan.instances)))
+    tree = _TREE_BYTES << _max_bits(plan)
     total = torch.cuda.mem_get_info(prover.device)[1]
     return torch.cuda.memory_allocated(prover.device) + tree > total * o.gkr_memory_budget / 100
 

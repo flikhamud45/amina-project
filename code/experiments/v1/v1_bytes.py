@@ -68,7 +68,7 @@ machine cannot hold.
 ``v0_bytes`` and ``v1_bytes`` (per message), ``v0_total``, ``v1_total``,
 ``ratio``, ``n_leaves``, ``n_instances``, ``instance_bits``, ``table``, ``n_exceptions``, ``reps``, ``columns``,
 ``setup_s``, ``setup_cache``, ``v0_query_s``, ``v1_bytes_s``; with ``--full`` ``v1_full`` (verdict, bytes, timings,
-the transcript digest, and whether the GKR took the low-memory path: ``--gkr-memory``), ``timed`` (``queries``; ``v0``, ``v1`` and ``v1_paths``: the per-part medians, ``prove_s`` /
+the transcript digest, and the GKR's memory path ``gkr_memory``: ``--gkr-memory``), ``timed`` (``queries``; ``v0``, ``v1`` and ``v1_paths``: the per-part medians, ``prove_s`` /
 ``verify_s`` with their ``[min, max]`` over the queries' own totals, ``fs_s``, and every query's own values
 ``prove_s_all``, ``verify_s_all``, ``timings_all`` and ``transcripts``) and ``tampers``; ``accounting``, ``accounting_ok``, ``peak``.
 With ``--codec-only`` one line with ``codec_only``, ``blocks`` and ``total`` instead.
@@ -409,7 +409,7 @@ def main() -> int:
             full = cp.run_cut_query(prover, v1, x)
             out["v1_full"] = {"accepted": full["accepted"], "rejected_at": full["rejected_at"], "bytes": full["bytes"],
                               "timings": full["timings"], "s": time.perf_counter() - t0,
-                              "transcript": full.get("transcript"), "gkr_low_memory": full.get("gkr_low_memory")}
+                              "transcript": full.get("transcript"), "gkr_memory": full.get("gkr_memory")}
             accounting["v1"] = v1_accounting(b1, full)
             good = good and full["accepted"] and all(accounting["v1"][k] for k in V1_EXACT)
             if args.reps > 1:                              # timed queries of both protocols, interleaved

@@ -54,14 +54,16 @@ the same query (`pvi.v1.protocol.cut_proof_bytes`: M1 encoded for real, every ot
   shows; a GPU with less memory may need a smaller `--lmax` (24 fits an 11 GB card; the proofs differ by under 0.3 MB). Each record lists every instance's size (`instance_bits`), from which the GKR term of Theorem `thm:v1` follows.
 * **GPU memory of the GKR.** A lean GPU prover keeps every claim as int32 on the device, and the Triton GKR's tree of
   an instance of `2^n` leaves peaks at 148 bytes per leaf (18.5 GiB at `2^27`). `--gkr-memory` chooses what the query
-  keeps during the GKR: `default` keeps everything (the path of the measured cells), `low` frees the sent values and
-  the claims no fold reads before it and runs the tree at 96 bytes per leaf (the leaves' numerators freed once
-  combined, each layer once halved), and `auto` (the default) takes `low` only where the memory in use plus the
-  largest instance's default-path peak exceeds `--gkr-memory-budget` percent (default 90) of the GPU. Proofs,
-  transcripts and verdicts are the same on every path, and so are the kernels; `v1_full.gkr_low_memory` records the
-  path taken. On the 44.5 GiB L40S, `auto` takes `low` for the full Llama-2-7B and OPT-6.7B at 2,048 tokens (about 26
-  and 24 GiB in use before their `2^27`-leaf instances; the Llama-2-7B runs out of memory on the default path) and
-  keeps `default` for Qwen3-4B and every smaller cell.
+  keeps on the GPU during the GKR: `default` keeps everything (the path of the measured cells); `low` frees the sent
+  values and the claims no fold reads before it and runs the tree at 96 bytes per leaf (the leaves' numerators freed
+  once combined, each layer once halved: the same kernels); `host` is `low` with the claims the folds read moved to
+  the host during the GKR and back for the folds (timed as `prove_offload` and within `prove_fold`); `auto` (the
+  default) takes the first of `default`, `low` and `host` whose predicted peak (the memory in use plus the largest
+  instance's tree) is within `--gkr-memory-budget` percent (default 90) of the GPU. Proofs, transcripts and verdicts
+  are the same on every path; `v1_full.gkr_memory` records the path taken. On the 44.5 GiB L40S, `auto` keeps
+  `default` for every cell up to Qwen3-4B at 2,048 tokens and takes `low` for the full Llama-2-7B and OPT-6.7B at 2,048
+  tokens (the Llama-2-7B runs out of memory on the default path) and `host` for the full Llama-2-7B with the GPU
+  verifier (`--verifier-device cuda`).
 * **Checks.** Every line checks the byte accounting (`accounting`, `accounting_ok`): v0's `u` and opened columns
   equal `pvi.commit.cost.proof_bytes` exactly; with `--full`, every V1 message but the Merkle multiproofs equals the
   sizing; the graph's shapes and claim columns are the benchmark's (`shapes`). A failed check, a rejected honest
