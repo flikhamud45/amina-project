@@ -174,7 +174,7 @@ bash code/experiments/package/run.sh --platform final --optional --llama-licence
 ```
 
 On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 245 jobs. There, the paper's run submits its tiers as fifteen jobs (`--one-job`), each of
+waits that long for each of its 246 jobs. There, the paper's run submits its tiers as fifteen jobs (`--one-job`), each of
 which runs its tiers' jobs one after another in its allocation: the timed tiers in ten jobs that have a node to
 themselves, and the tiers that time nothing (`quality`, `qllama`, `qcheck`, `tv`, `attack`, `smoke`) in five jobs on one GPU of a
 shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates nothing:
@@ -197,7 +197,7 @@ $R --one-job zkllm                         # 6-9 h: zkLLM's demo on the same GPU
 $R --one-job --no-exclusive quality        # 16-24 h, not timed (past 24 h: submit it again, Sec. 5)
 $R --one-job --no-exclusive qllama         # 40-48 h, not timed: two or three submissions in a row (Sec. 5)
 $R --one-job --no-exclusive qcheck         # 9-13 h, not timed
-$R --one-job --no-exclusive tv attack      # 6-9 h, not timed
+$R --one-job --no-exclusive tv attack      # 9-12 h, not timed
 $R --one-job --no-exclusive smoke          # 1.5-2 h, not timed: the test suite and xcheck on the run's GPU and CPU
 ```
 
@@ -211,7 +211,7 @@ again after the first ends at its limit, the same command runs only the jobs not
 `gpuv zkllm`). With `--dry-run` in front of `--one-job`,
 each submission prints its allocation's `sbatch` line and then the line below (and, where its job limits add up to
 more than 24 h, a last line saying that the same command, submitted again, runs only the jobs not yet ended
-successfully). Together the fifteen hold every job of `--optional all` once (245 jobs, 664 h of limits):
+successfully). Together the fifteen hold every job of `--optional all` once (246 jobs, 669 h of limits):
 
 | Submission | Its dry run's `# one job:` line |
 |---|---|
@@ -228,7 +228,7 @@ successfully). Together the fifteen hold every job of `--optional all` once (245
 | `--no-exclusive quality` | `# one job: quality: 18 jobs, job limits 56 h, time limit 24 h` |
 | `--no-exclusive qllama` | `# one job: qllama: 12 jobs, job limits 78 h, time limit 24 h` |
 | `--no-exclusive qcheck` | `# one job: qcheck: 5 jobs, job limits 20 h, time limit 20 h` |
-| `--no-exclusive tv attack` | `# one job: tv attack: 7 jobs, job limits 19 h, time limit 19 h` |
+| `--no-exclusive tv attack` | `# one job: tv attack: 8 jobs, job limits 24 h, time limit 24 h` |
 | `--no-exclusive smoke` | `# one job: smoke: 2 jobs, job limits 5 h, time limit 5 h` |
 
 Every allocation, the five without `--exclusive` too, asks for the same GPU (`--gres`) and checks its node before its
@@ -265,7 +265,7 @@ if it succeeds, which the run above does not need.
 | `qllama` | 12 (2) | 40-48 (10-14) | 78 (14) | with `--llama-licence` the ratios of Llama-2-7B and Llama-2-13B (`\LlamaSevenRatio`, `\LlamaThirteenRatio`) and their committed alpha and product balance among their neighbours on the test and the validation split (`\LlamaSeven...`, `\LlamaThirteen...`), one job per model, split and alpha (about 4 h each; without `--llama-licence` OpenLLaMA-7B's two jobs, which the paper does not report, in their place); its records are the `quality` tier's (`q-...`) |
 | `qcheck` | 5 | 9-13 | 20 | the Llama recipe beyond the cells it was chosen on: TinyLlama's and Qwen3-1.7B's alpha and product balance among their neighbours on the validation split (`\TinyLlamaValGap`, `\QwenMValGap`), and the main cells over three calibration draws on TinyLlama, Qwen3-1.7B and, with `--llama-licence`, Llama-2-7B (`\LlamaDrawSpread`; without it OpenLLaMA-7B, which the paper does not report); its records are the `quality` tier's (`q-...`) |
 | `tv` | 2 | 2-3 | 7 | the sampler's total-variation distance on the certified OPT-1.3B, and its checks |
-| `attack` | 5 | 4-6 | 12 | the attack: reproduction, MNIST, OPT-6.7B, the in-range edits (`tab:inrange`), the sampler games |
+| `attack` | 6 | 7-9 | 17 | the attack: reproduction, MNIST, OPT-6.7B, the in-range edits (`tab:inrange`; OPT-6.7B's two passes as two jobs), the sampler games |
 | `long` (optional) | 23 | 11-18 | 57 | prompts of 2,048 to 16,384 tokens on 2, 3 and 4 Llama-2-7B blocks, the full model a least-squares fit over the blocks (`tab:eval-long`); the full model measured at 2,048 and 8,192 tokens, the verifier and exact re-execution (8,192 tokens unless `--no-bigmem`; a node with 256 GB or more), against which `tab:eval-long-check` and the Discussion's `\LongCheckMax` set the fit; V1 on 2 blocks at 2,048 to 8,192 tokens, whole queries with tampers (`tab:eval-v1-long`) |
 | `zkllm` (optional) | 5 (0) | 6-9 | 14 (0) | zkLLM's public demo (commit `993311e`, unchanged) on the run's GPU: its build, then Llama-2-7B and Llama-2-13B at 2,048 tokens (one job each), then each model at the other lengths of `--zkllm-seqs` (default 64, 512 and 1,024 tokens; one job each, on one setup shared by its lengths; a length that zkLLM's demo does not prove is recorded as failed and the job goes on), 3 repetitions of layers 0 and 1, each proof binary timed (`logs/<name>/zkllm/`): zkLLM's prover on the same GPU model (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`; at the other lengths `tab:zkllm-lengths`, `\ZkllmSameGpuShortSeq`, `\ZkllmSameGpuFactorShortRange`, `\ZkllmSameGpuFactorLengthRange`), in place of the stored runs (`artifacts/results/zkllm_l40s/`), and the text's "in the same run" (`experiments/comparison/zkllm/README.md`) |
 
@@ -276,9 +276,9 @@ and gated by the smoke; a second invocation starts a new chain. Without a Llama-
 qcheck tier OpenLLaMA-7B's calibration draws, which the paper does not report). The counts and limits are those with
 `--llama-licence`; without it (in parentheses) the Llama-2 cost cells take random weights (job limits as in the
 parentheses of the cost tiers), the `real` tier has 19 jobs and 34 h of limits and the `qllama` tier 2 jobs and 14 h.
-`all` is then 198 jobs and 416 h of limits (217 and 593 h with `--llama-licence`; the `long` tier adds 23 jobs and
+`all` is then 199 jobs and 421 h of limits (218 and 598 h with `--llama-licence`; the `long` tier adds 23 jobs and
 57 h, and the `zkllm` tier, with `--llama-licence`, 5 jobs and 14 h: `run.sh --platform final --optional
---llama-licence --dry-run all` lists 245 jobs and 664 h; with `--random-weights`, 547 h). Every cell of the `long`
+--llama-licence --dry-run all` lists 246 jobs and 669 h; with `--random-weights`, 552 h). Every cell of the `long`
 tier, the GPU verifier's long cells and V1's codec curve is on random weights, the full model at 2,048 tokens too
 (`l-llama7-2048-full`, `l-rx-llama7-2048-full` and the full model in `g-long-llama7-2048` and `g-long-rx-llama7`),
 so that `tab:eval-long-check` sets the fit against measurements of the same weights. The `long` tier's full

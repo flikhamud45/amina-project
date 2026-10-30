@@ -433,7 +433,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     gen) echo 5-7.5 ;; batch) echo 3-6 ;; real) echo 11-16 ;; setup) echo 1.5-2.5 ;; improve) echo 6-12.5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
     qcheck) echo 9-13 ;;
-    tv) echo 2-3 ;; attack) echo 4-6 ;; long) echo 11-18 ;; gate) echo 1.5-3 ;;
+    tv) echo 2-3 ;; attack) echo 7-9 ;; long) echo 11-18 ;; gate) echo 1.5-3 ;;
     zkllm) echo 6-9 ;;
   esac
 }
@@ -1222,9 +1222,12 @@ $A.attack_llm $opt --target auto --out $o/real_llm_attack_opt-125m_auto.json"
 --out $o/real_llm_attack_auto.json"
   sub a-inrange-opt13 2 96 "mkdir -p $o && $A.inrange_llm --out $o/inrange_llm_opt-1.3b_any.json && \
 $A.inrange_llm --moves down --out $o/inrange_llm_opt-1.3b_down.json"
-  sub a-inrange-opt67 4 192 "mkdir -p $o && $A.inrange_llm --model facebook/opt-6.7b --layers 8 16 24 31 \
---threads 16 --out $o/inrange_llm_opt-6.7b_any.json && $A.inrange_llm --model facebook/opt-6.7b \
---layers 8 16 24 31 --threads 16 --moves down --out $o/inrange_llm_opt-6.7b_down.json"
+  # OPT-6.7B's two passes as two jobs (each resumable alone): on the L40S node the any-move pass takes about 1.7 h,
+  # the down-only pass about twice that (its searches at blocks 8 and 16 are the longest)
+  sub a-inrange-opt67 3 192 "mkdir -p $o && $A.inrange_llm --model facebook/opt-6.7b --layers 8 16 24 31 \
+--threads 16 --out $o/inrange_llm_opt-6.7b_any.json"
+  sub a-inrange-opt67-down 6 192 "mkdir -p $o && $A.inrange_llm --model facebook/opt-6.7b --layers 8 16 24 31 \
+--threads 16 --moves down --out $o/inrange_llm_opt-6.7b_down.json"
   sub a-game-opt13 1 96 "mkdir -p $o && $A.adaptive_game_llm --threads 8 --device cuda \
 --out $o/adaptive_game_opt-1.3b.json"
 }
