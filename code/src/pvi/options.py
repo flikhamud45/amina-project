@@ -31,9 +31,10 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 __all__ = ["Options", "current", "configure", "using", "add_arguments", "apply_arguments", "describe",
-           "native_dir", "python_include", "V1_VERIFIERS"]
+           "native_dir", "python_include", "V1_VERIFIERS", "GKR_MEMORY"]
 
 V1_VERIFIERS = ("optimised", "baseline")
+GKR_MEMORY = ("auto", "low", "default")
 
 
 def _option(default, help: str):
@@ -73,10 +74,20 @@ class Options:
     v1_native: bool = _option(True, "the native kernels of V1's window-table products on a CPU")
     gkr_triton: bool = _option(True, "V1's GKR prover in Triton on a GPU; off: the torch prover")
     gkr_profile: bool = _option(False, "synchronise and time each phase of the Triton GKR prover")
+    gkr_memory: str = _option("auto", "V1's GPU prover memory during the GKR: low (free the sent values and the "
+                                      "claims no fold reads before it, and each Triton tree's leaf numerators and "
+                                      "layers once read), default (keep them: the measured path), or auto (low only "
+                                      "where the default path's predicted peak exceeds --gkr-memory-budget)")
+    gkr_memory_budget: int = _option(90, "with --gkr-memory auto: the percentage of the GPU's memory the default "
+                                         "path's predicted GKR peak may take before the low-memory path is used")
 
     def __post_init__(self):
         if self.v1_verifier not in V1_VERIFIERS:
             raise ValueError(f"v1_verifier: one of {V1_VERIFIERS}, not {self.v1_verifier!r}")
+        if self.gkr_memory not in GKR_MEMORY:
+            raise ValueError(f"gkr_memory: one of {GKR_MEMORY}, not {self.gkr_memory!r}")
+        if not 1 <= self.gkr_memory_budget <= 100:
+            raise ValueError("gkr_memory_budget: a percentage in 1 .. 100")
         if self.hash_threads < 0:
             raise ValueError("hash_threads: 0 (torch's thread count) or a positive number")
 
@@ -118,6 +129,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
             group.add_argument(flag, action=argparse.BooleanOptionalAction, default=default, help=text)
         elif f.name == "v1_verifier":
             group.add_argument(flag, choices=V1_VERIFIERS, default=default, help=text)
+        elif f.name == "gkr_memory":
+            group.add_argument(flag, choices=GKR_MEMORY, default=default, help=text)
         else:
             group.add_argument(flag, type=int, default=default, help=text)
     group.add_argument("--require-native", action="store_true", help="stop unless the native CPU kernels are available")

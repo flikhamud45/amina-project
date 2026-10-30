@@ -357,9 +357,14 @@ def test_honest_exceptions_across_row_blocks(mode, monkeypatch):
 @pytest.mark.parametrize("kind,mode,policy,fs,pruned", [("llama", "C", "cnn16c", True, True),
                                                          ("opt", "C", "tightc", False, False),
                                                          ("llama", "Kpre", None, False, True)])
-def test_the_gkr_runs_with_only_the_claims_the_folds_read(kind, mode, policy, fs, pruned, monkeypatch):
-    # the sent values and the claims no fold reads are freed once encoded (a lean GPU prover keeps them as int32 on
-    # the device, where the GKR's fraction trees need the memory); the query and its transcript are unchanged
+@pytest.mark.parametrize("memory", ["low", "default", "auto"])
+def test_the_low_memory_gkr_runs_with_only_the_claims_the_folds_read(kind, mode, policy, fs, pruned, memory,
+                                                                     monkeypatch):
+    # gkr_memory low: the sent values and the claims no fold reads are freed before the GKR (a lean GPU prover keeps
+    # them as int32 on the device, where the GKR's fraction trees need the memory); default, and auto on a CPU
+    # prover, keep them; the query and its transcript are the same on every path
+    from pvi import options
+    monkeypatch.setattr(options, "_CURRENT", options.replace(options.current(), gkr_memory=memory))
     g, prover, v = _setup(kind, mode, policy, fs, pruned)
     ref = cp.run_cut_query(prover, v, _x(), seed=None if fs else 5)
     kept, at_gkr = [], []
@@ -378,8 +383,32 @@ def test_the_gkr_runs_with_only_the_claims_the_folds_read(kind, mode, policy, fs
     out = cp.run_cut_query(prover, v, _x(), seed=None if fs else 5)
     assert out["accepted"], out["rejected_at"]
     assert out["bytes"] == ref["bytes"] and (not fs or out["transcript"] == ref["transcript"])
+    assert out["gkr_low_memory"] == (memory == "low")
     plan = cp.cut_plan(v.graph, v.claim_columns(_x()), _x().shape[1], v.publics if v.groups else None,
                        v.params.cut_lmax, v.weights or None)
-    want = cp._fold_claims(v, plan)
+    want = cp._fold_claims(v, plan) if memory == "low" else {op.name for op in g.mat_ops}
     assert at_gkr and all(keys == want for keys in at_gkr)
-    assert len(want) < len(g.mat_ops)
+    assert len(cp._fold_claims(v, plan)) < len(g.mat_ops)
+
+
+def test_auto_low_memory_only_where_the_default_peak_exceeds_the_budget(monkeypatch):
+    # gkr_memory auto on a GPU prover: low exactly when the memory in use plus the largest instance's default tree
+    # (136 bytes per leaf, 24 per real entry uploaded) exceeds gkr_memory_budget percent of the GPU
+    import types
+
+    from pvi import options
+    g, prover, v = _setup("llama", "Kpre", None, False, True)
+    plan = cp.cut_plan(v.graph, v.claim_columns(_x()), _x().shape[1], None, v.params.cut_lmax, v.weights or None)
+    tree = max((136 << sum(plan.n_vars(b))) + 24 * plan.rows(b) * plan.T for b in range(len(plan.instances)))
+    gpu = types.SimpleNamespace(device=torch.device("cuda", 0))
+    for in_use, total, budget, want in [(0, 10 * tree, 90, False), (8 * tree, 10 * tree, 90, False),
+                                        (8 * tree + 1, 10 * tree, 90, True), (0, 2 * tree, 40, True)]:
+        monkeypatch.setattr(torch.cuda, "memory_allocated", lambda dev=None, n=in_use: n)
+        monkeypatch.setattr(torch.cuda, "mem_get_info", lambda dev=None, t=total: (t, t))
+        with options.using(gkr_memory="auto", gkr_memory_budget=budget):
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=True) is want
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=False) is False
+        with options.using(gkr_memory="default"):
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=True) is False
+        with options.using(gkr_memory="low"):
+            assert cp._gkr_low_memory(gpu, plan, on_gpu=False) is True

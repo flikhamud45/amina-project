@@ -45,6 +45,10 @@ def test_invalid_values_are_refused():
         options.Options(v1_verifier="fast")
     with pytest.raises(ValueError):
         options.Options(hash_threads=-1)
+    with pytest.raises(ValueError):
+        options.Options(gkr_memory="small")
+    with pytest.raises(ValueError):
+        options.Options(gkr_memory_budget=0)
     with pytest.raises(TypeError):
         options.configure(no_such_option=True)
 
