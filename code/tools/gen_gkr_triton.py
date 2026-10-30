@@ -470,14 +470,20 @@ def _absorb(ch, label: str, v: torch.Tensor) -> None:
     ch.absorb(label.encode(), v.reshape(-1).to(torch.int64).contiguous().cpu().numpy().tobytes())
 
 
+def _bottom_path(bottom: tuple[int, int] | None, n: int) -> bool:
+    """Whether :func:`_prove_tree` runs the bottom layer's column rounds on the real rows' ``q`` alone."""
+    return bottom is not None and bottom[1] >= 2 and n >= 2
+
+
 def _prove_tree(layers: list, ch, label: str, bottom: tuple[int, int] | None = None):
     """The transcript from the tree's layers (``layers[k]``: Montgomery SoA ``(p, q)`` of ``2^k`` nodes).  ``bottom =
     (rows, n_col)``: the leaves are an instance's, every one of its ``rows`` rows full (``T = 2^n_col``), so the bottom
-    layer's first ``n_col - 1`` rounds (its column bits) run on the real rows' ``q`` alone (:func:`_bottom_rounds`)."""
+    layer's first ``n_col - 1`` rounds (its column bits) run on the real rows' ``q`` alone (:func:`_bottom_rounds`).
+    Each layer is dropped once its halves are taken (the caller keeps no reference to the layers)."""
     from pvi.v1.gkr import Transcript
 
     n = len(layers) - 1
-    if bottom is not None and bottom[1] >= 2 and n >= 2:
+    if _bottom_path(bottom, n):
         layers[n] = (None, layers[n][1])         # the bottom path reads the leaves' q only: free their p now
     p1, q1 = layers[1]
     _tick("start", p1.device)
@@ -496,13 +502,16 @@ def _prove_tree(layers: list, ch, label: str, bottom: tuple[int, int] | None = N
         rounds, rs = [], []
         j0 = 0
         cp, cq = layers[k + 1]
-        if k == n - 1 and bottom is not None and bottom[1] >= 2:
+        layers[k + 1] = None                     # its halves are all this layer reads: each array is freed once halved
+        if k == n - 1 and _bottom_path(bottom, n):
+            del cp
             arrs, scale, j0 = _bottom_rounds(cq, bottom, rho, suffixes, lam_m, _li(lam), ch, label, k, rounds, rs,
                                              dev)
         else:
-            arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous(), cq[:, 0::2].contiguous(),
-                    cq[:, 1::2].contiguous()]
-        layers[k + 1] = None                     # its halves are all this layer reads
+            arrs = [cp[:, 0::2].contiguous(), cp[:, 1::2].contiguous()]
+            del cp
+            arrs += [cq[:, 0::2].contiguous(), cq[:, 1::2].contiguous()]
+        del cq
         _tick("halves", dev)
         for j in range(j0, k):
             # g_j(t) = scale eq(rho_j, t) h(t), h(t) = sum_y eq(rho_{>j}, y) F(t, y) of degree 2: the kernel gives
@@ -600,18 +609,27 @@ def _bottom_rounds(cq, bottom, rho, suffixes, lam_m, lam_l, ch, label, k, rounds
     return [ind, ind.clone(), ql_f, qr_f], scale, n_col - 1
 
 
-def _tree(p: torch.Tensor, q: torch.Tensor) -> list:
-    _tick("start", p.device)
+def _tree(leaves: list, drop_leaf_p: bool = False) -> list:
+    """The tree's layers, root first, from ``leaves = [p, q]`` (emptied: the layers hold the only reference to the
+    leaves).  ``drop_leaf_p``: the leaves' ``p`` is freed once the layer above them is combined (the bottom path,
+    :func:`_bottom_path`, reads the leaves' ``q`` only), so the tree peaks at 96 bytes per leaf instead of 128."""
+    p, q = leaves
+    leaves.clear()
+    dev = q.device
+    _tick("start", dev)
     layers = [(p, q)]
-    while layers[-1][0].shape[1] > 1:
+    del p, q
+    while layers[-1][1].shape[1] > 1:
         layers.append(_combine(*layers[-1]))
-    _tick("tree", p.device)
+        if drop_leaf_p and len(layers) == 2:
+            layers[0] = (None, layers[0][1])
+    _tick("tree", dev)
     return layers[::-1]
 
 
 def prove(p: torch.Tensor, q: torch.Tensor, ch, label: str, device="cuda"):
     """:func:`pvi.v1.gkr.prove` on the GPU for canonical leaves ``p, q`` ``[2^n, 8]`` (int64, any device)."""
-    return _prove_tree(_tree(_planes_mont(p, device), _planes_mont(q, device)), ch, label)
+    return _prove_tree(_tree([_planes_mont(p, device), _planes_mont(q, device)]), ch, label)
 
 
 def prove_leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, alpha: torch.Tensor, ch, label: str,
@@ -623,12 +641,12 @@ def prove_leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, a
     # uploaded as they are (the prover's witness is int32), reduced into the field on the device
     d = torch.remainder(delta.to(device, non_blocking=True).to(torch.int64), PRIME).to(torch.int32).contiguous()
     w = torch.remainder(width.to(device, non_blocking=True).to(torch.int64), PRIME).to(torch.int32).contiguous()
-    p = torch.empty(8, total, dtype=torch.int32, device=device)
-    q = torch.empty_like(p)
-    _leaf_kernel[_grid(total)](d, w, p, q, *_to_mont(alpha), rows, cols, n_col, total, total, PRIME, MU, R2, R_MOD,
-                               BLOCK=BLOCK)
+    leaves = [torch.empty(8, total, dtype=torch.int32, device=device) for _ in range(2)]      # p, q
+    _leaf_kernel[_grid(total)](d, w, *leaves, *_to_mont(alpha), rows, cols, n_col, total, total, PRIME, MU, R2,
+                               R_MOD, BLOCK=BLOCK)
     del d, w
-    return _prove_tree(_tree(p, q), ch, label, (rows, n_col) if cols == 1 << n_col else None)
+    bottom = (rows, n_col) if cols == 1 << n_col else None
+    return _prove_tree(_tree(leaves, drop_leaf_p=_bottom_path(bottom, n)), ch, label, bottom)
 '''
 
 

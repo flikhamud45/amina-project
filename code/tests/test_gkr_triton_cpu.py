@@ -6,7 +6,9 @@ module is the output of its generator (``tools/gen_gkr_triton.py``)."""
 
 from __future__ import annotations
 
+import gc
 import importlib.util
+import weakref
 from pathlib import Path
 
 import pytest
@@ -55,6 +57,56 @@ def test_instance_leaves_with_and_without_the_bottom_path(mocked, rows, cols, n_
     a = gkr.prove(*pq, _ch(), "cut/2/")
     b = mocked.prove_leaves(d, w, n_col, n, alpha, _ch(), "cut/2/", device="cpu")
     assert a.to_bytes() == b.to_bytes() and torch.equal(a.point, b.point)
+
+
+@pytest.mark.parametrize("rows,cols,n_col", [(5, 16, 4), (13, 32, 5), (3, 8, 3), (8, 16, 4), (7, 9, 4)])
+def test_the_leaves_numerators_are_freed_once_combined(mocked, monkeypatch, rows, cols, n_col):
+    # full rows (T = 2^n_col; their count need not be a power of two, padding rows fill the instance): the bottom path
+    # reads the leaves' q only, and no reference to their p outlives the first combine; the transcript is the eager
+    # prover's.  Rows that are not full (7 x 9) keep the generic path and the leaves' p.
+    leaf, refs, seen = mocked._leaf_kernel, {}, {}
+
+    class Spy:
+        def __getitem__(self, grid):
+            def run(d, w, p, q, *a, **kw):
+                refs["p"], refs["q"] = weakref.ref(p), weakref.ref(q)
+                return leaf[grid](d, w, p, q, *a, **kw)
+            return run
+    prove_tree = mocked._prove_tree
+
+    def spy(layers, *a, **kw):
+        gc.collect()
+        seen["p_alive"], seen["q_alive"] = refs["p"]() is not None, refs["q"]() is not None
+        return prove_tree(layers, *a, **kw)
+    monkeypatch.setattr(mocked, "_leaf_kernel", Spy())
+    monkeypatch.setattr(mocked, "_prove_tree", spy)
+    g = torch.Generator().manual_seed(rows * 7 + cols)
+    w = torch.randint(1, 1 << 12, (rows, 1), generator=g).expand(rows, cols).clone()
+    d = (torch.rand(rows, cols, generator=g) * w).floor().to(torch.int64)
+    alpha = torch.randint(0, P, (ef.D,), generator=g)
+    n = n_col + max(0, (rows - 1).bit_length())
+    a = gkr.prove(*logup.leaves(d, w, n_col, n, alpha), _ch(), "cut/4/")
+    b = mocked.prove_leaves(d, w, n_col, n, alpha, _ch(), "cut/4/", device="cpu")
+    assert a.to_bytes() == b.to_bytes() and torch.equal(a.point, b.point)
+    assert seen["q_alive"] and seen["p_alive"] == (cols != 1 << n_col)
+    gc.collect()
+    assert refs["p"]() is None and refs["q"]() is None          # nothing of the tree outlives the proof
+
+
+def test_the_tree_holds_the_only_reference_to_its_leaves(mocked):
+    g = torch.Generator().manual_seed(3)
+    p = gt._planes_mont(torch.randint(0, P, (16, ef.D), generator=g), "cpu")
+    q = gt._planes_mont(torch.randint(0, P, (16, ef.D), generator=g), "cpu")
+    ref_p, ref_q = weakref.ref(p), weakref.ref(q)
+    leaves = [p, q]
+    del p, q
+    kept = mocked._tree(leaves)
+    assert leaves == [] and kept[-1][0] is ref_p() and len(kept) == 5
+    leaves = [kept[-1][0], kept[-1][1]]
+    del kept
+    layers = mocked._tree(leaves, drop_leaf_p=True)
+    gc.collect()
+    assert leaves == [] and ref_p() is None and layers[-1] == (None, ref_q()) and layers[0][0].shape[1] == 1
 
 
 def test_the_module_is_its_generators_output():

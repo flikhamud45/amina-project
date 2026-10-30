@@ -262,7 +262,7 @@ def cut_proof_bytes(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed
                                                            plan.table_size())
             mult += counts
             exc[o.name] = (idx.cpu(), ez.cpu())
-            values[o.name] = s
+            values[o.name] = s.to(dtype=zs[o.name].dtype)     # as run_cut_query keeps them (int32 when narrowed)
             del d, w, counts
         mult = mult.cpu()
         for k, z in zs.items():
@@ -349,6 +349,12 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         exc_blob = pack_exceptions(plan, exc)
         mult_blob = encoded_message(claimcodec.encode, [mult[None]])
         sync_device(prover.device)
+    # the sent values were the encoder's alone, and of the claims only those the folds read (y = Z e) are read again:
+    # free the rest (on a lean GPU prover, int32 on the device) before the GKR's fraction trees take that memory
+    del values, sent_vals
+    read_again = _fold_claims(verifier, plan)
+    for name in [k for k in zs if k not in read_again]:
+        del zs[name]
     out["bytes"] = {"claims": len(blob) + len(rows or b""), "cut_exc": len(exc_blob), "cut_mult": len(mult_blob),
                     "cut_gkr": 0, "u": 0, "columns": 0,
                     "paths": HASH_BYTES * sum(len(proof_hashes(pr)) for pr in proofs.values())}
@@ -415,8 +421,9 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         from pvi.v1 import gkr_triton
         on_gpu = gkr_triton.available(prover.device)
     if on_gpu:
-        # free the forward pass's cached blocks: the Triton GKR's fraction tree alone takes up to 128 bytes per leaf
-        # (numerators and denominators as 8 int32 planes each, over all its layers)
+        # free the forward pass's cached blocks: the Triton GKR's fraction tree alone takes up to 96 bytes per leaf
+        # (numerators and denominators as 8 int32 planes each, over all its layers, the leaves' numerators freed once
+        # combined; 128 for an instance whose rows are not full)
         torch.cuda.empty_cache()
     with _timed(out, "prove_gkr"):
         trs = []
@@ -534,6 +541,12 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         reason = verifier.check_columns(lefts, sources, cols_idx, openings, wire=True)
         sync_device(vdev)
     return reason
+
+
+def _fold_claims(verifier: Verifier, plan) -> set[str]:
+    """The cut operations whose claims the prover's folds read (``y = Z e``): in mode C those outside the row layout,
+    in Kpre every one (the other folds read the weights)."""
+    return {o.name for o in plan.ops if not (verifier.mode == "C" and o.layout == "row")}
 
 
 def _narrowed(plan, claims: dict) -> dict:

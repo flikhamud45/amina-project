@@ -352,3 +352,34 @@ def test_honest_exceptions_across_row_blocks(mode, monkeypatch):
     out = cp.run_cut_query(prover, v, x)
     assert out["accepted"], out["rejected_at"]
     assert out["bytes"]["cut_exc"] == est["cut_exc"]
+
+
+@pytest.mark.parametrize("kind,mode,policy,fs,pruned", [("llama", "C", "cnn16c", True, True),
+                                                         ("opt", "C", "tightc", False, False),
+                                                         ("llama", "Kpre", None, False, True)])
+def test_the_gkr_runs_with_only_the_claims_the_folds_read(kind, mode, policy, fs, pruned, monkeypatch):
+    # the sent values and the claims no fold reads are freed once encoded (a lean GPU prover keeps them as int32 on
+    # the device, where the GKR's fraction trees need the memory); the query and its transcript are unchanged
+    g, prover, v = _setup(kind, mode, policy, fs, pruned)
+    ref = cp.run_cut_query(prover, v, _x(), seed=None if fs else 5)
+    kept, at_gkr = [], []
+    claims = prover.claims
+
+    def spy_claims(*a, **kw):
+        kept.append(claims(*a, **kw))
+        return kept[-1]
+    gkr_prove = cp.gkr.prove
+
+    def spy_prove(*a, **kw):
+        at_gkr.append(set(kept[-1]))
+        return gkr_prove(*a, **kw)
+    monkeypatch.setattr(prover, "claims", spy_claims)
+    monkeypatch.setattr(cp.gkr, "prove", spy_prove)
+    out = cp.run_cut_query(prover, v, _x(), seed=None if fs else 5)
+    assert out["accepted"], out["rejected_at"]
+    assert out["bytes"] == ref["bytes"] and (not fs or out["transcript"] == ref["transcript"])
+    plan = cp.cut_plan(v.graph, v.claim_columns(_x()), _x().shape[1], v.publics if v.groups else None,
+                       v.params.cut_lmax, v.weights or None)
+    want = cp._fold_claims(v, plan)
+    assert at_gkr and all(keys == want for keys in at_gkr)
+    assert len(want) < len(g.mat_ops)
