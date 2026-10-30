@@ -349,6 +349,30 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         exc_blob = pack_exceptions(plan, exc)
         mult_blob = encoded_message(claimcodec.encode, [mult[None]])
         sync_device(prover.device)
+    on_gpu = False
+    if options.current().gkr_triton and prover.device.type == "cuda":
+        from pvi.v1 import gkr_triton
+        on_gpu = gkr_triton.available(prover.device)
+    ahead = _gpu_verifier_bytes(prover, verifier, zs)
+    path = "low" if _gkr_low_memory(prover, plan, on_gpu, ahead) else "default"
+    if path == "low":
+        # the sent values were the encoder's alone, and of the claims only those the folds read (y = Z e) are read
+        # again: free the rest (on a lean GPU prover, int32 on the device) before the verifier's and the GKR's
+        # memory is needed
+        values = sent_vals = None
+        read_again = _fold_claims(verifier, plan)
+        for name in [k for k in zs if k not in read_again]:
+            del zs[name]
+        if _gkr_on_host(prover, plan, on_gpu, ahead):
+            # still too large (a GPU verifier's state on the same card): the kept claims wait on the host
+            path = "host"
+            with _timed(out, "prove_offload"):
+                for name in [k for k, z in zs.items() if z.is_cuda]:
+                    host = torch.empty(zs[name].shape, dtype=zs[name].dtype, pin_memory=True)  # cached across queries
+                    zs[name] = host.copy_(zs[name], non_blocking=True)
+                sync_device(prover.device)
+    low = path != "default"
+    out["gkr_memory"] = path
     out["bytes"] = {"claims": len(blob) + len(rows or b""), "cut_exc": len(exc_blob), "cut_mult": len(mult_blob),
                     "cut_gkr": 0, "u": 0, "columns": 0,
                     "paths": HASH_BYTES * sum(len(proof_hashes(pr)) for pr in proofs.values())}
@@ -410,26 +434,6 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     chis = ({name: chi.to(vdev) for name, chi in verifier.fold_challenges(ch, x).items()}
             if verifier.mode == "C" else {})
     ch_p = ch.fork() if p.fiat_shamir else _Recorder(ch)
-    on_gpu = False
-    if options.current().gkr_triton and prover.device.type == "cuda":
-        from pvi.v1 import gkr_triton
-        on_gpu = gkr_triton.available(prover.device)
-    path = "low" if _gkr_low_memory(prover, plan, on_gpu) else "default"
-    if path == "low":
-        # the sent values were the encoder's alone, and of the claims only those the folds read (y = Z e) are read
-        # again: free the rest (on a lean GPU prover, int32 on the device) before the GKR's fraction trees need it
-        values = sent_vals = None
-        read_again = _fold_claims(verifier, plan)
-        for name in [k for k in zs if k not in read_again]:
-            del zs[name]
-        if _gkr_on_host(prover, plan, on_gpu):
-            # still too large (e.g. a GPU verifier's state on the same card): the kept claims wait on the host
-            path = "host"
-            with _timed(out, "prove_offload"):
-                for name in [k for k, z in zs.items() if z.device.type != "cpu"]:
-                    zs[name] = zs[name].cpu()
-    low = path != "default"
-    out["gkr_memory"] = path
     if on_gpu:
         # free the forward pass's cached blocks: the Triton GKR's fraction tree alone takes up to 148 bytes per leaf
         # (numerators and denominators as 8 int32 planes each, over all its layers, one layer's halves and the eq
@@ -478,7 +482,7 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
                     chi = chi_full[o.row_offset:o.row_offset + o.n_rows]
                     folds[o.name] = prover.fold({o.name: _planes(chi).to(prover.device)})[o.name].cpu()
                 else:                                       # y = A xbar = Z e (|Z| < 2^29), where Z is kept
-                    z = zs[o.name] if path != "host" else zs[o.name].to(prover.device)
+                    z = zs[o.name] if path != "host" else zs[o.name].to(prover.device, non_blocking=True)
                     folds[o.name] = _planes(ef.int_times(z, e, 30)).cpu()
                     del z
         order = [op.name for op in clear_rows] if verifier.mode == "C" else []
@@ -563,30 +567,44 @@ _TREE_BYTES_LOW = 96
 """The same on the low-memory path (``prove_leaves(low_memory=True)``)."""
 
 
+_GPU_VERIFIER_BYTES = 1.8
+"""A GPU verifier on the prover's card keeps through the GKR about this many bytes per byte of the prover's device
+claims (its int64 activations and its decoded claims; 1.76 measured on TinyLlama at 1,024 tokens)."""
+
+
 def _max_bits(plan) -> int:
     return max(sum(plan.n_vars(b)) for b in range(len(plan.instances)))
 
 
-def _gkr_on_host(prover: Prover, plan, on_gpu: bool) -> bool:
+def _gpu_verifier_bytes(prover: Prover, verifier: Verifier, zs: dict) -> int:
+    """The device memory a GPU verifier on the prover's card will take before the GKR (:data:`_GPU_VERIFIER_BYTES`
+    per byte of the prover's device claims); 0 for a verifier elsewhere."""
+    v = torch.device(verifier.device)
+    if prover.device.type != "cuda" or v.type != "cuda" or (v.index or 0) != (prover.device.index or 0):
+        return 0
+    return int(_GPU_VERIFIER_BYTES * sum(z.numel() * z.element_size() for z in zs.values() if z.is_cuda))
+
+
+def _gkr_on_host(prover: Prover, plan, on_gpu: bool, ahead: int = 0) -> bool:
     """On the low-memory path, whether the claims the folds read wait on the host during the GKR (moved back to the
     device one by one for the folds): ``gkr_memory`` ``host``, or ``auto`` on a GPU prover where the memory in use
-    after the low path's frees plus the largest instance's low-memory tree (:data:`_TREE_BYTES_LOW` per leaf) still
-    exceeds ``gkr_memory_budget`` percent of the GPU's memory."""
+    after the low path's frees, plus ``ahead`` (:func:`_gpu_verifier_bytes`), plus the largest instance's low-memory
+    tree (:data:`_TREE_BYTES_LOW` per leaf) still exceeds ``gkr_memory_budget`` percent of the GPU's memory."""
     o = options.current()
     if o.gkr_memory != "auto":
         return o.gkr_memory == "host"
     if not on_gpu or not plan.instances:
         return False
     total = torch.cuda.mem_get_info(prover.device)[1]
-    return (torch.cuda.memory_allocated(prover.device) + (_TREE_BYTES_LOW << _max_bits(plan))
+    return (torch.cuda.memory_allocated(prover.device) + ahead + (_TREE_BYTES_LOW << _max_bits(plan))
             > total * o.gkr_memory_budget / 100)
 
 
-def _gkr_low_memory(prover: Prover, plan, on_gpu: bool) -> bool:
-    """Whether the query frees, before its GKR, what the GKR does not read, and the Triton prover runs with
-    ``low_memory`` (``pvi.options`` ``gkr_memory``: ``low`` or ``host``, ``default``, or ``auto``: on a GPU prover, where the
-    default path's predicted peak -- the memory in use now plus the largest instance's tree, :data:`_TREE_BYTES`
-    per leaf -- exceeds
+def _gkr_low_memory(prover: Prover, plan, on_gpu: bool, ahead: int = 0) -> bool:
+    """Whether the query frees, once its messages are encoded, what the GKR and the folds do not read, and the Triton
+    prover runs with ``low_memory`` (``pvi.options`` ``gkr_memory``: ``low`` or ``host``, ``default``, or ``auto``: on
+    a GPU prover, where the default path's predicted peak -- the memory in use now, plus ``ahead``
+    (:func:`_gpu_verifier_bytes`), plus the largest instance's tree, :data:`_TREE_BYTES` per leaf -- exceeds
     ``gkr_memory_budget`` percent of the GPU's memory).  The proof is the same either way."""
     o = options.current()
     if o.gkr_memory != "auto":
@@ -595,7 +613,7 @@ def _gkr_low_memory(prover: Prover, plan, on_gpu: bool) -> bool:
         return False
     tree = _TREE_BYTES << _max_bits(plan)
     total = torch.cuda.mem_get_info(prover.device)[1]
-    return torch.cuda.memory_allocated(prover.device) + tree > total * o.gkr_memory_budget / 100
+    return torch.cuda.memory_allocated(prover.device) + ahead + tree > total * o.gkr_memory_budget / 100
 
 
 def _fold_claims(verifier: Verifier, plan) -> set[str]:

@@ -402,6 +402,12 @@ def test_auto_low_memory_only_where_the_default_peak_exceeds_the_budget(monkeypa
     plan = cp.cut_plan(v.graph, v.claim_columns(_x()), _x().shape[1], None, v.params.cut_lmax, v.weights or None)
     tree = 148 << max(sum(plan.n_vars(b)) for b in range(len(plan.instances)))
     gpu = types.SimpleNamespace(device=torch.device("cuda", 0))
+    claims = {"a": torch.zeros(3, 4, dtype=torch.int32)}
+    assert cp._gpu_verifier_bytes(prover, v, claims) == 0                    # a CPU prover and verifier
+    assert cp._gpu_verifier_bytes(gpu, types.SimpleNamespace(device="cpu"), claims) == 0
+    monkeypatch.setattr(torch.Tensor, "is_cuda", property(lambda t: True))
+    assert cp._gpu_verifier_bytes(gpu, types.SimpleNamespace(device="cuda"), claims) == int(1.8 * 48)
+    monkeypatch.undo()
     for in_use, total, budget, want in [(0, 10 * tree, 90, False), (8 * tree, 10 * tree, 90, False),
                                         (8 * tree + 1, 10 * tree, 90, True), (0, 2 * tree, 40, True)]:
         monkeypatch.setattr(torch.cuda, "memory_allocated", lambda dev=None, n=in_use: n)
