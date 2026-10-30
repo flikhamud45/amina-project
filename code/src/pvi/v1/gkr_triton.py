@@ -1316,7 +1316,7 @@ def prove_leaves(delta: torch.Tensor, width: torch.Tensor, n_col: int, n: int, a
     """The transcript of the instance whose real entries are ``delta``, ``width`` ``[R, T]`` (integers, as
     :func:`pvi.v1.logup.leaves` lays them out), its leaves built on the device.  ``low_memory``: the same transcript
     with the leaves' numerators freed once combined (when the bottom path reads the leaves' ``q`` alone) and each
-    layer once halved: a peak of about 96 bytes per leaf instead of 136 (``pvi.options`` ``gkr_memory``)."""
+    layer once halved: a peak of 96 bytes per leaf instead of 148 (``pvi.options`` ``gkr_memory``)."""
     rows, cols = delta.shape
     total = 1 << n
     # uploaded as they are (the prover's witness is int32), reduced into the field on the device

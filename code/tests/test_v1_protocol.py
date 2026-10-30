@@ -393,13 +393,13 @@ def test_the_low_memory_gkr_runs_with_only_the_claims_the_folds_read(kind, mode,
 
 def test_auto_low_memory_only_where_the_default_peak_exceeds_the_budget(monkeypatch):
     # gkr_memory auto on a GPU prover: low exactly when the memory in use plus the largest instance's default tree
-    # (136 bytes per leaf, 24 per real entry uploaded) exceeds gkr_memory_budget percent of the GPU
+    # (148 bytes per leaf) exceeds gkr_memory_budget percent of the GPU
     import types
 
     from pvi import options
     g, prover, v = _setup("llama", "Kpre", None, False, True)
     plan = cp.cut_plan(v.graph, v.claim_columns(_x()), _x().shape[1], None, v.params.cut_lmax, v.weights or None)
-    tree = max((136 << sum(plan.n_vars(b))) + 24 * plan.rows(b) * plan.T for b in range(len(plan.instances)))
+    tree = 148 << max(sum(plan.n_vars(b)) for b in range(len(plan.instances)))
     gpu = types.SimpleNamespace(device=torch.device("cuda", 0))
     for in_use, total, budget, want in [(0, 10 * tree, 90, False), (8 * tree, 10 * tree, 90, False),
                                         (8 * tree + 1, 10 * tree, 90, True), (0, 2 * tree, 40, True)]:

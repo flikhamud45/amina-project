@@ -424,9 +424,9 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
         for name in [k for k in zs if k not in read_again]:
             del zs[name]
     if on_gpu:
-        # free the forward pass's cached blocks: the Triton GKR's fraction tree alone takes up to 136 bytes per leaf
-        # (numerators and denominators as 8 int32 planes each, over all its layers, and one layer's halves; about 96
-        # on the low-memory path)
+        # free the forward pass's cached blocks: the Triton GKR's fraction tree alone takes up to 148 bytes per leaf
+        # (numerators and denominators as 8 int32 planes each, over all its layers, one layer's halves and the eq
+        # tables; 96 on the low-memory path)
         torch.cuda.empty_cache()
     with _timed(out, "prove_gkr"):
         trs = []
@@ -546,25 +546,24 @@ def _query(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, 
     return reason
 
 
-_TREE_BYTES = 136
+_TREE_BYTES = 148
 """Bytes per leaf of a Triton GKR instance's peak on the default path (:func:`pvi.v1.gkr_triton.prove_leaves`: the
-leaves, every layer above them and one layer's halves, as 8 int32 planes each)."""
-_LEAF_UPLOAD_BYTES = 24
-"""Bytes per real entry of the leaves' inputs while they are reduced on the device (before the tree)."""
+leaves, every layer above them, one layer's halves and the suffix eq tables, as 8 int32 planes each; measured with
+``torch.cuda.max_memory_allocated`` from 2^18 to 2^26 leaves; the low-memory path: 96)."""
 
 
 def _gkr_low_memory(prover: Prover, plan, on_gpu: bool) -> bool:
     """Whether the query frees, before its GKR, what the GKR does not read, and the Triton prover runs with
     ``low_memory`` (``pvi.options`` ``gkr_memory``: ``low``, ``default``, or ``auto``: on a GPU prover, where the
-    default path's predicted peak -- the memory in use now plus the largest instance's tree -- exceeds
+    default path's predicted peak -- the memory in use now plus the largest instance's tree, :data:`_TREE_BYTES`
+    per leaf -- exceeds
     ``gkr_memory_budget`` percent of the GPU's memory).  The proof is the same either way."""
     o = options.current()
     if o.gkr_memory != "auto":
         return o.gkr_memory == "low"
     if not on_gpu or not plan.instances:
         return False
-    tree = max((_TREE_BYTES << sum(plan.n_vars(b))) + _LEAF_UPLOAD_BYTES * plan.rows(b) * plan.T
-               for b in range(len(plan.instances)))
+    tree = _TREE_BYTES << max(sum(plan.n_vars(b)) for b in range(len(plan.instances)))
     total = torch.cuda.mem_get_info(prover.device)[1]
     return torch.cuda.memory_allocated(prover.device) + tree > total * o.gkr_memory_budget / 100
 
