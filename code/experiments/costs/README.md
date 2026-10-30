@@ -114,15 +114,16 @@ GPU memory. The lean prover with the compact encoding keeps each claim on the GP
 4 bytes a claim, 1.3 GiB per Llama-2-7B block at 8,192 tokens, 40.6 GiB for the full model next to its 6.3 GiB of
 weights, more than an L40S's 44.5 GiB. The option `--host-claims` (`pvi.options`, every script) decides where they
 wait: `auto` (the default) keeps them all on the GPU whenever the claims, the weights and `--host-claims-reserve` GiB
-(default 8: the forward pass's and the encoder's temporaries) fit in the GPU's memory -- every cell of the run but
+(default 6: the forward pass's and the encoder's temporaries, measured at 2.9 GiB on Llama-2-7B blocks at 8,192
+tokens) fit in the GPU's memory -- every cell of the run but
 the few below, unchanged -- and otherwise keeps on the GPU the claims that fit beside the weights and the reserve and
 copies the others into pinned host memory as they are computed; the GPU's encoder then uploads those part by part.
 The bytes, the proof and the transcripts are the same; the copies add to `prove_forward` and `prove_encode`.
 `device` keeps every claim on the GPU (the path before the option), `host` stages every claim. The record's
 `claims_staged` gives the bytes staged (0: none). On an L40S, auto stages in the long tier's full model at 8,192
-tokens (`l-llama7-8192-full`, about 10 GiB staged), in `bench.py`'s batch of 4 prompts of 2,048 tokens
-(`bt-llama2-7b-2k-*`, the same claims) and in `serve_ab.py`'s joint proof of 4 prompts of 2,048 tokens of the 7B,
-OPT-6.7B and 13B models (which would otherwise run out of memory).
+tokens (`l-llama7-8192-full`: 32 GiB of claims kept on the GPU, 8.4 GiB staged), in `bench.py`'s batch of 4 prompts of 2,048 tokens
+(`bt-llama2-7b-2k-*`, the same claims) and in `serve_ab.py`'s joint proof of 4 prompts of 2,048 tokens of Llama-2-7B,
+OPT-6.7B and Llama-2-13B (which would otherwise run out of memory, OPT-6.7B by a few hundred MiB).
 
 The prover and the verifier share the process, so its peak memory is theirs together. `--client-memory` (a CPU
 verifier, the compact encoding; mode C under Fiat-Shamir) measures the client's own: a separate process

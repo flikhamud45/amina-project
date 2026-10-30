@@ -111,7 +111,8 @@ def test_slabs_carve_buffers_of_their_own_size_and_values(pin):
         b.copy_(torch.full(b.shape, i, dtype=torch.int32))
     for i, (b, sh) in enumerate(zip(bufs, shapes)):
         assert b.shape == sh and b.dtype == torch.int32 and b.is_contiguous() and b.is_pinned() == pin
-        assert (b.data_ptr() - b.untyped_storage().data_ptr()) % 256 == 0 and bool((b == i).all())
+        assert b.numel() == 0 or (b.data_ptr() - b.untyped_storage().data_ptr()) % 256 == 0
+        assert bool((b == i).all())
     big = s.empty(300, torch.int32)                            # more than a slab: a buffer of its own
     assert big.shape == (300,) and big.storage_offset() == 0 and big.is_pinned() == pin
     assert bufs[1].untyped_storage().data_ptr() == bufs[0].untyped_storage().data_ptr()   # the same slab

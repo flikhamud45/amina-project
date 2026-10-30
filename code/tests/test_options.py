@@ -25,7 +25,7 @@ def test_flags_round_trip_and_default_to_the_options_in_force(set_options):
     got = options.apply_arguments(args)
     assert (got.native_gemm, got.fused_encoder, got.hash_threads, got.v1_verifier) == (False, True, 3, "baseline")
     assert (got.host_claims, got.host_claims_reserve) == ("host", 2)
-    assert (options.Options().host_claims, options.Options().host_claims_reserve) == ("auto", 8)
+    assert (options.Options().host_claims, options.Options().host_claims_reserve) == ("auto", 6)
     with pytest.raises(SystemExit):
         ap.parse_args(["--host-claims", "gpu"])
     assert options.current() == got

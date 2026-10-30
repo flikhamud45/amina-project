@@ -81,9 +81,9 @@ class Options:
                                        "the claims, the weights and --host-claims-reserve fit in the GPU's memory; "
                                        "else the claims beyond that memory staged as with host, the others kept on "
                                        "the GPU)")
-    host_claims_reserve: int = _option(8, "GiB of GPU memory --host-claims auto leaves for everything but the weights "
+    host_claims_reserve: int = _option(6, "GiB of GPU memory --host-claims auto leaves for everything but the weights "
                                           "and the claims (the forward pass's temporaries, the encoder's, the CUDA "
-                                          "context)")
+                                          "context: 2.9 GiB measured on Llama-2-7B blocks at 8,192 tokens)")
 
     def __post_init__(self):
         if self.v1_verifier not in V1_VERIFIERS:
