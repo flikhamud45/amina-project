@@ -96,3 +96,40 @@ def test_a_tampered_claim_is_rejected_with_pageable_buffers(monkeypatch):
     for v in pair:
         r = proto.run_query(prover, v, x, seed=1, wire=True)
         assert not r["accepted"]
+
+
+# -- Slabs: many buffers carved out of slabs (a lean GPU prover's claims staged on the host) ----------------------
+
+@pytest.mark.parametrize("pin", [False, True])
+def test_slabs_carve_buffers_of_their_own_size_and_values(pin):
+    if pin and not torch.cuda.is_available():
+        pytest.skip("needs a GPU")
+    s = hostmem.Slabs(slab=1000, pin=pin)
+    shapes = [(3, 7), (10,), (0, 5), (50, 4), (2, 2)]
+    bufs = [s.empty(sh, torch.int32) for sh in shapes]
+    for i, b in enumerate(bufs):
+        b.copy_(torch.full(b.shape, i, dtype=torch.int32))
+    for i, (b, sh) in enumerate(zip(bufs, shapes)):
+        assert b.shape == sh and b.dtype == torch.int32 and b.is_contiguous() and b.is_pinned() == pin
+        assert b.numel() == 0 or (b.data_ptr() - b.untyped_storage().data_ptr()) % 256 == 0
+        assert bool((b == i).all())
+    big = s.empty(300, torch.int32)                            # more than a slab: a buffer of its own
+    assert big.shape == (300,) and big.storage_offset() == 0 and big.is_pinned() == pin
+    assert bufs[1].untyped_storage().data_ptr() == bufs[0].untyped_storage().data_ptr()   # the same slab
+    assert bufs[3].untyped_storage().data_ptr() != bufs[0].untyped_storage().data_ptr()   # 800 bytes: a new one
+    assert s.empty(2, torch.int64).dtype == torch.int64
+
+
+def test_slabs_turn_pageable_when_the_driver_grants_no_more(monkeypatch):
+    real = torch.empty
+
+    def empty(*a, pin_memory=False, **k):
+        if pin_memory:
+            raise RuntimeError("CUDA error: out of memory")
+        return real(*a, **k)
+
+    monkeypatch.setattr(torch, "empty", empty)
+    s = hostmem.Slabs(slab=64)
+    a = s.empty(4, torch.int32)
+    a.copy_(torch.arange(4, dtype=torch.int32))
+    assert not a.is_pinned() and not s.pin and a.tolist() == [0, 1, 2, 3]

@@ -1266,6 +1266,9 @@ tier_long() {
   csub l-rx-llama7-2048-full 2 256 "$RX --model llama2-7b --seq 2048 --layers 32 --variants int int_mm \
 int_fp32gemm --device cpu --reps $Q --no-malloc-tune $NATIVE"
   if [ -n "$BIGMEM" ]; then
+    # its 40.6 GiB of int32 claims and 6.3 GiB of weights exceed an L40S's 44.5 GiB: the prover's default
+    # --host-claims auto keeps 32 GiB of them on the GPU and stages the rest in pinned host memory until the GPU
+    # encodes them (the same bytes; the record's claims_staged)
     csub l-llama7-8192-full 6 256 "$PERF --model llama2-7b --seq 8192 --modes Kpre --queries $QH \
 --verifier-device cpu --label long $NATIVE"
     csub l-rx-llama7-8192-full 5 256 "$RX --model llama2-7b --seq 8192 --layers 32 --variants int int_mm \

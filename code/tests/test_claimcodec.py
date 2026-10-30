@@ -1126,3 +1126,42 @@ def test_random_corruptions_never_crash_the_split_decoder(sample, monkeypatch, s
         assert (one is None) == (split is None)
         assert one is None or all(np.array_equal(p, q) for p, q in zip(one, split))
     assert ran[("_rice_job", True)] > 400, ran                    # most corruptions reach the Rice vectors
+
+
+# -- host claims encoded on a GPU (a prover's claims staged in pinned host memory: the option host_claims) ---------
+
+@cuda_only
+def test_host_claims_encoded_on_a_gpu_give_the_reference_bytes(claim_sets, monkeypatch):
+    # claims held on the host (pageable int64, pinned int32), encoded on the GPU with device=: in parts, each part
+    # uploaded as it is read; the reference bytes, centred or not, in the default parts and in tiny ones
+    for name, zs in claim_sets.items():
+        n = _numel(zs)
+        held = [torch.as_tensor(z) for z in zs]
+        for centre in (True, False):
+            want = ref.encode(zs, centre=centre)
+            for chunk in sorted({1 << 23, 37, n // 3 + 1}):
+                if n // chunk > 400:
+                    continue
+                monkeypatch.setattr(cc, "_CHUNK", chunk)
+                for zt in (held, [cc.narrow(z).pin_memory() for z in held]):
+                    with options.using(fused_encoder=True):           # never taken for host claims
+                        assert cc.encode(zt, centre=centre, device="cuda") == want, (name, centre, chunk)
+    with pytest.raises(cc.Unencodable):
+        cc.encode([torch.tensor([[0, 1 << 29], [1, 2]], dtype=torch.int32)], device="cuda")
+
+
+@cuda_only
+def test_host_claims_encoded_on_a_gpu_leave_the_claims_on_the_host(monkeypatch):
+    # 256 MB of pinned int32 claims: the GPU holds only the encoder's temporaries of a part, a small fraction
+    monkeypatch.setattr(cc, "_CHUNK", 1 << 18)
+    g = torch.Generator().manual_seed(3)
+    zs = [(torch.randn(1024, 8192, generator=g) * 3e4).round_().to(torch.int32).pin_memory() for _ in range(8)]
+    want = cc.encode(zs, impl="host")
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    base = torch.cuda.memory_allocated()
+    got = cc.encode(zs, device="cuda")
+    torch.cuda.synchronize()
+    assert got == want
+    assert torch.cuda.max_memory_allocated() - base < sum(4 * z.numel() for z in zs) // 4

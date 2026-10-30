@@ -581,6 +581,7 @@ class Cell:
         self.digests: dict = {}     # (mode, how) -> the warm-up's per-proof SHA-256
         self.nbytes: dict = {}      # (mode, how) -> the warm-up's per-proof byte counts (run_query's)
         self.byte_parts: dict = {}  # (mode, how) -> the warm-up's byte counts by message, summed over its proofs
+        self.staged: dict = {}      # (mode, how) -> bytes of claims the prover staged in host memory (--host-claims)
         self.u1_rows = None
         self.u1_equal: list[bool] = []   # per timed repetition of U1: its logits are the warm-up's (the claimed ones)
 
@@ -656,6 +657,7 @@ class Cell:
             return False
         self.checks[key].update(u1_equals_claims=bool(equal), bytes_consistent=bool(consistent))
         self.digests[key], self.nbytes[key], self.byte_parts[key] = digests, counts, _bytes(outs)
+        self.staged[key] = sum(o.get("claims_staged", 0) for o in outs)
         return True
 
     # the repetitions -------------------------------------------------------------------------------
@@ -789,7 +791,7 @@ def _lines(cell: Cell, u2: dict, base: dict) -> list[dict]:
             "overhead_split_s": {"forward_extra": med["forward"] - float(np.median(u1)),
                                  **{k: med[k] for k in PHASES if k != "forward"},
                                  "residual": float(np.median([s - q for s, q in zip(prove_s, summed)]))},
-            "proof_bytes": nbytes, "bytes": cell.byte_parts.get(key),
+            "proof_bytes": nbytes, "bytes": cell.byte_parts.get(key), "claims_staged": cell.staged.get(key, 0),
             "proof_mb_per_token": per_tok / 1e6, "prove_s_per_token": p_med / tokens,
             "proved_tokens_per_s": tokens / p_med,
             "served_tokens_per_s": {"u1": tokens / float(np.median(u1)),

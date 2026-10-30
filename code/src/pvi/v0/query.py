@@ -126,6 +126,63 @@ class WireProof:
         return sum(len(b or b"") for b in (self.claims, self.rows, self.u, self.columns)) + HASH_BYTES * hashes
 
 
+def device_claim_budget(prover: Prover, x: torch.Tensor) -> int | None:
+    """The bytes of int32 claims of query ``x`` that a lean GPU prover with the compact encoding keeps on its GPU
+    before it stages the rest in pinned host memory (the option ``host_claims``), or ``None``: all on the GPU, as
+    before the option.  ``device``: ``None``; ``host``: 0 (every claim staged); ``auto``: ``None`` when the claims of
+    every weight op, the weights (which the forward pass keeps on the GPU) and ``host_claims_reserve`` GiB fit in the
+    GPU's memory, else the GPU's memory less the weights and the reserve, so that only the claims beyond it are
+    staged (the full Llama-2-7B at 8,192 tokens on a 44.5 GiB L40S: 40.6 GiB of claims, 6.3 GiB of weights, 32.2 GiB
+    of claims kept on the GPU and 8.4 GiB staged)."""
+    o = options.current()
+    if o.host_claims == "host":
+        return 0
+    if o.host_claims == "device" or prover.device.type != "cuda":
+        return None
+    sizes = prover.__dict__.setdefault("_claim_bytes", {})      # per query shape (a pass on meta tensors)
+    if tuple(x.shape) not in sizes:
+        graph = prover.graph
+        cols = graph.claim_columns(x)
+        weights = sum(t.numel() * t.element_size() for op in graph.mat_ops for t in (op.weight, op.bias)
+                      if t is not None)
+        sizes[tuple(x.shape)] = None if cols is None else (
+            4 * sum(op.n_rows * m for op, m in zip(graph.mat_ops, cols)), weights)
+    if sizes[tuple(x.shape)] is None:
+        return None
+    claims, weights = sizes[tuple(x.shape)]
+    free = torch.cuda.get_device_properties(prover.device).total_memory - weights - (o.host_claims_reserve << 30)
+    return None if claims <= free else max(0, free)
+
+
+def _staged(budget: int, slabs: hostmem.Slabs, staged: list):
+    """``send`` of a lean GPU prover whose claims do not all fit on its GPU: :func:`claimcodec.narrow` on the device,
+    kept there while the claims kept add up to at most ``budget`` bytes, the others copied into ``slabs`` and counted
+    in ``staged``.  A copy runs on a side stream of the GPU, after the claim is computed and while the forward pass
+    goes on; the device's int32 copy is freed once the copy is done (``record_stream``), and the caller's
+    :func:`sync_device` after the forward pass waits for every copy before anything reads them."""
+    kept, side = 0, None
+
+    def send(z: torch.Tensor) -> torch.Tensor:
+        nonlocal kept, side
+        zd = claimcodec.narrow(z)
+        n = zd.numel() * zd.element_size()
+        if kept + n <= budget:
+            kept += n
+            return zd
+        staged[0] += n
+        h = slabs.empty(zd.shape, torch.int32)
+        if not zd.is_cuda:
+            return h.copy_(zd)
+        if side is None:
+            side = torch.cuda.Stream(zd.device)
+        side.wait_stream(torch.cuda.current_stream(zd.device))       # the claim is computed
+        with torch.cuda.stream(side):
+            h.copy_(zd, non_blocking=True)
+        zd.record_stream(side)
+        return h
+    return send
+
+
 def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Challenger, out: dict,
                     forward_kwargs: dict, send=None, wire: bool = False) -> tuple[dict | bytes, bytes | None, dict]:
     """``(claims, rows, proofs)``: the claims of every weight op but those whose rows the verifier reads
@@ -135,17 +192,26 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
     count one byte each."""
     t = out["timings"]
     query = passed(x)
+    encode, budget = claimcodec.encode, None
     if wire and send is None and prover.lean and prover.device.type != "cpu":
         # a lean GPU prover keeps each claim on its device as int32 (not the host's int64) and encodes
         # them there: only the encoding comes back (about 2.3 bytes a claim on the random-weight decoders),
-        # not 8 bytes a claim
+        # not 8 bytes a claim.  Claims beyond what the GPU holds (device_claim_budget) wait in pinned host memory
+        # instead, and the GPU's encoder uploads them part by part: the same bytes
         send = claimcodec.narrow
+        budget = device_claim_budget(prover, query)
+        if budget is not None:
+            staged = [0]
+            send = _staged(budget, hostmem.Slabs(), staged)
+            encode = lambda zs: claimcodec.encode(zs, device=prover.device)     # noqa: E731
     sync_device(prover.device)
     c0 = contention.begin()
     t0 = time.perf_counter()
     claims = prover.claims(query, send=send, to_host=not wire, **forward_kwargs)
     sync_device(prover.device)
     t["prove_forward"] = time.perf_counter() - t0
+    if budget is not None:
+        out["claims_staged"] = staged[0]           # bytes of claims staged in host memory
     phase_done(out, "prove_forward", c0)
     sent = {op.name for op in verifier._sent_ops()}
     if len(sent) < len(claims):
@@ -163,7 +229,7 @@ def _claims_message(prover: Prover, verifier: Verifier, x: torch.Tensor, ch: Cha
         t0 = time.perf_counter()
         if verifier.tables:
             rows = encoded_message(claimcodec.pack_rows, [claims[name] for name in verifier.tables])
-        claims = encoded_message(claimcodec.encode, [claims[op.name] for op in prover.graph.mat_ops
+        claims = encoded_message(encode, [claims[op.name] for op in prover.graph.mat_ops
                                               if op.name in sent and op.name not in verifier.tables])
         sync_device(prover.device)
         t["prove_encode"] = time.perf_counter() - t0

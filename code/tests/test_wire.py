@@ -28,6 +28,7 @@ from pvi.models.cnn import build_float_model
 from pvi.models.decoder import CONFIGS, build_decoder
 from pvi.models.quantize import quantize_input, quantize_model
 from pvi.v0 import claimcodec as cc
+from pvi.v0 import query as v0_query
 from pvi.v0 import verifier as v0_verifier
 
 _ENCODE, _PACK_FIELD = cc.encode, cc.pack_field     # the codec's own, which tests replace in the protocol
@@ -609,6 +610,81 @@ def test_a_proof_encoded_on_the_device_in_parts_is_the_proof_of_one_pass(monkeyp
                 for i, kw in enumerate(_claim_attacks(graph.mat_ops).values()))], list(absorbed)))
         assert all(r == runs[0] for r in runs[1:]), mode
         assert [a for a, _, _ in runs[0][0]] == [True] + [False] * (len(runs[0][0]) - 1)
+
+
+# -- claims staged on the host (the option host_claims) -------------------------------------------
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+@pytest.mark.parametrize("mode", ["C", "Kpre"])
+def test_a_lean_gpu_prover_with_claims_on_the_host_sends_the_bytes_of_claims_on_the_gpu(mode, monkeypatch,
+                                                                                       set_options):
+    # every claim on the GPU (device), every claim narrowed there and staged in pinned host memory (host), and
+    # about half of them staged (auto beyond a budget), then encoded on the GPU (in parts): the same verdicts,
+    # labels, proof sizes and Fiat--Shamir transcripts, honest and tampered (beyond int32, another dtype), with the
+    # batched and the streaming verifier, in parts of the default size and of 97 values
+    graph, x = _graph("qwen")
+    last = graph.mat_ops[-1].name
+    attacks = dict(_claim_attacks(graph.mat_ops), big={"tamper": lambda o, z: z * (1 << 40)},
+                   int16={"tamper": lambda o, z: z.to(torch.int16) if o.name == last else z})
+    total = 4 * sum(z.numel() for z in graph.forward(x)[1].values())
+    seen = []
+    monkeypatch.setattr(cc, "encode", lambda zs, **kw: (
+        seen.append(({(z.device.type, z.is_pinned()) for z in zs}, str(kw.get("device")))), _ENCODE(zs, **kw))[1])
+    budget = v0_query.device_claim_budget
+    prover, pair = _setup(graph, mode, fiat_shamir=True)
+    lean = proto.Prover(graph, commitments=prover.commitments, device="cuda", lean=True)
+    runs = {}
+    for where, chunk in (("device", 0), ("host", 0), ("host", 97), ("half", 0)):
+        set_options(host_claims="host" if where == "host" else "device")
+        monkeypatch.setattr(v0_query, "device_claim_budget", (lambda p, q: total // 2) if where == "half" else budget)
+        if chunk:
+            monkeypatch.setattr(cc, "_CHUNK", chunk)
+        seen.clear()
+        runs[where, chunk] = [(r["accepted"], r["rejected_at"], r["bytes"], r["transcript"], r.get("claims_staged"))
+                              for i, kw in enumerate(attacks.values()) for v in pair
+                              for r in [proto.run_query(lean, v, x, seed=i, wire=True, forward_kwargs=kw)]]
+        want_seen = {"device": ({("cuda", False)}, "None"), "host": ({("cpu", True)}, "cuda"),
+                     "half": ({("cuda", False), ("cpu", True)}, "cuda")}[where]
+        assert all(s == want_seen for s in seen), (where, seen)
+        staged = [h for *_, h in runs[where, chunk]]
+        assert staged == ([None] * len(staged) if where == "device" else [total] * len(staged) if where == "host"
+                          else [h for h in staged if 0 < h < total]), (where, staged)
+    want = [(a, rej, b, t) for a, rej, b, t, _ in runs["device", 0]]
+    for key in (("host", 0), ("host", 97), ("half", 0)):
+        assert [(a, rej, b, t) for a, rej, b, t, _ in runs[key]] == want, key
+    assert [a for a, *_ in want] == [True, True] + [False] * (len(want) - 2)
+
+
+class _Props:
+    def __init__(self, total_memory):
+        self.total_memory = total_memory
+
+
+def test_auto_keeps_on_the_gpu_what_fits_beside_the_weights_and_the_reserve(monkeypatch, set_options):
+    # auto: every claim on the GPU (None) when the int32 claims of every weight op (a pass on meta tensors), the
+    # weights and the reserve fit in the GPU's memory, else the memory left beside the weights and the reserve;
+    # host: 0, device: None; a prover off the GPU never stages
+    graph, x = _graph("llama")
+    claims = 4 * sum(z.numel() for z in graph.forward(x)[1].values())
+    weights = sum(t.numel() * t.element_size() for op in graph.mat_ops for t in (op.weight, op.bias)
+                  if t is not None)
+    prover = proto.Prover(graph, device="cuda", lean=True)       # (nothing runs on it here)
+    total = {}
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda d: _Props(total["bytes"]))
+    for reserve in (0, 1):
+        set_options(host_claims="auto", host_claims_reserve=reserve)
+        fit = claims + weights + (reserve << 30)
+        for t, want in ((fit, None), (fit + (1 << 30), None), (fit - 1, claims - 1), (fit - 1000, claims - 1000),
+                        (weights, 0), (1, 0)):
+            total["bytes"] = t
+            assert v0_query.device_claim_budget(prover, x) == want, (reserve, t - fit)
+    total["bytes"] = 1
+    set_options(host_claims="device")
+    assert v0_query.device_claim_budget(prover, x) is None
+    set_options(host_claims="host")
+    assert v0_query.device_claim_budget(prover, x) == 0
+    set_options(host_claims="auto")
+    assert v0_query.device_claim_budget(proto.Prover(graph, device="cpu", lean=True), x) is None
 
 
 # -- the security parameters ----------------------------------------------------------------------

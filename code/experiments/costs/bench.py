@@ -400,6 +400,8 @@ def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
     r.rec("accepted", int(res["accepted"]), "", trial, **extra)
     if res.get("transcript"):       # Fiat--Shamir: the proof's fingerprint (pvi.v0.query.run_query)
         r.rec("proof_transcript", res["transcript"], "sha", trial, **extra)
+    if res.get("claims_staged"):    # claims the prover staged in host memory (--host-claims)
+        r.rec("claims_staged", res["claims_staged"], "B", trial, **extra)
     if not res["accepted"]:  # an honest query must never fail: GPU/CPU disagreement, stop the job
         # keep the evidence where a re-run cannot overwrite it and count_outcomes.py finds it
         # (no .done: the aggregates never read it)
