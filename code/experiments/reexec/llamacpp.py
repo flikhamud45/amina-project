@@ -48,7 +48,9 @@ configuration of other shapes, with RoPE scaling, a tied head or biases is refus
 ``--seq`` beyond the checkpoint's trained context; the checkpoint's tensor names, shapes and dtypes are checked against
 the plan before the file is written.  The conversion was checked against the release's own converter on a small
 checkpoint (``tests/test_llamacpp.py``: the same tensors byte for byte and the same metadata but ``general.*``).  This
-step also needs sentencepiece, huggingface_hub and Transformers.  llama-bench still times prompts of random token ids
+step also needs huggingface_hub and Transformers; the tokenizer (``tokenizer.model``) is read by a small protobuf
+reader here (:func:`spm_pieces`), not by sentencepiece, which the run's environment does not install (the tests check
+it against sentencepiece piece by piece).  llama-bench still times prompts of random token ids
 (it takes no prompt text): the weights are the checkpoint's, the prompt is not WikiText-2's.  Every file written, random
 or real, is read back with gguf-py's reader before quantisation: its tensors' names, order, shapes and types, the
 hyperparameters and the vocabulary's size must be the plan's, else the step fails.
@@ -425,36 +427,92 @@ def _looks_special(token: str) -> bool:
             or (token.startswith("<unused") and token.endswith(">")))
 
 
+def _varint(data: bytes, i: int) -> tuple[int, int]:
+    """The protobuf varint at ``data[i:]`` and the index after it."""
+    v = shift = 0
+    while True:
+        if i >= len(data):
+            raise LlamaCppError("vocabulary", "tokenizer.model: a truncated varint")
+        b = data[i]
+        i += 1
+        v |= (b & 0x7F) << shift
+        if not b & 0x80:
+            return v, i
+        shift += 7
+
+
+def _fields(data: bytes):
+    """``(field number, wire type, value)`` of a protobuf message: an int for varints, bytes otherwise."""
+    i = 0
+    while i < len(data):
+        key, i = _varint(data, i)
+        num, wt = key >> 3, key & 7
+        if wt == 0:
+            v, i = _varint(data, i)
+        elif wt == 1:
+            v, i = data[i:i + 8], i + 8
+        elif wt == 2:
+            n, i = _varint(data, i)
+            v, i = data[i:i + n], i + n
+        elif wt == 5:
+            v, i = data[i:i + 4], i + 4
+        else:
+            raise LlamaCppError("vocabulary", f"tokenizer.model: wire type {wt} of field {num} is not read")
+        if i > len(data):
+            raise LlamaCppError("vocabulary", "tokenizer.model: a truncated field")
+        yield num, wt, v
+
+
+SPM_TYPES = {1: "normal", 2: "unknown", 3: "control", 4: "user_defined", 5: "unused", 6: "byte"}
+"""SentencePiece's ``ModelProto.SentencePiece.Type`` values."""
+
+
+def spm_pieces(data: bytes) -> list[tuple[str, float, int]]:
+    """``(piece, score, type)`` of every piece of a SentencePiece model (the bytes of ``tokenizer.model``, a
+    ``ModelProto``: field 1 holds the pieces, each with its text (1), score (2, a float, default 0) and type (3,
+    :data:`SPM_TYPES`, default normal)), in id order, as sentencepiece's ``IdToPiece``, ``GetScore`` and ``Is*``
+    give them."""
+    import struct
+
+    out = []
+    for num, wt, v in _fields(data):
+        if num != 1:
+            continue
+        if wt != 2:
+            raise LlamaCppError("vocabulary", "tokenizer.model: a piece that is not a message")
+        piece, score, kind = None, 0.0, 1
+        for n, w, x in _fields(v):
+            if n == 1 and w == 2:
+                piece = x.decode("utf-8")
+            elif n == 2 and w == 5:
+                score = struct.unpack("<f", x)[0]
+            elif n == 3 and w == 0:
+                kind = x
+        if piece is None or kind not in SPM_TYPES:
+            raise LlamaCppError("vocabulary", f"tokenizer.model: piece {len(out)} has no text or type {kind}")
+        out.append((piece, score, kind))
+    if not out:
+        raise LlamaCppError("vocabulary", "tokenizer.model holds no pieces (not a SentencePiece model)")
+    return out
+
+
 def sentencepiece_vocab(path: Path, vocab_size: int | None) -> tuple[list[bytes], list[float], list[int]]:
     """``(tokens, scores, token types)`` of the checkpoint's SentencePiece tokenizer (``tokenizer.model``) as the
     release's converter makes them (``TextModel._create_vocab_sentencepiece``): ``vocab_size`` entries (default the
     tokenizer's), each piece with its score and type (normal 1, unknown 2, control 3, user-defined 4, unused 5, byte
     6), unused ``[PAD<i>]`` fillers (score -10000) past the tokenizer's pieces, then the tokens of
     ``added_tokens.json`` (user-defined) and of ``tokenizer_config.json``'s ``added_tokens_decoder`` (control when
-    special), each of score -1000."""
-    try:
-        from sentencepiece import SentencePieceProcessor
-    except ImportError as e:
-        raise LlamaCppError("vocabulary", f"{e} (--real needs sentencepiece)") from e
+    special), each of score -1000.  The pieces are read by :func:`spm_pieces` (no sentencepiece); a user-defined
+    piece is normal (1), as the converter's ``IsUnknown``/``IsControl``/``IsUnused``/``IsByte`` chain makes it."""
     path = Path(path)
     if not (path / "tokenizer.model").is_file():
         raise LlamaCppError("vocabulary", f"{path} has no tokenizer.model (a SentencePiece tokenizer)")
-    sp = SentencePieceProcessor()
-    sp.LoadFromFile(str(path / "tokenizer.model"))
-    n = vocab_size or sp.vocab_size()
+    pieces = spm_pieces((path / "tokenizer.model").read_bytes())
+    n = vocab_size or len(pieces)
     tokens = [f"[PAD{i}]".encode() for i in range(n)]
     scores, types = [-10000.0] * n, [5] * n
-    for i in range(min(sp.vocab_size(), n)):
-        kind = 1
-        if sp.IsUnknown(i):
-            kind = 2
-        elif sp.IsControl(i):
-            kind = 3
-        elif sp.IsUnused(i):
-            kind = 5
-        elif sp.IsByte(i):
-            kind = 6
-        tokens[i], scores[i], types[i] = sp.IdToPiece(i).encode(), sp.GetScore(i), kind
+    for i, (piece, score, kind) in enumerate(pieces[:n]):
+        tokens[i], scores[i], types[i] = piece.encode(), score, kind if kind in (2, 3, 5, 6) else 1
     added = path / "added_tokens.json"
     if added.is_file():
         for text, i in json.loads(added.read_text(encoding="utf-8")).items():

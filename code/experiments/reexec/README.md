@@ -105,7 +105,9 @@ and `same_model` false), `paper/numbers.py` fails any that does not, and it neve
   `meta-llama/Llama-2-7b-hf`, as the run package passes with `--llama-licence`) the checkpoint's safetensors,
   converted one tensor at a time as the release's `convert_hf_to_gguf.py` converts a `LlamaForCausalLM` (the q/k
   permutation, the SentencePiece vocabulary, the hyperparameters; every written file read back against the plan; the
-  records hold `weights`, `real` and the checkpoint's `revision`). Otherwise random weights of the model's exact
+  records hold `weights`, `real` and the checkpoint's `revision`). `tokenizer.model` is read by a small protobuf
+  reader in the script (`spm_pieces`; checked against sentencepiece piece by piece in the tests), so the step needs
+  no sentencepiece or protobuf. Otherwise random weights of the model's exact
   shapes (`pvi.models.decoder.CONFIGS`; Llama-2's architecture only, any other model is refused; `--layers N`: N
   blocks), normal with standard deviation 0.02 and norms of one
   (`--seed`), written as a bf16 GGUF by the clone's own `gguf-py` one tensor at a time, with a dummy vocabulary of

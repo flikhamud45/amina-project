@@ -524,3 +524,29 @@ def test_the_command_with_a_real_checkpoint_writes_checks_quantises_and_records(
         assert (r["weights"], r["real"], r["revision"], r["seed"], r["max_pos"], r["variant"]) == \
             ("real", str(folder), None, None, 256, "llamacpp_q8_0")
     assert not list(tmp_path.glob("pvi-llamacpp-*"))
+
+
+def test_the_tokenizer_is_read_without_sentencepiece_as_sentencepiece_reads_it(tmp_path, monkeypatch):
+    # the run's environment has no sentencepiece: spm_pieces must give its pieces, scores and types exactly
+    spm = pytest.importorskip("sentencepiece")
+    _sentencepiece(tmp_path / "tokenizer.model")
+    sp = spm.SentencePieceProcessor(model_file=str(tmp_path / "tokenizer.model"))
+    pieces = L.spm_pieces((tmp_path / "tokenizer.model").read_bytes())
+    assert len(pieces) == sp.vocab_size()
+    for i, (piece, score, kind) in enumerate(pieces):
+        assert piece == sp.IdToPiece(i) and score == sp.GetScore(i)
+        assert (kind == 2) == sp.IsUnknown(i) and (kind == 3) == sp.IsControl(i)
+        assert (kind == 5) == sp.IsUnused(i) and (kind == 6) == sp.IsByte(i)
+    want = L.sentencepiece_vocab(tmp_path, None)
+    monkeypatch.setitem(sys.modules, "sentencepiece", None)        # not installed: the same vocabulary
+    assert L.sentencepiece_vocab(tmp_path, None) == want
+    assert want[2][:3] == [2, 3, 3] and want[2][3] == 6
+
+
+def test_a_file_that_is_not_a_sentencepiece_model_is_refused(tmp_path):
+    (tmp_path / "tokenizer.model").write_bytes(b"\x0a\x05abc")   # field 1 truncated
+    with pytest.raises(L.LlamaCppError, match="truncated"):
+        L.sentencepiece_vocab(tmp_path, None)
+    (tmp_path / "tokenizer.model").write_bytes(b"\x12\x00")      # no pieces
+    with pytest.raises(L.LlamaCppError, match="no pieces"):
+        L.sentencepiece_vocab(tmp_path, None)
