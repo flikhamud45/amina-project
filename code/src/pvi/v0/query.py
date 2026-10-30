@@ -156,19 +156,30 @@ def device_claim_budget(prover: Prover, x: torch.Tensor) -> int | None:
 
 def _staged(budget: int, slabs: hostmem.Slabs, staged: list):
     """``send`` of a lean GPU prover whose claims do not all fit on its GPU: :func:`claimcodec.narrow` on the device,
-    kept there while the claims kept add up to at most ``budget`` bytes, the others copied into ``slabs`` (pinned:
-    queued on the stream, no wait; the device's int32 copy is freed at once) and counted in ``staged``."""
-    kept = 0
+    kept there while the claims kept add up to at most ``budget`` bytes, the others copied into ``slabs`` and counted
+    in ``staged``.  A copy runs on a side stream of the GPU, after the claim is computed and while the forward pass
+    goes on; the device's int32 copy is freed once the copy is done (``record_stream``), and the caller's
+    :func:`sync_device` after the forward pass waits for every copy before anything reads them."""
+    kept, side = 0, None
 
     def send(z: torch.Tensor) -> torch.Tensor:
-        nonlocal kept
+        nonlocal kept, side
         zd = claimcodec.narrow(z)
         n = zd.numel() * zd.element_size()
         if kept + n <= budget:
             kept += n
             return zd
         staged[0] += n
-        return slabs.empty(zd.shape, torch.int32).copy_(zd, non_blocking=True)
+        h = slabs.empty(zd.shape, torch.int32)
+        if not zd.is_cuda:
+            return h.copy_(zd)
+        if side is None:
+            side = torch.cuda.Stream(zd.device)
+        side.wait_stream(torch.cuda.current_stream(zd.device))       # the claim is computed
+        with torch.cuda.stream(side):
+            h.copy_(zd, non_blocking=True)
+        zd.record_stream(side)
+        return h
     return send
 
 
