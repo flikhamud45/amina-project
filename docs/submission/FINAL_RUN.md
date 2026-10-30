@@ -1,6 +1,6 @@
 # L40S machine: the final run
 
-Thank you again for the rehearsal. This file describes the final run of commit `65ac80b`. Its records give every
+Thank you again for the rehearsal. This file describes the final run of commit `<COMMIT>`. Its records give every
 number of the paper, so it runs in full on one platform: every job on an L40S node with an AMD EPYC 9334 host.
 
 There is no smoke run, no rehearsal and no gate before it. You submit the run's fifteen jobs directly (Sec. 4). The
@@ -117,9 +117,9 @@ V1's codec curve) keep random weights of the same shapes. You need nothing new f
 ```bash
 H=/home/sharifm/teaching/tml-0368-4075/erelbarzilay/final_project/amina-project/logs/validation/sp2027/handoff_l40s
 (cd $H && sha256sum -c SHA256SUMS)                    # every line: OK
-git -C <your clone> fetch $H/pvi-sp2027-artifact-65ac80b.bundle sp2027-artifact
+git -C <your clone> fetch $H/pvi-sp2027-artifact-<COMMIT>.bundle sp2027-artifact
 git -C <your clone> checkout -B sp2027-artifact FETCH_HEAD
-git -C <your clone> log --oneline -1                  # 65ac80b
+git -C <your clone> log --oneline -1                  # <COMMIT>
 git -C <your clone> status --short --untracked-files=no   # prints nothing
 ```
 
@@ -130,7 +130,7 @@ Start from an empty run folder. Records or `done` markers left in `logs/final/` 
 mixed into this run, or would make it skip jobs:
 
 ```bash
-[ -e logs/final ] && mv logs/final logs/final.before-65ac80b
+[ -e logs/final ] && mv logs/final logs/final.before-<COMMIT>
 squeue -u $USER          # no job whose name starts with sp- should be listed
 ```
 
@@ -243,7 +243,7 @@ The table gives each dry run's last line: "(4th line)" means the line above, aft
 | `R --dry-run --one-job --no-exclusive quality` | `# one job: quality: 18 jobs, job limits 56 h, time limit 24 h` | (4th line) |
 | `R --dry-run --one-job --no-exclusive qllama` | `# one job: qllama: 12 jobs, job limits 78 h, time limit 24 h` | (4th line) |
 | `R --dry-run --one-job --no-exclusive qcheck` | `# one job: qcheck: 5 jobs, job limits 20 h, time limit 20 h` | the `# one job:` line |
-| `R --dry-run --one-job --no-exclusive tv attack` | `# one job: tv attack: 7 jobs, job limits 19 h, time limit 19 h` | the `# one job:` line |
+| `R --dry-run --one-job --no-exclusive tv attack` | `# one job: tv attack: 8 jobs, job limits 24 h, time limit 24 h` | the `# one job:` line |
 | `R --dry-run --one-job --no-exclusive smoke` | `# one job: smoke: 2 jobs, job limits 5 h, time limit 5 h` | the `# one job:` line |
 
 The job limits are caps for each job, not expected times: a job ends when its work is done. That the limits of a
@@ -251,9 +251,9 @@ submission add up to more than 24 h does not mean it needs more than one allocat
 are what to plan with; only `qllama`, and possibly `bench`, `cpux` and `quality`, need a second submission of the
 same line.
 
-Together the fifteen submissions hold 245 jobs with 664 h of job limits. That is the whole run:
+Together the fifteen submissions hold 246 jobs with 669 h of job limits. That is the whole run:
 `R --dry-run --optional all` ends with `# smoke cpuv cpux v1 serve bench gpuv gen batch real setup improve quality
-qllama qcheck tv attack long zkllm: 245 jobs, job limits 664 h`. Every cost line of that dry run of a checkpoint's
+qllama qcheck tv attack long zkllm: 246 jobs, job limits 669 h`. Every cost line of that dry run of a checkpoint's
 model up to 2,048 tokens carries `--real <checkpoint>` (e.g. `--model llama2-7b --real meta-llama/Llama-2-7b-hf`).
 
 ## 4. Start the run
@@ -274,7 +274,7 @@ R --one-job zkllm                           # whole node; 6-9 h (add --cuda-home
 R --one-job --no-exclusive quality          # one GPU of a shared node; 16-24 h (may need a second submission)
 R --one-job --no-exclusive qllama           # one GPU of a shared node; 40-48 h (two or three submissions)
 R --one-job --no-exclusive qcheck           # one GPU of a shared node; 9-13 h
-R --one-job --no-exclusive tv attack        # one GPU of a shared node; 6-9 h
+R --one-job --no-exclusive tv attack        # one GPU of a shared node; 9-12 h
 R --one-job --no-exclusive smoke            # one GPU of a shared node; 1.5-2 h (the test suite and the xcheck proofs)
 squeue -u $USER
 ```
@@ -378,18 +378,18 @@ zkLLM runs (`zkllm/summary.csv` and one folder `zkllm/llama2-{7b,13b}-T{64,512,1
 with the raw timings `bin_times.log` and `time-*.txt`), the check; and the benchmark's raw records and tables:
 
 ```bash
-tar czf final-65ac80b.tgz --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp \
+tar czf final-<COMMIT>.tgz --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp \
     --exclude='ref_*.pt' --exclude=zkllm/home \
     logs/final code/artifacts/comparison/raw_final code/artifacts/comparison/tables_final
-tar tzf final-65ac80b.tgz > final-65ac80b.list
-grep -E 'zkllm/summary.csv|numbers_check.txt|dryrun.txt|env/inputs.sha256|env/models-check.txt' final-65ac80b.list
-grep -cE 'zkllm/llama2-(7b|13b)-T[0-9]+/env.txt$' final-65ac80b.list           # 8
-grep -cE 'smoke_pytest-.*\.(txt|xml)$' final-65ac80b.list                      # 2 (more if the smoke ran twice)
-grep -cE 'env/[^/]+/env.json$' final-65ac80b.list                              # 15 or more (one per allocation)
-grep -cE 'telemetry/sp-.*\.csv\.gz$' final-65ac80b.list                        # 245 or more (one per job run)
-grep -cE 'comparison/raw_final/' final-65ac80b.list                            # more than 0
-ls -lh final-65ac80b.tgz
-mkdir -p $H/return && cp final-65ac80b.tgz $H/return/ && (cd $H/return && sha256sum final-65ac80b.tgz)
+tar tzf final-<COMMIT>.tgz > final-<COMMIT>.list
+grep -E 'zkllm/summary.csv|numbers_check.txt|dryrun.txt|env/inputs.sha256|env/models-check.txt' final-<COMMIT>.list
+grep -cE 'zkllm/llama2-(7b|13b)-T[0-9]+/env.txt$' final-<COMMIT>.list           # 8
+grep -cE 'smoke_pytest-.*\.(txt|xml)$' final-<COMMIT>.list                      # 2 (more if the smoke ran twice)
+grep -cE 'env/[^/]+/env.json$' final-<COMMIT>.list                              # 15 or more (one per allocation)
+grep -cE 'telemetry/sp-.*\.csv\.gz$' final-<COMMIT>.list                        # 246 or more (one per job run)
+grep -cE 'comparison/raw_final/' final-<COMMIT>.list                            # more than 0
+ls -lh final-<COMMIT>.tgz
+mkdir -p $H/return && cp final-<COMMIT>.tgz $H/return/ && (cd $H/return && sha256sum final-<COMMIT>.tgz)
 ```
 
 The first `grep` should list `logs/final/zkllm/summary.csv`, `numbers_check.txt`, `dryrun.txt`,
