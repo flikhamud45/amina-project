@@ -4,7 +4,9 @@ Every table body and every measured number of the paper's text comes from one ru
 (`experiments/package/run.sh`) on one platform. `numbers.py` reads that run's records, checks them, and writes the
 body rows of each table and one LaTeX macro per text number; the paper (`paper_sp2027/main.tex`) inputs each file
 from `paper_sp2027/generated/` when it exists and from `paper_sp2027/fallback/`, which holds the values the paper
-prints before the final run, otherwise. Nothing here runs a model.
+prints before the final run, otherwise. The fallback wraps each value that the run replaces in `
+otready{...}` (orange in the PDF;
+`numbers.unmark` strips it when the checks read the fallback). Nothing here runs a model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|

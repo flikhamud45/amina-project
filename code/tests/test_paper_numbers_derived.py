@@ -35,8 +35,7 @@ from experiments.paper import numbers as N
 from experiments.paper import records as R
 from experiments.paper import tables as T
 
-FALLBACK = dict(re.findall(r"\\newcommand\{\\(\w+)\}\{(.*)\}", (PAPER / "fallback" / "numbers.tex").read_text(
-    encoding="utf-8")))
+FALLBACK = N.folder_files(PAPER / "fallback")[1]
 
 
 @pytest.fixture
@@ -52,7 +51,8 @@ def _macros(ctx):
 
 
 def _fallback_rows(name: str) -> list[str]:
-    return [r.strip() for r in (PAPER / "fallback" / f"{name}.tex").read_text(encoding="utf-8").splitlines()[1:]]
+    return [r.strip() for r in N.unmark((PAPER / "fallback" / f"{name}.tex").read_text(encoding="utf-8"))
+            .splitlines()[1:]]
 
 
 def _inrange_doc(src: Path, dst: Path, edit) -> None:

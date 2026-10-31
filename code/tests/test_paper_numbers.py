@@ -1056,7 +1056,7 @@ def test_the_attribution_its_numbers_and_what_the_text_says(run_dir):
     v = {k: x.value for k, x in m.items()}
     assert (v["AttrIntPpl"], v["AttrFpPpl"], v["AttrNormLoo"]) == ("75.5", "64.8", "69.4")
     assert v["AttrSmallCost"] == "0.2" and v["AttrFloatTol"] == r"$4\cdot10^{-5}$"    # the softmax costs 0.17
-    fallback = (PAPER / "fallback" / "tab_quality_attr.tex").read_text(encoding="utf-8")
+    fallback = N.unmark((PAPER / "fallback" / "tab_quality_attr.tex").read_text(encoding="utf-8"))
     assert [r.split() for r in tb.rows] == [x.split() for x in fallback.splitlines() if not x.startswith("%")]
     assert "digest d125" in tb.note
 
@@ -1258,8 +1258,7 @@ def test_the_setup_proof_from_the_library_gives_the_fallback():
     c = M.Collector()
     M.setup_proof(c, T.Ctx(R.Run([]), B.Bench(None), {}, "cnn18c", byte_model=True))
     got = {k: x.value for k, x in c.m.items() if x.value is not None}
-    values = dict(re.findall(r"\\newcommand\{\\(\w+)\}\{(.*)\}", (PAPER / "fallback" / "numbers.tex")
-                             .read_text(encoding="utf-8")))
+    values = N.folder_files(PAPER / "fallback")[1]
     assert got == {k: values[k] for k in got}
     assert set(c.m) - set(got) == {"SetupQueryShareLlamaA", "SetupQueryShareLlamaB"}
     assert (got["SetupGBLlamaA"], got["SetupUntrustedMBLlamaB"], got["SetupCombinedShareLlamaA"]) == \
@@ -1273,11 +1272,10 @@ def test_the_stored_attack_documents_regenerate_the_fallback(run_dir):
     tmp, logs = run_dir
     ctx, _ = _ctx(tmp, logs)
     tb = T.tab_inrange(ctx)
-    fallback = (PAPER / "fallback" / "tab_inrange.tex").read_text(encoding="utf-8").splitlines()[1:]
+    fallback = N.unmark((PAPER / "fallback" / "tab_inrange.tex").read_text(encoding="utf-8")).splitlines()[1:]
     assert [r.strip() for r in tb.rows] == [r.strip() for r in fallback]
     m, _ = M.build(ctx, [])
-    values = dict(re.findall(r"\\newcommand\{\\(\w+)\}\{(.*)\}", (PAPER / "fallback" / "numbers.tex")
-                             .read_text(encoding="utf-8")))
+    values = N.folder_files(PAPER / "fallback")[1]
     same = ("AttackOptLSucceeded", "AttackOptLPrompts", "AttackOptLPaths", "AttackOptLBackdoorBack",
             "AttackOptLBackdoorHacked", "PathsLlama", "PathsLlamaAbout", "WidthLlama", "OpenAllLlama",
             "MnistSinglePass",
@@ -1303,6 +1301,11 @@ def test_the_command_writes_every_file_and_strict_fails_on_a_missing_cell(run_di
     out = tmp / "out"
     names = {p.name for p in out.glob("*.tex")}
     assert names == {p.name for p in (PAPER / "fallback").glob("*.tex")}
+    # only the fallback marks a value printed before the final run; the run's own files never do
+    assert not any(r"\notready" in p.read_text(encoding="utf-8") for p in out.glob("*.tex"))
+    assert r"\notready{" in (PAPER / "fallback" / "tab_eval_compare.tex").read_text(encoding="utf-8")
+    assert N.unmark(r"a & \notready{\textbf{2.2\,s (1{,}213$\times\downarrow$)}} & \multicolumn{5}{c}{\notready{x}}") \
+        == r"a & \textbf{2.2\,s (1{,}213$\times\downarrow$)} & \multicolumn{5}{c}{x}"
     macro = re.compile(r"\\newcommand\{\\(\w+)\}")
     assert set(macro.findall((out / "numbers.tex").read_text(encoding="utf-8"))) == \
         set(macro.findall((PAPER / "fallback" / "numbers.tex").read_text(encoding="utf-8")))

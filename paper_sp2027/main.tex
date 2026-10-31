@@ -21,6 +21,8 @@
 
 % ---- visible marker for open items -------------------------------------------------
 \newcommand{\todo}[1]{{\color{red}\textbf{[TODO: #1]}}}
+% a value of fallback/ printed before the final run, which the run replaces (generated/ never uses it)
+\newcommand{\notready}[1]{\textcolor{orange!85!black}{#1}}
 
 % ---- the run's numbers (code/experiments/paper/numbers.py) ------------------------------
 % Each table body and the text numbers (numbers.tex) are read from generated/<name>.tex when it exists, else from

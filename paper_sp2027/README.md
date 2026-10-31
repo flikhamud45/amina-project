@@ -14,6 +14,8 @@ Every measured number of the paper is a macro (`\CpuRatioN{}`, ...) and every ta
 `\pvitable{<table>}`. Both come from `generated/<name>.tex` when the file exists and from `fallback/<name>.tex`
 otherwise; a number that the run lacks prints as a visible `[TODO: ...]`. Removing `generated/` returns the paper to
 the fallback values.
+In `fallback/`, every value that the final run replaces is wrapped in `
+otready{...}` and prints in orange; values that need no run (published numbers, labels, values computed by formula) stay black, and a value that no run has measured yet prints as a red `[TODO: ...]`. The marked values are those that `numbers.py` leaves missing when run on a run folder without records; `numbers.unmark` removes the marks wherever the code reads the fallback, and `generated/` never has them.
 
 **Choosing the rows of `tab:eval-compare`.** The comparison with published systems is computed for every row of
 `COMPARE_ROWS` in `code/experiments/paper/tables.py` whichever rows the body prints; the extended version's

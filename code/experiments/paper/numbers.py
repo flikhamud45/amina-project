@@ -520,13 +520,22 @@ def demote_text_claims(failed: list[str]) -> tuple[list[str], list[str]]:
             [x.replace("CHECK FAILED", "WARNING (rehearsal)", 1) for x in claims])
 
 
+_NOTREADY = re.compile(r"\\notready\{((?:[^{}]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*)\}")
+
+
+def unmark(text: str) -> str:
+    """``text`` without the fallback's ``\\notready{...}`` marks (a value printed before the final run, which the
+    run replaces; the paper prints it in its own colour), keeping the values they mark."""
+    return _NOTREADY.sub(r"\1", text)
+
+
 def folder_files(folder: Path) -> tuple[dict, dict]:
     """``({table file: body}, {macro: printed value})`` of a folder of the paper's files (``generated/``,
-    ``fallback/``)."""
-    tables = {name: (folder / f"{name}.tex").read_text(encoding="utf-8") for name in T.TABLE_FILES
+    ``fallback/``), without the fallback's :func:`unmark` marks."""
+    tables = {name: unmark((folder / f"{name}.tex").read_text(encoding="utf-8")) for name in T.TABLE_FILES
               if (folder / f"{name}.tex").exists()}
     path = folder / "numbers.tex"
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    text = unmark(path.read_text(encoding="utf-8")) if path.exists() else ""
     return tables, dict(re.findall(r"^\\newcommand\{\\(\w+)\}\{(.*?)\}(?:\s+%.*)?$", text, re.M))
 
 
