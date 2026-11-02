@@ -2215,7 +2215,7 @@ def _rice_device_parts(rbuf: torch.Tensor, buf, base: int, off: int, n: int, err
     return k, low, q
 
 
-def _rice_values(k: int, low: torch.Tensor | None, q: torch.Tensor, a: int, e: int) -> torch.Tensor:
+def _rice_part_values(k: int, low: torch.Tensor | None, q: torch.Tensor, a: int, e: int) -> torch.Tensor:
     """Values ``[a, e)`` of a Rice vector of :func:`_rice_device_parts`, int64."""
     v = q[a:e].to(torch.int64)
     if low is not None:
@@ -2265,9 +2265,9 @@ def decode_device_parts(buf, rows: list[int], cols: list[int], device, chunk: in
         for a in range(0, n_exc, chunk):
             e = min(a + chunk, n_exc)
             # the positions: decode_device's cumulative sum continued (the same int64 values, wrapped alike)
-            pos = torch.cumsum(_rice_values(gk, glow, gq, a, e).add_(1), 0).add_(carry).sub_(1)
+            pos = torch.cumsum(_rice_part_values(gk, glow, gq, a, e).add_(1), 0).add_(carry).sub_(1)
             carry = pos[-1] + 1
-            hz = _rice_values(hk, hlow, hq, a, e)
+            hz = _rice_part_values(hk, hlow, hq, a, e)
             bad_hz |= hz.max() >= (1 << 32)
             h = hz.add_(1)
             sign = h & 1
