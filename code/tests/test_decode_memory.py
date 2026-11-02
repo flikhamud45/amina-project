@@ -233,10 +233,10 @@ def test_on_a_gpu_auto_keeps_the_default_decoder_when_it_fits(set_options, monke
     assert v0_query.device_decode_low(verifier, b"PVC3", x) is False     # malformed: the default decoder rejects
     # a predicted peak beyond the GPU (the tiny model's own is far below any budget): auto takes the low decoder,
     # and the prediction it replaces was read from this query's header (not None)
-    real = []
+    real, predict = [], cc.device_decode_peak
 
     def huge(buf, rows, cols):
-        real.append(cc.device_decode_peak(buf, rows, cols))
+        real.append(predict(buf, rows, cols))
         return 1 << 50
     monkeypatch.setattr(v0_query.claimcodec, "device_decode_peak", huge)
     low = proto.run_query(prover, verifier, x, seed=1, wire=True)
