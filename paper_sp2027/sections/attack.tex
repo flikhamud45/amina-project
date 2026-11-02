@@ -145,7 +145,7 @@ the instance of~(a) embeds in a transformer (Remark~\ref{rem:scope}). Both bound
 locality: opening $q$ uniform blocks of $d$ rows attains the bound $1-qd/N$ of~(a) ($d\mid N$) but
 downloads the rows, while the checks of Section~\ref{sec:defence}, run on each block of $d$ rows encoded and
 committed on its own, keep the error of $d=N$ with $O(\lambda+\log L)$ queries per block, counting
-one per folded row and per opened column~\cite{fullversion}.
+one per folded row and per opened column (Section~\ref{sec:defence}).
 
 \subsection{Measured Attacks}
 \label{sec:break}
@@ -153,7 +153,9 @@ one per folded row and per opened column~\cite{fullversion}.
 We attacked our implementation of the path protocol on an MNIST MLP (784--512--256--10), LeNet-5,
 VGG-11, VGG-16 and ResNet-18 on CIFAR-10, a 224$\times$224 dog-vs-cat ResNet-18 that stands in for
 the unreleased model of~\cite{anchuri2026verifiable}, and the real OPT-6.7B, computing path
-acceptance exactly. The implementation reproduces the published behaviour~\cite{fullversion}.
+acceptance exactly. The implementation behaves as published: on MNIST versions of four of the authors'
+substitute-model settings, honest provers passed all \ReproRuns{} runs of each and substitute models were caught in
+\ReproCaught{}\% of runs.
 
 \para{MNIST.} One tampered neuron passes with the predicted probability $1-1/N$ (\MnistSinglePass{}\%);
 the substitute models of Anchuri et al.\ corrupt hundreds of the MLP's 778 trace nodes, our
@@ -260,7 +262,7 @@ token for \InrangeOptLChanged{} prompts at every layer, and a path opens them wi
   \smallskip
   {\footnotesize Acceptance follows from each scheme's own formulas and parameters; no deployed
   system was tested. Path-protocol entries follow the full version of~\cite{anchuri2026verifiable}
-  (arXiv:2603.19025v1); its two-server refereed variant is outside our model~\cite{fullversion}. $^a$Our models
+  (arXiv:2603.19025v1); its two-server refereed variant, which assumes one server honest, is outside our model. $^a$Our models
   (Section~\ref{sec:break}). $^b$The
   authors state that their analysis ``trivially extends to full soundness'' for binary-output
   models; their other-model theorem is unaffected. $^c$No theorem claims it; the gap comes from the

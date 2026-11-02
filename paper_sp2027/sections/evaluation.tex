@@ -32,7 +32,7 @@ GPT-2, OPT-125M/1.3B/6.7B, Llama-2-7B/13B and Qwen3-4B. Costs use the real check
 Section~\ref{sec:quality}; GPT-2 and prompts beyond a checkpoint's trained context (4{,}096 tokens and
 more) use random int8 weights of the same shapes. Values matter little: on the certified OPT-1.3B (both modes,
 64 and 2{,}048 tokens) the prover's and the CPU verifier's times are within \RealProveWithin{}\% and \RealVerifyWithin{}\% of random weights', and v0's proof is \RealProofSmaller{}\% smaller;
-in $\Kpre$ at 2{,}048 tokens \RealAcceptedClause{}, and every tamper rejected~\cite{fullversion}. Models are measured in full, the last block
+in $\Kpre$ at 2{,}048 tokens \RealAcceptedClause{}, and every tamper rejected. Models are measured in full, the last block
 pruned; a table marks a build of $b$ of a model's $L$ blocks as $b/L$.
 
 \para{Attacks and soundness tests.} Section~\ref{sec:break} reports the attack measurements. Our
@@ -73,8 +73,8 @@ On the \PlatformGpu{}, proving a 2{,}048-token OPT-1.3B prompt in $\Kpre$ and $\
 our exact integer forward pass without proofs, and \ServeOptMKpreOverUTwo{} and \ServeOptMCOverUTwo{}$\times$ an fp16 one. Proving 64 prompts of 64 tokens together in $\Kpre$ takes \ServeBatchKpre{}\,s (\ServeBatchOverUOne{} and
 \ServeBatchOverUTwo{}$\times$)\TodoServing{}.
 
-\para{Improvements.} Our improvements change no byte that the parties exchange; the extended
-version~\cite{fullversion} measures each against the code path it replaces. With float64 products,
+\para{Improvements.} Our improvements change no byte that the parties exchange, and we measure each
+against the code path it replaces. With float64 products,
 the column opening takes \ImproveOpenShare{}\% of the prover's time on Llama-2-7B blocks at 64 tokens;
 exact int8 GEMMs for the opening and the fold make the prover \ImproveOpenRange{}$\times$ faster on
 Llama-2 blocks, and a GPU claim decoder with a fused exact attention kernel makes the GPU verifier
@@ -233,7 +233,7 @@ Still, our prover is faster in every measured row, by \CompareProverMin{}$\times
 stays below 200\,kB. V1 narrows that gap, from about \CompareVOneBefore{}$\times$ to about \CompareVOneAfter{}$\times$ on
 OPT-1.3B (Table~\ref{tab:eval-v1}). On the \PlatformGpu{}, zkLLM's prover takes about \ZkllmSameGpuProverLlama{}\,s
 (Llama-2-7B) and \ZkllmSameGpuProverLlamaL{}\,s (13B), \ZkllmSameGpuFactorRange{}$\times$ ours, and
-\ZkllmSameGpuFactorShortRange{}$\times$ at \ZkllmSameGpuShortSeq{} tokens~\cite{fullversion}. We do not compare
+\ZkllmSameGpuFactorShortRange{}$\times$ at \ZkllmSameGpuShortSeq{} tokens. We do not compare
 sampling-based schemes such as CommitLLM (Table~\ref{tab:sok}), which skip operations.
 
 \input{sections/quality}

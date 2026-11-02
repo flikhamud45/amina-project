@@ -71,7 +71,7 @@ the roots, 32 bytes per tree, and the public encoding parameters.
 
 \para{Commitment plans.} The trees, codeword lengths and layouts (some matrices encode the rows of
 $A_\ell^\T$, the \emph{transposed layout}) form a \emph{plan}, a public function of the model that
-is part of $C_M$~\cite{fullversion}.
+is part of $C_M$.
 
 \subsection{The Protocol}
 \label{sec:protocol}
@@ -199,6 +199,6 @@ $a=1{,}000$, and the opened columns per interactive query grow from \SetupHonest
 \SetupQueryShareLlamaA{}\% of the proof at 2{,}048 tokens. Proving it takes \SetupProverLlama{} on the
 \PlatformGpu{} and verifying it \SetupVerifierLlama{} on 8 threads of the \PlatformCpu{}. For column-hash commitments these
 setup columns are forced: with fewer than $t^0_j$ columns of $j$'s tree, no complete test that sees
-only columns certifies radius $e_j$ at our error~\cite{fullversion}. FRI-, STIR-, WHIR- or
+only columns certifies radius $e_j$ at our error (proof in the extended version~\cite{fullversion}). FRI-, STIR-, WHIR- or
 BaseFold-style tests~\cite{fri2018,stir,whir,basefold} could shrink only the combined rows, \SetupCombinedShareLlamaA{}\%
 of the setup proof at $a=100$ and \SetupCombinedShareLlamaB{}\% at $a=1{,}000$.
