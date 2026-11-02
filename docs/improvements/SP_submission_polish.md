@@ -51,6 +51,11 @@ No proof, record or measured value changes.
 * The body ends on page 13, 18 pages in all, within the call's limit of 13 pages of body and 5 of references and
   appendices.
 
-## 5. What remains
+## 5. Tests
 
-* The full CPU test suite on the cluster at the final commit, before the artifact is frozen.
+The full CPU test suite passed on the cluster at 93d6aa3, and at baa26aa apart from one test whose hand-built
+arguments lacked the new prefix options; 39ee815 adds them, and that test passes.
+
+## 6. What remains
+
+* The full CPU test suite again at the commit that is finally frozen, if it differs from 39ee815.
