@@ -751,7 +751,8 @@ def _ppl_args(**kw):
                 train_chars=100, draws=[0], graphs=["main"], alphas=None, glu_smooths=None, gains=[4.0],
                 pct=99.99, pct_att=99.99, pct_glu=None, smooth_pct=99.9, no_qk_balance=False, glu_exps=[],
                 exp_only=False, calib_device="cpu", ref_device=None, ref_dtype="float32", ref_cache=None,
-                cos_windows=1, chunk=16, structure=False, out=None, smoke=False, device="cpu")
+                cos_windows=1, chunk=16, structure=False, out=None, smoke=False, device="cpu", absorb_margin=1.0,
+                absorb_max_len=6)
     return argparse.Namespace(**dict(base, **kw))
 
 
