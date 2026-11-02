@@ -190,8 +190,16 @@ parquets (downloaded from the hub). Every `--seq`-token test window (2,048 by de
 `--calib-windows` (4) windows of `--calib-seq` (default `--seq`) tokens from window `4d` of the train split on; draw
 0 is `checkpoints.llama_calibration`, so for OpenLLaMA-7B and Llama-2-7B (whose settings are `MAIN_RECIPE`'s) the
 default main cell is the graph of the real-weight cost cells (`checkpoints.real_graph`, unpruned). The prefix
-(`--prefix`, default `auto`: PrefixQuant's rule on the first draw's calibration windows; `bos`; comma-separated
-token ids; `none`) is chosen once per run.
+(`--prefix`, default `auto`: PrefixQuant's rule on the first draw's calibration windows; `absorb`; `bos`;
+comma-separated token ids; `none`) is chosen once per run. `absorb` (opt-in, `hf_llama.absorb_tokens`) starts from
+`auto`'s choice and checks, on the same windows with the candidate in front, that the fp residual stream's largest
+|value| over the windows' own positions times `--absorb-margin` (default 1) lies below the largest over the prefix
+positions; while it does not, the next most frequent outlier token of the same statistics goes in front of the BOS, up
+to `--absorb-max-len` (default 6) tokens. A checkpoint that `auto`'s choice serves keeps it; if no candidate absorbs,
+the one of the smallest ratio is kept and the record says so. The record's `prefix_choice` holds the rule
+(`absorb`), `auto_tokens`, `margin`, `max_len`, every candidate (`tokens`, `text`, `window_max`, `prefix_max`,
+`ratio`, `absorbed`), `absorbed` and `stop`. Whatever the rule, the prefix enters the graph as any fixed prefix
+(int8 keys and values in every attention op, bound by the digest; the structural diff stays empty).
 
 Cells (`--graphs`, in that order, for every draw): `main` (default; per `--alphas` and `--glu-smooths`, default the
 checkpoint's), `smooth` (the same without the product balance, per `--alphas`), `scalar` (one norm gain per `--gains`,
@@ -244,6 +252,30 @@ TinyLlama and Qwen3-0.6B, `code/artifacts/results/quality/llama_diag_tinyllama_q
 `--prefix none --no-qk-balance --recipes scalar4 smooth55` (the massive activation of Qwen3-0.6B at position 0 from
 block 3 on, and the cosines it costs). Output: one JSON line per recipe (`blocks`, `opts`, `s_residual`, `env`, ...)
 on stdout and `--out`, the table on stderr. CPU only; 64 GB of host memory for the models up to Qwen3-1.7B.
+`--prefix absorb` (with `--absorb-margin`, `--absorb-max-len`) as in `ppl_llama.py`.
+
+### `prefix_check.py`
+
+Whether a fixed prefix absorbs a checkpoint's massive activations, in fp and without any integer graph: on the
+recipe's calibration windows (draw 0 of `ppl_llama.py`: `--calib-windows` (4) windows of `--seq` (2,048) tokens of the
+train split, without special tokens), each candidate prefix runs in front of every window, and per checkpoint
+(`--models`, default Llama-2-7B, Llama-2-13B, TinyLlama, Qwen3-1.7B and Qwen3-4B) the script prints for each candidate
+the residual stream's largest |value| (the embedding's and every block's output, the hook points of
+`hf_llama._hidden_max`, which sets `s_res`) over the prefix positions and over the windows' positions, their ratio
+(`absorbed` when the windows' times `--absorb-margin` lies below the prefix's) and where the windows' maximum sits
+(block boundary, window, position, channel and token; `--per-block`: both maxima per boundary). The candidates:
+`auto`'s choice, every candidate of the `absorb` rule (`--absorb-margin`, `--absorb-max-len`), the BOS alone, the
+defaults of `EXTRA` (Llama-2-7B's prefix as PrefixQuant publishes it, `. \n [BOS]`, its tokens in the other order and
+the BOS first; `<|endoftext|>` twice for Qwen3; `--no-extra` drops them) and `--prefixes NAME:IDS`. Each checkpoint
+ends with the prefix `auto` and `absorb` pick and whether the latter absorbs. Text on stdout; `--out` appends one JSON
+line per candidate and one summary per checkpoint. The checkpoints run in `--dtype` (default float16) on `--device`;
+the rule inside `ppl_llama.py` measures in fp32 on the CPU, so a ratio within rounding of 1 may fall on the other side
+there. One GPU of 48 GB (Llama-2-13B in fp16: 26 GB), about 32 GB of host memory, about half an hour for the five
+checkpoints (the run package's `prefixcheck` tier, job `q-prefix-check`):
+
+    python -m experiments.quality.prefix_check --device cuda --per-block --out prefix_check.jsonl
+    python -m experiments.quality.prefix_check --models TinyLlama/TinyLlama_v1.1 --smoke --seq 128 \
+        --calib-windows 1 --device cpu                     # a tiny random model (laptop)
 
 ### `llama_attrib.py`
 
@@ -316,6 +348,14 @@ is OpenLLaMA-7B's (q-openllama7-draws), which the paper does not report:
         --alphas 0.35 0.45 0.55 --glu-smooths 0.2 0.3 0.4 --device cuda --calib-device cpu --threads 8
     python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --draws 0 1 2 \
         --device cuda --calib-device cpu --threads 8      # and TinyLlama, Qwen3-1.7B
+
+The run package's `--llama-prefix absorb` runs every one of these Llama-family jobs (the `quality` tier's TinyLlama
+and Qwen3 cells, the `qllama` and `qcheck` tiers; its `qprefix` tier holds exactly these) with `--prefix absorb`, as
+jobs named `<job>-absorb` (`--jobs` picks one checkpoint's); `experiments/paper/numbers.py` reads the latest job's
+record of each cell (with `--llama-prefix absorb` preferring the records that agree with the rule) and names the rule
+of the Llama-family records it read. A cell of PrefixQuant's rule whose prefix absorbs by its own record is the
+rule's (the same tokens, the same graph), so only the checkpoints whose prefix the rule changes are measured again;
+one whose prefix does not absorb fails the text's claim under the rule (`experiments/package/README.md`, Sec. 4).
 
 The repository stores no record of these runs; the stored diagnosis is `llama_diag_tinyllama_qwen3-0.6b.txt` (above).
 

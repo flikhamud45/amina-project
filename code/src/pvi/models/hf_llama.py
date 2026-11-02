@@ -65,7 +65,9 @@ prefix), so the graph digest binds them. The query's RoPE positions start at ``P
 query positions only (the fp residual maximum behind ``s_res`` too), so the prefix's outliers never set one. The
 weight ops, their shapes and claim columns are the benchmark graph's (the structural diff stays empty); the prefix
 adds no claim.
-:func:`prefixquant_tokens` is PrefixQuant's rule for choosing the prefix.
+:func:`prefixquant_tokens` is PrefixQuant's rule for choosing the prefix; :func:`absorb_tokens` (opt-in) extends its
+choice until the prefix's own residual maximum lies above the calibration windows' (the prefix absorbs the massive
+activations), constants only as well.
 """
 
 from __future__ import annotations
@@ -83,7 +85,7 @@ from pvi.models.decoder import (CERTIFIED_PROB_MAX, CONFIGS, PROB_MAX, RES_MAX, 
 
 __all__ = ["build_llama_from_hf", "config_of", "same_shape", "matches_benchmark_graph", "lean_logits",
            "real_logits", "residual_states", "hf_residual_states", "block_cosines", "swiglu_exp", "residual_exp",
-           "prefix_attention", "prefix_kv", "prefixquant_tokens", "ROLES"]
+           "prefix_attention", "prefix_kv", "prefixquant_tokens", "absorb_tokens", "ROLES"]
 
 _ROWS_NORM = 1 << 14
 """Calibration rows read by the smoothing statistics (evenly spaced over all windows)."""
@@ -572,13 +574,14 @@ def prefix_kv(model, prefix_ids, n_layers: int | None = None) -> list[tuple[torc
     return out
 
 
-def _prefixquant_select(maxes: list[torch.Tensor], ids: torch.Tensor, bos: int, eta: float) -> tuple[list[int], dict]:
-    """PrefixQuant's choice from the token-wise maxima ``maxes`` (per block, ``[W, T]``: ``max_j |x_tj|`` at the
-    down projection's input of token ``t`` of window ``w``) of the windows ``ids [W, T]``: token ``t`` is an outlier
-    token of its block when ``R_t = max_t / median_t' max_t' > eta`` (the median over its window); ``o`` is the
-    ceiling of the largest, over blocks, mean number of outlier tokens per window; the prefix is the ``o - 1`` token
-    ids found most often among the outlier tokens -- not counting a window's first position, the initial-token
-    outlier every window has, nor ``bos`` -- by decreasing count (ties: smaller id first), then ``bos``."""
+def _outlier_ranking(maxes: list[torch.Tensor], ids: torch.Tensor, bos: int,
+                     eta: float) -> tuple[list[float], list[tuple[int, int]]]:
+    """PrefixQuant's outlier statistics of the token-wise maxima ``maxes`` (per block, ``[W, T]``: ``max_j |x_tj|`` at
+    the down projection's input of token ``t`` of window ``w``) of the windows ``ids [W, T]``: token ``t`` is an
+    outlier token of its block when ``R_t = max_t / median_t' max_t' > eta`` (the median over its window). Returns
+    per block the mean number of outlier tokens per window, and the token ids found among the outlier tokens -- not
+    counting a window's first position, the initial-token outlier every window has, nor ``bos`` -- with their
+    counts, by decreasing count (ties: smaller id first)."""
     per_block, freq = [], collections.Counter()
     for m in maxes:
         out = m / m.median(-1, keepdim=True).values.clamp_min(1e-30) > eta
@@ -586,23 +589,24 @@ def _prefixquant_select(maxes: list[torch.Tensor], ids: torch.Tensor, bos: int, 
         for w, t in out.nonzero().tolist():
             if t > 0 and int(ids[w, t]) != bos:
                 freq[int(ids[w, t])] += 1
+    return per_block, sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _prefixquant_select(maxes: list[torch.Tensor], ids: torch.Tensor, bos: int, eta: float) -> tuple[list[int], dict]:
+    """PrefixQuant's choice from the token-wise maxima ``maxes`` of the windows ``ids`` (:func:`_outlier_ranking`):
+    ``o`` is the ceiling of the largest, over blocks, mean number of outlier tokens per window; the prefix is the
+    ``o - 1`` token ids found most often among the outlier tokens, by decreasing count (ties: smaller id first), then
+    ``bos``."""
+    per_block, ranked = _outlier_ranking(maxes, ids, bos, eta)
     o = math.ceil(max(per_block, default=0.0))
-    extra = [tok for tok, _ in sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))][:max(0, o - 1)]
+    extra = [tok for tok, _ in ranked][:max(0, o - 1)]
     return extra + [bos], {"rule": "prefixquant", "eta": eta, "o": o, "outliers_per_block": per_block,
-                           "outlier_tokens": sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))[:16]}
+                           "outlier_tokens": ranked[:16]}
 
 
-def prefixquant_tokens(model, calib_ids: torch.Tensor, *, eta: float = 64.0,
-                       bos: int | None = None) -> tuple[list[int], dict]:
-    """The fixed prefix PrefixQuant prescribes (Chen et al. 2024, arXiv:2410.05265, Sec. 4; their ``eta_1 = 64``),
-    from the fp checkpoint's down-projection inputs on the calibration windows ``calib_ids [W, T]``
-    (:func:`_prefixquant_select`): the high-frequency outlier tokens, then the BOS token (their "[BOS] last, for
-    consistency"; ``bos`` defaults to the configuration's ``bos_token_id``: ``<s>`` for Llama, ``<|endoftext|>``
-    for Qwen3). A model whose only outlier is the initial token gets ``[bos]`` (their Llama-3-8B and Qwen-2-7B
-    prefix); Llama-2-7B's is ``. \\n [BOS]``. Returns the token ids and the statistics behind them."""
-    bos = model.config.bos_token_id if bos is None else bos
-    if bos is None:
-        raise ValueError("the model has no bos_token_id: give the prefix's token ids")
+def _down_maxes(model, calib_ids: torch.Tensor) -> list[torch.Tensor]:
+    """Per block, the fp checkpoint's token-wise maxima ``max_j |x_tj|`` at the down projection's input on the
+    calibration windows ``calib_ids [W, T]`` (no prefix), ``[W, T]`` float64 on the CPU, one window at a time."""
     layers = list(model.model.layers)
     maxes: list[list[torch.Tensor]] = [[] for _ in layers]
 
@@ -619,7 +623,102 @@ def prefixquant_tokens(model, calib_ids: torch.Tensor, *, eta: float = 64.0,
     finally:
         for h in hooks:
             h.remove()
-    return _prefixquant_select([torch.cat(m) for m in maxes], calib_ids.cpu(), int(bos), eta)
+    return [torch.cat(m) for m in maxes]
+
+
+def _bos_of(model, bos: int | None) -> int:
+    """``bos``, by default the configuration's ``bos_token_id``."""
+    bos = model.config.bos_token_id if bos is None else bos
+    if bos is None:
+        raise ValueError("the model has no bos_token_id: give the prefix's token ids")
+    return int(bos)
+
+
+def prefixquant_tokens(model, calib_ids: torch.Tensor, *, eta: float = 64.0,
+                       bos: int | None = None) -> tuple[list[int], dict]:
+    """The fixed prefix PrefixQuant prescribes (Chen et al. 2024, arXiv:2410.05265, Sec. 4; their ``eta_1 = 64``),
+    from the fp checkpoint's down-projection inputs on the calibration windows ``calib_ids [W, T]``
+    (:func:`_prefixquant_select`): the high-frequency outlier tokens, then the BOS token (their "[BOS] last, for
+    consistency"; ``bos`` defaults to the configuration's ``bos_token_id``: ``<s>`` for Llama, ``<|endoftext|>``
+    for Qwen3). A model whose only outlier is the initial token gets ``[bos]`` (their Llama-3-8B and Qwen-2-7B
+    prefix); Llama-2-7B's is ``. \\n [BOS]``. Returns the token ids and the statistics behind them."""
+    bos = _bos_of(model, bos)
+    return _prefixquant_select(_down_maxes(model, calib_ids), calib_ids.cpu(), bos, eta)
+
+
+ABSORB_MARGIN = 1.0
+"""The absorption rule's default margin (:func:`absorb_tokens`): the windows' residual maximum times the margin must
+lie below the prefix's."""
+ABSORB_MAX_LEN = 6
+"""The absorption rule's default largest prefix length (:func:`absorb_tokens`), the BOS included."""
+
+
+def _absorb_search(measure, first: list[int], pool: list[int], *, margin: float,
+                   max_len: int) -> tuple[list[int], dict]:
+    """The greedy search of :func:`absorb_tokens`. ``measure(tokens)`` gives ``(window max, prefix max)`` of a
+    candidate prefix (:func:`_hidden_max`); ``first`` is PrefixQuant's choice (its last token the BOS) and ``pool``
+    the further outlier tokens by decreasing count. A candidate absorbs when ``window max * margin < prefix max``.
+    From ``first`` on, while the candidate does not absorb, is shorter than ``max_len`` and the pool is not empty,
+    the next pool token is added after the outlier tokens, in front of the BOS. Returns the first candidate that
+    absorbs, else the one of the smallest ratio ``window max / prefix max`` (the earlier on a tie), and the record:
+    every candidate with both maxima, the ratio and whether it absorbs, whether the chosen one does, and why the
+    search stopped (``absorbed``, ``max_len`` or ``no outlier token left``)."""
+    if margin <= 0 or max_len < 1:
+        raise ValueError(f"the absorption rule needs a margin > 0 and a length >= 1, not {margin} and {max_len}")
+    extra, bos, pool = list(first[:-1]), first[-1], list(pool)
+    cand, tried = list(first), []
+    while True:
+        win, pre = (float(v) for v in measure(cand))
+        ok = win * margin < pre
+        tried.append({"tokens": list(cand), "window_max": win, "prefix_max": pre,
+                      "ratio": win / pre if pre > 0 else None, "absorbed": bool(ok)})
+        if ok:
+            stop = "absorbed"
+            break
+        if len(cand) >= max_len:
+            stop = "max_len"
+            break
+        if not pool:
+            stop = "no outlier token left"
+            break
+        extra.append(pool.pop(0))
+        cand = extra + [bos]
+    best = tried[-1] if tried[-1]["absorbed"] else min(
+        tried, key=lambda c: math.inf if c["ratio"] is None else c["ratio"])
+    return list(best["tokens"]), {"candidates": tried, "absorbed": best["absorbed"], "stop": stop}
+
+
+def absorb_tokens(model, calib_ids: torch.Tensor, *, margin: float = ABSORB_MARGIN, max_len: int = ABSORB_MAX_LEN,
+                  eta: float = 64.0, bos: int | None = None) -> tuple[list[int], dict]:
+    """PrefixQuant's prefix (:func:`prefixquant_tokens`), checked for absorption and extended until it absorbs: the
+    opt-in rule ``absorb`` (the main recipe's rule stays :func:`prefixquant_tokens`).
+
+    A fixed prefix serves only if it takes the massive activations: the fp residual stream's largest ``|value|``
+    over the calibration windows' own positions, with the candidate in front (:func:`_hidden_max`, the value behind
+    ``s_res``), must lie below the largest over the prefix positions (by the factor ``margin``). PrefixQuant's rule
+    counts outlier tokens without a prefix, and its ``o - 1`` tokens can leave out a delimiter whose first occurrence
+    in a window then forms a massive activation of its own, above the prefix's. After CushionCache's greedy search
+    (Son et al., EMNLP 2024), which adds prefix tokens one at a time, the candidates are PrefixQuant's choice, then
+    that choice with the next most frequent outlier token of the same statistics added, and so on
+    (:func:`_absorb_search`), up to ``max_len`` tokens. The added token goes after the outlier tokens and the BOS
+    stays last (PrefixQuant's order): position 0 holds the initial-token activation whatever its token, so moving the
+    BOS forward removes no window's activation, while a delimiter's occurrence in the prefix is what takes its first
+    occurrence's activation out of the windows. A model that PrefixQuant's choice already serves keeps exactly that
+    prefix. Returns the token ids (the first candidate that absorbs, else the one of the smallest ratio, recorded as
+    not absorbed) and PrefixQuant's statistics with ``rule: "absorb"``, ``auto_tokens`` (PrefixQuant's choice),
+    ``margin``, ``max_len``, ``candidates`` (each one's ``tokens``, ``window_max``, ``prefix_max``, ``ratio`` and
+    ``absorbed``), ``absorbed`` and ``stop``. The prefix enters the graph as any fixed prefix
+    (``build_llama_from_hf(prefix_tokens=)``): its keys and values become int8 constants and the digest binds them."""
+    bos = _bos_of(model, bos)
+    maxes = _down_maxes(model, calib_ids)
+    ids = calib_ids.cpu()
+    first, stats = _prefixquant_select(maxes, ids, bos, eta)
+    pool = [tok for tok, _ in _outlier_ranking(maxes, ids, bos, eta)[1] if tok not in first]
+    del maxes
+    chosen, record = _absorb_search(
+        lambda tokens: _hidden_max(model, calib_ids, torch.tensor([tokens], dtype=torch.int64)), first, pool,
+        margin=margin, max_len=max_len)
+    return chosen, dict(stats, rule="absorb", auto_tokens=first, margin=margin, max_len=max_len, **record)
 
 
 def config_of(hf_config, name: str | None = None) -> DecoderConfig:
@@ -668,8 +767,9 @@ def build_llama_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, n
       massive activations at the down projection's input. Both are cheap ops the verifier recomputes; the graph
       then differs from the benchmark's in exactly these two ops per block (their notes, and the residual add also
       reads the product's two inputs), and V1 leaves the down projection clear (its reader is no ``requant_fn``).
-    * ``prefix_tokens`` (default None = off; the main recipe's comes from :func:`prefixquant_tokens`): a fixed
-      public prefix of ``P`` token ids (e.g. the BOS alone) in front of every query.
+    * ``prefix_tokens`` (default None = off; the main recipe's comes from :func:`prefixquant_tokens`, the opt-in
+      absorption-checked rule's from :func:`absorb_tokens`): a fixed public prefix of ``P`` token ids (e.g. the BOS
+      alone) in front of every query.
       Its keys and values per layer (:func:`prefix_kv`, the fp checkpoint's) become int8 constants of the attention
       op on that layer's k and v scales, the query's RoPE positions start at ``P``, and every scale -- ``s_res``
       from the fp residual maximum included -- is calibrated on the query positions only (the calibration windows

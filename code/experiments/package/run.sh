@@ -48,6 +48,16 @@
 #              not prove is recorded as failed), 3 repetitions of layers 0 and 1
 #              (experiments/comparison/zkllm/run_zkllm.sh); only with --llama-licence; its records go to
 #              logs/<name>/zkllm/
+#     prefixcheck  [not in 'all'] the fp check of the Llama recipe's fixed prefix (experiments/quality/prefix_check.py,
+#              no integer graph, one job of about half an hour): per checkpoint of the text's Llama-family cells
+#              (Llama-2-7B and Llama-2-13B with --llama-licence, TinyLlama, Qwen3-1.7B, Qwen3-4B), PrefixQuant's
+#              prefix, every candidate of the absorption rule (--absorb-margin, --absorb-max-len) and a few others in
+#              front of the calibration windows: the residual stream's largest |value| over the prefix and over the
+#              windows, and the block, position, channel and token of the windows'; the prefix --llama-prefix absorb
+#              would pick (records: logs/<name>/prefix_check.jsonl)
+#     qprefix  [not in 'all'] the Llama-family quality jobs alone, with --llama-prefix's rule: the quality tier's
+#              TinyLlama and Qwen3 cells and the whole qllama and qcheck tiers (not the OPT jobs), so that every
+#              Llama-family number of the text can be measured again with another prefix rule
 #     gate     [not in 'all'] the full-size checks, run once on the final platform before the run (after the smoke;
 #              about 1.5 to 3 hours; no --rehearsal): V1's GKR instances of 2^27 leaves on the GPU prover with both CPU
 #              verifiers and the GPU verifier (two Llama-2-7B blocks at 2,048 tokens), OPT-1.3B at 2,048 tokens
@@ -113,6 +123,20 @@
 #     --llama-licence   the Llama-2 cells (real, qllama, zkllm) and the real Llama-2 weights of every cost cell: only
 #                       with your own Llama-2 licence and Hugging Face token (HF_TOKEN); the rehearsal's Llama-2 jobs
 #                       read the gated repository from a compute node
+#     --llama-prefix RULE  the rule of the Llama recipe's fixed prefix in every Llama-family quality job (the quality
+#                       tier's TinyLlama and Qwen3 cells, the qllama, qcheck and qprefix tiers; ppl_llama.py --prefix):
+#                       auto (the default: PrefixQuant's rule, the main recipe's; the jobs as without the option) or
+#                       absorb (PrefixQuant's choice extended until the prefix absorbs the calibration windows' massive
+#                       activations, hf_llama.absorb_tokens): the same jobs with --prefix absorb, named
+#                       sp-<cell>-absorb (a --local run then runs them although the auto jobs ended successfully;
+#                       experiments/paper/numbers.py reads the latest job's record of a cell, or --llama-prefix's)
+#     --absorb-margin X  with --llama-prefix absorb (and the prefixcheck tier): a candidate prefix absorbs when the
+#                       windows' fp residual maximum times X lies below the prefix's (default 1)
+#     --absorb-max-len N  with --llama-prefix absorb (and the prefixcheck tier): the longest candidate prefix, BOS
+#                       included (default 6)
+#     --jobs LIST       only these jobs of the given tiers (comma-separated names without sp-, as the dry run lists
+#                       them: e.g. q-llama7-a0.55-absorb,q-llama7-draws-absorb with --llama-prefix absorb qprefix); a
+#                       name that none of the tiers has stops the submission
 #     --random-weights  every cost cell on random weights of its model's shapes (the real tier's real-weight cells
 #                       excepted).  By default a cost cell of Llama-2-7B and Llama-2-13B (with --llama-licence),
 #                       OPT-125M, OPT-1.3B, OPT-6.7B and Qwen3-4B takes the model's Hugging Face checkpoint (--real;
@@ -171,6 +195,7 @@ PLATFORM="" DRY="" REH="" LOCAL="" OPTIONAL="" CHAIN=1 EXCL="--exclusive" PIN=1 
 POL=cnn18c CACHE="" PY="" EXTRA_PP="" LLAMA="" BIGMEM=1 ONEJOB="" MAXH=24 TIERS=() RANDOMW=""
 REQGPU="L40S" REQCPU="EPYC 9334" GRES="${SBATCH_GRES:-}" EXCLUDE="" FROMONE=""
 ZKHOME="" ZKSCRATCH="" ZKPY="" CUDAHOME="" TELI=1 SNAPON=1 ZKSEQS=64,512,1024,2048
+LPREFIX=auto AMARGIN=1 AMAXLEN=6 ABSORB_SET="" JOBSEL="" MATCHED=","
 ARGV=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -207,6 +232,10 @@ while [ $# -gt 0 ]; do
     --telemetry-interval) TELI=$2; shift ;;
     --no-env-snapshot) SNAPON="" ;;
     --zkllm-seqs) ZKSEQS=$2; shift ;;
+    --llama-prefix) LPREFIX=$2; shift ;;
+    --jobs) JOBSEL=$2; shift ;;
+    --absorb-margin) AMARGIN=$2; ABSORB_SET=1; shift ;;
+    --absorb-max-len) AMAXLEN=$2; ABSORB_SET=1; shift ;;
     -h|--help) usage 0 ;;
     -*) echo "unknown option $1" >&2; usage ;;
     *) TIERS+=("$1") ;;
@@ -223,6 +252,16 @@ done
 [ -n "$REQGPU" ] && [ -n "$REQCPU" ] || { echo "--require-gpu, --require-cpu: a part of the name, or 'any'" >&2; exit 2; }
 [[ "$ZKSEQS" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || { echo "--zkllm-seqs: prompt lengths, comma-separated" >&2
   exit 2; }
+case "$LPREFIX" in auto|absorb) ;; *) echo "--llama-prefix: auto or absorb" >&2; exit 2 ;; esac
+[[ "$AMARGIN" =~ ^[0-9]*\.?[0-9]+$ ]] && awk -v m="$AMARGIN" 'BEGIN { exit !(m > 0) }' \
+  || { echo "--absorb-margin: a number above 0" >&2; exit 2; }
+[[ "$AMAXLEN" =~ ^[1-9][0-9]*$ ]] || { echo "--absorb-max-len: a whole number of tokens, at least 1" >&2; exit 2; }
+[ -z "$ABSORB_SET" ] || [ "$LPREFIX" = absorb ] || [[ " ${TIERS[*]} " == *" prefixcheck "* ]] \
+  || { echo "--absorb-margin, --absorb-max-len: the absorption rule's, with --llama-prefix absorb or the prefixcheck \
+tier" >&2; exit 2; }
+# the Llama-family quality jobs' prefix rule: with absorb, ppl_llama.py's options (LP) and the jobs' name suffix (LS)
+LP="" LS=""
+[ "$LPREFIX" = auto ] || LP=" --prefix $LPREFIX --absorb-margin $AMARGIN --absorb-max-len $AMAXLEN" LS="-$LPREFIX"
 # the zkllm tier's lengths other than tab:eval-compare's 2,048 (comma-separated; empty: none)
 ZKSHORT="$(tr ',' '\n' <<<"$ZKSEQS" | awk '$1 != 2048 && !seen[$1]++' | paste -sd, -)"
 [ -f code/experiments/package/run.sh ] || { echo "run this from the repository root" >&2; exit 2; }
@@ -273,6 +312,8 @@ CHILD="" CURRENT="" # --local: the running job's process and its name|log
 
 sub() {   # sub <name> <hours> <memGB> <command...>: one job, chained after the previous one
   # (the first job submitted after the smoke also waits for the smoke's success: GATE)
+  [ -z "$JOBSEL" ] || [[ ",$JOBSEL," == *",$1,"* ]] || return 0     # --jobs: not one of the named jobs
+  [ -z "$JOBSEL" ] || MATCHED+="$1,"
   local name="sp-$1" hours=$2 mem=$3 jid dep="singleton" pin=""; shift 3
   [ "$mem" -gt "$MEMMAX" ] && mem=$MEMMAX
   if [ -n "$PLAN" ]; then
@@ -432,6 +473,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     gen) echo 5-7.5 ;; batch) echo 3-6 ;; real) echo 11-16 ;; setup) echo 1.5-2.5 ;; improve) echo 6-12.5 ;;
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
     qcheck) echo 9-13 ;;
+    prefixcheck) echo 0.3-1 ;; qprefix) if [ -n "$LLAMA" ]; then echo 54-70; else echo 24-36; fi ;;
     tv) echo 2-3 ;; attack) echo 7-9 ;; long) echo 11-18 ;; gate) echo 1.5-3 ;;
     zkllm) echo 6-9 ;;
   esac
@@ -1066,8 +1108,7 @@ tier_quality() {
     sub q-opt125 1 64 "$P --model facebook/opt-125m --windows 2 --mass-windows 1 && $P --model facebook/opt-125m \
 --recipe legacy --graphs smooth --pbits 11 --windows 2 --mass-windows 1 --split validation"
     sub q-opt125-attr 1 64 "$A --model facebook/opt-125m --windows 2 --skip-sub"
-    sub q-smoke 1 64 "$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 && \
-$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 --glu-exps 8 --exp-only"
+    quality_llama
     sub q-zeroshot-opt-125m 1 64 "$Z --model facebook/opt-125m --limit 20 && $Z --model facebook/opt-125m \
 --recipe legacy --limit 20"
     sub q-digest-opt125 1 64 "$M.quality.digest_check --model facebook/opt-125m --threads 8 --commit \
@@ -1102,14 +1143,28 @@ $P --model facebook/opt-125m --graphs smooth --alphas 0.3 0.4 0.5 0.7 --pbits 11
 $M.quality.digest_check --model facebook/opt-125m --threads 8 --commit --commit-device cuda && \
 $M.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cuda && \
 $M.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cpu"
-  sub q-tinyllama 2 96 "$L --model TinyLlama/TinyLlama_v1.1"
-  sub q-qwen17 2 96 "$L --model Qwen/Qwen3-1.7B-Base && $L --model Qwen/Qwen3-1.7B-Base --glu-smooths 0.4 --glu-exps 8"
-  sub q-qwen4 5 192 "$L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-4b.pt && \
-$L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-4b.pt --glu-exps 8 --exp-only"
+  quality_llama
   sub q-qwen4-diag 2 192 "$M.quality.llama_diag --model Qwen/Qwen3-4B-Base --recipes smooth55 scalar4 && \
 $M.quality.llama_diag --model Qwen/Qwen3-4B-Base --recipes smooth55 scalar4 --prefix 151643,151643 && \
 $L --model Qwen/Qwen3-4B-Base --seq 128 --windows 16 --graphs smooth --glu-exps 8 --ref-device cpu \
 --prefix 151643,151643 && $M.quality.llama_attrib --model Qwen/Qwen3-4B-Base --blocks all --recipe smooth55"
+}
+
+quality_llama() {
+  # the quality tier's Llama-family cells (TinyLlama and Qwen3 with the main Llama recipe), with --llama-prefix's rule
+  # (also the qprefix tier's); in the rehearsal the recipe on a smoke model of Qwen3-0.6B's vocabulary.  Qwen3-4B's
+  # fp32 CPU reference is kept per prefix rule (logs/<name>/ref_qwen3-4b.pt, ref_qwen3-4b-absorb.pt)
+  local L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8$LP"
+  if [ -n "$REH" ]; then
+    sub "q-smoke$LS" 1 64 "$L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 \
+&& $L --model Qwen/Qwen3-0.6B-Base --smoke --seq 128 --windows 2 --calib-windows 1 --chunk 64 --glu-exps 8 --exp-only"
+    return 0
+  fi
+  sub "q-tinyllama$LS" 2 96 "$L --model TinyLlama/TinyLlama_v1.1"
+  sub "q-qwen17$LS" 2 96 "$L --model Qwen/Qwen3-1.7B-Base && $L --model Qwen/Qwen3-1.7B-Base --glu-smooths 0.4 \
+--glu-exps 8"
+  sub "q-qwen4$LS" 5 192 "$L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-4b$LS.pt \
+&& $L --model Qwen/Qwen3-4B-Base --ref-device cpu --ref-cache $ROOT/$LOGS/ref_qwen3-4b$LS.pt --glu-exps 8 --exp-only"
 }
 
 tier_qllama() {
@@ -1122,23 +1177,23 @@ tier_qllama() {
   # alphas, two product balances, the validation split, an fp16 reference) on a smoke model with the vocabulary of
   # Llama-2-7B, read from the gated repository by a job, with --llama-licence, and of OpenLLaMA-7B (its tokenizer
   # needs sentencepiece and protobuf) without it.
-  local L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8" a
+  local L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8$LP" a
   if [ -n "$REH" ]; then
     local grid="--smoke --split validation --seq 128 --windows 2 --calib-windows 1 --chunk 64 --alphas 0.45 0.55 \
 --glu-smooths 0.1 0.2 --ref-dtype float16"
     if [ -n "$LLAMA" ]; then
-      sub q-llama-access 1 32 "$L --model meta-llama/Llama-2-7b-hf $grid"
+      sub "q-llama-access$LS" 1 32 "$L --model meta-llama/Llama-2-7b-hf $grid"
     else
-      sub q-openllama7-smoke 1 32 "$L --model openlm-research/open_llama_7b_v2 $grid"
+      sub "q-openllama7-smoke$LS" 1 32 "$L --model openlm-research/open_llama_7b_v2 $grid"
     fi
     return 0
   fi
   if [ -z "$LLAMA" ]; then
     # the licence-free stand-in: OpenLLaMA-7B with Llama-2-7B's recipe (0.55, 0.2) on the test split, and that alpha
     # and product balance against their neighbours on the validation split (the fp32 reference on the GPU)
-    sub q-openllama7 4 192 "$L --model openlm-research/open_llama_7b_v2 --config llama2-7b --structure \
---ref-device cpu --ref-cache $ROOT/$LOGS/ref_open_llama_7b_v2.pt"
-    sub q-openllama7-validation 10 192 "$L --model openlm-research/open_llama_7b_v2 --split validation \
+    sub "q-openllama7$LS" 4 192 "$L --model openlm-research/open_llama_7b_v2 --config llama2-7b --structure \
+--ref-device cpu --ref-cache $ROOT/$LOGS/ref_open_llama_7b_v2$LS.pt"
+    sub "q-openllama7-validation$LS" 10 192 "$L --model openlm-research/open_llama_7b_v2 --split validation \
 --alphas 0.45 0.55 0.65 --glu-smooths 0.1 0.2 0.3"
     echo "tier qllama: no Llama-2 rows (they need your own Llama-2 licence: --llama-licence)" >&2
     return 0
@@ -1150,17 +1205,17 @@ tier_qllama() {
   # job's limit leaves room over its estimate.  The reference on the GPU: Llama-2-7B's in fp32, Llama-2-13B's in fp16,
   # as the text states
   for a in 0.45 0.55 0.65; do
-    sub "q-llama7-a$a" 6 192 "$L --model meta-llama/Llama-2-7b-hf --alphas $a --glu-smooths 0.1 0.2 0.3 --structure"
+    sub "q-llama7-a$a$LS" 6 192 "$L --model meta-llama/Llama-2-7b-hf --alphas $a --glu-smooths 0.1 0.2 0.3 --structure"
   done
   for a in 0.45 0.55 0.65; do
-    sub "q-llama7-validation-a$a" 6 192 "$L --model meta-llama/Llama-2-7b-hf --split validation --alphas $a \
+    sub "q-llama7-validation-a$a$LS" 6 192 "$L --model meta-llama/Llama-2-7b-hf --split validation --alphas $a \
 --glu-smooths 0.1 0.2 0.3"
   done
   for a in 0.5 0.6 0.7; do
-    sub "q-llama13-a$a" 7 256 "$L --model meta-llama/Llama-2-13b-hf --alphas $a --ref-dtype float16 --structure"
+    sub "q-llama13-a$a$LS" 7 256 "$L --model meta-llama/Llama-2-13b-hf --alphas $a --ref-dtype float16 --structure"
   done
   for a in 0.5 0.6 0.7; do
-    sub "q-llama13-validation-a$a" 7 256 "$L --model meta-llama/Llama-2-13b-hf --split validation --alphas $a \
+    sub "q-llama13-validation-a$a$LS" 7 256 "$L --model meta-llama/Llama-2-13b-hf --split validation --alphas $a \
 --ref-dtype float16"
   done
 }
@@ -1173,23 +1228,51 @@ tier_qcheck() {
   # chosen on draw 0) on TinyLlama, Qwen3-1.7B and, with --llama-licence, Llama-2-7B (without it OpenLLaMA-7B, which
   # the paper does not report: macros.DRAW_MODELS).  Its records are the quality tier's (job names q-...).  The
   # rehearsal runs the validation grid and the draws on a smoke model with TinyLlama's vocabulary.
-  local L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8"
+  local L="$M.quality.ppl_llama --device cuda --calib-device cpu --threads 8$LP"
   if [ -n "$REH" ]; then
-    sub q-check-smoke 1 32 "$L --model TinyLlama/TinyLlama_v1.1 --smoke --split validation --seq 128 --windows 2 \
+    sub "q-check-smoke$LS" 1 32 "$L --model TinyLlama/TinyLlama_v1.1 --smoke --split validation --seq 128 --windows 2 \
 --calib-windows 1 --chunk 64 --alphas 0.65 0.75 --glu-smooths 0.1 0.2 --draws 0 1"
     return 0
   fi
-  sub q-tinyllama-validation 4 96 "$L --model TinyLlama/TinyLlama_v1.1 --split validation --alphas 0.65 0.75 0.85 \
+  sub "q-tinyllama-validation$LS" 4 96 "$L --model TinyLlama/TinyLlama_v1.1 --split validation --alphas 0.65 0.75 0.85 \
 --glu-smooths 0.1 0.2 0.3"
-  sub q-qwen17-validation 5 96 "$L --model Qwen/Qwen3-1.7B-Base --split validation --alphas 0.35 0.45 0.55 \
+  sub "q-qwen17-validation$LS" 5 96 "$L --model Qwen/Qwen3-1.7B-Base --split validation --alphas 0.35 0.45 0.55 \
 --glu-smooths 0.2 0.3 0.4"
-  sub q-tinyllama-draws 2 96 "$L --model TinyLlama/TinyLlama_v1.1 --draws 0 1 2"
-  sub q-qwen17-draws 3 96 "$L --model Qwen/Qwen3-1.7B-Base --draws 0 1 2"
+  sub "q-tinyllama-draws$LS" 2 96 "$L --model TinyLlama/TinyLlama_v1.1 --draws 0 1 2"
+  sub "q-qwen17-draws$LS" 3 96 "$L --model Qwen/Qwen3-1.7B-Base --draws 0 1 2"
   if [ -n "$LLAMA" ]; then
-    sub q-llama7-draws 6 192 "$L --model meta-llama/Llama-2-7b-hf --draws 0 1 2"
+    sub "q-llama7-draws$LS" 6 192 "$L --model meta-llama/Llama-2-7b-hf --draws 0 1 2"
   else
-    sub q-openllama7-draws 6 192 "$L --model openlm-research/open_llama_7b_v2 --draws 0 1 2"
+    sub "q-openllama7-draws$LS" 6 192 "$L --model openlm-research/open_llama_7b_v2 --draws 0 1 2"
   fi
+}
+
+tier_prefixcheck() {
+  # [not in 'all'] the fp check of the Llama recipe's fixed prefix (experiments/quality/prefix_check.py): for each
+  # checkpoint of the text's Llama-family cells (Llama-2-7B and Llama-2-13B with --llama-licence, TinyLlama, Qwen3-1.7B
+  # and Qwen3-4B) on its calibration windows, PrefixQuant's prefix, every candidate of the absorption rule
+  # (--absorb-margin, --absorb-max-len) and a few others: the fp residual stream's largest |value| over the prefix and
+  # over the windows, per block boundary, and the boundary, window, position, channel and token of the windows'; the
+  # prefix --llama-prefix absorb would pick.  The checkpoints in fp16 on the GPU, no integer graph (about half an
+  # hour, mostly their loading); its records go to logs/<name>/prefix_check.jsonl.  The rehearsal: a smoke model of
+  # TinyLlama's vocabulary
+  local pc="$M.quality.prefix_check --device cuda --threads 8 --absorb-margin $AMARGIN --absorb-max-len $AMAXLEN"
+  local m="TinyLlama/TinyLlama_v1.1 Qwen/Qwen3-1.7B-Base Qwen/Qwen3-4B-Base"
+  if [ -n "$REH" ]; then
+    sub q-prefix-check 1 32 "$pc --models TinyLlama/TinyLlama_v1.1 --smoke --seq 128 --calib-windows 1"
+    return 0
+  fi
+  [ -z "$LLAMA" ] || m="meta-llama/Llama-2-7b-hf meta-llama/Llama-2-13b-hf $m"
+  sub q-prefix-check 2 128 "$pc --models $m --per-block --out $ROOT/$LOGS/prefix_check.jsonl"
+}
+
+tier_qprefix() {
+  # [not in 'all'] the Llama-family quality jobs alone, with --llama-prefix's rule: the quality tier's TinyLlama and
+  # Qwen3 cells (quality_llama), then the qllama and the qcheck tier, each job as its own tier submits it (with
+  # --llama-prefix absorb named sp-<cell>-absorb); the OPT jobs of the quality tier are not run again
+  quality_llama
+  tier_qllama
+  tier_qcheck
 }
 
 tier_tv() {
@@ -1407,11 +1490,14 @@ preflight() {   # what the jobs need from this host and the scheduler, checked b
   local bad=() t hf="" spm="" big gb=60 v d
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do
-    case "$t" in real|quality|qllama|qcheck|tv|attack|gate) hf=1 ;; zkllm) [ -z "$LLAMA" ] || hf=1 ;; esac
+    case "$t" in real|quality|qllama|qcheck|qprefix|prefixcheck|tv|attack|gate) hf=1 ;;
+      zkllm) [ -z "$LLAMA" ] || hf=1 ;;
+    esac
     # the cost tiers' real-weight cells (rw): OPT-125M, OPT-1.3B and OPT-6.7B (about 16 GB), Qwen3-4B (8 GB) and,
     # with --llama-licence, Llama-2-7B and Llama-2-13B (40 GB), and WikiText-2
     case "$t" in cpuv|cpux|v1|serve|bench|gpuv|gen|batch|setup|improve) [ -n "$RANDOMW" ] || hf=1 ;; esac
     [ "$t" != qllama ] || [ -n "$LLAMA" ] || spm=1       # OpenLLaMA-7B's jobs run only without --llama-licence
+    [ "$t" != qprefix ] || [ -n "$LLAMA" ] || spm=1      # (the qllama and qcheck tiers' jobs among its own)
     [ "$t" != qcheck ] || [ -n "$LLAMA$REH" ] || spm=1  # (the qcheck tier's rehearsal: TinyLlama's tokenizer)
   done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
@@ -1620,13 +1706,14 @@ run_tier() {   # run_tier <tier>: submit it and, in a dry run, print its summary
   local n0=$NJOBS h0=$HOURS
   "tier_$1"
   [ -z "$DRY" ] || [ -n "$PLAN" ] \
-    || echo "# tier $1: $((NJOBS - n0)) jobs, job limits $((HOURS - h0)) h, estimate $(est "$1") h"
+    || echo "# tier $1: $((NJOBS - n0)) jobs, job limits $((HOURS - h0)) h, estimate $(est "$1") \
+h${JOBSEL:+ for the whole tier}"
 }
 
 MUST="smoke cpuv cpux v1 serve bench gpuv gen batch real setup improve quality qllama qcheck tv attack"
 if [ "${TIERS[0]}" = all ]; then TIERS=($MUST ${OPTIONAL:+long zkllm}); fi
 for tier in "${TIERS[@]}"; do
-  case " $MUST long zkllm gate " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
+  case " $MUST long zkllm gate prefixcheck qprefix " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
   # (the gate tier is never in 'all', and its cells are full size only)
   [ "$tier" != gate ] || [ -z "$REH" ] || { echo "the gate tier checks the full sizes: run it without --rehearsal" \
 >&2; exit 2; }
@@ -1636,6 +1723,10 @@ for tier in "${TIERS[@]}"; do [ "$tier" = bench ] && need_images; done
 PLAN=1
 for tier in "${TIERS[@]}"; do run_tier "$tier"; done 2> /dev/null
 PLAN=""
+for j in ${JOBSEL//,/ }; do
+  [[ "$MATCHED" == *",$j,"* ]] || { echo "--jobs: no job $j in the tiers ${TIERS[*]} (the dry run lists them)" >&2
+    exit 2; }
+done
 preflight
 [ -n "$DRY$LOCAL" ] || (cd "$ROOT/code" && export PYTHONPATH="$ROOT/code/src:$ROOT/code${EXTRA_PP:+:$EXTRA_PP}" \
   && sources)

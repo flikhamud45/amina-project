@@ -214,16 +214,28 @@ def token_ids(tok, text: str, prefix_spec) -> torch.Tensor:
     return tok(text, return_tensors="pt", add_special_tokens=not prefix_spec).input_ids[0]
 
 
-def prefix_of(spec, model, calib: torch.Tensor, tok=None) -> tuple[list[int] | None, dict]:
+def prefix_of(spec, model, calib: torch.Tensor, tok=None, *, margin: float | None = None,
+              max_len: int | None = None) -> tuple[list[int] | None, dict]:
     """The fixed public prefix's token ids for ``spec`` and a record of the choice: None or ``""`` (no prefix),
-    ``auto`` (``hf_llama.prefixquant_tokens`` on the calibration windows ``calib``), ``bos`` (the configuration's
-    BOS alone) or comma-separated ids."""
+    ``auto`` (``hf_llama.prefixquant_tokens`` on the calibration windows ``calib``), ``absorb`` (opt-in:
+    ``hf_llama.absorb_tokens``, PrefixQuant's choice extended until it absorbs the windows' massive activations, by
+    the factor ``margin`` and with at most ``max_len`` tokens; None: ``hf_llama.ABSORB_MARGIN`` and
+    ``ABSORB_MAX_LEN``), ``bos`` (the configuration's BOS alone) or comma-separated ids.  With ``tok`` the record
+    holds each token's text (``text``; with ``absorb`` each candidate's too)."""
     from pvi.models import hf_llama
     if not spec:
         return None, {}
     if spec == "auto":
         ids, stats = hf_llama.prefixquant_tokens(model, calib)
         stats["outlier_tokens"] = [list(t) for t in stats["outlier_tokens"]]
+    elif spec == "absorb":
+        ids, stats = hf_llama.absorb_tokens(
+            model, calib, margin=hf_llama.ABSORB_MARGIN if margin is None else margin,
+            max_len=hf_llama.ABSORB_MAX_LEN if max_len is None else max_len)
+        stats["outlier_tokens"] = [list(t) for t in stats["outlier_tokens"]]
+        if tok is not None:
+            for c in stats["candidates"]:
+                c["text"] = [tok.decode([i]) for i in c["tokens"]]
     elif spec == "bos":
         if model.config.bos_token_id is None:
             raise ValueError("the configuration has no bos_token_id: give the prefix's ids")

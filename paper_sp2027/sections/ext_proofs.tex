@@ -124,7 +124,7 @@ pairs of position $t$ by the angles $t\theta_j$, which depend on the absolute in
 attention, row $t$ forms the scores $s_j=q_t\cdot k_j$, the gaps $\max_{j'\le t}s_{j'}-s_j$ over the
 keys $j\le t$ that the causal mask allows, $e_j$ from the public table and $e_j=0$ for $j>t$, then
 $S=\sum_je_j$ and $P_j=\lfloor(2P_{\max}e_j+S)/(2S)\rfloor$, with the public constant $P_{\max}$
-(255 in the cost benchmarks, 2{,}047 in the certified models), which is $\lfloor S/(2S)\rfloor=0$ for
+(2{,}047 in every measured cell; 255 gives 8-bit probabilities), which is $\lfloor S/(2S)\rfloor=0$ for
 $j>t$.
 The output $\sum_jP_jv_j$, requantised entrywise, therefore depends only on $q_t$ and on
 $(k_j,v_j)_{j\le t}$, through formulas that do not involve $T$. (The implementation chooses between

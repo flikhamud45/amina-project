@@ -77,7 +77,7 @@ import torch.nn.functional as F
 from experiments.common import records
 from experiments.common.checkpoints import load_llama, prefix_of, smoke_model
 from experiments.quality.llama_diag import RECIPES, data, recipe
-from experiments.quality.ppl_llama import prefix_spec
+from experiments.quality.ppl_llama import absorb_options, add_absorb_arguments, prefix_spec
 from pvi.core.graph import INT8_MAX, CheapOp, MatOp, requant
 from pvi.models import hf_llama
 from pvi.models.decoder import PROB_MAX, RES_MAX, SHIFT, integer_attention
@@ -650,8 +650,10 @@ def main() -> None:
     ap.add_argument("--flag-cos", type=float, default=0.99, help="flag an op whose own mean cosine falls below this")
     ap.add_argument("--flag-nats", type=float, default=0.1, help="flag an op adding more to the scores' error (nats)")
     ap.add_argument("--prefix", nargs="?", const="auto", default="auto",
-                    help="the fixed public prefix: auto (PrefixQuant's rule, the main recipe's), bos, comma-separated "
+                    help="the fixed public prefix: auto (PrefixQuant's rule, the main recipe's), absorb (PrefixQuant's "
+                         "choice extended until it absorbs the windows' massive activations), bos, comma-separated "
                          "token ids, or none")
+    add_absorb_arguments(ap)
     ap.add_argument("--smoke", action="store_true", help="a 2-block random model with the checkpoint's vocabulary")
     ap.add_argument("--threads", type=int, default=8, help="torch's intra-op threads")
     ap.add_argument("--out", default=None, help="a JSONL file the records are appended to")
@@ -663,7 +665,7 @@ def main() -> None:
     n_all = model.config.num_hidden_layers
     blocks = list(range(n_all)) if args.blocks == "all" else [int(s) for s in args.blocks.split(",")]
     with torch.no_grad():
-        prefix, choice = prefix_of(spec, model, calib, tok)
+        prefix, choice = prefix_of(spec, model, calib, tok, **absorb_options(args))
         opts = recipe(args.recipe, args.model)
         graph, info = hf_llama.build_llama_from_hf(model, calib, qk_balance=not args.no_qk_balance,
                                                    prefix_tokens=prefix, n_layers=max(blocks) + 1, **opts)

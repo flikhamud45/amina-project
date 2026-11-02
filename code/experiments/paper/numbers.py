@@ -27,6 +27,13 @@ Inputs (nothing here runs a model):
   records).  A main cell is read only from records of its weights (:data:`experiments.paper.records.MAIN`): a real
   cell whose real record is missing is missing (the exit status is 1), never filled from its random twin; the real
   tier's twins select their weights explicitly;
+* the rule of the Llama recipe's fixed prefix: ``--llama-prefix`` (``any``, the default: of several records of one
+  Llama-family cell the latest job's; ``auto`` or ``absorb``: only the ``ppl_llama.py`` records of that rule, e.g.
+  ``absorb`` after ``run.sh --llama-prefix absorb`` measured the Llama-family cells again).  The report names the
+  rules of the records read.  Under the absorption rule (``absorb``, or any record read built by it) a cell built by
+  PrefixQuant's rule counts as the rule's when its prefix absorbs by its own record (``--absorb-margin``, default the
+  margin the run's records name), and one whose prefix does not absorb fails the text's claim; otherwise records of
+  several rules among the cells read fail it (:func:`experiments.paper.macros.llama_prefix`);
 * the published systems' values (``artifacts/comparison/tables/reported_curated.csv``), zkLLM's prover on the
   run's GPU model (the run's ``zkllm`` tier, ``--logs``/``zkllm/summary.csv``, when it holds both models on the
   run's GPU, else the stored runs, ``artifacts/results/zkllm_l40s/``), the formulas of the spot-checking schemes
@@ -575,7 +582,9 @@ def build(args) -> int:
     recs = R.read_logs(logs, problems) if logs.is_dir() else []
     files = R.read_files(logs, problems) if logs.is_dir() else []
     run = R.Run(recs, files, licence={"auto": None, "yes": True, "no": False}[args.llama_licence],
-                random_weights={"auto": None, "real": False, "random": True}[args.weights])
+                random_weights={"auto": None, "real": False, "random": True}[args.weights],
+                llama_prefix=None if args.llama_prefix == "any" else args.llama_prefix,
+                absorb_margin=args.absorb_margin)
     licence, random_weights = run.licence, run.random_weights
     failed = [f"CHECK FAILED {Path(r.path).name}:{r.line}: {msg}" for r in recs for msg in R.checks(r)]
     failed += R.log_checks(logs) if logs.is_dir() else []
@@ -625,6 +634,11 @@ def build(args) -> int:
         counts[r.tier][r.kind] += 1
     for tier in sorted(counts, key=str):
         report.append(f"  tier {tier}: " + ", ".join(f"{k} {n}" for k, n in sorted(counts[tier].items())))
+    rules = M.llama_prefix_rules(run)
+    if rules:
+        report.append("Llama-family cells of the text: prefix rule " + ", ".join(
+            f"{rule} ({len(rs)} records)" for rule, rs in sorted(rules.items()))
+            + (f" (selected: {args.llama_prefix})" if args.llama_prefix != "any" else ""))
     missing_cells = 0
     for tb in tables:
         report.append(f"{tb.label}: {tb.filled} cells filled, {len(tb.missing)} missing")
@@ -711,6 +725,14 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--llama-licence", choices=["auto", "yes", "no"], default="auto",
                     help="whether the run had run.sh --llama-licence, so that its Llama-2 main cells are real (auto: "
                          "yes if a record names a Llama-2 checkpoint)")
+    ap.add_argument("--llama-prefix", choices=["any", *R.PREFIX_RULES], default="any",
+                    help="the prefix rule of the Llama-family quality records read (ppl_llama.py --prefix): any (the "
+                         "latest job's record of each cell), auto (PrefixQuant's records only) or absorb (the latest "
+                         "record that agrees with the absorption rule: built by it, or by PrefixQuant's rule with a "
+                         "prefix that absorbs by its own record)")
+    ap.add_argument("--absorb-margin", type=float, default=None,
+                    help="the absorption rule's margin for --llama-prefix absorb's check of PrefixQuant's records "
+                         "(default: the margin the run's absorb records name, else 1)")
     ap.add_argument("--bench", default=str(BENCH),
                     help="the folder of the benchmark's tables_<platform>/ and raw_<platform>/ (default "
                          "artifacts/comparison)")

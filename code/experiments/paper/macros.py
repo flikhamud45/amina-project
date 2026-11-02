@@ -63,7 +63,7 @@ from dataclasses import dataclass
 from experiments.paper import format as f
 from experiments.paper import tables as T
 from experiments.paper.bench import DEFAULT_PROB_MAX, STORED_PROB_MAX
-from experiments.paper.records import MAIN, Rec, Run, v1_timed
+from experiments.paper.records import MAIN, Rec, Run, absorb_consistent, prefix_rule, v1_timed
 
 
 @dataclass
@@ -1025,6 +1025,11 @@ def improvements(c: Collector, ctx: T.Ctx) -> None:
             and r.d.get("device") == "cpu" and r.d.get("path") != "float64"]
     c.put("KpreKeyLlama", fold[-1].d.get("precompute_s") if fold else None, fold[-1] if fold else None,
           lambda v: f"{v:.1f}")
+    # the same key derivation on the float64 path it replaces
+    before = [r for r in run.kind("fold_ab", "improve") if r.d.get("model") == "llama2-7b"
+              and r.d.get("device") == "cpu" and r.d.get("path") == "float64"]
+    c.put("KpreKeyLlamaBefore", before[-1].d.get("precompute_s") if before else None,
+          before[-1] if before else None, lambda v: f"{v:.1f}")
     # 11-bit against 8-bit attention probabilities ("at most": rounded up)
     nbytes, times, recs = prob_bits_changes(run)
     src = recs[-1] if recs else "improve tier, perf.py --prob-max 255 2047"
@@ -1340,6 +1345,10 @@ train windows each, one prefix chosen on draw 0) of each checkpoint's main cell 
 ``q-llama7-draws``, with ``--llama-licence``, ``q-tinyllama-draws`` and ``q-qwen17-draws``): ``<name>DrawSpread``, the
 ratio's largest minus its smallest, and ``LlamaDrawSpread``, the largest of them."""
 DRAWS = (0, 1, 2)
+LLAMA_EXP = (("Qwen/Qwen3-1.7B-Base", "QwenMExpRatio", "main-a0.45-glus0.4-exp8"),
+             ("Qwen/Qwen3-4B-Base", "QwenLExpRatio", "main-a0.45-glus0.5-exp8"))
+"""The per-token-exponent cells of the extended version's discussion (a possible improvement): checkpoint, macro and
+``ppl_llama.py`` cell."""
 ALPHAS_TEST = (0.3, 0.4, 0.5, 0.6, 0.7)
 ALPHAS_VALIDATION = (0.5, 0.6, 0.7)
 """The smoothing alphas of the quality tier's alpha studies on the test split (``q-opt13-recipes``,
@@ -1474,6 +1483,56 @@ def draw_spreads(c: Collector, run) -> None:
           "qcheck tier, the Llama recipe's main cells over three calibration draws", lambda v: ceil_fixed(v, 3))
 
 
+def llama_records(run) -> list[Rec]:
+    """The ``ppl_llama.py`` records the Llama-family numbers read, each once: the main cells of :data:`LLAMAS`, the
+    grids of :data:`LLAMA_GRIDS` on both splits, :data:`VALIDATION_GRIDS`, the draws of :data:`DRAW_MODELS` and the
+    cells of :data:`LLAMA_EXP` (those in the run)."""
+    out = [run.ppl(model, cell) for model, _, cell, _, _ in LLAMAS]
+    for model, _, alphas, balances in LLAMA_GRIDS:
+        for split, _ in LLAMA_SPLITS:
+            out += [run.ppl(model, f"main-a{a:g}-glus{g:g}", split=split) for a in alphas for g in balances]
+    for model, _, alphas, balances in VALIDATION_GRIDS:
+        out += [run.ppl(model, f"main-a{a:g}-glus{g:g}", split="validation") for a in alphas for g in balances]
+    for model, _ in DRAW_MODELS:
+        cell = next(cell for m, _, cell, _, _ in LLAMAS if m == model)
+        out += [run.ppl(model, cell, draw=d) for d in DRAWS]
+    out += [run.ppl(model, cell) for model, _, cell in LLAMA_EXP]
+    return list({id(r): r for r in out if r is not None}.values())
+
+
+def llama_prefix_rules(run) -> dict[str, list[Rec]]:
+    """The prefix rules (``records.prefix_rule``: ``auto``, PrefixQuant's; ``absorb``, the absorption-checked
+    extension of ``run.sh --llama-prefix absorb``) of the records the Llama-family numbers read
+    (:func:`llama_records`), each with its records; a record that names no rule is left out."""
+    out: dict[str, list[Rec]] = {}
+    for r in llama_records(run):
+        rule = prefix_rule(r.d)
+        if rule is not None:
+            out.setdefault(rule, []).append(r)
+    return out
+
+
+def llama_prefix(c: Collector, run) -> None:
+    """The Llama-family numbers come from one prefix rule.  Under the absorption rule (``numbers.py --llama-prefix
+    absorb``, or any record of the cells read built by it) every cell read must agree with it
+    (``records.absorb_consistent``): built by it, or by PrefixQuant's rule with a prefix that absorbs by its own record
+    (the rule then picks the same tokens, so only the checkpoints whose prefix it changes need measuring again); a
+    cell of PrefixQuant's rule whose prefix does not absorb fails the text's claim, which names it.  Otherwise records
+    of several rules among the cells read fail it."""
+    rules = llama_prefix_rules(run)
+    if run.llama_prefix == "absorb" or "absorb" in rules:
+        bad = [r for r in llama_records(run) if not absorb_consistent(r.d, run.absorb_margin)]
+        c.claim(not bad, f"{len(bad)} Llama-family cells the text reads were built by PrefixQuant's rule with a prefix "
+                f"that does not absorb (margin {run.absorb_margin:g}), the others by the absorption rule: "
+                + "; ".join(f"{r.d.get('model')} {r.d.get('cell')} ({r.d.get('split', 'test')}, draw "
+                            f"{r.d.get('draw')}; {r.source})" for r in bad[:8])
+                + (" ..." if len(bad) > 8 else "") + " (measure them again with run.sh --llama-prefix absorb)")
+        return
+    c.claim(len(rules) <= 1, "the Llama-family cells the text reads come from different prefix rules: " + "; ".join(
+        f"{rule} ({len(rs)} records, e.g. {rs[0].source})" for rule, rs in sorted(rules.items()))
+        + " (measure them all with one run.sh --llama-prefix, or select one with numbers.py --llama-prefix)")
+
+
 def quality(c: Collector, ctx: T.Ctx) -> None:
     """Quality (the quality tier): the OPT models' perplexity ratios, the recipes' alpha and calibration studies, the
     Llama-family ratios and grids, the reproducible build and the zero-shot accuracy."""
@@ -1563,6 +1622,8 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
     # the other settings chosen on the test split, on the validation split; the recipe over calibration draws
     validation_grids(c, run)
     draw_spreads(c, run)
+    # every Llama-family number from one rule of the fixed prefix
+    llama_prefix(c, run)
     # the reproducible build: every build of a certified model agrees (a CHECK FAILED line otherwise), over at least
     # two settings of what the text says it varies
     agree, failures = digest_agreement(run)
@@ -1571,8 +1632,7 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
         vals = (agree.get(model) or {}).get(key) or []
         c.put(name, vals if len(vals) >= 2 else None, f"quality tier, digest_check.py records of {model}",
               lambda v: _and([DEVICE_NAMES.get(x, x) if isinstance(x, str) else str(x) for x in v]))
-    for model, name, cell in (("Qwen/Qwen3-1.7B-Base", "QwenMExpRatio", "main-a0.45-glus0.4-exp8"),
-                              ("Qwen/Qwen3-4B-Base", "QwenLExpRatio", "main-a0.45-glus0.5-exp8")):
+    for model, name, cell in LLAMA_EXP:
         r = run.ppl(model, cell)
         c.put(name, r and r.d["ratio"], r, lambda v, name=name: f"{v:.2f}" if name == "QwenMExpRatio" else f"{v:.1f}")
     picks = []

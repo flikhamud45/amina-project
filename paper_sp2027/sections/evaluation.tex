@@ -76,11 +76,17 @@ proofs, and \ServeOptMKpreOverUTwo{} and \ServeOptMCOverUTwo{}$\times$ an fp16 o
 of its 64-token prompts together in $\Kpre$ takes \ServeBatchKpre{}\,s, \ServeBatchOverUOne{} and
 \ServeBatchOverUTwo{}$\times$ the two forward passes\TodoServing{}.
 
-\para{Optimisations.} Two optimisations change no byte that the parties exchange. With float64
-products the column opening takes \ImproveOpenShare{}\% of the prover's time (Llama-2-7B blocks, 64
-tokens); exact int8 GEMMs for the opening and the fold make the prover \ImproveOpenRange{}$\times$
-faster on Llama-2 blocks. Decoding the claims on the GPU and a fused exact attention kernel make the
-GPU verifier \ImproveGpuvRange{}$\times$ faster at 2{,}048 tokens.
+\para{Implementation improvements.} None changes a byte that the parties exchange or a verdict; the
+extended version~\cite{fullversion} details each and measures it against the path it replaces. The prover
+splits field elements into signed bytes so that the column opening and the fold are exact int8 GEMMs
+(\ImproveOpenRange{}$\times$ faster on Llama-2 blocks), runs the weight products on int8 tensor cores and
+attention in a fused exact kernel without a $T\times T$ buffer, frees activations once used, and writes the
+encoded claims on several threads (\ImproveEncodeRange{}$\times$). The GPU verifier decodes the claims on the
+GPU and reuses the fused attention (\ImproveGpuvRange{}$\times$ at 2{,}048 tokens). The CPU verifier uses
+native kernels for every phase, int32 claims and a tuned allocator, and derives the $\Kpre$ key with native
+field products. V1's verifier batches its final checks and its prover runs the GKR rounds in Triton. To fit
+the GPU's memory, the Llama-2 GPU-verifier cells decode the claims one stream at a time and V1's Llama-2-7B
+cells keep the GKR's layers in bounded memory; neither mode changes a byte.
 
 \subsection{V1 Against v0}
 \label{sec:eval-v1}

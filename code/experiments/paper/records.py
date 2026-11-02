@@ -475,6 +475,49 @@ job (:meth:`Run.weights`), so that a real cell is read only from real records an
 records, never one for the other."""
 
 
+PREFIX_RULES = ("auto", "absorb")
+"""The rules of the Llama recipe's fixed prefix that a run's quality cells can name (``ppl_llama.py --prefix``):
+``auto``, PrefixQuant's (the main recipe's), and ``absorb``, PrefixQuant's choice extended until it absorbs the
+windows' massive activations (``run.sh --llama-prefix absorb``)."""
+
+
+def prefix_rule(d: dict) -> str | None:
+    """The prefix rule of a ``ppl_llama.py`` record (its ``prefix_spec``): ``auto``, ``absorb``, ``bos``, ``ids``
+    (token ids given) or ``none``; None for a record that names none (``ppl_opt.py``'s)."""
+    if "prefix_spec" not in d:
+        return None
+    spec = d["prefix_spec"]
+    if not spec:
+        return "none"
+    return spec if spec in (*PREFIX_RULES, "bos") else "ids"
+
+
+ABSORB_MARGIN = 1.0
+"""The absorption rule's default margin (``pvi.models.hf_llama.ABSORB_MARGIN``), for a run whose records name none."""
+RESIDUAL_HEADROOM = 1.25
+"""``build_llama_from_hf``'s default ``residual_headroom``: a record's ``residual_real_max`` is the windows' fp residual
+maximum times it."""
+
+
+def prefix_absorbs(d: dict, margin: float = ABSORB_MARGIN) -> bool | None:
+    """Whether a ``ppl_llama.py`` record's prefix absorbs by its own fields, as the absorption rule decides it: the
+    windows' fp residual maximum (``residual_real_max`` over the headroom) times ``margin`` below the prefix's
+    (``prefix_hidden_max``); None when the record lacks them (no prefix, or no integer cell)."""
+    top, pre = d.get("residual_real_max"), d.get("prefix_hidden_max")
+    if top is None or pre is None:
+        return None
+    headroom = (d.get("opts") or {}).get("residual_headroom", RESIDUAL_HEADROOM)
+    return top / headroom * margin < pre
+
+
+def absorb_consistent(d: dict, margin: float = ABSORB_MARGIN) -> bool:
+    """Whether a record agrees with the absorption rule: built by it (``prefix_spec`` ``absorb``), by PrefixQuant's
+    rule with a prefix that absorbs (:func:`prefix_absorbs`; the rule then picks the same tokens, so the same graph),
+    or not a ``ppl_llama.py`` record."""
+    rule = prefix_rule(d)
+    return rule is None or rule == "absorb" or (rule == "auto" and prefix_absorbs(d, margin) is True)
+
+
 class Run:
     """The records of one run and the selection of a table cell's record.
 
@@ -491,18 +534,30 @@ class Run:
     options (:func:`experiments.paper.tables.cpu_point`).  Of several matching records (a tier run again) the latest
     job's is used; of several re-execution records of one variant (e.g. two allocator settings), the fastest.  Several
     quality records of one cell whose values differ are a ``WARNING`` line of :attr:`warnings` (:meth:`ppl`).
+    ``llama_prefix`` (None: any, the latest job's record) selects by the prefix rule (:func:`prefix_rule`): ``auto``
+    keeps only the ``ppl_llama.py`` records of PrefixQuant's rule; ``absorb`` takes the latest record that agrees with
+    the absorption rule (:func:`absorb_consistent` with ``absorb_margin``: built by it, or by PrefixQuant's rule with a
+    prefix that absorbs), else the latest record, which :func:`experiments.paper.macros.llama_prefix` then reports.
+    ``absorb_margin`` (None: the margin the run's ``absorb`` records name, else :data:`ABSORB_MARGIN`).
     """
 
     SAME = 1e-6
     """The relative difference above which two records of one quality cell are said to differ."""
 
     def __init__(self, recs: list[Rec], files: list[Rec] | None = None, *, licence: bool | None = None,
-                 random_weights: bool | None = None) -> None:
+                 random_weights: bool | None = None, llama_prefix: str | None = None,
+                 absorb_margin: float | None = None) -> None:
         named = [(r.tier, str(r.d.get("real"))) for r in recs if r.d.get("real")]
         self.licence = any(ck.startswith("meta-llama/") for _, ck in named) if licence is None else licence
         self.random_weights = (not any(t in COST_TIERS for t, _ in named) if random_weights is None
                                else random_weights)
         self.recs = sorted(recs, key=job_order)
+        self.llama_prefix = llama_prefix
+        if absorb_margin is None:
+            named = [(r.d.get("prefix_choice") or {}).get("margin") for r in self.recs
+                     if r.kind == "ppl" and prefix_rule(r.d) == "absorb"]
+            absorb_margin = next((m for m in named if m is not None), ABSORB_MARGIN)
+        self.absorb_margin = absorb_margin
         self.files = {Path(r.path).name: r for r in files or []}
         self.by_kind: dict = {}
         for r in self.recs:
@@ -657,15 +712,19 @@ class Run:
         """A quality record of ``ppl_opt.py`` (``cell`` names the graph, its recipe, alpha and probability width:
         ``smooth-certified-a0.6-p11``; ``fp32`` the reference) or ``ppl_llama.py`` (``main-a0.55-glus0.2``;
         ``reference``), on ``split`` with ``calibration`` (``ppl_llama.py``'s records name no calibration: train;
-        records without a split are the test split's).  Two jobs that measure one cell (a cell of two studies)
-        should give the same values: records of one cell whose perplexity or ratio differ by more than :data:`SAME`
-        (relative) are a ``WARNING`` of :attr:`warnings`."""
+        records without a split are the test split's; the run's ``llama_prefix`` selects by the prefix rule, as the
+        class says).  Two jobs that measure one cell (a cell of two studies) should give the same values:
+        records of one cell whose perplexity or ratio differ by more than :data:`SAME` (relative) are a ``WARNING``
+        of :attr:`warnings`."""
         def ok(r):
             d = r.d
             return (d.get("model") == model and d.get("cell") == cell and d.get("seq") == seq
                     and d.get("split", "test") == split and d.get("calibration", "train") == calibration
-                    and d.get("draw") in (None, draw) and not d.get("tag") and not d.get("smoke"))
+                    and d.get("draw") in (None, draw) and not d.get("tag") and not d.get("smoke")
+                    and (self.llama_prefix != "auto" or prefix_rule(d) in (None, "auto")))
         rs = [r for r in self.kind("ppl", "quality") if ok(r)]
+        if self.llama_prefix == "absorb":
+            rs = [r for r in rs if absorb_consistent(r.d, self.absorb_margin)] or rs
         self._same_values(rs, ("ppl", "ratio"), f"{model} {cell} ({split} split, {calibration} calibration, "
                                                 f"{seq} tokens, draw {draw})")
         return self._last(rs)

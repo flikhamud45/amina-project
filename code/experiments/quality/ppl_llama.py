@@ -37,9 +37,14 @@ place in a run without the Llama-2 licence; the paper does not report it.
   (``checkpoints.real_graph``).
 * The fixed public prefix (``--prefix``, part of the main recipe): ``auto`` (the default, and the value of a bare
   ``--prefix``) is PrefixQuant's rule (``hf_llama.prefixquant_tokens``: the high-frequency outlier tokens of the down
-  projections' inputs, then the BOS) on the first draw's calibration windows; ``bos`` the configuration's BOS alone;
-  comma-separated token ids; ``none`` no prefix.  Its keys and values enter every attention op as int8 constants
-  (``build_llama_from_hf(prefix_tokens=)``).  Only the windows' own tokens are scored, exactly the targets of a run
+  projections' inputs, then the BOS) on the first draw's calibration windows; ``absorb`` (opt-in, outside the main
+  recipe's default) PrefixQuant's choice checked for absorption on the same windows and extended until it absorbs
+  (``hf_llama.absorb_tokens``: the fp residual stream's maximum over the windows' own positions times
+  ``--absorb-margin`` must lie below the prefix positions' maximum; the next most frequent outlier token goes in front
+  of the BOS, up to ``--absorb-max-len`` tokens; the record's ``prefix_choice`` keeps every candidate's two maxima
+  and whether the chosen one absorbs); ``bos`` the configuration's BOS alone; comma-separated token ids; ``none`` no
+  prefix.  Its keys and values enter every attention op as int8 constants (``build_llama_from_hf(prefix_tokens=)``),
+  whichever rule chose it.  Only the windows' own tokens are scored, exactly the targets of a run
   without a prefix, and the fp32 reference runs on the same ``[prefix | window]`` (its prefix positions dropped), so
   the ratio compares like with like; every record says so (``prefix_tokens``, ``prefix_scoring``).
 * Graphs (``--graphs``, ``hf_llama.build_llama_from_hf``): ``main`` (the default), the main algorithm's recipe
@@ -134,6 +139,20 @@ CHECK_SEQ, PROTOCOL_SEQ, CHECK_CHARS = 128, 64, 200_000
 def prefix_spec(value: str | None) -> str | None:
     """The ``--prefix`` value for :func:`~experiments.common.checkpoints.prefix_of` (``none``: no prefix)."""
     return None if not value or value == "none" else value
+
+
+def add_absorb_arguments(ap: argparse.ArgumentParser) -> None:
+    """The ``--prefix absorb`` rule's parameters (``hf_llama.absorb_tokens``), shared by the Llama-family scripts."""
+    ap.add_argument("--absorb-margin", type=float, default=hf_llama.ABSORB_MARGIN,
+                    help="--prefix absorb: a candidate prefix absorbs when the windows' fp residual maximum times this "
+                         "lies below the prefix positions' maximum")
+    ap.add_argument("--absorb-max-len", type=int, default=hf_llama.ABSORB_MAX_LEN,
+                    help="--prefix absorb: the longest candidate prefix (tokens, the BOS included)")
+
+
+def absorb_options(args) -> dict:
+    """The keyword arguments of :func:`~experiments.common.checkpoints.prefix_of` for ``--prefix absorb``."""
+    return {"margin": args.absorb_margin, "max_len": args.absorb_max_len}
 
 
 def _joint(w: torch.Tensor, prefix) -> torch.Tensor:
@@ -259,7 +278,7 @@ def run(args, model, tok, spec) -> None:
     calibs = {draw: torch.cat(windows(train, cs, args.calib_windows, start=draw * args.calib_windows))
               for draw in args.draws}
     with torch.no_grad():           # one prefix for every draw and the reference: chosen on the first draw's windows
-        prefix, prefix_info = prefix_of(spec, model, calibs[args.draws[0]], tok)
+        prefix, prefix_info = prefix_of(spec, model, calibs[args.draws[0]], tok, **absorb_options(args))
     ref = reference(args, model, wins, prefix)
     fp = math.exp(sum(ref["nll"]) / sum(counts))
     name = args.config or CONFIG_OF.get(args.model.split("/")[-1])
@@ -364,7 +383,7 @@ def check(args, model, tok, spec) -> dict:
     vs_config = hf_llama.same_shape(shape, CONFIGS[name]) if name in CONFIGS else None
     against = name if vs_config == [] else shape
     with torch.no_grad():
-        prefix, prefix_info = prefix_of(spec, model, calib, tok)
+        prefix, prefix_info = prefix_of(spec, model, calib, tok, **absorb_options(args))
     report = {"model": args.model, "smoke": args.smoke, "seq": seq, "shape_vs_config": vs_config,
               "structure_against": name if vs_config == [] else "own shape", "prefix_tokens": prefix,
               "prefix_choice": prefix_info}
@@ -431,7 +450,7 @@ def protocol(args, model, tok, spec) -> dict:
     p = protocol_of(args)
     w, calib = _check_window(tok, spec, PROTOCOL_SEQ)
     with torch.no_grad():
-        prefix, prefix_info = prefix_of(spec, model, calib, tok)
+        prefix, prefix_info = prefix_of(spec, model, calib, tok, **absorb_options(args))
         graph, _ = hf_llama.build_llama_from_hf(model, calib, n_layers=2, prune_last=p.prune_last,
                                                 qk_balance=not args.no_qk_balance, prefix_tokens=prefix,
                                                 **hf_llama.main_recipe(args.model, *_first(args)))
@@ -494,8 +513,10 @@ def main() -> None:
     ap.add_argument("--train-chars", type=int, default=4_000_000, help="characters of the train split tokenised")
     ap.add_argument("--draws", type=int, nargs="+", default=[0], help="calibration draws")
     ap.add_argument("--prefix", nargs="?", const="auto", default="auto",
-                    help="the fixed public prefix: auto (PrefixQuant's rule, the main recipe's), bos, comma-separated "
+                    help="the fixed public prefix: auto (PrefixQuant's rule, the main recipe's), absorb (PrefixQuant's "
+                         "choice extended until it absorbs the windows' massive activations), bos, comma-separated "
                          "token ids, or none")
+    add_absorb_arguments(ap)
     ap.add_argument("--graphs", nargs="*", choices=["main", "smooth", "scalar"], default=["main"],
                     help="main: the main recipe; smooth: without the SwiGLU product balance; scalar: one norm gain "
                          "(given without a value: the reference only)")

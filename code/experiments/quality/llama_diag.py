@@ -18,15 +18,16 @@ and Llama models sit at the first token); and the integer stream's clipping (ent
 smoothing at alpha 0.55 with the 99.9 / 99.99 percentiles and no SwiGLU product balance; ``scalar4``, one norm gain 4.
 
 The fixed public prefix (``--prefix``, as ``ppl_llama.py``'s: ``auto``, the main recipe's and the default, is
-PrefixQuant's rule on the calibration windows; ``bos``; comma-separated ids; ``none``): the graphs carry it, the text
-is tokenised without the tokenizer's special tokens, and the fp32 reference runs on ``[prefix | window]``.  Positions
-are then the window's (position 0 is the window's first token, at RoPE position ``P``); the output adds the prefix's
-tokens and how they were chosen (``auto``: the outlier tokens per block and their counts), the fp32 stream's largest
-|value| at the prefix positions per block (where the first token's massive activation then sits), and per layer how
-far the prefix's keys and values reach on their layer's scales (``max |real| / (127 s)``; above 1 they clip).  A
-second massive activation shows as an ``fp_max`` at window position 0 above the prefix's ``fp_prefix_max``.
-``--no-qk-balance``: Qwen3's graphs without the q/k-norm balance (the lines are tagged ``-nobal``).  The op-level
-attribution is ``llama_attrib.py``.
+PrefixQuant's rule on the calibration windows; ``absorb``, that choice extended until it absorbs the windows' massive
+activations, with ``--absorb-margin`` and ``--absorb-max-len``; ``bos``; comma-separated ids; ``none``): the graphs
+carry it, the text is tokenised without the tokenizer's special tokens, and the fp32 reference runs on
+``[prefix | window]``.  Positions are then the window's (position 0 is the window's first token, at RoPE position
+``P``); the output adds the prefix's tokens and how they were chosen (``auto``: the outlier tokens per block and their
+counts; ``absorb``: also each candidate's two maxima), the fp32 stream's largest |value| at the prefix positions per
+block (where the first token's massive activation then sits), and per layer how far the prefix's keys and values reach
+on their layer's scales (``max |real| / (127 s)``; above 1 they clip).  A second massive activation shows as an
+``fp_max`` at window position 0 above the prefix's ``fp_prefix_max``.  ``--no-qk-balance``: Qwen3's graphs without the
+q/k-norm balance (the lines are tagged ``-nobal``).  The op-level attribution is ``llama_attrib.py``.
 
 Output: one JSON line per recipe on stdout (and appended to ``--out``): ``model``, ``recipe``, ``opts`` (the
 builder's keyword arguments), ``prefix_tokens``, ``qk_balance``, ``s_residual``, ``res_max_real``, ``RES_MAX``,
@@ -46,7 +47,7 @@ import torch
 
 from experiments.common import records
 from experiments.common.checkpoints import load_llama, prefix_of, smoke_model, token_ids, wikitext
-from experiments.quality.ppl_llama import prefix_spec
+from experiments.quality.ppl_llama import absorb_options, add_absorb_arguments, prefix_spec
 from pvi.models import hf_llama
 from pvi.models.decoder import RES_MAX
 
@@ -80,8 +81,10 @@ def main() -> None:
     ap.add_argument("--calib-windows", type=int, default=4, help="calibration windows")
     ap.add_argument("--recipes", nargs="+", default=["main"], choices=["main", *RECIPES])
     ap.add_argument("--prefix", nargs="?", const="auto", default="auto",
-                    help="the fixed public prefix: auto (PrefixQuant's rule, the main recipe's), bos, comma-separated "
+                    help="the fixed public prefix: auto (PrefixQuant's rule, the main recipe's), absorb (PrefixQuant's "
+                         "choice extended until it absorbs the windows' massive activations), bos, comma-separated "
                          "token ids, or none")
+    add_absorb_arguments(ap)
     ap.add_argument("--no-qk-balance", action="store_true", help="Qwen3: no q/k-norm balance per RoPE pair")
     ap.add_argument("--smoke", action="store_true", help="a 2-block random model with the checkpoint's vocabulary")
     ap.add_argument("--threads", type=int, default=8, help="torch's intra-op threads")
@@ -93,7 +96,7 @@ def main() -> None:
     w, calib = data(tok, spec, args.seq, args.calib_windows)
     env = records.environment("cpu")
     with torch.no_grad():
-        prefix, choice = prefix_of(spec, model, calib, tok)
+        prefix, choice = prefix_of(spec, model, calib, tok, **absorb_options(args))
         joint = w if not prefix else torch.cat([torch.tensor([prefix], dtype=w.dtype), w], 1)
         full = hf_llama.hf_residual_states(model, joint)              # [prefix | window]: split below
     n = len(prefix or ())
@@ -102,10 +105,15 @@ def main() -> None:
     del full
     if prefix:
         records.emit({"model": args.model, "prefix_tokens": prefix, "prefix_choice": choice, "env": env}, args.out)
+        tried = [(c["tokens"], round(c["window_max"], 1), round(c["prefix_max"], 1))
+                 for c in choice.get("candidates", [])]
         print(f"  prefix {prefix} = {choice.get('text')} ({choice.get('rule')}"
               + (f", o = {choice['o']}, outliers per block {[round(c, 2) for c in choice['outliers_per_block']]}, "
                  f"outlier tokens {[(tok.decode([t]), c) for t, c in choice['outlier_tokens'][:8]]}"
-                 if choice.get("rule") == "prefixquant" else "") + ")", file=sys.stderr, flush=True)
+                 if choice.get("rule") in ("prefixquant", "absorb") else "")
+              + (f", candidates (tokens, window max, prefix max) {tried}, absorbed {choice['absorbed']}"
+                 if choice.get("rule") == "absorb" else "") + ")",
+              file=sys.stderr, flush=True)
     mx = [(float(h.abs().max()), *[int(v) for v in divmod(int(h.abs().reshape(-1).argmax()), h.shape[-1])])
           for h in ref]
     for name in args.recipes:

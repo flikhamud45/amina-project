@@ -298,6 +298,54 @@ and the setup cache (`--setup-cache`, default `logs/<name>/setup_cache`): the fi
 plan stores its Merkle leaves (15-70 MB) and later jobs rebuild the same commitment from them; the `setup` tier always
 measures the setup itself.
 
+### The Llama recipe's fixed prefix: the check and the absorption rule
+
+The Llama recipe's fixed public prefix comes from PrefixQuant's rule (`--prefix auto` of `ppl_llama.py`,
+`hf_llama.prefixquant_tokens`). The prefix serves only if it absorbs the massive activations: the fp residual stream's
+largest |value| over the calibration windows' own positions, which sets the integer residual scale, must lie below the
+largest over the prefix positions. Two tiers outside `all` check this and measure every Llama-family number again with
+a prefix that does:
+
+```bash
+R="bash code/experiments/package/run.sh --platform final --llama-licence"
+$R prefixcheck                                     # one job, about half an hour on one GPU, fp only
+#  -> logs/final/sp-q-prefix-check-*.out: per checkpoint and candidate prefix the prefix's and the windows' maximum,
+#     their ratio and where the windows' maximum sits; the prefix --llama-prefix absorb picks (prefix_check.jsonl)
+$R --llama-prefix absorb qprefix                   # 20 jobs, 54-70 h (without --llama-licence 10 jobs, 24-36 h)
+```
+
+`prefixcheck` runs `experiments/quality/prefix_check.py` on Llama-2-7B and Llama-2-13B (with `--llama-licence`),
+TinyLlama, Qwen3-1.7B and Qwen3-4B in fp16: PrefixQuant's prefix, every candidate of the absorption rule and a few
+others (`EXTRA`; Llama-2-7B's prefix as PrefixQuant publishes it, `. \n [BOS]`), with no integer graph. `qprefix` runs
+the Llama-family quality jobs alone (the `quality` tier's TinyLlama and Qwen3 cells, the whole `qllama` and `qcheck`
+tiers; not the OPT jobs) with `--llama-prefix`'s rule. With `--llama-prefix absorb` (also in `quality`, `qllama` and
+`qcheck`) every Llama-family quality job runs `ppl_llama.py --prefix absorb --absorb-margin X --absorb-max-len N`
+(`--absorb-margin`, default 1; `--absorb-max-len`, default 6): PrefixQuant's choice, extended by the next most
+frequent outlier token in front of the BOS while the windows' maximum times X is not below the prefix's, up to N tokens
+(`hf_llama.absorb_tokens`; a checkpoint that PrefixQuant's choice already serves keeps that prefix). The prefix enters
+the graph as any fixed prefix: only constants change, and the structural diff stays empty. Each record's
+`prefix_choice` keeps every candidate's two maxima and whether the chosen prefix absorbs. These jobs are named
+`sp-<cell>-absorb` (Qwen3-4B's and OpenLLaMA-7B's CPU references are kept apart, `ref_*-absorb.pt`), so a `--local` or
+`--one-job` run runs them although the jobs of PrefixQuant's rule ended successfully; without the option every job is
+as before, and `--dry-run` lists the same jobs. `numbers.py` reads the latest job's record of each cell, so the
+`-absorb` jobs submitted after the others are the ones the paper reads; `numbers.py --llama-prefix absorb` prefers the
+records that agree with the rule, and its report names the rule of the Llama-family records it read.
+
+A checkpoint whose PrefixQuant prefix already absorbs gets the same tokens from the rule, so the same graph: only the
+checkpoints whose prefix the rule changes need measuring again (`prefixcheck` names them; expected Llama-2-7B and
+possibly Qwen3-4B). Under the rule (`numbers.py --llama-prefix absorb`, or any record read built by it) a cell of
+PrefixQuant's rule counts as the rule's when its prefix absorbs by its own record (`residual_real_max` over the
+headroom, times the rule's margin, below `prefix_hidden_max`), and one whose prefix does not absorb is a `CHECK
+FAILED text:` line that names it (`experiments/paper/macros.py`, `llama_prefix`). `--jobs` submits named jobs of the
+given tiers alone, e.g. Llama-2-7B's:
+
+```bash
+J=q-llama7-a0.45-absorb,q-llama7-a0.55-absorb,q-llama7-a0.65-absorb,q-llama7-validation-a0.45-absorb
+J=$J,q-llama7-validation-a0.55-absorb,q-llama7-validation-a0.65-absorb,q-llama7-draws-absorb
+$R --llama-prefix absorb --one-job --jobs $J qprefix     # Llama-2-7B: 7 jobs, 42 h of limits (about 30 h)
+$R --llama-prefix absorb --one-job --jobs q-qwen4-absorb qprefix   # Qwen3-4B: 1 job, 5 h limit (about 4 h)
+```
+
 ## 5. While it runs
 
 The real-weight cells name their refusals before anything is loaded or timed (`--real: ...` on the job's log, exit

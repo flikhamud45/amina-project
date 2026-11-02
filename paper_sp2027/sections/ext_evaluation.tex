@@ -41,9 +41,11 @@ most \ProbBitsTime{}\% against 8-bit ones.
   \end{tabular}
 \end{table}
 
-Each improvement is measured alone, on the \PlatformGpu{} with 8 threads of the \PlatformCpu{}, against the
-code path it replaces on the same queries (Table~\ref{tab:eval-improve}). No improvement changes a
-claim, a proof or a verdict.
+Each row is measured on the \PlatformGpu{} with 8 threads of the \PlatformCpu{}, against the code path it
+replaces on the same queries (Table~\ref{tab:eval-improve}); a row measures one improvement, except the GPU
+verifier's row (its claim decoder and fused attention together) and the CPU verifier's row (all its native
+kernels, int32 claims and the allocator setting together). No improvement changes a claim, a proof or a
+verdict.
 
 \para{Prover.} With float64 products, opening the committed columns takes \ImproveOpenShare{}\% of the prover's time
 on Llama-2-7B blocks at 64 tokens (\ImproveOpenFloat{} of \ImproveProveFloat{}\,s). Splitting each field element into four signed bytes makes the
@@ -52,7 +54,9 @@ faster on Llama-2 blocks. Int8 tensor cores also halve the forward pass's weight
 Llama-sized layers, and the prover reuses the verifier's fused attention kernel. The claim encoder
 was limited by a single-threaded copy of its output, so assembling the output on several threads
 gives \ImproveEncodeRange{}$\times$. A fused Triton encoder that writes the same bytes is slower
-(\ImproveFusedEncoder{} against \ImproveThreadedEncoder{}\,s on OPT-1.3B), so we do not use it.
+(\ImproveFusedEncoder{} against \ImproveThreadedEncoder{}\,s on OPT-1.3B), so we do not use it. The prover
+also frees each activation once its last consumer has run and keeps the int32 claims on the GPU until they
+are encoded, which bounds its memory without changing its output.
 
 \para{Verifier.} The GPU verifier path that these kernels replace spends most of its time decoding
 the claims on the host and passing about a dozen times over materialised $T\times T$ attention
@@ -63,8 +67,15 @@ attention kernel computes the same integers without a $T\times T$ buffer; its fp
 because every partial sum is an integer below $2^{24}$. Together they make the GPU verifier
 \ImproveGpuvRange{}$\times$ faster at 2{,}048 tokens. Afterwards, copies take \ProfileCopies{}\% of the CUDA time of an
 OPT-1.3B query (12 blocks) and int8 GEMMs \ProfileIntMM{}\%: data movement dominates, including the upload of
-the proof, which V1 makes smaller. On a CPU, native exact kernels for every phase gain \ImproveCpuv{}$\times$ at
-2{,}048 tokens.
+the proof, which V1 makes smaller. On a CPU, native exact kernels for every phase (the recomputed operations, the AVX-512 attention, the
+field products and the claim decoder), claims held as int32 instead of int64, and glibc's allocator set to
+keep freed memory in the process together gain \ImproveCpuv{}$\times$ at 2{,}048 tokens.
+
+\para{Bounded memory.} Two modes keep large cells within the GPU's memory without changing a byte or a
+verdict, and the run uses them only where the default path does not fit: the GPU verifier of the Llama-2
+cells at 2{,}048 tokens decodes the claims one stream at a time instead of all at once, and V1's
+Llama-2-7B cells at 2{,}048 tokens keep the GKR's layers in bounded memory. Both run inside the timed region,
+so the times of those cells include them.
 
 \subsection{Memory and Untrusted Commitments}
 \label{app:eval-untrusted}

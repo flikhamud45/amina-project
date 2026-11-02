@@ -154,7 +154,8 @@ transfer at 10\,Gb/s. A client that sends more than about \BreakevenQueriesShort
 therefore receives more bytes than a download of the weights, which are only
 \BreakevenQueriesLong{}$\times$ the size of one long prompt's proof. The protocol thus pays off only for a
 client that cannot or will not store and run the model (Figure~\ref{fig:breakeven}). A $\Kpre$ client needs the weights once, to compute its key
-(\KpreKeyLlama{}\,s for Llama-2-7B on 8 threads of the \PlatformCpu{}), and then keeps \KpreStoreGB{}\,GB instead of them:
+(\KpreKeyLlama{}\,s for Llama-2-7B on 8 threads of the \PlatformCpu{} with native field products, against
+\KpreKeyLlamaBefore{}\,s with float64 products), and then keeps \KpreStoreGB{}\,GB instead of them:
 \KpreKeyMB{}\,MB of secret vectors and folded rows and the \KpreEmbedMB{}\,MB embedding table. A provider may also serve with the exact model and prove
 later, on request, with the same proof; it then still pays the integer engine's cost over fp16
 serving (\ServeOptMUOneOverUTwo{}$\times$ on OPT-1.3B), and only the queries it proves are checked. On the \PlatformGpu{}, proving a 2{,}048-token OPT-1.3B prompt costs

@@ -14,7 +14,9 @@
   every tier submits jobs, the cells behind the text's generation, recipe and quality numbers are there (no quality
   cell measured twice where one job suffices), and the rehearsal submits small cells only, which run every script of
   every tier on the paths the full cells take (Llama-2-7B's grid path, or OpenLLaMA-7B's tokenizer without
-  --llama-licence); every CPU-timing cell requires the native kernels and is pinned to one NUMA node, and the dry
+  --llama-licence); ``--llama-prefix absorb`` runs the Llama-family quality jobs again under their own names with the
+  absorption-checked prefix and changes no other job, and the prefixcheck and qprefix tiers are outside 'all'; every
+  CPU-timing cell requires the native kernels and is pinned to one NUMA node, and the dry
   run lists every job even on a host without the run's settings; every cost cell builds its decoders at the default 11-bit attention probabilities but
   the improve tier's A/B of 8 against 11 bits (in the full run and the rehearsal); Llama-2-7B's CPU-verifier cells
   measure the client's own memory; the gate tier (the full-size checks before the run) is not in 'all', is refused
@@ -1353,3 +1355,51 @@ def test_the_submitting_host_clones_llama_cpp_and_a_failed_clone_only_warns(tmp_
     (tmp_path / "root" / "logs" / "rehearsal" / "llamacpp" / "src").mkdir(parents=True)     # cloned: not again
     status, out, err, jobs = _submit(tmp_path, *argv, extra={"FAKE_FAIL": "--clone-only"})
     assert status == 0 and jobs and "cloning llama.cpp" not in err, err
+
+
+def test_the_llama_prefix_rule_runs_the_llama_family_cells_again():
+    """``--llama-prefix absorb``: every Llama-family quality job (the quality tier's TinyLlama and Qwen3 cells, the
+    qllama and qcheck tiers; the qprefix tier holds exactly these) runs ``ppl_llama.py`` with ``--prefix absorb`` and
+    the rule's parameters under the name ``<job>-absorb``, its CPU references kept apart; every other job is
+    unchanged, and without the option no job names the rule.  The prefixcheck tier is one fp job on the five
+    checkpoints; neither tier is in 'all'.  A rule other than auto or absorb, or a margin or length out of range,
+    stops the submission."""
+    tiers = ("quality", "qllama", "qcheck")
+    plain = {_job(x): x for x in _dry(tiers=tiers)}
+    absorb = {_job(x): x for x in _dry("--llama-prefix", "absorb", tiers=tiers)}
+    assert not any("--prefix absorb" in x or n.endswith("-absorb") for n, x in plain.items())
+    llama = [n for n, x in plain.items() if "quality.ppl_llama" in x and "--prefix 151643" not in x]
+    assert len(llama) == 20 and {"sp-q-tinyllama", "sp-q-llama7-a0.55", "sp-q-llama13-validation-a0.6",
+                                 "sp-q-llama7-draws", "sp-q-qwen17-validation"} <= set(llama)
+    rule = "--prefix absorb --absorb-margin 1 --absorb-max-len 6 --model"
+    for n, x in plain.items():
+        if n not in llama:
+            assert absorb[n] == x, n
+            continue
+        y = absorb[n + "-absorb"]
+        assert y.count(rule) == y.count("quality.ppl_llama") > 0, n
+        assert y.replace(" --prefix absorb --absorb-margin 1 --absorb-max-len 6", "").replace("-absorb", "") == x, n
+    assert "ref_qwen3-4b-absorb.pt" in absorb["sp-q-qwen4-absorb"]
+    rerun = {_job(x): x for x in _dry("--llama-prefix", "absorb", "--absorb-margin", "1.5", tiers=("qprefix",))}
+    assert set(rerun) == {n + "-absorb" for n in llama}
+    assert all("--absorb-margin 1.5 --absorb-max-len 6" in x for x in rerun.values())
+    check = _dry(tiers=("prefixcheck",))
+    assert len(check) == 1 and _job(check[0]) == "sp-q-prefix-check"
+    assert ("quality.prefix_check --device cuda --threads 8 --absorb-margin 1 --absorb-max-len 6 --models "
+            "meta-llama/Llama-2-7b-hf meta-llama/Llama-2-13b-hf TinyLlama/TinyLlama_v1.1 Qwen/Qwen3-1.7B-Base "
+            "Qwen/Qwen3-4B-Base --per-block --out ") in check[0] and "prefix_check.jsonl" in check[0]
+    every = {_job(x) for x in _dry()}
+    assert "sp-q-prefix-check" not in every and not any(n.endswith("-absorb") for n in every)
+    for bad in (("--llama-prefix", "other"), ("--llama-prefix", "absorb", "--absorb-margin", "0"),
+                ("--llama-prefix", "absorb", "--absorb-max-len", "0"), ("--absorb-margin", "2")):
+        assert _dry(*bad, tiers=("qprefix",), status=2) == [], bad
+    # --jobs: one checkpoint's jobs alone (a name no tier has stops the submission)
+    seven = [n[3:] for n in rerun if n.startswith("sp-q-llama7-")]
+    assert len(seven) == 7
+    alone = _dry("--llama-prefix", "absorb", "--jobs", ",".join(seven), tiers=("qprefix",))
+    assert sorted(_job(x)[3:] for x in alone) == sorted(seven)
+    assert {_job(x) for x in _dry("--llama-prefix", "absorb", "--jobs", "q-qwen4-absorb", tiers=("qprefix",))} ==         {"sp-q-qwen4-absorb"}
+    assert _dry("--llama-prefix", "absorb", "--jobs", "q-qwen4", tiers=("qprefix",), status=2) == []
+    text = (REPO / RUN).read_text()
+    for tier in ("prefixcheck", "qprefix"):
+        assert f"tier_{tier}()" in text and re.search(rf"^#\s+{tier}\s+\[not in 'all'\]", text, re.M), tier
