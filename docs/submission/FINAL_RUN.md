@@ -1,6 +1,6 @@
 # L40S machine: the final run
 
-Thank you again for the rehearsal. This file describes the final run of commit `<COMMIT>`. Its records give every
+Thank you again for the rehearsal. This file describes the final run of commit `e258288`. Its records give every
 number of the paper, so it runs in full on one platform: every job on an L40S node with an AMD EPYC 9334 host.
 
 There is no smoke run, no rehearsal and no gate before it. You submit the run's fifteen jobs directly (Sec. 4). The
@@ -117,9 +117,9 @@ V1's codec curve) keep random weights of the same shapes. You need nothing new f
 ```bash
 H=/home/sharifm/teaching/tml-0368-4075/erelbarzilay/final_project/amina-project/logs/validation/sp2027/handoff_l40s
 (cd $H && sha256sum -c SHA256SUMS)                    # every line: OK
-git -C <your clone> fetch $H/pvi-sp2027-artifact-<COMMIT>.bundle sp2027-artifact
+git -C <your clone> fetch $H/pvi-sp2027-artifact-e258288.bundle sp2027-artifact
 git -C <your clone> checkout -B sp2027-artifact FETCH_HEAD
-git -C <your clone> log --oneline -1                  # <COMMIT>
+git -C <your clone> log --oneline -1                  # e258288
 git -C <your clone> status --short --untracked-files=no   # prints nothing
 ```
 
@@ -130,7 +130,7 @@ Start from an empty run folder. Records or `done` markers left in `logs/final/` 
 mixed into this run, or would make it skip jobs:
 
 ```bash
-[ -e logs/final ] && mv logs/final logs/final.before-<COMMIT>
+[ -e logs/final ] && mv logs/final logs/final.before-e258288
 squeue -u $USER          # no job whose name starts with sp- should be listed
 ```
 
@@ -378,18 +378,18 @@ zkLLM runs (`zkllm/summary.csv` and one folder `zkllm/llama2-{7b,13b}-T{64,512,1
 with the raw timings `bin_times.log` and `time-*.txt`), the check; and the benchmark's raw records and tables:
 
 ```bash
-tar czf final-<COMMIT>.tgz --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp \
+tar czf final-e258288.tgz --exclude=triton --exclude=native --exclude=setup_cache --exclude=llamacpp \
     --exclude='ref_*.pt' --exclude=zkllm/home \
     logs/final code/artifacts/comparison/raw_final code/artifacts/comparison/tables_final
-tar tzf final-<COMMIT>.tgz > final-<COMMIT>.list
-grep -E 'zkllm/summary.csv|numbers_check.txt|dryrun.txt|env/inputs.sha256|env/models-check.txt' final-<COMMIT>.list
-grep -cE 'zkllm/llama2-(7b|13b)-T[0-9]+/env.txt$' final-<COMMIT>.list           # 8
-grep -cE 'smoke_pytest-.*\.(txt|xml)$' final-<COMMIT>.list                      # 2 (more if the smoke ran twice)
-grep -cE 'env/[^/]+/env.json$' final-<COMMIT>.list                              # 15 or more (one per allocation)
-grep -cE 'telemetry/sp-.*\.csv\.gz$' final-<COMMIT>.list                        # 246 or more (one per job run)
-grep -cE 'comparison/raw_final/' final-<COMMIT>.list                            # more than 0
-ls -lh final-<COMMIT>.tgz
-mkdir -p $H/return && cp final-<COMMIT>.tgz $H/return/ && (cd $H/return && sha256sum final-<COMMIT>.tgz)
+tar tzf final-e258288.tgz > final-e258288.list
+grep -E 'zkllm/summary.csv|numbers_check.txt|dryrun.txt|env/inputs.sha256|env/models-check.txt' final-e258288.list
+grep -cE 'zkllm/llama2-(7b|13b)-T[0-9]+/env.txt$' final-e258288.list           # 8
+grep -cE 'smoke_pytest-.*\.(txt|xml)$' final-e258288.list                      # 2 (more if the smoke ran twice)
+grep -cE 'env/[^/]+/env.json$' final-e258288.list                              # 15 or more (one per allocation)
+grep -cE 'telemetry/sp-.*\.csv\.gz$' final-e258288.list                        # 246 or more (one per job run)
+grep -cE 'comparison/raw_final/' final-e258288.list                            # more than 0
+ls -lh final-e258288.tgz
+mkdir -p $H/return && cp final-e258288.tgz $H/return/ && (cd $H/return && sha256sum final-e258288.tgz)
 ```
 
 The first `grep` should list `logs/final/zkllm/summary.csv`, `numbers_check.txt`, `dryrun.txt`,
