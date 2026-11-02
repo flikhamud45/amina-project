@@ -89,7 +89,10 @@ the models and the model-substitution settings.
 torch kernels, the fused GPU kernels, GPU or host decoding, int8 GEMMs, the hash threads of the tree absorption,
 V1's optimised or baseline verifier, and where a lean GPU prover keeps its claims until it encodes them
 (`host_claims`: on the GPU, the default, in pinned host memory, or `auto`: on the GPU unless they do not fit, then
-only the overflow staged; `pvi.v0.query.device_claim_budget`). Every path gives the same integers, bytes and verdicts, and only time and memory
+only the overflow staged; `pvi.v0.query.device_claim_budget`), and how a GPU verifier decodes the claims
+(`decode_memory`: the whole input at once, the default, or `low`: stream by stream with the exceptions patched in
+parts, `claimcodec.decode_device_parts`; `auto`: `low` only when the default decoder's predicted peak would exceed
+`decode_memory_budget` percent of the GPU). Every path gives the same integers, bytes and verdicts, and only time and memory
 change. An option is set for the process (`options.configure`) or for a block (`with options.using(...)`). Every
 script exposes each option as a command-line flag and records `options.describe()`. Six environment variables
 name places on the host and select no code path: `CXX`, `PVI_NATIVE_DIR` and `PVI_PY_INCLUDE` (the native and Triton

@@ -290,6 +290,9 @@ Likewise `--gkr-memory` keeps its default path in every job but the V1 cells at 
 memory without it: the full Llama-2-7B's and the GPU-verifier V1 cells pass `--gkr-memory auto`, OPT-6.7B's (42.5 of
 44.5 GiB predicted) `--gkr-memory auto --gkr-memory-budget 100`, which keeps the default path unless the whole GPU
 would not do (`experiments/v1/README.md`, "GPU memory of the GKR", lists the cells; the record's `v1_full.gkr_memory`).
+Likewise `--decode-memory auto`, the GPU verifier's decoder in bounded memory, goes to the streaming GPU-verifier
+cells of the real Llama-2-7B and Llama-2-13B at 2,048 tokens alone (`b-cg-llama2-7b-2k`, `b-cg-llama2-13b-2k`;
+`experiments/costs/README.md`; the record's `decode_memory`).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
 cpuv`, then `v1`, ...); its jobs are chained among themselves. Every mode-C cell takes `--policy` (default `cnn18c`)

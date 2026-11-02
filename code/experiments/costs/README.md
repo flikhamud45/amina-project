@@ -126,6 +126,18 @@ every claim. The bytes, the proof and the transcripts are the same in all three;
 `serve_ab.py`'s joint proof of 4 such prompts of Llama-2-7B, OPT-6.7B and Llama-2-13B would also fit, at the cost of
 the copies; the run leaves them on `device`.
 
+The streaming GPU verifier decodes the claims on the GPU. Its default decoder (`claimcodec.decode_device`) holds the
+whole input, the int32 claims and about eleven int64 vectors as long as the list of exceptions (the values the Rice
+code does not cover) at once. On the real Llama-2-7B at 2,048 tokens (about 375 M exceptions among 2.7 G claims) and
+the real Llama-2-13B, this exceeds the L40S's memory beside the weights. The option `--decode-memory` (`pvi.options`,
+every script) selects the decoder: `default`, the whole input at once; `low` (`claimcodec.decode_device_parts`), one
+stream at a time with the exceptions kept compact and patched in parts of `--decode-chunk` exceptions (default
+2^23); `auto`, `low` only when the memory already allocated and the default decoder's peak, predicted from the
+input's header on the host before the timer starts, exceed `--decode-memory-budget` percent of the GPU (default 90).
+Both decoders give the same claims and reject a malformed input at the same check. `low` can change
+`verify_decode`; each query's record gives the decoder used (`decode_memory`). The run passes `--decode-memory auto`
+to the two cells that need it, `b-cg-llama2-7b-2k` and `b-cg-llama2-13b-2k`; every other job keeps `default`.
+
 The prover and the verifier share the process, so its peak memory is theirs together. `--client-memory` (a CPU
 verifier, the compact encoding; mode C under Fiat-Shamir) measures the client's own: a separate process
 (`experiments/common/client.py`, spawned per mode after the warm-up) holds only the public graph, the parameters and

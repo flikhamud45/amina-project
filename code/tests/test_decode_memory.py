@@ -222,7 +222,7 @@ def test_on_a_gpu_the_low_memory_decoder_rejects_what_the_default_decoder_reject
 
 
 @cuda_only
-def test_on_a_gpu_auto_keeps_the_default_decoder_when_it_fits(set_options):
+def test_on_a_gpu_auto_keeps_the_default_decoder_when_it_fits(set_options, monkeypatch):
     _gpu_ok()
     graph = build_decoder(shapes.LLAMA, calib_tokens=12, seed=3)
     x = torch.randint(0, 97, (1, 12), generator=torch.Generator().manual_seed(5))
@@ -230,9 +230,17 @@ def test_on_a_gpu_auto_keeps_the_default_decoder_when_it_fits(set_options):
     set_options(decode_memory="auto")
     out = proto.run_query(prover, verifier, x, seed=1, wire=True)
     assert out["accepted"] and out["decode_memory"] == "default"
-    set_options(decode_memory="auto", decode_memory_budget=1)
     assert v0_query.device_decode_low(verifier, b"PVC3", x) is False     # malformed: the default decoder rejects
+    # a predicted peak beyond the GPU (the tiny model's own is far below any budget): auto takes the low decoder,
+    # and the prediction it replaces was read from this query's header (not None)
+    real = []
+
+    def huge(buf, rows, cols):
+        real.append(cc.device_decode_peak(buf, rows, cols))
+        return 1 << 50
+    monkeypatch.setattr(v0_query.claimcodec, "device_decode_peak", huge)
     low = proto.run_query(prover, verifier, x, seed=1, wire=True)
+    assert real and all(p is not None and p > 0 for p in real)
     assert low["accepted"] and low["decode_memory"] == "low" and low["transcript"] == out["transcript"]
 
 
