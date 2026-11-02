@@ -810,7 +810,7 @@ def test_the_settings_and_the_further_text_numbers(run_dir):
     # the Kpre client's storage, from the shapes: r = 7 vectors and folded rows, and the int8 embedding table
     assert (v["KpreKeyMB"], v["KpreEmbedMB"], v["KpreStoreGB"]) == ("71", "131", "0.2")
     # quality: the recipe studies
-    assert v["QualityLegacyOptS"] == "2.0" and v["QualityAlphaGapOptM"] == "0.000" and v["QualityAlphaGapOptS"] is None
+    assert v["QualityLegacyOptS"] == "2.0" and v["QualityAlphaGapOptM"] == "0" and v["QualityAlphaGapOptS"] is None
     assert v["QualityAlphaValGapOptM"] == "0.001" and v["QualityAlphaCostOptL"] == "0.002"
     q = {(c["row"], c["column"]): c for c in tables["tab_quality"].cells}
     assert q["OPT-1.3B", "certified ratio"]["value"] == 1.026
@@ -822,6 +822,10 @@ def test_the_settings_and_the_further_text_numbers(run_dir):
     assert [M.count_word(x) for x in (5.43, 1, 10.2, 14.35)] == ["five", "one", "ten", "14"]
     assert (M.ceil_sig(0.8349), M.ceil_sig(1.8), M.ceil_sig(0.999), M.ceil_sig(12.3)) == ("0.84", "1.8", "1", "13")
     assert (M.ceil_fixed(0.34), M.ceil_fixed(0.3), M.ceil_fixed(0.0009999999999999, 3)) == ("0.4", "0.3", "0.001")
+    assert (M.ceil_fixed(0.0, 3), M.ceil_fixed(1e-13, 3)) == ("0", "0")      # a bound of zero, not "0.000"
+    # a nonzero amount below the printed resolution as a bound, never as zero; one range endpoint when both agree
+    assert (F.small(0.0004), F.small(0.006), F.small(0.0), F.small(0.04, 1)) == ("$<$0.01", "0.01", "0", "$<$0.1")
+    assert (F.rng(0.87, 0.871, lambda v: f"{v:.2f}"), F.rng(1.0, 1.2)) == ("0.87", "1--1.2")
     # from the shapes alone, under the run's instance bound (the records' lmax 27)
     assert v["VOneDownClaims"] == r"2.6\cdot10^{8}" and v["VOneLargeLeaves"] == r"4.3\cdot10^{9}"
     assert (v["VOneLargeInstances"], v["VOneLargeBits"]) == ("39", "27")
@@ -845,7 +849,7 @@ def test_the_llama_family_the_validation_grid_and_the_reproducible_build(run_dir
     assert (v["LlamaThirteenRatio"], v["LlamaThirteenCI"]) == ("1.065", "1.062, 1.066")
     assert (v["LlamaSevenTestBest"], v["LlamaSevenTestGap"]) == (r"$\alpha=0.45$ with balance 0.3", "0.003")
     assert (v["LlamaSevenValBest"], v["LlamaSevenValGap"]) == (r"$\alpha=0.45$ with balance 0.3", "0.004")
-    assert (v["LlamaThirteenTestBest"], v["LlamaThirteenTestGap"]) == (r"$\alpha=0.6$", "0.000")
+    assert (v["LlamaThirteenTestBest"], v["LlamaThirteenTestGap"]) == (r"$\alpha=0.6$", "0")
     assert (v["LlamaThirteenValBest"], v["LlamaThirteenValGap"]) == (r"$\alpha=0.5$", "0.002")
     assert (v["DigestThreadsOptS"], v["DigestEncodingOptM"]) == ("1 and 8", "CPU and GPU")
     z = {(c["row"], c["column"]): c for c in tables["tab_zeroshot"].cells}
@@ -919,7 +923,7 @@ def test_the_llama_recipes_validation_grids_and_calibration_draws():
     v, problems = _quality_run(*grids, *draws, draws[0])
     assert not problems
     assert (v["TinyLlamaValBest"], v["TinyLlamaValGap"]) == (r"$\alpha=0.85$ with balance 0.1", "0.002")
-    assert (v["QwenMValBest"], v["QwenMValGap"]) == (r"$\alpha=0.45$ with balance 0.3", "0.000")
+    assert (v["QwenMValBest"], v["QwenMValGap"]) == (r"$\alpha=0.45$ with balance 0.3", "0")
     assert (v["TinyLlamaDrawSpread"], v["QwenMDrawSpread"], v["LlamaSevenDrawSpread"]) == ("0.004", "0.015", "0.002")
     assert v["LlamaDrawSpread"] == "0.015"
     v, problems = _quality_run(*grids[:8], *draws[:-1])         # a grid cell and Llama-2-7B's draw 2 missing
@@ -954,7 +958,7 @@ def test_the_texts_claims_on_the_llama_family_and_a_build_that_differs():
     grid = [llama_ppl(l7, f"main-a{a:g}-glus{g:g}", 1.07 if (a, g) in ((0.55, 0.2), (0.65, 0.1)) else 1.08, alpha=a,
                       balance=g, split="validation") for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)]
     v, problems = _quality_run(*grid)
-    assert not problems and v["LlamaSevenValGap"] == "0.000"
+    assert not problems and v["LlamaSevenValGap"] == "0"
     assert v["LlamaSevenValBest"] == r"$\alpha=0.55$ with balance 0.2"
     assert v["LlamaSevenTestBest"] is None and v["LlamaSevenTestGap"] is None    # the test split's grid: not run
     v, problems = _quality_run(*grid[:8])                       # one cell missing: no best cell, and no false claim
@@ -1576,6 +1580,12 @@ def test_the_fallback_tables_agree_with_their_macros():
     assert len(N.same_value(tables, dict(macros, CpuVerifyLong="18.5"))) == 3   # tab:options, :eval-reexec, :eval-cpu
     assert N.two_jobs(tables, macros) == []
     assert N.two_jobs(tables, dict(macros, VOneVZeroVerifyLlama="25.0"))
+    # V1's verifier in tab:eval-v1 against tab:options' "with V1" row: compared only on a full-model build (the
+    # fallback's Llama-2-7B row is 2 of 32 blocks)
+    full = dict(tables, tab_eval_v1=tables["tab_eval_v1"].replace("Llama-2-7B, 2/32", "Llama-2-7B, 32/32"))
+    warned = N.two_jobs(full, macros)
+    assert len(warned) == 1 and "tab_eval_v1" in warned[0] and "VOneVerifyLlama" in warned[0]
+    assert N.two_jobs(full, dict(macros, VOneVerifyLlama=r"\notready{3.5}")) == []
     assert N.printed(r"2.9--3.5$\times$") == (2.9, 3.5, pytest.approx(0.1))
     assert N.printed(r"\textbf{17.6\,s (46$\times\downarrow$)}", 1) == (46.0, 46.0, 1.0)
     assert N.printed(r"431\,ms")[0] == pytest.approx(0.431) and N.printed(r"\todo{bench tier}") is None
@@ -1720,11 +1730,12 @@ def test_the_long_prompts_fit_the_blocks_and_check_the_fit_against_the_full_mode
     # the GPU at 16,384 tokens: 20 + 30 x 6 = 200 s against 30 + 30 x 15 = 480 s of int8 re-execution
     assert (v["LongGpuVerifyLong"], v["LongGpuRatioLong"], v["LongGpuPeakLong"]) == ("200", "2.4", "12.3")
     check = T.tab_eval_long_check(ctx)
-    assert check.rows[0] == r"CPU & 2{,}048 & 19.6 / 20 & 142 / 144 & 6.43 / 6.42 \\"
-    assert check.rows[1].startswith(" & 8{,}192 & 335 / 330 & 330 / 320 & 16.00 / 16.00")
-    assert check.rows[2].startswith(r"GPU & 2{,}048 & 5 / 4.9 & 1.65 / 1.6 & ")
+    # each time column with one number of decimals, from its smallest value (4.9 s, 1.6 s: three digits)
+    assert check.rows[0] == r"CPU & 2{,}048 & 19.60 / 20.00 & 141.60 / 144.00 & 6.43 / 6.42 \\"
+    assert check.rows[1].startswith(" & 8{,}192 & 335.00 / 330.33 & 330.00 / 320.00 & 16.00 / 16.00")
+    assert check.rows[2].startswith(r"GPU & 2{,}048 & 5.00 / 4.90 & 1.65 / 1.60 & ")
     gpu = T.tab_eval_long_gpu(ctx)
-    assert gpu.rows[3] == r"16{,}384 & 200 & 480 & 160 & 2.4$\times$ & 12.3 \\"
+    assert gpu.rows[3] == r"16{,}384 & 200.00 & 480.00 & 160 & 2.4$\times$ & 12.3 \\"
     assert len(gpu.missing) == 2 * 5 + 1                # no GPU cell at 4,096 or 8,192 tokens, no fp16 at 2,048
     tables = {tb.name: tb.text() for tb in (gpu, check)}
     assert N.same_value(tables, {k: x for k, x in v.items() if x is not None}) == []
@@ -1742,7 +1753,7 @@ def test_v1_at_long_prompts_and_its_measured_crossover(monkeypatch):
     run = _long_run()
     ctx = T.Ctx(run, B.Bench(None), {}, "cnn18c", "test platform", byte_model=False)
     tb = T.tab_eval_v1_long(ctx)
-    assert not tb.missing and tb.rows[0].startswith(r"2{,}048 & 400 & 189 & 2.12$\times$ & 4.1 & 9.1 & 2.20$\times$")
+    assert not tb.missing and tb.rows[0].startswith(r"2{,}048 & 400 & 189 & 2.12$\times$ & 4.10 & 9.10 & 2.20$\times$")
     assert tb.rows[2].endswith(r"& 2.00$\times$ \\")
     # the break-even on cpuv records and the codec profiles, with a fixed part of 0.1 GB at every length (the byte
     # model is not run here) and the int8 weights of 6.74 GB
@@ -1780,6 +1791,17 @@ def test_v1_at_long_prompts_and_its_measured_crossover(monkeypatch):
     assert (v["VOneClaimsRatioTwoK"], v["VOneClaimsRatioEightK"], v["VOneClaimsRatioSixteenK"]) == \
         ("2.2", "2.0", "2.0")
     assert not problems and [x["seq"] for x in out["v1_measured"]] == [64, 2048, 4096, 8192, 16384]
+    # V1's link crossover, and the sentence's clause on it; the figure's rows carry the crossovers they mark
+    assert v["BreakevenVOneClause"] == rf"~(V1: {v['BreakevenLinkVOne']}\,Gb/s)"
+    assert [x["L_star_gbps"] is not None for x in out["panel2"]] == [True, True]
+    assert all(x["Q_star"] > 0 for x in out["panel1"])
+    # V1's verifier alone slower than re-execution: no crossover, and the clause says so
+    slow_v1 = recs[:-1] + [rec("cpuv", "c-v1-llama2-7b-2048", "v1", v1(m, 2048, "Kpre", 32, 6.43e9, 2.8e9,
+                                                                       label="cpuv-v1", opt=(4.0, 200.0)))]
+    v, problems, out = breakeven(slow_v1)
+    assert v["BreakevenLinkVOne"] is None and v["BreakevenLinkLong"] is not None
+    assert v["BreakevenVOneClause"] == M.vone_link_clause("never") and "takes longer" in v["BreakevenVOneClause"]
+    assert out["panel2"][1]["L_star_gbps"] is None
     # without the codec profiles the measured crossover is missing (never the constant ratio's)
     v, problems, _ = breakeven(recs)
     assert v["BreakevenTokensVOne"] is None and v["BreakevenTokensVOneConstant"] is not None and not problems

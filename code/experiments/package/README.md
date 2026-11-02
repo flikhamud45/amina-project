@@ -343,8 +343,13 @@ given tiers alone, e.g. Llama-2-7B's:
 J=q-llama7-a0.45-absorb,q-llama7-a0.55-absorb,q-llama7-a0.65-absorb,q-llama7-validation-a0.45-absorb
 J=$J,q-llama7-validation-a0.55-absorb,q-llama7-validation-a0.65-absorb,q-llama7-draws-absorb
 $R --llama-prefix absorb --one-job --jobs $J qprefix     # Llama-2-7B: 7 jobs, 42 h of limits (about 30 h)
+# only once that allocation has ended (squeue shows no sp-node-qprefix):
 $R --llama-prefix absorb --one-job --jobs q-qwen4-absorb qprefix   # Qwen3-4B: 1 job, 5 h limit (about 4 h)
 ```
+
+Both `--one-job` commands name their allocation after the tier (`sp-node-qprefix`), so the second, submitted while
+the first is queued or running, is skipped as `already queued`; submit it after the first ends. One `--jobs` list of
+all eight jobs would run them in one allocation, which `--max-hours` (default 24) cuts short of their 47 h of limits.
 
 ## 5. While it runs
 

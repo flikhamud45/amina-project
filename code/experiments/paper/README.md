@@ -153,14 +153,20 @@ else `bench.DEFAULT_POLICY`, `cnn18c`), `--prob-max` (the decoders' attention pr
 cells, default 2047; 255 reads the stored runs' 8-bit cells), `--out` (default `paper_sp2027/generated`),
 `--figures` (default `paper_sp2027/figures`; `''` for none) and `--schematics`, `--weights` (`auto`, `real` or
 `random`: the main cells' weights) and `--llama-licence` (`auto`, `yes` or `no`: whether the Llama-2 main cells are
-real), `--expect <dry-run listing>`, `--check`, `--strict`, `--allow-missing`, `--rehearsal`, `--no-byte-model`
+real), `--llama-prefix` (`any`, `auto` or `absorb`: the prefix rule of the Llama-family quality records read; `any`,
+the default, the latest job's record of each cell; `auto` PrefixQuant's records only; `absorb` the latest record that
+agrees with the absorption rule: built by it, or by PrefixQuant's rule with a prefix that absorbs by its own record),
+`--absorb-margin` (the absorption rule's margin for `--llama-prefix absorb`'s check of PrefixQuant's records; default
+the margin the run's absorb records name, else 1), `--expect <dry-run listing>`, `--check`, `--strict`,
+`--allow-missing`, `--rehearsal`, `--no-byte-model`
 (skips `tab:params`, `tab:setup` and the break-even, which take several minutes on a laptop CPU), `--verbose`,
 `--xcheck-logs DIR...` (another platform's logs of the smoke tier, whose `xcheck` proofs must equal the run's;
 `\HwDigestDevices` then names its GPU and CPU), `--compare-rows ROWS` (`tab:eval-compare`'s rows: `default`, `all`, a comma-separated list
 of the keys of `tables.COMPARE_ROWS` or a file of them, one per line with `#` comments; an unknown key is refused
 with the list of keys). `SAME_VALUE` pairs each table cell with the macro that prints the same value of the same
 record, `TWO_JOBS` each quantity that two jobs measure (the serving harness's prover and the benchmark's, the
-benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and perf.py's).
+benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and perf.py's, the v1 tier's V1 verifier
+and the cpuv tier's).
 
 ## The checks
 

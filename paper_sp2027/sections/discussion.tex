@@ -13,7 +13,7 @@ client with the weights and a GPU should re-execute. The regime is narrow
 mode-$\sC$ proofs cost the client fewer bytes than one download of the int8 weights; at 2{,}048
 tokens the weights are only \BreakevenQueriesLong{}$\times$ the size of one proof, or \BreakevenQueriesVOne{}$\times$ with V1. A $\Kpre$ client that could keep the weights
 verifies faster than exact re-execution on its CPU only on links faster than
-\BreakevenLinkRange{}\,Gb/s (V1: \BreakevenLinkVOne{}\,Gb/s).
+\BreakevenLinkRange{}\,Gb/s\BreakevenVOneClause{}.
 
 \para{Proof size.} The proof carries every weight operation's output, so it grows with the prompt.
 For Llama-2-7B it reaches the size of the int8 weights at about \BreakevenTokens{} tokens without V1 and at about

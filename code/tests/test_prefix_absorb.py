@@ -7,9 +7,10 @@ statistics and tiny random Llama models (no download):
 * PrefixQuant's rule (``auto``, the default) gives what it gave before, and its record has no field of the new rule;
 * a prefix the rule chose builds the same graph, digest included, as the same token ids given by hand;
 * ``prefix_check.py`` measures the maxima ``_hidden_max`` measures, and prints every candidate and the rule's pick;
-* the paper's tooling names the rule of the Llama-family records it reads; under the absorption rule a cell of
-  PrefixQuant's rule whose prefix absorbs by its own record counts as the rule's, and one whose prefix does not
-  fails the text's claim; ``llama_prefix`` selects by the rule.
+* the paper's tooling names the rule of the Llama-family records it reads; under the absorption rule, per
+  checkpoint, a cell of PrefixQuant's rule whose prefix absorbs by its own record counts as the rule's, one whose
+  prefix does not fails the text's claim when another cell of the checkpoint is the rule's and is a warning when all
+  are PrefixQuant's; ``llama_prefix`` selects by the rule.
 """
 
 from __future__ import annotations
@@ -235,17 +236,23 @@ def _llama(model, cell, ratio, spec, job, *, window=None, prefix=None, **kw):
     return R.Rec("quality", f"q-x{job}", str(job), f"sp-q-x-{job}.out", 1, R.kind_of(d), d)
 
 
-def _macros(recs, **run_kw):
+def _macros(recs, warnings=None, **run_kw):
+    """``(printed macros, problems)`` of a build of ``recs``; ``warnings`` (a list): extended by the run's
+    ``WARNING`` lines."""
     problems: list = []
-    m, _ = M.build(T.Ctx(R.Run(recs, **run_kw), B.Bench(None), {}, byte_model=False), problems)
+    run = R.Run(recs, **run_kw)
+    m, _ = M.build(T.Ctx(run, B.Bench(None), {}, byte_model=False), problems)
+    if warnings is not None:
+        warnings += [w for w in run.warnings if w.startswith("WARNING prefix")]
     return {k: x.value for k, x in m.items()}, problems
 
 
 def test_the_paper_reads_one_prefix_rule():
     """Only the checkpoints whose prefix the absorption rule changes are measured again: a cell of PrefixQuant's rule
     whose prefix absorbs by its own record counts as the rule's; one whose prefix does not fails the text's claim
-    once any cell read is the rule's (or with ``llama_prefix="absorb"``).  The latest job's record is read, and
-    ``llama_prefix="absorb"`` prefers the records that agree with the rule."""
+    once a cell of its checkpoint is the rule's; a checkpoint whose cells are all PrefixQuant's is accepted with a
+    warning when its prefix does not absorb (also with ``llama_prefix="absorb"``).  The latest job's record is read,
+    and ``llama_prefix="absorb"`` prefers the records that agree with the rule."""
     tl, l7 = "TinyLlama/TinyLlama_v1.1", "meta-llama/Llama-2-7b-hf"
     assert (R.prefix_rule({"prefix_spec": "auto"}), R.prefix_rule({"prefix_spec": None}),
             R.prefix_rule({"prefix_spec": "13,1"}), R.prefix_rule({"cell": "x"})) == ("auto", "none", "ids", None)
@@ -256,7 +263,13 @@ def test_the_paper_reads_one_prefix_rule():
     assert not R.prefix_absorbs(tiny.d, 1.2) and R.absorb_consistent(tiny.d) and not R.absorb_consistent(seven.d)
     v, problems = _macros([tiny, seven])
     assert not problems and v["LlamaSevenRatio"] == "265.000"            # PrefixQuant's rule throughout: no check
-    v, problems = _macros([tiny, seven], llama_prefix="absorb")          # under the rule, Llama-2-7B's cell fails
+    warned: list = []
+    v, problems = _macros([tiny, seven], warned, llama_prefix="absorb")  # no cell of the rule: a warning only
+    assert not problems and len(warned) == 1 and l7 in warned[0] and tl not in warned[0]
+    # a cell of the rule next to a PrefixQuant cell of the same checkpoint that does not absorb fails
+    mixed = [tiny, seven, _llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 3, split="validation", window=900.0,
+                                 prefix=1500.0)]
+    v, problems = _macros(mixed)
     assert len(problems) == 1 and problems[0].startswith(M.TEXT_CLAIM) and "does not absorb" in problems[0]
     assert l7 in problems[0] and tl not in problems[0]
     # Llama-2-7B measured again with the rule (a later job): read, and TinyLlama's absorbing cell agrees
@@ -264,11 +277,14 @@ def test_the_paper_reads_one_prefix_rule():
     v, problems = _macros(again)
     assert not problems and v["LlamaSevenRatio"] == "1.080"
     assert {k: len(x) for k, x in M.llama_prefix_rules(R.Run(again)).items()} == {"auto": 1, "absorb": 1}
-    # a margin of 1.2 (named by the rule's records, or given): TinyLlama's prefix no longer absorbs
-    v, problems = _macros(again, absorb_margin=1.2)
-    assert len(problems) == 1 and tl in problems[0] and "margin 1.2" in problems[0]
-    v, problems = _macros(again[:2] + [_llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 3, margin=1.2)])
-    assert len(problems) == 1 and tl in problems[0]
+    # a margin of 1.2 (named by the rule's records, or given): TinyLlama's prefix no longer absorbs, a warning (its
+    # cells are all PrefixQuant's)
+    warned = []
+    v, problems = _macros(again, warned, absorb_margin=1.2)
+    assert not problems and len(warned) == 1 and tl in warned[0] and "margin 1.2" in warned[0]
+    warned = []
+    v, problems = _macros(again[:2] + [_llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 3, margin=1.2)], warned)
+    assert not problems and len(warned) == 1 and tl in warned[0]
     # a later job of PrefixQuant's rule: read by default (every cell read is then PrefixQuant's), passed over with
     # llama_prefix="absorb"
     late = again + [_llama(l7, "main-a0.55-glus0.2", 265.0, "auto", 5, window=2461.0, prefix=1130.0)]
@@ -278,3 +294,29 @@ def test_the_paper_reads_one_prefix_rule():
     assert not problems and v["LlamaSevenRatio"] == "1.080"
     v, problems = _macros(late, llama_prefix="auto")
     assert not problems and v["LlamaSevenRatio"] == "265.000"
+
+
+def test_the_rule_is_checked_per_checkpoint():
+    """Llama-2-7B measured again with the absorption rule, Qwen3-4B left with PrefixQuant's prefix (the rule cannot
+    absorb its massive activation within its longest prefix): the build passes, with a warning naming Qwen3-4B; a
+    cell of the rule whose own search found no prefix that absorbs is a warning too."""
+    l7, qw = "meta-llama/Llama-2-7b-hf", "Qwen/Qwen3-4B-Base"
+    seven = _llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 3, window=900.0, prefix=1500.0)
+    seven.d["prefix_choice"]["absorbed"] = True
+    qwen = _llama(qw, "main-a0.45-glus0.5", 1.05, "auto", 2, window=8803.0, prefix=2300.0)
+    assert R.prefix_absorbs(qwen.d) is False
+    warned: list = []
+    v, problems = _macros([seven, qwen], warned)
+    assert not problems, problems
+    assert v["LlamaSevenRatio"] == "1.080"
+    assert len(warned) == 1 and qw in warned[0] and l7 not in warned[0]
+    warned = []
+    v, problems = _macros([seven, qwen], warned, llama_prefix="absorb")
+    assert not problems and len(warned) == 1 and qw in warned[0]
+    # the rule's own search ended without a prefix that absorbs: still the rule's cell, with a warning
+    short = _llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 4, window=900.0, prefix=800.0)
+    short.d["prefix_choice"]["absorbed"] = False
+    warned = []
+    v, problems = _macros([short, qwen], warned)
+    assert not problems and len(warned) == 2
+    assert any(l7 in w and "no prefix that absorbs" in w for w in warned)

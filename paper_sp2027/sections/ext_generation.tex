@@ -2,6 +2,10 @@
 \providecommand{\sC}{\mathsf{C}}
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
 \providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+% \pviLoHi{\Lo}{\Hi}{sep}: "Lo sep Hi", or only Lo when the two macros hold the same text (or Hi is empty).
+\providecommand{\pviLoHi}[3]{\begingroup\expandafter\def\expandafter\pviLoHiA\expandafter{#1}%
+  \expandafter\def\expandafter\pviLoHiB\expandafter{#2}\def\pviLoHiE{}%
+  \ifx\pviLoHiA\pviLoHiB#1\else\ifx\pviLoHiB\pviLoHiE#1\else#1#3#2\fi\fi\endgroup}
 
 \subsection{Generated Responses as One Prefill: Details and Full Measurements}
 \label{sec:ext-gen}
@@ -79,10 +83,11 @@ in mode $\sC$ and \GenOverDecodeK{} times in $\Kpre$.
   proof divided by $G$}
   \label{tab:gen-full}
   \centering\footnotesize
-  \setlength{\tabcolsep}{3.5pt}
+  \setlength{\tabcolsep}{3pt}
   \begin{tabular}{@{}lrrrrr@{}}
     \toprule
-    Model, mode & $G$ & Prover (s) & Verifier (s) & Proof (MB) & MB/token \\
+    & & Prover & Verifier & Proof & MB/ \\
+    Model, mode & $G$ & (s) & (s) & (MB) & token \\
     \midrule
     \pvitable{tab_gen_full}
     \bottomrule
@@ -176,19 +181,19 @@ first), its ratio moves by \LlamaSevenDrawSpread{} on Llama-2-7B, \TinyLlamaDraw
 and \QwenMDrawSpread{} on Qwen3-1.7B (at most \LlamaDrawSpread{}).
 
 \para{Choice of $\alpha$.} The certified recipe's
-$\alpha=0.6$ was chosen on the test split: over $\alpha\in\{0.3,\dots,0.7\}$ its ratio is within
-\QualityAlphaGapOptS{} of the best on OPT-125M and within \QualityAlphaGapOptM{} on OPT-1.3B. On the validation split, which
-no choice used, it is within \QualityAlphaValGapOptS{} and \QualityAlphaValGapOptM{} of the best of $\alpha\in\{0.5,0.6,0.7\}$ on
+$\alpha=0.6$ was chosen on the test split: over $\alpha\in\{0.3,\dots,0.7\}$ its ratio is
+\QualityAlphaGapOptS{} above the best on OPT-125M and \QualityAlphaGapOptM{} above it on OPT-1.3B. On the validation split, which
+no choice used, it is \QualityAlphaValGapOptS{} and \QualityAlphaValGapOptM{} above the best of $\alpha\in\{0.5,0.6,0.7\}$ on
 OPT-125M and OPT-1.3B, and costs OPT-6.7B \QualityAlphaCostOptL{} against $\alpha=0.5$. The Llama recipe's $\alpha$
 and SwiGLU balance were likewise chosen per model on the test split, except Llama-2's, fixed in
 advance: 7B takes ($\alpha=0.55$, balance 0.2) from a licence-free model of its shapes, and 13B takes
 ($\alpha=0.6$, balance 0.2). On Llama-2-7B the best of
 $\alpha\in\{0.45,0.55,0.65\}$ and balance $\in\{0.1,0.2,0.3\}$ is \LlamaSevenTestBest{} (test) and
-\LlamaSevenValBest{} (validation), ours within \LlamaSevenTestGap{} and \LlamaSevenValGap{} of them;
+\LlamaSevenValBest{} (validation), ours \LlamaSevenTestGap{} and \LlamaSevenValGap{} above them;
 on Llama-2-13B the best of $\alpha\in\{0.5,0.6,0.7\}$ is \LlamaThirteenTestBest{} and \LlamaThirteenValBest{}, ours
-within \LlamaThirteenTestGap{} and \LlamaThirteenValGap{}. On the validation split, TinyLlama's setting is within
-\TinyLlamaValGap{} of the best of $\alpha\in\{0.65,0.75,0.85\}$ and balance $\in\{0.1,0.2,0.3\}$ (\TinyLlamaValBest{}),
-and Qwen3-1.7B's within \QwenMValGap{} of the best of $\alpha\in\{0.35,0.45,0.55\}$ and balance $\in\{0.2,0.3,0.4\}$
+\LlamaThirteenTestGap{} and \LlamaThirteenValGap{} above them. On the validation split, TinyLlama's setting is
+\TinyLlamaValGap{} above the best of $\alpha\in\{0.65,0.75,0.85\}$ and balance $\in\{0.1,0.2,0.3\}$ (\TinyLlamaValBest{}),
+and Qwen3-1.7B's \QwenMValGap{} above the best of $\alpha\in\{0.35,0.45,0.55\}$ and balance $\in\{0.2,0.3,0.4\}$
 (\QwenMValBest{}). Cross-layer equalisation did not help after smoothing (perplexity \CleWith{}
 against \CleWithout{} on OPT-125M at 128 tokens).
 
@@ -223,7 +228,8 @@ scores exact next-token predictions; the integer model picks the fp16 answer on
 \end{table*}
 
 \para{Per-row weight scales.} Per-row power-of-two weight scales (four per matrix) on top of
-smoothing reach $\times\RowScalesLo{}$--$\RowScalesHi{}$ on OPT-125M at 128 tokens, with top-1 agreement \RowScalesTopOneLo{} to \RowScalesTopOneHi{},
+smoothing reach $\times$\pviLoHi{\RowScalesLo}{\RowScalesHi}{--} on OPT-125M at 128 tokens, with top-1 agreement
+\pviLoHi{\RowScalesTopOneLo}{\RowScalesTopOneHi}{ to },
 but do not help at 2{,}048 tokens. They give a requantisation four multipliers. v0 recomputes such a
 requantisation like any other operation without weights, but V1's windows assume one multiplier per operation, so we do not adopt them; supporting a few
 multipliers per operation in V1 would remove this restriction.

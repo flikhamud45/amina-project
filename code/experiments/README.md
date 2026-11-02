@@ -38,7 +38,10 @@ paper's measured results (the protocol's: `experiments.common.cli.PAPER`):
   block computed at the last position only (`--no-prune-last`), the verifier reading the embedding rows itself in
   modes K and Kpre (`--no-lookups`), random-weight decoders with 11-bit attention probabilities as the certified
   models (`--prob-max 2047`; `--prob-max 255`: the 8-bit graphs), `--lam 128`, `--rate 4`, and `--setup-cache DIR`
-  for the prover's setup cache.
+  for the prover's setup cache. A script that times variants side by side (`costs/perf.py`, the one built with
+  `add_protocol_arguments(variants=True)`) takes lists instead of the `--no-...` forms: `--wire on|off`,
+  `--lean on|off`, `--prune-last on|off` and `--lookups on|off` (e.g. `--wire on off` times both), and likewise
+  several `--policy` plans and `--prob-max` scales; `--no-fs` works in every script.
 * **Models**: random weights with the benchmark shapes for the cost cells; for real checkpoints the certified OPT
   recipe (`pvi.models.hf_opt.CERTIFIED_RECIPE`) and the main Llama recipe with its fixed public prefix
   (`pvi.models.hf_llama.MAIN_RECIPE`, per checkpoint `main_recipe`). The percentile recipe is `--recipe legacy`.

@@ -45,11 +45,11 @@ the streaming GPU verifier \ImproveGpuvOptM{}$\times$ faster on OPT-1.3B blocks 
 queries of $T$ tokens reveal a weight matrix with rows of length $k$. The provider must also serve
 the integer model. Folding SmoothQuant's per-channel scales~\cite{xiao2023smoothquant} into the
 gains of the integer LayerNorm brings the integer model's WikiText-2 perplexity at 2{,}048 tokens to
-within a factor of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 on
+a factor of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 on
 OPT-125M, OPT-1.3B and OPT-6.7B, from \QualityScalarOptS{}, \QualityScalarOptM{} and
 \QualityScalarOptL{} with one scalar gain, and changes no operation that the protocol checks
-(Section~\ref{sec:quality}). With a fixed public prefix, Llama-2-7B is within a factor of
-\LlamaSevenRatio{}, while our integer Qwen3-4B stays at a factor of \QwenLRatio{}.
+(Section~\ref{sec:quality}). With a fixed public prefix, Llama-2-7B reaches a factor of
+\LlamaSevenRatio{} and our integer Qwen3-4B a factor of \QwenLRatio{}.
 
 \subsection{Related Work in Detail}
 \label{ext:related}

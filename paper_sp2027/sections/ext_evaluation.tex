@@ -154,8 +154,8 @@ The full real OPT-6.7B (32 blocks) runs end to end in $\Kpre$ at 2{,}048 tokens.
 \RealOptLTampers{} tampers rejected. The proof is \RealOptLProof{}\,GB (with embedding lookups); it
 takes \RealOptLProve{}\,s to prove and \RealOptLVerify{}\,s to verify on 8 threads of the
 \PlatformCpu{} (decoding \RealOptLDecode{}\,s, recomputation \RealOptLRecompute{}\,s, products
-\RealOptLProducts{}\,s). V1's proof is \VOneRealOptLVOneGB{}\,GB against \VOneRealOptLVZeroGB{}\,GB for
-v0 (\VOneRatioRealOptLExact{}$\times$), with \VOneRealOptLExceptions{} exceptions
+\RealOptLProducts{}\,s). On the V1 run's own queries, V1's proof is \VOneRealOptLVOneGB{}\,GB against
+\VOneRealOptLVZeroGB{}\,GB for v0 (\VOneRatioRealOptLExact{}$\times$), with \VOneRealOptLExceptions{} exceptions
 (\VOneRealOptLExceptionsMB{}\,MB); in mode $\sC$ V1 gains \VOneRatioRealOptLCExact{}$\times$ (random
 twin: \RndOptLVOneRatioC{}$\times$). The random-weight twin takes \RndOptLProve{}\,s to prove and
 \RndOptLVerify{}\,s to verify, with a \RndOptLProof{}\,GB v0 proof that V1 makes
@@ -175,7 +175,7 @@ the three builds (Table~\ref{tab:eval-long}). A block's verifier time follows $a
 \LongBytesPerBlock{}\,GB per block at 8{,}192 tokens. 32{,}768 tokens are beyond the range of our
 kernels.
 
-The full model, measured at 2{,}048 tokens (the CPU-verifier cells of Table~\ref{tab:options}) and at 8{,}192
+The full model with random weights, as the fit (the long tier's cells), measured at 2{,}048 and 8{,}192
 tokens,\footnote{At 8{,}192 tokens the full model's claims do not fit in the GPU's memory beside the model, so the prover
 moves \LongCheckStaged{}\,GB of them to host memory as they are made. This changes only the prover's time, which this
 check does not use; the verifier, the re-execution and the proof are as they would be without it.} checks
@@ -386,7 +386,7 @@ proof, the claims alone, does not change), and the CPU verifier takes \LamFortyV
   \setlength{\tabcolsep}{3pt}
   \begin{tabular}{@{}lrrrrrr@{}}
     \toprule
-    Plan & trees & columns & encoding (s) & proof (GB) & prover (s) & verifier (s) \\
+    Plan & trees & columns & encode (s) & proof (GB) & prove (s) & verify (s) \\
     \midrule
     \pvitable{tab_eval_plans}
     \bottomrule

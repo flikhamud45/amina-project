@@ -106,6 +106,17 @@ def fixed(v, decimals: int = 1) -> str:
     return DASH if _missing(v) else f"{v:.{decimals}f}"
 
 
+def small(v, decimals: int = 2) -> str:
+    """A plain number with ``decimals`` decimals, a positive value that would print as zero as a bound instead:
+    0.0004 -> ``$<$0.01`` (a measured nonzero amount never prints as ``0.00``); zero prints as ``0``."""
+    if _missing(v):
+        return DASH
+    if v == 0:
+        return "0"
+    unit = 10.0 ** -decimals
+    return f"$<${unit:.{decimals}f}" if 0 < v < unit / 2 else f"{v:.{decimals}f}"
+
+
 def pct(v, decimals: int = 0) -> str:
     """A fraction as a percentage number without the sign (the text writes ``\\%``): 0.172 -> ``17``."""
     return DASH if _missing(v) else f"{100 * v:.{decimals}f}"

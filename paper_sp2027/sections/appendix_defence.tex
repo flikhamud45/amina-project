@@ -46,8 +46,8 @@ the gaps $g_j=\max_{j'}s_{j'}-s_j$ over the keys that the causal mask allows, th
 $i_j=\mathrm{clamp}(\lfloor(m_sg_j+2^{29})/2^{30}\rfloor,0,255)$ for a public $m_s$, and
 $e_j=E[i_j]$ with $E[i]=\mathrm{round}(2^{15}e^{-i/16})$; masked keys get $e_j=0$. With
 $S=\sum_je_j\ge2^{15}$, the probabilities are $P_j=\lfloor(2P_{\max}e_j+S)/(2S)\rfloor\in[0,P_{\max}]$,
-that is, $P_{\max}e_j/S$ rounded, for a public $P_{\max}$ (255 in the cost benchmarks, 2{,}047 in
-the certified models), and the output $PV$ is requantised. Grouped-query attention shares each key and
+that is, $P_{\max}e_j/S$ rounded, for a public $P_{\max}$ (2{,}047 in every measured cell; 255 gives
+8-bit probabilities), and the output $PV$ is requantised. Grouped-query attention shares each key and
 value head among its query heads.
 
 \para{Exact hardware arithmetic.} Weight products run on int8 tensor cores with 32-bit accumulation

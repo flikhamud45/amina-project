@@ -107,8 +107,8 @@ cells keep the GKR's layers in bounded memory; neither mode changes a byte.
   \end{tabular}
 
   \smallskip
-  \parbox{\columnwidth}{\footnotesize The same queries under v0 and V1; the prover and the CPU
-  verifier as in Table~\ref{tab:eval-llm}; --: not timed.}
+  \parbox{\columnwidth}{\footnotesize The same queries under v0 and V1, with random weights of each
+  model's shapes (so v0 differs slightly from Table~\ref{tab:eval-llm}); --: not timed.}
 \end{table}
 
 \para{Proof size.} At 2{,}048 tokens, V1's proof is \VOneRatioRandom{}$\times$ smaller than v0's on
@@ -156,7 +156,7 @@ queries\TodoVOneTimings{}.
   CPU inference takes \CpuFloatShort{}/\CpuFloatLong{}\,s in fp32, \CpuBfShort{}/\CpuBfLong{}\,s in
   bf16 and \DynIntShort{}/\DynIntLong{}\,s with dynamic int8; fp16 on the GPU takes
   \GpuFloatShort{}/\GpuFloatLong{}\,s. $^b$An edit passes a one-token response with probability
-  about \SokCommitRateAbout{}\% at a 5\% audit rate (Table~\ref{tab:sok}). $^c$Designated verifier.
+  about 98.4\% at a 5\% audit rate (10 of 32 layers). $^c$Designated verifier.
   $^d$V1's proof and its CPU verifier on the same queries. $^e$Llama-3.1-8B (Llama-2-7B's layers and width), per audited
   token, as reported~\cite{commitllm2026}: retained trace state (Merkle paths not counted) and the
   routine 10-layer check on an Apple M4. $^f$Provider's cost over unverified serving: GPU TEE below

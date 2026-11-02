@@ -602,6 +602,15 @@ def tab_eval_compare_full(ctx: Ctx) -> Table:
     return _compare_table(ctx, "tab_eval_compare_full", "tab:eval-compare-full", COMPARE_KEYS)
 
 
+def column_format(values, digits: int = 3, most: int = 2):
+    """A fixed-decimals format for one column of times: the decimals that give the column's smallest value ``digits``
+    significant digits, at most ``most`` (none there: ``most``), so that every number of the column keeps them,
+    trailing zeros included (``5.20`` below ``0.44``, never ``5.2``)."""
+    vals = [abs(v) for v in values if v is not None and not (isinstance(v, float) and math.isnan(v)) and v != 0]
+    d = most if not vals else min(most, max(0, digits - 1 - math.floor(math.log10(min(vals)))))
+    return lambda v: f.num(v, d)
+
+
 def ratio_text(v: float) -> str:
     """A factor without the times sign: 1{,}213, 78, 2.1."""
     return f.thousands(f"{v:,.0f}") if v >= 100 else (f"{v:.0f}" if v >= 10 else f"{v:.1f}")
@@ -1177,13 +1186,14 @@ def tab_eval_long(ctx: Ctx) -> Table:
     tb = Table("tab_eval_long", "tab:eval-long", f"{protocol(ctx)}; long tier: perf.py --layers 2, 3 and 4 (label "
                "long), reexec.py --layers 2 3 4; full model = the least-squares line through the blocks at 32 "
                "blocks; re-execution: the fastest exact variant of the integer forward pass")
-    for seq in LONG:
-        p = long_point(ctx.run, seq)
+    points = {seq: long_point(ctx.run, seq) for seq in LONG}
+    secs = column_format([p.get("verify") for p in points.values()])
+    for seq, p in points.items():
         rx = p["reexec"]
         row = f"T={seq}"
         ratio = rx[0] / p["verify"] if rx and p.get("verify") else None
         tb.rows.append(" & ".join([
-            f.tokens(seq), tb.put(row, "verifier", p.get("verify"), p["src"], lambda v: f.sig(v, 3)),
+            f.tokens(seq), tb.put(row, "verifier", p.get("verify"), p["src"], secs),
             tb.put(row, "re-execution", rx and rx[0], rx and rx[2], lambda v: f.num(v, 1)),
             tb.put(row, "ratio", ratio, p["src"], lambda v: f.x(v, 1)),
             tb.put(row, "proof GB", p.get("bytes"), p["src"], lambda v: f.fixed(v / 1e9, 1))]) + r" \\")
@@ -1195,12 +1205,16 @@ def tab_eval_long_check(ctx: Ctx) -> Table:
     the points of :data:`LONG_CHECK`: the verifier, the fastest exact re-execution and the proof, each as ``measured /
     extrapolated``."""
     tb = Table("tab_eval_long_check", "tab:eval-long-check",
-               f"{protocol(ctx)}; measured: perf.py and reexec.py on the full model (the cpuv tier at 2,048 tokens, "
-               "the long tier at 8,192, the gpuv tier's streaming GPU verifier and GPU re-execution at 2,048); "
+               f"{protocol(ctx)}; measured: perf.py and reexec.py on random weights of the full model, as the fit "
+               "(the long tier's full model at 2,048 and 8,192 tokens, the gpuv tier's long cells: the streaming "
+               "GPU verifier and GPU re-execution at 2,048); "
                "extrapolated: the fit of tab:eval-long (CPU: 2, 3 and 4 blocks) and tab:eval-long-gpu (GPU: 2 and "
                "3)\ncolumns: device & T & verifier (s) measured / extrapolated & exact re-execution (s) measured / "
                "extrapolated & proof (GB) measured / extrapolated")
     err = long_errors(ctx.run)
+    # one number of decimals per column, over its measured and extrapolated values
+    secs = {k: column_format([x for point in LONG_CHECK for x in (err[point][k] or ())[:2]])
+            for k in ("verify", "reexec")}
     last = None
     for dev, seq in LONG_CHECK:
         e = err[(dev, seq)]
@@ -1208,7 +1222,7 @@ def tab_eval_long_check(ctx: Ctx) -> Table:
         name = "CPU" if dev == "cpu" else "GPU"
         cells = [name if name != last else "", f.tokens(seq)]
         last = name
-        for key, fmt in (("verify", lambda v: f.sig(v, 3)), ("reexec", lambda v: f.sig(v, 3)),
+        for key, fmt in (("verify", secs["verify"]), ("reexec", secs["reexec"]),
                          ("bytes", lambda v: f.fixed(v / 1e9, 2))):
             pair = e[key]
             cells.append(tb.put(row, f"{key} measured", pair and pair[0], e["src"], fmt) + " / "
@@ -1227,17 +1241,20 @@ def tab_eval_long_gpu(ctx: Ctx) -> Table:
                "through the blocks at 32 blocks; GPU peak: the 3-block cell's process (prover and verifier)\n"
                "columns: T & GPU verifier (s) & int8 re-execution (s) & fp16 re-execution (s) & ratio int8 / "
                "verifier & GPU peak (GB)")
-    for seq in LONG:
-        p = long_point(ctx.run, seq, gpu=True)
-        var = p.get("variants") or {}
-        i8, f16 = var.get("int"), var.get("float")
+    points = {seq: long_point(ctx.run, seq, gpu=True) for seq in LONG}
+    variants = {seq: p.get("variants") or {} for seq, p in points.items()}
+    secs = {"verify": column_format([p.get("verify") for p in points.values()])}
+    for key in ("int", "float"):
+        secs[key] = column_format([v[key][0] for v in variants.values() if v.get(key)])
+    for seq, p in points.items():
+        i8, f16 = variants[seq].get("int"), variants[seq].get("float")
         row = f"T={seq}"
         three = p["cells"].get(3)
         peak = three and (three.d.get("peak") or {}).get("gpu_peak_memory")
         tb.rows.append(" & ".join([
-            f.tokens(seq), tb.put(row, "GPU verifier", p.get("verify"), p["src"], lambda v: f.sig(v, 3)),
-            tb.put(row, "int8", i8 and i8[0], i8 and i8[1], lambda v: f.sig(v, 3)),
-            tb.put(row, "fp16", f16 and f16[0], f16 and f16[1], lambda v: f.sig(v, 3)),
+            f.tokens(seq), tb.put(row, "GPU verifier", p.get("verify"), p["src"], secs["verify"]),
+            tb.put(row, "int8", i8 and i8[0], i8 and i8[1], secs["int"]),
+            tb.put(row, "fp16", f16 and f16[0], f16 and f16[1], secs["float"]),
             tb.put(row, "ratio", i8 and p.get("verify") and i8[0] / p["verify"], p["src"], lambda v: f.x(v, 1)),
             tb.put(row, "GPU peak", peak, three, lambda v: f.fixed(v / 1e9, 1))]) + r" \\")
     return tb
@@ -1265,16 +1282,18 @@ def tab_eval_v1_long(ctx: Ctx) -> Table:
                "on the GPU); v1 tier: v1_bytes.py --codec-only on the full model (label v1-codec)\n"
                "columns: T & v0 proof (MB) & V1 proof (MB) & ratio & V1 prove (s) & V1 verify (s) & full model: "
                "claims ratio (codec profile)")
-    for seq in V1_LONG:
-        two, codec = v1_long(ctx.run, seq)
-        p1, v1s = v1_timed(two, "v1")
+    cells = {seq: v1_long(ctx.run, seq) for seq in V1_LONG}
+    timed = {seq: v1_timed(two, "v1") for seq, (two, _) in cells.items()}
+    prove, verify = (column_format([t[i] for t in timed.values()]) for i in (0, 1))
+    for seq, (two, codec) in cells.items():
+        p1, v1s = timed[seq]
         row = f"T={seq}"
         tb.rows.append(" & ".join([
             f.tokens(seq), tb.put(row, "v0 MB", two and two.d["v0_total"], two, lambda v: f.num(v / 1e6, 0)),
             tb.put(row, "V1 MB", two and two.d["v1_total"], two, lambda v: f.num(v / 1e6, 0)),
             tb.put(row, "ratio", two and two.d["v0_total"] / two.d["v1_total"], two, lambda v: f.x(v, 2)),
-            tb.put(row, "V1 prove", p1, two, lambda v: f.sig(v, 3)),
-            tb.put(row, "V1 verify", v1s, two, lambda v: f.sig(v, 3)),
+            tb.put(row, "V1 prove", p1, two, prove),
+            tb.put(row, "V1 verify", v1s, two, verify),
             tb.put(row, "full claims ratio", codec_ratio(codec), codec, lambda v: f.x(v, 2))]) + r" \\")
     return tb
 
@@ -1396,12 +1415,15 @@ def tab_eval_cpu(ctx: Ctx) -> Table:
                "--no-native-avx512 (label cpux-noavx512), Llama-2-13B (label cpux), reexec.py's exact variants on the "
                "same threads and options, glibc's allocator defaults (--no-malloc-tune); the 8-thread Llama-2-7B "
                "row: the cpuv tier's cells")
-    for name, setting, tier, m, threads, avx, label in CPU_ROWS:
-        ver, rx, ratio = cpu_point(ctx.run, tier, m, 2048, threads, avx, label, any_allocator=False)
+    points = [cpu_point(ctx.run, tier, m, 2048, threads, avx, label, any_allocator=False)
+              for _, _, tier, m, threads, avx, label in CPU_ROWS]
+    ver_s = column_format([ver and ver.d["verify_s"] for ver, _, _ in points])
+    rx_s = column_format([rx and rx[0] for _, rx, _ in points])
+    for (name, setting, _, m, *_), (ver, rx, ratio) in zip(CPU_ROWS, points):
         row = f"{NAME[m]} {setting}"
         tb.rows.append(" & ".join([
-            name, setting, tb.put(row, "verifier", ver and ver.d["verify_s"], ver, lambda v: f.sig(v, 3)),
-            tb.put(row, "re-execution", rx and rx[0], rx and rx[2], lambda v: f.sig(v, 3)),
+            name, setting, tb.put(row, "verifier", ver and ver.d["verify_s"], ver, ver_s),
+            tb.put(row, "re-execution", rx and rx[0], rx and rx[2], rx_s),
             tb.put(row, "ratio", ratio, ver, lambda v: f.x(v, 1))]) + r" \\")
     return tb
 
@@ -1435,16 +1457,17 @@ def tab_eval_plans(ctx: Ctx) -> Table:
     on 8 threads): the trees and the columns they open, the commitment's one-time encoding, the proof and the times."""
     tb = Table("tab_eval_plans", "tab:eval-plans", f"{protocol(ctx)}; cpux tier: perf.py --modes C --policy "
                f"{' '.join(PLANS)} (label plans) on the same queries, no setup cache")
-    for p in PLANS:
-        c = plan_cell(ctx.run, p) or {}
+    got = {p: plan_cell(ctx.run, p) or {} for p in PLANS}
+    secs = {k: column_format([c.get(k) for c in got.values()]) for k in ("commit", "prove", "verify")}
+    for p, c in got.items():
         r = c.get("record")
         tb.rows.append(" & ".join([
             PLAN_NAME[p], tb.put(p, "trees", c.get("trees"), r, str),
             tb.put(p, "columns", c.get("columns"), r, lambda v: f.num(v)),
-            tb.put(p, "commit s", c.get("commit"), r, lambda v: f.sig(v, 3)),
+            tb.put(p, "commit s", c.get("commit"), r, secs["commit"]),
             tb.put(p, "proof GB", c.get("proof"), r, lambda v: f.fixed(v / 1e9, 2)),
-            tb.put(p, "prover s", c.get("prove"), r, lambda v: f.sig(v, 3)),
-            tb.put(p, "verifier s", c.get("verify"), r, lambda v: f.sig(v, 3))]) + r" \\")
+            tb.put(p, "prover s", c.get("prove"), r, secs["prove"]),
+            tb.put(p, "verifier s", c.get("verify"), r, secs["verify"])]) + r" \\")
     return tb
 
 
@@ -1458,14 +1481,18 @@ def tab_eval_lambda(ctx: Ctx) -> Table:
     verifier on 8 threads): prover, verifier and proof in modes C and Kpre."""
     tb = Table("tab_eval_lambda", "tab:eval-lambda", f"{protocol(ctx)} (lambda as the row states); bench tier: "
                "costs/bench.py llm --lams 40 80 (b-lam-*) and the lambda-128 cells, modes C:fs and Kpre:fs")
+    modes = (("C", "c_cpu"), ("Kpre", "kpre_cpu"))
+    costs = {(seq, lam, mode): ctx.bench.llm_cost("llama2-7b", seq, base if lam == 128 else f"{base}_lam{lam}") or {}
+             for seq, lam in LAMBDA_ROWS for mode, base in modes}
+    secs = {(mode, k): column_format([c.get(k) for (_, _, m), c in costs.items() if m == mode])
+            for mode, _ in modes for k in ("prove", "verify")}
     for seq, lam in LAMBDA_ROWS:
         cells = [f.tokens(seq) if lam == LAMBDA_ROWS[0][1] else "", str(lam)]
-        for mode, base in (("C", "c_cpu"), ("Kpre", "kpre_cpu")):
-            cell = base if lam == 128 else f"{base}_lam{lam}"
-            cost = ctx.bench.llm_cost("llama2-7b", seq, cell) or {}
+        for mode, _ in modes:
+            cost = costs[(seq, lam, mode)]
             row, src = f"T={seq} lambda={lam}", cost.get("cell") or ctx.bench.name
-            cells += [tb.put(row, f"{mode} prover", cost.get("prove"), src, lambda v: f.sig(v, 3)),
-                      tb.put(row, f"{mode} verifier", cost.get("verify"), src, lambda v: f.sig(v, 3)),
+            cells += [tb.put(row, f"{mode} prover", cost.get("prove"), src, secs[(mode, "prove")]),
+                      tb.put(row, f"{mode} verifier", cost.get("verify"), src, secs[(mode, "verify")]),
                       tb.put(row, f"{mode} proof", cost.get("bytes"), src, f.b)]
         tb.rows.append(" & ".join(cells) + r" \\")
     return tb

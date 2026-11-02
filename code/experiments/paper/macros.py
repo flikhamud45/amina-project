@@ -63,7 +63,7 @@ from dataclasses import dataclass
 from experiments.paper import format as f
 from experiments.paper import tables as T
 from experiments.paper.bench import DEFAULT_PROB_MAX, STORED_PROB_MAX
-from experiments.paper.records import MAIN, Rec, Run, absorb_consistent, prefix_rule, v1_timed
+from experiments.paper.records import MAIN, Rec, Run, absorb_consistent, prefix_absorbs, prefix_rule, v1_timed
 
 
 @dataclass
@@ -114,9 +114,11 @@ def ceil_pct(v: float) -> str:
 
 
 def ceil_fixed(v: float, decimals: int = 1) -> str:
-    """``v`` rounded up to ``decimals`` decimals, for a bound ("at most N", "within N"): 0.34 -> ``0.4``."""
+    """``v`` rounded up to ``decimals`` decimals, for a bound ("at most N", "within N"): 0.34 -> ``0.4``; zero (or
+    less, up to a float error) prints as ``0``, not as a run of zero decimals."""
     k = 10 ** decimals
-    return f"{math.ceil(v * k - 1e-9) / k:.{decimals}f}"
+    up = math.ceil(v * k - 1e-9) / k
+    return "0" if up <= 0 else f"{up:.{decimals}f}"
 
 
 def ceil_sig(v: float, digits: int = 2) -> str:
@@ -664,7 +666,7 @@ def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
     c.put("VOneRealOptLVOneGB", real and real.d["v1_total"], real, lambda v: f"{v / 1e9:.2f}")
     c.put("VOneRealOptLExceptions", real and real.d.get("n_exceptions"), real, f.num)
     c.put("VOneRealOptLExceptionsMB", real and (real.d.get("v1_bytes") or {}).get("cut_exc"), real,
-          lambda v: f"{v / 1e6:.1f}")
+          lambda v: f.small(v / 1e6, 1))
     c.put("VOneRealOptLExceptionRate", real and real.d.get("n_leaves") and real.d.get("n_exceptions") is not None
           and real.d["n_exceptions"] / real.d["n_leaves"] or None, real,
           lambda v: f"$10^{{{round(math.log10(v))}}}$")
@@ -1092,7 +1094,7 @@ def real_weights(c: Collector, ctx: T.Ctx) -> None:
     c.put("VOneRealOptMShortExceptions", real and real.d.get("n_exceptions"), real, f.num)
     c.put("VOneRandomOptMShortExceptions", rnd and rnd.d.get("n_exceptions"), rnd, f.num)
     c.put("VOneRealOptMShortExceptionsMB", real and (real.d.get("v1_bytes") or {}).get("cut_exc"), real,
-          lambda v: f"{v / 1e6:.2f}")
+          lambda v: f.small(v / 1e6, 2))
     # the real Llama-2-7B (the real tier's cells with --llama-licence) against its random-weight twins
     ckpt = "meta-llama/Llama-2-7b-hf"
     lr = run.perf("real", "llama2-7b", 2048, "Kpre", vdev="cpu", label="real", real=ckpt)
@@ -1219,7 +1221,9 @@ def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
     records: the claims and the Kpre CPU verifier (cpuv perf.py), V1's claims ratio and verifier (cpuv V1 cell),
     exact re-execution and the int8 weights; V1's crossover in prompt length from V1's claims measured at each length
     (the v1 tier's codec profiles of the full model, :func:`crossover_piecewise`), next to the crossover that keeps
-    the 2,048-token ratio (``BreakevenTokensVOneConstant``).  Returns the inputs and crossovers (for the figure)."""
+    the 2,048-token ratio (``BreakevenTokensVOneConstant``).  V1's link crossover (``BreakevenLinkVOne``) is missing
+    when V1's verifier alone takes as long as re-execution; ``BreakevenVOneClause`` ends the text's sentence on the
+    link crossovers either way (:func:`vone_link_clause`).  Returns the inputs and crossovers (for the figure)."""
     run, b, m = ctx.run, ctx.bench, "llama2-7b"
     k = {s: run.perf("cpuv", m, s, "Kpre", vdev="cpu", label="cpuv") for s in (64, 2048)}
     rx = {s: T.fastest(run, "cpuv", m, s)[0] for s in (64, 2048)}
@@ -1228,7 +1232,7 @@ def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
     names = ("BreakevenQueriesShort", "BreakevenQueriesLong", "BreakevenQueriesVOne", "BreakevenLinkRange",
              "BreakevenLinkLong", "BreakevenLinkVOne", "BreakevenVOneFaster", "BreakevenTokens", "BreakevenTokensVOne",
              "BreakevenTokensVOneConstant", "VOneClaimsRatioTwoK", "VOneClaimsRatioEightK", "VOneClaimsRatioSixteenK",
-             "BreakevenTokensVOneMeasuredTo")
+             "BreakevenTokensVOneMeasuredTo", "BreakevenVOneClause")
     v1_claims = v1 and (v1.d.get("v0_bytes") or {}).get("claims") and (v1.d.get("v1_bytes") or {}).get("claims")
     ready = (all(k[s] and (k[s].d.get("bytes") or {}).get("claims") for s in k) and all(rx.values())
              and v1_claims and weights and v1_timed(v1, "v1", "optimised")[1] and ctx.byte_model)
@@ -1244,24 +1248,26 @@ def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
     fixed = {s: ev.fixed_part(m, ctx.policy, True, s)["fixed"] for s in (64, 2048)}
     proof = {s: claims[s] + fixed[s] for s in claims}
     proof_v1 = claims[2048] / ratio + fixed[2048]
+    links = [ev.breakeven_link_gbps(claims[s], t_v[s], rx[s]) for s in (64, 2048)]
+    link_v1 = ev.breakeven_link_gbps(claims[2048] / ratio, t_v1, rx[2048])
+    # the figure's rows carry their crossovers as ev_breakeven.crossovers gives them (None: no crossing to mark)
     out = {"weights_bytes": weights, "policies": [ctx.policy],
-           "panel1": [{"seq": 64, "protocol": "v0", "policy": ctx.policy, "fs": True, "proof_bytes": proof[64]},
-                      {"seq": 2048, "protocol": "v0", "policy": ctx.policy, "fs": True, "proof_bytes": proof[2048]},
-                      {"seq": 2048, "protocol": "v1", "policy": ctx.policy, "fs": True, "proof_bytes": proof_v1}],
+           "panel1": [{"seq": s, "protocol": p, "policy": ctx.policy, "fs": True, "proof_bytes": b,
+                       "Q_star": ev.crossover_queries(weights, b)}
+                      for s, p, b in ((64, "v0", proof[64]), (2048, "v0", proof[2048]), (2048, "v1", proof_v1))],
            "panel2": [{"seq": 2048, "protocol": "v0 Kpre", "fs": True, "proof_bytes": claims[2048],
-                       "verify_s": t_v[2048]},
+                       "verify_s": t_v[2048], "L_star_gbps": links[1]},
                       {"seq": 2048, "protocol": "V1 Kpre", "fs": True, "proof_bytes": claims[2048] / ratio,
-                       "verify_s": t_v1}],
+                       "verify_s": t_v1, "L_star_gbps": link_v1}],
            "reexec_s": rx[2048]}
     src = "deployment/ev_breakeven.py formulas on the cpuv records"
     c.put("BreakevenQueriesShort", ev.crossover_queries(weights, proof[64]), src, lambda v: f"{v:.0f}")
     c.put("BreakevenQueriesLong", ev.crossover_queries(weights, proof[2048]), src, lambda v: f"{v:.1f}")
     c.put("BreakevenQueriesVOne", ev.crossover_queries(weights, proof_v1), src, lambda v: f"{v:.1f}")
-    links = [ev.breakeven_link_gbps(claims[s], t_v[s], rx[s]) for s in (64, 2048)]
     _range(c, "BreakevenLinkRange", links, src, lambda v: f"{v:.2f}")
     c.put("BreakevenLinkLong", links[1], src, lambda v: f"{v:.2f}")
-    c.put("BreakevenLinkVOne", ev.breakeven_link_gbps(claims[2048] / ratio, t_v1, rx[2048]), src,
-          lambda v: f"{v:.2f}")
+    c.put("BreakevenLinkVOne", link_v1, src, lambda v: f"{v:.2f}")
+    c.put("BreakevenVOneClause", "never" if link_v1 is None else link_v1, src, vone_link_clause)
     c.put("BreakevenVOneFaster", ev.breakeven_link_gbps(claims[2048] - claims[2048] / ratio, t_v[2048], t_v1), src,
           lambda v: f"{v:.1f}")
     c.put("BreakevenTokens", ev.crossover_tokens(weights, (64, proof[64]), (2048, proof[2048])), src, f.about)
@@ -1293,6 +1299,15 @@ def breakeven(c: Collector, ctx: T.Ctx) -> dict | None:
             f"BreakevenTokensVOne is {cross} tokens, past the longest measured prompt ({measured and measured[-1][0]})")
     out["v1_measured"] = [{"seq": s, "protocol": "v1", "proof_bytes": b} for s, b in (measured or [])]
     return out
+
+
+def vone_link_clause(link) -> str:
+    """The end of the text's sentence on the links on which a Kpre client beats re-execution, for V1: its crossover
+    in Gb/s (``~(V1: 0.23\\,Gb/s)``), or, when V1's verifier alone takes as long as re-execution (``never``), the
+    clause saying so."""
+    if link == "never":
+        return "; V1's client never does, since its verifier alone takes longer than re-execution"
+    return f"~(V1: {link:.2f}\\,Gb/s)"
 
 
 def crossover_piecewise(weights_bytes: float, points: list[tuple[int, float]]) -> float | None:
@@ -1513,17 +1528,44 @@ def llama_prefix_rules(run) -> dict[str, list[Rec]]:
 
 
 def llama_prefix(c: Collector, run) -> None:
-    """The Llama-family numbers come from one prefix rule.  Under the absorption rule (``numbers.py --llama-prefix
-    absorb``, or any record of the cells read built by it) every cell read must agree with it
-    (``records.absorb_consistent``): built by it, or by PrefixQuant's rule with a prefix that absorbs by its own record
-    (the rule then picks the same tokens, so only the checkpoints whose prefix it changes need measuring again); a
-    cell of PrefixQuant's rule whose prefix does not absorb fails the text's claim, which names it.  Otherwise records
-    of several rules among the cells read fail it."""
+    """The Llama-family numbers come from one prefix rule per checkpoint.  Under the absorption rule
+    (``numbers.py --llama-prefix absorb``, or any record of the cells read built by it) each checkpoint is checked on
+    its own: one with a cell built by the rule must have every cell read agree with it
+    (``records.absorb_consistent``: built by it, or by PrefixQuant's rule with a prefix that absorbs by its own record;
+    the rule then picks the same tokens, so only the checkpoints whose prefix it changes need measuring again), and a
+    cell of PrefixQuant's rule whose prefix does not absorb fails the text's claim, which names it.  A checkpoint whose
+    cells are all PrefixQuant's is accepted (the rule cannot always absorb within its longest prefix: the checkpoint
+    keeps PrefixQuant's prefix); a prefix of it that does not absorb is a ``WARNING`` of ``run.warnings`` naming the
+    checkpoint, as is a cell of the rule whose own search ended without a prefix that absorbs (its record's
+    ``prefix_choice``, ``absorbed`` false).  Otherwise records of several rules among the cells read fail the text's
+    claim."""
     rules = llama_prefix_rules(run)
     if run.llama_prefix == "absorb" or "absorb" in rules:
-        bad = [r for r in llama_records(run) if not absorb_consistent(r.d, run.absorb_margin)]
-        c.claim(not bad, f"{len(bad)} Llama-family cells the text reads were built by PrefixQuant's rule with a prefix "
-                f"that does not absorb (margin {run.absorb_margin:g}), the others by the absorption rule: "
+        by_model: dict[str, list[Rec]] = {}
+        for r in llama_records(run):
+            by_model.setdefault(r.d.get("model"), []).append(r)
+        bad = []
+        for model, rs in by_model.items():
+            if any(prefix_rule(r.d) == "absorb" for r in rs):
+                bad += [r for r in rs if not absorb_consistent(r.d, run.absorb_margin)]
+                short = [r for r in rs if prefix_rule(r.d) == "absorb"
+                         and (r.d.get("prefix_choice") or r.d.get("absorb_choice") or {}).get("absorbed") is False]
+                if short:
+                    run.warnings.append(
+                        f"WARNING prefix: {model}: the absorption rule found no prefix that absorbs in "
+                        f"{len(short)} of its cells read (e.g. {short[0].d.get('cell')}, {short[0].source}); they "
+                        "keep the candidate of the smallest ratio")
+                continue
+            bad += [r for r in rs if prefix_rule(r.d) not in (None, "auto")]
+            loose = [r for r in rs if prefix_rule(r.d) == "auto" and prefix_absorbs(r.d, run.absorb_margin) is False]
+            if loose:
+                run.warnings.append(
+                    f"WARNING prefix: {model} has only cells of PrefixQuant's rule, and its prefix does not absorb "
+                    f"(margin {run.absorb_margin:g}) in {len(loose)} of them (e.g. {loose[0].d.get('cell')}, "
+                    f"{loose[0].source}); the text reads them with PrefixQuant's prefix")
+        c.claim(not bad, f"{len(bad)} Llama-family cells the text reads disagree with the absorption rule that "
+                "other cells of their checkpoint were built by (PrefixQuant's rule with a prefix that does not "
+                f"absorb at margin {run.absorb_margin:g}, or another rule): "
                 + "; ".join(f"{r.d.get('model')} {r.d.get('cell')} ({r.d.get('split', 'test')}, draw "
                             f"{r.d.get('draw')}; {r.source})" for r in bad[:8])
                 + (" ..." if len(bad) > 8 else "") + " (measure them again with run.sh --llama-prefix absorb)")

@@ -1,5 +1,9 @@
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
 \providecommand{\todo}[1]{\textbf{[TODO: #1]}}
+% \pviLoHi{\Lo}{\Hi}{sep}: "Lo sep Hi", or only Lo when the two macros hold the same text (or Hi is empty).
+\providecommand{\pviLoHi}[3]{\begingroup\expandafter\def\expandafter\pviLoHiA\expandafter{#1}%
+  \expandafter\def\expandafter\pviLoHiB\expandafter{#2}\def\pviLoHiE{}%
+  \ifx\pviLoHiA\pviLoHiB#1\else\ifx\pviLoHiB\pviLoHiE#1\else#1#3#2\fi\fi\endgroup}
 \providecommand{\sC}{\mathsf{C}}
 \providecommand{\sK}{\mathsf{K}}
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
@@ -42,13 +46,13 @@ tamper, with proofs \RealLlamaShortSmaller{}\% smaller and the verifier within \
 its 2{,}048-token proof \VOneRealLlamaRatio{}$\times$ smaller.
 
 \para{Model quality.} With smoothing through the norm's gains, the certified OPT-125M,
-OPT-1.3B and OPT-6.7B are within factors of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 at 2{,}048 tokens
+OPT-1.3B and OPT-6.7B reach factors of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 at 2{,}048 tokens
 (Section~\ref{sec:quality}); with one scalar gain OPT-6.7B is \QualityScalarExcessOptL{}\% above. With a fixed public prefix and a balance of
-the SwiGLU product, Llama-2-7B (our benchmark's exact structure) is within $\times$\LlamaSevenRatio{} (95\% interval
-[\LlamaSevenCI{}]) and TinyLlama within
-$\times$\TinyLlamaRatio{} of fp32 at 2{,}048 tokens, and Llama-2-13B within $\times$\LlamaThirteenRatio{} of fp16
+the SwiGLU product, Llama-2-7B (our benchmark's exact structure) is at $\times$\LlamaSevenRatio{} (95\% interval
+[\LlamaSevenCI{}]) and TinyLlama at
+$\times$\TinyLlamaRatio{} of fp32 at 2{,}048 tokens, and Llama-2-13B at $\times$\LlamaThirteenRatio{} of fp16
 ([\LlamaThirteenCI{}]); with a per-pair balance of the q/k norms' gains as
-well, Qwen3-1.7B is within $\times$\QwenMRatio{} and Qwen3-4B at $\times$\QwenLRatio{}. These graphs are the ones whose
+well, Qwen3-1.7B is at $\times$\QwenMRatio{} and Qwen3-4B at $\times$\QwenLRatio{}. These graphs are the ones whose
 costs we report. A per-token exponent at the SwiGLU product would bring Qwen3-1.7B to $\times$\QwenMExpRatio{}
 and Qwen3-4B to $\times$\QwenLExpRatio{}, but it changes two operations per block and leaves the down projection
 outside V1's cut ($\VOneDownClaims{}$ claims of a 2{,}048-token Llama-2-7B query), so we count it only as a possible
@@ -58,15 +62,15 @@ residual stream cannot hold it; a per-token residual scale would change the grap
 numbers concern only how well that model serves.
 
 \para{V1.} V1 is an option, not a replacement. At 2{,}048 tokens it makes the proof
-\VOneRatioRandom{}$\times$ smaller on the real checkpoints, but the prover about
-\VOneProverRatioAbout{} times slower, and the CPU verifier \VOneVerifyRatioLlama{}$\times$ slower than
-v0's on the full Llama-2-7B (\VOneVerifyRatioLong{}$\times$ on the 2{,}048-token builds of
-Table~\ref{tab:eval-v1}). For the client alone (transfer plus
-verification), V1 is nevertheless faster than v0 on links slower than about \BreakevenVOneFaster{}\,Gb/s, and it beats
-re-execution down to \BreakevenLinkVOne{}\,Gb/s, against \BreakevenLinkLong{}\,Gb/s for v0. Llama-2-13B at 2{,}048 tokens is
+\VOneRatioRandom{}$\times$ smaller on the full models (random weights), but the prover about
+\VOneProverRatioAbout{} times slower, and the CPU verifier \VOneVerifyRatioLong{}$\times$ slower than
+v0's on the 2{,}048-token builds of Table~\ref{tab:eval-v1} (\VOneVerifyRatioLlama{}$\times$ on the full
+Llama-2-7B in $\Kpre$). For the client alone (transfer plus
+verification), V1 is nevertheless faster than v0 on links slower than about \BreakevenVOneFaster{}\,Gb/s; v0 beats
+re-execution on links faster than \BreakevenLinkLong{}\,Gb/s\BreakevenVOneClause{}. Llama-2-13B at 2{,}048 tokens is
 measured as the build of Table~\ref{tab:eval-v1}. Mode $\sK$ and the streaming GPU verifier do not
 support V1 yet, and V1 assumes one requantisation multiplier per operation, which excludes
-per-row weight scales ($\times\RowScalesLo{}$--$\RowScalesHi{}$ on OPT-125M at 128 tokens).
+per-row weight scales ($\times$\pviLoHi{\RowScalesLo}{\RowScalesHi}{--} on OPT-125M at 128 tokens).
 
 \subsection{A Client's Options in Detail}
 \label{ext:disc-options}
@@ -147,8 +151,8 @@ prompts; the table marks such a length as failed.
 \para{Ours.} In mode $\sC$ the client holds the 32-byte Merkle roots of the weights and no weights.
 A 64-token proof is \ProofLlamaShortC{}, about \ProofRatioLlamaShort{}$\times$ smaller than the int8
 weights, and is checked in \VerifyLlamaShortCCpu{} on 8 threads of the \PlatformCpu{} or
-\VerifyLlamaShortCGpu{} on the \PlatformGpu{}. Of it, \ColumnsLlamaShort{} are opened columns, which
-do not shrink with shorter prompts. At 2{,}048 tokens the proof is \ProofLlamaLongC{}
+\VerifyLlamaShortCGpu{} on the \PlatformGpu{}. Of it, \ColumnsLlamaShort{} are opened columns (31 bits per element, without Merkle paths;
+Table~\ref{tab:params} counts 4 bytes), which do not shrink with shorter prompts. At 2{,}048 tokens the proof is \ProofLlamaLongC{}
 (\ProofLlamaLongK{} in $\Kpre$), about the size of the weights, and takes \TransferLlamaLong{}\,s to
 transfer at 10\,Gb/s. A client that sends more than about \BreakevenQueriesShort{} short prompts
 therefore receives more bytes than a download of the weights, which are only

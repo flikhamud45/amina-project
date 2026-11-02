@@ -96,8 +96,8 @@ detection of the best attack we found against that sampler. The \SamplerContribu
 sampler is against the plain attack; the \FloorBest{}\% of the floor $\delta=1$ is the highest detection among our
 samplers, each against the attacks built for it.
 
-\para{Larger models.} A change to the least-visited penultimate neuron of a CNN is caught by one
-path with probability as low as 1/\CnnMinNode{} million. The \PathsLlama{} paths for Llama-2-7B use its FFN width
+\para{Larger models.} A change to the least-visited neuron of a CNN (in any layer; a convolution's
+visits are not uniform) is caught by one path with probability as low as 1/\CnnMinNode{} million. The \PathsLlama{} paths for Llama-2-7B use its FFN width
 \WidthLlama{} and the fp16 weights of~\cite{anchuri2026verifiable}.
 
 \para{OPT-6.7B.} The search ran over the FFN neurons of layers 8, 16, 24 and 31 at the last

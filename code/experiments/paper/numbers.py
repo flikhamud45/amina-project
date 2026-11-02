@@ -30,10 +30,13 @@ Inputs (nothing here runs a model):
 * the rule of the Llama recipe's fixed prefix: ``--llama-prefix`` (``any``, the default: of several records of one
   Llama-family cell the latest job's; ``auto`` or ``absorb``: only the ``ppl_llama.py`` records of that rule, e.g.
   ``absorb`` after ``run.sh --llama-prefix absorb`` measured the Llama-family cells again).  The report names the
-  rules of the records read.  Under the absorption rule (``absorb``, or any record read built by it) a cell built by
-  PrefixQuant's rule counts as the rule's when its prefix absorbs by its own record (``--absorb-margin``, default the
-  margin the run's records name), and one whose prefix does not absorb fails the text's claim; otherwise records of
-  several rules among the cells read fail it (:func:`experiments.paper.macros.llama_prefix`);
+  rules of the records read.  Under the absorption rule (``absorb``, or any record read built by it) each checkpoint
+  is checked on its own: of a checkpoint with a cell built by the rule, a cell built by PrefixQuant's rule counts as
+  the rule's when its prefix absorbs by its own record (``--absorb-margin``, default the margin the run's records
+  name), and one whose prefix does not absorb fails the text's claim; a checkpoint whose cells are all PrefixQuant's
+  is accepted, with a ``WARNING`` when its prefix does not absorb (as for a cell of the rule whose search found no
+  prefix that absorbs).  Otherwise records of several rules among the cells read fail the text's claim
+  (:func:`experiments.paper.macros.llama_prefix`);
 * the published systems' values (``artifacts/comparison/tables/reported_curated.csv``), zkLLM's prover on the
   run's GPU model (the run's ``zkllm`` tier, ``--logs``/``zkllm/summary.csv``, when it holds both models on the
   run's GPU, else the stored runs, ``artifacts/results/zkllm_l40s/``), the formulas of the spot-checking schemes
@@ -419,10 +422,14 @@ TWO_JOBS = (
     ("tab_options", None, (r"Ours, $\sC$",), 4, None, 0, 1, "VerifyLlamaShortCCpu", 1),
     ("tab_options", None, (r"Ours, $\Kpre$",), 3, None, 0, 1, "ProofLlamaLongK", 1),
     (None, None, (), 0, None, 0, 1, "VOneVZeroVerifyLlama", 1, "CpuVerifyLong"),
+    # V1's CPU verifier of the full Llama-2-7B in Kpre at 2,048 tokens: the v1 tier's (tab:eval-v1, the second
+    # number of its verifier cell "v0/V1"; compared only when that row's build is the full model, 32 of 32 blocks)
+    # against the cpuv tier's V1 job (tab:options' "with V1" row, which prints the same value as the macro)
+    ("tab_eval_v1", "2{,}048", ("Llama-2-7B, 32/32", r"$\Kpre$"), 6, None, 1, 1, "VOneVerifyLlama", 1),
 )
 """Pairs of a table cell (or, with a macro name at the end, a second macro) and a macro that give one quantity from
 two jobs: the serving harness's prover against the benchmark's, the benchmark's CPU verifier against perf.py's, v0's
-timed queries of the V1 job against perf.py's."""
+timed queries of the V1 job against perf.py's, the v1 tier's V1 verifier against the cpuv tier's."""
 _NUMBER = re.compile(r"(?P<a>[-+]?\d+(?:\.\d+)?)(?:--(?P<b>[-+]?\d+(?:\.\d+)?))?"
                      r"(?:\s*\\,\s*(?P<u>ms|s|min|kB|MB|GB)(?![A-Za-z]))?")
 _UNITS = {"ms": 1e-3, "s": 1.0, "min": 60.0, "kB": 1e3, "MB": 1e6, "GB": 1e9}
