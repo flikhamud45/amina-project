@@ -174,8 +174,8 @@ the weights can run, and against the other options of a client.
 requantisation, one-pass recomputed operations, field products and claim decoding), our $\Kpre$
 verifier checks a 2{,}048-token query of the full Llama-2-7B in \CpuVerifyLong{}\,s on 8 threads of the
 \PlatformCpu{}, against \CpuReexecLong{}\,s for exact re-execution on the same threads (the integer forward
-pass with \CpuReexecName{}): \CpuRatio{}$\times$ faster. At 64 tokens it takes \CpuVerifyShort{}\,s, against
-\CpuReexecShort{}\,s: \CpuRatioShort{}$\times$. Inexact inference of the same weights (PyTorch, llama.cpp~\cite{llamacpp}),
+pass with \CpuReexecName{}), which needs the \WeightsLlama{} of weights where the verifier holds a
+\KpreStoreGB{}\,GB key. At 64 tokens it takes \CpuVerifyShort{}\,s, against \CpuReexecShort{}\,s. Inexact inference of the same weights (PyTorch, llama.cpp~\cite{llamacpp}),
 which cannot confirm the claims bit for bit, takes at least \CpuInexactLong{}\,s at 2{,}048 tokens
 (\CpuInexactName{}), \CpuRatioInexact{}$\times$ the verifier's time.
 
