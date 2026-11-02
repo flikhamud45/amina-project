@@ -101,7 +101,7 @@ from pvi.commit.commitment import map_threaded
 from pvi.core import hostmem
 
 __all__ = ["ClaimCodecError", "Unencodable", "MAGIC", "BMAX", "encode", "decode", "decode_torch", "decode_device",
-           "decode_device_ok", "narrow",
+           "decode_device_ok", "decode_device_parts", "device_decode_peak", "narrow",
            "FIELD_BITS", "field_size", "pack_field", "unpack_field", "pack_rows", "unpack_rows"]
 
 MAGIC = b"PVC3"
@@ -2125,6 +2125,177 @@ def decode_device(buf, rows: list[int], cols: list[int], device) -> list[torch.T
     elif _d2h(err)[0]:
         raise ClaimCodecError("non-zero padding in a slot stream")
     for n_rows, m, means, main in heads:                    # the row means and base of each centred op
+        if means is not None:
+            z = x[start[main]:start[main] + n_rows * m].view(n_rows, m)
+            z.add_((x[start[means]:start[means] + n_rows].to(torch.int64) + segs[main][1]).to(torch.int32)[:, None])
+    return [x[start[main]:start[main] + n * m].view(n, m) for n, m, _, main in heads]
+
+
+# ---------------------------------------------------------------------------- the decoder on a GPU, in parts
+# :func:`decode_device` holds the whole input on the device while it unpacks the streams and then about eleven int64
+# vectors of the exceptions' length at once (their Rice vectors, positions, high parts, segments, widths and the
+# values they patch).  On the real Llama-2 checkpoints at 2,048 tokens about 13% of the claims are exceptions, and
+# these vectors alone exceed the GPU's memory.  :func:`decode_device_parts` gives the same claims and the same
+# rejections with every slot stream uploaded and unpacked on its own, the exceptions' Rice vectors kept as their
+# int32 low parts and uint8 quotients, and the exceptions patched in parts of ``chunk`` (the option
+# ``decode_chunk``): its memory beyond the claims is the largest slot stream, then about 1.3 bytes of the input
+# per exception plus the parts' temporaries.  It is the path of the option ``decode_memory`` (``low``, or ``auto``
+# when :func:`device_decode_peak` predicts that the default path's would not fit).
+
+_PEAK_PER_EXCEPTION = 88    # bytes per exception of decode_device's peak (eleven int64 vectors at once)
+
+
+def _device_extents(buf, rows: list[int], cols: list[int]):
+    """:func:`decode_device`'s reading of the input on the host: ``(heads, segs, total, streams (B, n, offset),
+    the exceptions' number, the gaps' and the payloads' offsets, the exception list's offset)``, every check made."""
+    heads, segs, off = _read_header(buf, rows, cols)
+    total = sum(n for _, _, n in segs)
+    widths = sorted({s[0] for s in segs})
+    streams = []
+    for b in widths:
+        cnt = sum(s[2] for s in segs if s[0] == b)
+        nbytes = 4 * b * ((cnt + 31) // 32)
+        if off + nbytes > len(buf):
+            raise ClaimCodecError("truncated slot stream")
+        streams.append((b, cnt, off))
+        off += nbytes
+    n_exc, g_off, _ = _exceptions(buf, off, total, 1)
+    p_off = _rice_end(buf, g_off, n_exc)
+    if _rice_end(buf, p_off, n_exc) != len(buf):
+        raise ClaimCodecError("trailing bytes")
+    return heads, segs, total, streams, n_exc, g_off, p_off, off
+
+
+def device_decode_peak(buf, rows: list[int], cols: list[int]) -> int | None:
+    """The device memory :func:`decode_device` takes at its peak on these bytes (a conservative prediction: the
+    input, the int32 claims and ``_PEAK_PER_EXCEPTION`` bytes per exception), from the header and the exceptions'
+    count read on the host; ``None`` for an input the decoders reject (which takes no more)."""
+    try:
+        heads, segs, off = _read_header(buf, rows, cols)
+        total = sum(n for _, _, n in segs)
+        for b in sorted({s[0] for s in segs}):
+            off += 4 * b * ((sum(s[2] for s in segs if s[0] == b) + 31) // 32)
+        n_exc = struct.unpack_from("<I", buf, _need(buf, off, 4) - 4)[0]
+    except (ClaimCodecError, struct.error):
+        return None
+    return len(buf) + 4 * total + _PEAK_PER_EXCEPTION * n_exc
+
+
+def _rice_device_parts(rbuf: torch.Tensor, buf, base: int, off: int, n: int, err: torch.Tensor):
+    """:func:`_rice_device` (``rbuf``: the input's bytes from ``base`` on, on the device) as ``(k, the k-bit low
+    parts as int32 or None, the quotients as uint8)``: the value ``i`` is ``(q[i] << k) | low[i]`` (``low`` read
+    as unsigned), with the same checks."""
+    from pvi.kernels import codec_triton as ck
+    dev = rbuf.device
+    k = buf[off]
+    g = (n + 31) // 32
+    off += 1
+    low = None
+    if k:
+        words = rbuf[off - base:off - base + 4 * k * g].clone().view(torch.int32).view(k, g)
+        low = torch.empty(n, dtype=torch.int32, device=dev)
+        ck.unpack_stream(words, low, err, n, k)
+        del words
+        off += 4 * k * g
+    q = torch.zeros(n, dtype=torch.uint8, device=dev)
+    idx, count = None, n
+    shifts = torch.arange(8, dtype=torch.uint8, device=dev)
+    for level in range(1, _QCAP + 1):
+        if count == 0:
+            break
+        nbytes = (count + 7) // 8
+        if count % 8 and buf[off + nbytes - 1] >> (count % 8):
+            raise ClaimCodecError("non-zero padding in unary levels")
+        bits = ((rbuf[off - base:off - base + nbytes, None] >> shifts) & 1).view(-1)[:count].bool()
+        idx = torch.nonzero(bits).view(-1) if idx is None else idx[bits]
+        del bits
+        q[idx] = level
+        count = idx.numel()
+        off += nbytes
+    return k, low, q
+
+
+def _rice_values(k: int, low: torch.Tensor | None, q: torch.Tensor, a: int, e: int) -> torch.Tensor:
+    """Values ``[a, e)`` of a Rice vector of :func:`_rice_device_parts`, int64."""
+    v = q[a:e].to(torch.int64)
+    if low is not None:
+        v.bitwise_left_shift_(k).bitwise_or_(low[a:e].to(torch.int64) & 0xFFFFFFFF)
+    return v
+
+
+def decode_device_parts(buf, rows: list[int], cols: list[int], device, chunk: int) -> list[torch.Tensor]:
+    """:func:`decode_device` in bounded memory (see above): the same int32 claims (views of one buffer) and the same
+    :class:`ClaimCodecError` on the same inputs, the exceptions patched ``chunk`` at a time."""
+    from pvi.kernels import codec_triton as ck
+    if chunk < 1:
+        raise ValueError("chunk: at least one exception per part")
+    dev = torch.device(device)
+    heads, segs, total, streams, n_exc, g_off, p_off, e_off = _device_extents(buf, rows, cols)
+    arr = np.frombuffer(buf, dtype=np.uint8)
+    members = {b: [i for i, s in enumerate(segs) if s[0] == b] for b, _, _ in streams}
+    x = torch.empty(total, dtype=torch.int32, device=dev)
+    err = torch.zeros(1, dtype=torch.int32, device=dev)
+    residual = {main for _, _, means, main in heads if means is not None}
+    start, seg_order, base = [0] * len(segs), [], 0
+    for b, cnt, o in streams:
+        if b and cnt:                       # this stream's bytes only, on the device while it is unpacked
+            words = _upload(arr[o:o + 4 * b * ((cnt + 31) // 32)], dev)
+            ck.unpack_stream(words.view(torch.int32).view(b, -1), x[base:base + cnt], err, cnt, b)
+            del words
+        elif cnt:
+            x[base:base + cnt].zero_()
+        for i in members[b]:
+            start[i] = base
+            seg_order.append(i)
+            if segs[i][1] and i not in residual:
+                x[base:base + segs[i][2]].add_(segs[i][1])
+            base += segs[i][2]
+    checks = [err]
+    if n_exc:
+        rbuf = _upload(arr[e_off:], dev)    # the exception list: the input's end
+        gk, glow, gq = _rice_device_parts(rbuf, buf, e_off, g_off, n_exc, err)
+        hk, hlow, hq = _rice_device_parts(rbuf, buf, e_off, p_off, n_exc, err)
+        del rbuf
+        seg_start = torch.tensor([start[i] for i in seg_order], dtype=torch.int64, device=dev)
+        widths = torch.tensor([segs[i][0] for i in seg_order], dtype=torch.int64, device=dev)
+        pends = torch.tensor([segs[i][1] if i in residual else 0 for i in seg_order], dtype=torch.int64, device=dev)
+        bad_pos = torch.zeros((), dtype=torch.bool, device=dev)
+        bad_hz, bad_v = bad_pos.clone(), bad_pos.clone()
+        carry = torch.zeros((), dtype=torch.int64, device=dev)     # the positions before this part, plus one
+        for a in range(0, n_exc, chunk):
+            e = min(a + chunk, n_exc)
+            # the positions: decode_device's cumulative sum continued (the same int64 values, wrapped alike)
+            pos = torch.cumsum(_rice_values(gk, glow, gq, a, e).add_(1), 0).add_(carry).sub_(1)
+            carry = pos[-1] + 1
+            hz = _rice_values(hk, hlow, hq, a, e)
+            bad_hz |= hz.max() >= (1 << 32)
+            h = hz.add_(1)
+            sign = h & 1
+            h = h.bitwise_right_shift_(1).bitwise_xor_(sign.neg_())
+            del sign
+            seg = (torch.searchsorted(seg_start, pos, right=True) - 1).clamp_(min=0)
+            bad_pos |= (pos.min() < 0) | ~((pos >= 0) & (pos < total)).all()
+            at = pos.clamp_(0, total - 1)
+            del pos
+            h.bitwise_left_shift_(widths[seg]).add_(x[at])      # slot + lo + h 2**B (or a base still pending)
+            v = h + pends[seg]
+            del seg
+            bad_v |= (v <= -_X_LIMIT).any() | (v >= _X_LIMIT).any()
+            del v
+            # positions in order write disjoint parts (out of order ones are rejected below, x with them)
+            x[at] = h.to(torch.int32)
+            del h, at
+        checks += [bad_pos | (carry - 1 >= total), bad_hz, bad_v]
+        verdicts = _d2h(torch.stack([c.to(torch.int64).view(-1)[0] for c in checks]))
+        if verdicts[0]:
+            raise ClaimCodecError("non-zero padding in a slot stream")
+        if verdicts[1]:
+            raise ClaimCodecError("exception position out of range")
+        if verdicts[2] or verdicts[3]:
+            raise ClaimCodecError("exception out of range")
+    elif _d2h(err)[0]:
+        raise ClaimCodecError("non-zero padding in a slot stream")
+    for n_rows, m, means, main in heads:
         if means is not None:
             z = x[start[main]:start[main] + n_rows * m].view(n_rows, m)
             z.add_((x[start[means]:start[means] + n_rows].to(torch.int64) + segs[main][1]).to(torch.int32)[:, None])

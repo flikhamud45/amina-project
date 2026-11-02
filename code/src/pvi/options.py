@@ -31,11 +31,12 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 __all__ = ["Options", "current", "configure", "using", "add_arguments", "apply_arguments", "describe",
-           "native_dir", "python_include", "V1_VERIFIERS", "HOST_CLAIMS", "GKR_MEMORY"]
+           "native_dir", "python_include", "V1_VERIFIERS", "HOST_CLAIMS", "GKR_MEMORY", "DECODE_MEMORY"]
 
 V1_VERIFIERS = ("optimised", "baseline")
 HOST_CLAIMS = ("auto", "device", "host")
 GKR_MEMORY = ("auto", "low", "host", "default")
+DECODE_MEMORY = ("auto", "low", "default")
 
 
 def _option(default, help: str):
@@ -95,6 +96,20 @@ class Options:
                                       "--gkr-memory-budget)")
     gkr_memory_budget: int = _option(90, "with --gkr-memory auto: the percentage of the GPU's memory the default "
                                          "path's predicted GKR peak may take before the low-memory path is used")
+    decode_memory: str = _option("default", "a GPU verifier's decoder of the compact claim encoding: default (the "
+                                            "whole input and the exceptions' int64 vectors on the GPU at once: the "
+                                            "measured path), low (each slot stream uploaded and unpacked on its own, "
+                                            "the exceptions patched --decode-chunk at a time: the same claims and "
+                                            "verdicts in bounded memory), or auto (default unless its predicted "
+                                            "peak, with the GPU memory already allocated, exceeds "
+                                            "--decode-memory-budget; then low).  Decided before the timed decoding; "
+                                            "a query records the path taken (decode_memory) unless the option is "
+                                            "default")
+    decode_memory_budget: int = _option(90, "with --decode-memory auto: the percentage of the GPU's memory the "
+                                            "default decoder's predicted peak may take before the low-memory "
+                                            "decoder is used")
+    decode_chunk: int = _option(1 << 23, "with --decode-memory low (or auto choosing it): exceptions patched per "
+                                         "part (about 80 bytes of temporaries each)")
 
     def __post_init__(self):
         if self.v1_verifier not in V1_VERIFIERS:
@@ -103,6 +118,12 @@ class Options:
             raise ValueError(f"gkr_memory: one of {GKR_MEMORY}, not {self.gkr_memory!r}")
         if not 1 <= self.gkr_memory_budget <= 100:
             raise ValueError("gkr_memory_budget: a percentage in 1 .. 100")
+        if self.decode_memory not in DECODE_MEMORY:
+            raise ValueError(f"decode_memory: one of {DECODE_MEMORY}, not {self.decode_memory!r}")
+        if not 1 <= self.decode_memory_budget <= 100:
+            raise ValueError("decode_memory_budget: a percentage in 1 .. 100")
+        if self.decode_chunk < 1:
+            raise ValueError("decode_chunk: at least one exception per part")
         if self.hash_threads < 0:
             raise ValueError("hash_threads: 0 (torch's thread count) or a positive number")
         if self.host_claims not in HOST_CLAIMS:
@@ -152,6 +173,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
             group.add_argument(flag, choices=HOST_CLAIMS, default=default, help=text)
         elif f.name == "gkr_memory":
             group.add_argument(flag, choices=GKR_MEMORY, default=default, help=text)
+        elif f.name == "decode_memory":
+            group.add_argument(flag, choices=DECODE_MEMORY, default=default, help=text)
         else:
             group.add_argument(flag, type=int, default=default, help=text)
     group.add_argument("--require-native", action="store_true", help="stop unless the native CPU kernels are available")

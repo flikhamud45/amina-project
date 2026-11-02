@@ -285,6 +285,10 @@ def decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torch
     mats = [op for op in sent if op.name not in verifier.tables]
     tables = [op for op in sent if op.name in verifier.tables]
     vdev = torch.device(verifier.device)
+    low = None
+    if options.current().decode_memory != "default":      # decided before the timed decoding, and recorded
+        low = device_decode_low(verifier, blob, x)
+        out["decode_memory"] = "low" if low else "default"
     c0 = contention.begin()
     t0 = time.perf_counter()
     cols = verifier.claim_columns(x)
@@ -293,7 +297,11 @@ def decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torch
         m_of = dict(zip((op.name for op in verifier.graph.mat_ops), cols))
         shapes = [op.n_rows for op in mats], [m_of[op.name] for op in mats]
         try:
-            if vdev.type == "cuda" and options.current().gpu_decode and claimcodec.decode_device_ok(vdev):
+            if low:
+                dec = claimcodec.decode_device_parts(blob, *shapes, vdev, options.current().decode_chunk)
+                dec = dec if dtype == torch.int32 else [d.to(dtype) for d in dec]
+                sync_device(vdev)
+            elif vdev.type == "cuda" and options.current().gpu_decode and claimcodec.decode_device_ok(vdev):
                 dec = claimcodec.decode_device(blob, *shapes, vdev)
                 dec = dec if dtype == torch.int32 else [d.to(dtype) for d in dec]
                 sync_device(vdev)
@@ -308,6 +316,30 @@ def decoded_claims(verifier: Verifier, blob: bytes, rows: bytes | None, x: torch
     out["timings"]["verify_decode"] = out["timings"].get("verify_decode", 0.0) + time.perf_counter() - t0
     phase_done(out, "verify_decode", c0)
     return zs
+
+
+def device_decode_low(verifier: Verifier, blob: bytes, x: torch.Tensor) -> bool:
+    """Whether a GPU verifier decodes the claims of query ``x`` with :func:`claimcodec.decode_device_parts` (the
+    option ``decode_memory``): ``low``, or ``auto`` when the default decoder's predicted peak
+    (:func:`claimcodec.device_decode_peak`) on top of the GPU memory already allocated exceeds
+    ``decode_memory_budget`` percent of the GPU's memory; never on a verifier that does not decode on its GPU
+    (on the host, or without Triton).  Read off the header on the host, outside every timed phase."""
+    o = options.current()
+    vdev = torch.device(verifier.device)
+    if o.decode_memory == "default" or not (vdev.type == "cuda" and o.gpu_decode and claimcodec.decode_device_ok(vdev)):
+        return False
+    if o.decode_memory == "low":
+        return True
+    cols = verifier.claim_columns(x)
+    if cols is None:
+        return False
+    m_of = dict(zip((op.name for op in verifier.graph.mat_ops), cols))
+    mats = [op for op in verifier._sent_ops() if op.name not in verifier.tables]
+    peak = claimcodec.device_decode_peak(blob, [op.n_rows for op in mats], [m_of[op.name] for op in mats])
+    if peak is None:
+        return False
+    total = torch.cuda.get_device_properties(vdev).total_memory
+    return torch.cuda.memory_allocated(vdev) + peak > total * o.decode_memory_budget // 100
 
 
 def field_message(blob: bytes, shapes: list[tuple[int, int]], out: dict, dtype: torch.dtype) -> list | None:

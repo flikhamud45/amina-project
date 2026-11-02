@@ -26,6 +26,14 @@ def test_flags_round_trip_and_default_to_the_options_in_force(set_options):
     assert (got.native_gemm, got.fused_encoder, got.hash_threads, got.v1_verifier) == (False, True, 3, "baseline")
     assert (got.host_claims, got.host_claims_reserve) == ("host", 2)
     assert (options.Options().host_claims, options.Options().host_claims_reserve) == ("device", 6)
+    got = options.apply_arguments(ap.parse_args(["--decode-memory", "auto", "--decode-memory-budget", "80",
+                                                 "--decode-chunk", "1024"]))
+    assert (got.decode_memory, got.decode_memory_budget, got.decode_chunk) == ("auto", 80, 1024)
+    d = options.Options()
+    assert (d.decode_memory, d.decode_memory_budget, d.decode_chunk) == ("default", 90, 1 << 23)
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--decode-memory", "small"])
+    got = options.apply_arguments(args)
     with pytest.raises(SystemExit):
         ap.parse_args(["--host-claims", "gpu"])
     assert options.current() == got
@@ -58,6 +66,12 @@ def test_invalid_values_are_refused():
         options.Options(gkr_memory="small")
     with pytest.raises(ValueError):
         options.Options(gkr_memory_budget=0)
+    with pytest.raises(ValueError):
+        options.Options(decode_memory="host")
+    with pytest.raises(ValueError):
+        options.Options(decode_memory_budget=101)
+    with pytest.raises(ValueError):
+        options.Options(decode_chunk=0)
     with pytest.raises(TypeError):
         options.configure(no_such_option=True)
 

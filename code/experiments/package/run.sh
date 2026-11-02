@@ -679,7 +679,7 @@ tier_bench() {
   # 2,048-token rows, Maverick's Qwen3-4B row).  The CPU verifier and the streaming GPU verifier (--verifier-device
   # cuda --verifier-impl stream); 5 timed queries for the 64-token cells and OPT-1.3B and Llama-2-7B at 2,048 tokens.
   # The CPU verifier's cells are CPU-timing jobs (csub, $NATIVE).
-  local gpuv="--verifier-device cuda --verifier-impl stream" m t mem q cm hc hk hg
+  local gpuv="--verifier-device cuda --verifier-impl stream" m t mem q cm hc hk hg dm
   if [ -n "$REH" ]; then
     csub b-c-lenet5 1 64 "$BENCH cnn --model lenet5 --queries 3 --tampers 3 --modes C:fs,C:int --policy $POL $NATIVE"
     rw opt-125m 64
@@ -732,12 +732,14 @@ tier_bench() {
 --lams 40 80 --modes C:fs,Kpre:fs --policy $POL $NATIVE"
   # (c) 2,048-token prompts (zkLLM's rows interactive as well)
   for m in opt-125m opt-1.3b opt-6.7b llama2-7b llama2-13b; do
-    q=3; mem=96; cm="C:fs,C:int"; hc=1; hk=1; hg=1
+    # dm: the Llama-2 cells' GPU verifier decodes the claims with --decode-memory auto (the default decoder's
+    # predicted peak exceeds an L40S's memory there; the path taken is recorded); every other cell: the default
+    q=3; mem=96; cm="C:fs,C:int"; hc=1; hk=1; hg=1; dm=""
     case "$m" in
       opt-1.3b) q=5 ;;
       opt-6.7b) cm="C:fs" ;;
-      llama2-7b) q=5; mem=128; hc=2 ;;
-      llama2-13b) mem=128; hc=3; hg=2 ;;
+      llama2-7b) q=5; mem=128; hc=2; dm=" --decode-memory auto" ;;
+      llama2-13b) mem=128; hc=3; hg=2; dm=" --decode-memory auto" ;;
     esac
     rw "$m" 2048
     csub "b-c-$m-2k" $((hc + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 2048 --builds full --queries $q \
@@ -745,7 +747,7 @@ tier_bench() {
     csub "b-k-$m-2k" $((hk + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 2048 --builds full --queries $q \
 --lams 128 --modes Kpre:fs $NATIVE"
     sub "b-cg-$m-2k" $((hg + RH)) "$(memgb $mem)" "$BENCH llm --model $m$R --seq 2048 --builds full --queries $q \
---lams 128 --modes $cm --policy $POL $gpuv"
+--lams 128 --modes $cm --policy $POL $gpuv$dm"
   done
   # (d) our side of zkLLM's same-GPU comparison at the zkllm tier's other prompt lengths (--zkllm-seqs): mode C,
   # interactive, lambda 128, as zkLLM's rows of tab:eval-compare (the 2,048-token cells are those of (c))

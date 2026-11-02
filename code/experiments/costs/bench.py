@@ -402,6 +402,8 @@ def _record_query(r: Recorder, res: dict, trial: int, **extra) -> None:
         r.rec("proof_transcript", res["transcript"], "sha", trial, **extra)
     if res.get("claims_staged"):    # claims the prover staged in host memory (--host-claims)
         r.rec("claims_staged", res["claims_staged"], "B", trial, **extra)
+    if res.get("decode_memory"):    # the GPU verifier's decoder taken under --decode-memory low|auto
+        r.rec("decode_memory", res["decode_memory"], "", trial, **extra)
     if not res["accepted"]:  # an honest query must never fail: GPU/CPU disagreement, stop the job
         # keep the evidence where a re-run cannot overwrite it and count_outcomes.py finds it
         # (no .done: the aggregates never read it)
