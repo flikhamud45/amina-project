@@ -27,7 +27,7 @@ distinction.
 The marked values are exactly those that `numbers.py` leaves missing when it runs on a run folder without records.
 Such an empty run fills only the values that need no run, so every fallback cell or macro that it leaves empty, and
 that prints a value (neither a `\todo` nor `--`), is one the final run replaces. In the commit this marked 495 table
-cells and 382 text numbers. The marks were added once to the files of `fallback/`, by a script outside the repository
+cells and 318 text numbers. The marks were added once to the files of `fallback/`, by a script outside the repository
 that compares the fallback with the empty run's output cell by cell.
 
 `generated/` never carries the mark: a file that `numbers.py` writes prints black, so the final PDF has no orange
